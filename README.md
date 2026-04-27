@@ -15,53 +15,55 @@ Here's some instructions for Mac. If you're on anything else, you're on your own
 ```bash
 brew install conan cmake
 conan profile detect --force
-conan install . --build=missing -s build_type=Release
+conan install . --build=missing -s build_type=Debug
 ```
 
 ### 2. Configure project
 
 ```bash
-cmake --preset conan-release
-ln -sf build/Release/compile_commands.json compile_commands.json
+cmake --preset conan-debug
+ln -sf build/Debug/compile_commands.json compile_commands.json
 ```
 
 ### 3. Build
 
 ```bash
-cmake --build --preset conan-release
+cmake --build --preset conan-debug
 ```
 
 ### 4. Symlink LSP
 
 ```bash
-ln -sf build/Release/compile_commands.json compile_commands.json
+ln -sf build/Debug/compile_commands.json compile_commands.json
 ```
 
 ### 5. Run
 
 ```bash
-./build/Release/bin/GameEngine
+./build/Debug/bin/GameEngine
 ```
 
 ## Re-Building
 
 ### Standard code changes
 
+See optional aliases
+
 ```bash
-cmake --build --preset conan-release && ./build/Release/bin/GameEngine
+cmake --build --preset conan-debug && ./build/Debug/bin/GameEngine
 ```
 
 ### If `conanfile.txt` changes
 
 ```bash
-conan install . --build=missing -s build_type=Release
-cmake --preset conan-release
+conan install . --build=missing -s build_type=Debug
+cmake --preset conan-debug
 ```
 
 ### If `CMakeLists.txt` changes
 
 ```bash
-cmake --preset conan-release
+cmake --preset conan-debug
 ```
 
 ### If compiler/toolchain changes
@@ -75,10 +77,10 @@ conan profile detect --force
 ```bash
 rm -rf build compile_commands.json
 
-conan install . --build=missing -s build_type=Release
-cmake --preset conan-release
-ln -sf build/Release/compile_commands.json compile_commands.json
-cmake --build --preset conan-release
+conan install . --build=missing -s build_type=Debug
+cmake --preset conan-debug
+ln -sf build/Debug/compile_commands.json compile_commands.json
+cmake --build --preset conan-debug
 ```
 
 ## Optional
@@ -86,7 +88,9 @@ cmake --build --preset conan-release
 Add an alias command to run this shit easier.
 
 ```bash
-echo "alias crun='cmake --build --preset conan-release --target run'" >> ~/.zshrc
+echo "alias crun='cmake --build --preset conan-debug --target run'" >> ~/.zshrc
+echo "alias crun-release='cmake --build --preset conan-release --target run'" >> ~/.zshrc
+source ~/.zshrc
 ```
 
 Then run with
