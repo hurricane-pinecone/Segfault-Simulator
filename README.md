@@ -92,7 +92,7 @@ Run this before you submit a PR and make sure there's no new leaks. Preferably j
 
 ## Optional
 
-Add an alias command to run this shit easier.
+Add an alias command to run this shit easier. If you're not on zsh, first of all, how dare you.
 
 ```bash
 echo "alias crun='cmake --build --preset conan-debug --target run'" >> ~/.zshrc
