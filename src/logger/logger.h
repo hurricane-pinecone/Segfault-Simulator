@@ -53,11 +53,20 @@ private:
   static const char* toString(Level level);
 };
 
+inline const char* __log_file_name(const char* path)
+{
+  const char* file = std::strrchr(path, '/');
+  return file ? file + 1 : path;
+}
+
 #define LOG_INFO(message)                                                      \
-  Logger::info(message, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+  Logger::info(                                                                \
+      message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
 
 #define LOG_DEBUG(message)                                                     \
-  Logger::debug(message, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+  Logger::debug(                                                               \
+      message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
 
 #define LOG_ERROR(message)                                                     \
-  Logger::error(message, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+  Logger::error(                                                               \
+      message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)

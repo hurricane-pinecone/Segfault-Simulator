@@ -8,7 +8,9 @@ public:
   Entity(int id) : id(id) {};
   ~Entity() = default;
 
-  int getId() const;
+  int getId() const { return id; };
+
+  void setRegistry(Registry* registry) { this->registry = registry; }
 
   template <typename TComponent, typename... TArgs>
   Entity& addComponent(TArgs&&... args);
@@ -44,6 +46,4 @@ private:
 
   int id;
   Registry* registry;
-
-  void setRegistry(Registry* registry);
 };
