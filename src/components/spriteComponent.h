@@ -4,14 +4,12 @@
 
 struct SpriteComponent
 {
+  std::string assetId;
   int width;
   int height;
-  std::string path;
 
-  SpriteComponent(std::string path, int width, int height)
+  SpriteComponent(std::string assetId, int width, int height)
+      : assetId(std::move(assetId)), width(width), height(height)
   {
-    this->path = path;
-    this->width = width;
-    this->height = height;
   }
 };

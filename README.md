@@ -22,7 +22,6 @@ conan install . --build=missing -s build_type=Debug
 
 ```bash
 cmake --preset conan-debug
-ln -sf build/Debug/compile_commands.json compile_commands.json
 ```
 
 ### 3. Build
@@ -97,4 +96,12 @@ Then run with
 
 ```bash
 crun
+```
+
+# Leak Detection
+
+Run this before you submit a PR and make sure there's no new leaks. Preferably just use it to run all your debug builds to catch them early.
+
+```bash
+./scripts/run_leaks.sh
 ```

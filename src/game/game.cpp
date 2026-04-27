@@ -13,11 +13,7 @@
 #include <glm/glm.hpp>
 #include <memory>
 
-Game::Game()
-{
-  isRunning = false;
-  registry = std::make_unique<Registry>();
-}
+Game::Game() { isRunning = false; }
 
 Game::~Game() { LOG_INFO("Game destroyed"); }
 
@@ -61,8 +57,6 @@ void Game::init()
   }
 
   // SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
-
-  isRunning = true;
 }
 
 void Game::run()
@@ -117,7 +111,7 @@ void Game::render()
 
   if (registry->hasSystem<RenderSystem>())
   {
-    registry->getSystem<RenderSystem>().render(renderer);
+    registry->getSystem<RenderSystem>().render(*renderer);
   }
 }
 
@@ -130,11 +124,19 @@ void Game::destroy()
 
 void Game::setup()
 {
+  registry = std::make_unique<Registry>();
+  assetStore = std::make_unique<AssetStore>(*renderer);
+
   registry->addSystem<MovementSystem>();
-  registry->addSystem<RenderSystem>();
+  registry->addSystem<RenderSystem>(*assetStore);
+
+  assetStore->addTexture("player", "./assets/sprites/man_guy.png");
 
   registry->createEntity()
-      .addComponent<TransformComponent>(glm::vec2(10.0, windowHeight / 2))
+      .addComponent<TransformComponent>(
+          glm::vec2(10.0, windowHeight / 2), glm::vec2(2.0, 2.0))
       .addComponent<RigidBodyComponent>(glm::vec2(100.0, 0.0))
-      .addComponent<SpriteComponent>("sprites/man_guy.png", 32, 32);
+      .addComponent<SpriteComponent>("player", 32, 32);
+
+  isRunning = true;
 }

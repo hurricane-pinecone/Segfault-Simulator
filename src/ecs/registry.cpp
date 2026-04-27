@@ -11,6 +11,7 @@ Entity Registry::createEntity()
 
   Entity entity(entityId);
   entity.setRegistry(this);
+
   entitiesToBeAdded.insert(entity);
 
   if (entityId >= entityComponentSignatures.size())
