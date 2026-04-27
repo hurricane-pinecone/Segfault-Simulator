@@ -82,6 +82,14 @@ ln -sf build/Debug/compile_commands.json compile_commands.json
 cmake --build --preset conan-debug
 ```
 
+## Leak Detection
+
+Run this before you submit a PR and make sure there's no new leaks. Preferably just use it to run all your debug builds to catch them early.
+
+```bash
+./scripts/run_leaks.sh
+```
+
 ## Optional
 
 Add an alias command to run this shit easier.
@@ -96,12 +104,4 @@ Then run with
 
 ```bash
 crun
-```
-
-# Leak Detection
-
-Run this before you submit a PR and make sure there's no new leaks. Preferably just use it to run all your debug builds to catch them early.
-
-```bash
-./scripts/run_leaks.sh
 ```
