@@ -35,7 +35,7 @@ public:
       const auto transform = entity.getComponent<TransformComponent>();
       const auto sprite = entity.getComponent<SpriteComponent>();
 
-      SDL_Texture* texture = getTexture(renderer, "../assets/" + sprite.path);
+      SDL_Texture* texture = getTexture(renderer, "./assets/" + sprite.path);
 
       if (!texture)
       {

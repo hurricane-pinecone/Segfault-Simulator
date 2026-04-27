@@ -1,0 +1,15 @@
+[requires]
+lua/5.4.8
+sdl/2.28.3
+sdl_image/2.8.2
+sdl_ttf/2.22.0
+sdl_mixer/2.8.0
+imgui/1.92.7
+glm/1.0.1
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout

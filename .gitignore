@@ -1,2 +1,10 @@
 bin/
 lib/
+build/
+
+.DS_Store
+CMakeCache.txt
+cmake_install.txt
+CMakeUserPresets.json
+compile_commands.json
+Makefile
