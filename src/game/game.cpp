@@ -10,7 +10,6 @@
 #include "systems/movementSystem.h"
 #include "systems/renderSystem.h"
 
-#include <glm/glm.hpp>
 #include <memory>
 
 Game::Game() { isRunning = false; }
@@ -134,7 +133,7 @@ void Game::setup()
 
   registry->createEntity()
       .addComponent<TransformComponent>(
-          glm::vec2(10.0, windowHeight / 2), glm::vec2(2.0, 2.0))
+          glm::vec2(10.0, windowHeight / 2), glm::vec2(2.0, 2.0), 64.0)
       .addComponent<RigidBodyComponent>(glm::vec2(100.0, 0.0))
       .addComponent<SpriteComponent>("player", 32, 32);
 

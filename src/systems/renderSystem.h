@@ -37,7 +37,24 @@ public:
                        static_cast<int>(sprite.width * transform.scale.x),
                        static_cast<int>(sprite.height * transform.scale.y)};
 
-      SDL_RenderCopy(&renderer, texture, nullptr, &dest);
+      SDL_Rect* src = nullptr;
+      SDL_Rect srcRect;
+      if (sprite.positionInSheet)
+      {
+        srcRect = SDL_Rect{static_cast<int>(sprite.positionInSheet->x),
+                           static_cast<int>(sprite.positionInSheet->y),
+                           static_cast<int>(sprite.width),
+                           static_cast<int>(sprite.height)};
+        src = &srcRect;
+      }
+
+      SDL_RenderCopyEx(&renderer,
+                       texture,
+                       src,
+                       &dest,
+                       transform.rotation,
+                       NULL,
+                       SDL_FLIP_NONE);
     }
     SDL_RenderPresent(&renderer);
   };
