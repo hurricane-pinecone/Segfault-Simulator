@@ -1,0 +1,14 @@
+BasedOnStyle: LLVM
+
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackParameters: false
+BinPackArguments: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+AlwaysBreakTemplateDeclarations: Yes
+
+PenaltyBreakBeforeFirstCallParameter: 0
+
+BreakBeforeBraces: Allman
+
+ColumnLimit: 80
