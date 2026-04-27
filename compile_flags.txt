@@ -1,0 +1,7 @@
+-xc++
+-std=c++17
+-I/Users/ayx106047/dev/gameEngine/lib/SDL2/include
+-I/Users/ayx106047/dev/gameEngine/src
+-I/Users/ayx106047/dev/gameEngine/lib
+-I/Users/ayx106047/dev/gameEngine/lib/imgui
+-I/Users/ayx106047/dev/gameEngine/lib/imgui/backends
