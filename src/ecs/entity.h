@@ -24,18 +24,6 @@ public:
   template <typename TComponent>
   TComponent& getComponent() const;
 
-  template <typename TSystem, typename... TArgs>
-  void addSystem(TArgs&&... args) const;
-
-  template <typename TSystem>
-  void removeSystem() const;
-
-  template <typename TSystem>
-  bool hasSystem() const;
-
-  template <typename TSystem>
-  TSystem& getSystem() const;
-
   bool operator==(const Entity& other) const { return id == other.id; }
   bool operator!=(const Entity& other) const { return id != other.id; }
   bool operator>(const Entity& other) const { return id > other.id; }
