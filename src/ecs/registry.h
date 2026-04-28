@@ -4,7 +4,6 @@
 #include "entity.h"
 #include "logger/logger.h"
 #include "pool.h"
-#include "signature.h"
 #include "system.h"
 
 #include <memory>
@@ -49,6 +48,9 @@ public:
   TSystem& getSystem() const;
 
 private:
+  void addEntityToSystems(const Entity& entity);
+
+private:
   int entityCount = 0;
   std::set<Entity> entitiesToBeAdded;
   std::set<Entity> entitiesToBeRemoved;
@@ -62,8 +64,6 @@ private:
   std::vector<Signature> entityComponentSignatures;
 
   std::unordered_map<std::type_index, std::shared_ptr<System>> systems;
-
-  void addEntityToSystems(const Entity& entity);
 };
 
 template <typename TComponent, typename... TArgs>

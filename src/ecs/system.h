@@ -2,7 +2,6 @@
 
 #include "component.h"
 #include "entity.h"
-#include "signature.h"
 
 #include <vector>
 
