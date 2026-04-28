@@ -11,11 +11,11 @@ struct SpriteComponent
   int height;
   std::optional<glm::vec2> positionInSheet;
 
-  SpriteComponent(std::string assetId,
+  SpriteComponent(const std::string& assetId,
                   int width,
                   int height,
                   std::optional<glm::vec2> positionInSheet = std::nullopt)
-      : assetId(std::move(assetId)), width(width), height(height),
+      : assetId(assetId), width(width), height(height),
         positionInSheet(positionInSheet)
   {
   }

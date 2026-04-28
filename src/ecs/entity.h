@@ -1,5 +1,10 @@
 #pragma once
 
+#include <bitset>
+
+const unsigned int MAX_COMPONENTS = 32;
+typedef std::bitset<MAX_COMPONENTS> Signature;
+
 class Registry;
 
 class Entity
@@ -12,6 +17,9 @@ public:
 
   void setRegistry(Registry* registry) { this->registry = registry; }
 
+  // Templates implemented in registry.h
+  // Used for syntactic suger, but still a bit grossed out by this - visit again
+  // later maybe
   template <typename TComponent, typename... TArgs>
   Entity& addComponent(TArgs&&... args);
 
