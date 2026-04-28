@@ -16,8 +16,8 @@ public:
   const Signature& getComponentSignature() const;
 
   virtual void update(double deltatime) {};
-  void addEntity(Entity entity);
-  void removeEntity(Entity entity);
+  void addEntity(const Entity& entity);
+  void removeEntity(const Entity& entity);
 
   template <typename TComponent>
   void registerComponent();
