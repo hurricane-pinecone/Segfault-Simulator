@@ -3,7 +3,7 @@
 struct BaseComponent
 {
 protected:
-  static int nextId;
+  inline static int nextId = 0;
 };
 
 // Template used to assign unique id per Component<T>
@@ -14,7 +14,7 @@ public:
   // Unique id of component T
   static int getId()
   {
-    static auto id = nextId++;
+    static int id = nextId++;
     return id;
   }
 };

@@ -85,8 +85,7 @@ void Registry::addComponent(const Entity& entity, TArgs&&... args)
   std::shared_ptr<Pool<TComponent>> componentPool =
       std::static_pointer_cast<Pool<TComponent>>(componentPools[componentId]);
 
-  TComponent component(std::forward<TArgs>(args)...);
-  componentPool->set(entityId, component);
+  componentPool->set(entityId, std::forward<TArgs>(args)...);
 
   entityComponentSignatures[entityId].set(componentId, true);
 

@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 class IPool
@@ -19,7 +20,12 @@ public:
   size_t getSize() const { return data.size(); }
   void resize(size_t size) { data.resize(size); }
   void clear() { data.clear(); }
-  void add(const T& obj) { data.push_back(obj); }
+
+  template <typename... TArgs>
+  void add(TArgs&&... args)
+  {
+    data.emplace_back(std::forward<TArgs>(args)...);
+  }
 
   bool has(size_t index) const
   {
@@ -41,25 +47,25 @@ public:
       if (data[i] == obj)
       {
 
-        data[i] = data.back();
-        data.pop_back();
+        data[i].reset();
         return;
       }
     }
   }
 
-  void set(size_t index, const T& obj)
+  template <typename... TArgs>
+  void set(size_t index, TArgs&&... args)
   {
     if (index >= data.size())
     {
       data.resize(index + 1);
     }
-    data[index] = obj;
+    data[index].emplace(std::forward<TArgs>(args)...);
   }
 
   T& get(size_t index) { return data[index].value(); }
 
-  T& operator[](size_t index) { return data[index].value(); }
+  T& operator[](size_t index) { return get(index); }
 
 private:
   std::vector<std::optional<T>> data;
