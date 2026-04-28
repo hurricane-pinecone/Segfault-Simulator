@@ -183,27 +183,3 @@ TComponent& Entity::getComponent() const
 {
   return registry->getComponent<TComponent>(*this);
 }
-
-template <typename TSystem, typename... TArgs>
-void Entity::addSystem(TArgs&&... args) const
-{
-  registry->addSystem<TSystem>(std::forward<TArgs>(args)...);
-};
-
-template <typename TSystem>
-void Entity::removeSystem() const
-{
-  registry->removeSystem<TSystem>();
-};
-
-template <typename TSystem>
-bool Entity::hasSystem() const
-{
-  return registry->hasSystem<TSystem>();
-};
-
-template <typename TSystem>
-TSystem& Entity::getSystem() const
-{
-  return registry->getSystem<TSystem>();
-}
