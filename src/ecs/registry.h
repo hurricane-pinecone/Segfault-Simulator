@@ -59,7 +59,7 @@ private:
   // ComponentPool index = entity id
   std::vector<std::shared_ptr<IPool>> componentPools;
 
-  // Vector or component signatures, which allows us to tell which components
+  // Vector of component signatures, which allows us to tell which components
   // are turned on per entity
   std::vector<Signature> entityComponentSignatures;
 
