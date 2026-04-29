@@ -12,8 +12,6 @@ void AssetStore::clearAssets()
   LOG_DEBUG("Asset store textures cleared.");
 }
 
-// TODO: Prevent adding the same texture twice somehow.
-// IE: some-image.png should not be able to be added more than once.
 void AssetStore::addTexture(const std::string& assetId,
                             const std::string& filePath)
 {
