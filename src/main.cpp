@@ -1,8 +1,10 @@
 
 #include "game/game.h"
 #include "logger/logger.h"
+#include <cstddef>
+#include <cstdlib>
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
   Game game;
 

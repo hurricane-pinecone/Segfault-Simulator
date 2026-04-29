@@ -57,13 +57,13 @@ private:
 
   // vector index = component type id
   // ComponentPool index = entity id
-  std::vector<std::shared_ptr<IPool>> componentPools;
+  std::vector<std::unique_ptr<IPool>> componentPools;
 
   // Vector of component signatures, which allows us to tell which components
   // are turned on per entity
   std::vector<Signature> entityComponentSignatures;
 
-  std::unordered_map<std::type_index, std::shared_ptr<System>> systems;
+  std::unordered_map<std::type_index, std::unique_ptr<System>> systems;
 };
 
 template <typename TComponent, typename... TArgs>
@@ -74,16 +74,16 @@ void Registry::addComponent(const Entity& entity, TArgs&&... args)
 
   if (componentId >= componentPools.size())
   {
-    componentPools.resize(componentId + 1, nullptr);
+    componentPools.resize(componentId + 1);
   }
 
   if (!componentPools[componentId])
   {
-    componentPools[componentId] = std::make_shared<Pool<TComponent>>();
+    componentPools[componentId] = std::make_unique<Pool<TComponent>>();
   }
 
-  std::shared_ptr<Pool<TComponent>> componentPool =
-      std::static_pointer_cast<Pool<TComponent>>(componentPools[componentId]);
+  auto componentPool =
+      static_cast<Pool<TComponent>*>(componentPools[componentId].get());
 
   componentPool->set(entityId, std::forward<TArgs>(args)...);
 
@@ -112,18 +112,17 @@ template <typename TComponent>
 TComponent& Registry::getComponent(const Entity& entity)
 {
   const int componentId = Component<TComponent>::getId();
-  auto pool =
-      std::static_pointer_cast<Pool<TComponent>>(componentPools[componentId]);
+  auto* pool =
+      static_cast<Pool<TComponent>*>(componentPools[componentId].get());
   return pool->get(entity.getId());
 }
 
 template <typename TSystem, typename... TArgs>
 void Registry::addSystem(TArgs&&... args)
 {
-  std::shared_ptr<TSystem> system =
-      std::make_shared<TSystem>(std::forward<TArgs>(args)...);
   auto typeIndex = std::type_index(typeid(TSystem));
-  systems.insert(std::make_pair(typeIndex, system));
+  systems.emplace(
+      typeIndex, std::make_unique<TSystem>(std::forward<TArgs>(args)...));
 }
 
 template <typename TSystem>
@@ -151,13 +150,16 @@ TSystem& Registry::getSystem() const
     throw std::runtime_error("System does not exist");
   }
 
-  return *std::static_pointer_cast<TSystem>(system->second);
+  return *static_cast<TSystem*>(system->second.get());
 }
 
 /*
  * ENTITY TEMPLATE METHODS
  *
  * They need to go here to avoid curcular imports
+ *
+ * TODO: Potentially scrap these. I'm not sold on storing a registry pointer on
+ * entity soley for syntactic suger
  */
 template <typename TComponent, typename... TArgs>
 Entity& Entity::addComponent(TArgs&&... args)

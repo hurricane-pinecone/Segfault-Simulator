@@ -19,7 +19,7 @@ public:
 
   void render(SDL_Renderer& renderer)
   {
-    for (auto entity : getEntities())
+    for (const auto& entity : getEntities())
     {
       const auto& transform = entity.getComponent<TransformComponent>();
       const auto& sprite = entity.getComponent<SpriteComponent>();
@@ -62,7 +62,6 @@ public:
                        NULL,
                        SDL_FLIP_NONE);
     }
-    SDL_RenderPresent(&renderer);
   };
 
   RenderSystem(const RenderSystem&) = delete;
