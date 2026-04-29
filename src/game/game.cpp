@@ -1,17 +1,22 @@
 
 #include "game.h"
 #include "SDL.h"
-#include "SDL_render.h"
 #include "components/rigidBodyComponent.h"
 #include "components/spriteComponent.h"
 #include "components/transformComponent.h"
 #include "glm/ext/vector_float2.hpp"
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_sdlrenderer2.h"
 #include "logger/logger.h"
 #include "systems/movementSystem.h"
 #include "systems/renderSystem.h"
+#include "utils/allocationMetrics.h"
+#include "utils/ui.h"
 
 #include <glm/ext/vector_float3.hpp>
 #include <memory>
+#include <string>
 
 Game::Game() { isRunning = false; }
 
@@ -56,6 +61,12 @@ void Game::init()
     return;
   }
 
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+
+  ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+  ImGui_ImplSDLRenderer2_Init(renderer);
+
   // SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
 }
 
@@ -82,8 +93,11 @@ void Game::run()
 void Game::processInput()
 {
   SDL_Event sdlEvent;
+
   while (SDL_PollEvent(&sdlEvent))
   {
+    ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
+
     switch (sdlEvent.type)
     {
     case SDL_QUIT:
@@ -100,23 +114,39 @@ void Game::processInput()
   }
 }
 
-void Game::update(double deltaTime) { registry->update(deltaTime); }
+void Game::update(double deltaTime)
+{
+  setMemoryTrackingEnabled(true);
+  registry->update(deltaTime);
+  setMemoryTrackingEnabled(false);
+}
 
 void Game::render()
 {
-
   // Render background
   SDL_SetRenderDrawColor(renderer, 21, 21, 21, 255);
   SDL_RenderClear(renderer);
 
+  setMemoryTrackingEnabled(true);
   if (registry->hasSystem<RenderSystem>())
   {
     registry->getSystem<RenderSystem>().render(*renderer);
   }
+  setMemoryTrackingEnabled(false);
+
+#ifndef NDEBUG
+  renderDebugUI(renderer);
+#endif
+
+  SDL_RenderPresent(renderer);
 }
 
 void Game::destroy()
 {
+  ImGui_ImplSDLRenderer2_Shutdown();
+  ImGui_ImplSDL2_Shutdown();
+  ImGui::DestroyContext();
+
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
@@ -124,18 +154,20 @@ void Game::destroy()
 
 void Game::setup()
 {
+  setMemoryTrackingEnabled(true);
+
   registry = std::make_unique<Registry>();
   assetStore = std::make_unique<AssetStore>(*renderer);
 
   registry->addSystem<MovementSystem>();
   registry->addSystem<RenderSystem>(*assetStore);
 
-  assetStore->addTexture("player", "./assets/sprites/man_guy.png");
   assetStore->addTexture("truck", "./assets/spriteSheets/tilemap.png");
+  assetStore->addTexture("jungle", "./assets/spriteSheets/jungle.png");
 
   // TODO: I HATE that clangd intellisense doesn't infer TAargs.
   // Possibly make addComponent take in place construction
-  // if I can live with myself adding a an extra move for cosmetics...
+  // if I can live with myself adding an extra move...
   registry->createEntity()
       .addComponent<TransformComponent>(
           glm::vec2(10.0, windowHeight / 2), glm::vec2(6.0, 6.0))
@@ -144,4 +176,6 @@ void Game::setup()
           "truck", 16, 16, glm::vec3(16.0, 6.0, 1.0));
 
   isRunning = true;
+
+  setMemoryTrackingEnabled(false);
 }

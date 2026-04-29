@@ -16,7 +16,7 @@ public:
 
   void update(double deltaTime) override
   {
-    for (auto entity : getEntities())
+    for (const auto& entity : getEntities())
     {
       auto& transform = entity.getComponent<TransformComponent>();
       const auto rigidBody = entity.getComponent<RigidBodyComponent>();

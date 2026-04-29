@@ -46,6 +46,14 @@ void Logger::debug(const std::string& message,
             << RESET << std::endl;
 }
 
+void Logger::debug(const char* message, std::size_t value, const char* file)
+{
+  if (Logger::logLevel > Logger::Level::DEBUG)
+    return;
+
+  std::fprintf(stdout, "%s[DEBUG] %s: %zu%s\n", BLUE, message, value, RESET);
+}
+
 std::string Logger::formatMessage(Logger::Level level,
                                   const std::string& message,
                                   const char* file,

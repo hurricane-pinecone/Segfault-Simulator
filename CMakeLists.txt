@@ -18,6 +18,12 @@ add_executable(GameEngine
 target_include_directories(GameEngine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends"
+)
+
+target_sources(GameEngine PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdlrenderer2.cpp"
 )
 
 target_compile_options(GameEngine PRIVATE

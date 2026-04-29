@@ -30,6 +30,9 @@ public:
                     const char* file,
                     int line,
                     const char* func);
+
+  static void debug(const char* message, std::size_t value, const char* file);
+
   static void error(const std::string& message,
                     const char* file,
                     int line,
@@ -66,6 +69,9 @@ inline const char* __log_file_name(const char* path)
 #define LOG_DEBUG(message)                                                     \
   Logger::debug(                                                               \
       message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+
+#define LOG_DEBUG_SIZE(label, value)                                           \
+  Logger::debug(label, value, __log_file_name(__FILE__))
 
 #define LOG_ERROR(message)                                                     \
   Logger::error(                                                               \
