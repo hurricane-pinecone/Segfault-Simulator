@@ -10,6 +10,7 @@
 #include "systems/movementSystem.h"
 #include "systems/renderSystem.h"
 
+#include <glm/ext/vector_float3.hpp>
 #include <memory>
 
 Game::Game() { isRunning = false; }
@@ -130,12 +131,17 @@ void Game::setup()
   registry->addSystem<RenderSystem>(*assetStore);
 
   assetStore->addTexture("player", "./assets/sprites/man_guy.png");
+  assetStore->addTexture("truck", "./assets/spriteSheets/tilemap.png");
 
+  // TODO: I HATE that clangd intellisense doesn't infer TAargs.
+  // Possibly make addComponent take in place construction
+  // if I can live with myself adding a an extra move for cosmetics...
   registry->createEntity()
       .addComponent<TransformComponent>(
-          glm::vec2(10.0, windowHeight / 2), glm::vec2(2.0, 2.0), 64.0)
+          glm::vec2(10.0, windowHeight / 2), glm::vec2(6.0, 6.0))
       .addComponent<RigidBodyComponent>(glm::vec2(100.0, 0.0))
-      .addComponent<SpriteComponent>("player", 32, 32);
+      .addComponent<SpriteComponent>(
+          "truck", 16, 16, glm::vec3(16.0, 6.0, 1.0));
 
   isRunning = true;
 }

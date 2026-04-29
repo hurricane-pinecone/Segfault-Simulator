@@ -41,10 +41,16 @@ public:
       SDL_Rect srcRect;
       if (sprite.positionInSheet)
       {
-        srcRect = SDL_Rect{static_cast<int>(sprite.positionInSheet->x),
-                           static_cast<int>(sprite.positionInSheet->y),
-                           static_cast<int>(sprite.width),
-                           static_cast<int>(sprite.height)};
+        // positionInSheet.x => Col
+        // positionInSheet.y => Row
+        // positionInSheet.z => Gap
+        srcRect = SDL_Rect{
+            static_cast<int>(sprite.positionInSheet->x *
+                             (sprite.width + sprite.positionInSheet->z)),
+            static_cast<int>(sprite.positionInSheet->y *
+                             (sprite.height + sprite.positionInSheet->z)),
+            static_cast<int>(sprite.width),
+            static_cast<int>(sprite.height)};
         src = &srcRect;
       }
 
