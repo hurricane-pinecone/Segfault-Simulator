@@ -23,7 +23,7 @@ public:
 
       transform.position.x += rigidBody.velocity.x * deltaTime;
       transform.position.y += rigidBody.velocity.y * deltaTime;
-      transform.rotation += 30.0 * deltaTime;
+      transform.rotation += transform.rotation * deltaTime;
     }
   };
 };
