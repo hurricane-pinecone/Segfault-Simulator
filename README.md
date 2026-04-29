@@ -8,7 +8,7 @@ This project uses **Conan (C++ package manager)** and **CMake** for building and
 
 ## Initial Setup
 
-Here's some instructions for Mac. If you're on anything else, you're on your own. Good luck.
+Here's some instructions for Mac. If you're on anything else, you're on your own. Good luck.  
 I also have no idea how to generate a Visual Studio proj so good luck with that.
 
 ### 1. Install dependencies
