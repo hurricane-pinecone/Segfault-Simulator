@@ -189,17 +189,14 @@ void Game::setup()
     }
   }
 
-  auto playerId = assetStore->addSpriteFromSpriteSheet(
+  auto playerSprite = assetStore->addSpriteFromSpriteSheet(
       "spritesheet", "guy", 16, 16, SpriteSheetPosition{16, 6, 1});
 
-  // TODO: I HATE that clangd intellisense doesn't infer TAargs.
-  // Possibly make addComponent take in place construction
-  // if I can live with myself adding an extra move...
   registry->createEntity()
       .addComponent<TransformComponent>(
           glm::vec2(10.0, windowHeight / 2), glm::vec2(2.0, 2.0))
       .addComponent<RigidBodyComponent>(glm::vec2(100.0, 0.0))
-      .addComponent<SpriteComponent>(playerId);
+      .addComponent<SpriteComponent>(playerSprite);
 
   isRunning = true;
 
