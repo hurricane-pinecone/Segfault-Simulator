@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <typeindex>
+#include <unordered_map>
 #include <utility>
 
 class Registry
