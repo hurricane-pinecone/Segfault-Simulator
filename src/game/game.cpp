@@ -1,6 +1,7 @@
 
 #include "game.h"
 #include "SDL.h"
+#include "assetStore/sprite.h"
 #include "components/rigidBodyComponent.h"
 #include "components/spriteComponent.h"
 #include "components/transformComponent.h"
@@ -9,14 +10,17 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "logger/logger.h"
+#include "mapLoader/mapLoader.h"
 #include "systems/movementSystem.h"
 #include "systems/renderSystem.h"
 #include "utils/allocationMetrics.h"
 #include "utils/ui.h"
 
+#include <cstdint>
 #include <glm/ext/vector_float3.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 
 Game::Game() { isRunning = false; }
 
@@ -162,18 +166,40 @@ void Game::setup()
   registry->addSystem<MovementSystem>();
   registry->addSystem<RenderSystem>(*assetStore);
 
-  assetStore->addTexture("truck", "./assets/spriteSheets/tilemap.png");
-  assetStore->addTexture("jungle", "./assets/spriteSheets/jungle.png");
+  assetStore->addTexture(
+      "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
+  assetStore->addTexture("jungle", ASSET_ROOT + "spriteSheets/jungle.png");
+
+  const int tileSize = 32;
+  std::vector<uint32_t> jungleSprites = assetStore->addSpritesFromSpriteSheet(
+      "jungle", "jungle", tileSize, tileSize, 0);
+
+  MapData map = MapLoader::parseMapFile(ASSET_ROOT + "maps/jungle.map");
+
+  for (int y = 0; y < map.height; y++)
+  {
+    for (int x = 0; x < map.width; x++)
+    {
+      uint32_t spriteId = map.tiles[y * map.width + x];
+
+      registry->createEntity()
+          .addComponent<TransformComponent>(
+              glm::vec2(x * tileSize, y * tileSize))
+          .addComponent<SpriteComponent>(spriteId);
+    }
+  }
+
+  auto playerId = assetStore->addSpriteFromSpriteSheet(
+      "spritesheet", "guy", 16, 16, SpriteSheetPosition{16, 6, 1});
 
   // TODO: I HATE that clangd intellisense doesn't infer TAargs.
   // Possibly make addComponent take in place construction
   // if I can live with myself adding an extra move...
   registry->createEntity()
       .addComponent<TransformComponent>(
-          glm::vec2(10.0, windowHeight / 2), glm::vec2(6.0, 6.0))
+          glm::vec2(10.0, windowHeight / 2), glm::vec2(2.0, 2.0))
       .addComponent<RigidBodyComponent>(glm::vec2(100.0, 0.0))
-      .addComponent<SpriteComponent>(
-          "truck", 16, 16, glm::vec3(16.0, 6.0, 1.0));
+      .addComponent<SpriteComponent>(playerId);
 
   isRunning = true;
 

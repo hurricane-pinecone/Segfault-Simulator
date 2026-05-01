@@ -53,15 +53,15 @@ set_target_properties(GameEngine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_target(copy_assets
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:GameEngine>/assets"
+        "${CMAKE_SOURCE_DIR}/src/game/assets"
+        "$<TARGET_FILE_DIR:GameEngine>/game/assets"
+    DEPENDS GameEngine
 )
 
-# Build + run
 add_custom_target(run
     COMMAND GameEngine
-    DEPENDS GameEngine
+    DEPENDS copy_assets
     WORKING_DIRECTORY $<TARGET_FILE_DIR:GameEngine>
 )
