@@ -9,11 +9,25 @@
 
 #include <memory>
 
+const std::string ASSET_ROOT = "./game/assets/";
+
 const double TARGET_FPS = 165.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
 
 class Game
 {
+public:
+  Game();
+  ~Game();
+
+  void init();
+  void setup();
+  void run();
+  void processInput();
+  void update(double deltaTime);
+  void render();
+  void destroy();
+
 private:
   bool isRunning;
   int windowWidth;
@@ -26,16 +40,4 @@ private:
 
   std::unique_ptr<Registry> registry;
   std::unique_ptr<AssetStore> assetStore;
-
-public:
-  Game();
-  ~Game();
-
-  void init();
-  void setup();
-  void run();
-  void processInput();
-  void update(double deltaTime);
-  void render();
-  void destroy();
 };

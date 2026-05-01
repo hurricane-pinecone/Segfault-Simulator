@@ -22,9 +22,17 @@ public:
     for (const auto& entity : getEntities())
     {
       const auto& transform = entity.getComponent<TransformComponent>();
-      const auto& sprite = entity.getComponent<SpriteComponent>();
+      const auto& spriteComponent = entity.getComponent<SpriteComponent>();
 
-      SDL_Texture* texture = assetStore.getTexture(sprite.assetId);
+      const auto sprite = assetStore.getSprite(spriteComponent.spriteId);
+
+      if (!sprite)
+      {
+        LOG_ERROR("Attempted to render NULL sprite");
+        continue;
+      }
+
+      SDL_Texture* texture = assetStore.getTexture(sprite->textureId);
 
       if (!texture)
       {
@@ -34,23 +42,23 @@ public:
 
       SDL_Rect dest = {static_cast<int>(transform.position.x),
                        static_cast<int>(transform.position.y),
-                       static_cast<int>(sprite.width * transform.scale.x),
-                       static_cast<int>(sprite.height * transform.scale.y)};
+                       static_cast<int>(sprite->width * transform.scale.x),
+                       static_cast<int>(sprite->height * transform.scale.y)};
 
       SDL_Rect* src = nullptr;
       SDL_Rect srcRect;
-      if (sprite.positionInSheet)
+      if (sprite->positionInSheet)
       {
         // positionInSheet.x => Col
         // positionInSheet.y => Row
         // positionInSheet.z => Gap
         srcRect = SDL_Rect{
-            static_cast<int>(sprite.positionInSheet->x *
-                             (sprite.width + sprite.positionInSheet->z)),
-            static_cast<int>(sprite.positionInSheet->y *
-                             (sprite.height + sprite.positionInSheet->z)),
-            static_cast<int>(sprite.width),
-            static_cast<int>(sprite.height)};
+            static_cast<int>(sprite->positionInSheet->x *
+                             (sprite->width + sprite->positionInSheet->gap)),
+            static_cast<int>(sprite->positionInSheet->y *
+                             (sprite->height + sprite->positionInSheet->gap)),
+            static_cast<int>(sprite->width),
+            static_cast<int>(sprite->height)};
         src = &srcRect;
       }
 

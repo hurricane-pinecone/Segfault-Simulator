@@ -1,9 +1,12 @@
 #pragma once
 
+#include "assetStore/sprite.h"
 #include <SDL_render.h>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 class AssetStore
 {
@@ -16,6 +19,20 @@ public:
   void removeTexture(const std::string& assetId);
   SDL_Texture* getTexture(const std::string& assetId) const;
 
+  uint32_t addSpriteFromSpriteSheet(const std::string& sheetId,
+                                    const std::string& spriteName,
+                                    uint16_t width,
+                                    uint16_t height,
+                                    SpriteSheetPosition position);
+  std::vector<uint32_t>
+  addSpritesFromSpriteSheet(const std::string& sheetId,
+                            const std::string& baseSpriteName,
+                            uint16_t width,
+                            uint16_t height,
+                            uint8_t gap);
+  void removeSprite(uint32_t spriteId);
+  const Sprite* getSprite(uint32_t spriteId) const;
+
   AssetStore(const AssetStore&) = delete;
   AssetStore& operator=(const AssetStore&) = delete;
 
@@ -26,4 +43,7 @@ private:
   SDL_Renderer& renderer;
 
   std::unordered_map<std::string, TexturePtr> textures;
+
+  uint32_t nextSpriteId = 0;
+  std::unordered_map<uint32_t, Sprite> sprites;
 };
