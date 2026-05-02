@@ -2,67 +2,104 @@
 
 ## Overview
 
-This project uses **Conan (C++ package manager)** and **CMake** for building and dependency management.
+This project uses:
 
----
+- **Conan (v2)** → dependency management
+- **CMake + Presets** → build system
+
+The project is structured as:
+
+```text
+engine/ → library
+game/   → executable
+```
 
 ## Initial Setup
 
-Here's some instructions for Mac. If you're on anything else, you're on your own. Good luck.
-
-### 1. Install dependencies
+### 1. Install dependencies (macOS)
 
 ```bash
 brew install conan cmake
+```
+
+Initialize Conan:
+
+```bash
 conan profile detect --force
+```
+
+## Debug Build
+
+### 2. Install dependencies
+
+```bash
 conan install . --build=missing -s build_type=Debug
 ```
 
-### 2. Configure project
+### 3. Configure
 
 ```bash
-cmake --preset conan-debug
+cmake --preset debug
 ```
 
-### 3. Build
+### 4. Build
 
 ```bash
-cmake --build --preset conan-debug
+cmake --build --preset debug
 ```
 
-### 4. Symlink LSP
+## Run
+
+```bash
+cmake --build --preset debug --target run
+```
+
+## Release Build
+
+```bash
+conan install . --build=missing -s build_type=Release
+
+cmake --preset release
+cmake --build --preset release
+
+cmake --build --preset release --target run
+```
+
+## LSP / clangd setup
 
 ```bash
 ln -sf build/Debug/compile_commands.json compile_commands.json
 ```
 
-### 5. Run
+Restart your editor after this.
+
+## Rebuilding
+
+### TL;DR
 
 ```bash
-./build/Debug/bin/GameEngine
+conan install . --build=missing -s build_type=Debug
+cmake --preset debug
+cmake --build --preset debug --target run
 ```
 
-## Re-Building
-
-### Standard code changes
-
-See optional aliases
+### Normal rebuild
 
 ```bash
-cmake --build --preset conan-debug && ./build/Debug/bin/GameEngine
+cmake --build --preset debug
 ```
 
 ### If `conanfile.txt` changes
 
 ```bash
 conan install . --build=missing -s build_type=Debug
-cmake --preset conan-debug
+cmake --preset debug
 ```
 
 ### If `CMakeLists.txt` changes
 
 ```bash
-cmake --preset conan-debug
+cmake --preset debug
 ```
 
 ### If compiler/toolchain changes
@@ -71,16 +108,55 @@ cmake --preset conan-debug
 conan profile detect --force
 ```
 
-## Clean build
+## Clean Build
 
 ```bash
-rm -rf build compile_commands.json
+rm -rf build compile_commands.json CMakeUserPresets.json
+rm -rf engine/build
 
 conan install . --build=missing -s build_type=Debug
-cmake --preset conan-debug
-ln -sf build/Debug/compile_commands.json compile_commands.json
-cmake --build --preset conan-debug
+cmake --preset debug
+cmake --build --preset debug
 ```
+
+## Assets
+
+Assets are automatically copied to the executable directory:
+
+```text
+build/Debug/bin/
+  game
+  assets/
+```
+
+Game code uses:
+
+```cpp
+const std::string ASSET_ROOT = "./assets/";
+```
+
+## Important
+
+Always run the game using one of these:
+
+```bash
+cmake --build --preset debug --target run
+```
+
+or:
+
+```bash
+cd build/Debug/bin
+./game
+```
+
+Do **not** run from repo root:
+
+```bash
+./build/Debug/bin/game
+```
+
+This will break asset paths.
 
 ## Leak Detection
 
@@ -88,18 +164,23 @@ cmake --build --preset conan-debug
 ./scripts/run_leaks.sh
 ```
 
-## Optional
-
-Add an alias command to run this shit easier. If you're not on zsh, first of all, how dare you.
+## Optional Aliases (zsh)
 
 ```bash
-echo "alias crun='cmake --build --preset conan-debug --target run'" >> ~/.zshrc
-echo "alias crun-release='cmake --build --preset conan-release --target run'" >> ~/.zshrc
+echo "alias crun='cmake --build --preset debug --target run'" >> ~/.zshrc
+echo "alias crun-release='cmake --build --preset release --target run'" >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Then run with
+Run with:
 
 ```bash
 crun
+crun-release
 ```
+
+## Notes
+
+- Engine is a reusable **library**
+- Game is the **entry point**
+- Assets live next to the executable at runtime
