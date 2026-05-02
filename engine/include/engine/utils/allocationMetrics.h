@@ -4,6 +4,9 @@
 #include <atomic>
 #include <cstddef>
 
+namespace sfs
+{
+
 void setMemoryTrackingEnabled(bool enabled);
 bool isMemoryTrackingEnabled();
 
@@ -18,3 +21,4 @@ struct MemoryMetrics
 };
 
 MemoryMetrics& getMemoryMetrics();
+} // namespace sfs

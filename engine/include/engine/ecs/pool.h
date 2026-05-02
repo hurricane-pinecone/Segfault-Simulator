@@ -3,6 +3,9 @@
 #include <utility>
 #include <vector>
 
+namespace sfs
+{
+
 class IPool
 {
 public:
@@ -70,3 +73,5 @@ public:
 private:
   std::vector<std::optional<T>> data;
 };
+
+} // namespace sfs

@@ -21,6 +21,9 @@
 #include <memory>
 #include <string>
 
+namespace sfs
+{
+
 void Game::init(int windowWidth, int windowHeight)
 {
   this->windowWidth = windowWidth;
@@ -170,3 +173,5 @@ void Game::destroy()
   SDL_DestroyWindow(window);
   SDL_Quit();
 }
+
+} // namespace sfs

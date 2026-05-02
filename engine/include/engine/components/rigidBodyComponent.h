@@ -1,6 +1,9 @@
 #pragma once
 
-#include "glm/ext/vector_float2.hpp"
+#include <glm/ext/vector_float2.hpp>
+
+namespace sfs
+{
 
 struct RigidBodyComponent
 {
@@ -11,3 +14,5 @@ struct RigidBodyComponent
   {
   }
 };
+
+} // namespace sfs

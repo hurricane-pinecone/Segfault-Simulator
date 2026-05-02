@@ -4,6 +4,9 @@
 #include <engine/components/transformComponent.h>
 #include <engine/ecs/system.h>
 
+namespace sfs
+{
+
 class MovementSystem : public System
 {
 public:
@@ -27,3 +30,5 @@ public:
     }
   };
 };
+
+} // namespace sfs

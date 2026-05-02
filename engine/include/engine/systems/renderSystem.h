@@ -8,6 +8,9 @@
 #include <engine/ecs/system.h>
 #include <engine/logger/logger.h>
 
+namespace sfs
+{
+
 class RenderSystem : public System
 {
 public:
@@ -78,3 +81,5 @@ public:
 private:
   AssetStore& assetStore;
 };
+
+} // namespace sfs

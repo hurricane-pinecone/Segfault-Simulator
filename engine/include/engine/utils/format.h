@@ -2,6 +2,9 @@
 
 #include <cstdio>
 
+namespace sfs
+{
+
 inline const char* formatBytes(std::size_t bytes)
 {
   static thread_local char buffer[64];
@@ -29,3 +32,5 @@ inline const char* formatBytes(std::size_t bytes)
 
   return buffer;
 }
+
+} // namespace sfs

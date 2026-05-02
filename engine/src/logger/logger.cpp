@@ -5,6 +5,9 @@
 #include <iostream>
 #include <sstream>
 
+namespace sfs
+{
+
 Logger::Level Logger::logLevel = Logger::Level::DEBUG;
 Logger::Verbosity Logger::verbosity = Logger::Verbosity::MINIMAL;
 
@@ -111,3 +114,5 @@ const char* Logger::toString(Logger::Level level)
 }
 
 void Logger::setVerbosity(Verbosity v) { Logger::verbosity = v; }
+
+} // namespace sfs

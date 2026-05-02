@@ -1,5 +1,8 @@
 #pragma once
 
+namespace sfs
+{
+
 struct BaseComponent
 {
 protected:
@@ -19,3 +22,5 @@ public:
     return id;
   }
 };
+
+} // namespace sfs

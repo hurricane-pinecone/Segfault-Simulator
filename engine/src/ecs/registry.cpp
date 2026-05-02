@@ -4,6 +4,9 @@
 
 #include <string>
 
+namespace sfs
+{
+
 Entity Registry::createEntity()
 {
   int entityId;
@@ -57,3 +60,5 @@ void Registry::update(double deltaTime)
     system->update(deltaTime);
   }
 }
+
+} // namespace sfs

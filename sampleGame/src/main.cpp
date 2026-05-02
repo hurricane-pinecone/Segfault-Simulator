@@ -8,7 +8,7 @@ int main(int argc, char* argv[])
 {
   SampleGame game;
 
-  Logger::setLogLevel(Logger::Level::DEBUG);
+  sfs::Logger::setLogLevel(sfs::Logger::Level::DEBUG);
 
   game.init(800, 600);
   game.setup();

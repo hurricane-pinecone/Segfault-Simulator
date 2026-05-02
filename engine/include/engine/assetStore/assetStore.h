@@ -8,6 +8,9 @@
 #include <unordered_map>
 #include <vector>
 
+namespace sfs
+{
+
 class AssetStore
 {
 public:
@@ -47,3 +50,5 @@ private:
   uint32_t nextSpriteId = 0;
   std::unordered_map<uint32_t, Sprite> sprites;
 };
+
+} // namespace sfs

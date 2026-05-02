@@ -6,10 +6,13 @@
 #include <string>
 #include <vector>
 
+namespace sfs
+{
+
 MapData MapLoader::parseMapFile(const std::string& path)
 {
   std::ifstream mapfile(path);
-  MapData map;
+  sfs::MapData map;
 
   if (!mapfile.is_open())
   {
@@ -56,3 +59,5 @@ MapData MapLoader::parseMapFile(const std::string& path)
 
   return map;
 }
+
+} // namespace sfs

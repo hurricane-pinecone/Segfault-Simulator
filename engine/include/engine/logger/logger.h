@@ -2,6 +2,9 @@
 
 #include <string>
 
+namespace sfs
+{
+
 class Logger
 {
 public:
@@ -61,6 +64,8 @@ inline const char* __log_file_name(const char* path)
   const char* file = std::strrchr(path, '/');
   return file ? file + 1 : path;
 }
+
+} // namespace sfs
 
 #define LOG_INFO(message)                                                      \
   Logger::info(                                                                \

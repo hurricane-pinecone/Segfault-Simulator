@@ -17,15 +17,15 @@ void SampleGame::onSetup()
       "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
 
   auto playerSprite = assetStore->addSpriteFromSpriteSheet(
-      "spritesheet", "guy", 16, 16, SpriteSheetPosition{16, 6, 1});
+      "spritesheet", "guy", 16, 16, sfs::SpriteSheetPosition{16, 6, 1});
 
   player = registry->createEntity();
 
   player.addComponent<PlayerTag>()
-      .addComponent<TransformComponent>(
+      .addComponent<sfs::TransformComponent>(
           glm::vec2(windowWidth / 2, windowHeight / 2), glm::vec2(2.0, 2.0))
-      .addComponent<RigidBodyComponent>(glm::vec2(0.0, 0.0))
-      .addComponent<SpriteComponent>(playerSprite);
+      .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
+      .addComponent<sfs::SpriteComponent>(playerSprite);
 
   // Register Game defined systems
   registry->addSystem<PlayerInputSystem>();
@@ -42,7 +42,8 @@ void SampleGame::loadMap()
   std::vector<uint32_t> jungleSprites = assetStore->addSpritesFromSpriteSheet(
       "jungle", "jungle", tileSize, tileSize, 0);
 
-  MapData map = MapLoader::parseMapFile(ASSET_ROOT + "maps/jungle.map");
+  sfs::MapData map =
+      sfs::MapLoader::parseMapFile(ASSET_ROOT + "maps/jungle.map");
 
   for (int y = 0; y < map.height; y++)
   {
@@ -51,9 +52,9 @@ void SampleGame::loadMap()
       uint32_t spriteId = map.tiles[y * map.width + x];
 
       registry->createEntity()
-          .addComponent<TransformComponent>(
+          .addComponent<sfs::TransformComponent>(
               glm::vec2(x * tileSize, y * tileSize))
-          .addComponent<SpriteComponent>(spriteId);
+          .addComponent<sfs::SpriteComponent>(spriteId);
     }
   }
 }

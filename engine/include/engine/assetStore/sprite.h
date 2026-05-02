@@ -6,6 +6,9 @@
 #include <optional>
 #include <string>
 
+namespace sfs
+{
+
 struct SpriteSheetPosition
 {
   int x, y, gap;
@@ -21,3 +24,5 @@ struct Sprite
 
   std::optional<SpriteSheetPosition> positionInSheet;
 };
+
+} // namespace sfs
