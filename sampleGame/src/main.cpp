@@ -1,4 +1,4 @@
-#include "sampleGame/sampleGame.h"
+#include "sampleGame.h"
 #include <cstddef>
 #include <cstdlib>
 #include <engine/game/game.h>
