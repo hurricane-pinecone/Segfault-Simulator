@@ -18,15 +18,16 @@ set_target_properties(game PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-add_custom_target(copy_game_assets
+# --- Copy assets after build ---
+add_custom_command(TARGET game POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:game>/assets"
-    DEPENDS game
 )
 
+# --- Run target ---
 add_custom_target(run
     COMMAND $<TARGET_FILE:game>
-    DEPENDS copy_game_assets
+    DEPENDS game
     WORKING_DIRECTORY $<TARGET_FILE_DIR:game>
 )
