@@ -24,6 +24,11 @@ public:
   template <typename TComponent>
   void registerComponent();
 
+  void setRegistry(Registry* registry) { this->registry = registry; }
+
+protected:
+  Registry* registry = nullptr;
+
 private:
   Signature componentSignature;
   std::vector<Entity> entities;

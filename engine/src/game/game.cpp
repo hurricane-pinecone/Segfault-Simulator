@@ -81,7 +81,7 @@ void Game::setup()
   assetStore = std::make_unique<AssetStore>(*renderer);
 
   registry->addSystem<MovementSystem>();
-  registry->addSystem<RenderSystem>(*assetStore);
+  registry->addSystem<RenderSystem>(*assetStore, windowWidth, windowHeight);
 
   onSetup();
 

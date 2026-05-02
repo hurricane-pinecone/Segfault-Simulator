@@ -2,9 +2,12 @@
 #include "sampleGame.h"
 #include "config.h"
 #include <SDL_keyboard.h>
+#include <engine/components/cameraComponent.h>
 #include <engine/mapLoader/mapLoader.h>
+#include <engine/systems/cameraSystem.h>
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
+#include <glm/ext/vector_float2.hpp>
 #include <glm/glm.hpp>
 
 #include "systems/playerInputSystem.h"
@@ -27,8 +30,14 @@ void SampleGame::onSetup()
       .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
       .addComponent<sfs::SpriteComponent>(playerSprite);
 
-  // Register Game defined systems
+  auto camera = registry->createEntity()
+                    .addComponent<sfs::TransformComponent>(
+                        glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
+                    .addComponent<sfs::CameraComponent>(
+                        player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
+
   registry->addSystem<PlayerInputSystem>();
+  registry->addSystem<sfs::CameraSystem>();
 
   isRunning = true;
 }
