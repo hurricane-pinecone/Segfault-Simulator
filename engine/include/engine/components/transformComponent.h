@@ -1,6 +1,9 @@
 #pragma once
 
-#include "glm/ext/vector_float2.hpp"
+#include <glm/ext/vector_float2.hpp>
+
+namespace sfs
+{
 
 struct TransformComponent
 {
@@ -15,3 +18,5 @@ struct TransformComponent
   {
   }
 };
+
+} // namespace sfs

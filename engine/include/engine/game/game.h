@@ -10,6 +10,9 @@
 
 #include <memory>
 
+namespace sfs
+{
+
 const double TARGET_FPS = 165.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
 
@@ -50,3 +53,5 @@ private:
 private:
   Uint64 previousTime;
 };
+
+} // namespace sfs

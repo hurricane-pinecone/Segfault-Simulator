@@ -1,14 +1,12 @@
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_render.h>
-#include <cstdint>
 #include <engine/assetStore/assetStore.h>
 #include <engine/assetStore/sprite.h>
 #include <engine/logger/logger.h>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
+
+namespace sfs
+{
 
 void AssetStore::clearAssets()
 {
@@ -114,3 +112,5 @@ const Sprite* AssetStore::getSprite(uint32_t spriteId) const
 
   return &it->second;
 }
+
+} // namespace sfs

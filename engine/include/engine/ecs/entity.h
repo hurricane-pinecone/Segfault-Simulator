@@ -2,6 +2,9 @@
 
 #include <bitset>
 
+namespace sfs
+{
+
 const unsigned int MAX_COMPONENTS = 32;
 typedef std::bitset<MAX_COMPONENTS> Signature;
 
@@ -48,3 +51,5 @@ private:
   int id;
   Registry* registry;
 };
+
+} // namespace sfs

@@ -7,6 +7,9 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include <SDL_render.h>
 
+namespace sfs
+{
+
 inline static void renderDebugUI(SDL_Renderer* renderer)
 {
   ImGui_ImplSDLRenderer2_NewFrame();
@@ -36,3 +39,5 @@ inline static void renderDebugUI(SDL_Renderer* renderer)
   ImGui::Render();
   ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
 }
+
+} // namespace sfs

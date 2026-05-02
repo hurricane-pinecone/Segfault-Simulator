@@ -5,6 +5,9 @@
 
 #include <vector>
 
+namespace sfs
+{
+
 class System
 {
 public:
@@ -32,3 +35,5 @@ void System::registerComponent()
   const auto componentId = Component<TComponent>::getId();
   componentSignature.set(componentId);
 }
+
+} // namespace sfs

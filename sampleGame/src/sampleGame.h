@@ -4,7 +4,7 @@
 #include "engine/ecs/entity.h"
 #include <engine/game/game.h>
 
-class SampleGame : public Game
+class SampleGame : public sfs::Game
 {
 public:
   ~SampleGame() = default;
@@ -17,5 +17,5 @@ private:
   void loadMap();
 
 private:
-  Entity player;
+  sfs::Entity player;
 };

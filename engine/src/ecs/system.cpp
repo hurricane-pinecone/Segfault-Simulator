@@ -1,5 +1,8 @@
 #include <engine/ecs/system.h>
 
+namespace sfs
+{
+
 const std::vector<Entity>& System::getEntities() const { return entities; }
 
 const Signature& System::getComponentSignature() const
@@ -21,3 +24,5 @@ void System::removeEntity(const Entity& entity)
     }
   }
 }
+
+} // namespace sfs

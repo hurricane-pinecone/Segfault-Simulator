@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <vector>
 
+namespace sfs
+{
+
 struct MapData
 {
   int width = 0;
@@ -15,3 +18,5 @@ class MapLoader
 public:
   static MapData parseMapFile(const std::string& path);
 };
+
+} // namespace sfs

@@ -14,6 +14,9 @@ std::atomic_bool& trackingEnabled()
 }
 } // namespace
 
+namespace sfs
+{
+
 void setMemoryTrackingEnabled(bool enabled)
 {
   trackingEnabled().store(enabled, std::memory_order_relaxed);
@@ -26,7 +29,7 @@ bool isMemoryTrackingEnabled()
 
 MemoryMetrics& getMemoryMetrics()
 {
-  static MemoryMetrics metrics;
+  static sfs::MemoryMetrics metrics;
   return metrics;
 }
 
@@ -38,7 +41,7 @@ struct alignas(std::max_align_t) AllocationHeader
 
 static void recordAllocation(std::size_t size)
 {
-  auto& metrics = getMemoryMetrics();
+  auto& metrics = sfs::getMemoryMetrics();
 
   metrics.allocated += size;
   metrics.allocationCount++;
@@ -53,16 +56,18 @@ static void recordAllocation(std::size_t size)
 
 static void recordFree(std::size_t size)
 {
-  auto& metrics = getMemoryMetrics();
+  auto& metrics = sfs::getMemoryMetrics();
 
   metrics.freed += size;
   metrics.freeCount++;
   metrics.current -= size;
 }
 
+} // namespace sfs
+
 void* operator new(std::size_t size)
 {
-  const auto totalSize = size + sizeof(AllocationHeader);
+  const auto totalSize = size + sizeof(sfs::AllocationHeader);
 
   auto* raw = static_cast<unsigned char*>(std::malloc(totalSize));
 
@@ -71,14 +76,14 @@ void* operator new(std::size_t size)
     throw std::bad_alloc();
   }
 
-  auto* header = reinterpret_cast<AllocationHeader*>(raw);
+  auto* header = reinterpret_cast<sfs::AllocationHeader*>(raw);
   header->size = size;
-  header->tracked = isMemoryTrackingEnabled();
+  header->tracked = sfs::isMemoryTrackingEnabled();
 
   if (header->tracked)
-    recordAllocation(size);
+    sfs::recordAllocation(size);
 
-  return raw + sizeof(AllocationHeader);
+  return raw + sizeof(sfs::AllocationHeader);
 }
 
 void operator delete(void* memory) noexcept
@@ -88,11 +93,12 @@ void operator delete(void* memory) noexcept
     return;
   }
 
-  auto* raw = static_cast<unsigned char*>(memory) - sizeof(AllocationHeader);
-  auto* header = reinterpret_cast<AllocationHeader*>(raw);
+  auto* raw =
+      static_cast<unsigned char*>(memory) - sizeof(sfs::AllocationHeader);
+  auto* header = reinterpret_cast<sfs::AllocationHeader*>(raw);
 
   if (header->tracked)
-    recordFree(header->size);
+    sfs::recordFree(header->size);
 
   std::free(raw);
 }

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../logger/logger.h"
 #include "component.h"
 #include "entity.h"
 #include "pool.h"
 #include "system.h"
+#include <engine/logger/logger.h>
 
 #include <memory>
 #include <set>
@@ -12,6 +12,9 @@
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
+
+namespace sfs
+{
 
 class Registry
 {
@@ -186,3 +189,5 @@ TComponent& Entity::getComponent() const
 {
   return registry->getComponent<TComponent>(*this);
 }
+
+} // namespace sfs

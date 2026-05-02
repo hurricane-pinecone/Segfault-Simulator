@@ -8,12 +8,12 @@
 #include <engine/ecs/system.h>
 #include <glm/glm.hpp>
 
-class PlayerInputSystem : public System
+class PlayerInputSystem : public sfs::System
 {
 public:
   PlayerInputSystem()
   {
-    registerComponent<RigidBodyComponent>();
+    registerComponent<sfs::RigidBodyComponent>();
     registerComponent<PlayerTag>();
   }
 
@@ -39,7 +39,7 @@ public:
 
     for (const auto& entity : getEntities())
     {
-      auto& rb = entity.getComponent<RigidBodyComponent>();
+      auto& rb = entity.getComponent<sfs::RigidBodyComponent>();
       rb.velocity = direction * baseSpeed;
     }
   }
