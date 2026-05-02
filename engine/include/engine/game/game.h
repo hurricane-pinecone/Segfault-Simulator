@@ -10,8 +10,6 @@
 
 #include <memory>
 
-const std::string ASSET_ROOT = "./game/assets/";
-
 const double TARGET_FPS = 165.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
 

@@ -1,4 +1,5 @@
 #include "sampleGame.h"
+#include "config.h"
 #include <engine/mapLoader/mapLoader.h>
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>

@@ -1,1 +1,0 @@
-. "/Users/ayx106047/dev/gameEngine/build/Release/generators/conanrunenv-release-armv8.sh"
