@@ -11,11 +11,11 @@ The project is structured as:
 
 ```text
 engine/ → library
-game/   → executable
+sampleGame/   → executable
 ```
 
 - Engine is a reusable **library**
-- Game is the **entry point**
+- sampleGame is the **entry point**
 - Assets live next to the executable at runtime
 
 ## Initial Setup
@@ -129,7 +129,7 @@ Assets are automatically copied to the executable directory:
 
 ```text
 build/Debug/bin/
-  game
+  sampleGame
   assets/
 ```
 
@@ -151,13 +151,13 @@ or:
 
 ```bash
 cd build/Debug/bin
-./game
+./sampleGame
 ```
 
 Do **not** run from repo root:
 
 ```bash
-./build/Debug/bin/game
+./build/Debug/bin/sampleGame
 ```
 
 This will break asset paths.
