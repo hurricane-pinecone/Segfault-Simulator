@@ -26,7 +26,7 @@ add_custom_target(copy_game_assets
 )
 
 add_custom_target(run
-    COMMAND game
+    COMMAND $<TARGET_FILE:game>
     DEPENDS copy_game_assets
     WORKING_DIRECTORY $<TARGET_FILE_DIR:game>
 )
