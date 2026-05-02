@@ -25,6 +25,16 @@ Entity Registry::createEntity()
   return entity;
 }
 
+Entity Registry::getEntity(int id)
+{
+  if (id < 0 || id >= entityCount)
+    return Entity();
+
+  Entity entity(id);
+  entity.setRegistry(this);
+  return entity;
+}
+
 void Registry::addEntityToSystems(const Entity& entity)
 {
   const int entityId = entity.getId();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/systems/cameraSystem.h"
 #include <SDL_rect.h>
 #include <SDL_render.h>
 #include <engine/assetStore/assetStore.h>
@@ -7,6 +8,7 @@
 #include <engine/components/transformComponent.h>
 #include <engine/ecs/system.h>
 #include <engine/logger/logger.h>
+#include <glm/ext/vector_float2.hpp>
 
 namespace sfs
 {
@@ -14,7 +16,9 @@ namespace sfs
 class RenderSystem : public System
 {
 public:
-  RenderSystem(AssetStore& assetStore) : assetStore(assetStore)
+  RenderSystem(AssetStore& assetStore, int windowWidth, int windowHeight)
+      : assetStore(assetStore), windowWidth(windowWidth),
+        windowHeight(windowHeight)
   {
     registerComponent<SpriteComponent>();
     registerComponent<TransformComponent>();
@@ -22,6 +26,21 @@ public:
 
   void render(SDL_Renderer& renderer)
   {
+    glm::vec2 cameraPosition{0.0f, 0.0f};
+
+    if (registry->hasSystem<CameraSystem>())
+    {
+      const auto& camera = registry->getSystem<CameraSystem>().getEntities();
+
+      if (!camera.empty())
+      {
+        const auto& cameraTransform =
+            camera[0].getComponent<TransformComponent>();
+
+        cameraPosition = cameraTransform.position;
+      }
+    }
+
     for (const auto& entity : getEntities())
     {
       const auto& transform = entity.getComponent<TransformComponent>();
@@ -43,8 +62,13 @@ public:
         continue;
       }
 
-      SDL_Rect dest = {static_cast<int>(transform.position.x),
-                       static_cast<int>(transform.position.y),
+      glm::vec2 screenCenter{static_cast<float>(windowWidth) / 2.0f,
+                             static_cast<float>(windowHeight) / 2.0f};
+      glm::vec2 screenPosition =
+          transform.position - cameraPosition + screenCenter;
+
+      SDL_Rect dest = {static_cast<int>(screenPosition.x),
+                       static_cast<int>(screenPosition.y),
                        static_cast<int>(sprite->width * transform.scale.x),
                        static_cast<int>(sprite->height * transform.scale.y)};
 
@@ -80,6 +104,8 @@ public:
 
 private:
   AssetStore& assetStore;
+  int windowWidth;
+  int windowHeight;
 };
 
 } // namespace sfs

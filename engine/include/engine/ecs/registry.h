@@ -23,6 +23,7 @@ public:
   ~Registry() = default;
 
   Entity createEntity();
+  Entity getEntity(int id);
   void destroyEntity();
 
   void update(double deltaTime);
@@ -125,8 +126,9 @@ template <typename TSystem, typename... TArgs>
 void Registry::addSystem(TArgs&&... args)
 {
   auto typeIndex = std::type_index(typeid(TSystem));
-  systems.emplace(
-      typeIndex, std::make_unique<TSystem>(std::forward<TArgs>(args)...));
+  auto system = std::make_unique<TSystem>(std::forward<TArgs>(args)...);
+  system->setRegistry(this);
+  systems[typeIndex] = std::move(system);
 }
 
 template <typename TSystem>
