@@ -1,9 +1,26 @@
-bin/
-build/
+# Build output
+/build/
+/bin/
 
-.DS_Store
+# CMake
 CMakeCache.txt
-cmake_install.txt
-CMakeUserPresets.json
-compile_commands.json
+CMakeFiles/
+cmake_install.cmake
 Makefile
+compile_commands.json
+CMakeUserPresets.json
+
+# Conan (v2)
+build/**/generators/
+build/**/conan.lock
+build/**/conanbuild.*
+build/**/conanrun.*
+
+# macOS
+.DS_Store
+
+# Logs / temp
+*.log
+
+# Local files
+imgui.ini
