@@ -14,6 +14,10 @@ engine/ → library
 game/   → executable
 ```
 
+- Engine is a reusable **library**
+- Game is the **entry point**
+- Assets live next to the executable at runtime
+
 ## Initial Setup
 
 ### 1. Install dependencies (macOS)
@@ -164,6 +168,12 @@ This will break asset paths.
 ./scripts/run_leaks.sh
 ```
 
+If it needs permissions
+
+```bash
+chmod +x scripts/run_leaks.sh
+```
+
 ## Optional Aliases (zsh)
 
 ```bash
@@ -178,9 +188,3 @@ Run with:
 crun
 crun-release
 ```
-
-## Notes
-
-- Engine is a reusable **library**
-- Game is the **entry point**
-- Assets live next to the executable at runtime
