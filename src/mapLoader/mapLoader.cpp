@@ -52,5 +52,7 @@ MapData MapLoader::parseMapFile(const std::string& path)
   map.width = width;
   map.height = height;
 
+  mapfile.close();
+
   return map;
 }
