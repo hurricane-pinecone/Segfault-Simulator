@@ -124,9 +124,9 @@ void Game::processInput()
       }
       break;
     }
-  }
 
-  onProcessInput(sdlEvent);
+    onProcessInput(sdlEvent);
+  }
 }
 
 void Game::update(double deltaTime)
