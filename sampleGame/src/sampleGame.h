@@ -11,7 +11,6 @@ public:
 
 protected:
   void onSetup() override;
-  void onUpdate(double deltaTime) override;
   void onDestroy() override;
 
 private:

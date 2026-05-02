@@ -7,6 +7,8 @@
 #include <engine/systems/renderSystem.h>
 #include <glm/glm.hpp>
 
+#include "systems/playerInputSystem.h"
+
 void SampleGame::onSetup()
 {
   loadMap();
@@ -19,40 +21,16 @@ void SampleGame::onSetup()
 
   player = registry->createEntity();
 
-  player
+  player.addComponent<PlayerTag>()
       .addComponent<TransformComponent>(
           glm::vec2(windowWidth / 2, windowHeight / 2), glm::vec2(2.0, 2.0))
       .addComponent<RigidBodyComponent>(glm::vec2(0.0, 0.0))
       .addComponent<SpriteComponent>(playerSprite);
 
+  // Register Game defined systems
+  registry->addSystem<PlayerInputSystem>();
+
   isRunning = true;
-}
-
-void SampleGame::onUpdate(double deltaTime)
-{
-  auto& rb = player.getComponent<RigidBodyComponent>();
-
-  const Uint8* keys = SDL_GetKeyboardState(NULL);
-
-  glm::vec2 direction(0.0f);
-
-  if (keys[SDL_SCANCODE_A])
-    direction.x -= 1.0f;
-  if (keys[SDL_SCANCODE_D])
-    direction.x += 1.0f;
-  if (keys[SDL_SCANCODE_W])
-    direction.y -= 1.0f;
-  if (keys[SDL_SCANCODE_S])
-    direction.y += 1.0f;
-
-  if (glm::length(direction) > 0.0f)
-  {
-    direction = glm::normalize(direction);
-  }
-
-  float speed = 100.0f;
-
-  rb.velocity = direction * speed;
 }
 
 void SampleGame::loadMap()
