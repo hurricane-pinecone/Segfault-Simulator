@@ -75,7 +75,7 @@ void Game::init(int windowWidth, int windowHeight)
 
 void Game::setup()
 {
-  setMemoryTrackingEnabled(true);
+  sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
   registry = std::make_unique<Registry>();
   assetStore = std::make_unique<AssetStore>(*renderer);
@@ -84,8 +84,6 @@ void Game::setup()
   registry->addSystem<RenderSystem>(*assetStore, windowWidth, windowHeight);
 
   onSetup();
-
-  setMemoryTrackingEnabled(false);
 }
 
 void Game::run()
@@ -122,8 +120,15 @@ void Game::processInput()
 
     if (sdlEvent.type == SDL_MOUSEMOTION)
     {
+      if (sdlEvent.motion.windowID != SDL_GetWindowID(window))
+        continue;
+
+      if (sdlEvent.motion.x < 0 || sdlEvent.motion.y < 0 ||
+          sdlEvent.motion.x >= windowWidth || sdlEvent.motion.y >= windowHeight)
+        continue;
+
       input.mouse().setPosition(sdlEvent.motion.x, sdlEvent.motion.y);
-      input.mouse().processDrag();
+      // input.mouse().processDrag();
     }
 
     if (sdlEvent.type == SDL_MOUSEBUTTONDOWN)
@@ -153,10 +158,9 @@ void Game::processInput()
 
 void Game::update(double deltaTime)
 {
-  setMemoryTrackingEnabled(true);
+  sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Update};
   registry->update(deltaTime);
   onUpdate(deltaTime);
-  setMemoryTrackingEnabled(false);
 }
 
 void Game::render()
@@ -165,13 +169,14 @@ void Game::render()
   SDL_SetRenderDrawColor(renderer, 21, 21, 21, 255);
   SDL_RenderClear(renderer);
 
-  setMemoryTrackingEnabled(true);
-  if (registry->hasSystem<RenderSystem>())
   {
-    registry->getSystem<RenderSystem>().render(*renderer);
+    sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
+    if (registry->hasSystem<RenderSystem>())
+    {
+      registry->getSystem<RenderSystem>().render(*renderer);
+    }
+    onRender();
   }
-  onRender();
-  setMemoryTrackingEnabled(false);
 
 #ifndef NDEBUG
   renderDebugUI(renderer);
