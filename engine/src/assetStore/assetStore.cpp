@@ -1,3 +1,4 @@
+#include "engine/utils/string.h"
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_render.h>
@@ -30,7 +31,7 @@ void AssetStore::addTexture(const std::string& assetId,
   }
 
   textures.emplace(assetId, TexturePtr(texture, SDL_DestroyTexture));
-  LOG_DEBUG("Created (sprite) with ID: " + assetId);
+  LOG_DEBUG("Created texture with ID: " + assetId);
 }
 
 void AssetStore::removeTexture(const std::string& assetId)
@@ -56,8 +57,12 @@ uint32_t AssetStore::addSprite(const std::string& textureId,
                                SDL_Rect srcRect)
 {
   const auto id = nextSpriteId++;
+  auto sn = toLower(spriteName);
 
-  sprites.emplace(id, Sprite{id, textureId, spriteName, srcRect});
+  sprites.emplace(id, Sprite{id, textureId, sn, srcRect});
+  spriteNameToId[sn] = id;
+
+  LOG_DEBUG("Created sprite: " + sn);
 
   return id;
 }
@@ -173,6 +178,16 @@ const Sprite* AssetStore::getSprite(uint32_t spriteId) const
     return nullptr;
 
   return &it->second;
+}
+
+const Sprite* AssetStore::getSprite(const std::string& spriteId) const
+{
+  auto it = spriteNameToId.find(toLower(spriteId));
+
+  if (it == spriteNameToId.end())
+    return nullptr;
+
+  return getSprite(it->second);
 }
 
 } // namespace sfs

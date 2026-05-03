@@ -68,16 +68,16 @@ inline const char* __log_file_name(const char* path)
 } // namespace sfs
 
 #define LOG_INFO(message)                                                      \
-  Logger::info(                                                                \
-      message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+  sfs::Logger::info(                                                           \
+      message, sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
 
 #define LOG_DEBUG(message)                                                     \
-  Logger::debug(                                                               \
-      message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+  sfs::Logger::debug(                                                          \
+      message, sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
 
 #define LOG_DEBUG_SIZE(label, value)                                           \
-  Logger::debug(label, value, __log_file_name(__FILE__))
+  sfs::Logger::debug(label, value, sfs::__log_file_name(__FILE__))
 
 #define LOG_ERROR(message)                                                     \
-  Logger::error(                                                               \
-      message, __log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+  sfs::Logger::error(                                                          \
+      message, sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)

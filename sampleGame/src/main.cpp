@@ -9,6 +9,7 @@ int main(int argc, char* argv[])
   SampleGame game;
 
   sfs::Logger::setLogLevel(sfs::Logger::Level::DEBUG);
+  // sfs::Logger::setVerbosity(sfs::Logger::Verbosity::FULL);
 
   game.init(800, 600);
   game.setup();
