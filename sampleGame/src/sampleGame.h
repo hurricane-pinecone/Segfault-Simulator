@@ -3,7 +3,6 @@
 
 #include "InputController/InputController.h"
 #include "engine/ecs/entity.h"
-#include "engine/input/keyboardInput.h"
 #include <SDL_events.h>
 #include <engine/game/game.h>
 
@@ -15,7 +14,7 @@ public:
 
 protected:
   void onSetup() override;
-  void onProcessInput(const sfs::KeyboardInput& keyboardInput) override;
+  void onProcessInput(const sfs::Input& input) override;
   void onDestroy() override;
 
 private:
@@ -23,5 +22,6 @@ private:
 
 private:
   sfs::Entity player;
+  sfs::Entity camera;
   InputController inputController;
 };

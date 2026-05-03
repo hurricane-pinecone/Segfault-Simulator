@@ -2,6 +2,7 @@
 #include "sampleGame.h"
 #include "config.h"
 #include "engine/input/keyboardInput.h"
+#include "engine/input/mouseInput.h"
 #include "engine/logger/logger.h"
 #include <SDL_keyboard.h>
 #include <engine/components/cameraComponent.h>
@@ -35,25 +36,25 @@ void SampleGame::onSetup()
           .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
           .addComponent<sfs::SpriteComponent>(playerSprite);
 
-  auto camera = registry->createEntity()
-                    .addComponent<sfs::TransformComponent>(
-                        glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
-                    .addComponent<sfs::CameraComponent>(
-                        player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
+  camera = registry->createEntity()
+               .addComponent<sfs::TransformComponent>(
+                   glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
+               .addComponent<sfs::CameraComponent>(
+                   player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
 
   registry->addSystem<sfs::CameraSystem>();
 
   isRunning = true;
 }
 
-void SampleGame::onProcessInput(const sfs::KeyboardInput& input)
+void SampleGame::onProcessInput(const sfs::Input& input)
 {
-  inputController.processKeyboardInput(input, player);
-
-  if (input.keyPressed(sfs::Key::Escape))
+  if (input.keyboard().keyPressed(sfs::Key::Escape))
   {
     isRunning = false;
   }
+
+  inputController.processKeyboardInput(input.keyboard(), player);
 }
 
 void SampleGame::loadMap()

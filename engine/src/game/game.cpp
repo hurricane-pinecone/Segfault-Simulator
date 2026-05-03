@@ -108,10 +108,9 @@ void Game::run()
 
 void Game::processInput()
 {
+  input.mouse().beginFrame();
+
   SDL_Event sdlEvent;
-
-  keyboardInput.update();
-
   while (SDL_PollEvent(&sdlEvent))
   {
     ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
@@ -120,9 +119,36 @@ void Game::processInput()
     {
       isRunning = false;
     }
+
+    if (sdlEvent.type == SDL_MOUSEMOTION)
+    {
+      input.mouse().setPosition(sdlEvent.motion.x, sdlEvent.motion.y);
+      input.mouse().processDrag();
+    }
+
+    if (sdlEvent.type == SDL_MOUSEBUTTONDOWN)
+    {
+      input.mouse().setPosition(sdlEvent.button.x, sdlEvent.button.y);
+      input.mouse().pressButton(
+          static_cast<sfs::MouseButton>(sdlEvent.button.button));
+    }
+
+    if (sdlEvent.type == SDL_MOUSEBUTTONUP)
+    {
+      input.mouse().setPosition(sdlEvent.button.x, sdlEvent.button.y);
+      input.mouse().releaseButton(
+          static_cast<sfs::MouseButton>(sdlEvent.button.button));
+    }
+
+    if (sdlEvent.type == SDL_MOUSEWHEEL)
+    {
+      input.mouse().addScroll(sdlEvent.wheel.x, sdlEvent.wheel.y);
+    }
   }
 
-  onProcessInput(keyboardInput);
+  input.update();
+
+  onProcessInput(input);
 }
 
 void Game::update(double deltaTime)
