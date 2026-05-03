@@ -18,14 +18,7 @@ void MouseInput::beginFrame()
   scrollY = 0;
 }
 
-void MouseInput::update()
-{
-  int x, y;
-  SDL_GetMouseState(&x, &y);
-
-  setPosition(x, y);
-  processDrag();
-}
+void MouseInput::update() { processDrag(); }
 
 void MouseInput::pressButton(MouseButton button)
 {

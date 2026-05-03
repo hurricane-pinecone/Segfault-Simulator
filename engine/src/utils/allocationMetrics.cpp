@@ -1,37 +1,36 @@
 #include <engine/utils/allocationMetrics.h>
 
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
 #include <new>
 
 namespace
 {
-std::atomic_bool& trackingEnabled()
-{
-  static std::atomic_bool enabled{false};
-  return enabled;
-}
+thread_local sfs::MemoryTrackingPhase currentPhase =
+    sfs::MemoryTrackingPhase::None;
+
+thread_local bool insideTracker = false;
 } // namespace
 
 namespace sfs
 {
 
-void setMemoryTrackingEnabled(bool enabled)
-{
-  trackingEnabled().store(enabled, std::memory_order_relaxed);
-}
-
-bool isMemoryTrackingEnabled()
-{
-  return trackingEnabled().load(std::memory_order_relaxed);
-}
-
 MemoryMetrics& getMemoryMetrics()
 {
-  static sfs::MemoryMetrics metrics;
+  static MemoryMetrics metrics;
   return metrics;
 }
+
+MemoryTrackingPhase getMemoryTrackingPhase() { return currentPhase; }
+
+static void setMemoryTrackingPhase(MemoryTrackingPhase phase)
+{
+  currentPhase = phase;
+}
+
+// ----------------------------
+// Internal tracking functions
+// ----------------------------
 
 struct alignas(std::max_align_t) AllocationHeader
 {
@@ -41,7 +40,7 @@ struct alignas(std::max_align_t) AllocationHeader
 
 static void recordAllocation(std::size_t size)
 {
-  auto& metrics = sfs::getMemoryMetrics();
+  auto& metrics = getMemoryMetrics();
 
   metrics.allocated += size;
   metrics.allocationCount++;
@@ -56,14 +55,33 @@ static void recordAllocation(std::size_t size)
 
 static void recordFree(std::size_t size)
 {
-  auto& metrics = sfs::getMemoryMetrics();
+  auto& metrics = getMemoryMetrics();
 
   metrics.freed += size;
   metrics.freeCount++;
   metrics.current -= size;
 }
 
+// ----------------------------
+// Scoped tracking
+// ----------------------------
+
+ScopedMemoryTracking::ScopedMemoryTracking(MemoryTrackingPhase phase)
+    : previousPhase(getMemoryTrackingPhase())
+{
+  setMemoryTrackingPhase(phase);
+}
+
+ScopedMemoryTracking::~ScopedMemoryTracking()
+{
+  setMemoryTrackingPhase(previousPhase);
+}
+
 } // namespace sfs
+
+// ============================
+// Global new/delete overrides
+// ============================
 
 void* operator new(std::size_t size)
 {
@@ -77,11 +95,18 @@ void* operator new(std::size_t size)
   }
 
   auto* header = reinterpret_cast<sfs::AllocationHeader*>(raw);
+
+  const auto phase = sfs::getMemoryTrackingPhase();
+
   header->size = size;
-  header->tracked = sfs::isMemoryTrackingEnabled();
+  header->tracked = phase != sfs::MemoryTrackingPhase::None && !insideTracker;
 
   if (header->tracked)
+  {
+    insideTracker = true;
     sfs::recordAllocation(size);
+    insideTracker = false;
+  }
 
   return raw + sizeof(sfs::AllocationHeader);
 }
@@ -89,23 +114,34 @@ void* operator new(std::size_t size)
 void operator delete(void* memory) noexcept
 {
   if (!memory)
-  {
     return;
-  }
 
   auto* raw =
       static_cast<unsigned char*>(memory) - sizeof(sfs::AllocationHeader);
+
   auto* header = reinterpret_cast<sfs::AllocationHeader*>(raw);
 
-  if (header->tracked)
+  if (header->tracked && !insideTracker)
+  {
+    insideTracker = true;
     sfs::recordFree(header->size);
+    insideTracker = false;
+  }
 
   std::free(raw);
 }
 
+// ============================
+// Array new/delete
+// ============================
+
 void* operator new[](std::size_t size) { return operator new(size); }
 
 void operator delete[](void* memory) noexcept { operator delete(memory); }
+
+// ============================
+// Sized delete
+// ============================
 
 void operator delete(void* memory, std::size_t) noexcept
 {
@@ -113,6 +149,37 @@ void operator delete(void* memory, std::size_t) noexcept
 }
 
 void operator delete[](void* memory, std::size_t) noexcept
+{
+  operator delete[](memory);
+}
+
+// ============================
+// nothrow new/delete
+// ============================
+
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept
+{
+  try
+  {
+    return operator new(size);
+  }
+  catch (...)
+  {
+    return nullptr;
+  }
+}
+
+void operator delete(void* memory, const std::nothrow_t&) noexcept
+{
+  operator delete(memory);
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept
+{
+  return operator new(size, std::nothrow);
+}
+
+void operator delete[](void* memory, const std::nothrow_t&) noexcept
 {
   operator delete[](memory);
 }
