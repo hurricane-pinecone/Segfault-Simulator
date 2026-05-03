@@ -69,29 +69,12 @@ public:
 
       SDL_Rect dest = {static_cast<int>(screenPosition.x),
                        static_cast<int>(screenPosition.y),
-                       static_cast<int>(sprite->width * transform.scale.x),
-                       static_cast<int>(sprite->height * transform.scale.y)};
-
-      SDL_Rect* src = nullptr;
-      SDL_Rect srcRect;
-      if (sprite->positionInSheet)
-      {
-        // positionInSheet.x => Col
-        // positionInSheet.y => Row
-        // positionInSheet.z => Gap
-        srcRect = SDL_Rect{
-            static_cast<int>(sprite->positionInSheet->x *
-                             (sprite->width + sprite->positionInSheet->gap)),
-            static_cast<int>(sprite->positionInSheet->y *
-                             (sprite->height + sprite->positionInSheet->gap)),
-            static_cast<int>(sprite->width),
-            static_cast<int>(sprite->height)};
-        src = &srcRect;
-      }
+                       static_cast<int>(sprite->srcRect.w * transform.scale.x),
+                       static_cast<int>(sprite->srcRect.h * transform.scale.y)};
 
       SDL_RenderCopyEx(&renderer,
                        texture,
-                       src,
+                       &sprite->srcRect,
                        &dest,
                        transform.rotation,
                        NULL,

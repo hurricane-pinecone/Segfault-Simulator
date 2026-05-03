@@ -1,17 +1,18 @@
 #pragma once
 
 #include <SDL2/SDL_render.h>
+#include <SDL_rect.h>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string>
 
 namespace sfs
 {
 
-struct SpriteSheetPosition
+struct SpriteRegion
 {
-  int x, y, gap;
+  std::string name;
+  SDL_Rect srcRect;
 };
 
 struct Sprite
@@ -19,10 +20,8 @@ struct Sprite
   uint32_t id;
   std::string textureId;
   std::string name;
-  uint16_t width;
-  uint16_t height;
 
-  std::optional<SpriteSheetPosition> positionInSheet;
+  SDL_Rect srcRect;
 };
 
 } // namespace sfs
