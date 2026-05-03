@@ -2,8 +2,6 @@
 #include "sampleGame.h"
 #include "config.h"
 #include "engine/input/keyboardInput.h"
-#include "engine/input/mouseInput.h"
-#include "engine/logger/logger.h"
 #include <SDL_keyboard.h>
 #include <engine/components/cameraComponent.h>
 #include <engine/mapLoader/mapLoader.h>
