@@ -33,6 +33,7 @@ find_package(SDL2_ttf REQUIRED)
 find_package(SDL2_mixer REQUIRED)
 find_package(imgui REQUIRED)
 find_package(glm REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 target_sources(engine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
@@ -48,4 +49,6 @@ target_link_libraries(engine
         lua::lua
         sdl_ttf::sdl_ttf
         SDL2_mixer::SDL2_mixer
+    PRIVATE
+        nlohmann_json::nlohmann_json
 )

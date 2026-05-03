@@ -6,6 +6,7 @@ sdl_ttf/2.22.0
 sdl_mixer/2.8.0
 imgui/1.92.7
 glm/1.0.1
+nlohmann_json/3.11.3
 
 [options]
 imgui/*:with_sdl2=True

@@ -2,6 +2,7 @@
 
 #include "sprite.h"
 #include <SDL2/SDL_render.h>
+#include <SDL_rect.h>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -22,17 +23,30 @@ public:
   void removeTexture(const std::string& assetId);
   SDL_Texture* getTexture(const std::string& assetId) const;
 
-  uint32_t addSpriteFromSpriteSheet(const std::string& sheetId,
-                                    const std::string& spriteName,
-                                    uint16_t width,
-                                    uint16_t height,
-                                    SpriteSheetPosition position);
-  std::vector<uint32_t>
-  addSpritesFromSpriteSheet(const std::string& sheetId,
-                            const std::string& baseSpriteName,
-                            uint16_t width,
-                            uint16_t height,
-                            uint8_t gap);
+  uint32_t addSprite(const std::string& textureId,
+                     const std::string& spriteName,
+                     SDL_Rect srcRect);
+  std::vector<uint32_t> addSprites(const std::string& textureId,
+                                   const std::vector<SpriteRegion>& regions);
+
+  uint32_t addSpriteFromSheet(const std::string& textureId,
+                              const std::string& spriteName,
+                              uint16_t width,
+                              uint16_t height,
+                              uint16_t col,
+                              uint16_t row,
+                              uint8_t gap,
+                              uint8_t padding);
+  std::vector<uint32_t> addSpritesFromSheet(const std::string& textureId,
+                                            const std::string& baseSpriteName,
+                                            uint16_t width,
+                                            uint16_t height,
+                                            uint8_t gap,
+                                            uint8_t padding);
+
+  void loadAsepriteAtlas(const std::string& textureId,
+                         const std::string& jsonPath);
+
   void removeSprite(uint32_t spriteId);
   const Sprite* getSprite(uint32_t spriteId) const;
 
