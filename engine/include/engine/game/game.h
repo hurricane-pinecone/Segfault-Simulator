@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/input/keyboardInput.h"
 #include <SDL_events.h>
 #include <SDL_render.h>
 #include <SDL_stdinc.h>
@@ -30,7 +31,7 @@ public:
 protected:
   virtual void onInit() {};
   virtual void onSetup() {};
-  virtual void onProcessInput(SDL_Event& event) {};
+  virtual void onProcessInput(const KeyboardInput& keyboardInput) {};
   virtual void onUpdate(double deltaTime) {};
   virtual void onRender() {};
   virtual void onDestroy() = 0;
@@ -52,6 +53,7 @@ private:
 
 private:
   Uint64 previousTime;
+  KeyboardInput keyboardInput;
 };
 
 } // namespace sfs

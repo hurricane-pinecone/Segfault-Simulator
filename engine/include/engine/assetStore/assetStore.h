@@ -49,6 +49,7 @@ public:
 
   void removeSprite(uint32_t spriteId);
   const Sprite* getSprite(uint32_t spriteId) const;
+  const Sprite* getSprite(const std::string& spriteId) const;
 
   AssetStore(const AssetStore&) = delete;
   AssetStore& operator=(const AssetStore&) = delete;
@@ -61,8 +62,13 @@ private:
 
   std::unordered_map<std::string, TexturePtr> textures;
 
+  // This looks wierd, but its more performant than storing strings as the main
+  // sprite key (sprites).
+  // The second map, spriteNameId allows sprite name searches while avoiding
+  // expensive lookups in game loop.
   uint32_t nextSpriteId = 0;
   std::unordered_map<uint32_t, Sprite> sprites;
+  std::unordered_map<std::string, uint32_t> spriteNameToId;
 };
 
 } // namespace sfs

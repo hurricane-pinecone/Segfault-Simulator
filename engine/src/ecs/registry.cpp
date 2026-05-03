@@ -20,8 +20,6 @@ Entity Registry::createEntity()
   if (entityId >= entityComponentSignatures.size())
     entityComponentSignatures.resize(entityId + 1);
 
-  LOG_DEBUG("Entity queued for creation. ID: " + std::to_string(entityId));
-
   return entity;
 }
 

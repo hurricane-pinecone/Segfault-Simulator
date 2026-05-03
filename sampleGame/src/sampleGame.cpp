@@ -1,6 +1,8 @@
 
 #include "sampleGame.h"
 #include "config.h"
+#include "engine/input/keyboardInput.h"
+#include "engine/logger/logger.h"
 #include <SDL_keyboard.h>
 #include <engine/components/cameraComponent.h>
 #include <engine/mapLoader/mapLoader.h>
@@ -10,6 +12,7 @@
 #include <glm/ext/vector_float2.hpp>
 #include <glm/ext/vector_int2.hpp>
 #include <glm/glm.hpp>
+#include <string>
 
 void SampleGame::onSetup()
 {
@@ -25,12 +28,12 @@ void SampleGame::onSetup()
   auto playerSprite =
       assetStore->addSpriteFromSheet("spritesheet", "guy", 16, 16, 16, 6, 1, 0);
 
-  player = registry->createEntity()
-               .addComponent<sfs::TransformComponent>(
-                   glm::ivec2{windowWidth / 2, windowHeight / 2},
-                   glm::vec2{2.0, 2.0})
-               .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
-               .addComponent<sfs::SpriteComponent>(playerSprite);
+  player =
+      registry->createEntity()
+          .addComponent<sfs::TransformComponent>(
+              glm::vec2{windowWidth / 2, windowHeight / 2}, glm::vec2{2.0, 2.0})
+          .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
+          .addComponent<sfs::SpriteComponent>(playerSprite);
 
   auto camera = registry->createEntity()
                     .addComponent<sfs::TransformComponent>(
@@ -43,31 +46,14 @@ void SampleGame::onSetup()
   isRunning = true;
 }
 
-void SampleGame::onProcessInput(SDL_Event& event)
+void SampleGame::onProcessInput(const sfs::KeyboardInput& input)
 {
-  // GetKeyboardState is better for button held checks. IE, movement checks.
-  // For single presses, use SDL_Event.
-  const Uint8* keys = SDL_GetKeyboardState(nullptr);
+  inputController.processKeyboardInput(input, player);
 
-  glm::vec2 direction(0.0f);
-
-  if (keys[SDL_SCANCODE_A])
-    direction.x -= 1.0f;
-  if (keys[SDL_SCANCODE_D])
-    direction.x += 1.0f;
-  if (keys[SDL_SCANCODE_W])
-    direction.y -= 1.0f;
-  if (keys[SDL_SCANCODE_S])
-    direction.y += 1.0f;
-
-  if (glm::length(direction) > 0.0f)
+  if (input.keyPressed(sfs::Key::Escape))
   {
-    direction = glm::normalize(direction);
+    isRunning = false;
   }
-
-  auto& rb = player.getComponent<sfs::RigidBodyComponent>();
-
-  rb.velocity = direction * 200.0f;
 }
 
 void SampleGame::loadMap()

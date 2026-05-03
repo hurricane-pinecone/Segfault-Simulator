@@ -8,7 +8,6 @@
 
 #include <memory>
 #include <set>
-#include <string>
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
@@ -93,9 +92,6 @@ void Registry::addComponent(const Entity& entity, TArgs&&... args)
   componentPool->set(entityId, std::forward<TArgs>(args)...);
 
   entityComponentSignatures[entityId].set(componentId, true);
-
-  LOG_DEBUG("Component ID: " + std::to_string(componentId) +
-            " added to entity ID: " + std::to_string(entityId));
 }
 
 template <typename TComponent>

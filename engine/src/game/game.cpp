@@ -110,26 +110,19 @@ void Game::processInput()
 {
   SDL_Event sdlEvent;
 
+  keyboardInput.update();
+
   while (SDL_PollEvent(&sdlEvent))
   {
     ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
 
-    switch (sdlEvent.type)
+    if (sdlEvent.type == SDL_QUIT)
     {
-    case SDL_QUIT:
       isRunning = false;
-      break;
-
-    case SDL_KEYDOWN:
-      if (sdlEvent.key.keysym.sym == SDLK_ESCAPE)
-      {
-        isRunning = false;
-      }
-      break;
     }
-
-    onProcessInput(sdlEvent);
   }
+
+  onProcessInput(keyboardInput);
 }
 
 void Game::update(double deltaTime)
