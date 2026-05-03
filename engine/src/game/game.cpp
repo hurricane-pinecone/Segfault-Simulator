@@ -151,9 +151,13 @@ void Game::processInput()
     }
   }
 
+  // input.update contains SDL stuff which we don't want to track
   input.update();
+  {
+    sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Input};
 
-  onProcessInput(input);
+    onProcessInput(input);
+  }
 }
 
 void Game::update(double deltaTime)

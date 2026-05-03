@@ -54,6 +54,11 @@ void SampleGame::onProcessInput(const sfs::Input& input)
     isRunning = false;
   }
 
+  if (input.mouse().mousePressed(sfs::MouseButton::Left))
+  {
+    delete new int;
+  }
+
   inputController.processKeyboardInput(input.keyboard(), player);
 }
 

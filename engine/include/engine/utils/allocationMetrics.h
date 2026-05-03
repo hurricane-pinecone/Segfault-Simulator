@@ -11,6 +11,7 @@ enum class MemoryTrackingPhase
   None,
   Setup,
   Update,
+  Input,
   Render
 };
 
