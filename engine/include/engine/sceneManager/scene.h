@@ -32,9 +32,6 @@ public:
   void update(double deltaTime);
   void render(SDL_Renderer& renderer);
 
-  Registry& registry();
-  const Registry& registry() const;
-
   Entity createEntity();
   Entity getEntity(int id);
   void destroyEntity(int id);
@@ -50,6 +47,10 @@ public:
 
   template <typename TSystem>
   TSystem& getSystem() const;
+
+private:
+  Registry& registry();
+  const Registry& registry() const;
 
 private:
   SceneId m_id = -1;

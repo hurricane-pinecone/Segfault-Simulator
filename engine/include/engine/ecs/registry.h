@@ -18,9 +18,6 @@ namespace sfs
 class Registry
 {
 public:
-  Registry() = default;
-  ~Registry() = default;
-
   Entity createEntity();
   Entity getEntity(int id);
   void destroyEntity(int id);
@@ -52,8 +49,15 @@ public:
   TSystem& getSystem() const;
 
 private:
+  // TODO: Figure out how to hide registry.h from client completely. For now
+  // this stops anything but Scene being able to create Registry.
+  Registry() = default;
+  ~Registry() = default;
+
   void addEntityToSystems(const Entity& entity);
   void removeEntityFromSystems(const Entity& entity);
+
+  friend class Scene;
 
 private:
   int entityCount = 0;

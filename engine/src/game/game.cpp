@@ -81,9 +81,8 @@ void Game::setup()
 
   Scene* mainScene = sceneManager.createScene();
 
-  mainScene->registry().addSystem<MovementSystem>();
-  mainScene->registry().addSystem<RenderSystem>(
-      *assetStore, windowWidth, windowHeight);
+  mainScene->addSystem<MovementSystem>();
+  mainScene->addSystem<RenderSystem>(*assetStore, windowWidth, windowHeight);
 
   onSetup();
 }
