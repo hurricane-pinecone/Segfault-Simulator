@@ -2,7 +2,7 @@
 
 This is a lightweight engine built using the ECS pattern.
 
-The engine comes with a few common systems, like movement and rigidbody. Game specific systems can inherit sfs::System and be added to the registry (See playerInputSystem in sample game).
+The engine comes with a few common systems, like movement and rigidbody. Game specific systems can inherit sfs::System and be added to scenes.
 
 PS, The sample game is dogshit so don't get excited.
 
