@@ -77,11 +77,13 @@ void Game::setup()
 {
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
-  registry = std::make_unique<Registry>();
   assetStore = std::make_unique<AssetStore>(*renderer);
 
-  registry->addSystem<MovementSystem>();
-  registry->addSystem<RenderSystem>(*assetStore, windowWidth, windowHeight);
+  Scene* mainScene = sceneManager.createScene();
+
+  mainScene->registry().addSystem<MovementSystem>();
+  mainScene->registry().addSystem<RenderSystem>(
+      *assetStore, windowWidth, windowHeight);
 
   onSetup();
 }
@@ -163,7 +165,9 @@ void Game::processInput()
 void Game::update(double deltaTime)
 {
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Update};
-  registry->update(deltaTime);
+  if (!sceneManager)
+    return;
+  sceneManager.current()->update(deltaTime);
   onUpdate(deltaTime);
 }
 
@@ -175,10 +179,12 @@ void Game::render()
 
   {
     sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
-    if (registry->hasSystem<RenderSystem>())
-    {
-      registry->getSystem<RenderSystem>().render(*renderer);
-    }
+
+    if (!sceneManager)
+      return;
+
+    sceneManager.current()->render(*renderer);
+
     onRender();
   }
 

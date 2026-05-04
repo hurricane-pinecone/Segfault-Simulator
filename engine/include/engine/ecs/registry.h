@@ -23,7 +23,7 @@ public:
 
   Entity createEntity();
   Entity getEntity(int id);
-  void destroyEntity();
+  void destroyEntity(int id);
 
   void update(double deltaTime);
 
@@ -53,6 +53,7 @@ public:
 
 private:
   void addEntityToSystems(const Entity& entity);
+  void removeEntityFromSystems(const Entity& entity);
 
 private:
   int entityCount = 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/sceneManager/sceneManager.h"
 #include <SDL_events.h>
 #include <SDL_render.h>
 #include <SDL_stdinc.h>
@@ -37,7 +38,7 @@ protected:
   virtual void onDestroy() = 0;
 
 protected:
-  std::unique_ptr<Registry> registry;
+  SceneManager sceneManager;
   std::unique_ptr<AssetStore> assetStore;
   bool isRunning = false;
   int windowWidth;
