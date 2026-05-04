@@ -1,8 +1,11 @@
 #pragma once
 
+#include "engine/assetStore/assetStore.h"
 #include "engine/ecs/entity.h"
 #include "engine/ecs/registry.h"
+#include "engine/input/input.h"
 #include <SDL_render.h>
+#include <string>
 
 namespace sfs
 {
@@ -12,9 +15,18 @@ using SceneId = uint32_t;
 class Scene
 {
 public:
-  Scene(SceneId id) : m_id(id) {};
-  Scene(SceneId id, const std::string& name) : m_id(id), m_name(name) {};
-  ~Scene() = default;
+  Scene(SceneId id, AssetStore& assetStore)
+      : m_assetStore(assetStore), m_id(id),
+        m_name("scene_" + std::to_string(id))
+  {
+  }
+
+  Scene(SceneId id, AssetStore& assetStore, const std::string& name)
+      : m_assetStore(assetStore), m_id(id), m_name(name)
+  {
+  }
+
+  virtual ~Scene() = default;
 
   enum class Mode
   {
@@ -22,14 +34,11 @@ public:
     GAME,
   };
 
-  SceneId id();
-  const std::string& name();
-
-  // TODO: Are these even needed
-  void onEnter() {};
-  void onExit() {};
+  SceneId id() const;
+  const std::string& name() const;
 
   void update(double deltaTime);
+  void processInput(const sfs::Input& input);
   void render(SDL_Renderer& renderer);
 
   Entity createEntity();
@@ -52,16 +61,27 @@ private:
   Registry& registry();
   const Registry& registry() const;
 
+protected:
+  virtual void onInit() {};
+  virtual void onEnter() {};
+  virtual void onExit() {};
+  virtual void onProcessInput(const Input& input) {};
+
+  friend class SceneManager;
+
+protected:
+  AssetStore& m_assetStore;
+
 private:
-  SceneId m_id = -1;
-  Registry m_registry;
+  SceneId m_id = 0;
   std::string m_name = "";
+  Registry m_registry;
 };
 
 template <typename TSystem, typename... TArgs>
 void Scene::addSystem(TArgs&&... args)
 {
-  m_registry.addSystem<TSystem>(args...);
+  m_registry.addSystem<TSystem>(std::forward<TArgs>(args)...);
 }
 
 template <typename TSystem>
@@ -73,7 +93,7 @@ void Scene::removeSystem()
 template <typename TSystem>
 bool Scene::hasSystem() const
 {
-  m_registry.hasSystem<TSystem>();
+  return m_registry.hasSystem<TSystem>();
 }
 
 template <typename TSystem>
