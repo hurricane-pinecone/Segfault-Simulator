@@ -23,7 +23,7 @@ void SampleGame::onSetup()
       "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
 
   // TODO: Create actual title screen and refactor
-  sfs::Scene* titleScene = sceneManager.createScene("Title Scene");
+  // sfs::Scene* titleScene = sceneManager.createScene("Title Scene");
   auto gameScene = sceneManager.createScene<GameScene>("Game");
 
   isRunning = true;
