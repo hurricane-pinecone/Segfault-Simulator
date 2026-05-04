@@ -50,6 +50,14 @@ void Registry::addEntityToSystems(const Entity& entity)
   }
 }
 
+void Registry::removeEntityFromSystems(const Entity& entity)
+{
+  for (auto& system : systems)
+  {
+    system.second->removeEntity(entity);
+  }
+}
+
 void Registry::update(double deltaTime)
 {
   for (const auto e : entitiesToBeAdded)
@@ -63,10 +71,37 @@ void Registry::update(double deltaTime)
   }
   entitiesToBeAdded.clear();
 
+  for (const auto e : entitiesToBeRemoved)
+  {
+    Entity entity(e.id);
+    entity.setRegistry(this);
+
+    removeEntityFromSystems(entity);
+
+    if (e.id >= 0 && e.id < entityComponentSignatures.size())
+      entityComponentSignatures[e.id].reset();
+  }
+
+  if (!entitiesToBeRemoved.empty())
+  {
+    LOG_DEBUG(std::to_string(entitiesToBeRemoved.size()) +
+              " entities removed from Systems.");
+  }
+
+  entitiesToBeRemoved.clear();
+
   for (auto& [type, system] : systems)
   {
     system->update(deltaTime);
   }
+}
+
+void Registry::destroyEntity(int id)
+{
+  if (id < 0 || id >= entityCount)
+    return;
+
+  entitiesToBeRemoved.insert(id);
 }
 
 } // namespace sfs

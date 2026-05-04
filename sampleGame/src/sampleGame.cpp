@@ -28,19 +28,21 @@ void SampleGame::onSetup()
       assetStore->addSpriteFromSheet("spritesheet", "guy", 16, 16, 16, 6, 1, 0);
 
   player =
-      registry->createEntity()
+      sceneManager.current()
+          ->createEntity()
           .addComponent<sfs::TransformComponent>(
               glm::vec2{windowWidth / 2, windowHeight / 2}, glm::vec2{2.0, 2.0})
           .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
           .addComponent<sfs::SpriteComponent>(playerSprite);
 
-  camera = registry->createEntity()
+  camera = sceneManager.current()
+               ->createEntity()
                .addComponent<sfs::TransformComponent>(
                    glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
                .addComponent<sfs::CameraComponent>(
                    player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
 
-  registry->addSystem<sfs::CameraSystem>();
+  sceneManager.current()->addSystem<sfs::CameraSystem>();
 
   isRunning = true;
 }
@@ -73,7 +75,8 @@ void SampleGame::loadMap()
     {
       uint32_t spriteId = map.tiles[y * map.width + x];
 
-      auto tile = registry->createEntity()
+      auto tile = sceneManager.current()
+                      ->createEntity()
                       .addComponent<sfs::TransformComponent>(
                           glm::vec2(x * tileSize, y * tileSize))
                       .addComponent<sfs::SpriteComponent>(spriteId);

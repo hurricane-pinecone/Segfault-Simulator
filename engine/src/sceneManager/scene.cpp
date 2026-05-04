@@ -1,0 +1,26 @@
+
+#include <engine/ecs/registry.h>
+#include <engine/sceneManager/scene.h>
+#include <engine/systems/renderSystem.h>
+
+namespace sfs
+{
+
+SceneId Scene::id() { return m_id; }
+const std::string& Scene::name() { return m_name; }
+
+Registry& Scene::registry() { return m_registry; }
+const Registry& Scene::registry() const { return m_registry; }
+
+Entity Scene::createEntity() { return m_registry.createEntity(); }
+Entity Scene::getEntity(int id) { return m_registry.getEntity(id); }
+void Scene::destroyEntity(int id) { m_registry.destroyEntity(id); }
+
+void Scene::update(double deltaTime) { m_registry.update(deltaTime); }
+void Scene::render(SDL_Renderer& renderer)
+{
+  if (registry().hasSystem<RenderSystem>())
+    registry().getSystem<RenderSystem>().render(renderer);
+}
+
+} // namespace sfs
