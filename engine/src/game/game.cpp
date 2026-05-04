@@ -78,11 +78,7 @@ void Game::setup()
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
   assetStore = std::make_unique<AssetStore>(*renderer);
-
-  Scene* mainScene = sceneManager.createScene();
-
-  mainScene->addSystem<MovementSystem>();
-  mainScene->addSystem<RenderSystem>(*assetStore, windowWidth, windowHeight);
+  sceneManager.setAssetStore(assetStore.get());
 
   onSetup();
 }
@@ -157,6 +153,7 @@ void Game::processInput()
   {
     sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Input};
 
+    sceneManager.current()->processInput(input);
     onProcessInput(input);
   }
 }
