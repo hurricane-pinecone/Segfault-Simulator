@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="favicon.png" type="image/png" />
+    <link rel="shortcut icon" href="favicon.png" />
+    <title>Fully sick game</title>
+
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: radial-gradient(circle at center, #111 0%, #000 100%);
+        color: white;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+
+      #root {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+
+      #title {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: #fff;
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
+      }
+
+      #container {
+        aspect-ratio: 4 / 3;
+        width: min(70vw, 900px);
+        box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        background: black;
+      }
+
+      #panel {
+        width: min(70vw, 900px);
+        background: rgba(20, 20, 20, 0.75);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 14px 18px;
+        text-align: center;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+      }
+
+      #panel h2 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #aaa;
+      }
+
+      #panel p {
+        margin: 0;
+        font-size: 16px;
+        color: #ddd;
+      }
+
+      .key {
+        display: inline-block;
+        min-width: 28px;
+        padding: 6px 8px;
+        margin: 0 4px;
+        border-radius: 6px;
+
+        background: linear-gradient(180deg, #2a2a2a, #1a1a1a);
+        border: 1px solid #444;
+
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          0 2px 4px rgba(0, 0, 0, 0.6);
+
+        font-weight: bold;
+        font-size: 14px;
+        color: #fff;
+      }
+
+      .key:hover {
+        background: linear-gradient(180deg, #333, #222);
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root">
+      <div id="title">Fully Sick Game</div>
+
+      <div id="container">
+        <canvas
+          id="canvas"
+          oncontextmenu="event.preventDefault()"
+          tabindex="-1"
+        ></canvas>
+      </div>
+
+      <div id="panel">
+        <h2>Controls</h2>
+        <p>
+          Use
+          <span class="key">W</span>
+          <span class="key">A</span>
+          <span class="key">S</span>
+          <span class="key">D</span>
+          to move
+        </p>
+      </div>
+    </div>
+
+    <script>
+      var Module = {
+        canvas: document.getElementById("canvas"),
+      };
+    </script>
+
+    {{{ SCRIPT }}}
+  </body>
+</html>

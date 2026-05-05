@@ -24,6 +24,7 @@ if(EMSCRIPTEN)
     )
 
     target_link_options(sampleGame PRIVATE
+        --shell-file "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
         --preload-file "${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets"
         -sALLOW_MEMORY_GROWTH=1
         -sASYNCIFY
