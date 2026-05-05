@@ -6,6 +6,12 @@ The engine comes with a few common systems, like movement and rigidbody. Game sp
 
 PS, The sample game is dogshit so don't get excited.
 
+<p align="center">
+  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/sampleGame.html">
+    <strong>▶ Play the fully sick sample game in your browser</strong>
+  </a>
+</p>
+
 ![ECS Diagram](./docs/images/ecs.png)
 ![Sample Game](./docs/images/sample_game.png)
 
