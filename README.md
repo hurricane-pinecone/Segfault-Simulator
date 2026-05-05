@@ -5,7 +5,7 @@ This is a lightweight engine built using the ECS pattern.
 The engine comes with a few common systems, like movement and rigidbody. Game specific systems can inherit sfs::System and be added to scenes.
 
 <p align="center">
-  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/sampleGame.html" target="_blank" rel="noopener noreferrer">
+  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
     <strong>▶ Play the dogshit sample game</strong>
   </a>
 </p>
