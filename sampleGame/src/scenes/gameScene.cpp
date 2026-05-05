@@ -10,8 +10,8 @@
 #include <engine/mapLoader/mapLoader.h>
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
-#include <glm/geometric.hpp>
-#include <glm/vec2.hpp>
+#include <glm/glm/geometric.hpp>
+#include <glm/glm/vec2.hpp>
 
 void GameScene::onInit()
 {

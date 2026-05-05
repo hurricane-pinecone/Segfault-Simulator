@@ -26,7 +26,8 @@ void AssetStore::addTexture(const std::string& assetId,
   SDL_Texture* texture = IMG_LoadTexture(&renderer, filePath.c_str());
   if (!texture)
   {
-    LOG_ERROR(std::string("Failed to create texture ") + IMG_GetError());
+    LOG_INFO(std::string("Failed to load texture: ") + filePath +
+             " | SDL_image error: " + IMG_GetError());
     return;
   }
 

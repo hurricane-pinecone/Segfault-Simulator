@@ -6,6 +6,7 @@ BinPackArguments: false
 PointerAlignment: Left
 ReferenceAlignment: Left
 AlwaysBreakTemplateDeclarations: Yes
+IndentPPDirectives: BeforeHash
 
 PenaltyBreakBeforeFirstCallParameter: 0
 

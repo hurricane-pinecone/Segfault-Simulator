@@ -1,7 +1,7 @@
 #include <engine/input/mouseInput.h>
 
 #include <SDL.h>
-#include <glm/geometric.hpp>
+#include <glm/glm/geometric.hpp>
 
 namespace sfs
 {

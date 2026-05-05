@@ -10,9 +10,9 @@
 #include <engine/systems/cameraSystem.h>
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
-#include <glm/ext/vector_float2.hpp>
-#include <glm/ext/vector_int2.hpp>
-#include <glm/glm.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_int2.hpp>
+#include <glm/glm/glm.hpp>
 #include <string>
 
 void SampleGame::onSetup()
@@ -33,6 +33,9 @@ void SampleGame::onProcessInput(const sfs::Input& input)
 {
   if (input.keyboard().keyPressed(sfs::Key::Escape))
   {
+#ifdef ENGINE_WEB
+    return;
+#endif
     isRunning = false;
   }
 

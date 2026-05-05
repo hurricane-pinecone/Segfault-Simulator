@@ -8,7 +8,7 @@
 #include <engine/components/transformComponent.h>
 #include <engine/ecs/system.h>
 #include <engine/logger/logger.h>
-#include <glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
 {

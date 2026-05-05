@@ -1,11 +1,10 @@
 #pragma once
 
-#include <cmath>
 #include <engine/components/cameraComponent.h>
 #include <engine/components/transformComponent.h>
 #include <engine/ecs/system.h>
-#include <glm/common.hpp>
-#include <glm/ext/vector_float2.hpp>
+#include <glm/glm/common.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
 
 #include <engine/ecs/registry.h>
 

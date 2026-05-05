@@ -24,9 +24,10 @@ public:
   Game() = default;
   virtual ~Game() = default;
 
-  void init(int windowWidth, int windowHeight);
+  bool init(int windowWidth, int windowHeight);
   void setup();
   void run();
+  void tick();
   void destroy();
 
 protected:

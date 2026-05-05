@@ -1,10 +1,12 @@
 #pragma once
 
+#include "engine/logger/logger.h"
 #include "sprite.h"
 #include <SDL2/SDL_render.h>
 #include <SDL_rect.h>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -15,7 +17,10 @@ namespace sfs
 class AssetStore
 {
 public:
-  AssetStore(SDL_Renderer& renderer) : renderer(renderer) {};
+  explicit AssetStore(SDL_Renderer& renderer)
+      : renderer(renderer) {
+
+        };
   ~AssetStore() { clearAssets(); };
 
   void clearAssets();
