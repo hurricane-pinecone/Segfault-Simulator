@@ -20,6 +20,7 @@ set_target_properties(sampleGame PROPERTIES
 
 if(EMSCRIPTEN)
     set_target_properties(sampleGame PROPERTIES
+        OUTPUT_NAME "index"
         SUFFIX ".html"
     )
 
