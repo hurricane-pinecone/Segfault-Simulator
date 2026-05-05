@@ -2,7 +2,7 @@
 
 #include <SDL_mouse.h>
 #include <array>
-#include <glm/vec2.hpp>
+#include <glm/glm/vec2.hpp>
 
 namespace sfs
 {

@@ -1,9 +1,9 @@
+
+#include <SDL_error.h>
 #include <engine/game/game.h>
 
 #include "SDL.h"
-#include "imgui.h"
-#include "imgui_impl_sdl2.h"
-#include "imgui_impl_sdlrenderer2.h"
+
 #include <engine/assetStore/sprite.h>
 #include <engine/components/rigidBodyComponent.h>
 #include <engine/components/spriteComponent.h>
@@ -15,30 +15,40 @@
 #include <engine/systems/renderSystem.h>
 #include <engine/utils/allocationMetrics.h>
 #include <engine/utils/ui.h>
-#include <glm/ext/vector_float2.hpp>
+#include <glm/glm/ext/vector_float2.hpp>
 
-#include <glm/ext/vector_float3.hpp>
+#include <glm/glm/ext/vector_float3.hpp>
 #include <memory>
 #include <string>
+
+#ifndef ENGINE_WEB
+  #include "imgui.h"
+  #include "imgui_impl_sdl2.h"
+  #include "imgui_impl_sdlrenderer2.h"
+#endif
+
+#ifdef __EMSCRIPTEN__
+  #include <emscripten.h>
+#endif
 
 namespace sfs
 {
 
-void Game::init(int windowWidth, int windowHeight)
+bool Game::init(int windowWidth, int windowHeight)
 {
   this->windowWidth = windowWidth;
   this->windowHeight = windowHeight;
 
-  if (SDL_Init(SDL_INIT_EVERYTHING) != 0)
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0)
   {
-    LOG_ERROR("Error initializing SDL");
-    return;
+    LOG_ERROR(std::string("Error initializing SDL: ") + SDL_GetError());
+    return false;
   }
 
   SDL_DisplayMode displayMode;
   SDL_GetCurrentDisplayMode(0, &displayMode);
 
-  window = SDL_CreateWindow(NULL,
+  window = SDL_CreateWindow("SegFaultSimulator",
                             SDL_WINDOWPOS_CENTERED,
                             SDL_WINDOWPOS_CENTERED,
                             windowWidth,
@@ -48,7 +58,7 @@ void Game::init(int windowWidth, int windowHeight)
   if (!window)
   {
     LOG_ERROR("Error creating window");
-    return;
+    return false;
   }
 
   renderer = SDL_CreateRenderer(
@@ -56,21 +66,28 @@ void Game::init(int windowWidth, int windowHeight)
 
   if (!renderer)
   {
-    LOG_ERROR("Error creating renderer");
-    return;
+    LOG_INFO(std::string("Error creating renderer: ") + SDL_GetError());
+    return false;
   }
 
   // SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
 
+#ifndef ENGINE_WEB
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
 
   ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
   ImGui_ImplSDLRenderer2_Init(renderer);
+#endif
+
+  LOG_INFO("Game renderer ptr: " +
+           std::to_string(reinterpret_cast<std::uintptr_t>(renderer)));
 
   onInit();
 
   isRunning = true;
+
+  return true;
 }
 
 void Game::setup()
@@ -87,6 +104,35 @@ void Game::run()
 {
   previousTime = SDL_GetPerformanceCounter();
 
+#ifdef __EMSCRIPTEN__
+
+  // Store this pointer for the static loop
+  static Game* self = this;
+
+  auto loop = []()
+  {
+    if (!self->isRunning)
+    {
+      self->destroy();
+      emscripten_cancel_main_loop(); // stop browser loop
+      return;
+    }
+
+    Uint64 now = SDL_GetPerformanceCounter();
+    double deltaTime = static_cast<double>(now - self->previousTime) /
+                       SDL_GetPerformanceFrequency();
+
+    self->previousTime = now;
+
+    self->processInput();
+    self->update(deltaTime);
+    self->render();
+  };
+
+  emscripten_set_main_loop(loop, 0, 1);
+
+#else
+
   while (isRunning)
   {
     Uint64 now = SDL_GetPerformanceCounter();
@@ -99,6 +145,10 @@ void Game::run()
     update(deltaTime);
     render();
   }
+
+  destroy();
+
+#endif
 }
 
 void Game::processInput()
@@ -108,7 +158,10 @@ void Game::processInput()
   SDL_Event sdlEvent;
   while (SDL_PollEvent(&sdlEvent))
   {
+
+#ifndef ENGINE_WEB
     ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
+#endif
 
     if (sdlEvent.type == SDL_QUIT)
     {
@@ -184,7 +237,7 @@ void Game::render()
     onRender();
   }
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(ENGINE_WEB)
   renderDebugUI(renderer);
 #endif
 
@@ -195,9 +248,11 @@ void Game::destroy()
 {
   onDestroy();
 
+#ifndef ENGINE_WEB
   ImGui_ImplSDLRenderer2_Shutdown();
   ImGui_ImplSDL2_Shutdown();
   ImGui::DestroyContext();
+#endif
 
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);

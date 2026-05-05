@@ -11,10 +11,10 @@ int main(int argc, char* argv[])
   sfs::Logger::setLogLevel(sfs::Logger::Level::DEBUG);
   // sfs::Logger::setVerbosity(sfs::Logger::Verbosity::FULL);
 
-  game.init(800, 600);
+  if (!game.init(800, 600))
+    return 1;
   game.setup();
   game.run();
-  game.destroy();
 
   return 0;
 }

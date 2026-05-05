@@ -1,11 +1,13 @@
 #pragma once
 
+#ifndef ENGINE_WEB
 #include "allocationMetrics.h"
 #include "format.h"
-#include "imgui.h"
+
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include <SDL_render.h>
+#include <imgui.h>
 
 namespace sfs
 {
@@ -41,3 +43,4 @@ inline static void renderDebugUI(SDL_Renderer* renderer)
 }
 
 } // namespace sfs
+#endif
