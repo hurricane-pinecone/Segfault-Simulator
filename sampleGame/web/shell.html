@@ -15,6 +15,7 @@
         background: radial-gradient(circle at center, #111 0%, #000 100%);
         color: white;
         font-family: "Segoe UI", system-ui, sans-serif;
+        overflow: hidden;
       }
 
       #root {
@@ -32,7 +33,6 @@
         font-size: 28px;
         font-weight: 700;
         letter-spacing: 1px;
-        color: #fff;
         text-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
       }
 
@@ -72,31 +72,58 @@
 
       #panel p {
         margin: 0;
-        font-size: 16px;
-        color: #ddd;
-      }
-
-      .key {
-        display: inline-block;
-        min-width: 28px;
-        padding: 6px 8px;
-        margin: 0 4px;
-        border-radius: 6px;
-
-        background: linear-gradient(180deg, #2a2a2a, #1a1a1a);
-        border: 1px solid #444;
-
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.1),
-          0 2px 4px rgba(0, 0, 0, 0.6);
-
-        font-weight: bold;
         font-size: 14px;
-        color: #fff;
+        color: #ccc;
       }
 
-      .key:hover {
-        background: linear-gradient(180deg, #333, #222);
+      .controls {
+        margin-top: 12px;
+      }
+
+      .touch-row {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .touch-button {
+        width: 56px;
+        height: 56px;
+        border-radius: 12px;
+        border: 1px solid #555;
+        background: linear-gradient(180deg, #333, #181818);
+        color: white;
+        font-weight: bold;
+        font-size: 20px;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.12),
+          0 4px 8px rgba(0, 0, 0, 0.6);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+      }
+
+      .touch-button.interactive {
+        touch-action: none;
+      }
+
+      .touch-button.interactive:active,
+      .touch-button.interactive.pressed {
+        transform: translateY(2px);
+        background: linear-gradient(180deg, #444, #222);
+      }
+
+      @media (pointer: coarse), (max-width: 700px) {
+        #container,
+        #panel {
+          width: min(94vw, 900px);
+        }
+
+        #title {
+          font-size: 22px;
+        }
       }
     </style>
   </head>
@@ -115,21 +142,68 @@
 
       <div id="panel">
         <h2>Controls</h2>
-        <p>
-          Use
-          <span class="key">W</span>
-          <span class="key">A</span>
-          <span class="key">S</span>
-          <span class="key">D</span>
-          to move
-        </p>
+        <p>Use WASD to move</p>
+
+        <div class="controls">
+          <div>
+            <div class="touch-button interactive" data-key="w">W</div>
+          </div>
+
+          <div class="touch-row">
+            <div class="touch-button interactive" data-key="a">A</div>
+            <div class="touch-button interactive" data-key="s">S</div>
+            <div class="touch-button interactive" data-key="d">D</div>
+          </div>
+        </div>
       </div>
     </div>
 
     <script>
+      const canvas = document.getElementById("canvas");
+
       var Module = {
-        canvas: document.getElementById("canvas"),
+        canvas,
       };
+
+      function emitKey(type, key) {
+        window.dispatchEvent(
+          new KeyboardEvent(type, {
+            key,
+            code: "Key" + key.toUpperCase(),
+            bubbles: true,
+          }),
+        );
+      }
+
+      // Enable touch + mouse interaction (mobile + desktop)
+      document
+        .querySelectorAll(".touch-button.interactive")
+        .forEach((button) => {
+          const key = button.dataset.key;
+
+          const press = (event) => {
+            event.preventDefault();
+            button.classList.add("pressed");
+            canvas.focus();
+            emitKey("keydown", key);
+          };
+
+          const release = (event) => {
+            event.preventDefault();
+            button.classList.remove("pressed");
+            emitKey("keyup", key);
+          };
+
+          // touch
+          button.addEventListener("touchstart", press, { passive: false });
+          button.addEventListener("touchend", release, { passive: false });
+          button.addEventListener("touchcancel", release, { passive: false });
+
+          // mouse (so it works on desktop too)
+          button.addEventListener("mousedown", press);
+          button.addEventListener("mouseup", release);
+          button.addEventListener("mouseleave", release);
+        });
     </script>
 
     {{{ SCRIPT }}}
