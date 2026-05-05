@@ -11,7 +11,6 @@ The engine comes with a few common systems, like movement and rigidbody. Game sp
 </p>
 
 ![ECS Diagram](./docs/images/ecs.png)
-![Sample Game](./docs/images/sample_game.png)
 
 ## Overview
 
