@@ -23,9 +23,7 @@ public:
 
   void update(double deltaTime) override
   {
-    auto entities = getEntities();
-
-    for (const auto& entity : entities)
+    for (const auto& entity : getEntities())
     {
       auto& rb = entity.getComponent<RigidBodyComponent>();
 
