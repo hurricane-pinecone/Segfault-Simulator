@@ -5,6 +5,9 @@
 namespace sfs
 {
 
+/**
+ * @param glm::vec2 velocity
+ */
 struct RigidBodyComponent
 {
   glm::vec2 velocity;

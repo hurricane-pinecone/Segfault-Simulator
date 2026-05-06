@@ -5,6 +5,11 @@
 namespace sfs
 {
 
+/**
+ * @param glm::vec2 position
+ * @param glm::vec2 scale
+ * @param glm::rotation
+ */
 struct TransformComponent
 {
   glm::vec2 position;

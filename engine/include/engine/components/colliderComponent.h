@@ -6,6 +6,14 @@
 namespace sfs
 {
 
+/**
+ * Bounding rect of hit mask.
+ * Add tag `sfs::SolidObject` to impede movement on collision.
+ *
+ * @param glm::vec2 offset
+ * @param glm::vec2 size
+ * @param glm::vec2 position
+ */
 struct ColliderComponent
 {
   glm::vec2 offset;
@@ -40,7 +48,7 @@ struct ColliderComponent
   float bottom() const { return bounds.w; }
 };
 
-struct Solid
+struct SolidObject
 {
 };
 
