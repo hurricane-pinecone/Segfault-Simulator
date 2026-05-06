@@ -33,20 +33,20 @@ void GameScene::createPlayer()
       "spritesheet", "enemy", 16, 16, 0, 6, 1, 0);
 
   createEntity()
+      .addComponent<sfs::SpriteComponent>(enemySprite)
       .addComponent<sfs::TransformComponent>(
           glm::vec2{300, 300}, glm::vec2{2.0, 2.0})
       .addComponent<sfs::ColliderComponent>(
           glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{300, 300})
-      .addComponent<sfs::SpriteComponent>(enemySprite)
       .addTag<sfs::Solid>();
 
   m_player = createEntity()
+                 .addComponent<sfs::SpriteComponent>(playerSprite)
                  .addComponent<sfs::TransformComponent>(
                      glm::vec2{200.0, 200.0}, glm::vec2{2.0, 2.0})
                  .addComponent<sfs::ColliderComponent>(
                      glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{200, 200})
-                 .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
-                 .addComponent<sfs::SpriteComponent>(playerSprite);
+                 .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0));
 
   sfs::Entity camera =
       createEntity()
@@ -106,7 +106,9 @@ void GameScene::loadMap()
                           glm::vec2(x * tileSize, y * tileSize))
                       .addComponent<sfs::SpriteComponent>(spriteId);
 
-      // TODO: Improve this whack ass check
+      // TODO: Improve this whack ass check - The eventual map editor should be
+      // able to store metadata for tiles
+      // Collide with water
       if (spriteId == 21)
       {
         tile.addComponent<sfs::ColliderComponent>(
