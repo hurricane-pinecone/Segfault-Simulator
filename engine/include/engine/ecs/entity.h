@@ -29,6 +29,11 @@ public:
   template <typename TComponent, typename... TArgs>
   Entity& addComponent(TArgs&&... args);
 
+  // This is exactly the same as addComponent, but it's nicer semantically
+  // for game client
+  template <typename TComponent, typename... TArgs>
+  Entity& addTag(TArgs&&... args);
+
   template <typename TComponent>
   void removeComponent() const;
 

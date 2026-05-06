@@ -1,27 +1,12 @@
 
 #include "sampleGame.h"
-#include "config.h"
-#include "engine/input/keyboardInput.h"
-#include "engine/sceneManager/scene.h"
 #include "scenes/gameScene.h"
-#include <SDL_keyboard.h>
-#include <engine/components/cameraComponent.h>
-#include <engine/mapLoader/mapLoader.h>
-#include <engine/systems/cameraSystem.h>
-#include <engine/systems/movementSystem.h>
-#include <engine/systems/renderSystem.h>
-#include <glm/glm/ext/vector_float2.hpp>
-#include <glm/glm/ext/vector_int2.hpp>
-#include <glm/glm/glm.hpp>
+#include <engine/input/keyboardInput.h>
+#include <engine/sceneManager/scene.h>
 #include <string>
 
 void SampleGame::onSetup()
 {
-
-  assetStore->addTexture("jungle", ASSET_ROOT + "spriteSheets/jungle.png");
-  assetStore->addTexture(
-      "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
-
   // TODO: Create actual title screen and refactor
   // sfs::Scene* titleScene = sceneManager.createScene("Title Scene");
   auto gameScene = sceneManager.createScene<GameScene>("Game");
