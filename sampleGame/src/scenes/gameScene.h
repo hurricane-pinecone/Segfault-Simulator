@@ -15,7 +15,7 @@ protected:
 
 private:
   void loadMap();
-  void createPlayer();
+  void createEntities();
 
 private:
   sfs::Entity m_player;

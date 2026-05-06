@@ -4,6 +4,11 @@
 namespace sfs
 {
 
+/**
+ * @param int target - The entity id if attaching camera to an entity
+ * @param glm::vec2 offset
+ * @param float smoothing
+ */
 struct CameraComponent
 {
   int target;

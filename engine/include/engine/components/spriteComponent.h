@@ -6,6 +6,9 @@
 namespace sfs
 {
 
+/**
+ * @param uint32_t spriteId
+ */
 struct SpriteComponent
 {
   uint32_t spriteId;

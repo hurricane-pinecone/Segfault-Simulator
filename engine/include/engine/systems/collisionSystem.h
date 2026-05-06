@@ -85,7 +85,7 @@ private:
   const ColliderComponent* getCollision(const Entity& entity,
                                         const ColliderComponent& collider)
   {
-    for (const auto& other : registry->view<ColliderComponent, Solid>())
+    for (const auto& other : registry->view<ColliderComponent, SolidObject>())
     {
       if (entity == other)
         continue;

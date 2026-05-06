@@ -19,10 +19,15 @@
 void GameScene::onInit()
 {
   loadMap();
-  createPlayer();
+  createEntities();
+
+  addSystem<sfs::MovementSystem>();
+  addSystem<sfs::CollisionSystem>();
+  addSystem<sfs::CameraSystem>();
+  addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
 }
 
-void GameScene::createPlayer()
+void GameScene::createEntities()
 {
   m_assetStore.addTexture(
       "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
@@ -38,7 +43,7 @@ void GameScene::createPlayer()
           glm::vec2{300, 300}, glm::vec2{2.0, 2.0})
       .addComponent<sfs::ColliderComponent>(
           glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{300, 300})
-      .addTag<sfs::Solid>();
+      .addTag<sfs::SolidObject>();
 
   m_player = createEntity()
                  .addComponent<sfs::SpriteComponent>(playerSprite)
@@ -46,19 +51,13 @@ void GameScene::createPlayer()
                      glm::vec2{200.0, 200.0}, glm::vec2{2.0, 2.0})
                  .addComponent<sfs::ColliderComponent>(
                      glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{200, 200})
-                 .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0));
+                 .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0});
 
-  sfs::Entity camera =
-      createEntity()
-          .addComponent<sfs::TransformComponent>(
-              glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
-          .addComponent<sfs::CameraComponent>(
-              m_player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
-
-  addSystem<sfs::MovementSystem>();
-  addSystem<sfs::CollisionSystem>();
-  addSystem<sfs::CameraSystem>();
-  addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
+  createEntity()
+      .addComponent<sfs::TransformComponent>(
+          glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
+      .addComponent<sfs::CameraComponent>(
+          m_player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
 }
 
 void GameScene::onProcessInput(const sfs::Input& input)
@@ -103,7 +102,7 @@ void GameScene::loadMap()
 
       auto tile = createEntity()
                       .addComponent<sfs::TransformComponent>(
-                          glm::vec2(x * tileSize, y * tileSize))
+                          glm::vec2{x * tileSize, y * tileSize})
                       .addComponent<sfs::SpriteComponent>(spriteId);
 
       // TODO: Improve this whack ass check - The eventual map editor should be
@@ -111,11 +110,11 @@ void GameScene::loadMap()
       // Collide with water
       if (spriteId == 21)
       {
+        tile.addTag<sfs::SolidObject>();
         tile.addComponent<sfs::ColliderComponent>(
             glm::vec2{0, 0},
             glm::vec2{32, 32},
             glm::vec2{x * tileSize, y * tileSize});
-        tile.addTag<sfs::Solid>();
       }
     }
   }
