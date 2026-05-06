@@ -40,13 +40,12 @@ void Registry::addEntityToSystems(const Entity& entity)
 
   for (auto& system : systems)
   {
-    const auto& systemComponentSignature =
-        system.second->getComponentSignature();
+    const auto& systemComponentSignature = system->getComponentSignature();
 
     bool isInterested = (entityComponentSignature & systemComponentSignature) ==
                         systemComponentSignature;
     if (isInterested)
-      system.second->addEntity(entity);
+      system->addEntity(entity);
   }
 }
 
@@ -54,7 +53,7 @@ void Registry::removeEntityFromSystems(const Entity& entity)
 {
   for (auto& system : systems)
   {
-    system.second->removeEntity(entity);
+    system->removeEntity(entity);
   }
 }
 
@@ -90,7 +89,7 @@ void Registry::update(double deltaTime)
 
   entitiesToBeRemoved.clear();
 
-  for (auto& [type, system] : systems)
+  for (auto& system : systems)
   {
     system->update(deltaTime);
   }

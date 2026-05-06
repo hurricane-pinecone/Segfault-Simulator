@@ -1,13 +1,13 @@
 #pragma once
 
 #ifndef ENGINE_WEB
-#include "allocationMetrics.h"
-#include "format.h"
+  #include "allocationMetrics.h"
+  #include "format.h"
 
-#include "imgui_impl_sdl2.h"
-#include "imgui_impl_sdlrenderer2.h"
-#include <SDL_render.h>
-#include <imgui.h>
+  #include "imgui_impl_sdl2.h"
+  #include "imgui_impl_sdlrenderer2.h"
+  #include <SDL_render.h>
+  #include <imgui.h>
 
 namespace sfs
 {
@@ -25,11 +25,7 @@ inline static void renderDebugUI(SDL_Renderer* renderer)
 
   ImGui::Text("Current: %s", formatBytes(metrics.current.load()));
   ImGui::Text("Peak: %s", formatBytes(metrics.peak.load()));
-  ImGui::Text("Allocated: %s", formatBytes(metrics.allocated.load()));
-  ImGui::Text("Freed: %s", formatBytes(metrics.freed.load()));
   ImGui::Separator();
-  ImGui::Text("Alloc count: %zu", metrics.allocationCount.load());
-  ImGui::Text("Free count: %zu", metrics.freeCount.load());
   ImGui::Text("Live allocs: %zu",
               metrics.allocationCount.load() - metrics.freeCount.load());
 

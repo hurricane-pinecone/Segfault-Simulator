@@ -1,7 +1,10 @@
 
 #include "gameScene.h"
 #include "config.h"
+#include "engine/systems/collisionSystem.h"
+#include "glm/glm/ext/vector_float2.hpp"
 #include <engine/components/cameraComponent.h>
+#include <engine/components/colliderComponent.h>
 #include <engine/components/rigidBodyComponent.h>
 #include <engine/components/spriteComponent.h>
 #include <engine/components/transformComponent.h>
@@ -21,12 +24,27 @@ void GameScene::onInit()
 
 void GameScene::createPlayer()
 {
+  m_assetStore.addTexture(
+      "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
   auto playerSprite = m_assetStore.addSpriteFromSheet(
       "spritesheet", "guy", 16, 16, 16, 6, 1, 0);
+
+  auto enemySprite = m_assetStore.addSpriteFromSheet(
+      "spritesheet", "enemy", 16, 16, 0, 6, 1, 0);
+
+  createEntity()
+      .addComponent<sfs::TransformComponent>(
+          glm::vec2{300, 300}, glm::vec2{2.0, 2.0})
+      .addComponent<sfs::ColliderComponent>(
+          glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{300, 300})
+      .addComponent<sfs::SpriteComponent>(enemySprite)
+      .addTag<sfs::Solid>();
 
   m_player = createEntity()
                  .addComponent<sfs::TransformComponent>(
                      glm::vec2{200.0, 200.0}, glm::vec2{2.0, 2.0})
+                 .addComponent<sfs::ColliderComponent>(
+                     glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{200, 200})
                  .addComponent<sfs::RigidBodyComponent>(glm::vec2(0.0, 0.0))
                  .addComponent<sfs::SpriteComponent>(playerSprite);
 
@@ -38,8 +56,9 @@ void GameScene::createPlayer()
               m_player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
 
   addSystem<sfs::MovementSystem>();
-  addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
+  addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
+  addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
 }
 
 void GameScene::onProcessInput(const sfs::Input& input)
@@ -69,6 +88,7 @@ void GameScene::loadMap()
 {
   const int tileSize = 32;
 
+  m_assetStore.addTexture("jungle", ASSET_ROOT + "spriteSheets/jungle.png");
   std::vector<uint32_t> jungleSprites = m_assetStore.addSpritesFromSheet(
       "jungle", "jungle", tileSize, tileSize, 0, 0);
 
@@ -85,6 +105,16 @@ void GameScene::loadMap()
                       .addComponent<sfs::TransformComponent>(
                           glm::vec2(x * tileSize, y * tileSize))
                       .addComponent<sfs::SpriteComponent>(spriteId);
+
+      // TODO: Improve this whack ass check
+      if (spriteId == 21)
+      {
+        tile.addComponent<sfs::ColliderComponent>(
+            glm::vec2{0, 0},
+            glm::vec2{32, 32},
+            glm::vec2{x * tileSize, y * tileSize});
+        tile.addTag<sfs::Solid>();
+      }
     }
   }
 }

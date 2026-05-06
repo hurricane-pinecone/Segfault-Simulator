@@ -4,13 +4,13 @@
 #include "entity.h"
 #include "pool.h"
 #include "system.h"
+#include <algorithm>
 #include <engine/logger/logger.h>
 
 #include <memory>
 #include <set>
-#include <typeindex>
-#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -48,6 +48,9 @@ public:
   template <typename TSystem>
   TSystem& getSystem() const;
 
+  template <typename... TComponents>
+  std::vector<Entity> view();
+
 private:
   // TODO: Figure out how to hide registry.h from client completely. For now
   // this stops anything but Scene being able to create Registry.
@@ -72,7 +75,7 @@ private:
   // are turned on per entity
   std::vector<Signature> entityComponentSignatures;
 
-  std::unordered_map<std::type_index, std::unique_ptr<System>> systems;
+  std::vector<std::unique_ptr<System>> systems;
 };
 
 template <typename TComponent, typename... TArgs>
@@ -126,38 +129,68 @@ TComponent& Registry::getComponent(const Entity& entity)
 template <typename TSystem, typename... TArgs>
 void Registry::addSystem(TArgs&&... args)
 {
-  auto typeIndex = std::type_index(typeid(TSystem));
   auto system = std::make_unique<TSystem>(std::forward<TArgs>(args)...);
   system->setRegistry(this);
-  systems[typeIndex] = std::move(system);
+  systems.emplace_back(std::move(system));
 }
 
 template <typename TSystem>
 void Registry::removeSystem()
 {
-  auto typeIndex = std::type_index(typeid(TSystem));
-  systems.erase(typeIndex);
+  systems.erase(
+      std::remove_if(
+          systems.begin(),
+          systems.end(),
+          [](const std::unique_ptr<System>& system)
+          { return dynamic_cast<TSystem*>(system.get()) != nullptr; }),
+      systems.end());
 }
 
 template <typename TSystem>
 bool Registry::hasSystem() const
 {
-  auto typeIndex = std::type_index(typeid(TSystem));
-  return systems.find(typeIndex) != systems.end();
+  return std::any_of(
+      systems.begin(),
+      systems.end(),
+      [](const std::unique_ptr<System>& system)
+      { return dynamic_cast<TSystem*>(system.get()) != nullptr; });
 }
 
 template <typename TSystem>
 TSystem& Registry::getSystem() const
 {
-  auto typeIndex = std::type_index(typeid(TSystem));
-  auto system = systems.find(typeIndex);
-
-  if (system == systems.end())
+  for (const auto& system : systems)
   {
-    throw std::runtime_error("System does not exist");
+    if (auto* casted = dynamic_cast<TSystem*>(system.get()))
+    {
+      return *casted;
+    }
   }
 
-  return *static_cast<TSystem*>(system->second.get());
+  throw std::runtime_error("System not found");
+}
+
+template <typename... TComponents>
+std::vector<Entity> Registry::view()
+{
+  Signature requiredSignature;
+
+  (requiredSignature.set(Component<TComponents>::getId()), ...);
+
+  std::vector<Entity> result;
+
+  for (int entityId = 0; entityId < entityComponentSignatures.size();
+       entityId++)
+  {
+    const Signature& entitySignature = entityComponentSignatures[entityId];
+
+    if ((entitySignature & requiredSignature) == requiredSignature)
+    {
+      result.push_back(getEntity(entityId));
+    }
+  }
+
+  return result;
 }
 
 /*
@@ -170,6 +203,13 @@ TSystem& Registry::getSystem() const
  */
 template <typename TComponent, typename... TArgs>
 Entity& Entity::addComponent(TArgs&&... args)
+{
+  registry->addComponent<TComponent>(*this, std::forward<TArgs>(args)...);
+  return *this;
+}
+
+template <typename TComponent, typename... TArgs>
+Entity& Entity::addTag(TArgs&&... args)
 {
   registry->addComponent<TComponent>(*this, std::forward<TArgs>(args)...);
   return *this;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <engine/components/colliderComponent.h>
 #include <engine/components/rigidBodyComponent.h>
 #include <engine/components/transformComponent.h>
 #include <engine/ecs/system.h>
@@ -14,21 +15,29 @@ public:
   {
     registerComponent<TransformComponent>();
     registerComponent<RigidBodyComponent>();
-  };
+  }
+
   ~MovementSystem() = default;
 
   void update(double deltaTime) override
   {
     for (const auto& entity : getEntities())
     {
+      auto& rb = entity.getComponent<RigidBodyComponent>();
       auto& transform = entity.getComponent<TransformComponent>();
-      const auto rigidBody = entity.getComponent<RigidBodyComponent>();
 
-      transform.position.x += rigidBody.velocity.x * deltaTime;
-      transform.position.y += rigidBody.velocity.y * deltaTime;
-      transform.rotation += transform.rotation * deltaTime;
+      // Allows collision system to check lest position
+      transform.previousPosition = transform.position;
+      transform.position += rb.velocity * static_cast<float>(deltaTime);
+
+      if (entity.hasComponent<ColliderComponent>())
+      {
+        auto& collider = entity.getComponent<ColliderComponent>();
+
+        collider.updateBounds(transform.position);
+      }
     }
-  };
+  }
 };
 
 } // namespace sfs
