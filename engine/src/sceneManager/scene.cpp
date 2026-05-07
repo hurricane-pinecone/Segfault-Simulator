@@ -17,12 +17,20 @@ Entity Scene::createEntity() { return m_registry.createEntity(); }
 Entity Scene::getEntity(int id) { return m_registry.getEntity(id); }
 void Scene::destroyEntity(int id) { m_registry.destroyEntity(id); }
 
-void Scene::update(double deltaTime) { m_registry.update(deltaTime); }
+void Scene::update(double deltaTime)
+{
+  m_registry.update(deltaTime);
+  onUpdate(deltaTime);
+}
 void Scene::processInput(const Input& input) { onProcessInput(input); }
 void Scene::render(SDL_Renderer& renderer)
 {
   if (registry().hasSystem<RenderSystem>())
+  {
     registry().getSystem<RenderSystem>().render(renderer);
+  }
+
+  onPostRender();
 }
 
 } // namespace sfs

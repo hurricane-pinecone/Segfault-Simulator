@@ -65,6 +65,8 @@ protected:
   virtual void onInit() {};
   virtual void onEnter() {};
   virtual void onExit() {};
+  virtual void onUpdate(double deltaTime) {};
+  virtual void onPostRender() {};
   virtual void onProcessInput(const Input& input) {};
 
   friend class SceneManager;

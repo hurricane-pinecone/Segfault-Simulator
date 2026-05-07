@@ -12,6 +12,7 @@ public:
 protected:
   void onInit() override;
   void onProcessInput(const sfs::Input& input) override;
+  void onPostRender() override;
 
 private:
   void loadMap();
