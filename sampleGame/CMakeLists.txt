@@ -26,9 +26,13 @@ if(EMSCRIPTEN)
 
     target_link_options(sampleGame PRIVATE
         --shell-file "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
-        --preload-file "${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets"
+
+        "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets"
+        "--preload-file=${CMAKE_SOURCE_DIR}/engine/include/assets@/assets"
+
         -sALLOW_MEMORY_GROWTH=1
         -sASYNCIFY
+        -sUSE_SDL_TTF=2
     )
 else()
     add_custom_command(TARGET sampleGame POST_BUILD
