@@ -3,6 +3,7 @@
 #include "config.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "engine/systems/collisionSystem.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <engine/components/cameraComponent.h>
 #include <engine/components/colliderComponent.h>
@@ -16,6 +17,7 @@
 #include <engine/systems/renderSystem.h>
 #include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
+#include <string>
 
 void GameScene::onInit()
 {
@@ -86,7 +88,13 @@ void GameScene::onProcessInput(const sfs::Input& input)
 
 void GameScene::onPostRender()
 {
-  sfs::TextRenderer::drawText(20, 20, "Bing bong", sfs::Colors::Magenta);
+  auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
+  glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos / 32.0f));
+
+  sfs::TextRenderer::drawText(20,
+                              20,
+                              "Pos: " + std::to_string(playerGrid.x) + ", " +
+                                  std::to_string(playerGrid.y));
 }
 
 void GameScene::loadMap()
@@ -116,11 +124,11 @@ void GameScene::loadMap()
       // Collide with water
       if (spriteId == 21)
       {
-        tile.addTag<sfs::SolidObject>();
-        tile.addComponent<sfs::ColliderComponent>(
-            glm::vec2{0, 0},
-            glm::vec2{32, 32},
-            glm::vec2{x * tileSize, y * tileSize});
+        // tile.addTag<sfs::SolidObject>();
+        // tile.addComponent<sfs::ColliderComponent>(
+        //     glm::vec2{0, 0},
+        //     glm::vec2{32, 32},
+        //     glm::vec2{x * tileSize, y * tileSize});
       }
     }
   }

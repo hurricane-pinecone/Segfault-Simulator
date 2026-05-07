@@ -3,6 +3,7 @@
 #include "engine/ecs/entity.h"
 #include "engine/input/input.h"
 #include "engine/sceneManager/scene.h"
+#include "glm/glm/ext/vector_float2.hpp"
 
 class GameScene : public sfs::Scene
 {
@@ -20,4 +21,5 @@ private:
 
 private:
   sfs::Entity m_player;
+  glm::vec2 m_mousePos;
 };
