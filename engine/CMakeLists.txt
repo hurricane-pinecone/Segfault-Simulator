@@ -31,6 +31,9 @@ target_compile_options(engine PRIVATE
     -Wno-unknown-warning-option
 )
 
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets
+     DESTINATION ${CMAKE_BINARY_DIR}/bin)
+
 if(EMSCRIPTEN)
     target_compile_definitions(engine PUBLIC
         ENGINE_WEB=1

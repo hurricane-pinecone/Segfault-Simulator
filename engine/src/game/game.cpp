@@ -1,8 +1,10 @@
 
 #include <SDL_error.h>
+#include <SDL_ttf.h>
 #include <engine/game/game.h>
 
 #include "SDL.h"
+#include "engine/TextRenderer/textRenderer.h"
 
 #include <engine/assetStore/sprite.h>
 #include <engine/components/rigidBodyComponent.h>
@@ -45,6 +47,11 @@ bool Game::init(int windowWidth, int windowHeight)
     return false;
   }
 
+  if (TTF_Init() != 0)
+  {
+    LOG_ERROR(std::string("Error initializing TTF: ") + TTF_GetError());
+  }
+
   SDL_DisplayMode displayMode;
   SDL_GetCurrentDisplayMode(0, &displayMode);
 
@@ -80,9 +87,6 @@ bool Game::init(int windowWidth, int windowHeight)
   ImGui_ImplSDLRenderer2_Init(renderer);
 #endif
 
-  LOG_INFO("Game renderer ptr: " +
-           std::to_string(reinterpret_cast<std::uintptr_t>(renderer)));
-
   onInit();
 
   isRunning = true;
@@ -96,6 +100,8 @@ void Game::setup()
 
   assetStore = std::make_unique<AssetStore>(*renderer);
   sceneManager.setAssetStore(assetStore.get());
+
+  TextRenderer::init(*renderer, *assetStore);
 
   onSetup();
 }
