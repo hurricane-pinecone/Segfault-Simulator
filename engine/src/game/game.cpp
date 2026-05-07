@@ -233,13 +233,13 @@ void Game::render()
   SDL_RenderClear(renderer);
 
   {
-    sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
 
     if (!sceneManager)
       return;
 
     sceneManager.current()->render(*renderer);
 
+    sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
     onRender();
   }
 

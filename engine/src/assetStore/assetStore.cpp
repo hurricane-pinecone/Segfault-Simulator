@@ -1,6 +1,7 @@
 #include "engine/utils/string.h"
 #include <SDL.h>
 #include <SDL_image.h>
+#include <SDL_rect.h>
 #include <SDL_render.h>
 #include <SDL_ttf.h>
 #include <cstddef>

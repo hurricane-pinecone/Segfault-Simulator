@@ -83,6 +83,8 @@ cmake --build --preset release --target run
 
 ### Web build
 
+The web build can't be run in debug because ImGUI is stripped from the build
+
 ```bash
 rm -rf build-web
 emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release

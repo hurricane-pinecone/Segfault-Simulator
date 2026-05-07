@@ -67,10 +67,14 @@ public:
       glm::vec2 screenPosition =
           transform.position - cameraPosition + screenCenter;
 
-      SDL_Rect dest = {static_cast<int>(screenPosition.x),
-                       static_cast<int>(screenPosition.y),
-                       static_cast<int>(sprite->srcRect.w * transform.scale.x),
-                       static_cast<int>(sprite->srcRect.h * transform.scale.y)};
+      int width = static_cast<int>(sprite->srcRect.w * transform.scale.x);
+
+      int height = static_cast<int>(sprite->srcRect.h * transform.scale.y);
+
+      SDL_Rect dest = {static_cast<int>(screenPosition.x - width / 2.0f),
+                       static_cast<int>(screenPosition.y - height / 2.0f),
+                       width,
+                       height};
 
       SDL_RenderCopyEx(&renderer,
                        texture,
