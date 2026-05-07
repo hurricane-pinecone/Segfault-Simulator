@@ -2,6 +2,8 @@
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_render.h>
+#include <SDL_ttf.h>
+#include <cstddef>
 #include <engine/assetStore/assetStore.h>
 #include <engine/assetStore/sprite.h>
 #include <engine/logger/logger.h>
@@ -16,8 +18,11 @@ using json = nlohmann::json;
 void AssetStore::clearAssets()
 {
   textures.clear();
+  sprites.clear();
+  spriteNameToId.clear();
+  fonts.clear();
 
-  LOG_DEBUG("Asset store textures cleared.");
+  LOG_DEBUG("Asset store cleared.");
 }
 
 void AssetStore::addTexture(const std::string& assetId,
@@ -189,6 +194,38 @@ const Sprite* AssetStore::getSprite(const std::string& spriteId) const
     return nullptr;
 
   return getSprite(it->second);
+}
+
+TTF_Font* AssetStore::addFont(const std::string& fontId,
+                              const std::string& path,
+                              int size)
+{
+  TTF_Font* rawFont = TTF_OpenFont(path.c_str(), size);
+
+  if (!rawFont)
+  {
+    LOG_ERROR("Failed to load font at " + path + " : " + TTF_GetError());
+    return nullptr;
+  }
+
+  fonts.emplace(fontId, FontPtr(rawFont, TTF_CloseFont));
+
+  return rawFont;
+}
+
+void AssetStore::removeFont(const std::string& fontId) { fonts.erase(fontId); }
+
+TTF_Font* AssetStore::getFont(const std::string& fontId) const
+{
+  auto it = fonts.find(fontId);
+
+  if (it == fonts.end())
+  {
+    LOG_ERROR("Font not found: " + fontId);
+    return nullptr;
+  }
+
+  return it->second.get();
 }
 
 } // namespace sfs

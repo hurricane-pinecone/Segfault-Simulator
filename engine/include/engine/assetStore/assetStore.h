@@ -1,12 +1,11 @@
 #pragma once
 
-#include "engine/logger/logger.h"
 #include "sprite.h"
 #include <SDL2/SDL_render.h>
 #include <SDL_rect.h>
+#include <SDL_ttf.h>
 #include <cstdint>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -56,16 +55,23 @@ public:
   const Sprite* getSprite(uint32_t spriteId) const;
   const Sprite* getSprite(const std::string& spriteId) const;
 
+  TTF_Font*
+  addFont(const std::string& fontId, const std::string& filePath, int size);
+  void removeFont(const std::string& fontId);
+  TTF_Font* getFont(const std::string& fontId) const;
+
   AssetStore(const AssetStore&) = delete;
   AssetStore& operator=(const AssetStore&) = delete;
 
 private:
   using TexturePtr =
       std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)>;
+  using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
 
   SDL_Renderer& renderer;
 
   std::unordered_map<std::string, TexturePtr> textures;
+  std::unordered_map<std::string, FontPtr> fonts;
 
   // This looks wierd, but its more performant than storing strings as the main
   // sprite key (sprites).

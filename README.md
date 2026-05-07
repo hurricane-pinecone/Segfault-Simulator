@@ -127,7 +127,7 @@ conan profile detect --force
 ## Clean Build
 
 ```bash
-rm -rf build compile_commands.json CMakeUserPresets.json
+rm -rf build
 rm -rf engine/build
 
 conan install . --build=missing -s build_type=Debug

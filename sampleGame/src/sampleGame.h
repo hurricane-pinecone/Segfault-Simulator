@@ -12,6 +12,7 @@ public:
 
 protected:
   void onSetup() override;
+  void onRender() override;
   void onProcessInput(const sfs::Input& input) override;
   void onDestroy() override;
 };
