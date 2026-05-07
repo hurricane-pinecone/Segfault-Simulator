@@ -1,11 +1,11 @@
 #pragma once
 
+#include "engine/types/SDLPtrs.h"
 #include "sprite.h"
 #include <SDL2/SDL_render.h>
 #include <SDL_rect.h>
 #include <SDL_ttf.h>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -64,10 +64,6 @@ public:
   AssetStore& operator=(const AssetStore&) = delete;
 
 private:
-  using TexturePtr =
-      std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)>;
-  using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
-
   SDL_Renderer& renderer;
 
   std::unordered_map<std::string, TexturePtr> textures;

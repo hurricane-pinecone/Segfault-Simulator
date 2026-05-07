@@ -1,4 +1,6 @@
+#include "engine/Color/Color.h"
 #include "engine/logger/logger.h"
+#include "engine/types/SDLPtrs.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
 #include <engine/TextRenderer/textRenderer.h>
@@ -9,6 +11,17 @@ namespace sfs
 bool TextRenderer::m_initialized = false;
 SDL_Renderer* TextRenderer::m_renderer = nullptr;
 AssetStore* TextRenderer::m_assetStore = nullptr;
+
+std::unordered_map<std::string, CachedText> TextRenderer::m_textCache;
+
+std::string TextRenderer::buildCacheKey(const std::string& text,
+                                        const std::string& fontId,
+                                        Color color)
+{
+  return fontId + "_" + std::to_string(color.r) + "_" +
+         std::to_string(color.g) + "_" + std::to_string(color.b) + "_" +
+         std::to_string(color.a) + "_" + text;
+}
 
 bool TextRenderer::init(SDL_Renderer& sdlRenderer, AssetStore& assetStore)
 {
@@ -48,77 +61,79 @@ void TextRenderer::shutdown()
 
 bool TextRenderer::isInitialized() { return m_initialized; }
 
-void TextRenderer::drawText(float x, float y, const std::string& text)
-{
-  SDL_Color white = {255, 255, 255, 255};
-  drawText(x, y, text, "default", white);
-}
-
 void TextRenderer::drawText(float x,
                             float y,
                             const std::string& text,
-                            const std::string& fontId)
+                            Color color)
 {
-  SDL_Color white = {255, 255, 255, 255};
-  drawText(x, y, text, fontId, white);
+  drawText(x, y, text, "default", color);
 }
 
 void TextRenderer::drawText(float x,
                             float y,
                             const std::string& text,
                             const std::string& fontId,
-                            SDL_Color color)
+                            Color color)
 {
   if (!m_initialized)
-  {
     return;
-  }
 
   if (!m_renderer || !m_assetStore)
-  {
     return;
-  }
 
   if (text.empty())
-  {
     return;
-  }
 
   TTF_Font* font = m_assetStore->getFont(fontId);
 
   if (!font)
-  {
     return;
-  }
 
-  SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), color);
+  std::string cacheKey = buildCacheKey(text, fontId, color);
 
-  if (!surface)
+  auto it = m_textCache.find(cacheKey);
+
+  if (it == m_textCache.end())
   {
-    LOG_ERROR(std::string("Failed to render text surface: ") + TTF_GetError());
-    return;
-  }
+    SDL_Surface* surface =
+        TTF_RenderText_Blended(font, text.c_str(), color.toSDL());
 
-  SDL_Texture* texture = SDL_CreateTextureFromSurface(m_renderer, surface);
+    if (!surface)
+    {
+      LOG_ERROR(std::string("Failed to render text surface: ") +
+                TTF_GetError());
+      return;
+    }
 
-  if (!texture)
-  {
-    LOG_ERROR(std::string("Failed to create text texture: ") + SDL_GetError());
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(m_renderer, surface);
+
+    if (!texture)
+    {
+      LOG_ERROR(std::string("Failed to create text texture: ") +
+                SDL_GetError());
+
+      SDL_FreeSurface(surface);
+      return;
+    }
+
+    CachedText cached{
+        surface->w, surface->h, TexturePtr(texture, SDL_DestroyTexture)};
+
     SDL_FreeSurface(surface);
-    return;
+
+    auto [insertedIt, inserted] =
+        m_textCache.emplace(cacheKey, std::move(cached));
+
+    it = insertedIt;
   }
 
   SDL_Rect dstRect;
   dstRect.x = static_cast<int>(x);
   dstRect.y = static_cast<int>(y);
-  dstRect.w = surface->w;
-  dstRect.h = surface->h;
+  dstRect.w = it->second.width;
+  dstRect.h = it->second.height;
 
-  SDL_FreeSurface(surface);
-
-  SDL_RenderCopy(m_renderer, texture, nullptr, &dstRect);
-
-  SDL_DestroyTexture(texture);
+  SDL_RenderCopy(m_renderer, it->second.texture.get(), nullptr, &dstRect);
 }
 
 } // namespace sfs
