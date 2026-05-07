@@ -1,6 +1,7 @@
 
 #include "gameScene.h"
 #include "config.h"
+#include "engine/TextRenderer/textRenderer.h"
 #include "engine/systems/collisionSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <engine/components/cameraComponent.h>
@@ -81,6 +82,11 @@ void GameScene::onProcessInput(const sfs::Input& input)
   auto& rb = m_player.getComponent<sfs::RigidBodyComponent>();
 
   rb.velocity = direction * 200.0f;
+}
+
+void GameScene::onPostRender()
+{
+  sfs::TextRenderer::drawText(20, 20, "Bing bong", sfs::Colors::Magenta);
 }
 
 void GameScene::loadMap()

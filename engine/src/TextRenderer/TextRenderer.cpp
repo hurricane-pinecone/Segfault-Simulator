@@ -61,6 +61,11 @@ void TextRenderer::shutdown()
 
 bool TextRenderer::isInitialized() { return m_initialized; }
 
+void TextRenderer::drawText(float x, float y, const std::string& text)
+{
+  drawText(x, y, text, "default", Colors::White);
+}
+
 void TextRenderer::drawText(float x,
                             float y,
                             const std::string& text,

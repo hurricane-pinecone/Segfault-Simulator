@@ -23,15 +23,14 @@ public:
 
   static bool isInitialized();
 
-  static void drawText(float x,
-                       float y,
-                       const std::string& text,
-                       Color color = Colors::White);
+  static void drawText(float x, float y, const std::string& text);
+
+  static void drawText(float x, float y, const std::string& text, Color color);
 
   static void drawText(float x,
                        float y,
                        const std::string& text,
-                       const std::string& fontId = "default",
+                       const std::string& fontId,
                        Color color = Colors::White);
 
 private:
