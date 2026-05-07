@@ -81,6 +81,15 @@ cmake --build --preset release
 cmake --build --preset release --target run
 ```
 
+### Web build
+
+```bash
+rm -rf build-web
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web
+python3 -m http.server 8080 -d build-web/bin
+```
+
 ## LSP / clangd setup
 
 ```bash
