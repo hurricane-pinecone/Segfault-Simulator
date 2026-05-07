@@ -1,5 +1,6 @@
 
 #include "sampleGame.h"
+#include "engine/Color/Color.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "scenes/gameScene.h"
 #include <engine/input/keyboardInput.h>
@@ -15,7 +16,10 @@ void SampleGame::onSetup()
   isRunning = true;
 }
 
-void SampleGame::onRender() { sfs::TextRenderer::drawText(20, 20, "Hello"); }
+void SampleGame::onRender()
+{
+  sfs::TextRenderer::drawText(20, 20, "Bing bong", sfs::Colors::Magenta);
+}
 
 void SampleGame::onProcessInput(const sfs::Input& input)
 {
