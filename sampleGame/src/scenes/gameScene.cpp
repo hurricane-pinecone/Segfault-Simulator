@@ -3,8 +3,10 @@
 #include "config.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "engine/systems/collisionSystem.h"
+#include "engine/systems/isometricRenderSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
+#include <SDL_rect.h>
 #include <engine/components/cameraComponent.h>
 #include <engine/components/colliderComponent.h>
 #include <engine/components/rigidBodyComponent.h>
@@ -27,7 +29,8 @@ void GameScene::onInit()
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
-  addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
+  // addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
+  addSystem<sfs::IsometricRenderSystem>(m_assetStore, 800, 600, 32, 16);
 }
 
 void GameScene::createEntities()
@@ -40,18 +43,11 @@ void GameScene::createEntities()
   auto enemySprite = m_assetStore.addSpriteFromSheet(
       "spritesheet", "enemy", 16, 16, 0, 6, 1, 0);
 
-  createEntity()
-      .addComponent<sfs::SpriteComponent>(enemySprite)
-      .addComponent<sfs::TransformComponent>(
-          glm::vec2{300, 300}, glm::vec2{2.0, 2.0})
-      .addComponent<sfs::ColliderComponent>(
-          glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{300, 300})
-      .addTag<sfs::SolidObject>();
-
   m_player = createEntity()
-                 .addComponent<sfs::SpriteComponent>(playerSprite)
+                 .addComponent<sfs::SpriteComponent>(
+                     playerSprite, glm::vec2{0.5f, 1.0f})
                  .addComponent<sfs::TransformComponent>(
-                     glm::vec2{200.0, 200.0}, glm::vec2{2.0, 2.0})
+                     glm::vec2{12.0, 12.0}, glm::vec2{1.0, 1.0})
                  .addComponent<sfs::ColliderComponent>(
                      glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{200, 200})
                  .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0});
@@ -65,31 +61,56 @@ void GameScene::createEntities()
 
 void GameScene::onProcessInput(const sfs::Input& input)
 {
-  glm::vec2 direction(0.0f);
+  glm::vec2 screenDirection(0.0f);
 
   if (input.keyboard().keyHeld(sfs::Key::A))
-    direction.x -= 1.0f;
+    screenDirection.x -= 1.0f;
   if (input.keyboard().keyHeld(sfs::Key::D))
-    direction.x += 1.0f;
+    screenDirection.x += 1.0f;
   if (input.keyboard().keyHeld(sfs::Key::W))
-    direction.y -= 1.0f;
+    screenDirection.y -= 1.0f;
   if (input.keyboard().keyHeld(sfs::Key::S))
-    direction.y += 1.0f;
+    screenDirection.y += 1.0f;
 
-  if (glm::length(direction) > 0.0f)
+  if (glm::length(screenDirection) > 0.0f)
   {
-    direction = glm::normalize(direction);
+    screenDirection = glm::normalize(screenDirection);
+  }
+
+  glm::vec2 gridDirection{screenDirection.y + screenDirection.x,
+                          screenDirection.y - screenDirection.x};
+
+  if (glm::length(gridDirection) > 0.0f)
+  {
+    gridDirection = glm::normalize(gridDirection);
   }
 
   auto& rb = m_player.getComponent<sfs::RigidBodyComponent>();
+  rb.velocity = gridDirection * 5.0f;
+}
 
-  rb.velocity = direction * 200.0f;
+void GameScene::onRender(SDL_Renderer& renderer)
+{
+  const auto& playerTransform =
+      m_player.getComponent<sfs::TransformComponent>();
+
+  glm::vec2 playerTile = glm::floor(playerTransform.position);
+
+  int elevation = 0;
+
+  if (playerTile.y < 10)
+  {
+    elevation = 10 - static_cast<int>(playerTile.y);
+  }
+
+  getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
+      renderer, playerTile, elevation);
 }
 
 void GameScene::onPostRender()
 {
   auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
-  glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos / 32.0f));
+  glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos));
 
   sfs::TextRenderer::drawText(20,
                               20,
@@ -97,39 +118,54 @@ void GameScene::onPostRender()
                                   std::to_string(playerGrid.y));
 }
 
+void GameScene::onUpdate(double deltaTime)
+{
+  m_worldWaveTime += static_cast<float>(deltaTime);
+
+  getSystem<sfs::IsometricRenderSystem>().setWaveTime(m_worldWaveTime);
+}
+
 void GameScene::loadMap()
 {
   const int tileSize = 32;
 
-  m_assetStore.addTexture("jungle", ASSET_ROOT + "spriteSheets/jungle.png");
-  std::vector<uint32_t> jungleSprites = m_assetStore.addSpritesFromSheet(
-      "jungle", "jungle", tileSize, tileSize, 0, 0);
+  m_assetStore.addTexture("block", ASSET_ROOT + "sprites/block.png");
+  m_assetStore.addTexture("blockHalf", ASSET_ROOT + "sprites/block_half.png");
+  auto blockSprite =
+      m_assetStore.addSprite("block", "block", SDL_Rect{0, 0, 32, 32});
 
-  sfs::MapData map =
-      sfs::MapLoader::parseMapFile(ASSET_ROOT + "maps/jungle.map");
+  auto blockHalf =
+      m_assetStore.addSprite("blockHalf", "blockHalf", SDL_Rect{0, 0, 32, 32});
 
-  for (int y = 0; y < map.height; y++)
+  // sfs::MapData map =
+  //     sfs::MapLoader::parseMapFile(ASSET_ROOT + "maps/jungle.map");
+
+  for (int y = 0; y < 25; y++)
   {
-    for (int x = 0; x < map.width; x++)
+    for (int x = 0; x < 25; x++)
     {
-      uint32_t spriteId = map.tiles[y * map.width + x];
+      int elevation = 0;
 
-      auto tile = createEntity()
-                      .addComponent<sfs::TransformComponent>(
-                          glm::vec2{x * tileSize, y * tileSize})
-                      .addComponent<sfs::SpriteComponent>(spriteId);
-
-      // TODO: Improve this whack ass check - The eventual map editor should be
-      // able to store metadata for tiles
-      // Collide with water
-      if (spriteId == 21)
+      // Hill at the top of the map
+      if (y < 10)
       {
-        // tile.addTag<sfs::SolidObject>();
-        // tile.addComponent<sfs::ColliderComponent>(
-        //     glm::vec2{0, 0},
-        //     glm::vec2{32, 32},
-        //     glm::vec2{x * tileSize, y * tileSize});
+        elevation = 10 - y;
       }
+
+      for (int z = 0; z < elevation; z++)
+      {
+        createEntity()
+            .addComponent<sfs::TransformComponent>(glm::vec2{x, y})
+            .addComponent<sfs::SpriteComponent>(blockHalf)
+            .addComponent<sfs::ElevationComponent>(z)
+            .addTag<sfs::IsometricTile>();
+      }
+
+      createEntity()
+          .addComponent<sfs::TransformComponent>(glm::vec2{x, y})
+          .addComponent<sfs::SpriteComponent>(blockSprite)
+          .addComponent<sfs::ElevationComponent>(elevation)
+          .addTag<sfs::IsometricTile>();
     }
   }
 }

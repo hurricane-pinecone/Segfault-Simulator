@@ -66,6 +66,7 @@ protected:
   virtual void onEnter() {};
   virtual void onExit() {};
   virtual void onUpdate(double deltaTime) {};
+  virtual void onRender(SDL_Renderer& renderer) {};
   virtual void onPostRender() {};
   virtual void onProcessInput(const Input& input) {};
 

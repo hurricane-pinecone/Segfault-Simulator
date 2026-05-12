@@ -13,6 +13,8 @@ public:
 protected:
   void onInit() override;
   void onProcessInput(const sfs::Input& input) override;
+  void onRender(SDL_Renderer& renderer) override;
+  void onUpdate(double deltaTime) override;
   void onPostRender() override;
 
 private:
@@ -22,4 +24,5 @@ private:
 private:
   sfs::Entity m_player;
   glm::vec2 m_mousePos;
+  float m_worldWaveTime;
 };

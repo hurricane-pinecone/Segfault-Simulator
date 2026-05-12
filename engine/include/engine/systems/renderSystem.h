@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/systems/cameraSystem.h"
+#include "engine/systems/isometricRenderSystem.h"
 #include <SDL_rect.h>
 #include <SDL_render.h>
 #include <engine/assetStore/assetStore.h>
@@ -43,6 +44,8 @@ public:
 
     for (const auto& entity : getEntities())
     {
+      if (entity.hasComponent<IsometricTile>())
+        continue;
       const auto& transform = entity.getComponent<TransformComponent>();
       const auto& spriteComponent = entity.getComponent<SpriteComponent>();
 

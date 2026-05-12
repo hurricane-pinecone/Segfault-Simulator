@@ -1,5 +1,6 @@
 
 #include "engine/input/input.h"
+#include "engine/systems/isometricRenderSystem.h"
 #include <engine/ecs/registry.h>
 #include <engine/sceneManager/scene.h>
 #include <engine/systems/renderSystem.h>
@@ -25,11 +26,16 @@ void Scene::update(double deltaTime)
 void Scene::processInput(const Input& input) { onProcessInput(input); }
 void Scene::render(SDL_Renderer& renderer)
 {
+  if (registry().hasSystem<IsometricRenderSystem>())
+  {
+    registry().getSystem<IsometricRenderSystem>().render(renderer);
+  }
   if (registry().hasSystem<RenderSystem>())
   {
     registry().getSystem<RenderSystem>().render(renderer);
   }
 
+  onRender(renderer);
   onPostRender();
 }
 
