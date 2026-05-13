@@ -9,6 +9,7 @@ namespace sfs
 
 /**
  * @param uint32_t spriteId
+ * @param glm::vec2 anchor
  */
 struct SpriteComponent
 {
@@ -19,6 +20,13 @@ struct SpriteComponent
       : spriteId(spriteId), anchor(anchor)
   {
   }
+};
+
+struct NormalMapComponent
+{
+  uint32_t spriteId;
+
+  NormalMapComponent(uint32_t spriteId) : spriteId(spriteId) {}
 };
 
 } // namespace sfs

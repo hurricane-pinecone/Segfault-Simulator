@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/systems/cameraSystem.h"
+#include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/geometric.hpp"
 
 #include <SDL_rect.h>
 #include <SDL_render.h>
@@ -106,10 +108,36 @@ public:
       const glm::vec2 surfacePosition{
           screenPosition.x, screenPosition.y - elevationOffset - waveOffset};
 
+      glm::vec3 spriteLightSample{surfacePosition.x,
+                                  surfacePosition.y,
+                                  static_cast<float>(elevationOffset)};
+
+      glm::vec3 lightDir = glm::normalize(m_lightPosition - spriteLightSample);
+
       SDL_Rect dest{static_cast<int>(std::round(surfacePosition.x - anchorX)),
                     static_cast<int>(std::round(surfacePosition.y - anchorY)),
                     width,
                     height};
+
+      bool hasNormalMap = entity.hasComponent<NormalMapComponent>();
+
+      if (hasNormalMap)
+      {
+        const auto& normalMap = entity.getComponent<NormalMapComponent>();
+
+        // later: use normalMap.spriteId to sample lighting data
+        // for now: apply primitive lit tint
+        glm::vec3 faceNormal = glm::normalize(glm::vec3{0.0f, -0.4f, 1.0f});
+
+        float brightness = computeBrightness(faceNormal, lightDir);
+        Uint8 tint = toTint(brightness);
+
+        SDL_SetTextureColorMod(texture, tint, tint, tint);
+      }
+      else
+      {
+        SDL_SetTextureColorMod(texture, 255, 255, 255);
+      }
 
       SDL_RenderCopyEx(&renderer,
                        texture,
@@ -118,6 +146,8 @@ public:
                        0.0,
                        nullptr,
                        SDL_FLIP_NONE);
+
+      SDL_SetTextureColorMod(texture, 255, 255, 255);
     }
   }
 
@@ -169,10 +199,47 @@ public:
     SDL_RenderDrawLines(&renderer, points, 5);
   }
 
+  void setLightPosition(int x, int y, int z)
+  {
+    m_lightPosition = {
+        static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
+  }
+
   IsometricRenderSystem(const IsometricRenderSystem&) = delete;
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
 
 private:
+  glm::vec3 getFaceNormalFromColor(SDL_Color color)
+  {
+    if (color.r > 200 && color.g < 80 && color.b < 80)
+      return glm::normalize(glm::vec3{1.0f, 0.0f, 0.65f}); // right
+
+    if (color.g > 200 && color.r < 80 && color.b < 80)
+      return glm::normalize(glm::vec3{-1.0f, 0.0f, 0.65f}); // left
+
+    if (color.b > 200 && color.r < 80 && color.g < 80)
+      return glm::normalize(glm::vec3{0.0f, -0.4f, 1.0f}); // top
+
+    return glm::vec3{0.0f, 0.0f, 1.0f};
+  }
+
+  Uint8 toTint(float value) const
+  {
+    value = std::clamp(value, 0.0f, 1.0f);
+    return static_cast<Uint8>(value * 255.0f);
+  }
+
+  float computeBrightness(const glm::vec3& normal,
+                          const glm::vec3& lightDir) const
+  {
+    constexpr float ambient = 0.25f;
+    constexpr float diffuseStrength = 0.85f;
+
+    float diffuse = std::max(glm::dot(normal, lightDir), 0.0f);
+
+    return std::clamp(ambient + diffuse * diffuseStrength, 0.0f, 1.0f);
+  }
+
   glm::vec2 getCameraPosition() const
   {
     if (!registry->hasSystem<CameraSystem>())
@@ -294,6 +361,8 @@ private:
   int tileHeight;
 
   int elevationStep = 8;
+
+  glm::vec3 m_lightPosition = {0.0f, 0.0f, 0.0f};
 
   bool waveEnabled = true;
   float waveTime = 0.0f;
