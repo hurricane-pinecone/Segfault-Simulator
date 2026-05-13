@@ -153,9 +153,7 @@ public:
 
       constexpr float directionInfluence = 0.65f;
 
-      glm::vec3 lightDir =
-          glm::normalize(pointDir * (1.0f - directionInfluence) +
-                         m_lightDirection * directionInfluence);
+      glm::vec3 lightDir = m_lightDirection;
 
       // glm::vec3 lightDir = glm::normalize(glm::vec3{-1.0f, 0.5f, 0.5f});
 
@@ -177,7 +175,7 @@ public:
 
         if (albedoSurface && normalSurface)
         {
-          const int bucketScale = 8;
+          const int bucketScale = 64;
 
           LitTextureKey key{spriteComponent.spriteId,
                             normalMap.spriteId,
@@ -294,7 +292,27 @@ public:
     if (glm::length(direction) < 0.001f)
       return;
 
-    m_lightDirection = glm::normalize(direction);
+    glm::vec3 newDirection = glm::normalize(direction);
+
+    if (glm::distance(newDirection, m_lightDirection) > 0.005f)
+    {
+      m_lightDirection = newDirection;
+      clearLitTextureCache();
+    }
+  }
+
+  void setLighting(float ambient, float diffuseStrength)
+  {
+    ambient = std::clamp(ambient, 0.0f, 1.0f);
+    diffuseStrength = std::clamp(diffuseStrength, 0.0f, 2.0f);
+
+    if (std::abs(ambient - m_ambient) > 0.005f ||
+        std::abs(diffuseStrength - m_diffuseStrength) > 0.005f)
+    {
+      m_ambient = ambient;
+      m_diffuseStrength = diffuseStrength;
+      clearLitTextureCache();
+    }
   }
 
   glm::vec2 gridToIsometric(const glm::vec2& gridPosition) const
@@ -340,15 +358,10 @@ private:
   float computeBrightness(const glm::vec3& normal,
                           const glm::vec3& lightDir) const
   {
-    constexpr float ambient = 0.12f;
-    constexpr float diffuseStrength = 0.85f;
-
     float ndotl = std::max(glm::dot(normal, lightDir), 0.0f);
-
-    // Slightly softened but still punchy.
     float diffuse = std::pow(ndotl, 0.75f);
 
-    return std::clamp(ambient + diffuse * diffuseStrength, 0.0f, 0.95f);
+    return std::clamp(m_ambient + diffuse * m_diffuseStrength, 0.0f, 1.0f);
   }
 
   glm::vec2 getCameraPosition() const
@@ -575,6 +588,9 @@ private:
 
   glm::vec3 m_lightPosition = {0.0f, 0.0f, 0.0f};
   glm::vec3 m_lightDirection = {0.0f, 0.0f, 1.0f};
+
+  float m_ambient = 0.18f;
+  float m_diffuseStrength = 0.85f;
 
   bool waveEnabled = true;
   float waveTime = 0.0f;
