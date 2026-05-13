@@ -61,6 +61,12 @@ void GameScene::createEntities()
 
 void GameScene::onProcessInput(const sfs::Input& input)
 {
+  int mouseX = 0;
+  int mouseY = 0;
+  SDL_GetMouseState(&mouseX, &mouseY);
+
+  getSystem<sfs::IsometricRenderSystem>().setLightPosition(mouseX, mouseY, 128);
+
   glm::vec2 screenDirection(0.0f);
 
   if (input.keyboard().keyHeld(sfs::Key::A))
@@ -130,9 +136,13 @@ void GameScene::loadMap()
   const int tileSize = 32;
 
   m_assetStore.addTexture("block", ASSET_ROOT + "sprites/block.png");
+  m_assetStore.addTexture(
+      "blockNormal", ASSET_ROOT + "sprites/block_normal.png");
   m_assetStore.addTexture("blockHalf", ASSET_ROOT + "sprites/block_half.png");
   auto blockSprite =
       m_assetStore.addSprite("block", "block", SDL_Rect{0, 0, 32, 32});
+  auto blockNormal = m_assetStore.addSprite(
+      "blockNormal", "blockNormal", SDL_Rect{0, 0, 32, 32});
 
   auto blockHalf =
       m_assetStore.addSprite("blockHalf", "blockHalf", SDL_Rect{0, 0, 32, 32});
@@ -164,6 +174,7 @@ void GameScene::loadMap()
       createEntity()
           .addComponent<sfs::TransformComponent>(glm::vec2{x, y})
           .addComponent<sfs::SpriteComponent>(blockSprite)
+          .addComponent<sfs::NormalMapComponent>(blockNormal)
           .addComponent<sfs::ElevationComponent>(elevation)
           .addTag<sfs::IsometricTile>();
     }
