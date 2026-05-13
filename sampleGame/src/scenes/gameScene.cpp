@@ -2,7 +2,9 @@
 #include "gameScene.h"
 #include "config.h"
 #include "engine/TextRenderer/textRenderer.h"
+#include "engine/components/lightEmitterComponent.h"
 #include "engine/systems/collisionSystem.h"
+#include "engine/systems/isometricLightingSystem.h"
 #include "engine/systems/isometricRenderSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -29,8 +31,8 @@ void GameScene::onInit()
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
-  // addSystem<sfs::RenderSystem>(m_assetStore, 800, 600);
   addSystem<sfs::IsometricRenderSystem>(m_assetStore, 800, 600, 32, 16);
+  addSystem<sfs::IsometricLightingSystem>(m_assetStore);
 }
 
 void GameScene::createEntities()
@@ -124,8 +126,8 @@ void GameScene::onRender(SDL_Renderer& renderer)
     elevation = 10 - static_cast<int>(playerTile.y);
   }
 
-  getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
-      renderer, playerTile, elevation);
+  // getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
+  //     renderer, playerTile, elevation);
 }
 
 void GameScene::onPostRender()
@@ -150,14 +152,18 @@ void GameScene::loadMap()
 {
   const int tileSize = 32;
 
+  m_assetStore.addTexture("lamp", ASSET_ROOT + "sprites/lamp.png");
+  auto lamp = m_assetStore.addSprite("lamp", "lamp", SDL_Rect{0, 0, 32, 32});
+
   m_assetStore.addTexture("block", ASSET_ROOT + "sprites/block.png");
   m_assetStore.addTexture(
       "blockNormal", ASSET_ROOT + "sprites/block_normal.png");
-  m_assetStore.addTexture("blockHalf", ASSET_ROOT + "sprites/block_half.png");
   auto blockSprite =
       m_assetStore.addSprite("block", "block", SDL_Rect{0, 0, 32, 32});
   auto blockNormal = m_assetStore.addSprite(
       "blockNormal", "blockNormal", SDL_Rect{0, 0, 32, 32});
+
+  m_assetStore.addTexture("blockHalf", ASSET_ROOT + "sprites/block_half.png");
 
   auto blockHalf =
       m_assetStore.addSprite("blockHalf", "blockHalf", SDL_Rect{0, 0, 32, 32});
@@ -194,4 +200,16 @@ void GameScene::loadMap()
           .addTag<sfs::IsometricTile>();
     }
   }
+
+  createEntity()
+      .addComponent<sfs::TransformComponent>(glm::vec2{18.5, 13.5})
+      .addComponent<sfs::ElevationComponent>(0)
+      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
+      .addComponent<sfs::LightEmitterComponent>(10.0f, 2.0f, 32.0f);
+
+  createEntity()
+      .addComponent<sfs::TransformComponent>(glm::vec2{5.5, 13.5})
+      .addComponent<sfs::ElevationComponent>(0)
+      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
+      .addComponent<sfs::LightEmitterComponent>(10.0f, 2.0f, 32.0f);
 }
