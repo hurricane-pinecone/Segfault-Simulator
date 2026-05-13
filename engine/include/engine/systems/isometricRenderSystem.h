@@ -144,17 +144,20 @@ public:
                                   surfacePosition.y,
                                   static_cast<float>(elevationOffset)};
 
-      glm::vec3 toLight = m_lightPosition - spriteLightSample;
+      glm::vec3 pointDir = m_lightPosition - spriteLightSample;
 
-      // Reduce side-on lighting, increase overhead lighting.
-      toLight.x *= 0.30f;
-      toLight.y *= 0.30f;
-      toLight.z *= 3.0f;
+      if (glm::length(pointDir) < 0.001f)
+        pointDir = glm::vec3{0.0f, 0.0f, 1.0f};
 
-      if (glm::length(toLight) < 0.001f)
-        toLight = glm::vec3{0.0f, 0.0f, 1.0f};
+      pointDir = glm::normalize(pointDir);
 
-      glm::vec3 lightDir = glm::normalize(toLight);
+      constexpr float directionInfluence = 0.65f;
+
+      glm::vec3 lightDir =
+          glm::normalize(pointDir * (1.0f - directionInfluence) +
+                         m_lightDirection * directionInfluence);
+
+      // glm::vec3 lightDir = glm::normalize(glm::vec3{-1.0f, 0.5f, 0.5f});
 
       SDL_Rect dest{static_cast<int>(std::round(surfacePosition.x - anchorX)),
                     static_cast<int>(std::round(surfacePosition.y - anchorY)),
@@ -286,6 +289,32 @@ public:
         static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
   }
 
+  void setLightDirection(const glm::vec3& direction)
+  {
+    if (glm::length(direction) < 0.001f)
+      return;
+
+    m_lightDirection = glm::normalize(direction);
+  }
+
+  glm::vec2 gridToIsometric(const glm::vec2& gridPosition) const
+  {
+    return {(gridPosition.x - gridPosition.y) * static_cast<float>(tileWidth) /
+                2.0f,
+
+            (gridPosition.x + gridPosition.y) * static_cast<float>(tileHeight) /
+                2.0f};
+  }
+
+  glm::vec2 isometricToGrid(const glm::vec2& iso) const
+  {
+    float x = (iso.x / (tileWidth / 2.0f) + iso.y / (tileHeight / 2.0f)) * 0.5f;
+
+    float y = (iso.y / (tileHeight / 2.0f) - iso.x / (tileWidth / 2.0f)) * 0.5f;
+
+    return {x, y};
+  }
+
   IsometricRenderSystem(const IsometricRenderSystem&) = delete;
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
 
@@ -333,15 +362,6 @@ private:
       return {0.0f, 0.0f};
 
     return camera[0].getComponent<TransformComponent>().position;
-  }
-
-  glm::vec2 gridToIsometric(const glm::vec2& gridPosition) const
-  {
-    return {(gridPosition.x - gridPosition.y) * static_cast<float>(tileWidth) /
-                2.0f,
-
-            (gridPosition.x + gridPosition.y) * static_cast<float>(tileHeight) /
-                2.0f};
   }
 
   glm::ivec2 gridCellOf(const glm::vec2& position) const
@@ -554,6 +574,7 @@ private:
   int elevationStep = 8;
 
   glm::vec3 m_lightPosition = {0.0f, 0.0f, 0.0f};
+  glm::vec3 m_lightDirection = {0.0f, 0.0f, 1.0f};
 
   bool waveEnabled = true;
   float waveTime = 0.0f;

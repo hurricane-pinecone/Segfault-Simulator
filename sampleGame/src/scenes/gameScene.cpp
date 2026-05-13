@@ -63,8 +63,33 @@ void GameScene::onProcessInput(const sfs::Input& input)
 {
   auto mousePos = input.mouse().getPosition();
 
-  getSystem<sfs::IsometricRenderSystem>().setLightPosition(
-      mousePos.x, mousePos.y, 120);
+  auto& isoRenderer = getSystem<sfs::IsometricRenderSystem>();
+
+  constexpr float screenW = 800.0f;
+  constexpr float screenH = 600.0f;
+
+  float x01 = std::clamp(mousePos.x / screenW, 0.0f, 1.0f);
+  float y01 = std::clamp(mousePos.y / screenH, 0.0f, 1.0f);
+
+  // -1 = left, +1 = right
+  float sunX = x01 * 2.0f - 1.0f;
+
+  // bottom = 0, top = 1
+  float sunHeight = 1.0f - y01;
+
+  // Optional curve: keeps sunrise/sunset lower for longer.
+  // sunHeight = sunHeight * sunHeight;
+
+  glm::vec3 sunDirection{sunX, 0.0f, sunHeight};
+
+  if (glm::length(sunDirection) < 0.001f)
+    sunDirection = glm::vec3{0.0f, 0.0f, 0.01f};
+
+  isoRenderer.setLightDirection(sunDirection);
+
+  // Still set position if your renderer expects it, but it no longer matters
+  // much.
+  isoRenderer.setLightPosition(400, 300, 120);
 
   glm::vec2 screenDirection(0.0f);
 
