@@ -111,7 +111,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
   rb.velocity = gridDirection * 5.0f;
 }
 
-void GameScene::onRender(SDL_Renderer& renderer)
+void GameScene::onRender()
 {
 
   const auto& playerTransform =
@@ -135,10 +135,10 @@ void GameScene::onPostRender()
   auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
   glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos));
 
-  sfs::TextRenderer::drawText(20,
-                              20,
-                              "Pos: " + std::to_string(playerGrid.x) + ", " +
-                                  std::to_string(playerGrid.y));
+  // sfs::TextRenderer::drawText(20,
+  //                             20,
+  //                             "Pos: " + std::to_string(playerGrid.x) + ", " +
+  //                                 std::to_string(playerGrid.y));
 }
 
 void GameScene::onUpdate(double deltaTime)
@@ -153,7 +153,10 @@ void GameScene::loadMap()
   const int tileSize = 32;
 
   m_assetStore.addTexture("lamp", ASSET_ROOT + "sprites/lamp.png");
+  m_assetStore.addTexture("lampNormal", ASSET_ROOT + "sprites/lamp_normal.png");
   auto lamp = m_assetStore.addSprite("lamp", "lamp", SDL_Rect{0, 0, 32, 32});
+  auto lampNormal = m_assetStore.addSprite(
+      "lampNormal", "lampNormal", SDL_Rect{0, 0, 32, 32});
 
   m_assetStore.addTexture("block", ASSET_ROOT + "sprites/block.png");
   m_assetStore.addTexture(
@@ -205,11 +208,13 @@ void GameScene::loadMap()
       .addComponent<sfs::TransformComponent>(glm::vec2{18.5, 13.5})
       .addComponent<sfs::ElevationComponent>(0)
       .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
-      .addComponent<sfs::LightEmitterComponent>(10.0f, 2.0f, 32.0f);
+      .addComponent<sfs::NormalMapComponent>(lampNormal)
+      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
 
   createEntity()
       .addComponent<sfs::TransformComponent>(glm::vec2{5.5, 13.5})
       .addComponent<sfs::ElevationComponent>(0)
       .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
-      .addComponent<sfs::LightEmitterComponent>(10.0f, 2.0f, 32.0f);
+      .addComponent<sfs::NormalMapComponent>(lampNormal)
+      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
 }

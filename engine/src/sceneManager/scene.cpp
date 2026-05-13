@@ -24,18 +24,18 @@ void Scene::update(double deltaTime)
   onUpdate(deltaTime);
 }
 void Scene::processInput(const Input& input) { onProcessInput(input); }
-void Scene::render(SDL_Renderer& renderer)
+void Scene::render()
 {
   if (registry().hasSystem<IsometricRenderSystem>())
   {
-    registry().getSystem<IsometricRenderSystem>().render(renderer);
+    registry().getSystem<IsometricRenderSystem>().render();
   }
-  if (registry().hasSystem<RenderSystem>())
-  {
-    registry().getSystem<RenderSystem>().render(renderer);
-  }
+  // if (registry().hasSystem<RenderSystem>())
+  // {
+  //   registry().getSystem<RenderSystem>().render(renderer);
+  // }
 
-  onRender(renderer);
+  onRender();
   onPostRender();
 }
 

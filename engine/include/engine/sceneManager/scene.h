@@ -39,7 +39,7 @@ public:
 
   void update(double deltaTime);
   void processInput(const sfs::Input& input);
-  void render(SDL_Renderer& renderer);
+  void render();
 
   Entity createEntity();
   Entity getEntity(int id);
@@ -66,7 +66,7 @@ protected:
   virtual void onEnter() {};
   virtual void onExit() {};
   virtual void onUpdate(double deltaTime) {};
-  virtual void onRender(SDL_Renderer& renderer) {};
+  virtual void onRender() {};
   virtual void onPostRender() {};
   virtual void onProcessInput(const Input& input) {};
 

@@ -1,6 +1,11 @@
-
+#ifdef __EMSCRIPTEN__
+  #include <GLES3/gl3.h>
+#else
+  #include <GL/glew.h>
+#endif
 #include <SDL_error.h>
 #include <SDL_ttf.h>
+#include <SDL_video.h>
 #include <engine/game/game.h>
 
 #include "SDL.h"
@@ -60,7 +65,7 @@ bool Game::init(int windowWidth, int windowHeight)
                             SDL_WINDOWPOS_CENTERED,
                             windowWidth,
                             windowHeight,
-                            SDL_WINDOW_BORDERLESS);
+                            SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
 
   if (!window)
   {
@@ -68,23 +73,54 @@ bool Game::init(int windowWidth, int windowHeight)
     return false;
   }
 
-  renderer = SDL_CreateRenderer(
-      window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+#ifdef __EMSCRIPTEN__
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#else
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
 
-  if (!renderer)
+  m_glContext = SDL_GL_CreateContext(window);
+
+  if (!m_glContext)
   {
-    LOG_INFO(std::string("Error creating renderer: ") + SDL_GetError());
+    LOG_ERROR("Failed to create OpenGL context");
     return false;
   }
+
+  SDL_GL_MakeCurrent(window, m_glContext);
+  SDL_GL_SetSwapInterval(1);
+
+#ifndef __EMSCRIPTEN__
+  glewExperimental = GL_TRUE;
+
+  if (glewInit() != GLEW_OK)
+  {
+    LOG_ERROR("Failed to initialize GLEW");
+    return false;
+  }
+#endif
+
+  // renderer = SDL_CreateRenderer(
+  //     window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+
+  // if (!renderer)
+  // {
+  //   LOG_INFO(std::string("Error creating renderer: ") + SDL_GetError());
+  //   return false;
+  // }
 
   // SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
 
 #ifndef ENGINE_WEB
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-
-  ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-  ImGui_ImplSDLRenderer2_Init(renderer);
+  // IMGUI_CHECKVERSION();
+  // ImGui::CreateContext();
+  //
+  // ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+  // ImGui_ImplSDLRenderer2_Init(renderer);
 #endif
 
   onInit();
@@ -98,10 +134,11 @@ void Game::setup()
 {
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
-  assetStore = std::make_unique<AssetStore>(*renderer);
+  assetStore = std::make_unique<AssetStore>();
   sceneManager.setAssetStore(assetStore.get());
 
-  TextRenderer::init(*renderer, *assetStore);
+  // TODO: Use openGL text rendering
+  // TextRenderer::init(*renderer, *assetStore);
 
   onSetup();
 }
@@ -166,7 +203,7 @@ void Game::processInput()
   {
 
 #ifndef ENGINE_WEB
-    ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
+    // ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
 #endif
 
     if (sdlEvent.type == SDL_QUIT)
@@ -229,25 +266,26 @@ void Game::update(double deltaTime)
 void Game::render()
 {
   // Render background
-  SDL_SetRenderDrawColor(renderer, 21, 21, 21, 255);
-  SDL_RenderClear(renderer);
+  glViewport(0, 0, windowWidth, windowHeight);
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
 
   {
-
     if (!sceneManager)
       return;
 
-    sceneManager.current()->render(*renderer);
+    // sceneManager.current()->render(*renderer);
+    sceneManager.current()->render();
 
     sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
     onRender();
   }
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
-  renderDebugUI(renderer);
+  // renderDebugUI(renderer);
 #endif
 
-  SDL_RenderPresent(renderer);
+  SDL_GL_SwapWindow(window);
 }
 
 void Game::destroy()
@@ -255,13 +293,27 @@ void Game::destroy()
   onDestroy();
 
 #ifndef ENGINE_WEB
-  ImGui_ImplSDLRenderer2_Shutdown();
-  ImGui_ImplSDL2_Shutdown();
-  ImGui::DestroyContext();
+  // ImGui shutdown later
 #endif
 
-  SDL_DestroyRenderer(renderer);
-  SDL_DestroyWindow(window);
+  if (m_glContext)
+  {
+    SDL_GL_DeleteContext(m_glContext);
+    m_glContext = nullptr;
+  }
+
+  if (renderer)
+  {
+    SDL_DestroyRenderer(renderer);
+    renderer = nullptr;
+  }
+
+  if (window)
+  {
+    SDL_DestroyWindow(window);
+    window = nullptr;
+  }
+
   SDL_Quit();
 }
 

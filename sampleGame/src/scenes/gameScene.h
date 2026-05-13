@@ -13,7 +13,7 @@ public:
 protected:
   void onInit() override;
   void onProcessInput(const sfs::Input& input) override;
-  void onRender(SDL_Renderer& renderer) override;
+  void onRender() override;
   void onUpdate(double deltaTime) override;
   void onPostRender() override;
 
