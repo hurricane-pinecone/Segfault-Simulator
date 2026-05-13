@@ -29,15 +29,47 @@ void AssetStore::clearAssets()
 void AssetStore::addTexture(const std::string& assetId,
                             const std::string& filePath)
 {
-  SDL_Texture* texture = IMG_LoadTexture(&renderer, filePath.c_str());
-  if (!texture)
+  SDL_Surface* loadedSurface = IMG_Load(filePath.c_str());
+
+  if (!loadedSurface)
   {
-    LOG_INFO(std::string("Failed to load texture: ") + filePath +
+    LOG_INFO(std::string("Failed to load surface: ") + filePath +
              " | SDL_image error: " + IMG_GetError());
     return;
   }
 
-  textures.emplace(assetId, TexturePtr(texture, SDL_DestroyTexture));
+  SDL_Surface* surface =
+      SDL_ConvertSurfaceFormat(loadedSurface, SDL_PIXELFORMAT_RGBA32, 0);
+
+  SDL_FreeSurface(loadedSurface);
+
+  if (!surface)
+  {
+    LOG_INFO(std::string("Failed to convert surface: ") + filePath +
+             " | SDL error: " + SDL_GetError());
+    return;
+  }
+
+  SDL_Texture* texture = SDL_CreateTextureFromSurface(&renderer, surface);
+
+  if (!texture)
+  {
+    SDL_FreeSurface(surface);
+
+    LOG_INFO(std::string("Failed to create texture: ") + filePath +
+             " | SDL error: " + SDL_GetError());
+    return;
+  }
+
+  textures.insert_or_assign(assetId, TexturePtr(texture, SDL_DestroyTexture));
+
+  surfaces.insert_or_assign(assetId, SurfacePtr(surface, SDL_FreeSurface));
+
+  LOG_DEBUG("surface stored = [" + assetId + "]");
+
+  LOG_DEBUG(getSurface(assetId) ? "surface lookup immediately OK"
+                                : "surface lookup immediately NULL");
+
   LOG_DEBUG("Created texture with ID: " + assetId);
 }
 
@@ -225,6 +257,16 @@ TTF_Font* AssetStore::getFont(const std::string& fontId) const
     LOG_ERROR("Font not found: " + fontId);
     return nullptr;
   }
+
+  return it->second.get();
+}
+
+SDL_Surface* AssetStore::getSurface(const std::string& assetId) const
+{
+  auto it = surfaces.find(assetId);
+
+  if (it == surfaces.end())
+    return nullptr;
 
   return it->second.get();
 }

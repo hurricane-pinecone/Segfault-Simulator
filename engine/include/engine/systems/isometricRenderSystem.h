@@ -33,6 +33,36 @@ struct ElevationComponent
   ElevationComponent(int level = 0) : level(level) {}
 };
 
+struct LitTextureKey
+{
+  uint32_t spriteId;
+  uint32_t normalSpriteId;
+  int lightX;
+  int lightY;
+  int lightZ;
+
+  bool operator==(const LitTextureKey& other) const
+  {
+    return spriteId == other.spriteId &&
+           normalSpriteId == other.normalSpriteId && lightX == other.lightX &&
+           lightY == other.lightY && lightZ == other.lightZ;
+  }
+};
+
+struct LitTextureKeyHash
+{
+  std::size_t operator()(const LitTextureKey& key) const
+  {
+    std::size_t h = 17;
+    h = h * 31 + std::hash<uint32_t>{}(key.spriteId);
+    h = h * 31 + std::hash<uint32_t>{}(key.normalSpriteId);
+    h = h * 31 + std::hash<int>{}(key.lightX);
+    h = h * 31 + std::hash<int>{}(key.lightY);
+    h = h * 31 + std::hash<int>{}(key.lightZ);
+    return h;
+  }
+};
+
 class IsometricRenderSystem : public System
 {
 public:
@@ -47,6 +77,8 @@ public:
     registerComponent<SpriteComponent>();
     registerComponent<TransformComponent>();
   }
+
+  ~IsometricRenderSystem() { clearLitTextureCache(); }
 
   void render(SDL_Renderer& renderer)
   {
@@ -119,25 +151,64 @@ public:
                     width,
                     height};
 
-      bool hasNormalMap = entity.hasComponent<NormalMapComponent>();
-
-      if (hasNormalMap)
+      if (entity.hasComponent<NormalMapComponent>())
       {
         const auto& normalMap = entity.getComponent<NormalMapComponent>();
+        const auto normalSprite = assetStore.getSprite(normalMap.spriteId);
 
-        // later: use normalMap.spriteId to sample lighting data
-        // for now: apply primitive lit tint
-        glm::vec3 faceNormal = glm::normalize(glm::vec3{0.0f, -0.4f, 1.0f});
+        SDL_Surface* albedoSurface = assetStore.getSurface(sprite->textureId);
 
-        float brightness = computeBrightness(faceNormal, lightDir);
-        Uint8 tint = toTint(brightness);
+        SDL_Surface* normalSurface =
+            normalSprite ? assetStore.getSurface(normalSprite->textureId)
+                         : nullptr;
 
-        SDL_SetTextureColorMod(texture, tint, tint, tint);
+        if (albedoSurface && normalSurface)
+        {
+          const int bucketScale = 4;
+
+          LitTextureKey key{spriteComponent.spriteId,
+                            normalMap.spriteId,
+                            static_cast<int>(lightDir.x * bucketScale),
+                            static_cast<int>(lightDir.y * bucketScale),
+                            static_cast<int>(lightDir.z * bucketScale)};
+
+          SDL_Texture* litTexture = nullptr;
+
+          auto it = litTextureCache.find(key);
+
+          if (it != litTextureCache.end())
+          {
+            litTexture = it->second;
+          }
+          else
+          {
+            litTexture = createLitTexture(renderer,
+                                          albedoSurface,
+                                          normalSurface,
+                                          sprite->srcRect,
+                                          normalSprite->srcRect,
+                                          lightDir);
+
+            if (litTexture)
+              litTextureCache.emplace(key, litTexture);
+          }
+
+          if (litTexture)
+          {
+            SDL_RenderCopyEx(&renderer,
+                             litTexture,
+                             nullptr,
+                             &dest,
+                             0.0,
+                             nullptr,
+                             SDL_FLIP_NONE);
+
+            continue;
+          }
+        }
       }
-      else
-      {
-        SDL_SetTextureColorMod(texture, 255, 255, 255);
-      }
+
+      SDL_SetTextureColorMod(texture, 255, 255, 255);
 
       SDL_RenderCopyEx(&renderer,
                        texture,
@@ -209,18 +280,16 @@ public:
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
 
 private:
-  glm::vec3 getFaceNormalFromColor(SDL_Color color)
+  glm::vec3 getFaceNormalFromColor(SDL_Color color) const
   {
-    if (color.r > 200 && color.g < 80 && color.b < 80)
-      return glm::normalize(glm::vec3{1.0f, 0.0f, 0.65f}); // right
+    glm::vec3 normal{color.r / 255.0f * 2.0f - 1.0f,
+                     color.g / 255.0f * 2.0f - 1.0f,
+                     color.b / 255.0f * 2.0f - 1.0f};
 
-    if (color.g > 200 && color.r < 80 && color.b < 80)
-      return glm::normalize(glm::vec3{-1.0f, 0.0f, 0.65f}); // left
+    if (glm::length(normal) < 0.001f)
+      return glm::vec3{0.0f, 0.0f, 1.0f};
 
-    if (color.b > 200 && color.r < 80 && color.g < 80)
-      return glm::normalize(glm::vec3{0.0f, -0.4f, 1.0f}); // top
-
-    return glm::vec3{0.0f, 0.0f, 1.0f};
+    return glm::normalize(normal);
   }
 
   Uint8 toTint(float value) const
@@ -232,8 +301,8 @@ private:
   float computeBrightness(const glm::vec3& normal,
                           const glm::vec3& lightDir) const
   {
-    constexpr float ambient = 0.25f;
-    constexpr float diffuseStrength = 0.85f;
+    constexpr float ambient = 0.20f;
+    constexpr float diffuseStrength = 0.80f;
 
     float diffuse = std::max(glm::dot(normal, lightDir), 0.0f);
 
@@ -351,6 +420,112 @@ private:
            waveAmplitude;
   }
 
+  SDL_Color getPixel(SDL_Surface* surface, int x, int y) const
+  {
+    x = std::clamp(x, 0, surface->w - 1);
+    y = std::clamp(y, 0, surface->h - 1);
+
+    const int bpp = surface->format->BytesPerPixel;
+
+    Uint8* p =
+        static_cast<Uint8*>(surface->pixels) + y * surface->pitch + x * bpp;
+
+    Uint32 pixel = 0;
+
+    std::memcpy(&pixel, p, bpp);
+
+    SDL_Color color;
+    SDL_GetRGBA(pixel, surface->format, &color.r, &color.g, &color.b, &color.a);
+
+    return color;
+  }
+
+  void setPixel(SDL_Surface* surface, int x, int y, SDL_Color color) const
+  {
+    x = std::clamp(x, 0, surface->w - 1);
+    y = std::clamp(y, 0, surface->h - 1);
+
+    const int bpp = surface->format->BytesPerPixel;
+
+    Uint8* p =
+        static_cast<Uint8*>(surface->pixels) + y * surface->pitch + x * bpp;
+
+    Uint32 pixel =
+        SDL_MapRGBA(surface->format, color.r, color.g, color.b, color.a);
+
+    std::memcpy(p, &pixel, bpp);
+  }
+
+  SDL_Texture* createLitTexture(SDL_Renderer& renderer,
+                                SDL_Surface* albedoSurface,
+                                SDL_Surface* normalSurface,
+                                const SDL_Rect& albedoRect,
+                                const SDL_Rect& normalRect,
+                                const glm::vec3& lightDir)
+  {
+    SDL_Surface* output = SDL_CreateRGBSurfaceWithFormat(
+        0, albedoRect.w, albedoRect.h, 32, SDL_PIXELFORMAT_RGBA32);
+
+    if (!output)
+      return nullptr;
+
+    SDL_LockSurface(albedoSurface);
+    SDL_LockSurface(normalSurface);
+    SDL_LockSurface(output);
+
+    for (int y = 0; y < albedoRect.h; y++)
+    {
+      for (int x = 0; x < albedoRect.w; x++)
+      {
+        SDL_Color albedo =
+            getPixel(albedoSurface, albedoRect.x + x, albedoRect.y + y);
+
+        if (albedo.a == 0)
+        {
+          setPixel(output, x, y, SDL_Color{0, 0, 0, 0});
+          continue;
+        }
+
+        SDL_Color normalColor =
+            getPixel(normalSurface, normalRect.x + x, normalRect.y + y);
+
+        glm::vec3 normal = getFaceNormalFromColor(normalColor);
+
+        float brightness = computeBrightness(normal, lightDir);
+
+        SDL_Color out{
+            static_cast<Uint8>(std::clamp(albedo.r * brightness, 0.0f, 255.0f)),
+            static_cast<Uint8>(std::clamp(albedo.g * brightness, 0.0f, 255.0f)),
+            static_cast<Uint8>(std::clamp(albedo.b * brightness, 0.0f, 255.0f)),
+            albedo.a};
+
+        setPixel(output, x, y, out);
+      }
+    }
+
+    SDL_UnlockSurface(output);
+    SDL_UnlockSurface(normalSurface);
+    SDL_UnlockSurface(albedoSurface);
+
+    SDL_Texture* litTexture = SDL_CreateTextureFromSurface(&renderer, output);
+    SDL_FreeSurface(output);
+
+    if (litTexture)
+      SDL_SetTextureBlendMode(litTexture, SDL_BLENDMODE_BLEND);
+
+    return litTexture;
+  }
+  void clearLitTextureCache()
+  {
+    for (auto& [key, texture] : litTextureCache)
+    {
+      if (texture)
+        SDL_DestroyTexture(texture);
+    }
+
+    litTextureCache.clear();
+  }
+
 private:
   AssetStore& assetStore;
 
@@ -359,6 +534,9 @@ private:
 
   int tileWidth;
   int tileHeight;
+
+  std::unordered_map<LitTextureKey, SDL_Texture*, LitTextureKeyHash>
+      litTextureCache;
 
   int elevationStep = 8;
 
