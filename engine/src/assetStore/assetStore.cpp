@@ -1,13 +1,10 @@
+#include "engine/assetStore/assetStore.h"
+
+#include "engine/logger/logger.h"
 #include "engine/utils/string.h"
-#include <SDL.h>
+
 #include <SDL_image.h>
-#include <SDL_rect.h>
-#include <SDL_render.h>
-#include <SDL_ttf.h>
-#include <cstddef>
-#include <engine/assetStore/assetStore.h>
-#include <engine/assetStore/sprite.h>
-#include <engine/logger/logger.h>
+
 #include <fstream>
 #include <nlohmann/json.hpp>
 
@@ -16,12 +13,14 @@ namespace sfs
 
 using json = nlohmann::json;
 
+AssetStore::~AssetStore() { clearAssets(); }
+
 void AssetStore::clearAssets()
 {
-  textures.clear();
-  sprites.clear();
-  spriteNameToId.clear();
-  fonts.clear();
+  m_surfaces.clear();
+  m_sprites.clear();
+  m_spriteNameToId.clear();
+  m_fonts.clear();
 
   LOG_DEBUG("Asset store cleared.");
 }
@@ -50,56 +49,35 @@ void AssetStore::addTexture(const std::string& assetId,
     return;
   }
 
-  SDL_Texture* texture = SDL_CreateTextureFromSurface(&renderer, surface);
+  m_surfaces.insert_or_assign(assetId, SurfacePtr(surface, SDL_FreeSurface));
 
-  if (!texture)
-  {
-    SDL_FreeSurface(surface);
-
-    LOG_INFO(std::string("Failed to create texture: ") + filePath +
-             " | SDL error: " + SDL_GetError());
-    return;
-  }
-
-  textures.insert_or_assign(assetId, TexturePtr(texture, SDL_DestroyTexture));
-
-  surfaces.insert_or_assign(assetId, SurfacePtr(surface, SDL_FreeSurface));
-
-  LOG_DEBUG("surface stored = [" + assetId + "]");
-
-  LOG_DEBUG(getSurface(assetId) ? "surface lookup immediately OK"
-                                : "surface lookup immediately NULL");
-
-  LOG_DEBUG("Created texture with ID: " + assetId);
+  LOG_DEBUG("Stored surface with ID: " + assetId);
 }
 
 void AssetStore::removeTexture(const std::string& assetId)
 {
-  auto it = textures.find(assetId);
-
-  if (it == textures.end())
-    return;
-
-  textures.erase(it);
+  m_surfaces.erase(assetId);
 }
 
-SDL_Texture* AssetStore::getTexture(const std::string& assetId) const
+SDL_Surface* AssetStore::getSurface(const std::string& assetId) const
 {
-  auto it = textures.find(assetId);
-  if (it == textures.end())
+  auto it = m_surfaces.find(assetId);
+
+  if (it == m_surfaces.end())
     return nullptr;
+
   return it->second.get();
-};
+}
 
 uint32_t AssetStore::addSprite(const std::string& textureId,
                                const std::string& spriteName,
                                SDL_Rect srcRect)
 {
-  const auto id = nextSpriteId++;
+  const auto id = m_nextSpriteId++;
   auto sn = toLower(spriteName);
 
-  sprites.emplace(id, Sprite{id, textureId, sn, srcRect});
-  spriteNameToId[sn] = id;
+  m_sprites.emplace(id, Sprite{id, textureId, sn, srcRect});
+  m_spriteNameToId[sn] = id;
 
   LOG_DEBUG("Created sprite: " + sn);
 
@@ -145,14 +123,19 @@ AssetStore::addSpritesFromSheet(const std::string& textureId,
                                 uint8_t gap,
                                 uint8_t padding)
 {
-  auto texture = getTexture(textureId);
+  SDL_Surface* surface = getSurface(textureId);
 
-  int textureWidth = 0;
-  int textureHeight = 0;
-  SDL_QueryTexture(texture, nullptr, nullptr, &textureWidth, &textureHeight);
+  if (!surface)
+  {
+    LOG_ERROR("Surface not found for sprite sheet: " + textureId);
+    return {};
+  }
 
-  int cols = (textureWidth - padding * 2 + gap) / (width + gap);
-  int rows = (textureHeight - padding * 2 + gap) / (height + gap);
+  const int textureWidth = surface->w;
+  const int textureHeight = surface->h;
+
+  const int cols = (textureWidth - padding * 2 + gap) / (width + gap);
+  const int rows = (textureHeight - padding * 2 + gap) / (height + gap);
 
   std::vector<uint32_t> ids;
 
@@ -175,6 +158,13 @@ void AssetStore::loadAsepriteAtlas(const std::string& textureId,
                                    const std::string& jsonPath)
 {
   std::ifstream file(jsonPath);
+
+  if (!file)
+  {
+    LOG_ERROR("Failed to open atlas JSON: " + jsonPath);
+    return;
+  }
+
   json data;
   file >> data;
 
@@ -184,16 +174,30 @@ void AssetStore::loadAsepriteAtlas(const std::string& textureId,
 
     SDL_Rect srcRect{frame["x"], frame["y"], frame["w"], frame["h"]};
 
-    // ---- Parse name ----
-    // "Sprite-0001 (Grapes) 2." -> "graps_stage_2"
     std::string name = key;
 
     auto start = name.find("(");
     auto end = name.find(")");
 
+    if (start == std::string::npos || end == std::string::npos || end <= start)
+    {
+      addSprite(textureId, name, srcRect);
+      continue;
+    }
+
     std::string plant = name.substr(start + 1, end - start - 1);
 
-    int stage = std::stoi(name.substr(end + 2));
+    int stage = 0;
+
+    try
+    {
+      stage = std::stoi(name.substr(end + 2));
+    }
+    catch (...)
+    {
+      addSprite(textureId, plant, srcRect);
+      continue;
+    }
 
     std::string cleanName = plant + "_stage_" + std::to_string(stage);
 
@@ -203,17 +207,20 @@ void AssetStore::loadAsepriteAtlas(const std::string& textureId,
 
 void AssetStore::removeSprite(uint32_t spriteId)
 {
-  auto it = sprites.find(spriteId);
-  if (it == sprites.end())
+  auto it = m_sprites.find(spriteId);
+
+  if (it == m_sprites.end())
     return;
-  sprites.erase(it);
+
+  m_spriteNameToId.erase(it->second.name);
+  m_sprites.erase(it);
 }
 
 const Sprite* AssetStore::getSprite(uint32_t spriteId) const
 {
-  auto it = sprites.find(spriteId);
+  auto it = m_sprites.find(spriteId);
 
-  if (it == sprites.end())
+  if (it == m_sprites.end())
     return nullptr;
 
   return &it->second;
@@ -221,9 +228,9 @@ const Sprite* AssetStore::getSprite(uint32_t spriteId) const
 
 const Sprite* AssetStore::getSprite(const std::string& spriteId) const
 {
-  auto it = spriteNameToId.find(toLower(spriteId));
+  auto it = m_spriteNameToId.find(toLower(spriteId));
 
-  if (it == spriteNameToId.end())
+  if (it == m_spriteNameToId.end())
     return nullptr;
 
   return getSprite(it->second);
@@ -241,32 +248,25 @@ TTF_Font* AssetStore::addFont(const std::string& fontId,
     return nullptr;
   }
 
-  fonts.emplace(fontId, FontPtr(rawFont, TTF_CloseFont));
+  m_fonts.insert_or_assign(fontId, FontPtr(rawFont, TTF_CloseFont));
 
   return rawFont;
 }
 
-void AssetStore::removeFont(const std::string& fontId) { fonts.erase(fontId); }
+void AssetStore::removeFont(const std::string& fontId)
+{
+  m_fonts.erase(fontId);
+}
 
 TTF_Font* AssetStore::getFont(const std::string& fontId) const
 {
-  auto it = fonts.find(fontId);
+  auto it = m_fonts.find(fontId);
 
-  if (it == fonts.end())
+  if (it == m_fonts.end())
   {
     LOG_ERROR("Font not found: " + fontId);
     return nullptr;
   }
-
-  return it->second.get();
-}
-
-SDL_Surface* AssetStore::getSurface(const std::string& assetId) const
-{
-  auto it = surfaces.find(assetId);
-
-  if (it == surfaces.end())
-    return nullptr;
 
   return it->second.get();
 }

@@ -56,6 +56,7 @@ private:
 private:
   Uint64 previousTime;
   Input input;
+  SDL_GLContext m_glContext;
 };
 
 } // namespace sfs

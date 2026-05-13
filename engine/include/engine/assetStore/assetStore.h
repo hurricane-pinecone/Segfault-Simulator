@@ -1,11 +1,13 @@
 #pragma once
 
-#include "engine/types/SDLPtrs.h"
-#include "sprite.h"
-#include <SDL2/SDL_render.h>
+#include "engine/assetStore/sprite.h"
+
 #include <SDL_rect.h>
+#include <SDL_surface.h>
 #include <SDL_ttf.h>
+
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -13,23 +15,25 @@
 namespace sfs
 {
 
+using SurfacePtr = std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)>;
+using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
+
 class AssetStore
 {
 public:
-  explicit AssetStore(SDL_Renderer& renderer)
-      : renderer(renderer) {
-
-        };
-  ~AssetStore() { clearAssets(); };
+  AssetStore() = default;
+  ~AssetStore();
 
   void clearAssets();
+
   void addTexture(const std::string& assetId, const std::string& filePath);
   void removeTexture(const std::string& assetId);
-  SDL_Texture* getTexture(const std::string& assetId) const;
+  SDL_Surface* getSurface(const std::string& assetId) const;
 
   uint32_t addSprite(const std::string& textureId,
                      const std::string& spriteName,
                      SDL_Rect srcRect);
+
   std::vector<uint32_t> addSprites(const std::string& textureId,
                                    const std::vector<SpriteRegion>& regions);
 
@@ -41,6 +45,7 @@ public:
                               uint16_t row,
                               uint8_t gap,
                               uint8_t padding);
+
   std::vector<uint32_t> addSpritesFromSheet(const std::string& textureId,
                                             const std::string& baseSpriteName,
                                             uint16_t width,
@@ -57,29 +62,21 @@ public:
 
   TTF_Font*
   addFont(const std::string& fontId, const std::string& filePath, int size);
+
   void removeFont(const std::string& fontId);
   TTF_Font* getFont(const std::string& fontId) const;
-
-  SDL_Surface* getSurface(const std::string& assetId) const;
 
   AssetStore(const AssetStore&) = delete;
   AssetStore& operator=(const AssetStore&) = delete;
 
 private:
-  SDL_Renderer& renderer;
+  std::unordered_map<std::string, SurfacePtr> m_surfaces;
+  std::unordered_map<std::string, FontPtr> m_fonts;
 
-  std::unordered_map<std::string, TexturePtr> textures;
-  std::unordered_map<std::string, SurfacePtr> surfaces;
+  uint32_t m_nextSpriteId = 0;
 
-  std::unordered_map<std::string, FontPtr> fonts;
-
-  // This looks wierd, but its more performant than storing strings as the main
-  // sprite key (sprites).
-  // The second map, spriteNameId allows sprite name searches while avoiding
-  // expensive lookups in game loop.
-  uint32_t nextSpriteId = 0;
-  std::unordered_map<uint32_t, Sprite> sprites;
-  std::unordered_map<std::string, uint32_t> spriteNameToId;
+  std::unordered_map<uint32_t, Sprite> m_sprites;
+  std::unordered_map<std::string, uint32_t> m_spriteNameToId;
 };
 
 } // namespace sfs

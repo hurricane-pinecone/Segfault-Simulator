@@ -1,3 +1,9 @@
+set(IS_WEB_BUILD FALSE)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
+    set(IS_WEB_BUILD TRUE)
+endif()
+
 file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
@@ -18,11 +24,12 @@ set_target_properties(sampleGame PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-if(EMSCRIPTEN)
-    set_target_properties(sampleGame PROPERTIES
-        OUTPUT_NAME "index"
-        SUFFIX ".html"
-    )
+if(IS_WEB_BUILD)
+set_target_properties(sampleGame PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    OUTPUT_NAME "index"
+    SUFFIX ".html"
+)
 
     target_link_options(sampleGame PRIVATE
         --shell-file "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
@@ -32,7 +39,13 @@ if(EMSCRIPTEN)
 
         -sALLOW_MEMORY_GROWTH=1
         -sASYNCIFY
+        -sUSE_SDL=2
+        -sUSE_SDL_IMAGE=2
+        -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
+        -sMIN_WEBGL_VERSION=2
+        -sMAX_WEBGL_VERSION=2
+        -sFULL_ES3=1
     )
 else()
     add_custom_command(TARGET sampleGame POST_BUILD

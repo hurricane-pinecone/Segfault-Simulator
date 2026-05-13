@@ -1,3 +1,13 @@
+set(ENGINE_WEB_BUILD FALSE)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
+    set(ENGINE_WEB_BUILD TRUE)
+endif()
+
+message(STATUS "ENGINE_WEB_BUILD=${ENGINE_WEB_BUILD}")
+message(STATUS "CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}")
+message(STATUS "EMSCRIPTEN=${EMSCRIPTEN}")
+
 file(GLOB_RECURSE ENGINE_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
@@ -7,7 +17,7 @@ file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
 )
 
-if(EMSCRIPTEN)
+if(ENGINE_WEB_BUILD)
     list(FILTER ENGINE_SRC EXCLUDE REGEX ".*/imgui/.*")
     list(FILTER ENGINE_SRC EXCLUDE REGEX ".*/lua/.*")
 endif()
@@ -34,7 +44,7 @@ target_compile_options(engine PRIVATE
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets
      DESTINATION ${CMAKE_BINARY_DIR}/bin)
 
-if(EMSCRIPTEN)
+if(ENGINE_WEB_BUILD)
     target_compile_definitions(engine PUBLIC
         ENGINE_WEB=1
     )
@@ -53,6 +63,9 @@ if(EMSCRIPTEN)
         -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
         -sUSE_SDL_MIXER=2
+        -sMIN_WEBGL_VERSION=2
+        -sMAX_WEBGL_VERSION=2
+        -sFULL_ES3=1
     )
 else()
     find_package(lua REQUIRED)
@@ -61,6 +74,8 @@ else()
     find_package(SDL2_ttf REQUIRED)
     find_package(SDL2_mixer REQUIRED)
     find_package(imgui REQUIRED)
+    find_package(OpenGL REQUIRED)
+    find_package(GLEW REQUIRED)
 
     target_include_directories(engine PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends"
@@ -79,5 +94,7 @@ else()
             lua::lua
             sdl_ttf::sdl_ttf
             SDL2_mixer::SDL2_mixer
+            OpenGL::GL
+            GLEW::GLEW
     )
 endif()
