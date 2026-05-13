@@ -60,6 +60,8 @@ public:
   void removeFont(const std::string& fontId);
   TTF_Font* getFont(const std::string& fontId) const;
 
+  SDL_Surface* getSurface(const std::string& assetId) const;
+
   AssetStore(const AssetStore&) = delete;
   AssetStore& operator=(const AssetStore&) = delete;
 
@@ -67,6 +69,8 @@ private:
   SDL_Renderer& renderer;
 
   std::unordered_map<std::string, TexturePtr> textures;
+  std::unordered_map<std::string, SurfacePtr> surfaces;
+
   std::unordered_map<std::string, FontPtr> fonts;
 
   // This looks wierd, but its more performant than storing strings as the main

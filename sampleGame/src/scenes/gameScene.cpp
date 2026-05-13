@@ -96,6 +96,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
 
 void GameScene::onRender(SDL_Renderer& renderer)
 {
+
   const auto& playerTransform =
       m_player.getComponent<sfs::TransformComponent>();
 
