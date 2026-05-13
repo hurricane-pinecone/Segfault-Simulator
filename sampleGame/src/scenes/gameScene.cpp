@@ -61,11 +61,10 @@ void GameScene::createEntities()
 
 void GameScene::onProcessInput(const sfs::Input& input)
 {
-  int mouseX = 0;
-  int mouseY = 0;
-  SDL_GetMouseState(&mouseX, &mouseY);
+  auto mousePos = input.mouse().getPosition();
 
-  getSystem<sfs::IsometricRenderSystem>().setLightPosition(mouseX, mouseY, 128);
+  getSystem<sfs::IsometricRenderSystem>().setLightPosition(
+      mousePos.x, mousePos.y, 120);
 
   glm::vec2 screenDirection(0.0f);
 
