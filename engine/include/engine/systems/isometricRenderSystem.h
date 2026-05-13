@@ -144,7 +144,17 @@ public:
                                   surfacePosition.y,
                                   static_cast<float>(elevationOffset)};
 
-      glm::vec3 lightDir = glm::normalize(m_lightPosition - spriteLightSample);
+      glm::vec3 toLight = m_lightPosition - spriteLightSample;
+
+      // Reduce side-on lighting, increase overhead lighting.
+      toLight.x *= 0.30f;
+      toLight.y *= 0.30f;
+      toLight.z *= 3.0f;
+
+      if (glm::length(toLight) < 0.001f)
+        toLight = glm::vec3{0.0f, 0.0f, 1.0f};
+
+      glm::vec3 lightDir = glm::normalize(toLight);
 
       SDL_Rect dest{static_cast<int>(std::round(surfacePosition.x - anchorX)),
                     static_cast<int>(std::round(surfacePosition.y - anchorY)),
@@ -164,7 +174,7 @@ public:
 
         if (albedoSurface && normalSurface)
         {
-          const int bucketScale = 4;
+          const int bucketScale = 8;
 
           LitTextureKey key{spriteComponent.spriteId,
                             normalMap.spriteId,
@@ -301,12 +311,15 @@ private:
   float computeBrightness(const glm::vec3& normal,
                           const glm::vec3& lightDir) const
   {
-    constexpr float ambient = 0.20f;
-    constexpr float diffuseStrength = 0.80f;
+    constexpr float ambient = 0.12f;
+    constexpr float diffuseStrength = 0.85f;
 
-    float diffuse = std::max(glm::dot(normal, lightDir), 0.0f);
+    float ndotl = std::max(glm::dot(normal, lightDir), 0.0f);
 
-    return std::clamp(ambient + diffuse * diffuseStrength, 0.0f, 1.0f);
+    // Slightly softened but still punchy.
+    float diffuse = std::pow(ndotl, 0.75f);
+
+    return std::clamp(ambient + diffuse * diffuseStrength, 0.0f, 0.95f);
   }
 
   glm::vec2 getCameraPosition() const
