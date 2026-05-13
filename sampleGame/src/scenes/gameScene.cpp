@@ -62,34 +62,24 @@ void GameScene::createEntities()
 void GameScene::onProcessInput(const sfs::Input& input)
 {
   auto mousePos = input.mouse().getPosition();
-
   auto& isoRenderer = getSystem<sfs::IsometricRenderSystem>();
 
-  constexpr float screenW = 800.0f;
-  constexpr float screenH = 600.0f;
+  float x01 = std::clamp(mousePos.x / 800.0f, 0.0f, 1.0f);
+  float y01 = std::clamp(mousePos.y / 600.0f, 0.0f, 1.0f);
 
-  float x01 = std::clamp(mousePos.x / screenW, 0.0f, 1.0f);
-  float y01 = std::clamp(mousePos.y / screenH, 0.0f, 1.0f);
-
-  // -1 = left, +1 = right
   float sunX = x01 * 2.0f - 1.0f;
-
-  // bottom = 0, top = 1
   float sunHeight = 1.0f - y01;
 
-  // Optional curve: keeps sunrise/sunset lower for longer.
-  // sunHeight = sunHeight * sunHeight;
+  // Below this, sun is basically below horizon.
+  float daylight = std::clamp((sunHeight - 0.15f) / 0.85f, 0.0f, 1.0f);
+  daylight = daylight * daylight * (3.0f - 2.0f * daylight);
 
-  glm::vec3 sunDirection{sunX, 0.0f, sunHeight};
+  // Allows bottom screen to behave like below-horizon light.
+  float sunZ = sunHeight * 2.0f - 0.35f;
 
-  if (glm::length(sunDirection) < 0.001f)
-    sunDirection = glm::vec3{0.0f, 0.0f, 0.01f};
+  isoRenderer.setLightDirection(glm::vec3{sunX, 0.0f, sunZ});
 
-  isoRenderer.setLightDirection(sunDirection);
-
-  // Still set position if your renderer expects it, but it no longer matters
-  // much.
-  isoRenderer.setLightPosition(400, 300, 120);
+  isoRenderer.setLighting(0.08f + daylight * 0.28f, 0.12f + daylight * 0.78f);
 
   glm::vec2 screenDirection(0.0f);
 
