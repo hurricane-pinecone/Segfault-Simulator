@@ -82,6 +82,8 @@ private:
     int textureHeight = 0;
     float sortKey = 0.0f;
 
+    int renderLayer = 1; // 0 = ground tiles, 1 = shadows, 2 = sprites
+
     bool hasNormalMap = false;
     std::string normalTextureId;
     SDL_Rect normalSrcRect{0, 0, 0, 0};
@@ -142,6 +144,9 @@ private:
                     const glm::vec2& shadowOffset,
                     float alpha,
                     float sortKeyBias = -0.004f);
+
+  glm::vec2 worldDirToShadowOffset(const glm::vec2& worldDir,
+                                   float length) const;
 
 private:
   AssetStore& assetStore;

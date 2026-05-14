@@ -124,6 +124,7 @@ void IsometricRenderSystem::render()
     item.textureHeight = surface->h;
     item.sortKey = sortKey;
     item.tint = SDL_Color{255, 255, 255, 255};
+    item.renderLayer = isTileEntity(entity) ? 0 : 2;
 
     glm::vec2 spriteWorldSample =
         isTileEntity(entity) ? transform.position + glm::vec2{0.5f, 0.5f}
@@ -169,33 +170,29 @@ void IsometricRenderSystem::render()
 
       for (const auto& light : lights)
       {
-        glm::vec2 fromLight = spriteWorldSample - light.worldPosition;
-        float distance = glm::length(fromLight);
+        glm::vec2 delta = spriteWorldSample - light.worldPosition;
+        float distance = glm::length(delta);
 
         if (distance > light.radius || distance < 0.001f)
           continue;
 
+        glm::vec2 shadowWorldDir = delta / distance;
+
         float attenuation = 1.0f - distance / light.radius;
         attenuation = std::pow(std::clamp(attenuation, 0.0f, 1.0f), 0.75f);
 
-        glm::vec2 shadowWorldDir = glm::normalize(fromLight);
+        float casterHeight = static_cast<float>(item.dest.h) * 0.75f;
 
-        float heightPixels = static_cast<float>(item.dest.h) * 0.55f +
-                             static_cast<float>(elevationOffset);
-
-        float lightHeight =
-            std::max(light.height - static_cast<float>(elevationOffset), 8.0f);
+        float visualLightHeight =
+            std::max(light.height * 0.0625f,
+                     1.0f); // Exaggerate shadows because it looks sick. 32
+                            // height looks like 2 to cast a low light
 
         float shadowLength =
-            heightPixels * (1.0f + distance / lightHeight) * 0.45f;
+            (casterHeight * distance / visualLightHeight) * 1.0f;
 
-        glm::vec2 isoDir =
-            gridToIsometric(shadowWorldDir) - gridToIsometric({0.0f, 0.0f});
-
-        if (glm::length(isoDir) > 0.001f)
-          isoDir = glm::normalize(isoDir);
-
-        glm::vec2 shadowOffset = isoDir * shadowLength;
+        glm::vec2 shadowOffset =
+            worldDirToShadowOffset(shadowWorldDir, shadowLength);
 
         float alpha =
             0.42f * attenuation * std::clamp(light.intensity, 0.0f, 2.0f);
@@ -205,7 +202,7 @@ void IsometricRenderSystem::render()
 
       glm::vec3 sunDir = lightingSystem->getLightDirection();
 
-      if (sunDir.z > 0.05f)
+      if (lightingSystem->getDiffuseStrength() > 0.001f && sunDir.z > 0.05f)
       {
         glm::vec2 sunHorizontal{sunDir.x, sunDir.y};
         float horizontalLength = glm::length(sunHorizontal);
@@ -265,9 +262,13 @@ void IsometricRenderSystem::submitShadow(const RenderItem& caster,
   shadow.normalTextureId.clear();
   shadow.shadowOffset = shadowOffset;
 
+  shadow.renderLayer = 1;
+
   const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
 
   shadow.tint = SDL_Color{0, 0, 0, a};
+
+  // sort within the shadow layer
   shadow.sortKey = caster.sortKey + sortKeyBias;
 
   renderItems.push_back(shadow);
@@ -278,7 +279,12 @@ void IsometricRenderSystem::flushBatches()
   std::stable_sort(renderItems.begin(),
                    renderItems.end(),
                    [](const RenderItem& a, const RenderItem& b)
-                   { return a.sortKey < b.sortKey; });
+                   {
+                     if (a.renderLayer != b.renderLayer)
+                       return a.renderLayer < b.renderLayer;
+
+                     return a.sortKey < b.sortKey;
+                   });
 
   glUseProgram(shaderProgram);
 
@@ -403,13 +409,12 @@ void IsometricRenderSystem::flushBatches()
 
     if (item.isShadow)
     {
-      q0 += item.shadowOffset;
-      q1 += item.shadowOffset;
-
       const float groundY = bottom;
 
-      q0.y = groundY + (q0.y - groundY) * 0.45f;
-      q1.y = groundY + (q1.y - groundY) * 0.45f;
+      q0 = glm::vec2{left, groundY} + item.shadowOffset;
+      q1 = glm::vec2{right, groundY} + item.shadowOffset;
+      q2 = glm::vec2{right, groundY};
+      q3 = glm::vec2{left, groundY};
     }
 
     const glm::vec2 p0 = toNdc(q0);
@@ -507,6 +512,19 @@ IsometricRenderSystem::gridToIsometric(const glm::vec2& gridPosition) const
       (gridPosition.x - gridPosition.y) * static_cast<float>(tileWidth) / 2.0f,
       (gridPosition.x + gridPosition.y) * static_cast<float>(tileHeight) /
           2.0f};
+}
+
+glm::vec2
+IsometricRenderSystem::worldDirToShadowOffset(const glm::vec2& worldDir,
+                                              float length) const
+{
+  glm::vec2 isoDir =
+      gridToIsometric(worldDir) - gridToIsometric(glm::vec2{0.0f, 0.0f});
+
+  if (glm::length(isoDir) < 0.001f)
+    return {0.0f, 0.0f};
+
+  return glm::normalize(isoDir) * length;
 }
 
 glm::vec2 IsometricRenderSystem::isometricToGrid(const glm::vec2& iso) const

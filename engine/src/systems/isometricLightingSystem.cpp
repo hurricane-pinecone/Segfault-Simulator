@@ -1,7 +1,9 @@
 
 #include "engine/systems/isometricLightingSystem.h"
 
-#include "engine/ecs/registry.h"
+#include "engine/components/lightEmitterComponent.h"
+#include "engine/components/transformComponent.h"
+#include "engine/ecs/registry.h" // Forward declarations
 
 #include "glm/glm/geometric.hpp"
 
