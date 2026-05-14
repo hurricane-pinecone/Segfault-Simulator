@@ -762,7 +762,8 @@ void main()
 
   if (uHasNormalMap == 0)
   {
-    FragColor = albedo * uColor;
+    float brightness = clamp(uAmbient + uLightIntensity, 0.0, 1.0);
+    FragColor = vec4(albedo.rgb * brightness, albedo.a) * uColor;
     return;
   }
 

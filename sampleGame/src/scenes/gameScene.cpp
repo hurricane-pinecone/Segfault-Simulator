@@ -206,7 +206,8 @@ void GameScene::loadMap()
       .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
 
   createEntity()
-      .addComponent<sfs::TransformComponent>(glm::vec2{5.5, 13.5})
+      .addComponent<sfs::TransformComponent>(
+          glm::vec2{5.5, 13.5}, glm::vec2{5, 5})
       .addComponent<sfs::ElevationComponent>(0)
       .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
       .addComponent<sfs::NormalMapComponent>(lampNormal)
