@@ -81,8 +81,10 @@ void IsometricRenderSystem::render()
     const glm::vec2 screenPosition =
         isoPosition - isoCameraPosition + screenCenter;
 
-    const int width = static_cast<int>(sprite->srcRect.w * transform.scale.x);
-    const int height = static_cast<int>(sprite->srcRect.h * transform.scale.y);
+    const int width =
+        static_cast<int>(sprite->srcRect.w * (transform.scale.x * worldScale));
+    const int height =
+        static_cast<int>(sprite->srcRect.h * (transform.scale.y * worldScale));
 
     const float anchorX = spriteComponent.anchor.x * static_cast<float>(width);
     const float anchorY = spriteComponent.anchor.y * static_cast<float>(height);
@@ -93,7 +95,8 @@ void IsometricRenderSystem::render()
     const int elevationLevel =
         getRenderElevationLevel(entity, groundSamplePosition);
 
-    const int elevationOffset = elevationLevel * elevationStep;
+    const int elevationOffset = static_cast<int>(
+        std::round(elevationLevel * elevationStep * worldScale));
     const float waveOffset = getWaveOffset(groundSamplePosition);
 
     const glm::vec2 surfacePosition{
@@ -508,10 +511,11 @@ void IsometricRenderSystem::setLighting(float ambient, float diffuseStrength)
 glm::vec2
 IsometricRenderSystem::gridToIsometric(const glm::vec2& gridPosition) const
 {
-  return {
-      (gridPosition.x - gridPosition.y) * static_cast<float>(tileWidth) / 2.0f,
-      (gridPosition.x + gridPosition.y) * static_cast<float>(tileHeight) /
-          2.0f};
+  return {(gridPosition.x - gridPosition.y) *
+              (static_cast<float>(tileWidth) * worldScale) / 2.0f,
+
+          (gridPosition.x + gridPosition.y) *
+              (static_cast<float>(tileHeight) * worldScale) / 2.0f};
 }
 
 glm::vec2
@@ -529,9 +533,16 @@ IsometricRenderSystem::worldDirToShadowOffset(const glm::vec2& worldDir,
 
 glm::vec2 IsometricRenderSystem::isometricToGrid(const glm::vec2& iso) const
 {
-  float x = (iso.x / (tileWidth / 2.0f) + iso.y / (tileHeight / 2.0f)) * 0.5f;
+  const float scaledTileWidth = static_cast<float>(tileWidth) * worldScale;
+  const float scaledTileHeight = static_cast<float>(tileHeight) * worldScale;
 
-  float y = (iso.y / (tileHeight / 2.0f) - iso.x / (tileWidth / 2.0f)) * 0.5f;
+  float x =
+      (iso.x / (scaledTileWidth / 2.0f) + iso.y / (scaledTileHeight / 2.0f)) *
+      0.5f;
+
+  float y =
+      (iso.y / (scaledTileHeight / 2.0f) - iso.x / (scaledTileWidth / 2.0f)) *
+      0.5f;
 
   return {x, y};
 }
@@ -1034,5 +1045,12 @@ float IsometricRenderSystem::getWaveOffset(const glm::vec2& gridPosition) const
                   gridPosition.y * waveFrequency + waveTime * waveSpeed) *
          waveAmplitude;
 }
+
+void IsometricRenderSystem::setWorldScale(float scale)
+{
+  worldScale = std::max(scale, 1.0f);
+}
+
+float IsometricRenderSystem::getWorldScale() const { return worldScale; }
 
 } // namespace sfs

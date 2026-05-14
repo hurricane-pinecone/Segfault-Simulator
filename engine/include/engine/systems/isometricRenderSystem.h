@@ -7,6 +7,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
+#include <cstdint>
 
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
@@ -62,6 +63,9 @@ public:
 
   glm::vec2 gridToIsometric(const glm::vec2& gridPosition) const;
   glm::vec2 isometricToGrid(const glm::vec2& iso) const;
+
+  void setWorldScale(float scale);
+  float getWorldScale() const;
 
   IsometricRenderSystem(const IsometricRenderSystem&) = delete;
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
@@ -153,6 +157,8 @@ private:
 
   int windowWidth;
   int windowHeight;
+
+  float worldScale = 1.0f;
 
   int tileWidth;
   int tileHeight;

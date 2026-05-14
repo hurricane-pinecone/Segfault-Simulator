@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.h"
 #include "engine/systems/isometricRenderSystem.h"
 #include <algorithm>
 
@@ -25,8 +26,8 @@ public:
       return;
     }
 
-    float x01 = std::clamp(x / 800.0f, 0.0f, 1.0f);
-    float y01 = std::clamp(y / 600.0f, 0.0f, 1.0f);
+    float x01 = std::clamp(x / static_cast<float>(WINDOW_WIDTH), 0.0f, 1.0f);
+    float y01 = std::clamp(y / static_cast<float>(WINDOW_HEIGHT), 0.0f, 1.0f);
 
     float sunX = x01 * 2.0f - 1.0f;
     float sunHeight = 1.0f - y01;

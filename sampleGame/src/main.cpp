@@ -1,3 +1,4 @@
+#include "config.h"
 #include "sampleGame.h"
 #include <cstddef>
 #include <cstdlib>
@@ -11,7 +12,7 @@ int main(int argc, char* argv[])
   sfs::Logger::setLogLevel(sfs::Logger::Level::DEBUG);
   // sfs::Logger::setVerbosity(sfs::Logger::Verbosity::FULL);
 
-  if (!game.init(800, 600))
+  if (!game.init(WINDOW_WIDTH, WINDOW_HEIGHT))
     return 1;
   game.setup();
   game.run();

@@ -29,9 +29,11 @@ void GameScene::onInit()
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
-  auto& renderer =
-      addSystem<sfs::IsometricRenderSystem>(m_assetStore, 800, 600, 32, 16);
-  addSystem<sfs::IsometricLightingSystem>(m_assetStore);
+  auto& renderer = addSystem<sfs::IsometricRenderSystem>(
+      m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
+  addSystem<sfs::IsometricLightingSystem>();
+
+  renderer.setWorldScale(WORLD_SCALE);
 
   m_sunController.setRenderSystem(renderer);
 }
@@ -49,8 +51,7 @@ void GameScene::createEntities()
   m_player = createEntity()
                  .addComponent<sfs::SpriteComponent>(
                      playerSprite, glm::vec2{0.5f, 1.0f})
-                 .addComponent<sfs::TransformComponent>(
-                     glm::vec2{12.0, 12.0}, glm::vec2{1.0, 1.0})
+                 .addComponent<sfs::TransformComponent>(glm::vec2{12.0, 12.0})
                  .addComponent<sfs::ColliderComponent>(
                      glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{200, 200})
                  .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0});
@@ -206,8 +207,7 @@ void GameScene::loadMap()
       .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
 
   createEntity()
-      .addComponent<sfs::TransformComponent>(
-          glm::vec2{5.5, 13.5}, glm::vec2{5, 5})
+      .addComponent<sfs::TransformComponent>(glm::vec2{5.5, 13.5})
       .addComponent<sfs::ElevationComponent>(0)
       .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
       .addComponent<sfs::NormalMapComponent>(lampNormal)
