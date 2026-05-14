@@ -19,14 +19,25 @@
       }
 
       #root {
-        display: flex;
-        flex-direction: column;
         height: 100%;
-        align-items: center;
-        justify-content: center;
-        gap: 16px;
         padding: 20px;
         box-sizing: border-box;
+      }
+
+      #game-layout {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+      }
+
+      #game-area {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
       }
 
       #title {
@@ -38,9 +49,11 @@
 
       #container {
         aspect-ratio: 4 / 3;
-        width: 90vw;
-        max-width: 1600px;
-        max-height: 1200px;
+        width: min(75vw, 1600px);
+        max-height: calc(100vh - 90px);
+        box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+        border-radius: 8px;
+        overflow: hidden;
       }
 
       canvas {
@@ -51,13 +64,20 @@
       }
 
       #panel {
-        width: min(70vw, 900px);
+        width: 280px;
+        flex: 0 0 280px;
+
         background: rgba(20, 20, 20, 0.75);
         backdrop-filter: blur(8px);
+
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 10px;
+
         padding: 14px 18px;
+        box-sizing: border-box;
+
         text-align: center;
+
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
       }
 
@@ -89,23 +109,30 @@
       .touch-button {
         width: 56px;
         height: 56px;
+
         border-radius: 12px;
         border: 1px solid #555;
+
         background: linear-gradient(180deg, #333, #181818);
+
         color: white;
         font-weight: bold;
         font-size: 20px;
+
         box-shadow:
           inset 0 1px 0 rgba(255, 255, 255, 0.12),
           0 4px 8px rgba(0, 0, 0, 0.6);
+
         display: inline-flex;
         align-items: center;
         justify-content: center;
+
         user-select: none;
       }
 
       .touch-button.interactive {
         touch-action: none;
+        cursor: pointer;
       }
 
       .touch-button.interactive:active,
@@ -114,14 +141,23 @@
         background: linear-gradient(180deg, #444, #222);
       }
 
-      @media (pointer: coarse), (max-width: 700px) {
-        #container,
-        #panel {
-          width: min(94vw, 900px);
+      @media (pointer: coarse), (max-width: 900px) {
+        #game-layout {
+          flex-direction: column;
         }
 
         #title {
           font-size: 22px;
+        }
+
+        #container {
+          width: min(94vw, 900px);
+          max-height: 60vh;
+        }
+
+        #panel {
+          width: min(94vw, 900px);
+          flex: none;
         }
 
         .touch-button {
@@ -140,37 +176,42 @@
 
   <body>
     <div id="root">
-      <div id="title">Segfault Simulator</div>
+      <main id="game-layout">
+        <section id="game-area">
+          <div id="title">Segfault Simulator</div>
 
-      <div id="container">
-        <canvas
-          id="canvas"
-          oncontextmenu="event.preventDefault()"
-          tabindex="-1"
-        ></canvas>
-      </div>
+          <div id="container">
+            <canvas
+              id="canvas"
+              oncontextmenu="event.preventDefault()"
+              tabindex="-1"
+            ></canvas>
+          </div>
+        </section>
 
-    <div id="panel">
-      <h2>Controls</h2>
-      <p>Use WASD to move</p>
-      <p>Move the mouse to control the sun</p>
-        <br>
-      <p>Left/right changes sun direction; up/down changes sun height</p>
-      <p>Top of screen = midday, bottom of screen = night</p>
-        <br>
-      <p>Press the buttons below on mobile</p>
+        <aside id="panel">
+          <h2>Controls</h2>
+          <p>Use WASD to move</p>
+          <p>Move the mouse to control the sun</p>
+          <br />
+          <p>Left/right changes sun direction; up/down changes sun height</p>
+          <p>Top of screen = midday, bottom of screen = night</p>
+          <br />
+          <p>Press the buttons below on mobile</p>
 
-      <div class="controls">
-        <div>
-          <div class="touch-button interactive" data-key="w">W</div>
-        </div>
+          <div class="controls">
+            <div>
+              <div class="touch-button interactive" data-key="w">W</div>
+            </div>
 
-        <div class="touch-row">
-          <div class="touch-button interactive" data-key="a">A</div>
-          <div class="touch-button interactive" data-key="s">S</div>
-          <div class="touch-button interactive" data-key="d">D</div>
-        </div>
-      </div>
+            <div class="touch-row">
+              <div class="touch-button interactive" data-key="a">A</div>
+              <div class="touch-button interactive" data-key="s">S</div>
+              <div class="touch-button interactive" data-key="d">D</div>
+            </div>
+          </div>
+        </aside>
+      </main>
     </div>
 
     <script>
