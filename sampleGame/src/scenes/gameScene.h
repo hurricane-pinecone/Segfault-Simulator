@@ -1,5 +1,7 @@
 #pragma once
 
+#include "controllers/sunController.h"
+#include "engine/assetStore/assetStore.h"
 #include "engine/ecs/entity.h"
 #include "engine/input/input.h"
 #include "engine/sceneManager/scene.h"
@@ -8,7 +10,12 @@
 class GameScene : public sfs::Scene
 {
 public:
-  using sfs::Scene::Scene;
+  GameScene(sfs::SceneId id,
+            sfs::AssetStore& assetStore,
+            const std::string& name)
+      : sfs::Scene(id, assetStore, name), m_sunController()
+  {
+  }
 
 protected:
   void onInit() override;
@@ -25,4 +32,5 @@ private:
   sfs::Entity m_player;
   glm::vec2 m_mousePos;
   float m_worldWaveTime;
+  SunController m_sunController;
 };

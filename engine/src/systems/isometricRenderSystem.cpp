@@ -310,16 +310,25 @@ void IsometricRenderSystem::flushBatches()
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, activeBatch.texture);
 
+    GLuint normalTexture = defaultNormalTexture;
+    bool useNormalMap = activeHasNormalMap;
+
     if (activeHasNormalMap)
     {
-      glActiveTexture(GL_TEXTURE1);
-      glBindTexture(GL_TEXTURE_2D, getOrCreateTexture(activeNormalTextureId));
+      GLuint uploadedNormalTexture = getOrCreateTexture(activeNormalTextureId);
+
+      if (uploadedNormalTexture != 0)
+      {
+        normalTexture = uploadedNormalTexture;
+      }
+      else
+      {
+        useNormalMap = false;
+      }
     }
-    else
-    {
-      glActiveTexture(GL_TEXTURE1);
-      glBindTexture(GL_TEXTURE_2D, 0);
-    }
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, normalTexture);
 
     glUniform4f(uColorLocation,
                 activeTint.r / 255.0f,
@@ -327,7 +336,7 @@ void IsometricRenderSystem::flushBatches()
                 activeTint.b / 255.0f,
                 activeTint.a / 255.0f);
 
-    glUniform1i(uHasNormalMapLocation, activeHasNormalMap ? 1 : 0);
+    glUniform1i(uHasNormalMapLocation, useNormalMap ? 1 : 0);
 
     glUniform3f(uLightDirectionLocation,
                 activeLightDirection.x,
@@ -428,7 +437,7 @@ void IsometricRenderSystem::flushBatches()
   flushActiveBatch();
 
   glActiveTexture(GL_TEXTURE1);
-  glBindTexture(GL_TEXTURE_2D, 0);
+  glBindTexture(GL_TEXTURE_2D, defaultNormalTexture);
 
   glActiveTexture(GL_TEXTURE0);
 }
@@ -542,6 +551,29 @@ void IsometricRenderSystem::initializeOpenGL()
   glUniform1f(uAmbientLocation, 0.18f);
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
 
+  glGenTextures(1, &defaultNormalTexture);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, defaultNormalTexture);
+
+  const unsigned char defaultNormalPixel[4] = {128, 128, 255, 255};
+
+  glTexImage2D(GL_TEXTURE_2D,
+               0,
+               GL_RGBA,
+               1,
+               1,
+               0,
+               GL_RGBA,
+               GL_UNSIGNED_BYTE,
+               defaultNormalPixel);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  glActiveTexture(GL_TEXTURE0);
+
   glUseProgram(0);
 
   glGenVertexArrays(1, &vao);
@@ -580,6 +612,17 @@ void IsometricRenderSystem::initializeOpenGL()
 
 void IsometricRenderSystem::shutdownOpenGL()
 {
+  if (!glInitialized)
+    return;
+
+  glBindVertexArray(0);
+
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
   for (auto& [id, texture] : textureCache)
   {
     if (texture != 0)
@@ -587,6 +630,12 @@ void IsometricRenderSystem::shutdownOpenGL()
   }
 
   textureCache.clear();
+
+  if (defaultNormalTexture != 0)
+    glDeleteTextures(1, &defaultNormalTexture);
+
+  defaultNormalTexture = 0;
+
   renderItems.clear();
   activeBatch.vertices.clear();
   activeBatch.texture = 0;

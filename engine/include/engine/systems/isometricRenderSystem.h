@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/assetStore/assetStore.h"
-#include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
 
@@ -169,6 +168,8 @@ private:
 
   GLuint debugVao = 0;
   GLuint debugVbo = 0;
+
+  GLuint defaultNormalTexture = 0;
 
   GLint uTextureLocation = -1;
   GLint uColorLocation = -1;
