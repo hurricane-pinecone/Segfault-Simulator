@@ -5,6 +5,7 @@
 #include "engine/logger/logger.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
+#include "glm/glm/geometric.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -122,6 +123,7 @@ void IsometricRenderSystem::render()
     item.textureWidth = surface->w;
     item.textureHeight = surface->h;
     item.sortKey = sortKey;
+    item.tint = SDL_Color{255, 255, 255, 255};
 
     glm::vec2 spriteWorldSample =
         isTileEntity(entity) ? transform.position + glm::vec2{0.5f, 0.5f}
@@ -161,6 +163,80 @@ void IsometricRenderSystem::render()
       }
     }
 
+    if (lightingSystem && !isTileEntity(entity))
+    {
+      const auto& lights = lightingSystem->getLights();
+
+      for (const auto& light : lights)
+      {
+        glm::vec2 fromLight = spriteWorldSample - light.worldPosition;
+        float distance = glm::length(fromLight);
+
+        if (distance > light.radius || distance < 0.001f)
+          continue;
+
+        float attenuation = 1.0f - distance / light.radius;
+        attenuation = std::pow(std::clamp(attenuation, 0.0f, 1.0f), 0.75f);
+
+        glm::vec2 shadowWorldDir = glm::normalize(fromLight);
+
+        float heightPixels = static_cast<float>(item.dest.h) * 0.55f +
+                             static_cast<float>(elevationOffset);
+
+        float lightHeight =
+            std::max(light.height - static_cast<float>(elevationOffset), 8.0f);
+
+        float shadowLength =
+            heightPixels * (1.0f + distance / lightHeight) * 0.45f;
+
+        glm::vec2 isoDir =
+            gridToIsometric(shadowWorldDir) - gridToIsometric({0.0f, 0.0f});
+
+        if (glm::length(isoDir) > 0.001f)
+          isoDir = glm::normalize(isoDir);
+
+        glm::vec2 shadowOffset = isoDir * shadowLength;
+
+        float alpha =
+            0.42f * attenuation * std::clamp(light.intensity, 0.0f, 2.0f);
+
+        submitShadow(item, shadowOffset, alpha);
+      }
+
+      glm::vec3 sunDir = lightingSystem->getLightDirection();
+
+      if (sunDir.z > 0.05f)
+      {
+        glm::vec2 sunHorizontal{sunDir.x, sunDir.y};
+        float horizontalLength = glm::length(sunHorizontal);
+
+        if (horizontalLength > 0.001f)
+        {
+          glm::vec2 shadowWorldDir = -sunHorizontal / horizontalLength;
+
+          glm::vec2 isoDir =
+              gridToIsometric(shadowWorldDir) - gridToIsometric({0.0f, 0.0f});
+
+          if (glm::length(isoDir) > 0.001f)
+          {
+            isoDir = glm::normalize(isoDir);
+
+            float noonFade = glm::smoothstep(0.0f, 0.25f, horizontalLength);
+
+            float shadowLength =
+                static_cast<float>(item.dest.h) *
+                std::clamp(horizontalLength / sunDir.z, 0.0f, 3.5f) * 0.35f *
+                noonFade;
+
+            float shadowAlpha = 0.22f * noonFade;
+
+            if (shadowLength > 0.5f && shadowAlpha > 0.01f)
+              submitShadow(item, isoDir * shadowLength, shadowAlpha);
+          }
+        }
+      }
+    }
+
     submitSprite(item);
   }
 
@@ -177,6 +253,26 @@ void IsometricRenderSystem::submitSprite(const RenderItem& item)
   renderItems.push_back(item);
 }
 
+void IsometricRenderSystem::submitShadow(const RenderItem& caster,
+                                         const glm::vec2& shadowOffset,
+                                         float alpha,
+                                         float sortKeyBias)
+{
+  RenderItem shadow = caster;
+
+  shadow.isShadow = true;
+  shadow.hasNormalMap = false;
+  shadow.normalTextureId.clear();
+  shadow.shadowOffset = shadowOffset;
+
+  const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+
+  shadow.tint = SDL_Color{0, 0, 0, a};
+  shadow.sortKey = caster.sortKey + sortKeyBias;
+
+  renderItems.push_back(shadow);
+}
+
 void IsometricRenderSystem::flushBatches()
 {
   std::stable_sort(renderItems.begin(),
@@ -186,7 +282,6 @@ void IsometricRenderSystem::flushBatches()
 
   glUseProgram(shaderProgram);
 
-  glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
   glUniform1i(uUseTextureLocation, 1);
 
   glActiveTexture(GL_TEXTURE0);
@@ -199,6 +294,9 @@ void IsometricRenderSystem::flushBatches()
 
   std::string activeNormalTextureId;
   bool activeHasNormalMap = false;
+  bool activeIsShadow = false;
+  SDL_Color activeTint{255, 255, 255, 255};
+
   glm::vec3 activeLightDirection{0.0f, 0.0f, 1.0f};
   float activeLightIntensity = 1.0f;
   float activeAmbient = 0.18f;
@@ -217,12 +315,25 @@ void IsometricRenderSystem::flushBatches()
       glActiveTexture(GL_TEXTURE1);
       glBindTexture(GL_TEXTURE_2D, getOrCreateTexture(activeNormalTextureId));
     }
+    else
+    {
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    glUniform4f(uColorLocation,
+                activeTint.r / 255.0f,
+                activeTint.g / 255.0f,
+                activeTint.b / 255.0f,
+                activeTint.a / 255.0f);
 
     glUniform1i(uHasNormalMapLocation, activeHasNormalMap ? 1 : 0);
+
     glUniform3f(uLightDirectionLocation,
                 activeLightDirection.x,
                 activeLightDirection.y,
                 activeLightDirection.z);
+
     glUniform1f(uLightIntensityLocation, activeLightIntensity);
     glUniform1f(uAmbientLocation, activeAmbient);
     glUniform1f(uDiffuseStrengthLocation, activeDiffuseStrength);
@@ -241,13 +352,17 @@ void IsometricRenderSystem::flushBatches()
 
   for (const auto& item : renderItems)
   {
-    const bool batchBreak = activeBatchTextureId != item.textureId ||
-                            activeHasNormalMap != item.hasNormalMap ||
-                            activeNormalTextureId != item.normalTextureId ||
-                            activeLightDirection != item.lightDirection ||
-                            activeLightIntensity != item.lightIntensity ||
-                            activeAmbient != item.ambient ||
-                            activeDiffuseStrength != item.diffuseStrength;
+    const bool batchBreak =
+        activeBatchTextureId != item.textureId ||
+        activeHasNormalMap != item.hasNormalMap ||
+        activeNormalTextureId != item.normalTextureId ||
+        activeIsShadow != item.isShadow || activeTint.r != item.tint.r ||
+        activeTint.g != item.tint.g || activeTint.b != item.tint.b ||
+        activeTint.a != item.tint.a ||
+        activeLightDirection != item.lightDirection ||
+        activeLightIntensity != item.lightIntensity ||
+        activeAmbient != item.ambient ||
+        activeDiffuseStrength != item.diffuseStrength;
 
     if (batchBreak)
     {
@@ -258,6 +373,9 @@ void IsometricRenderSystem::flushBatches()
 
       activeHasNormalMap = item.hasNormalMap;
       activeNormalTextureId = item.normalTextureId;
+      activeIsShadow = item.isShadow;
+      activeTint = item.tint;
+
       activeLightDirection = item.lightDirection;
       activeLightIntensity = item.lightIntensity;
       activeAmbient = item.ambient;
@@ -269,10 +387,26 @@ void IsometricRenderSystem::flushBatches()
     const float top = static_cast<float>(item.dest.y);
     const float bottom = static_cast<float>(item.dest.y + item.dest.h);
 
-    const glm::vec2 p0 = toNdc({left, top});
-    const glm::vec2 p1 = toNdc({right, top});
-    const glm::vec2 p2 = toNdc({right, bottom});
-    const glm::vec2 p3 = toNdc({left, bottom});
+    glm::vec2 q0{left, top};
+    glm::vec2 q1{right, top};
+    glm::vec2 q2{right, bottom};
+    glm::vec2 q3{left, bottom};
+
+    if (item.isShadow)
+    {
+      q0 += item.shadowOffset;
+      q1 += item.shadowOffset;
+
+      const float groundY = bottom;
+
+      q0.y = groundY + (q0.y - groundY) * 0.45f;
+      q1.y = groundY + (q1.y - groundY) * 0.45f;
+    }
+
+    const glm::vec2 p0 = toNdc(q0);
+    const glm::vec2 p1 = toNdc(q1);
+    const glm::vec2 p2 = toNdc(q2);
+    const glm::vec2 p3 = toNdc(q3);
 
     const float u0 = static_cast<float>(item.srcRect.x) / item.textureWidth;
     const float u1 =
