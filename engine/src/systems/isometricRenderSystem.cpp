@@ -204,8 +204,9 @@ void IsometricRenderSystem::render()
       }
 
       glm::vec3 sunDir = lightingSystem->getLightDirection();
+      float horizonFade = glm::smoothstep(0.0f, 0.15f, sunDir.z);
 
-      if (lightingSystem->getDiffuseStrength() > 0.001f && sunDir.z > 0.05f)
+      if (lightingSystem->getDiffuseStrength() > 0.001f && horizonFade > 0.001f)
       {
         glm::vec2 sunHorizontal{sunDir.x, sunDir.y};
         float horizontalLength = glm::length(sunHorizontal);
@@ -223,12 +224,13 @@ void IsometricRenderSystem::render()
 
             float noonFade = glm::smoothstep(0.0f, 0.25f, horizontalLength);
 
-            float shadowLength =
-                static_cast<float>(item.dest.h) *
-                std::clamp(horizontalLength / sunDir.z, 0.0f, 3.5f) * 0.35f *
-                noonFade;
+            float lowSunStretch = std::clamp(
+                horizontalLength / std::max(sunDir.z, 0.03f), 0.0f, 12.0f);
 
-            float shadowAlpha = 0.22f * noonFade;
+            float shadowLength = static_cast<float>(item.dest.h) *
+                                 lowSunStretch * 0.45f * noonFade;
+
+            float shadowAlpha = 0.22f * noonFade * horizonFade;
 
             if (shadowLength > 0.5f && shadowAlpha > 0.01f)
               submitShadow(item, isoDir * shadowLength, shadowAlpha);
