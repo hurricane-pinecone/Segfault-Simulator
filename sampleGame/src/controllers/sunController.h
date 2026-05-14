@@ -52,5 +52,5 @@ public:
 private:
   sfs::IsometricRenderSystem* m_renderer = nullptr;
 
-  bool m_isSunEnabled = false;
+  bool m_isSunEnabled = true;
 };
