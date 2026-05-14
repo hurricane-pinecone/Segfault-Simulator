@@ -87,7 +87,7 @@ The web build can't be run in debug because ImGUI is stripped from the build
 
 ```bash
 rm -rf build-web
-cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
 cmake --build build-web
 python3 -m http.server 8080 -d build-web/bin
 ```

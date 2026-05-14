@@ -93,6 +93,10 @@ private:
     float lightIntensity = 1.0f;
     float ambient = 0.18f;
     float diffuseStrength = 0.85f;
+
+    bool isShadow = false;
+    glm::vec2 shadowOffset{0.0f};
+    SDL_Color tint{255, 255, 255, 255};
   };
 
   struct SpriteBatch
@@ -134,6 +138,11 @@ private:
   int getTileElevationAt(const glm::vec2& position) const;
 
   float getWaveOffset(const glm::vec2& gridPosition) const;
+
+  void submitShadow(const RenderItem& caster,
+                    const glm::vec2& shadowOffset,
+                    float alpha,
+                    float sortKeyBias = -0.004f);
 
 private:
   AssetStore& assetStore;
