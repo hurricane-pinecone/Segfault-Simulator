@@ -1,6 +1,5 @@
 #pragma once
 
-#include "engine/assetStore/assetStore.h"
 #include "engine/ecs/system.h"
 
 #include "glm/glm/ext/vector_float2.hpp"
