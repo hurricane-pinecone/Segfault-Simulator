@@ -37,7 +37,7 @@ struct IsometricComputedLighting
 class IsometricLightingSystem : public System
 {
 public:
-  explicit IsometricLightingSystem(AssetStore& assetStore);
+  explicit IsometricLightingSystem();
 
   void rebuildLights();
 
@@ -54,8 +54,6 @@ public:
   const std::vector<ActiveLight>& getLights() const { return lights; }
 
 private:
-  AssetStore& assetStore;
-
   std::vector<ActiveLight> lights;
 
   glm::vec3 m_lightDirection = {0.0f, 0.0f, 1.0f};

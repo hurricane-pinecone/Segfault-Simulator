@@ -3,7 +3,7 @@
 
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/components/transformComponent.h"
-#include "engine/ecs/registry.h" // Forward declarations
+#include "engine/ecs/registry.h" // IWYU pragma: keep
 
 #include "glm/glm/geometric.hpp"
 
@@ -12,8 +12,7 @@
 namespace sfs
 {
 
-IsometricLightingSystem::IsometricLightingSystem(AssetStore& assetStore)
-    : assetStore(assetStore)
+IsometricLightingSystem::IsometricLightingSystem()
 {
   registerComponent<TransformComponent>();
   registerComponent<LightEmitterComponent>();
