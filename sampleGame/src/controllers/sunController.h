@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "engine/systems/isometricRenderSystem.h"
+#include "glm/glm/geometric.hpp"
 #include <algorithm>
 
 class SunController
@@ -14,32 +15,54 @@ public:
   void moveTo(int x, int y)
   {
     assert(m_renderer && "SunController renderer not set");
+
     if (!m_renderer)
       return;
 
     if (!m_isSunEnabled)
     {
       m_renderer->setLightDirection(glm::vec3{0.0f, 0.0f, 1.0f});
-
-      // ambient-only night lighting
       m_renderer->setLighting(0.08f, 0.0f);
       return;
     }
 
-    float x01 = std::clamp(x / static_cast<float>(WINDOW_WIDTH), 0.0f, 1.0f);
+    const float cx = static_cast<float>(WINDOW_WIDTH) * 0.5f;
+    const float cy = static_cast<float>(WINDOW_HEIGHT) * 0.5f;
+
+    float dx = (static_cast<float>(x) - cx) / cx;
+    float dy = (cy - static_cast<float>(y)) / cy; // screen up = positive
+
+    glm::vec2 mouseDir{dx, dy};
+
+    float distanceFromCenter = std::clamp(glm::length(mouseDir), 0.0f, 1.0f);
+
+    if (distanceFromCenter > 0.001f)
+      mouseDir /= distanceFromCenter;
+    else
+      mouseDir = glm::vec2{0.0f, 1.0f};
+
+    // Mouse angle around the screen = sun rotation around the world.
+    float azimuth = std::atan2(mouseDir.y, mouseDir.x);
+
+    // Center = high noon, edge = horizon.
     float y01 = std::clamp(y / static_cast<float>(WINDOW_HEIGHT), 0.0f, 1.0f);
+    float sunZ = 1.0f - y01 * 2.0f;
 
-    float sunX = x01 * 2.0f - 1.0f;
-    float sunHeight = 1.0f - y01;
+    float horizontalRadius = std::sqrt(std::max(0.0f, 1.0f - sunZ * sunZ));
 
-    // Below this, sun is basically below horizon.
-    float daylight = std::clamp((sunHeight - 0.15f) / 0.85f, 0.0f, 1.0f);
+    glm::vec3 sunDir{
+        std::cos(azimuth) * horizontalRadius,
+        std::sin(azimuth) * horizontalRadius,
+        sunZ,
+    };
+
+    if (glm::length(sunDir) > 0.001f)
+      sunDir = glm::normalize(sunDir);
+
+    float daylight = std::clamp((sunZ + 0.3f) / 1.2f, 0.0f, 1.0f);
     daylight = daylight * daylight * (3.0f - 2.0f * daylight);
 
-    // Allows bottom screen to behave like below-horizon light.
-    float sunZ = sunHeight * 2.0f - 0.35f;
-
-    m_renderer->setLightDirection(glm::vec3{sunX, 0.0f, sunZ});
+    m_renderer->setLightDirection(sunDir);
     m_renderer->setLighting(0.08f + daylight * 0.28f, 0.12f + daylight * 0.78f);
   }
 
