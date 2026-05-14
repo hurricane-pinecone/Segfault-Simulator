@@ -67,6 +67,9 @@ void GameScene::onProcessInput(const sfs::Input& input)
   auto mousePos = input.mouse().getPosition();
   m_sunController.moveTo(mousePos.x, mousePos.y);
 
+  if (input.keyboard().keyPressed(sfs::Key::F))
+    m_sunController.toggleSun();
+
   glm::vec2 screenDirection(0.0f);
 
   if (input.keyboard().keyHeld(sfs::Key::A))
@@ -195,9 +198,22 @@ void GameScene::loadMap()
       .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
       .addComponent<sfs::NormalMapComponent>(lampNormal)
       .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
+  createEntity()
+      .addComponent<sfs::TransformComponent>(glm::vec2{18.5, 17.5})
+      .addComponent<sfs::ElevationComponent>(0)
+      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
+      .addComponent<sfs::NormalMapComponent>(lampNormal)
+      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
 
   createEntity()
       .addComponent<sfs::TransformComponent>(glm::vec2{5.5, 13.5})
+      .addComponent<sfs::ElevationComponent>(0)
+      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
+      .addComponent<sfs::NormalMapComponent>(lampNormal)
+      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
+
+  createEntity()
+      .addComponent<sfs::TransformComponent>(glm::vec2{6.5, 13.5})
       .addComponent<sfs::ElevationComponent>(0)
       .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
       .addComponent<sfs::NormalMapComponent>(lampNormal)

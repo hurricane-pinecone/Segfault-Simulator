@@ -16,6 +16,15 @@ public:
     if (!m_renderer)
       return;
 
+    if (!m_isSunEnabled)
+    {
+      m_renderer->setLightDirection(glm::vec3{0.0f, 0.0f, 1.0f});
+
+      // ambient-only night lighting
+      m_renderer->setLighting(0.08f, 0.0f);
+      return;
+    }
+
     float x01 = std::clamp(x / 800.0f, 0.0f, 1.0f);
     float y01 = std::clamp(y / 600.0f, 0.0f, 1.0f);
 
@@ -37,6 +46,8 @@ public:
   {
     m_renderer = &renderer;
   }
+
+  void toggleSun() { m_isSunEnabled = !m_isSunEnabled; }
 
 private:
   sfs::IsometricRenderSystem* m_renderer = nullptr;

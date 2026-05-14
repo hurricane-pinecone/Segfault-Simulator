@@ -1,8 +1,6 @@
 #pragma once
 
 #include "engine/assetStore/assetStore.h"
-#include "engine/components/lightEmitterComponent.h"
-#include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
 
 #include "glm/glm/ext/vector_float2.hpp"
@@ -51,6 +49,7 @@ public:
 
   float getAmbient() const { return m_ambient; }
   float getDiffuseStrength() const { return m_diffuseStrength; }
+
   const glm::vec3& getLightDirection() const { return m_lightDirection; }
   const std::vector<ActiveLight>& getLights() const { return lights; }
 
