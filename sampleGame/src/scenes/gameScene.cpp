@@ -1,7 +1,6 @@
 
 #include "gameScene.h"
 #include "config.h"
-#include "engine/TextRenderer/textRenderer.h"
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
@@ -21,7 +20,6 @@
 #include <engine/systems/renderSystem.h>
 #include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
-#include <string>
 
 void GameScene::onInit()
 {
@@ -31,8 +29,11 @@ void GameScene::onInit()
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
-  addSystem<sfs::IsometricRenderSystem>(m_assetStore, 800, 600, 32, 16);
+  auto& renderer =
+      addSystem<sfs::IsometricRenderSystem>(m_assetStore, 800, 600, 32, 16);
   addSystem<sfs::IsometricLightingSystem>(m_assetStore);
+
+  m_sunController.setRenderSystem(renderer);
 }
 
 void GameScene::createEntities()
@@ -64,24 +65,7 @@ void GameScene::createEntities()
 void GameScene::onProcessInput(const sfs::Input& input)
 {
   auto mousePos = input.mouse().getPosition();
-  auto& isoRenderer = getSystem<sfs::IsometricRenderSystem>();
-
-  float x01 = std::clamp(mousePos.x / 800.0f, 0.0f, 1.0f);
-  float y01 = std::clamp(mousePos.y / 600.0f, 0.0f, 1.0f);
-
-  float sunX = x01 * 2.0f - 1.0f;
-  float sunHeight = 1.0f - y01;
-
-  // Below this, sun is basically below horizon.
-  float daylight = std::clamp((sunHeight - 0.15f) / 0.85f, 0.0f, 1.0f);
-  daylight = daylight * daylight * (3.0f - 2.0f * daylight);
-
-  // Allows bottom screen to behave like below-horizon light.
-  float sunZ = sunHeight * 2.0f - 0.35f;
-
-  isoRenderer.setLightDirection(glm::vec3{sunX, 0.0f, sunZ});
-
-  isoRenderer.setLighting(0.08f + daylight * 0.28f, 0.12f + daylight * 0.78f);
+  m_sunController.moveTo(mousePos.x, mousePos.y);
 
   glm::vec2 screenDirection(0.0f);
 
@@ -204,6 +188,7 @@ void GameScene::loadMap()
     }
   }
 
+  // Lamps
   createEntity()
       .addComponent<sfs::TransformComponent>(glm::vec2{18.5, 13.5})
       .addComponent<sfs::ElevationComponent>(0)

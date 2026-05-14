@@ -46,7 +46,7 @@ public:
   void destroyEntity(int id);
 
   template <typename TSystem, typename... TArgs>
-  void addSystem(TArgs&&... args);
+  TSystem& addSystem(TArgs&&... args);
 
   template <typename TSystem>
   void removeSystem();
@@ -82,9 +82,9 @@ private:
 };
 
 template <typename TSystem, typename... TArgs>
-void Scene::addSystem(TArgs&&... args)
+TSystem& Scene::addSystem(TArgs&&... args)
 {
-  m_registry.addSystem<TSystem>(std::forward<TArgs>(args)...);
+  return m_registry.addSystem<TSystem>(std::forward<TArgs>(args)...);
 }
 
 template <typename TSystem>

@@ -37,7 +37,7 @@ public:
   TComponent& getComponent(const Entity& entity);
 
   template <typename TSystem, typename... TArgs>
-  void addSystem(TArgs&&... args);
+  TSystem& addSystem(TArgs&&... args);
 
   template <typename TSystem>
   void removeSystem();
@@ -127,11 +127,15 @@ TComponent& Registry::getComponent(const Entity& entity)
 }
 
 template <typename TSystem, typename... TArgs>
-void Registry::addSystem(TArgs&&... args)
+TSystem& Registry::addSystem(TArgs&&... args)
 {
   auto system = std::make_unique<TSystem>(std::forward<TArgs>(args)...);
   system->setRegistry(this);
+
+  TSystem* ptr = system.get();
+
   systems.emplace_back(std::move(system));
+  return *ptr;
 }
 
 template <typename TSystem>
