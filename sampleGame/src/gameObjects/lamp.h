@@ -14,6 +14,25 @@
 class Lamp : public sfs::GameObject
 {
 public:
+  struct Color
+  {
+    static constexpr glm::vec3 WarmWhite{1.0f, 0.9f, 0.7f};
+    static constexpr glm::vec3 White{1.0f, 1.0f, 1.0f};
+    static constexpr glm::vec3 Red{1.0f, 0.05f, 0.05f};
+    static constexpr glm::vec3 SoftRed{1.0f, 0.25f, 0.25f};
+    static constexpr glm::vec3 Blue{0.25f, 0.35f, 1.0f};
+    static constexpr glm::vec3 SoftBlue{0.45f, 0.55f, 1.0f};
+    static constexpr glm::vec3 Green{0.2f, 1.0f, 0.2f};
+    static constexpr glm::vec3 SoftGreen{0.45f, 1.0f, 0.45f};
+    static constexpr glm::vec3 Purple{0.8f, 0.3f, 1.0f};
+    static constexpr glm::vec3 Pink{1.0f, 0.35f, 0.75f};
+    static constexpr glm::vec3 Orange{1.0f, 0.45f, 0.15f};
+    static constexpr glm::vec3 Gold{1.0f, 0.75f, 0.2f};
+    static constexpr glm::vec3 Cyan{0.2f, 1.0f, 1.0f};
+    static constexpr glm::vec3 Moonlight{0.55f, 0.65f, 1.0f};
+    static constexpr glm::vec3 Torch{1.0f, 0.5f, 0.2f};
+  };
+
   Lamp(glm::vec2 position, glm::vec3 color = {1.0f, 0.9f, 0.7f})
       : m_position(position), m_color(color)
   {
