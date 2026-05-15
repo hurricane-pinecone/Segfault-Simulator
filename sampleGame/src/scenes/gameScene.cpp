@@ -117,7 +117,7 @@ void GameScene::loadMap()
         createObject<GrassBlock>(glm::vec2{x, y}, z, BlockShape::Half);
       }
 
-      createObject<GrassBlock>(glm::vec2{x, y}, elevation);
+      createObject<GrassBlock>(glm::vec2{x, y}, elevation, BlockShape::Full);
     }
   }
 }
