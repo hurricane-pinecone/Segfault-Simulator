@@ -107,19 +107,30 @@ void IsometricRenderSystem::render()
         height,
     };
 
+    RenderItem item;
     float sortKey = transform.position.x + transform.position.y;
+
+    glm::vec2 spriteWorldSample =
+        isTileEntity(entity) ? transform.position + glm::vec2{0.5f, 0.5f}
+                             : transform.position;
 
     if (isTileEntity(entity))
     {
       sortKey += static_cast<float>(elevationLevel) * 0.01f;
+      item.worldPoints[0] = transform.position;
+      item.worldPoints[1] = transform.position + glm::vec2{1.0f, 0.0f};
+      item.worldPoints[2] = transform.position + glm::vec2{1.0f, 1.0f};
+      item.worldPoints[3] = transform.position + glm::vec2{0.0f, 1.0f};
     }
     else
     {
       sortKey += static_cast<float>(elevationLevel) * 0.01f;
       sortKey += 0.005f;
+      item.worldPoints[0] = spriteWorldSample;
+      item.worldPoints[1] = spriteWorldSample;
+      item.worldPoints[2] = spriteWorldSample;
+      item.worldPoints[3] = spriteWorldSample;
     }
-
-    RenderItem item;
     item.textureId = sprite->textureId;
     item.srcRect = sprite->srcRect;
     item.dest = dest;
@@ -128,10 +139,6 @@ void IsometricRenderSystem::render()
     item.sortKey = sortKey;
     item.tint = SDL_Color{255, 255, 255, 255};
     item.renderLayer = isTileEntity(entity) ? 0 : 2;
-
-    glm::vec2 spriteWorldSample =
-        isTileEntity(entity) ? transform.position + glm::vec2{0.5f, 0.5f}
-                             : transform.position;
 
     if (lightingSystem)
     {
@@ -274,6 +281,30 @@ void IsometricRenderSystem::flushBatches()
       command.lightIntensity = item.lighting.intensity;
       command.ambient = item.lighting.ambient;
       command.diffuseStrength = item.lighting.diffuseStrength;
+      command.lightColor = item.lighting.color;
+      command.worldPoints[0] = item.worldPoints[0];
+      command.worldPoints[1] = item.worldPoints[1];
+      command.worldPoints[2] = item.worldPoints[2];
+      command.worldPoints[3] = item.worldPoints[3];
+
+      if (registry->hasSystem<IsometricLightingSystem>())
+      {
+        const auto& lightingSystem =
+            registry->getSystem<IsometricLightingSystem>();
+        const auto& lights = lightingSystem.getLights();
+
+        command.lightCount = std::min(static_cast<int>(lights.size()),
+                                      OpenGLQuadRenderer::MaxShaderLights);
+
+        for (int i = 0; i < command.lightCount; i++)
+        {
+          command.lightPositions[i] = lights[i].worldPosition;
+          command.lightColors[i] = lights[i].color;
+          command.lightIntensities[i] = lights[i].intensity;
+          command.lightRadii[i] = lights[i].radius;
+          command.lightHeights[i] = lights[i].height;
+        }
+      }
 
       if (item.hasNormalMap)
       {

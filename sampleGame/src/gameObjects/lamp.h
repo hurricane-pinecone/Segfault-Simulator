@@ -9,11 +9,15 @@
 #include "engine/game/gameObject.h"
 #include "engine/sceneManager/scene.h"
 #include "engine/systems/isometricRenderSystem.h"
+#include "glm/glm/ext/vector_float3.hpp"
 
 class Lamp : public sfs::GameObject
 {
 public:
-  Lamp(glm::vec2 position) : m_position(position) {}
+  Lamp(glm::vec2 position, glm::vec3 color = {1.0f, 0.9f, 0.7f})
+      : m_position(position), m_color(color)
+  {
+  }
 
   void onCreate(sfs::Scene& scene) override
   {
@@ -28,12 +32,14 @@ public:
             .addComponent<sfs::NormalMapComponent>(normal)
             .addComponent<sfs::ColliderComponent>(
                 glm::vec2{-0.15f, -0.15f}, glm::vec2{0.3f, 0.3f})
-            .addComponent<sfs::SolidObject>()
-            .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
+            .addComponent<sfs::LightEmitterComponent>(
+                10.0f, 1.0f, 32.0f, m_color)
+            .addTag<sfs::SolidObject>();
 
     m_entity.getComponent<sfs::ColliderComponent>().updateBounds(m_position);
   }
 
 private:
   glm::vec2 m_position;
+  glm::vec3 m_color;
 };

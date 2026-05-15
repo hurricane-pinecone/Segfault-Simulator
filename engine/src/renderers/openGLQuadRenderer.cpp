@@ -2,6 +2,7 @@
 #include "engine/renderers/openGLQuadRenderer.h"
 
 #include "engine/logger/logger.h"
+#include <algorithm>
 
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
@@ -51,6 +52,16 @@ void OpenGLQuadRenderer::initialize()
   uAmbientLocation = glGetUniformLocation(shaderProgram, "uAmbient");
   uDiffuseStrengthLocation =
       glGetUniformLocation(shaderProgram, "uDiffuseStrength");
+  uLightColorLocation = glGetUniformLocation(shaderProgram, "uLightColor");
+  uLightCountLocation = glGetUniformLocation(shaderProgram, "uLightCount");
+  uLightPositionsLocation =
+      glGetUniformLocation(shaderProgram, "uLightPositions[0]");
+  uLightColorsLocation = glGetUniformLocation(shaderProgram, "uLightColors[0]");
+  uLightIntensitiesLocation =
+      glGetUniformLocation(shaderProgram, "uLightIntensities[0]");
+  uLightRadiiLocation = glGetUniformLocation(shaderProgram, "uLightRadii[0]");
+  uLightHeightsLocation =
+      glGetUniformLocation(shaderProgram, "uLightHeights[0]");
 
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
@@ -79,6 +90,15 @@ void OpenGLQuadRenderer::initialize()
                         sizeof(Vertex),
                         reinterpret_cast<void*>(offsetof(Vertex, uv)));
 
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(
+      2,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(Vertex),
+      reinterpret_cast<void*>(offsetof(Vertex, worldPosition)));
+
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
 
@@ -93,6 +113,7 @@ void OpenGLQuadRenderer::initialize()
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
   glUniform1i(uTextureLocation, 0);
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+  glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
 
   glUseProgram(0);
 
@@ -274,7 +295,15 @@ void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
                    command.lightDirection,
                    command.lightIntensity,
                    command.ambient,
-                   command.diffuseStrength);
+                   command.diffuseStrength,
+                   command.lightColor,
+                   command.worldPoints,
+                   command.lightCount,
+                   command.lightPositions,
+                   command.lightColors,
+                   command.lightIntensities,
+                   command.lightRadii,
+                   command.lightHeights);
 }
 
 void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
@@ -293,7 +322,7 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
   vertices.reserve(static_cast<std::size_t>(count));
 
   for (int i = 0; i < count; i++)
-    vertices.push_back({toNdc(points[i]), {0.0f, 0.0f}});
+    vertices.push_back({toNdc(points[i]), {0.0f, 0.0f}, {0.0f, 0.0f}});
 
   glUseProgram(shaderProgram);
 
@@ -327,6 +356,19 @@ void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
                                           const glm::vec2& p3,
                                           SDL_Color tint)
 {
+  const glm::vec2 worldPoints[4] = {
+      glm::vec2{0.0f, 0.0f},
+      glm::vec2{0.0f, 0.0f},
+      glm::vec2{0.0f, 0.0f},
+      glm::vec2{0.0f, 0.0f},
+  };
+
+  const glm::vec2 lightPositions[MaxShaderLights] = {};
+  const glm::vec3 lightColors[MaxShaderLights] = {};
+  const float lightIntensities[MaxShaderLights] = {};
+  const float lightRadii[MaxShaderLights] = {};
+  const float lightHeights[MaxShaderLights] = {};
+
   drawQuadInternal(texture,
                    srcRect,
                    textureWidth,
@@ -342,25 +384,42 @@ void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
                    glm::vec3{0.0f, 0.0f, 1.0f},
                    1.0f,
                    1.0f,
-                   0.0f);
+                   0.0f,
+                   glm::vec3{1.0f, 1.0f, 1.0f},
+                   worldPoints,
+                   0,
+                   lightPositions,
+                   lightColors,
+                   lightIntensities,
+                   lightRadii,
+                   lightHeights);
 }
 
-void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
-                                          const SDL_Rect& srcRect,
-                                          int textureWidth,
-                                          int textureHeight,
-                                          const glm::vec2& p0,
-                                          const glm::vec2& p1,
-                                          const glm::vec2& p2,
-                                          const glm::vec2& p3,
-                                          SDL_Color tint,
-                                          bool useLighting,
-                                          bool hasNormalMap,
-                                          unsigned int normalTexture,
-                                          const glm::vec3& lightDirection,
-                                          float lightIntensity,
-                                          float ambient,
-                                          float diffuseStrength)
+void OpenGLQuadRenderer::drawQuadInternal(
+    unsigned int texture,
+    const SDL_Rect& srcRect,
+    int textureWidth,
+    int textureHeight,
+    const glm::vec2& p0,
+    const glm::vec2& p1,
+    const glm::vec2& p2,
+    const glm::vec2& p3,
+    SDL_Color tint,
+    bool useLighting,
+    bool hasNormalMap,
+    unsigned int normalTexture,
+    const glm::vec3& lightDirection,
+    float lightIntensity,
+    float ambient,
+    float diffuseStrength,
+    const glm::vec3& lightColor,
+    const glm::vec2 worldPoints[4],
+    int lightCount,
+    const glm::vec2 lightPositions[MaxShaderLights],
+    const glm::vec3 lightColors[MaxShaderLights],
+    const float lightIntensities[MaxShaderLights],
+    const float lightRadii[MaxShaderLights],
+    const float lightHeights[MaxShaderLights])
 {
   const float u0 = static_cast<float>(srcRect.x) / textureWidth;
   const float u1 = static_cast<float>(srcRect.x + srcRect.w) / textureWidth;
@@ -369,13 +428,13 @@ void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
   const float v1 = static_cast<float>(srcRect.y + srcRect.h) / textureHeight;
 
   const Vertex vertices[6] = {
-      {p0, {u0, v0}},
-      {p1, {u1, v0}},
-      {p2, {u1, v1}},
+      {p0, {u0, v0}, worldPoints[0]},
+      {p1, {u1, v0}, worldPoints[1]},
+      {p2, {u1, v1}, worldPoints[2]},
 
-      {p0, {u0, v0}},
-      {p2, {u1, v1}},
-      {p3, {u0, v1}},
+      {p0, {u0, v0}, worldPoints[0]},
+      {p2, {u1, v1}, worldPoints[2]},
+      {p3, {u0, v1}, worldPoints[3]},
   };
 
   glUseProgram(shaderProgram);
@@ -411,6 +470,28 @@ void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
               tint.g / 255.0f,
               tint.b / 255.0f,
               tint.a / 255.0f);
+  glUniform3f(uLightColorLocation, lightColor.x, lightColor.y, lightColor.z);
+  const int clampedLightCount = std::clamp(lightCount, 0, MaxShaderLights);
+
+  glUniform1i(uLightCountLocation, clampedLightCount);
+
+  if (clampedLightCount > 0)
+  {
+    glUniform2fv(uLightPositionsLocation,
+                 clampedLightCount,
+                 reinterpret_cast<const float*>(lightPositions));
+
+    glUniform3fv(uLightColorsLocation,
+                 clampedLightCount,
+                 reinterpret_cast<const float*>(lightColors));
+
+    glUniform1fv(
+        uLightIntensitiesLocation, clampedLightCount, lightIntensities);
+
+    glUniform1fv(uLightRadiiLocation, clampedLightCount, lightRadii);
+
+    glUniform1fv(uLightHeightsLocation, clampedLightCount, lightHeights);
+  }
 
   glActiveTexture(GL_TEXTURE0);
 
@@ -473,23 +554,28 @@ unsigned int OpenGLQuadRenderer::createShaderProgram() const
 #endif
 
   const std::string vertexSource = glslVersion + R"(
-
 layout (location = 0) in vec2 aPosition;
 layout (location = 1) in vec2 aUv;
+layout (location = 2) in vec2 aWorldPosition;
 
 out vec2 vUv;
+out vec2 vWorldPosition;
 
 void main()
 {
   vUv = aUv;
+  vWorldPosition = aWorldPosition;
   gl_Position = vec4(aPosition, 0.0, 1.0);
 }
 )";
 
   const std::string fragmentSource = glslVersion + R"(
 in vec2 vUv;
+in vec2 vWorldPosition;
 
 out vec4 FragColor;
+
+#define MAX_LIGHTS 16
 
 uniform sampler2D uTexture;
 uniform sampler2D uNormalTexture;
@@ -500,10 +586,72 @@ uniform int uUseLighting;
 uniform int uHasNormalMap;
 
 uniform vec3 uLightDirection;
-uniform float uLightIntensity;
 uniform float uAmbient;
 uniform float uDiffuseStrength;
 
+uniform int uLightCount;
+uniform vec2 uLightPositions[MAX_LIGHTS];
+uniform vec3 uLightColors[MAX_LIGHTS];
+uniform float uLightIntensities[MAX_LIGHTS];
+uniform float uLightRadii[MAX_LIGHTS];
+uniform float uLightHeights[MAX_LIGHTS];
+
+vec3 calculateLampLighting(vec3 normal)
+{
+  vec3 accumulated = vec3(0.0);
+
+  for (int i = 0; i < MAX_LIGHTS; i++)
+  {
+    if (i >= uLightCount)
+      break;
+
+    vec2 delta = uLightPositions[i] - vWorldPosition;
+    float dist = length(delta);
+
+    if (dist >= uLightRadii[i])
+      continue;
+
+    float attenuation = 1.0 - dist / uLightRadii[i];
+    attenuation = clamp(attenuation, 0.0, 1.0);
+
+    attenuation = attenuation * attenuation;
+
+    vec3 lightVector = vec3(delta.x, delta.y, uLightHeights[i]);
+    vec3 lightDir = normalize(lightVector);
+
+    float ndotl = max(dot(normal, lightDir), 0.0);
+    float diffuse = pow(ndotl, 0.75);
+
+    float sunFade = 1.0 - clamp(uDiffuseStrength, 0.0, 1.0);
+    float lampBoost = mix(0.35, 2.75, sunFade);
+
+    float amount =
+        diffuse * uLightIntensities[i] * attenuation * lampBoost;
+
+    vec3 color = uLightColors[i];
+
+    // Normalize brightness WITHOUT changing hue.
+    float maxChannel = max(max(color.r, color.g), color.b);
+
+    if (maxChannel > 0.001)
+      color /= maxChannel;
+    else
+      color = vec3(1.0);
+
+    // Strong color identity.
+    color = mix(vec3(1.0), color, 0.92);
+
+    accumulated += color * amount;
+  }
+
+  // Soft overall clamp instead of per-channel tonemap.
+  float peak = max(max(accumulated.r, accumulated.g), accumulated.b);
+
+  if (peak > 1.0)
+    accumulated /= peak;
+
+  return accumulated;
+}
 void main()
 {
   vec4 albedo = texture(uTexture, vUv);
@@ -519,52 +667,55 @@ void main()
     return;
   }
 
-  if (uHasNormalMap == 0)
+  vec3 normal = vec3(0.0, 0.0, 1.0);
+  float emissiveMask = 0.0;
+
+  if (uHasNormalMap != 0)
   {
-    float brightness = clamp(uAmbient + uLightIntensity, 0.0, 1.0);
-    FragColor = vec4(albedo.rgb * brightness, albedo.a) * uColor;
-    return;
+    vec3 normalSample = texture(uNormalTexture, vUv).rgb;
+
+    emissiveMask = smoothstep(
+        0.95,
+        1.0,
+        min(min(normalSample.r, normalSample.g), normalSample.b));
+
+    normal = normalSample * 2.0 - 1.0;
+
+    if (length(normal) < 0.001)
+      normal = vec3(0.0, 0.0, 1.0);
+    else
+      normal = normalize(normal);
   }
 
-  vec3 normalSample = texture(uNormalTexture, vUv).rgb;
-
-  float emissiveMask = smoothstep(
-      0.95,
-      1.0,
-      min(min(normalSample.r, normalSample.g), normalSample.b));
-
-  vec3 normal = normalSample * 2.0 - 1.0;
-
-  if (length(normal) < 0.001)
-  {
-    normal = vec3(0.0, 0.0, 1.0);
-  }
-  else
-  {
-    normal = normalize(normal);
-  }
+  vec3 lampLighting = calculateLampLighting(normal);
 
   vec3 lightDir = normalize(uLightDirection);
+  float directionalDiffuse = max(dot(normal, lightDir), 0.0);
 
-  float ndotl = max(dot(normal, lightDir), 0.0);
-  float diffuse = pow(ndotl, 0.75);
+  vec3 sunLighting =
+      vec3(uAmbient) + directionalDiffuse * uDiffuseStrength;
 
-  const float maxDiffuseStrength = 0.85;
+  vec3 sunLitColor = albedo.rgb * clamp(sunLighting, 0.0, 1.0);
 
-  float totalDiffuseStrength =
-      clamp(uDiffuseStrength + uLightIntensity, 0.0, maxDiffuseStrength);
+  // Use grayscale surface response for colored lamps so red/blue lights
+  // still show on green/brown/blue sprites.
+  float albedoLuma = dot(albedo.rgb, vec3(0.299, 0.587, 0.114));
+  vec3 lampSurface = mix(albedo.rgb, vec3(albedoLuma), 0.25);
 
-  float brightness =
-      clamp(uAmbient + diffuse * totalDiffuseStrength, 0.0, 1.0);
+float sunAmount = clamp(uDiffuseStrength, 0.0, 1.0);
 
-  vec3 litColor = albedo.rgb * brightness;
+// Lamps are subtle in daylight, strong at night.
+float visibleLampStrength = mix(1.25, 0.15, sunAmount);
+
+vec3 lampLitColor = lampSurface * lampLighting * visibleLampStrength;
+
+  vec3 litColor = clamp(sunLitColor + lampLitColor, 0.0, 1.0);
   vec3 emissiveColor = albedo.rgb * 2.5;
+
   vec3 finalRgb = mix(litColor, emissiveColor, emissiveMask);
 
   FragColor = vec4(finalRgb, albedo.a) * uColor;
-}
-)";
-
+})";
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
 
   GLuint fragmentShader =

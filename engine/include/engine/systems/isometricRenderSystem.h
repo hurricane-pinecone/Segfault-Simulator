@@ -86,6 +86,12 @@ private:
     glm::vec2 shadowOffset{0.0f, 0.0f};
 
     SDL_Color tint{255, 255, 255, 255};
+    glm::vec2 worldPoints[4] = {
+        glm::vec2{0.0f, 0.0f},
+        glm::vec2{0.0f, 0.0f},
+        glm::vec2{0.0f, 0.0f},
+        glm::vec2{0.0f, 0.0f},
+    };
   };
 
 private:

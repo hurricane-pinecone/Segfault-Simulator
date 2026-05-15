@@ -18,10 +18,13 @@ namespace sfs
 class OpenGLQuadRenderer
 {
 public:
+  static constexpr int MaxShaderLights = 16;
+
   struct Vertex
   {
     glm::vec2 position;
     glm::vec2 uv;
+    glm::vec2 worldPosition;
   };
 
   struct QuadDrawCommand
@@ -60,6 +63,15 @@ public:
     float lightIntensity = 1.0f;
     float ambient = 0.18f;
     float diffuseStrength = 0.85f;
+
+    glm::vec3 lightColor{1.0f, 1.0f, 1.0f};
+    glm::vec2 worldPoints[4];
+    int lightCount = 0;
+    glm::vec2 lightPositions[MaxShaderLights];
+    glm::vec3 lightColors[MaxShaderLights];
+    float lightIntensities[MaxShaderLights];
+    float lightRadii[MaxShaderLights];
+    float lightHeights[MaxShaderLights];
   };
 
   OpenGLQuadRenderer(int windowWidth, int windowHeight);
@@ -111,7 +123,15 @@ private:
                         const glm::vec3& lightDirection,
                         float lightIntensity,
                         float ambient,
-                        float diffuseStrength);
+                        float diffuseStrength,
+                        const glm::vec3& lightColor,
+                        const glm::vec2 worldPoints[4],
+                        int lightCount,
+                        const glm::vec2 lightPositions[MaxShaderLights],
+                        const glm::vec3 lightColors[MaxShaderLights],
+                        const float lightIntensities[MaxShaderLights],
+                        const float lightRadii[MaxShaderLights],
+                        const float lightHeights[MaxShaderLights]);
 
   unsigned int compileShader(unsigned int type, const char* source) const;
   unsigned int createShaderProgram() const;
@@ -137,6 +157,13 @@ private:
   int uDiffuseStrengthLocation = -1;
   int uTextureLocation = -1;
   int uColorLocation = -1;
+  int uLightColorLocation = -1;
+  GLint uLightCountLocation = -1;
+  GLint uLightPositionsLocation = -1;
+  GLint uLightColorsLocation = -1;
+  GLint uLightIntensitiesLocation = -1;
+  GLint uLightRadiiLocation = -1;
+  GLint uLightHeightsLocation = -1;
 
   std::unordered_map<std::string, unsigned int> textureCache;
 };
