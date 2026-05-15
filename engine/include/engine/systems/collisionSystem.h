@@ -5,6 +5,7 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/registry.h"
 #include "engine/ecs/system.h"
+#include "engine/systems/isometricRenderSystem.h"
 
 namespace sfs
 {
@@ -23,6 +24,15 @@ public:
 
   void update(double deltaTime) override
   {
+    for (const auto& entity :
+         registry->view<ColliderComponent, TransformComponent>())
+    {
+      auto& collider = entity.getComponent<ColliderComponent>();
+      const auto& transform = entity.getComponent<TransformComponent>();
+
+      collider.updateBounds(transform.position);
+    }
+
     for (const auto& entity : getEntities())
     {
       auto& rb = entity.getComponent<RigidBodyComponent>();
@@ -85,9 +95,22 @@ private:
   const ColliderComponent* getCollision(const Entity& entity,
                                         const ColliderComponent& collider)
   {
+    int entityElevation = 0;
+
+    if (entity.hasComponent<ElevationComponent>())
+      entityElevation = entity.getComponent<ElevationComponent>().level;
+
     for (const auto& other : registry->view<ColliderComponent, SolidObject>())
     {
       if (entity == other)
+        continue;
+
+      int otherElevation = 0;
+
+      if (other.hasComponent<ElevationComponent>())
+        otherElevation = other.getComponent<ElevationComponent>().level;
+
+      if (entityElevation != otherElevation)
         continue;
 
       const auto& otherCollider = other.getComponent<ColliderComponent>();

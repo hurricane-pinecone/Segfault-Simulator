@@ -1,11 +1,13 @@
 
 #include "gameScene.h"
 #include "config.h"
-#include "engine/components/lightEmitterComponent.h"
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
 #include "engine/systems/isometricRenderSystem.h"
-#include "glm/glm/common.hpp"
+#include "gameObjects/blocks/block.h"
+#include "gameObjects/blocks/grass.h"
+#include "gameObjects/lamp.h"
+#include "gameObjects/player.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <SDL_rect.h>
 #include <engine/components/cameraComponent.h>
@@ -40,27 +42,12 @@ void GameScene::onInit()
 
 void GameScene::createEntities()
 {
-  m_assetStore.addTexture(
-      "spritesheet", ASSET_ROOT + "spriteSheets/tilemap.png");
-  auto playerSprite = m_assetStore.addSpriteFromSheet(
-      "spritesheet", "guy", 16, 16, 16, 6, 1, 0);
+  createObject<Player>();
 
-  auto enemySprite = m_assetStore.addSpriteFromSheet(
-      "spritesheet", "enemy", 16, 16, 0, 6, 1, 0);
-
-  m_player = createEntity()
-                 .addComponent<sfs::SpriteComponent>(
-                     playerSprite, glm::vec2{0.5f, 1.0f})
-                 .addComponent<sfs::TransformComponent>(glm::vec2{12.0, 12.0})
-                 .addComponent<sfs::ColliderComponent>(
-                     glm::vec2{0, 0}, glm::vec2{32, 32}, glm::vec2{200, 200})
-                 .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0});
-
-  createEntity()
-      .addComponent<sfs::TransformComponent>(
-          glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
-      .addComponent<sfs::CameraComponent>(
-          m_player.getId(), glm::vec2{0.0f, 0.0f}, 8.0f);
+  createObject<Lamp>(glm::vec2{18.5, 13.5});
+  createObject<Lamp>(glm::vec2{18.5, 17.5});
+  createObject<Lamp>(glm::vec2{5.5, 13.5});
+  createObject<Lamp>(glm::vec2{6.5, 13.5});
 }
 
 void GameScene::onProcessInput(const sfs::Input& input)
@@ -70,49 +57,22 @@ void GameScene::onProcessInput(const sfs::Input& input)
 
   if (input.keyboard().keyPressed(sfs::Key::F))
     m_sunController.toggleSun();
-
-  glm::vec2 screenDirection(0.0f);
-
-  if (input.keyboard().keyHeld(sfs::Key::A))
-    screenDirection.x -= 1.0f;
-  if (input.keyboard().keyHeld(sfs::Key::D))
-    screenDirection.x += 1.0f;
-  if (input.keyboard().keyHeld(sfs::Key::W))
-    screenDirection.y -= 1.0f;
-  if (input.keyboard().keyHeld(sfs::Key::S))
-    screenDirection.y += 1.0f;
-
-  if (glm::length(screenDirection) > 0.0f)
-  {
-    screenDirection = glm::normalize(screenDirection);
-  }
-
-  glm::vec2 gridDirection{screenDirection.y + screenDirection.x,
-                          screenDirection.y - screenDirection.x};
-
-  if (glm::length(gridDirection) > 0.0f)
-  {
-    gridDirection = glm::normalize(gridDirection);
-  }
-
-  auto& rb = m_player.getComponent<sfs::RigidBodyComponent>();
-  rb.velocity = gridDirection * 5.0f;
 }
 
 void GameScene::onRender()
 {
 
-  const auto& playerTransform =
-      m_player.getComponent<sfs::TransformComponent>();
-
-  glm::vec2 playerTile = glm::floor(playerTransform.position);
-
-  int elevation = 0;
-
-  if (playerTile.y < 10)
-  {
-    elevation = 10 - static_cast<int>(playerTile.y);
-  }
+  // const auto& playerTransform =
+  //     m_player.getComponent<sfs::TransformComponent>();
+  //
+  // glm::vec2 playerTile = glm::floor(playerTransform.position);
+  //
+  // int elevation = 0;
+  //
+  // if (playerTile.y < 10)
+  // {
+  //   elevation = 10 - static_cast<int>(playerTile.y);
+  // }
 
   // getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
   //     renderer, playerTile, elevation);
@@ -120,8 +80,8 @@ void GameScene::onRender()
 
 void GameScene::onPostRender()
 {
-  auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
-  glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos));
+  // auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
+  // glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos));
 
   // sfs::TextRenderer::drawText(20,
   //                             20,
@@ -140,28 +100,6 @@ void GameScene::loadMap()
 {
   const int tileSize = 32;
 
-  m_assetStore.addTexture("lamp", ASSET_ROOT + "sprites/lamp.png");
-  m_assetStore.addTexture("lampNormal", ASSET_ROOT + "sprites/lamp_normal.png");
-  auto lamp = m_assetStore.addSprite("lamp", "lamp", SDL_Rect{0, 0, 32, 32});
-  auto lampNormal = m_assetStore.addSprite(
-      "lampNormal", "lampNormal", SDL_Rect{0, 0, 32, 32});
-
-  m_assetStore.addTexture("block", ASSET_ROOT + "sprites/block.png");
-  m_assetStore.addTexture(
-      "blockNormal", ASSET_ROOT + "sprites/block_normal.png");
-  auto blockSprite =
-      m_assetStore.addSprite("block", "block", SDL_Rect{0, 0, 32, 32});
-  auto blockNormal = m_assetStore.addSprite(
-      "blockNormal", "blockNormal", SDL_Rect{0, 0, 32, 32});
-
-  m_assetStore.addTexture("blockHalf", ASSET_ROOT + "sprites/block_half.png");
-
-  auto blockHalf =
-      m_assetStore.addSprite("blockHalf", "blockHalf", SDL_Rect{0, 0, 32, 32});
-
-  // sfs::MapData map =
-  //     sfs::MapLoader::parseMapFile(ASSET_ROOT + "maps/jungle.map");
-
   for (int y = 0; y < 25; y++)
   {
     for (int x = 0; x < 25; x++)
@@ -176,47 +114,10 @@ void GameScene::loadMap()
 
       for (int z = 0; z < elevation; z++)
       {
-        createEntity()
-            .addComponent<sfs::TransformComponent>(glm::vec2{x, y})
-            .addComponent<sfs::SpriteComponent>(blockHalf)
-            .addComponent<sfs::ElevationComponent>(z)
-            .addTag<sfs::IsometricTile>();
+        createObject<GrassBlock>(glm::vec2{x, y}, z, BlockShape::Half);
       }
 
-      createEntity()
-          .addComponent<sfs::TransformComponent>(glm::vec2{x, y})
-          .addComponent<sfs::SpriteComponent>(blockSprite)
-          .addComponent<sfs::NormalMapComponent>(blockNormal)
-          .addComponent<sfs::ElevationComponent>(elevation)
-          .addTag<sfs::IsometricTile>();
+      createObject<GrassBlock>(glm::vec2{x, y}, elevation);
     }
   }
-
-  // Lamps
-  createEntity()
-      .addComponent<sfs::TransformComponent>(glm::vec2{18.5, 13.5})
-      .addComponent<sfs::ElevationComponent>(0)
-      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
-      .addComponent<sfs::NormalMapComponent>(lampNormal)
-      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
-  createEntity()
-      .addComponent<sfs::TransformComponent>(glm::vec2{18.5, 17.5})
-      .addComponent<sfs::ElevationComponent>(0)
-      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
-      .addComponent<sfs::NormalMapComponent>(lampNormal)
-      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
-
-  createEntity()
-      .addComponent<sfs::TransformComponent>(glm::vec2{5.5, 13.5})
-      .addComponent<sfs::ElevationComponent>(0)
-      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
-      .addComponent<sfs::NormalMapComponent>(lampNormal)
-      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
-
-  createEntity()
-      .addComponent<sfs::TransformComponent>(glm::vec2{6.5, 13.5})
-      .addComponent<sfs::ElevationComponent>(0)
-      .addComponent<sfs::SpriteComponent>(lamp, glm::vec2{0.5f, 1.0f})
-      .addComponent<sfs::NormalMapComponent>(lampNormal)
-      .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f);
 }

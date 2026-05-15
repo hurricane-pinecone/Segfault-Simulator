@@ -30,14 +30,21 @@ public:
   void removeTexture(const std::string& assetId);
   SDL_Surface* getSurface(const std::string& assetId) const;
 
-  uint32_t addSprite(const std::string& textureId,
+  SpriteId addSprite(const std::string& textureId,
                      const std::string& spriteName,
                      SDL_Rect srcRect);
+  SpriteId getOrCreateSprite(const std::string& spriteName,
+                             const std::string& path,
+                             SDL_Rect src);
+  std::pair<SpriteId, SpriteId>
+  getOrCreateSpriteWithNormal(const std::string& spriteName,
+                              const std::string& path,
+                              SDL_Rect src);
 
-  std::vector<uint32_t> addSprites(const std::string& textureId,
+  std::vector<SpriteId> addSprites(const std::string& textureId,
                                    const std::vector<SpriteRegion>& regions);
 
-  uint32_t addSpriteFromSheet(const std::string& textureId,
+  SpriteId addSpriteFromSheet(const std::string& textureId,
                               const std::string& spriteName,
                               uint16_t width,
                               uint16_t height,
@@ -46,7 +53,7 @@ public:
                               uint8_t gap,
                               uint8_t padding);
 
-  std::vector<uint32_t> addSpritesFromSheet(const std::string& textureId,
+  std::vector<SpriteId> addSpritesFromSheet(const std::string& textureId,
                                             const std::string& baseSpriteName,
                                             uint16_t width,
                                             uint16_t height,
@@ -56,8 +63,8 @@ public:
   void loadAsepriteAtlas(const std::string& textureId,
                          const std::string& jsonPath);
 
-  void removeSprite(uint32_t spriteId);
-  const Sprite* getSprite(uint32_t spriteId) const;
+  void removeSprite(SpriteId spriteId);
+  const Sprite* getSprite(SpriteId spriteId) const;
   const Sprite* getSprite(const std::string& spriteId) const;
 
   TTF_Font*
@@ -73,10 +80,10 @@ private:
   std::unordered_map<std::string, SurfacePtr> m_surfaces;
   std::unordered_map<std::string, FontPtr> m_fonts;
 
-  uint32_t m_nextSpriteId = 0;
+  SpriteId m_nextSpriteId = 0;
 
-  std::unordered_map<uint32_t, Sprite> m_sprites;
-  std::unordered_map<std::string, uint32_t> m_spriteNameToId;
+  std::unordered_map<SpriteId, Sprite> m_sprites;
+  std::unordered_map<std::string, SpriteId> m_spriteNameToId;
 };
 
 } // namespace sfs
