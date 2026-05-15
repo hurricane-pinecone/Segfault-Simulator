@@ -1,3 +1,4 @@
+#include "engine/renderers/renderContext.h"
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
 #else
@@ -103,6 +104,8 @@ bool Game::init(int windowWidth, int windowHeight)
     return false;
   }
 #endif
+
+  sfs::RenderContext::init(windowWidth, windowHeight);
 
   // renderer = SDL_CreateRenderer(
   //     window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -307,6 +310,8 @@ void Game::destroy()
     SDL_DestroyRenderer(renderer);
     renderer = nullptr;
   }
+
+  sfs::RenderContext::shutdown();
 
   if (window)
   {

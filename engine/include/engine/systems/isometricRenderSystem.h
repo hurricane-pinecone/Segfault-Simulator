@@ -3,21 +3,16 @@
 #include "engine/assetStore/assetStore.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
+#include "engine/renderers/openGLQuadRenderer.h"
 
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
-#ifdef __EMSCRIPTEN__
-  #include <GLES3/gl3.h>
-#else
-  #include <GL/glew.h>
-#endif
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
 
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace sfs
@@ -70,22 +65,18 @@ public:
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
 
 private:
-  struct Vertex
-  {
-    glm::vec2 position;
-    glm::vec2 uv;
-  };
-
   struct RenderItem
   {
     std::string textureId;
-    SDL_Rect srcRect;
-    SDL_Rect dest;
+
+    SDL_Rect srcRect{0, 0, 0, 0};
+    SDL_Rect dest{0, 0, 0, 0};
+
     int textureWidth = 0;
     int textureHeight = 0;
-    float sortKey = 0.0f;
 
-    int renderLayer = 1; // 0 = ground tiles, 1 = shadows, 2 = sprites
+    float sortKey = 0.0f;
+    int renderLayer = 1;
 
     bool hasNormalMap = false;
     std::string normalTextureId;
@@ -99,32 +90,20 @@ private:
     float diffuseStrength = 0.85f;
 
     bool isShadow = false;
-    glm::vec2 shadowOffset{0.0f};
+    glm::vec2 shadowOffset{0.0f, 0.0f};
+
     SDL_Color tint{255, 255, 255, 255};
   };
 
-  struct SpriteBatch
-  {
-    GLuint texture = 0;
-    std::vector<Vertex> vertices;
-  };
-
 private:
-  void initializeOpenGL();
-  void shutdownOpenGL();
-
-  GLuint compileShader(GLenum type, const char* source) const;
-  GLuint createShaderProgram() const;
-
-  GLuint getOrCreateTexture(const std::string& textureId);
-
   void beginBatches();
   void submitSprite(const RenderItem& item);
+  void submitShadow(const RenderItem& caster,
+                    const glm::vec2& shadowOffset,
+                    float alpha,
+                    float sortKeyBias = -0.004f);
+
   void flushBatches();
-
-  void drawDebugLineLoop(const glm::vec2* points, int count, SDL_Color color);
-
-  glm::vec2 toNdc(const glm::vec2& pixelPosition) const;
 
   glm::vec2 getCameraPosition() const;
   glm::ivec2 gridCellOf(const glm::vec2& position) const;
@@ -139,14 +118,10 @@ private:
 
   bool tryGetTileElevationAt(const glm::vec2& position,
                              int& outElevation) const;
+
   int getTileElevationAt(const glm::vec2& position) const;
 
   float getWaveOffset(const glm::vec2& gridPosition) const;
-
-  void submitShadow(const RenderItem& caster,
-                    const glm::vec2& shadowOffset,
-                    float alpha,
-                    float sortKeyBias = -0.004f);
 
   glm::vec2 worldDirToShadowOffset(const glm::vec2& worldDir,
                                    float length) const;
@@ -154,13 +129,13 @@ private:
 private:
   AssetStore& assetStore;
 
-  int windowWidth;
-  int windowHeight;
+  int windowWidth = 0;
+  int windowHeight = 0;
 
   float worldScale = 1.0f;
 
-  int tileWidth;
-  int tileHeight;
+  int tileWidth = 0;
+  int tileHeight = 0;
 
   int elevationStep = 8;
 
@@ -170,31 +145,7 @@ private:
   float waveFrequency = 0.45f;
   float waveSpeed = 3.0f;
 
-  bool glInitialized = false;
-
-  GLuint shaderProgram = 0;
-  GLuint vao = 0;
-  GLuint vbo = 0;
-
-  GLuint debugVao = 0;
-  GLuint debugVbo = 0;
-
-  GLuint defaultNormalTexture = 0;
-
-  GLint uTextureLocation = -1;
-  GLint uColorLocation = -1;
-  GLint uUseTextureLocation = -1;
-  GLint uNormalTextureLocation = -1;
-  GLint uHasNormalMapLocation = -1;
-  GLint uLightDirectionLocation = -1;
-  GLint uLightIntensityLocation = -1;
-  GLint uAmbientLocation = -1;
-  GLint uDiffuseStrengthLocation = -1;
-
-  std::unordered_map<std::string, GLuint> textureCache;
   std::vector<RenderItem> renderItems;
-  SpriteBatch activeBatch;
-  std::string activeBatchTextureId;
 };
 
 } // namespace sfs

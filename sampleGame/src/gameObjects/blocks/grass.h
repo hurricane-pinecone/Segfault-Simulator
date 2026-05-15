@@ -28,15 +28,15 @@ public:
   }
 
 protected:
-  const BlockSpriteDef& getVariant(BlockShape shape,
+  const BlockSpriteDef& getVariant(Shape shape,
                                    Direction direction) const override
   {
-    static const std::map<std::pair<BlockShape, Direction>, BlockSpriteDef>
+    static const std::map<std::pair<Shape, Direction>, BlockSpriteDef>
         variants = {
-            {{BlockShape::Full, Direction::North},
+            {{Shape::Full, Direction::North},
              {"grass_block", "sprites/block.png", {0, 0, 32, 32}}},
 
-            {{BlockShape::Half, Direction::North},
+            {{Shape::Half, Direction::North},
              {"grass_block_half", "sprites/block_half.png", {0, 0, 32, 32}}},
         };
 
