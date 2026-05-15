@@ -62,6 +62,7 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
     const IsometricLightingSample& sample) const
 {
   glm::vec3 accumulatedLightDir{0.0f, 0.0f, 0.0f};
+  glm::vec3 accumulatedColor{0.0f, 0.0f, 0.0f};
   float accumulatedIntensity = 0.0f;
 
   for (const auto& light : m_lights)
@@ -75,7 +76,7 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
 
     float attenuation = 1.0f - distance / light.radius;
     attenuation = std::clamp(attenuation, 0.0f, 1.0f);
-    attenuation = std::pow(attenuation, 0.65f);
+    attenuation = std::pow(attenuation, 3.0f);
 
     glm::vec3 toLight{
         toLightWorld2.x,
@@ -85,11 +86,19 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
 
     if (glm::length(toLight) > 0.001f)
     {
-      accumulatedIntensity += attenuation * light.intensity;
+      const float contribution = attenuation * light.intensity;
 
-      accumulatedLightDir +=
-          glm::normalize(toLight) * attenuation * light.intensity;
+      accumulatedIntensity += contribution;
+      accumulatedColor += light.color * contribution;
+      accumulatedLightDir += glm::normalize(toLight) * contribution;
     }
+  }
+
+  glm::vec3 finalColor{1.0f, 1.0f, 1.0f};
+
+  if (accumulatedIntensity > 0.001f)
+  {
+    finalColor = accumulatedColor / accumulatedIntensity;
   }
 
   glm::vec3 lightDir =
@@ -102,6 +111,7 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
 
   return {
       lightDir,
+      finalColor,
       accumulatedIntensity,
       m_ambient,
       m_diffuseStrength,

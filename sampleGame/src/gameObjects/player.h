@@ -3,6 +3,7 @@
 #include "config.h"
 #include "engine/components/cameraComponent.h"
 #include "engine/components/colliderComponent.h"
+#include "engine/components/lightEmitterComponent.h"
 #include "engine/components/rigidBodyComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
@@ -27,6 +28,7 @@ public:
             .addComponent<sfs::TransformComponent>(glm::vec2{12.0, 12.0})
             .addComponent<sfs::ColliderComponent>(
                 glm::vec2{-0.25f, -0.25f}, glm::vec2{0.5f, 0.5f})
+            .addComponent<sfs::LightEmitterComponent>(3.0f, 0.5f, 16.0f)
             .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0});
 
     // Camera

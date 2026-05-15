@@ -10,6 +10,7 @@
 #include "gameObjects/blocks/grass.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
+#include "glm/glm/ext/vector_float3.hpp"
 #include <engine/ecs/entity.h>
 #include <engine/input/input.h>
 #include <engine/mapLoader/mapLoader.h>
@@ -38,8 +39,8 @@ void GameScene::createEntities()
 {
   createObject<Player>();
 
-  createObject<Lamp>(glm::vec2{18.5, 13.5});
-  createObject<Lamp>(glm::vec2{18.5, 17.5});
+  createObject<Lamp>(glm::vec2{18.5, 13.5}, glm::vec3{1.0f, 0.05f, 0.05f});
+  createObject<Lamp>(glm::vec2{18.5, 17.5}, glm::vec3{0.25f, 0.35f, 1.0f});
   createObject<Lamp>(glm::vec2{5.5, 13.5});
   createObject<Lamp>(glm::vec2{6.5, 13.5});
 }
@@ -63,9 +64,8 @@ void GameScene::onPostRender()
     return;
   }
 
-  auto position = getEntity(player->entity().getId())
-                      .getComponent<sfs::TransformComponent>()
-                      .position;
+  auto position =
+      player->entity().getComponent<sfs::TransformComponent>().position;
   glm::ivec2 playerGrid = glm::ivec2(glm::floor(position));
 
   sfs::TextRenderer::drawText(20,
