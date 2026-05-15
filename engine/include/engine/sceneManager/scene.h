@@ -53,6 +53,9 @@ public:
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
 
+  template <typename TObject>
+  TObject* tryFindObject() const;
+
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
 
@@ -101,6 +104,18 @@ TObject& Scene::createObject(TArgs&&... args)
   ref.onCreate(*this);
 
   return ref;
+}
+
+template <typename TObject>
+TObject* Scene::tryFindObject() const
+{
+  for (auto& object : m_gameObjects)
+  {
+    if (auto casted = dynamic_cast<TObject*>(object.get()))
+      return casted;
+  }
+
+  return nullptr;
 }
 
 template <typename TSystem, typename... TArgs>

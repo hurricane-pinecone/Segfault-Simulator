@@ -139,6 +139,7 @@ void Game::setup()
 
   assetStore = std::make_unique<AssetStore>();
   sceneManager.setAssetStore(assetStore.get());
+  sfs::TextRenderer::init(sfs::RenderContext::quadRenderer(), *assetStore);
 
   // TODO: Use openGL text rendering
   // TextRenderer::init(*renderer, *assetStore);

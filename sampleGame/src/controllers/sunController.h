@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config.h"
-#include "engine/systems/isometricRenderSystem.h"
+#include "engine/systems/isometricLightingSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
 
@@ -14,15 +14,15 @@ public:
 
   void moveTo(int x, int y)
   {
-    assert(m_renderer && "SunController renderer not set");
+    assert(m_lighting && "SunController renderer not set");
 
-    if (!m_renderer)
+    if (!m_lighting)
       return;
 
     if (!m_isSunEnabled)
     {
-      m_renderer->setLightDirection(glm::vec3{0.0f, 0.0f, 1.0f});
-      m_renderer->setLighting(0.08f, 0.0f);
+      m_lighting->setLightDirection(glm::vec3{0.0f, 0.0f, 1.0f});
+      m_lighting->setLighting(0.08f, 0.0f);
       return;
     }
 
@@ -62,19 +62,19 @@ public:
     float daylight = std::clamp((sunZ + 0.3f) / 1.2f, 0.0f, 1.0f);
     daylight = daylight * daylight * (3.0f - 2.0f * daylight);
 
-    m_renderer->setLightDirection(sunDir);
-    m_renderer->setLighting(0.08f + daylight * 0.28f, 0.12f + daylight * 0.78f);
+    m_lighting->setLightDirection(sunDir);
+    m_lighting->setLighting(0.08f + daylight * 0.28f, 0.12f + daylight * 0.78f);
   }
 
-  void setRenderSystem(sfs::IsometricRenderSystem& renderer)
+  void setLightingSystem(sfs::IsometricLightingSystem& lighting)
   {
-    m_renderer = &renderer;
+    m_lighting = &lighting;
   }
 
   void toggleSun() { m_isSunEnabled = !m_isSunEnabled; }
 
 private:
-  sfs::IsometricRenderSystem* m_renderer = nullptr;
+  sfs::IsometricLightingSystem* m_lighting = nullptr;
 
   bool m_isSunEnabled = true;
 };

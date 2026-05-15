@@ -7,8 +7,6 @@
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
 
-#include "glm/glm/geometric.hpp"
-
 #include <algorithm>
 #include <cmath>
 
@@ -137,104 +135,47 @@ void IsometricRenderSystem::render()
 
     if (lightingSystem)
     {
-      IsometricLightingSample lightingSample{
+      item.lighting = lightingSystem->computeLighting({
           spriteWorldSample,
           static_cast<float>(elevationOffset),
-      };
+      });
 
-      const auto lighting = lightingSystem->computeLighting(lightingSample);
-
-      item.lightDirection = lighting.direction;
-      item.lightIntensity = lighting.intensity;
-      item.ambient = lighting.ambient;
-      item.diffuseStrength = lighting.diffuseStrength;
-    }
-
-    if (entity.hasComponent<NormalMapComponent>())
-    {
-      const auto& normalMap = entity.getComponent<NormalMapComponent>();
-      const auto normalSprite = assetStore.getSprite(normalMap.spriteId);
-
-      if (normalSprite)
+      if (entity.hasComponent<NormalMapComponent>())
       {
-        SDL_Surface* normalSurface =
-            assetStore.getSurface(normalSprite->textureId);
+        const auto& normalMap = entity.getComponent<NormalMapComponent>();
+        const auto normalSprite = assetStore.getSprite(normalMap.spriteId);
 
-        if (normalSurface)
+        if (normalSprite)
         {
-          item.hasNormalMap = true;
-          item.normalTextureId = normalSprite->textureId;
-          item.normalSrcRect = normalSprite->srcRect;
-          item.normalTextureWidth = normalSurface->w;
-          item.normalTextureHeight = normalSurface->h;
+          SDL_Surface* normalSurface =
+              assetStore.getSurface(normalSprite->textureId);
+
+          if (normalSurface)
+          {
+            item.hasNormalMap = true;
+            item.normalTextureId = normalSprite->textureId;
+            item.normalSrcRect = normalSprite->srcRect;
+            item.normalTextureWidth = normalSurface->w;
+            item.normalTextureHeight = normalSurface->h;
+          }
         }
       }
     }
 
     if (lightingSystem && !isTileEntity(entity))
     {
-      const auto& lights = lightingSystem->getLights();
+      const auto shadows =
+          computeIsometricShadows(lightingSystem->getLights(),
+                                  lightingSystem->getLightDirection(),
+                                  lightingSystem->getDiffuseStrength(),
+                                  spriteWorldSample,
+                                  item.dest.h,
+                                  worldScale,
+                                  tileWidth,
+                                  tileHeight);
 
-      for (const auto& light : lights)
-      {
-        glm::vec2 delta = spriteWorldSample - light.worldPosition;
-        float distance = glm::length(delta);
-
-        if (distance > light.radius || distance < 0.001f)
-          continue;
-
-        glm::vec2 shadowWorldDir = delta / distance;
-
-        float attenuation = 1.0f - distance / light.radius;
-        attenuation = std::pow(std::clamp(attenuation, 0.0f, 1.0f), 0.75f);
-
-        float casterHeight = static_cast<float>(item.dest.h) * 0.75f;
-        float visualLightHeight = std::max(light.height * 0.0625f, 1.0f);
-        float shadowLength = casterHeight * distance / visualLightHeight;
-
-        glm::vec2 shadowOffset =
-            worldDirToShadowOffset(shadowWorldDir, shadowLength);
-
-        float alpha =
-            0.42f * attenuation * std::clamp(light.intensity, 0.0f, 2.0f);
-
-        submitShadow(item, shadowOffset, alpha);
-      }
-
-      glm::vec3 sunDir = lightingSystem->getLightDirection();
-      float horizonFade = glm::smoothstep(0.0f, 0.15f, sunDir.z);
-
-      if (lightingSystem->getDiffuseStrength() > 0.001f && horizonFade > 0.001f)
-      {
-        glm::vec2 sunHorizontal{sunDir.x, sunDir.y};
-        float horizontalLength = glm::length(sunHorizontal);
-
-        if (horizontalLength > 0.001f)
-        {
-          glm::vec2 shadowWorldDir = -sunHorizontal / horizontalLength;
-
-          glm::vec2 isoDir =
-              gridToIsometric(shadowWorldDir) - gridToIsometric({0.0f, 0.0f});
-
-          if (glm::length(isoDir) > 0.001f)
-          {
-            isoDir = glm::normalize(isoDir);
-
-            float noonFade = glm::smoothstep(0.0f, 0.25f, horizontalLength);
-
-            float lowSunStretch = std::clamp(
-                horizontalLength / std::max(sunDir.z, 0.03f), 0.0f, 12.0f);
-
-            float shadowLength = static_cast<float>(item.dest.h) *
-                                 lowSunStretch * 0.45f * noonFade;
-
-            float shadowAlpha = 0.22f * noonFade * horizonFade;
-
-            if (shadowLength > 0.5f && shadowAlpha > 0.01f)
-              submitShadow(item, isoDir * shadowLength, shadowAlpha);
-          }
-        }
-      }
+      for (const auto& shadow : shadows)
+        submitShadow(item, shadow.offset, shadow.alpha);
     }
 
     submitSprite(item);
@@ -329,10 +270,10 @@ void IsometricRenderSystem::flushBatches()
       command.textureHeight = item.textureHeight;
       command.tint = item.tint;
 
-      command.lightDirection = item.lightDirection;
-      command.lightIntensity = item.lightIntensity;
-      command.ambient = item.ambient;
-      command.diffuseStrength = item.diffuseStrength;
+      command.lightDirection = item.lighting.direction;
+      command.lightIntensity = item.lighting.intensity;
+      command.ambient = item.lighting.ambient;
+      command.diffuseStrength = item.lighting.diffuseStrength;
 
       if (item.hasNormalMap)
       {
@@ -398,23 +339,6 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
   quadRenderer.drawLineLoop(points, 5, color);
 }
 
-void IsometricRenderSystem::setLightDirection(const glm::vec3& direction)
-{
-  if (!registry->hasSystem<IsometricLightingSystem>())
-    return;
-
-  registry->getSystem<IsometricLightingSystem>().setLightDirection(direction);
-}
-
-void IsometricRenderSystem::setLighting(float ambient, float diffuseStrength)
-{
-  if (!registry->hasSystem<IsometricLightingSystem>())
-    return;
-
-  registry->getSystem<IsometricLightingSystem>().setLighting(
-      ambient, diffuseStrength);
-}
-
 glm::vec2
 IsometricRenderSystem::gridToIsometric(const glm::vec2& gridPosition) const
 {
@@ -425,19 +349,6 @@ IsometricRenderSystem::gridToIsometric(const glm::vec2& gridPosition) const
       (gridPosition.x + gridPosition.y) *
           (static_cast<float>(tileHeight) * worldScale) / 2.0f,
   };
-}
-
-glm::vec2
-IsometricRenderSystem::worldDirToShadowOffset(const glm::vec2& worldDir,
-                                              float length) const
-{
-  glm::vec2 isoDir =
-      gridToIsometric(worldDir) - gridToIsometric(glm::vec2{0.0f, 0.0f});
-
-  if (glm::length(isoDir) < 0.001f)
-    return {0.0f, 0.0f};
-
-  return glm::normalize(isoDir) * length;
 }
 
 glm::vec2 IsometricRenderSystem::isometricToGrid(const glm::vec2& iso) const

@@ -8,6 +8,7 @@
 #include "glm/glm/geometric.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace sfs
 {
@@ -20,7 +21,7 @@ IsometricLightingSystem::IsometricLightingSystem()
 
 void IsometricLightingSystem::rebuildLights()
 {
-  lights.clear();
+  m_lights.clear();
 
   for (const auto& entity : getEntities())
   {
@@ -33,11 +34,13 @@ void IsometricLightingSystem::rebuildLights()
     const auto& transform = entity.getComponent<TransformComponent>();
     const auto& light = entity.getComponent<LightEmitterComponent>();
 
-    lights.push_back({transform.position,
-                      light.height,
-                      light.color,
-                      light.intensity,
-                      light.radius});
+    m_lights.push_back({
+        transform.position,
+        light.height,
+        light.color,
+        light.intensity,
+        light.radius,
+    });
   }
 }
 
@@ -58,12 +61,13 @@ void IsometricLightingSystem::setLighting(float ambient, float diffuseStrength)
 IsometricComputedLighting IsometricLightingSystem::computeLighting(
     const IsometricLightingSample& sample) const
 {
-  glm::vec3 accumulatedLightDir{0.0f};
+  glm::vec3 accumulatedLightDir{0.0f, 0.0f, 0.0f};
   float accumulatedIntensity = 0.0f;
 
-  for (const auto& light : lights)
+  for (const auto& light : m_lights)
   {
     glm::vec2 toLightWorld2 = light.worldPosition - sample.worldPosition;
+
     float distance = glm::length(toLightWorld2);
 
     if (distance > light.radius)
@@ -71,13 +75,13 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
 
     float attenuation = 1.0f - distance / light.radius;
     attenuation = std::clamp(attenuation, 0.0f, 1.0f);
-
-    // Softer falloff than squared.
     attenuation = std::pow(attenuation, 0.65f);
 
-    glm::vec3 toLight{toLightWorld2.x,
-                      toLightWorld2.y,
-                      light.height - sample.elevationOffset};
+    glm::vec3 toLight{
+        toLightWorld2.x,
+        toLightWorld2.y,
+        light.height - sample.elevationOffset,
+    };
 
     if (glm::length(toLight) > 0.001f)
     {
@@ -96,7 +100,12 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
   else
     lightDir = glm::normalize(lightDir);
 
-  return {lightDir, accumulatedIntensity, m_ambient, m_diffuseStrength};
+  return {
+      lightDir,
+      accumulatedIntensity,
+      m_ambient,
+      m_diffuseStrength,
+  };
 }
 
 } // namespace sfs
