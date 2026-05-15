@@ -1,6 +1,5 @@
 
 #include "gameScene.h"
-#include "config.h"
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
 #include "engine/systems/isometricRenderSystem.h"
@@ -8,19 +7,11 @@
 #include "gameObjects/blocks/grass.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
-#include "glm/glm/ext/vector_float2.hpp"
-#include <SDL_rect.h>
-#include <engine/components/cameraComponent.h>
-#include <engine/components/colliderComponent.h>
-#include <engine/components/rigidBodyComponent.h>
-#include <engine/components/spriteComponent.h>
-#include <engine/components/transformComponent.h>
 #include <engine/ecs/entity.h>
 #include <engine/input/input.h>
 #include <engine/mapLoader/mapLoader.h>
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
-#include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
 
 void GameScene::onInit()
@@ -59,25 +50,6 @@ void GameScene::onProcessInput(const sfs::Input& input)
     m_sunController.toggleSun();
 }
 
-void GameScene::onRender()
-{
-
-  // const auto& playerTransform =
-  //     m_player.getComponent<sfs::TransformComponent>();
-  //
-  // glm::vec2 playerTile = glm::floor(playerTransform.position);
-  //
-  // int elevation = 0;
-  //
-  // if (playerTile.y < 10)
-  // {
-  //   elevation = 10 - static_cast<int>(playerTile.y);
-  // }
-
-  // getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
-  //     renderer, playerTile, elevation);
-}
-
 void GameScene::onPostRender()
 {
   // auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
@@ -114,10 +86,10 @@ void GameScene::loadMap()
 
       for (int z = 0; z < elevation; z++)
       {
-        createObject<GrassBlock>(glm::vec2{x, y}, z, BlockShape::Half);
+        createObject<GrassBlock>(glm::vec2{x, y}, z, Block::Shape::Half);
       }
 
-      createObject<GrassBlock>(glm::vec2{x, y}, elevation, BlockShape::Full);
+      createObject<GrassBlock>(glm::vec2{x, y}, elevation, Block::Shape::Full);
     }
   }
 }

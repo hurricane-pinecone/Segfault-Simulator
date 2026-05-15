@@ -1,9 +1,8 @@
 #pragma once
 
-#include "SDL2/SDL_render.h"
 #include "engine/Color/Color.h"
 #include "engine/assetStore/assetStore.h"
-#include "engine/types/SDLPtrs.h"
+#include "engine/renderers/openGLQuadRenderer.h"
 #include <SDL_render.h>
 namespace sfs
 {
@@ -12,13 +11,13 @@ struct CachedText
 {
   int width = 0;
   int height = 0;
-  TexturePtr texture{nullptr, SDL_DestroyTexture};
+  GLuint texture = 0;
 };
 
 class TextRenderer
 {
 public:
-  static bool init(SDL_Renderer& renderer, AssetStore& assetStore);
+  static bool init(OpenGLQuadRenderer& quadRenderer, AssetStore& assetStore);
   static void shutdown();
 
   static bool isInitialized();
@@ -35,8 +34,8 @@ public:
 
 private:
   static bool m_initialized;
-  static SDL_Renderer* m_renderer;
   static AssetStore* m_assetStore;
+  static OpenGLQuadRenderer* m_quadRenderer;
 
   static std::unordered_map<std::string, CachedText> m_textCache;
   static std::string buildCacheKey(const std::string& text,

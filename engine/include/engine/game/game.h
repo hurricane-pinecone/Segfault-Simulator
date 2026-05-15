@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/renderers/openGLQuadRenderer.h"
 #include "engine/sceneManager/sceneManager.h"
 #include <SDL_events.h>
 #include <SDL_render.h>
@@ -57,6 +58,8 @@ private:
   Uint64 previousTime;
   Input input;
   SDL_GLContext m_glContext;
+
+  std::unique_ptr<sfs::OpenGLQuadRenderer> m_quadRenderer;
 };
 
 } // namespace sfs
