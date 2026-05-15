@@ -7,17 +7,18 @@
 
 #include <vector>
 
+#pragma once
+
+#include "engine/ecs/system.h"
+#include "engine/utils/isometricLightingUtils.h"
+
+#include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_float3.hpp"
+
+#include <vector>
+
 namespace sfs
 {
-
-struct ActiveLight
-{
-  glm::vec2 worldPosition;
-  float height = 0.0f;
-  glm::vec3 color{1.0f};
-  float intensity = 1.0f;
-  float radius = 1.0f;
-};
 
 struct IsometricLightingSample
 {
@@ -50,12 +51,16 @@ public:
   float getDiffuseStrength() const { return m_diffuseStrength; }
 
   const glm::vec3& getLightDirection() const { return m_lightDirection; }
-  const std::vector<ActiveLight>& getLights() const { return lights; }
+
+  const std::vector<IsometricLightSnapshot>& getLights() const
+  {
+    return m_lights;
+  }
 
 private:
-  std::vector<ActiveLight> lights;
+  std::vector<IsometricLightSnapshot> m_lights;
 
-  glm::vec3 m_lightDirection = {0.0f, 0.0f, 1.0f};
+  glm::vec3 m_lightDirection{0.0f, 0.0f, 1.0f};
 
   float m_ambient = 0.18f;
   float m_diffuseStrength = 0.85f;

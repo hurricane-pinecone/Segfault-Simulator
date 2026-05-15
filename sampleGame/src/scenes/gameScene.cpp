@@ -1,5 +1,8 @@
 
 #include "gameScene.h"
+#include "engine/TextRenderer/textRenderer.h"
+#include "engine/components/transformComponent.h"
+#include "engine/logger/logger.h"
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
 #include "engine/systems/isometricRenderSystem.h"
@@ -24,11 +27,11 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   auto& renderer = addSystem<sfs::IsometricRenderSystem>(
       m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
-  addSystem<sfs::IsometricLightingSystem>();
+  auto& lighting = addSystem<sfs::IsometricLightingSystem>();
 
   renderer.setWorldScale(WORLD_SCALE);
 
-  m_sunController.setRenderSystem(renderer);
+  m_sunController.setLightingSystem(lighting);
 }
 
 void GameScene::createEntities()
@@ -52,13 +55,23 @@ void GameScene::onProcessInput(const sfs::Input& input)
 
 void GameScene::onPostRender()
 {
-  // auto& pos = m_player.getComponent<sfs::TransformComponent>().position;
-  // glm::ivec2 playerGrid = glm::ivec2(glm::floor(pos));
+  auto player = tryFindObject<Player>();
 
-  // sfs::TextRenderer::drawText(20,
-  //                             20,
-  //                             "Pos: " + std::to_string(playerGrid.x) + ", " +
-  //                                 std::to_string(playerGrid.y));
+  if (!player)
+  {
+    LOG_DEBUG("PLAYER NOT FOUND");
+    return;
+  }
+
+  auto position = getEntity(player->entity().getId())
+                      .getComponent<sfs::TransformComponent>()
+                      .position;
+  glm::ivec2 playerGrid = glm::ivec2(glm::floor(position));
+
+  sfs::TextRenderer::drawText(20,
+                              20,
+                              "Pos: " + std::to_string(playerGrid.x) + ", " +
+                                  std::to_string(playerGrid.y));
 }
 
 void GameScene::onUpdate(double deltaTime)

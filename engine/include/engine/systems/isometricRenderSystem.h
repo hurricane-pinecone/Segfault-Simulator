@@ -3,10 +3,9 @@
 #include "engine/assetStore/assetStore.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
-#include "engine/renderers/openGLQuadRenderer.h"
 
+#include "engine/systems/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
-#include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
 #include <SDL_pixels.h>
@@ -52,9 +51,6 @@ public:
                      int elevation,
                      SDL_Color color = SDL_Color{255, 255, 0, 255});
 
-  void setLightDirection(const glm::vec3& direction);
-  void setLighting(float ambient, float diffuseStrength);
-
   glm::vec2 gridToIsometric(const glm::vec2& gridPosition) const;
   glm::vec2 isometricToGrid(const glm::vec2& iso) const;
 
@@ -84,10 +80,7 @@ private:
     int normalTextureWidth = 0;
     int normalTextureHeight = 0;
 
-    glm::vec3 lightDirection{0.0f, 0.0f, 1.0f};
-    float lightIntensity = 1.0f;
-    float ambient = 0.18f;
-    float diffuseStrength = 0.85f;
+    IsometricComputedLighting lighting{};
 
     bool isShadow = false;
     glm::vec2 shadowOffset{0.0f, 0.0f};
@@ -122,9 +115,6 @@ private:
   int getTileElevationAt(const glm::vec2& position) const;
 
   float getWaveOffset(const glm::vec2& gridPosition) const;
-
-  glm::vec2 worldDirToShadowOffset(const glm::vec2& worldDir,
-                                   float length) const;
 
 private:
   AssetStore& assetStore;
