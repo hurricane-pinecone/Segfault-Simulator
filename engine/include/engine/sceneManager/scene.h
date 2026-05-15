@@ -3,9 +3,12 @@
 #include "engine/assetStore/assetStore.h"
 #include "engine/ecs/entity.h"
 #include "engine/ecs/registry.h"
+#include "engine/game/gameObject.h"
 #include "engine/input/input.h"
 #include <SDL_render.h>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace sfs
 {
@@ -45,6 +48,11 @@ public:
   Entity getEntity(int id);
   void destroyEntity(int id);
 
+  AssetStore& assetStore() const { return m_assetStore; }
+
+  template <typename TObject, typename... TArgs>
+  TObject& createObject(TArgs&&... args);
+
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
 
@@ -79,7 +87,21 @@ private:
   SceneId m_id = 0;
   std::string m_name = "";
   Registry m_registry;
+
+  std::vector<std::unique_ptr<GameObject>> m_gameObjects;
 };
+
+template <typename TObject = GameObject, typename... TArgs>
+TObject& Scene::createObject(TArgs&&... args)
+{
+  auto object = std::make_unique<TObject>(std::forward<TArgs>(args)...);
+  TObject& ref = *object;
+
+  m_gameObjects.push_back(std::move(object));
+  ref.onCreate(*this);
+
+  return ref;
+}
 
 template <typename TSystem, typename... TArgs>
 TSystem& Scene::addSystem(TArgs&&... args)

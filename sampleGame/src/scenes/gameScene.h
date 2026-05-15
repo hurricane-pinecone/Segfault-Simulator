@@ -2,7 +2,6 @@
 
 #include "controllers/sunController.h"
 #include "engine/assetStore/assetStore.h"
-#include "engine/ecs/entity.h"
 #include "engine/input/input.h"
 #include "engine/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -29,7 +28,6 @@ private:
   void createEntities();
 
 private:
-  sfs::Entity m_player;
   glm::vec2 m_mousePos;
   float m_worldWaveTime;
   SunController m_sunController;

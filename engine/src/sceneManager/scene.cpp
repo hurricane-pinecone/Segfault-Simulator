@@ -21,9 +21,20 @@ void Scene::destroyEntity(int id) { m_registry.destroyEntity(id); }
 void Scene::update(double deltaTime)
 {
   m_registry.update(deltaTime);
+  for (auto& obj : m_gameObjects)
+  {
+    obj->onUpdate(deltaTime);
+  }
   onUpdate(deltaTime);
 }
-void Scene::processInput(const Input& input) { onProcessInput(input); }
+void Scene::processInput(const Input& input)
+{
+  for (auto& obj : m_gameObjects)
+  {
+    obj->onProcessInput(input);
+  }
+  onProcessInput(input);
+}
 void Scene::render()
 {
   if (registry().hasSystem<IsometricRenderSystem>())

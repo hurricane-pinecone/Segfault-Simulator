@@ -20,10 +20,9 @@ struct ColliderComponent
   glm::vec2 size;
   glm::vec4 bounds;
 
-  ColliderComponent(glm::vec2 offset, glm::vec2 size, glm::vec2 position)
+  ColliderComponent(glm::vec2 offset, glm::vec2 size)
       : offset(offset), size(size), bounds(0.0f)
   {
-    updateBounds(position);
   }
 
   void updateBounds(const glm::vec2& transformPosition)

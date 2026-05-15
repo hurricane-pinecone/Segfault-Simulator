@@ -9,6 +9,8 @@
 namespace sfs
 {
 
+using SpriteId = uint32_t;
+
 struct SpriteRegion
 {
   std::string name;
@@ -17,7 +19,7 @@ struct SpriteRegion
 
 struct Sprite
 {
-  uint32_t id;
+  SpriteId id;
   std::string textureId;
   std::string name;
 

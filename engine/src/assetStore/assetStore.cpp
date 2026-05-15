@@ -1,5 +1,6 @@
 #include "engine/assetStore/assetStore.h"
 
+#include "engine/assetStore/sprite.h"
 #include "engine/logger/logger.h"
 #include "engine/utils/string.h"
 
@@ -7,6 +8,7 @@
 
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <utility>
 
 namespace sfs
 {
@@ -69,7 +71,7 @@ SDL_Surface* AssetStore::getSurface(const std::string& assetId) const
   return it->second.get();
 }
 
-uint32_t AssetStore::addSprite(const std::string& textureId,
+SpriteId AssetStore::addSprite(const std::string& textureId,
                                const std::string& spriteName,
                                SDL_Rect srcRect)
 {
@@ -84,11 +86,44 @@ uint32_t AssetStore::addSprite(const std::string& textureId,
   return id;
 }
 
-std::vector<uint32_t>
+SpriteId AssetStore::getOrCreateSprite(const std::string& spriteName,
+                                       const std::string& path,
+                                       SDL_Rect src)
+{
+  auto sprite = getSprite(spriteName);
+
+  SpriteId spriteId;
+
+  if (!sprite)
+  {
+    addTexture(spriteName, path);
+    spriteId = addSprite(spriteName, spriteName, src);
+  }
+  else
+  {
+    spriteId = sprite->id;
+  }
+  return spriteId;
+}
+
+std::pair<SpriteId, SpriteId>
+AssetStore::getOrCreateSpriteWithNormal(const std::string& spriteName,
+                                        const std::string& path,
+                                        SDL_Rect src)
+{
+  size_t dot = path.find_last_of('.');
+  std::string normalPath = path.substr(0, dot) + "_normal" + path.substr(dot);
+
+  return std::make_pair(
+      getOrCreateSprite(spriteName, path, src),
+      getOrCreateSprite(spriteName + "_normal", normalPath, src));
+}
+
+std::vector<SpriteId>
 AssetStore::addSprites(const std::string& textureId,
                        const std::vector<SpriteRegion>& regions)
 {
-  std::vector<uint32_t> ids;
+  std::vector<SpriteId> ids;
 
   for (const auto& region : regions)
   {
@@ -98,7 +133,7 @@ AssetStore::addSprites(const std::string& textureId,
   return ids;
 }
 
-uint32_t AssetStore::addSpriteFromSheet(const std::string& textureId,
+SpriteId AssetStore::addSpriteFromSheet(const std::string& textureId,
                                         const std::string& spriteName,
                                         uint16_t width,
                                         uint16_t height,
@@ -115,7 +150,7 @@ uint32_t AssetStore::addSpriteFromSheet(const std::string& textureId,
   return addSprite(textureId, spriteName, srcRect);
 }
 
-std::vector<uint32_t>
+std::vector<SpriteId>
 AssetStore::addSpritesFromSheet(const std::string& textureId,
                                 const std::string& baseSpriteName,
                                 uint16_t width,
@@ -137,7 +172,7 @@ AssetStore::addSpritesFromSheet(const std::string& textureId,
   const int cols = (textureWidth - padding * 2 + gap) / (width + gap);
   const int rows = (textureHeight - padding * 2 + gap) / (height + gap);
 
-  std::vector<uint32_t> ids;
+  std::vector<SpriteId> ids;
 
   for (int row = 0; row < rows; row++)
   {
@@ -205,7 +240,7 @@ void AssetStore::loadAsepriteAtlas(const std::string& textureId,
   }
 }
 
-void AssetStore::removeSprite(uint32_t spriteId)
+void AssetStore::removeSprite(SpriteId spriteId)
 {
   auto it = m_sprites.find(spriteId);
 
@@ -216,7 +251,7 @@ void AssetStore::removeSprite(uint32_t spriteId)
   m_sprites.erase(it);
 }
 
-const Sprite* AssetStore::getSprite(uint32_t spriteId) const
+const Sprite* AssetStore::getSprite(SpriteId spriteId) const
 {
   auto it = m_sprites.find(spriteId);
 
