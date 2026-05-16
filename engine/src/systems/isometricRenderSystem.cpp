@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace sfs
 {
@@ -52,6 +53,21 @@ void IsometricRenderSystem::render()
   };
 
   const glm::vec2 isoCameraPosition = gridToIsometric(cameraPosition);
+
+  std::unordered_set<CellKey, CellKeyHash> occupiedCells;
+
+  for (const auto& entity : getEntities())
+  {
+    if (isTileEntity(entity))
+      continue;
+
+    const auto& transform = entity.getComponent<TransformComponent>();
+
+    const glm::ivec2 cell = gridCellOf(transform.position);
+    const int elevation = getTileElevationAt(glm::vec2{cell});
+
+    occupiedCells.insert(CellKey{cell.x, cell.y, elevation});
+  }
 
   for (const auto& entity : getEntities())
   {
@@ -112,21 +128,33 @@ void IsometricRenderSystem::render()
     };
 
     RenderItem item;
+
+    const bool tileEntity = isTileEntity(entity);
+
+    glm::vec2 exactPosition = transform.position;
+    glm::vec2 sortPosition = exactPosition;
+
+    if (!tileEntity)
+    {
+      const glm::ivec2 cell = gridCellOf(exactPosition);
+
+      sortPosition = glm::vec2{
+          static_cast<float>(cell.x) + 0.5f,
+          static_cast<float>(cell.y) + 0.5f,
+      };
+    }
+
     constexpr float ElevationSortWeight = 0.5f;
-    constexpr float ElevatedTileBias = 0.25f;
     constexpr float SpriteBias = 0.001f;
 
-    float sortKey = transform.position.x + transform.position.y +
+    float sortKey = sortPosition.x + sortPosition.y +
                     static_cast<float>(elevationLevel) * ElevationSortWeight;
 
-    if (isTileEntity(entity) && elevationLevel > 0)
-      sortKey += ElevatedTileBias;
-
     glm::vec2 spriteWorldSample =
-        isTileEntity(entity) ? transform.position + glm::vec2{0.5f, 0.5f}
-                             : transform.position;
+        tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
+                   : transform.position;
 
-    if (isTileEntity(entity))
+    if (tileEntity)
     {
       item.worldPoints[0] = transform.position;
       item.worldPoints[1] = transform.position + glm::vec2{1.0f, 0.0f};
@@ -135,7 +163,17 @@ void IsometricRenderSystem::render()
     }
     else
     {
+      // Tiny exact-position tie-break inside the tile.
+      const glm::vec2 fractional{
+          exactPosition.x - std::floor(exactPosition.x),
+          exactPosition.y - std::floor(exactPosition.y),
+      };
+
+      const float exactTieBreak =
+          (fractional.x + fractional.y - 1.0f) * 0.0001f;
+
       sortKey += SpriteBias;
+      sortKey += exactTieBreak;
 
       item.worldPoints[0] = spriteWorldSample;
       item.worldPoints[1] = spriteWorldSample;
@@ -150,7 +188,7 @@ void IsometricRenderSystem::render()
     item.textureHeight = surface->h;
     item.sortKey = sortKey;
     item.tint = SDL_Color{255, 255, 255, 255};
-    item.renderLayer = isTileEntity(entity) ? 0 : 2;
+    item.renderLayer = tileEntity ? 0 : 2;
 
     if (lightingSystem)
     {
