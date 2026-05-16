@@ -1,11 +1,11 @@
 #pragma once
 
 #include "engine/components/colliderComponent.h"
+#include "engine/components/elevationComponent.h"
 #include "engine/components/rigidBodyComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/registry.h"
 #include "engine/ecs/system.h"
-#include "engine/systems/isometricRenderSystem.h"
 
 namespace sfs
 {

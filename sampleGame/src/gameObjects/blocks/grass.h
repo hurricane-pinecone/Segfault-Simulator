@@ -1,10 +1,11 @@
 #pragma once
 
 #include "config.h"
+#include "engine/components/elevationComponent.h"
 #include "engine/components/spriteComponent.h"
+#include "engine/components/tags/isometricTile.h"
 #include "engine/components/transformComponent.h"
 #include "engine/sceneManager/scene.h"
-#include "engine/systems/isometricRenderSystem.h"
 #include "gameObjects/blocks/block.h"
 
 class GrassBlock : public Block
