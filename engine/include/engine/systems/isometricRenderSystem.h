@@ -18,6 +18,27 @@
 namespace sfs
 {
 
+struct CellKey
+{
+  int x;
+  int y;
+  int elevation;
+
+  bool operator==(const CellKey& other) const
+  {
+    return x == other.x && y == other.y && elevation == other.elevation;
+  }
+};
+
+struct CellKeyHash
+{
+  std::size_t operator()(const CellKey& key) const
+  {
+    return std::hash<int>{}(key.x) ^ (std::hash<int>{}(key.y) << 1) ^
+           (std::hash<int>{}(key.elevation) << 2);
+  }
+};
+
 struct ActiveCamera
 {
   const CameraComponent* camera = nullptr;
@@ -86,6 +107,8 @@ private:
     SDL_Rect normalSrcRect{0, 0, 0, 0};
     int normalTextureWidth = 0;
     int normalTextureHeight = 0;
+
+    int elevationLevel = 0;
 
     IsometricComputedLighting lighting{};
 
