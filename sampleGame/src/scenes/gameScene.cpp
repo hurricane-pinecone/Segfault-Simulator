@@ -15,6 +15,8 @@
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
 #include <glm/glm/vec2.hpp>
+#include <iomanip>
+#include <sstream>
 
 void GameScene::onInit()
 {
@@ -63,14 +65,15 @@ void GameScene::onPostRender()
     return;
   }
 
-  auto position =
+  const auto position =
       player->entity().getComponent<sfs::TransformComponent>().position;
-  glm::ivec2 playerGrid = glm::ivec2(glm::floor(position));
 
-  sfs::TextRenderer::drawText(20,
-                              20,
-                              "Pos: " + std::to_string(playerGrid.x) + ", " +
-                                  std::to_string(playerGrid.y));
+  std::ostringstream stream;
+
+  stream << std::fixed << std::setprecision(2) << "Pos: " << position.x << ", "
+         << position.y;
+
+  sfs::TextRenderer::drawText(20, 20, stream.str());
 }
 
 void GameScene::onUpdate(double deltaTime)

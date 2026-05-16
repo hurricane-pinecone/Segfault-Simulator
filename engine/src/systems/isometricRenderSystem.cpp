@@ -112,7 +112,15 @@ void IsometricRenderSystem::render()
     };
 
     RenderItem item;
-    float sortKey = transform.position.x + transform.position.y;
+    constexpr float ElevationSortWeight = 0.5f;
+    constexpr float ElevatedTileBias = 0.25f;
+    constexpr float SpriteBias = 0.001f;
+
+    float sortKey = transform.position.x + transform.position.y +
+                    static_cast<float>(elevationLevel) * ElevationSortWeight;
+
+    if (isTileEntity(entity) && elevationLevel > 0)
+      sortKey += ElevatedTileBias;
 
     glm::vec2 spriteWorldSample =
         isTileEntity(entity) ? transform.position + glm::vec2{0.5f, 0.5f}
@@ -120,7 +128,6 @@ void IsometricRenderSystem::render()
 
     if (isTileEntity(entity))
     {
-      sortKey += static_cast<float>(elevationLevel) * 0.01f;
       item.worldPoints[0] = transform.position;
       item.worldPoints[1] = transform.position + glm::vec2{1.0f, 0.0f};
       item.worldPoints[2] = transform.position + glm::vec2{1.0f, 1.0f};
@@ -128,13 +135,14 @@ void IsometricRenderSystem::render()
     }
     else
     {
-      sortKey += static_cast<float>(elevationLevel) * 0.01f;
-      sortKey += 0.005f;
+      sortKey += SpriteBias;
+
       item.worldPoints[0] = spriteWorldSample;
       item.worldPoints[1] = spriteWorldSample;
       item.worldPoints[2] = spriteWorldSample;
       item.worldPoints[3] = spriteWorldSample;
     }
+
     item.textureId = &sprite->textureId;
     item.srcRect = sprite->srcRect;
     item.dest = dest;
@@ -229,10 +237,13 @@ void IsometricRenderSystem::flushBatches()
                    renderItems.end(),
                    [](const RenderItem& a, const RenderItem& b)
                    {
-                     if (a.renderLayer != b.renderLayer)
-                       return a.renderLayer < b.renderLayer;
+                     if (a.sortKey < b.sortKey)
+                       return true;
 
-                     return a.sortKey < b.sortKey;
+                     if (a.sortKey > b.sortKey)
+                       return false;
+
+                     return a.renderLayer < b.renderLayer;
                    });
 
   for (const auto& item : renderItems)
