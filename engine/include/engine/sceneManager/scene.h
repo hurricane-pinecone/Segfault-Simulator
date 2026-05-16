@@ -45,8 +45,8 @@ public:
   void render();
 
   Entity createEntity();
-  Entity getEntity(int id);
-  void destroyEntity(int id);
+  Entity getEntity(Entity::EntityId id);
+  void destroyEntity(const Entity& entity);
 
   AssetStore& assetStore() const { return m_assetStore; }
 

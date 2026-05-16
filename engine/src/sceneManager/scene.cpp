@@ -1,4 +1,5 @@
 
+#include "engine/ecs/entity.h"
 #include "engine/input/input.h"
 #include "engine/systems/isometricRenderSystem.h"
 #include <engine/ecs/registry.h>
@@ -16,8 +17,14 @@ Registry& Scene::registry() { return m_registry; }
 const Registry& Scene::registry() const { return m_registry; }
 
 Entity Scene::createEntity() { return m_registry.createEntity(); }
-Entity Scene::getEntity(int id) { return m_registry.getEntity(id); }
-void Scene::destroyEntity(int id) { m_registry.destroyEntity(id); }
+Entity Scene::getEntity(Entity::EntityId id)
+{
+  return m_registry.getEntity(id);
+}
+void Scene::destroyEntity(const Entity& entity)
+{
+  m_registry.destroyEntity(entity);
+}
 
 void Scene::update(double deltaTime)
 {

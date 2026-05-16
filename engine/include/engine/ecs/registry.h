@@ -19,8 +19,9 @@ class Registry
 {
 public:
   Entity createEntity();
-  Entity getEntity(int id);
-  void destroyEntity(int id);
+  Entity getEntity(Entity::EntityId id);
+  void destroyEntity(const Entity& entity);
+  bool isAlive(const Entity& entity) const;
 
   void update(double deltaTime);
 
@@ -63,7 +64,13 @@ private:
   friend class Scene;
 
 private:
-  int entityCount = 0;
+  uint32_t entityCount = 0;
+  uint64_t nextDebugId = 1;
+
+  std::vector<uint32_t> freeEntityIds;
+  std::vector<uint64_t> entityDebugIds;
+  std::vector<uint32_t> generations;
+  std::vector<bool> entityAlive;
   std::set<Entity> entitiesToBeAdded;
   std::set<Entity> entitiesToBeRemoved;
 

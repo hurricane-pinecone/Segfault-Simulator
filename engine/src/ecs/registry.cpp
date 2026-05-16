@@ -2,34 +2,50 @@
 #include <engine/ecs/registry.h>
 #include <engine/logger/logger.h>
 
-#include <string>
-
 namespace sfs
 {
 
 Entity Registry::createEntity()
 {
-  int entityId;
-  entityId = entityCount++;
+  Entity::EntityId id;
 
-  Entity entity(entityId);
+  if (!freeEntityIds.empty())
+  {
+    id = freeEntityIds.back();
+    freeEntityIds.pop_back();
+  }
+  else
+  {
+    id = entityCount++;
+
+    entityComponentSignatures.resize(entityCount);
+    generations.resize(entityCount, 0);
+    entityDebugIds.resize(entityCount, 0);
+    entityAlive.resize(entityCount, false);
+  }
+
+  entityAlive[id] = true;
+  entityDebugIds[id] = nextDebugId++;
+
+  Entity entity{id, generations[id], entityDebugIds[id]};
   entity.setRegistry(this);
 
   entitiesToBeAdded.insert(entity);
 
-  if (entityId >= entityComponentSignatures.size())
-    entityComponentSignatures.resize(entityId + 1);
-
   return entity;
 }
 
-Entity Registry::getEntity(int id)
+Entity Registry::getEntity(Entity::EntityId id)
 {
-  if (id < 0 || id >= entityCount)
-    return Entity();
+  if (id >= entityCount)
+    return {};
 
-  Entity entity(id);
+  if (!entityAlive[id])
+    return {};
+
+  Entity entity{id, generations[id], entityDebugIds[id]};
   entity.setRegistry(this);
+
   return entity;
 }
 
@@ -59,21 +75,38 @@ void Registry::removeEntityFromSystems(const Entity& entity)
 
 void Registry::update(double deltaTime)
 {
-  for (const auto e : entitiesToBeAdded)
+  for (const auto& entity : entitiesToBeAdded)
   {
-    addEntityToSystems(e);
+    if (isAlive(entity))
+      addEntityToSystems(entity);
   }
+
   entitiesToBeAdded.clear();
 
-  for (const auto e : entitiesToBeRemoved)
+  for (const auto& entity : entitiesToBeRemoved)
   {
-    Entity entity(e.id);
-    entity.setRegistry(this);
+    if (!isAlive(entity))
+      continue;
+
+    const auto id = entity.getId();
 
     removeEntityFromSystems(entity);
 
-    if (e.id >= 0 && e.id < entityComponentSignatures.size())
-      entityComponentSignatures[e.id].reset();
+    if (id < entityComponentSignatures.size())
+      entityComponentSignatures[id].reset();
+
+    for (auto& pool : componentPools)
+    {
+      if (pool)
+      {
+        pool->remove(id);
+      }
+    }
+
+    entityAlive[id] = false;
+    generations[id]++;
+
+    freeEntityIds.push_back(id);
   }
 
   entitiesToBeRemoved.clear();
@@ -84,12 +117,23 @@ void Registry::update(double deltaTime)
   }
 }
 
-void Registry::destroyEntity(int id)
+void Registry::destroyEntity(const Entity& entity)
 {
-  if (id < 0 || id >= entityCount)
+  if (!isAlive(entity))
     return;
 
-  entitiesToBeRemoved.insert(id);
+  if (entitiesToBeRemoved.contains(entity))
+    return;
+
+  entitiesToBeRemoved.insert(entity);
+}
+
+bool Registry::isAlive(const Entity& entity) const
+{
+  const auto id = entity.getId();
+
+  return id < entityAlive.size() && entityAlive[id] &&
+         generations[id] == entity.getGeneration();
 }
 
 } // namespace sfs

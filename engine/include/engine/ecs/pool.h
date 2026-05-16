@@ -10,6 +10,8 @@ class IPool
 {
 public:
   virtual ~IPool() = default;
+
+  virtual void remove(size_t index) = 0;
 };
 
 template <typename T>
