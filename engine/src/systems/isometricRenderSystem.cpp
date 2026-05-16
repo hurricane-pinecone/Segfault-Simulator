@@ -148,7 +148,7 @@ void IsometricRenderSystem::render()
     {
       item.lighting = lightingSystem->computeLighting({
           spriteWorldSample,
-          static_cast<float>(elevationOffset),
+          static_cast<float>(elevationLevel),
       });
 
       if (entity.hasComponent<NormalMapComponent>())
