@@ -69,6 +69,7 @@ private:
 
     float sortKey = 0.0f;
     int renderLayer = 1;
+    float screenSortY = 0.0f;
 
     bool hasNormalMap = false;
     const std::string* normalTextureId = nullptr;

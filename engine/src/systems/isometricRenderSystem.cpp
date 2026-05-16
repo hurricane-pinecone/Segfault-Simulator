@@ -208,6 +208,7 @@ void IsometricRenderSystem::render()
     item.sortKey = sortKey;
     item.tint = SDL_Color{255, 255, 255, 255};
     item.renderLayer = tileEntity ? 0 : 2;
+    item.screenSortY = static_cast<float>(dest.y + dest.h);
 
     if (lightingSystem)
     {
@@ -286,7 +287,12 @@ void IsometricRenderSystem::submitShadow(const RenderItem& caster,
   const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
 
   shadow.tint = SDL_Color{0, 0, 0, a};
-  shadow.sortKey = caster.sortKey + sortKeyBias;
+
+  const float casterBottom = caster.screenSortY;
+  const float shadowTipBottom = caster.screenSortY + shadowOffset.y;
+
+  shadow.screenSortY = std::max(casterBottom, shadowTipBottom);
+  shadow.sortKey = shadow.screenSortY + sortKeyBias;
 
   renderItems.push_back(shadow);
 }
