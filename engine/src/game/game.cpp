@@ -31,8 +31,7 @@
 
 #ifndef ENGINE_WEB
   #include "imgui.h"
-  #include "imgui_impl_sdl2.h"
-  #include "imgui_impl_sdlrenderer2.h"
+  #include "imgui/backends/imgui_impl_sdlrenderer2.h"
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -119,11 +118,11 @@ bool Game::init(int windowWidth, int windowHeight)
   // SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
 
 #ifndef ENGINE_WEB
-  // IMGUI_CHECKVERSION();
-  // ImGui::CreateContext();
-  //
-  // ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-  // ImGui_ImplSDLRenderer2_Init(renderer);
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+
+  ImGui_ImplSDL2_InitForOpenGL(window, m_glContext);
+  ImGui_ImplOpenGL3_Init("#version 330");
 #endif
 
   onInit();
@@ -207,7 +206,7 @@ void Game::processInput()
   {
 
 #ifndef ENGINE_WEB
-    // ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
+    ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
 #endif
 
     if (sdlEvent.type == SDL_QUIT)
@@ -286,7 +285,7 @@ void Game::render()
   }
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
-  // renderDebugUI(renderer);
+  renderDebugUI();
 #endif
 
   SDL_GL_SwapWindow(window);
@@ -297,7 +296,9 @@ void Game::destroy()
   onDestroy();
 
 #ifndef ENGINE_WEB
-  // ImGui shutdown later
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplSDL2_Shutdown();
+  ImGui::DestroyContext();
 #endif
 
   if (m_glContext)

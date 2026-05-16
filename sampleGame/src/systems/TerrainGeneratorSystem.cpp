@@ -1,0 +1,122 @@
+#include "TerrainGeneratorSystem.h"
+#include "engine/components/cameraComponent.h"
+#include "gameObjects/blocks/grass.h"
+
+#include <cmath>
+#include <vector>
+
+TerrainGeneratorSystem::TerrainGeneratorSystem(sfs::Scene& scene)
+    : m_scene(scene)
+{
+  m_noise.setSeed(1337);
+  m_noise.setFrequency(0.035f);
+  m_noise.setType(sfs::Noise::Type::OpenSimplex);
+}
+
+void TerrainGeneratorSystem::update(double deltaTime)
+{
+  // TODO: This will become inefficient if more than 1 camera is added to game.
+  // Dunno why there ever would be, but maybe
+  auto cameras =
+      registry->view<sfs::CameraComponent, sfs::TransformComponent>();
+
+  if (cameras.empty())
+    return;
+
+  const auto cameraEntity = cameras.front();
+  const auto& transform = cameraEntity.getComponent<sfs::TransformComponent>();
+  const auto& camera = cameraEntity.getComponent<sfs::CameraComponent>();
+
+  update(transform.position + camera.offset);
+}
+
+void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
+{
+  constexpr int viewTilesX = 40;
+  constexpr int viewTilesY = 40;
+  constexpr int padding = 3;
+
+  const int centerX = static_cast<int>(std::floor(cameraWorldPos.x));
+  const int centerY = static_cast<int>(std::floor(cameraWorldPos.y));
+
+  const int minX = centerX - viewTilesX / 2 - padding;
+  const int maxX = centerX + viewTilesX / 2 + padding;
+
+  const int minY = centerY - viewTilesY / 2 - padding;
+  const int maxY = centerY + viewTilesY / 2 + padding;
+
+  for (int y = minY; y <= maxY; y++)
+  {
+    for (int x = minX; x <= maxX; x++)
+    {
+      TilePos tile{x, y};
+
+      if (m_loadedTiles.contains(tile))
+        continue;
+
+      loadTile(tile);
+    }
+  }
+
+  unloadFarTiles(minX, maxX, minY, maxY);
+}
+
+void TerrainGeneratorSystem::loadTile(TilePos tile)
+{
+  const int elevation = getElevation(tile.x, tile.y);
+
+  auto& grass = m_scene.createObject<GrassBlock>(
+      glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full);
+
+  m_loadedTiles[tile] = {&grass};
+}
+
+void TerrainGeneratorSystem::unloadTile(TilePos tile)
+{
+  auto it = m_loadedTiles.find(tile);
+
+  if (it == m_loadedTiles.end())
+    return;
+
+  for (sfs::GameObject* object : it->second)
+  {
+    m_scene.destroyObject(object);
+  }
+
+  m_loadedTiles.erase(it);
+}
+
+void TerrainGeneratorSystem::unloadFarTiles(int minX,
+                                            int maxX,
+                                            int minY,
+                                            int maxY)
+{
+  std::vector<TilePos> toUnload;
+
+  for (const auto& [tile, entities] : m_loadedTiles)
+  {
+    const bool outside =
+        tile.x < minX || tile.x > maxX || tile.y < minY || tile.y > maxY;
+
+    if (outside)
+      toUnload.push_back(tile);
+  }
+
+  for (const TilePos& tile : toUnload)
+  {
+    unloadTile(tile);
+  }
+}
+
+int TerrainGeneratorSystem::getElevation(int x, int y) const
+{
+  float n = m_noise.get(static_cast<float>(x), static_cast<float>(y));
+
+  float normalized = (n + 1.0f) * 0.5f;
+
+  normalized = normalized * normalized;
+
+  constexpr int maxHeight = 12;
+
+  return static_cast<int>(normalized * maxHeight);
+}

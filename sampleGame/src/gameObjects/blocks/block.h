@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/game/gameObject.h"
+#include "engine/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <map>
 

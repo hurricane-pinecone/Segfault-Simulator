@@ -4,6 +4,7 @@
 #include <engine/ecs/registry.h>
 #include <engine/sceneManager/scene.h>
 #include <engine/systems/renderSystem.h>
+#include <string>
 
 namespace sfs
 {
@@ -48,6 +49,21 @@ void Scene::render()
 
   onRender();
   onPostRender();
+}
+
+void Scene::destroyObject(GameObject* object)
+{
+  if (!object)
+    return;
+
+  object->destroy(*this);
+
+  m_gameObjects.erase(
+      std::remove_if(m_gameObjects.begin(),
+                     m_gameObjects.end(),
+                     [object](const std::unique_ptr<GameObject>& current)
+                     { return current.get() == object; }),
+      m_gameObjects.end());
 }
 
 } // namespace sfs

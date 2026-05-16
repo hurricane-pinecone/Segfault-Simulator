@@ -56,6 +56,8 @@ public:
   template <typename TObject>
   TObject* tryFindObject() const;
 
+  void destroyObject(GameObject* object);
+
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
 
