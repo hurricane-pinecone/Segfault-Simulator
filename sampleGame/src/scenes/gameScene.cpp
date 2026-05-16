@@ -6,10 +6,9 @@
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
 #include "engine/systems/isometricRenderSystem.h"
-#include "gameObjects/blocks/block.h"
-#include "gameObjects/blocks/grass.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
+#include "systems/TerrainGeneratorSystem.h"
 #include <engine/ecs/entity.h>
 #include <engine/input/input.h>
 #include <engine/mapLoader/mapLoader.h>
@@ -19,12 +18,13 @@
 
 void GameScene::onInit()
 {
-  loadMap();
+  // loadMap();
   createEntities();
 
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
+  addSystem<TerrainGeneratorSystem>(*this);
   auto& renderer = addSystem<sfs::IsometricRenderSystem>(
       m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
   auto& lighting = addSystem<sfs::IsometricLightingSystem>();
@@ -80,28 +80,29 @@ void GameScene::onUpdate(double deltaTime)
   getSystem<sfs::IsometricRenderSystem>().setWaveTime(m_worldWaveTime);
 }
 
-void GameScene::loadMap()
-{
-  const int tileSize = 32;
-
-  for (int y = 0; y < 25; y++)
-  {
-    for (int x = 0; x < 25; x++)
-    {
-      int elevation = 0;
-
-      // Hill at the top of the map
-      if (y < 10)
-      {
-        elevation = 10 - y;
-      }
-
-      for (int z = 0; z < elevation; z++)
-      {
-        createObject<GrassBlock>(glm::vec2{x, y}, z, Block::Shape::Half);
-      }
-
-      createObject<GrassBlock>(glm::vec2{x, y}, elevation, Block::Shape::Full);
-    }
-  }
-}
+// void GameScene::loadMap()
+// {
+//   const int tileSize = 32;
+//
+//   for (int y = 0; y < 25; y++)
+//   {
+//     for (int x = 0; x < 25; x++)
+//     {
+//       int elevation = 0;
+//
+//       // Hill at the top of the map
+//       if (y < 10)
+//       {
+//         elevation = 10 - y;
+//       }
+//
+//       for (int z = 0; z < elevation; z++)
+//       {
+//         createObject<GrassBlock>(glm::vec2{x, y}, z, Block::Shape::Half);
+//       }
+//
+//       createObject<GrassBlock>(glm::vec2{x, y}, elevation,
+//       Block::Shape::Full);
+//     }
+//   }
+// }

@@ -1,11 +1,13 @@
 #include "engine/systems/isometricRenderSystem.h"
 
+#include "engine/components/cameraComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/ecs/registry.h"
 #include "engine/logger/logger.h"
 #include "engine/renderers/renderContext.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
+#include "glm/glm/ext/vector_float2.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -40,7 +42,9 @@ void IsometricRenderSystem::render()
   if (lightingSystem)
     lightingSystem->rebuildLights();
 
-  const glm::vec2 cameraPosition = getCameraPosition();
+  const auto& activeCamera = getCamera();
+  auto cameraPosition = getCameraPosition();
+  float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1;
 
   const glm::vec2 screenCenter{
       static_cast<float>(windowWidth) / 2.0f,
@@ -73,13 +77,13 @@ void IsometricRenderSystem::render()
     const glm::vec2 isoPosition = gridToIsometric(transform.position);
 
     const glm::vec2 screenPosition =
-        isoPosition - isoCameraPosition + screenCenter;
+        (isoPosition - isoCameraPosition) * zoom + screenCenter;
 
-    const int width =
-        static_cast<int>(sprite->srcRect.w * transform.scale.x * worldScale);
+    const int width = static_cast<int>(sprite->srcRect.w * transform.scale.x *
+                                       worldScale * zoom);
 
-    const int height =
-        static_cast<int>(sprite->srcRect.h * transform.scale.y * worldScale);
+    const int height = static_cast<int>(sprite->srcRect.h * transform.scale.y *
+                                        worldScale * zoom);
 
     const float anchorX = spriteComponent.anchor.x * static_cast<float>(width);
     const float anchorY = spriteComponent.anchor.y * static_cast<float>(height);
@@ -91,9 +95,9 @@ void IsometricRenderSystem::render()
         getRenderElevationLevel(entity, groundSamplePosition);
 
     const int elevationOffset = static_cast<int>(
-        std::round(elevationLevel * elevationStep * worldScale));
+        std::round(elevationLevel * elevationStep * worldScale * zoom));
 
-    const float waveOffset = getWaveOffset(groundSamplePosition);
+    const float waveOffset = getWaveOffset(groundSamplePosition) * zoom;
 
     const glm::vec2 surfacePosition{
         screenPosition.x,
@@ -131,7 +135,7 @@ void IsometricRenderSystem::render()
       item.worldPoints[2] = spriteWorldSample;
       item.worldPoints[3] = spriteWorldSample;
     }
-    item.textureId = sprite->textureId;
+    item.textureId = &sprite->textureId;
     item.srcRect = sprite->srcRect;
     item.dest = dest;
     item.textureWidth = surface->w;
@@ -160,7 +164,7 @@ void IsometricRenderSystem::render()
           if (normalSurface)
           {
             item.hasNormalMap = true;
-            item.normalTextureId = normalSprite->textureId;
+            item.normalTextureId = &normalSprite->textureId;
             item.normalSrcRect = normalSprite->srcRect;
             item.normalTextureWidth = normalSurface->w;
             item.normalTextureHeight = normalSurface->h;
@@ -207,7 +211,7 @@ void IsometricRenderSystem::submitShadow(const RenderItem& caster,
 
   shadow.isShadow = true;
   shadow.hasNormalMap = false;
-  shadow.normalTextureId.clear();
+  shadow.normalTextureId = nullptr;
   shadow.shadowOffset = shadowOffset;
   shadow.renderLayer = 1;
 
@@ -234,13 +238,13 @@ void IsometricRenderSystem::flushBatches()
   for (const auto& item : renderItems)
   {
     auto& quadRenderer = RenderContext::quadRenderer();
-    SDL_Surface* surface = assetStore.getSurface(item.textureId);
+    SDL_Surface* surface = assetStore.getSurface(*item.textureId);
 
     if (!surface)
       continue;
 
     const unsigned int texture =
-        quadRenderer.getOrCreateTexture(item.textureId, surface);
+        quadRenderer.getOrCreateTexture(*item.textureId, surface);
 
     if (texture == 0)
       continue;
@@ -309,12 +313,12 @@ void IsometricRenderSystem::flushBatches()
       if (item.hasNormalMap)
       {
         SDL_Surface* normalSurface =
-            assetStore.getSurface(item.normalTextureId);
+            assetStore.getSurface(*item.normalTextureId);
 
         if (normalSurface)
         {
           command.normalTexture = quadRenderer.getOrCreateTexture(
-              item.normalTextureId, normalSurface);
+              *item.normalTextureId, normalSurface);
 
           command.hasNormalMap = command.normalTexture != 0;
         }
@@ -342,6 +346,8 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
                                           int elevation,
                                           SDL_Color color)
 {
+  const auto& activeCamera = getCamera();
+  float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1;
   auto& quadRenderer = RenderContext::quadRenderer();
 
   const glm::vec2 cameraPosition = getCameraPosition();
@@ -351,8 +357,9 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
       static_cast<float>(windowHeight) / 2.0f,
   };
 
-  glm::vec2 screenPosition = gridToIsometric(gridPosition) -
-                             gridToIsometric(cameraPosition) + screenCenter;
+  glm::vec2 screenPosition =
+      (gridToIsometric(gridPosition) - gridToIsometric(cameraPosition)) * zoom +
+      screenCenter;
 
   screenPosition.y -= elevation * elevationStep;
   screenPosition.y -= getWaveOffset(gridPosition);
@@ -398,17 +405,32 @@ glm::vec2 IsometricRenderSystem::isometricToGrid(const glm::vec2& iso) const
   return {x, y};
 }
 
-glm::vec2 IsometricRenderSystem::getCameraPosition() const
+ActiveCamera IsometricRenderSystem::getCamera() const
 {
   if (!registry->hasSystem<CameraSystem>())
+    return {};
+
+  const auto& cameras = registry->getSystem<CameraSystem>().getEntities();
+
+  if (cameras.empty())
+    return {};
+
+  const auto& cameraEntity = cameras.front();
+
+  return {
+      &cameraEntity.getComponent<CameraComponent>(),
+      &cameraEntity.getComponent<TransformComponent>(),
+  };
+}
+
+glm::vec2 IsometricRenderSystem::getCameraPosition() const
+{
+  const auto activeCamera = getCamera();
+
+  if (!activeCamera.camera || !activeCamera.transform)
     return {0.0f, 0.0f};
 
-  const auto& camera = registry->getSystem<CameraSystem>().getEntities();
-
-  if (camera.empty())
-    return {0.0f, 0.0f};
-
-  return camera[0].getComponent<TransformComponent>().position;
+  return activeCamera.transform->position + activeCamera.camera->offset;
 }
 
 glm::ivec2 IsometricRenderSystem::gridCellOf(const glm::vec2& position) const

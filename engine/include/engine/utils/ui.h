@@ -1,20 +1,20 @@
 #pragma once
 
 #ifndef ENGINE_WEB
+  #include "imgui/backends/imgui_impl_opengl3.h"
+  #include "imgui/backends/imgui_impl_sdl2.h"
+
   #include "allocationMetrics.h"
   #include "format.h"
 
-  #include "imgui_impl_sdl2.h"
-  #include "imgui_impl_sdlrenderer2.h"
-  #include <SDL_render.h>
   #include <imgui.h>
 
 namespace sfs
 {
 
-inline static void renderDebugUI(SDL_Renderer* renderer)
+inline static void renderDebugUI()
 {
-  ImGui_ImplSDLRenderer2_NewFrame();
+  ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplSDL2_NewFrame();
   ImGui::NewFrame();
 
@@ -25,18 +25,22 @@ inline static void renderDebugUI(SDL_Renderer* renderer)
 
   ImGui::Text("Current: %s", formatBytes(metrics.current.load()));
   ImGui::Text("Peak: %s", formatBytes(metrics.peak.load()));
+
   ImGui::Separator();
+
   ImGui::Text("Live allocs: %zu",
               metrics.allocationCount.load() - metrics.freeCount.load());
 
   ImGui::Separator();
+
   ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
 
   ImGui::End();
 
   ImGui::Render();
-  ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 } // namespace sfs
+
 #endif

@@ -77,14 +77,14 @@ else()
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
 
-    target_include_directories(engine PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends"
-    )
+target_include_directories(engine PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui"
+)
 
-    target_sources(engine PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdlrenderer2.cpp"
-    )
+target_sources(engine PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
+)
 
     target_link_libraries(engine
         PUBLIC

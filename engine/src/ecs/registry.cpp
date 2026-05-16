@@ -63,11 +63,6 @@ void Registry::update(double deltaTime)
   {
     addEntityToSystems(e);
   }
-  if (entitiesToBeAdded.size() > 0)
-  {
-    LOG_DEBUG(std::to_string(entitiesToBeAdded.size()) +
-              " entities added to Systems.");
-  }
   entitiesToBeAdded.clear();
 
   for (const auto e : entitiesToBeRemoved)
@@ -79,12 +74,6 @@ void Registry::update(double deltaTime)
 
     if (e.id >= 0 && e.id < entityComponentSignatures.size())
       entityComponentSignatures[e.id].reset();
-  }
-
-  if (!entitiesToBeRemoved.empty())
-  {
-    LOG_DEBUG(std::to_string(entitiesToBeRemoved.size()) +
-              " entities removed from Systems.");
   }
 
   entitiesToBeRemoved.clear();

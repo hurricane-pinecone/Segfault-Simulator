@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/assetStore/assetStore.h"
+#include "engine/components/cameraComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
 
@@ -16,6 +17,12 @@
 
 namespace sfs
 {
+
+struct ActiveCamera
+{
+  const CameraComponent* camera = nullptr;
+  const TransformComponent* transform = nullptr;
+};
 
 struct IsometricTile
 {
@@ -63,7 +70,7 @@ public:
 private:
   struct RenderItem
   {
-    std::string textureId;
+    const std::string* textureId = nullptr;
 
     SDL_Rect srcRect{0, 0, 0, 0};
     SDL_Rect dest{0, 0, 0, 0};
@@ -75,7 +82,7 @@ private:
     int renderLayer = 1;
 
     bool hasNormalMap = false;
-    std::string normalTextureId;
+    const std::string* normalTextureId = nullptr;
     SDL_Rect normalSrcRect{0, 0, 0, 0};
     int normalTextureWidth = 0;
     int normalTextureHeight = 0;
@@ -94,7 +101,6 @@ private:
     };
   };
 
-private:
   void beginBatches();
   void submitSprite(const RenderItem& item);
   void submitShadow(const RenderItem& caster,
@@ -121,6 +127,8 @@ private:
   int getTileElevationAt(const glm::vec2& position) const;
 
   float getWaveOffset(const glm::vec2& gridPosition) const;
+
+  ActiveCamera getCamera() const;
 
 private:
   AssetStore& assetStore;
