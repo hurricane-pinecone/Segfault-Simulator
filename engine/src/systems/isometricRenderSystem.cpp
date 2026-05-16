@@ -1,7 +1,9 @@
 #include "engine/systems/isometricRenderSystem.h"
 
 #include "engine/components/cameraComponent.h"
+#include "engine/components/elevationComponent.h"
 #include "engine/components/spriteComponent.h"
+#include "engine/components/tags/isometricTile.h"
 #include "engine/ecs/registry.h"
 #include "engine/logger/logger.h"
 #include "engine/renderers/renderContext.h"
@@ -11,7 +13,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_set>
 
 namespace sfs
 {
@@ -54,21 +55,6 @@ void IsometricRenderSystem::render()
 
   const glm::vec2 isoCameraPosition = gridToIsometric(cameraPosition);
 
-  std::unordered_set<CellKey, CellKeyHash> occupiedCells;
-
-  for (const auto& entity : getEntities())
-  {
-    if (isTileEntity(entity))
-      continue;
-
-    const auto& transform = entity.getComponent<TransformComponent>();
-
-    const glm::ivec2 cell = gridCellOf(transform.position);
-    const int elevation = getTileElevationAt(glm::vec2{cell});
-
-    occupiedCells.insert(CellKey{cell.x, cell.y, elevation});
-  }
-
   for (const auto& entity : getEntities())
   {
     const auto& transform = entity.getComponent<TransformComponent>();
@@ -90,6 +76,9 @@ void IsometricRenderSystem::render()
       continue;
     }
 
+    // Rendering position stays exact. Anchor, elevation, wave motion, camera,
+    // and zoom all affect the final screen rect, but should not directly decide
+    // depth ordering.
     const glm::vec2 isoPosition = gridToIsometric(transform.position);
 
     const glm::vec2 screenPosition =
@@ -101,6 +90,9 @@ void IsometricRenderSystem::render()
     const int height = static_cast<int>(sprite->srcRect.h * transform.scale.y *
                                         worldScale * zoom);
 
+    // Anchors define how the sprite image attaches to its world position.
+    // Blocks can use a top anchor while actors use a feet/bottom anchor.
+    // Sorting below does not assume every sprite has the same anchor.
     const float anchorX = spriteComponent.anchor.x * static_cast<float>(width);
     const float anchorY = spriteComponent.anchor.y * static_cast<float>(height);
 
@@ -131,7 +123,16 @@ void IsometricRenderSystem::render()
 
     const bool tileEntity = isTileEntity(entity);
 
+    // exactPosition is where the entity really is in world/grid space.
+    // It is still used for rendering, lighting, and fractional tie-breaks.
     glm::vec2 exactPosition = transform.position;
+
+    // sortPosition is intentionally different for non-tile sprites.
+    //
+    // Moving actors use fractional positions, which made them flip in front of
+    // nearby raised blocks just before stepping onto them. For depth ordering,
+    // sprites are grouped by the center of their current grid cell. Their exact
+    // fractional position is added later only as a tiny tie-break.
     glm::vec2 sortPosition = exactPosition;
 
     if (!tileEntity)
@@ -144,12 +145,25 @@ void IsometricRenderSystem::render()
       };
     }
 
+    // Elevation contributes to sorting, but only partially.
+    //
+    // 0.01 was too weak: raised blocks failed to occlude actors behind them.
+    // 1.0 was too strong: raised blocks behind the actor could incorrectly draw
+    // over the actor. 0.5 matches the visual half-tile rise of this isometric
+    // projection closely enough for stable painter ordering.
     constexpr float ElevationSortWeight = 0.5f;
+
+    // Non-tile sprites sort just after tiles at the same effective depth, so an
+    // actor standing on a tile appears above that tile instead of underneath
+    // it.
     constexpr float SpriteBias = 0.001f;
 
     float sortKey = sortPosition.x + sortPosition.y +
                     static_cast<float>(elevationLevel) * ElevationSortWeight;
 
+    // Tiles use the tile center for lighting because their lit surface spans
+    // the whole tile. Sprites use their exact world position, which represents
+    // their feet/contact point for actors and the authored position for props.
     glm::vec2 spriteWorldSample =
         tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
                    : transform.position;
@@ -163,7 +177,12 @@ void IsometricRenderSystem::render()
     }
     else
     {
-      // Tiny exact-position tie-break inside the tile.
+      // Tiny exact-position tie-break inside the current tile.
+      //
+      // The main sprite sort uses the tile center for stability against raised
+      // neighboring blocks. This tie-break restores local ordering between
+      // sprites/props inside the same tile, such as a player and a lamp both
+      // placed around the tile center.
       const glm::vec2 fractional{
           exactPosition.x - std::floor(exactPosition.x),
           exactPosition.y - std::floor(exactPosition.y),
@@ -219,7 +238,7 @@ void IsometricRenderSystem::render()
       }
     }
 
-    if (lightingSystem && !isTileEntity(entity))
+    if (lightingSystem && !tileEntity)
     {
       const auto shadows =
           computeIsometricShadows(lightingSystem->getLights(),
@@ -259,6 +278,9 @@ void IsometricRenderSystem::submitShadow(const RenderItem& caster,
   shadow.hasNormalMap = false;
   shadow.normalTextureId = nullptr;
   shadow.shadowOffset = shadowOffset;
+
+  // Shadows live between ground tiles and sprites. They still keep a sort key
+  // near their caster so they follow the caster's approximate depth.
   shadow.renderLayer = 1;
 
   const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
@@ -275,12 +297,18 @@ void IsometricRenderSystem::flushBatches()
                    renderItems.end(),
                    [](const RenderItem& a, const RenderItem& b)
                    {
+                     // Depth must be primary. Earlier versions sorted by
+                     // renderLayer first, which forced every tile behind every
+                     // sprite and made raised/closer blocks unable to occlude
+                     // actors correctly.
                      if (a.sortKey < b.sortKey)
                        return true;
 
                      if (a.sortKey > b.sortKey)
                        return false;
 
+                     // Layer is only a tie-break for items at the same depth:
+                     // tiles first, shadows next, sprites last.
                      return a.renderLayer < b.renderLayer;
                    });
 
@@ -517,6 +545,9 @@ glm::vec2 IsometricRenderSystem::getGroundSamplePosition(
   if (isTileEntity(entity))
     return transform.position;
 
+  // Sprites sample the tile they are standing on, not the neighboring raised
+  // tile they may visually overlap. This prevents early visual "step up" while
+  // approaching an elevated block.
   return glm::floor(transform.position);
 }
 

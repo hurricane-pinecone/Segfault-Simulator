@@ -18,42 +18,10 @@
 namespace sfs
 {
 
-struct CellKey
-{
-  int x;
-  int y;
-  int elevation;
-
-  bool operator==(const CellKey& other) const
-  {
-    return x == other.x && y == other.y && elevation == other.elevation;
-  }
-};
-
-struct CellKeyHash
-{
-  std::size_t operator()(const CellKey& key) const
-  {
-    return std::hash<int>{}(key.x) ^ (std::hash<int>{}(key.y) << 1) ^
-           (std::hash<int>{}(key.elevation) << 2);
-  }
-};
-
 struct ActiveCamera
 {
   const CameraComponent* camera = nullptr;
   const TransformComponent* transform = nullptr;
-};
-
-struct IsometricTile
-{
-};
-
-struct ElevationComponent
-{
-  int level = 0;
-
-  ElevationComponent(int level = 0);
 };
 
 class IsometricRenderSystem : public System
@@ -108,8 +76,6 @@ private:
     int normalTextureWidth = 0;
     int normalTextureHeight = 0;
 
-    int elevationLevel = 0;
-
     IsometricComputedLighting lighting{};
 
     bool isShadow = false;
@@ -129,7 +95,7 @@ private:
   void submitShadow(const RenderItem& caster,
                     const glm::vec2& shadowOffset,
                     float alpha,
-                    float sortKeyBias = -0.004f);
+                    float sortKeyBias = 0.005f);
 
   void flushBatches();
 

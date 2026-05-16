@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/systems/isometricRenderSystem.h"
+#include "engine/components/elevationComponent.h"
 #include <cmath>
 #include <engine/components/colliderComponent.h>
 #include <engine/components/rigidBodyComponent.h>
