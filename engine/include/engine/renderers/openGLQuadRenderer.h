@@ -74,6 +74,27 @@ public:
     float lightHeights[MaxShaderLights];
   };
 
+  struct TerrainShadowDrawCommand
+  {
+    glm::vec2 edgeA{0.0f, 0.0f};
+    glm::vec2 edgeB{0.0f, 0.0f};
+    glm::vec2 shadowDir{0.0f, 1.0f};
+
+    float shadowLength = 0.0f;
+    int elevation = 0;
+
+    float zoom = 1.0f;
+    glm::vec2 isoCameraPosition{0.0f, 0.0f};
+    glm::vec2 screenCenter{0.0f, 0.0f};
+
+    int tileWidth = 0;
+    int tileHeight = 0;
+    int elevationStep = 0;
+    float worldScale = 1.0f;
+
+    SDL_Color tint{0, 0, 0, 120};
+  };
+
   OpenGLQuadRenderer(int windowWidth, int windowHeight);
   ~OpenGLQuadRenderer();
 
@@ -91,6 +112,7 @@ public:
   void
   drawLitQuad(const LitQuadDrawCommand& command); // Normalised sprites (ie,
                                                   // sprites that light affects)
+  void drawTerrainShadow(const TerrainShadowDrawCommand& command);
   void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
 
   void setViewportSize(int width, int height);
@@ -164,6 +186,17 @@ private:
   GLint uLightIntensitiesLocation = -1;
   GLint uLightRadiiLocation = -1;
   GLint uLightHeightsLocation = -1;
+  GLint uTerrainShadowModeLocation = -1;
+  GLint uTerrainShadowDirLocation = -1;
+  GLint uTerrainShadowLengthLocation = -1;
+  GLint uTerrainShadowElevationLocation = -1;
+  GLint uTerrainShadowCameraIsoLocation = -1;
+  GLint uTerrainShadowScreenCenterLocation = -1;
+  GLint uTerrainShadowViewportSizeLocation = -1;
+  GLint uTerrainShadowZoomLocation = -1;
+  GLint uTerrainShadowTileSizeLocation = -1;
+  GLint uTerrainShadowElevationStepLocation = -1;
+  GLint uTerrainShadowWorldScaleLocation = -1;
 
   std::unordered_map<std::string, unsigned int> textureCache;
 };

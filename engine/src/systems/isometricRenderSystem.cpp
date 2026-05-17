@@ -301,7 +301,8 @@ void IsometricRenderSystem::render()
 
       lightDir2D = glm::normalize(lightDir2D);
 
-      const glm::vec2 shadowDir = lightDir2D;
+      // Shadows cast away from the sun.
+      const glm::vec2 shadowDir = -lightDir2D;
       const glm::vec2 shadowSide{-shadowDir.y, shadowDir.x};
 
       const float spriteWorldHeight =
@@ -543,11 +544,8 @@ void IsometricRenderSystem::render()
 
             const float groundAlpha = ShadowAlpha * shadowFade;
 
-            submitTileShadowPolygonAt(shadowTile,
-                                      tileElevation,
-                                      finalShadowWorldPoints,
-                                      groundAlpha,
-                                      item);
+            submitTileShadowPolygonAt(
+                shadowTile, tileElevation, finalShadowWorldPoints, groundAlpha);
           }
         }
       }
@@ -648,6 +646,47 @@ void IsometricRenderSystem::render()
     submitSprite(item);
   }
 
+  if (lightingSystem)
+  {
+    const glm::vec3 sunDir3D = lightingSystem->getLightDirection();
+
+    // No terrain shadows when the sun is below/too close to the horizon.
+    if (sunDir3D.z > 0.02f)
+    {
+      glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
+
+      if (glm::length(shadowDir) > 0.001f)
+        shadowDir = glm::normalize(shadowDir);
+      else
+        shadowDir = glm::vec2{0.0f, 1.0f};
+
+      const float sunHeight = std::max(sunDir3D.z, 0.08f);
+
+      constexpr float TerrainShadowLengthScale = 1.35f;
+      constexpr float TerrainShadowMaxLength = 3.0f;
+      constexpr float TerrainShadowAlpha = 0.42f;
+
+      for (const TerrainShadowEdge& edge : getTerrainShadowEdges())
+      {
+        const int heightDelta = edge.topElevation - edge.bottomElevation;
+
+        if (heightDelta <= 0)
+          continue;
+
+        const float shadowLength =
+            std::min(TerrainShadowMaxLength,
+                     static_cast<float>(heightDelta) *
+                         TerrainShadowLengthScale / sunHeight);
+
+        const float alpha =
+            TerrainShadowAlpha *
+            std::clamp(lightingSystem->getDiffuseStrength(), 0.0f, 1.0f);
+
+        submitTerrainEdgeShadowClipped(edge, shadowDir, shadowLength, alpha);
+      }
+    }
+  }
+
   flushBatches();
 }
 
@@ -711,6 +750,37 @@ void IsometricRenderSystem::flushBatches()
   for (const auto& item : renderItems)
   {
     auto& quadRenderer = RenderContext::quadRenderer();
+
+    // if (item.isTerrainEdgeShadow)
+    // {
+    //   OpenGLQuadRenderer::TerrainShadowDrawCommand command;
+    //
+    //   const auto& activeCamera = getCamera();
+    //   const float zoom = activeCamera.camera ? activeCamera.camera->zoom
+    //   : 1.0f;
+    //
+    //   command.edgeA = item.terrainEdgeA;
+    //   command.edgeB = item.terrainEdgeB;
+    //   command.shadowDir = item.terrainShadowDir;
+    //   command.shadowLength = item.terrainShadowLength;
+    //   command.elevation = item.terrainShadowElevation;
+    //
+    //   command.zoom = zoom;
+    //   command.isoCameraPosition = gridToIsometric(getCameraPosition());
+    //   command.screenCenter = {
+    //       static_cast<float>(windowWidth) * 0.5f,
+    //       static_cast<float>(windowHeight) * 0.5f,
+    //   };
+    //
+    //   command.tileWidth = tileWidth;
+    //   command.tileHeight = tileHeight;
+    //   command.elevationStep = elevationStep;
+    //   command.worldScale = worldScale;
+    //   command.tint = item.tint;
+    //
+    //   quadRenderer.drawTerrainShadow(command);
+    //   continue;
+    // }
 
     if (item.isTerrainShadow)
     {
