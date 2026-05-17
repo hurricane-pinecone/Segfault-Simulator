@@ -10,9 +10,11 @@
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/geometric.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace sfs
 {
@@ -36,6 +38,7 @@ IsometricRenderSystem::~IsometricRenderSystem() = default;
 void IsometricRenderSystem::render()
 {
   beginBatches();
+  rebuildTileElevationCache();
 
   auto* lightingSystem = registry->hasSystem<IsometricLightingSystem>()
                              ? &registry->getSystem<IsometricLightingSystem>()
@@ -168,12 +171,64 @@ void IsometricRenderSystem::render()
         tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
                    : transform.position;
 
+    item.textureId = &sprite->textureId;
+    item.srcRect = sprite->srcRect;
+    item.dest = dest;
+    item.textureWidth = surface->w;
+    item.textureHeight = surface->h;
+    item.sortKey = sortKey;
+    item.tint = SDL_Color{255, 255, 255, 255};
+    item.renderLayer = tileEntity ? 0 : 2;
+    item.screenSortY = static_cast<float>(dest.y + dest.h);
+
+    std::unordered_set<std::string> visitedGroundTiles;
+    std::unordered_set<std::string> visitedWallFaces;
+
     if (tileEntity)
     {
       item.worldPoints[0] = transform.position;
       item.worldPoints[1] = transform.position + glm::vec2{1.0f, 0.0f};
       item.worldPoints[2] = transform.position + glm::vec2{1.0f, 1.0f};
       item.worldPoints[3] = transform.position + glm::vec2{0.0f, 1.0f};
+
+      // const glm::ivec2 tile = gridCellOf(transform.position);
+
+      // if (tile.x == 15 && tile.y == 17)
+      // {
+      //   submitWallShadowFace(tile, elevationLevel, 2, item);
+      //   submitWallShadowFace(tile, elevationLevel, 3, item);
+      // }
+
+      // DEBUG
+      // const glm::ivec2 tile = gridCellOf(transform.position);
+      // const int elevation = elevationLevel;
+      //
+      // if (elevation > 0)
+      // {
+      //   const int leftElevation =
+      //       getTileElevationAt(glm::vec2{tile.x - 1, tile.y});
+      //
+      //   const int backElevation =
+      //       getTileElevationAt(glm::vec2{tile.x, tile.y - 1});
+      //
+      //   const int rightElevation =
+      //       getTileElevationAt(glm::vec2{tile.x + 1, tile.y});
+      //
+      //   const int frontElevation =
+      //       getTileElevationAt(glm::vec2{tile.x, tile.y + 1});
+      //
+      //   if (leftElevation < elevation)
+      //     drawDebugWallFace(tile, elevation, 0, SDL_Color{255, 0, 255, 255});
+      //
+      //   if (backElevation < elevation)
+      //     drawDebugWallFace(tile, elevation, 1, SDL_Color{255, 0, 255, 255});
+      //
+      //   if (rightElevation < elevation)
+      //     drawDebugWallFace(tile, elevation, 2, SDL_Color{255, 0, 255, 255});
+      //
+      //   if (frontElevation < elevation)
+      //     drawDebugWallFace(tile, elevation, 3, SDL_Color{255, 0, 255, 255});
+      // }
     }
     else
     {
@@ -199,16 +254,6 @@ void IsometricRenderSystem::render()
       item.worldPoints[2] = spriteWorldSample;
       item.worldPoints[3] = spriteWorldSample;
     }
-
-    item.textureId = &sprite->textureId;
-    item.srcRect = sprite->srcRect;
-    item.dest = dest;
-    item.textureWidth = surface->w;
-    item.textureHeight = surface->h;
-    item.sortKey = sortKey;
-    item.tint = SDL_Color{255, 255, 255, 255};
-    item.renderLayer = tileEntity ? 0 : 2;
-    item.screenSortY = static_cast<float>(dest.y + dest.h);
 
     if (lightingSystem)
     {
@@ -241,18 +286,306 @@ void IsometricRenderSystem::render()
 
     if (lightingSystem && !tileEntity)
     {
-      const auto shadows =
-          computeIsometricShadows(lightingSystem->getLights(),
-                                  lightingSystem->getLightDirection(),
-                                  lightingSystem->getDiffuseStrength(),
-                                  spriteWorldSample,
-                                  item.dest.h,
-                                  worldScale,
-                                  tileWidth,
-                                  tileHeight);
+      const glm::vec3 lightDir3D = lightingSystem->getLightDirection();
 
-      for (const auto& shadow : shadows)
-        submitShadow(item, shadow.offset, shadow.alpha);
+      glm::vec2 lightDir2D{
+          lightDir3D.x,
+          lightDir3D.y,
+      };
+
+      if (glm::length(lightDir2D) <= 0.0001f)
+      {
+        submitSprite(item);
+        continue;
+      }
+
+      lightDir2D = glm::normalize(lightDir2D);
+
+      const glm::vec2 shadowDir = lightDir2D;
+      const glm::vec2 shadowSide{-shadowDir.y, shadowDir.x};
+
+      const float spriteWorldHeight =
+          static_cast<float>(item.dest.h) /
+          (static_cast<float>(tileHeight) * worldScale * zoom);
+
+      const float shadowLength =
+          ShadowLength * std::clamp(spriteWorldHeight * 0.35f, 0.75f, 2.5f);
+
+      const float spriteWorldWidth =
+          static_cast<float>(item.dest.w) /
+          (static_cast<float>(tileWidth) * worldScale * zoom);
+
+      const float casterFootWidth =
+          std::clamp(spriteWorldWidth * 0.22f, 0.15f, 0.75f);
+
+      const float casterFootDepth =
+          std::clamp(spriteWorldWidth * 0.14f, 0.08f, 0.45f);
+
+      const glm::vec2 casterA = spriteWorldSample -
+                                shadowSide * casterFootWidth -
+                                shadowDir * casterFootDepth;
+
+      const glm::vec2 casterB = spriteWorldSample +
+                                shadowSide * casterFootWidth -
+                                shadowDir * casterFootDepth;
+
+      const glm::vec2 casterC = spriteWorldSample +
+                                shadowSide * casterFootWidth +
+                                shadowDir * casterFootDepth;
+
+      const glm::vec2 casterD = spriteWorldSample -
+                                shadowSide * casterFootWidth +
+                                shadowDir * casterFootDepth;
+
+      auto buildShadowPolygon = [&](float length)
+      {
+        std::array<glm::vec2, 4> points = {
+            casterA,
+            casterB,
+            casterC + shadowDir * length,
+            casterD + shadowDir * length,
+        };
+
+        return points;
+      };
+
+      auto casterShadowWorldPointsArray = buildShadowPolygon(ShadowLength);
+      glm::vec2 casterShadowWorldPoints[4] = {
+          casterShadowWorldPointsArray[0],
+          casterShadowWorldPointsArray[1],
+          casterShadowWorldPointsArray[2],
+          casterShadowWorldPointsArray[3],
+      };
+
+      std::unordered_set<std::string> visitedGroundTiles;
+      std::unordered_set<std::string> visitedWallFaces;
+
+      auto wallKey = [](const glm::ivec2& tile, int side)
+      {
+        return std::to_string(tile.x) + "," + std::to_string(tile.y) + "," +
+               std::to_string(side);
+      };
+
+      glm::vec2 rayPosition = spriteWorldSample;
+
+      int currentShadowElevation = elevationLevel;
+      float remainingShadowLength = shadowLength;
+
+      const float verticalLight = std::max(std::abs(lightDir3D.z), 0.35f);
+
+      glm::vec2 shadowStartPosition = spriteWorldSample;
+      int shadowSurfaceElevation = elevationLevel;
+
+      glm::vec2 elevatedStartA{0.0f, 0.0f};
+      glm::vec2 elevatedStartB{0.0f, 0.0f};
+      bool hasElevatedStartEdge = false;
+
+      for (int step = 0; step < MaxShadowSteps && remainingShadowLength > 0.0f;
+           step++)
+      {
+        const float stepDistance =
+            std::min(ShadowStepSize, remainingShadowLength);
+
+        const glm::vec2 previousRayPosition = rayPosition;
+        rayPosition += shadowDir * stepDistance;
+        remainingShadowLength -= stepDistance;
+
+        const glm::ivec2 previousTile = gridCellOf(previousRayPosition);
+        const glm::ivec2 receiverTile = gridCellOf(rayPosition);
+        const int receiverElevation = getTileElevationAt(rayPosition);
+
+        const float distanceUsed = shadowLength - remainingShadowLength;
+
+        const float normalizedDistance =
+            std::clamp(distanceUsed / shadowLength, 0.0f, 1.0f);
+
+        constexpr float MinShadowFade = 0.65f;
+
+        const float shadowFade =
+            std::lerp(1.0f, MinShadowFade, normalizedDistance);
+
+        const float groundShadowAlpha = ShadowAlpha * shadowFade;
+
+        auto wallKey = [](const glm::ivec2& tile, int side)
+        {
+          return std::to_string(tile.x) + "," + std::to_string(tile.y) + "," +
+                 std::to_string(side);
+        };
+
+        if (receiverElevation > currentShadowElevation)
+        {
+          int hitSide = -1;
+
+          if (receiverTile.x > previousTile.x)
+            hitSide = 0;
+          else if (receiverTile.x < previousTile.x)
+            hitSide = 2;
+          else if (receiverTile.y > previousTile.y)
+            hitSide = 1;
+          else if (receiverTile.y < previousTile.y)
+            hitSide = 3;
+
+          if (hitSide != -1)
+          {
+            const std::string key = wallKey(receiverTile, hitSide);
+
+            if (!visitedWallFaces.contains(key))
+            {
+              visitedWallFaces.insert(key);
+
+              submitWallShadowFace(receiverTile,
+                                   receiverElevation,
+                                   hitSide,
+                                   casterShadowWorldPoints,
+                                   static_cast<float>(currentShadowElevation),
+                                   normalizedDistance,
+                                   groundShadowAlpha,
+                                   item);
+            }
+
+            glm::vec2 wallA;
+            glm::vec2 wallB;
+
+            getWallEdge(receiverTile, hitSide, wallA, wallB);
+
+            float minT = 0.0f;
+            float maxT = 1.0f;
+
+            if (projectShadowOntoWallEdge(
+                    casterShadowWorldPoints, wallA, wallB, minT, maxT))
+            {
+              constexpr float WallPad = 0.05f;
+
+              minT = std::clamp(minT - WallPad, 0.0f, 1.0f);
+              maxT = std::clamp(maxT + WallPad, 0.0f, 1.0f);
+
+              elevatedStartA = wallA + (wallB - wallA) * minT;
+              elevatedStartB = wallA + (wallB - wallA) * maxT;
+              hasElevatedStartEdge = true;
+            }
+          }
+
+          const int elevationDelta = receiverElevation - currentShadowElevation;
+
+          constexpr float ShadowClimbCostScale = 0.35f;
+
+          const float elevationHeightInTiles =
+              static_cast<float>(elevationStep) /
+              (static_cast<float>(tileHeight) * worldScale);
+
+          const float climbCost = static_cast<float>(elevationDelta) *
+                                  elevationHeightInTiles *
+                                  ShadowClimbCostScale / verticalLight;
+
+          remainingShadowLength -= climbCost;
+          currentShadowElevation = receiverElevation;
+
+          if (hitSide == 0)
+            shadowStartPosition.x = static_cast<float>(receiverTile.x);
+          else if (hitSide == 2)
+            shadowStartPosition.x = static_cast<float>(receiverTile.x + 1);
+          else if (hitSide == 1)
+            shadowStartPosition.y = static_cast<float>(receiverTile.y);
+          else if (hitSide == 3)
+            shadowStartPosition.y = static_cast<float>(receiverTile.y + 1);
+
+          if (hitSide == 0 || hitSide == 2)
+            shadowStartPosition.y = rayPosition.y;
+          else
+            shadowStartPosition.x = rayPosition.x;
+
+          if (remainingShadowLength <= 0.0f)
+            break;
+        }
+
+        const glm::vec2 shadowEndPosition =
+            shadowStartPosition +
+            shadowDir * std::max(0.0f, remainingShadowLength);
+
+        glm::vec2 groundStartA =
+            shadowStartPosition - shadowSide * casterFootWidth;
+
+        glm::vec2 groundStartB =
+            shadowStartPosition + shadowSide * casterFootWidth;
+
+        if (hasElevatedStartEdge)
+        {
+          const glm::vec2 normalStartA =
+              shadowStartPosition - shadowSide * casterFootWidth;
+
+          const glm::vec2 normalStartB =
+              shadowStartPosition + shadowSide * casterFootWidth;
+
+          const float directOrder = glm::length(elevatedStartA - normalStartA) +
+                                    glm::length(elevatedStartB - normalStartB);
+
+          const float swappedOrder =
+              glm::length(elevatedStartB - normalStartA) +
+              glm::length(elevatedStartA - normalStartB);
+
+          if (swappedOrder < directOrder)
+          {
+            groundStartA = elevatedStartB;
+            groundStartB = elevatedStartA;
+          }
+          else
+          {
+            groundStartA = elevatedStartA;
+            groundStartB = elevatedStartB;
+          }
+        }
+
+        glm::vec2 groundShadowWorldPoints[4] = {
+            groundStartA,
+            groundStartB,
+            shadowEndPosition + shadowSide * casterFootWidth,
+            shadowEndPosition - shadowSide * casterFootWidth,
+        };
+
+        int minX = static_cast<int>(std::floor(groundShadowWorldPoints[0].x));
+        int maxX = minX;
+        int minY = static_cast<int>(std::floor(groundShadowWorldPoints[0].y));
+        int maxY = minY;
+
+        for (int i = 1; i < 4; i++)
+        {
+          minX = std::min(
+              minX, static_cast<int>(std::floor(groundShadowWorldPoints[i].x)));
+          maxX = std::max(
+              maxX, static_cast<int>(std::floor(groundShadowWorldPoints[i].x)));
+          minY = std::min(
+              minY, static_cast<int>(std::floor(groundShadowWorldPoints[i].y)));
+          maxY = std::max(
+              maxY, static_cast<int>(std::floor(groundShadowWorldPoints[i].y)));
+        }
+
+        for (int y = minY; y <= maxY; y++)
+        {
+          for (int x = minX; x <= maxX; x++)
+          {
+            const glm::ivec2 shadowTile{x, y};
+
+            const int tileElevation = getTileElevationAt(glm::vec2{x, y});
+
+            if (tileElevation > currentShadowElevation)
+              continue;
+
+            const std::string groundKey =
+                tileKey(shadowTile) + "," + std::to_string(tileElevation);
+
+            if (visitedGroundTiles.contains(groundKey))
+              continue;
+
+            visitedGroundTiles.insert(groundKey);
+
+            submitTileShadowPolygonAt(shadowTile,
+                                      tileElevation,
+                                      groundShadowWorldPoints,
+                                      groundShadowAlpha,
+                                      item);
+          }
+        }
+      }
     }
 
     submitSprite(item);
@@ -321,6 +654,35 @@ void IsometricRenderSystem::flushBatches()
   for (const auto& item : renderItems)
   {
     auto& quadRenderer = RenderContext::quadRenderer();
+
+    if (item.isTerrainShadow)
+    {
+      SDL_Surface* surface = assetStore.getSurface(*item.textureId);
+
+      if (!surface)
+        continue;
+
+      const unsigned int texture =
+          quadRenderer.getOrCreateTexture(*item.textureId, surface);
+
+      if (texture == 0)
+        continue;
+
+      OpenGLQuadRenderer::FreeformQuadDrawCommand command;
+
+      command.texture = texture;
+      command.srcRect = item.srcRect;
+      command.textureWidth = item.textureWidth;
+      command.textureHeight = item.textureHeight;
+      command.tint = item.tint;
+
+      for (int i = 0; i < 4; i++)
+        command.points[i] = item.shadowScreenPoints[i];
+
+      quadRenderer.drawFreeformQuad(command);
+      continue;
+    }
+
     SDL_Surface* surface = assetStore.getSurface(*item.textureId);
 
     if (!surface)
@@ -560,32 +922,19 @@ glm::vec2 IsometricRenderSystem::getGroundSamplePosition(
 bool IsometricRenderSystem::tryGetTileElevationAt(const glm::vec2& position,
                                                   int& outElevation) const
 {
-  const glm::ivec2 targetTile = gridCellOf(position);
+  const glm::ivec2 tile = gridCellOf(position);
+  const std::string key = tileKey(tile);
 
-  bool found = false;
-  int highest = 0;
+  auto it = tileElevationCache.find(key);
 
-  for (const auto& entity : getEntities())
+  if (it == tileElevationCache.end())
   {
-    if (!isTileEntity(entity))
-      continue;
-
-    if (!entity.hasComponent<ElevationComponent>())
-      continue;
-
-    const auto& transform = entity.getComponent<TransformComponent>();
-
-    if (gridCellOf(transform.position) != targetTile)
-      continue;
-
-    const auto& elevation = entity.getComponent<ElevationComponent>();
-
-    highest = std::max(highest, elevation.level);
-    found = true;
+    outElevation = 0;
+    return false;
   }
 
-  outElevation = highest;
-  return found;
+  outElevation = it->second;
+  return true;
 }
 
 int IsometricRenderSystem::getTileElevationAt(const glm::vec2& position) const
@@ -612,4 +961,32 @@ void IsometricRenderSystem::setWorldScale(float scale)
 
 float IsometricRenderSystem::getWorldScale() const { return worldScale; }
 
+void IsometricRenderSystem::submitTerrainShadow(const glm::vec2 screenPoints[4],
+                                                SDL_Color tint,
+                                                float sortKey,
+                                                const std::string* textureId,
+                                                SDL_Rect srcRect,
+                                                int textureWidth,
+                                                int textureHeight)
+{
+  RenderItem item;
+
+  static const std::string shadowTextureId = "white_pixel";
+
+  item.textureId = &shadowTextureId;
+  item.srcRect = SDL_Rect{0, 0, 1, 1};
+  item.textureWidth = 1;
+  item.textureHeight = 1;
+
+  item.isShadow = true;
+  item.isTerrainShadow = true;
+  item.tint = tint;
+  item.sortKey = sortKey;
+  item.renderLayer = 1;
+
+  for (int i = 0; i < 4; i++)
+    item.shadowScreenPoints[i] = screenPoints[i];
+
+  renderItems.push_back(item);
+}
 } // namespace sfs
