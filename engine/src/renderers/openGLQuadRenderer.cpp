@@ -62,28 +62,6 @@ void OpenGLQuadRenderer::initialize()
   uLightRadiiLocation = glGetUniformLocation(shaderProgram, "uLightRadii[0]");
   uLightHeightsLocation =
       glGetUniformLocation(shaderProgram, "uLightHeights[0]");
-  uTerrainShadowModeLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowMode");
-  uTerrainShadowDirLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowDir");
-  uTerrainShadowLengthLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowLength");
-  uTerrainShadowElevationLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowElevation");
-  uTerrainShadowCameraIsoLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowCameraIso");
-  uTerrainShadowScreenCenterLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowScreenCenter");
-  uTerrainShadowViewportSizeLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowViewportSize");
-  uTerrainShadowZoomLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowZoom");
-  uTerrainShadowTileSizeLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowTileSize");
-  uTerrainShadowElevationStepLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowElevationStep");
-  uTerrainShadowWorldScaleLocation =
-      glGetUniformLocation(shaderProgram, "uTerrainShadowWorldScale");
 
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
@@ -136,7 +114,6 @@ void OpenGLQuadRenderer::initialize()
   glUniform1i(uTextureLocation, 0);
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
   glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
-  glUniform1i(uTerrainShadowModeLocation, 0);
 
   glUseProgram(0);
 
@@ -273,92 +250,6 @@ void OpenGLQuadRenderer::drawFreeformQuad(
                    p2,
                    p3,
                    command.tint);
-}
-
-void OpenGLQuadRenderer::drawTerrainShadow(
-    const TerrainShadowDrawCommand& command)
-{
-  initialize();
-
-  if (!initialized)
-    return;
-
-  if (command.shadowLength <= 0.001f)
-    return;
-
-  struct TerrainVertex
-  {
-    glm::vec2 position;
-    glm::vec2 uv;
-    glm::vec2 worldPosition;
-  };
-
-  const TerrainVertex vertices[6] = {
-      {command.edgeA, {0.0f, 0.0f}, command.edgeA},
-      {command.edgeB, {0.0f, 0.0f}, command.edgeB},
-      {command.edgeB, {1.0f, 0.0f}, command.edgeB},
-
-      {command.edgeA, {0.0f, 0.0f}, command.edgeA},
-      {command.edgeB, {1.0f, 0.0f}, command.edgeB},
-      {command.edgeA, {1.0f, 0.0f}, command.edgeA},
-  };
-
-  glUseProgram(shaderProgram);
-
-  glUniform1i(uTerrainShadowModeLocation, 1);
-
-  glUniform2f(
-      uTerrainShadowDirLocation, command.shadowDir.x, command.shadowDir.y);
-  glUniform1f(uTerrainShadowLengthLocation, command.shadowLength);
-  glUniform1f(
-      uTerrainShadowElevationLocation, static_cast<float>(command.elevation));
-
-  glUniform2f(uTerrainShadowCameraIsoLocation,
-              command.isoCameraPosition.x,
-              command.isoCameraPosition.y);
-
-  glUniform2f(uTerrainShadowScreenCenterLocation,
-              command.screenCenter.x,
-              command.screenCenter.y);
-
-  glUniform2f(uTerrainShadowViewportSizeLocation,
-              static_cast<float>(windowWidth),
-              static_cast<float>(windowHeight));
-
-  glUniform1f(uTerrainShadowZoomLocation, command.zoom);
-
-  glUniform2f(uTerrainShadowTileSizeLocation,
-              static_cast<float>(command.tileWidth),
-              static_cast<float>(command.tileHeight));
-
-  glUniform1f(uTerrainShadowElevationStepLocation,
-              static_cast<float>(command.elevationStep));
-
-  glUniform1f(uTerrainShadowWorldScaleLocation, command.worldScale);
-
-  glUniform4f(uColorLocation,
-              command.tint.r / 255.0f,
-              command.tint.g / 255.0f,
-              command.tint.b / 255.0f,
-              command.tint.a / 255.0f);
-
-  glUniform1i(uUseLightingLocation, 0);
-  glUniform1i(uHasNormalMapLocation, 0);
-
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, 0);
-
-  glBindVertexArray(vao);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-  glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(sizeof(vertices)),
-               vertices,
-               GL_DYNAMIC_DRAW);
-
-  glDrawArrays(GL_TRIANGLES, 0, 6);
-
-  glUniform1i(uTerrainShadowModeLocation, 0);
 }
 
 void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
@@ -670,63 +561,10 @@ layout (location = 2) in vec2 aWorldPosition;
 out vec2 vUv;
 out vec2 vWorldPosition;
 
-uniform int uTerrainShadowMode;
-uniform vec2 uTerrainShadowDir;
-uniform float uTerrainShadowLength;
-uniform float uTerrainShadowElevation;
-
-uniform vec2 uTerrainShadowCameraIso;
-uniform vec2 uTerrainShadowScreenCenter;
-uniform vec2 uTerrainShadowViewportSize;
-uniform float uTerrainShadowZoom;
-uniform vec2 uTerrainShadowTileSize;
-uniform float uTerrainShadowElevationStep;
-uniform float uTerrainShadowWorldScale;
-
-vec2 terrainGridToIso(vec2 gridPosition)
-{
-  return vec2(
-    (gridPosition.x - gridPosition.y) *
-      (uTerrainShadowTileSize.x * uTerrainShadowWorldScale) * 0.5,
-    (gridPosition.x + gridPosition.y) *
-      (uTerrainShadowTileSize.y * uTerrainShadowWorldScale) * 0.5
-  );
-}
-
-vec2 terrainToNdc(vec2 pixelPosition)
-{
-  return vec2(
-    pixelPosition.x / uTerrainShadowViewportSize.x * 2.0 - 1.0,
-    1.0 - pixelPosition.y / uTerrainShadowViewportSize.y * 2.0
-  );
-}
-
 void main()
 {
   vUv = aUv;
   vWorldPosition = aWorldPosition;
-
-  if (uTerrainShadowMode != 0)
-  {
-    // aPosition is used as world/grid position in terrain-shadow mode.
-    // aUv.x is used as the extrude flag: 0 = edge, 1 = shadow tip.
-    vec2 worldPosition =
-        aPosition + uTerrainShadowDir * uTerrainShadowLength * aUv.x;
-
-    vec2 screenPosition =
-        (terrainGridToIso(worldPosition) - uTerrainShadowCameraIso) *
-          uTerrainShadowZoom +
-        uTerrainShadowScreenCenter;
-
-    screenPosition.y -=
-        uTerrainShadowElevation *
-        uTerrainShadowElevationStep *
-        uTerrainShadowWorldScale *
-        uTerrainShadowZoom;
-
-    gl_Position = vec4(terrainToNdc(screenPosition), 0.0, 1.0);
-    return;
-  }
 
   gl_Position = vec4(aPosition, 0.0, 1.0);
 }
@@ -776,7 +614,6 @@ vec3 calculateLampLighting(vec3 normal)
 
     float attenuation = 1.0 - dist / uLightRadii[i];
     attenuation = clamp(attenuation, 0.0, 1.0);
-
     attenuation = attenuation * attenuation;
 
     vec3 lightVector = vec3(delta.x, delta.y, uLightHeights[i]);
@@ -788,12 +625,10 @@ vec3 calculateLampLighting(vec3 normal)
     float sunFade = 1.0 - clamp(uDiffuseStrength, 0.0, 1.0);
     float lampBoost = mix(0.35, 2.75, sunFade);
 
-    float amount =
-        diffuse * uLightIntensities[i] * attenuation * lampBoost;
+    float amount = diffuse * uLightIntensities[i] * attenuation * lampBoost;
 
     vec3 color = uLightColors[i];
 
-    // Normalize brightness WITHOUT changing hue.
     float maxChannel = max(max(color.r, color.g), color.b);
 
     if (maxChannel > 0.001)
@@ -801,13 +636,11 @@ vec3 calculateLampLighting(vec3 normal)
     else
       color = vec3(1.0);
 
-    // Strong color identity.
     color = mix(vec3(1.0), color, 0.92);
 
     accumulated += color * amount;
   }
 
-  // Soft overall clamp instead of per-channel tonemap.
   float peak = max(max(accumulated.r, accumulated.g), accumulated.b);
 
   if (peak > 1.0)
@@ -815,14 +648,13 @@ vec3 calculateLampLighting(vec3 normal)
 
   return accumulated;
 }
+
 void main()
 {
   vec4 albedo = texture(uTexture, vUv);
 
   if (albedo.a <= 0.0)
-  {
     discard;
-  }
 
   if (uUseLighting == 0)
   {
@@ -860,17 +692,14 @@ void main()
 
   vec3 sunLitColor = albedo.rgb * clamp(sunLighting, 0.0, 1.0);
 
-  // Use grayscale surface response for colored lamps so red/blue lights
-  // still show on green/brown/blue sprites.
   float albedoLuma = dot(albedo.rgb, vec3(0.299, 0.587, 0.114));
   vec3 lampSurface = mix(albedo.rgb, vec3(albedoLuma), 0.25);
 
-float sunAmount = clamp(uDiffuseStrength, 0.0, 1.0);
+  float sunAmount = clamp(uDiffuseStrength, 0.0, 1.0);
 
-// Lamps are subtle in daylight, strong at night.
-float visibleLampStrength = mix(1.25, 0.15, sunAmount);
+  float visibleLampStrength = mix(1.25, 0.15, sunAmount);
 
-vec3 lampLitColor = lampSurface * lampLighting * visibleLampStrength;
+  vec3 lampLitColor = lampSurface * lampLighting * visibleLampStrength;
 
   vec3 litColor = clamp(sunLitColor + lampLitColor, 0.0, 1.0);
   vec3 emissiveColor = albedo.rgb * 2.5;
