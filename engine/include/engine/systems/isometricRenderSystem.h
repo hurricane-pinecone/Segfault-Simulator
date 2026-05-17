@@ -33,6 +33,18 @@ constexpr float WallShadowAlpha = 90.0f / 255.0f;
 constexpr float CasterFootWidth = 0.35f;
 constexpr float CasterFootDepth = 0.22f;
 
+struct TerrainShadowEdge
+{
+  glm::vec2 a;
+  glm::vec2 b;
+
+  glm::ivec2 casterTile{0, 0};
+  glm::ivec2 receiverTile{0, 0};
+
+  int topElevation = 0;
+  int bottomElevation = 0;
+};
+
 struct ShadowWallFace
 {
   enum class Type
@@ -110,8 +122,16 @@ private:
     bool isShadow = false;
     glm::vec2 shadowOffset{0.0f, 0.0f};
     bool isTerrainShadow = false;
+    bool isTerrainEdgeShadow = false;
 
     glm::vec2 shadowScreenPoints[4] = {};
+
+    // GPU terrain edge shadow source data.
+    glm::vec2 terrainEdgeA{0.0f, 0.0f};
+    glm::vec2 terrainEdgeB{0.0f, 0.0f};
+    glm::vec2 terrainShadowDir{0.0f, 1.0f};
+    float terrainShadowLength = 0.0f;
+    int terrainShadowElevation = 0;
 
     SDL_Color tint{255, 255, 255, 255};
     glm::vec2 worldPoints[4] = {
@@ -136,6 +156,127 @@ private:
                            int textureWidth,
                            int textureHeight);
   void flushBatches();
+
+  void submitTerrainEdgeShadowClipped(const TerrainShadowEdge& edge,
+                                      const glm::vec2& shadowDir,
+                                      float shadowLength,
+                                      float alpha)
+  {
+    const int heightDelta = edge.topElevation - edge.bottomElevation;
+
+    if (heightDelta <= 0)
+      return;
+
+    const glm::vec2 casterCenter{
+        static_cast<float>(edge.casterTile.x) + 0.5f,
+        static_cast<float>(edge.casterTile.y) + 0.5f,
+    };
+
+    const glm::vec2 receiverCenter{
+        static_cast<float>(edge.receiverTile.x) + 0.5f,
+        static_cast<float>(edge.receiverTile.y) + 0.5f,
+    };
+
+    const glm::vec2 outwardDir = glm::normalize(receiverCenter - casterCenter);
+
+    // Only cast through the exposed edge that faces the shadow direction.
+    if (glm::dot(shadowDir, outwardDir) <= 0.05f)
+      return;
+
+    glm::vec2 shadowWorldPoints[4] = {
+        edge.a,
+        edge.b,
+        edge.b + shadowDir * shadowLength,
+        edge.a + shadowDir * shadowLength,
+    };
+
+    int minX = static_cast<int>(std::floor(shadowWorldPoints[0].x));
+    int maxX = minX;
+    int minY = static_cast<int>(std::floor(shadowWorldPoints[0].y));
+    int maxY = minY;
+
+    for (int i = 1; i < 4; i++)
+    {
+      minX =
+          std::min(minX, static_cast<int>(std::floor(shadowWorldPoints[i].x)));
+      maxX =
+          std::max(maxX, static_cast<int>(std::floor(shadowWorldPoints[i].x)));
+      minY =
+          std::min(minY, static_cast<int>(std::floor(shadowWorldPoints[i].y)));
+      maxY =
+          std::max(maxY, static_cast<int>(std::floor(shadowWorldPoints[i].y)));
+    }
+
+    for (int y = minY; y <= maxY; y++)
+    {
+      for (int x = minX; x <= maxX; x++)
+      {
+        const glm::ivec2 tile{x, y};
+        const int tileElevation = getTileElevationAt(glm::vec2{x, y});
+
+        // Critical fix:
+        // do not draw the terrain shadow onto terrain at or above the caster.
+        if (tileElevation >= edge.topElevation)
+          continue;
+
+        // Optional but usually correct:
+        // do not let this shadow climb onto terrain higher than the first
+        // receiver.
+        // if (tileElevation > edge.bottomElevation)
+        //   continue;
+
+        submitTileShadowPolygonAt(
+            tile, tileElevation, shadowWorldPoints, alpha);
+      }
+    }
+  }
+
+  std::vector<TerrainShadowEdge> getTerrainShadowEdges() const
+  {
+    std::vector<TerrainShadowEdge> edges;
+
+    for (const auto& [key, elevation] : tileElevationCache)
+    {
+      if (elevation <= 0)
+        continue;
+
+      const auto comma = key.find(',');
+
+      if (comma == std::string::npos)
+        continue;
+
+      const int x = std::stoi(key.substr(0, comma));
+      const int y = std::stoi(key.substr(comma + 1));
+
+      const glm::ivec2 casterTile{x, y};
+
+      auto addEdgeIfExposed =
+          [&](const glm::ivec2& receiverTile, glm::vec2 a, glm::vec2 b)
+      {
+        const int receiverElevation =
+            getTileElevationAt(glm::vec2{receiverTile.x, receiverTile.y});
+
+        if (receiverElevation >= elevation)
+          return;
+
+        edges.push_back({
+            a,
+            b,
+            casterTile,
+            receiverTile,
+            elevation,
+            receiverElevation,
+        });
+      };
+
+      addEdgeIfExposed({x - 1, y}, {x, y}, {x, y + 1});         // west
+      addEdgeIfExposed({x + 1, y}, {x + 1, y}, {x + 1, y + 1}); // east
+      addEdgeIfExposed({x, y - 1}, {x, y}, {x + 1, y});         // north
+      addEdgeIfExposed({x, y + 1}, {x, y + 1}, {x + 1, y + 1}); // south
+    }
+
+    return edges;
+  }
 
   void submitTileShadowAt(const glm::ivec2& tile,
                           int elevation,
@@ -187,8 +328,7 @@ private:
   void submitTileShadowPolygonAt(const glm::ivec2& tile,
                                  int elevation,
                                  const glm::vec2 worldPoints[4],
-                                 float alpha,
-                                 const RenderItem& caster)
+                                 float alpha)
   {
     const std::vector<glm::vec2> clipped = clipPolygonToTile(worldPoints, tile);
 
@@ -235,10 +375,10 @@ private:
           screenPoints,
           SDL_Color{0, 0, 0, static_cast<Uint8>(alpha * 255.0f)},
           sortKey,
-          caster.textureId,
-          caster.srcRect,
-          caster.textureWidth,
-          caster.textureHeight);
+          nullptr,
+          SDL_Rect{0, 0, 1, 1},
+          1,
+          1);
     }
   }
   static std::vector<glm::vec2>
