@@ -26,40 +26,64 @@ public:
       return;
     }
 
-    const float cx = static_cast<float>(WINDOW_WIDTH) * 0.5f;
-    const float cy = static_cast<float>(WINDOW_HEIGHT) * 0.5f;
+    const float w = static_cast<float>(WINDOW_WIDTH);
+    const float h = static_cast<float>(WINDOW_HEIGHT);
 
-    float dx = (static_cast<float>(x) - cx) / cx;
-    float dy = (cy - static_cast<float>(y)) / cy; // screen up = positive
+    const float cx = w * 0.5f;
 
-    glm::vec2 mouseDir{dx, dy};
+    const float x01 = std::clamp(static_cast<float>(x) / w, 0.0f, 1.0f);
+    const float y01 = std::clamp(static_cast<float>(y) / h, 0.0f, 1.0f);
 
-    float distanceFromCenter = std::clamp(glm::length(mouseDir), 0.0f, 1.0f);
+    // Vertical mouse controls sun height.
+    // Top = high sun.
+    // Bottom = low sun.
+    float sunZ = 1.0f - y01;
 
-    if (distanceFromCenter > 0.001f)
-      mouseDir /= distanceFromCenter;
+    // Keep sun above horizon.
+    sunZ = std::clamp(sunZ, 0.18f, 1.0f);
+
+    // Center/top = near-noon.
+    // Low sun = stronger sideways component.
+    const float horizontalAmount =
+        std::sqrt(std::max(0.0f, 1.0f - sunZ * sunZ));
+
+    // Mouse X moves sun from left side to right side.
+    // This controls whether shadows go front-right or front-left.
+    const float side =
+        std::clamp((static_cast<float>(x) - cx) / cx, -1.0f, 1.0f);
+
+    // IMPORTANT:
+    // lightDir is the direction light travels FROM.
+    // shadows use -lightDir.
+    //
+    // We want shadows to always cast toward camera/front:
+    //   -lightDir.y should be positive
+    //
+    // Therefore lightDir.y should stay negative.
+    constexpr float BackLightBias = -0.65f;
+
+    glm::vec2 horizontalDir{
+        side,
+        BackLightBias,
+    };
+
+    if (glm::length(horizontalDir) > 0.001f)
+      horizontalDir = glm::normalize(horizontalDir);
     else
-      mouseDir = glm::vec2{0.0f, 1.0f};
-
-    // Mouse angle around the screen = sun rotation around the world.
-    float azimuth = std::atan2(mouseDir.y, mouseDir.x);
-
-    // Center = high noon, edge = horizon.
-    float y01 = std::clamp(y / static_cast<float>(WINDOW_HEIGHT), 0.0f, 1.0f);
-    float sunZ = 1.0f - y01 * 2.0f;
-
-    float horizontalRadius = std::sqrt(std::max(0.0f, 1.0f - sunZ * sunZ));
+      horizontalDir = glm::vec2{0.0f, -1.0f};
 
     glm::vec3 sunDir{
-        std::cos(azimuth) * horizontalRadius,
-        std::sin(azimuth) * horizontalRadius,
+        horizontalDir.x * horizontalAmount,
+        horizontalDir.y * horizontalAmount,
         sunZ,
     };
 
     if (glm::length(sunDir) > 0.001f)
       sunDir = glm::normalize(sunDir);
+    else
+      sunDir = glm::vec3{0.0f, 0.0f, 1.0f};
 
-    float daylight = std::clamp((sunZ + 0.3f) / 1.2f, 0.0f, 1.0f);
+    float daylight = std::clamp((sunZ - 0.12f) / 0.88f, 0.0f, 1.0f);
     daylight = daylight * daylight * (3.0f - 2.0f * daylight);
 
     m_lighting->setLightDirection(sunDir);
