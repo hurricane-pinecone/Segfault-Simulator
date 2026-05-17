@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace sfs
@@ -164,7 +165,7 @@ private:
   {
     const int heightDelta = edge.topElevation - edge.bottomElevation;
 
-    if (heightDelta <= 0)
+    if (heightDelta <= 0 || shadowLength <= 0.05f || alpha <= 0.01f)
       return;
 
     const glm::vec2 casterCenter{
@@ -179,7 +180,6 @@ private:
 
     const glm::vec2 outwardDir = glm::normalize(receiverCenter - casterCenter);
 
-    // Only cast through the exposed edge that faces the shadow direction.
     if (glm::dot(shadowDir, outwardDir) <= 0.05f)
       return;
 
@@ -190,22 +190,28 @@ private:
         edge.a + shadowDir * shadowLength,
     };
 
-    int minX = static_cast<int>(std::floor(shadowWorldPoints[0].x));
-    int maxX = minX;
-    int minY = static_cast<int>(std::floor(shadowWorldPoints[0].y));
-    int maxY = minY;
+    int minX = static_cast<int>(std::floor(
+        std::min(std::min(shadowWorldPoints[0].x, shadowWorldPoints[1].x),
+                 std::min(shadowWorldPoints[2].x, shadowWorldPoints[3].x))));
 
-    for (int i = 1; i < 4; i++)
-    {
-      minX =
-          std::min(minX, static_cast<int>(std::floor(shadowWorldPoints[i].x)));
-      maxX =
-          std::max(maxX, static_cast<int>(std::floor(shadowWorldPoints[i].x)));
-      minY =
-          std::min(minY, static_cast<int>(std::floor(shadowWorldPoints[i].y)));
-      maxY =
-          std::max(maxY, static_cast<int>(std::floor(shadowWorldPoints[i].y)));
-    }
+    int maxX = static_cast<int>(std::floor(
+        std::max(std::max(shadowWorldPoints[0].x, shadowWorldPoints[1].x),
+                 std::max(shadowWorldPoints[2].x, shadowWorldPoints[3].x))));
+
+    int minY = static_cast<int>(std::floor(
+        std::min(std::min(shadowWorldPoints[0].y, shadowWorldPoints[1].y),
+                 std::min(shadowWorldPoints[2].y, shadowWorldPoints[3].y))));
+
+    int maxY = static_cast<int>(std::floor(
+        std::max(std::max(shadowWorldPoints[0].y, shadowWorldPoints[1].y),
+                 std::max(shadowWorldPoints[2].y, shadowWorldPoints[3].y))));
+
+    constexpr int MaxShadowTileSpan = 2;
+
+    minX = std::max(minX, edge.receiverTile.x - MaxShadowTileSpan);
+    maxX = std::min(maxX, edge.receiverTile.x + MaxShadowTileSpan);
+    minY = std::max(minY, edge.receiverTile.y - MaxShadowTileSpan);
+    maxY = std::min(maxY, edge.receiverTile.y + MaxShadowTileSpan);
 
     for (int y = minY; y <= maxY; y++)
     {
@@ -214,16 +220,8 @@ private:
         const glm::ivec2 tile{x, y};
         const int tileElevation = getTileElevationAt(glm::vec2{x, y});
 
-        // Critical fix:
-        // do not draw the terrain shadow onto terrain at or above the caster.
         if (tileElevation >= edge.topElevation)
           continue;
-
-        // Optional but usually correct:
-        // do not let this shadow climb onto terrain higher than the first
-        // receiver.
-        // if (tileElevation > edge.bottomElevation)
-        //   continue;
 
         submitTileShadowPolygonAt(
             tile, tileElevation, shadowWorldPoints, alpha);
@@ -882,6 +880,7 @@ private:
       else
         it->second = std::max(it->second, elevation);
     }
+    terrainShadowCacheDirty = true;
   }
 
 private:
@@ -905,6 +904,11 @@ private:
   float waveSpeed = 3.0f;
 
   std::vector<RenderItem> renderItems;
+
+  std::vector<RenderItem> cachedTerrainShadowItems;
+  glm::vec3 cachedTerrainShadowSunDir{999.0f, 999.0f, 999.0f};
+  std::size_t cachedTerrainShadowTileCount = 0;
+  bool terrainShadowCacheDirty = true;
 };
 
 } // namespace sfs
