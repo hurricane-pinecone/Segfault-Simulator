@@ -487,14 +487,14 @@ private:
 
     const float incomingZ = std::clamp(incomingElevation, 0.0f, topZ);
 
-    const float elevationDelta = std::max(0.0f, topZ - incomingZ);
-
     const float shadowTopZ = topZ;
-
-    // For upward hits, cover the whole transition immediately.
-    // The ray already paid the climbCost, so the wall should represent that
-    // climb.
     const float shadowBottomZ = incomingZ;
+
+    if (shadowTopZ <= shadowBottomZ + 0.001f)
+      return;
+
+    if (shadowTopZ <= shadowBottomZ + 0.001f)
+      return;
 
     glm::vec2 screenPoints[4] = {
         worldToScreen(shadowA, shadowTopZ),
@@ -509,7 +509,11 @@ private:
 
     submitTerrainShadow(
         screenPoints,
-        SDL_Color{255, 0, 255, 220}, // keep magenta until both faces show
+        SDL_Color{0,
+                  0,
+                  0,
+                  static_cast<Uint8>(
+                      alpha * 255.0f)}, // keep magenta until both faces show
         sortKey,
         textureSource.textureId,
         textureSource.srcRect,
