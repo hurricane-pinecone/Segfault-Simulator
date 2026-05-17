@@ -256,4 +256,6 @@ void main()
   return program;
 }
 
+bool TerrainShadowRenderer::hasPending() const { return !vertices.empty(); }
+
 } // namespace sfs

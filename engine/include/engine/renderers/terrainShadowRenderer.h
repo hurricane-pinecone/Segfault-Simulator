@@ -35,6 +35,8 @@ public:
 
   void flush();
 
+  bool hasPending() const;
+
 private:
   glm::vec2 toNdc(glm::vec2 pixelPosition) const;
 

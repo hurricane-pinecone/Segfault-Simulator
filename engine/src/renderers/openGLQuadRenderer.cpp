@@ -687,8 +687,15 @@ void main()
   vec3 lightDir = normalize(uLightDirection);
   float directionalDiffuse = max(dot(normal, lightDir), 0.0);
 
-  vec3 sunLighting =
-      vec3(uAmbient) + directionalDiffuse * uDiffuseStrength;
+float shadeSide = smoothstep(0.0, 0.75, directionalDiffuse);
+
+// Shadow-like darkness on faces turned away from the sun.
+float directionalAmbient =
+    uAmbient * mix(0.18, 1.0, shadeSide);
+
+vec3 sunLighting =
+    vec3(directionalAmbient) +
+    directionalDiffuse * uDiffuseStrength;
 
   vec3 sunLitColor = albedo.rgb * clamp(sunLighting, 0.0, 1.0);
 

@@ -735,16 +735,8 @@ void IsometricRenderSystem::render()
             if (glm::dot(shadowDir, outwardDir) <= 0.05f)
               continue;
 
-            const float shadowLength =
-                std::min(TerrainShadowMaxLength,
-                         static_cast<float>(heightDelta) *
-                             TerrainShadowLengthScale / sunHeight);
-
-            if (shadowLength < 0.15f)
-              continue;
-
-            submitTerrainEdgeShadowClipped(
-                edge, shadowDir, shadowLength, alpha);
+            submitTerrainEdgeShadowProjectedClipped(
+                edge, shadowDir, sunHeight, TerrainShadowMaxLength, alpha);
           }
 
           cachedTerrainShadowItems.assign(
@@ -851,10 +843,16 @@ void IsometricRenderSystem::flushBatches()
           item.shadowScreenPoints[1],
           item.shadowScreenPoints[2],
           item.shadowScreenPoints[3],
-          SDL_Color{255, 0, 255, 255}); // debug magenta
+          item.tint);
 
       continue;
     }
+
+    // Important:
+    // any pending terrain shadows must be drawn before the next solid item,
+    // so closer blocks can cover earlier/farther shadows correctly.
+    if (RenderContext::terrainShadowRenderer().hasPending())
+      RenderContext::terrainShadowRenderer().flush();
 
     SDL_Surface* surface = assetStore.getSurface(*item.textureId);
 
@@ -1152,15 +1150,22 @@ void IsometricRenderSystem::submitTerrainShadow(const glm::vec2 screenPoints[4],
   renderItems.push_back(item);
 }
 
-void IsometricRenderSystem::submitTerrainEdgeShadowWalked(
+void IsometricRenderSystem::submitTerrainEdgeShadowProjectedClipped(
     const TerrainShadowEdge& edge,
     const glm::vec2& shadowDir,
-    float shadowLength,
+    float sunHeight,
+    float maxShadowLength,
     float alpha)
 {
-  const int heightDelta = edge.topElevation - edge.bottomElevation;
+  const int edgeHeightDelta = edge.topElevation - edge.bottomElevation;
 
-  if (heightDelta <= 0 || shadowLength <= 0.05f || alpha <= 0.01f)
+  if (edgeHeightDelta <= 0)
+    return;
+
+  if (sunHeight <= 0.001f)
+    return;
+
+  if (maxShadowLength <= 0.05f || alpha <= 0.01f)
     return;
 
   const glm::vec2 casterCenter =
@@ -1174,102 +1179,102 @@ void IsometricRenderSystem::submitTerrainEdgeShadowWalked(
   if (glm::dot(shadowDir, outwardDir) <= 0.05f)
     return;
 
-  glm::vec2 a = edge.a + shadowDir * 0.01f;
-  glm::vec2 b = edge.b + shadowDir * 0.01f;
+  constexpr float TerrainShadowLengthScale = 1.35f;
 
-  float travelled = 0.0f;
+  const float shadowLength = std::min(maxShadowLength,
+                                      static_cast<float>(edgeHeightDelta) *
+                                          TerrainShadowLengthScale / sunHeight);
 
-  for (int step = 0; step < 8 && travelled < shadowLength; step++)
+  if (shadowLength <= 0.05f)
+    return;
+
+  glm::vec2 shadowWorldPoints[4] = {
+      edge.a,
+      edge.b,
+      edge.b + shadowDir * shadowLength,
+      edge.a + shadowDir * shadowLength,
+  };
+
+  int minX = static_cast<int>(std::floor(
+      std::min(std::min(shadowWorldPoints[0].x, shadowWorldPoints[1].x),
+               std::min(shadowWorldPoints[2].x, shadowWorldPoints[3].x))));
+
+  int maxX = static_cast<int>(std::floor(
+      std::max(std::max(shadowWorldPoints[0].x, shadowWorldPoints[1].x),
+               std::max(shadowWorldPoints[2].x, shadowWorldPoints[3].x))));
+
+  int minY = static_cast<int>(std::floor(
+      std::min(std::min(shadowWorldPoints[0].y, shadowWorldPoints[1].y),
+               std::min(shadowWorldPoints[2].y, shadowWorldPoints[3].y))));
+
+  int maxY = static_cast<int>(std::floor(
+      std::max(std::max(shadowWorldPoints[0].y, shadowWorldPoints[1].y),
+               std::max(shadowWorldPoints[2].y, shadowWorldPoints[3].y))));
+
+  for (int y = minY; y <= maxY; y++)
   {
-    glm::ivec2 tile =
-        step == 0 ? edge.receiverTile : gridCellOf((a + b) * 0.5f);
+    for (int x = minX; x <= maxX; x++)
+    {
+      const glm::ivec2 tile{x, y};
 
-    const int receiverElevation = getTileElevationAt(glm::vec2{tile.x, tile.y});
+      if (!hasTileAt(tile))
+        continue;
 
-    if (receiverElevation >= edge.topElevation)
-      break;
+      const int receiverElevation = getTileElevationAt(glm::vec2{x, y});
 
-    float stepLength = distanceUntilShadowLeavesTile(a, b, shadowDir, tile);
+      if (receiverElevation != edge.bottomElevation)
+        continue;
 
-    stepLength = std::min(stepLength, shadowLength - travelled);
+      if (terrainShadowPathBlocked(edge, tile, shadowDir))
+        continue;
 
-    if (stepLength <= 0.001f)
-      break;
-
-    glm::vec2 worldQuad[4] = {
-        a,
-        b,
-        b + shadowDir * stepLength,
-        a + shadowDir * stepLength,
-    };
-
-    submitTerrainShadowQuadOnTile(tile, receiverElevation, worldQuad, alpha);
-
-    a += shadowDir * (stepLength + 0.001f);
-    b += shadowDir * (stepLength + 0.001f);
-
-    travelled += stepLength + 0.001f;
+      submitTileShadowPolygonAt(
+          tile, receiverElevation, shadowWorldPoints, alpha);
+    }
   }
 }
 
-float IsometricRenderSystem::distanceUntilShadowLeavesTile(
-    glm::vec2 a,
-    glm::vec2 b,
-    glm::vec2 dir,
-    glm::ivec2 tile) const
+bool IsometricRenderSystem::terrainShadowPathBlocked(
+    const TerrainShadowEdge& edge,
+    const glm::ivec2& receiverTile,
+    const glm::vec2& shadowDir) const
 {
-  const float minX = static_cast<float>(tile.x);
-  const float maxX = static_cast<float>(tile.x + 1);
+  const glm::vec2 start = (edge.a + edge.b) * 0.5f + shadowDir * 0.02f;
+  const glm::vec2 target =
+      glm::vec2{receiverTile.x + 0.5f, receiverTile.y + 0.5f};
 
-  const float minY = static_cast<float>(tile.y);
-  const float maxY = static_cast<float>(tile.y + 1);
+  const glm::vec2 delta = target - start;
+  const float distance = glm::length(delta);
 
-  float result = std::numeric_limits<float>::max();
+  if (distance <= 0.001f)
+    return false;
 
-  auto test = [&](glm::vec2 p)
+  const glm::vec2 dir = delta / distance;
+
+  // Only test along the actual shadow direction.
+  if (glm::dot(dir, shadowDir) <= 0.5f)
+    return false;
+
+  constexpr float StepSize = 0.25f;
+
+  for (float t = StepSize; t < distance; t += StepSize)
   {
-    if (dir.x > 0.0001f)
-      result = std::min(result, (maxX - p.x) / dir.x);
-    else if (dir.x < -0.0001f)
-      result = std::min(result, (minX - p.x) / dir.x);
+    const glm::vec2 p = start + dir * t;
+    const glm::ivec2 tile = gridCellOf(p);
 
-    if (dir.y > 0.0001f)
-      result = std::min(result, (maxY - p.y) / dir.y);
-    else if (dir.y < -0.0001f)
-      result = std::min(result, (minY - p.y) / dir.y);
-  };
+    if (tile == receiverTile)
+      return false;
 
-  test(a);
-  test(b);
+    if (!hasTileAt(tile))
+      return true;
 
-  if (!std::isfinite(result))
-    return 0.0f;
+    const int elevation = getTileElevationAt(glm::vec2{tile.x, tile.y});
 
-  return std::max(0.0f, result);
-}
+    if (elevation >= edge.topElevation)
+      return true;
+  }
 
-void IsometricRenderSystem::submitTerrainShadowQuadOnTile(
-    const glm::ivec2& tile,
-    int elevation,
-    const glm::vec2 worldQuad[4],
-    float alpha)
-{
-  glm::vec2 screenPoints[4] = {
-      worldToScreenCached(worldQuad[0], elevation),
-      worldToScreenCached(worldQuad[1], elevation),
-      worldToScreenCached(worldQuad[2], elevation),
-      worldToScreenCached(worldQuad[3], elevation),
-  };
-
-  constexpr float ElevationSortWeight = 0.5f;
-
-  const float sortKey =
-      static_cast<float>(tile.x) + static_cast<float>(tile.y) +
-      static_cast<float>(elevation) * ElevationSortWeight + 0.0005f;
-
-  submitTerrainShadow(screenPoints,
-                      SDL_Color{0, 0, 0, static_cast<Uint8>(alpha * 255.0f)},
-                      sortKey);
+  return false;
 }
 
 } // namespace sfs

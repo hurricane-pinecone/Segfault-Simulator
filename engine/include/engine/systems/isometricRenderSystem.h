@@ -214,77 +214,6 @@ private:
                            float sortKey);
   void flushBatches();
 
-  void submitTerrainEdgeShadowClipped(const TerrainShadowEdge& edge,
-                                      const glm::vec2& shadowDir,
-                                      float shadowLength,
-                                      float alpha)
-  {
-    const int heightDelta = edge.topElevation - edge.bottomElevation;
-
-    if (heightDelta <= 0 || shadowLength <= 0.05f || alpha <= 0.01f)
-      return;
-
-    const glm::vec2 casterCenter{
-        static_cast<float>(edge.casterTile.x) + 0.5f,
-        static_cast<float>(edge.casterTile.y) + 0.5f,
-    };
-
-    const glm::vec2 receiverCenter{
-        static_cast<float>(edge.receiverTile.x) + 0.5f,
-        static_cast<float>(edge.receiverTile.y) + 0.5f,
-    };
-
-    const glm::vec2 outwardDir = glm::normalize(receiverCenter - casterCenter);
-
-    if (glm::dot(shadowDir, outwardDir) <= 0.05f)
-      return;
-
-    glm::vec2 shadowWorldPoints[4] = {
-        edge.a,
-        edge.b,
-        edge.b + shadowDir * shadowLength,
-        edge.a + shadowDir * shadowLength,
-    };
-
-    int minX = static_cast<int>(std::floor(
-        std::min(std::min(shadowWorldPoints[0].x, shadowWorldPoints[1].x),
-                 std::min(shadowWorldPoints[2].x, shadowWorldPoints[3].x))));
-
-    int maxX = static_cast<int>(std::floor(
-        std::max(std::max(shadowWorldPoints[0].x, shadowWorldPoints[1].x),
-                 std::max(shadowWorldPoints[2].x, shadowWorldPoints[3].x))));
-
-    int minY = static_cast<int>(std::floor(
-        std::min(std::min(shadowWorldPoints[0].y, shadowWorldPoints[1].y),
-                 std::min(shadowWorldPoints[2].y, shadowWorldPoints[3].y))));
-
-    int maxY = static_cast<int>(std::floor(
-        std::max(std::max(shadowWorldPoints[0].y, shadowWorldPoints[1].y),
-                 std::max(shadowWorldPoints[2].y, shadowWorldPoints[3].y))));
-
-    constexpr int MaxShadowTileSpan = 2;
-
-    minX = std::max(minX, edge.receiverTile.x - MaxShadowTileSpan);
-    maxX = std::min(maxX, edge.receiverTile.x + MaxShadowTileSpan);
-    minY = std::max(minY, edge.receiverTile.y - MaxShadowTileSpan);
-    maxY = std::min(maxY, edge.receiverTile.y + MaxShadowTileSpan);
-
-    for (int y = minY; y <= maxY; y++)
-    {
-      for (int x = minX; x <= maxX; x++)
-      {
-        const glm::ivec2 tile{x, y};
-        const int tileElevation = getTileElevationAt(glm::vec2{x, y});
-
-        if (tileElevation >= edge.topElevation)
-          continue;
-
-        submitTileShadowPolygonAt(
-            tile, tileElevation, shadowWorldPoints, alpha);
-      }
-    }
-  }
-
   std::vector<TerrainShadowEdge> getTerrainShadowEdges() const
   {
     std::vector<TerrainShadowEdge> edges;
@@ -774,6 +703,12 @@ private:
     return outMaxT > outMinT;
   }
 
+  void submitTerrainEdgeShadowProjectedClipped(const TerrainShadowEdge& edge,
+                                               const glm::vec2& shadowDir,
+                                               float sunHeight,
+                                               float maxShadowLength,
+                                               float alpha);
+
   glm::vec2 getCameraPosition() const;
   glm::ivec2 gridCellOf(const glm::vec2& position) const;
 
@@ -794,20 +729,14 @@ private:
 
   ActiveCamera getCamera() const;
 
-  void submitTerrainEdgeShadowWalked(const TerrainShadowEdge& edge,
-                                     const glm::vec2& shadowDir,
-                                     float shadowLength,
-                                     float alpha);
+  bool terrainShadowPathBlocked(const TerrainShadowEdge& edge,
+                                const glm::ivec2& receiverTile,
+                                const glm::vec2& shadowDir) const;
 
-  float distanceUntilShadowLeavesTile(glm::vec2 a,
-                                      glm::vec2 b,
-                                      glm::vec2 dir,
-                                      glm::ivec2 tile) const;
-
-  void submitTerrainShadowQuadOnTile(const glm::ivec2& tile,
-                                     int elevation,
-                                     const glm::vec2 worldQuad[4],
-                                     float alpha);
+  bool hasTileAt(const glm::ivec2& tile) const
+  {
+    return tileElevationCache.find(tile) != tileElevationCache.end();
+  }
 
   glm::vec2 worldToScreenCached(glm::vec2 p, float elevation) const
   {
