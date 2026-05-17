@@ -306,4 +306,24 @@ TTF_Font* AssetStore::getFont(const std::string& fontId) const
   return it->second.get();
 }
 
+void AssetStore::addWhitePixelTexture(const std::string& textureId)
+{
+  SDL_Surface* surface =
+      SDL_CreateRGBSurfaceWithFormat(0, 1, 1, 32, SDL_PIXELFORMAT_RGBA32);
+
+  if (!surface)
+  {
+    LOG_ERROR("Failed to create white pixel surface");
+    return;
+  }
+
+  Uint32 white = SDL_MapRGBA(surface->format, 255, 255, 255, 255);
+  SDL_FillRect(surface, nullptr, white);
+
+  m_surfaces.insert_or_assign(
+      textureId,
+      std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(
+          surface, SDL_FreeSurface));
+}
+
 } // namespace sfs

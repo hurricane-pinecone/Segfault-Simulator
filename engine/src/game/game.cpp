@@ -138,6 +138,7 @@ void Game::setup()
 
   assetStore = std::make_unique<AssetStore>();
   sceneManager.setAssetStore(assetStore.get());
+  assetStore->addWhitePixelTexture("white_pixel");
   sfs::TextRenderer::init(sfs::RenderContext::quadRenderer(), *assetStore);
 
   // TODO: Use openGL text rendering

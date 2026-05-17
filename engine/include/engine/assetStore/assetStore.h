@@ -76,6 +76,8 @@ public:
   AssetStore(const AssetStore&) = delete;
   AssetStore& operator=(const AssetStore&) = delete;
 
+  void addWhitePixelTexture(const std::string& textureId);
+
 private:
   std::unordered_map<std::string, SurfacePtr> m_surfaces;
   std::unordered_map<std::string, FontPtr> m_fonts;
