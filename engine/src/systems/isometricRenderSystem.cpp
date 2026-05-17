@@ -59,6 +59,15 @@ void IsometricRenderSystem::render()
 
   const glm::vec2 isoCameraPosition = gridToIsometric(cameraPosition);
 
+  cachedRenderTransform.zoom = zoom;
+
+  cachedRenderTransform.screenCenter = {
+      static_cast<float>(windowWidth) * 0.5f,
+      static_cast<float>(windowHeight) * 0.5f,
+  };
+
+  cachedRenderTransform.isoCameraPosition = isoCameraPosition;
+
   for (const auto& entity : getEntities())
   {
     const auto& transform = entity.getComponent<TransformComponent>();
@@ -182,8 +191,9 @@ void IsometricRenderSystem::render()
     item.renderLayer = tileEntity ? 0 : 2;
     item.screenSortY = static_cast<float>(dest.y + dest.h);
 
-    std::unordered_set<std::string> visitedGroundTiles;
-    std::unordered_set<std::string> visitedWallFaces;
+    std::unordered_set<TileElevationKey, TileElevationKeyHash>
+        visitedGroundTiles;
+    std::unordered_set<WallFaceKey, WallFaceKeyHash> visitedWallFaces;
 
     if (tileEntity)
     {
@@ -351,9 +361,10 @@ void IsometricRenderSystem::render()
         return points;
       };
 
-      std::unordered_set<std::string> visitedGroundTiles;
-      std::unordered_set<std::string> visitedWallFaces;
-      std::unordered_set<std::string> visitedTraceWalls;
+      std::unordered_set<TileElevationKey, TileElevationKeyHash>
+          visitedGroundTiles;
+      std::unordered_set<WallFaceKey, WallFaceKeyHash> visitedWallFaces;
+      std::unordered_set<WallFaceKey, WallFaceKeyHash> visitedTraceWalls;
 
       const float verticalLight = std::max(std::abs(lightDir3D.z), 0.35f);
 
@@ -418,8 +429,7 @@ void IsometricRenderSystem::render()
                   stepShadowWorldPoints, wallA, wallB, minT, maxT))
             return;
 
-          const std::string traceKey =
-              tileKey(wallTile) + "," + std::to_string(side);
+          const WallFaceKey traceKey{wallTile, side};
 
           if (visitedTraceWalls.contains(traceKey))
             return;
@@ -522,8 +532,7 @@ void IsometricRenderSystem::render()
             const glm::ivec2 shadowTile{x, y};
             const int tileElevation = getTileElevationAt(glm::vec2{x, y});
 
-            const std::string groundKey =
-                tileKey(shadowTile) + "," + std::to_string(tileElevation);
+            const TileElevationKey groundKey{shadowTile, tileElevation};
 
             if (visitedGroundTiles.contains(groundKey))
               continue;
@@ -604,8 +613,7 @@ void IsometricRenderSystem::render()
                       finalShadowWorldPoints, wallA, wallB, minT, maxT))
                 return;
 
-              const std::string wallFaceKey =
-                  tileKey(wallTile) + "," + std::to_string(side);
+              const WallFaceKey wallFaceKey{wallTile, side};
 
               if (visitedWallFaces.contains(wallFaceKey))
                 return;
@@ -647,53 +655,84 @@ void IsometricRenderSystem::render()
     submitSprite(item);
   }
 
+  // terrain edge shadows
   if (lightingSystem)
   {
+    if (terrainShadowEdgesDirty || cachedTerrainShadowEdges.empty())
+    {
+      cachedTerrainShadowEdges = getTerrainShadowEdges();
+      terrainShadowEdgesDirty = false;
+      terrainShadowCacheDirty = true;
+    }
+
     const glm::vec3 sunDir3D = lightingSystem->getLightDirection();
 
-    const bool sunChanged =
-        glm::length(sunDir3D - cachedTerrainShadowSunDir) > 0.025f;
-
-    const bool terrainChanged =
-        cachedTerrainShadowTileCount != tileElevationCache.size();
-
-    const bool rebuildTerrainShadowCache =
-        terrainShadowCacheDirty || sunChanged || terrainChanged;
-
-    if (rebuildTerrainShadowCache)
+    if (sunDir3D.z > 0.02f)
     {
-      cachedTerrainShadowItems.clear();
+      glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
 
-      const size_t before = renderItems.size();
+      if (glm::length(shadowDir) > 0.001f)
+        shadowDir = glm::normalize(shadowDir);
+      else
+        shadowDir = glm::vec2{0.0f, 1.0f};
 
-      if (sunDir3D.z > 0.02f)
+      const float sunHeight = std::max(sunDir3D.z, 0.08f);
+
+      constexpr float TerrainShadowLengthScale = 1.35f;
+      constexpr float TerrainShadowMaxLength = 3.0f;
+      constexpr float TerrainShadowAlpha = 0.42f;
+
+      const float alpha =
+          TerrainShadowAlpha *
+          std::clamp(lightingSystem->getDiffuseStrength(), 0.0f, 1.0f);
+
+      if (alpha >= 0.04f)
       {
-        glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
+        const bool sunChanged =
+            glm::length(sunDir3D - cachedTerrainShadowSunDir) > 0.025f;
 
-        if (glm::length(shadowDir) > 0.001f)
-          shadowDir = glm::normalize(shadowDir);
-        else
-          shadowDir = glm::vec2{0.0f, 1.0f};
+        const bool tileCountChanged =
+            cachedTerrainShadowTileCount != tileElevationCache.size();
 
-        const float sunHeight = std::max(sunDir3D.z, 0.08f);
+        const bool cameraChanged =
+            glm::length(cachedRenderTransform.isoCameraPosition -
+                        cachedTerrainShadowRenderTransform.isoCameraPosition) >
+                0.001f ||
+            std::abs(cachedRenderTransform.zoom -
+                     cachedTerrainShadowRenderTransform.zoom) > 0.001f;
 
-        constexpr float TerrainShadowLengthScale = 1.35f;
-        constexpr float TerrainShadowMaxLength = 3.0f;
-        constexpr float TerrainShadowAlpha = 0.42f;
-
-        const float alpha =
-            TerrainShadowAlpha *
-            std::clamp(lightingSystem->getDiffuseStrength(), 0.0f, 1.0f);
-
-        if (alpha >= 0.04f)
+        if (!terrainShadowCacheDirty && !sunChanged && !tileCountChanged &&
+            !cameraChanged)
         {
-          const std::vector<TerrainShadowEdge> edges = getTerrainShadowEdges();
+          renderItems.insert(renderItems.end(),
+                             cachedTerrainShadowItems.begin(),
+                             cachedTerrainShadowItems.end());
+        }
+        else
+        {
+          const std::size_t startIndex = renderItems.size();
 
-          for (const TerrainShadowEdge& edge : edges)
+          for (const TerrainShadowEdge& edge : cachedTerrainShadowEdges)
           {
             const int heightDelta = edge.topElevation - edge.bottomElevation;
 
             if (heightDelta <= 0)
+              continue;
+
+            const glm::vec2 casterCenter{
+                static_cast<float>(edge.casterTile.x) + 0.5f,
+                static_cast<float>(edge.casterTile.y) + 0.5f,
+            };
+
+            const glm::vec2 receiverCenter{
+                static_cast<float>(edge.receiverTile.x) + 0.5f,
+                static_cast<float>(edge.receiverTile.y) + 0.5f,
+            };
+
+            const glm::vec2 outwardDir =
+                glm::normalize(receiverCenter - casterCenter);
+
+            if (glm::dot(shadowDir, outwardDir) <= 0.05f)
               continue;
 
             const float shadowLength =
@@ -707,28 +746,44 @@ void IsometricRenderSystem::render()
             submitTerrainEdgeShadowClipped(
                 edge, shadowDir, shadowLength, alpha);
           }
+
+          cachedTerrainShadowItems.assign(
+              renderItems.begin() + startIndex, renderItems.end());
+
+          renderItems.erase(
+              renderItems.begin() + startIndex, renderItems.end());
+
+          renderItems.insert(renderItems.end(),
+                             cachedTerrainShadowItems.begin(),
+                             cachedTerrainShadowItems.end());
+
+          cachedTerrainShadowRenderTransform = cachedRenderTransform;
+          cachedTerrainShadowSunDir = sunDir3D;
+          cachedTerrainShadowTileCount = tileElevationCache.size();
+          terrainShadowCacheDirty = false;
         }
       }
-
-      cachedTerrainShadowItems.assign(
-          renderItems.begin() + before, renderItems.end());
-
-      cachedTerrainShadowSunDir = sunDir3D;
-      cachedTerrainShadowTileCount = tileElevationCache.size();
-      terrainShadowCacheDirty = false;
-    }
-    else
-    {
-      renderItems.insert(renderItems.end(),
-                         cachedTerrainShadowItems.begin(),
-                         cachedTerrainShadowItems.end());
     }
   }
 
   flushBatches();
+  //
+  // RenderContext::terrainShadowRenderer().submitQuad(
+  //     glm::vec2{100.0f, 100.0f},
+  //     glm::vec2{200.0f, 100.0f},
+  //     glm::vec2{220.0f, 180.0f},
+  //     glm::vec2{120.0f, 180.0f},
+  //     SDL_Color{255, 0, 255, 255});
+  //
+  // RenderContext::terrainShadowRenderer().flush();
 }
 
-void IsometricRenderSystem::beginBatches() { renderItems.clear(); }
+void IsometricRenderSystem::beginBatches()
+{
+  renderItems.clear();
+
+  RenderContext::terrainShadowRenderer().begin();
+}
 
 void IsometricRenderSystem::submitSprite(const RenderItem& item)
 {
@@ -789,62 +844,15 @@ void IsometricRenderSystem::flushBatches()
   {
     auto& quadRenderer = RenderContext::quadRenderer();
 
-    // if (item.isTerrainEdgeShadow)
-    // {
-    //   OpenGLQuadRenderer::TerrainShadowDrawCommand command;
-    //
-    //   const auto& activeCamera = getCamera();
-    //   const float zoom = activeCamera.camera ? activeCamera.camera->zoom
-    //   : 1.0f;
-    //
-    //   command.edgeA = item.terrainEdgeA;
-    //   command.edgeB = item.terrainEdgeB;
-    //   command.shadowDir = item.terrainShadowDir;
-    //   command.shadowLength = item.terrainShadowLength;
-    //   command.elevation = item.terrainShadowElevation;
-    //
-    //   command.zoom = zoom;
-    //   command.isoCameraPosition = gridToIsometric(getCameraPosition());
-    //   command.screenCenter = {
-    //       static_cast<float>(windowWidth) * 0.5f,
-    //       static_cast<float>(windowHeight) * 0.5f,
-    //   };
-    //
-    //   command.tileWidth = tileWidth;
-    //   command.tileHeight = tileHeight;
-    //   command.elevationStep = elevationStep;
-    //   command.worldScale = worldScale;
-    //   command.tint = item.tint;
-    //
-    //   quadRenderer.drawTerrainShadow(command);
-    //   continue;
-    // }
-
     if (item.isTerrainShadow)
     {
-      SDL_Surface* surface = assetStore.getSurface(*item.textureId);
+      RenderContext::terrainShadowRenderer().submitQuad(
+          item.shadowScreenPoints[0],
+          item.shadowScreenPoints[1],
+          item.shadowScreenPoints[2],
+          item.shadowScreenPoints[3],
+          SDL_Color{255, 0, 255, 255}); // debug magenta
 
-      if (!surface)
-        continue;
-
-      const unsigned int texture =
-          quadRenderer.getOrCreateTexture(*item.textureId, surface);
-
-      if (texture == 0)
-        continue;
-
-      OpenGLQuadRenderer::FreeformQuadDrawCommand command;
-
-      command.texture = texture;
-      command.srcRect = item.srcRect;
-      command.textureWidth = item.textureWidth;
-      command.textureHeight = item.textureHeight;
-      command.tint = item.tint;
-
-      for (int i = 0; i < 4; i++)
-        command.points[i] = item.shadowScreenPoints[i];
-
-      quadRenderer.drawFreeformQuad(command);
       continue;
     }
 
@@ -937,6 +945,7 @@ void IsometricRenderSystem::flushBatches()
       quadRenderer.drawLitQuad(command);
     }
   }
+  RenderContext::terrainShadowRenderer().flush();
 }
 
 void IsometricRenderSystem::setWaveTime(float time) { waveTime = time; }
@@ -1088,9 +1097,8 @@ bool IsometricRenderSystem::tryGetTileElevationAt(const glm::vec2& position,
                                                   int& outElevation) const
 {
   const glm::ivec2 tile = gridCellOf(position);
-  const std::string key = tileKey(tile);
 
-  auto it = tileElevationCache.find(key);
+  auto it = tileElevationCache.find(tile);
 
   if (it == tileElevationCache.end())
   {
@@ -1128,20 +1136,9 @@ float IsometricRenderSystem::getWorldScale() const { return worldScale; }
 
 void IsometricRenderSystem::submitTerrainShadow(const glm::vec2 screenPoints[4],
                                                 SDL_Color tint,
-                                                float sortKey,
-                                                const std::string* textureId,
-                                                SDL_Rect srcRect,
-                                                int textureWidth,
-                                                int textureHeight)
+                                                float sortKey)
 {
   RenderItem item;
-
-  static const std::string shadowTextureId = "white_pixel";
-
-  item.textureId = &shadowTextureId;
-  item.srcRect = SDL_Rect{0, 0, 1, 1};
-  item.textureWidth = 1;
-  item.textureHeight = 1;
 
   item.isShadow = true;
   item.isTerrainShadow = true;
@@ -1154,4 +1151,125 @@ void IsometricRenderSystem::submitTerrainShadow(const glm::vec2 screenPoints[4],
 
   renderItems.push_back(item);
 }
+
+void IsometricRenderSystem::submitTerrainEdgeShadowWalked(
+    const TerrainShadowEdge& edge,
+    const glm::vec2& shadowDir,
+    float shadowLength,
+    float alpha)
+{
+  const int heightDelta = edge.topElevation - edge.bottomElevation;
+
+  if (heightDelta <= 0 || shadowLength <= 0.05f || alpha <= 0.01f)
+    return;
+
+  const glm::vec2 casterCenter =
+      glm::vec2(edge.casterTile) + glm::vec2{0.5f, 0.5f};
+
+  const glm::vec2 receiverCenter =
+      glm::vec2(edge.receiverTile) + glm::vec2{0.5f, 0.5f};
+
+  const glm::vec2 outwardDir = glm::normalize(receiverCenter - casterCenter);
+
+  if (glm::dot(shadowDir, outwardDir) <= 0.05f)
+    return;
+
+  glm::vec2 a = edge.a + shadowDir * 0.01f;
+  glm::vec2 b = edge.b + shadowDir * 0.01f;
+
+  float travelled = 0.0f;
+
+  for (int step = 0; step < 8 && travelled < shadowLength; step++)
+  {
+    glm::ivec2 tile =
+        step == 0 ? edge.receiverTile : gridCellOf((a + b) * 0.5f);
+
+    const int receiverElevation = getTileElevationAt(glm::vec2{tile.x, tile.y});
+
+    if (receiverElevation >= edge.topElevation)
+      break;
+
+    float stepLength = distanceUntilShadowLeavesTile(a, b, shadowDir, tile);
+
+    stepLength = std::min(stepLength, shadowLength - travelled);
+
+    if (stepLength <= 0.001f)
+      break;
+
+    glm::vec2 worldQuad[4] = {
+        a,
+        b,
+        b + shadowDir * stepLength,
+        a + shadowDir * stepLength,
+    };
+
+    submitTerrainShadowQuadOnTile(tile, receiverElevation, worldQuad, alpha);
+
+    a += shadowDir * (stepLength + 0.001f);
+    b += shadowDir * (stepLength + 0.001f);
+
+    travelled += stepLength + 0.001f;
+  }
+}
+
+float IsometricRenderSystem::distanceUntilShadowLeavesTile(
+    glm::vec2 a,
+    glm::vec2 b,
+    glm::vec2 dir,
+    glm::ivec2 tile) const
+{
+  const float minX = static_cast<float>(tile.x);
+  const float maxX = static_cast<float>(tile.x + 1);
+
+  const float minY = static_cast<float>(tile.y);
+  const float maxY = static_cast<float>(tile.y + 1);
+
+  float result = std::numeric_limits<float>::max();
+
+  auto test = [&](glm::vec2 p)
+  {
+    if (dir.x > 0.0001f)
+      result = std::min(result, (maxX - p.x) / dir.x);
+    else if (dir.x < -0.0001f)
+      result = std::min(result, (minX - p.x) / dir.x);
+
+    if (dir.y > 0.0001f)
+      result = std::min(result, (maxY - p.y) / dir.y);
+    else if (dir.y < -0.0001f)
+      result = std::min(result, (minY - p.y) / dir.y);
+  };
+
+  test(a);
+  test(b);
+
+  if (!std::isfinite(result))
+    return 0.0f;
+
+  return std::max(0.0f, result);
+}
+
+void IsometricRenderSystem::submitTerrainShadowQuadOnTile(
+    const glm::ivec2& tile,
+    int elevation,
+    const glm::vec2 worldQuad[4],
+    float alpha)
+{
+  glm::vec2 screenPoints[4] = {
+      worldToScreenCached(worldQuad[0], elevation),
+      worldToScreenCached(worldQuad[1], elevation),
+      worldToScreenCached(worldQuad[2], elevation),
+      worldToScreenCached(worldQuad[3], elevation),
+  };
+
+  constexpr float ElevationSortWeight = 0.5f;
+
+  const float sortKey =
+      static_cast<float>(tile.x) + static_cast<float>(tile.y) +
+      static_cast<float>(elevation) * ElevationSortWeight + 0.0005f;
+
+  submitTerrainShadow(screenPoints,
+                      SDL_Color{0, 0, 0, static_cast<Uint8>(alpha * 255.0f)},
+                      sortKey);
+}
+
 } // namespace sfs

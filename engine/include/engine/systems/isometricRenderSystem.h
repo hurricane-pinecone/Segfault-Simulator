@@ -16,6 +16,7 @@
 #include <SDL_rect.h>
 
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -57,6 +58,65 @@ struct ShadowWallFace
   glm::ivec2 tile;
   int elevation = 0;
   Type type;
+};
+
+struct IVec2Hash
+{
+  std::size_t operator()(const glm::ivec2& v) const noexcept
+  {
+    const std::uint32_t x = static_cast<std::uint32_t>(v.x);
+    const std::uint32_t y = static_cast<std::uint32_t>(v.y);
+
+    return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u);
+  }
+};
+
+struct TileElevationKey
+{
+  glm::ivec2 tile{0, 0};
+  int elevation = 0;
+
+  bool operator==(const TileElevationKey& other) const noexcept
+  {
+    return tile == other.tile && elevation == other.elevation;
+  }
+};
+
+struct TileElevationKeyHash
+{
+  std::size_t operator()(const TileElevationKey& k) const noexcept
+  {
+    const std::uint32_t x = static_cast<std::uint32_t>(k.tile.x);
+    const std::uint32_t y = static_cast<std::uint32_t>(k.tile.y);
+    const std::uint32_t e = static_cast<std::uint32_t>(k.elevation);
+
+    return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u ^
+                                    e * 83492791u);
+  }
+};
+
+struct WallFaceKey
+{
+  glm::ivec2 tile{0, 0};
+  int side = 0;
+
+  bool operator==(const WallFaceKey& other) const noexcept
+  {
+    return tile == other.tile && side == other.side;
+  }
+};
+
+struct WallFaceKeyHash
+{
+  std::size_t operator()(const WallFaceKey& k) const noexcept
+  {
+    const std::uint32_t x = static_cast<std::uint32_t>(k.tile.x);
+    const std::uint32_t y = static_cast<std::uint32_t>(k.tile.y);
+    const std::uint32_t s = static_cast<std::uint32_t>(k.side);
+
+    return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u ^
+                                    s * 83492791u);
+  }
 };
 
 struct ActiveCamera
@@ -151,11 +211,7 @@ private:
                     float sortKeyBias = 0.005f);
   void submitTerrainShadow(const glm::vec2 screenPoints[4],
                            SDL_Color tint,
-                           float sortKey,
-                           const std::string* textureId,
-                           SDL_Rect srcRect,
-                           int textureWidth,
-                           int textureHeight);
+                           float sortKey);
   void flushBatches();
 
   void submitTerrainEdgeShadowClipped(const TerrainShadowEdge& edge,
@@ -233,21 +289,13 @@ private:
   {
     std::vector<TerrainShadowEdge> edges;
 
-    for (const auto& [key, elevation] : tileElevationCache)
+    for (const auto& [casterTile, elevation] : tileElevationCache)
     {
       if (elevation <= 0)
         continue;
 
-      const auto comma = key.find(',');
-
-      if (comma == std::string::npos)
-        continue;
-
-      const int x = std::stoi(key.substr(0, comma));
-      const int y = std::stoi(key.substr(comma + 1));
-
-      const glm::ivec2 casterTile{x, y};
-
+      const int x = casterTile.x;
+      const int y = casterTile.y;
       auto addEdgeIfExposed =
           [&](const glm::ivec2& receiverTile, glm::vec2 a, glm::vec2 b)
       {
@@ -276,53 +324,6 @@ private:
     return edges;
   }
 
-  void submitTileShadowAt(const glm::ivec2& tile,
-                          int elevation,
-                          float alpha,
-                          const RenderItem& caster)
-  {
-    const auto& activeCamera = getCamera();
-    const float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1.0f;
-
-    const glm::vec2 screenCenter{
-        static_cast<float>(windowWidth) / 2.0f,
-        static_cast<float>(windowHeight) / 2.0f,
-    };
-
-    const glm::vec2 isoCameraPosition = gridToIsometric(getCameraPosition());
-
-    auto tilePointToScreen = [&](glm::vec2 p)
-    {
-      glm::vec2 screen =
-          (gridToIsometric(p) - isoCameraPosition) * zoom + screenCenter;
-
-      screen.y -= elevation * elevationStep * worldScale * zoom;
-      screen.y -= getWaveOffset(p) * zoom;
-
-      return screen;
-    };
-
-    glm::vec2 points[4] = {
-        tilePointToScreen(glm::vec2{tile.x + 0.0f, tile.y + 0.0f}),
-        tilePointToScreen(glm::vec2{tile.x + 1.0f, tile.y + 0.0f}),
-        tilePointToScreen(glm::vec2{tile.x + 1.0f, tile.y + 1.0f}),
-        tilePointToScreen(glm::vec2{tile.x + 0.0f, tile.y + 1.0f}),
-    };
-
-    constexpr float ElevationSortWeight = 0.5f;
-
-    const float sortKey =
-        static_cast<float>(tile.x) + static_cast<float>(tile.y) +
-        static_cast<float>(elevation) * ElevationSortWeight + 0.0005f;
-    submitTerrainShadow(points,
-                        SDL_Color{255, 0, 0, 220},
-                        sortKey,
-                        caster.textureId,
-                        caster.srcRect,
-                        caster.textureWidth,
-                        caster.textureHeight);
-  }
-
   void submitTileShadowPolygonAt(const glm::ivec2& tile,
                                  int elevation,
                                  const glm::vec2 worldPoints[4],
@@ -333,27 +334,6 @@ private:
     if (clipped.size() < 3)
       return;
 
-    const auto& activeCamera = getCamera();
-    const float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1.0f;
-
-    const glm::vec2 screenCenter{
-        static_cast<float>(windowWidth) / 2.0f,
-        static_cast<float>(windowHeight) / 2.0f,
-    };
-
-    const glm::vec2 isoCameraPosition = gridToIsometric(getCameraPosition());
-
-    auto worldPointToScreen = [&](const glm::vec2& p)
-    {
-      glm::vec2 screen =
-          (gridToIsometric(p) - isoCameraPosition) * zoom + screenCenter;
-
-      screen.y -= elevation * elevationStep * worldScale * zoom;
-      screen.y -= getWaveOffset(p) * zoom;
-
-      return screen;
-    };
-
     constexpr float ElevationSortWeight = 0.5f;
 
     const float sortKey =
@@ -363,20 +343,16 @@ private:
     for (size_t i = 1; i + 1 < clipped.size(); i++)
     {
       glm::vec2 screenPoints[4] = {
-          worldPointToScreen(clipped[0]),
-          worldPointToScreen(clipped[i]),
-          worldPointToScreen(clipped[i + 1]),
-          worldPointToScreen(clipped[i + 1]),
+          worldToScreenCached(clipped[0], static_cast<float>(elevation)),
+          worldToScreenCached(clipped[i], static_cast<float>(elevation)),
+          worldToScreenCached(clipped[i + 1], static_cast<float>(elevation)),
+          worldToScreenCached(clipped[i + 1], static_cast<float>(elevation)),
       };
 
       submitTerrainShadow(
           screenPoints,
           SDL_Color{0, 0, 0, static_cast<Uint8>(alpha * 255.0f)},
-          sortKey,
-          nullptr,
-          SDL_Rect{0, 0, 1, 1},
-          1,
-          1);
+          sortKey);
     }
   }
   static std::vector<glm::vec2>
@@ -564,25 +540,6 @@ private:
                             float alpha,
                             const RenderItem& textureSource)
   {
-    const auto& activeCamera = getCamera();
-    const float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1.0f;
-
-    const glm::vec2 screenCenter{
-        static_cast<float>(windowWidth) / 2.0f,
-        static_cast<float>(windowHeight) / 2.0f,
-    };
-
-    const glm::vec2 isoCameraPosition = gridToIsometric(getCameraPosition());
-
-    auto worldToScreen = [&](glm::vec2 p, float z)
-    {
-      glm::vec2 screen =
-          (gridToIsometric(p) - isoCameraPosition) * zoom + screenCenter;
-
-      screen.y -= z * elevationStep * worldScale * zoom;
-      return screen;
-    };
-
     glm::vec2 a;
     glm::vec2 b;
 
@@ -631,32 +588,20 @@ private:
     if (shadowTopZ <= shadowBottomZ + 0.001f)
       return;
 
-    if (shadowTopZ <= shadowBottomZ + 0.001f)
-      return;
-
     glm::vec2 screenPoints[4] = {
-        worldToScreen(shadowA, shadowTopZ),
-        worldToScreen(shadowB, shadowTopZ),
-        worldToScreen(shadowB, shadowBottomZ),
-        worldToScreen(shadowA, shadowBottomZ),
+        worldToScreenCached(shadowA, shadowTopZ),
+        worldToScreenCached(shadowB, shadowTopZ),
+        worldToScreenCached(shadowB, shadowBottomZ),
+        worldToScreenCached(shadowA, shadowBottomZ),
     };
 
     const float sortKey = static_cast<float>(tile.x) +
                           static_cast<float>(tile.y) +
                           static_cast<float>(elevation) * 0.5f + 0.0006f;
 
-    submitTerrainShadow(
-        screenPoints,
-        SDL_Color{0,
-                  0,
-                  0,
-                  static_cast<Uint8>(
-                      alpha * 255.0f)}, // keep magenta until both faces show
-        sortKey,
-        textureSource.textureId,
-        textureSource.srcRect,
-        textureSource.textureWidth,
-        textureSource.textureHeight);
+    submitTerrainShadow(screenPoints,
+                        SDL_Color{0, 0, 0, static_cast<Uint8>(alpha * 255.0f)},
+                        sortKey);
   }
 
   static void
@@ -849,9 +794,33 @@ private:
 
   ActiveCamera getCamera() const;
 
-  static std::string tileKey(const glm::ivec2& tile)
+  void submitTerrainEdgeShadowWalked(const TerrainShadowEdge& edge,
+                                     const glm::vec2& shadowDir,
+                                     float shadowLength,
+                                     float alpha);
+
+  float distanceUntilShadowLeavesTile(glm::vec2 a,
+                                      glm::vec2 b,
+                                      glm::vec2 dir,
+                                      glm::ivec2 tile) const;
+
+  void submitTerrainShadowQuadOnTile(const glm::ivec2& tile,
+                                     int elevation,
+                                     const glm::vec2 worldQuad[4],
+                                     float alpha);
+
+  glm::vec2 worldToScreenCached(glm::vec2 p, float elevation) const
   {
-    return std::to_string(tile.x) + "," + std::to_string(tile.y);
+    const float zoom = cachedRenderTransform.zoom;
+
+    glm::vec2 screen =
+        (gridToIsometric(p) - cachedRenderTransform.isoCameraPosition) * zoom +
+        cachedRenderTransform.screenCenter;
+
+    screen.y -= elevation * elevationStep * worldScale * zoom;
+    screen.y -= getWaveOffset(p) * zoom;
+
+    return screen;
   }
 
   void rebuildTileElevationCache()
@@ -871,19 +840,26 @@ private:
         elevation = entity.getComponent<ElevationComponent>().level;
 
       const glm::ivec2 tile = gridCellOf(transform.position);
-      const std::string key = tileKey(tile);
 
-      auto it = tileElevationCache.find(key);
+      auto it = tileElevationCache.find(tile);
 
       if (it == tileElevationCache.end())
-        tileElevationCache.emplace(key, elevation);
+        tileElevationCache.emplace(tile, elevation);
       else
         it->second = std::max(it->second, elevation);
     }
-    terrainShadowCacheDirty = true;
+    terrainShadowEdgesDirty = true;
   }
 
 private:
+  struct CachedRenderTransform
+  {
+    float zoom = 1.0f;
+
+    glm::vec2 screenCenter{0.0f, 0.0f};
+    glm::vec2 isoCameraPosition{0.0f, 0.0f};
+  };
+
   AssetStore& assetStore;
 
   int windowWidth = 0;
@@ -895,7 +871,6 @@ private:
   int tileHeight = 0;
 
   int elevationStep = 8;
-  std::unordered_map<std::string, int> tileElevationCache;
 
   bool waveEnabled = false;
   float waveTime = 0.0f;
@@ -905,10 +880,21 @@ private:
 
   std::vector<RenderItem> renderItems;
 
-  std::vector<RenderItem> cachedTerrainShadowItems;
   glm::vec3 cachedTerrainShadowSunDir{999.0f, 999.0f, 999.0f};
   std::size_t cachedTerrainShadowTileCount = 0;
   bool terrainShadowCacheDirty = true;
+
+  std::unordered_map<glm::ivec2, int, IVec2Hash> tileElevationCache;
+
+  std::vector<TerrainShadowEdge> cachedTerrainShadowEdges;
+  bool terrainShadowEdgesDirty = true;
+
+  // NEW STUFF
+  std::vector<RenderItem> cachedTerrainShadowItems;
+
+  CachedRenderTransform cachedRenderTransform;
+
+  CachedRenderTransform cachedTerrainShadowRenderTransform;
 };
 
 } // namespace sfs
