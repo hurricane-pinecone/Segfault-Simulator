@@ -38,7 +38,8 @@ IsometricRenderSystem::~IsometricRenderSystem() = default;
 void IsometricRenderSystem::render()
 {
   beginBatches();
-  rebuildTileElevationCache();
+  if (tileElevationCache.empty())
+    rebuildTileElevationCache();
 
   auto* lightingSystem = registry->hasSystem<IsometricLightingSystem>()
                              ? &registry->getSystem<IsometricLightingSystem>()
@@ -650,40 +651,77 @@ void IsometricRenderSystem::render()
   {
     const glm::vec3 sunDir3D = lightingSystem->getLightDirection();
 
-    // No terrain shadows when the sun is below/too close to the horizon.
-    if (sunDir3D.z > 0.02f)
+    const bool sunChanged =
+        glm::length(sunDir3D - cachedTerrainShadowSunDir) > 0.025f;
+
+    const bool terrainChanged =
+        cachedTerrainShadowTileCount != tileElevationCache.size();
+
+    const bool rebuildTerrainShadowCache =
+        terrainShadowCacheDirty || sunChanged || terrainChanged;
+
+    if (rebuildTerrainShadowCache)
     {
-      glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
+      cachedTerrainShadowItems.clear();
 
-      if (glm::length(shadowDir) > 0.001f)
-        shadowDir = glm::normalize(shadowDir);
-      else
-        shadowDir = glm::vec2{0.0f, 1.0f};
+      const size_t before = renderItems.size();
 
-      const float sunHeight = std::max(sunDir3D.z, 0.08f);
-
-      constexpr float TerrainShadowLengthScale = 1.35f;
-      constexpr float TerrainShadowMaxLength = 3.0f;
-      constexpr float TerrainShadowAlpha = 0.42f;
-
-      for (const TerrainShadowEdge& edge : getTerrainShadowEdges())
+      if (sunDir3D.z > 0.02f)
       {
-        const int heightDelta = edge.topElevation - edge.bottomElevation;
+        glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
 
-        if (heightDelta <= 0)
-          continue;
+        if (glm::length(shadowDir) > 0.001f)
+          shadowDir = glm::normalize(shadowDir);
+        else
+          shadowDir = glm::vec2{0.0f, 1.0f};
 
-        const float shadowLength =
-            std::min(TerrainShadowMaxLength,
-                     static_cast<float>(heightDelta) *
-                         TerrainShadowLengthScale / sunHeight);
+        const float sunHeight = std::max(sunDir3D.z, 0.08f);
+
+        constexpr float TerrainShadowLengthScale = 1.35f;
+        constexpr float TerrainShadowMaxLength = 3.0f;
+        constexpr float TerrainShadowAlpha = 0.42f;
 
         const float alpha =
             TerrainShadowAlpha *
             std::clamp(lightingSystem->getDiffuseStrength(), 0.0f, 1.0f);
 
-        submitTerrainEdgeShadowClipped(edge, shadowDir, shadowLength, alpha);
+        if (alpha >= 0.04f)
+        {
+          const std::vector<TerrainShadowEdge> edges = getTerrainShadowEdges();
+
+          for (const TerrainShadowEdge& edge : edges)
+          {
+            const int heightDelta = edge.topElevation - edge.bottomElevation;
+
+            if (heightDelta <= 0)
+              continue;
+
+            const float shadowLength =
+                std::min(TerrainShadowMaxLength,
+                         static_cast<float>(heightDelta) *
+                             TerrainShadowLengthScale / sunHeight);
+
+            if (shadowLength < 0.15f)
+              continue;
+
+            submitTerrainEdgeShadowClipped(
+                edge, shadowDir, shadowLength, alpha);
+          }
+        }
       }
+
+      cachedTerrainShadowItems.assign(
+          renderItems.begin() + before, renderItems.end());
+
+      cachedTerrainShadowSunDir = sunDir3D;
+      cachedTerrainShadowTileCount = tileElevationCache.size();
+      terrainShadowCacheDirty = false;
+    }
+    else
+    {
+      renderItems.insert(renderItems.end(),
+                         cachedTerrainShadowItems.begin(),
+                         cachedTerrainShadowItems.end());
     }
   }
 
