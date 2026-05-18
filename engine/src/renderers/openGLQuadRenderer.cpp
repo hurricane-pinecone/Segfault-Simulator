@@ -39,6 +39,14 @@ void OpenGLQuadRenderer::initialize()
     return;
   }
 
+  solidShaderProgram = createSolidShaderProgram();
+
+  if (solidShaderProgram == 0)
+  {
+    LOG_ERROR("Failed to create OpenGLQuadRenderer solid shader program");
+    return;
+  }
+
   uTextureLocation = glGetUniformLocation(shaderProgram, "uTexture");
   uColorLocation = glGetUniformLocation(shaderProgram, "uColor");
   uUseLightingLocation = glGetUniformLocation(shaderProgram, "uUseLighting");
@@ -63,6 +71,7 @@ void OpenGLQuadRenderer::initialize()
   uLightHeightsLocation =
       glGetUniformLocation(shaderProgram, "uLightHeights[0]");
 
+  // Textured/lit quad VAO/VBO
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
 
@@ -102,8 +111,38 @@ void OpenGLQuadRenderer::initialize()
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
 
+  // Solid quad VAO/VBO
+  glGenVertexArrays(1, &solidVao);
+  glGenBuffers(1, &solidVbo);
+
+  glBindVertexArray(solidVao);
+  glBindBuffer(GL_ARRAY_BUFFER, solidVbo);
+
+  glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SolidVertex),
+      reinterpret_cast<void*>(offsetof(SolidVertex, position)));
+
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1,
+                        4,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(SolidVertex),
+                        reinterpret_cast<void*>(offsetof(SolidVertex, color)));
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+
   glUseProgram(shaderProgram);
 
+  glUniform1i(uTextureLocation, 0);
   glUniform1i(uNormalTextureLocation, 1);
   glUniform1i(uUseLightingLocation, 0);
   glUniform1i(uHasNormalMapLocation, 0);
@@ -111,15 +150,12 @@ void OpenGLQuadRenderer::initialize()
   glUniform1f(uLightIntensityLocation, 1.0f);
   glUniform1f(uAmbientLocation, 0.18f);
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
-  glUniform1i(uTextureLocation, 0);
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
   glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
 
   glUseProgram(0);
 
-  //
   // Default normal texture
-  //
   glGenTextures(1, &defaultNormalTexture);
 
   glActiveTexture(GL_TEXTURE1);
@@ -142,9 +178,7 @@ void OpenGLQuadRenderer::initialize()
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-  //
   // White texture
-  //
   glGenTextures(1, &whiteTexture);
 
   glActiveTexture(GL_TEXTURE0);
@@ -206,6 +240,20 @@ void OpenGLQuadRenderer::shutdown()
 
   if (defaultNormalTexture != 0)
     glDeleteTextures(1, &defaultNormalTexture);
+
+  if (solidVbo != 0)
+    glDeleteBuffers(1, &solidVbo);
+
+  if (solidVao != 0)
+    glDeleteVertexArrays(1, &solidVao);
+
+  if (solidShaderProgram != 0)
+    glDeleteProgram(solidShaderProgram);
+
+  solidVbo = 0;
+  solidVao = 0;
+  solidShaderProgram = 0;
+  m_solidVertices.clear();
 
   whiteTexture = 0;
   defaultNormalTexture = 0;
@@ -345,19 +393,43 @@ void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
 
 void OpenGLQuadRenderer::drawSolidQuad(const SolidQuadDrawCommand& command)
 {
+  beginSolidQuads();
+  submitSolidQuad(command);
+  flushSolidQuads();
+}
+
+void OpenGLQuadRenderer::flushSolidQuads()
+{
   initialize();
 
   if (!initialized)
     return;
 
-  const glm::vec2 p0 = toNdc(command.points[0]);
-  const glm::vec2 p1 = toNdc(command.points[1]);
-  const glm::vec2 p2 = toNdc(command.points[2]);
-  const glm::vec2 p3 = toNdc(command.points[3]);
+  if (m_solidVertices.empty())
+    return;
 
-  // Use your existing shader with a 1x1 white texture.
-  drawQuadInternal(
-      whiteTexture, SDL_Rect{0, 0, 1, 1}, 1, 1, p0, p1, p2, p3, command.color);
+  glUseProgram(solidShaderProgram);
+
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glBindVertexArray(solidVao);
+  glBindBuffer(GL_ARRAY_BUFFER, solidVbo);
+
+  glBufferData(
+      GL_ARRAY_BUFFER,
+      static_cast<GLsizeiptr>(m_solidVertices.size() * sizeof(SolidVertex)),
+      m_solidVertices.data(),
+      GL_DYNAMIC_DRAW);
+
+  glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+  glUseProgram(0);
+
+  m_solidVertices.clear();
 }
 
 void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
@@ -891,6 +963,117 @@ void OpenGLQuadRenderer::deleteTexture(unsigned int texture)
 {
   if (texture != 0)
     glDeleteTextures(1, &texture);
+}
+
+void OpenGLQuadRenderer::beginSolidQuads()
+{
+  initialize();
+  m_solidVertices.clear();
+}
+
+bool OpenGLQuadRenderer::hasPendingSolidQuads() const
+{
+  return !m_solidVertices.empty();
+}
+
+void OpenGLQuadRenderer::submitSolidQuad(const SolidQuadDrawCommand& command)
+{
+  initialize();
+
+  if (!initialized)
+    return;
+
+  const glm::vec4 color{
+      command.color.r / 255.0f,
+      command.color.g / 255.0f,
+      command.color.b / 255.0f,
+      command.color.a / 255.0f,
+  };
+
+  const glm::vec2 p0 = toNdc(command.points[0]);
+  const glm::vec2 p1 = toNdc(command.points[1]);
+  const glm::vec2 p2 = toNdc(command.points[2]);
+  const glm::vec2 p3 = toNdc(command.points[3]);
+
+  m_solidVertices.push_back({p0, color});
+  m_solidVertices.push_back({p1, color});
+  m_solidVertices.push_back({p2, color});
+
+  m_solidVertices.push_back({p0, color});
+  m_solidVertices.push_back({p2, color});
+  m_solidVertices.push_back({p3, color});
+}
+
+unsigned int OpenGLQuadRenderer::createSolidShaderProgram() const
+{
+#ifdef __EMSCRIPTEN__
+  const std::string glslVersion = "#version 300 es\n"
+                                  "precision mediump float;\n";
+#else
+  const std::string glslVersion = "#version 330 core\n";
+#endif
+
+  const std::string vertexSource = glslVersion + R"(
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec4 aColor;
+
+out vec4 vColor;
+
+void main()
+{
+  vColor = aColor;
+  gl_Position = vec4(aPosition, 0.0, 1.0);
+}
+)";
+
+  const std::string fragmentSource = glslVersion + R"(
+in vec4 vColor;
+out vec4 FragColor;
+
+void main()
+{
+  FragColor = vColor;
+}
+)";
+
+  GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+  GLuint fragmentShader =
+      compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+
+  if (vertexShader == 0 || fragmentShader == 0)
+  {
+    if (vertexShader != 0)
+      glDeleteShader(vertexShader);
+
+    if (fragmentShader != 0)
+      glDeleteShader(fragmentShader);
+
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+  if (!success)
+  {
+    char infoLog[1024];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+    LOG_ERROR(infoLog);
+
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
 }
 
 } // namespace sfs
