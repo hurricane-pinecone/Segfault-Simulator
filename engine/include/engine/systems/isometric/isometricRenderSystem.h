@@ -5,14 +5,13 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
 
+#include "engine/renderers/isometricRenderContext.h"
 #include "engine/renderers/isometricRenderQueue.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
-
-#include <vector>
 
 namespace sfs
 {
@@ -35,38 +34,6 @@ constexpr float ShadowAlpha = 0.45f;
 constexpr float WallShadowAlpha = 90.0f / 255.0f;
 constexpr float CasterFootWidth = 0.35f;
 constexpr float CasterFootDepth = 0.22f;
-
-struct TerrainShadowEdge
-{
-  enum class Side
-  {
-    West,
-    East,
-    North,
-    South,
-  };
-  glm::vec2 a;
-  glm::vec2 b;
-
-  glm::ivec2 casterTile{0, 0};
-  glm::ivec2 receiverTile{0, 0};
-
-  int topElevation = 0;
-  int bottomElevation = 0;
-
-  Side side = Side::West;
-};
-
-struct IVec2Hash
-{
-  std::size_t operator()(const glm::ivec2& v) const noexcept
-  {
-    const std::uint32_t x = static_cast<std::uint32_t>(v.x);
-    const std::uint32_t y = static_cast<std::uint32_t>(v.y);
-
-    return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u);
-  }
-};
 
 struct TileElevationKey
 {
@@ -163,74 +130,8 @@ private:
                     const glm::vec2& shadowOffset,
                     float alpha,
                     float sortKeyBias = 0.005f);
-  void submitTerrainShadow(std::vector<IsometricRenderItem>& outItems,
-                           const glm::vec2 screenPoints[4],
-                           SDL_Color tint,
-                           float sortKey);
+
   void flushBatches();
-
-  std::vector<TerrainShadowEdge>
-  mergeTerrainShadowEdges(const std::vector<TerrainShadowEdge>& input) const;
-
-  std::vector<TerrainShadowEdge> getTerrainShadowEdges() const;
-
-  void submitTileShadowPolygonAt(std::vector<IsometricRenderItem>& outItems,
-                                 const glm::ivec2& tile,
-                                 int elevation,
-                                 const glm::vec2 worldPoints[4],
-                                 float alpha);
-
-  static std::vector<glm::vec2>
-  clipPolygonAgainstEdge(const std::vector<glm::vec2>& input,
-                         float edge,
-                         int axis,
-                         bool keepGreater);
-
-  static std::vector<glm::vec2>
-  clipPolygonToTile(const glm::vec2 worldPoints[4], const glm::ivec2& tile);
-
-  void drawDebugWallFace(const glm::ivec2& tile,
-                         int elevation,
-                         int side,
-                         SDL_Color color);
-
-  void submitWallShadowFace(std::vector<IsometricRenderItem>& outItems,
-                            const glm::ivec2& tile,
-                            int elevation,
-                            int side,
-                            const glm::vec2 shadowWorldPoints[4],
-                            float incomingElevation,
-                            float normalizedDistance,
-                            float alpha,
-                            const IsometricRenderItem& textureSource);
-
-  static void
-  getWallEdge(const glm::ivec2& tile, int side, glm::vec2& a, glm::vec2& b);
-
-  static bool segmentIntersectsSegment(glm::vec2 p1,
-                                       glm::vec2 p2,
-                                       glm::vec2 q1,
-                                       glm::vec2 q2);
-
-  bool shadowTouchesWallFace(const glm::vec2 shadowPoly[4],
-                             const glm::ivec2& tile,
-                             int side);
-
-  static bool pointInConvexQuad(glm::vec2 p, const glm::vec2 quad[4]);
-
-  static bool projectShadowOntoWallEdge(const glm::vec2 shadowPoly[4],
-                                        glm::vec2 wallA,
-                                        glm::vec2 wallB,
-                                        float& outMinT,
-                                        float& outMaxT);
-
-  void submitTerrainEdgeShadowProjectedClipped(
-      std::vector<IsometricRenderItem>& outItems,
-      const TerrainShadowEdge& edge,
-      const glm::vec2& shadowDir,
-      float sunHeight,
-      float maxShadowLength,
-      float alpha);
 
   glm::vec2 getCameraPosition() const;
   glm::ivec2 gridCellOf(const glm::vec2& position) const;
@@ -252,31 +153,9 @@ private:
 
   ActiveCamera getCamera() const;
 
-  bool terrainShadowPathBlocked(const TerrainShadowEdge& edge,
-                                const glm::ivec2& receiverTile,
-                                const glm::vec2& shadowDir) const;
-
-  bool hasTileAt(const glm::ivec2& tile) const;
-
-  glm::vec2 worldToScreenCached(glm::vec2 p, float elevation) const;
-
   void rebuildTileElevationCache();
 
-  bool shouldCastTerrainShadow(const TerrainShadowEdge& edge,
-                               const glm::vec2& shadowDir);
-
-  void drawDebugTerrainShadowEdge(const TerrainShadowEdge& edge,
-                                  SDL_Color color);
-
 private:
-  struct CachedRenderTransform
-  {
-    float zoom = 1.0f;
-
-    glm::vec2 screenCenter{0.0f, 0.0f};
-    glm::vec2 isoCameraPosition{0.0f, 0.0f};
-  };
-
   AssetStore& assetStore;
 
   int windowWidth = 0;
@@ -297,24 +176,10 @@ private:
 
   IsometricRenderQueue m_renderQueue;
 
-  glm::vec3 cachedTerrainShadowSunDir{999.0f, 999.0f, 999.0f};
-
   std::unordered_map<glm::ivec2, int, IVec2Hash> tileElevationCache;
-
-  std::vector<TerrainShadowEdge> cachedTerrainShadowEdges;
-  bool terrainShadowEdgesDirty = true;
-
-  // NEW STUFF
-  std::vector<IsometricRenderItem> cachedTerrainShadowItems;
-  bool terrainShadowCacheDirty = true;
-
-  CachedRenderTransform cachedRenderTransform;
-
-  CachedRenderTransform cachedTerrainShadowRenderTransform;
-
   bool tileElevationCacheDirty = true;
 
-  bool debugDrawTerrainShadowEdges = true;
+  IsometricRenderContext m_context;
 };
 
 } // namespace sfs

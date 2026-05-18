@@ -4,6 +4,7 @@
 #include "SDL2/SDL_surface.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/ext/vector_float4.hpp"
 #include <string>
 #include <unordered_map>
 #ifdef __EMSCRIPTEN__
@@ -25,6 +26,12 @@ public:
     glm::vec2 position;
     glm::vec2 uv;
     glm::vec2 worldPosition;
+  };
+
+  struct SolidVertex
+  {
+    glm::vec2 position;
+    glm::vec4 color;
   };
 
   struct QuadDrawCommand
@@ -97,15 +104,21 @@ public:
   void
   drawLitQuad(const LitQuadDrawCommand& command); // Normalised sprites (ie,
                                                   // sprites that light affects)
-  void drawSolidQuad(const SolidQuadDrawCommand& command);
+  void submitSolidQuad(const SolidQuadDrawCommand& command);
+  void beginSolidQuads();
+  void flushSolidQuads();
+  bool hasPendingSolidQuads() const;
 
   void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
 
   void setViewportSize(int width, int height);
 
 private:
+  unsigned int createSolidShaderProgram() const;
+
   glm::vec2 toNdc(const glm::vec2& pixelPosition) const;
 
+  void drawSolidQuad(const SolidQuadDrawCommand& command);
   void drawQuadInternal(unsigned int texture,
                         const SDL_Rect& srcRect,
                         int textureWidth,
@@ -175,6 +188,12 @@ private:
   GLint uLightHeightsLocation = -1;
 
   std::unordered_map<std::string, unsigned int> textureCache;
+
+  // Batched
+  unsigned int solidShaderProgram = 0;
+  unsigned int solidVao = 0;
+  unsigned int solidVbo = 0;
+  std::vector<SolidVertex> m_solidVertices;
 };
 
 } // namespace sfs
