@@ -3,12 +3,12 @@
 #include "config.h"
 #include "engine/assetStore/assetStore.h"
 #include "engine/components/colliderComponent.h"
+#include "engine/components/elevationComponent.h"
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/game/gameObject.h"
 #include "engine/sceneManager/scene.h"
-#include "engine/systems/isometricRenderSystem.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
 class Lamp : public sfs::GameObject

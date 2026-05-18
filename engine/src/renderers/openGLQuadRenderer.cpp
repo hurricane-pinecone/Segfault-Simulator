@@ -117,6 +117,9 @@ void OpenGLQuadRenderer::initialize()
 
   glUseProgram(0);
 
+  //
+  // Default normal texture
+  //
   glGenTextures(1, &defaultNormalTexture);
 
   glActiveTexture(GL_TEXTURE1);
@@ -133,6 +136,31 @@ void OpenGLQuadRenderer::initialize()
                GL_RGBA,
                GL_UNSIGNED_BYTE,
                defaultNormalPixel);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  //
+  // White texture
+  //
+  glGenTextures(1, &whiteTexture);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, whiteTexture);
+
+  const unsigned char whitePixel[4] = {255, 255, 255, 255};
+
+  glTexImage2D(GL_TEXTURE_2D,
+               0,
+               GL_RGBA,
+               1,
+               1,
+               0,
+               GL_RGBA,
+               GL_UNSIGNED_BYTE,
+               whitePixel);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -172,6 +200,15 @@ void OpenGLQuadRenderer::shutdown()
 
   if (shaderProgram != 0)
     glDeleteProgram(shaderProgram);
+
+  if (whiteTexture != 0)
+    glDeleteTextures(1, &whiteTexture);
+
+  if (defaultNormalTexture != 0)
+    glDeleteTextures(1, &defaultNormalTexture);
+
+  whiteTexture = 0;
+  defaultNormalTexture = 0;
 
   vbo = 0;
   vao = 0;
@@ -306,16 +343,30 @@ void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
                    command.lightHeights);
 }
 
-void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
-                                      int count,
-                                      SDL_Color color)
+void OpenGLQuadRenderer::drawSolidQuad(const SolidQuadDrawCommand& command)
 {
   initialize();
 
   if (!initialized)
     return;
 
-  if (!points || count <= 1)
+  const glm::vec2 p0 = toNdc(command.points[0]);
+  const glm::vec2 p1 = toNdc(command.points[1]);
+  const glm::vec2 p2 = toNdc(command.points[2]);
+  const glm::vec2 p3 = toNdc(command.points[3]);
+
+  // Use your existing shader with a 1x1 white texture.
+  drawQuadInternal(
+      whiteTexture, SDL_Rect{0, 0, 1, 1}, 1, 1, p0, p1, p2, p3, command.color);
+}
+
+void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
+                                      int count,
+                                      SDL_Color color)
+{
+  initialize();
+
+  if (!initialized || !points || count <= 1)
     return;
 
   std::vector<Vertex> vertices;
@@ -326,6 +377,9 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
 
   glUseProgram(shaderProgram);
 
+  glUniform1i(uUseLightingLocation, 0);
+  glUniform1i(uHasNormalMapLocation, 0);
+
   glUniform4f(uColorLocation,
               color.r / 255.0f,
               color.g / 255.0f,
@@ -333,7 +387,11 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
               color.a / 255.0f);
 
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, 0);
+
+  // Do NOT bind texture 0 here, because the shader samples uTexture
+  // and discards when alpha <= 0.
+  glBindTexture(GL_TEXTURE_2D, whiteTexture);
+  glUniform1i(uTextureLocation, 0);
 
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -343,7 +401,13 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
                vertices.data(),
                GL_DYNAMIC_DRAW);
 
+  glLineWidth(3.0f);
   glDrawArrays(GL_LINE_STRIP, 0, count);
+  glLineWidth(1.0f);
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+  glUseProgram(0);
 }
 
 void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
