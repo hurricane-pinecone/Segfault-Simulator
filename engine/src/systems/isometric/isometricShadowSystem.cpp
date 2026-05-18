@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <future>
+#include <thread>
 
 #include "engine/components/elevationComponent.h"
 #include "engine/components/tags/isometricTile.h"
@@ -56,7 +58,6 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
 
   const float sunHeight = std::max(sunDir3D.z, 0.08f);
 
-  constexpr float TerrainShadowMaxLength = 3.0f;
   constexpr float TerrainShadowAlpha = 0.42f;
 
   const float alpha =
@@ -78,28 +79,9 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
     return;
   }
 
-  m_cache.items.clear();
-
-  for (const TerrainShadowEdge& edge : m_cache.edges)
-  {
-    const int heightDelta = edge.topElevation - edge.bottomElevation;
-
-    if (heightDelta <= 0)
-      continue;
-
-    if (!shouldCastTerrainShadow(edge, shadowDir))
-      continue;
-
-    submitTerrainEdgeShadowProjectedClipped(context,
-                                            m_cache.items,
-                                            edge,
-                                            shadowDir,
-                                            sunHeight,
-                                            TerrainShadowMaxLength,
-                                            alpha);
-
-    gTerrainShadowEdgesProcessed++;
-  }
+  // Multi threaded
+  m_cache.items =
+      buildTerrainEdgeShadowItems(context, shadowDir, sunHeight, alpha);
 
   queue.submitAll(m_cache.items);
 
@@ -742,6 +724,93 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::mergeTerrainShadowEdges(
   }
 
   return merged;
+}
+
+std::vector<IsometricRenderItem>
+IsometricShadowSystem::buildTerrainEdgeShadowItems(
+    const IsometricRenderContext& context,
+    const glm::vec2& shadowDir,
+    float sunHeight,
+    float alpha)
+{
+  const std::vector<TerrainShadowEdge> edges = m_cache.edges;
+  const std::size_t edgeCount = edges.size();
+
+  constexpr float TerrainShadowMaxLength = 3.0f;
+
+  struct ShadowBuildResult
+  {
+    std::vector<IsometricRenderItem> items;
+    int edgesProcessed = 0;
+  };
+
+  if (edgeCount == 0)
+    return {};
+
+  const unsigned int hardwareThreads =
+      std::max(1u, std::thread::hardware_concurrency());
+
+  const std::size_t batchCount =
+      std::min<std::size_t>(hardwareThreads, edgeCount);
+
+  const std::size_t batchSize = (edgeCount + batchCount - 1) / batchCount;
+
+  std::vector<std::future<ShadowBuildResult>> jobs;
+  jobs.reserve(batchCount);
+
+  for (std::size_t batchIndex = 0; batchIndex < batchCount; batchIndex++)
+  {
+    const std::size_t begin = batchIndex * batchSize;
+    const std::size_t end = std::min(begin + batchSize, edgeCount);
+
+    if (begin >= end)
+      continue;
+
+    jobs.push_back(std::async(
+        std::launch::async,
+        [this, &context, &edges, shadowDir, sunHeight, alpha, begin, end]()
+        {
+          ShadowBuildResult result;
+
+          for (std::size_t i = begin; i < end; i++)
+          {
+            const TerrainShadowEdge& edge = edges[i];
+
+            const int heightDelta = edge.topElevation - edge.bottomElevation;
+
+            if (heightDelta <= 0)
+              continue;
+
+            if (!shouldCastTerrainShadow(edge, shadowDir))
+              continue;
+
+            submitTerrainEdgeShadowProjectedClipped(context,
+                                                    result.items,
+                                                    edge,
+                                                    shadowDir,
+                                                    sunHeight,
+                                                    TerrainShadowMaxLength,
+                                                    alpha);
+
+            result.edgesProcessed++;
+          }
+
+          return result;
+        }));
+  }
+
+  std::vector<IsometricRenderItem> items;
+
+  for (auto& job : jobs)
+  {
+    ShadowBuildResult result = job.get();
+
+    gTerrainShadowEdgesProcessed += result.edgesProcessed;
+
+    items.insert(items.end(), result.items.begin(), result.items.end());
+  }
+
+  return items;
 }
 
 } // namespace sfs

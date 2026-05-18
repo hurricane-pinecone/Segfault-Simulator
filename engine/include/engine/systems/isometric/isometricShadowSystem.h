@@ -120,6 +120,13 @@ private:
   static std::vector<glm::vec2>
   clipPolygonToTile(const glm::vec2 worldPoints[4], const glm::ivec2& tile);
 
+  // Multi threaded
+  std::vector<IsometricRenderItem>
+  buildTerrainEdgeShadowItems(const IsometricRenderContext& context,
+                              const glm::vec2& shadowDir,
+                              float sunHeight,
+                              float alpha);
+
 private:
   struct TerrainShadowCache
   {
