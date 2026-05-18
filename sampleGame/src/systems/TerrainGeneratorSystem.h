@@ -40,11 +40,17 @@ private:
   void unloadFarTiles(int minX, int maxX, int minY, int maxY);
 
   int getElevation(int x, int y) const;
+  int getCachedElevation(int x, int y);
 
 private:
   sfs::Scene& m_scene;
   sfs::Noise m_noise;
 
+  // Used to break out of update if camera hasn't moved
+  glm::ivec2 m_lastCenterTile{std::numeric_limits<int>::min(),
+                              std::numeric_limits<int>::min()};
+
   std::unordered_map<TilePos, std::vector<sfs::GameObject*>, TilePosHash>
       m_loadedTiles;
+  std::unordered_map<TilePos, int, TilePosHash> m_elevationCache;
 };

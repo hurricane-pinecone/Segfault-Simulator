@@ -1,5 +1,7 @@
 #include "TerrainGeneratorSystem.h"
 #include "engine/components/cameraComponent.h"
+#include "engine/components/terrainBoundaryComponent.h"
+#include "engine/systems/isometric/isometricRenderSystem.h"
 #include "gameObjects/blocks/grass.h"
 
 #include <cmath>
@@ -32,6 +34,16 @@ void TerrainGeneratorSystem::update(double deltaTime)
 
 void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
 {
+  const glm::ivec2 centerTile{
+      static_cast<int>(std::floor(cameraWorldPos.x)),
+      static_cast<int>(std::floor(cameraWorldPos.y)),
+  };
+
+  if (centerTile == m_lastCenterTile)
+    return;
+
+  m_lastCenterTile = centerTile;
+
   constexpr int viewTilesX = 40;
   constexpr int viewTilesY = 40;
   constexpr int padding = 3;
@@ -59,14 +71,42 @@ void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
   }
 
   unloadFarTiles(minX, maxX, minY, maxY);
+
+  if (registry->hasSystem<sfs::IsometricRenderSystem>())
+    registry->getSystem<sfs::IsometricRenderSystem>().markTerrainDirty();
 }
 
 void TerrainGeneratorSystem::loadTile(TilePos tile)
 {
-  const int elevation = getElevation(tile.x, tile.y);
+  const int elevation = getCachedElevation(tile.x, tile.y);
 
   auto& grass = m_scene.createObject<GrassBlock>(
       glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full);
+
+  sfs::TerrainBoundaryComponent boundary;
+
+  const int west = getCachedElevation(tile.x - 1, tile.y);
+  const int east = getCachedElevation(tile.x + 1, tile.y);
+  const int north = getCachedElevation(tile.x, tile.y - 1);
+  const int south = getCachedElevation(tile.x, tile.y + 1);
+
+  boundary.westExposed = west < elevation;
+  boundary.eastExposed = east < elevation;
+  boundary.northExposed = north < elevation;
+  boundary.southExposed = south < elevation;
+
+  boundary.westBottomElevation = west;
+  boundary.eastBottomElevation = east;
+  boundary.northBottomElevation = north;
+  boundary.southBottomElevation = south;
+
+  boundary.dirty = true;
+
+  if (boundary.westExposed || boundary.eastExposed || boundary.northExposed ||
+      boundary.southExposed)
+  {
+    grass.entity().addComponent<sfs::TerrainBoundaryComponent>(boundary);
+  }
 
   m_loadedTiles[tile] = {&grass};
 }
@@ -83,6 +123,7 @@ void TerrainGeneratorSystem::unloadTile(TilePos tile)
     m_scene.destroyObject(object);
   }
 
+  m_elevationCache.erase(it->first);
   m_loadedTiles.erase(it);
 }
 
@@ -113,10 +154,22 @@ int TerrainGeneratorSystem::getElevation(int x, int y) const
   float n = m_noise.get(static_cast<float>(x), static_cast<float>(y));
 
   float normalized = (n + 1.0f) * 0.5f;
-
   normalized = normalized * normalized;
-
   constexpr int maxHeight = 12;
 
   return static_cast<int>(normalized * maxHeight);
+}
+
+int TerrainGeneratorSystem::getCachedElevation(int x, int y)
+{
+  const TilePos tile{x, y};
+  auto it = m_elevationCache.find(tile);
+
+  if (it != m_elevationCache.end())
+    return it->second;
+
+  const int elevation = getElevation(x, y);
+  m_elevationCache.emplace(tile, elevation);
+
+  return elevation;
 }

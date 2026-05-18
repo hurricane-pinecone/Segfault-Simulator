@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config.h"
-#include "engine/systems/isometricLightingSystem.h"
+#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
 

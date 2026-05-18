@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/systems/isometric/isometricRenderSystem.h"
 #ifndef ENGINE_WEB
   #include "imgui/backends/imgui_impl_opengl3.h"
   #include "imgui/backends/imgui_impl_sdl2.h"
@@ -34,6 +35,16 @@ inline static void renderDebugUI()
   ImGui::Separator();
 
   ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+
+  ImGui::Separator();
+
+  ImGui::Text("Render Items: %d", gRenderItemCount);
+  ImGui::Text("Terrain Shadow Items: %d", gTerrainShadowItems);
+  ImGui::Text("Terrain Shadow Flushes: %d", gTerrainShadowFlushes);
+  ImGui::Text("Shadow edges processed: %d", gTerrainShadowEdgesProcessed);
+  ImGui::Text("Tile render items: %d", gTileRenderItems);
+  ImGui::Text("Sprite render items: %d", gSpriteRenderItems);
+  ImGui::Text("Sprite shadows: %d", gSpriteProjectedShadowItems);
 
   ImGui::End();
 

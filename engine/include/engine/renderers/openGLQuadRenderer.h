@@ -40,6 +40,12 @@ public:
     SDL_Color tint{255, 255, 255, 255};
   };
 
+  struct SolidQuadDrawCommand
+  {
+    glm::vec2 points[4];
+    SDL_Color color{255, 255, 255, 255};
+  };
+
   struct FreeformQuadDrawCommand
   {
     unsigned int texture = 0;
@@ -91,6 +97,8 @@ public:
   void
   drawLitQuad(const LitQuadDrawCommand& command); // Normalised sprites (ie,
                                                   // sprites that light affects)
+  void drawSolidQuad(const SolidQuadDrawCommand& command);
+
   void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
 
   void setViewportSize(int width, int height);
@@ -147,6 +155,7 @@ private:
   unsigned int vbo = 0;
 
   unsigned int defaultNormalTexture = 0;
+  unsigned int whiteTexture = 0;
 
   int uUseLightingLocation = -1;
   int uNormalTextureLocation = -1;

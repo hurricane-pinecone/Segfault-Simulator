@@ -1,7 +1,7 @@
 
 #include "engine/ecs/entity.h"
 #include "engine/input/input.h"
-#include "engine/systems/isometricRenderSystem.h"
+#include "engine/systems/isometric/isometricRenderSystem.h"
 #include <engine/ecs/registry.h>
 #include <engine/sceneManager/scene.h>
 #include <engine/systems/renderSystem.h>
