@@ -6,6 +6,7 @@
 #endif
 #include <cmath>
 #include <future>
+#include <limits>
 #include <thread>
 
 #include "engine/components/elevationComponent.h"
@@ -21,6 +22,9 @@
 
 namespace sfs
 {
+
+std::atomic<uint64_t> gShadowPathChecks{0};
+std::atomic<uint64_t> gShadowTilesTraversed{0};
 
 IsometricShadowSystem::IsometricShadowSystem()
 {
@@ -81,6 +85,9 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
     queue.submitAll(m_cache.items);
     return;
   }
+
+  gShadowPathChecks.store(0, std::memory_order_relaxed);
+  gShadowTilesTraversed.store(0, std::memory_order_relaxed);
 
   // Multi threaded
 #ifdef __EMSCRIPTEN__
@@ -366,6 +373,8 @@ bool IsometricShadowSystem::terrainShadowPathBlocked(
     const glm::ivec2& receiverTile,
     const glm::vec2& shadowDir) const
 {
+  gShadowPathChecks.fetch_add(1, std::memory_order_relaxed);
+
   const glm::vec2 start = (edge.a + edge.b) * 0.5f + shadowDir * 0.02f;
 
   const glm::vec2 target{
@@ -384,12 +393,47 @@ bool IsometricShadowSystem::terrainShadowPathBlocked(
   if (glm::dot(dir, shadowDir) <= 0.5f)
     return false;
 
-  constexpr float StepSize = 0.25f;
+  glm::ivec2 tile = context.gridCellOf(start);
 
-  for (float t = StepSize; t < distance; t += StepSize)
+  const int stepX = dir.x >= 0.0f ? 1 : -1;
+  const int stepY = dir.y >= 0.0f ? 1 : -1;
+
+  const float nextBoundaryX = dir.x >= 0.0f ? static_cast<float>(tile.x + 1)
+                                            : static_cast<float>(tile.x);
+
+  const float nextBoundaryY = dir.y >= 0.0f ? static_cast<float>(tile.y + 1)
+                                            : static_cast<float>(tile.y);
+
+  float tMaxX = std::abs(dir.x) > 0.0001f
+                    ? (nextBoundaryX - start.x) / dir.x
+                    : std::numeric_limits<float>::infinity();
+
+  float tMaxY = std::abs(dir.y) > 0.0001f
+                    ? (nextBoundaryY - start.y) / dir.y
+                    : std::numeric_limits<float>::infinity();
+
+  const float tDeltaX = std::abs(dir.x) > 0.0001f
+                            ? std::abs(1.0f / dir.x)
+                            : std::numeric_limits<float>::infinity();
+
+  const float tDeltaY = std::abs(dir.y) > 0.0001f
+                            ? std::abs(1.0f / dir.y)
+                            : std::numeric_limits<float>::infinity();
+
+  while (tile != receiverTile)
   {
-    const glm::vec2 p = start + dir * t;
-    const glm::ivec2 tile = context.gridCellOf(p);
+    gShadowTilesTraversed.fetch_add(1, std::memory_order_relaxed);
+
+    if (tMaxX < tMaxY)
+    {
+      tile.x += stepX;
+      tMaxX += tDeltaX;
+    }
+    else
+    {
+      tile.y += stepY;
+      tMaxY += tDeltaY;
+    }
 
     if (tile == receiverTile)
       return false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/systems/isometric/isometricRenderSystem.h"
+#include "engine/systems/isometric/isometricShadowSystem.h"
 #ifndef ENGINE_WEB
   #include "imgui/backends/imgui_impl_opengl3.h"
   #include "imgui/backends/imgui_impl_sdl2.h"
@@ -45,6 +46,13 @@ inline static void renderDebugUI()
   ImGui::Text("Tile render items: %d", gTileRenderItems);
   ImGui::Text("Sprite render items: %d", gSpriteRenderItems);
   ImGui::Text("Sprite shadows: %d", gSpriteProjectedShadowItems);
+  ImGui::Text("Shadow path checks: %llu",
+              static_cast<unsigned long long>(
+                  gShadowPathChecks.load(std::memory_order_relaxed)));
+
+  ImGui::Text("Shadow tiles traversed: %llu",
+              static_cast<unsigned long long>(
+                  gShadowTilesTraversed.load(std::memory_order_relaxed)));
 
   ImGui::End();
 

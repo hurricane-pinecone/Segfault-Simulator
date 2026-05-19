@@ -4,6 +4,7 @@
 #include "engine/renderers/isometricRenderContext.h"
 #include "engine/renderers/isometricRenderItem.h"
 #include "engine/renderers/isometricRenderQueue.h"
+#include <atomic>
 
 #ifdef __EMSCRIPTEN__
   #include <future>
@@ -11,6 +12,9 @@
 
 namespace sfs
 {
+
+extern std::atomic<uint64_t> gShadowPathChecks;
+extern std::atomic<uint64_t> gShadowTilesTraversed;
 
 struct TerrainShadowEdge
 {
