@@ -51,8 +51,8 @@ struct IsometricShadowSettings
   float terrainShadowMaxLength = 3.0f;
   float spriteShadowMaxLength = 1.25f;
 
-  float terrainShadowAlpha = 0.42f;
-  float spriteShadowAlpha = 0.28f;
+  float terrainShadowAlpha = 1.0f;
+  float spriteShadowAlpha = 1.0f;
 };
 
 glm::vec2 gridDirectionToIsometricDirection(const glm::vec2& worldDir,

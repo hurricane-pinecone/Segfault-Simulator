@@ -22,45 +22,46 @@ public:
     if (!m_isSunEnabled)
     {
       m_lighting->setAmbientDirection(glm::vec3{0.0f, 0.0f, 1.0f});
-      m_lighting->setAmbient(0.08f);
+      m_lighting->setAmbient(0.06f);
       m_lighting->setAmbientDiffuseStrength(0.0f);
+      m_lighting->setAmbientColor(glm::vec3{0.08f, 0.13f, 0.30f});
       return;
     }
 
     const float w = static_cast<float>(WINDOW_WIDTH);
     const float h = static_cast<float>(WINDOW_HEIGHT);
-
     const float cx = w * 0.5f;
 
-    const float x01 = std::clamp(static_cast<float>(x) / w, 0.0f, 1.0f);
-    const float y01 = std::clamp(static_cast<float>(y) / h, 0.0f, 1.0f);
+    const float clampedY = std::clamp(static_cast<float>(y), 0.0f, h);
+    const float clampedX = std::clamp(static_cast<float>(x), 0.0f, w);
 
-    // Vertical mouse controls sun height.
-    // Top = high sun.
-    // Bottom = low sun.
-    float sunZ = 1.0f - y01;
+    const float y01 = clampedY / h;
 
-    // Keep sun above horizon.
-    sunZ = std::clamp(sunZ, 0.18f, 1.0f);
+    //
+    // Mouse top = noon
+    // Mouse bottom = night
+    //
+    const float dayPosition = 1.0f - y01;
 
-    // Center/top = near-noon.
-    // Low sun = stronger sideways component.
+    //
+    // Keep sun slightly above horizon at all times
+    // so shadows remain possible.
+    //
+    constexpr float MinSunZ = 0.08f;
+
+    float sunZ = MinSunZ + dayPosition * (1.0f - MinSunZ);
+
+    //
+    // Make shadows lengthen earlier while still bright.
+    //
+    const float shadowSunZ = std::pow(sunZ, 1.35f);
+
     const float horizontalAmount =
-        std::sqrt(std::max(0.0f, 1.0f - sunZ * sunZ));
+        std::sqrt(std::max(0.0f, 1.0f - shadowSunZ * shadowSunZ));
 
-    // Mouse X moves sun from left side to right side.
-    // This controls whether shadows go front-right or front-left.
     const float side =
-        std::clamp((static_cast<float>(x) - cx) / cx, -1.0f, 1.0f);
+        std::clamp((static_cast<float>(clampedX) - cx) / cx, -1.0f, 1.0f);
 
-    // IMPORTANT:
-    // lightDir is the direction light travels FROM.
-    // shadows use -lightDir.
-    //
-    // We want shadows to always cast toward camera/front:
-    //   -lightDir.y should be positive
-    //
-    // Therefore lightDir.y should stay negative.
     constexpr float BackLightBias = -0.65f;
 
     glm::vec2 horizontalDir{
@@ -84,12 +85,44 @@ public:
     else
       sunDir = glm::vec3{0.0f, 0.0f, 1.0f};
 
-    float daylight = std::clamp((sunZ - 0.12f) / 0.88f, 0.0f, 1.0f);
-    daylight = daylight * daylight * (3.0f - 2.0f * daylight);
+    //
+    // Exponential DAY -> NIGHT curve.
+    //
+    // Stays bright for most of the screen,
+    // then falls off near the bottom.
+    //
+    const float ambientDaylight = 1.0f - std::pow(1.0f - dayPosition, 5.5f);
+
+    const float diffuseDaylight = 1.0f - std::pow(1.0f - dayPosition, 3.2f);
 
     m_lighting->setAmbientDirection(sunDir);
-    m_lighting->setAmbient(0.08f + daylight * 0.28f);
-    m_lighting->setAmbientDiffuseStrength(0.12f + daylight * 0.78f);
+
+    //
+    // Brighter daytime while preserving dark nights.
+    //
+    m_lighting->setAmbient(0.06f + ambientDaylight * 0.39f);
+
+    //
+    // Directional sunlight strength.
+    //
+    m_lighting->setAmbientDiffuseStrength(diffuseDaylight * 0.78f);
+
+    const glm::vec3 dayColor{
+        1.0f,
+        1.0f,
+        1.0f,
+    };
+
+    const glm::vec3 nightColor{
+        0.08f,
+        0.13f,
+        0.30f,
+    };
+
+    const glm::vec3 ambientColor =
+        glm::mix(nightColor, dayColor, ambientDaylight);
+
+    m_lighting->setAmbientColor(ambientColor);
   }
 
   void setLightingSystem(sfs::IsometricLightingSystem& lighting)

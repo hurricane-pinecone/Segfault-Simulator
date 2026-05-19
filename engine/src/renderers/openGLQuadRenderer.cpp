@@ -71,9 +71,6 @@ void OpenGLQuadRenderer::initialize()
   uLightHeightsLocation =
       glGetUniformLocation(shaderProgram, "uLightHeights[0]");
 
-  //
-  // Textured/lit quad VAO/VBO
-  //
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
 
@@ -110,13 +107,10 @@ void OpenGLQuadRenderer::initialize()
       sizeof(Vertex),
       reinterpret_cast<void*>(offsetof(Vertex, worldPosition)));
 
-  // WebGL-safe order: unbind VAO first, then buffer.
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  //
   // Solid quad VAO/VBO
-  //
   glGenVertexArrays(1, &solidVao);
   glGenBuffers(1, &solidVbo);
 
@@ -145,13 +139,9 @@ void OpenGLQuadRenderer::initialize()
                         sizeof(SolidVertex),
                         reinterpret_cast<void*>(offsetof(SolidVertex, color)));
 
-  // WebGL-safe order: unbind VAO first, then buffer.
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  //
-  // Default textured shader uniforms
-  //
   glUseProgram(shaderProgram);
 
   glUniform1i(uTextureLocation, 0);
@@ -167,9 +157,6 @@ void OpenGLQuadRenderer::initialize()
 
   glUseProgram(0);
 
-  //
-  // Default normal texture
-  //
   glGenTextures(1, &defaultNormalTexture);
 
   glActiveTexture(GL_TEXTURE1);
@@ -192,9 +179,6 @@ void OpenGLQuadRenderer::initialize()
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-  //
-  // White texture
-  //
   glGenTextures(1, &whiteTexture);
 
   glActiveTexture(GL_TEXTURE0);
