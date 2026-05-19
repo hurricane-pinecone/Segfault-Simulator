@@ -49,12 +49,14 @@ public:
                                 const IsometricAmbientLighting& lightingSystem,
                                 IsometricRenderQueue& queue);
 
-  void submitSpriteShadow(const IsometricRenderContext& context,
-                          const IsometricRenderItem& caster,
-                          const glm::vec2& casterWorldSample,
-                          int casterElevation,
-                          const IsometricAmbientLighting& ambientLighting,
-                          IsometricRenderQueue& queue);
+  void submitSpriteShadow(
+      const IsometricRenderContext& context,
+      const IsometricRenderItem& caster,
+      const glm::vec2& casterWorldSample,
+      int casterElevation,
+      const IsometricAmbientLighting* ambientLighting,
+      const std::vector<IsometricPointLightSnapshot>* pointLights,
+      IsometricRenderQueue& queue);
 
   void markTerrainDirty();
 

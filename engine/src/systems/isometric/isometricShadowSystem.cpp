@@ -1,6 +1,8 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
+#include "engine/logger/logger.h"
 
 #include <algorithm>
+#include <string>
 #ifdef __EMSCRIPTEN__
   #include <chrono>
 #endif
@@ -933,81 +935,159 @@ void IsometricShadowSystem::submitSpriteShadow(
     const IsometricRenderContext& context,
     const IsometricRenderItem&,
     const glm::vec2& casterWorldSample,
-    int casterElevation,
-    const IsometricAmbientLighting& ambientLighting,
+    int,
+    const IsometricAmbientLighting* ambientLighting,
+    const std::vector<IsometricPointLightSnapshot>* pointLights,
     IsometricRenderQueue& queue)
 {
-  const glm::vec3 sunDir3D = ambientLighting.direction;
-
-  if (sunDir3D.z <= 0.02f)
+  if (!ambientLighting && (!pointLights || pointLights->empty()))
     return;
-
-  glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
-
-  if (glm::length(shadowDir) > 0.001f)
-    shadowDir = glm::normalize(shadowDir);
-  else
-    shadowDir = glm::vec2{0.0f, 1.0f};
-
-  const float sunHeight = std::max(sunDir3D.z, 0.08f);
 
   constexpr float SpriteShadowWidth = 0.42f;
-  constexpr float SpriteShadowAlpha = 0.28f;
 
-  const float diffuse = std::clamp(ambientLighting.diffuseStrength, 0.0f, 1.0f);
+  const float ambientAmount =
+      ambientLighting ? std::clamp(ambientLighting->ambient, 0.0f, 1.0f) : 1.0f;
 
-  const float alpha = SpriteShadowAlpha * diffuse;
-
-  if (alpha <= 0.01f)
-    return;
-
-  const float shadowLength = m_shadowSettings.spriteShadowMaxLength *
-                             std::clamp(1.0f / sunHeight, 0.75f, 2.25f);
-
-  const glm::vec2 side{-shadowDir.y, shadowDir.x};
-
-  const glm::vec2 base = casterWorldSample;
-  const glm::vec2 tip = base + shadowDir * shadowLength;
-
-  glm::vec2 worldPoints[4] = {
-      base - side * SpriteShadowWidth * 0.5f,
-      base + side * SpriteShadowWidth * 0.5f,
-      tip + side * SpriteShadowWidth * 0.3f,
-      tip - side * SpriteShadowWidth * 0.3f,
-  };
-
-  const float minFx = std::min(std::min(worldPoints[0].x, worldPoints[1].x),
-                               std::min(worldPoints[2].x, worldPoints[3].x));
-
-  const float maxFx = std::max(std::max(worldPoints[0].x, worldPoints[1].x),
-                               std::max(worldPoints[2].x, worldPoints[3].x));
-
-  const float minFy = std::min(std::min(worldPoints[0].y, worldPoints[1].y),
-                               std::min(worldPoints[2].y, worldPoints[3].y));
-
-  const float maxFy = std::max(std::max(worldPoints[0].y, worldPoints[1].y),
-                               std::max(worldPoints[2].y, worldPoints[3].y));
-
-  const int minX = static_cast<int>(std::floor(minFx));
-  const int maxX = static_cast<int>(std::floor(maxFx));
-  const int minY = static_cast<int>(std::floor(minFy));
-  const int maxY = static_cast<int>(std::floor(maxFy));
+  // 0 = full daylight
+  // 1 = full darkness
+  const float ambientDarkness = 1.0f - ambientAmount;
 
   std::vector<IsometricRenderItem> items;
 
-  for (int y = minY; y <= maxY; y++)
+  auto submitShadowFootprint =
+      [&](const glm::vec2& shadowDir, float shadowLength, float alpha)
   {
-    for (int x = minX; x <= maxX; x++)
-    {
-      const glm::ivec2 tile{x, y};
+    if (alpha <= 0.01f || shadowLength <= 0.01f)
+      return;
 
-      if (!context.hasTileAt(tile))
+    glm::vec2 dir = shadowDir;
+
+    if (glm::length(dir) > 0.001f)
+      dir = glm::normalize(dir);
+    else
+      dir = glm::vec2{0.0f, 1.0f};
+
+    const glm::vec2 side{-dir.y, dir.x};
+
+    const glm::vec2 base = casterWorldSample;
+    const glm::vec2 tip = base + dir * shadowLength;
+
+    glm::vec2 worldPoints[4] = {
+        base - side * SpriteShadowWidth * 0.5f,
+        base + side * SpriteShadowWidth * 0.5f,
+        tip + side * SpriteShadowWidth * 0.3f,
+        tip - side * SpriteShadowWidth * 0.3f,
+    };
+
+    const float minFx = std::min(std::min(worldPoints[0].x, worldPoints[1].x),
+                                 std::min(worldPoints[2].x, worldPoints[3].x));
+
+    const float maxFx = std::max(std::max(worldPoints[0].x, worldPoints[1].x),
+                                 std::max(worldPoints[2].x, worldPoints[3].x));
+
+    const float minFy = std::min(std::min(worldPoints[0].y, worldPoints[1].y),
+                                 std::min(worldPoints[2].y, worldPoints[3].y));
+
+    const float maxFy = std::max(std::max(worldPoints[0].y, worldPoints[1].y),
+                                 std::max(worldPoints[2].y, worldPoints[3].y));
+
+    const int minX = static_cast<int>(std::floor(minFx));
+    const int maxX = static_cast<int>(std::floor(maxFx));
+    const int minY = static_cast<int>(std::floor(minFy));
+    const int maxY = static_cast<int>(std::floor(maxFy));
+
+    for (int y = minY; y <= maxY; y++)
+    {
+      for (int x = minX; x <= maxX; x++)
+      {
+        const glm::ivec2 tile{x, y};
+
+        if (!context.hasTileAt(tile))
+          continue;
+
+        const int receiverElevation =
+            context.getTileElevationAt(glm::vec2{x, y});
+
+        submitTileShadowPolygonAt(
+            context, items, tile, receiverElevation, worldPoints, alpha);
+      }
+    }
+  };
+
+  //
+  // Sun / ambient shadows
+  //
+  if (ambientLighting)
+  {
+    const glm::vec3 sunDir3D = ambientLighting->direction;
+
+    if (sunDir3D.z > 0.02f)
+    {
+      glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
+
+      const float sunHeight = std::max(sunDir3D.z, 0.08f);
+
+      // Shadows become darker as ambient gets darker.
+      const float darknessScale = glm::mix(0.35f, 1.0f, ambientDarkness);
+
+      const float diffuse =
+          std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
+
+      const float alpha =
+          m_shadowSettings.spriteShadowAlpha * diffuse * darknessScale;
+
+      constexpr float SpriteCasterHeight = 0.75f;
+
+      const float shadowLength =
+          std::min(m_shadowSettings.spriteShadowMaxLength,
+                   SpriteCasterHeight / sunHeight);
+
+      submitShadowFootprint(shadowDir, shadowLength, alpha);
+    }
+  }
+
+  //
+  // Point light shadows
+  //
+  if (pointLights)
+  {
+    for (const auto& light : *pointLights)
+    {
+      const glm::vec2 toCaster = casterWorldSample - light.worldPosition;
+
+      const float distance = glm::length(toCaster);
+
+      if (distance <= 0.001f || distance >= light.radius)
         continue;
 
-      const int receiverElevation = context.getTileElevationAt(glm::vec2{x, y});
+      float attenuation = 1.0f - distance / light.radius;
+      attenuation = std::clamp(attenuation, 0.0f, 1.0f);
+      attenuation = attenuation * attenuation;
 
-      submitTileShadowPolygonAt(
-          context, items, tile, receiverElevation, worldPoints, alpha);
+      // Point-light shadows become much stronger at night.
+      const float darknessScale = glm::mix(0.25f, 1.35f, ambientDarkness);
+
+      const float alpha = m_shadowSettings.spriteShadowAlpha * light.intensity *
+                          attenuation * darknessScale;
+
+      if (alpha <= 0.01f)
+        continue;
+
+      constexpr float SpriteCasterHeightWorld = 1.0f;
+
+      const float elevationStepPixels =
+          static_cast<float>(context.elevationStep) * context.worldScale;
+
+      const float lightHeightWorld =
+          std::max(light.height / elevationStepPixels, 0.08f);
+
+      float shadowLength =
+          SpriteCasterHeightWorld * distance / lightHeightWorld;
+
+      shadowLength = std::clamp(
+          shadowLength, 0.15f, m_shadowSettings.spriteShadowMaxLength);
+
+      submitShadowFootprint(toCaster, shadowLength, alpha);
     }
   }
 

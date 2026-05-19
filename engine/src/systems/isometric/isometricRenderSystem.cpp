@@ -70,6 +70,8 @@ void IsometricRenderSystem::render()
           : nullptr;
   const auto ambientLighting =
       lightingSystem ? &lightingSystem->ambient() : nullptr;
+  const auto pointLights =
+      lightingSystem ? &lightingSystem->getPointLights() : nullptr;
 
   const auto& activeCamera = getCamera();
   auto cameraPosition = getCameraPosition();
@@ -298,7 +300,8 @@ void IsometricRenderSystem::render()
           item,
           spriteWorldSample,
           elevationLevel,
-          *ambientLighting,
+          ambientLighting,
+          pointLights,
           m_renderQueue);
     }
   }
