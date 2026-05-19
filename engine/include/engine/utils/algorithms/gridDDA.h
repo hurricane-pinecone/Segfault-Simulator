@@ -164,6 +164,9 @@ void walkGridDDA(glm::vec2 start,
       static_cast<int>(std::floor(start.y)),
   };
 
+  if (!visit(tile, 0.0f))
+    return;
+
   const int stepX = dir.x >= 0.0f ? 1 : -1;
   const int stepY = dir.y >= 0.0f ? 1 : -1;
 

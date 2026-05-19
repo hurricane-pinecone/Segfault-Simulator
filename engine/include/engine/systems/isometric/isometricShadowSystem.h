@@ -161,9 +161,6 @@ private:
                           float shadowLength,
                           Visitor&& visit);
 
-  template <typename Visitor>
-  void constructSeedShadowStrip(const TerrainShadowEdge& edge, Visitor&& visit);
-
 private:
   struct TerrainShadowCache
   {
@@ -208,33 +205,6 @@ private:
   TerrainShadowCache m_cache;
   IsometricShadowSettings m_shadowSettings;
 };
-
-template <typename Visitor>
-void IsometricShadowSystem::constructSeedShadowStrip(
-    const TerrainShadowEdge& edge,
-    Visitor&& visit)
-{
-  if (edge.side == TerrainShadowEdge::Side::West ||
-      edge.side == TerrainShadowEdge::Side::East)
-  {
-    const int y0 = static_cast<int>(std::floor(std::min(edge.a.y, edge.b.y)));
-
-    const int y1 =
-        static_cast<int>(std::ceil(std::max(edge.a.y, edge.b.y))) - 1;
-
-    for (int y = y0; y <= y1; y++)
-      visit(glm::ivec2{edge.receiverTile.x, y}, true);
-
-    return;
-  }
-
-  const int x0 = static_cast<int>(std::floor(std::min(edge.a.x, edge.b.x)));
-
-  const int x1 = static_cast<int>(std::ceil(std::max(edge.a.x, edge.b.x))) - 1;
-
-  for (int x = x0; x <= x1; x++)
-    visit(glm::ivec2{x, edge.receiverTile.y}, true);
-}
 
 template <typename Visitor>
 void IsometricShadowSystem::walkShadowEdgeRays(const TerrainShadowEdge& edge,

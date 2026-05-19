@@ -43,6 +43,12 @@ struct IsometricRenderItem
       glm::vec2{0.0f, 0.0f},
       glm::vec2{0.0f, 0.0f},
   };
+  glm::vec2 shadowUVs[4] = {
+      {0.0f, 0.0f},
+      {1.0f, 0.0f},
+      {1.0f, 1.0f},
+      {0.0f, 1.0f},
+  };
 };
 
 } // namespace sfs

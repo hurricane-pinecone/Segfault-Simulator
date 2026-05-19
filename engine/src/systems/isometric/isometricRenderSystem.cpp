@@ -413,6 +413,11 @@ void IsometricRenderSystem::flushBatches()
       command.points[2] = item.shadowScreenPoints[2];
       command.points[3] = item.shadowScreenPoints[3];
 
+      command.uvs[0] = item.shadowUVs[0];
+      command.uvs[1] = item.shadowUVs[1];
+      command.uvs[2] = item.shadowUVs[2];
+      command.uvs[3] = item.shadowUVs[3];
+
       quadRenderer.drawFreeformQuad(command);
       gSpriteProjectedShadowItems++;
     }
