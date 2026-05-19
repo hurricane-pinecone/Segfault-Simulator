@@ -27,7 +27,7 @@ glm::vec2 gridDirectionToIsometricDirection(const glm::vec2& worldDir,
 }
 
 std::vector<IsometricShadowResult>
-computeIsometricShadows(const std::vector<IsometricLightSnapshot>& lights,
+computeIsometricShadows(const std::vector<IsometricPointLightSnapshot>& lights,
                         const glm::vec3& sunDirection,
                         float diffuseStrength,
                         const glm::vec2& casterWorldPosition,

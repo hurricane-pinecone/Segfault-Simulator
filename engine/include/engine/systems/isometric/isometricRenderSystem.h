@@ -125,11 +125,6 @@ public:
 
 private:
   void beginBatches();
-  void submitSprite(const IsometricRenderItem& item);
-  void submitShadow(const IsometricRenderItem& caster,
-                    const glm::vec2& shadowOffset,
-                    float alpha,
-                    float sortKeyBias = 0.005f);
 
   void flushBatches();
 

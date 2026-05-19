@@ -7,6 +7,7 @@
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
+#include "engine/utils/isometricLightingUtils.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
 #include "systems/TerrainGeneratorSystem.h"
@@ -21,7 +22,6 @@
 
 void GameScene::onInit()
 {
-  // loadMap();
   createEntities();
 
   addSystem<sfs::MovementSystem>();
@@ -31,7 +31,8 @@ void GameScene::onInit()
   auto& renderer = addSystem<sfs::IsometricRenderSystem>(
       m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
   auto& lighting = addSystem<sfs::IsometricLightingSystem>();
-  addSystem<sfs::IsometricShadowSystem>();
+  addSystem<sfs::IsometricShadowSystem>(
+      sfs::IsometricShadowSettings{8.0f, 8.0f});
 
   renderer.setWorldScale(WORLD_SCALE);
 

@@ -21,8 +21,9 @@ public:
 
     if (!m_isSunEnabled)
     {
-      m_lighting->setLightDirection(glm::vec3{0.0f, 0.0f, 1.0f});
-      m_lighting->setLighting(0.08f, 0.0f);
+      m_lighting->setAmbientDirection(glm::vec3{0.0f, 0.0f, 1.0f});
+      m_lighting->setAmbient(0.08f);
+      m_lighting->setAmbientDiffuseStrength(0.0f);
       return;
     }
 
@@ -86,8 +87,9 @@ public:
     float daylight = std::clamp((sunZ - 0.12f) / 0.88f, 0.0f, 1.0f);
     daylight = daylight * daylight * (3.0f - 2.0f * daylight);
 
-    m_lighting->setLightDirection(sunDir);
-    m_lighting->setLighting(0.08f + daylight * 0.28f, 0.12f + daylight * 0.78f);
+    m_lighting->setAmbientDirection(sunDir);
+    m_lighting->setAmbient(0.08f + daylight * 0.28f);
+    m_lighting->setAmbientDiffuseStrength(0.12f + daylight * 0.78f);
   }
 
   void setLightingSystem(sfs::IsometricLightingSystem& lighting)
