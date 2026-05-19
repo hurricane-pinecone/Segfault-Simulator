@@ -1275,7 +1275,6 @@ IsometricShadowSystem::startTerrainEdgeShadowJobs(
   const std::vector<TerrainShadowEdge> edges = m_cache.edges;
   const std::size_t edgeCount = edges.size();
 
-  constexpr float TerrainShadowMaxLength = 3.0f;
   constexpr unsigned int hardwareThreads = 2;
 
   std::vector<std::future<ShadowBuildResult>> jobs;
@@ -1314,13 +1313,14 @@ IsometricShadowSystem::startTerrainEdgeShadowJobs(
             if (!shouldCastTerrainShadow(edge, shadowDir))
               continue;
 
-            submitTerrainEdgeShadowProjectedClipped(context,
-                                                    result.items,
-                                                    edge,
-                                                    shadowDir,
-                                                    sunHeight,
-                                                    TerrainShadowMaxLength,
-                                                    alpha);
+            constructTerrainEdgeShadowProjectedClipped(
+                context,
+                result.items,
+                edge,
+                shadowDir,
+                sunHeight,
+                m_shadowSettings.terrainShadowMaxLength,
+                alpha);
 
             result.edgesProcessed++;
           }

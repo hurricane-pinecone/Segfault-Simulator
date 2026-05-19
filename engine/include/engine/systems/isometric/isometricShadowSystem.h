@@ -196,10 +196,6 @@ private:
 
   std::vector<std::future<ShadowBuildResult>> m_shadowJobs;
   bool m_shadowBuildInProgress = false;
-
-  glm::vec2 m_pendingShadowDir{};
-  float m_pendingSunHeight = 0.0f;
-  float m_pendingAlpha = 0.0f;
 #endif
 
   TerrainShadowCache m_cache;
