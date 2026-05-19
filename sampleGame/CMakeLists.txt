@@ -25,11 +25,17 @@ set_target_properties(sampleGame PROPERTIES
 )
 
 if(IS_WEB_BUILD)
-set_target_properties(sampleGame PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    OUTPUT_NAME "index"
-    SUFFIX ".html"
-)
+    set_target_properties(sampleGame PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        OUTPUT_NAME "index"
+        SUFFIX ".html"
+    )
+
+    target_compile_options(engine PUBLIC
+        -pthread
+        -matomics
+        -mbulk-memory
+    )
 
     target_link_options(sampleGame PRIVATE
         --shell-file "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
@@ -46,7 +52,26 @@ set_target_properties(sampleGame PROPERTIES
         -sMIN_WEBGL_VERSION=2
         -sMAX_WEBGL_VERSION=2
         -sFULL_ES3=1
+        -sUSE_PTHREADS=1
+        -sPTHREAD_POOL_SIZE=4
+        # -sPROXY_TO_PTHREAD=1
+        # -sOFFSCREENCANVAS_SUPPORT=1
     )
+
+  add_custom_target(run
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/web/server.py"
+          "${CMAKE_BINARY_DIR}/bin/server.py"
+      COMMAND python3 "${CMAKE_BINARY_DIR}/bin/server.py"
+      DEPENDS sampleGame
+      WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  )
+
+add_custom_command(TARGET sampleGame POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/server.py"
+        "$<TARGET_FILE_DIR:sampleGame>/server.py"
+)
 else()
     add_custom_command(TARGET sampleGame POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory

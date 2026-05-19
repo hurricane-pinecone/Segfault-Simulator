@@ -2,6 +2,8 @@
 
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
+#include <cmath>
+#include <cstdint>
 #include <unordered_map>
 
 namespace sfs

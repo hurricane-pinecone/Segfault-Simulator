@@ -5,6 +5,10 @@
 #include "engine/renderers/isometricRenderItem.h"
 #include "engine/renderers/isometricRenderQueue.h"
 
+#ifdef __EMSCRIPTEN__
+  #include <future>
+#endif
+
 namespace sfs
 {
 
@@ -140,6 +144,27 @@ private:
     glm::vec2 isoCameraPosition{999.0f, 999.0f};
     float zoom = -1.0f;
   };
+
+#ifdef __EMSCRIPTEN__
+  struct ShadowBuildResult
+  {
+    std::vector<IsometricRenderItem> items;
+    int edgesProcessed = 0;
+  };
+
+  std::vector<std::future<ShadowBuildResult>>
+  startTerrainEdgeShadowJobs(const IsometricRenderContext& context,
+                             const glm::vec2& shadowDir,
+                             float sunHeight,
+                             float alpha);
+
+  std::vector<std::future<ShadowBuildResult>> m_shadowJobs;
+  bool m_shadowBuildInProgress = false;
+
+  glm::vec2 m_pendingShadowDir{};
+  float m_pendingSunHeight = 0.0f;
+  float m_pendingAlpha = 0.0f;
+#endif
 
   TerrainShadowCache m_cache;
 };

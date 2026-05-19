@@ -1,6 +1,9 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 
 #include <algorithm>
+#ifdef __EMSCRIPTEN__
+  #include <chrono>
+#endif
 #include <cmath>
 #include <future>
 #include <thread>
@@ -14,7 +17,7 @@
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 
-#include "engine/ecs/registry.h"
+#include "engine/ecs/registry.h" // IWYU pragma: keep
 
 namespace sfs
 {
@@ -80,8 +83,59 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
   }
 
   // Multi threaded
+#ifdef __EMSCRIPTEN__
+  if (m_shadowBuildInProgress)
+  {
+    bool allReady = true;
+
+    for (auto& job : m_shadowJobs)
+    {
+      if (job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+      {
+        allReady = false;
+        break;
+      }
+    }
+
+    if (allReady)
+    {
+      std::vector<IsometricRenderItem> newItems;
+
+      for (auto& job : m_shadowJobs)
+      {
+        ShadowBuildResult result = job.get();
+
+        gTerrainShadowEdgesProcessed += result.edgesProcessed;
+
+        newItems.insert(
+            newItems.end(), result.items.begin(), result.items.end());
+      }
+
+      m_cache.items = std::move(newItems);
+      m_cache.sunDir = sunDir3D;
+      m_cache.isoCameraPosition = context.isoCameraPosition;
+      m_cache.zoom = context.zoom;
+      m_cache.itemsDirty = false;
+
+      m_shadowJobs.clear();
+      m_shadowBuildInProgress = false;
+    }
+
+    queue.submitAll(m_cache.items);
+    return;
+  }
+
+  m_shadowJobs =
+      startTerrainEdgeShadowJobs(context, shadowDir, sunHeight, alpha);
+
+  m_shadowBuildInProgress = !m_shadowJobs.empty();
+
+  queue.submitAll(m_cache.items);
+  return;
+#else
   m_cache.items =
       buildTerrainEdgeShadowItems(context, shadowDir, sunHeight, alpha);
+#endif
 
   queue.submitAll(m_cache.items);
 
@@ -747,8 +801,12 @@ IsometricShadowSystem::buildTerrainEdgeShadowItems(
   if (edgeCount == 0)
     return {};
 
+#ifdef __EMSCRIPTEN__
+  const unsigned int hardwareThreads = 2;
+#else
   const unsigned int hardwareThreads =
       std::max(1u, std::thread::hardware_concurrency());
+#endif
 
   const std::size_t batchCount =
       std::min<std::size_t>(hardwareThreads, edgeCount);
@@ -812,5 +870,74 @@ IsometricShadowSystem::buildTerrainEdgeShadowItems(
 
   return items;
 }
+
+#ifdef __EMSCRIPTEN__
+std::vector<std::future<IsometricShadowSystem::ShadowBuildResult>>
+IsometricShadowSystem::startTerrainEdgeShadowJobs(
+    const IsometricRenderContext& context,
+    const glm::vec2& shadowDir,
+    float sunHeight,
+    float alpha)
+{
+  const std::vector<TerrainShadowEdge> edges = m_cache.edges;
+  const std::size_t edgeCount = edges.size();
+
+  constexpr float TerrainShadowMaxLength = 3.0f;
+  constexpr unsigned int hardwareThreads = 2;
+
+  std::vector<std::future<ShadowBuildResult>> jobs;
+
+  if (edgeCount == 0)
+    return jobs;
+
+  const std::size_t batchCount =
+      std::min<std::size_t>(hardwareThreads, edgeCount);
+
+  const std::size_t batchSize = (edgeCount + batchCount - 1) / batchCount;
+
+  jobs.reserve(batchCount);
+
+  for (std::size_t batchIndex = 0; batchIndex < batchCount; batchIndex++)
+  {
+    const std::size_t begin = batchIndex * batchSize;
+    const std::size_t end = std::min(begin + batchSize, edgeCount);
+
+    if (begin >= end)
+      continue;
+
+    jobs.push_back(std::async(
+        std::launch::async,
+        [this, context, edges, shadowDir, sunHeight, alpha, begin, end]()
+        {
+          ShadowBuildResult result;
+
+          for (std::size_t i = begin; i < end; i++)
+          {
+            const TerrainShadowEdge& edge = edges[i];
+
+            if (edge.topElevation - edge.bottomElevation <= 0)
+              continue;
+
+            if (!shouldCastTerrainShadow(edge, shadowDir))
+              continue;
+
+            submitTerrainEdgeShadowProjectedClipped(context,
+                                                    result.items,
+                                                    edge,
+                                                    shadowDir,
+                                                    sunHeight,
+                                                    TerrainShadowMaxLength,
+                                                    alpha);
+
+            result.edgesProcessed++;
+          }
+
+          return result;
+        }));
+  }
+
+  return jobs;
+}
+#endif
 
 } // namespace sfs

@@ -6,7 +6,6 @@
 #else
   #include <GL/glew.h>
 #endif
-#include <SDL_opengl.h>
 #include <cstddef>
 #include <string>
 
