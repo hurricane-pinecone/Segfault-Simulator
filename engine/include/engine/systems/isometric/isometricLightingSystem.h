@@ -39,6 +39,7 @@ public:
   }
 
   const IsometricAmbientLighting& ambient() const { return m_ambientLighting; }
+  IsometricAmbientLighting& ambient() { return m_ambientLighting; }
 
   void setAmbientLighting(IsometricAmbientLighting ambient);
   void setAmbient(float ambient);

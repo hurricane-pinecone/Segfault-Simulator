@@ -59,20 +59,39 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
 
   glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
 
-  if (glm::length(shadowDir) > 0.001f)
-    shadowDir = glm::normalize(shadowDir);
-  else
-    shadowDir = glm::vec2{0.0f, 1.0f};
+  const float horizontalAmount = glm::length(shadowDir);
+
+  if (horizontalAmount <= 0.001f)
+  {
+    m_cache.items.clear();
+    m_cache.itemsDirty = true;
+    m_cache.sunDir = sunDir3D;
+    return;
+  }
+
+  shadowDir /= horizontalAmount;
 
   const float sunHeight = std::max(sunDir3D.z, 0.08f);
+  const float effectiveSunHeight =
+      sunHeight / std::max(horizontalAmount, 0.001f);
 
-  constexpr float TerrainShadowAlpha = 0.42f;
+  const float diffuse = std::clamp(ambient.diffuseStrength, 0.0f, 1.0f);
 
-  const float alpha =
-      TerrainShadowAlpha * std::clamp(ambient.diffuseStrength, 0.0f, 1.0f);
+  if (diffuse <= 0.01f)
+  {
+    m_cache.items.clear();
+    m_cache.itemsDirty = true;
+    return;
+  }
+
+  const float alpha = m_shadowSettings.terrainShadowAlpha * diffuse;
 
   if (alpha < 0.04f)
+  {
+    m_cache.items.clear();
+    m_cache.itemsDirty = true;
     return;
+  }
 
   const bool sunChanged = glm::length(sunDir3D - m_cache.sunDir) > 0.025f;
 
@@ -133,15 +152,15 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
   }
 
   m_shadowJobs =
-      startTerrainEdgeShadowJobs(context, shadowDir, sunHeight, alpha);
+      startTerrainEdgeShadowJobs(context, shadowDir, effectiveSunHeight, alpha);
 
   m_shadowBuildInProgress = !m_shadowJobs.empty();
 
   queue.submitAll(m_cache.items);
   return;
 #else
-  m_cache.items =
-      buildTerrainEdgeShadowItems(context, shadowDir, sunHeight, alpha);
+  m_cache.items = buildTerrainEdgeShadowItems(
+      context, shadowDir, effectiveSunHeight, alpha);
 #endif
 
   queue.submitAll(m_cache.items);
@@ -945,12 +964,11 @@ void IsometricShadowSystem::submitSpriteShadow(
 
   constexpr float SpriteShadowWidth = 0.42f;
 
-  const float ambientAmount =
-      ambientLighting ? std::clamp(ambientLighting->ambient, 0.0f, 1.0f) : 1.0f;
+  const float sunStrength =
+      ambientLighting ? std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f)
+                      : 0.0f;
 
-  // 0 = full daylight
-  // 1 = full darkness
-  const float ambientDarkness = 1.0f - ambientAmount;
+  const float pointShadowStrength = 1.0f - sunStrength;
 
   std::vector<IsometricRenderItem> items;
 
@@ -965,7 +983,7 @@ void IsometricShadowSystem::submitSpriteShadow(
     if (glm::length(dir) > 0.001f)
       dir = glm::normalize(dir);
     else
-      dir = glm::vec2{0.0f, 1.0f};
+      return;
 
     const glm::vec2 side{-dir.y, dir.x};
 
@@ -981,13 +999,10 @@ void IsometricShadowSystem::submitSpriteShadow(
 
     const float minFx = std::min(std::min(worldPoints[0].x, worldPoints[1].x),
                                  std::min(worldPoints[2].x, worldPoints[3].x));
-
     const float maxFx = std::max(std::max(worldPoints[0].x, worldPoints[1].x),
                                  std::max(worldPoints[2].x, worldPoints[3].x));
-
     const float minFy = std::min(std::min(worldPoints[0].y, worldPoints[1].y),
                                  std::min(worldPoints[2].y, worldPoints[3].y));
-
     const float maxFy = std::max(std::max(worldPoints[0].y, worldPoints[1].y),
                                  std::max(worldPoints[2].y, worldPoints[3].y));
 
@@ -1015,46 +1030,48 @@ void IsometricShadowSystem::submitSpriteShadow(
   };
 
   //
-  // Sun / ambient shadows
+  // Sun shadows
   //
   if (ambientLighting)
   {
     const glm::vec3 sunDir3D = ambientLighting->direction;
 
-    if (sunDir3D.z > 0.02f)
+    const float diffuse =
+        std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
+
+    if (sunDir3D.z > 0.02f && diffuse > 0.01f)
     {
       glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
 
-      const float sunHeight = std::max(sunDir3D.z, 0.08f);
+      const float horizontalAmount = glm::length(shadowDir);
 
-      // Shadows become darker as ambient gets darker.
-      const float darknessScale = glm::mix(0.35f, 1.0f, ambientDarkness);
+      if (horizontalAmount > 0.001f)
+      {
+        shadowDir /= horizontalAmount;
 
-      const float diffuse =
-          std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
+        const float sunHeight = std::max(sunDir3D.z, 0.08f);
 
-      const float alpha =
-          m_shadowSettings.spriteShadowAlpha * diffuse * darknessScale;
+        constexpr float SpriteCasterHeight = 0.75f;
 
-      constexpr float SpriteCasterHeight = 0.75f;
+        const float shadowLength =
+            std::min(m_shadowSettings.spriteShadowMaxLength,
+                     SpriteCasterHeight * horizontalAmount / sunHeight);
 
-      const float shadowLength =
-          std::min(m_shadowSettings.spriteShadowMaxLength,
-                   SpriteCasterHeight / sunHeight);
+        const float alpha = m_shadowSettings.spriteShadowAlpha * diffuse;
 
-      submitShadowFootprint(shadowDir, shadowLength, alpha);
+        submitShadowFootprint(shadowDir, shadowLength, alpha);
+      }
     }
   }
 
   //
-  // Point light shadows
+  // Point-light shadows
   //
   if (pointLights)
   {
     for (const auto& light : *pointLights)
     {
       const glm::vec2 toCaster = casterWorldSample - light.worldPosition;
-
       const float distance = glm::length(toCaster);
 
       if (distance <= 0.001f || distance >= light.radius)
@@ -1062,13 +1079,15 @@ void IsometricShadowSystem::submitSpriteShadow(
 
       float attenuation = 1.0f - distance / light.radius;
       attenuation = std::clamp(attenuation, 0.0f, 1.0f);
-      attenuation = attenuation * attenuation;
+      attenuation *= attenuation;
 
-      // Point-light shadows become much stronger at night.
-      const float darknessScale = glm::mix(0.25f, 1.35f, ambientDarkness);
+      const float lightFactor =
+          std::clamp(light.intensity * attenuation, 0.0f, 1.0f);
 
-      const float alpha = m_shadowSettings.spriteShadowAlpha * light.intensity *
-                          attenuation * darknessScale;
+      const float alpha = std::clamp(m_shadowSettings.spriteShadowAlpha *
+                                         lightFactor * pointShadowStrength,
+                                     0.0f,
+                                     1.0f);
 
       if (alpha <= 0.01f)
         continue;

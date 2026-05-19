@@ -32,7 +32,7 @@ void GameScene::onInit()
       m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
   auto& lighting = addSystem<sfs::IsometricLightingSystem>();
   addSystem<sfs::IsometricShadowSystem>(
-      sfs::IsometricShadowSettings{8.0f, 8.0f});
+      sfs::IsometricShadowSettings{5.0f, 7.0f});
 
   renderer.setWorldScale(WORLD_SCALE);
 

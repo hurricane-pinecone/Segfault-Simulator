@@ -68,8 +68,7 @@ void IsometricRenderSystem::render()
       registry->hasSystem<IsometricLightingSystem>()
           ? &registry->getSystem<IsometricLightingSystem>()
           : nullptr;
-  const auto ambientLighting =
-      lightingSystem ? &lightingSystem->ambient() : nullptr;
+  auto ambientLighting = lightingSystem ? &lightingSystem->ambient() : nullptr;
   const auto pointLights =
       lightingSystem ? &lightingSystem->getPointLights() : nullptr;
 
