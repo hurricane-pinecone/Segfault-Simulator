@@ -63,6 +63,12 @@ public:
     int textureHeight = 0;
 
     glm::vec2 points[4];
+    glm::vec2 uvs[4] = {
+        {0.0f, 0.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f},
+    };
 
     SDL_Color tint{255, 255, 255, 255};
   };
@@ -153,6 +159,13 @@ private:
                         const float lightIntensities[MaxShaderLights],
                         const float lightRadii[MaxShaderLights],
                         const float lightHeights[MaxShaderLights]);
+  void drawQuadInternalWithUvs(unsigned int texture,
+                               const glm::vec2& p0,
+                               const glm::vec2& p1,
+                               const glm::vec2& p2,
+                               const glm::vec2& p3,
+                               const glm::vec2 uvs[4],
+                               SDL_Color tint);
 
   unsigned int compileShader(unsigned int type, const char* source) const;
   unsigned int createShaderProgram() const;

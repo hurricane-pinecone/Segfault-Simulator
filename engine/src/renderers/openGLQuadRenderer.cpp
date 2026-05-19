@@ -326,15 +326,65 @@ void OpenGLQuadRenderer::drawFreeformQuad(
   const glm::vec2 p2 = toNdc(command.points[2]);
   const glm::vec2 p3 = toNdc(command.points[3]);
 
-  drawQuadInternal(command.texture,
-                   command.srcRect,
-                   command.textureWidth,
-                   command.textureHeight,
-                   p0,
-                   p1,
-                   p2,
-                   p3,
-                   command.tint);
+  drawQuadInternalWithUvs(
+      command.texture, p0, p1, p2, p3, command.uvs, command.tint);
+}
+
+void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
+                                                 const glm::vec2& p0,
+                                                 const glm::vec2& p1,
+                                                 const glm::vec2& p2,
+                                                 const glm::vec2& p3,
+                                                 const glm::vec2 uvs[4],
+                                                 SDL_Color tint)
+{
+  const glm::vec2 worldPoints[4] = {
+      {0.0f, 0.0f},
+      {0.0f, 0.0f},
+      {0.0f, 0.0f},
+      {0.0f, 0.0f},
+  };
+
+  const Vertex vertices[6] = {
+      {p0, uvs[0], worldPoints[0]},
+      {p1, uvs[1], worldPoints[1]},
+      {p2, uvs[2], worldPoints[2]},
+
+      {p0, uvs[0], worldPoints[0]},
+      {p2, uvs[2], worldPoints[2]},
+      {p3, uvs[3], worldPoints[3]},
+  };
+
+  glUseProgram(shaderProgram);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glUniform1i(uTextureLocation, 0);
+
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, defaultNormalTexture);
+  glUniform1i(uNormalTextureLocation, 1);
+
+  glUniform1i(uUseLightingLocation, 0);
+  glUniform1i(uHasNormalMapLocation, 0);
+
+  glUniform4f(uColorLocation,
+              tint.r / 255.0f,
+              tint.g / 255.0f,
+              tint.b / 255.0f,
+              tint.a / 255.0f);
+
+  glActiveTexture(GL_TEXTURE0);
+
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sizeof(vertices)),
+               vertices,
+               GL_DYNAMIC_DRAW);
+
+  glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
