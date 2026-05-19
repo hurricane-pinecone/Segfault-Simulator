@@ -5,6 +5,7 @@
 #include "engine/renderers/isometricRenderItem.h"
 #include "engine/renderers/isometricRenderQueue.h"
 #include "engine/utils/isometricLightingUtils.h"
+#include "glm/glm/geometric.hpp"
 #include <atomic>
 
 #ifdef __EMSCRIPTEN__
@@ -45,9 +46,9 @@ public:
   IsometricShadowSystem(IsometricShadowSettings settings)
       : m_shadowSettings(settings) {};
 
-  void submitTerrainEdgeShadows(const IsometricRenderContext& context,
-                                const IsometricAmbientLighting& lightingSystem,
-                                IsometricRenderQueue& queue);
+  void submitTerrainShadows(const IsometricRenderContext& context,
+                            const IsometricAmbientLighting& lightingSystem,
+                            IsometricRenderQueue& queue);
 
   void submitSpriteShadow(
       const IsometricRenderContext& context,
@@ -66,29 +67,29 @@ public:
   void setSpriteShadowAlpha(float alpha);
 
 private:
-  void submitTerrainShadow(std::vector<IsometricRenderItem>& outItems,
-                           const glm::vec2 screenPoints[4],
-                           SDL_Color tint,
-                           float sortKey);
+  void constructTerrainShadow(std::vector<IsometricRenderItem>& outItems,
+                              const glm::vec2 screenPoints[4],
+                              SDL_Color tint,
+                              float sortKey);
 
-  void submitTileShadowPolygonAt(const IsometricRenderContext& renderContext,
-                                 std::vector<IsometricRenderItem>& outItems,
-                                 const glm::ivec2& tile,
-                                 int elevation,
-                                 const glm::vec2 worldPoints[4],
-                                 float alpha);
+  void constructTileShadowPolygonAt(const IsometricRenderContext& renderContext,
+                                    std::vector<IsometricRenderItem>& outItems,
+                                    const glm::ivec2& tile,
+                                    int elevation,
+                                    const glm::vec2 worldPoints[4],
+                                    float alpha);
 
-  void submitWallShadowFace(const IsometricRenderContext& renderContext,
-                            std::vector<IsometricRenderItem>& outItems,
-                            const glm::ivec2& tile,
-                            int elevation,
-                            int side,
-                            const glm::vec2 shadowWorldPoints[4],
-                            float incomingElevation,
-                            float normalizedDistance,
-                            float alpha);
+  void constructWallShadowFace(const IsometricRenderContext& renderContext,
+                               std::vector<IsometricRenderItem>& outItems,
+                               const glm::ivec2& tile,
+                               int elevation,
+                               int side,
+                               const glm::vec2 shadowWorldPoints[4],
+                               float incomingElevation,
+                               float normalizedDistance,
+                               float alpha);
 
-  void submitTerrainEdgeShadowProjectedClipped(
+  void constructTerrainEdgeShadowProjectedClipped(
       const IsometricRenderContext& renderContext,
       std::vector<IsometricRenderItem>& outItems,
       const TerrainShadowEdge& edge,
@@ -143,6 +144,26 @@ private:
                               float sunHeight,
                               float alpha);
 
+  bool tryConstructShadowOnTile(const IsometricRenderContext& context,
+                                std::vector<IsometricRenderItem>& outItems,
+                                const glm::ivec2& tile,
+                                int requiredElevation,
+                                const glm::vec2 worldPoints[4],
+                                float alpha);
+
+  float calculateTerrainShadowLength(const TerrainShadowEdge& edge,
+                                     float sunHeight,
+                                     float maxShadowLength);
+
+  template <typename Visitor>
+  void walkShadowEdgeRays(const TerrainShadowEdge& edge,
+                          const glm::vec2& shadowDir,
+                          float shadowLength,
+                          Visitor&& visit);
+
+  template <typename Visitor>
+  void constructSeedShadowStrip(const TerrainShadowEdge& edge, Visitor&& visit);
+
 private:
   struct TerrainShadowCache
   {
@@ -155,6 +176,12 @@ private:
     glm::vec3 sunDir{999.0f, 999.0f, 999.0f};
     glm::vec2 isoCameraPosition{999.0f, 999.0f};
     float zoom = -1.0f;
+  };
+
+  struct CachedTerrainShadowPolygon
+  {
+    glm::vec2 screenPoints[4];
+    float sortKey = 0.0f;
   };
 
 #ifdef __EMSCRIPTEN__
@@ -181,5 +208,58 @@ private:
   TerrainShadowCache m_cache;
   IsometricShadowSettings m_shadowSettings;
 };
+
+template <typename Visitor>
+void IsometricShadowSystem::constructSeedShadowStrip(
+    const TerrainShadowEdge& edge,
+    Visitor&& visit)
+{
+  if (edge.side == TerrainShadowEdge::Side::West ||
+      edge.side == TerrainShadowEdge::Side::East)
+  {
+    const int y0 = static_cast<int>(std::floor(std::min(edge.a.y, edge.b.y)));
+
+    const int y1 =
+        static_cast<int>(std::ceil(std::max(edge.a.y, edge.b.y))) - 1;
+
+    for (int y = y0; y <= y1; y++)
+      visit(glm::ivec2{edge.receiverTile.x, y}, true);
+
+    return;
+  }
+
+  const int x0 = static_cast<int>(std::floor(std::min(edge.a.x, edge.b.x)));
+
+  const int x1 = static_cast<int>(std::ceil(std::max(edge.a.x, edge.b.x))) - 1;
+
+  for (int x = x0; x <= x1; x++)
+    visit(glm::ivec2{x, edge.receiverTile.y}, true);
+}
+
+template <typename Visitor>
+void IsometricShadowSystem::walkShadowEdgeRays(const TerrainShadowEdge& edge,
+                                               const glm::vec2& shadowDir,
+                                               float shadowLength,
+                                               Visitor&& visit)
+{
+  const float edgeLength = glm::length(edge.b - edge.a);
+
+  constexpr float RaySpacing = 0.1f;
+
+  const int samples =
+      std::max(2, static_cast<int>(std::ceil(edgeLength / RaySpacing)));
+
+  for (int i = 0; i <= samples; i++)
+  {
+    const float t = static_cast<float>(i) / static_cast<float>(samples);
+    const glm::vec2 p = glm::mix(edge.a, edge.b, t);
+
+    walkGridDDA(p + shadowDir * 0.02f,
+                shadowDir,
+                shadowLength,
+                [&](const glm::ivec2& tile, float)
+                { return visit(tile, false); });
+  }
+}
 
 } // namespace sfs

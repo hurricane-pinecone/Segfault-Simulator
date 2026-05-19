@@ -307,7 +307,7 @@ void IsometricRenderSystem::render()
 
   if (lightingSystem && registry->hasSystem<IsometricShadowSystem>())
   {
-    registry->getSystem<IsometricShadowSystem>().submitTerrainEdgeShadows(
+    registry->getSystem<IsometricShadowSystem>().submitTerrainShadows(
         m_context, *ambientLighting, m_renderQueue);
   }
 
@@ -400,10 +400,6 @@ void IsometricRenderSystem::flushBatches()
 
     if (item.isShadow)
     {
-      const float left = static_cast<float>(item.dest.x);
-      const float right = static_cast<float>(item.dest.x + item.dest.w);
-      const float bottom = static_cast<float>(item.dest.y + item.dest.h);
-
       OpenGLQuadRenderer::FreeformQuadDrawCommand command;
 
       command.texture = texture;
@@ -412,10 +408,10 @@ void IsometricRenderSystem::flushBatches()
       command.textureHeight = item.textureHeight;
       command.tint = item.tint;
 
-      command.points[0] = glm::vec2{left, bottom} + item.shadowOffset;
-      command.points[1] = glm::vec2{right, bottom} + item.shadowOffset;
-      command.points[2] = glm::vec2{right, bottom};
-      command.points[3] = glm::vec2{left, bottom};
+      command.points[0] = item.shadowScreenPoints[0];
+      command.points[1] = item.shadowScreenPoints[1];
+      command.points[2] = item.shadowScreenPoints[2];
+      command.points[3] = item.shadowScreenPoints[3];
 
       quadRenderer.drawFreeformQuad(command);
       gSpriteProjectedShadowItems++;
