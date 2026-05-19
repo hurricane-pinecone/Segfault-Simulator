@@ -54,8 +54,6 @@ if(IS_WEB_BUILD)
         -sFULL_ES3=1
         -sUSE_PTHREADS=1
         -sPTHREAD_POOL_SIZE=4
-        # -sPROXY_TO_PTHREAD=1
-        # -sOFFSCREENCANVAS_SUPPORT=1
     )
 
   add_custom_target(run
@@ -67,11 +65,15 @@ if(IS_WEB_BUILD)
       WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   )
 
-add_custom_command(TARGET sampleGame POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/web/server.py"
-        "$<TARGET_FILE_DIR:sampleGame>/server.py"
-)
+  add_custom_command(TARGET sampleGame POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/web/server.py"
+          "$<TARGET_FILE_DIR:sampleGame>/server.py"
+
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/web/coi-serviceworker.js"
+          "$<TARGET_FILE_DIR:sampleGame>/coi-serviceworker.js"
+  )
 else()
     add_custom_command(TARGET sampleGame POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
