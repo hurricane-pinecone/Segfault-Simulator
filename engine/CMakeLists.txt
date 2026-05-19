@@ -55,6 +55,9 @@ if(ENGINE_WEB_BUILD)
         -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
         -sUSE_SDL_MIXER=2
+        -pthread
+        -matomics
+        -mbulk-memory
     )
 
     target_link_options(engine PUBLIC
@@ -66,6 +69,8 @@ if(ENGINE_WEB_BUILD)
         -sMIN_WEBGL_VERSION=2
         -sMAX_WEBGL_VERSION=2
         -sFULL_ES3=1
+        -sUSE_PTHREADS=1
+        -sPTHREAD_POOL_SIZE=4
     )
 else()
     find_package(lua REQUIRED)

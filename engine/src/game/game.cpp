@@ -31,7 +31,7 @@
 
 #ifndef ENGINE_WEB
   #include "imgui.h"
-  #include "imgui/backends/imgui_impl_sdlrenderer2.h"
+  #include "imgui/backends/imgui_impl_sdlrenderer2.h" // IWYU pragma: keep
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -92,9 +92,10 @@ bool Game::init(int windowWidth, int windowHeight)
   }
 
   SDL_GL_MakeCurrent(window, m_glContext);
-  SDL_GL_SetSwapInterval(1);
 
 #ifndef __EMSCRIPTEN__
+  SDL_GL_SetSwapInterval(1);
+
   glewExperimental = GL_TRUE;
 
   if (glewInit() != GLEW_OK)
