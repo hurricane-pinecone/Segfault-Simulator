@@ -2,7 +2,8 @@
 
 #include "engine/ecs/system.h"
 
-#include "glm/glm/ext/vector_float2.hpp"
+#include "engine/renderers/isometricRenderContext.h"
+#include "engine/renderers/isometricRenderQueue.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
 #include <vector>
@@ -12,7 +13,6 @@
 #include "engine/ecs/system.h"
 #include "engine/utils/isometricLightingUtils.h"
 
-#include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 
 #include <vector>
@@ -20,51 +20,44 @@
 namespace sfs
 {
 
-struct IsometricLightingSample
-{
-  glm::vec2 worldPosition;
-  float elevationOffset = 0.0f;
-};
-
-struct IsometricComputedLighting
-{
-  glm::vec3 direction{0.0f, 0.0f, 1.0f};
-  glm::vec3 color{1.0f, 1.0f, 1.0f};
-  float intensity = 1.0f;
-  float ambient = 0.18f;
-  float diffuseStrength = 0.85f;
-};
-
 class IsometricLightingSystem : public System
 {
 public:
-  explicit IsometricLightingSystem();
+  IsometricLightingSystem();
 
-  void rebuildLights();
+  void submitLighting(const IsometricRenderContext& context,
+                      IsometricRenderQueue& queue);
 
-  void setLightDirection(const glm::vec3& direction);
-  void setLighting(float ambient, float diffuseStrength);
+  void markLightsDirty();
 
   IsometricComputedLighting
   computeLighting(const IsometricLightingSample& sample) const;
 
-  float getAmbient() const { return m_ambient; }
-  float getDiffuseStrength() const { return m_diffuseStrength; }
-
-  const glm::vec3& getLightDirection() const { return m_lightDirection; }
-
-  const std::vector<IsometricLightSnapshot>& getLights() const
+  const std::vector<IsometricPointLightSnapshot>& getPointLights() const
   {
-    return m_lights;
+    return m_cache.lights;
   }
 
+  const IsometricAmbientLighting& ambient() const { return m_ambientLighting; }
+
+  void setAmbientLighting(IsometricAmbientLighting ambient);
+  void setAmbient(float ambient);
+  void setAmbientDirection(glm::vec3 direction);
+  void setAmbientColor(glm::vec3 color);
+  void setAmbientDiffuseStrength(float strength);
+
 private:
-  std::vector<IsometricLightSnapshot> m_lights;
+  void rebuildLightSnapshots();
 
-  glm::vec3 m_lightDirection{0.0f, 0.0f, 1.0f};
+private:
+  struct PointLightCache
+  {
+    std::vector<IsometricPointLightSnapshot> lights;
+    bool lightsDirty = true;
+  };
 
-  float m_ambient = 0.18f;
-  float m_diffuseStrength = 0.85f;
+  PointLightCache m_cache;
+  IsometricAmbientLighting m_ambientLighting;
 };
 
 } // namespace sfs

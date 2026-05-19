@@ -2,7 +2,7 @@
 #pragma once
 
 #include "SDL2/SDL_rect.h"
-#include "engine/systems/isometric/isometricLightingSystem.h"
+#include "engine/utils/isometricLightingUtils.h"
 #include <string>
 
 namespace sfs

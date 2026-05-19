@@ -4,6 +4,7 @@
 #include "engine/renderers/isometricRenderContext.h"
 #include "engine/renderers/isometricRenderItem.h"
 #include "engine/renderers/isometricRenderQueue.h"
+#include "engine/utils/isometricLightingUtils.h"
 #include <atomic>
 
 #ifdef __EMSCRIPTEN__
@@ -37,25 +38,30 @@ struct TerrainShadowEdge
   Side side = Side::West;
 };
 
-class IsometricLightingSystem;
-
 class IsometricShadowSystem : public System
 {
 public:
   IsometricShadowSystem();
-
-  void submitSpriteShadow(const IsometricRenderContext& renderContext,
-                          const IsometricRenderItem& caster,
-                          const glm::vec2& spriteWorldSample,
-                          int elevationLevel,
-                          const IsometricLightingSystem& lightingSystem,
-                          IsometricRenderQueue& queue);
+  IsometricShadowSystem(IsometricShadowSettings settings)
+      : m_shadowSettings(settings) {};
 
   void submitTerrainEdgeShadows(const IsometricRenderContext& context,
-                                const IsometricLightingSystem& lightingSystem,
+                                const IsometricAmbientLighting& lightingSystem,
                                 IsometricRenderQueue& queue);
 
+  void submitSpriteShadow(const IsometricRenderContext& context,
+                          const IsometricRenderItem& caster,
+                          const glm::vec2& casterWorldSample,
+                          int casterElevation,
+                          const IsometricAmbientLighting& ambientLighting,
+                          IsometricRenderQueue& queue);
+
   void markTerrainDirty();
+
+  void setTerrainShadowMaxLength(float length);
+  void setSpriteShadowMaxLength(float length);
+  void setTerrainShadowAlpha(float alpha);
+  void setSpriteShadowAlpha(float alpha);
 
 private:
   void submitTerrainShadow(std::vector<IsometricRenderItem>& outItems,
@@ -171,6 +177,7 @@ private:
 #endif
 
   TerrainShadowCache m_cache;
+  IsometricShadowSettings m_shadowSettings;
 };
 
 } // namespace sfs

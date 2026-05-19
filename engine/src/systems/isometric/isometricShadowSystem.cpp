@@ -14,7 +14,6 @@
 #include "engine/components/terrainBoundaryComponent.h"
 #include "engine/renderers/isometricRenderItem.h"
 #include "engine/renderers/isometricRenderQueue.h"
-#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 
@@ -40,7 +39,7 @@ void IsometricShadowSystem::markTerrainDirty()
 
 void IsometricShadowSystem::submitTerrainEdgeShadows(
     const IsometricRenderContext& context,
-    const IsometricLightingSystem& lightingSystem,
+    const IsometricAmbientLighting& ambient,
     IsometricRenderQueue& queue)
 {
   if (m_cache.edgesDirty || m_cache.edges.empty())
@@ -51,7 +50,7 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
     m_cache.itemsDirty = true;
   }
 
-  const glm::vec3 sunDir3D = lightingSystem.getLightDirection();
+  const glm::vec3 sunDir3D = ambient.direction;
 
   if (sunDir3D.z <= 0.02f)
     return;
@@ -68,8 +67,7 @@ void IsometricShadowSystem::submitTerrainEdgeShadows(
   constexpr float TerrainShadowAlpha = 0.42f;
 
   const float alpha =
-      TerrainShadowAlpha *
-      std::clamp(lightingSystem.getDiffuseStrength(), 0.0f, 1.0f);
+      TerrainShadowAlpha * std::clamp(ambient.diffuseStrength, 0.0f, 1.0f);
 
   if (alpha < 0.04f)
     return;
@@ -367,6 +365,23 @@ void IsometricShadowSystem::submitTerrainEdgeShadowProjectedClipped(
   }
 }
 
+// DDA grid traversal.
+//
+// We treat the shadow test like a ray marching through a tile grid:
+//
+// Instead of sampling tiny intervals, we jump directly to the next
+// tile boundary crossing each iteration.
+//
+// tMaxX/Y:
+//   Distance along the ray until we cross the next vertical/horizontal
+//   grid line.
+//
+// tDeltaX/Y:
+//   How much ray distance is needed to cross one whole tile in X/Y.
+//
+// Each loop visits exactly ONE new tile.
+//
+// Reduced shadow traversal work by roughly 10x
 bool IsometricShadowSystem::terrainShadowPathBlocked(
     const IsometricRenderContext& context,
     const TerrainShadowEdge& edge,
@@ -834,8 +849,6 @@ IsometricShadowSystem::buildTerrainEdgeShadowItems(
   const std::vector<TerrainShadowEdge> edges = m_cache.edges;
   const std::size_t edgeCount = edges.size();
 
-  constexpr float TerrainShadowMaxLength = 3.0f;
-
   struct ShadowBuildResult
   {
     std::vector<IsometricRenderItem> items;
@@ -886,13 +899,14 @@ IsometricShadowSystem::buildTerrainEdgeShadowItems(
             if (!shouldCastTerrainShadow(edge, shadowDir))
               continue;
 
-            submitTerrainEdgeShadowProjectedClipped(context,
-                                                    result.items,
-                                                    edge,
-                                                    shadowDir,
-                                                    sunHeight,
-                                                    TerrainShadowMaxLength,
-                                                    alpha);
+            submitTerrainEdgeShadowProjectedClipped(
+                context,
+                result.items,
+                edge,
+                shadowDir,
+                sunHeight,
+                m_shadowSettings.terrainShadowMaxLength,
+                alpha);
 
             result.edgesProcessed++;
           }
@@ -913,6 +927,115 @@ IsometricShadowSystem::buildTerrainEdgeShadowItems(
   }
 
   return items;
+}
+
+void IsometricShadowSystem::submitSpriteShadow(
+    const IsometricRenderContext& context,
+    const IsometricRenderItem&,
+    const glm::vec2& casterWorldSample,
+    int casterElevation,
+    const IsometricAmbientLighting& ambientLighting,
+    IsometricRenderQueue& queue)
+{
+  const glm::vec3 sunDir3D = ambientLighting.direction;
+
+  if (sunDir3D.z <= 0.02f)
+    return;
+
+  glm::vec2 shadowDir{-sunDir3D.x, -sunDir3D.y};
+
+  if (glm::length(shadowDir) > 0.001f)
+    shadowDir = glm::normalize(shadowDir);
+  else
+    shadowDir = glm::vec2{0.0f, 1.0f};
+
+  const float sunHeight = std::max(sunDir3D.z, 0.08f);
+
+  constexpr float SpriteShadowWidth = 0.42f;
+  constexpr float SpriteShadowAlpha = 0.28f;
+
+  const float diffuse = std::clamp(ambientLighting.diffuseStrength, 0.0f, 1.0f);
+
+  const float alpha = SpriteShadowAlpha * diffuse;
+
+  if (alpha <= 0.01f)
+    return;
+
+  const float shadowLength = m_shadowSettings.spriteShadowMaxLength *
+                             std::clamp(1.0f / sunHeight, 0.75f, 2.25f);
+
+  const glm::vec2 side{-shadowDir.y, shadowDir.x};
+
+  const glm::vec2 base = casterWorldSample;
+  const glm::vec2 tip = base + shadowDir * shadowLength;
+
+  glm::vec2 worldPoints[4] = {
+      base - side * SpriteShadowWidth * 0.5f,
+      base + side * SpriteShadowWidth * 0.5f,
+      tip + side * SpriteShadowWidth * 0.3f,
+      tip - side * SpriteShadowWidth * 0.3f,
+  };
+
+  const float minFx = std::min(std::min(worldPoints[0].x, worldPoints[1].x),
+                               std::min(worldPoints[2].x, worldPoints[3].x));
+
+  const float maxFx = std::max(std::max(worldPoints[0].x, worldPoints[1].x),
+                               std::max(worldPoints[2].x, worldPoints[3].x));
+
+  const float minFy = std::min(std::min(worldPoints[0].y, worldPoints[1].y),
+                               std::min(worldPoints[2].y, worldPoints[3].y));
+
+  const float maxFy = std::max(std::max(worldPoints[0].y, worldPoints[1].y),
+                               std::max(worldPoints[2].y, worldPoints[3].y));
+
+  const int minX = static_cast<int>(std::floor(minFx));
+  const int maxX = static_cast<int>(std::floor(maxFx));
+  const int minY = static_cast<int>(std::floor(minFy));
+  const int maxY = static_cast<int>(std::floor(maxFy));
+
+  std::vector<IsometricRenderItem> items;
+
+  for (int y = minY; y <= maxY; y++)
+  {
+    for (int x = minX; x <= maxX; x++)
+    {
+      const glm::ivec2 tile{x, y};
+
+      if (!context.hasTileAt(tile))
+        continue;
+
+      const int receiverElevation = context.getTileElevationAt(glm::vec2{x, y});
+
+      submitTileShadowPolygonAt(
+          context, items, tile, receiverElevation, worldPoints, alpha);
+    }
+  }
+
+  queue.submitAll(items);
+}
+
+void IsometricShadowSystem::setTerrainShadowMaxLength(float length)
+{
+  m_shadowSettings.terrainShadowMaxLength = std::max(length, 0.0f);
+
+  markTerrainDirty();
+}
+
+void IsometricShadowSystem::setSpriteShadowMaxLength(float length)
+{
+  m_shadowSettings.spriteShadowMaxLength = std::max(length, 0.0f);
+}
+
+void IsometricShadowSystem::setTerrainShadowAlpha(float alpha)
+{
+  m_shadowSettings.terrainShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
+
+  markTerrainDirty();
+}
+
+void IsometricShadowSystem::setSpriteShadowAlpha(float alpha)
+{
+  m_shadowSettings.spriteShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
 }
 
 #ifdef __EMSCRIPTEN__

@@ -13,9 +13,11 @@
 #include "engine/logger/logger.h"
 
 #include "engine/systems/cameraSystem.h"
+#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
+#include <cstddef>
 
 namespace sfs
 {
@@ -62,12 +64,12 @@ void IsometricRenderSystem::render()
     tileElevationCacheDirty = false;
   }
 
-  auto* lightingSystem = registry->hasSystem<IsometricLightingSystem>()
-                             ? &registry->getSystem<IsometricLightingSystem>()
-                             : nullptr;
-
-  if (lightingSystem)
-    lightingSystem->rebuildLights();
+  const auto lightingSystem =
+      registry->hasSystem<IsometricLightingSystem>()
+          ? &registry->getSystem<IsometricLightingSystem>()
+          : nullptr;
+  const auto ambientLighting =
+      lightingSystem ? &lightingSystem->ambient() : nullptr;
 
   const auto& activeCamera = getCamera();
   auto cameraPosition = getCameraPosition();
@@ -98,6 +100,9 @@ void IsometricRenderSystem::render()
   m_context.waveFrequency = waveFrequency;
   m_context.waveSpeed = waveSpeed;
   m_context.tileElevations = &tileElevationCache;
+
+  if (ambientLighting)
+    lightingSystem->submitLighting(m_context, m_renderQueue);
 
   for (const auto& entity : getEntities())
   {
@@ -284,53 +289,30 @@ void IsometricRenderSystem::render()
       }
     }
 
-    submitSprite(item);
+    m_renderQueue.submit(item);
+
+    if (!tileEntity && registry->hasSystem<IsometricShadowSystem>())
+    {
+      registry->getSystem<IsometricShadowSystem>().submitSpriteShadow(
+          m_context,
+          item,
+          spriteWorldSample,
+          elevationLevel,
+          *ambientLighting,
+          m_renderQueue);
+    }
   }
 
   if (lightingSystem && registry->hasSystem<IsometricShadowSystem>())
   {
     registry->getSystem<IsometricShadowSystem>().submitTerrainEdgeShadows(
-        m_context, *lightingSystem, m_renderQueue);
+        m_context, *ambientLighting, m_renderQueue);
   }
 
   flushBatches();
 }
 
 void IsometricRenderSystem::beginBatches() { m_renderQueue.clear(); }
-
-void IsometricRenderSystem::submitSprite(const IsometricRenderItem& item)
-{
-  m_renderQueue.submit(item);
-}
-
-void IsometricRenderSystem::submitShadow(const IsometricRenderItem& caster,
-                                         const glm::vec2& shadowOffset,
-                                         float alpha,
-                                         float sortKeyBias)
-{
-  IsometricRenderItem shadow = caster;
-
-  shadow.isShadow = true;
-  shadow.hasNormalMap = false;
-  shadow.normalTextureId = nullptr;
-  shadow.shadowOffset = shadowOffset;
-
-  // Shadows live between ground tiles and sprites. They still keep a sort key
-  // near their caster so they follow the caster's approximate depth.
-  shadow.renderLayer = 1;
-
-  const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
-
-  shadow.tint = SDL_Color{0, 0, 0, a};
-
-  const float casterBottom = caster.screenSortY;
-  const float shadowTipBottom = caster.screenSortY + shadowOffset.y;
-
-  shadow.screenSortY = std::max(casterBottom, shadowTipBottom);
-  shadow.sortKey = shadow.screenSortY + sortKeyBias;
-
-  m_renderQueue.submit(shadow);
-}
 
 void IsometricRenderSystem::flushBatches()
 {
@@ -372,6 +354,11 @@ void IsometricRenderSystem::flushBatches()
         // tiles first, shadows next, sprites last.
         return a.renderLayer < b.renderLayer;
       });
+
+  const std::vector<IsometricPointLightSnapshot>* pointLights = nullptr;
+  if (registry->hasSystem<IsometricLightingSystem>())
+    pointLights =
+        &registry->getSystem<IsometricLightingSystem>().getPointLights();
 
   for (const auto& item : items)
   {
@@ -429,6 +416,7 @@ void IsometricRenderSystem::flushBatches()
       command.points[3] = glm::vec2{left, bottom};
 
       quadRenderer.drawFreeformQuad(command);
+      gSpriteProjectedShadowItems++;
     }
     else
     {
@@ -451,11 +439,9 @@ void IsometricRenderSystem::flushBatches()
       command.worldPoints[2] = item.worldPoints[2];
       command.worldPoints[3] = item.worldPoints[3];
 
-      if (registry->hasSystem<IsometricLightingSystem>())
+      if (pointLights)
       {
-        const auto& lightingSystem =
-            registry->getSystem<IsometricLightingSystem>();
-        const auto& lights = lightingSystem.getLights();
+        const auto& lights = *pointLights;
 
         command.lightCount = std::min(static_cast<int>(lights.size()),
                                       OpenGLQuadRenderer::MaxShaderLights);

@@ -5,6 +5,8 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/registry.h" // IWYU pragma: keep
 
+#include "engine/utils/isometricLightingUtils.h"
+#include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
 
 #include <algorithm>
@@ -19,9 +21,9 @@ IsometricLightingSystem::IsometricLightingSystem()
   registerComponent<LightEmitterComponent>();
 }
 
-void IsometricLightingSystem::rebuildLights()
+void IsometricLightingSystem::rebuildLightSnapshots()
 {
-  m_lights.clear();
+  m_cache.lights.clear();
 
   for (const auto& entity : getEntities())
   {
@@ -34,7 +36,7 @@ void IsometricLightingSystem::rebuildLights()
     const auto& transform = entity.getComponent<TransformComponent>();
     const auto& light = entity.getComponent<LightEmitterComponent>();
 
-    m_lights.push_back({
+    m_cache.lights.push_back({
         transform.position,
         light.height,
         light.color,
@@ -44,20 +46,6 @@ void IsometricLightingSystem::rebuildLights()
   }
 }
 
-void IsometricLightingSystem::setLightDirection(const glm::vec3& direction)
-{
-  if (glm::length(direction) < 0.001f)
-    return;
-
-  m_lightDirection = glm::normalize(direction);
-}
-
-void IsometricLightingSystem::setLighting(float ambient, float diffuseStrength)
-{
-  m_ambient = std::clamp(ambient, 0.0f, 1.0f);
-  m_diffuseStrength = std::clamp(diffuseStrength, 0.0f, 2.0f);
-}
-
 IsometricComputedLighting IsometricLightingSystem::computeLighting(
     const IsometricLightingSample& sample) const
 {
@@ -65,7 +53,7 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
   glm::vec3 accumulatedColor{0.0f, 0.0f, 0.0f};
   float accumulatedIntensity = 0.0f;
 
-  for (const auto& light : m_lights)
+  for (const auto& light : m_cache.lights)
   {
     glm::vec2 toLightWorld2 = light.worldPosition - sample.worldPosition;
 
@@ -102,7 +90,8 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
   }
 
   glm::vec3 lightDir =
-      m_lightDirection * m_diffuseStrength + accumulatedLightDir;
+      m_ambientLighting.direction * m_ambientLighting.diffuseStrength +
+      accumulatedLightDir;
 
   if (glm::length(lightDir) < 0.001f)
     lightDir = glm::vec3{0.0f, 0.0f, 1.0f};
@@ -113,9 +102,51 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
       lightDir,
       finalColor,
       accumulatedIntensity,
-      m_ambient,
-      m_diffuseStrength,
+      m_ambientLighting.ambient,
+      m_ambientLighting.diffuseStrength,
   };
+}
+
+void IsometricLightingSystem::submitLighting(
+    const IsometricRenderContext& context,
+    IsometricRenderQueue& queue)
+{
+  if (!m_cache.lightsDirty)
+    return;
+
+  rebuildLightSnapshots();
+  m_cache.lightsDirty = false;
+}
+
+void IsometricLightingSystem::markLightsDirty() { m_cache.lightsDirty = true; }
+
+void IsometricLightingSystem::setAmbientLighting(
+    IsometricAmbientLighting ambient)
+{
+  m_ambientLighting = ambient;
+}
+
+void IsometricLightingSystem::setAmbient(float ambient)
+{
+  m_ambientLighting.ambient = ambient;
+}
+
+void IsometricLightingSystem::setAmbientDirection(glm::vec3 direction)
+{
+  if (glm::length(direction) < 0.001f)
+    return;
+
+  m_ambientLighting.direction = glm::normalize(direction);
+}
+
+void IsometricLightingSystem::setAmbientColor(glm::vec3 color)
+{
+  m_ambientLighting.color = color;
+}
+
+void IsometricLightingSystem::setAmbientDiffuseStrength(float strength)
+{
+  m_ambientLighting.diffuseStrength = strength;
 }
 
 } // namespace sfs
