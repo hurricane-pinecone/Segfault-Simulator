@@ -5,6 +5,7 @@
 #include "engine/components/colliderComponent.h"
 #include "engine/components/elevationComponent.h"
 #include "engine/components/lightEmitterComponent.h"
+#include "engine/components/shadowCasterComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/game/gameObject.h"
@@ -53,6 +54,7 @@ public:
                 glm::vec2{-0.15f, -0.15f}, glm::vec2{0.3f, 0.3f})
             .addComponent<sfs::LightEmitterComponent>(
                 10.0f, 1.0f, 32.0f, m_color)
+            .addComponent<sfs::ShadowCasterComponent>()
             .addTag<sfs::SolidObject>();
 
     m_entity.getComponent<sfs::ColliderComponent>().updateBounds(m_position);

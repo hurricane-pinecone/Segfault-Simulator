@@ -4,6 +4,7 @@
 #include "engine/components/cameraComponent.h"
 #include "engine/components/colliderComponent.h"
 #include "engine/components/rigidBodyComponent.h"
+#include "engine/components/shadowCasterComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/game/gameObject.h"
@@ -27,7 +28,8 @@ public:
             .addComponent<sfs::TransformComponent>(glm::vec2{12.0, 12.0})
             .addComponent<sfs::ColliderComponent>(
                 glm::vec2{-0.25f, -0.25f}, glm::vec2{0.5f, 0.5f})
-            .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0});
+            .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0})
+            .addComponent<sfs::ShadowCasterComponent>();
 
     // Camera
     scene.createEntity()

@@ -1,6 +1,7 @@
 #include "engine/Color/Color.h"
 #include "engine/logger/logger.h"
 #include "engine/renderers/openGLQuadRenderer.h"
+#include "engine/renderers/quads.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
 #include <engine/TextRenderer/textRenderer.h>
@@ -163,7 +164,7 @@ void TextRenderer::drawText(float x,
     it = insertedIt;
   }
 
-  OpenGLQuadRenderer::QuadDrawCommand command;
+  TexturedQuad command;
 
   command.texture = it->second.texture;
 
@@ -191,7 +192,7 @@ void TextRenderer::drawText(float x,
       255,
   };
 
-  m_quadRenderer->drawQuad(command);
+  m_quadRenderer->drawImmediate(command);
 }
 
 } // namespace sfs

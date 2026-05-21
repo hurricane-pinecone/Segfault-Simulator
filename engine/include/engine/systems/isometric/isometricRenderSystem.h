@@ -5,8 +5,9 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/system.h"
 
+#include "engine/renderers/commands/commands.h"
 #include "engine/renderers/isometricRenderContext.h"
-#include "engine/renderers/isometricRenderQueue.h"
+#include "engine/renderers/renderQueue.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -23,41 +24,6 @@ extern int gTerrainShadowEdgesProcessed;
 extern int gTileRenderItems;
 extern int gSpriteRenderItems;
 extern int gSpriteProjectedShadowItems;
-
-constexpr int WallSideRightVisible = 2;
-constexpr int WallSideFrontVisible = 3;
-
-constexpr float ShadowLength = 3.0f;
-constexpr float ShadowStepSize = 0.35f;
-constexpr int MaxShadowSteps = 12;
-constexpr float ShadowAlpha = 0.45f;
-constexpr float WallShadowAlpha = 90.0f / 255.0f;
-constexpr float CasterFootWidth = 0.35f;
-constexpr float CasterFootDepth = 0.22f;
-
-struct TileElevationKey
-{
-  glm::ivec2 tile{0, 0};
-  int elevation = 0;
-
-  bool operator==(const TileElevationKey& other) const noexcept
-  {
-    return tile == other.tile && elevation == other.elevation;
-  }
-};
-
-struct TileElevationKeyHash
-{
-  std::size_t operator()(const TileElevationKey& k) const noexcept
-  {
-    const std::uint32_t x = static_cast<std::uint32_t>(k.tile.x);
-    const std::uint32_t y = static_cast<std::uint32_t>(k.tile.y);
-    const std::uint32_t e = static_cast<std::uint32_t>(k.elevation);
-
-    return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u ^
-                                    e * 83492791u);
-  }
-};
 
 struct WallFaceKey
 {
@@ -128,6 +94,8 @@ private:
 
   void flushBatches();
 
+  unsigned int resolveTexture(const std::string* textureId);
+
   glm::vec2 getCameraPosition() const;
   glm::ivec2 gridCellOf(const glm::vec2& position) const;
 
@@ -169,7 +137,7 @@ private:
   float waveFrequency = 0.45f;
   float waveSpeed = 3.0f;
 
-  IsometricRenderQueue m_renderQueue;
+  RenderQueue<AnyRenderCommand> m_renderQueue;
 
   std::unordered_map<glm::ivec2, int, IVec2Hash> tileElevationCache;
   bool tileElevationCacheDirty = true;
