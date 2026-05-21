@@ -8,6 +8,7 @@
 #include "engine/utils/isometricLightingUtils.h"
 #include "glm/glm/geometric.hpp"
 #include <atomic>
+#include <map>
 #include <vector>
 
 #ifdef __EMSCRIPTEN__
@@ -43,7 +44,7 @@ struct TerrainShadowEdge
 
 class IsometricShadowSystem
     : public System,
-      public RenderProvider<IsometricRenderContext, TerrainShadowCommand>
+      public RenderProvider<IsometricRenderContext, TerrainShadowBatchCommand>
 {
 public:
   IsometricShadowSystem();
@@ -132,6 +133,9 @@ private:
                             float alpha,
                             float sortKey);
 
+  std::vector<TerrainShadowBatchCommand> batchTerrainShadowCommands(
+      const std::vector<TerrainShadowCommand>& items) const;
+
 private:
   struct TerrainShadowCache
   {
@@ -140,14 +144,36 @@ private:
     bool edgesDirty = true;
     bool itemsDirty = true;
 
+    float alpha = -1.0f;
+
     glm::vec3 sunDir{999.0f, 999.0f, 999.0f};
     glm::vec2 isoCameraPosition{999.0f, 999.0f};
     float zoom = -1.0f;
   };
 
+  struct RenderOrderKey
+  {
+    RenderPass pass;
+    float depth;
+    int subpass;
+
+    bool operator<(const RenderOrderKey& other) const
+    {
+      if (pass != other.pass)
+        return pass < other.pass;
+
+      if (depth != other.depth)
+        return depth < other.depth;
+
+      return subpass < other.subpass;
+    }
+  };
+
   TerrainShadowCache m_cache;
   IsometricShadowSettings m_shadowSettings;
   const IsometricAmbientLighting* m_ambientLighting = nullptr;
+
+  std::map<RenderOrderKey, std::vector<Quad>> shadowBatches;
 
 #ifdef __EMSCRIPTEN__
   struct ShadowBuildResult
@@ -175,7 +201,7 @@ void IsometricShadowSystem::walkShadowEdgeRays(const TerrainShadowEdge& edge,
 {
   const float edgeLength = glm::length(edge.b - edge.a);
 
-  constexpr float RaySpacing = 0.1f;
+  constexpr float RaySpacing = 0.25;
 
   const int samples =
       std::max(2, static_cast<int>(std::ceil(edgeLength / RaySpacing)));

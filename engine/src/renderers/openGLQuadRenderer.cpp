@@ -2,7 +2,9 @@
 #include "engine/renderers/openGLQuadRenderer.h"
 
 #include "engine/logger/logger.h"
+#include "engine/renderers/batchKeys/LitQuadBatchKey.h"
 #include "engine/renderers/quads.h"
+#include "engine/systems/isometric/isometricRenderSystem.h"
 #include <algorithm>
 
 #ifdef __EMSCRIPTEN__
@@ -269,28 +271,84 @@ void OpenGLQuadRenderer::shutdown()
   initialized = false;
 }
 
+void OpenGLQuadRenderer::submit(const Quad& command)
+{
+  initialize();
+
+  if (!initialized)
+    return;
+
+  beginPipeline(Pipeline::SolidColor);
+  appendSolidVertices(command);
+}
+
 void OpenGLQuadRenderer::submit(const TexturedQuad& command)
 {
-  if (hasPendingQuads())
-    flush();
-
+  flush();
   drawImmediate(command);
 }
 
 void OpenGLQuadRenderer::submit(const FreeformQuad& command)
 {
-  if (hasPendingQuads())
-    flush();
-
+  flush();
   drawQuad(command);
 }
 
 void OpenGLQuadRenderer::submit(const LitQuad& command)
 {
-  if (hasPendingQuads())
-    flush();
+  initialize();
 
-  drawQuad(command);
+  if (!initialized)
+    return;
+
+  if (command.texture == 0)
+    return;
+
+  if (command.destRect.w <= 0 || command.destRect.h <= 0)
+    return;
+
+  if (command.textureWidth <= 0 || command.textureHeight <= 0)
+    return;
+
+  const LitBatchKey key = LitBatchKey::from(command, defaultNormalTexture);
+
+  if (m_pipeline != Pipeline::LitSprite || !m_litBatchKey ||
+      *m_litBatchKey != key)
+  {
+    flushCurrentPipeline();
+    m_pipeline = Pipeline::LitSprite;
+    m_litBatchKey = key;
+  }
+
+  appendLitVertices(command);
+}
+
+void OpenGLQuadRenderer::appendSolidVertices(const Quad& command)
+{
+  initialize();
+
+  if (!initialized)
+    return;
+
+  const glm::vec4 color{
+      command.tint.r / 255.0f,
+      command.tint.g / 255.0f,
+      command.tint.b / 255.0f,
+      command.tint.a / 255.0f,
+  };
+
+  const glm::vec2 p0 = toNdc(command.points[0]);
+  const glm::vec2 p1 = toNdc(command.points[1]);
+  const glm::vec2 p2 = toNdc(command.points[2]);
+  const glm::vec2 p3 = toNdc(command.points[3]);
+
+  m_solidVertices.push_back({p0, color});
+  m_solidVertices.push_back({p1, color});
+  m_solidVertices.push_back({p2, color});
+
+  m_solidVertices.push_back({p0, color});
+  m_solidVertices.push_back({p2, color});
+  m_solidVertices.push_back({p3, color});
 }
 
 void OpenGLQuadRenderer::drawImmediate(const TexturedQuad& command)
@@ -412,22 +470,8 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
   glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-void OpenGLQuadRenderer::drawQuad(const LitQuad& command)
+void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
 {
-  initialize();
-
-  if (!initialized)
-    return;
-
-  if (command.texture == 0)
-    return;
-
-  if (command.destRect.w <= 0 || command.destRect.h <= 0)
-    return;
-
-  if (command.textureWidth <= 0 || command.textureHeight <= 0)
-    return;
-
   const float left = static_cast<float>(command.destRect.x);
   const float right =
       static_cast<float>(command.destRect.x + command.destRect.w);
@@ -440,33 +484,25 @@ void OpenGLQuadRenderer::drawQuad(const LitQuad& command)
   const glm::vec2 p2 = toNdc({right, bottom});
   const glm::vec2 p3 = toNdc({left, bottom});
 
-  drawQuadInternal(command.texture,
-                   command.srcRect,
-                   command.textureWidth,
-                   command.textureHeight,
-                   p0,
-                   p1,
-                   p2,
-                   p3,
-                   command.tint,
-                   true,
-                   command.hasNormalMap,
-                   command.normalTexture,
-                   command.lightDirection,
-                   command.lightIntensity,
-                   command.ambient,
-                   command.diffuseStrength,
-                   command.lightColor,
-                   command.worldPoints,
-                   command.lightCount,
-                   command.lightPositions,
-                   command.lightColors,
-                   command.lightIntensities,
-                   command.lightRadii,
-                   command.lightHeights);
+  const float u0 = static_cast<float>(command.srcRect.x) / command.textureWidth;
+  const float u1 = static_cast<float>(command.srcRect.x + command.srcRect.w) /
+                   command.textureWidth;
+
+  const float v0 =
+      static_cast<float>(command.srcRect.y) / command.textureHeight;
+  const float v1 = static_cast<float>(command.srcRect.y + command.srcRect.h) /
+                   command.textureHeight;
+
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0]});
+  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1]});
+  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2]});
+
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0]});
+  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2]});
+  m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3]});
 }
 
-void OpenGLQuadRenderer::flush()
+void OpenGLQuadRenderer::flushSolid()
 {
   initialize();
 
@@ -491,6 +527,7 @@ void OpenGLQuadRenderer::flush()
       m_solidVertices.data(),
       GL_DYNAMIC_DRAW);
 
+  gTerrainShadowFlushes++;
   glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -498,6 +535,86 @@ void OpenGLQuadRenderer::flush()
   glUseProgram(0);
 
   m_solidVertices.clear();
+}
+
+void OpenGLQuadRenderer::flushLit()
+{
+  initialize();
+
+  if (!initialized)
+    return;
+
+  if (m_litVertices.empty() || !m_litBatchKey)
+    return;
+
+  const LitBatchKey& key = *m_litBatchKey;
+
+  glUseProgram(shaderProgram);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, key.texture);
+  glUniform1i(uTextureLocation, 0);
+
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, key.normalTexture);
+  glUniform1i(uNormalTextureLocation, 1);
+
+  glUniform1i(uUseLightingLocation, 1);
+  glUniform1i(uHasNormalMapLocation, key.hasNormalMap ? 1 : 0);
+
+  glUniform3f(uLightDirectionLocation,
+              key.lightDirection.x,
+              key.lightDirection.y,
+              key.lightDirection.z);
+
+  glUniform1f(uLightIntensityLocation, key.lightIntensity);
+  glUniform1f(uAmbientLocation, key.ambient);
+  glUniform1f(uDiffuseStrengthLocation, key.diffuseStrength);
+
+  glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+
+  glUniform3f(uLightColorLocation,
+              key.lightColor.x,
+              key.lightColor.y,
+              key.lightColor.z);
+
+  glUniform1i(uLightCountLocation, key.lightCount);
+
+  if (key.lightCount > 0)
+  {
+    glUniform2fv(uLightPositionsLocation,
+                 key.lightCount,
+                 reinterpret_cast<const float*>(key.lightPositions));
+
+    glUniform3fv(uLightColorsLocation,
+                 key.lightCount,
+                 reinterpret_cast<const float*>(key.lightColors));
+
+    glUniform1fv(
+        uLightIntensitiesLocation, key.lightCount, key.lightIntensities);
+
+    glUniform1fv(uLightRadiiLocation, key.lightCount, key.lightRadii);
+    glUniform1fv(uLightHeightsLocation, key.lightCount, key.lightHeights);
+  }
+
+  glActiveTexture(GL_TEXTURE0);
+
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(m_litVertices.size() * sizeof(Vertex)),
+               m_litVertices.data(),
+               GL_DYNAMIC_DRAW);
+
+  glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_litVertices.size()));
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+  glUseProgram(0);
+
+  m_litVertices.clear();
+  m_litBatchKey.reset();
 }
 
 void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
@@ -1036,40 +1153,13 @@ void OpenGLQuadRenderer::deleteTexture(unsigned int texture)
 void OpenGLQuadRenderer::begin()
 {
   initialize();
+
+  m_pipeline = Pipeline::None;
+
   m_solidVertices.clear();
-}
+  m_litVertices.clear();
 
-bool OpenGLQuadRenderer::hasPendingQuads() const
-{
-  return !m_solidVertices.empty();
-}
-
-void OpenGLQuadRenderer::submit(const Quad& command)
-{
-  initialize();
-
-  if (!initialized)
-    return;
-
-  const glm::vec4 color{
-      command.tint.r / 255.0f,
-      command.tint.g / 255.0f,
-      command.tint.b / 255.0f,
-      command.tint.a / 255.0f,
-  };
-
-  const glm::vec2 p0 = toNdc(command.points[0]);
-  const glm::vec2 p1 = toNdc(command.points[1]);
-  const glm::vec2 p2 = toNdc(command.points[2]);
-  const glm::vec2 p3 = toNdc(command.points[3]);
-
-  m_solidVertices.push_back({p0, color});
-  m_solidVertices.push_back({p1, color});
-  m_solidVertices.push_back({p2, color});
-
-  m_solidVertices.push_back({p0, color});
-  m_solidVertices.push_back({p2, color});
-  m_solidVertices.push_back({p3, color});
+  m_litBatchKey.reset();
 }
 
 unsigned int OpenGLQuadRenderer::createSolidShaderProgram() const
@@ -1143,5 +1233,37 @@ void main()
 
   return program;
 }
+
+void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
+{
+  if (m_pipeline == pipeline)
+    return;
+
+  flushCurrentPipeline();
+  m_pipeline = pipeline;
+}
+
+void OpenGLQuadRenderer::flushCurrentPipeline()
+{
+  switch (m_pipeline)
+  {
+  case Pipeline::SolidColor:
+    flushSolid();
+    break;
+
+  case Pipeline::LitSprite:
+    flushLit();
+    break;
+
+  case Pipeline::Textured:
+  case Pipeline::Freeform:
+  case Pipeline::None:
+    break;
+  }
+
+  m_pipeline = Pipeline::None;
+}
+
+void OpenGLQuadRenderer::flush() { flushCurrentPipeline(); }
 
 } // namespace sfs

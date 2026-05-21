@@ -4,6 +4,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include <SDL_rect.h>
+#include <vector>
 
 namespace sfs
 {
@@ -12,6 +13,11 @@ struct Quad
 {
   SDL_Color tint{255, 255, 255, 255};
   glm::vec2 points[4] = {};
+};
+
+struct QuadBatch
+{
+  std::vector<Quad> quads;
 };
 
 struct TexturedQuad
@@ -67,6 +73,11 @@ struct LitQuad : TexturedQuad
   float lightIntensities[MaxShaderLights] = {};
   float lightRadii[MaxShaderLights] = {};
   float lightHeights[MaxShaderLights] = {};
+};
+
+struct LitQuadBatch
+{
+  std::vector<LitQuad> quads;
 };
 
 } // namespace sfs

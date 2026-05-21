@@ -6,14 +6,16 @@
 
 #include "engine/components/tags/isometricTile.h"
 #include "engine/renderers/commands/commands.h"
+#include "engine/renderers/commands/renderCommand.h"
 #include "engine/renderers/isometricRenderContext.h"
+#include "engine/renderers/quads.h"
 #include "engine/renderers/renderContext.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 
 #include "engine/ecs/registry.h"
 #include "engine/logger/logger.h"
 
-#include "engine/renderers/renderLayer.h"
+#include "engine/renderers/renderPass.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
@@ -221,9 +223,10 @@ void IsometricRenderSystem::render()
                    : transform.position;
 
     LitQuadCommand command;
+    command.order = isTileEntity(entity)
+                        ? RenderOrder{RenderPass::Terrain, sortKey, 0}
+                        : RenderOrder{RenderPass::Objects, sortKey, 0};
     command.textureId = &sprite->textureId;
-    command.renderLayer =
-        tileEntity ? RenderLayer::Background : RenderLayer::Object;
     command.quad.srcRect = sprite->srcRect;
     command.quad.destRect = dest;
     command.quad.textureWidth = surface->w;
@@ -260,8 +263,6 @@ void IsometricRenderSystem::render()
       command.quad.worldPoints[2] = spriteWorldSample;
       command.quad.worldPoints[3] = spriteWorldSample;
     }
-
-    command.sortKey = sortKey;
 
     // Ambient lighting
     if (lightingSystem)
@@ -340,6 +341,47 @@ void IsometricRenderSystem::flushBatches()
   auto& quadRenderer = RenderContext::quadRenderer();
   auto& commands = m_renderQueue.mutableItems();
 
+  std::vector<AnyRenderCommand> batched;
+  batched.reserve(commands.size());
+
+  std::map<std::tuple<RenderOrder, const std::string*, const std::string*>,
+           LitQuadBatchCommand>
+      litBatches;
+
+  for (const auto& command : commands)
+  {
+    std::visit(
+        [&](const auto& concrete)
+        {
+          using T = std::decay_t<decltype(concrete)>;
+
+          if constexpr (std::is_same_v<T, LitQuadCommand>)
+          {
+            if (concrete.order.pass == RenderPass::Terrain)
+            {
+              auto key = std::make_tuple(
+                  concrete.order, concrete.textureId, concrete.normalTextureId);
+
+              auto& batch = litBatches[key];
+
+              batch.order = concrete.order;
+              batch.textureId = concrete.textureId;
+              batch.normalTextureId = concrete.normalTextureId;
+              batch.quad.quads.push_back(concrete.quad);
+              return;
+            }
+          }
+
+          batched.push_back(concrete);
+        },
+        command);
+  }
+
+  for (auto& [_, batch] : litBatches)
+    batched.push_back(std::move(batch));
+
+  commands = std::move(batched);
+
   quadRenderer.begin();
 
   std::stable_sort(commands.begin(),
@@ -349,13 +391,13 @@ void IsometricRenderSystem::flushBatches()
                      return std::visit(
                          [](const auto& lhs, const auto& rhs)
                          {
-                           if (lhs.sortKey < rhs.sortKey)
-                             return true;
+                           if (lhs.order.pass != rhs.order.pass)
+                             return lhs.order.pass < rhs.order.pass;
 
-                           if (lhs.sortKey > rhs.sortKey)
-                             return false;
+                           if (lhs.order.depth != rhs.order.depth)
+                             return lhs.order.depth < rhs.order.depth;
 
-                           return lhs.renderLayer < rhs.renderLayer;
+                           return lhs.order.subpass < rhs.order.subpass;
                          },
                          a,
                          b);
@@ -368,33 +410,63 @@ void IsometricRenderSystem::flushBatches()
         {
           auto drawable = concrete;
 
-          if constexpr (requires {
-                          drawable.textureId;
-                          drawable.quad.texture;
-                        })
+          if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
+                                       LitQuadBatch>)
           {
-            drawable.quad.texture = resolveTexture(drawable.textureId);
-            if (drawable.quad.texture == 0)
-              return;
-          }
+            for (auto& quad : drawable.quad.quads)
+            {
+              quad.texture = resolveTexture(drawable.textureId);
 
-          if constexpr (requires {
-                          drawable.normalTextureId;
-                          drawable.quad.normalTexture;
-                        })
+              if (quad.texture == 0)
+                continue;
+
+              if (drawable.normalTextureId)
+              {
+                quad.normalTexture = resolveTexture(drawable.normalTextureId);
+                quad.hasNormalMap = quad.normalTexture != 0;
+              }
+
+              quadRenderer.submit(quad);
+            }
+          }
+          else if constexpr (std::is_same_v<
+                                 std::decay_t<decltype(drawable.quad)>,
+                                 QuadBatch>)
           {
-            drawable.quad.normalTexture =
-                resolveTexture(drawable.normalTextureId);
-            drawable.quad.hasNormalMap = drawable.quad.normalTexture != 0;
+            for (const auto& quad : drawable.quad.quads)
+              quadRenderer.submit(quad);
           }
+          else
+          {
+            if constexpr (requires {
+                            drawable.textureId;
+                            drawable.quad.texture;
+                          })
+            {
+              drawable.quad.texture = resolveTexture(drawable.textureId);
 
-          quadRenderer.submit(drawable.quad);
+              if (drawable.quad.texture == 0)
+                return;
+            }
+
+            if constexpr (requires {
+                            drawable.normalTextureId;
+                            drawable.quad.normalTexture;
+                          })
+            {
+              drawable.quad.normalTexture =
+                  resolveTexture(drawable.normalTextureId);
+
+              drawable.quad.hasNormalMap = drawable.quad.normalTexture != 0;
+            }
+
+            quadRenderer.submit(drawable.quad);
+          }
         },
         command);
   }
 
-  if (quadRenderer.hasPendingQuads())
-    quadRenderer.flush();
+  quadRenderer.flush();
 }
 
 void IsometricRenderSystem::setWaveTime(float time) { waveTime = time; }
