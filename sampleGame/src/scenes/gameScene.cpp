@@ -38,8 +38,8 @@ void GameScene::onInit()
 
   addSystem<sfs::IsometricShadowSystem>(
       shadowSettings, &m_assetStore, &ambient);
-  // addSystem<sfs::IsometricSpriteShadowSystem>(
-  //     shadowSettings, m_assetStore, &ambient);
+  addSystem<sfs::IsometricSpriteShadowSystem>(
+      shadowSettings, m_assetStore, &ambient);
 
   renderer.setWorldScale(WORLD_SCALE);
 
