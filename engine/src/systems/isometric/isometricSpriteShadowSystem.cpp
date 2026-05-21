@@ -240,7 +240,7 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
         SpriteShadowCommand shadow;
 
         shadow.textureId = textureId;
-        shadow.sortKey = sortKey;
+        shadow.order.depth = sortKey;
         shadow.quad.srcRect = srcRect;
         shadow.quad.textureWidth = textureWidth;
         shadow.quad.textureHeight = textureHeight;

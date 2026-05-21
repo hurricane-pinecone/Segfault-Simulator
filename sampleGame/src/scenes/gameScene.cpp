@@ -38,8 +38,8 @@ void GameScene::onInit()
 
   addSystem<sfs::IsometricShadowSystem>(
       shadowSettings, &m_assetStore, &ambient);
-  addSystem<sfs::IsometricSpriteShadowSystem>(
-      shadowSettings, m_assetStore, &ambient);
+  // addSystem<sfs::IsometricSpriteShadowSystem>(
+  //     shadowSettings, m_assetStore, &ambient);
 
   renderer.setWorldScale(WORLD_SCALE);
 
@@ -50,7 +50,7 @@ void GameScene::createEntities()
 {
   createObject<Player>();
 
-  createObject<Lamp>(glm::vec2{18.5, 13.5}, Lamp::Color::Red);
+  createObject<Lamp>(glm::vec2{18.5, 13.5}, Lamp::Color::Moonlight);
   createObject<Lamp>(glm::vec2{18.5, 17.5}, Lamp::Color::Blue);
   createObject<Lamp>(glm::vec2{5.5, 13.5});
   createObject<Lamp>(glm::vec2{6.5, 13.5});
@@ -84,38 +84,17 @@ void GameScene::onPostRender()
          << position.y;
 
   sfs::TextRenderer::drawText(20, 20, stream.str());
+  sfs::TextRenderer::drawText(
+      20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
 }
 
 void GameScene::onUpdate(double deltaTime)
 {
-  m_worldWaveTime += static_cast<float>(deltaTime);
 
-  getSystem<sfs::IsometricRenderSystem>().setWaveTime(m_worldWaveTime);
+  if (deltaTime > 0.0001)
+  {
+    const double instantFps = 1.0 / deltaTime;
+
+    m_fps += (instantFps - m_fps) * 0.1;
+  }
 }
-
-// void GameScene::loadMap()
-// {
-//   const int tileSize = 32;
-//
-//   for (int y = 0; y < 25; y++)
-//   {
-//     for (int x = 0; x < 25; x++)
-//     {
-//       int elevation = 0;
-//
-//       // Hill at the top of the map
-//       if (y < 10)
-//       {
-//         elevation = 10 - y;
-//       }
-//
-//       for (int z = 0; z < elevation; z++)
-//       {
-//         createObject<GrassBlock>(glm::vec2{x, y}, z, Block::Shape::Half);
-//       }
-//
-//       createObject<GrassBlock>(glm::vec2{x, y}, elevation,
-//       Block::Shape::Full);
-//     }
-//   }
-// }

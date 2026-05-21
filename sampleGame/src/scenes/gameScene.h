@@ -29,5 +29,6 @@ private:
 private:
   glm::vec2 m_mousePos;
   float m_worldWaveTime;
+  double m_fps;
   SunController m_sunController;
 };

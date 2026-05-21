@@ -2,6 +2,7 @@
 
 #include "SDL2/SDL_rect.h"
 #include "SDL2/SDL_surface.h"
+#include "engine/renderers/batchKeys/LitQuadBatchKey.h"
 #include "engine/renderers/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -20,19 +21,6 @@ namespace sfs
 class OpenGLQuadRenderer
 {
 public:
-  struct Vertex
-  {
-    glm::vec2 position;
-    glm::vec2 uv;
-    glm::vec2 worldPosition;
-  };
-
-  struct SolidVertex
-  {
-    glm::vec2 position;
-    glm::vec4 color;
-  };
-
   OpenGLQuadRenderer(int windowWidth, int windowHeight);
   ~OpenGLQuadRenderer();
 
@@ -54,14 +42,31 @@ public:
 
   void begin();
   void flush();
-  bool hasPendingQuads() const;
 
   void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
 
   void setViewportSize(int width, int height);
 
 private:
+  enum class Pipeline
+  {
+    None,
+    SolidColor,
+    Textured,
+    Freeform,
+    LitSprite
+  };
+
   unsigned int createSolidShaderProgram() const;
+
+  void beginPipeline(Pipeline stage);
+  void flushCurrentPipeline();
+  void flushSolid();
+  void flushFreeform();
+  void flushLit();
+
+  void appendSolidVertices(const Quad& command);
+  void appendLitVertices(const LitQuad& command);
 
   void drawQuad(const Quad& command);
   void drawQuad(const FreeformQuad& command); // Shadows
@@ -117,6 +122,20 @@ private:
   unsigned int createShaderProgram() const;
 
 private:
+  struct Vertex
+  {
+    glm::vec2 position;
+    glm::vec2 uv;
+    glm::vec2 worldPosition;
+  };
+
+  struct SolidVertex
+  {
+    glm::vec2 position;
+    glm::vec4 color;
+  };
+
+private:
   int windowWidth = 0;
   int windowHeight = 0;
 
@@ -149,10 +168,16 @@ private:
   std::unordered_map<std::string, unsigned int> textureCache;
 
   // Batched
+
+  Pipeline m_pipeline = Pipeline::None;
+
   unsigned int solidShaderProgram = 0;
   unsigned int solidVao = 0;
   unsigned int solidVbo = 0;
+
   std::vector<SolidVertex> m_solidVertices;
+  std::vector<Vertex> m_litVertices;
+  std::optional<LitBatchKey> m_litBatchKey;
 };
 
 } // namespace sfs

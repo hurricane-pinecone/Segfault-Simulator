@@ -62,7 +62,7 @@ void IsometricShadowSystem::computeCommands(
 void IsometricShadowSystem::computeTerrainShadows(
     const IsometricRenderContext& context)
 {
-  if (m_cache.edgesDirty || m_cache.edges.empty())
+  if (m_cache.edgesDirty)
   {
     m_cache.edges = mergeTerrainShadowEdges(getTerrainShadowEdges(context));
 
@@ -125,8 +125,9 @@ void IsometricShadowSystem::computeTerrainShadows(
   const bool cameraChanged = glm::length(context.isoCameraPosition -
                                          m_cache.isoCameraPosition) > 0.001f ||
                              std::abs(context.zoom - m_cache.zoom) > 0.001f;
+  const bool alphaChanged = std::abs(alpha - m_cache.alpha) > 0.005f;
 
-  if (!m_cache.itemsDirty && !sunChanged && !cameraChanged)
+  if (!m_cache.itemsDirty && !sunChanged && !cameraChanged && !alphaChanged)
   {
     return;
   }
@@ -163,11 +164,12 @@ void IsometricShadowSystem::computeTerrainShadows(
             newItems.end(), result.items.begin(), result.items.end());
       }
 
-      m_commands = std::move(newItems);
+      m_commands = batchTerrainShadowCommands(newItems);
       m_cache.sunDir = sunDir3D;
       m_cache.isoCameraPosition = context.isoCameraPosition;
       m_cache.zoom = context.zoom;
       m_cache.itemsDirty = false;
+      m_cache.alpha = alpha;
 
       m_shadowJobs.clear();
       m_shadowBuildInProgress = false;
@@ -176,12 +178,13 @@ void IsometricShadowSystem::computeTerrainShadows(
     return;
   }
 
-  flush();
-
   m_shadowJobs =
       startTerrainEdgeShadowJobs(context, shadowDir, effectiveSunHeight, alpha);
 
   m_shadowBuildInProgress = !m_shadowJobs.empty();
+
+  if (!m_shadowBuildInProgress)
+    flush();
 
   return;
 #else
@@ -193,6 +196,7 @@ void IsometricShadowSystem::computeTerrainShadows(
   m_cache.isoCameraPosition = context.isoCameraPosition;
   m_cache.zoom = context.zoom;
   m_cache.itemsDirty = false;
+  m_cache.alpha = alpha;
 }
 
 std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
@@ -339,6 +343,8 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
   };
 
   std::unordered_set<glm::ivec2, IVec2Hash> visited;
+
+  visited.reserve(32);
 
   auto visitShadowTile = [&](const glm::ivec2& tile, float)
   {
@@ -615,8 +621,10 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
     float sunHeight,
     float alpha)
 {
-  const std::vector<TerrainShadowEdge> edges = m_cache.edges;
+  const std::vector<TerrainShadowEdge>& edges = m_cache.edges;
   const std::size_t edgeCount = edges.size();
+  std::vector<TerrainShadowCommand> rawItems;
+  rawItems.reserve(5000);
 
   struct ShadowBuildResult
   {
@@ -631,7 +639,7 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
   const unsigned int hardwareThreads = 2;
 #else
   const unsigned int hardwareThreads =
-      std::max(1u, std::thread::hardware_concurrency());
+      std::max(1u, std::min(4u, std::thread::hardware_concurrency()));
 #endif
 
   const std::size_t batchCount =
@@ -652,9 +660,10 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
 
     jobs.push_back(std::async(
         std::launch::async,
-        [this, &context, edges, shadowDir, sunHeight, alpha, begin, end]()
+        [this, &context, &edges, shadowDir, sunHeight, alpha, begin, end]()
         {
           ShadowBuildResult result;
+          result.items.reserve((end - begin) * 8);
 
           for (std::size_t i = begin; i < end; i++)
           {
@@ -690,9 +699,9 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
 
     gTerrainShadowEdgesProcessed += result.edgesProcessed;
 
-    m_commands.insert(
-        m_commands.end(), result.items.begin(), result.items.end());
+    rawItems.insert(rawItems.end(), result.items.begin(), result.items.end());
   }
+  m_commands = batchTerrainShadowCommands(rawItems);
 }
 
 void IsometricShadowSystem::setTerrainShadowMaxLength(float length)
@@ -755,7 +764,7 @@ TerrainShadowCommand IsometricShadowSystem::buildTerrainShadowCommand(
     float sortKey)
 {
   TerrainShadowCommand item;
-  item.sortKey = sortKey;
+  item.order.depth = sortKey;
   item.quad.tint = SDL_Color{
       0,
       0,
@@ -767,6 +776,37 @@ TerrainShadowCommand IsometricShadowSystem::buildTerrainShadowCommand(
   return item;
 }
 
+std::vector<TerrainShadowBatchCommand>
+IsometricShadowSystem::batchTerrainShadowCommands(
+    const std::vector<TerrainShadowCommand>& items) const
+{
+  std::map<RenderOrderKey, std::vector<Quad>> batches;
+
+  for (const auto& item : items)
+  {
+    RenderOrderKey key{
+        item.order.pass,
+        item.order.depth,
+        item.order.subpass,
+    };
+
+    batches[key].push_back(item.quad);
+  }
+
+  std::vector<TerrainShadowBatchCommand> result;
+  result.reserve(batches.size());
+
+  for (auto& [key, quads] : batches)
+  {
+    TerrainShadowBatchCommand batch;
+    batch.order = {key.pass, key.depth, key.subpass};
+    batch.quad.quads = std::move(quads);
+    result.push_back(std::move(batch));
+  }
+
+  return result;
+}
+
 #ifdef __EMSCRIPTEN__
 std::vector<std::future<IsometricShadowSystem::ShadowBuildResult>>
 IsometricShadowSystem::startTerrainEdgeShadowJobs(
@@ -775,8 +815,11 @@ IsometricShadowSystem::startTerrainEdgeShadowJobs(
     float sunHeight,
     float alpha)
 {
-  const std::vector<TerrainShadowEdge> edges = m_cache.edges;
-  const std::size_t edgeCount = edges.size();
+  const auto edges =
+      std::make_shared<const std::vector<TerrainShadowEdge>>(m_cache.edges);
+  const auto contextCopy =
+      std::make_shared<const IsometricRenderContext>(context);
+  const std::size_t edgeCount = edges->size();
 
   constexpr unsigned int hardwareThreads = 2;
 
@@ -802,13 +845,13 @@ IsometricShadowSystem::startTerrainEdgeShadowJobs(
 
     jobs.push_back(std::async(
         std::launch::async,
-        [this, context, edges, shadowDir, sunHeight, alpha, begin, end]()
+        [this, contextCopy, edges, shadowDir, sunHeight, alpha, begin, end]()
         {
           ShadowBuildResult result;
 
           for (std::size_t i = begin; i < end; i++)
           {
-            const TerrainShadowEdge& edge = edges[i];
+            const TerrainShadowEdge& edge = (*edges)[i];
 
             if (edge.topElevation - edge.bottomElevation <= 0)
               continue;
@@ -817,7 +860,7 @@ IsometricShadowSystem::startTerrainEdgeShadowJobs(
               continue;
 
             constructTerrainEdgeShadowProjectedClipped(
-                context,
+                *contextCopy,
                 result.items,
                 edge,
                 shadowDir,
