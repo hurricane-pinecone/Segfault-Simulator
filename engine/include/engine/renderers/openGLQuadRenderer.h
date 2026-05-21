@@ -2,6 +2,7 @@
 
 #include "SDL2/SDL_rect.h"
 #include "SDL2/SDL_surface.h"
+#include "engine/renderers/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -19,8 +20,6 @@ namespace sfs
 class OpenGLQuadRenderer
 {
 public:
-  static constexpr int MaxShaderLights = 16;
-
   struct Vertex
   {
     glm::vec2 position;
@@ -32,65 +31,6 @@ public:
   {
     glm::vec2 position;
     glm::vec4 color;
-  };
-
-  struct QuadDrawCommand
-  {
-    unsigned int texture = 0;
-
-    SDL_Rect srcRect{0, 0, 0, 0};
-    SDL_Rect destRect{0, 0, 0, 0};
-
-    int textureWidth = 0;
-    int textureHeight = 0;
-
-    SDL_Color tint{255, 255, 255, 255};
-  };
-
-  struct SolidQuadDrawCommand
-  {
-    glm::vec2 points[4];
-    SDL_Color color{255, 255, 255, 255};
-  };
-
-  struct FreeformQuadDrawCommand
-  {
-    unsigned int texture = 0;
-
-    SDL_Rect srcRect{0, 0, 0, 0};
-
-    int textureWidth = 0;
-    int textureHeight = 0;
-
-    glm::vec2 points[4];
-    glm::vec2 uvs[4] = {
-        {0.0f, 0.0f},
-        {1.0f, 0.0f},
-        {1.0f, 1.0f},
-        {0.0f, 1.0f},
-    };
-
-    SDL_Color tint{255, 255, 255, 255};
-  };
-
-  struct LitQuadDrawCommand : QuadDrawCommand
-  {
-    bool hasNormalMap = false;
-    unsigned int normalTexture = 0;
-
-    glm::vec3 lightDirection{0.0f, 0.0f, 1.0f};
-    float lightIntensity = 1.0f;
-    float ambient = 0.18f;
-    float diffuseStrength = 0.85f;
-
-    glm::vec3 lightColor{1.0f, 1.0f, 1.0f};
-    glm::vec2 worldPoints[4];
-    int lightCount = 0;
-    glm::vec2 lightPositions[MaxShaderLights];
-    glm::vec3 lightColors[MaxShaderLights];
-    float lightIntensities[MaxShaderLights];
-    float lightRadii[MaxShaderLights];
-    float lightHeights[MaxShaderLights];
   };
 
   OpenGLQuadRenderer(int windowWidth, int windowHeight);
@@ -105,15 +45,16 @@ public:
   unsigned int uploadSurfaceTexture(SDL_Surface* surface);
   void deleteTexture(unsigned int texture);
 
-  void drawQuad(const QuadDrawCommand& command); // Text, UI, simple sprites
-  void drawFreeformQuad(const FreeformQuadDrawCommand& command); // Shadows
-  void
-  drawLitQuad(const LitQuadDrawCommand& command); // Normalised sprites (ie,
-                                                  // sprites that light affects)
-  void submitSolidQuad(const SolidQuadDrawCommand& command);
-  void beginSolidQuads();
-  void flushSolidQuads();
-  bool hasPendingSolidQuads() const;
+  void submit(const Quad& command);
+  void submit(const TexturedQuad& command);
+  void submit(const FreeformQuad& command);
+  void submit(const LitQuad& command);
+
+  void drawImmediate(const TexturedQuad& command); // Text, UI, simple sprites
+
+  void begin();
+  void flush();
+  bool hasPendingQuads() const;
 
   void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
 
@@ -122,9 +63,14 @@ public:
 private:
   unsigned int createSolidShaderProgram() const;
 
+  void drawQuad(const Quad& command);
+  void drawQuad(const FreeformQuad& command); // Shadows
+  void drawQuad(const LitQuad& command);      // Normalised sprites (ie,
+                                              // sprites that light affects)
+
   glm::vec2 toNdc(const glm::vec2& pixelPosition) const;
 
-  void drawSolidQuad(const SolidQuadDrawCommand& command);
+  void drawSolidQuad(const Quad& command);
   void drawQuadInternal(unsigned int texture,
                         const SDL_Rect& srcRect,
                         int textureWidth,

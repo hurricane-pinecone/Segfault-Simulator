@@ -49,6 +49,9 @@ public:
   template <typename TSystem>
   TSystem& getSystem() const;
 
+  template <typename TSystem>
+  TSystem* tryGetSystem() const;
+
   template <typename... TComponents>
   std::vector<Entity> view();
 
@@ -179,6 +182,23 @@ TSystem& Registry::getSystem() const
   }
 
   throw std::runtime_error("System not found");
+}
+
+template <typename TSystem>
+TSystem* Registry::tryGetSystem() const
+{
+  if (!this->hasSystem<TSystem>())
+    return nullptr;
+
+  for (const auto& system : systems)
+  {
+    if (auto* casted = dynamic_cast<TSystem*>(system.get()))
+    {
+      return casted;
+    }
+  }
+
+  return nullptr;
 }
 
 template <typename... TComponents>

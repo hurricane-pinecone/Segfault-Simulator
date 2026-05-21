@@ -1,20 +1,11 @@
 #pragma once
 
 #include "engine/ecs/system.h"
-
+#include "engine/renderers/commands/commands.h"
 #include "engine/renderers/isometricRenderContext.h"
-#include "engine/renderers/isometricRenderQueue.h"
-#include "glm/glm/ext/vector_float3.hpp"
-
-#include <vector>
-
-#pragma once
-
-#include "engine/ecs/system.h"
+#include "engine/renderers/renderQueue.h"
 #include "engine/utils/isometricLightingUtils.h"
-
 #include "glm/glm/ext/vector_float3.hpp"
-
 #include <vector>
 
 namespace sfs
@@ -26,7 +17,7 @@ public:
   IsometricLightingSystem();
 
   void submitLighting(const IsometricRenderContext& context,
-                      IsometricRenderQueue& queue);
+                      RenderQueue<AnyRenderCommand>& queue);
 
   void markLightsDirty();
 

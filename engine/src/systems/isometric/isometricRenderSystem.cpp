@@ -5,6 +5,7 @@
 #include "engine/components/spriteComponent.h"
 
 #include "engine/components/tags/isometricTile.h"
+#include "engine/renderers/commands/commands.h"
 #include "engine/renderers/isometricRenderContext.h"
 #include "engine/renderers/renderContext.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
@@ -12,12 +13,15 @@
 #include "engine/ecs/registry.h"
 #include "engine/logger/logger.h"
 
+#include "engine/renderers/renderLayer.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
+#include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <cstddef>
+#include <variant>
 
 namespace sfs
 {
@@ -169,8 +173,6 @@ void IsometricRenderSystem::render()
         height,
     };
 
-    IsometricRenderItem item;
-
     const bool tileEntity = isTileEntity(entity);
 
     // exactPosition is where the entity really is in world/grid space.
@@ -218,22 +220,21 @@ void IsometricRenderSystem::render()
         tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
                    : transform.position;
 
-    item.textureId = &sprite->textureId;
-    item.srcRect = sprite->srcRect;
-    item.dest = dest;
-    item.textureWidth = surface->w;
-    item.textureHeight = surface->h;
-    item.sortKey = sortKey;
-    item.tint = SDL_Color{255, 255, 255, 255};
-    item.renderLayer = tileEntity ? 0 : 2;
-    item.screenSortY = static_cast<float>(dest.y + dest.h);
+    LitQuadCommand command;
+    command.textureId = &sprite->textureId;
+    command.renderLayer =
+        tileEntity ? RenderLayer::Background : RenderLayer::Object;
+    command.quad.srcRect = sprite->srcRect;
+    command.quad.destRect = dest;
+    command.quad.textureWidth = surface->w;
+    command.quad.textureHeight = surface->h;
 
     if (tileEntity)
     {
-      item.worldPoints[0] = transform.position;
-      item.worldPoints[1] = transform.position + glm::vec2{1.0f, 0.0f};
-      item.worldPoints[2] = transform.position + glm::vec2{1.0f, 1.0f};
-      item.worldPoints[3] = transform.position + glm::vec2{0.0f, 1.0f};
+      command.quad.worldPoints[0] = transform.position;
+      command.quad.worldPoints[1] = transform.position + glm::vec2{1.0f, 0.0f};
+      command.quad.worldPoints[2] = transform.position + glm::vec2{1.0f, 1.0f};
+      command.quad.worldPoints[3] = transform.position + glm::vec2{0.0f, 1.0f};
     }
     else
     {
@@ -254,19 +255,27 @@ void IsometricRenderSystem::render()
       sortKey += SpriteBias;
       sortKey += exactTieBreak;
 
-      item.worldPoints[0] = spriteWorldSample;
-      item.worldPoints[1] = spriteWorldSample;
-      item.worldPoints[2] = spriteWorldSample;
-      item.worldPoints[3] = spriteWorldSample;
+      command.quad.worldPoints[0] = spriteWorldSample;
+      command.quad.worldPoints[1] = spriteWorldSample;
+      command.quad.worldPoints[2] = spriteWorldSample;
+      command.quad.worldPoints[3] = spriteWorldSample;
     }
+
+    command.sortKey = sortKey;
 
     // Ambient lighting
     if (lightingSystem)
     {
-      item.lighting = lightingSystem->computeLighting({
+      const auto lighting = lightingSystem->computeLighting({
           spriteWorldSample,
           static_cast<float>(elevationLevel),
       });
+
+      command.quad.lightDirection = lighting.direction;
+      command.quad.lightIntensity = lighting.intensity;
+      command.quad.ambient = lighting.ambient;
+      command.quad.diffuseStrength = lighting.diffuseStrength;
+      command.quad.lightColor = lighting.color;
 
       if (entity.hasComponent<NormalMapComponent>())
       {
@@ -280,35 +289,45 @@ void IsometricRenderSystem::render()
 
           if (normalSurface)
           {
-            item.hasNormalMap = true;
-            item.normalTextureId = &normalSprite->textureId;
-            item.normalSrcRect = normalSprite->srcRect;
-            item.normalTextureWidth = normalSurface->w;
-            item.normalTextureHeight = normalSurface->h;
+            command.quad.hasNormalMap = true;
+            command.normalTextureId = &normalSprite->textureId;
           }
         }
       }
     }
 
-    m_renderQueue.submit(item);
-
-    if (!tileEntity && registry->hasSystem<IsometricShadowSystem>())
+    if (pointLights)
     {
-      registry->getSystem<IsometricShadowSystem>().submitSpriteShadow(
-          m_context,
-          item,
-          spriteWorldSample,
-          elevationLevel,
-          ambientLighting,
-          pointLights,
-          m_renderQueue);
+      const auto& lights = *pointLights;
+
+      command.quad.lightCount =
+          std::min(static_cast<int>(lights.size()), MaxShaderLights);
+
+      for (int i = 0; i < command.quad.lightCount; i++)
+      {
+        command.quad.lightPositions[i] = lights[i].worldPosition;
+        command.quad.lightColors[i] = lights[i].color;
+        command.quad.lightIntensities[i] = lights[i].intensity;
+        command.quad.lightRadii[i] = lights[i].radius;
+        command.quad.lightHeights[i] = lights[i].height;
+      }
     }
+    m_renderQueue.submit(command);
   }
 
-  if (lightingSystem && registry->hasSystem<IsometricShadowSystem>())
+  if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>())
   {
-    registry->getSystem<IsometricShadowSystem>().submitTerrainShadows(
-        m_context, *ambientLighting, m_renderQueue);
+    shadowSystem->setAmbientLighting(ambientLighting);
+    shadowSystem->computeCommands(m_context);
+    m_renderQueue.submitAll(shadowSystem->commands());
+  }
+
+  if (const auto spriteShadowSystem =
+          registry->tryGetSystem<IsometricSpriteShadowSystem>())
+  {
+    spriteShadowSystem->setAmbientLighting(ambientLighting);
+    spriteShadowSystem->computeCommands(m_context);
+    m_renderQueue.submitAll(spriteShadowSystem->commands());
   }
 
   flushBatches();
@@ -318,164 +337,64 @@ void IsometricRenderSystem::beginBatches() { m_renderQueue.clear(); }
 
 void IsometricRenderSystem::flushBatches()
 {
-
   auto& quadRenderer = RenderContext::quadRenderer();
-  auto& items = m_renderQueue.mutableItems();
+  auto& commands = m_renderQueue.mutableItems();
 
-  quadRenderer.beginSolidQuads();
+  quadRenderer.begin();
 
-  // Debug
-  gRenderItemCount = static_cast<int>(m_renderQueue.size());
+  std::stable_sort(commands.begin(),
+                   commands.end(),
+                   [](const AnyRenderCommand& a, const AnyRenderCommand& b)
+                   {
+                     return std::visit(
+                         [](const auto& lhs, const auto& rhs)
+                         {
+                           if (lhs.sortKey < rhs.sortKey)
+                             return true;
 
-  for (const IsometricRenderItem& item : items)
+                           if (lhs.sortKey > rhs.sortKey)
+                             return false;
+
+                           return lhs.renderLayer < rhs.renderLayer;
+                         },
+                         a,
+                         b);
+                   });
+
+  for (const auto& command : commands)
   {
-    if (item.isTerrainShadow)
-      gTerrainShadowItems++;
-    else if (item.renderLayer == 0)
-      gTileRenderItems++;
-    else
-      gSpriteRenderItems++;
+    std::visit(
+        [&](const auto& concrete)
+        {
+          auto drawable = concrete;
+
+          if constexpr (requires {
+                          drawable.textureId;
+                          drawable.quad.texture;
+                        })
+          {
+            drawable.quad.texture = resolveTexture(drawable.textureId);
+            if (drawable.quad.texture == 0)
+              return;
+          }
+
+          if constexpr (requires {
+                          drawable.normalTextureId;
+                          drawable.quad.normalTexture;
+                        })
+          {
+            drawable.quad.normalTexture =
+                resolveTexture(drawable.normalTextureId);
+            drawable.quad.hasNormalMap = drawable.quad.normalTexture != 0;
+          }
+
+          quadRenderer.submit(drawable.quad);
+        },
+        command);
   }
 
-  std::stable_sort(
-      items.begin(),
-      items.end(),
-      [](const IsometricRenderItem& a, const IsometricRenderItem& b)
-      {
-        // Depth must be primary. Earlier versions sorted by
-        // renderLayer first, which forced every tile behind every
-        // sprite and made raised/closer blocks unable to occlude
-        // actors correctly.
-        if (a.sortKey < b.sortKey)
-          return true;
-
-        if (a.sortKey > b.sortKey)
-          return false;
-
-        // Layer is only a tie-break for items at the same depth:
-        // tiles first, shadows next, sprites last.
-        return a.renderLayer < b.renderLayer;
-      });
-
-  const std::vector<IsometricPointLightSnapshot>* pointLights = nullptr;
-  if (registry->hasSystem<IsometricLightingSystem>())
-    pointLights =
-        &registry->getSystem<IsometricLightingSystem>().getPointLights();
-
-  for (const auto& item : items)
-  {
-
-    if (item.isTerrainShadow)
-    {
-      OpenGLQuadRenderer::SolidQuadDrawCommand command;
-
-      command.points[0] = item.shadowScreenPoints[0];
-      command.points[1] = item.shadowScreenPoints[1];
-      command.points[2] = item.shadowScreenPoints[2];
-      command.points[3] = item.shadowScreenPoints[3];
-      command.color = item.tint;
-
-      quadRenderer.submitSolidQuad(command);
-      continue;
-    }
-
-    // Important: draw queued terrain shadows before the next real tile/sprite.
-    // This lets closer tiles/sprites render over already-submitted shadows.
-    if (quadRenderer.hasPendingSolidQuads())
-    {
-      quadRenderer.flushSolidQuads();
-      gTerrainShadowFlushes++;
-    }
-
-    SDL_Surface* surface = assetStore.getSurface(*item.textureId);
-
-    if (!surface)
-      continue;
-
-    const unsigned int texture =
-        quadRenderer.getOrCreateTexture(*item.textureId, surface);
-
-    if (texture == 0)
-      continue;
-
-    if (item.isShadow)
-    {
-      OpenGLQuadRenderer::FreeformQuadDrawCommand command;
-
-      command.texture = texture;
-      command.srcRect = item.srcRect;
-      command.textureWidth = item.textureWidth;
-      command.textureHeight = item.textureHeight;
-      command.tint = item.tint;
-
-      command.points[0] = item.shadowScreenPoints[0];
-      command.points[1] = item.shadowScreenPoints[1];
-      command.points[2] = item.shadowScreenPoints[2];
-      command.points[3] = item.shadowScreenPoints[3];
-
-      command.uvs[0] = item.shadowUVs[0];
-      command.uvs[1] = item.shadowUVs[1];
-      command.uvs[2] = item.shadowUVs[2];
-      command.uvs[3] = item.shadowUVs[3];
-
-      quadRenderer.drawFreeformQuad(command);
-      gSpriteProjectedShadowItems++;
-    }
-    else
-    {
-      OpenGLQuadRenderer::LitQuadDrawCommand command;
-
-      command.texture = texture;
-      command.srcRect = item.srcRect;
-      command.destRect = item.dest;
-      command.textureWidth = item.textureWidth;
-      command.textureHeight = item.textureHeight;
-      command.tint = item.tint;
-
-      command.lightDirection = item.lighting.direction;
-      command.lightIntensity = item.lighting.intensity;
-      command.ambient = item.lighting.ambient;
-      command.diffuseStrength = item.lighting.diffuseStrength;
-      command.lightColor = item.lighting.color;
-      command.worldPoints[0] = item.worldPoints[0];
-      command.worldPoints[1] = item.worldPoints[1];
-      command.worldPoints[2] = item.worldPoints[2];
-      command.worldPoints[3] = item.worldPoints[3];
-
-      if (pointLights)
-      {
-        const auto& lights = *pointLights;
-
-        command.lightCount = std::min(static_cast<int>(lights.size()),
-                                      OpenGLQuadRenderer::MaxShaderLights);
-
-        for (int i = 0; i < command.lightCount; i++)
-        {
-          command.lightPositions[i] = lights[i].worldPosition;
-          command.lightColors[i] = lights[i].color;
-          command.lightIntensities[i] = lights[i].intensity;
-          command.lightRadii[i] = lights[i].radius;
-          command.lightHeights[i] = lights[i].height;
-        }
-      }
-
-      if (item.hasNormalMap)
-      {
-        SDL_Surface* normalSurface =
-            assetStore.getSurface(*item.normalTextureId);
-
-        if (normalSurface)
-        {
-          command.normalTexture = quadRenderer.getOrCreateTexture(
-              *item.normalTextureId, normalSurface);
-
-          command.hasNormalMap = command.normalTexture != 0;
-        }
-      }
-
-      quadRenderer.drawLitQuad(command);
-    }
-  }
+  if (quadRenderer.hasPendingQuads())
+    quadRenderer.flush();
 }
 
 void IsometricRenderSystem::setWaveTime(float time) { waveTime = time; }
@@ -524,6 +443,19 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
   };
 
   quadRenderer.drawLineLoop(points, 5, color);
+}
+
+unsigned int IsometricRenderSystem::resolveTexture(const std::string* textureId)
+{
+  if (!textureId)
+    return 0;
+
+  SDL_Surface* surface = assetStore.getSurface(*textureId);
+
+  if (!surface)
+    return 0;
+
+  return RenderContext::quadRenderer().getOrCreateTexture(*textureId, surface);
 }
 
 glm::vec2

@@ -2,6 +2,7 @@
 #include "engine/renderers/openGLQuadRenderer.h"
 
 #include "engine/logger/logger.h"
+#include "engine/renderers/quads.h"
 #include <algorithm>
 
 #ifdef __EMSCRIPTEN__
@@ -268,7 +269,31 @@ void OpenGLQuadRenderer::shutdown()
   initialized = false;
 }
 
-void OpenGLQuadRenderer::drawQuad(const QuadDrawCommand& command)
+void OpenGLQuadRenderer::submit(const TexturedQuad& command)
+{
+  if (hasPendingQuads())
+    flush();
+
+  drawImmediate(command);
+}
+
+void OpenGLQuadRenderer::submit(const FreeformQuad& command)
+{
+  if (hasPendingQuads())
+    flush();
+
+  drawQuad(command);
+}
+
+void OpenGLQuadRenderer::submit(const LitQuad& command)
+{
+  if (hasPendingQuads())
+    flush();
+
+  drawQuad(command);
+}
+
+void OpenGLQuadRenderer::drawImmediate(const TexturedQuad& command)
 {
   initialize();
 
@@ -287,6 +312,7 @@ void OpenGLQuadRenderer::drawQuad(const QuadDrawCommand& command)
   const float left = static_cast<float>(command.destRect.x);
   const float right =
       static_cast<float>(command.destRect.x + command.destRect.w);
+
   const float top = static_cast<float>(command.destRect.y);
   const float bottom =
       static_cast<float>(command.destRect.y + command.destRect.h);
@@ -307,8 +333,7 @@ void OpenGLQuadRenderer::drawQuad(const QuadDrawCommand& command)
                    command.tint);
 }
 
-void OpenGLQuadRenderer::drawFreeformQuad(
-    const FreeformQuadDrawCommand& command)
+void OpenGLQuadRenderer::drawQuad(const FreeformQuad& command)
 {
   initialize();
 
@@ -387,7 +412,7 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
   glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
+void OpenGLQuadRenderer::drawQuad(const LitQuad& command)
 {
   initialize();
 
@@ -441,14 +466,7 @@ void OpenGLQuadRenderer::drawLitQuad(const LitQuadDrawCommand& command)
                    command.lightHeights);
 }
 
-void OpenGLQuadRenderer::drawSolidQuad(const SolidQuadDrawCommand& command)
-{
-  beginSolidQuads();
-  submitSolidQuad(command);
-  flushSolidQuads();
-}
-
-void OpenGLQuadRenderer::flushSolidQuads()
+void OpenGLQuadRenderer::flush()
 {
   initialize();
 
@@ -1015,18 +1033,18 @@ void OpenGLQuadRenderer::deleteTexture(unsigned int texture)
     glDeleteTextures(1, &texture);
 }
 
-void OpenGLQuadRenderer::beginSolidQuads()
+void OpenGLQuadRenderer::begin()
 {
   initialize();
   m_solidVertices.clear();
 }
 
-bool OpenGLQuadRenderer::hasPendingSolidQuads() const
+bool OpenGLQuadRenderer::hasPendingQuads() const
 {
   return !m_solidVertices.empty();
 }
 
-void OpenGLQuadRenderer::submitSolidQuad(const SolidQuadDrawCommand& command)
+void OpenGLQuadRenderer::submit(const Quad& command)
 {
   initialize();
 
@@ -1034,10 +1052,10 @@ void OpenGLQuadRenderer::submitSolidQuad(const SolidQuadDrawCommand& command)
     return;
 
   const glm::vec4 color{
-      command.color.r / 255.0f,
-      command.color.g / 255.0f,
-      command.color.b / 255.0f,
-      command.color.a / 255.0f,
+      command.tint.r / 255.0f,
+      command.tint.g / 255.0f,
+      command.tint.b / 255.0f,
+      command.tint.a / 255.0f,
   };
 
   const glm::vec2 p0 = toNdc(command.points[0]);

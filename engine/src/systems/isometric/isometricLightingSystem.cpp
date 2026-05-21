@@ -5,6 +5,7 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/registry.h" // IWYU pragma: keep
 
+#include "engine/renderers/renderQueue.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
@@ -109,7 +110,7 @@ IsometricComputedLighting IsometricLightingSystem::computeLighting(
 
 void IsometricLightingSystem::submitLighting(
     const IsometricRenderContext& context,
-    IsometricRenderQueue& queue)
+    RenderQueue<AnyRenderCommand>& queue)
 {
   if (!m_cache.lightsDirty)
     return;
