@@ -3,6 +3,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
+#include "tracy/Tracy.hpp"
 #include <cstddef>
 
 namespace sfs
@@ -193,6 +194,47 @@ getTileWallEdge(const glm::ivec2& tile, int side, glm::vec2& a, glm::vec2& b)
   {
     a = glm::vec2{tile.x, tile.y + 1};
     b = glm::vec2{tile.x + 1, tile.y + 1};
+  }
+}
+
+template <typename Visitor>
+void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
+                                      Visitor&& visit)
+{
+  ZoneScopedN("forEachTileOverlappingShadowQuad()");
+
+  float minX = points[0].x;
+  float maxX = points[0].x;
+  float minY = points[0].y;
+  float maxY = points[0].y;
+
+  for (int i = 1; i < 4; i++)
+  {
+    minX = std::min(minX, points[i].x);
+    maxX = std::max(maxX, points[i].x);
+    minY = std::min(minY, points[i].y);
+    maxY = std::max(maxY, points[i].y);
+  }
+
+  const int tileMinX = static_cast<int>(std::floor(minX));
+  const int tileMaxX = static_cast<int>(std::floor(maxX));
+  const int tileMinY = static_cast<int>(std::floor(minY));
+  const int tileMaxY = static_cast<int>(std::floor(maxY));
+
+  for (int y = tileMinY; y <= tileMaxY; y++)
+  {
+    for (int x = tileMinX; x <= tileMaxX; x++)
+    {
+      const glm::ivec2 tile{x, y};
+
+      const ClippedPolygon clipped = clipPolygonToTile(points, tile);
+
+      if (clipped.count >= 3)
+      {
+        if (!visit(tile, 0.0f))
+          return;
+      }
+    }
   }
 }
 

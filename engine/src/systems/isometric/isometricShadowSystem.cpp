@@ -7,7 +7,6 @@
 #include "tracy/Tracy.hpp"
 
 #include <algorithm>
-#include <unordered_set>
 #include <vector>
 #ifdef __EMSCRIPTEN__
   #include <chrono>
@@ -348,26 +347,19 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
       edge.a + shadowDir * shadowLength,
   };
 
-  std::unordered_set<glm::ivec2, IVec2Hash> visited;
+  forEachTileOverlappingShadowQuad(shadowWorldPoints,
+                                   [&](const glm::ivec2& tile, float)
+                                   {
+                                     tryConstructShadowOnTile(
+                                         context,
+                                         outCommands,
+                                         tile,
+                                         edge.bottomElevation,
+                                         shadowWorldPoints,
+                                         alpha);
 
-  visited.reserve(32);
-
-  auto visitShadowTile = [&](const glm::ivec2& tile, float)
-  {
-    if (!visited.insert(tile).second)
-      return true;
-
-    tryConstructShadowOnTile(context,
-                             outCommands,
-                             tile,
-                             edge.bottomElevation,
-                             shadowWorldPoints,
-                             alpha);
-
-    return true;
-  };
-
-  walkShadowEdgeRays(edge, shadowDir, shadowLength, visitShadowTile);
+                                     return true;
+                                   });
 }
 
 bool IsometricShadowSystem::terrainShadowPathBlocked(
