@@ -1,8 +1,6 @@
 # Segfault Simulator
 
-This is a lightweight engine built using the ECS pattern.
-
-The engine comes with a few common systems, like movement and rigidbody. Game specific systems can inherit sfs::System and be added to scenes.
+This is a lightweight engine built using the ECS pattern, with a Unity style OOP layer on top for the game client.
 
 <p align="center">
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
@@ -11,6 +9,32 @@ The engine comes with a few common systems, like movement and rigidbody. Game sp
 </p>
 
 ![ECS Diagram](./docs/images/ecs.png)
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Initial Setup](#initial-setup)
+- [Debug Build](#debug-build)
+- [Run](#run)
+- [Release Build](#release-build)
+  - [Web build](#web-build)
+- [LSP / clangd setup](#lsp--clangd-setup)
+- [Rebuilding](#rebuilding)
+  - [TL;DR](#tldr)
+  - [Normal rebuild](#normal-rebuild)
+  - [If `conanfile.txt` changes](#if-conanfiletxt-changes)
+  - [If `CMakeLists.txt` changes](#if-cmakeliststxt-changes)
+  - [If compiler/toolchain changes](#if-compilertoolchain-changes)
+- [Clean Build](#clean-build)
+- [Assets](#assets)
+- [Important](#important)
+- [Optional Aliases (zsh)](#optional-aliases-zsh)
+- [Tooling](#tooling)
+  - [Leak Detection](#leak-detection)
+  - [Tracy Profiling](#tracy-profiling)
+    - [Install Tracy Profiler (macOS)](#install-tracy-profiler-macos)
+    - [Build and Run in Profiling Mode](#build-and-run-in-profiling-mode)
+    - [Tracy Configuration](#tracy-configuration)
 
 ## Overview
 
