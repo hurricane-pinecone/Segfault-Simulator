@@ -10,10 +10,6 @@
 #include <atomic>
 #include <vector>
 
-#ifdef __EMSCRIPTEN__
-  #include <future>
-#endif
-
 namespace sfs
 {
 
@@ -136,22 +132,5 @@ private:
   TerrainShadowCache m_cache;
   IsometricShadowSettings m_shadowSettings;
   const IsometricAmbientLighting* m_ambientLighting = nullptr;
-
-#ifdef __EMSCRIPTEN__
-  struct ShadowBuildResult
-  {
-    std::vector<TerrainShadowCommand> items;
-    int edgesProcessed = 0;
-  };
-
-  std::vector<std::future<ShadowBuildResult>>
-  startTerrainEdgeShadowJobs(const IsometricRenderContext& context,
-                             const glm::vec2& shadowDir,
-                             float sunHeight,
-                             float alpha);
-
-  std::vector<std::future<ShadowBuildResult>> m_shadowJobs;
-  bool m_shadowBuildInProgress = false;
-#endif
 };
 } // namespace sfs

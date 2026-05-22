@@ -90,7 +90,11 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
   const int textureWidth = surface->w;
   const int textureHeight = surface->h;
   const glm::vec2 worldSample = transform.position;
-  const int elevation = context.getTileElevationAt(glm::floor(worldSample));
+
+  int elevation = 0;
+  context.terrainElevationGrid.tryGet(
+      context.gridCellOf(glm::floor(worldSample)), elevation);
+
   const int width = static_cast<int>(sprite->srcRect.w * transform.scale.x *
                                      context.worldScale * context.zoom);
   const int height = static_cast<int>(sprite->srcRect.h * transform.scale.y *
@@ -203,11 +207,11 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
 
     auto constructSpriteShadowOnTile = [&](const glm::ivec2& tile)
     {
-      if (!context.hasTileAt(tile))
+      int receiverElevation = 0;
+
+      if (!context.terrainElevationGrid.tryGet(tile, receiverElevation))
         return;
 
-      const int receiverElevation =
-          context.getTileElevationAt(glm::vec2{tile.x, tile.y});
       const float elevationStepPixels =
           static_cast<float>(context.elevationStep) * context.worldScale *
           context.zoom;
