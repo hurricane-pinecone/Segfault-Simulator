@@ -23,6 +23,7 @@
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <cstddef>
+#include <map>
 #include <variant>
 
 namespace sfs
@@ -67,6 +68,7 @@ void IsometricRenderSystem::render()
   if (tileElevationCacheDirty)
   {
     rebuildTileElevationCache();
+    rebuildTerrainElevationGridView();
     tileElevationCacheDirty = false;
   }
 
@@ -106,7 +108,7 @@ void IsometricRenderSystem::render()
   m_context.waveAmplitude = waveAmplitude;
   m_context.waveFrequency = waveFrequency;
   m_context.waveSpeed = waveSpeed;
-  m_context.tileElevations = &tileElevationCache;
+  m_context.terrainElevationGrid = tileElevationGridView;
 
   if (ambientLighting)
     lightingSystem->submitLighting(m_context, m_renderQueue);
@@ -630,18 +632,7 @@ glm::vec2 IsometricRenderSystem::getGroundSamplePosition(
 bool IsometricRenderSystem::tryGetTileElevationAt(const glm::vec2& position,
                                                   int& outElevation) const
 {
-  const glm::ivec2 tile = gridCellOf(position);
-
-  auto it = tileElevationCache.find(tile);
-
-  if (it == tileElevationCache.end())
-  {
-    outElevation = 0;
-    return false;
-  }
-
-  outElevation = it->second;
-  return true;
+  return tileElevationGridView.tryGet(gridCellOf(position), outElevation);
 }
 
 int IsometricRenderSystem::getTileElevationAt(const glm::vec2& position) const
@@ -701,6 +692,43 @@ void IsometricRenderSystem::rebuildTileElevationCache()
     else
       it->second = std::max(it->second, elevation);
   }
+}
+
+void IsometricRenderSystem::rebuildTerrainElevationGridView()
+{
+  tileElevationGridData.clear();
+  tileElevationGridView = {};
+
+  if (tileElevationCache.empty())
+    return;
+
+  glm::ivec2 min = tileElevationCache.begin()->first;
+  glm::ivec2 max = tileElevationCache.begin()->first;
+
+  for (const auto& [tile, elevation] : tileElevationCache)
+  {
+    min = glm::min(min, tile);
+    max = glm::max(max, tile);
+  }
+
+  const int width = max.x - min.x + 1;
+  const int height = max.y - min.y + 1;
+
+  tileElevationGridData.assign(width * height, -1);
+
+  for (const auto& [tile, elevation] : tileElevationCache)
+  {
+    const int x = tile.x - min.x;
+    const int y = tile.y - min.y;
+
+    tileElevationGridData[y * width + x] = elevation;
+  }
+
+  tileElevationGridView.elevations = tileElevationGridData.data();
+  tileElevationGridView.width = width;
+  tileElevationGridView.height = height;
+  tileElevationGridView.stride = width;
+  tileElevationGridView.origin = min;
 }
 
 } // namespace sfs

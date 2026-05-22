@@ -7,6 +7,7 @@
 #include "tracy/Tracy.hpp"
 
 #include <algorithm>
+#include <map>
 #include <vector>
 #ifdef __EMSCRIPTEN__
   #include <chrono>
@@ -63,9 +64,11 @@ void IsometricShadowSystem::computeTerrainShadows(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("Compute terrain shadows");
+
   if (m_cache.edgesDirty)
   {
     m_cache.edges = mergeTerrainShadowEdges(getTerrainShadowEdges(context));
+    m_cache.edgeTileBounds = getTerrainShadowEdgeTileBounds(m_cache.edges);
 
     m_cache.edgesDirty = false;
     m_cache.itemsDirty = true;
@@ -132,6 +135,8 @@ void IsometricShadowSystem::computeTerrainShadows(
   {
     return;
   }
+
+  assert(context.terrainElevationGrid.valid());
 
   gShadowPathChecks.store(0, std::memory_order_relaxed);
   gShadowTilesTraversed.store(0, std::memory_order_relaxed);
@@ -285,18 +290,17 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
   return edges;
 }
 
-void IsometricShadowSystem::constructTileShadowPolygonAt(
+void IsometricShadowSystem::emitTileShadow(
     const IsometricRenderContext& context,
     std::vector<TerrainShadowCommand>& outCommands,
     const glm::ivec2& tile,
     int elevation,
-    const glm::vec2 worldPoints[4],
+    const ClippedPolygon& poly,
     float alpha)
 {
-  ZoneScopedN("Shadow: constructTileShadowPolygonAt()");
-  const auto clipped = clipPolygonToTile(worldPoints, tile);
+  ZoneScopedN("Shadow: emitTileShadow()");
 
-  if (clipped.count < 3)
+  if (poly.count < 3)
     return;
 
   constexpr float ElevationSortWeight = 0.5f;
@@ -305,15 +309,15 @@ void IsometricShadowSystem::constructTileShadowPolygonAt(
       static_cast<float>(tile.x) + static_cast<float>(tile.y) +
       static_cast<float>(elevation) * ElevationSortWeight + 0.0005f;
 
-  for (size_t i = 1; i + 1 < clipped.count; i++)
+  for (int i = 1; i + 1 < poly.count; i++)
   {
     glm::vec2 screenPoints[4] = {
-        context.worldToScreen(clipped.points[0], static_cast<float>(elevation)),
-        context.worldToScreen(clipped.points[i], static_cast<float>(elevation)),
+        context.worldToScreen(poly.points[0], static_cast<float>(elevation)),
+        context.worldToScreen(poly.points[i], static_cast<float>(elevation)),
         context.worldToScreen(
-            clipped.points[i + 1], static_cast<float>(elevation)),
+            poly.points[i + 1], static_cast<float>(elevation)),
         context.worldToScreen(
-            clipped.points[i + 1], static_cast<float>(elevation)),
+            poly.points[i + 1], static_cast<float>(elevation)),
     };
 
     outCommands.push_back(
@@ -331,6 +335,7 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
     float alpha)
 {
   ZoneScopedN("Shadow: constructTerrainEdgeShadowProjectedClipped()");
+
   if (sunHeight <= 0.001f || maxShadowLength <= 0.05f || alpha <= 0.01f)
     return;
 
@@ -347,19 +352,30 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
       edge.a + shadowDir * shadowLength,
   };
 
-  forEachTileOverlappingShadowQuad(shadowWorldPoints,
-                                   [&](const glm::ivec2& tile, float)
-                                   {
-                                     tryConstructShadowOnTile(
-                                         context,
-                                         outCommands,
-                                         tile,
-                                         edge.bottomElevation,
-                                         shadowWorldPoints,
-                                         alpha);
+  constexpr int ReceiverBoundsPadding = 8;
 
-                                     return true;
-                                   });
+  const TileBounds receiverBounds =
+      expandedTileBounds(m_cache.edgeTileBounds, ReceiverBoundsPadding);
+
+  if (!shadowQuadOverlapsTileBounds(shadowWorldPoints, receiverBounds))
+    return;
+
+  forEachTileOverlappingShadowQuad(
+      shadowWorldPoints,
+      [&](const glm::ivec2& tile, const ClippedPolygon& poly)
+      {
+        int elevation = 0;
+
+        if (!context.terrainElevationGrid.tryGet(tile, elevation))
+          return true;
+
+        if (elevation != edge.bottomElevation)
+          return true;
+
+        emitTileShadow(context, outCommands, tile, elevation, poly, alpha);
+
+        return true;
+      });
 }
 
 bool IsometricShadowSystem::terrainShadowPathBlocked(
@@ -406,14 +422,13 @@ bool IsometricShadowSystem::terrainShadowPathBlocked(
                 if (tile == receiverTile)
                   return false;
 
-                if (!context.hasTileAt(tile))
+                int elevation = 0;
+
+                if (!context.terrainElevationGrid.tryGet(tile, elevation))
                 {
                   blocked = true;
                   return false;
                 }
-
-                const int elevation =
-                    context.getTileElevationAt(glm::vec2{tile.x, tile.y});
 
                 if (elevation >= edge.topElevation)
                 {
@@ -457,7 +472,6 @@ void IsometricShadowSystem::constructWallShadowFace(
     int side,
     const glm::vec2 shadowWorldPoints[4],
     float incomingElevation,
-    float normalizedDistance,
     float alpha)
 {
   ZoneScopedN("constructWallShadowFace()");
@@ -718,31 +732,6 @@ void IsometricShadowSystem::setTerrainShadowAlpha(float alpha)
   m_shadowSettings.terrainShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
 
   markTerrainDirty();
-}
-
-bool IsometricShadowSystem::tryConstructShadowOnTile(
-    const IsometricRenderContext& context,
-    std::vector<TerrainShadowCommand>& outCommands,
-    const glm::ivec2& tile,
-    int requiredElevation,
-    const glm::vec2 worldPoints[4],
-    float alpha)
-{
-
-  ZoneScopedN("Shadow: tryConstructShadowOnTile()");
-  if (!context.hasTileAt(tile))
-    return false;
-
-  const int receiverElevation =
-      context.getTileElevationAt(glm::vec2{tile.x, tile.y});
-
-  if (receiverElevation != requiredElevation)
-    return false;
-
-  constructTileShadowPolygonAt(
-      context, outCommands, tile, receiverElevation, worldPoints, alpha);
-
-  return true;
 }
 
 float IsometricShadowSystem::calculateTerrainShadowLength(

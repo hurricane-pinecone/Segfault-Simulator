@@ -117,6 +117,7 @@ private:
   ActiveCamera getCamera() const;
 
   void rebuildTileElevationCache();
+  void rebuildTerrainElevationGridView();
 
 private:
   AssetStore& assetStore;
@@ -140,6 +141,8 @@ private:
   RenderQueue<AnyRenderCommand> m_renderQueue;
 
   std::unordered_map<glm::ivec2, int, IVec2Hash> tileElevationCache;
+  std::vector<int> tileElevationGridData;
+  TerrainElevationGridView tileElevationGridView;
   bool tileElevationCacheDirty = true;
 
   IsometricRenderContext m_context;
