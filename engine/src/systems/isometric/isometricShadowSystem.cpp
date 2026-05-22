@@ -7,14 +7,9 @@
 #include "tracy/Tracy.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <vector>
-#ifdef __EMSCRIPTEN__
-  #include <chrono>
-#endif
-#include <cmath>
-#include <future>
-#include <thread>
 
 #include "engine/components/elevationComponent.h"
 #include "engine/components/tags/isometricTile.h"
@@ -141,62 +136,8 @@ void IsometricShadowSystem::computeTerrainShadows(
   gShadowPathChecks.store(0, std::memory_order_relaxed);
   gShadowTilesTraversed.store(0, std::memory_order_relaxed);
 
-  // Multi threaded
-#ifdef __EMSCRIPTEN__
-  if (m_shadowBuildInProgress)
-  {
-    bool allReady = true;
-
-    for (auto& job : m_shadowJobs)
-    {
-      if (job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
-      {
-        allReady = false;
-        break;
-      }
-    }
-
-    if (allReady)
-    {
-      std::vector<TerrainShadowCommand> newItems;
-
-      for (auto& job : m_shadowJobs)
-      {
-        ShadowBuildResult result = job.get();
-
-        gTerrainShadowEdgesProcessed += result.edgesProcessed;
-
-        newItems.insert(
-            newItems.end(), result.items.begin(), result.items.end());
-      }
-
-      m_commands = batchTerrainShadowCommands(newItems);
-      m_cache.sunDir = sunDir3D;
-      m_cache.isoCameraPosition = context.isoCameraPosition;
-      m_cache.zoom = context.zoom;
-      m_cache.itemsDirty = false;
-      m_cache.alpha = alpha;
-
-      m_shadowJobs.clear();
-      m_shadowBuildInProgress = false;
-    }
-
-    return;
-  }
-
-  m_shadowJobs =
-      startTerrainEdgeShadowJobs(context, shadowDir, effectiveSunHeight, alpha);
-
-  m_shadowBuildInProgress = !m_shadowJobs.empty();
-
-  if (!m_shadowBuildInProgress)
-    flush();
-
-  return;
-#else
   flush();
   buildTerrainEdgeShadowItems(context, shadowDir, effectiveSunHeight, alpha);
-#endif
 
   m_cache.sunDir = sunDir3D;
   m_cache.isoCameraPosition = context.isoCameraPosition;
@@ -638,85 +579,40 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
   ZoneScopedN("Shadow: buildTerrainEdgeShadowItems()");
 
   const std::vector<TerrainShadowEdge>& edges = m_cache.edges;
-  const std::size_t edgeCount = edges.size();
-  std::vector<TerrainShadowCommand> rawItems;
-  rawItems.reserve(5000);
 
-  struct ShadowBuildResult
+  if (edges.empty())
   {
-    std::vector<TerrainShadowCommand> items;
-    int edgesProcessed = 0;
-  };
-
-  if (edgeCount == 0)
+    m_commands.clear();
     return;
+  }
 
-#ifdef __EMSCRIPTEN__
-  const unsigned int hardwareThreads = 2;
-#else
-  const unsigned int hardwareThreads =
-      std::max(1u, std::min(4u, std::thread::hardware_concurrency()));
-#endif
+  std::vector<TerrainShadowCommand> rawItems;
+  rawItems.reserve(edges.size() * 4);
 
-  const std::size_t batchCount =
-      std::min<std::size_t>(hardwareThreads, edgeCount);
+  int edgesProcessed = 0;
 
-  const std::size_t batchSize = (edgeCount + batchCount - 1) / batchCount;
-
-  std::vector<std::future<ShadowBuildResult>> jobs;
-  jobs.reserve(batchCount);
-
-  for (std::size_t batchIndex = 0; batchIndex < batchCount; batchIndex++)
+  for (const TerrainShadowEdge& edge : edges)
   {
-    const std::size_t begin = batchIndex * batchSize;
-    const std::size_t end = std::min(begin + batchSize, edgeCount);
-
-    if (begin >= end)
+    if (edge.topElevation <= edge.bottomElevation)
       continue;
 
-    jobs.push_back(std::async(
-        std::launch::async,
-        [this, &context, &edges, shadowDir, sunHeight, alpha, begin, end]()
-        {
-          ShadowBuildResult result;
-          result.items.reserve((end - begin) * 8);
+    if (!shouldCastTerrainShadow(edge, shadowDir))
+      continue;
 
-          for (std::size_t i = begin; i < end; i++)
-          {
-            const TerrainShadowEdge& edge = edges[i];
+    constructTerrainEdgeShadowProjectedClipped(
+        context,
+        rawItems,
+        edge,
+        shadowDir,
+        sunHeight,
+        m_shadowSettings.terrainShadowMaxLength,
+        alpha);
 
-            const int heightDelta = edge.topElevation - edge.bottomElevation;
-
-            if (heightDelta <= 0)
-              continue;
-
-            if (!shouldCastTerrainShadow(edge, shadowDir))
-              continue;
-
-            constructTerrainEdgeShadowProjectedClipped(
-                context,
-                result.items,
-                edge,
-                shadowDir,
-                sunHeight,
-                m_shadowSettings.terrainShadowMaxLength,
-                alpha);
-
-            result.edgesProcessed++;
-          }
-
-          return result;
-        }));
+    edgesProcessed++;
   }
 
-  for (auto& job : jobs)
-  {
-    ShadowBuildResult result = job.get();
+  gTerrainShadowEdgesProcessed += edgesProcessed;
 
-    gTerrainShadowEdgesProcessed += result.edgesProcessed;
-
-    rawItems.insert(rawItems.end(), result.items.begin(), result.items.end());
-  }
   m_commands = batchTerrainShadowCommands(rawItems);
 }
 
@@ -801,77 +697,5 @@ IsometricShadowSystem::batchTerrainShadowCommands(
 
   return result;
 }
-
-#ifdef __EMSCRIPTEN__
-std::vector<std::future<IsometricShadowSystem::ShadowBuildResult>>
-IsometricShadowSystem::startTerrainEdgeShadowJobs(
-    const IsometricRenderContext& context,
-    const glm::vec2& shadowDir,
-    float sunHeight,
-    float alpha)
-{
-  const auto edges =
-      std::make_shared<const std::vector<TerrainShadowEdge>>(m_cache.edges);
-  const auto contextCopy =
-      std::make_shared<const IsometricRenderContext>(context);
-  const std::size_t edgeCount = edges->size();
-
-  constexpr unsigned int hardwareThreads = 2;
-
-  std::vector<std::future<ShadowBuildResult>> jobs;
-
-  if (edgeCount == 0)
-    return jobs;
-
-  const std::size_t batchCount =
-      std::min<std::size_t>(hardwareThreads, edgeCount);
-
-  const std::size_t batchSize = (edgeCount + batchCount - 1) / batchCount;
-
-  jobs.reserve(batchCount);
-
-  for (std::size_t batchIndex = 0; batchIndex < batchCount; batchIndex++)
-  {
-    const std::size_t begin = batchIndex * batchSize;
-    const std::size_t end = std::min(begin + batchSize, edgeCount);
-
-    if (begin >= end)
-      continue;
-
-    jobs.push_back(std::async(
-        std::launch::async,
-        [this, contextCopy, edges, shadowDir, sunHeight, alpha, begin, end]()
-        {
-          ShadowBuildResult result;
-
-          for (std::size_t i = begin; i < end; i++)
-          {
-            const TerrainShadowEdge& edge = (*edges)[i];
-
-            if (edge.topElevation - edge.bottomElevation <= 0)
-              continue;
-
-            if (!shouldCastTerrainShadow(edge, shadowDir))
-              continue;
-
-            constructTerrainEdgeShadowProjectedClipped(
-                *contextCopy,
-                result.items,
-                edge,
-                shadowDir,
-                sunHeight,
-                m_shadowSettings.terrainShadowMaxLength,
-                alpha);
-
-            result.edgesProcessed++;
-          }
-
-          return result;
-        }));
-  }
-
-  return jobs;
-}
-#endif
 
 } // namespace sfs
