@@ -1,8 +1,9 @@
 #include "engine/utils/allocationMetrics.h"
-#include <tracy/Tracy.hpp>
 
 #include <cstdlib>
 #include <new>
+
+#include "engine/utils/profiling.h" // IWYU pragma: keep
 
 namespace
 {

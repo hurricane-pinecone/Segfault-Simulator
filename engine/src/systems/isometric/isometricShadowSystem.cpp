@@ -4,7 +4,6 @@
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/algorithms/gridDDA.h"
 #include "engine/utils/isometricLightingUtils.h"
-#include "tracy/Tracy.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +16,7 @@
 #include "glm/glm/geometric.hpp"
 
 #include "engine/ecs/registry.h" // IWYU pragma: keep
+#include "engine/utils/profiling.h"
 
 namespace sfs
 {

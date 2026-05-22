@@ -186,18 +186,6 @@ Do **not** run from repo root:
 
 This will break asset paths.
 
-## Leak Detection
-
-```bash
-./scripts/run_leaks.sh
-```
-
-If it needs permissions
-
-```bash
-chmod +x scripts/run_leaks.sh
-```
-
 ## Optional Aliases (zsh)
 
 ```bash
@@ -211,4 +199,68 @@ Run with:
 ```bash
 crun
 crun-release
+```
+
+## Tooling
+
+### Leak Detection
+
+```bash
+./scripts/run_leaks.sh
+```
+
+If it needs permissions
+
+```bash
+chmod +x scripts/run_leaks.sh
+```
+
+### Tracy Profiling
+
+![Tracy](./docs/images/tracy.png)
+
+#### Install Tracy Profiler (macOS)
+
+```bash
+brew install tracy
+```
+
+Launch the profiler UI:
+
+```bash
+tracy-profiler
+```
+
+---
+
+#### Build and Run in Profiling Mode
+
+Add this alias to your shell config (`~/.zshrc`, `~/.bashrc`, etc):
+
+```bash
+alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
+```
+
+Reload your shell:
+
+```bash
+source ~/.zshrc
+```
+
+Then build and run the engine with Tracy enabled:
+
+```bash
+crun-profile
+```
+
+---
+
+#### Tracy Configuration
+
+Tracy is only enabled in `RelWithDebInfo` builds.
+
+Use the shared profiling wrapper so Tracy is stripped from other build types automatically.
+
+```cpp
+#include "engine/utils/profiling.h"
 ```
