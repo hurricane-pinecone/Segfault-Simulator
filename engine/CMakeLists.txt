@@ -82,6 +82,10 @@ else()
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
 
+    target_include_directories(engine PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/tracy/public"
+)
+
 target_include_directories(engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui"
 )
@@ -89,7 +93,13 @@ target_include_directories(engine PUBLIC
 target_sources(engine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/tracy/public/TracyClient.cpp"
 )
+
+target_compile_definitions(engine PUBLIC
+    TRACY_ENABLE
+)
+
 
     target_link_libraries(engine
         PUBLIC

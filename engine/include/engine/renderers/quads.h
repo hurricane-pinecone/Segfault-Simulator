@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SDL2/SDL_pixels.h"
+#include "SDL_pixels.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include <SDL_rect.h>

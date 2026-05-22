@@ -1,6 +1,6 @@
-#include <engine/utils/allocationMetrics.h>
+#include "engine/utils/allocationMetrics.h"
+#include <tracy/Tracy.hpp>
 
-#include <cstddef>
 #include <cstdlib>
 #include <new>
 
@@ -27,10 +27,6 @@ static void setMemoryTrackingPhase(MemoryTrackingPhase phase)
 {
   currentPhase = phase;
 }
-
-// ----------------------------
-// Internal tracking functions
-// ----------------------------
 
 struct alignas(std::max_align_t) AllocationHeader
 {
@@ -62,10 +58,6 @@ static void recordFree(std::size_t size)
   metrics.current -= size;
 }
 
-// ----------------------------
-// Scoped tracking
-// ----------------------------
-
 ScopedMemoryTracking::ScopedMemoryTracking(MemoryTrackingPhase phase)
     : previousPhase(getMemoryTrackingPhase())
 {
@@ -79,10 +71,6 @@ ScopedMemoryTracking::~ScopedMemoryTracking()
 
 } // namespace sfs
 
-// ============================
-// Global new/delete overrides
-// ============================
-
 void* operator new(std::size_t size)
 {
   const auto totalSize = size + sizeof(sfs::AllocationHeader);
@@ -90,9 +78,7 @@ void* operator new(std::size_t size)
   auto* raw = static_cast<unsigned char*>(std::malloc(totalSize));
 
   if (!raw)
-  {
     throw std::bad_alloc();
-  }
 
   auto* header = reinterpret_cast<sfs::AllocationHeader*>(raw);
 
@@ -101,6 +87,10 @@ void* operator new(std::size_t size)
   header->size = size;
   header->tracked = phase != sfs::MemoryTrackingPhase::None && !insideTracker;
 
+  void* userMemory = raw + sizeof(sfs::AllocationHeader);
+
+  TracyAlloc(userMemory, size);
+
   if (header->tracked)
   {
     insideTracker = true;
@@ -108,7 +98,7 @@ void* operator new(std::size_t size)
     insideTracker = false;
   }
 
-  return raw + sizeof(sfs::AllocationHeader);
+  return userMemory;
 }
 
 void operator delete(void* memory) noexcept
@@ -121,6 +111,8 @@ void operator delete(void* memory) noexcept
 
   auto* header = reinterpret_cast<sfs::AllocationHeader*>(raw);
 
+  TracyFree(memory);
+
   if (header->tracked && !insideTracker)
   {
     insideTracker = true;
@@ -131,17 +123,9 @@ void operator delete(void* memory) noexcept
   std::free(raw);
 }
 
-// ============================
-// Array new/delete
-// ============================
-
 void* operator new[](std::size_t size) { return operator new(size); }
 
 void operator delete[](void* memory) noexcept { operator delete(memory); }
-
-// ============================
-// Sized delete
-// ============================
 
 void operator delete(void* memory, std::size_t) noexcept
 {
@@ -152,10 +136,6 @@ void operator delete[](void* memory, std::size_t) noexcept
 {
   operator delete[](memory);
 }
-
-// ============================
-// nothrow new/delete
-// ============================
 
 void* operator new(std::size_t size, const std::nothrow_t&) noexcept
 {

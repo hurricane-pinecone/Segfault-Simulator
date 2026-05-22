@@ -3,89 +3,98 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
-#include <vector>
+#include <cstddef>
 
 namespace sfs
 {
+
+struct ClippedPolygon
+{
+  glm::vec2 points[8];
+  size_t count = 0;
+};
 
 inline static float cross2D(const glm::vec2& a, const glm::vec2& b)
 {
   return a.x * b.y - a.y * b.x;
 }
 
-inline static std::vector<glm::vec2>
-clipPolygonAgainstEdge(const std::vector<glm::vec2>& input,
-                       float edge,
-                       int axis,
-                       bool keepGreater)
+inline static void clipPolygonAgainstEdge(const glm::vec2* input,
+                                          int inputCount,
+                                          glm::vec2* output,
+                                          int& outputCount,
+                                          float value,
+                                          int axis,
+                                          bool keepGreater)
 {
-  std::vector<glm::vec2> output;
+  outputCount = 0;
 
-  if (input.empty())
-    return output;
+  if (inputCount <= 0)
+    return;
 
   auto inside = [&](const glm::vec2& p)
-  {
-    const float value = axis == 0 ? p.x : p.y;
-    return keepGreater ? value >= edge : value <= edge;
-  };
+  { return keepGreater ? p[axis] >= value : p[axis] <= value; };
 
   auto intersect = [&](const glm::vec2& a, const glm::vec2& b)
   {
-    const float av = axis == 0 ? a.x : a.y;
-    const float bv = axis == 0 ? b.x : b.y;
-    const float t = (edge - av) / (bv - av);
+    const float da = a[axis] - value;
+    const float db = b[axis] - value;
+    const float t = da / (da - db);
 
     return a + (b - a) * t;
   };
 
-  glm::vec2 previous = input.back();
+  glm::vec2 previous = input[inputCount - 1];
   bool previousInside = inside(previous);
 
-  for (const glm::vec2& current : input)
+  for (int i = 0; i < inputCount; i++)
   {
+    const glm::vec2 current = input[i];
     const bool currentInside = inside(current);
 
-    if (currentInside)
-    {
-      if (!previousInside)
-        output.push_back(intersect(previous, current));
+    if (currentInside != previousInside)
+      output[outputCount++] = intersect(previous, current);
 
-      output.push_back(current);
-    }
-    else if (previousInside)
-    {
-      output.push_back(intersect(previous, current));
-    }
+    if (currentInside)
+      output[outputCount++] = current;
 
     previous = current;
     previousInside = currentInside;
   }
-
-  return output;
 }
 
-inline static std::vector<glm::vec2>
-clipPolygonToTile(const glm::vec2 worldPoints[4], const glm::ivec2& tile)
+inline static ClippedPolygon clipPolygonToTile(const glm::vec2 worldPoints[4],
+                                               const glm::ivec2& tile)
 {
-  std::vector<glm::vec2> polygon = {
+  glm::vec2 bufferA[8] = {
       worldPoints[0],
       worldPoints[1],
       worldPoints[2],
       worldPoints[3],
   };
 
+  glm::vec2 bufferB[8];
+
+  int countA = 4;
+  int countB = 0;
+
   const float minX = static_cast<float>(tile.x);
   const float maxX = static_cast<float>(tile.x + 1);
   const float minY = static_cast<float>(tile.y);
   const float maxY = static_cast<float>(tile.y + 1);
 
-  polygon = clipPolygonAgainstEdge(polygon, minX, 0, true);
-  polygon = clipPolygonAgainstEdge(polygon, maxX, 0, false);
-  polygon = clipPolygonAgainstEdge(polygon, minY, 1, true);
-  polygon = clipPolygonAgainstEdge(polygon, maxY, 1, false);
+  clipPolygonAgainstEdge(bufferA, countA, bufferB, countB, minX, 0, true);
+  clipPolygonAgainstEdge(bufferB, countB, bufferA, countA, maxX, 0, false);
+  clipPolygonAgainstEdge(bufferA, countA, bufferB, countB, minY, 1, true);
+  clipPolygonAgainstEdge(bufferB, countB, bufferA, countA, maxY, 1, false);
 
-  return polygon;
+  ClippedPolygon result;
+  result.count = countA;
+
+  for (int i = 0; i < countA; i++)
+    result.points[i] = bufferA[i];
+
+  return result;
 }
 
 inline static bool pointInConvexQuad(glm::vec2 p, const glm::vec2 quad[4])

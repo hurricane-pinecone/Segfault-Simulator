@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SDL_pixels.h>
+#include "SDL_pixels.h"
 #include <cstdint>
 
 namespace sfs
