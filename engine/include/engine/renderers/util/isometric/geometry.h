@@ -3,7 +3,6 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
-#include "tracy/Tracy.hpp"
 #include <cstddef>
 
 namespace sfs
@@ -12,7 +11,61 @@ namespace sfs
 struct ClippedPolygon
 {
   glm::vec2 points[8];
-  size_t count = 0;
+  int count = 0;
+};
+
+struct TileBounds
+{
+  glm::ivec2 min{0, 0};
+  glm::ivec2 max{0, 0};
+  bool valid = false;
+};
+
+struct TerrainShadowEdge
+{
+  enum class Side
+  {
+    West,
+    East,
+    North,
+    South,
+  };
+  glm::vec2 a;
+  glm::vec2 b;
+
+  glm::ivec2 casterTile{0, 0};
+  glm::ivec2 receiverTile{0, 0};
+
+  int topElevation = 0;
+  int bottomElevation = 0;
+
+  Side side = Side::West;
+};
+
+struct TerrainElevationGridView
+{
+  const int* elevations = nullptr;
+  int width = 0;
+  int height = 0;
+  int stride = 0;
+  glm::ivec2 origin{0, 0};
+
+  bool valid() const
+  {
+    return elevations != nullptr && width > 0 && height > 0 && stride >= width;
+  }
+
+  bool tryGet(const glm::ivec2& tile, int& elevation) const
+  {
+    const int x = tile.x - origin.x;
+    const int y = tile.y - origin.y;
+
+    if (x < 0 || y < 0 || x >= width || y >= height)
+      return false;
+
+    elevation = elevations[y * stride + x];
+    return true;
+  }
 };
 
 inline static float cross2D(const glm::vec2& a, const glm::vec2& b)
@@ -201,8 +254,6 @@ template <typename Visitor>
 void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
                                       Visitor&& visit)
 {
-  ZoneScopedN("forEachTileOverlappingShadowQuad()");
-
   float minX = points[0].x;
   float maxX = points[0].x;
   float minY = points[0].y;
@@ -229,13 +280,76 @@ void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
 
       const ClippedPolygon clipped = clipPolygonToTile(points, tile);
 
-      if (clipped.count >= 3)
-      {
-        if (!visit(tile, 0.0f))
-          return;
-      }
+      if (clipped.count < 3)
+        continue;
+
+      if (!visit(tile, clipped))
+        return;
     }
   }
+}
+
+inline static void expandTileBounds(TileBounds& bounds, const glm::ivec2& tile)
+{
+  if (!bounds.valid)
+  {
+    bounds.min = tile;
+    bounds.max = tile;
+    bounds.valid = true;
+    return;
+  }
+
+  bounds.min = glm::min(bounds.min, tile);
+  bounds.max = glm::max(bounds.max, tile);
+}
+
+inline static TileBounds expandedTileBounds(TileBounds bounds, int padding)
+{
+  if (!bounds.valid)
+    return bounds;
+
+  bounds.min -= glm::ivec2{padding, padding};
+  bounds.max += glm::ivec2{padding, padding};
+  return bounds;
+}
+
+inline static bool shadowQuadOverlapsTileBounds(const glm::vec2 points[4],
+                                                const TileBounds& bounds)
+{
+  if (!bounds.valid)
+    return false;
+
+  float minX = points[0].x;
+  float maxX = points[0].x;
+  float minY = points[0].y;
+  float maxY = points[0].y;
+
+  for (int i = 1; i < 4; i++)
+  {
+    minX = std::min(minX, points[i].x);
+    maxX = std::max(maxX, points[i].x);
+    minY = std::min(minY, points[i].y);
+    maxY = std::max(maxY, points[i].y);
+  }
+
+  return maxX >= static_cast<float>(bounds.min.x) &&
+         minX <= static_cast<float>(bounds.max.x + 1) &&
+         maxY >= static_cast<float>(bounds.min.y) &&
+         minY <= static_cast<float>(bounds.max.y + 1);
+}
+
+inline static TileBounds
+getTerrainShadowEdgeTileBounds(const std::vector<TerrainShadowEdge>& edges)
+{
+  TileBounds bounds;
+
+  for (const TerrainShadowEdge& edge : edges)
+  {
+    expandTileBounds(bounds, edge.casterTile);
+    expandTileBounds(bounds, edge.receiverTile);
+  }
+
+  return bounds;
 }
 
 } // namespace sfs

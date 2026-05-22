@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/renderers/util/isometric/geometry.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include <cmath>
@@ -40,6 +41,8 @@ struct IsometricRenderContext
   float waveAmplitude = 6.0f;
   float waveFrequency = 0.45f;
   float waveSpeed = 3.0f;
+
+  TerrainElevationGridView terrainElevationGrid;
 
   const std::unordered_map<glm::ivec2, int, IVec2Hash>* tileElevations =
       nullptr;
