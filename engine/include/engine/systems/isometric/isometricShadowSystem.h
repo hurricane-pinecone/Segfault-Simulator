@@ -7,6 +7,7 @@
 #include "engine/renderers/renderProvider.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "glm/glm/geometric.hpp"
+#include "tracy/Tracy.hpp"
 #include <atomic>
 #include <map>
 #include <vector>
@@ -199,6 +200,8 @@ void IsometricShadowSystem::walkShadowEdgeRays(const TerrainShadowEdge& edge,
                                                float shadowLength,
                                                Visitor&& visit)
 {
+
+  ZoneScopedN("Shadow: walkShadowEdgeRays()");
   const float edgeLength = glm::length(edge.b - edge.a);
 
   constexpr float RaySpacing = 0.25;

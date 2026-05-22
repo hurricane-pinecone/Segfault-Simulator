@@ -21,6 +21,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include <tracy/public/tracy/Tracy.hpp>
+
 void GameScene::onInit()
 {
   createEntities();
@@ -97,4 +99,6 @@ void GameScene::onUpdate(double deltaTime)
 
     m_fps += (instantFps - m_fps) * 0.1;
   }
+
+  FrameMark;
 }

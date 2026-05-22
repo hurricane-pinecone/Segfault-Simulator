@@ -219,10 +219,9 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
       if (static_cast<float>(receiverElevation) > maxShadowReceiverElevation)
         return;
 
-      const std::vector<glm::vec2> clipped =
-          clipPolygonToTile(groundPoints, tile);
+      const auto clipped = clipPolygonToTile(groundPoints, tile);
 
-      if (clipped.size() < 3)
+      if (clipped.count < 3)
         return;
 
       constexpr float ElevationSortWeight = 0.5f;
@@ -231,11 +230,11 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
           static_cast<float>(tile.x) + static_cast<float>(tile.y) +
           static_cast<float>(receiverElevation) * ElevationSortWeight + 0.0004f;
 
-      for (size_t i = 1; i + 1 < clipped.size(); i++)
+      for (int i = 1; i + 1 < clipped.count; i++)
       {
-        const glm::vec2 p0 = clipped[0];
-        const glm::vec2 p1 = clipped[i];
-        const glm::vec2 p2 = clipped[i + 1];
+        const glm::vec2 p0 = clipped.points[0];
+        const glm::vec2 p1 = clipped.points[i];
+        const glm::vec2 p2 = clipped.points[i + 1];
 
         SpriteShadowCommand shadow;
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <SDL2/SDL_render.h>
 #include <SDL_rect.h>
+#include <SDL_render.h>
 #include <cstddef>
 #include <cstdint>
 #include <string>

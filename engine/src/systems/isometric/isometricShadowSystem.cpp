@@ -4,6 +4,7 @@
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/algorithms/gridDDA.h"
 #include "engine/utils/isometricLightingUtils.h"
+#include "tracy/Tracy.hpp"
 
 #include <algorithm>
 #include <unordered_set>
@@ -62,6 +63,7 @@ void IsometricShadowSystem::computeCommands(
 void IsometricShadowSystem::computeTerrainShadows(
     const IsometricRenderContext& context)
 {
+  ZoneScopedN("Compute terrain shadows");
   if (m_cache.edgesDirty)
   {
     m_cache.edges = mergeTerrainShadowEdges(getTerrainShadowEdges(context));
@@ -292,9 +294,10 @@ void IsometricShadowSystem::constructTileShadowPolygonAt(
     const glm::vec2 worldPoints[4],
     float alpha)
 {
-  const std::vector<glm::vec2> clipped = clipPolygonToTile(worldPoints, tile);
+  ZoneScopedN("Shadow: constructTileShadowPolygonAt()");
+  const auto clipped = clipPolygonToTile(worldPoints, tile);
 
-  if (clipped.size() < 3)
+  if (clipped.count < 3)
     return;
 
   constexpr float ElevationSortWeight = 0.5f;
@@ -303,13 +306,15 @@ void IsometricShadowSystem::constructTileShadowPolygonAt(
       static_cast<float>(tile.x) + static_cast<float>(tile.y) +
       static_cast<float>(elevation) * ElevationSortWeight + 0.0005f;
 
-  for (size_t i = 1; i + 1 < clipped.size(); i++)
+  for (size_t i = 1; i + 1 < clipped.count; i++)
   {
     glm::vec2 screenPoints[4] = {
-        context.worldToScreen(clipped[0], static_cast<float>(elevation)),
-        context.worldToScreen(clipped[i], static_cast<float>(elevation)),
-        context.worldToScreen(clipped[i + 1], static_cast<float>(elevation)),
-        context.worldToScreen(clipped[i + 1], static_cast<float>(elevation)),
+        context.worldToScreen(clipped.points[0], static_cast<float>(elevation)),
+        context.worldToScreen(clipped.points[i], static_cast<float>(elevation)),
+        context.worldToScreen(
+            clipped.points[i + 1], static_cast<float>(elevation)),
+        context.worldToScreen(
+            clipped.points[i + 1], static_cast<float>(elevation)),
     };
 
     outCommands.push_back(
@@ -326,6 +331,7 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
     float maxShadowLength,
     float alpha)
 {
+  ZoneScopedN("Shadow: constructTerrainEdgeShadowProjectedClipped()");
   if (sunHeight <= 0.001f || maxShadowLength <= 0.05f || alpha <= 0.01f)
     return;
 
@@ -370,9 +376,10 @@ bool IsometricShadowSystem::terrainShadowPathBlocked(
     const glm::ivec2& receiverTile,
     const glm::vec2& shadowDir) const
 {
+  ZoneScopedN("terrainShadowPathBlocked()")
 
 #if !defined(NDEBUG)
-  gShadowPathChecks.fetch_add(1, std::memory_order_relaxed);
+      gShadowPathChecks.fetch_add(1, std::memory_order_relaxed);
 #endif
 
   const glm::vec2 start = (edge.a + edge.b) * 0.5f + shadowDir * 0.02f;
@@ -461,6 +468,7 @@ void IsometricShadowSystem::constructWallShadowFace(
     float normalizedDistance,
     float alpha)
 {
+  ZoneScopedN("constructWallShadowFace()");
   glm::vec2 a;
   glm::vec2 b;
   getTileWallEdge(tile, side, a, b);
@@ -503,7 +511,7 @@ void IsometricShadowSystem::constructWallShadowFace(
 std::vector<TerrainShadowEdge> IsometricShadowSystem::mergeTerrainShadowEdges(
     const std::vector<TerrainShadowEdge>& input) const
 {
-  struct Run
+  ZoneScopedN("mergeTerrainShadowEdges()") struct Run
   {
     TerrainShadowEdge edge;
     int constant = 0;
@@ -621,6 +629,8 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
     float sunHeight,
     float alpha)
 {
+  ZoneScopedN("Shadow: buildTerrainEdgeShadowItems()");
+
   const std::vector<TerrainShadowEdge>& edges = m_cache.edges;
   const std::size_t edgeCount = edges.size();
   std::vector<TerrainShadowCommand> rawItems;
@@ -726,6 +736,8 @@ bool IsometricShadowSystem::tryConstructShadowOnTile(
     const glm::vec2 worldPoints[4],
     float alpha)
 {
+
+  ZoneScopedN("Shadow: tryConstructShadowOnTile()");
   if (!context.hasTileAt(tile))
     return false;
 
@@ -746,6 +758,8 @@ float IsometricShadowSystem::calculateTerrainShadowLength(
     float sunHeight,
     float maxShadowLength)
 {
+
+  ZoneScopedN("Shadow: calculateTerrainShadowLength()");
   const int heightDelta = edge.topElevation - edge.bottomElevation;
 
   if (heightDelta <= 0)
