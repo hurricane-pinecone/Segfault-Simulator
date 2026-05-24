@@ -4,7 +4,6 @@
 #include "engine/components/shadowCasterComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
-#include "engine/ecs/entity.h"
 #include "engine/renderers/util/isometric/geometry.h"
 #include "engine/utils/algorithms/gridDDA.h"
 #include "glm/glm/common.hpp"
