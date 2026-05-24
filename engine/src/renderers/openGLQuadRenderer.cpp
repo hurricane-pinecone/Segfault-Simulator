@@ -918,9 +918,11 @@ uniform float uLightIntensities[MAX_LIGHTS];
 uniform float uLightRadii[MAX_LIGHTS];
 uniform float uLightHeights[MAX_LIGHTS];
 
-vec3 calculateLampLighting(vec3 normal)
+vec3 calculatePointLighting(vec3 normal)
 {
-  vec3 accumulated = vec3(0.0);
+  vec3 weightedColor = vec3(0.0);
+  float totalWeight = 0.0;
+  float strongestAmount = 0.0;
 
   for (int i = 0; i < MAX_LIGHTS; i++)
   {
@@ -935,18 +937,18 @@ vec3 calculateLampLighting(vec3 normal)
 
     float attenuation = 1.0 - dist / uLightRadii[i];
     attenuation = clamp(attenuation, 0.0, 1.0);
-    attenuation = attenuation * attenuation;
+    attenuation = pow(attenuation, 1.35);
 
-    vec3 lightVector = vec3(delta.x, delta.y, uLightHeights[i]);
-    vec3 lightDir = normalize(lightVector);
+    vec3 lightVector = vec3(delta.x, delta.y, uLightHeights[i] * 0.65);
+    vec3 pointDir = normalize(lightVector);
 
-    float ndotl = max(dot(normal, lightDir), 0.0);
-    float diffuse = pow(ndotl, 0.75);
+    float ndotl = max(dot(normal, pointDir), 0.0);
+    float diffuse = mix(0.25, 1.0, pow(ndotl, 0.55));
 
-    float sunFade = 1.0 - clamp(uDiffuseStrength, 0.0, 1.0);
-    float lampBoost = mix(0.35, 2.75, sunFade);
-
-    float amount = diffuse * uLightIntensities[i] * attenuation * lampBoost;
+    float amount =
+        uLightIntensities[i] *
+        attenuation *
+        diffuse;
 
     vec3 color = uLightColors[i];
 
@@ -957,17 +959,22 @@ vec3 calculateLampLighting(vec3 normal)
     else
       color = vec3(1.0);
 
-    color = mix(vec3(1.0), color, 0.92);
-
-    accumulated += color * amount;
+    weightedColor += color * amount;
+    totalWeight += amount;
+    strongestAmount = max(strongestAmount, amount);
   }
 
-  float peak = max(max(accumulated.r, accumulated.g), accumulated.b);
+  if (totalWeight <= 0.001)
+    return vec3(0.0);
 
-  if (peak > 1.0)
-    accumulated /= peak;
+  vec3 blendedColor = weightedColor / totalWeight;
 
-  return accumulated;
+  float cappedAmount =
+      strongestAmount / (1.0 + strongestAmount);
+
+  cappedAmount *= 1.65;
+
+  return blendedColor * cappedAmount;
 }
 
 void main()
@@ -1003,39 +1010,69 @@ void main()
       normal = normalize(normal);
   }
 
-  vec3 lampLighting = calculateLampLighting(normal);
-
   vec3 lightDir = normalize(uLightDirection);
-  float directionalDiffuse = max(dot(normal, lightDir), 0.0);
+  float sunDiffuse = max(dot(normal, lightDir), 0.0);
 
-float shadeSide = smoothstep(0.0, 0.75, directionalDiffuse);
+  float shadeSide =
+      smoothstep(0.0, 0.75, sunDiffuse);
 
-// Shadow-like darkness on faces turned away from the sun.
-float directionalAmbient =
-    uAmbient * mix(0.18, 1.0, shadeSide);
+  float ambientShade =
+      mix(0.18, 1.0, shadeSide);
 
-vec3 sunLighting =
-    vec3(directionalAmbient) +
-    directionalDiffuse * uDiffuseStrength;
+  vec3 sunlight =
+      vec3(uAmbient * ambientShade) +
+      vec3(sunDiffuse * uDiffuseStrength);
 
-  vec3 sunLitColor = albedo.rgb * clamp(sunLighting, 0.0, 1.0);
+  float lightFloor =
+      mix(0.06, 0.82, clamp(uAmbient, 0.0, 1.0));
 
-  float albedoLuma = dot(albedo.rgb, vec3(0.299, 0.587, 0.114));
-  vec3 lampSurface = mix(albedo.rgb, vec3(albedoLuma), 0.25);
+  sunlight =
+      max(sunlight, vec3(lightFloor));
 
-  float sunAmount = clamp(uDiffuseStrength, 0.0, 1.0);
+  vec3 pointLight =
+      calculatePointLighting(normal);
 
-  float visibleLampStrength = mix(1.25, 0.15, sunAmount);
+  float daylight =
+      smoothstep(0.20, 0.75, uAmbient);
 
-  vec3 lampLitColor = lampSurface * lampLighting * visibleLampStrength;
+  float pointVisibility =
+      1.0 - daylight;
 
-  vec3 litColor = clamp(sunLitColor + lampLitColor, 0.0, 1.0);
-  vec3 emissiveColor = albedo.rgb * 2.5;
+  pointVisibility =
+      pointVisibility * pointVisibility;
 
-  vec3 finalRgb = mix(litColor, emissiveColor, emissiveMask);
+  pointLight *= pointVisibility * 2.0;
 
-  FragColor = vec4(finalRgb, albedo.a) * uColor;
-})";
+  float sunlightAmount =
+      max(max(sunlight.r, sunlight.g), sunlight.b);
+
+  // At night: point lights have full authority.
+  // During day: point lights only affect shadowed areas.
+  float shadowRoom =
+      mix(
+          1.0,
+          1.0 - smoothstep(0.65, 1.0, sunlightAmount),
+          daylight);
+
+  vec3 totalLight =
+      sunlight + pointLight * shadowRoom;
+
+  totalLight =
+      clamp(totalLight, 0.0, 1.0);
+
+  vec3 litColor =
+      albedo.rgb * totalLight;
+
+  vec3 emissiveColor =
+      albedo.rgb * 2.5;
+
+  vec3 finalRgb =
+      mix(litColor, emissiveColor, emissiveMask);
+
+  FragColor =
+      vec4(finalRgb, albedo.a) * uColor;
+}
+)";
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
 
   GLuint fragmentShader =
