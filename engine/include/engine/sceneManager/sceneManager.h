@@ -53,7 +53,10 @@ TScene* SceneManager::createScene(TArgs&&... args)
   TScene* ptr = scene.get();
 
   if (m_scenes.empty())
+  {
     m_currentScene = ptr;
+    m_currentScene->onEnter();
+  }
 
   m_scenes.emplace(id, std::move(scene));
   m_nameToId[ptr->name()] = id;
