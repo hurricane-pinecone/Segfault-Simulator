@@ -115,7 +115,7 @@ void IsometricShadowSystem::computeTerrainShadows(
     return;
   }
 
-  const bool sunChanged = glm::length(sunDir3D - m_cache.sunDir) > 0.025f;
+  const bool sunChanged = glm::length(sunDir3D - m_cache.sunDir) > 0.002f;
 
   const bool cameraChanged = glm::length(context.isoCameraPosition -
                                          m_cache.isoCameraPosition) > 0.001f ||

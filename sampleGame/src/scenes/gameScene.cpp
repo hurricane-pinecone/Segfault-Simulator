@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <sstream>
 
+#include <string>
 #include <tracy/public/tracy/Tracy.hpp>
 
 void GameScene::onInit()
@@ -34,31 +35,28 @@ void GameScene::onInit()
   auto& renderer = addSystem<sfs::IsometricRenderSystem>(
       m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
 
-  sfs::IsometricShadowSettings shadowSettings = {5.0f, 7.0f};
+  sfs::IsometricShadowSettings shadowSettings = {7.0f, 7.0f};
 
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
 
-  renderer.setWorldScale(WORLD_SCALE);
+  addSystem<SunController>();
 
-  m_sunController.setLightingService(renderer.lighting());
+  renderer.setWorldScale(WORLD_SCALE);
 }
 
 void GameScene::createEntities()
 {
   createObject<Player>();
 
-  createObject<Lamp>(glm::vec2{18.5, 13.5}, Lamp::Color::Moonlight);
-  createObject<Lamp>(glm::vec2{18.5, 17.5}, Lamp::Color::Blue);
+  createObject<Lamp>(glm::vec2{18.5, 13.5}, Lamp::Color::Blue);
+  createObject<Lamp>(glm::vec2{18.5, 17.5}, Lamp::Color::SoftRed);
   createObject<Lamp>(glm::vec2{5.5, 13.5});
   createObject<Lamp>(glm::vec2{6.5, 13.5});
 }
 
 void GameScene::onProcessInput(const sfs::Input& input)
 {
-  auto mousePos = input.mouse().getPosition();
-  m_sunController.moveTo(mousePos.x, mousePos.y);
-
   if (input.keyboard().keyPressed(sfs::Key::F))
     m_sunController.toggleSun();
 }
@@ -84,6 +82,23 @@ void GameScene::onRender()
   sfs::TextRenderer::drawText(20, 20, stream.str());
   sfs::TextRenderer::drawText(
       20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
+  sfs::TextRenderer::drawText(
+      20, 60, "Time: " + getSystem<SunController>().timeString12Hour());
+
+  sfs::TextRenderer::drawText(
+      20,
+      100,
+      "Ambient: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
+                                       .lighting()
+                                       .ambient()
+                                       ->ambient));
+  sfs::TextRenderer::drawText(
+      20,
+      120,
+      "Diffuse: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
+                                       .lighting()
+                                       .ambient()
+                                       ->diffuseStrength));
 }
 
 void GameScene::onUpdate(double deltaTime)
