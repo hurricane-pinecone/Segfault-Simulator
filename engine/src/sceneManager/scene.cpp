@@ -1,7 +1,6 @@
 
 #include "engine/ecs/entity.h"
 #include "engine/input/input.h"
-#include "engine/systems/isometric/isometricRenderSystem.h"
 #include <engine/ecs/registry.h>
 #include <engine/sceneManager/scene.h>
 #include <engine/systems/renderSystem.h>
@@ -28,7 +27,9 @@ void Scene::destroyEntity(const Entity& entity)
 
 void Scene::update(double deltaTime)
 {
-  m_registry.update(deltaTime);
+  m_registry.flushEntities();
+  m_registry.forEachSystem([deltaTime](System& system)
+                           { system.update(deltaTime); });
   for (auto& obj : m_gameObjects)
   {
     obj->onUpdate(deltaTime);
@@ -44,18 +45,11 @@ void Scene::processInput(const Input& input)
   onProcessInput(input);
 }
 void Scene::render()
+
 {
-  if (registry().hasSystem<IsometricRenderSystem>())
-  {
-    registry().getSystem<IsometricRenderSystem>().render();
-  }
-  // if (registry().hasSystem<RenderSystem>())
-  // {
-  //   registry().getSystem<RenderSystem>().render(renderer);
-  // }
+  m_registry.forEachSystem([](System& system) { system.render(); });
 
   onRender();
-  onPostRender();
 }
 
 void Scene::destroyObject(GameObject* object)

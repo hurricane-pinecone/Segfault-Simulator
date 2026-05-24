@@ -23,7 +23,7 @@ public:
   void destroyEntity(const Entity& entity);
   bool isAlive(const Entity& entity) const;
 
-  void update(double deltaTime);
+  void flushEntities();
 
   template <typename TComponent, typename... TArgs>
   void addComponent(const Entity& entity, TArgs&&... args);
@@ -54,6 +54,9 @@ public:
 
   template <typename... TComponents>
   std::vector<Entity> view();
+
+  template <typename Fn>
+  void forEachSystem(Fn&& fn);
 
 private:
   // TODO: Figure out how to hide registry.h from client completely. For now
@@ -145,6 +148,10 @@ TSystem& Registry::addSystem(TArgs&&... args)
   TSystem* ptr = system.get();
 
   systems.emplace_back(std::move(system));
+
+  System* base = ptr;
+  base->create();
+
   return *ptr;
 }
 
@@ -222,6 +229,13 @@ std::vector<Entity> Registry::view()
   }
 
   return result;
+}
+
+template <typename Fn>
+void Registry::forEachSystem(Fn&& fn)
+{
+  for (auto& system : systems)
+    fn(*system);
 }
 
 /*

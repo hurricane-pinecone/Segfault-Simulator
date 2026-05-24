@@ -279,7 +279,6 @@ void Game::render()
     if (!sceneManager)
       return;
 
-    // sceneManager.current()->render(*renderer);
     sceneManager.current()->render();
 
     sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};

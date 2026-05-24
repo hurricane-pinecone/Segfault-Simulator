@@ -15,18 +15,19 @@ class IsometricSpriteShadowSystem
       public RenderProvider<IsometricRenderContext, SpriteShadowCommand>
 {
 public:
-  IsometricSpriteShadowSystem(AssetStore& assetStore);
-  IsometricSpriteShadowSystem(
-      IsometricShadowSettings settings,
-      AssetStore& assetStore,
-      const IsometricAmbientLighting* ambient = nullptr);
+  IsometricSpriteShadowSystem(AssetStore& assetStore)
+      : m_assetStore(assetStore) {};
+  IsometricSpriteShadowSystem(IsometricShadowSettings settings,
+                              AssetStore& assetStore)
+      : m_assetStore(assetStore), m_shadowSettings(settings) {};
 
   void computeCommands(const IsometricRenderContext& context) override;
 
-  void setAmbientLighting(const IsometricAmbientLighting* ambient);
-
   void setSpriteShadowMaxLength(float length);
   void setSpriteShadowAlpha(float alpha);
+
+protected:
+  void create() override;
 
 private:
   void constructSpriteShadows(const IsometricRenderContext& context,
@@ -35,7 +36,6 @@ private:
 private:
   AssetStore& m_assetStore;
   IsometricShadowSettings m_shadowSettings;
-  const IsometricAmbientLighting* m_ambientLighting = nullptr;
 };
 
 } // namespace sfs

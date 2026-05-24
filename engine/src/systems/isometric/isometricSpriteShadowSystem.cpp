@@ -5,9 +5,7 @@
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/entity.h"
-#include "engine/ecs/registry.h"
 #include "engine/renderers/util/isometric/geometry.h"
-#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/utils/algorithms/gridDDA.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
@@ -18,30 +16,11 @@
 namespace sfs
 {
 
-IsometricSpriteShadowSystem::IsometricSpriteShadowSystem(AssetStore& assetStore)
-    : m_assetStore(assetStore)
+void IsometricSpriteShadowSystem::create()
 {
   registerComponent<TransformComponent>();
   registerComponent<SpriteComponent>();
   registerComponent<ShadowCasterComponent>();
-}
-
-IsometricSpriteShadowSystem::IsometricSpriteShadowSystem(
-    IsometricShadowSettings settings,
-    AssetStore& assetStore,
-    const IsometricAmbientLighting* ambient)
-    : m_assetStore(assetStore), m_shadowSettings(settings),
-      m_ambientLighting(ambient)
-{
-  registerComponent<TransformComponent>();
-  registerComponent<SpriteComponent>();
-  registerComponent<ShadowCasterComponent>();
-}
-
-void IsometricSpriteShadowSystem::setAmbientLighting(
-    const IsometricAmbientLighting* ambient)
-{
-  m_ambientLighting = ambient;
 }
 
 void IsometricSpriteShadowSystem::setSpriteShadowMaxLength(float length)
@@ -69,9 +48,10 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
     const IsometricRenderContext& context,
     const Entity& entity)
 {
-  const auto* lighting = registry->tryGetSystem<IsometricLightingSystem>();
+  const auto* ambientLighting = context.ambientLighting;
+  const auto* pointLights = context.pointLights;
 
-  if (!m_ambientLighting && !lighting)
+  if (!ambientLighting && (!pointLights || pointLights->empty()))
     return;
 
   const auto& transform = entity.getComponent<TransformComponent>();
@@ -102,9 +82,8 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
   const SDL_Rect dest{0, 0, width, height};
 
   const float sunStrength =
-      m_ambientLighting
-          ? std::clamp(m_ambientLighting->diffuseStrength, 0.0f, 1.0f)
-          : 0.0f;
+      ambientLighting ? std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f)
+                      : 0.0f;
 
   const float pointShadowStrength = 1.0f - sunStrength;
 
@@ -285,19 +264,13 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
 
     walkGridDDA(groundPoints[0], dir, shadowLength, visitSpriteShadowTile);
     walkGridDDA(groundPoints[1], dir, shadowLength, visitSpriteShadowTile);
-
-    // walkGridDDA(base, dir, shadowLength, visitSpriteShadowTile);
-    // walkGridDDA(groundPoints[0], dir, shadowLength, visitSpriteShadowTile);
-    // walkGridDDA(groundPoints[1], dir, shadowLength, visitSpriteShadowTile);
-    // walkGridDDA(groundPoints[2], dir, shadowLength, visitSpriteShadowTile);
-    // walkGridDDA(groundPoints[3], dir, shadowLength, visitSpriteShadowTile);
   };
 
-  if (m_ambientLighting)
+  if (ambientLighting)
   {
-    const glm::vec3 sunDir3D = m_ambientLighting->direction;
+    const glm::vec3 sunDir3D = ambientLighting->direction;
     const float diffuse =
-        std::clamp(m_ambientLighting->diffuseStrength, 0.0f, 1.0f);
+        std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
 
     if (sunDir3D.z > 0.02f && diffuse > 0.01f)
     {
@@ -322,12 +295,10 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
     }
   }
 
-  if (!lighting)
+  if (!pointLights)
     return;
 
-  const auto& pointLights = lighting->getPointLights();
-
-  for (const auto& light : pointLights)
+  for (const auto& light : *pointLights)
   {
     const glm::vec2 toCaster = worldSample - light.worldPosition;
     const float distance = glm::length(toCaster);

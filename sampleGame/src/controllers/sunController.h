@@ -8,23 +8,25 @@
 class SunController
 {
 public:
-  SunController() {}
-
+  SunController() = default;
   ~SunController() = default;
 
   void moveTo(int x, int y)
   {
-    assert(m_lighting && "SunController renderer not set");
+    assert(m_lighting && "SunController lighting service not set");
 
     if (!m_lighting)
       return;
 
     if (!m_isSunEnabled)
     {
-      m_lighting->setAmbientDirection(glm::vec3{0.0f, 0.0f, 1.0f});
-      m_lighting->setAmbient(0.06f);
-      m_lighting->setAmbientDiffuseStrength(0.0f);
-      m_lighting->setAmbientColor(glm::vec3{0.08f, 0.13f, 0.30f});
+      sfs::IsometricAmbientLighting ambient;
+      ambient.direction = glm::vec3{0.0f, 0.0f, 1.0f};
+      ambient.ambient = 0.06f;
+      ambient.diffuseStrength = 0.0f;
+      ambient.color = glm::vec3{0.08f, 0.13f, 0.30f};
+
+      m_lighting->setAmbientLighting(ambient);
       return;
     }
 
@@ -36,38 +38,21 @@ public:
     const float clampedX = std::clamp(static_cast<float>(x), 0.0f, w);
 
     const float y01 = clampedY / h;
-
-    //
-    // Mouse top = noon
-    // Mouse bottom = night
-    //
     const float dayPosition = 1.0f - y01;
 
-    //
-    // Keep sun slightly above horizon at all times
-    // so shadows remain possible.
-    //
     constexpr float MinSunZ = 0.08f;
 
     float sunZ = MinSunZ + dayPosition * (1.0f - MinSunZ);
-
-    //
-    // Make shadows lengthen earlier while still bright.
-    //
     const float shadowSunZ = std::pow(sunZ, 1.35f);
 
     const float horizontalAmount =
         std::sqrt(std::max(0.0f, 1.0f - shadowSunZ * shadowSunZ));
 
-    const float side =
-        std::clamp((static_cast<float>(clampedX) - cx) / cx, -1.0f, 1.0f);
+    const float side = std::clamp((clampedX - cx) / cx, -1.0f, 1.0f);
 
     constexpr float BackLightBias = -0.65f;
 
-    glm::vec2 horizontalDir{
-        side,
-        BackLightBias,
-    };
+    glm::vec2 horizontalDir{side, BackLightBias};
 
     if (glm::length(horizontalDir) > 0.001f)
       horizontalDir = glm::normalize(horizontalDir);
@@ -85,47 +70,23 @@ public:
     else
       sunDir = glm::vec3{0.0f, 0.0f, 1.0f};
 
-    //
-    // Exponential DAY -> NIGHT curve.
-    //
-    // Stays bright for most of the screen,
-    // then falls off near the bottom.
-    //
     const float ambientDaylight = 1.0f - std::pow(1.0f - dayPosition, 5.5f);
 
     const float diffuseDaylight = 1.0f - std::pow(1.0f - dayPosition, 3.2f);
 
-    m_lighting->setAmbientDirection(sunDir);
+    const glm::vec3 dayColor{1.0f, 1.0f, 1.0f};
+    const glm::vec3 nightColor{0.08f, 0.13f, 0.30f};
 
-    //
-    // Brighter daytime while preserving dark nights.
-    //
-    m_lighting->setAmbient(0.06f + ambientDaylight * 0.39f);
+    sfs::IsometricAmbientLighting ambient;
+    ambient.direction = sunDir;
+    ambient.ambient = 0.06f + ambientDaylight * 0.39f;
+    ambient.diffuseStrength = diffuseDaylight * 0.78f;
+    ambient.color = glm::mix(nightColor, dayColor, ambientDaylight);
 
-    //
-    // Directional sunlight strength.
-    //
-    m_lighting->setAmbientDiffuseStrength(diffuseDaylight * 0.78f);
-
-    const glm::vec3 dayColor{
-        1.0f,
-        1.0f,
-        1.0f,
-    };
-
-    const glm::vec3 nightColor{
-        0.08f,
-        0.13f,
-        0.30f,
-    };
-
-    const glm::vec3 ambientColor =
-        glm::mix(nightColor, dayColor, ambientDaylight);
-
-    m_lighting->setAmbientColor(ambientColor);
+    m_lighting->setAmbientLighting(ambient);
   }
 
-  void setLightingSystem(sfs::IsometricLightingSystem& lighting)
+  void setLightingService(sfs::IsometricLightingService& lighting)
   {
     m_lighting = &lighting;
   }
@@ -133,7 +94,6 @@ public:
   void toggleSun() { m_isSunEnabled = !m_isSunEnabled; }
 
 private:
-  sfs::IsometricLightingSystem* m_lighting = nullptr;
-
+  sfs::IsometricLightingService* m_lighting = nullptr;
   bool m_isSunEnabled = true;
 };
