@@ -1,7 +1,7 @@
 #include "engine/Color/Color.h"
 #include "engine/logger/logger.h"
-#include "engine/renderers/openGLQuadRenderer.h"
-#include "engine/renderers/quads.h"
+#include "engine/rendering/openGLQuadRenderer.h"
+#include "engine/rendering/quads.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
 #include <engine/TextRenderer/textRenderer.h>

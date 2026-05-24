@@ -4,9 +4,9 @@
 #include "engine/components/cameraComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
-#include "engine/renderers/commands/commands.h"
-#include "engine/renderers/isometricRenderContext.h"
-#include "engine/renderers/renderQueue.h"
+#include "engine/rendering/commands/commands.h"
+#include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/renderQueue.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"

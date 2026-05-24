@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/renderers/util/isometric/geometry.h"
+#include "engine/rendering/util/isometric/geometry.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"

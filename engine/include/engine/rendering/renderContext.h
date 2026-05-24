@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/renderers/openGLQuadRenderer.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 #include <memory>
 
 namespace sfs

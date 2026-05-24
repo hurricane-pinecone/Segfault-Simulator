@@ -2,8 +2,8 @@
 
 #include "SDL2/SDL_rect.h"
 #include "SDL2/SDL_surface.h"
-#include "engine/renderers/batchKeys/LitQuadBatchKey.h"
-#include "engine/renderers/quads.h"
+#include "engine/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"

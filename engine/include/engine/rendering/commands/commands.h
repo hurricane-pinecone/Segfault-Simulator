@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/renderers/commands/shadowCommands.h"
-#include "engine/renderers/quads.h"
+#include "engine/rendering/commands/shadowCommands.h"
+#include "engine/rendering/quads.h"
 #include <variant>
 
 namespace sfs
