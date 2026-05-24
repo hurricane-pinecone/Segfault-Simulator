@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/assetStore/assetStore.h"
-#include "engine/ecs/system.h"
+#include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/renderers/commands/shadowCommands.h"
 #include "engine/renderers/isometricRenderContext.h"
 #include "engine/renderers/renderProvider.h"

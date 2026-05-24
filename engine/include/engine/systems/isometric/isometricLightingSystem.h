@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/ecs/registry.h"
+#include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/utils/isometricLightingUtils.h"
 #include <vector>
 
