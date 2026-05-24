@@ -94,7 +94,7 @@ bool Game::init(int windowWidth, int windowHeight)
   SDL_GL_MakeCurrent(window, m_glContext);
 
 #ifndef __EMSCRIPTEN__
-  SDL_GL_SetSwapInterval(1);
+  SDL_GL_SetSwapInterval(0);
 
   glewExperimental = GL_TRUE;
 

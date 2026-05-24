@@ -24,6 +24,7 @@ extern int gTerrainShadowEdgesProcessed;
 extern int gTileRenderItems;
 extern int gSpriteRenderItems;
 extern int gSpriteProjectedShadowItems;
+extern int gTerrainShadowBatchCount;
 
 struct WallFaceKey
 {

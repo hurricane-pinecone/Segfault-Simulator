@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <vector>
 
 #include "engine/components/elevationComponent.h"
@@ -236,26 +235,29 @@ void IsometricShadowSystem::emitTileShadow(
     const ClippedPolygon& poly,
     float alpha)
 {
-  ZoneScopedN("Shadow: emitTileShadow()");
-
   if (poly.count < 3)
     return;
 
   constexpr float ElevationSortWeight = 0.5f;
 
-  const float sortKey =
-      static_cast<float>(tile.x) + static_cast<float>(tile.y) +
-      static_cast<float>(elevation) * ElevationSortWeight + 0.0005f;
+  const float elevationF = static_cast<float>(elevation);
+
+  const float sortKey = static_cast<float>(tile.x) +
+                        static_cast<float>(tile.y) +
+                        elevationF * ElevationSortWeight + 0.0005f;
+
+  glm::vec2 screenPoly[8];
+
+  for (int i = 0; i < poly.count; i++)
+    screenPoly[i] = context.worldToScreen(poly.points[i], elevationF);
 
   for (int i = 1; i + 1 < poly.count; i++)
   {
     glm::vec2 screenPoints[4] = {
-        context.worldToScreen(poly.points[0], static_cast<float>(elevation)),
-        context.worldToScreen(poly.points[i], static_cast<float>(elevation)),
-        context.worldToScreen(
-            poly.points[i + 1], static_cast<float>(elevation)),
-        context.worldToScreen(
-            poly.points[i + 1], static_cast<float>(elevation)),
+        screenPoly[0],
+        screenPoly[i],
+        screenPoly[i + 1],
+        screenPoly[i + 1],
     };
 
     outCommands.push_back(
@@ -298,22 +300,25 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
   if (!shadowQuadOverlapsTileBounds(shadowWorldPoints, receiverBounds))
     return;
 
-  forEachTileOverlappingShadowQuad(
-      shadowWorldPoints,
-      [&](const glm::ivec2& tile, const ClippedPolygon& poly)
-      {
-        int elevation = 0;
+  {
+    ZoneScopedN("Shadow: emitTileShadow()");
+    forEachTileOverlappingShadowQuad(
+        shadowWorldPoints,
+        [&](const glm::ivec2& tile, const ClippedPolygon& poly)
+        {
+          int elevation = 0;
 
-        if (!context.terrainElevationGrid.tryGet(tile, elevation))
+          if (!context.terrainElevationGrid.tryGet(tile, elevation))
+            return true;
+
+          if (elevation != edge.bottomElevation)
+            return true;
+
+          emitTileShadow(context, outCommands, tile, elevation, poly, alpha);
+
           return true;
-
-        if (elevation != edge.bottomElevation)
-          return true;
-
-        emitTileShadow(context, outCommands, tile, elevation, poly, alpha);
-
-        return true;
-      });
+        });
+  }
 }
 
 bool IsometricShadowSystem::terrainShadowPathBlocked(
@@ -567,52 +572,6 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::mergeTerrainShadowEdges(
   return merged;
 }
 
-void IsometricShadowSystem::buildTerrainEdgeShadowItems(
-    const IsometricRenderContext& context,
-    const glm::vec2& shadowDir,
-    float sunHeight,
-    float alpha)
-{
-  ZoneScopedN("Shadow: buildTerrainEdgeShadowItems()");
-
-  const std::vector<TerrainShadowEdge>& edges = m_cache.edges;
-
-  if (edges.empty())
-  {
-    m_commands.clear();
-    return;
-  }
-
-  std::vector<TerrainShadowCommand> rawItems;
-  rawItems.reserve(edges.size() * 4);
-
-  int edgesProcessed = 0;
-
-  for (const TerrainShadowEdge& edge : edges)
-  {
-    if (edge.topElevation <= edge.bottomElevation)
-      continue;
-
-    if (!shouldCastTerrainShadow(edge, shadowDir))
-      continue;
-
-    constructTerrainEdgeShadowProjectedClipped(
-        context,
-        rawItems,
-        edge,
-        shadowDir,
-        sunHeight,
-        m_shadowSettings.terrainShadowMaxLength,
-        alpha);
-
-    edgesProcessed++;
-  }
-
-  gTerrainShadowEdgesProcessed += edgesProcessed;
-
-  m_commands = batchTerrainShadowCommands(rawItems);
-}
-
 void IsometricShadowSystem::setTerrainShadowMaxLength(float length)
 {
   m_shadowSettings.terrainShadowMaxLength = std::max(length, 0.0f);
@@ -632,8 +591,6 @@ float IsometricShadowSystem::calculateTerrainShadowLength(
     float sunHeight,
     float maxShadowLength)
 {
-
-  ZoneScopedN("Shadow: calculateTerrainShadowLength()");
   const int heightDelta = edge.topElevation - edge.bottomElevation;
 
   if (heightDelta <= 0)
@@ -664,36 +621,48 @@ TerrainShadowCommand IsometricShadowSystem::buildTerrainShadowCommand(
   return item;
 }
 
-std::vector<TerrainShadowBatchCommand>
-IsometricShadowSystem::batchTerrainShadowCommands(
-    const std::vector<TerrainShadowCommand>& items) const
+void IsometricShadowSystem::buildTerrainEdgeShadowItems(
+    const IsometricRenderContext& context,
+    const glm::vec2& shadowDir,
+    float sunHeight,
+    float alpha)
 {
-  ZoneScopedN("batchTerrainShadowCommands()");
-  std::map<RenderOrderKey, std::vector<Quad>> batches;
+  ZoneScopedN("Shadow: buildTerrainEdgeShadowItems()");
 
-  for (const auto& item : items)
+  const auto& edges = m_cache.edges;
+
+  if (edges.empty())
   {
-    RenderOrderKey key{
-        item.order.pass,
-        item.order.depth,
-        item.order.subpass,
-    };
-
-    batches[key].push_back(item.quad);
+    m_commands.clear();
+    return;
   }
 
-  std::vector<TerrainShadowBatchCommand> result;
-  result.reserve(batches.size());
+  m_commands.clear();
+  m_commands.reserve(edges.size() * 4);
 
-  for (auto& [key, quads] : batches)
+  int edgesProcessed = 0;
+
+  for (const TerrainShadowEdge& edge : edges)
   {
-    TerrainShadowBatchCommand batch;
-    batch.order = {key.pass, key.depth, key.subpass};
-    batch.quad.quads = std::move(quads);
-    result.push_back(std::move(batch));
+    if (edge.topElevation <= edge.bottomElevation)
+      continue;
+
+    if (!shouldCastTerrainShadow(edge, shadowDir))
+      continue;
+
+    constructTerrainEdgeShadowProjectedClipped(
+        context,
+        m_commands,
+        edge,
+        shadowDir,
+        sunHeight,
+        m_shadowSettings.terrainShadowMaxLength,
+        alpha);
+
+    edgesProcessed++;
   }
 
-  return result;
+  gTerrainShadowEdgesProcessed += edgesProcessed;
 }
 
 } // namespace sfs

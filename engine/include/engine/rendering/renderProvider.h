@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "engine/utils/profiling.h"
 #include <vector>
 
 namespace sfs
@@ -16,7 +17,11 @@ public:
   const std::vector<TCommand>& commands() const { return m_commands; };
 
 protected:
-  void flush() { m_commands.clear(); }
+  void flush()
+  {
+    ZoneScopedN("RenderProvider.flush()");
+    m_commands.clear();
+  }
 
 protected:
   std::vector<TCommand> m_commands;

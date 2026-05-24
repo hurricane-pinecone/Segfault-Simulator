@@ -54,6 +54,8 @@ inline static void renderDebugUI()
               static_cast<unsigned long long>(
                   gShadowTilesTraversed.load(std::memory_order_relaxed)));
 
+  ImGui::Text("Terrain shadow batches: %d", gTerrainShadowBatchCount);
+
   ImGui::End();
 
   ImGui::Render();
