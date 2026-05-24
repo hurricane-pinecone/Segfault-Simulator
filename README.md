@@ -9,6 +9,7 @@ This is a lightweight engine built using the ECS pattern, with a Unity style OOP
 </p>
 
 ![ECS Diagram](./docs/images/ecs.png)
+![High Level Ownership](./docs/images/high-level-ownership.png)
 
 ## Table of Contents
 

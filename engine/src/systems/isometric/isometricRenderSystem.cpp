@@ -60,8 +60,6 @@ void IsometricRenderSystem::render()
   gSpriteRenderItems = 0;
   gSpriteProjectedShadowItems = 0;
 
-  m_lightingService.setRegistry(registry);
-
   beginBatches();
   if (tileElevationCacheDirty)
   {

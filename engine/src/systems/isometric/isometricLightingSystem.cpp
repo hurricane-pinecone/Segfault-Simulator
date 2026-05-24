@@ -3,7 +3,6 @@
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/components/transformComponent.h"
-#include "engine/ecs/registry.h" // IWYU pragma: keep
 
 #include "engine/utils/isometricLightingUtils.h"
 #include "glm/glm/geometric.hpp"

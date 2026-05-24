@@ -15,7 +15,6 @@
 #include "engine/components/terrainBoundaryComponent.h"
 #include "glm/glm/geometric.hpp"
 
-#include "engine/ecs/registry.h" // IWYU pragma: keep
 #include "engine/utils/profiling.h"
 
 namespace sfs
@@ -669,6 +668,7 @@ std::vector<TerrainShadowBatchCommand>
 IsometricShadowSystem::batchTerrainShadowCommands(
     const std::vector<TerrainShadowCommand>& items) const
 {
+  ZoneScopedN("batchTerrainShadowCommands()");
   std::map<RenderOrderKey, std::vector<Quad>> batches;
 
   for (const auto& item : items)
