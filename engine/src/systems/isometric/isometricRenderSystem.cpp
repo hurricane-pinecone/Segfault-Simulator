@@ -36,6 +36,7 @@ int gTerrainShadowEdgesProcessed = 0;
 int gTileRenderItems = 0;
 int gSpriteRenderItems = 0;
 int gSpriteProjectedShadowItems = 0;
+int gTerrainShadowBatchCount = 0;
 
 ElevationComponent::ElevationComponent(int level) : level(level) {}
 

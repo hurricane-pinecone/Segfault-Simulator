@@ -18,7 +18,7 @@ extern std::atomic<uint64_t> gShadowTilesTraversed;
 
 class IsometricShadowSystem
     : public System,
-      public RenderProvider<IsometricRenderContext, TerrainShadowBatchCommand>
+      public RenderProvider<IsometricRenderContext, TerrainShadowCommand>
 {
 public:
   IsometricShadowSystem();
@@ -126,6 +126,25 @@ private:
         return depth < other.depth;
 
       return subpass < other.subpass;
+    }
+
+    bool operator==(const RenderOrderKey& other) const
+    {
+      return pass == other.pass && depth == other.depth &&
+             subpass == other.subpass;
+    }
+  };
+
+  struct RenderOrderKeyHash
+  {
+    size_t operator()(const RenderOrderKey& k) const noexcept
+    {
+      size_t h = std::hash<int>{}(static_cast<int>(k.pass));
+
+      h ^= std::hash<float>{}(k.depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.subpass) + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+      return h;
     }
   };
 
