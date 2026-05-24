@@ -73,7 +73,7 @@ void Registry::removeEntityFromSystems(const Entity& entity)
   }
 }
 
-void Registry::update(double deltaTime)
+void Registry::flushEntities()
 {
   for (const auto& entity : entitiesToBeAdded)
   {
@@ -110,11 +110,6 @@ void Registry::update(double deltaTime)
   }
 
   entitiesToBeRemoved.clear();
-
-  for (auto& system : systems)
-  {
-    system->update(deltaTime);
-  }
 }
 
 void Registry::destroyEntity(const Entity& entity)

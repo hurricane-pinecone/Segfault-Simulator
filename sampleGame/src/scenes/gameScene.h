@@ -20,7 +20,7 @@ protected:
   void onInit() override;
   void onProcessInput(const sfs::Input& input) override;
   void onUpdate(double deltaTime) override;
-  void onPostRender() override;
+  void onRender() override;
 
 private:
   void loadMap();

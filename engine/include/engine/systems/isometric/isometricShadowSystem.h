@@ -23,12 +23,10 @@ class IsometricShadowSystem
 public:
   IsometricShadowSystem();
   IsometricShadowSystem(IsometricShadowSettings settings,
-                        const AssetStore* assetStore = nullptr,
-                        const IsometricAmbientLighting* ambient = nullptr)
-      : m_shadowSettings(settings), m_ambientLighting(ambient) {};
+                        const AssetStore* assetStore = nullptr)
+      : m_shadowSettings(settings) {};
 
   void computeCommands(const IsometricRenderContext& context) override;
-  void setAmbientLighting(const IsometricAmbientLighting* ambient);
 
   void markTerrainDirty();
 
@@ -70,7 +68,6 @@ private:
   std::vector<TerrainShadowEdge>
   getTerrainShadowEdges(const IsometricRenderContext& context) const;
 
-  // Multi threaded
   void buildTerrainEdgeShadowItems(const IsometricRenderContext& context,
                                    const glm::vec2& shadowDir,
                                    float sunHeight,
@@ -94,6 +91,9 @@ private:
                       int elevation,
                       const ClippedPolygon& poly,
                       float alpha);
+
+protected:
+  void create() override;
 
 private:
   struct TerrainShadowCache
@@ -131,6 +131,5 @@ private:
 
   TerrainShadowCache m_cache;
   IsometricShadowSettings m_shadowSettings;
-  const IsometricAmbientLighting* m_ambientLighting = nullptr;
 };
 } // namespace sfs

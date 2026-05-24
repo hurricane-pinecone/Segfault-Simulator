@@ -33,19 +33,15 @@ void GameScene::onInit()
   addSystem<TerrainGeneratorSystem>(*this);
   auto& renderer = addSystem<sfs::IsometricRenderSystem>(
       m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
-  auto& lighting = addSystem<sfs::IsometricLightingSystem>();
 
   sfs::IsometricShadowSettings shadowSettings = {5.0f, 7.0f};
-  auto& ambient = lighting.ambient();
 
-  addSystem<sfs::IsometricShadowSystem>(
-      shadowSettings, &m_assetStore, &ambient);
-  addSystem<sfs::IsometricSpriteShadowSystem>(
-      shadowSettings, m_assetStore, &ambient);
+  addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
+  addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
 
   renderer.setWorldScale(WORLD_SCALE);
 
-  m_sunController.setLightingSystem(lighting);
+  m_sunController.setLightingService(renderer.lighting());
 }
 
 void GameScene::createEntities()
@@ -67,7 +63,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
     m_sunController.toggleSun();
 }
 
-void GameScene::onPostRender()
+void GameScene::onRender()
 {
   auto player = tryFindObject<Player>();
 

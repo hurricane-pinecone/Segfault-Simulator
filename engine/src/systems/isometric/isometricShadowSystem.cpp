@@ -24,7 +24,9 @@ namespace sfs
 std::atomic<uint64_t> gShadowPathChecks{0};
 std::atomic<uint64_t> gShadowTilesTraversed{0};
 
-IsometricShadowSystem::IsometricShadowSystem()
+IsometricShadowSystem::IsometricShadowSystem() {}
+
+void IsometricShadowSystem::create()
 {
   registerComponent<TransformComponent>();
   registerComponent<TerrainBoundaryComponent>();
@@ -36,16 +38,10 @@ void IsometricShadowSystem::markTerrainDirty()
   m_cache.itemsDirty = true;
 }
 
-void IsometricShadowSystem::setAmbientLighting(
-    const IsometricAmbientLighting* ambient)
-{
-  m_ambientLighting = ambient;
-}
-
 void IsometricShadowSystem::computeCommands(
     const IsometricRenderContext& context)
 {
-  if (!m_ambientLighting)
+  if (!context.ambientLighting)
   {
     flush();
     m_cache.itemsDirty = true;
@@ -60,6 +56,8 @@ void IsometricShadowSystem::computeTerrainShadows(
 {
   ZoneScopedN("Compute terrain shadows");
 
+  const auto* ambientLighting = context.ambientLighting;
+
   if (m_cache.edgesDirty)
   {
     m_cache.edges = mergeTerrainShadowEdges(getTerrainShadowEdges(context));
@@ -69,10 +67,10 @@ void IsometricShadowSystem::computeTerrainShadows(
     m_cache.itemsDirty = true;
   }
 
-  if (!m_ambientLighting)
+  if (!ambientLighting)
     return;
 
-  const glm::vec3 sunDir3D = m_ambientLighting->direction;
+  const glm::vec3 sunDir3D = ambientLighting->direction;
 
   if (sunDir3D.z <= 0.02f)
   {
@@ -101,7 +99,7 @@ void IsometricShadowSystem::computeTerrainShadows(
       sunHeight / std::max(horizontalAmount, 0.001f);
 
   const float diffuse =
-      std::clamp(m_ambientLighting->diffuseStrength, 0.0f, 1.0f);
+      std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
 
   if (diffuse <= 0.01f)
   {

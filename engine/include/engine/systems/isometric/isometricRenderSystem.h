@@ -8,6 +8,7 @@
 #include "engine/renderers/commands/commands.h"
 #include "engine/renderers/isometricRenderContext.h"
 #include "engine/renderers/renderQueue.h"
+#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -62,11 +63,12 @@ public:
                         int windowWidth,
                         int windowHeight,
                         int tileWidth,
-                        int tileHeight);
+                        int tileHeight)
+      : assetStore(assetStore), windowWidth(windowWidth),
+        windowHeight(windowHeight), tileWidth(tileWidth),
+        tileHeight(tileHeight) {};
 
   ~IsometricRenderSystem();
-
-  void render();
 
   void setWaveTime(float time);
   void setWaveEnabled(bool enabled);
@@ -86,8 +88,15 @@ public:
   void setWorldScale(float scale);
   float getWorldScale() const;
 
+  IsometricLightingService& lighting();
+  const IsometricLightingService& lighting() const;
+
   IsometricRenderSystem(const IsometricRenderSystem&) = delete;
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
+
+protected:
+  void create() override;
+  void render() override;
 
 private:
   void beginBatches();
@@ -146,6 +155,7 @@ private:
   bool tileElevationCacheDirty = true;
 
   IsometricRenderContext m_context;
+  IsometricLightingService m_lightingService;
 };
 
 } // namespace sfs

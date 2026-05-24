@@ -4,6 +4,7 @@ namespace sfs
 {
 
 const std::vector<Entity>& System::getEntities() const { return entities; }
+std::vector<Entity>& System::getEntities() { return entities; }
 
 const Signature& System::getComponentSignature() const
 {

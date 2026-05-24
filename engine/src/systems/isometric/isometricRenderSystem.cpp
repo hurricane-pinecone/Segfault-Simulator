@@ -39,19 +39,15 @@ int gSpriteProjectedShadowItems = 0;
 
 ElevationComponent::ElevationComponent(int level) : level(level) {}
 
-IsometricRenderSystem::IsometricRenderSystem(AssetStore& assetStore,
-                                             int windowWidth,
-                                             int windowHeight,
-                                             int tileWidth,
-                                             int tileHeight)
-    : assetStore(assetStore), windowWidth(windowWidth),
-      windowHeight(windowHeight), tileWidth(tileWidth), tileHeight(tileHeight)
+IsometricRenderSystem::~IsometricRenderSystem() = default;
+
+void IsometricRenderSystem::create()
 {
   registerComponent<SpriteComponent>();
   registerComponent<TransformComponent>();
-}
 
-IsometricRenderSystem::~IsometricRenderSystem() = default;
+  m_lightingService.setRegistry(registry);
+}
 
 void IsometricRenderSystem::render()
 {
@@ -64,6 +60,8 @@ void IsometricRenderSystem::render()
   gSpriteRenderItems = 0;
   gSpriteProjectedShadowItems = 0;
 
+  m_lightingService.setRegistry(registry);
+
   beginBatches();
   if (tileElevationCacheDirty)
   {
@@ -72,13 +70,9 @@ void IsometricRenderSystem::render()
     tileElevationCacheDirty = false;
   }
 
-  const auto lightingSystem =
-      registry->hasSystem<IsometricLightingSystem>()
-          ? &registry->getSystem<IsometricLightingSystem>()
-          : nullptr;
-  auto ambientLighting = lightingSystem ? &lightingSystem->ambient() : nullptr;
-  const auto pointLights =
-      lightingSystem ? &lightingSystem->getPointLights() : nullptr;
+  m_lightingService.updateCacheIfDirty();
+  const auto* ambientLighting = m_lightingService.ambient();
+  const auto& pointLights = m_lightingService.pointLights();
 
   const auto& activeCamera = getCamera();
   auto cameraPosition = getCameraPosition();
@@ -109,9 +103,8 @@ void IsometricRenderSystem::render()
   m_context.waveFrequency = waveFrequency;
   m_context.waveSpeed = waveSpeed;
   m_context.terrainElevationGrid = tileElevationGridView;
-
-  if (ambientLighting)
-    lightingSystem->submitLighting(m_context, m_renderQueue);
+  m_context.ambientLighting = ambientLighting;
+  m_context.pointLights = &pointLights;
 
   for (const auto& entity : getEntities())
   {
@@ -266,10 +259,9 @@ void IsometricRenderSystem::render()
       command.quad.worldPoints[3] = spriteWorldSample;
     }
 
-    // Ambient lighting
-    if (lightingSystem)
+    if (ambientLighting || !pointLights.empty())
     {
-      const auto lighting = lightingSystem->computeLighting({
+      const auto lighting = m_lightingService.computeLighting({
           spriteWorldSample,
           static_cast<float>(elevationLevel),
       });
@@ -279,48 +271,46 @@ void IsometricRenderSystem::render()
       command.quad.ambient = lighting.ambient;
       command.quad.diffuseStrength = lighting.diffuseStrength;
       command.quad.lightColor = lighting.color;
+    }
 
-      if (entity.hasComponent<NormalMapComponent>())
+    if (entity.hasComponent<NormalMapComponent>())
+    {
+      const auto& normalMap = entity.getComponent<NormalMapComponent>();
+      const auto normalSprite = assetStore.getSprite(normalMap.spriteId);
+
+      if (normalSprite)
       {
-        const auto& normalMap = entity.getComponent<NormalMapComponent>();
-        const auto normalSprite = assetStore.getSprite(normalMap.spriteId);
+        SDL_Surface* normalSurface =
+            assetStore.getSurface(normalSprite->textureId);
 
-        if (normalSprite)
+        if (normalSurface)
         {
-          SDL_Surface* normalSurface =
-              assetStore.getSurface(normalSprite->textureId);
-
-          if (normalSurface)
-          {
-            command.quad.hasNormalMap = true;
-            command.normalTextureId = &normalSprite->textureId;
-          }
+          command.quad.hasNormalMap = true;
+          command.normalTextureId = &normalSprite->textureId;
         }
       }
     }
 
-    if (pointLights)
+    if (!pointLights.empty())
     {
-      const auto& lights = *pointLights;
-
       command.quad.lightCount =
-          std::min(static_cast<int>(lights.size()), MaxShaderLights);
+          std::min(static_cast<int>(pointLights.size()), MaxShaderLights);
 
       for (int i = 0; i < command.quad.lightCount; i++)
       {
-        command.quad.lightPositions[i] = lights[i].worldPosition;
-        command.quad.lightColors[i] = lights[i].color;
-        command.quad.lightIntensities[i] = lights[i].intensity;
-        command.quad.lightRadii[i] = lights[i].radius;
-        command.quad.lightHeights[i] = lights[i].height;
+        command.quad.lightPositions[i] = pointLights[i].worldPosition;
+        command.quad.lightColors[i] = pointLights[i].color;
+        command.quad.lightIntensities[i] = pointLights[i].intensity;
+        command.quad.lightRadii[i] = pointLights[i].radius;
+        command.quad.lightHeights[i] = pointLights[i].height;
       }
     }
+
     m_renderQueue.submit(command);
   }
 
   if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>())
   {
-    shadowSystem->setAmbientLighting(ambientLighting);
     shadowSystem->computeCommands(m_context);
     m_renderQueue.submitAll(shadowSystem->commands());
   }
@@ -328,7 +318,6 @@ void IsometricRenderSystem::render()
   if (const auto spriteShadowSystem =
           registry->tryGetSystem<IsometricSpriteShadowSystem>())
   {
-    spriteShadowSystem->setAmbientLighting(ambientLighting);
     spriteShadowSystem->computeCommands(m_context);
     m_renderQueue.submitAll(spriteShadowSystem->commands());
   }
@@ -729,6 +718,16 @@ void IsometricRenderSystem::rebuildTerrainElevationGridView()
   tileElevationGridView.height = height;
   tileElevationGridView.stride = width;
   tileElevationGridView.origin = min;
+}
+
+IsometricLightingService& IsometricRenderSystem::lighting()
+{
+  return m_lightingService;
+}
+
+const IsometricLightingService& IsometricRenderSystem::lighting() const
+{
+  return m_lightingService;
 }
 
 } // namespace sfs

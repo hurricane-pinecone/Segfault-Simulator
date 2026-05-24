@@ -33,7 +33,7 @@ public:
       collider.updateBounds(transform.position);
     }
 
-    for (const auto& entity : getEntities())
+    for (auto& entity : getEntities())
     {
       auto& rb = entity.getComponent<RigidBodyComponent>();
 
