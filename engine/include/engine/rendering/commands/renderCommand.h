@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/renderers/quads.h"
-#include "engine/renderers/renderPass.h"
+#include "engine/rendering/quads.h"
+#include "engine/rendering/renderPass.h"
 
 namespace sfs
 {

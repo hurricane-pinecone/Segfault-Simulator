@@ -1,9 +1,9 @@
 
-#include "engine/renderers/openGLQuadRenderer.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 
 #include "engine/logger/logger.h"
-#include "engine/renderers/batchKeys/LitQuadBatchKey.h"
-#include "engine/renderers/quads.h"
+#include "engine/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/rendering/quads.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include <algorithm>
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/renderers/quads.h"
+#include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include <algorithm>

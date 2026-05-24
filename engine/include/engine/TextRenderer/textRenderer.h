@@ -2,8 +2,9 @@
 
 #include "engine/Color/Color.h"
 #include "engine/assetStore/assetStore.h"
-#include "engine/renderers/openGLQuadRenderer.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 #include <SDL_render.h>
+
 namespace sfs
 {
 

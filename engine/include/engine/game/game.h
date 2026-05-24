@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/renderers/openGLQuadRenderer.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 #include "engine/sceneManager/sceneManager.h"
 #include <SDL_events.h>
 #include <SDL_render.h>

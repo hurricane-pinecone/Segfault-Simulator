@@ -5,17 +5,17 @@
 #include "engine/components/spriteComponent.h"
 
 #include "engine/components/tags/isometricTile.h"
-#include "engine/renderers/commands/commands.h"
-#include "engine/renderers/commands/renderCommand.h"
-#include "engine/renderers/isometricRenderContext.h"
-#include "engine/renderers/quads.h"
-#include "engine/renderers/renderContext.h"
+#include "engine/rendering/commands/commands.h"
+#include "engine/rendering/commands/renderCommand.h"
+#include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/quads.h"
+#include "engine/rendering/renderContext.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 
 #include "engine/ecs/registry.h"
 #include "engine/logger/logger.h"
 
-#include "engine/renderers/renderPass.h"
+#include "engine/rendering/renderPass.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"

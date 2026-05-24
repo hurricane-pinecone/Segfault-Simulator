@@ -1,6 +1,6 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/components/transformComponent.h"
-#include "engine/renderers/util/isometric/geometry.h"
+#include "engine/rendering/util/isometric/geometry.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/algorithms/gridDDA.h"
 #include "engine/utils/isometricLightingUtils.h"

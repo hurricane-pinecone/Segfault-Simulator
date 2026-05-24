@@ -2,10 +2,10 @@
 
 #include "engine/assetStore/assetStore.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
-#include "engine/renderers/commands/shadowCommands.h"
-#include "engine/renderers/isometricRenderContext.h"
-#include "engine/renderers/renderProvider.h"
-#include "engine/renderers/util/isometric/geometry.h"
+#include "engine/rendering/commands/shadowCommands.h"
+#include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/renderProvider.h"
+#include "engine/rendering/util/isometric/geometry.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include <atomic>
 #include <vector>

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "SDL2/SDL_pixels.h"
-#include "engine/renderers/commands/renderCommand.h"
-#include "engine/renderers/quads.h"
+#include "engine/rendering/commands/renderCommand.h"
+#include "engine/rendering/quads.h"
 #include <variant>
 
 namespace sfs
