@@ -361,4 +361,45 @@ getTerrainShadowEdgeTileBounds(const std::vector<TerrainShadowEdge>& edges)
   return bounds;
 }
 
+inline static glm::vec2 isometricTogrid(const glm::vec2& iso,
+                                        int tileWidth,
+                                        int tileHeight,
+                                        float worldScale = 1.0f)
+{
+  const float scaledTileWidth = static_cast<float>(tileWidth) * worldScale;
+  const float scaledTileHeight = static_cast<float>(tileHeight) * worldScale;
+
+  float x =
+      (iso.x / (scaledTileWidth / 2.0f) + iso.y / (scaledTileHeight / 2.0f)) *
+      0.5f;
+
+  float y =
+      (iso.y / (scaledTileHeight / 2.0f) - iso.x / (scaledTileWidth / 2.0f)) *
+      0.5f;
+
+  return {x, y};
+}
+
+inline glm::vec2 gridToIsometric(const glm::vec2& gridPosition,
+                                 int tileWidth,
+                                 int tileHeight,
+                                 float worldScale)
+{
+  return {
+      (gridPosition.x - gridPosition.y) *
+          (static_cast<float>(tileWidth) * worldScale) * 0.5f,
+
+      (gridPosition.x + gridPosition.y) *
+          (static_cast<float>(tileHeight) * worldScale) * 0.5f,
+  };
+}
+
+inline static glm::ivec2 gridCellOf(const glm::vec2& position)
+{
+  return {
+      static_cast<int>(std::floor(position.x)),
+      static_cast<int>(std::floor(position.y)),
+  };
+}
+
 } // namespace sfs

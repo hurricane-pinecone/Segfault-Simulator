@@ -20,6 +20,7 @@
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
+#include "engine/systems/isometric/isometricWaterSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <cstddef>
@@ -39,6 +40,31 @@ int gSpriteProjectedShadowItems = 0;
 int gTerrainShadowBatchCount = 0;
 
 ElevationComponent::ElevationComponent(int level) : level(level) {}
+
+IsometricRenderSystem::IsometricRenderSystem(AssetStore& assetStore,
+                                             int windowWidth,
+                                             int windowHeight,
+                                             int tileWidth,
+                                             int tileHeight,
+                                             int elevationStep,
+                                             float worldScale)
+    : assetStore(assetStore)
+{
+
+  const glm::vec2 screenCenter{
+      static_cast<float>(windowWidth) / 2.0f,
+      static_cast<float>(windowHeight) / 2.0f,
+  };
+
+  IsometricRenderContext context{windowWidth,
+                                 windowHeight,
+                                 tileWidth,
+                                 tileHeight,
+                                 elevationStep,
+                                 worldScale,
+                                 screenCenter};
+  m_context = context;
+}
 
 IsometricRenderSystem::~IsometricRenderSystem() = default;
 
@@ -61,6 +87,8 @@ void IsometricRenderSystem::render()
   gSpriteRenderItems = 0;
   gSpriteProjectedShadowItems = 0;
 
+  m_context.activeCamera = getCamera();
+
   beginBatches();
   if (tileElevationCacheDirty)
   {
@@ -73,34 +101,6 @@ void IsometricRenderSystem::render()
   const auto* ambientLighting = m_lightingService.ambient();
   const auto& pointLights = m_lightingService.pointLights();
 
-  const auto& activeCamera = getCamera();
-  auto cameraPosition = getCameraPosition();
-  float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1;
-
-  const glm::vec2 screenCenter{
-      static_cast<float>(windowWidth) / 2.0f,
-      static_cast<float>(windowHeight) / 2.0f,
-  };
-
-  const glm::vec2 isoCameraPosition = gridToIsometric(cameraPosition);
-
-  m_context.windowWidth = windowWidth;
-  m_context.windowHeight = windowHeight;
-  m_context.tileWidth = tileWidth;
-  m_context.tileHeight = tileHeight;
-  m_context.elevationStep = elevationStep;
-  m_context.worldScale = worldScale;
-  m_context.zoom = zoom;
-  m_context.screenCenter = {
-      static_cast<float>(windowWidth) * 0.5f,
-      static_cast<float>(windowHeight) * 0.5f,
-  };
-  m_context.isoCameraPosition = isoCameraPosition;
-  m_context.waveEnabled = waveEnabled;
-  m_context.waveTime = waveTime;
-  m_context.waveAmplitude = waveAmplitude;
-  m_context.waveFrequency = waveFrequency;
-  m_context.waveSpeed = waveSpeed;
   m_context.terrainElevationGrid = tileElevationGridView;
   m_context.ambientLighting = ambientLighting;
   m_context.pointLights = &pointLights;
@@ -127,18 +127,28 @@ void IsometricRenderSystem::render()
     }
 
     // Rendering position stays exact. Anchor, elevation, wave motion, camera,
-    // and zoom all affect the final screen rect, but should not directly decide
-    // depth ordering.
-    const glm::vec2 isoPosition = gridToIsometric(transform.position);
+    // and m_context.zoom all affect the final screen rect, but should not
+    // directly decide depth ordering.
+    const glm::vec2 isoPosition = gridToIsometric(transform.position,
+                                                  m_context.tileWidth,
+                                                  m_context.tileHeight,
+                                                  m_context.worldScale);
+
+    const auto zoom =
+        m_context.activeCamera.camera ? m_context.activeCamera.camera->zoom : 1;
 
     const glm::vec2 screenPosition =
-        (isoPosition - isoCameraPosition) * zoom + screenCenter;
+        (isoPosition -
+         m_context.activeCamera.isoPosition(
+             m_context.tileWidth, m_context.tileHeight, m_context.worldScale)) *
+            m_context.activeCamera.camera->zoom +
+        m_context.screenCenter;
 
     const int width = static_cast<int>(sprite->srcRect.w * transform.scale.x *
-                                       worldScale * zoom);
+                                       m_context.worldScale * zoom);
 
     const int height = static_cast<int>(sprite->srcRect.h * transform.scale.y *
-                                        worldScale * zoom);
+                                        m_context.worldScale * zoom);
 
     // Anchors define how the sprite image attaches to its world position.
     // Blocks can use a top anchor while actors use a feet/bottom anchor.
@@ -152,14 +162,13 @@ void IsometricRenderSystem::render()
     const int elevationLevel =
         getRenderElevationLevel(entity, groundSamplePosition);
 
-    const int elevationOffset = static_cast<int>(
-        std::round(elevationLevel * elevationStep * worldScale * zoom));
-
-    const float waveOffset = getWaveOffset(groundSamplePosition) * zoom;
+    const int elevationOffset =
+        static_cast<int>(std::round(elevationLevel * m_context.elevationStep *
+                                    m_context.worldScale * zoom));
 
     const glm::vec2 surfacePosition{
         screenPosition.x,
-        screenPosition.y - elevationOffset - waveOffset,
+        screenPosition.y - elevationOffset,
     };
 
     SDL_Rect dest{
@@ -321,6 +330,12 @@ void IsometricRenderSystem::render()
     m_renderQueue.submitAll(spriteShadowSystem->commands());
   }
 
+  if (const auto waterSystem = registry->tryGetSystem<IsometricWaterSystem>())
+  {
+    waterSystem->computeCommands(m_context);
+    m_renderQueue.submitAll(waterSystem->commands());
+  }
+
   flushBatches();
 }
 
@@ -332,6 +347,7 @@ void IsometricRenderSystem::flushBatches()
   auto& commands = m_renderQueue.mutableItems();
 
   batchTerrainTiles(commands);
+  // appendWaterCommands(commands);
   sortRenderCommands(commands);
 
   quadRenderer.begin();
@@ -340,13 +356,6 @@ void IsometricRenderSystem::flushBatches()
     submitRenderCommand(command, quadRenderer);
 
   quadRenderer.flush();
-}
-
-void IsometricRenderSystem::setWaveTime(float time) { waveTime = time; }
-
-void IsometricRenderSystem::setWaveEnabled(bool enabled)
-{
-  waveEnabled = enabled;
 }
 
 void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
@@ -359,31 +368,38 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
                                           int elevation,
                                           SDL_Color color)
 {
-  const auto& activeCamera = getCamera();
-  float zoom = activeCamera.camera ? activeCamera.camera->zoom : 1;
   auto& quadRenderer = RenderContext::quadRenderer();
 
-  const glm::vec2 cameraPosition = getCameraPosition();
+  const glm::vec2 cameraPosition = m_context.activeCamera.getCameraPosition();
 
   const glm::vec2 screenCenter{
-      static_cast<float>(windowWidth) / 2.0f,
-      static_cast<float>(windowHeight) / 2.0f,
+      static_cast<float>(m_context.windowWidth) / 2.0f,
+      static_cast<float>(m_context.windowHeight) / 2.0f,
   };
 
-  glm::vec2 screenPosition =
-      (gridToIsometric(gridPosition) - gridToIsometric(cameraPosition)) * zoom +
-      screenCenter;
+  const auto zoom =
+      m_context.activeCamera.camera ? m_context.activeCamera.camera->zoom : 1;
 
-  screenPosition.y -= elevation * elevationStep;
-  screenPosition.y -= getWaveOffset(gridPosition);
+  glm::vec2 screenPosition = (gridToIsometric(gridPosition,
+                                              m_context.tileWidth,
+                                              m_context.tileHeight,
+                                              m_context.worldScale) -
+                              gridToIsometric(cameraPosition,
+                                              m_context.tileWidth,
+                                              m_context.tileHeight,
+                                              m_context.worldScale)) *
+                                 zoom +
+                             screenCenter;
+
+  screenPosition.y -= elevation * m_context.elevationStep;
 
   glm::vec2 points[5] = {
       {screenPosition.x, screenPosition.y},
-      {screenPosition.x + tileWidth / 2.0f,
-       screenPosition.y + tileHeight / 2.0f},
-      {screenPosition.x, screenPosition.y + tileHeight},
-      {screenPosition.x - tileWidth / 2.0f,
-       screenPosition.y + tileHeight / 2.0f},
+      {screenPosition.x + m_context.tileWidth / 2.0f,
+       screenPosition.y + m_context.tileHeight / 2.0f},
+      {screenPosition.x, screenPosition.y + m_context.tileHeight},
+      {screenPosition.x - m_context.tileWidth / 2.0f,
+       screenPosition.y + m_context.tileHeight / 2.0f},
       {screenPosition.x, screenPosition.y},
   };
 
@@ -403,34 +419,6 @@ unsigned int IsometricRenderSystem::resolveTexture(const std::string* textureId)
   return RenderContext::quadRenderer().getOrCreateTexture(*textureId, surface);
 }
 
-glm::vec2
-IsometricRenderSystem::gridToIsometric(const glm::vec2& gridPosition) const
-{
-  return {
-      (gridPosition.x - gridPosition.y) *
-          (static_cast<float>(tileWidth) * worldScale) / 2.0f,
-
-      (gridPosition.x + gridPosition.y) *
-          (static_cast<float>(tileHeight) * worldScale) / 2.0f,
-  };
-}
-
-glm::vec2 IsometricRenderSystem::isometricToGrid(const glm::vec2& iso) const
-{
-  const float scaledTileWidth = static_cast<float>(tileWidth) * worldScale;
-  const float scaledTileHeight = static_cast<float>(tileHeight) * worldScale;
-
-  float x =
-      (iso.x / (scaledTileWidth / 2.0f) + iso.y / (scaledTileHeight / 2.0f)) *
-      0.5f;
-
-  float y =
-      (iso.y / (scaledTileHeight / 2.0f) - iso.x / (scaledTileWidth / 2.0f)) *
-      0.5f;
-
-  return {x, y};
-}
-
 ActiveCamera IsometricRenderSystem::getCamera() const
 {
   if (!registry->hasSystem<CameraSystem>())
@@ -446,24 +434,6 @@ ActiveCamera IsometricRenderSystem::getCamera() const
   return {
       &cameraEntity.getComponent<CameraComponent>(),
       &cameraEntity.getComponent<TransformComponent>(),
-  };
-}
-
-glm::vec2 IsometricRenderSystem::getCameraPosition() const
-{
-  const auto activeCamera = getCamera();
-
-  if (!activeCamera.camera || !activeCamera.transform)
-    return {0.0f, 0.0f};
-
-  return activeCamera.transform->position + activeCamera.camera->offset;
-}
-
-glm::ivec2 IsometricRenderSystem::gridCellOf(const glm::vec2& position) const
-{
-  return {
-      static_cast<int>(std::floor(position.x)),
-      static_cast<int>(std::floor(position.y)),
   };
 }
 
@@ -513,22 +483,15 @@ int IsometricRenderSystem::getTileElevationAt(const glm::vec2& position) const
   return elevation;
 }
 
-float IsometricRenderSystem::getWaveOffset(const glm::vec2& gridPosition) const
-{
-  if (!waveEnabled)
-    return 0.0f;
-
-  return std::sin(gridPosition.x * waveFrequency +
-                  gridPosition.y * waveFrequency + waveTime * waveSpeed) *
-         waveAmplitude;
-}
-
 void IsometricRenderSystem::setWorldScale(float scale)
 {
-  worldScale = std::max(scale, 1.0f);
+  m_context.worldScale = std::max(scale, 1.0f);
 }
 
-float IsometricRenderSystem::getWorldScale() const { return worldScale; }
+float IsometricRenderSystem::getWorldScale() const
+{
+  return m_context.worldScale;
+}
 
 void IsometricRenderSystem::markTerrainDirty()
 {
@@ -585,7 +548,7 @@ void IsometricRenderSystem::rebuildTerrainElevationGridView()
   const int width = max.x - min.x + 1;
   const int height = max.y - min.y + 1;
 
-  tileElevationGridData.assign(width * height, -1);
+  tileElevationGridData.assign(width * height, EmptyElevation);
 
   for (const auto& [tile, elevation] : tileElevationCache)
   {

@@ -46,6 +46,8 @@ private:
   sfs::Scene& m_scene;
   sfs::Noise m_noise;
 
+  int m_waterLevel = 0;
+
   // Used to break out of update if camera hasn't moved
   glm::ivec2 m_lastCenterTile{std::numeric_limits<int>::min(),
                               std::numeric_limits<int>::min()};

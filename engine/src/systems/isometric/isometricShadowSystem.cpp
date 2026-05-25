@@ -117,9 +117,14 @@ void IsometricShadowSystem::computeTerrainShadows(
 
   const bool sunChanged = glm::length(sunDir3D - m_cache.sunDir) > 0.002f;
 
-  const bool cameraChanged = glm::length(context.isoCameraPosition -
-                                         m_cache.isoCameraPosition) > 0.001f ||
-                             std::abs(context.zoom - m_cache.zoom) > 0.001f;
+  const auto isoCameraPosition = context.activeCamera.isoPosition(
+      context.tileWidth, context.tileHeight, context.worldScale);
+  const auto zoom =
+      context.activeCamera.camera ? context.activeCamera.camera->zoom : 1;
+
+  const bool cameraChanged =
+      glm::length(isoCameraPosition - m_cache.isoCameraPosition) > 0.001f ||
+      std::abs(zoom - m_cache.zoom) > 0.001f;
   const bool alphaChanged = std::abs(alpha - m_cache.alpha) > 0.005f;
 
   if (!m_cache.itemsDirty && !sunChanged && !cameraChanged && !alphaChanged)
@@ -136,8 +141,8 @@ void IsometricShadowSystem::computeTerrainShadows(
   buildTerrainEdgeShadowItems(context, shadowDir, effectiveSunHeight, alpha);
 
   m_cache.sunDir = sunDir3D;
-  m_cache.isoCameraPosition = context.isoCameraPosition;
-  m_cache.zoom = context.zoom;
+  m_cache.isoCameraPosition = isoCameraPosition;
+  m_cache.zoom = zoom;
   m_cache.itemsDirty = false;
   m_cache.alpha = alpha;
 }
@@ -163,15 +168,12 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
     if (entity.hasComponent<ElevationComponent>())
       elevation = entity.getComponent<ElevationComponent>().level;
 
-    if (elevation <= 0)
-      continue;
-
     const glm::ivec2 tile = context.gridCellOf(transform.position);
 
     const int x = tile.x;
     const int y = tile.y;
 
-    if (boundary.westExposed)
+    if (boundary.westExposed && boundary.westBottomElevation)
     {
       edges.push_back({
           glm::vec2{x, y},
@@ -184,7 +186,7 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
       });
     }
 
-    if (boundary.eastExposed)
+    if (boundary.eastExposed && boundary.eastBottomElevation)
     {
       edges.push_back({
           glm::vec2{x + 1, y},
@@ -197,7 +199,7 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
       });
     }
 
-    if (boundary.northExposed)
+    if (boundary.northExposed && boundary.northBottomElevation)
     {
       edges.push_back({
           glm::vec2{x, y},
@@ -210,7 +212,7 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
       });
     }
 
-    if (boundary.southExposed)
+    if (boundary.southExposed && boundary.southBottomElevation)
     {
       edges.push_back({
           glm::vec2{x, y + 1},
