@@ -36,15 +36,6 @@ private:
   void setTerrainShadowMaxLength(float length);
   void setTerrainShadowAlpha(float alpha);
 
-  void constructWallShadowFace(const IsometricRenderContext& renderContext,
-                               std::vector<TerrainShadowCommand>& outCommands,
-                               const glm::ivec2& tile,
-                               int elevation,
-                               int side,
-                               const glm::vec2 shadowWorldPoints[4],
-                               float incomingElevation,
-                               float alpha);
-
   void constructTerrainEdgeShadowProjectedClipped(
       const IsometricRenderContext& renderContext,
       std::vector<TerrainShadowCommand>& outCommands,

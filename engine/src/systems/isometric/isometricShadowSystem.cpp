@@ -408,56 +408,6 @@ bool IsometricShadowSystem::shouldCastTerrainShadow(
   return false;
 }
 
-void IsometricShadowSystem::constructWallShadowFace(
-    const IsometricRenderContext& renderContext,
-    std::vector<TerrainShadowCommand>& outCommands,
-    const glm::ivec2& tile,
-    int elevation,
-    int side,
-    const glm::vec2 shadowWorldPoints[4],
-    float incomingElevation,
-    float alpha)
-{
-  ZoneScopedN("constructWallShadowFace()");
-  glm::vec2 a;
-  glm::vec2 b;
-  getTileWallEdge(tile, side, a, b);
-
-  float minT = 0.0f;
-  float maxT = 1.0f;
-
-  if (!projectShadowOntoWallEdge(shadowWorldPoints, a, b, minT, maxT))
-    return;
-
-  constexpr float WallPad = 0.05f;
-
-  minT = std::clamp(minT - WallPad, 0.0f, 1.0f);
-  maxT = std::clamp(maxT + WallPad, 0.0f, 1.0f);
-
-  const glm::vec2 shadowA = a + (b - a) * minT;
-  const glm::vec2 shadowB = a + (b - a) * maxT;
-
-  const float topZ = static_cast<float>(elevation);
-  const float incomingZ = std::clamp(incomingElevation, 0.0f, topZ);
-
-  if (topZ <= incomingZ + 0.001f)
-    return;
-
-  glm::vec2 screenPoints[4] = {
-      renderContext.worldToScreen(shadowA, topZ),
-      renderContext.worldToScreen(shadowB, topZ),
-      renderContext.worldToScreen(shadowB, incomingZ),
-      renderContext.worldToScreen(shadowA, incomingZ),
-  };
-
-  const float sortKey = static_cast<float>(tile.x) +
-                        static_cast<float>(tile.y) +
-                        static_cast<float>(elevation) * 0.5f + 0.0006f;
-
-  outCommands.push_back(
-      buildTerrainShadowCommand(screenPoints, alpha, sortKey));
-}
-
 std::vector<TerrainShadowEdge> IsometricShadowSystem::mergeTerrainShadowEdges(
     const std::vector<TerrainShadowEdge>& input) const
 {
