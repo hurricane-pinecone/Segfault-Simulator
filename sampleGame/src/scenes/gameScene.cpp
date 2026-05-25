@@ -1,5 +1,6 @@
 
 #include "gameScene.h"
+#include "config.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
@@ -8,6 +9,7 @@
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
+#include "engine/systems/isometric/isometricWaterSystem.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
@@ -33,16 +35,15 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   addSystem<TerrainGeneratorSystem>(*this);
   auto& renderer = addSystem<sfs::IsometricRenderSystem>(
-      m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16);
+      m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16, 8, WORLD_SCALE);
 
   sfs::IsometricShadowSettings shadowSettings = {7.0f, 7.0f};
 
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
+  addSystem<sfs::IsometricWaterSystem>();
 
   addSystem<SunController>();
-
-  renderer.setWorldScale(WORLD_SCALE);
 }
 
 void GameScene::createEntities()

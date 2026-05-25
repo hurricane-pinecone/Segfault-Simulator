@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/rendering/util/isometric/camera.h"
 #include "engine/rendering/util/isometric/geometry.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -33,15 +34,9 @@ struct IsometricRenderContext
 
   float worldScale = 1.0f;
 
-  float zoom = 1.0f;
   glm::vec2 screenCenter{0.0f, 0.0f};
-  glm::vec2 isoCameraPosition{0.0f, 0.0f};
 
-  bool waveEnabled = false;
-  float waveTime = 0.0f;
-  float waveAmplitude = 6.0f;
-  float waveFrequency = 0.45f;
-  float waveSpeed = 3.0f;
+  ActiveCamera activeCamera;
 
   const IsometricAmbientLighting* ambientLighting = nullptr;
   const std::vector<IsometricPointLightSnapshot>* pointLights = nullptr;
@@ -70,27 +65,6 @@ struct IsometricRenderContext
     };
   }
 
-  float getWaveOffset(const glm::vec2& gridPosition) const
-  {
-    if (!waveEnabled)
-      return 0.0f;
-
-    return std::sin(gridPosition.x * waveFrequency +
-                    gridPosition.y * waveFrequency + waveTime * waveSpeed) *
-           waveAmplitude;
-  }
-
-  glm::vec2 worldToScreen(glm::vec2 p, float elevation) const
-  {
-    glm::vec2 screen =
-        (gridToIsometric(p) - isoCameraPosition) * zoom + screenCenter;
-
-    screen.y -= elevation * elevationStep * worldScale * zoom;
-    screen.y -= getWaveOffset(p) * zoom;
-
-    return screen;
-  }
-
   bool hasTileAt(const glm::ivec2& tile) const
   {
     return tileElevations &&
@@ -110,6 +84,20 @@ struct IsometricRenderContext
       return 0;
 
     return it->second;
+  }
+
+  glm::vec2 worldToScreen(const glm::vec2& world, float elevation) const
+  {
+    const auto zoom = activeCamera.camera ? activeCamera.camera->zoom : 1;
+    glm::vec2 p =
+        (gridToIsometric(world) -
+         activeCamera.isoPosition(tileWidth, tileHeight, worldScale)) *
+            zoom +
+        screenCenter;
+
+    p.y -= elevation * elevationStep * worldScale * zoom;
+
+    return p;
   }
 };
 } // namespace sfs

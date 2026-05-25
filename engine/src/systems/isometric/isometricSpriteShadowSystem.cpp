@@ -74,10 +74,13 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
   context.terrainElevationGrid.tryGet(
       context.gridCellOf(glm::floor(worldSample)), elevation);
 
+  const auto zoom =
+      context.activeCamera.camera ? context.activeCamera.camera->zoom : 1;
+
   const int width = static_cast<int>(sprite->srcRect.w * transform.scale.x *
-                                     context.worldScale * context.zoom);
+                                     context.worldScale * zoom);
   const int height = static_cast<int>(sprite->srcRect.h * transform.scale.y *
-                                      context.worldScale * context.zoom);
+                                      context.worldScale * zoom);
   const SDL_Rect dest{0, 0, width, height};
 
   const float sunStrength =
@@ -191,8 +194,7 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
         return;
 
       const float elevationStepPixels =
-          static_cast<float>(context.elevationStep) * context.worldScale *
-          context.zoom;
+          static_cast<float>(context.elevationStep) * context.worldScale * zoom;
       const float spriteHeightElevation =
           static_cast<float>(dest.h) / std::max(elevationStepPixels, 0.001f);
       const float maxShadowReceiverElevation =
@@ -257,7 +259,6 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
       if (!visited.insert(tile).second)
         return true;
 
-      constructSpriteShadowOnTile(tile);
       return true;
     };
 

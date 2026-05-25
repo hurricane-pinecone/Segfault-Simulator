@@ -1,6 +1,7 @@
 #include "TerrainGeneratorSystem.h"
 #include "engine/components/cameraComponent.h"
 #include "engine/components/terrainBoundaryComponent.h"
+#include "engine/components/waterTileComponent.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "gameObjects/blocks/grass.h"
 
@@ -83,6 +84,20 @@ void TerrainGeneratorSystem::loadTile(TilePos tile)
   auto& grass = m_scene.createObject<GrassBlock>(
       glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full);
 
+  const bool isWater = elevation < m_waterLevel;
+
+  if (isWater)
+  {
+    sfs::WaterTileComponent water;
+    water.elevation = m_waterLevel;
+    water.color = SDL_Color{35, 120, 190, 115};
+
+    grass.entity().addComponent<sfs::WaterTileComponent>(water);
+
+    // m_loadedTiles[tile] = {&grass};
+    // return;
+  }
+
   sfs::TerrainBoundaryComponent boundary;
 
   const int west = getCachedElevation(tile.x - 1, tile.y);
@@ -153,11 +168,13 @@ int TerrainGeneratorSystem::getElevation(int x, int y) const
 {
   float n = m_noise.get(static_cast<float>(x), static_cast<float>(y));
 
-  float normalized = (n + 1.0f) * 0.5f;
-  normalized = normalized * normalized;
+  constexpr int minHeight = -4;
   constexpr int maxHeight = 12;
 
-  return static_cast<int>(normalized * maxHeight);
+  float normalized = (n + 1.0f) * 0.5f;
+  normalized = normalized * normalized;
+
+  return minHeight + static_cast<int>(normalized * (maxHeight - minHeight));
 }
 
 int TerrainGeneratorSystem::getCachedElevation(int x, int y)

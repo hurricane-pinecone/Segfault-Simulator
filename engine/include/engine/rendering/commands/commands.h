@@ -1,11 +1,16 @@
 #pragma once
 
+#include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/quads.h"
 #include <variant>
 
 namespace sfs
 {
+
+struct QuadCommand : RenderCommand<Quad>
+{
+};
 
 struct TexturedQuadCommand : RenderCommand<TexturedQuad>
 {
@@ -29,7 +34,8 @@ struct LitQuadBatchCommand : RenderCommand<LitQuadBatch>
   const std::string* normalTextureId = nullptr;
 };
 
-using AnyRenderCommand = std::variant<TexturedQuadCommand,
+using AnyRenderCommand = std::variant<QuadCommand,
+                                      TexturedQuadCommand,
                                       FreeformQuadCommand,
                                       LitQuadCommand,
                                       LitQuadBatchCommand,
