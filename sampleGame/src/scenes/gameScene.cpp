@@ -84,21 +84,6 @@ void GameScene::onRender()
       20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
   sfs::TextRenderer::drawText(
       20, 60, "Time: " + getSystem<SunController>().timeString12Hour());
-
-  sfs::TextRenderer::drawText(
-      20,
-      100,
-      "Ambient: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
-                                       .lighting()
-                                       .ambient()
-                                       ->ambient));
-  sfs::TextRenderer::drawText(
-      20,
-      120,
-      "Diffuse: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
-                                       .lighting()
-                                       .ambient()
-                                       ->diffuseStrength));
 }
 
 void GameScene::onUpdate(double deltaTime)
