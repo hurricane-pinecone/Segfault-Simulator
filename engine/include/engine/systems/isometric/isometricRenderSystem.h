@@ -259,6 +259,12 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
     quadRenderer.submitTerrainShadow(drawable.quad);
   }
 
+  // Surface meshes (water, lava, fog, etc.)
+  else if constexpr (std::is_same_v<T, SurfaceCommand>)
+  {
+    quadRenderer.submit(drawable);
+  }
+
   // Batched lit terrain tiles.
   //
   // These are grouped earlier by texture + lighting state to reduce

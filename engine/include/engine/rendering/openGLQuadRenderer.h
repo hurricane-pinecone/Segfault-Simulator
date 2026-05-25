@@ -3,6 +3,7 @@
 #include "SDL2/SDL_rect.h"
 #include "SDL2/SDL_surface.h"
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/rendering/commands/commands.h"
 #include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -37,6 +38,7 @@ public:
   void submit(const TexturedQuad& command);
   void submit(const FreeformQuad& command);
   void submit(const LitQuad& command);
+  void submit(const SurfaceCommand& command);
   void submitTerrainShadow(const Quad& command)
   {
     initialize();
@@ -56,6 +58,8 @@ public:
   void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
 
   void setViewportSize(int width, int height);
+
+  void setSurfaceTime(float time);
 
 private:
   enum class Pipeline
@@ -131,6 +135,7 @@ private:
 
   unsigned int compileShader(unsigned int type, const char* source) const;
   unsigned int createShaderProgram() const;
+  unsigned int createSurfaceShaderProgram() const;
 
   void flushTerrainShadow()
   {
@@ -193,6 +198,15 @@ private:
     glm::vec4 color;
   };
 
+  struct SurfaceGpuVertex
+  {
+    glm::vec2 position;
+    glm::vec2 worldPosition;
+    glm::vec4 color;
+    glm::vec2 uv;
+    glm::vec4 params;
+  };
+
 private:
   int windowWidth = 0;
   int windowHeight = 0;
@@ -222,6 +236,17 @@ private:
   GLint uLightIntensitiesLocation = -1;
   GLint uLightRadiiLocation = -1;
   GLint uLightHeightsLocation = -1;
+
+  unsigned int surfaceShaderProgram = 0;
+  unsigned int surfaceVao = 0;
+  unsigned int surfaceVbo = 0;
+  unsigned int surfaceEbo = 0;
+
+  int uSurfaceTimeLocation = -1;
+  int uSurfaceRippleStrengthLocation = -1;
+  int uSurfaceRippleScaleLocation = -1;
+
+  float m_surfaceTime = 0.0f;
 
   std::unordered_map<std::string, unsigned int> textureCache;
 

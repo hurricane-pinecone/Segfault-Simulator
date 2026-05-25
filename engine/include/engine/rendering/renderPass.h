@@ -11,6 +11,7 @@ enum class RenderPass : uint8_t
   Terrain,
   Shadow,
   Objects,
+  Surfaces,
   Foreground,
   UI,
 };

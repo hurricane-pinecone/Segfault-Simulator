@@ -3,6 +3,8 @@
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/quads.h"
+#include "engine/rendering/renderPass.h"
+#include "engine/rendering/vertices/vertices.h"
 #include <variant>
 
 namespace sfs
@@ -34,12 +36,31 @@ struct LitQuadBatchCommand : RenderCommand<LitQuadBatch>
   const std::string* normalTextureId = nullptr;
 };
 
+struct SurfaceCommand
+{
+  // TODO: Flesh this out
+  enum class SurfaceMaterial
+  {
+    Water,
+    Lava,
+    Fog,
+    MagicField
+  };
+
+  std::vector<SurfaceVertex> vertices;
+  std::vector<uint32_t> indices;
+
+  SurfaceMaterial material;
+  RenderOrder order{RenderPass::Surfaces, 0, 0};
+};
+
 using AnyRenderCommand = std::variant<QuadCommand,
                                       TexturedQuadCommand,
                                       FreeformQuadCommand,
                                       LitQuadCommand,
                                       LitQuadBatchCommand,
                                       TerrainShadowCommand,
+                                      SurfaceCommand,
                                       TerrainShadowBatchCommand,
                                       SpriteShadowCommand>;
 } // namespace sfs
