@@ -331,130 +331,13 @@ void IsometricRenderSystem::flushBatches()
   auto& quadRenderer = RenderContext::quadRenderer();
   auto& commands = m_renderQueue.mutableItems();
 
-  std::vector<AnyRenderCommand> batched;
-  batched.reserve(commands.size());
-
-  std::map<std::tuple<RenderOrder, const std::string*, const std::string*>,
-           LitQuadBatchCommand>
-      litBatches;
-
-  for (const auto& command : commands)
-  {
-    std::visit(
-        [&](const auto& concrete)
-        {
-          using T = std::decay_t<decltype(concrete)>;
-
-          if constexpr (std::is_same_v<T, LitQuadCommand>)
-          {
-            if (concrete.order.pass == RenderPass::Terrain)
-            {
-              auto key = std::make_tuple(
-                  concrete.order, concrete.textureId, concrete.normalTextureId);
-
-              auto& batch = litBatches[key];
-
-              batch.order = concrete.order;
-              batch.textureId = concrete.textureId;
-              batch.normalTextureId = concrete.normalTextureId;
-              batch.quad.quads.push_back(concrete.quad);
-              return;
-            }
-          }
-
-          batched.push_back(concrete);
-        },
-        command);
-  }
-
-  for (auto& [_, batch] : litBatches)
-    batched.push_back(std::move(batch));
-
-  commands = std::move(batched);
+  batchTerrainTiles(commands);
+  sortRenderCommands(commands);
 
   quadRenderer.begin();
 
-  std::stable_sort(commands.begin(),
-                   commands.end(),
-                   [](const AnyRenderCommand& a, const AnyRenderCommand& b)
-                   {
-                     return std::visit(
-                         [](const auto& lhs, const auto& rhs)
-                         {
-                           if (lhs.order.pass != rhs.order.pass)
-                             return lhs.order.pass < rhs.order.pass;
-
-                           if (lhs.order.depth != rhs.order.depth)
-                             return lhs.order.depth < rhs.order.depth;
-
-                           return lhs.order.subpass < rhs.order.subpass;
-                         },
-                         a,
-                         b);
-                   });
-
   for (const auto& command : commands)
-  {
-    std::visit(
-        [&](const auto& concrete)
-        {
-          auto drawable = concrete;
-
-          if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
-                                       LitQuadBatch>)
-          {
-            for (auto& quad : drawable.quad.quads)
-            {
-              quad.texture = resolveTexture(drawable.textureId);
-
-              if (quad.texture == 0)
-                continue;
-
-              if (drawable.normalTextureId)
-              {
-                quad.normalTexture = resolveTexture(drawable.normalTextureId);
-                quad.hasNormalMap = quad.normalTexture != 0;
-              }
-
-              quadRenderer.submit(quad);
-            }
-          }
-          else if constexpr (std::is_same_v<
-                                 std::decay_t<decltype(drawable.quad)>,
-                                 QuadBatch>)
-          {
-            for (const auto& quad : drawable.quad.quads)
-              quadRenderer.submit(quad);
-          }
-          else
-          {
-            if constexpr (requires {
-                            drawable.textureId;
-                            drawable.quad.texture;
-                          })
-            {
-              drawable.quad.texture = resolveTexture(drawable.textureId);
-
-              if (drawable.quad.texture == 0)
-                return;
-            }
-
-            if constexpr (requires {
-                            drawable.normalTextureId;
-                            drawable.quad.normalTexture;
-                          })
-            {
-              drawable.quad.normalTexture =
-                  resolveTexture(drawable.normalTextureId);
-
-              drawable.quad.hasNormalMap = drawable.quad.normalTexture != 0;
-            }
-
-            quadRenderer.submit(drawable.quad);
-          }
-        },
-        command);
-  }
+    submitRenderCommand(command, quadRenderer);
 
   quadRenderer.flush();
 }
@@ -727,6 +610,83 @@ IsometricLightingService& IsometricRenderSystem::lighting()
 const IsometricLightingService& IsometricRenderSystem::lighting() const
 {
   return m_lightingService;
+}
+
+void IsometricRenderSystem::sortRenderCommands(
+    std::vector<AnyRenderCommand>& commands)
+{
+  std::stable_sort(commands.begin(),
+                   commands.end(),
+                   [](const AnyRenderCommand& a, const AnyRenderCommand& b)
+                   {
+                     return std::visit(
+                         [](const auto& lhs, const auto& rhs)
+                         {
+                           if (lhs.order.pass != rhs.order.pass)
+                             return lhs.order.pass < rhs.order.pass;
+
+                           if (lhs.order.depth != rhs.order.depth)
+                             return lhs.order.depth < rhs.order.depth;
+
+                           return lhs.order.subpass < rhs.order.subpass;
+                         },
+                         a,
+                         b);
+                   });
+}
+
+void IsometricRenderSystem::batchTerrainTiles(
+    std::vector<AnyRenderCommand>& commands)
+{
+  std::vector<AnyRenderCommand> batched;
+  batched.reserve(commands.size());
+
+  std::map<std::tuple<RenderOrder, const std::string*, const std::string*>,
+           LitQuadBatchCommand>
+      litBatches;
+
+  for (const auto& command : commands)
+  {
+    std::visit(
+        [&](const auto& concrete)
+        {
+          using T = std::decay_t<decltype(concrete)>;
+
+          if constexpr (std::is_same_v<T, LitQuadCommand>)
+          {
+            if (concrete.order.pass == RenderPass::Terrain)
+            {
+              auto key = std::make_tuple(
+                  concrete.order, concrete.textureId, concrete.normalTextureId);
+
+              auto& batch = litBatches[key];
+
+              batch.order = concrete.order;
+              batch.textureId = concrete.textureId;
+              batch.normalTextureId = concrete.normalTextureId;
+              batch.quad.quads.push_back(concrete.quad);
+              return;
+            }
+          }
+
+          batched.push_back(concrete);
+        },
+        command);
+  }
+
+  for (auto& [_, batch] : litBatches)
+    batched.push_back(std::move(batch));
+
+  commands = std::move(batched);
+}
+
+void IsometricRenderSystem::submitRenderCommand(
+    const AnyRenderCommand& command,
+    OpenGLQuadRenderer& quadRenderer)
+{
+  std::visit([&](const auto& concrete)
+             { submitConcreteRenderCommand(concrete, quadRenderer); },
+             command);
 }
 
 } // namespace sfs

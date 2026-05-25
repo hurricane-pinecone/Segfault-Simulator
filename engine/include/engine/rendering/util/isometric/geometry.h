@@ -252,6 +252,7 @@ getTileWallEdge(const glm::ivec2& tile, int side, glm::vec2& a, glm::vec2& b)
 
 template <typename Visitor>
 void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
+                                      const glm::vec2& shadowDir,
                                       Visitor&& visit)
 {
   float minX = points[0].x;
@@ -272,9 +273,17 @@ void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
   const int tileMinY = static_cast<int>(std::floor(minY));
   const int tileMaxY = static_cast<int>(std::floor(maxY));
 
-  for (int y = tileMinY; y <= tileMaxY; y++)
+  const int xStart = shadowDir.x >= 0.0f ? tileMinX : tileMaxX;
+  const int xEnd = shadowDir.x >= 0.0f ? tileMaxX : tileMinX;
+  const int xStep = shadowDir.x >= 0.0f ? 1 : -1;
+
+  const int yStart = shadowDir.y >= 0.0f ? tileMinY : tileMaxY;
+  const int yEnd = shadowDir.y >= 0.0f ? tileMaxY : tileMinY;
+  const int yStep = shadowDir.y >= 0.0f ? 1 : -1;
+
+  for (int y = yStart; y != yEnd + yStep; y += yStep)
   {
-    for (int x = tileMinX; x <= tileMaxX; x++)
+    for (int x = xStart; x != xEnd + xStep; x += xStep)
     {
       const glm::ivec2 tile{x, y};
 
