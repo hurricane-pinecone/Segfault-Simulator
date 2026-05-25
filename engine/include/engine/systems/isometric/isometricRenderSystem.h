@@ -6,6 +6,7 @@
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 #include "engine/rendering/renderQueue.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -128,6 +129,17 @@ private:
   void rebuildTileElevationCache();
   void rebuildTerrainElevationGridView();
 
+  void sortRenderCommands(std::vector<AnyRenderCommand>& commands);
+
+  void batchTerrainTiles(std::vector<AnyRenderCommand>& commands);
+
+  void submitRenderCommand(const AnyRenderCommand& command,
+                           OpenGLQuadRenderer& quadRenderer);
+
+  template <typename T>
+  void submitConcreteRenderCommand(const T& concrete,
+                                   OpenGLQuadRenderer& quadRenderer);
+
 private:
   AssetStore& assetStore;
 
@@ -158,4 +170,88 @@ private:
   IsometricLightingService m_lightingService;
 };
 
+template <typename T>
+void IsometricRenderSystem::submitConcreteRenderCommand(
+    const T& concrete,
+    OpenGLQuadRenderer& quadRenderer)
+{
+  // Work on a mutable local copy because textures and normal maps
+  // are resolved lazily during submission.
+  auto drawable = concrete;
+
+  // Terrain shadows use the special stencil-based pipeline so
+  // overlapping shadow quads do not stack darker.
+  if constexpr (std::is_same_v<T, TerrainShadowCommand>)
+  {
+    quadRenderer.submitTerrainShadow(drawable.quad);
+  }
+
+  // Batched lit terrain tiles.
+  //
+  // These are grouped earlier by texture + lighting state to reduce
+  // OpenGL state changes and draw calls.
+  else if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
+                                    LitQuadBatch>)
+  {
+    for (auto& quad : drawable.quad.quads)
+    {
+      // Resolve diffuse/albedo texture.
+      quad.texture = resolveTexture(drawable.textureId);
+
+      if (quad.texture == 0)
+        continue;
+
+      // Optional normal map for lighting.
+      if (drawable.normalTextureId)
+      {
+        quad.normalTexture = resolveTexture(drawable.normalTextureId);
+
+        quad.hasNormalMap = quad.normalTexture != 0;
+      }
+
+      quadRenderer.submit(quad);
+    }
+  }
+
+  // Generic solid quad batches.
+  //
+  // Used for grouped non-lit quads.
+  else if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
+                                    QuadBatch>)
+  {
+    for (const auto& quad : drawable.quad.quads)
+      quadRenderer.submit(quad);
+  }
+
+  // Everything else:
+  // sprites, UI, standalone lit quads, etc.
+  else
+  {
+    // Resolve main texture if the drawable owns one.
+    if constexpr (requires {
+                    drawable.textureId;
+                    drawable.quad.texture;
+                  })
+    {
+      drawable.quad.texture = resolveTexture(drawable.textureId);
+
+      if (drawable.quad.texture == 0)
+        return;
+    }
+
+    // Resolve optional normal map.
+    if constexpr (requires {
+                    drawable.normalTextureId;
+                    drawable.quad.normalTexture;
+                  })
+    {
+      drawable.quad.normalTexture = resolveTexture(drawable.normalTextureId);
+
+      drawable.quad.hasNormalMap = drawable.quad.normalTexture != 0;
+    }
+
+    // Standard submission path.
+    quadRenderer.submit(drawable.quad);
+  }
+}
 } // namespace sfs

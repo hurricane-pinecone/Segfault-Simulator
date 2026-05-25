@@ -304,6 +304,7 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
     ZoneScopedN("Shadow: emitTileShadow()");
     forEachTileOverlappingShadowQuad(
         shadowWorldPoints,
+        shadowDir,
         [&](const glm::ivec2& tile, const ClippedPolygon& poly)
         {
           int elevation = 0;
@@ -616,8 +617,10 @@ TerrainShadowCommand IsometricShadowSystem::buildTerrainShadowCommand(
       0,
       static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f),
   };
+
   for (int i = 0; i < 4; i++)
     item.quad.points[i] = screenPoints[i];
+
   return item;
 }
 
@@ -661,8 +664,6 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
 
     edgesProcessed++;
   }
-
   gTerrainShadowEdgesProcessed += edgesProcessed;
 }
-
 } // namespace sfs

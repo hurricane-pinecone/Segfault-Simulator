@@ -1288,6 +1288,10 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
     flushSolid();
     break;
 
+  case Pipeline::TerrainShadow:
+    flushTerrainShadow();
+    break;
+
   case Pipeline::LitSprite:
     flushLit();
     break;

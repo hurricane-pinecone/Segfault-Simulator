@@ -182,7 +182,7 @@ private:
   // 0.25 = sunrise
   // 0.50 = noon
   // 0.75 = sunset
-  float m_timeOfDay = 0.15f;
+  float m_timeOfDay = 0.35f;
 
   // Full day duration in real seconds.
   float m_dayLengthSeconds = 120.0f;

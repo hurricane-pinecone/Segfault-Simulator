@@ -37,6 +37,16 @@ public:
   void submit(const TexturedQuad& command);
   void submit(const FreeformQuad& command);
   void submit(const LitQuad& command);
+  void submitTerrainShadow(const Quad& command)
+  {
+    initialize();
+
+    if (!initialized)
+      return;
+
+    beginPipeline(Pipeline::TerrainShadow);
+    appendSolidVertices(command);
+  }
 
   void drawImmediate(const TexturedQuad& command); // Text, UI, simple sprites
 
@@ -52,6 +62,7 @@ private:
   {
     None,
     SolidColor,
+    TerrainShadow,
     Textured,
     Freeform,
     LitSprite
@@ -120,6 +131,53 @@ private:
 
   unsigned int compileShader(unsigned int type, const char* source) const;
   unsigned int createShaderProgram() const;
+
+  void flushTerrainShadow()
+  {
+    initialize();
+
+    if (!initialized || m_solidVertices.empty())
+      return;
+
+    glUseProgram(solidShaderProgram);
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glEnable(GL_STENCIL_TEST);
+    glClear(GL_STENCIL_BUFFER_BIT);
+
+    glStencilMask(0xFF);
+    glStencilFunc(GL_EQUAL, 0, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+
+    glBindVertexArray(solidVao);
+    glBindBuffer(GL_ARRAY_BUFFER, solidVbo);
+
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(m_solidVertices.size() * sizeof(SolidVertex)),
+        m_solidVertices.data(),
+        GL_DYNAMIC_DRAW);
+
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
+
+    glDisable(GL_STENCIL_TEST);
+    glStencilMask(0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    glStencilFunc(GL_ALWAYS, 0, 0xFF);
+
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+    glUseProgram(0);
+
+    m_solidVertices.clear();
+  }
 
 private:
   struct Vertex

@@ -82,9 +82,6 @@ private:
                             float alpha,
                             float sortKey);
 
-  std::vector<TerrainShadowBatchCommand> batchTerrainShadowCommands(
-      const std::vector<TerrainShadowCommand>& items) const;
-
   void emitTileShadow(const IsometricRenderContext& context,
                       std::vector<TerrainShadowCommand>& outCommands,
                       const glm::ivec2& tile,
@@ -109,43 +106,6 @@ private:
     glm::vec3 sunDir{999.0f, 999.0f, 999.0f};
     glm::vec2 isoCameraPosition{999.0f, 999.0f};
     float zoom = -1.0f;
-  };
-
-  struct RenderOrderKey
-  {
-    RenderPass pass;
-    float depth;
-    int subpass;
-
-    bool operator<(const RenderOrderKey& other) const
-    {
-      if (pass != other.pass)
-        return pass < other.pass;
-
-      if (depth != other.depth)
-        return depth < other.depth;
-
-      return subpass < other.subpass;
-    }
-
-    bool operator==(const RenderOrderKey& other) const
-    {
-      return pass == other.pass && depth == other.depth &&
-             subpass == other.subpass;
-    }
-  };
-
-  struct RenderOrderKeyHash
-  {
-    size_t operator()(const RenderOrderKey& k) const noexcept
-    {
-      size_t h = std::hash<int>{}(static_cast<int>(k.pass));
-
-      h ^= std::hash<float>{}(k.depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
-      h ^= std::hash<int>{}(k.subpass) + 0x9e3779b9 + (h << 6) + (h >> 2);
-
-      return h;
-    }
   };
 
   TerrainShadowCache m_cache;
