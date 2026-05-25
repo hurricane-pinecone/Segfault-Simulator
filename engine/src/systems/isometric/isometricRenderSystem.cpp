@@ -38,6 +38,7 @@ int gTileRenderItems = 0;
 int gSpriteRenderItems = 0;
 int gSpriteProjectedShadowItems = 0;
 int gTerrainShadowBatchCount = 0;
+static int initialTerrainCacheRefreshes = 3;
 
 ElevationComponent::ElevationComponent(int level) : level(level) {}
 
@@ -90,6 +91,15 @@ void IsometricRenderSystem::render()
   m_context.activeCamera = getCamera();
 
   beginBatches();
+
+  // FIXME: Fix this water pop in bug properly
+  if (initialTerrainCacheRefreshes > 0)
+  {
+    LOG_DEBUG("ELEVEATION CACHE HACK");
+    tileElevationCacheDirty = true;
+    initialTerrainCacheRefreshes--;
+  }
+
   if (tileElevationCacheDirty)
   {
     rebuildTileElevationCache();
@@ -347,10 +357,11 @@ void IsometricRenderSystem::flushBatches()
   auto& commands = m_renderQueue.mutableItems();
 
   batchTerrainTiles(commands);
-  // appendWaterCommands(commands);
   sortRenderCommands(commands);
 
   quadRenderer.begin();
+
+  quadRenderer.setSurfaceTime(static_cast<float>(SDL_GetTicks()) / 1000.0f);
 
   for (const auto& command : commands)
     submitRenderCommand(command, quadRenderer);

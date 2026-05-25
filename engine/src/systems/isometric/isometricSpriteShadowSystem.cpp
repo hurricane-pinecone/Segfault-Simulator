@@ -259,6 +259,7 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
       if (!visited.insert(tile).second)
         return true;
 
+      constructSpriteShadowOnTile(tile);
       return true;
     };
 

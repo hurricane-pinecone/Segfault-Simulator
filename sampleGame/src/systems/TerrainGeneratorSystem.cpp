@@ -93,9 +93,6 @@ void TerrainGeneratorSystem::loadTile(TilePos tile)
     water.color = SDL_Color{35, 120, 190, 115};
 
     grass.entity().addComponent<sfs::WaterTileComponent>(water);
-
-    // m_loadedTiles[tile] = {&grass};
-    // return;
   }
 
   sfs::TerrainBoundaryComponent boundary;

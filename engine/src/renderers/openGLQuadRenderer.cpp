@@ -50,6 +50,14 @@ void OpenGLQuadRenderer::initialize()
     return;
   }
 
+  surfaceShaderProgram = createSurfaceShaderProgram();
+
+  if (surfaceShaderProgram == 0)
+  {
+    LOG_ERROR("Failed to create OpenGLQuadRenderer surface shader program");
+    return;
+  }
+
   uTextureLocation = glGetUniformLocation(shaderProgram, "uTexture");
   uColorLocation = glGetUniformLocation(shaderProgram, "uColor");
   uUseLightingLocation = glGetUniformLocation(shaderProgram, "uUseLighting");
@@ -73,6 +81,71 @@ void OpenGLQuadRenderer::initialize()
   uLightRadiiLocation = glGetUniformLocation(shaderProgram, "uLightRadii[0]");
   uLightHeightsLocation =
       glGetUniformLocation(shaderProgram, "uLightHeights[0]");
+
+  // Surfaces
+  uSurfaceTimeLocation = glGetUniformLocation(surfaceShaderProgram, "uTime");
+  uSurfaceRippleStrengthLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uRippleStrength");
+  uSurfaceRippleScaleLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uRippleScale");
+
+  glGenVertexArrays(1, &surfaceVao);
+  glGenBuffers(1, &surfaceVbo);
+  glGenBuffers(1, &surfaceEbo);
+
+  glBindVertexArray(surfaceVao);
+  glBindBuffer(GL_ARRAY_BUFFER, surfaceVbo);
+
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SurfaceGpuVertex),
+      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, position)));
+
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(
+      1,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SurfaceGpuVertex),
+      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, worldPosition)));
+
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(
+      2,
+      4,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SurfaceGpuVertex),
+      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, color)));
+
+  glEnableVertexAttribArray(3);
+  glVertexAttribPointer(
+      3,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SurfaceGpuVertex),
+      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, uv)));
+
+  glEnableVertexAttribArray(4);
+  glVertexAttribPointer(
+      4,
+      4,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SurfaceGpuVertex),
+      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, params)));
+
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surfaceEbo);
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
@@ -157,6 +230,8 @@ void OpenGLQuadRenderer::initialize()
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
   glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
+  glUniform1f(uSurfaceRippleStrengthLocation, 0.012f);
+  glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
 
   glUseProgram(0);
 
@@ -253,6 +328,23 @@ void OpenGLQuadRenderer::shutdown()
   if (solidShaderProgram != 0)
     glDeleteProgram(solidShaderProgram);
 
+  if (surfaceEbo != 0)
+    glDeleteBuffers(1, &surfaceEbo);
+
+  if (surfaceVbo != 0)
+    glDeleteBuffers(1, &surfaceVbo);
+
+  if (surfaceVao != 0)
+    glDeleteVertexArrays(1, &surfaceVao);
+
+  if (surfaceShaderProgram != 0)
+    glDeleteProgram(surfaceShaderProgram);
+
+  surfaceEbo = 0;
+  surfaceVbo = 0;
+  surfaceVao = 0;
+  surfaceShaderProgram = 0;
+
   solidVbo = 0;
   solidVao = 0;
   solidShaderProgram = 0;
@@ -321,6 +413,72 @@ void OpenGLQuadRenderer::submit(const LitQuad& command)
   }
 
   appendLitVertices(command);
+}
+
+void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
+{
+  initialize();
+
+  if (!initialized)
+    return;
+
+  if (command.vertices.empty() || command.indices.empty())
+    return;
+
+  if (surfaceShaderProgram == 0)
+    return;
+
+  flushCurrentPipeline();
+  m_pipeline = Pipeline::None;
+
+  std::vector<SurfaceGpuVertex> gpuVertices;
+  gpuVertices.reserve(command.vertices.size());
+
+  for (const SurfaceVertex& vertex : command.vertices)
+  {
+    gpuVertices.push_back(SurfaceGpuVertex{
+        toNdc(vertex.position),
+        vertex.worldPosition,
+        vertex.color,
+        vertex.uv,
+        vertex.params,
+    });
+  }
+
+  glUseProgram(surfaceShaderProgram);
+
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glUniform1f(uSurfaceTimeLocation, m_surfaceTime);
+  glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
+  glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
+
+  glBindVertexArray(surfaceVao);
+
+  glBindBuffer(GL_ARRAY_BUFFER, surfaceVbo);
+  glBufferData(
+      GL_ARRAY_BUFFER,
+      static_cast<GLsizeiptr>(gpuVertices.size() * sizeof(SurfaceGpuVertex)),
+      gpuVertices.data(),
+      GL_DYNAMIC_DRAW);
+
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surfaceEbo);
+  glBufferData(
+      GL_ELEMENT_ARRAY_BUFFER,
+      static_cast<GLsizeiptr>(command.indices.size() * sizeof(uint32_t)),
+      command.indices.data(),
+      GL_DYNAMIC_DRAW);
+
+  glDrawElements(GL_TRIANGLES,
+                 static_cast<GLsizei>(command.indices.size()),
+                 GL_UNSIGNED_INT,
+                 nullptr);
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+  glUseProgram(0);
 }
 
 void OpenGLQuadRenderer::appendSolidVertices(const Quad& command)
@@ -1306,5 +1464,116 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
 }
 
 void OpenGLQuadRenderer::flush() { flushCurrentPipeline(); }
+
+unsigned int OpenGLQuadRenderer::createSurfaceShaderProgram() const
+{
+#ifdef __EMSCRIPTEN__
+  const std::string glslVersion = "#version 300 es\n"
+                                  "precision mediump float;\n";
+#else
+  const std::string glslVersion = "#version 330 core\n";
+#endif
+
+  const std::string vertexSource = glslVersion + R"(
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aWorldPosition;
+layout(location = 2) in vec4 aColor;
+layout(location = 3) in vec2 aUv;
+layout(location = 4) in vec4 aParams;
+
+out vec2 vWorldPosition;
+out vec4 vColor;
+out vec2 vUv;
+out vec4 vParams;
+
+void main()
+{
+  vWorldPosition = aWorldPosition;
+  vColor = aColor;
+  vUv = aUv;
+  vParams = aParams;
+
+  gl_Position = vec4(aPosition, 0.0, 1.0);
+}
+)";
+
+  const std::string fragmentSource = glslVersion + R"(
+in vec2 vWorldPosition;
+in vec4 vColor;
+in vec2 vUv;
+in vec4 vParams;
+
+out vec4 FragColor;
+
+uniform float uTime;
+uniform float uRippleStrength;
+uniform float uRippleScale;
+
+void main()
+{
+  float depthFactor = vParams.y;
+
+float r1 = sin(
+    vWorldPosition.x * 1.25 +
+    vWorldPosition.y * 0.55 +
+    uTime * 2.2);
+
+float r2 = sin(
+    vWorldPosition.x * -0.75 +
+    vWorldPosition.y * 1.10 +
+    uTime * 1.6);
+
+float ripple = (r1 + r2) * 0.5;
+
+vec3 color = vColor.rgb;
+color += ripple * uRippleStrength;
+
+  color = clamp(color, 0.0, 1.0);
+
+  FragColor = vec4(color, vColor.a);
+}
+)";
+
+  GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+  GLuint fragmentShader =
+      compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+
+  if (vertexShader == 0 || fragmentShader == 0)
+  {
+    if (vertexShader != 0)
+      glDeleteShader(vertexShader);
+
+    if (fragmentShader != 0)
+      glDeleteShader(fragmentShader);
+
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+  if (!success)
+  {
+    char infoLog[1024];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+    LOG_ERROR(infoLog);
+
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
+}
+
+void OpenGLQuadRenderer::setSurfaceTime(float time) { m_surfaceTime = time; }
 
 } // namespace sfs
