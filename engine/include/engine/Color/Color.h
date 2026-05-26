@@ -40,6 +40,7 @@ inline constexpr Color DarkGray{64, 64, 64, 255};
 inline constexpr Color Brown{139, 69, 19, 255};
 inline constexpr Color Lime{50, 205, 50, 255};
 inline constexpr Color Navy{0, 0, 128, 255};
+inline constexpr Color Turqoise{55, 155, 210, 70};
 
 inline constexpr Color Transparent{0, 0, 0, 0};
 } // namespace Colors

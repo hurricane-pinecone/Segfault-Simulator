@@ -245,6 +245,12 @@ private:
   int uSurfaceTimeLocation = -1;
   int uSurfaceRippleStrengthLocation = -1;
   int uSurfaceRippleScaleLocation = -1;
+  int uSurfaceAmbientLocation = -1;
+  int uSurfaceLightCountLocation = -1;
+  int uSurfaceLightPositionsLocation = -1;
+  int uSurfaceLightColorsLocation = -1;
+  int uSurfaceLightIntensitiesLocation = -1;
+  int uSurfaceLightRadiiLocation = -1;
 
   float m_surfaceTime = 0.0f;
 

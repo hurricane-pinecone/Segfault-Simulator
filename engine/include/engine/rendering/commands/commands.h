@@ -50,6 +50,13 @@ struct SurfaceCommand
   std::vector<SurfaceVertex> vertices;
   std::vector<uint32_t> indices;
 
+  float ambient = 1.0f;
+  int lightCount = 0;
+  glm::vec2 lightPositions[MaxShaderLights]{};
+  glm::vec3 lightColors[MaxShaderLights]{};
+  float lightIntensities[MaxShaderLights]{};
+  float lightRadii[MaxShaderLights]{};
+
   SurfaceMaterial material;
   RenderOrder order{RenderPass::Surfaces, 0, 0};
 };

@@ -34,6 +34,16 @@ void OpenGLQuadRenderer::initialize()
   if (initialized)
     return;
 
+  // ===========================================================================
+  // Create shader programs
+  // ===========================================================================
+
+  // Main textured + lit sprite shader.
+  // Used by:
+  // - terrain sprites
+  // - actors
+  // - lit quads
+  // - textured debug rendering
   shaderProgram = createShaderProgram();
 
   if (shaderProgram == 0)
@@ -42,6 +52,10 @@ void OpenGLQuadRenderer::initialize()
     return;
   }
 
+  // Simple untextured solid-color shader.
+  // Used by:
+  // - terrain shadows
+  // - debug fills
   solidShaderProgram = createSolidShaderProgram();
 
   if (solidShaderProgram == 0)
@@ -50,6 +64,10 @@ void OpenGLQuadRenderer::initialize()
     return;
   }
 
+  // Surface shader.
+  // Used by:
+  // - water rendering
+  // - animated surface effects
   surfaceShaderProgram = createSurfaceShaderProgram();
 
   if (surfaceShaderProgram == 0)
@@ -57,6 +75,10 @@ void OpenGLQuadRenderer::initialize()
     LOG_ERROR("Failed to create OpenGLQuadRenderer surface shader program");
     return;
   }
+
+  // ===========================================================================
+  // Main textured/lit shader uniform locations
+  // ===========================================================================
 
   uTextureLocation = glGetUniformLocation(shaderProgram, "uTexture");
   uColorLocation = glGetUniformLocation(shaderProgram, "uColor");
@@ -82,12 +104,32 @@ void OpenGLQuadRenderer::initialize()
   uLightHeightsLocation =
       glGetUniformLocation(shaderProgram, "uLightHeights[0]");
 
-  // Surfaces
+  // ===========================================================================
+  // Surface shader uniform locations
+  // ===========================================================================
+
   uSurfaceTimeLocation = glGetUniformLocation(surfaceShaderProgram, "uTime");
   uSurfaceRippleStrengthLocation =
       glGetUniformLocation(surfaceShaderProgram, "uRippleStrength");
   uSurfaceRippleScaleLocation =
       glGetUniformLocation(surfaceShaderProgram, "uRippleScale");
+  uSurfaceAmbientLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uAmbient");
+  uSurfaceLightCountLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uLightCount");
+  uSurfaceLightPositionsLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uLightPositions[0]");
+  uSurfaceLightColorsLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uLightColors[0]");
+  uSurfaceLightIntensitiesLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uLightIntensities[0]");
+  uSurfaceLightRadiiLocation =
+      glGetUniformLocation(surfaceShaderProgram, "uLightRadii[0]");
+
+  // ===========================================================================
+  // Surface rendering VAO/VBO/EBO
+  // Used by water/surface meshes.
+  // ===========================================================================
 
   glGenVertexArrays(1, &surfaceVao);
   glGenBuffers(1, &surfaceVbo);
@@ -96,6 +138,7 @@ void OpenGLQuadRenderer::initialize()
   glBindVertexArray(surfaceVao);
   glBindBuffer(GL_ARRAY_BUFFER, surfaceVbo);
 
+  // position
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(
       0,
@@ -105,6 +148,7 @@ void OpenGLQuadRenderer::initialize()
       sizeof(SurfaceGpuVertex),
       reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, position)));
 
+  // world position
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(
       1,
@@ -114,6 +158,7 @@ void OpenGLQuadRenderer::initialize()
       sizeof(SurfaceGpuVertex),
       reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, worldPosition)));
 
+  // color
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(
       2,
@@ -123,6 +168,7 @@ void OpenGLQuadRenderer::initialize()
       sizeof(SurfaceGpuVertex),
       reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, color)));
 
+  // uv
   glEnableVertexAttribArray(3);
   glVertexAttribPointer(
       3,
@@ -132,6 +178,7 @@ void OpenGLQuadRenderer::initialize()
       sizeof(SurfaceGpuVertex),
       reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, uv)));
 
+  // params
   glEnableVertexAttribArray(4);
   glVertexAttribPointer(
       4,
@@ -147,6 +194,11 @@ void OpenGLQuadRenderer::initialize()
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+  // ===========================================================================
+  // Main textured quad VAO/VBO
+  // Used by sprites + lit textured rendering.
+  // ===========================================================================
+
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
 
@@ -158,6 +210,7 @@ void OpenGLQuadRenderer::initialize()
                nullptr,
                GL_DYNAMIC_DRAW);
 
+  // position
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0,
                         2,
@@ -166,6 +219,7 @@ void OpenGLQuadRenderer::initialize()
                         sizeof(Vertex),
                         reinterpret_cast<void*>(offsetof(Vertex, position)));
 
+  // uv
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(1,
                         2,
@@ -174,6 +228,7 @@ void OpenGLQuadRenderer::initialize()
                         sizeof(Vertex),
                         reinterpret_cast<void*>(offsetof(Vertex, uv)));
 
+  // world position
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(
       2,
@@ -186,7 +241,11 @@ void OpenGLQuadRenderer::initialize()
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  // Solid quad VAO/VBO
+  // ===========================================================================
+  // Solid color VAO/VBO
+  // Used by terrain shadows and debug rendering.
+  // ===========================================================================
+
   glGenVertexArrays(1, &solidVao);
   glGenBuffers(1, &solidVbo);
 
@@ -198,6 +257,7 @@ void OpenGLQuadRenderer::initialize()
                nullptr,
                GL_DYNAMIC_DRAW);
 
+  // position
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(
       0,
@@ -207,6 +267,7 @@ void OpenGLQuadRenderer::initialize()
       sizeof(SolidVertex),
       reinterpret_cast<void*>(offsetof(SolidVertex, position)));
 
+  // color
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(1,
                         4,
@@ -218,22 +279,52 @@ void OpenGLQuadRenderer::initialize()
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+  // ===========================================================================
+  // Default uniforms: textured/lit sprite shader
+  // ===========================================================================
+
   glUseProgram(shaderProgram);
 
   glUniform1i(uTextureLocation, 0);
   glUniform1i(uNormalTextureLocation, 1);
+
   glUniform1i(uUseLightingLocation, 0);
   glUniform1i(uHasNormalMapLocation, 0);
+
   glUniform3f(uLightDirectionLocation, 0.0f, 0.0f, 1.0f);
   glUniform1f(uLightIntensityLocation, 1.0f);
+
+  // Terrain/sprite default ambient light.
   glUniform1f(uAmbientLocation, 0.18f);
+
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
+
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+
   glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
-  glUniform1f(uSurfaceRippleStrengthLocation, 0.012f);
-  glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
 
   glUseProgram(0);
+
+  // ===========================================================================
+  // Default uniforms: surface shader
+  // ===========================================================================
+
+  glUseProgram(surfaceShaderProgram);
+
+  glUniform1f(uSurfaceTimeLocation, 0.0f);
+
+  glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
+
+  glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
+
+  // Water/surface default ambient.
+  glUniform1f(uSurfaceAmbientLocation, 1.0f);
+
+  glUseProgram(0);
+
+  // ===========================================================================
+  // Default normal map texture
+  // ===========================================================================
 
   glGenTextures(1, &defaultNormalTexture);
 
@@ -253,9 +344,16 @@ void OpenGLQuadRenderer::initialize()
                defaultNormalPixel);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  // ===========================================================================
+  // White fallback texture
+  // ===========================================================================
 
   glGenTextures(1, &whiteTexture);
 
@@ -275,13 +373,21 @@ void OpenGLQuadRenderer::initialize()
                whitePixel);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
   glActiveTexture(GL_TEXTURE0);
 
+  // ===========================================================================
+  // Global OpenGL state
+  // ===========================================================================
+
   glDisable(GL_DEPTH_TEST);
+
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -454,6 +560,23 @@ void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
   glUniform1f(uSurfaceTimeLocation, m_surfaceTime);
   glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
   glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
+  glUniform1f(uSurfaceAmbientLocation, command.ambient);
+  glUniform1i(uSurfaceLightCountLocation, command.lightCount);
+
+  if (command.lightCount > 0)
+  {
+    glUniform2fv(uSurfaceLightPositionsLocation,
+                 command.lightCount,
+                 reinterpret_cast<const float*>(command.lightPositions));
+    glUniform3fv(uSurfaceLightColorsLocation,
+                 command.lightCount,
+                 reinterpret_cast<const float*>(command.lightColors));
+    glUniform1fv(uSurfaceLightIntensitiesLocation,
+                 command.lightCount,
+                 command.lightIntensities);
+    glUniform1fv(
+        uSurfaceLightRadiiLocation, command.lightCount, command.lightRadii);
+  }
 
   glBindVertexArray(surfaceVao);
 
@@ -1498,6 +1621,8 @@ void main()
 )";
 
   const std::string fragmentSource = glslVersion + R"(
+#define MAX_LIGHTS 16
+
 in vec2 vWorldPosition;
 in vec4 vColor;
 in vec2 vUv;
@@ -1508,26 +1633,58 @@ out vec4 FragColor;
 uniform float uTime;
 uniform float uRippleStrength;
 uniform float uRippleScale;
+uniform float uAmbient;
+
+uniform int uLightCount;
+uniform vec2 uLightPositions[MAX_LIGHTS];
+uniform vec3 uLightColors[MAX_LIGHTS];
+uniform float uLightIntensities[MAX_LIGHTS];
+uniform float uLightRadii[MAX_LIGHTS];
 
 void main()
 {
-  float depthFactor = vParams.y;
+  float r1 = sin(
+      vWorldPosition.x * 1.25 +
+      vWorldPosition.y * 0.55 +
+      uTime * 2.2);
 
-float r1 = sin(
-    vWorldPosition.x * 1.25 +
-    vWorldPosition.y * 0.55 +
-    uTime * 2.2);
+  float r2 = sin(
+      vWorldPosition.x * -0.75 +
+      vWorldPosition.y * 1.10 +
+      uTime * 1.6);
 
-float r2 = sin(
-    vWorldPosition.x * -0.75 +
-    vWorldPosition.y * 1.10 +
-    uTime * 1.6);
+  float ripple = (r1 + r2) * 0.5;
 
-float ripple = (r1 + r2) * 0.5;
+  vec3 color = vColor.rgb;
+  color += ripple * uRippleStrength;
 
-vec3 color = vColor.rgb;
-color += ripple * uRippleStrength;
+  float lightFloor = mix(0.06, 0.82, clamp(uAmbient, 0.0, 1.0));
+  color *= max(uAmbient, lightFloor);
 
+  vec3 pointLight = vec3(0.0);
+
+  for (int i = 0; i < MAX_LIGHTS; i++)
+  {
+    if (i >= uLightCount)
+      break;
+
+    float dist = length(uLightPositions[i] - vWorldPosition);
+
+    if (dist >= uLightRadii[i])
+      continue;
+
+    float attenuation = 1.0 - dist / uLightRadii[i];
+    attenuation = clamp(attenuation, 0.0, 1.0);
+    attenuation = pow(attenuation, 1.35);
+
+    pointLight +=
+        uLightColors[i] *
+        uLightIntensities[i] *
+        attenuation *
+        0.45;
+  }
+
+  color += pointLight;
   color = clamp(color, 0.0, 1.0);
 
   FragColor = vec4(color, vColor.a);
