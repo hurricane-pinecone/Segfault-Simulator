@@ -227,7 +227,7 @@ void IsometricRenderSystem::render()
     LitQuadCommand command;
     command.order = isTileEntity(entity)
                         ? RenderOrder{RenderPass::Terrain, sortKey, 0}
-                        : RenderOrder{RenderPass::Objects, sortKey, 0};
+                        : RenderOrder{RenderPass::Terrain, sortKey, 1};
     command.textureId = &sprite->textureId;
     command.quad.srcRect = sprite->srcRect;
     command.quad.destRect = dest;

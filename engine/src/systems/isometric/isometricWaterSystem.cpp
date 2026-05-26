@@ -26,18 +26,68 @@ void IsometricWaterSystem::computeCommands(
   if (build.cells.empty())
     return;
 
-  SurfaceCommand command = createWaterSurfaceCommand();
-  buildWaterSurfaceMesh(context, build, command);
+  const int cellWidth = build.maxTile.x - build.minTile.x + 1;
 
-  if (!command.vertices.empty() && !command.indices.empty())
-    m_commands.push_back(std::move(command));
+  const int cellHeight = build.maxTile.y - build.minTile.y + 1;
+
+  std::vector<float> cellDepths(
+      static_cast<size_t>(cellWidth * cellHeight), -1.0f);
+
+  auto cellIndex = [&](const glm::ivec2& tile)
+  {
+    const int x = tile.x - build.minTile.x;
+    const int y = tile.y - build.minTile.y;
+
+    return static_cast<size_t>(y * cellWidth + x);
+  };
+
+  for (const WaterCell& cell : build.cells)
+    cellDepths[cellIndex(cell.tile)] = cell.depth;
+
+  for (const WaterCell& cell : build.cells)
+  {
+    if (cell.terrainElevation >= cell.elevation)
+      continue;
+
+    SurfaceCommand command = createWaterSurfaceCommand(context, cell);
+
+    buildSingleWaterTileMesh(
+        context, build, cell, cellWidth, cellHeight, cellDepths, command);
+
+    if (!command.vertices.empty() && !command.indices.empty())
+    {
+      m_commands.push_back(std::move(command));
+    }
+  }
 }
 
-SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand() const
+SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
+    const IsometricRenderContext& context,
+    const WaterCell& cell) const
 {
   SurfaceCommand command;
   command.material = SurfaceCommand::SurfaceMaterial::Water;
-  command.order = RenderOrder{RenderPass::Surfaces, 0.0f, 0};
+  command.order = RenderOrder{
+      RenderPass::Terrain,
+      static_cast<float>(cell.tile.x + cell.tile.y) + cell.elevation * 0.5f,
+      2};
+  command.ambient =
+      context.ambientLighting ? context.ambientLighting->ambient : 1.0f;
+
+  if (context.pointLights)
+  {
+    command.lightCount = std::min(
+        static_cast<int>(context.pointLights->size()), MaxShaderLights);
+
+    for (int i = 0; i < command.lightCount; i++)
+    {
+      const auto& light = (*context.pointLights)[i];
+      command.lightPositions[i] = light.worldPosition;
+      command.lightColors[i] = light.color;
+      command.lightIntensities[i] = light.intensity;
+      command.lightRadii[i] = light.radius;
+    }
+  }
   return command;
 }
 
@@ -63,6 +113,7 @@ WaterSurfaceBuild IsometricWaterSystem::collectWaterSurfaceBuild(
     build.cells.push_back(WaterCell{
         tile,
         water.elevation,
+        terrainElevation,
         static_cast<float>(std::max(0, water.elevation - terrainElevation))});
 
     if (!hasBounds)
@@ -81,75 +132,6 @@ WaterSurfaceBuild IsometricWaterSystem::collectWaterSurfaceBuild(
   return build;
 }
 
-void IsometricWaterSystem::buildWaterSurfaceMesh(
-    const IsometricRenderContext& context,
-    const WaterSurfaceBuild& build,
-    SurfaceCommand& command) const
-{
-  const int cellWidth = build.maxTile.x - build.minTile.x + 1;
-  const int cellHeight = build.maxTile.y - build.minTile.y + 1;
-
-  std::vector<float> cellDepths(
-      static_cast<size_t>(cellWidth * cellHeight), -1.0f);
-
-  auto cellIndex = [&](const glm::ivec2& tile)
-  {
-    const int x = tile.x - build.minTile.x;
-    const int y = tile.y - build.minTile.y;
-    return static_cast<size_t>(y * cellWidth + x);
-  };
-
-  command.vertices.reserve(static_cast<size_t>(build.cells.size() * 4));
-
-  for (const WaterCell& cell : build.cells)
-  {
-    cellDepths[cellIndex(cell.tile)] = cell.depth;
-  }
-
-  for (const WaterCell& cell : build.cells)
-  {
-    const glm::ivec2 tile = cell.tile;
-
-    const float d0 = sampleSurfaceVertexDepth(tile + glm::ivec2{0, 0},
-                                              build.minTile,
-                                              cellWidth,
-                                              cellHeight,
-                                              cellDepths);
-    const float d1 = sampleSurfaceVertexDepth(tile + glm::ivec2{1, 0},
-                                              build.minTile,
-                                              cellWidth,
-                                              cellHeight,
-                                              cellDepths);
-    const float d2 = sampleSurfaceVertexDepth(tile + glm::ivec2{1, 1},
-                                              build.minTile,
-                                              cellWidth,
-                                              cellHeight,
-                                              cellDepths);
-    const float d3 = sampleSurfaceVertexDepth(tile + glm::ivec2{0, 1},
-                                              build.minTile,
-                                              cellWidth,
-                                              cellHeight,
-                                              cellDepths);
-
-    const uint32_t i0 = addSurfaceVertex(
-        context, tile + glm::ivec2{0, 0}, cell.elevation, d0, command);
-    const uint32_t i1 = addSurfaceVertex(
-        context, tile + glm::ivec2{1, 0}, cell.elevation, d1, command);
-    const uint32_t i2 = addSurfaceVertex(
-        context, tile + glm::ivec2{1, 1}, cell.elevation, d2, command);
-    const uint32_t i3 = addSurfaceVertex(
-        context, tile + glm::ivec2{0, 1}, cell.elevation, d3, command);
-
-    command.indices.push_back(i0);
-    command.indices.push_back(i1);
-    command.indices.push_back(i2);
-
-    command.indices.push_back(i0);
-    command.indices.push_back(i2);
-    command.indices.push_back(i3);
-  }
-}
-
 uint32_t
 IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
                                        const glm::ivec2& gridPoint,
@@ -159,7 +141,7 @@ IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
 {
   const float depthFactor = std::clamp(depth / 6.0f, 0.0f, 1.0f);
 
-  const SDL_Color shallowColor{55, 155, 210, 70};
+  const SDL_Color shallowColor = sfs::Colors::Turqoise.toSDL();
   const SDL_Color deepColor = sfs::Colors::Navy.toSDL();
 
   const glm::vec4 shallow{
@@ -199,6 +181,56 @@ IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
   return index;
 }
 
+void IsometricWaterSystem::buildSingleWaterTileMesh(
+    const IsometricRenderContext& context,
+    const WaterSurfaceBuild& build,
+    const WaterCell& cell,
+    int cellWidth,
+    int cellHeight,
+    const std::vector<float>& cellDepths,
+    SurfaceCommand& command) const
+{
+  const glm::ivec2 tile = cell.tile;
+
+  const float d0 = sampleSurfaceVertexDepth(tile + glm::ivec2{0, 0},
+                                            build.minTile,
+                                            cellWidth,
+                                            cellHeight,
+                                            cellDepths);
+
+  const float d1 = sampleSurfaceVertexDepth(tile + glm::ivec2{1, 0},
+                                            build.minTile,
+                                            cellWidth,
+                                            cellHeight,
+                                            cellDepths);
+
+  const float d2 = sampleSurfaceVertexDepth(tile + glm::ivec2{1, 1},
+                                            build.minTile,
+                                            cellWidth,
+                                            cellHeight,
+                                            cellDepths);
+
+  const float d3 = sampleSurfaceVertexDepth(tile + glm::ivec2{0, 1},
+                                            build.minTile,
+                                            cellWidth,
+                                            cellHeight,
+                                            cellDepths);
+
+  const uint32_t i0 = addSurfaceVertex(
+      context, tile + glm::ivec2{0, 0}, cell.elevation, d0, command);
+
+  const uint32_t i1 = addSurfaceVertex(
+      context, tile + glm::ivec2{1, 0}, cell.elevation, d1, command);
+
+  const uint32_t i2 = addSurfaceVertex(
+      context, tile + glm::ivec2{1, 1}, cell.elevation, d2, command);
+
+  const uint32_t i3 = addSurfaceVertex(
+      context, tile + glm::ivec2{0, 1}, cell.elevation, d3, command);
+
+  command.indices.insert(command.indices.end(), {i0, i1, i2, i0, i2, i3});
+}
+
 float IsometricWaterSystem::sampleSurfaceVertexDepth(
     const glm::ivec2& gridPoint,
     const glm::ivec2& minTile,
@@ -219,7 +251,9 @@ float IsometricWaterSystem::sampleSurfaceVertexDepth(
       const int y = tile.y - minTile.y;
 
       if (x < 0 || y < 0 || x >= cellWidth || y >= cellHeight)
+      {
         continue;
+      }
 
       const float depth = cellDepths[static_cast<size_t>(y * cellWidth + x)];
 
