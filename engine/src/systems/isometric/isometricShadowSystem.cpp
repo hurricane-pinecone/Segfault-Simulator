@@ -310,7 +310,7 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
           if (!context.terrainElevationGrid.tryGet(tile, elevation))
             return true;
 
-          if (elevation != edge.bottomElevation)
+          if (elevation > edge.bottomElevation)
             return true;
 
           emitTileShadow(context, outCommands, tile, elevation, poly, alpha);

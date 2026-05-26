@@ -86,7 +86,7 @@ bool TerrainGeneratorSystem::loadTile(TilePos tile)
   auto& grass = m_scene.createObject<GrassBlock>(
       glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full);
 
-  const bool isWater = elevation < m_waterLevel;
+  const bool isWater = elevation <= m_waterLevel;
 
   if (isWater)
   {
