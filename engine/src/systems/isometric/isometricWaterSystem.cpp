@@ -67,9 +67,40 @@ SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
 {
   SurfaceCommand command;
   command.material = SurfaceCommand::SurfaceMaterial::Water;
+
+  // Water participates in the Terrain render pass instead of a separate
+  // Surfaces pass so it can painter-sort together with terrain tiles and
+  // actors.
+  //
+  // If water renders in a later dedicated pass, it loses per-tile interleaving
+  // with terrain and sprites:
+  //
+  //   terrain -> sprites -> water
+  //
+  // which causes:
+  // - water drawing over mountains/cliffs
+  // - incorrect shoreline occlusion
+  // - actors always appearing under or over water globally
+  //
+  // Water tiles also use the same tile-center depth convention as sprites.
+  //
+  // Non-tile sprites sort using the center of their occupied grid cell:
+  //
+  //   tile.x + 0.5 +
+  //   tile.y + 0.5
+  //
+  // which becomes:
+  //
+  //   tile.x + tile.y + 1.0
+  //
+  // Water must match that same effective depth or sprites standing in water
+  // will always sort after the water surface regardless of subpass.
+  //
+  // Subpass 2 then correctly places water over actors on the same tile while
+  // still allowing terrain elevation painter sorting to work normally.
   command.order = RenderOrder{
       RenderPass::Terrain,
-      static_cast<float>(cell.tile.x + cell.tile.y) + cell.elevation * 0.5f,
+      static_cast<float>(cell.tile.x + cell.tile.y + 1) + cell.elevation * 0.5f,
       2};
   command.ambient =
       context.ambientLighting ? context.ambientLighting->ambient : 1.0f;
