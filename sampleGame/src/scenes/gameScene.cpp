@@ -35,14 +35,14 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   addSystem<TerrainGeneratorSystem>(*this);
 
+  auto& renderer = addSystem<sfs::IsometricRenderSystem>(
+      m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16, 8, WORLD_SCALE);
+
   sfs::IsometricShadowSettings shadowSettings = {7.0f, 7.0f};
 
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
   addSystem<sfs::IsometricWaterSystem>();
-
-  auto& renderer = addSystem<sfs::IsometricRenderSystem>(
-      m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16, 8, WORLD_SCALE);
 
   addSystem<SunController>();
 }

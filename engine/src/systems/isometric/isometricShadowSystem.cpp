@@ -1,4 +1,5 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
+#include "engine/components/tags/isometricTile.h"
 #include "engine/components/transformComponent.h"
 #include "engine/rendering/util/isometric/geometry.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
@@ -10,7 +11,6 @@
 #include <vector>
 
 #include "engine/components/elevationComponent.h"
-#include "engine/components/tags/isometricTile.h"
 #include "engine/components/terrainBoundaryComponent.h"
 #include "glm/glm/geometric.hpp"
 
@@ -28,6 +28,7 @@ void IsometricShadowSystem::create()
 {
   registerComponent<TransformComponent>();
   registerComponent<TerrainBoundaryComponent>();
+  registerComponent<ElevationComponent>();
 }
 
 void IsometricShadowSystem::markTerrainDirty()
@@ -152,21 +153,16 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
 {
   std::vector<TerrainShadowEdge> edges;
 
-  for (const auto& entity : getEntities())
+  auto tiles = registry->view<TransformComponent,
+                              TerrainBoundaryComponent,
+                              IsometricTile,
+                              ElevationComponent>();
+
+  for (const auto& entity : tiles)
   {
-    if (!entity.hasComponent<IsometricTile>())
-      continue;
-
-    if (!entity.hasComponent<TerrainBoundaryComponent>())
-      continue;
-
     const auto& transform = entity.getComponent<TransformComponent>();
     const auto& boundary = entity.getComponent<TerrainBoundaryComponent>();
-
-    int elevation = 0;
-
-    if (entity.hasComponent<ElevationComponent>())
-      elevation = entity.getComponent<ElevationComponent>().level;
+    const int elevation = entity.getComponent<ElevationComponent>().level;
 
     const glm::ivec2 tile = context.gridCellOf(transform.position);
 

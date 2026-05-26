@@ -45,9 +45,9 @@ void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
 
   m_lastCenterTile = centerTile;
 
-  constexpr int viewTilesX = 40;
-  constexpr int viewTilesY = 40;
-  constexpr int padding = 3;
+  constexpr int viewTilesX = 50;
+  constexpr int viewTilesY = 50;
+  constexpr int padding = 0;
 
   const int centerX = static_cast<int>(std::floor(cameraWorldPos.x));
   const int centerY = static_cast<int>(std::floor(cameraWorldPos.y));
@@ -58,6 +58,8 @@ void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
   const int minY = centerY - viewTilesY / 2 - padding;
   const int maxY = centerY + viewTilesY / 2 + padding;
 
+  bool dirty = false;
+
   for (int y = minY; y <= maxY; y++)
   {
     for (int x = minX; x <= maxX; x++)
@@ -67,17 +69,17 @@ void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
       if (m_loadedTiles.contains(tile))
         continue;
 
-      loadTile(tile);
+      dirty |= loadTile(tile);
     }
   }
 
-  unloadFarTiles(minX, maxX, minY, maxY);
+  dirty |= unloadFarTiles(minX, maxX, minY, maxY);
 
-  if (registry->hasSystem<sfs::IsometricRenderSystem>())
+  if (registry->hasSystem<sfs::IsometricRenderSystem>() && dirty)
     registry->getSystem<sfs::IsometricRenderSystem>().markTerrainDirty();
 }
 
-void TerrainGeneratorSystem::loadTile(TilePos tile)
+bool TerrainGeneratorSystem::loadTile(TilePos tile)
 {
   const int elevation = getCachedElevation(tile.x, tile.y);
 
@@ -121,14 +123,16 @@ void TerrainGeneratorSystem::loadTile(TilePos tile)
   }
 
   m_loadedTiles[tile] = {&grass};
+
+  return true;
 }
 
-void TerrainGeneratorSystem::unloadTile(TilePos tile)
+bool TerrainGeneratorSystem::unloadTile(TilePos tile)
 {
   auto it = m_loadedTiles.find(tile);
 
   if (it == m_loadedTiles.end())
-    return;
+    return false;
 
   for (sfs::GameObject* object : it->second)
   {
@@ -137,9 +141,11 @@ void TerrainGeneratorSystem::unloadTile(TilePos tile)
 
   m_elevationCache.erase(it->first);
   m_loadedTiles.erase(it);
+
+  return true;
 }
 
-void TerrainGeneratorSystem::unloadFarTiles(int minX,
+bool TerrainGeneratorSystem::unloadFarTiles(int minX,
                                             int maxX,
                                             int minY,
                                             int maxY)
@@ -155,10 +161,14 @@ void TerrainGeneratorSystem::unloadFarTiles(int minX,
       toUnload.push_back(tile);
   }
 
+  bool dirty = false;
+
   for (const TilePos& tile : toUnload)
   {
-    unloadTile(tile);
+    dirty |= unloadTile(tile);
   }
+
+  return dirty;
 }
 
 int TerrainGeneratorSystem::getElevation(int x, int y) const

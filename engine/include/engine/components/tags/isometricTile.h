@@ -2,9 +2,7 @@
 
 namespace sfs
 {
-
 struct IsometricTile
 {
 };
-
 } // namespace sfs

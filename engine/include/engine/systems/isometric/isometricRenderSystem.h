@@ -27,8 +27,6 @@ extern int gSpriteRenderItems;
 extern int gSpriteProjectedShadowItems;
 extern int gTerrainShadowBatchCount;
 
-static constexpr int EmptyElevation = std::numeric_limits<int>::min();
-
 struct WallFaceKey
 {
   glm::ivec2 tile{0, 0};
@@ -130,104 +128,6 @@ private:
   template <typename T>
   void submitConcreteRenderCommand(const T& concrete,
                                    OpenGLQuadRenderer& quadRenderer);
-
-  // void appendWaterCommands(std::vector<AnyRenderCommand>& commands)
-  // {
-  //   const auto& activeCamera = getCamera();
-  //   const glm::vec2 cameraPosition = getCameraPosition();
-  //   const float zoom = activeCamera.camera ? activeCamera.camera->zoom
-  //   : 1.0f;
-  //
-  //   const glm::vec2 screenCenter{
-  //       static_cast<float>(windowWidth) * 0.5f,
-  //       static_cast<float>(windowHeight) * 0.5f,
-  //   };
-  //
-  //   const glm::vec2 isoCameraPosition = gridToIsometric(cameraPosition);
-  //
-  //   auto view = registry->view<TransformComponent, WaterTileComponent>();
-  //
-  //   for (auto entity : view)
-  //   {
-  //     const auto& transform = entity.getComponent<TransformComponent>();
-  //     const auto& water = entity.getComponent<WaterTileComponent>();
-  //
-  //     auto project = [&](const glm::vec2& world)
-  //     {
-  //       glm::vec2 p =
-  //           (gridToIsometric(world) - isoCameraPosition) * zoom +
-  //           screenCenter;
-  //
-  //       p.y -= static_cast<float>(water.elevation) * elevationStep *
-  //              worldScale * zoom;
-  //
-  //       return p;
-  //     };
-  //
-  //     const glm::ivec2 tile = gridCellOf(transform.position);
-  //
-  //     float depthSum = 0.0f;
-  //     float weightSum = 0.0f;
-  //
-  //     for (int oy = -1; oy <= 1; oy++)
-  //     {
-  //       for (int ox = -1; ox <= 1; ox++)
-  //       {
-  //         const glm::ivec2 sampleTile = tile + glm::ivec2{ox, oy};
-  //
-  //         int sampleElevation = 0;
-  //
-  //         if (!tileElevationGridView.tryGet(sampleTile, sampleElevation))
-  //           continue;
-  //
-  //         const float sampleDepth = static_cast<float>(
-  //             std::max(0, water.elevation - sampleElevation));
-  //
-  //         const float weight = ox == 0 && oy == 0 ? 2.0f : 1.0f;
-  //
-  //         depthSum += sampleDepth * weight;
-  //         weightSum += weight;
-  //       }
-  //     }
-  //
-  //     const float smoothedDepth =
-  //         weightSum > 0.0f ? depthSum / weightSum : 0.0f;
-  //
-  //     float depthFactor = std::clamp(smoothedDepth / 6.0f, 0.0f, 1.0f);
-  //
-  //     SDL_Color shallow{55, 155, 210, 70};
-  //     SDL_Color deep = sfs::Colors::Navy.toSDL();
-  //
-  //     auto lerpByte = [](Uint8 a, Uint8 b, float t)
-  //     {
-  //       return static_cast<Uint8>(
-  //           std::round(static_cast<float>(a) +
-  //                      (static_cast<float>(b) - static_cast<float>(a)) * t));
-  //     };
-  //
-  //     QuadCommand command;
-  //
-  //     command.quad.points[0] = project(transform.position + glm::vec2{0, 0});
-  //     command.quad.points[1] = project(transform.position + glm::vec2{1, 0});
-  //     command.quad.points[2] = project(transform.position + glm::vec2{1, 1});
-  //     command.quad.points[3] = project(transform.position + glm::vec2{0, 1});
-  //     const Uint8 baseAlpha = lerpByte(shallow.a, deep.a, depthFactor);
-  //
-  //     command.quad.tint = SDL_Color{
-  //         lerpByte(shallow.r, deep.r, depthFactor),
-  //         lerpByte(shallow.g, deep.g, depthFactor),
-  //         lerpByte(shallow.b, deep.b, depthFactor),
-  //         static_cast<Uint8>(std::round(static_cast<float>(baseAlpha))),
-  //     };
-  //
-  //     const float sort = transform.position.x + transform.position.y +
-  //                        static_cast<float>(water.elevation) * 0.5f;
-  //
-  //     command.order = RenderOrder{RenderPass::Terrain, sort, 3};
-  //
-  //     commands.push_back(command);
-  //   }
-  // }
 
 private:
   AssetStore& assetStore;

@@ -35,9 +35,9 @@ public:
 
 private:
   void update(const glm::vec2& cameraWorldPos);
-  void loadTile(TilePos tile);
-  void unloadTile(TilePos tile);
-  void unloadFarTiles(int minX, int maxX, int minY, int maxY);
+  bool loadTile(TilePos tile);
+  bool unloadTile(TilePos tile);
+  bool unloadFarTiles(int minX, int maxX, int minY, int maxY);
 
   int getElevation(int x, int y) const;
   int getCachedElevation(int x, int y);

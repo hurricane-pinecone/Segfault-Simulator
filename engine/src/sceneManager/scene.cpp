@@ -34,8 +34,10 @@ void Scene::update(double deltaTime)
   {
     obj->onUpdate(deltaTime);
   }
+
   onUpdate(deltaTime);
 }
+
 void Scene::processInput(const Input& input)
 {
   for (auto& obj : m_gameObjects)
