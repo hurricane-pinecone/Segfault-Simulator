@@ -10,6 +10,7 @@
 #include "engine/game/gameObject.h"
 #include "engine/input/input.h"
 #include "engine/sceneManager/scene.h"
+#include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/geometric.hpp"
 
 class Player : public sfs::GameObject

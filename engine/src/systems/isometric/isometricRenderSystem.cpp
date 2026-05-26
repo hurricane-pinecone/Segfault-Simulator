@@ -170,9 +170,12 @@ void IsometricRenderSystem::render()
         screenPosition.y - elevationOffset,
     };
 
+    const glm::vec2 visualPosition =
+        surfacePosition + spriteComponent.renderOffset * zoom;
+
     SDL_Rect dest{
-        static_cast<int>(std::round(surfacePosition.x - anchorX)),
-        static_cast<int>(std::round(surfacePosition.y - anchorY)),
+        static_cast<int>(std::round(visualPosition.x - anchorX)),
+        static_cast<int>(std::round(visualPosition.y - anchorY)),
         width,
         height,
     };
@@ -224,6 +227,23 @@ void IsometricRenderSystem::render()
         tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
                    : transform.position;
 
+    // Terrain tiles, actors, water, and shadows all share the same Terrain
+    // painter pass so they can interleave correctly by world depth.
+    //
+    // Subpasses only resolve ordering *within the same effective depth*:
+    //
+    //   0 = terrain tiles
+    //   1 = actors/sprites
+    //   2 = water surfaces
+    //
+    // This allows:
+    // - actors to render above the terrain tile they stand on
+    // - water to render over actors standing in shallow water
+    // - terrain elevation painter sorting to remain stable
+    //
+    // Using separate render passes for terrain/water/objects caused global
+    // ordering artifacts because entire categories rendered before/after others
+    // instead of participating in the same world-depth sort.
     LitQuadCommand command;
     command.order = isTileEntity(entity)
                         ? RenderOrder{RenderPass::Terrain, sortKey, 0}
