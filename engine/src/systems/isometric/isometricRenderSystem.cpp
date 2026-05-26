@@ -38,9 +38,6 @@ int gTileRenderItems = 0;
 int gSpriteRenderItems = 0;
 int gSpriteProjectedShadowItems = 0;
 int gTerrainShadowBatchCount = 0;
-static int initialTerrainCacheRefreshes = 3;
-
-ElevationComponent::ElevationComponent(int level) : level(level) {}
 
 IsometricRenderSystem::IsometricRenderSystem(AssetStore& assetStore,
                                              int windowWidth,
@@ -91,14 +88,6 @@ void IsometricRenderSystem::render()
   m_context.activeCamera = getCamera();
 
   beginBatches();
-
-  // FIXME: Fix this water pop in bug properly
-  if (initialTerrainCacheRefreshes > 0)
-  {
-    LOG_DEBUG("ELEVEATION CACHE HACK");
-    tileElevationCacheDirty = true;
-    initialTerrainCacheRefreshes--;
-  }
 
   if (tileElevationCacheDirty)
   {
@@ -516,17 +505,13 @@ void IsometricRenderSystem::rebuildTileElevationCache()
 {
   tileElevationCache.clear();
 
-  for (const auto& entity : getEntities())
+  auto tiles =
+      registry->view<TransformComponent, IsometricTile, ElevationComponent>();
+
+  for (const auto& entity : tiles)
   {
-    if (!isTileEntity(entity))
-      continue;
-
     const auto& transform = entity.getComponent<TransformComponent>();
-
-    int elevation = 0;
-
-    if (entity.hasComponent<ElevationComponent>())
-      elevation = entity.getComponent<ElevationComponent>().level;
+    const int elevation = entity.getComponent<ElevationComponent>().level;
 
     const glm::ivec2 tile = gridCellOf(transform.position);
 

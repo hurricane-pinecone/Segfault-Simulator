@@ -75,14 +75,6 @@ void Registry::removeEntityFromSystems(const Entity& entity)
 
 void Registry::flushEntities()
 {
-  for (const auto& entity : entitiesToBeAdded)
-  {
-    if (isAlive(entity))
-      addEntityToSystems(entity);
-  }
-
-  entitiesToBeAdded.clear();
-
   for (const auto& entity : entitiesToBeRemoved)
   {
     if (!isAlive(entity))
@@ -110,6 +102,14 @@ void Registry::flushEntities()
   }
 
   entitiesToBeRemoved.clear();
+
+  for (const auto& entity : entitiesToBeAdded)
+  {
+    if (isAlive(entity))
+      addEntityToSystems(entity);
+  }
+
+  entitiesToBeAdded.clear();
 }
 
 void Registry::destroyEntity(const Entity& entity)

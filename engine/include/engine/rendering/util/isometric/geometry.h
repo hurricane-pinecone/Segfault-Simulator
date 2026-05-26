@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/components/elevationComponent.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
@@ -63,7 +64,12 @@ struct TerrainElevationGridView
     if (x < 0 || y < 0 || x >= width || y >= height)
       return false;
 
-    elevation = elevations[y * stride + x];
+    const int value = elevations[y * stride + x];
+
+    if (value == EmptyElevation)
+      return false;
+
+    elevation = value;
     return true;
   }
 };

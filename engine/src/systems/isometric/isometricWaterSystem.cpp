@@ -1,5 +1,6 @@
 #include "engine/systems/isometric/isometricWaterSystem.h"
 #include "engine/Color/Color.h"
+#include "engine/components/elevationComponent.h"
 #include "engine/components/waterTileComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/isometricRenderContext.h"
@@ -12,6 +13,7 @@ void IsometricWaterSystem::create()
 {
   registerComponent<WaterTileComponent>();
   registerComponent<TransformComponent>();
+  registerComponent<ElevationComponent>();
 }
 
 void IsometricWaterSystem::computeCommands(
@@ -51,9 +53,11 @@ WaterSurfaceBuild IsometricWaterSystem::collectWaterSurfaceBuild(
   {
     const auto& transform = entity.getComponent<TransformComponent>();
     const auto& water = entity.getComponent<WaterTileComponent>();
+    const auto& elevation = entity.getComponent<ElevationComponent>();
 
     const glm::ivec2 tile = gridCellOf(transform.position);
-    int terrainElevation = 0;
+
+    int terrainElevation = elevation.level;
     context.terrainElevationGrid.tryGet(tile, terrainElevation);
 
     build.cells.push_back(WaterCell{
