@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/components/surfaceEffect.h"
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/quads.h"
@@ -28,25 +29,20 @@ struct LitQuadCommand : RenderCommand<LitQuad>
 {
   const std::string* textureId = nullptr;
   const std::string* normalTextureId = nullptr;
+
+  SurfaceEffect::Type type = SurfaceEffect::Type::None;
 };
 
 struct LitQuadBatchCommand : RenderCommand<LitQuadBatch>
 {
   const std::string* textureId = nullptr;
   const std::string* normalTextureId = nullptr;
+
+  SurfaceEffect::Type type = SurfaceEffect::Type::None;
 };
 
 struct SurfaceCommand
 {
-  // TODO: Flesh this out
-  enum class SurfaceMaterial
-  {
-    Water,
-    Lava,
-    Fog,
-    MagicField
-  };
-
   std::vector<SurfaceVertex> vertices;
   std::vector<uint32_t> indices;
 
@@ -57,7 +53,7 @@ struct SurfaceCommand
   float lightIntensities[MaxShaderLights]{};
   float lightRadii[MaxShaderLights]{};
 
-  SurfaceMaterial material;
+  SurfaceEffect::Type type = SurfaceEffect::Type::None;
   RenderOrder order{RenderPass::Surfaces, 0, 0};
 };
 

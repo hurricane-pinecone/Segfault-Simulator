@@ -103,6 +103,9 @@ void OpenGLQuadRenderer::initialize()
   uLightRadiiLocation = glGetUniformLocation(shaderProgram, "uLightRadii[0]");
   uLightHeightsLocation =
       glGetUniformLocation(shaderProgram, "uLightHeights[0]");
+  uSurfaceEffectTimeLocation = glGetUniformLocation(shaderProgram, "uTime");
+  uSurfaceEffectLocation =
+      glGetUniformLocation(shaderProgram, "uSurfaceEffect");
 
   // ===========================================================================
   // Surface shader uniform locations
@@ -296,12 +299,10 @@ void OpenGLQuadRenderer::initialize()
 
   // Terrain/sprite default ambient light.
   glUniform1f(uAmbientLocation, 0.18f);
-
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
-
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
-
   glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
+  glUniform1i(uSurfaceEffectLocation, 0);
 
   glUseProgram(0);
 
@@ -310,11 +311,8 @@ void OpenGLQuadRenderer::initialize()
   // ===========================================================================
 
   glUseProgram(surfaceShaderProgram);
-
   glUniform1f(uSurfaceTimeLocation, 0.0f);
-
   glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
-
   glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
 
   // Water/surface default ambient.
@@ -463,6 +461,7 @@ void OpenGLQuadRenderer::shutdown()
   vao = 0;
   shaderProgram = 0;
 
+  uSurfaceEffectLocation = -1;
   uTextureLocation = -1;
   uColorLocation = -1;
 
@@ -861,6 +860,9 @@ void OpenGLQuadRenderer::flushLit()
 
   glUniform1i(uLightCountLocation, key.lightCount);
 
+  glUniform1f(uSurfaceEffectTimeLocation, m_surfaceTime);
+  glUniform1i(uSurfaceEffectLocation, key.surfaceEffect);
+
   if (key.lightCount > 0)
   {
     glUniform2fv(uLightPositionsLocation,
@@ -1076,6 +1078,7 @@ void OpenGLQuadRenderer::drawQuadInternal(
   const int clampedLightCount = std::clamp(lightCount, 0, MaxShaderLights);
 
   glUniform1i(uLightCountLocation, clampedLightCount);
+  glUniform1i(uSurfaceEffectLocation, 0);
 
   if (clampedLightCount > 0)
   {
@@ -1199,6 +1202,64 @@ uniform float uLightIntensities[MAX_LIGHTS];
 uniform float uLightRadii[MAX_LIGHTS];
 uniform float uLightHeights[MAX_LIGHTS];
 
+uniform float uTime;
+uniform int uSurfaceEffect;
+
+float hash21(vec2 p)
+{
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+
+float valueNoise(vec2 p)
+{
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+
+  f = f * f * (3.0 - 2.0 * f);
+
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float isoTopMask(vec2 uv)
+{
+  vec2 p = uv - vec2(0.5, 0.25);
+
+  float diamond =
+      abs(p.x) / 0.5 +
+      abs(p.y) / 0.25;
+
+  return 1.0 - smoothstep(0.92, 1.02, diamond);
+}
+
+vec3 applyGrassEffect(vec3 color, vec2 uv, vec2 worldPos)
+{
+  vec2 p = worldPos * 12.0 + uv * 28.0;
+
+  float n1 = valueNoise(p);
+  float n2 = valueNoise(p * 2.7);
+
+  float variation = n1 * 0.65 + n2 * 0.35;
+
+  vec3 dark = vec3(0.55, 0.85, 0.45);
+  vec3 light = vec3(1.15, 1.28, 0.82);
+
+  color *= mix(dark, light, variation);
+
+  float blade =
+      smoothstep(0.72, 0.92, valueNoise(vec2(p.x * 0.7, p.y * 3.5)));
+
+  color *= mix(vec3(1.0), vec3(0.75, 1.12, 0.65), blade * 0.35);
+
+  return color;
+}
+
 vec3 calculatePointLighting(vec3 normal)
 {
   vec3 weightedColor = vec3(0.0);
@@ -1261,6 +1322,13 @@ vec3 calculatePointLighting(vec3 normal)
 void main()
 {
   vec4 albedo = texture(uTexture, vUv);
+
+if (uSurfaceEffect == 3)
+{
+  float top = isoTopMask(vUv);
+  vec3 grass = applyGrassEffect(albedo.rgb, vUv, vWorldPosition);
+  albedo.rgb = mix(albedo.rgb, grass, top);
+}
 
   if (albedo.a <= 0.0)
     discard;

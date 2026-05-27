@@ -188,6 +188,11 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
         quad.hasNormalMap = quad.normalTexture != 0;
       }
 
+      if constexpr (requires { drawable.type; })
+      {
+        quad.surfaceEffect = static_cast<int>(drawable.type);
+      }
+
       quadRenderer.submit(quad);
     }
   }
@@ -227,6 +232,14 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
       drawable.quad.normalTexture = resolveTexture(drawable.normalTextureId);
 
       drawable.quad.hasNormalMap = drawable.quad.normalTexture != 0;
+    }
+
+    if constexpr (requires {
+                    drawable.effect;
+                    drawable.quad.surfaceEffect;
+                  })
+    {
+      drawable.quad.surfaceEffect = static_cast<int>(drawable.effect);
     }
 
     // Standard submission path.
