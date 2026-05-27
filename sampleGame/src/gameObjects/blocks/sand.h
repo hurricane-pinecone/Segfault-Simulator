@@ -8,8 +8,10 @@
 #include "engine/components/transformComponent.h"
 #include "engine/sceneManager/scene.h"
 #include "gameObjects/blocks/block.h"
+#include <map>
+#include <utility>
 
-class GrassBlock : public Block
+class SandBlock : public Block
 {
 public:
   using Block::Block;
@@ -19,7 +21,10 @@ public:
     const auto& variant = getVariant(m_shape, m_direction);
 
     auto [sprite, normal] = scene.assetStore().getOrCreateSpriteWithNormal(
-        variant.name, ASSET_ROOT + variant.path, variant.src);
+        variant.name,
+        ASSET_ROOT + variant.path,
+        variant.src,
+        ASSET_ROOT + "sprites/block_normal.png");
 
     m_entity =
         scene.createEntity()
@@ -27,7 +32,7 @@ public:
             .addComponent<sfs::SpriteComponent>(sprite)
             .addComponent<sfs::NormalMapComponent>(normal)
             .addComponent<sfs::ElevationComponent>(m_elevation)
-            .addComponent<sfs::SurfaceEffect>(sfs::SurfaceEffect::Type::Grass)
+            .addComponent<sfs::SurfaceEffect>(sfs::SurfaceEffect::Type::Sand)
             .addTag<sfs::IsometricTile>();
   }
 
@@ -36,14 +41,13 @@ protected:
                                    Direction direction) const override
   {
     static const std::map<std::pair<Shape, Direction>, BlockSpriteDef>
-        variants = {
-            {{Shape::Full, Direction::North},
-             {"grass_block", "sprites/block.png", {0, 0, 32, 32}}},
+        variants = {{{Shape::Full, Direction::North},
+                     {"sand_block", "sprites/sand.png", {0, 0, 32, 32}}},
+                    {{Shape::Half, Direction::North},
+                     {"sand_half",
 
-            {{Shape::Half, Direction::North},
-             {"grass_block_half", "sprites/block_half.png", {0, 0, 32, 32}}},
-        };
-
+                      "sprites/sand_half.png",
+                      {0, 0, 32, 32}}}};
     return variants.at({shape, direction});
   }
 };

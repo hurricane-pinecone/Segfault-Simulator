@@ -15,6 +15,7 @@ struct SurfaceEffect
 
     /* --- Terrain ---*/
     Grass,
+    Sand,
     Snow
   };
 

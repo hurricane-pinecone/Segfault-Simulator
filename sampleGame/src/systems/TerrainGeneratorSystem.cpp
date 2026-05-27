@@ -4,7 +4,10 @@
 #include "engine/components/terrainBoundaryComponent.h"
 #include "engine/components/waterTileComponent.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
+#include "gameObjects/blocks/block.h"
 #include "gameObjects/blocks/grass.h"
+#include "gameObjects/blocks/sand.h"
+#include "glm/glm/ext/vector_float2.hpp"
 
 #include <cmath>
 #include <vector>
@@ -83,11 +86,13 @@ void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
 bool TerrainGeneratorSystem::loadTile(TilePos tile)
 {
   const int elevation = getCachedElevation(tile.x, tile.y);
-
-  auto& grass = m_scene.createObject<GrassBlock>(
-      glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full);
-
   const bool isWater = elevation <= m_waterLevel;
+
+  Block& block =
+      isWater ? static_cast<Block&>(m_scene.createObject<SandBlock>(
+                    glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full))
+              : static_cast<Block&>(m_scene.createObject<GrassBlock>(
+                    glm::vec2{tile.x, tile.y}, elevation, Block::Shape::Full));
 
   if (isWater)
   {
@@ -95,11 +100,8 @@ bool TerrainGeneratorSystem::loadTile(TilePos tile)
     water.elevation = m_waterLevel;
     water.color = SDL_Color{35, 120, 190, 115};
 
-    grass.entity().addComponent<sfs::WaterTileComponent>(water);
+    block.entity().addComponent<sfs::WaterTileComponent>(water);
   }
-
-  grass.entity().addComponent<sfs::SurfaceEffect>(
-      sfs::SurfaceEffect::Type::Grass);
 
   sfs::TerrainBoundaryComponent boundary;
 
@@ -123,10 +125,10 @@ bool TerrainGeneratorSystem::loadTile(TilePos tile)
   if (boundary.westExposed || boundary.eastExposed || boundary.northExposed ||
       boundary.southExposed)
   {
-    grass.entity().addComponent<sfs::TerrainBoundaryComponent>(boundary);
+    block.entity().addComponent<sfs::TerrainBoundaryComponent>(boundary);
   }
 
-  m_loadedTiles[tile] = {&grass};
+  m_loadedTiles[tile] = {&block};
 
   return true;
 }

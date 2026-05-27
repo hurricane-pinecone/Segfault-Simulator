@@ -1260,6 +1260,57 @@ vec3 applyGrassEffect(vec3 color, vec2 uv, vec2 worldPos)
   return color;
 }
 
+vec3 applySandEffect(vec3 color, vec2 uv, vec2 worldPos)
+{
+  vec2 p =
+      worldPos * 18.0 +
+      uv * 72.0;
+
+  // Rotate-ish coordinate basis for wind-shaped diagonal dunes.
+  float along =
+      p.x * 0.85 + p.y * 0.32;
+
+  float across =
+      p.x * -0.28 + p.y * 0.96;
+
+  float warp =
+      valueNoise(vec2(along * 0.08, across * 0.18)) * 2.0 - 1.0;
+
+  float dune =
+      sin(along * 0.42 + warp * 2.8) * 0.5 + 0.5;
+
+  dune =
+      smoothstep(0.38, 0.72, dune);
+
+  float fineDune =
+      sin(along * 1.4 + warp * 3.5) * 0.5 + 0.5;
+
+  fineDune =
+      smoothstep(0.48, 0.82, fineDune);
+
+  float grain =
+      valueNoise(p * 3.7);
+
+  float specks =
+      smoothstep(0.90, 0.985, valueNoise(p * 10.0));
+
+  vec3 sand = color;
+
+  // broad dune bands
+  sand *= mix(0.90, 1.10, dune * 0.25);
+
+  // smaller wind ripples
+  sand *= mix(0.96, 1.06, fineDune * 0.15);
+
+  // fine grain
+  sand *= mix(0.97, 1.03, grain * 0.5);
+
+  // sparse darker flecks
+  sand -= specks * 0.025;
+
+  return sand;
+}
+
 vec3 calculatePointLighting(vec3 normal)
 {
   vec3 weightedColor = vec3(0.0);
@@ -1323,11 +1374,18 @@ void main()
 {
   vec4 albedo = texture(uTexture, vUv);
 
-if (uSurfaceEffect == 3)
+
+float top = isoTopMask(vUv);
+
+if (uSurfaceEffect == 3) // Grass
 {
-  float top = isoTopMask(vUv);
   vec3 grass = applyGrassEffect(albedo.rgb, vUv, vWorldPosition);
   albedo.rgb = mix(albedo.rgb, grass, top);
+}
+else if (uSurfaceEffect == 4) // Sand
+{
+  vec3 sand = applySandEffect(albedo.rgb, vUv, vWorldPosition);
+  albedo.rgb = mix(albedo.rgb, sand, top);
 }
 
   if (albedo.a <= 0.0)

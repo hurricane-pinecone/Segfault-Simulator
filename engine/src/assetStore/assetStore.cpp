@@ -109,10 +109,15 @@ SpriteId AssetStore::getOrCreateSprite(const std::string& spriteName,
 std::pair<SpriteId, SpriteId>
 AssetStore::getOrCreateSpriteWithNormal(const std::string& spriteName,
                                         const std::string& path,
-                                        SDL_Rect src)
+                                        SDL_Rect src,
+                                        const std::string& normal)
 {
-  size_t dot = path.find_last_of('.');
-  std::string normalPath = path.substr(0, dot) + "_normal" + path.substr(dot);
+  std::string normalPath = normal;
+  if (normal == "")
+  {
+    size_t dot = path.find_last_of('.');
+    normalPath = path.substr(0, dot) + "_normal" + path.substr(dot);
+  }
 
   return std::make_pair(
       getOrCreateSprite(spriteName, path, src),
