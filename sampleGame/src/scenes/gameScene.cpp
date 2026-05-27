@@ -51,8 +51,8 @@ void GameScene::createEntities()
 {
   createObject<Player>();
 
-  createObject<Lamp>(glm::vec2{18.5, 13.5}, Lamp::Color::Blue);
-  createObject<Lamp>(glm::vec2{18.5, 17.5}, Lamp::Color::SoftRed);
+  createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
+  createObject<Lamp>(glm::vec2{16.5, 11.5}, Lamp::Color::Moonlight);
   createObject<Lamp>(glm::vec2{5.5, 13.5});
   createObject<Lamp>(glm::vec2{6.5, 13.5});
 }

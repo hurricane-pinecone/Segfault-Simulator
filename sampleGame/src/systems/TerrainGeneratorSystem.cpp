@@ -1,6 +1,5 @@
 #include "TerrainGeneratorSystem.h"
 #include "engine/components/cameraComponent.h"
-#include "engine/components/surfaceEffect.h"
 #include "engine/components/terrainBoundaryComponent.h"
 #include "engine/components/waterTileComponent.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
