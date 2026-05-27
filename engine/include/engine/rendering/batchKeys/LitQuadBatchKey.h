@@ -27,6 +27,8 @@ struct LitBatchKey
   float lightRadii[MaxShaderLights] = {};
   float lightHeights[MaxShaderLights] = {};
 
+  int surfaceEffect = 0;
+
   static LitBatchKey from(const LitQuad& command,
                           unsigned int defaultNormalTexture)
   {
@@ -47,6 +49,8 @@ struct LitBatchKey
     key.lightColor = command.lightColor;
 
     key.lightCount = std::clamp(command.lightCount, 0, MaxShaderLights);
+
+    key.surfaceEffect = command.surfaceEffect;
 
     for (int i = 0; i < key.lightCount; i++)
     {
@@ -87,6 +91,9 @@ struct LitBatchKey
       return false;
 
     if (lightCount != other.lightCount)
+      return false;
+
+    if (surfaceEffect != other.surfaceEffect)
       return false;
 
     for (int i = 0; i < lightCount; i++)

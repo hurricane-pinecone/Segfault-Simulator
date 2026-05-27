@@ -236,6 +236,8 @@ private:
   GLint uLightIntensitiesLocation = -1;
   GLint uLightRadiiLocation = -1;
   GLint uLightHeightsLocation = -1;
+  int uSurfaceEffectLocation = -1;
+  int uSurfaceEffectTimeLocation = -1;
 
   unsigned int surfaceShaderProgram = 0;
   unsigned int surfaceVao = 0;

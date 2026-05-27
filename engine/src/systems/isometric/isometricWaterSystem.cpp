@@ -1,6 +1,7 @@
 #include "engine/systems/isometric/isometricWaterSystem.h"
 #include "engine/Color/Color.h"
 #include "engine/components/elevationComponent.h"
+#include "engine/components/surfaceEffect.h"
 #include "engine/components/waterTileComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/isometricRenderContext.h"
@@ -66,7 +67,7 @@ SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
     const WaterCell& cell) const
 {
   SurfaceCommand command;
-  command.material = SurfaceCommand::SurfaceMaterial::Water;
+  command.type = SurfaceEffect::Type::Water;
 
   // Water participates in the Terrain render pass instead of a separate
   // Surfaces pass so it can painter-sort together with terrain tiles and

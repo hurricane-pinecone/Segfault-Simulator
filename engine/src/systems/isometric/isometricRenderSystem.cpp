@@ -4,7 +4,9 @@
 #include "engine/components/elevationComponent.h"
 #include "engine/components/spriteComponent.h"
 
+#include "engine/components/surfaceEffect.h"
 #include "engine/components/tags/isometricTile.h"
+#include "engine/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/isometricRenderContext.h"
@@ -253,6 +255,9 @@ void IsometricRenderSystem::render()
     command.quad.destRect = dest;
     command.quad.textureWidth = surface->w;
     command.quad.textureHeight = surface->h;
+
+    if (entity.hasComponent<SurfaceEffect>())
+      command.type = entity.getComponent<SurfaceEffect>().type;
 
     if (tileEntity)
     {
@@ -620,7 +625,10 @@ void IsometricRenderSystem::batchTerrainTiles(
   std::vector<AnyRenderCommand> batched;
   batched.reserve(commands.size());
 
-  std::map<std::tuple<RenderOrder, const std::string*, const std::string*>,
+  std::map<std::tuple<RenderOrder,
+                      const std::string*,
+                      const std::string*,
+                      SurfaceEffect::Type>,
            LitQuadBatchCommand>
       litBatches;
 
@@ -635,14 +643,17 @@ void IsometricRenderSystem::batchTerrainTiles(
           {
             if (concrete.order.pass == RenderPass::Terrain)
             {
-              auto key = std::make_tuple(
-                  concrete.order, concrete.textureId, concrete.normalTextureId);
+              auto key = std::make_tuple(concrete.order,
+                                         concrete.textureId,
+                                         concrete.normalTextureId,
+                                         concrete.type);
 
               auto& batch = litBatches[key];
 
               batch.order = concrete.order;
               batch.textureId = concrete.textureId;
               batch.normalTextureId = concrete.normalTextureId;
+              batch.type = concrete.type;
               batch.quad.quads.push_back(concrete.quad);
               return;
             }

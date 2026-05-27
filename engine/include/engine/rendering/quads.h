@@ -73,6 +73,9 @@ struct LitQuad : TexturedQuad
   float lightIntensities[MaxShaderLights] = {};
   float lightRadii[MaxShaderLights] = {};
   float lightHeights[MaxShaderLights] = {};
+
+  // EG, water, grass etc.
+  int surfaceEffect = 0;
 };
 
 struct LitQuadBatch
