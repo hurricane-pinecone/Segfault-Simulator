@@ -39,7 +39,8 @@ public:
   std::pair<SpriteId, SpriteId>
   getOrCreateSpriteWithNormal(const std::string& spriteName,
                               const std::string& path,
-                              SDL_Rect src);
+                              SDL_Rect src,
+                              const std::string& normal = "");
 
   std::vector<SpriteId> addSprites(const std::string& textureId,
                                    const std::vector<SpriteRegion>& regions);

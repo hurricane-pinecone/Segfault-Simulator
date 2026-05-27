@@ -6,7 +6,6 @@
 
 #include "engine/components/surfaceEffect.h"
 #include "engine/components/tags/isometricTile.h"
-#include "engine/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/isometricRenderContext.h"
