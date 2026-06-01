@@ -22,12 +22,102 @@
 #include "engine/systems/isometric/isometricWaterSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
+#include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <map>
+#include <type_traits>
 #include <variant>
 
 namespace sfs
 {
+
+namespace
+{
+
+// Subpass only ever broke ties between commands at the same painter depth.
+// Folding it into the depth as a tiny epsilon reproduces the old
+// (depth, subpass) total order as a single monotonic value, which we then map
+// to clip-space z so the GPU depth buffer occludes exactly as the painter sort
+// did.
+constexpr float kSubpassEpsilon = 1e-4f;
+
+float orderKey(const RenderOrder& order)
+{
+  return order.depth + static_cast<float>(order.subpass) * kSubpassEpsilon;
+}
+
+// Map each command's painter sort-key to a clip-space z (gl_Position.z) and
+// stamp it onto the command's quad(s). Higher sort-key = nearer the camera.
+// Runs before batching so each quad keeps its own depth even after tiles are
+// merged into texture batches.
+void assignClipDepth(std::vector<AnyRenderCommand>& commands)
+{
+  ZoneScopedN("Render: assignClipDepth");
+
+  float minKey = std::numeric_limits<float>::max();
+  float maxKey = std::numeric_limits<float>::lowest();
+
+  for (const auto& command : commands)
+  {
+    std::visit(
+        [&](const auto& concrete)
+        {
+          // UI/text draws with depth disabled, so it must not skew the range.
+          if (concrete.order.pass == RenderPass::UI)
+            return;
+
+          const float key = orderKey(concrete.order);
+          minKey = std::min(minKey, key);
+          maxKey = std::max(maxKey, key);
+        },
+        command);
+  }
+
+  const float range = maxKey - minKey;
+  const float invRange = range > 1e-6f ? 1.0f / range : 0.0f;
+
+  const auto toClipZ = [&](const RenderOrder& order)
+  {
+    const float t =
+        invRange > 0.0f ? (orderKey(order) - minKey) * invRange : 0.5f;
+    const float clamped = std::clamp(t, 0.0f, 1.0f);
+
+    // Higher sort-key (clamped -> 1) maps to the near plane (smaller window
+    // depth). Reserve NDC headroom of [-0.9, 0.9] for future always-on-top /
+    // always-behind layering hacks without clamping against the clip planes.
+    return 0.9f - 1.8f * clamped;
+  };
+
+  for (auto& command : commands)
+  {
+    std::visit(
+        [&](auto& concrete)
+        {
+          using T = std::decay_t<decltype(concrete)>;
+
+          const float z = toClipZ(concrete.order);
+
+          if constexpr (std::is_same_v<T, SurfaceCommand>)
+          {
+            concrete.z = z;
+          }
+          else if constexpr (requires { concrete.quad.quads; })
+          {
+            // Batched quads (e.g. terrain-shadow batches) share one depth.
+            for (auto& quad : concrete.quad.quads)
+              quad.z = z;
+          }
+          else
+          {
+            concrete.quad.z = z;
+          }
+        },
+        command);
+  }
+}
+
+} // namespace
 
 int gTerrainShadowItems = 0;
 int gTerrainShadowFlushes = 0;
@@ -243,23 +333,19 @@ void IsometricRenderSystem::render()
         tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
                    : transform.position;
 
-    // Terrain tiles, actors, water, and shadows all share the same Terrain
-    // painter pass so they can interleave correctly by world depth.
+    // Terrain tiles and actors are opaque and share the Terrain pass; the GPU
+    // depth buffer (not painter interleaving) resolves their occlusion. Each
+    // quad's world depth is mapped to clip-space z in assignClipDepth().
     //
-    // Subpasses only resolve ordering *within the same effective depth*:
+    // Subpass still encodes ordering *within the same effective depth*, folded
+    // into clip-z as a tiny epsilon so the tie-break survives:
     //
     //   0 = terrain tiles
     //   1 = actors/sprites
-    //   2 = water surfaces
+    //   (shadows and water sort later via the Shadow/Surfaces passes)
     //
-    // This allows:
-    // - actors to render above the terrain tile they stand on
-    // - water to render over actors standing in shallow water
-    // - terrain elevation painter sorting to remain stable
-    //
-    // Using separate render passes for terrain/water/objects caused global
-    // ordering artifacts because entire categories rendered before/after others
-    // instead of participating in the same world-depth sort.
+    // This keeps actors rendering above the tile they stand on while the depth
+    // buffer handles block-behind-block and sprite-behind-block occlusion.
     LitQuadCommand command;
     command.order = isTileEntity(entity)
                         ? RenderOrder{RenderPass::Terrain, sortKey, 0}
@@ -380,6 +466,10 @@ void IsometricRenderSystem::flushBatches()
   auto& commands = m_renderQueue.mutableItems();
 
   gRenderItemCount = static_cast<int>(commands.size());
+
+  // Stamp each quad's clip-space depth before batching, so tiles merged by
+  // texture still occlude correctly via the GPU depth buffer.
+  assignClipDepth(commands);
 
   batchTerrainTiles(commands);
   sortRenderCommands(commands);
@@ -623,8 +713,11 @@ void IsometricRenderSystem::batchTerrainTiles(
   std::vector<AnyRenderCommand> batched;
   batched.reserve(commands.size());
 
-  std::map<std::tuple<RenderOrder,
-                      const std::string*,
+  // Group purely by material (texture + normal map + surface effect), NOT by
+  // painter depth. The depth buffer now resolves occlusion, so all tiles and
+  // sprites sharing a material merge into one draw call regardless of depth,
+  // collapsing the per-depth batch flushes that previously dominated render.
+  std::map<std::tuple<const std::string*,
                       const std::string*,
                       SurfaceEffect::Type>,
            LitQuadBatchCommand>
@@ -641,8 +734,7 @@ void IsometricRenderSystem::batchTerrainTiles(
           {
             if (concrete.order.pass == RenderPass::Terrain)
             {
-              auto key = std::make_tuple(concrete.order,
-                                         concrete.textureId,
+              auto key = std::make_tuple(concrete.textureId,
                                          concrete.normalTextureId,
                                          concrete.type);
 

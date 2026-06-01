@@ -13,6 +13,10 @@ struct Quad
 {
   SDL_Color tint{255, 255, 255, 255};
   glm::vec2 points[4] = {};
+
+  // Clip-space depth (gl_Position.z), stamped from the command's painter
+  // sort-key so the GPU depth buffer reproduces the painter order.
+  float z = 0.0f;
 };
 
 struct QuadBatch
@@ -31,6 +35,10 @@ struct TexturedQuad
   int textureHeight = 0;
 
   SDL_Color tint{255, 255, 255, 255};
+
+  // Clip-space depth (gl_Position.z), stamped from the command's painter
+  // sort-key so the GPU depth buffer reproduces the painter order.
+  float z = 0.0f;
 };
 
 struct FreeformQuad : Quad

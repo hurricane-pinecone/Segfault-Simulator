@@ -62,6 +62,7 @@ bool Game::init(int windowWidth, int windowHeight)
   SDL_DisplayMode displayMode;
   SDL_GetCurrentDisplayMode(0, &displayMode);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 #ifdef __EMSCRIPTEN__
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
@@ -94,6 +95,14 @@ bool Game::init(int windowWidth, int windowHeight)
   }
 
   SDL_GL_MakeCurrent(window, m_glContext);
+
+  // The iso pipeline relies on a real depth buffer for occlusion. If the driver
+  // gave us 0 depth bits, depth-testing silently no-ops and occlusion breaks.
+  int depthBits = 0;
+  SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &depthBits);
+  if (depthBits < 16)
+    LOG_ERROR("GL context has no usable depth buffer (" +
+              std::to_string(depthBits) + " bits); occlusion will be broken");
 
 #ifndef __EMSCRIPTEN__
   SDL_GL_SetSwapInterval(0);
@@ -289,7 +298,10 @@ void Game::render()
   // Render background
   glViewport(0, 0, windowWidth, windowHeight);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT);
+  // Depth write must be enabled for glClear to reset the depth buffer; the
+  // translucent passes leave it disabled.
+  glDepthMask(GL_TRUE);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   {
     if (!sceneManager)

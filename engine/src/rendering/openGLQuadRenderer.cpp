@@ -193,6 +193,16 @@ void OpenGLQuadRenderer::initialize()
       sizeof(SurfaceGpuVertex),
       reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, params)));
 
+  // clip-space depth
+  glEnableVertexAttribArray(5);
+  glVertexAttribPointer(
+      5,
+      1,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(SurfaceGpuVertex),
+      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, z)));
+
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surfaceEbo);
 
   glBindVertexArray(0);
@@ -243,6 +253,15 @@ void OpenGLQuadRenderer::initialize()
       sizeof(Vertex),
       reinterpret_cast<void*>(offsetof(Vertex, worldPosition)));
 
+  // clip-space depth
+  glEnableVertexAttribArray(3);
+  glVertexAttribPointer(3,
+                        1,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(Vertex),
+                        reinterpret_cast<void*>(offsetof(Vertex, z)));
+
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -280,6 +299,15 @@ void OpenGLQuadRenderer::initialize()
                         GL_FALSE,
                         sizeof(SolidVertex),
                         reinterpret_cast<void*>(offsetof(SolidVertex, color)));
+
+  // clip-space depth
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2,
+                        1,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(SolidVertex),
+                        reinterpret_cast<void*>(offsetof(SolidVertex, z)));
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -386,7 +414,12 @@ void OpenGLQuadRenderer::initialize()
   // Global OpenGL state
   // ===========================================================================
 
-  glDisable(GL_DEPTH_TEST);
+  // Depth-buffer based iso pipeline: opaque geometry tests + writes depth so
+  // occlusion is resolved by the GPU instead of painter draw order. Per-pass
+  // depth state is (re)set in begin() and the translucent flushes.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_TRUE);
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -552,12 +585,17 @@ void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
         vertex.color,
         vertex.uv,
         vertex.params,
+        command.z,
     });
   }
 
   glUseProgram(surfaceShaderProgram);
 
-  glDisable(GL_DEPTH_TEST);
+  // Water is translucent: test against the opaque depth (cliffs/blocks occlude
+  // water behind them) but do not write depth.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -627,13 +665,15 @@ void OpenGLQuadRenderer::appendSolidVertices(const Quad& command)
   const glm::vec2 p2 = toNdc(command.points[2]);
   const glm::vec2 p3 = toNdc(command.points[3]);
 
-  m_solidVertices.push_back({p0, color});
-  m_solidVertices.push_back({p1, color});
-  m_solidVertices.push_back({p2, color});
+  const float z = command.z;
 
-  m_solidVertices.push_back({p0, color});
-  m_solidVertices.push_back({p2, color});
-  m_solidVertices.push_back({p3, color});
+  m_solidVertices.push_back({p0, color, z});
+  m_solidVertices.push_back({p1, color, z});
+  m_solidVertices.push_back({p2, color, z});
+
+  m_solidVertices.push_back({p0, color, z});
+  m_solidVertices.push_back({p2, color, z});
+  m_solidVertices.push_back({p3, color, z});
 }
 
 void OpenGLQuadRenderer::drawImmediate(const TexturedQuad& command)
@@ -695,7 +735,7 @@ void OpenGLQuadRenderer::drawQuad(const FreeformQuad& command)
   const glm::vec2 p3 = toNdc(command.points[3]);
 
   drawQuadInternalWithUvs(
-      command.texture, p0, p1, p2, p3, command.uvs, command.tint);
+      command.texture, p0, p1, p2, p3, command.uvs, command.tint, command.z);
 }
 
 void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
@@ -704,7 +744,8 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
                                                  const glm::vec2& p2,
                                                  const glm::vec2& p3,
                                                  const glm::vec2 uvs[4],
-                                                 SDL_Color tint)
+                                                 SDL_Color tint,
+                                                 float z)
 {
   const glm::vec2 worldPoints[4] = {
       {0.0f, 0.0f},
@@ -714,14 +755,20 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
   };
 
   const Vertex vertices[6] = {
-      {p0, uvs[0], worldPoints[0]},
-      {p1, uvs[1], worldPoints[1]},
-      {p2, uvs[2], worldPoints[2]},
+      {p0, uvs[0], worldPoints[0], z},
+      {p1, uvs[1], worldPoints[1], z},
+      {p2, uvs[2], worldPoints[2], z},
 
-      {p0, uvs[0], worldPoints[0]},
-      {p2, uvs[2], worldPoints[2]},
-      {p3, uvs[3], worldPoints[3]},
+      {p0, uvs[0], worldPoints[0], z},
+      {p2, uvs[2], worldPoints[2], z},
+      {p3, uvs[3], worldPoints[3], z},
   };
+
+  // Sprite shadows are translucent: they test against the opaque depth (so a
+  // block in front occludes the shadow) but must not write depth.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
 
   glUseProgram(shaderProgram);
 
@@ -778,13 +825,15 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   const float v1 = static_cast<float>(command.srcRect.y + command.srcRect.h) /
                    command.textureHeight;
 
-  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0]});
-  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1]});
-  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2]});
+  const float z = command.z;
 
-  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0]});
-  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2]});
-  m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3]});
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], z});
+  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1], z});
+  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
+
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], z});
+  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
+  m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3], z});
 }
 
 void OpenGLQuadRenderer::flushSolid()
@@ -802,7 +851,10 @@ void OpenGLQuadRenderer::flushSolid()
 
   glUseProgram(solidShaderProgram);
 
-  glDisable(GL_DEPTH_TEST);
+  // Solid/debug fills are translucent overlays: test depth, do not write it.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -839,6 +891,13 @@ void OpenGLQuadRenderer::flushLit()
     return;
 
   const LitBatchKey& key = *m_litBatchKey;
+
+  // Lit geometry is opaque: test + write depth. Cutout (discard on alpha <= 0
+  // in the fragment shader) keeps transparent sprite corners from writing
+  // depth and punching holes in what's behind them.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_TRUE);
 
   glUseProgram(shaderProgram);
 
@@ -924,7 +983,10 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
   vertices.reserve(static_cast<std::size_t>(count));
 
   for (int i = 0; i < count; i++)
-    vertices.push_back({toNdc(points[i]), {0.0f, 0.0f}, {0.0f, 0.0f}});
+    vertices.push_back({toNdc(points[i]), {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f});
+
+  // Debug line overlays draw on top, unaffected by the depth buffer.
+  glDisable(GL_DEPTH_TEST);
 
   glUseProgram(shaderProgram);
 
@@ -1052,6 +1114,10 @@ void OpenGLQuadRenderer::drawQuadInternal(
       {p3, {u0, v1}, worldPoints[3]},
   };
 
+  // Immediate UI/text draws on top of the world, unaffected by the depth
+  // buffer.
+  glDisable(GL_DEPTH_TEST);
+
   glUseProgram(shaderProgram);
 
   glActiveTexture(GL_TEXTURE0);
@@ -1173,6 +1239,7 @@ unsigned int OpenGLQuadRenderer::createShaderProgram() const
 layout (location = 0) in vec2 aPosition;
 layout (location = 1) in vec2 aUv;
 layout (location = 2) in vec2 aWorldPosition;
+layout (location = 3) in float aZ;
 
 out vec2 vUv;
 out vec2 vWorldPosition;
@@ -1182,7 +1249,7 @@ void main()
   vUv = aUv;
   vWorldPosition = aWorldPosition;
 
-  gl_Position = vec4(aPosition, 0.0, 1.0);
+  gl_Position = vec4(aPosition, aZ, 1.0);
 }
 )";
 
@@ -1615,6 +1682,13 @@ void OpenGLQuadRenderer::begin()
   m_litVertices.clear();
 
   m_litBatchKey.reset();
+
+  // Opaque pass state: depth-test on, write on. Translucent passes (shadows,
+  // water) turn the depth write off themselves before drawing. The frame's
+  // depth buffer is cleared in Game::render().
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_TRUE);
 }
 
 unsigned int OpenGLQuadRenderer::createSolidShaderProgram() const
@@ -1629,13 +1703,14 @@ unsigned int OpenGLQuadRenderer::createSolidShaderProgram() const
   const std::string vertexSource = glslVersion + R"(
 layout(location = 0) in vec2 aPosition;
 layout(location = 1) in vec4 aColor;
+layout(location = 2) in float aZ;
 
 out vec4 vColor;
 
 void main()
 {
   vColor = aColor;
-  gl_Position = vec4(aPosition, 0.0, 1.0);
+  gl_Position = vec4(aPosition, aZ, 1.0);
 }
 )";
 
@@ -1745,6 +1820,7 @@ layout(location = 1) in vec2 aWorldPosition;
 layout(location = 2) in vec4 aColor;
 layout(location = 3) in vec2 aUv;
 layout(location = 4) in vec4 aParams;
+layout(location = 5) in float aZ;
 
 out vec2 vWorldPosition;
 out vec4 vColor;
@@ -1758,7 +1834,7 @@ void main()
   vUv = aUv;
   vParams = aParams;
 
-  gl_Position = vec4(aPosition, 0.0, 1.0);
+  gl_Position = vec4(aPosition, aZ, 1.0);
 }
 )";
 

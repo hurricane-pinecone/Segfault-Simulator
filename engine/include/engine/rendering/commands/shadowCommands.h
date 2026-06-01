@@ -13,7 +13,7 @@ struct TerrainShadowCommand : RenderCommand<Quad>
   TerrainShadowCommand()
   {
     quad.tint = SDL_Color{0, 0, 0, 255};
-    order = {RenderPass::Terrain, 0, 1};
+    order = {RenderPass::Shadow, 0, 1};
   }
 };
 
@@ -23,18 +23,19 @@ struct SpriteShadowCommand : RenderCommand<FreeformQuad>
 
   SpriteShadowCommand()
   {
-    // Shares the Terrain pass so projected shadows interleave with blocks by
-    // world depth (a block in front occludes the shadow). Per-command depth is
-    // set from the receiver tile; subpass 0 plus that depth's bias keeps the
-    // shadow above the ground tile it lands on and below actors.
-    order = {RenderPass::Terrain, 0, 0};
+    // Drawn in the translucent Shadow pass, after all opaque depth is laid
+    // down: the depth buffer (not painter interleaving) makes a block in front
+    // occlude the shadow. Per-command depth is set from the receiver tile; its
+    // small bias keeps the shadow just above the ground tile it lands on, while
+    // nearer actors occlude it via depth-test.
+    order = {RenderPass::Shadow, 0, 0};
     quad.tint = SDL_Color{0, 0, 0, 255};
   }
 };
 
 struct TerrainShadowBatchCommand : RenderCommand<QuadBatch>
 {
-  TerrainShadowBatchCommand() { order = {RenderPass::Terrain, 0.0f, 1}; }
+  TerrainShadowBatchCommand() { order = {RenderPass::Shadow, 0.0f, 1}; }
 };
 
 using ShadowCommand = std::variant<TerrainShadowCommand,

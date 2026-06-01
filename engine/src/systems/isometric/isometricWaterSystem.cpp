@@ -86,38 +86,22 @@ SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
   SurfaceCommand command;
   command.type = SurfaceEffect::Type::Water;
 
-  // Water participates in the Terrain render pass instead of a separate
-  // Surfaces pass so it can painter-sort together with terrain tiles and
-  // actors.
+  // Water is translucent and renders in the Surfaces pass, after all opaque
+  // geometry. It no longer needs to share the Terrain pass for interleaving:
+  // the GPU depth buffer now occludes water against opaque terrain, so a
+  // cliff/mountain in front correctly hides the water behind it (correct
+  // shoreline occlusion) without painter-sorting water amongst the tiles.
   //
-  // If water renders in a later dedicated pass, it loses per-tile interleaving
-  // with terrain and sprites:
+  // The depth value is still computed on the same world scale as sprites/tiles
+  // so the shared depth buffer compares them correctly:
   //
-  //   terrain -> sprites -> water
+  //   tile.x + 0.5 + tile.y + 0.5  ==  tile.x + tile.y + 1.0
   //
-  // which causes:
-  // - water drawing over mountains/cliffs
-  // - incorrect shoreline occlusion
-  // - actors always appearing under or over water globally
-  //
-  // Water tiles also use the same tile-center depth convention as sprites.
-  //
-  // Non-tile sprites sort using the center of their occupied grid cell:
-  //
-  //   tile.x + 0.5 +
-  //   tile.y + 0.5
-  //
-  // which becomes:
-  //
-  //   tile.x + tile.y + 1.0
-  //
-  // Water must match that same effective depth or sprites standing in water
-  // will always sort after the water surface regardless of subpass.
-  //
-  // Subpass 2 then correctly places water over actors on the same tile while
-  // still allowing terrain elevation painter sorting to work normally.
+  // Subpass 2 keeps water just in front of an actor on the same tile (so water
+  // blends over an actor standing in shallow water) via the subpass epsilon
+  // folded into clip-z.
   command.order = RenderOrder{
-      RenderPass::Terrain,
+      RenderPass::Surfaces,
       static_cast<float>(cell.tile.x + cell.tile.y + 1) + cell.elevation * 0.5f,
       2};
   command.ambient =
