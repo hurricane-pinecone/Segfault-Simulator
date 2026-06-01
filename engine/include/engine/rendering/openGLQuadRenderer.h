@@ -136,7 +136,8 @@ private:
                                const glm::vec2& p2,
                                const glm::vec2& p3,
                                const glm::vec2 uvs[4],
-                               SDL_Color tint);
+                               SDL_Color tint,
+                               float z);
 
   unsigned int compileShader(unsigned int type, const char* source) const;
   unsigned int createShaderProgram() const;
@@ -151,7 +152,12 @@ private:
 
     glUseProgram(solidShaderProgram);
 
-    glDisable(GL_DEPTH_TEST);
+    // Terrain shadows are translucent: test against the opaque depth (a block
+    // in front occludes the shadow) but do not write depth. Stencil de-dups
+    // overlapping shadow quads so they don't stack darker.
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
     glBlendEquation(GL_FUNC_ADD);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -195,12 +201,14 @@ private:
     glm::vec2 position;
     glm::vec2 uv;
     glm::vec2 worldPosition;
+    float z = 0.0f; // clip-space depth (gl_Position.z)
   };
 
   struct SolidVertex
   {
     glm::vec2 position;
     glm::vec4 color;
+    float z = 0.0f; // clip-space depth (gl_Position.z)
   };
 
   struct SurfaceGpuVertex
@@ -210,6 +218,7 @@ private:
     glm::vec4 color;
     glm::vec2 uv;
     glm::vec4 params;
+    float z = 0.0f; // clip-space depth (gl_Position.z)
   };
 
 private:
