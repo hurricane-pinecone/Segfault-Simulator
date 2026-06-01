@@ -40,7 +40,7 @@ private:
 
   void constructTerrainEdgeShadowProjectedClipped(
       const IsometricRenderContext& renderContext,
-      std::vector<TerrainShadowCommand>& outCommands,
+      std::vector<Quad>& outQuads,
       const TerrainShadowEdge& edge,
       const glm::vec2& shadowDir,
       float sunHeight,
@@ -70,13 +70,8 @@ private:
                                      float sunHeight,
                                      float maxShadowLength);
 
-  TerrainShadowCommand
-  buildTerrainShadowCommand(const glm::vec2 screenPoints[4],
-                            float alpha,
-                            float sortKey);
-
   void emitTileShadow(const IsometricRenderContext& context,
-                      std::vector<TerrainShadowCommand>& outCommands,
+                      std::vector<Quad>& outQuads,
                       const glm::ivec2& tile,
                       int elevation,
                       const ClippedPolygon& poly,
@@ -103,5 +98,9 @@ private:
 
   TerrainShadowCache m_cache;
   IsometricShadowSettings m_shadowSettings;
+
+  // Persistent per-worker-range scratch buffers, reused across rebuilds so we
+  // don't reallocate them every frame (clear() keeps capacity).
+  std::vector<std::vector<Quad>> m_shadowRangeQuads;
 };
 } // namespace sfs
