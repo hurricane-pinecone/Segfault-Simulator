@@ -87,19 +87,18 @@ SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
   command.type = SurfaceEffect::Type::Water;
 
   // Water is translucent and renders in the Surfaces pass, after all opaque
-  // geometry. It no longer needs to share the Terrain pass for interleaving:
-  // the GPU depth buffer now occludes water against opaque terrain, so a
-  // cliff/mountain in front correctly hides the water behind it (correct
-  // shoreline occlusion) without painter-sorting water amongst the tiles.
+  // geometry. The depth buffer occludes it against opaque terrain, so a
+  // cliff/mountain in front hides the water behind it (correct shoreline
+  // occlusion).
   //
-  // The depth value is still computed on the same world scale as sprites/tiles
-  // so the shared depth buffer compares them correctly:
+  // Its depth uses the same world scale as sprites/tiles so the shared depth
+  // buffer compares them correctly:
   //
   //   tile.x + 0.5 + tile.y + 0.5  ==  tile.x + tile.y + 1.0
   //
   // Subpass 2 keeps water just in front of an actor on the same tile (so water
-  // blends over an actor standing in shallow water) via the subpass epsilon
-  // folded into clip-z.
+  // blends over an actor in shallow water) via the subpass epsilon folded into
+  // clip-z.
   command.order = RenderOrder{
       RenderPass::Surfaces,
       static_cast<float>(cell.tile.x + cell.tile.y + 1) + cell.elevation * 0.5f,

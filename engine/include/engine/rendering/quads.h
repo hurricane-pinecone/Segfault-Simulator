@@ -14,8 +14,8 @@ struct Quad
   SDL_Color tint{255, 255, 255, 255};
   glm::vec2 points[4] = {};
 
-  // Clip-space depth (gl_Position.z), stamped from the command's painter
-  // sort-key so the GPU depth buffer reproduces the painter order.
+  // Clip-space depth (gl_Position.z), set from the command's painter sort-key
+  // so the depth buffer orders quads correctly.
   float z = 0.0f;
 };
 
@@ -36,8 +36,8 @@ struct TexturedQuad
 
   SDL_Color tint{255, 255, 255, 255};
 
-  // Clip-space depth (gl_Position.z), stamped from the command's painter
-  // sort-key so the GPU depth buffer reproduces the painter order.
+  // Clip-space depth (gl_Position.z), set from the command's painter sort-key
+  // so the depth buffer orders quads correctly.
   float z = 0.0f;
 };
 

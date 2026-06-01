@@ -35,11 +35,10 @@ namespace sfs
 namespace
 {
 
-// Subpass only ever broke ties between commands at the same painter depth.
-// Folding it into the depth as a tiny epsilon reproduces the old
-// (depth, subpass) total order as a single monotonic value, which we then map
-// to clip-space z so the GPU depth buffer occludes exactly as the painter sort
-// did.
+// Subpass breaks ties between commands at the same painter depth. Folding it
+// into the depth as a tiny epsilon yields one monotonic key per command, which
+// maps to clip-space z so the depth buffer orders them the way the painter sort
+// intends.
 constexpr float kSubpassEpsilon = 1e-4f;
 
 float orderKey(const RenderOrder& order)
@@ -333,19 +332,19 @@ void IsometricRenderSystem::render()
         tileEntity ? transform.position + glm::vec2{0.5f, 0.5f}
                    : transform.position;
 
-    // Terrain tiles and actors are opaque and share the Terrain pass; the GPU
-    // depth buffer (not painter interleaving) resolves their occlusion. Each
-    // quad's world depth is mapped to clip-space z in assignClipDepth().
+    // Terrain tiles and actors are opaque and share the Terrain pass; the depth
+    // buffer resolves their occlusion. Each quad's world depth maps to
+    // clip-space z in assignClipDepth().
     //
-    // Subpass still encodes ordering *within the same effective depth*, folded
-    // into clip-z as a tiny epsilon so the tie-break survives:
+    // Subpass encodes ordering within the same effective depth, folded into
+    // clip-z as a tiny epsilon so the tie-break survives:
     //
     //   0 = terrain tiles
     //   1 = actors/sprites
     //   (shadows and water sort later via the Shadow/Surfaces passes)
     //
     // This keeps actors rendering above the tile they stand on while the depth
-    // buffer handles block-behind-block and sprite-behind-block occlusion.
+    // buffer handles block- and sprite-behind-block occlusion.
     LitQuadCommand command;
     command.order = isTileEntity(entity)
                         ? RenderOrder{RenderPass::Terrain, sortKey, 0}
@@ -468,7 +467,7 @@ void IsometricRenderSystem::flushBatches()
   gRenderItemCount = static_cast<int>(commands.size());
 
   // Stamp each quad's clip-space depth before batching, so tiles merged by
-  // texture still occlude correctly via the GPU depth buffer.
+  // texture occlude correctly via the depth buffer.
   assignClipDepth(commands);
 
   batchTerrainTiles(commands);
@@ -713,10 +712,10 @@ void IsometricRenderSystem::batchTerrainTiles(
   std::vector<AnyRenderCommand> batched;
   batched.reserve(commands.size());
 
-  // Group purely by material (texture + normal map + surface effect), NOT by
-  // painter depth. The depth buffer now resolves occlusion, so all tiles and
-  // sprites sharing a material merge into one draw call regardless of depth,
-  // collapsing the per-depth batch flushes that previously dominated render.
+  // Group by material (texture + normal map + surface effect), not by painter
+  // depth: the depth buffer resolves occlusion, so all tiles and sprites
+  // sharing a material merge into one draw call regardless of depth, keeping
+  // the batch-flush count down to one per material per frame.
   std::map<std::tuple<const std::string*,
                       const std::string*,
                       SurfaceEffect::Type>,
