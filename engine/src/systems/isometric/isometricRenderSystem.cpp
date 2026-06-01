@@ -71,6 +71,7 @@ void IsometricRenderSystem::render()
   gTileRenderItems = 0;
   gSpriteRenderItems = 0;
   gSpriteProjectedShadowItems = 0;
+  gTerrainShadowBatchCount = 0;
 
   // A scene without an injected projection has nothing isometric to draw.
   if (!m_context.projection)
@@ -326,23 +327,41 @@ void IsometricRenderSystem::render()
       }
     }
 
+    if (tileEntity)
+      gTileRenderItems++;
+    else
+      gSpriteRenderItems++;
+
     m_renderQueue.submit(command);
   }
 
-  if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>())
+  if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>();
+      shadowSystem && shadowSystem->enabled())
   {
     shadowSystem->computeCommands(m_context);
-    m_renderQueue.submitAll(shadowSystem->commands());
+
+    const auto& shadowCommands = shadowSystem->commands();
+    gTerrainShadowBatchCount = static_cast<int>(shadowCommands.size());
+    for (const auto& batch : shadowCommands)
+      gTerrainShadowItems += static_cast<int>(batch.quad.quads.size());
+
+    m_renderQueue.submitAll(shadowCommands);
   }
 
   if (const auto spriteShadowSystem =
-          registry->tryGetSystem<IsometricSpriteShadowSystem>())
+          registry->tryGetSystem<IsometricSpriteShadowSystem>();
+      spriteShadowSystem && spriteShadowSystem->enabled())
   {
     spriteShadowSystem->computeCommands(m_context);
+
+    gSpriteProjectedShadowItems =
+        static_cast<int>(spriteShadowSystem->commands().size());
+
     m_renderQueue.submitAll(spriteShadowSystem->commands());
   }
 
-  if (const auto waterSystem = registry->tryGetSystem<IsometricWaterSystem>())
+  if (const auto waterSystem = registry->tryGetSystem<IsometricWaterSystem>();
+      waterSystem && waterSystem->enabled())
   {
     waterSystem->computeCommands(m_context);
     m_renderQueue.submitAll(waterSystem->commands());
@@ -359,6 +378,8 @@ void IsometricRenderSystem::flushBatches()
 
   auto& quadRenderer = m_quadRenderer;
   auto& commands = m_renderQueue.mutableItems();
+
+  gRenderItemCount = static_cast<int>(commands.size());
 
   batchTerrainTiles(commands);
   sortRenderCommands(commands);

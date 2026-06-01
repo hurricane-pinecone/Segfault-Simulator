@@ -25,6 +25,10 @@
 #include <string>
 #include <tracy/public/tracy/Tracy.hpp>
 
+#ifndef ENGINE_WEB
+  #include <imgui.h>
+#endif
+
 void GameScene::onInit()
 {
   createEntities();
@@ -36,7 +40,7 @@ void GameScene::onInit()
 
   addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
 
-  sfs::IsometricShadowSettings shadowSettings = {7.0f, 7.0f};
+  sfs::IsometricShadowSettings shadowSettings = {10.0f, 10.0f};
 
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
@@ -113,4 +117,33 @@ void GameScene::onUpdate(double deltaTime)
   }
 
   FrameMark;
+}
+
+void GameScene::onDebugUI()
+{
+#ifndef ENGINE_WEB
+  if (!hasSystem<SunController>())
+    return;
+
+  auto& sun = getSystem<SunController>();
+
+  ImGui::SetNextWindowSize(ImVec2(300, 150), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Time of Day");
+
+  ImGui::Text("%s", sun.timeString12Hour().c_str());
+
+  bool enabled = sun.sunEnabled();
+  if (ImGui::Checkbox("Sun enabled", &enabled))
+    sun.setSunEnabled(enabled);
+
+  float hour = sun.timeOfDay() * 24.0f;
+  if (ImGui::SliderFloat("Hour", &hour, 0.0f, 24.0f))
+    sun.setTimeOfDay(hour / 24.0f);
+
+  float multiplier = sun.timeMultiplier();
+  if (ImGui::SliderFloat("Day speed", &multiplier, 0.0f, 10.0f))
+    sun.setTimeMultiplier(multiplier);
+
+  ImGui::End();
+#endif
 }

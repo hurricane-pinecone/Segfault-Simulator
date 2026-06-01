@@ -1,7 +1,9 @@
 #pragma once
 
+#include "engine/sceneManager/scene.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
+#include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #ifndef ENGINE_WEB
   #include "imgui/backends/imgui_impl_opengl3.h"
   #include "imgui/backends/imgui_impl_sdl2.h"
@@ -11,15 +13,37 @@
 
   #include <imgui.h>
 
+  #include <cstdlib>
+  #include <string>
+  #include <typeinfo>
+  #if defined(__GNUC__) || defined(__clang__)
+    #include <cxxabi.h>
+  #endif
+
 namespace sfs
 {
 
-inline static void renderDebugUI()
+// Human-readable system name from RTTI, with the sfs:: namespace stripped.
+inline static std::string prettyTypeName(const std::type_info& info)
 {
-  ImGui_ImplOpenGL3_NewFrame();
-  ImGui_ImplSDL2_NewFrame();
-  ImGui::NewFrame();
+  #if defined(__GNUC__) || defined(__clang__)
+  int status = 0;
+  char* demangled = abi::__cxa_demangle(info.name(), nullptr, nullptr, &status);
+  std::string name = (status == 0 && demangled) ? demangled : info.name();
+  std::free(demangled);
+  #else
+  std::string name = info.name();
+  #endif
 
+  const std::string prefix = "sfs::";
+  if (name.rfind(prefix, 0) == 0)
+    name = name.substr(prefix.size());
+
+  return name;
+}
+
+inline static void renderDebugStats()
+{
   const auto& metrics = getMemoryMetrics();
 
   ImGui::SetNextWindowSize(ImVec2(450, 180), ImGuiCond_FirstUseEver);
@@ -41,6 +65,7 @@ inline static void renderDebugUI()
 
   ImGui::Text("Render Items: %d", gRenderItemCount);
   ImGui::Text("Terrain Shadow Items: %d", gTerrainShadowItems);
+  ImGui::Text("Terrain shadow batches: %d", gTerrainShadowBatchCount);
   ImGui::Text("Terrain Shadow Flushes: %d", gTerrainShadowFlushes);
   ImGui::Text("Shadow edges processed: %d", gTerrainShadowEdgesProcessed);
   ImGui::Text("Tile render items: %d", gTileRenderItems);
@@ -49,14 +74,87 @@ inline static void renderDebugUI()
   ImGui::Text("Shadow path checks: %llu",
               static_cast<unsigned long long>(
                   gShadowPathChecks.load(std::memory_order_relaxed)));
-
   ImGui::Text("Shadow tiles traversed: %llu",
               static_cast<unsigned long long>(
                   gShadowTilesTraversed.load(std::memory_order_relaxed)));
 
-  ImGui::Text("Terrain shadow batches: %d", gTerrainShadowBatchCount);
+  ImGui::End();
+}
+
+// Debug-only controls: toggle each system (except the render system) and tweak
+// shadow settings live.
+inline static void renderDebugControls(Scene* scene)
+{
+  if (!scene)
+    return;
+
+  ImGui::SetNextWindowSize(ImVec2(300, 320), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Debug Systems");
+
+  ImGui::TextUnformatted("Systems");
+  ImGui::Separator();
+
+  scene->forEachSystem(
+      [](System& system)
+      {
+        // The render system is required for anything to draw.
+        if (typeid(system) == typeid(IsometricRenderSystem))
+          return;
+
+        const std::string name = prettyTypeName(typeid(system));
+
+        bool enabled = system.enabled();
+        if (ImGui::Checkbox(name.c_str(), &enabled))
+          system.setEnabled(enabled);
+      });
+
+  if (scene->hasSystem<IsometricShadowSystem>())
+  {
+    ImGui::Separator();
+    ImGui::TextUnformatted("Terrain shadows");
+
+    auto& shadow = scene->getSystem<IsometricShadowSystem>();
+    auto& settings = shadow.shadowSettings();
+
+    // Length/alpha feed the cached terrain-shadow geometry, so a change forces
+    // a rebuild.
+    if (ImGui::SliderFloat(
+            "Terrain length", &settings.terrainShadowMaxLength, 0.0f, 10.0f))
+      shadow.markTerrainDirty();
+
+    if (ImGui::SliderFloat(
+            "Terrain alpha", &settings.terrainShadowAlpha, 0.0f, 1.0f))
+      shadow.markTerrainDirty();
+  }
+
+  if (scene->hasSystem<IsometricSpriteShadowSystem>())
+  {
+    ImGui::Separator();
+    ImGui::TextUnformatted("Sprite shadows");
+
+    auto& settings =
+        scene->getSystem<IsometricSpriteShadowSystem>().shadowSettings();
+
+    ImGui::SliderFloat(
+        "Sprite length", &settings.spriteShadowMaxLength, 0.0f, 5.0f);
+    ImGui::SliderFloat("Sprite alpha", &settings.spriteShadowAlpha, 0.0f, 1.0f);
+  }
 
   ImGui::End();
+}
+
+inline static void renderDebugUI(Scene* scene)
+{
+  ImGui_ImplOpenGL3_NewFrame();
+  ImGui_ImplSDL2_NewFrame();
+  ImGui::NewFrame();
+
+  renderDebugStats();
+  renderDebugControls(scene);
+
+  // Game-specific debug controls (added by the active scene).
+  if (scene)
+    scene->debugUI();
 
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
