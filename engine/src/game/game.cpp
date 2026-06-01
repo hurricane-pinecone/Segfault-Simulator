@@ -22,6 +22,8 @@
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
 #include <engine/utils/allocationMetrics.h>
+#include <engine/utils/gpuProfiling.h>
+#include <engine/utils/profiling.h>
 #include <engine/utils/ui.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
@@ -109,6 +111,9 @@ bool Game::init(int windowWidth, int windowHeight)
       std::make_unique<OpenGLQuadRenderer>(windowWidth, windowHeight);
   m_quadRenderer->initialize();
   m_quadRenderer->setViewportSize(windowWidth, windowHeight);
+
+  // GL context is current and loaded; set up Tracy's GPU timing context.
+  TracyGpuContext;
 
   // renderer = SDL_CreateRenderer(
   //     window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -206,6 +211,8 @@ void Game::run()
 
 void Game::processInput()
 {
+  ZoneScopedN("Game::processInput");
+
   input.mouse().beginFrame();
 
   SDL_Event sdlEvent;
@@ -266,6 +273,8 @@ void Game::processInput()
 
 void Game::update(double deltaTime)
 {
+  ZoneScopedN("Game::update");
+
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Update};
   if (!sceneManager)
     return;
@@ -275,6 +284,8 @@ void Game::update(double deltaTime)
 
 void Game::render()
 {
+  ZoneScopedN("Game::render");
+
   // Render background
   glViewport(0, 0, windowWidth, windowHeight);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -295,6 +306,9 @@ void Game::render()
 #endif
 
   SDL_GL_SwapWindow(window);
+
+  // Collect this frame's GPU timing queries.
+  TracyGpuCollect;
 }
 
 void Game::destroy()

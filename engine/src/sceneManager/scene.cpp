@@ -4,6 +4,7 @@
 #include <engine/ecs/registry.h>
 #include <engine/sceneManager/scene.h>
 #include <engine/systems/renderSystem.h>
+#include <engine/utils/profiling.h>
 #include <string>
 
 namespace sfs
@@ -27,9 +28,16 @@ void Scene::destroyEntity(const Entity& entity)
 
 void Scene::update(double deltaTime)
 {
+  ZoneScopedN("Scene::update");
+
   m_registry.flushEntities();
-  m_registry.forEachSystem([deltaTime](System& system)
-                           { system.update(deltaTime); });
+
+  {
+    ZoneScopedN("Scene: systems update");
+    m_registry.forEachSystem([deltaTime](System& system)
+                             { system.update(deltaTime); });
+  }
+
   for (auto& obj : m_gameObjects)
   {
     obj->onUpdate(deltaTime);
@@ -40,6 +48,8 @@ void Scene::update(double deltaTime)
 
 void Scene::processInput(const Input& input)
 {
+  ZoneScopedN("Scene::processInput");
+
   for (auto& obj : m_gameObjects)
   {
     obj->onProcessInput(input);
@@ -49,6 +59,8 @@ void Scene::processInput(const Input& input)
 void Scene::render()
 
 {
+  ZoneScopedN("Scene::render");
+
   m_registry.forEachSystem([](System& system) { system.render(); });
 
   onRender();
