@@ -200,5 +200,5 @@ private:
   float m_dayLengthSeconds = 120.0f;
 
   // Scales how fast the cycle advances (debug control).
-  float m_timeMultiplier = 1.0f;
+  float m_timeMultiplier = 0.1f;
 };
