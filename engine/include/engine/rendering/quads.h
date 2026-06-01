@@ -52,6 +52,18 @@ struct FreeformQuad : Quad
 
 static constexpr int MaxShaderLights = 16;
 
+// The frame's point lights, shared by every lit/surface draw and bound once on
+// the renderer.
+struct PointLightSet
+{
+  int count = 0;
+  glm::vec2 positions[MaxShaderLights] = {};
+  glm::vec3 colors[MaxShaderLights] = {};
+  float intensities[MaxShaderLights] = {};
+  float radii[MaxShaderLights] = {};
+  float heights[MaxShaderLights] = {};
+};
+
 struct LitQuad : TexturedQuad
 {
   bool hasNormalMap = false;
@@ -66,13 +78,6 @@ struct LitQuad : TexturedQuad
 
   // Shader-space world samples, not screen draw points.
   glm::vec2 worldPoints[4] = {};
-
-  int lightCount = 0;
-  glm::vec2 lightPositions[MaxShaderLights] = {};
-  glm::vec3 lightColors[MaxShaderLights] = {};
-  float lightIntensities[MaxShaderLights] = {};
-  float lightRadii[MaxShaderLights] = {};
-  float lightHeights[MaxShaderLights] = {};
 
   // EG, water, grass etc.
   int surfaceEffect = 0;

@@ -5,7 +5,9 @@
 #include "engine/components/waterTileComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/isometricRenderContext.h"
+#include "engine/utils/profiling.h"
 #include <cstdint>
+#include <map>
 
 namespace sfs
 {
@@ -20,6 +22,8 @@ void IsometricWaterSystem::create()
 void IsometricWaterSystem::computeCommands(
     const IsometricRenderContext& context)
 {
+  ZoneScopedN("Water: computeCommands");
+
   flush();
 
   WaterSurfaceBuild build = collectWaterSurfaceBuild(context);
@@ -45,20 +49,33 @@ void IsometricWaterSystem::computeCommands(
   for (const WaterCell& cell : build.cells)
     cellDepths[cellIndex(cell.tile)] = cell.depth;
 
+  // Group tiles that share a painter depth into one mesh. Each depth keeps its
+  // own draw so it still interleaves correctly with terrain and sprites, while
+  // all water tiles at that depth submit in a single draw call.
+  std::map<float, SurfaceCommand> batches;
+
   for (const WaterCell& cell : build.cells)
   {
     if (cell.terrainElevation >= cell.elevation)
       continue;
 
-    SurfaceCommand command = createWaterSurfaceCommand(context, cell);
+    const float depth = static_cast<float>(cell.tile.x + cell.tile.y + 1) +
+                        cell.elevation * 0.5f;
+
+    auto it = batches.find(depth);
+
+    if (it == batches.end())
+      it = batches.emplace(depth, createWaterSurfaceCommand(context, cell))
+               .first;
 
     buildSingleWaterTileMesh(
-        context, build, cell, cellWidth, cellHeight, cellDepths, command);
+        context, build, cell, cellWidth, cellHeight, cellDepths, it->second);
+  }
 
+  for (auto& [depth, command] : batches)
+  {
     if (!command.vertices.empty() && !command.indices.empty())
-    {
       m_commands.push_back(std::move(command));
-    }
   }
 }
 
@@ -106,20 +123,6 @@ SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
   command.ambient =
       context.ambientLighting ? context.ambientLighting->ambient : 1.0f;
 
-  if (context.pointLights)
-  {
-    command.lightCount = std::min(
-        static_cast<int>(context.pointLights->size()), MaxShaderLights);
-
-    for (int i = 0; i < command.lightCount; i++)
-    {
-      const auto& light = (*context.pointLights)[i];
-      command.lightPositions[i] = light.worldPosition;
-      command.lightColors[i] = light.color;
-      command.lightIntensities[i] = light.intensity;
-      command.lightRadii[i] = light.radius;
-    }
-  }
   return command;
 }
 

@@ -42,6 +42,9 @@ public:
 
   virtual void setViewportSize(int width, int height) = 0;
   virtual void setSurfaceTime(float time) = 0;
+
+  // The frame's point lights, bound to every subsequent lit/surface draw.
+  virtual void setPointLights(const PointLightSet& lights) = 0;
 };
 
 } // namespace sfs

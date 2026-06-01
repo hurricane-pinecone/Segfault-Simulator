@@ -6,6 +6,7 @@
 #include "engine/components/transformComponent.h"
 #include "engine/rendering/util/isometric/geometry.h"
 #include "engine/utils/algorithms/gridDDA.h"
+#include "engine/utils/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
@@ -35,6 +36,8 @@ void IsometricSpriteShadowSystem::setSpriteShadowAlpha(float alpha)
 void IsometricSpriteShadowSystem::computeCommands(
     const IsometricRenderContext& context)
 {
+  ZoneScopedN("SpriteShadow: computeCommands");
+
   flush();
 
   for (const auto& e : getEntities())
@@ -47,6 +50,8 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
     const IsometricRenderContext& context,
     const Entity& entity)
 {
+  ZoneScopedN("SpriteShadow: constructSpriteShadows");
+
   const auto* ambientLighting = context.ambientLighting;
   const auto* pointLights = context.pointLights;
 
