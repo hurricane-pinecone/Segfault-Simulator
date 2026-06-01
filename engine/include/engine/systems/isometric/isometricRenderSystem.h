@@ -54,15 +54,15 @@ struct WallFaceKeyHash
 class IsometricRenderSystem : public System
 {
 public:
-  IsometricRenderSystem(AssetStore& assetStore,
-                        int windowWidth,
-                        int windowHeight,
-                        int tileWidth,
-                        int tileHeight,
-                        int elevationStep,
-                        float worldScale);
+  IsometricRenderSystem(AssetStore& assetStore);
 
   ~IsometricRenderSystem();
+
+  // Inject the projection to render with. The orchestrator (game) owns the
+  // IsometricProjection and keeps it updated; the render system only holds the
+  // pointer, so this is set once (not pushed per frame). A scene that does not
+  // want isometric rendering simply never injects one and uses another system.
+  void setProjection(const IsometricProjection* projection);
 
   void setWaveTime(float time);
   void setWaveEnabled(bool enabled);
@@ -76,11 +76,19 @@ public:
 
   void markTerrainDirty();
 
-  void setWorldScale(float scale);
-  float getWorldScale() const;
-
   IsometricLightingService& lighting();
   const IsometricLightingService& lighting() const;
+
+  // Screen (pixel) position -> grid space on the plane at the given elevation.
+  glm::vec2 screenToWorld(const glm::vec2& screenPosition,
+                          float elevation = 0.0f) const;
+
+  // Screen (pixel) position -> topmost terrain tile under it, accounting for
+  // tile elevation. Inspect TilePick::valid to know if a tile was hit.
+  TilePick pickTile(const glm::vec2& screenPosition) const;
+
+  // Convenience: the grid cell from pickTile (valid or ground-plane fallback).
+  glm::ivec2 screenToTile(const glm::vec2& screenPosition) const;
 
   IsometricRenderSystem(const IsometricRenderSystem&) = delete;
   IsometricRenderSystem& operator=(const IsometricRenderSystem&) = delete;
@@ -96,8 +104,6 @@ private:
 
   unsigned int resolveTexture(const std::string* textureId);
 
-  glm::vec2 getCameraPosition() const;
-
   bool isTileEntity(const Entity& entity) const;
 
   int getRenderElevationLevel(const Entity& entity,
@@ -112,8 +118,6 @@ private:
   int getTileElevationAt(const glm::vec2& position) const;
 
   float getWaveOffset(const glm::vec2& gridPosition) const;
-
-  ActiveCamera getCamera() const;
 
   void rebuildTileElevationCache();
   void rebuildTerrainElevationGridView();

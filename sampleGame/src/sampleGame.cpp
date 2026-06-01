@@ -1,17 +1,50 @@
 
 #include "sampleGame.h"
+#include "config.h"
 #include "scenes/gameScene.h"
 #include <engine/input/keyboardInput.h>
+#include <engine/rendering/util/isometric/camera.h>
 #include <engine/sceneManager/scene.h>
+#include <engine/systems/cameraSystem.h>
+#include <engine/systems/isometric/isometricRenderSystem.h>
+#include <glm/glm/ext/vector_float2.hpp>
 #include <string>
 
 void SampleGame::onSetup()
 {
+  m_isoConfig = sfs::IsometricProjectionConfig{
+      32,
+      16,
+      8,
+      WORLD_SCALE,
+      glm::vec2{WINDOW_WIDTH / 2.0f, WINDOW_HEIGHT / 2.0f},
+  };
+
   // TODO: Create actual title screen and refactor
   // sfs::Scene* titleScene = sceneManager.createScene("Title Scene");
   auto gameScene = sceneManager.createScene<GameScene>("Game");
 
   isRunning = true;
+}
+
+void SampleGame::onUpdate(double deltaTime)
+{
+  sfs::Scene* scene = sceneManager.current();
+
+  // Only scenes that registered an isometric render system get a projection;
+  // others (e.g. a title screen) simply opt out and render another way.
+  if (!scene || !scene->hasSystem<sfs::IsometricRenderSystem>())
+    return;
+
+  const sfs::ActiveCamera camera =
+      scene->hasSystem<sfs::CameraSystem>()
+          ? scene->getSystem<sfs::CameraSystem>().activeCamera()
+          : sfs::ActiveCamera{};
+
+  m_isoProjection = sfs::makeProjection(m_isoConfig, camera);
+
+  scene->getSystem<sfs::IsometricRenderSystem>().setProjection(
+      &m_isoProjection);
 }
 
 void SampleGame::onProcessInput(const sfs::Input& input)

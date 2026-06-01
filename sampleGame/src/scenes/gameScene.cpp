@@ -1,6 +1,5 @@
 
 #include "gameScene.h"
-#include "config.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
@@ -35,8 +34,9 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   addSystem<TerrainGeneratorSystem>(*this);
 
-  auto& renderer = addSystem<sfs::IsometricRenderSystem>(
-      m_assetStore, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 16, 8, WORLD_SCALE);
+  // The isometric projection is owned by the game and injected into this
+  // system each frame (see SampleGame); the scene just registers the system.
+  addSystem<sfs::IsometricRenderSystem>(m_assetStore);
 
   sfs::IsometricShadowSettings shadowSettings = {7.0f, 7.0f};
 
@@ -61,6 +61,17 @@ void GameScene::onProcessInput(const sfs::Input& input)
 {
   if (input.keyboard().keyPressed(sfs::Key::F))
     m_sunController.toggleSun();
+
+  // Resolve the tile under the cursor so onRender can highlight it. The pick
+  // accounts for tile elevation, so raised terrain highlights correctly.
+  m_mousePos = input.mouse().getPosition();
+
+  const sfs::TilePick pick =
+      getSystem<sfs::IsometricRenderSystem>().pickTile(m_mousePos);
+
+  m_hoveredTile = pick.tile;
+  m_hoveredElevation = pick.elevation;
+  m_hasHoveredTile = pick.valid;
 }
 
 void GameScene::onRender()
@@ -86,11 +97,18 @@ void GameScene::onRender()
       20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
   sfs::TextRenderer::drawText(
       20, 60, "Time: " + getSystem<SunController>().timeString12Hour());
+
+  if (m_hasHoveredTile)
+  {
+    getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
+        glm::vec2{m_hoveredTile},
+        m_hoveredElevation,
+        SDL_Color{255, 255, 0, 255});
+  }
 }
 
 void GameScene::onUpdate(double deltaTime)
 {
-
   if (deltaTime > 0.0001)
   {
     const double instantFps = 1.0 / deltaTime;

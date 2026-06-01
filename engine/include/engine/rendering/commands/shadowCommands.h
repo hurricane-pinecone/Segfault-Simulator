@@ -23,7 +23,12 @@ struct SpriteShadowCommand : RenderCommand<FreeformQuad>
 
   SpriteShadowCommand()
   {
-    order = {RenderPass::Shadow, 0, 0};
+    // Share the Terrain pass so projected shadows interleave with blocks by
+    // world depth (a block in front occludes the shadow). The per-command depth
+    // is set from the receiver tile; subpass 0 plus that depth's +bias keeps the
+    // shadow above the ground tile it lands on but below actors. A separate
+    // Shadow pass would always draw after all terrain, painting over blocks.
+    order = {RenderPass::Terrain, 0, 0};
     quad.tint = SDL_Color{0, 0, 0, 255};
   }
 };

@@ -118,10 +118,8 @@ void IsometricShadowSystem::computeTerrainShadows(
 
   const bool sunChanged = glm::length(sunDir3D - m_cache.sunDir) > 0.002f;
 
-  const auto isoCameraPosition = context.activeCamera.isoPosition(
-      context.tileWidth, context.tileHeight, context.worldScale);
-  const auto zoom =
-      context.activeCamera.camera ? context.activeCamera.camera->zoom : 1;
+  const auto isoCameraPosition = context.projection->cameraIso;
+  const auto zoom = context.projection->zoom;
 
   const bool cameraChanged =
       glm::length(isoCameraPosition - m_cache.isoCameraPosition) > 0.001f ||
