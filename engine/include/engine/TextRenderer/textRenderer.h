@@ -2,8 +2,9 @@
 
 #include "engine/Color/Color.h"
 #include "engine/assetStore/assetStore.h"
-#include "engine/rendering/openGLQuadRenderer.h"
-#include <SDL_render.h>
+#include "engine/rendering/iQuadRenderer.h"
+#include <string>
+#include <unordered_map>
 
 namespace sfs
 {
@@ -12,36 +13,39 @@ struct CachedText
 {
   int width = 0;
   int height = 0;
-  GLuint texture = 0;
+  unsigned int texture = 0; // GL texture handle
 };
 
 class TextRenderer
 {
 public:
-  static bool init(OpenGLQuadRenderer& quadRenderer, AssetStore& assetStore);
-  static void shutdown();
+  TextRenderer(IQuadRenderer& quadRenderer, AssetStore& assetStore);
+  ~TextRenderer();
 
-  static bool isInitialized();
+  bool init();
 
-  static void drawText(float x, float y, const std::string& text);
+  bool isInitialized() const;
 
-  static void drawText(float x, float y, const std::string& text, Color color);
+  void drawText(float x, float y, const std::string& text);
 
-  static void drawText(float x,
-                       float y,
-                       const std::string& text,
-                       const std::string& fontId,
-                       Color color = Colors::White);
+  void drawText(float x, float y, const std::string& text, Color color);
+
+  void drawText(float x,
+                float y,
+                const std::string& text,
+                const std::string& fontId,
+                Color color = Colors::White);
 
 private:
-  static bool m_initialized;
-  static AssetStore* m_assetStore;
-  static OpenGLQuadRenderer* m_quadRenderer;
-
-  static std::unordered_map<std::string, CachedText> m_textCache;
   static std::string buildCacheKey(const std::string& text,
                                    const std::string& fontId,
                                    Color color);
+
+  IQuadRenderer& m_quadRenderer;
+  AssetStore& m_assetStore;
+
+  bool m_initialized = false;
+  std::unordered_map<std::string, CachedText> m_textCache;
 };
 
 } // namespace sfs

@@ -9,6 +9,9 @@
 namespace sfs
 {
 
+class IQuadRenderer;
+class TextRenderer;
+
 class SceneManager
 {
 public:
@@ -26,6 +29,8 @@ public:
   Scene* current();
 
   void setAssetStore(AssetStore* assetStore);
+  void setQuadRenderer(IQuadRenderer* quadRenderer);
+  void setTextRenderer(TextRenderer* textRenderer);
 
   operator bool() { return m_currentScene != nullptr; }
 
@@ -35,6 +40,8 @@ private:
   std::unordered_map<std::string, SceneId> m_nameToId;
 
   AssetStore* m_assetStore = nullptr;
+  IQuadRenderer* m_quadRenderer = nullptr;
+  TextRenderer* m_textRenderer = nullptr;
 
   SceneId nextSceneId = 0;
 };
@@ -51,6 +58,10 @@ TScene* SceneManager::createScene(TArgs&&... args)
       std::make_unique<TScene>(id, *m_assetStore, std::forward<TArgs>(args)...);
 
   TScene* ptr = scene.get();
+
+  // Inject engine-owned services before the scene initialises its systems.
+  static_cast<Scene*>(ptr)->m_quadRenderer = m_quadRenderer;
+  static_cast<Scene*>(ptr)->m_textRenderer = m_textRenderer;
 
   if (m_scenes.empty())
   {

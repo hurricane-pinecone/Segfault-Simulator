@@ -31,8 +31,6 @@ void SampleGame::onUpdate(double deltaTime)
 {
   sfs::Scene* scene = sceneManager.current();
 
-  // Only scenes that registered an isometric render system get a projection;
-  // others (e.g. a title screen) simply opt out and render another way.
   if (!scene || !scene->hasSystem<sfs::IsometricRenderSystem>())
     return;
 

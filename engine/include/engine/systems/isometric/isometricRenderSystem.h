@@ -4,8 +4,8 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/commands/commands.h"
+#include "engine/rendering/iQuadRenderer.h"
 #include "engine/rendering/isometricRenderContext.h"
-#include "engine/rendering/openGLQuadRenderer.h"
 #include "engine/rendering/renderQueue.h"
 #include "engine/rendering/util/isometric/camera.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
@@ -54,14 +54,10 @@ struct WallFaceKeyHash
 class IsometricRenderSystem : public System
 {
 public:
-  IsometricRenderSystem(AssetStore& assetStore);
+  IsometricRenderSystem(AssetStore& assetStore, IQuadRenderer& quadRenderer);
 
   ~IsometricRenderSystem();
 
-  // Inject the projection to render with. The orchestrator (game) owns the
-  // IsometricProjection and keeps it updated; the render system only holds the
-  // pointer, so this is set once (not pushed per frame). A scene that does not
-  // want isometric rendering simply never injects one and uses another system.
   void setProjection(const IsometricProjection* projection);
 
   void setWaveTime(float time);
@@ -79,15 +75,11 @@ public:
   IsometricLightingService& lighting();
   const IsometricLightingService& lighting() const;
 
-  // Screen (pixel) position -> grid space on the plane at the given elevation.
   glm::vec2 screenToWorld(const glm::vec2& screenPosition,
                           float elevation = 0.0f) const;
 
-  // Screen (pixel) position -> topmost terrain tile under it, accounting for
-  // tile elevation. Inspect TilePick::valid to know if a tile was hit.
   TilePick pickTile(const glm::vec2& screenPosition) const;
 
-  // Convenience: the grid cell from pickTile (valid or ground-plane fallback).
   glm::ivec2 screenToTile(const glm::vec2& screenPosition) const;
 
   IsometricRenderSystem(const IsometricRenderSystem&) = delete;
@@ -127,14 +119,15 @@ private:
   void batchTerrainTiles(std::vector<AnyRenderCommand>& commands);
 
   void submitRenderCommand(const AnyRenderCommand& command,
-                           OpenGLQuadRenderer& quadRenderer);
+                           IQuadRenderer& quadRenderer);
 
   template <typename T>
   void submitConcreteRenderCommand(const T& concrete,
-                                   OpenGLQuadRenderer& quadRenderer);
+                                   IQuadRenderer& quadRenderer);
 
 private:
   AssetStore& assetStore;
+  IQuadRenderer& m_quadRenderer;
 
   RenderQueue<AnyRenderCommand> m_renderQueue;
 
@@ -150,7 +143,7 @@ private:
 template <typename T>
 void IsometricRenderSystem::submitConcreteRenderCommand(
     const T& concrete,
-    OpenGLQuadRenderer& quadRenderer)
+    IQuadRenderer& quadRenderer)
 {
   // Work on a mutable local copy because textures and normal maps
   // are resolved lazily during submission.

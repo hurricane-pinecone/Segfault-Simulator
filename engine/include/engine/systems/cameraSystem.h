@@ -48,9 +48,7 @@ public:
     }
   }
 
-  // The active camera as a view value type, for the orchestrator to inject into
-  // consumers (e.g. the render system). Empty when no camera entity exists, in
-  // which case consumers fall back to the grid origin at zoom 1.
+  // The active (first) camera, or an empty ActiveCamera when none exists.
   ActiveCamera activeCamera() const
   {
     const auto& cameras = getEntities();

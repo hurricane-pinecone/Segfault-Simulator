@@ -25,10 +25,7 @@ struct IVec2Hash
 
 struct IsometricRenderContext
 {
-  // The single source of truth for all projection math (tile metrics, world
-  // scale, camera view, screen centre). Owned and updated by the game, injected
-  // once via IsometricRenderSystem::setProjection. Non-null whenever the
-  // isometric pipeline runs.
+  // Non-null while the render pipeline runs; the forwarders below assume it.
   const IsometricProjection* projection = nullptr;
 
   const IsometricAmbientLighting* ambientLighting = nullptr;
@@ -46,15 +43,11 @@ struct IsometricRenderContext
     return projection->worldToScreen(world, elevation);
   }
 
-  // Inverse of worldToScreen, assuming the cursor lies on the plane at the
-  // given elevation.
   glm::vec2 screenToWorld(const glm::vec2& screen, float elevation = 0.0f) const
   {
     return projection->screenToWorld(screen, elevation);
   }
 
-  // Resolve a screen position to the topmost terrain tile under it, using this
-  // context's elevation grid.
   TilePick pickTile(const glm::vec2& screen) const
   {
     return sfs::pickTile(screen, *projection, terrainElevationGrid);

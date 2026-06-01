@@ -15,6 +15,9 @@ namespace sfs
 
 using SceneId = uint32_t;
 
+class IQuadRenderer;
+class TextRenderer;
+
 class Scene
 {
 public:
@@ -49,6 +52,8 @@ public:
   void destroyEntity(const Entity& entity);
 
   AssetStore& assetStore() const { return m_assetStore; }
+  IQuadRenderer& quadRenderer() const { return *m_quadRenderer; }
+  TextRenderer& textRenderer() const { return *m_textRenderer; }
 
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
@@ -91,6 +96,10 @@ private:
   SceneId m_id = 0;
   std::string m_name = "";
   Registry m_registry;
+
+  // Set by SceneManager.
+  IQuadRenderer* m_quadRenderer = nullptr;
+  TextRenderer* m_textRenderer = nullptr;
 
   std::vector<std::unique_ptr<GameObject>> m_gameObjects;
 };
