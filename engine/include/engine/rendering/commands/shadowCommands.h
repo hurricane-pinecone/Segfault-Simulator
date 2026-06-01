@@ -23,12 +23,12 @@ struct SpriteShadowCommand : RenderCommand<FreeformQuad>
 
   SpriteShadowCommand()
   {
-    // Drawn in the translucent Shadow pass, after all opaque depth is laid
-    // down, so the depth buffer makes a block in front occlude the shadow.
-    // Per-command depth comes from the receiver tile; its small bias keeps the
-    // shadow just above the ground tile it lands on, while nearer actors
-    // occlude it via depth-test.
-    order = {RenderPass::Shadow, 0, 0};
+    // Drawn in the translucent SpriteShadow pass, after all opaque depth and
+    // the terrain shadows. Its own pass keeps every sprite shadow contiguous so
+    // they batch by texture instead of interleaving (by depth) with terrain
+    // shadows. The depth buffer makes a block in front occlude the shadow;
+    // per-command depth comes from the receiver tile.
+    order = {RenderPass::SpriteShadow, 0, 0};
     quad.tint = SDL_Color{0, 0, 0, 255};
   }
 };

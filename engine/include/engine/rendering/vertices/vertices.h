@@ -13,6 +13,10 @@ struct SurfaceVertex
   glm::vec4 color;
   glm::vec2 uv;
   glm::vec4 params;
+
+  // Painter sort-key at build time; assignClipDepth() remaps it in place to a
+  // clip-space z (gl_Position.z) so a merged water mesh occludes per vertex.
+  float z = 0.0f;
 };
 
 } // namespace sfs

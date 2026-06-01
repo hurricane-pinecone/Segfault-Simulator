@@ -6,8 +6,9 @@
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/utils/profiling.h"
+#include <algorithm>
 #include <cstdint>
-#include <map>
+#include <vector>
 
 namespace sfs
 {
@@ -49,34 +50,40 @@ void IsometricWaterSystem::computeCommands(
   for (const WaterCell& cell : build.cells)
     cellDepths[cellIndex(cell.tile)] = cell.depth;
 
-  // Group tiles that share a painter depth into one mesh. Each depth keeps its
-  // own draw so it still interleaves correctly with terrain and sprites, while
-  // all water tiles at that depth submit in a single draw call.
-  std::map<float, SurfaceCommand> batches;
+  // All water merges into a single mesh / draw. The depth buffer resolves
+  // occlusion against terrain per vertex (each vertex carries its tile's
+  // sort-key), so water needs no per-depth split. Tiles are appended
+  // back-to-front (ascending painter depth) so the translucent water blends in
+  // the right order within the single mesh.
+  const auto cellDepth = [](const WaterCell& cell)
+  {
+    return static_cast<float>(cell.tile.x + cell.tile.y + 1) +
+           cell.elevation * 0.5f;
+  };
+
+  std::vector<const WaterCell*> sorted;
+  sorted.reserve(build.cells.size());
 
   for (const WaterCell& cell : build.cells)
-  {
-    if (cell.terrainElevation >= cell.elevation)
-      continue;
+    if (cell.terrainElevation < cell.elevation)
+      sorted.push_back(&cell);
 
-    const float depth = static_cast<float>(cell.tile.x + cell.tile.y + 1) +
-                        cell.elevation * 0.5f;
+  if (sorted.empty())
+    return;
 
-    auto it = batches.find(depth);
+  std::sort(sorted.begin(),
+            sorted.end(),
+            [&](const WaterCell* a, const WaterCell* b)
+            { return cellDepth(*a) < cellDepth(*b); });
 
-    if (it == batches.end())
-      it = batches.emplace(depth, createWaterSurfaceCommand(context, cell))
-               .first;
+  SurfaceCommand command = createWaterSurfaceCommand(context, *sorted.front());
 
+  for (const WaterCell* cell : sorted)
     buildSingleWaterTileMesh(
-        context, build, cell, cellWidth, cellHeight, cellDepths, it->second);
-  }
+        context, build, *cell, cellWidth, cellHeight, cellDepths, command);
 
-  for (auto& [depth, command] : batches)
-  {
-    if (!command.vertices.empty() && !command.indices.empty())
-      m_commands.push_back(std::move(command));
-  }
+  if (!command.vertices.empty() && !command.indices.empty())
+    m_commands.push_back(std::move(command));
 }
 
 SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
@@ -155,6 +162,7 @@ IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
                                        const glm::ivec2& gridPoint,
                                        int waterElevation,
                                        float depth,
+                                       float sortDepth,
                                        SurfaceCommand& command) const
 {
   const float depthFactor = std::clamp(depth / 6.0f, 0.0f, 1.0f);
@@ -193,6 +201,9 @@ IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
       static_cast<float>(waterElevation),
       0.0f,
   };
+
+  // World painter sort-key; assignClipDepth() remaps it to clip-space z.
+  vertex.z = sortDepth;
 
   const uint32_t index = static_cast<uint32_t>(command.vertices.size());
   command.vertices.push_back(vertex);
@@ -234,17 +245,22 @@ void IsometricWaterSystem::buildSingleWaterTileMesh(
                                             cellHeight,
                                             cellDepths);
 
+  // All four corners share the tile's painter sort-key so the merged mesh
+  // occludes per tile exactly as the old per-depth water draws did.
+  const float sortDepth =
+      static_cast<float>(cell.tile.x + cell.tile.y + 1) + cell.elevation * 0.5f;
+
   const uint32_t i0 = addSurfaceVertex(
-      context, tile + glm::ivec2{0, 0}, cell.elevation, d0, command);
+      context, tile + glm::ivec2{0, 0}, cell.elevation, d0, sortDepth, command);
 
   const uint32_t i1 = addSurfaceVertex(
-      context, tile + glm::ivec2{1, 0}, cell.elevation, d1, command);
+      context, tile + glm::ivec2{1, 0}, cell.elevation, d1, sortDepth, command);
 
   const uint32_t i2 = addSurfaceVertex(
-      context, tile + glm::ivec2{1, 1}, cell.elevation, d2, command);
+      context, tile + glm::ivec2{1, 1}, cell.elevation, d2, sortDepth, command);
 
   const uint32_t i3 = addSurfaceVertex(
-      context, tile + glm::ivec2{0, 1}, cell.elevation, d3, command);
+      context, tile + glm::ivec2{0, 1}, cell.elevation, d3, sortDepth, command);
 
   command.indices.insert(command.indices.end(), {i0, i1, i2, i0, i2, i3});
 }

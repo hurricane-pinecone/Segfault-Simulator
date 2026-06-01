@@ -44,6 +44,7 @@ private:
                             const glm::ivec2& gridPoint,
                             int waterElevation,
                             float depth,
+                            float sortDepth,
                             SurfaceCommand& command) const;
 
   void buildSingleWaterTileMesh(const IsometricRenderContext& context,

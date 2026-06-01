@@ -164,6 +164,15 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
       quadRenderer.submitTerrainShadow(quad);
   }
 
+  // Projected sprite shadows batch by texture into one draw per shadow atlas.
+  else if constexpr (std::is_same_v<T, SpriteShadowCommand>)
+  {
+    drawable.quad.texture = resolveTexture(drawable.textureId);
+
+    if (drawable.quad.texture != 0)
+      quadRenderer.submitSpriteShadow(drawable.quad);
+  }
+
   // Surface meshes (water, lava, fog, etc.)
   else if constexpr (std::is_same_v<T, SurfaceCommand>)
   {
