@@ -22,8 +22,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include <engine/utils/profiling.h>
 #include <string>
-#include <tracy/public/tracy/Tracy.hpp>
 
 #ifndef ENGINE_WEB
   #include <imgui.h>
