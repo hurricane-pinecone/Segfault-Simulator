@@ -8,6 +8,7 @@
 #include <SDL_render.h>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -47,6 +48,10 @@ public:
   void processInput(const sfs::Input& input);
   void render();
 
+  // Invoked inside the debug ImGui frame (debug builds only) so a scene can add
+  // game-specific debug controls.
+  void debugUI() { onDebugUI(); }
+
   Entity createEntity();
   Entity getEntity(Entity::EntityId id);
   void destroyEntity(const Entity& entity);
@@ -75,6 +80,13 @@ public:
   template <typename TSystem>
   TSystem& getSystem() const;
 
+  // Iterate all systems (debug tooling: enable/disable, inspect).
+  template <typename Fn>
+  void forEachSystem(Fn&& fn)
+  {
+    m_registry.forEachSystem(std::forward<Fn>(fn));
+  }
+
 private:
   Registry& registry();
   const Registry& registry() const;
@@ -86,6 +98,7 @@ protected:
   virtual void onUpdate(double deltaTime) {};
   virtual void onRender() {};
   virtual void onProcessInput(const Input& input) {};
+  virtual void onDebugUI() {};
 
   friend class SceneManager;
 

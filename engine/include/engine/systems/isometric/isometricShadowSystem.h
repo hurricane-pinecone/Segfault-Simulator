@@ -30,6 +30,8 @@ public:
 
   void markTerrainDirty();
 
+  IsometricShadowSettings& shadowSettings() { return m_shadowSettings; }
+
 private:
   void computeTerrainShadows(const IsometricRenderContext& context);
 

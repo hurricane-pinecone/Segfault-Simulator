@@ -22,6 +22,7 @@ protected:
   void onProcessInput(const sfs::Input& input) override;
   void onUpdate(double deltaTime) override;
   void onRender() override;
+  void onDebugUI() override;
 
 private:
   void loadMap();

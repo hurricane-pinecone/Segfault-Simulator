@@ -25,6 +25,8 @@ public:
   void setSpriteShadowMaxLength(float length);
   void setSpriteShadowAlpha(float alpha);
 
+  IsometricShadowSettings& shadowSettings() { return m_shadowSettings; }
+
 protected:
   void create() override;
 

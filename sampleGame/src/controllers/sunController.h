@@ -38,7 +38,8 @@ public:
       return;
     }
 
-    m_timeOfDay += static_cast<float>(deltaTime) / m_dayLengthSeconds;
+    m_timeOfDay +=
+        static_cast<float>(deltaTime) / m_dayLengthSeconds * m_timeMultiplier;
 
     m_timeOfDay -= std::floor(m_timeOfDay);
 
@@ -47,11 +48,22 @@ public:
 
   void toggleSun() { m_isSunEnabled = !m_isSunEnabled; }
 
+  bool sunEnabled() const { return m_isSunEnabled; }
+  void setSunEnabled(bool enabled) { m_isSunEnabled = enabled; }
+
   void setDayLengthSeconds(float seconds)
   {
     m_dayLengthSeconds = std::max(seconds, 1.0f);
   }
 
+  // 0 = paused, 1 = normal speed, >1 = faster day/night cycle.
+  float timeMultiplier() const { return m_timeMultiplier; }
+  void setTimeMultiplier(float multiplier)
+  {
+    m_timeMultiplier = std::max(0.0f, multiplier);
+  }
+
+  float timeOfDay() const { return m_timeOfDay; }
   void setTimeOfDay(float time01)
   {
     m_timeOfDay = time01 - std::floor(time01);
@@ -186,4 +198,7 @@ private:
 
   // Full day duration in real seconds.
   float m_dayLengthSeconds = 120.0f;
+
+  // Scales how fast the cycle advances (debug control).
+  float m_timeMultiplier = 1.0f;
 };

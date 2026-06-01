@@ -34,8 +34,12 @@ void Scene::update(double deltaTime)
 
   {
     ZoneScopedN("Scene: systems update");
-    m_registry.forEachSystem([deltaTime](System& system)
-                             { system.update(deltaTime); });
+    m_registry.forEachSystem(
+        [deltaTime](System& system)
+        {
+          if (system.enabled())
+            system.update(deltaTime);
+        });
   }
 
   for (auto& obj : m_gameObjects)
@@ -61,7 +65,12 @@ void Scene::render()
 {
   ZoneScopedN("Scene::render");
 
-  m_registry.forEachSystem([](System& system) { system.render(); });
+  m_registry.forEachSystem(
+      [](System& system)
+      {
+        if (system.enabled())
+          system.render();
+      });
 
   onRender();
 }

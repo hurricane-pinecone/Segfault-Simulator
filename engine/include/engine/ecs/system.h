@@ -21,6 +21,11 @@ public:
   void addEntity(const Entity& entity);
   void removeEntity(const Entity& entity);
 
+  // Disabled systems are skipped by Scene update/render and by render providers.
+  // Intended for debug toggling; the render system is never disabled.
+  bool enabled() const { return m_enabled; }
+  void setEnabled(bool enabled) { m_enabled = enabled; }
+
 protected:
   virtual void create() {};
   virtual void update(double deltatime) {};
@@ -38,6 +43,7 @@ protected:
 private:
   Signature componentSignature;
   std::vector<Entity> entities;
+  bool m_enabled = true;
 
   friend class Registry;
   friend class Scene;

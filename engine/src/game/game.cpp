@@ -302,7 +302,7 @@ void Game::render()
   }
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
-  renderDebugUI();
+  renderDebugUI(sceneManager.current());
 #endif
 
   SDL_GL_SwapWindow(window);
