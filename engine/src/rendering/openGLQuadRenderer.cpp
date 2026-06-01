@@ -5,6 +5,7 @@
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/rendering/quads.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
+#include "engine/utils/gpuProfiling.h"
 #include "engine/utils/profiling.h"
 #include <algorithm>
 
@@ -524,6 +525,7 @@ void OpenGLQuadRenderer::submit(const LitQuad& command)
 void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
 {
   ZoneScopedN("GL: submit surface");
+  TracyGpuZone("GPU: surface");
 
   initialize();
 
@@ -788,6 +790,7 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
 void OpenGLQuadRenderer::flushSolid()
 {
   ZoneScopedN("GL: flushSolid");
+  TracyGpuZone("GPU: solid");
 
   initialize();
 
@@ -825,6 +828,7 @@ void OpenGLQuadRenderer::flushSolid()
 void OpenGLQuadRenderer::flushLit()
 {
   ZoneScopedN("GL: flushLit");
+  TracyGpuZone("GPU: lit");
 
   initialize();
 
@@ -1705,8 +1709,11 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
     break;
 
   case Pipeline::TerrainShadow:
+  {
+    TracyGpuZone("GPU: terrain shadow");
     flushTerrainShadow();
     break;
+  }
 
   case Pipeline::LitSprite:
     flushLit();
