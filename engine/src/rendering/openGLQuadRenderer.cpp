@@ -414,9 +414,8 @@ void OpenGLQuadRenderer::initialize()
   // Global OpenGL state
   // ===========================================================================
 
-  // Depth-buffer based iso pipeline: opaque geometry tests + writes depth so
-  // occlusion is resolved by the GPU instead of painter draw order. Per-pass
-  // depth state is (re)set in begin() and the translucent flushes.
+  // Opaque geometry tests and writes depth; per-pass depth state is (re)set in
+  // begin() and the translucent flushes.
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LEQUAL);
   glDepthMask(GL_TRUE);
