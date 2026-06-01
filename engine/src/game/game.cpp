@@ -309,15 +309,23 @@ void Game::render()
 
     sceneManager.current()->render();
 
-    sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
-    onRender();
+    {
+      ZoneScopedN("Game::onRender");
+      sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Render};
+      onRender();
+    }
   }
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
   renderDebugUI(sceneManager.current());
 #endif
 
-  SDL_GL_SwapWindow(window);
+  {
+    // CPU blocks here until the GPU has presented the frame; zoning it keeps
+    // that wait out of Game::render's unattributed self-time.
+    ZoneScopedN("SDL_GL_SwapWindow");
+    SDL_GL_SwapWindow(window);
+  }
 
   // Collect this frame's GPU timing queries.
   TracyGpuCollect;
