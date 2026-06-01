@@ -31,6 +31,9 @@ public:
   virtual void submit(const SurfaceCommand& command) = 0;
   virtual void submitTerrainShadow(const Quad& command) = 0;
 
+  // Projected sprite shadows, batched by texture (one draw per shadow atlas).
+  virtual void submitSpriteShadow(const FreeformQuad& command) = 0;
+
   // Immediate-mode draw (text, UI, simple sprites), bypassing the batch queue.
   virtual void drawImmediate(const TexturedQuad& command) = 0;
 

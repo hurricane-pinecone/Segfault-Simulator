@@ -78,6 +78,21 @@ void OpenGLQuadRenderer::initialize()
     return;
   }
 
+  // Textured shadow shader.
+  // Used by:
+  // - projected sprite shadows (silhouette alpha from the sprite, per-vertex
+  //   tint), batched by texture
+  spriteShadowShaderProgram = createSpriteShadowShaderProgram();
+
+  if (spriteShadowShaderProgram == 0)
+  {
+    LOG_ERROR("Failed to create OpenGLQuadRenderer sprite shadow shader");
+    return;
+  }
+
+  uSpriteShadowTextureLocation =
+      glGetUniformLocation(spriteShadowShaderProgram, "uTexture");
+
   // ===========================================================================
   // Main textured/lit shader uniform locations
   // ===========================================================================
@@ -313,6 +328,63 @@ void OpenGLQuadRenderer::initialize()
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
   // ===========================================================================
+  // Sprite shadow VAO/VBO
+  // Textured (silhouette) + per-vertex tint, batched by texture.
+  // ===========================================================================
+
+  glGenVertexArrays(1, &spriteShadowVao);
+  glGenBuffers(1, &spriteShadowVbo);
+
+  glBindVertexArray(spriteShadowVao);
+  glBindBuffer(GL_ARRAY_BUFFER, spriteShadowVbo);
+
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sizeof(ShadowVertex) * 6),
+               nullptr,
+               GL_DYNAMIC_DRAW);
+
+  // position
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(ShadowVertex),
+      reinterpret_cast<void*>(offsetof(ShadowVertex, position)));
+
+  // uv
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1,
+                        2,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(ShadowVertex),
+                        reinterpret_cast<void*>(offsetof(ShadowVertex, uv)));
+
+  // color (tint)
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(
+      2,
+      4,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(ShadowVertex),
+      reinterpret_cast<void*>(offsetof(ShadowVertex, color)));
+
+  // clip-space depth
+  glEnableVertexAttribArray(3);
+  glVertexAttribPointer(3,
+                        1,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(ShadowVertex),
+                        reinterpret_cast<void*>(offsetof(ShadowVertex, z)));
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+  // ===========================================================================
   // Default uniforms: textured/lit sprite shader
   // ===========================================================================
 
@@ -466,6 +538,15 @@ void OpenGLQuadRenderer::shutdown()
   if (solidShaderProgram != 0)
     glDeleteProgram(solidShaderProgram);
 
+  if (spriteShadowVbo != 0)
+    glDeleteBuffers(1, &spriteShadowVbo);
+
+  if (spriteShadowVao != 0)
+    glDeleteVertexArrays(1, &spriteShadowVao);
+
+  if (spriteShadowShaderProgram != 0)
+    glDeleteProgram(spriteShadowShaderProgram);
+
   if (surfaceEbo != 0)
     glDeleteBuffers(1, &surfaceEbo);
 
@@ -482,6 +563,11 @@ void OpenGLQuadRenderer::shutdown()
   surfaceVbo = 0;
   surfaceVao = 0;
   surfaceShaderProgram = 0;
+
+  spriteShadowVbo = 0;
+  spriteShadowVao = 0;
+  spriteShadowShaderProgram = 0;
+  m_spriteShadowBatches.clear();
 
   solidVbo = 0;
   solidVao = 0;
@@ -584,7 +670,7 @@ void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
         vertex.color,
         vertex.uv,
         vertex.params,
-        command.z,
+        vertex.z,
     });
   }
 
@@ -833,6 +919,101 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], z});
   m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
   m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3], z});
+}
+
+void OpenGLQuadRenderer::submitSpriteShadow(const FreeformQuad& command)
+{
+  initialize();
+
+  if (!initialized || command.texture == 0)
+    return;
+
+  if (m_pipeline != Pipeline::SpriteShadow)
+  {
+    flushCurrentPipeline();
+    m_pipeline = Pipeline::SpriteShadow;
+  }
+
+  appendSpriteShadowVertices(command);
+}
+
+void OpenGLQuadRenderer::appendSpriteShadowVertices(const FreeformQuad& command)
+{
+  const glm::vec2 p0 = toNdc(command.points[0]);
+  const glm::vec2 p1 = toNdc(command.points[1]);
+  const glm::vec2 p2 = toNdc(command.points[2]);
+  const glm::vec2 p3 = toNdc(command.points[3]);
+
+  const glm::vec4 color{
+      command.tint.r / 255.0f,
+      command.tint.g / 255.0f,
+      command.tint.b / 255.0f,
+      command.tint.a / 255.0f,
+  };
+
+  const float z = command.z;
+
+  // Bucket by texture; order within/between buckets does not matter for black
+  // translucent shadows.
+  std::vector<ShadowVertex>& verts = m_spriteShadowBatches[command.texture];
+
+  verts.push_back({p0, command.uvs[0], color, z});
+  verts.push_back({p1, command.uvs[1], color, z});
+  verts.push_back({p2, command.uvs[2], color, z});
+
+  verts.push_back({p0, command.uvs[0], color, z});
+  verts.push_back({p2, command.uvs[2], color, z});
+  verts.push_back({p3, command.uvs[3], color, z});
+}
+
+void OpenGLQuadRenderer::flushSpriteShadow()
+{
+  ZoneScopedN("GL: flushSpriteShadow");
+  TracyGpuZone("GPU: sprite shadow");
+
+  initialize();
+
+  if (!initialized || m_spriteShadowBatches.empty())
+    return;
+
+  glUseProgram(spriteShadowShaderProgram);
+
+  // Translucent: test against the opaque depth (a block in front occludes the
+  // shadow) but do not write depth.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glActiveTexture(GL_TEXTURE0);
+  glUniform1i(uSpriteShadowTextureLocation, 0);
+
+  glBindVertexArray(spriteShadowVao);
+  glBindBuffer(GL_ARRAY_BUFFER, spriteShadowVbo);
+
+  // One draw per shadow atlas. Black-shadow blend is order-independent, so the
+  // (unordered) bucket iteration order is fine.
+  for (auto& [texture, verts] : m_spriteShadowBatches)
+  {
+    if (verts.empty())
+      continue;
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(ShadowVertex)),
+                 verts.data(),
+                 GL_DYNAMIC_DRAW);
+
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size()));
+  }
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+  glUseProgram(0);
+
+  m_spriteShadowBatches.clear();
 }
 
 void OpenGLQuadRenderer::flushSolid()
@@ -1679,6 +1860,7 @@ void OpenGLQuadRenderer::begin()
 
   m_solidVertices.clear();
   m_litVertices.clear();
+  m_spriteShadowBatches.clear();
 
   m_litBatchKey.reset();
 
@@ -1763,6 +1945,93 @@ void main()
   return program;
 }
 
+unsigned int OpenGLQuadRenderer::createSpriteShadowShaderProgram() const
+{
+#ifdef __EMSCRIPTEN__
+  const std::string glslVersion = "#version 300 es\n"
+                                  "precision mediump float;\n";
+#else
+  const std::string glslVersion = "#version 330 core\n";
+#endif
+
+  const std::string vertexSource = glslVersion + R"(
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aUv;
+layout(location = 2) in vec4 aColor;
+layout(location = 3) in float aZ;
+
+out vec2 vUv;
+out vec4 vColor;
+
+void main()
+{
+  vUv = aUv;
+  vColor = aColor;
+  gl_Position = vec4(aPosition, aZ, 1.0);
+}
+)";
+
+  const std::string fragmentSource = glslVersion + R"(
+in vec2 vUv;
+in vec4 vColor;
+
+out vec4 FragColor;
+
+uniform sampler2D uTexture;
+
+void main()
+{
+  // Silhouette alpha comes from the sprite texture; the tint (typically black)
+  // comes from the per-vertex color.
+  float silhouette = texture(uTexture, vUv).a;
+
+  if (silhouette <= 0.0)
+    discard;
+
+  FragColor = vec4(vColor.rgb, vColor.a * silhouette);
+}
+)";
+
+  GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+  GLuint fragmentShader =
+      compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+
+  if (vertexShader == 0 || fragmentShader == 0)
+  {
+    if (vertexShader != 0)
+      glDeleteShader(vertexShader);
+
+    if (fragmentShader != 0)
+      glDeleteShader(fragmentShader);
+
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+  if (!success)
+  {
+    char infoLog[1024];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+    LOG_ERROR(infoLog);
+
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
+}
+
 void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
 {
   if (m_pipeline == pipeline)
@@ -1791,6 +2060,10 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
 
   case Pipeline::LitSprite:
     flushLit();
+    break;
+
+  case Pipeline::SpriteShadow:
+    flushSpriteShadow();
     break;
 
   case Pipeline::Textured:

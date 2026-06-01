@@ -46,10 +46,10 @@ float orderKey(const RenderOrder& order)
   return order.depth + static_cast<float>(order.subpass) * kSubpassEpsilon;
 }
 
-// Map each command's painter sort-key to a clip-space z (gl_Position.z) and
-// stamp it onto the command's quad(s). Higher sort-key = nearer the camera.
-// Runs before batching so each quad keeps its own depth even after tiles are
-// merged into texture batches.
+// Map each command's painter sort-key to a clip-space z (gl_Position.z): onto
+// the quad(s) for quad commands, and per-vertex for merged surface meshes.
+// Higher sort-key = nearer the camera. Runs before batching so each quad keeps
+// its own depth even after tiles are merged into texture batches.
 void assignClipDepth(std::vector<AnyRenderCommand>& commands)
 {
   ZoneScopedN("Render: assignClipDepth");
@@ -57,18 +57,33 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
   float minKey = std::numeric_limits<float>::max();
   float maxKey = std::numeric_limits<float>::lowest();
 
+  const auto includeKey = [&](float key)
+  {
+    minKey = std::min(minKey, key);
+    maxKey = std::max(maxKey, key);
+  };
+
   for (const auto& command : commands)
   {
     std::visit(
         [&](const auto& concrete)
         {
+          using T = std::decay_t<decltype(concrete)>;
+
           // UI/text draws with depth disabled, so it must not skew the range.
           if (concrete.order.pass == RenderPass::UI)
             return;
 
-          const float key = orderKey(concrete.order);
-          minKey = std::min(minKey, key);
-          maxKey = std::max(maxKey, key);
+          if constexpr (std::is_same_v<T, SurfaceCommand>)
+          {
+            // A merged surface mesh carries a per-vertex world sort-key.
+            for (const auto& vertex : concrete.vertices)
+              includeKey(vertex.z);
+          }
+          else
+          {
+            includeKey(orderKey(concrete.order));
+          }
         },
         command);
   }
@@ -76,15 +91,13 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
   const float range = maxKey - minKey;
   const float invRange = range > 1e-6f ? 1.0f / range : 0.0f;
 
-  const auto toClipZ = [&](const RenderOrder& order)
+  // Higher sort-key (clamped -> 1) maps to the near plane (smaller window
+  // depth). NDC headroom of [-0.9, 0.9] leaves room for future always-on-top /
+  // always-behind layering without clamping against the clip planes.
+  const auto toClipZ = [&](float key)
   {
-    const float t =
-        invRange > 0.0f ? (orderKey(order) - minKey) * invRange : 0.5f;
+    const float t = invRange > 0.0f ? (key - minKey) * invRange : 0.5f;
     const float clamped = std::clamp(t, 0.0f, 1.0f);
-
-    // Higher sort-key (clamped -> 1) maps to the near plane (smaller window
-    // depth). Reserve NDC headroom of [-0.9, 0.9] for future always-on-top /
-    // always-behind layering hacks without clamping against the clip planes.
     return 0.9f - 1.8f * clamped;
   };
 
@@ -95,21 +108,22 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
         {
           using T = std::decay_t<decltype(concrete)>;
 
-          const float z = toClipZ(concrete.order);
-
           if constexpr (std::is_same_v<T, SurfaceCommand>)
           {
-            concrete.z = z;
+            // Remap each vertex's world sort-key to clip-space z in place.
+            for (auto& vertex : concrete.vertices)
+              vertex.z = toClipZ(vertex.z);
           }
           else if constexpr (requires { concrete.quad.quads; })
           {
             // Batched quads (e.g. terrain-shadow batches) share one depth.
+            const float z = toClipZ(orderKey(concrete.order));
             for (auto& quad : concrete.quad.quads)
               quad.z = z;
           }
           else
           {
-            concrete.quad.z = z;
+            concrete.quad.z = toClipZ(orderKey(concrete.order));
           }
         },
         command);

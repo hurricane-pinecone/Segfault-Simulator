@@ -51,6 +51,8 @@ public:
     appendSolidVertices(command);
   }
 
+  void submitSpriteShadow(const FreeformQuad& command) override;
+
   void
   drawImmediate(const TexturedQuad& command) override; // Text, UI, sprites
 
@@ -72,21 +74,25 @@ private:
     None,
     SolidColor,
     TerrainShadow,
+    SpriteShadow,
     Textured,
     Freeform,
     LitSprite
   };
 
   unsigned int createSolidShaderProgram() const;
+  unsigned int createSpriteShadowShaderProgram() const;
 
   void beginPipeline(Pipeline stage);
   void flushCurrentPipeline();
   void flushSolid();
   void flushFreeform();
   void flushLit();
+  void flushSpriteShadow();
 
   void appendSolidVertices(const Quad& command);
   void appendLitVertices(const LitQuad& command);
+  void appendSpriteShadowVertices(const FreeformQuad& command);
 
   void drawQuad(const Quad& command);
   void drawQuad(const FreeformQuad& command); // Shadows
@@ -221,6 +227,14 @@ private:
     float z = 0.0f; // clip-space depth (gl_Position.z)
   };
 
+  struct ShadowVertex
+  {
+    glm::vec2 position;
+    glm::vec2 uv;
+    glm::vec4 color;
+    float z = 0.0f; // clip-space depth (gl_Position.z)
+  };
+
 private:
   int windowWidth = 0;
   int windowHeight = 0;
@@ -282,9 +296,19 @@ private:
   unsigned int solidVao = 0;
   unsigned int solidVbo = 0;
 
+  unsigned int spriteShadowShaderProgram = 0;
+  unsigned int spriteShadowVao = 0;
+  unsigned int spriteShadowVbo = 0;
+  int uSpriteShadowTextureLocation = -1;
+
   std::vector<SolidVertex> m_solidVertices;
   std::vector<Vertex> m_litVertices;
   std::optional<LitBatchKey> m_litBatchKey;
+
+  // Sprite shadows are uniform black translucent quads, so their blend order is
+  // irrelevant. Bucket by texture and draw one batch per shadow atlas.
+  std::unordered_map<unsigned int, std::vector<ShadowVertex>>
+      m_spriteShadowBatches;
 };
 
 } // namespace sfs

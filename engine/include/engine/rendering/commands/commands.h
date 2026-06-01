@@ -50,10 +50,6 @@ struct SurfaceCommand
 
   SurfaceEffect::Type type = SurfaceEffect::Type::None;
   RenderOrder order{RenderPass::Surfaces, 0, 0};
-
-  // Clip-space depth (gl_Position.z), stamped from order so the depth buffer
-  // occludes water against opaque geometry.
-  float z = 0.0f;
 };
 
 using AnyRenderCommand = std::variant<QuadCommand,
