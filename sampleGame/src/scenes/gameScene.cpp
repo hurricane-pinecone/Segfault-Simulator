@@ -34,9 +34,7 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   addSystem<TerrainGeneratorSystem>(*this);
 
-  // The isometric projection is owned by the game and injected into this
-  // system each frame (see SampleGame); the scene just registers the system.
-  addSystem<sfs::IsometricRenderSystem>(m_assetStore);
+  addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
 
   sfs::IsometricShadowSettings shadowSettings = {7.0f, 7.0f};
 
@@ -62,8 +60,6 @@ void GameScene::onProcessInput(const sfs::Input& input)
   if (input.keyboard().keyPressed(sfs::Key::F))
     m_sunController.toggleSun();
 
-  // Resolve the tile under the cursor so onRender can highlight it. The pick
-  // accounts for tile elevation, so raised terrain highlights correctly.
   m_mousePos = input.mouse().getPosition();
 
   const sfs::TilePick pick =
@@ -92,10 +88,10 @@ void GameScene::onRender()
   stream << std::fixed << std::setprecision(2) << "Pos: " << position.x << ", "
          << position.y;
 
-  sfs::TextRenderer::drawText(20, 20, stream.str());
-  sfs::TextRenderer::drawText(
+  textRenderer().drawText(20, 20, stream.str());
+  textRenderer().drawText(
       20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
-  sfs::TextRenderer::drawText(
+  textRenderer().drawText(
       20, 60, "Time: " + getSystem<SunController>().timeString12Hour());
 
   if (m_hasHoveredTile)

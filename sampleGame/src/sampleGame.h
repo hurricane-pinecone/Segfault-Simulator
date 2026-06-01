@@ -18,8 +18,6 @@ protected:
   void onDestroy() override;
 
 private:
-  // The game owns the isometric projection and keeps it current; scenes that
-  // render isometrically have it injected into their render system each frame.
   sfs::IsometricProjectionConfig m_isoConfig;
   sfs::IsometricProjection m_isoProjection;
 };

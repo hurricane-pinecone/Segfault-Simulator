@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/rendering/openGLQuadRenderer.h"
+#include "engine/TextRenderer/textRenderer.h"
+#include "engine/rendering/iQuadRenderer.h"
 #include "engine/sceneManager/sceneManager.h"
 #include <SDL_events.h>
 #include <SDL_render.h>
@@ -59,7 +60,8 @@ private:
   Input input;
   SDL_GLContext m_glContext;
 
-  std::unique_ptr<sfs::OpenGLQuadRenderer> m_quadRenderer;
+  std::unique_ptr<IQuadRenderer> m_quadRenderer;
+  std::unique_ptr<TextRenderer> m_textRenderer;
 };
 
 } // namespace sfs

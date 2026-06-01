@@ -4,6 +4,7 @@
 #include "SDL2/SDL_surface.h"
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/rendering/commands/commands.h"
+#include "engine/rendering/iQuadRenderer.h"
 #include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -19,27 +20,27 @@
 namespace sfs
 {
 
-class OpenGLQuadRenderer
+class OpenGLQuadRenderer : public IQuadRenderer
 {
 public:
   OpenGLQuadRenderer(int windowWidth, int windowHeight);
-  ~OpenGLQuadRenderer();
+  ~OpenGLQuadRenderer() override;
 
-  void initialize();
-  void shutdown();
+  void initialize() override;
+  void shutdown() override;
 
   unsigned int getOrCreateTexture(const std::string& textureId,
-                                  SDL_Surface* surface);
+                                  SDL_Surface* surface) override;
 
-  unsigned int uploadSurfaceTexture(SDL_Surface* surface);
-  void deleteTexture(unsigned int texture);
+  unsigned int uploadSurfaceTexture(SDL_Surface* surface) override;
+  void deleteTexture(unsigned int texture) override;
 
-  void submit(const Quad& command);
-  void submit(const TexturedQuad& command);
-  void submit(const FreeformQuad& command);
-  void submit(const LitQuad& command);
-  void submit(const SurfaceCommand& command);
-  void submitTerrainShadow(const Quad& command)
+  void submit(const Quad& command) override;
+  void submit(const TexturedQuad& command) override;
+  void submit(const FreeformQuad& command) override;
+  void submit(const LitQuad& command) override;
+  void submit(const SurfaceCommand& command) override;
+  void submitTerrainShadow(const Quad& command) override
   {
     initialize();
 
@@ -50,16 +51,18 @@ public:
     appendSolidVertices(command);
   }
 
-  void drawImmediate(const TexturedQuad& command); // Text, UI, simple sprites
+  void
+  drawImmediate(const TexturedQuad& command) override; // Text, UI, sprites
 
-  void begin();
-  void flush();
+  void begin() override;
+  void flush() override;
 
-  void drawLineLoop(const glm::vec2* points, int count, SDL_Color color);
+  void
+  drawLineLoop(const glm::vec2* points, int count, SDL_Color color) override;
 
-  void setViewportSize(int width, int height);
+  void setViewportSize(int width, int height) override;
 
-  void setSurfaceTime(float time);
+  void setSurfaceTime(float time) override;
 
 private:
   enum class Pipeline

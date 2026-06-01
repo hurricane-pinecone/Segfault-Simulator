@@ -9,12 +9,6 @@
 namespace sfs
 {
 
-bool TextRenderer::m_initialized = false;
-AssetStore* TextRenderer::m_assetStore = nullptr;
-OpenGLQuadRenderer* TextRenderer::m_quadRenderer = nullptr;
-
-std::unordered_map<std::string, CachedText> TextRenderer::m_textCache;
-
 std::string TextRenderer::buildCacheKey(const std::string& text,
                                         const std::string& fontId,
                                         Color color)
@@ -24,31 +18,12 @@ std::string TextRenderer::buildCacheKey(const std::string& text,
          std::to_string(color.a) + "_" + text;
 }
 
-bool TextRenderer::init(OpenGLQuadRenderer& quadRenderer,
-                        AssetStore& assetStore)
+TextRenderer::TextRenderer(IQuadRenderer& quadRenderer, AssetStore& assetStore)
+    : m_quadRenderer(quadRenderer), m_assetStore(assetStore)
 {
-  m_quadRenderer = &quadRenderer;
-  m_assetStore = &assetStore;
-
-  if (TTF_Init() != 0)
-  {
-    LOG_ERROR(std::string("Failed to initialize SDL_ttf: ") + TTF_GetError());
-    m_initialized = false;
-    return false;
-  }
-
-  auto font = assetStore.addFont("default", "assets/fonts/m6x11.ttf", 24);
-
-  if (!font)
-    return false;
-
-  TTF_SetFontHinting(font, TTF_HINTING_MONO);
-
-  m_initialized = true;
-  return true;
 }
 
-void TextRenderer::shutdown()
+TextRenderer::~TextRenderer()
 {
   for (auto& [key, cached] : m_textCache)
   {
@@ -62,11 +37,29 @@ void TextRenderer::shutdown()
     TTF_Quit();
 
   m_initialized = false;
-  m_quadRenderer = nullptr;
-  m_assetStore = nullptr;
 }
 
-bool TextRenderer::isInitialized() { return m_initialized; }
+bool TextRenderer::init()
+{
+  if (TTF_Init() != 0)
+  {
+    LOG_ERROR(std::string("Failed to initialize SDL_ttf: ") + TTF_GetError());
+    m_initialized = false;
+    return false;
+  }
+
+  auto font = m_assetStore.addFont("default", "assets/fonts/m6x11.ttf", 24);
+
+  if (!font)
+    return false;
+
+  TTF_SetFontHinting(font, TTF_HINTING_MONO);
+
+  m_initialized = true;
+  return true;
+}
+
+bool TextRenderer::isInitialized() const { return m_initialized; }
 
 void TextRenderer::drawText(float x, float y, const std::string& text)
 {
@@ -90,13 +83,10 @@ void TextRenderer::drawText(float x,
   if (!m_initialized)
     return;
 
-  if (!m_quadRenderer || !m_assetStore)
-    return;
-
   if (text.empty())
     return;
 
-  TTF_Font* font = m_assetStore->getFont(fontId);
+  TTF_Font* font = m_assetStore.getFont(fontId);
 
   if (!font)
     return;
@@ -192,7 +182,7 @@ void TextRenderer::drawText(float x,
       255,
   };
 
-  m_quadRenderer->drawImmediate(command);
+  m_quadRenderer.drawImmediate(command);
 }
 
 } // namespace sfs

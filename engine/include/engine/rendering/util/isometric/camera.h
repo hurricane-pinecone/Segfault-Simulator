@@ -29,10 +29,8 @@ struct ActiveCamera
   }
 };
 
-// Compose the static projection config with a live camera view into a baked
-// IsometricProjection snapshot. Call once per frame from the orchestrator; the
-// camera pointers are read only transiently here, so the result is safe to hold
-// after ECS component storage moves.
+// Bakes the camera into plain values, so the result stays valid even after ECS
+// component storage moves and invalidates the camera's component pointers.
 inline IsometricProjection makeProjection(const IsometricProjectionConfig& config,
                                           const ActiveCamera& camera)
 {

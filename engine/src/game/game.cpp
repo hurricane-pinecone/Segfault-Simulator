@@ -1,4 +1,4 @@
-#include "engine/rendering/renderContext.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
 #else
@@ -105,7 +105,10 @@ bool Game::init(int windowWidth, int windowHeight)
   }
 #endif
 
-  sfs::RenderContext::init(windowWidth, windowHeight);
+  m_quadRenderer =
+      std::make_unique<OpenGLQuadRenderer>(windowWidth, windowHeight);
+  m_quadRenderer->initialize();
+  m_quadRenderer->setViewportSize(windowWidth, windowHeight);
 
   // renderer = SDL_CreateRenderer(
   //     window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -138,12 +141,14 @@ void Game::setup()
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
   assetStore = std::make_unique<AssetStore>();
-  sceneManager.setAssetStore(assetStore.get());
   assetStore->addWhitePixelTexture("white_pixel");
-  sfs::TextRenderer::init(sfs::RenderContext::quadRenderer(), *assetStore);
 
-  // TODO: Use openGL text rendering
-  // TextRenderer::init(*renderer, *assetStore);
+  m_textRenderer = std::make_unique<TextRenderer>(*m_quadRenderer, *assetStore);
+  m_textRenderer->init();
+
+  sceneManager.setAssetStore(assetStore.get());
+  sceneManager.setQuadRenderer(m_quadRenderer.get());
+  sceneManager.setTextRenderer(m_textRenderer.get());
 
   onSetup();
 }
@@ -296,6 +301,13 @@ void Game::destroy()
 {
   onDestroy();
 
+  // Tear down GPU-backed resources while the GL context is still valid.
+  m_textRenderer.reset();
+
+  if (m_quadRenderer)
+    m_quadRenderer->shutdown();
+  m_quadRenderer.reset();
+
 #ifndef ENGINE_WEB
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL2_Shutdown();
@@ -313,8 +325,6 @@ void Game::destroy()
     SDL_DestroyRenderer(renderer);
     renderer = nullptr;
   }
-
-  sfs::RenderContext::shutdown();
 
   if (window)
   {

@@ -63,4 +63,14 @@ void SceneManager::setAssetStore(AssetStore* assetStore)
   m_assetStore = assetStore;
 }
 
+void SceneManager::setQuadRenderer(IQuadRenderer* quadRenderer)
+{
+  m_quadRenderer = quadRenderer;
+}
+
+void SceneManager::setTextRenderer(TextRenderer* textRenderer)
+{
+  m_textRenderer = textRenderer;
+}
+
 } // namespace sfs

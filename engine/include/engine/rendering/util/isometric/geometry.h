@@ -408,10 +408,6 @@ inline static glm::ivec2 gridCellOf(const glm::vec2& position)
   };
 }
 
-// Static configuration of the isometric projection, owned and supplied by the
-// game (tile metrics + where the grid origin lands on screen). The live camera
-// view (position/zoom) is supplied separately; the renderer composes the two
-// into an IsometricProjection.
 struct IsometricProjectionConfig
 {
   int tileWidth = 0;
@@ -423,12 +419,6 @@ struct IsometricProjectionConfig
   glm::vec2 screenCenter{0.0f, 0.0f};
 };
 
-// Self-contained description of the isometric screen projection.
-//
-// Holds everything needed to map between grid space and screen (pixel) space
-// without depending on the render context, its tile-elevation map, lighting,
-// or any other per-frame render data. Build one from a context/camera and pass
-// it anywhere a coordinate conversion is needed (input handling, picking, UI).
 struct IsometricProjection
 {
   int tileWidth = 0;
@@ -473,19 +463,14 @@ struct IsometricProjection
   }
 };
 
-// Result of resolving a screen position to a terrain tile.
 struct TilePick
 {
   glm::ivec2 tile{0, 0};
-
-  // Grid-space position on the picked tile's top face (or the ground plane
-  // when nothing was hit).
   glm::vec2 world{0.0f, 0.0f};
-
   int elevation = 0;
 
-  // false when the cursor was not over any terrain tile; tile/world then
-  // describe the elevation-0 ground projection as a fallback.
+  // false when the cursor is over no tile; tile/world then hold the
+  // elevation-0 ground projection.
   bool valid = false;
 };
 
@@ -525,12 +510,10 @@ inline static TilePick pickTile(const glm::vec2& screen,
 
     int tileElevation = 0;
 
-    // tileElevation >= elevation (rather than ==) accepts the block's walls,
-    // not just its top face: when the cursor is over a raised tile's vertical
-    // side, the cell only projects onto that tile at a plane below its top, so
-    // an equality test would miss it. Scanning high-to-low still returns the
-    // topmost block, and we report the tile's true top elevation so the
-    // highlight sits on its top face regardless of where on the block we hit.
+    // Take the first (topmost) cell whose column reaches the tested plane.
+    // The >= also resolves a block's vertical walls, where the cursor projects
+    // onto the tile only at planes below its top. Report the tile's true top
+    // elevation so the highlight lands on the top face.
     if (terrain.tryGet(tile, tileElevation) && tileElevation >= elevation)
       return TilePick{tile, world, tileElevation, true};
   }

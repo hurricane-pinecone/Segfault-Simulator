@@ -9,7 +9,6 @@
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/quads.h"
-#include "engine/rendering/renderContext.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 
 #include "engine/ecs/registry.h"
@@ -38,8 +37,9 @@ int gSpriteRenderItems = 0;
 int gSpriteProjectedShadowItems = 0;
 int gTerrainShadowBatchCount = 0;
 
-IsometricRenderSystem::IsometricRenderSystem(AssetStore& assetStore)
-    : assetStore(assetStore)
+IsometricRenderSystem::IsometricRenderSystem(AssetStore& assetStore,
+                                             IQuadRenderer& quadRenderer)
+    : assetStore(assetStore), m_quadRenderer(quadRenderer)
 {
 }
 
@@ -69,7 +69,7 @@ void IsometricRenderSystem::render()
   gSpriteRenderItems = 0;
   gSpriteProjectedShadowItems = 0;
 
-  // No projection injected (e.g. a non-isometric scene): nothing to draw.
+  // A scene without an injected projection has nothing isometric to draw.
   if (!m_context.projection)
     return;
 
@@ -114,8 +114,8 @@ void IsometricRenderSystem::render()
     }
 
     // Rendering position stays exact. Anchor, elevation, wave motion, camera,
-    // and m_context.zoom all affect the final screen rect, but should not
-    // directly decide depth ordering.
+    // and zoom all affect the final screen rect, but should not directly decide
+    // depth ordering.
     const glm::vec2 isoPosition = gridToIsometric(
         transform.position, proj.tileWidth, proj.tileHeight, proj.worldScale);
 
@@ -345,7 +345,7 @@ void IsometricRenderSystem::beginBatches() { m_renderQueue.clear(); }
 
 void IsometricRenderSystem::flushBatches()
 {
-  auto& quadRenderer = RenderContext::quadRenderer();
+  auto& quadRenderer = m_quadRenderer;
   auto& commands = m_renderQueue.mutableItems();
 
   batchTerrainTiles(commands);
@@ -371,13 +371,10 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
                                           int elevation,
                                           SDL_Color color)
 {
-  auto& quadRenderer = RenderContext::quadRenderer();
+  auto& quadRenderer = m_quadRenderer;
 
   const float e = static_cast<float>(elevation);
 
-  // Outline the tile's top face by projecting its four grid-space corners with
-  // the same transform tiles are rendered with, so the outline matches tile
-  // size, position, zoom and elevation exactly.
   const glm::vec2 points[5] = {
       m_context.worldToScreen({gridPosition.x, gridPosition.y}, e),
       m_context.worldToScreen({gridPosition.x + 1.0f, gridPosition.y}, e),
@@ -400,7 +397,7 @@ unsigned int IsometricRenderSystem::resolveTexture(const std::string* textureId)
   if (!surface)
     return 0;
 
-  return RenderContext::quadRenderer().getOrCreateTexture(*textureId, surface);
+  return m_quadRenderer.getOrCreateTexture(*textureId, surface);
 }
 
 glm::vec2 IsometricRenderSystem::screenToWorld(const glm::vec2& screenPosition,
@@ -627,7 +624,7 @@ void IsometricRenderSystem::batchTerrainTiles(
 
 void IsometricRenderSystem::submitRenderCommand(
     const AnyRenderCommand& command,
-    OpenGLQuadRenderer& quadRenderer)
+    IQuadRenderer& quadRenderer)
 {
   std::visit([&](const auto& concrete)
              { submitConcreteRenderCommand(concrete, quadRenderer); },
