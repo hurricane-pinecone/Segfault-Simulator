@@ -186,26 +186,33 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
   else if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
                                     LitQuadBatch>)
   {
+    // Every quad in the batch shares the same material, so resolve the textures
+    // and effect once instead of once per quad.
+    const unsigned int batchTexture = resolveTexture(drawable.textureId);
+
+    if (batchTexture == 0)
+      return;
+
+    unsigned int batchNormalTexture = 0;
+    bool batchHasNormalMap = false;
+
+    if (drawable.normalTextureId)
+    {
+      batchNormalTexture = resolveTexture(drawable.normalTextureId);
+      batchHasNormalMap = batchNormalTexture != 0;
+    }
+
+    int batchSurfaceEffect = 0;
+
+    if constexpr (requires { drawable.type; })
+      batchSurfaceEffect = static_cast<int>(drawable.type);
+
     for (auto& quad : drawable.quad.quads)
     {
-      // Resolve diffuse/albedo texture.
-      quad.texture = resolveTexture(drawable.textureId);
-
-      if (quad.texture == 0)
-        continue;
-
-      // Optional normal map for lighting.
-      if (drawable.normalTextureId)
-      {
-        quad.normalTexture = resolveTexture(drawable.normalTextureId);
-
-        quad.hasNormalMap = quad.normalTexture != 0;
-      }
-
-      if constexpr (requires { drawable.type; })
-      {
-        quad.surfaceEffect = static_cast<int>(drawable.type);
-      }
+      quad.texture = batchTexture;
+      quad.normalTexture = batchNormalTexture;
+      quad.hasNormalMap = batchHasNormalMap;
+      quad.surfaceEffect = batchSurfaceEffect;
 
       quadRenderer.submit(quad);
     }
