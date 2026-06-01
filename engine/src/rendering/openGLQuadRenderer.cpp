@@ -27,6 +27,9 @@ namespace sfs
 OpenGLQuadRenderer::OpenGLQuadRenderer(int windowWidth, int windowHeight)
     : windowWidth(windowWidth), windowHeight(windowHeight)
 {
+  m_ndcScaleX = windowWidth > 0 ? 2.0f / static_cast<float>(windowWidth) : 0.0f;
+  m_ndcScaleY =
+      windowHeight > 0 ? 2.0f / static_cast<float>(windowHeight) : 0.0f;
 }
 
 OpenGLQuadRenderer::~OpenGLQuadRenderer() { shutdown(); }
@@ -1372,13 +1375,15 @@ void OpenGLQuadRenderer::setViewportSize(int width, int height)
 {
   windowWidth = width;
   windowHeight = height;
+  m_ndcScaleX = width > 0 ? 2.0f / static_cast<float>(width) : 0.0f;
+  m_ndcScaleY = height > 0 ? 2.0f / static_cast<float>(height) : 0.0f;
 }
 
 glm::vec2 OpenGLQuadRenderer::toNdc(const glm::vec2& pixelPosition) const
 {
   return {
-      pixelPosition.x / static_cast<float>(windowWidth) * 2.0f - 1.0f,
-      1.0f - pixelPosition.y / static_cast<float>(windowHeight) * 2.0f,
+      pixelPosition.x * m_ndcScaleX - 1.0f,
+      1.0f - pixelPosition.y * m_ndcScaleY,
   };
 }
 

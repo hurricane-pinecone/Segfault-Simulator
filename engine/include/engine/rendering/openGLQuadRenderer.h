@@ -239,6 +239,11 @@ private:
   int windowWidth = 0;
   int windowHeight = 0;
 
+  // Precomputed 2 / window size so toNdc() multiplies instead of dividing
+  // (it runs once per vertex, ~12k times a frame).
+  float m_ndcScaleX = 0.0f;
+  float m_ndcScaleY = 0.0f;
+
   bool initialized = false;
 
   unsigned int shaderProgram = 0;
