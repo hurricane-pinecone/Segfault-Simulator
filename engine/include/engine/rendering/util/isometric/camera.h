@@ -29,4 +29,24 @@ struct ActiveCamera
   }
 };
 
+// Compose the static projection config with a live camera view into a baked
+// IsometricProjection snapshot. Call once per frame from the orchestrator; the
+// camera pointers are read only transiently here, so the result is safe to hold
+// after ECS component storage moves.
+inline IsometricProjection makeProjection(const IsometricProjectionConfig& config,
+                                          const ActiveCamera& camera)
+{
+  const float zoom = camera.camera ? camera.camera->zoom : 1.0f;
+
+  return IsometricProjection{
+      config.tileWidth,
+      config.tileHeight,
+      config.elevationStep,
+      config.worldScale,
+      zoom,
+      camera.isoPosition(config.tileWidth, config.tileHeight, config.worldScale),
+      config.screenCenter,
+  };
+}
+
 } // namespace sfs

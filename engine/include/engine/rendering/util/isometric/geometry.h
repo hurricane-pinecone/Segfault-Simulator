@@ -408,4 +408,138 @@ inline static glm::ivec2 gridCellOf(const glm::vec2& position)
   };
 }
 
+// Static configuration of the isometric projection, owned and supplied by the
+// game (tile metrics + where the grid origin lands on screen). The live camera
+// view (position/zoom) is supplied separately; the renderer composes the two
+// into an IsometricProjection.
+struct IsometricProjectionConfig
+{
+  int tileWidth = 0;
+  int tileHeight = 0;
+  int elevationStep = 8;
+
+  float worldScale = 1.0f;
+
+  glm::vec2 screenCenter{0.0f, 0.0f};
+};
+
+// Self-contained description of the isometric screen projection.
+//
+// Holds everything needed to map between grid space and screen (pixel) space
+// without depending on the render context, its tile-elevation map, lighting,
+// or any other per-frame render data. Build one from a context/camera and pass
+// it anywhere a coordinate conversion is needed (input handling, picking, UI).
+struct IsometricProjection
+{
+  int tileWidth = 0;
+  int tileHeight = 0;
+  int elevationStep = 8;
+
+  float worldScale = 1.0f;
+  float zoom = 1.0f;
+
+  // Screen-space iso offset of the camera, i.e.
+  // gridToIsometric(cameraGridPosition, tileWidth, tileHeight, worldScale).
+  glm::vec2 cameraIso{0.0f, 0.0f};
+
+  // Pixel position that grid origin maps to before the camera offset is
+  // applied (typically the window centre).
+  glm::vec2 screenCenter{0.0f, 0.0f};
+
+  // Grid -> screen (pixels). elevation is in elevation levels (not pixels).
+  glm::vec2 worldToScreen(const glm::vec2& world, float elevation) const
+  {
+    glm::vec2 p = (gridToIsometric(world, tileWidth, tileHeight, worldScale) -
+                   cameraIso) *
+                      zoom +
+                  screenCenter;
+
+    p.y -= elevation * static_cast<float>(elevationStep) * worldScale * zoom;
+
+    return p;
+  }
+
+  // Screen (pixels) -> grid, assuming the cursor lies on the plane at the
+  // given elevation. This is the exact inverse of worldToScreen.
+  glm::vec2 screenToWorld(const glm::vec2& screen, float elevation) const
+  {
+    glm::vec2 p = screen;
+
+    p.y += elevation * static_cast<float>(elevationStep) * worldScale * zoom;
+
+    const glm::vec2 iso = (p - screenCenter) / zoom + cameraIso;
+
+    return isometricTogrid(iso, tileWidth, tileHeight, worldScale);
+  }
+};
+
+// Result of resolving a screen position to a terrain tile.
+struct TilePick
+{
+  glm::ivec2 tile{0, 0};
+
+  // Grid-space position on the picked tile's top face (or the ground plane
+  // when nothing was hit).
+  glm::vec2 world{0.0f, 0.0f};
+
+  int elevation = 0;
+
+  // false when the cursor was not over any terrain tile; tile/world then
+  // describe the elevation-0 ground projection as a fallback.
+  bool valid = false;
+};
+
+inline static int maxTerrainElevation(const TerrainElevationGridView& grid)
+{
+  if (!grid.valid())
+    return 0;
+
+  int maxElevation = 0;
+
+  for (int y = 0; y < grid.height; y++)
+  {
+    for (int x = 0; x < grid.width; x++)
+    {
+      const int value = grid.elevations[y * grid.stride + x];
+
+      if (value != EmptyElevation)
+        maxElevation = std::max(maxElevation, value);
+    }
+  }
+
+  return maxElevation;
+}
+
+inline static TilePick pickTile(const glm::vec2& screen,
+                                const IsometricProjection& projection,
+                                const TerrainElevationGridView& terrain)
+{
+  const int maxElevation = maxTerrainElevation(terrain);
+
+  for (int elevation = maxElevation; elevation >= 0; elevation--)
+  {
+    const glm::vec2 world =
+        projection.screenToWorld(screen, static_cast<float>(elevation));
+
+    const glm::ivec2 tile = gridCellOf(world);
+
+    int tileElevation = 0;
+
+    // tileElevation >= elevation (rather than ==) accepts the block's walls,
+    // not just its top face: when the cursor is over a raised tile's vertical
+    // side, the cell only projects onto that tile at a plane below its top, so
+    // an equality test would miss it. Scanning high-to-low still returns the
+    // topmost block, and we report the tile's true top elevation so the
+    // highlight sits on its top face regardless of where on the block we hit.
+    if (terrain.tryGet(tile, tileElevation) && tileElevation >= elevation)
+      return TilePick{tile, world, tileElevation, true};
+  }
+
+  // No tile under the cursor: fall back to the flat ground projection so
+  // callers still get a usable grid coordinate.
+  const glm::vec2 ground = projection.screenToWorld(screen, 0.0f);
+
+  return TilePick{gridCellOf(ground), ground, 0, false};
+}
+
 } // namespace sfs
