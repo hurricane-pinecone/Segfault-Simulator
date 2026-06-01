@@ -28,6 +28,15 @@ public:
   virtual void submit(const TexturedQuad& command) = 0;
   virtual void submit(const FreeformQuad& command) = 0;
   virtual void submit(const LitQuad& command) = 0;
+
+  // Submit a whole batch of lit quads that share one material + lighting (so
+  // the batch key is set once, not rebuilt per quad).
+  virtual void submitLitBatch(const LitQuadBatch& batch,
+                              unsigned int texture,
+                              unsigned int normalTexture,
+                              bool hasNormalMap,
+                              int surfaceEffect) = 0;
+
   virtual void submit(const SurfaceCommand& command) = 0;
   virtual void submitTerrainShadow(const Quad& command) = 0;
 

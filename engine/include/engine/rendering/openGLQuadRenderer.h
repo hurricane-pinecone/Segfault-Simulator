@@ -39,6 +39,11 @@ public:
   void submit(const TexturedQuad& command) override;
   void submit(const FreeformQuad& command) override;
   void submit(const LitQuad& command) override;
+  void submitLitBatch(const LitQuadBatch& batch,
+                      unsigned int texture,
+                      unsigned int normalTexture,
+                      bool hasNormalMap,
+                      int surfaceEffect) override;
   void submit(const SurfaceCommand& command) override;
   void submitTerrainShadow(const Quad& command) override
   {
