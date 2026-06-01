@@ -145,28 +145,29 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
     const T& concrete,
     IQuadRenderer& quadRenderer)
 {
-  // Work on a mutable local copy because textures and normal maps
-  // are resolved lazily during submission.
-  auto drawable = concrete;
+  // Most paths only read the command, so they use `concrete` directly. Only
+  // the branches that resolve a texture onto the quad take a mutable copy, and
+  // never of a whole batch's quad vector.
 
   // Terrain shadows use the special stencil-based pipeline so
   // overlapping shadow quads do not stack darker.
   if constexpr (std::is_same_v<T, TerrainShadowCommand>)
   {
-    quadRenderer.submitTerrainShadow(drawable.quad);
+    quadRenderer.submitTerrainShadow(concrete.quad);
   }
 
   // Terrain shadows grouped per painter depth run the same stencil path, one
   // command's worth of quads at a time.
   else if constexpr (std::is_same_v<T, TerrainShadowBatchCommand>)
   {
-    for (const auto& quad : drawable.quad.quads)
+    for (const auto& quad : concrete.quad.quads)
       quadRenderer.submitTerrainShadow(quad);
   }
 
   // Projected sprite shadows batch by texture into one draw per shadow atlas.
   else if constexpr (std::is_same_v<T, SpriteShadowCommand>)
   {
+    auto drawable = concrete;
     drawable.quad.texture = resolveTexture(drawable.textureId);
 
     if (drawable.quad.texture != 0)
@@ -176,19 +177,20 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
   // Surface meshes (water, lava, fog, etc.)
   else if constexpr (std::is_same_v<T, SurfaceCommand>)
   {
-    quadRenderer.submit(drawable);
+    quadRenderer.submit(concrete);
   }
 
   // Batched lit terrain tiles.
   //
   // These are grouped earlier by texture + lighting state to reduce
   // OpenGL state changes and draw calls.
-  else if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
+  else if constexpr (std::is_same_v<std::decay_t<decltype(concrete.quad)>,
                                     LitQuadBatch>)
   {
     // Every quad in the batch shares the same material, so resolve the textures
-    // and effect once instead of once per quad.
-    const unsigned int batchTexture = resolveTexture(drawable.textureId);
+    // and effect once, then submit the whole batch in one call (the renderer
+    // sets the batch key once instead of rebuilding it per quad).
+    const unsigned int batchTexture = resolveTexture(concrete.textureId);
 
     if (batchTexture == 0)
       return;
@@ -196,35 +198,31 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
     unsigned int batchNormalTexture = 0;
     bool batchHasNormalMap = false;
 
-    if (drawable.normalTextureId)
+    if (concrete.normalTextureId)
     {
-      batchNormalTexture = resolveTexture(drawable.normalTextureId);
+      batchNormalTexture = resolveTexture(concrete.normalTextureId);
       batchHasNormalMap = batchNormalTexture != 0;
     }
 
     int batchSurfaceEffect = 0;
 
-    if constexpr (requires { drawable.type; })
-      batchSurfaceEffect = static_cast<int>(drawable.type);
+    if constexpr (requires { concrete.type; })
+      batchSurfaceEffect = static_cast<int>(concrete.type);
 
-    for (auto& quad : drawable.quad.quads)
-    {
-      quad.texture = batchTexture;
-      quad.normalTexture = batchNormalTexture;
-      quad.hasNormalMap = batchHasNormalMap;
-      quad.surfaceEffect = batchSurfaceEffect;
-
-      quadRenderer.submit(quad);
-    }
+    quadRenderer.submitLitBatch(concrete.quad,
+                                batchTexture,
+                                batchNormalTexture,
+                                batchHasNormalMap,
+                                batchSurfaceEffect);
   }
 
   // Generic solid quad batches.
   //
   // Used for grouped non-lit quads.
-  else if constexpr (std::is_same_v<std::decay_t<decltype(drawable.quad)>,
+  else if constexpr (std::is_same_v<std::decay_t<decltype(concrete.quad)>,
                                     QuadBatch>)
   {
-    for (const auto& quad : drawable.quad.quads)
+    for (const auto& quad : concrete.quad.quads)
       quadRenderer.submit(quad);
   }
 
@@ -232,6 +230,8 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
   // sprites, UI, standalone lit quads, etc.
   else
   {
+    auto drawable = concrete;
+
     // Resolve main texture if the drawable owns one.
     if constexpr (requires {
                     drawable.textureId;

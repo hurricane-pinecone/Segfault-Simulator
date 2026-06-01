@@ -643,6 +643,56 @@ void OpenGLQuadRenderer::submit(const LitQuad& command)
   appendLitVertices(command);
 }
 
+void OpenGLQuadRenderer::submitLitBatch(const LitQuadBatch& batch,
+                                        unsigned int texture,
+                                        unsigned int normalTexture,
+                                        bool hasNormalMap,
+                                        int surfaceEffect)
+{
+  initialize();
+
+  if (!initialized || texture == 0 || batch.quads.empty())
+    return;
+
+  // Every quad in the batch shares one material and the frame-global
+  // directional lighting (see IsometricRenderSystem::render), so build the
+  // batch key once instead of per quad.
+  const LitQuad& first = batch.quads.front();
+
+  LitBatchKey key;
+  key.texture = texture;
+  key.normalTexture =
+      hasNormalMap && normalTexture != 0 ? normalTexture : defaultNormalTexture;
+  key.hasNormalMap = hasNormalMap && normalTexture != 0;
+  key.lightDirection = first.lightDirection;
+  key.lightIntensity = first.lightIntensity;
+  key.ambient = first.ambient;
+  key.diffuseStrength = first.diffuseStrength;
+  key.lightColor = first.lightColor;
+  key.surfaceEffect = surfaceEffect;
+
+  if (m_pipeline != Pipeline::LitSprite || !m_litBatchKey ||
+      *m_litBatchKey != key)
+  {
+    flushCurrentPipeline();
+    m_pipeline = Pipeline::LitSprite;
+    m_litBatchKey = key;
+  }
+
+  m_litVertices.reserve(m_litVertices.size() + batch.quads.size() * 6);
+
+  for (const LitQuad& quad : batch.quads)
+  {
+    if (quad.destRect.w <= 0 || quad.destRect.h <= 0)
+      continue;
+
+    if (quad.textureWidth <= 0 || quad.textureHeight <= 0)
+      continue;
+
+    appendLitVertices(quad);
+  }
+}
+
 void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
 {
   ZoneScopedN("GL: submit surface");
