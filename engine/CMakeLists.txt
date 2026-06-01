@@ -87,6 +87,7 @@ if(ENGINE_WEB_BUILD)
         -sPTHREAD_POOL_SIZE=4
     )
 else()
+    find_package(Threads REQUIRED)
     find_package(lua REQUIRED)
     find_package(SDL2 REQUIRED)
     find_package(SDL2_image REQUIRED)
@@ -115,5 +116,6 @@ target_sources(engine PRIVATE
             SDL2_mixer::SDL2_mixer
             OpenGL::GL
             GLEW::GLEW
+            Threads::Threads
     )
 endif()

@@ -5,10 +5,10 @@
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/algorithms/gridDDA.h"
 #include "engine/utils/isometricLightingUtils.h"
+#include "engine/utils/parallelFor.h"
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <vector>
 
 #include "engine/components/elevationComponent.h"
@@ -228,7 +228,7 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
 
 void IsometricShadowSystem::emitTileShadow(
     const IsometricRenderContext& context,
-    std::vector<TerrainShadowCommand>& outCommands,
+    std::vector<Quad>& outQuads,
     const glm::ivec2& tile,
     int elevation,
     const ClippedPolygon& poly,
@@ -241,9 +241,19 @@ void IsometricShadowSystem::emitTileShadow(
 
   const float elevationF = static_cast<float>(elevation);
 
+  // Painter sort-key, baked into each quad's z; assignClipDepth() remaps it to
+  // clip-space depth so each shadow tile occludes correctly via the depth
+  // buffer (one batch, no per-depth grouping needed).
   const float sortKey = static_cast<float>(tile.x) +
                         static_cast<float>(tile.y) +
                         elevationF * ElevationSortWeight + 0.0005f;
+
+  const SDL_Color tint{
+      0,
+      0,
+      0,
+      static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f),
+  };
 
   glm::vec2 screenPoly[8];
 
@@ -252,21 +262,21 @@ void IsometricShadowSystem::emitTileShadow(
 
   for (int i = 1; i + 1 < poly.count; i++)
   {
-    glm::vec2 screenPoints[4] = {
-        screenPoly[0],
-        screenPoly[i],
-        screenPoly[i + 1],
-        screenPoly[i + 1],
-    };
+    Quad quad;
+    quad.tint = tint;
+    quad.points[0] = screenPoly[0];
+    quad.points[1] = screenPoly[i];
+    quad.points[2] = screenPoly[i + 1];
+    quad.points[3] = screenPoly[i + 1];
+    quad.z = sortKey;
 
-    outCommands.push_back(
-        buildTerrainShadowCommand(screenPoints, alpha, sortKey));
+    outQuads.push_back(quad);
   }
 }
 
 void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
     const IsometricRenderContext& context,
-    std::vector<TerrainShadowCommand>& outCommands,
+    std::vector<Quad>& outQuads,
     const TerrainShadowEdge& edge,
     const glm::vec2& shadowDir,
     float sunHeight,
@@ -314,7 +324,7 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
           if (elevation > edge.bottomElevation)
             return true;
 
-          emitTileShadow(context, outCommands, tile, elevation, poly, alpha);
+          emitTileShadow(context, outQuads, tile, elevation, poly, alpha);
 
           return true;
         });
@@ -553,26 +563,6 @@ float IsometricShadowSystem::calculateTerrainShadowLength(
       static_cast<float>(heightDelta) * TerrainShadowLengthScale / sunHeight);
 }
 
-TerrainShadowCommand IsometricShadowSystem::buildTerrainShadowCommand(
-    const glm::vec2 screenPoints[4],
-    float alpha,
-    float sortKey)
-{
-  TerrainShadowCommand item;
-  item.order.depth = sortKey;
-  item.quad.tint = SDL_Color{
-      0,
-      0,
-      0,
-      static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f),
-  };
-
-  for (int i = 0; i < 4; i++)
-    item.quad.points[i] = screenPoints[i];
-
-  return item;
-}
-
 void IsometricShadowSystem::buildTerrainEdgeShadowItems(
     const IsometricRenderContext& context,
     const glm::vec2& shadowDir,
@@ -588,54 +578,68 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
   if (edges.empty())
     return;
 
-  std::vector<TerrainShadowCommand> triangles;
-  triangles.reserve(edges.size() * 4);
+  const float maxLength = m_shadowSettings.terrainShadowMaxLength;
 
-  int edgesProcessed = 0;
+  // Each edge projects its shadow independently, so fan the edge loop across
+  // the worker pool. Every range writes into its own persistent buffer (no
+  // shared mutation, no per-frame allocation); each quad carries its own world
+  // depth in z, so the results just concatenate into one batch with no sort or
+  // per-depth grouping.
+  const std::size_t rangeCount = parallelForRangeCount(edges.size());
 
-  for (const TerrainShadowEdge& edge : edges)
-  {
-    if (edge.topElevation <= edge.bottomElevation)
-      continue;
+  m_shadowRangeQuads.resize(rangeCount);
+  for (std::vector<Quad>& buffer : m_shadowRangeQuads)
+    buffer.clear();
 
-    if (!shouldCastTerrainShadow(edge, shadowDir))
-      continue;
+  std::vector<int> rangeEdges(rangeCount, 0);
 
-    constructTerrainEdgeShadowProjectedClipped(
-        context,
-        triangles,
-        edge,
-        shadowDir,
-        sunHeight,
-        m_shadowSettings.terrainShadowMaxLength,
-        alpha);
+  parallelFor(
+      edges.size(),
+      [&](std::size_t begin, std::size_t end, std::size_t range)
+      {
+        std::vector<Quad>& out = m_shadowRangeQuads[range];
 
-    edgesProcessed++;
-  }
-  gTerrainShadowEdgesProcessed += edgesProcessed;
+        int processed = 0;
 
-  // Group triangles by painter depth into one batch per depth. Each depth keeps
-  // its own command so it still interleaves with terrain and sprites, and its
-  // triangles submit (and stencil-flush) together as one queue entry.
-  std::map<float, TerrainShadowBatchCommand> batches;
+        for (std::size_t i = begin; i < end; i++)
+        {
+          const TerrainShadowEdge& edge = edges[i];
 
-  for (const TerrainShadowCommand& triangle : triangles)
-  {
-    auto it = batches.find(triangle.order.depth);
+          if (edge.topElevation <= edge.bottomElevation)
+            continue;
 
-    if (it == batches.end())
-    {
-      TerrainShadowBatchCommand batch;
-      batch.order = triangle.order;
-      it = batches.emplace(triangle.order.depth, std::move(batch)).first;
-    }
+          if (!shouldCastTerrainShadow(edge, shadowDir))
+            continue;
 
-    it->second.quad.quads.push_back(triangle.quad);
-  }
+          constructTerrainEdgeShadowProjectedClipped(
+              context, out, edge, shadowDir, sunHeight, maxLength, alpha);
 
-  m_commands.reserve(batches.size());
+          processed++;
+        }
 
-  for (auto& [depth, batch] : batches)
-    m_commands.push_back(std::move(batch));
+        rangeEdges[range] = processed;
+      });
+
+  std::size_t quadCount = 0;
+  for (const std::vector<Quad>& buffer : m_shadowRangeQuads)
+    quadCount += buffer.size();
+
+  for (int processed : rangeEdges)
+    gTerrainShadowEdgesProcessed += processed;
+
+  if (quadCount == 0)
+    return;
+
+  // All shadow quads go into a single batch (each carries its own depth in z),
+  // submitted together through the one stencil-deduped flush.
+  TerrainShadowBatchCommand batch;
+  batch.quad.quads.reserve(quadCount);
+
+  for (std::vector<Quad>& buffer : m_shadowRangeQuads)
+    batch.quad.quads.insert(batch.quad.quads.end(),
+                            buffer.begin(),
+                            buffer.end());
+
+  m_commands.push_back(std::move(batch));
 }
 } // namespace sfs

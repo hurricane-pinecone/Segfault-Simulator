@@ -80,6 +80,13 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
             for (const auto& vertex : concrete.vertices)
               includeKey(vertex.z);
           }
+          else if constexpr (requires { concrete.quad.quads; })
+          {
+            // A merged quad batch (terrain shadows) carries a per-quad world
+            // sort-key in z.
+            for (const auto& quad : concrete.quad.quads)
+              includeKey(quad.z);
+          }
           else
           {
             includeKey(orderKey(concrete.order));
@@ -116,10 +123,10 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
           }
           else if constexpr (requires { concrete.quad.quads; })
           {
-            // Batched quads (e.g. terrain-shadow batches) share one depth.
-            const float z = toClipZ(orderKey(concrete.order));
+            // Merged quad batch (terrain shadows): remap each quad's own world
+            // sort-key so a single batch occludes correctly per tile.
             for (auto& quad : concrete.quad.quads)
-              quad.z = z;
+              quad.z = toClipZ(quad.z);
           }
           else
           {
