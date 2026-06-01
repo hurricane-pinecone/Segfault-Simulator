@@ -156,6 +156,14 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
     quadRenderer.submitTerrainShadow(drawable.quad);
   }
 
+  // Terrain shadows grouped per painter depth run the same stencil path, one
+  // command's worth of quads at a time.
+  else if constexpr (std::is_same_v<T, TerrainShadowBatchCommand>)
+  {
+    for (const auto& quad : drawable.quad.quads)
+      quadRenderer.submitTerrainShadow(quad);
+  }
+
   // Surface meshes (water, lava, fog, etc.)
   else if constexpr (std::is_same_v<T, SurfaceCommand>)
   {

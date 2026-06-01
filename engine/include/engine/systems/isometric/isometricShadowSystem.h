@@ -18,7 +18,7 @@ extern std::atomic<uint64_t> gShadowTilesTraversed;
 
 class IsometricShadowSystem
     : public System,
-      public RenderProvider<IsometricRenderContext, TerrainShadowCommand>
+      public RenderProvider<IsometricRenderContext, TerrainShadowBatchCommand>
 {
 public:
   IsometricShadowSystem();

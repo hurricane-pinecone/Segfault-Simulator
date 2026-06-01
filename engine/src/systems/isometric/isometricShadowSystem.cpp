@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <vector>
 
 #include "engine/components/elevationComponent.h"
@@ -582,14 +583,13 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
 
   const auto& edges = m_cache.edges;
 
-  if (edges.empty())
-  {
-    m_commands.clear();
-    return;
-  }
-
   m_commands.clear();
-  m_commands.reserve(edges.size() * 4);
+
+  if (edges.empty())
+    return;
+
+  std::vector<TerrainShadowCommand> triangles;
+  triangles.reserve(edges.size() * 4);
 
   int edgesProcessed = 0;
 
@@ -603,7 +603,7 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
 
     constructTerrainEdgeShadowProjectedClipped(
         context,
-        m_commands,
+        triangles,
         edge,
         shadowDir,
         sunHeight,
@@ -613,5 +613,29 @@ void IsometricShadowSystem::buildTerrainEdgeShadowItems(
     edgesProcessed++;
   }
   gTerrainShadowEdgesProcessed += edgesProcessed;
+
+  // Group triangles by painter depth into one batch per depth. Each depth keeps
+  // its own command so it still interleaves with terrain and sprites, and its
+  // triangles submit (and stencil-flush) together as one queue entry.
+  std::map<float, TerrainShadowBatchCommand> batches;
+
+  for (const TerrainShadowCommand& triangle : triangles)
+  {
+    auto it = batches.find(triangle.order.depth);
+
+    if (it == batches.end())
+    {
+      TerrainShadowBatchCommand batch;
+      batch.order = triangle.order;
+      it = batches.emplace(triangle.order.depth, std::move(batch)).first;
+    }
+
+    it->second.quad.quads.push_back(triangle.quad);
+  }
+
+  m_commands.reserve(batches.size());
+
+  for (auto& [depth, batch] : batches)
+    m_commands.push_back(std::move(batch));
 }
 } // namespace sfs
