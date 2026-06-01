@@ -47,11 +47,6 @@ struct SurfaceCommand
   std::vector<uint32_t> indices;
 
   float ambient = 1.0f;
-  int lightCount = 0;
-  glm::vec2 lightPositions[MaxShaderLights]{};
-  glm::vec3 lightColors[MaxShaderLights]{};
-  float lightIntensities[MaxShaderLights]{};
-  float lightRadii[MaxShaderLights]{};
 
   SurfaceEffect::Type type = SurfaceEffect::Type::None;
   RenderOrder order{RenderPass::Surfaces, 0, 0};

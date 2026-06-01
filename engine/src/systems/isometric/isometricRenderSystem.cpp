@@ -13,6 +13,7 @@
 
 #include "engine/ecs/registry.h"
 #include "engine/logger/logger.h"
+#include "engine/utils/profiling.h"
 
 #include "engine/rendering/renderPass.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
@@ -60,6 +61,8 @@ void IsometricRenderSystem::create()
 
 void IsometricRenderSystem::render()
 {
+  ZoneScopedN("IsometricRenderSystem::render");
+
   // Debug watch
   gTerrainShadowItems = 0;
   gTerrainShadowFlushes = 0;
@@ -91,6 +94,38 @@ void IsometricRenderSystem::render()
   m_context.terrainElevationGrid = tileElevationGridView;
   m_context.ambientLighting = ambientLighting;
   m_context.pointLights = &pointLights;
+
+  // Sun/ambient is identical for every sprite this frame, and the fragment
+  // shader applies point lights per pixel, so the directional term is computed
+  // once for all sprites. Defaults (no ambient) are a straight-up light at full
+  // ambient with no diffuse.
+  glm::vec3 sunDirection{0.0f, 0.0f, 1.0f};
+  float ambientLevel = 1.0f;
+  float sunDiffuseStrength = 0.0f;
+
+  if (ambientLighting)
+  {
+    sunDirection = ambientLighting->direction;
+    ambientLevel = ambientLighting->ambient;
+    sunDiffuseStrength = ambientLighting->diffuseStrength;
+  }
+
+  // The point-light set is the same for every draw this frame, so bind it once
+  // on the renderer.
+  PointLightSet pointLightSet;
+  pointLightSet.count =
+      std::min(static_cast<int>(pointLights.size()), MaxShaderLights);
+
+  for (int i = 0; i < pointLightSet.count; i++)
+  {
+    pointLightSet.positions[i] = pointLights[i].worldPosition;
+    pointLightSet.colors[i] = pointLights[i].color;
+    pointLightSet.intensities[i] = pointLights[i].intensity;
+    pointLightSet.radii[i] = pointLights[i].radius;
+    pointLightSet.heights[i] = pointLights[i].height;
+  }
+
+  m_quadRenderer.setPointLights(pointLightSet);
 
   for (const auto& entity : getEntities())
   {
@@ -269,19 +304,9 @@ void IsometricRenderSystem::render()
       command.quad.worldPoints[3] = spriteWorldSample;
     }
 
-    if (ambientLighting || !pointLights.empty())
-    {
-      const auto lighting = m_lightingService.computeLighting({
-          spriteWorldSample,
-          static_cast<float>(elevationLevel),
-      });
-
-      command.quad.lightDirection = lighting.direction;
-      command.quad.lightIntensity = lighting.intensity;
-      command.quad.ambient = lighting.ambient;
-      command.quad.diffuseStrength = lighting.diffuseStrength;
-      command.quad.lightColor = lighting.color;
-    }
+    command.quad.lightDirection = sunDirection;
+    command.quad.ambient = ambientLevel;
+    command.quad.diffuseStrength = sunDiffuseStrength;
 
     if (entity.hasComponent<NormalMapComponent>())
     {
@@ -298,21 +323,6 @@ void IsometricRenderSystem::render()
           command.quad.hasNormalMap = true;
           command.normalTextureId = &normalSprite->textureId;
         }
-      }
-    }
-
-    if (!pointLights.empty())
-    {
-      command.quad.lightCount =
-          std::min(static_cast<int>(pointLights.size()), MaxShaderLights);
-
-      for (int i = 0; i < command.quad.lightCount; i++)
-      {
-        command.quad.lightPositions[i] = pointLights[i].worldPosition;
-        command.quad.lightColors[i] = pointLights[i].color;
-        command.quad.lightIntensities[i] = pointLights[i].intensity;
-        command.quad.lightRadii[i] = pointLights[i].radius;
-        command.quad.lightHeights[i] = pointLights[i].height;
       }
     }
 
@@ -345,6 +355,8 @@ void IsometricRenderSystem::beginBatches() { m_renderQueue.clear(); }
 
 void IsometricRenderSystem::flushBatches()
 {
+  ZoneScopedN("Render: flushBatches");
+
   auto& quadRenderer = m_quadRenderer;
   auto& commands = m_renderQueue.mutableItems();
 
@@ -355,10 +367,17 @@ void IsometricRenderSystem::flushBatches()
 
   quadRenderer.setSurfaceTime(static_cast<float>(SDL_GetTicks()) / 1000.0f);
 
-  for (const auto& command : commands)
-    submitRenderCommand(command, quadRenderer);
+  {
+    ZoneScopedN("Render: submit loop");
 
-  quadRenderer.flush();
+    for (const auto& command : commands)
+      submitRenderCommand(command, quadRenderer);
+  }
+
+  {
+    ZoneScopedN("Render: final flush");
+    quadRenderer.flush();
+  }
 }
 
 void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
@@ -389,6 +408,8 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
 
 unsigned int IsometricRenderSystem::resolveTexture(const std::string* textureId)
 {
+  ZoneScopedN("Render: resolveTexture");
+
   if (!textureId)
     return 0;
 
@@ -551,6 +572,8 @@ const IsometricLightingService& IsometricRenderSystem::lighting() const
 void IsometricRenderSystem::sortRenderCommands(
     std::vector<AnyRenderCommand>& commands)
 {
+  ZoneScopedN("Render: sortRenderCommands");
+
   std::stable_sort(commands.begin(),
                    commands.end(),
                    [](const AnyRenderCommand& a, const AnyRenderCommand& b)
@@ -574,6 +597,8 @@ void IsometricRenderSystem::sortRenderCommands(
 void IsometricRenderSystem::batchTerrainTiles(
     std::vector<AnyRenderCommand>& commands)
 {
+  ZoneScopedN("Render: batchTerrainTiles");
+
   std::vector<AnyRenderCommand> batched;
   batched.reserve(commands.size());
 

@@ -23,5 +23,9 @@ build/**/conanrun.*
 # Logs / temp
 *.log
 
+# Profiling captures
+/traces/
+*.tracy
+
 # Local files
 imgui.ini

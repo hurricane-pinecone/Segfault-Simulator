@@ -5,6 +5,7 @@
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/rendering/quads.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
+#include "engine/utils/profiling.h"
 #include <algorithm>
 
 #ifdef __EMSCRIPTEN__
@@ -522,6 +523,8 @@ void OpenGLQuadRenderer::submit(const LitQuad& command)
 
 void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
 {
+  ZoneScopedN("GL: submit surface");
+
   initialize();
 
   if (!initialized)
@@ -560,21 +563,21 @@ void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
   glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
   glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
   glUniform1f(uSurfaceAmbientLocation, command.ambient);
-  glUniform1i(uSurfaceLightCountLocation, command.lightCount);
+  glUniform1i(uSurfaceLightCountLocation, m_pointLights.count);
 
-  if (command.lightCount > 0)
+  if (m_pointLights.count > 0)
   {
     glUniform2fv(uSurfaceLightPositionsLocation,
-                 command.lightCount,
-                 reinterpret_cast<const float*>(command.lightPositions));
+                 m_pointLights.count,
+                 reinterpret_cast<const float*>(m_pointLights.positions));
     glUniform3fv(uSurfaceLightColorsLocation,
-                 command.lightCount,
-                 reinterpret_cast<const float*>(command.lightColors));
+                 m_pointLights.count,
+                 reinterpret_cast<const float*>(m_pointLights.colors));
     glUniform1fv(uSurfaceLightIntensitiesLocation,
-                 command.lightCount,
-                 command.lightIntensities);
+                 m_pointLights.count,
+                 m_pointLights.intensities);
     glUniform1fv(
-        uSurfaceLightRadiiLocation, command.lightCount, command.lightRadii);
+        uSurfaceLightRadiiLocation, m_pointLights.count, m_pointLights.radii);
   }
 
   glBindVertexArray(surfaceVao);
@@ -784,6 +787,8 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
 
 void OpenGLQuadRenderer::flushSolid()
 {
+  ZoneScopedN("GL: flushSolid");
+
   initialize();
 
   if (!initialized)
@@ -819,6 +824,8 @@ void OpenGLQuadRenderer::flushSolid()
 
 void OpenGLQuadRenderer::flushLit()
 {
+  ZoneScopedN("GL: flushLit");
+
   initialize();
 
   if (!initialized)
@@ -858,26 +865,26 @@ void OpenGLQuadRenderer::flushLit()
               key.lightColor.y,
               key.lightColor.z);
 
-  glUniform1i(uLightCountLocation, key.lightCount);
+  glUniform1i(uLightCountLocation, m_pointLights.count);
 
   glUniform1f(uSurfaceEffectTimeLocation, m_surfaceTime);
   glUniform1i(uSurfaceEffectLocation, key.surfaceEffect);
 
-  if (key.lightCount > 0)
+  if (m_pointLights.count > 0)
   {
     glUniform2fv(uLightPositionsLocation,
-                 key.lightCount,
-                 reinterpret_cast<const float*>(key.lightPositions));
+                 m_pointLights.count,
+                 reinterpret_cast<const float*>(m_pointLights.positions));
 
     glUniform3fv(uLightColorsLocation,
-                 key.lightCount,
-                 reinterpret_cast<const float*>(key.lightColors));
+                 m_pointLights.count,
+                 reinterpret_cast<const float*>(m_pointLights.colors));
 
     glUniform1fv(
-        uLightIntensitiesLocation, key.lightCount, key.lightIntensities);
+        uLightIntensitiesLocation, m_pointLights.count, m_pointLights.intensities);
 
-    glUniform1fv(uLightRadiiLocation, key.lightCount, key.lightRadii);
-    glUniform1fv(uLightHeightsLocation, key.lightCount, key.lightHeights);
+    glUniform1fv(uLightRadiiLocation, m_pointLights.count, m_pointLights.radii);
+    glUniform1fv(uLightHeightsLocation, m_pointLights.count, m_pointLights.heights);
   }
 
   glActiveTexture(GL_TEXTURE0);
@@ -1689,6 +1696,8 @@ void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
 
 void OpenGLQuadRenderer::flushCurrentPipeline()
 {
+  ZoneScopedN("GL: pipeline flush");
+
   switch (m_pipeline)
   {
   case Pipeline::SolidColor:
@@ -1954,5 +1963,11 @@ void main()
 }
 
 void OpenGLQuadRenderer::setSurfaceTime(float time) { m_surfaceTime = time; }
+
+void OpenGLQuadRenderer::setPointLights(const PointLightSet& lights)
+{
+  m_pointLights = lights;
+  m_pointLights.count = std::clamp(m_pointLights.count, 0, MaxShaderLights);
+}
 
 } // namespace sfs

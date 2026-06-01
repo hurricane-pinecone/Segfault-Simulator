@@ -40,6 +40,8 @@ void IsometricShadowSystem::markTerrainDirty()
 void IsometricShadowSystem::computeCommands(
     const IsometricRenderContext& context)
 {
+  ZoneScopedN("ShadowSystem: computeCommands");
+
   if (!context.ambientLighting)
   {
     flush();

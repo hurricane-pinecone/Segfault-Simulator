@@ -64,6 +64,8 @@ public:
 
   void setSurfaceTime(float time) override;
 
+  void setPointLights(const PointLightSet& lights) override;
+
 private:
   enum class Pipeline
   {
@@ -258,6 +260,8 @@ private:
   int uSurfaceLightRadiiLocation = -1;
 
   float m_surfaceTime = 0.0f;
+
+  PointLightSet m_pointLights;
 
   std::unordered_map<std::string, unsigned int> textureCache;
 

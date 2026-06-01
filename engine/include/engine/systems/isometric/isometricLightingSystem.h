@@ -20,9 +20,6 @@ public:
 
   const std::vector<IsometricPointLightSnapshot>& pointLights() const;
 
-  IsometricComputedLighting
-  computeLighting(const IsometricLightingSample& sample) const;
-
 private:
   Registry* m_registry = nullptr;
   IsometricAmbientLighting m_ambient;
