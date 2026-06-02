@@ -272,12 +272,22 @@ void IsometricRenderSystem::render()
   pointLightSet.count =
       std::min(static_cast<int>(pointLights.size()), MaxShaderLights);
 
+  // Light radius is authored in screen pixels; the lighting math runs in world
+  // tiles, so convert by the on-screen tile width. (Emitter height is converted
+  // to elevation levels on the GPU via uHeightScale.) Drop the worldScale factor
+  // here -- and the matching one in heightScale -- to make these world-scale
+  // independent.
+  const float tilePixelWidth =
+      static_cast<float>(proj.tileWidth) * proj.worldScale;
+  const float radiusPixelsToWorld =
+      tilePixelWidth > 0.0001f ? 1.0f / tilePixelWidth : 0.0f;
+
   for (int i = 0; i < pointLightSet.count; i++)
   {
     pointLightSet.positions[i] = pointLights[i].worldPosition;
     pointLightSet.colors[i] = pointLights[i].color;
     pointLightSet.intensities[i] = pointLights[i].intensity;
-    pointLightSet.radii[i] = pointLights[i].radius;
+    pointLightSet.radii[i] = pointLights[i].radius * radiusPixelsToWorld;
     pointLightSet.heights[i] = pointLights[i].height;
   }
 

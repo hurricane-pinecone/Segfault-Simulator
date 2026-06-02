@@ -103,6 +103,12 @@ private:
   void flushLit();
   void flushSpriteShadow();
 
+  // Binds the terrain heightmap to texture unit 2 and pushes its uniforms on the
+  // currently-bound program. Every path that does point-light occlusion must call
+  // this; otherwise the shader samples the heightmap from whatever state a prior
+  // draw happened to leave behind.
+  void bindHeightmapUniforms();
+
   void appendSolidVertices(const Quad& command);
   void appendLitVertices(const LitQuad& command);
   void appendSpriteShadowVertices(const FreeformQuad& command);

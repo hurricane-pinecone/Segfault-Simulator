@@ -53,7 +53,7 @@ public:
             .addComponent<sfs::ColliderComponent>(
                 glm::vec2{-0.15f, -0.15f}, glm::vec2{0.3f, 0.3f})
             .addComponent<sfs::LightEmitterComponent>(
-                10.0f, 1.0f, 32.0f, m_color)
+                640.0f, 1.0f, 32.0f, m_color)
             .addComponent<sfs::ShadowCasterComponent>()
             .addTag<sfs::SolidObject>();
 

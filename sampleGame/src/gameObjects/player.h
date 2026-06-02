@@ -31,7 +31,7 @@ public:
             .addComponent<sfs::ColliderComponent>(
                 glm::vec2{-0.25f, -0.25f}, glm::vec2{0.5f, 0.5f})
             .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0})
-            .addComponent<sfs::LightEmitterComponent>(10.0f, 1.0f, 32.0f)
+            .addComponent<sfs::LightEmitterComponent>(640.0f, 1.0f, 10.0f)
             .addComponent<sfs::ShadowCasterComponent>();
 
     // Camera

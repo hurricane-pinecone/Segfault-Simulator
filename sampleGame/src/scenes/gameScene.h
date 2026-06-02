@@ -7,6 +7,8 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
+class Player;
+
 class GameScene : public sfs::Scene
 {
 public:
@@ -36,4 +38,5 @@ private:
   int m_hoveredElevation = 0;
   bool m_hasHoveredTile = false;
   SunController m_sunController;
+  Player* m_player = nullptr;
 };
