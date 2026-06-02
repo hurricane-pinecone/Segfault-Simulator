@@ -1733,21 +1733,34 @@ else if (uSurfaceEffect == 4) // Sand
   vec3 lightDir = normalize(uLightDirection);
   float sunDiffuse = max(dot(normal, lightDir), 0.0);
 
-  float shadeSide =
-      smoothstep(0.0, 0.75, sunDiffuse);
+  // These normal maps are screen-space: every face shares roughly the same z, so
+  // tops and sides are told apart by the green channel (normal.y = "up on
+  // screen") — tops point up (~+0.8), side faces point down (~-0.4). Only a side
+  // face that is ALSO turned away from the sun is shaded, so terrain tops stay
+  // bright whatever the sun angle.
+  float upness = smoothstep(0.0, 0.5, normal.y);
+  float sunFacing = smoothstep(0.0, 0.6, sunDiffuse);
+  float shade = (1.0 - upness) * (1.0 - sunFacing);
 
-  float ambientShade =
-      mix(0.18, 1.0, shadeSide);
+  // Top faces dim slightly as the sun drops toward the horizon: a higher sun
+  // (lightDir.z) lets an up-facing surface catch more sky light. The top normal
+  // barely faces the sun horizontally, so tie this to the sun's elevation rather
+  // than the dot product. Kept subtle - noon tops read full, low-sun tops only
+  // soften - and applied only to up-facing surfaces so side faces are untouched.
+  float sunHeight = clamp(lightDir.z, 0.0, 1.0);
+  float ambientLevel = uAmbient * mix(mix(0.8, 1.0, sunHeight), 1.0, 1.0 - upness);
 
-  vec3 sunlight =
-      vec3(uAmbient * ambientShade) +
-      vec3(sunDiffuse * uDiffuseStrength);
+  // Lit faces get ambient + direct sun. A fully shaded side drops to the same
+  // brightness a cast terrain shadow leaves it at (direct sun removed), so a
+  // sprite's dark side reads as dark as the shadows on the ground. 1.0 -
+  // uDiffuseStrength mirrors the terrain shadow overlay (terrainShadowAlpha
+  // defaults to 1); never brighter than the ambient sky term.
+  float litLevel = ambientLevel + sunDiffuse * uDiffuseStrength;
+  float shadedLevel = min(1.0 - uDiffuseStrength, uAmbient);
 
-  float lightFloor =
-      mix(0.06, 0.82, clamp(uAmbient, 0.0, 1.0));
+  vec3 sunlight = vec3(mix(litLevel, shadedLevel, shade));
 
-  sunlight =
-      max(sunlight, vec3(lightFloor));
+  sunlight = max(sunlight, vec3(0.03));
 
   vec3 pointLight =
       calculatePointLighting(normal);
