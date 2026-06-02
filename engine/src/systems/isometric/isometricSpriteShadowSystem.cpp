@@ -602,6 +602,40 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
     const float lightHeightWorld =
         std::max(light.height / elevationStepPixels, 0.08f);
 
+    // Terrain taller than the light between it and the caster blocks the light,
+    // so the caster casts no shadow from it - the same occlusion the lit shader
+    // does for point-light illumination. The light sits at its tile's elevation
+    // plus its emitter height in levels.
+    int lightGround = 0;
+    context.terrainElevationGrid.tryGet(
+        context.gridCellOf(glm::floor(light.worldPosition)), lightGround);
+    const float lightLevel =
+        static_cast<float>(lightGround) + light.height / elevationStepPixels;
+
+    const glm::ivec2 casterTile = context.gridCellOf(glm::floor(worldSample));
+    const glm::ivec2 lightTile =
+        context.gridCellOf(glm::floor(light.worldPosition));
+
+    bool lightBlocked = false;
+    constexpr int OcclusionSteps = 24;
+    for (int s = 1; s < OcclusionSteps && !lightBlocked; s++)
+    {
+      const float t = static_cast<float>(s) / static_cast<float>(OcclusionSteps);
+      const glm::ivec2 tile = context.gridCellOf(
+          glm::floor(glm::mix(worldSample, light.worldPosition, t)));
+
+      if (tile == casterTile || tile == lightTile)
+        continue;
+
+      int e = 0;
+      if (context.terrainElevationGrid.tryGet(tile, e) &&
+          static_cast<float>(e) > lightLevel + 0.5f)
+        lightBlocked = true;
+    }
+
+    if (lightBlocked)
+      continue;
+
     float shadowLength = SpriteCasterHeightWorld * distance / lightHeightWorld;
     shadowLength =
         std::clamp(shadowLength, 0.15f, m_shadowSettings.spriteShadowMaxLength);

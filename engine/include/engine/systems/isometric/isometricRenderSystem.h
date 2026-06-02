@@ -112,7 +112,7 @@ private:
   float getWaveOffset(const glm::vec2& gridPosition) const;
 
   void rebuildTileElevationCache();
-  void rebuildTerrainElevationGridView();
+  void rebuildTerrainElevationGridView(const glm::ivec2& centerTile);
 
   void sortRenderCommands(std::vector<AnyRenderCommand>& commands);
 
@@ -135,6 +135,12 @@ private:
   std::vector<int> tileElevationGridData;
   TerrainElevationGridView tileElevationGridView;
   bool tileElevationCacheDirty = true;
+
+  // The heightmap covers more terrain than is on screen, so re-uploading it
+  // every tile-crossing is wasteful and each upload risks an occlusion flicker.
+  // Re-upload only once the camera has drifted this far from the last upload.
+  glm::ivec2 m_lastHeightmapUploadOrigin{0, 0};
+  bool m_heightmapUploaded = false;
 
   IsometricRenderContext m_context;
   IsometricLightingService m_lightingService;
