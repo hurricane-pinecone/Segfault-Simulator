@@ -41,12 +41,6 @@ namespace
 // intends.
 constexpr float kSubpassEpsilon = 1e-4f;
 
-// Re-upload the point-light heightmap only after the camera drifts this many
-// tiles. The loaded grid extends ~25 tiles past the screen edge, so a handful
-// of tiles of staleness stays well within coverage while cutting how often the
-// upload (and its occasional one-frame occlusion flicker) happens.
-constexpr int kHeightmapReuploadTiles = 5;
-
 float orderKey(const RenderOrder& order)
 {
   return order.depth + static_cast<float>(order.subpass) * kSubpassEpsilon;
@@ -165,6 +159,12 @@ void IsometricRenderSystem::setProjection(const IsometricProjection* projection)
   m_context.projection = projection;
 }
 
+void IsometricRenderSystem::setTerrainHeightSource(
+    const ITerrainHeightSource* source)
+{
+  m_terrainHeightSource = source;
+}
+
 IsometricRenderSystem::~IsometricRenderSystem() = default;
 
 void IsometricRenderSystem::create()
@@ -199,45 +199,44 @@ void IsometricRenderSystem::render()
 
   if (tileElevationCacheDirty)
   {
-    rebuildTileElevationCache();
+    // A terrain height source answers directly from the generator, so the ECS
+    // scan (one entity per tile) is only needed as the fallback when no source
+    // is wired in.
+    if (!m_terrainHeightSource)
+      rebuildTileElevationCache();
 
     // The camera grid position maps to the screen centre, so inverting it gives
-    // the tile the heightmap window should be centered on.
+    // the tile the heightmap window should be centered on. The window only needs
+    // rebuilding when the camera crosses a tile.
     const glm::ivec2 cameraTile =
         gridCellOf(proj.screenToWorld(proj.screenCenter, 0.0f));
     rebuildTerrainElevationGridView(cameraTile);
     tileElevationCacheDirty = false;
+  }
 
-    // Upload the elevation grid so the shader can occlude point lights against
-    // terrain. heightScale converts a light's emitter height into levels.
-    //
-    // The grid is rebuilt every tile-crossing for the shadow systems, but the
-    // heightmap covers ~25 tiles past the screen edge in every direction, so it
-    // only needs re-uploading once the camera has drifted a few tiles. Each
-    // upload risks a one-frame occlusion flicker, so re-upload as rarely as
-    // coverage allows.
-    const glm::ivec2 origin = tileElevationGridView.origin;
-    const bool drifted =
-        std::abs(origin.x - m_lastHeightmapUploadOrigin.x) >= kHeightmapReuploadTiles ||
-        std::abs(origin.y - m_lastHeightmapUploadOrigin.y) >= kHeightmapReuploadTiles;
+  // Re-upload the elevation grid every frame so the shader can occlude point
+  // lights against terrain. heightScale converts a light's emitter height into
+  // levels.
+  //
+  // This re-stamps the same window most frames, which looks wasteful, but it is
+  // deliberate: a glTexSubImage2D that lands after a gap of frames with no
+  // upload produces a one-frame glitch in what the shader samples on this GL
+  // driver (the occlusion flashes off for a frame). Uploading only on
+  // tile-crossings leaves exactly those gaps and flickers; re-stamping every
+  // frame never leaves a gap and is stable. The upload is tiny (49x49 R32F).
+  if (tileElevationGridView.valid())
+  {
+    const float elevationStepWorld =
+        static_cast<float>(proj.elevationStep) * proj.worldScale;
+    const float heightScale =
+        elevationStepWorld > 0.0001f ? 1.0f / elevationStepWorld : 0.0f;
 
-    if (!m_heightmapUploaded || drifted)
-    {
-      const float elevationStepWorld =
-          static_cast<float>(proj.elevationStep) * proj.worldScale;
-      const float heightScale =
-          elevationStepWorld > 0.0001f ? 1.0f / elevationStepWorld : 0.0f;
-
-      m_quadRenderer.setHeightmap(tileElevationGridData.data(),
-                                  tileElevationGridView.width,
-                                  tileElevationGridView.height,
-                                  tileElevationGridView.origin.x,
-                                  tileElevationGridView.origin.y,
-                                  heightScale);
-
-      m_lastHeightmapUploadOrigin = origin;
-      m_heightmapUploaded = true;
-    }
+    m_quadRenderer.setHeightmap(tileElevationGridData.data(),
+                                tileElevationGridView.width,
+                                tileElevationGridView.height,
+                                tileElevationGridView.origin.x,
+                                tileElevationGridView.origin.y,
+                                heightScale);
   }
 
   // Lights move (the player emits one), so refresh the list every frame. The
@@ -705,15 +704,15 @@ void IsometricRenderSystem::rebuildTerrainElevationGridView(
   tileElevationGridData.clear();
   tileElevationGridView = {};
 
-  if (tileElevationCache.empty())
+  if (!m_terrainHeightSource && tileElevationCache.empty())
     return;
 
-  // Build a fixed-size window centered on the camera rather than the cache's
-  // raw min/max. The cache briefly holds tiles that were unloaded but not yet
-  // destroyed, which would otherwise stretch the bounds, oscillate the grid
-  // size, and leave uncovered corner cells as the camera moves -- all of which
-  // flicker the point-light occlusion. A window a tile smaller than the loaded
-  // area on each side stays fully inside it, so every cell is always present.
+  // A fixed-size window centered on the camera. A height source answers every
+  // cell directly, so the window is always complete. The ECS fallback instead
+  // reads tiles that briefly linger after being unloaded or are missing while
+  // streaming in; a window a tile inside the loaded area on each side keeps the
+  // bounds stable, but its leading edge can still hole for a frame -- which is
+  // exactly the flicker the height source removes.
   constexpr int kHalfSpan = 24; // the terrain loads 25 tiles in each direction
   const glm::ivec2 min = centerTile - glm::ivec2(kHalfSpan);
   const int span = kHalfSpan * 2 + 1;
@@ -724,7 +723,16 @@ void IsometricRenderSystem::rebuildTerrainElevationGridView(
   {
     for (int x = 0; x < span; x++)
     {
-      const auto it = tileElevationCache.find(min + glm::ivec2(x, y));
+      const glm::ivec2 tile = min + glm::ivec2(x, y);
+
+      if (m_terrainHeightSource)
+      {
+        tileElevationGridData[y * span + x] =
+            m_terrainHeightSource->terrainHeightAt(tile.x, tile.y);
+        continue;
+      }
+
+      const auto it = tileElevationCache.find(tile);
 
       if (it != tileElevationCache.end())
         tileElevationGridData[y * span + x] = it->second;

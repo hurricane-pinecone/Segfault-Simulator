@@ -1571,7 +1571,8 @@ float terrainLevelAt(vec2 world)
 // mountain taller than the lamp casts a shadow. The fragment's and the lamp's
 // own tiles never occlude. The threshold is soft (a 1-level penumbra) and the
 // heightmap samples bilinearly, so the shadow edge isn't tile-blocky.
-float pointLightVisibility(vec2 fragXY, vec2 lightXY, float lightLevel)
+float pointLightVisibility(vec2 fragXY, vec2 lightXY, float fragLevel,
+                           float lightLevel)
 {
   if (uHeightmapSize.x < 1.0)
     return 1.0;
@@ -1581,6 +1582,10 @@ float pointLightVisibility(vec2 fragXY, vec2 lightXY, float lightLevel)
   // is NOT skipped: skipping it makes a moving light pop occlusion on/off in one
   // frame as it crosses a peak. Letting lightLevel handle it keeps that smooth.
   ivec2 fragTile = ivec2(floor(fragXY));
+
+  // A fragment outside the grid has no valid ground level; anchor the line of
+  // sight at the light's level there, which reduces to the old flat-plane test.
+  float anchorLevel = fragLevel < -1.0e8 ? lightLevel : fragLevel;
 
   // Dense, evenly-spaced samples (no per-fragment jitter). Jitter dithers away
   // streaks for a static light, but for a moving light it turns the penumbra
@@ -1599,7 +1604,14 @@ float pointLightVisibility(vec2 fragXY, vec2 lightXY, float lightLevel)
     if (sampleTile == fragTile)
       continue;
 
-    float over = terrainLevelAt(samplePos) - lightLevel;
+    // Occlude against the straight line of sight from the fragment's ground up
+    // to the light, not a flat plane at the light's height. Comparing to a flat
+    // lightLevel makes a ridge between the two flip occlusion on/off in one frame
+    // as the light's level sweeps across the ridge height (a moving light "pops"
+    // crossing a peak). The interpolated line of sight rises smoothly along the
+    // ray, so that transition becomes a continuous penumbra instead of a flash.
+    float lineOfSight = mix(anchorLevel, lightLevel, t);
+    float over = terrainLevelAt(samplePos) - lineOfSight;
     visibility = min(visibility, 1.0 - smoothstep(0.5, 1.5, over));
   }
 
@@ -1718,6 +1730,10 @@ vec3 calculatePointLighting(vec3 normal)
   float totalWeight = 0.0;
   float strongestAmount = 0.0;
 
+  // The fragment's own ground level anchors the occlusion line of sight; it is
+  // the same for every light, so sample it once.
+  float fragLevel = terrainLevelAt(vWorldPosition);
+
   for (int i = 0; i < MAX_LIGHTS; i++)
   {
     if (i >= uLightCount)
@@ -1741,8 +1757,8 @@ vec3 calculatePointLighting(vec3 normal)
     float lightLevel =
         terrainLevelAt(lightGroundPos) + uLightHeights[i] * uHeightScale;
 
-    float visibility =
-        pointLightVisibility(vWorldPosition, uLightPositions[i], lightLevel);
+    float visibility = pointLightVisibility(
+        vWorldPosition, uLightPositions[i], fragLevel, lightLevel);
 
     if (visibility <= 0.001)
       continue;
@@ -2523,11 +2539,10 @@ void OpenGLQuadRenderer::setHeightmap(const int* elevations,
   glActiveTexture(GL_TEXTURE2);
   glBindTexture(GL_TEXTURE_2D, heightmapTexture);
 
-  // Keep one fixed-size texture and update it in place. The grid size oscillates
-  // by a tile as the camera moves, so reallocating with glTexImage2D every frame
-  // thrashes the texture and flickers the occlusion; glTexSubImage2D into a
-  // larger fixed texture avoids that. Reallocation only happens if the grid ever
-  // outgrows the current texture (rare).
+  // Allocate the fixed-size texture once. The grid size oscillates by a tile as
+  // the camera moves, so a larger fixed texture lets us always update in place.
+  // Reallocation only happens if the grid ever outgrows the current texture
+  // (rare).
   if (texSize > m_heightmapTexSize)
   {
     const std::vector<float> empty(static_cast<size_t>(texSize) * texSize,
@@ -2552,16 +2567,26 @@ void OpenGLQuadRenderer::setHeightmap(const int* elevations,
     m_heightmapTexSize = texSize;
   }
 
-  // One float texel per tile holds the tile's elevation in levels. Empty tiles
-  // get a finite low value so they never occlude and bilinear sampling near them
-  // stays sane (the real empty sentinel is INT_MIN).
-  std::vector<float> texels(static_cast<size_t>(width) * height);
-  for (size_t i = 0; i < texels.size(); i++)
-    texels[i] =
+  // Convert to float and upload the grid region synchronously. A synchronous
+  // glTexSubImage2D from client memory completes before the draws that sample it
+  // this frame, so the texture and the origin uniform never disagree. Empty
+  // tiles get a finite low value so they never occlude (the sentinel is INT_MIN).
+  const size_t count = static_cast<size_t>(width) * height;
+  m_heightmapScratch.resize(count);
+
+  for (size_t i = 0; i < count; i++)
+    m_heightmapScratch[i] =
         elevations[i] < -100000 ? -1000.0f : static_cast<float>(elevations[i]);
 
-  glTexSubImage2D(
-      GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED, GL_FLOAT, texels.data());
+  glTexSubImage2D(GL_TEXTURE_2D,
+                  0,
+                  0,
+                  0,
+                  width,
+                  height,
+                  GL_RED,
+                  GL_FLOAT,
+                  m_heightmapScratch.data());
 
   glBindTexture(GL_TEXTURE_2D, 0);
   glActiveTexture(GL_TEXTURE0);

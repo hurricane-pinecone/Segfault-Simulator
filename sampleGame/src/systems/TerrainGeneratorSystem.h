@@ -2,6 +2,7 @@
 
 #include "engine/ecs/system.h"
 #include "engine/noise/noise.h"
+#include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <unordered_map>
@@ -27,11 +28,20 @@ struct TilePosHash
   }
 };
 
-class TerrainGeneratorSystem : public sfs::System
+class TerrainGeneratorSystem : public sfs::System,
+                               public sfs::ITerrainHeightSource
 {
 public:
   explicit TerrainGeneratorSystem(sfs::Scene& scene);
   void update(double deltaTime) override;
+
+  // Terrain elevation is a pure function of the tile coordinate, so it is known
+  // for every tile the moment it is asked for -- no entity needs to exist yet.
+  // This feeds the point-light occlusion heightmap a hole-free window.
+  int terrainHeightAt(int tileX, int tileY) const override
+  {
+    return getElevation(tileX, tileY);
+  }
 
 private:
   void update(const glm::vec2& cameraWorldPos);
