@@ -289,6 +289,15 @@ void IsometricRenderSystem::render()
     pointLightSet.intensities[i] = pointLights[i].intensity;
     pointLightSet.radii[i] = pointLights[i].radius * radiusPixelsToWorld;
     pointLightSet.heights[i] = pointLights[i].height;
+
+    // The light's ground is the eased elevation of the emitting actor (so a
+    // moving light ramps between tile heights), falling back to the raw tile
+    // elevation for lights that aren't tracked actors.
+    const auto elevationIt = m_actorElevation.find(pointLights[i].entityId);
+    pointLightSet.groundLevels[i] =
+        elevationIt != m_actorElevation.end()
+            ? elevationIt->second
+            : static_cast<float>(getTileElevationAt(pointLights[i].worldPosition));
   }
 
   m_quadRenderer.setPointLights(pointLightSet);
@@ -340,7 +349,7 @@ void IsometricRenderSystem::render()
     const glm::vec2 groundSamplePosition =
         getGroundSamplePosition(entity, transform);
 
-    const int elevationLevel =
+    const float elevationLevel =
         getRenderElevationLevel(entity, groundSamplePosition);
 
     const int elevationOffset = static_cast<int>(std::round(
@@ -636,19 +645,71 @@ bool IsometricRenderSystem::isTileEntity(const Entity& entity) const
   return entity.hasComponent<IsometricTile>();
 }
 
-int IsometricRenderSystem::getRenderElevationLevel(
+float IsometricRenderSystem::getRenderElevationLevel(
     const Entity& entity,
     const glm::vec2& samplePosition) const
 {
   if (isTileEntity(entity))
   {
     if (entity.hasComponent<ElevationComponent>())
-      return entity.getComponent<ElevationComponent>().level;
+      return static_cast<float>(entity.getComponent<ElevationComponent>().level);
 
-    return 0;
+    return 0.0f;
   }
 
-  return getTileElevationAt(samplePosition);
+  // Actors ride the eased elevation so a step up/down ramps instead of snapping.
+  return smoothedElevationOf(entity, samplePosition);
+}
+
+float IsometricRenderSystem::smoothedElevationOf(
+    const Entity& entity,
+    const glm::vec2& samplePosition) const
+{
+  const auto it = m_actorElevation.find(entity.getId());
+
+  if (it != m_actorElevation.end())
+    return it->second;
+
+  return static_cast<float>(getTileElevationAt(samplePosition));
+}
+
+void IsometricRenderSystem::update(double deltaTime)
+{
+  updateActorElevations(deltaTime);
+}
+
+void IsometricRenderSystem::updateActorElevations(double deltaTime)
+{
+  // Without a populated elevation window every tile reads as 0; wait for it so
+  // actors initialise (snap) to their true height instead of easing up from 0.
+  if (!tileElevationGridView.valid())
+    return;
+
+  // Frame-rate independent exponential ease. ~0.08s to close most of the gap, so
+  // a step up/down reads as a quick smooth move rather than a teleport.
+  constexpr float kElevationEaseRate = 14.0f;
+  const float factor = static_cast<float>(1.0 - std::exp(-deltaTime * kElevationEaseRate));
+
+  for (const auto& entity : getEntities())
+  {
+    if (isTileEntity(entity))
+      continue;
+
+    const auto& transform = entity.getComponent<TransformComponent>();
+
+    // Target is the discrete tile the actor stands on (floor()), matching the
+    // gameplay elevation -- the easing only smooths how the render/light catch up
+    // to it, so the actor never floats up a cliff before it's actually on top.
+    const float target =
+        static_cast<float>(getTileElevationAt(glm::floor(transform.position)));
+
+    const auto it = m_actorElevation.find(entity.getId());
+
+    if (it == m_actorElevation.end())
+      m_actorElevation.emplace(entity.getId(), target); // snap on first sight
+    else
+      it->second += (target - it->second) * factor;
+  }
 }
 
 glm::vec2 IsometricRenderSystem::getGroundSamplePosition(

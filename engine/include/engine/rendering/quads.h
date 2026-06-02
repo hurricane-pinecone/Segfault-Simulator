@@ -70,6 +70,12 @@ struct PointLightSet
   float intensities[MaxShaderLights] = {};
   float radii[MaxShaderLights] = {};
   float heights[MaxShaderLights] = {};
+
+  // The emitter's ground elevation in levels (terrain height under the light).
+  // Supplied by the CPU rather than sampled from the heightmap in the shader so a
+  // moving emitter can ease between tile elevations instead of snapping a whole
+  // level as it crosses a tile border.
+  float groundLevels[MaxShaderLights] = {};
 };
 
 struct LitQuad : TexturedQuad

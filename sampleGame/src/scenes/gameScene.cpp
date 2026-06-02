@@ -113,12 +113,6 @@ void GameScene::onRender()
         m_hoveredElevation,
         SDL_Color{255, 255, 0, 255});
   }
-
-  // DEBUG: mark the player's light world position. The drawn diamond's top
-  // corner sits exactly on the light origin, so it should land on the sprite's
-  // feet.
-  getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
-      position, SDL_Color{0, 255, 255, 255});
 }
 
 void GameScene::onUpdate(double deltaTime)
