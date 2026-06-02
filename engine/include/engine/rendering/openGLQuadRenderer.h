@@ -11,6 +11,7 @@
 #include "glm/glm/ext/vector_float4.hpp"
 #include <string>
 #include <unordered_map>
+#include <vector>
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
 #else
@@ -285,9 +286,16 @@ private:
   int uSurfaceEffectTimeLocation = -1;
 
   // Terrain heightmap used to occlude point lights against terrain. A fixed-size
-  // texture updated in place (glTexSubImage2D); the render system throttles how
-  // often it re-uploads so the per-upload occlusion flicker stays rare.
+  // texture whose grid region is refreshed in place with a synchronous
+  // glTexSubImage2D, which the render system re-stamps every frame: a sparse
+  // upload that lands after a gap of idle frames glitches the sampled texture
+  // for one frame on the macOS GL driver (flashing the occlusion), and uploading
+  // every frame leaves no such gap. The copy is tiny (one R32F texel per tile)
+  // and in-order, so it can't desync from the matching origin uniform.
+  // m_heightmapScratch holds the float conversion so the upload doesn't allocate
+  // each time.
   unsigned int heightmapTexture = 0;
+  std::vector<float> m_heightmapScratch;
   int m_heightmapTexSize = 0; // allocated texture dimension (fixed, >= grid)
   int m_heightmapWidth = 0;
   int m_heightmapHeight = 0;

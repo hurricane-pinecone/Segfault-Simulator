@@ -49,6 +49,11 @@ void GameScene::onInit()
   addSystem<sfs::IsometricWaterSystem>();
 
   addSystem<SunController>();
+
+  // Feed terrain heights straight from the generator so the point-light
+  // occlusion heightmap never holes while tiles stream in.
+  getSystem<sfs::IsometricRenderSystem>().setTerrainHeightSource(
+      &getSystem<TerrainGeneratorSystem>());
 }
 
 void GameScene::createEntities()

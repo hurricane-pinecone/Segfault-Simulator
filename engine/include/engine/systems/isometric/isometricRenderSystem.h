@@ -5,6 +5,7 @@
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/iQuadRenderer.h"
+#include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/renderQueue.h"
 #include "engine/rendering/util/isometric/camera.h"
@@ -59,6 +60,11 @@ public:
   ~IsometricRenderSystem();
 
   void setProjection(const IsometricProjection* projection);
+
+  // Authoritative terrain heights for the point-light occlusion heightmap. When
+  // set, the heightmap samples this instead of the per-tile ECS entities, so its
+  // window is hole-free even while terrain streams in (see ITerrainHeightSource).
+  void setTerrainHeightSource(const ITerrainHeightSource* source);
 
   void setWaveTime(float time);
   void setWaveEnabled(bool enabled);
@@ -136,11 +142,9 @@ private:
   TerrainElevationGridView tileElevationGridView;
   bool tileElevationCacheDirty = true;
 
-  // The heightmap covers more terrain than is on screen, so re-uploading it
-  // every tile-crossing is wasteful and each upload risks an occlusion flicker.
-  // Re-upload only once the camera has drifted this far from the last upload.
-  glm::ivec2 m_lastHeightmapUploadOrigin{0, 0};
-  bool m_heightmapUploaded = false;
+  // Optional authoritative terrain heights. When present the heightmap window is
+  // filled from this (complete, no streaming holes) rather than the ECS tiles.
+  const ITerrainHeightSource* m_terrainHeightSource = nullptr;
 
   IsometricRenderContext m_context;
   IsometricLightingService m_lightingService;
