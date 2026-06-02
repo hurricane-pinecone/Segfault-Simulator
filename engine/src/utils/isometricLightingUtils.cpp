@@ -26,6 +26,18 @@ glm::vec2 gridDirectionToIsometricDirection(const glm::vec2& worldDir,
   return glm::normalize(isoDir);
 }
 
+float projectedShadowLength(float heightLevels,
+                            float projectionFactor,
+                            float maxLength)
+{
+  if (heightLevels <= 0.0f)
+    return 0.0f;
+
+  const float length = heightLevels * projectionFactor;
+
+  return std::min(length, maxLength * std::max(1.0f, heightLevels));
+}
+
 std::vector<IsometricShadowResult>
 computeIsometricShadows(const std::vector<IsometricPointLightSnapshot>& lights,
                         const glm::vec3& sunDirection,

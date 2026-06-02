@@ -33,7 +33,7 @@ struct IsometricShadowResult
 
 struct IsometricShadowSettings
 {
-  float terrainShadowMaxLength = 3.0f;
+  float terrainShadowMaxLength = 1.25f;
   float spriteShadowMaxLength = 1.25f;
 
   float terrainShadowAlpha = 1.0f;
@@ -44,6 +44,15 @@ glm::vec2 gridDirectionToIsometricDirection(const glm::vec2& worldDir,
                                             float worldScale,
                                             int tileWidth,
                                             int tileHeight);
+
+// Length a directional (sun) shadow reaches for a caster of the given height in
+// elevation levels. Shared by terrain and sprite shadows so an edge and a sprite
+// of the same height throw the same shadow. projectionFactor is the horizontal
+// reach per unit height (horizontalAmount / sunHeight); the cap scales with
+// height so tall casters keep their reach.
+float projectedShadowLength(float heightLevels,
+                            float projectionFactor,
+                            float maxLength);
 
 std::vector<IsometricShadowResult>
 computeIsometricShadows(const std::vector<IsometricPointLightSnapshot>& lights,

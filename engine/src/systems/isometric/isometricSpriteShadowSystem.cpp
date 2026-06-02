@@ -6,6 +6,7 @@
 #include "engine/components/transformComponent.h"
 #include "engine/rendering/util/isometric/geometry.h"
 #include "engine/utils/algorithms/gridDDA.h"
+#include "engine/utils/isometricLightingUtils.h"
 #include "engine/utils/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
@@ -546,15 +547,12 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
         // Shadow length is the caster's actual height projected by the sun. A
         // caster taller than a wall therefore climbs the whole wall and spills
         // onto the ground above; max climb (right beside the wall) equals the
-        // caster height in levels.
-        float shadowLength = casterHeightLevels * horizontalAmount / sunHeight;
-
-        // Cap to avoid runaway shadows at grazing sun, but scale the cap with
-        // caster height so tall casters keep their reach.
-        shadowLength =
-            std::min(shadowLength,
-                     m_shadowSettings.spriteShadowMaxLength *
-                         std::max(1.0f, casterHeightLevels));
+        // caster height in levels. Shared with terrain shadows so equal heights
+        // throw equal-length shadows.
+        const float shadowLength =
+            projectedShadowLength(casterHeightLevels,
+                                  horizontalAmount / sunHeight,
+                                  m_shadowSettings.spriteShadowMaxLength);
 
         const float alpha = m_shadowSettings.spriteShadowAlpha * diffuse;
 
@@ -608,9 +606,13 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
     shadowLength =
         std::clamp(shadowLength, 0.15f, m_shadowSettings.spriteShadowMaxLength);
 
-    // Point-light sprite shadows stay flat for now (climb is phase 3).
+    // Point-light shadows climb walls like the sun's, costing one budget unit
+    // per elevation level. The textured-shadow UV already has a point-light
+    // (perspective) branch, so the same wall projection applies.
+    constexpr float climbScale = 1.0f;
+
     constructTexturedSpriteShadow(
-        toCaster, shadowLength, alpha, 0.0f, &light.worldPosition);
+        toCaster, shadowLength, alpha, climbScale, &light.worldPosition);
   }
 }
 
