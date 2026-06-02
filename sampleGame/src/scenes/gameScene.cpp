@@ -40,7 +40,9 @@ void GameScene::onInit()
 
   addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
 
-  sfs::IsometricShadowSettings shadowSettings = {10.0f, 10.0f};
+  // Terrain and sprite shadows share one length so equal heights match.
+  constexpr float shadowMaxLength = 3.5f;
+  sfs::IsometricShadowSettings shadowSettings = {shadowMaxLength, shadowMaxLength};
 
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);

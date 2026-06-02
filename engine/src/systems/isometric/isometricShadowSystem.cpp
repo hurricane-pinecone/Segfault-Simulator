@@ -551,16 +551,14 @@ float IsometricShadowSystem::calculateTerrainShadowLength(
     float sunHeight,
     float maxShadowLength)
 {
-  const int heightDelta = edge.topElevation - edge.bottomElevation;
+  // sunHeight here is the effective sun height (sun height / horizontal
+  // amount), so its reciprocal is the horizontal reach per unit height. Shared
+  // with sprite shadows so an edge and a sprite of the same height match.
+  const float heightDelta =
+      static_cast<float>(edge.topElevation - edge.bottomElevation);
 
-  if (heightDelta <= 0)
-    return 0.0f;
-
-  constexpr float TerrainShadowLengthScale = 1.35f;
-
-  return std::min(
-      maxShadowLength,
-      static_cast<float>(heightDelta) * TerrainShadowLengthScale / sunHeight);
+  return projectedShadowLength(
+      heightDelta, 1.0f / std::max(sunHeight, 0.001f), maxShadowLength);
 }
 
 void IsometricShadowSystem::buildTerrainEdgeShadowItems(
