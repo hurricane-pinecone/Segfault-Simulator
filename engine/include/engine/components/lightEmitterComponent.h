@@ -4,13 +4,31 @@
 
 namespace sfs
 {
+
+// A point light emitted from the entity's transform position.
+//
+// Units (resolved in IsometricRenderSystem against the active projection):
+//   radius    - reach, in screen pixels. Converted to world tiles for the
+//               lighting math by dividing by the on-screen tile width
+//               (tileWidth * worldScale). Beyond it the light contributes
+//               nothing.
+//   intensity - brightness multiplier (0 = off, 1 = full); unitless.
+//   height    - emitter height above the tile it sits on, in screen pixels.
+//               Converted to elevation levels for terrain occlusion by dividing
+//               by the on-screen level height (elevationStep * worldScale), and
+//               also tilts the per-pixel diffuse term.
+//   color     - linear RGB tint of the light.
+//
+// radius and height are screen pixels, so world scale currently affects both
+// (the conversions include worldScale). Drop that factor in the render system
+// to make them world-scale independent.
 struct LightEmitterComponent
 {
 
   float intensity = 1.0f;
-  float radius = 10.0f;
-  float height;
-  glm::vec3 color;
+  float radius = 640.0f;
+  float height = 64.0f;
+  glm::vec3 color{1.0f, 0.9f, 0.7f};
 
   LightEmitterComponent() = default;
 

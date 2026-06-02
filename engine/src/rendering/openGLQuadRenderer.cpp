@@ -1193,6 +1193,8 @@ void OpenGLQuadRenderer::flushLit()
     glUniform1fv(uLightHeightsLocation, m_pointLights.count, m_pointLights.heights);
   }
 
+  bindHeightmapUniforms();
+
   glActiveTexture(GL_TEXTURE0);
 
   glBindVertexArray(vao);
@@ -1418,19 +1420,7 @@ void OpenGLQuadRenderer::drawQuadInternal(
     glUniform1fv(uLightHeightsLocation, clampedLightCount, lightHeights);
   }
 
-  // Terrain heightmap for point-light occlusion (texture unit 2).
-  glActiveTexture(GL_TEXTURE2);
-  glBindTexture(GL_TEXTURE_2D, heightmapTexture);
-  glUniform1i(uHeightmapLocation, 2);
-  glUniform2f(uHeightmapOriginLocation,
-              static_cast<float>(m_heightmapOriginX),
-              static_cast<float>(m_heightmapOriginY));
-  glUniform2f(uHeightmapSizeLocation,
-              static_cast<float>(m_heightmapWidth),
-              static_cast<float>(m_heightmapHeight));
-  glUniform1f(uHeightmapTexSizeLocation,
-              static_cast<float>(m_heightmapTexSize));
-  glUniform1f(uHeightScaleLocation, m_heightScale);
+  bindHeightmapUniforms();
 
   glActiveTexture(GL_TEXTURE0);
 
@@ -1443,6 +1433,23 @@ void OpenGLQuadRenderer::drawQuadInternal(
                GL_DYNAMIC_DRAW);
 
   glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+// Terrain heightmap for point-light occlusion (texture unit 2).
+void OpenGLQuadRenderer::bindHeightmapUniforms()
+{
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, heightmapTexture);
+  glUniform1i(uHeightmapLocation, 2);
+  glUniform2f(uHeightmapOriginLocation,
+              static_cast<float>(m_heightmapOriginX),
+              static_cast<float>(m_heightmapOriginY));
+  glUniform2f(uHeightmapSizeLocation,
+              static_cast<float>(m_heightmapWidth),
+              static_cast<float>(m_heightmapHeight));
+  glUniform1f(uHeightmapTexSizeLocation,
+              static_cast<float>(m_heightmapTexSize));
+  glUniform1f(uHeightScaleLocation, m_heightScale);
 }
 
 void OpenGLQuadRenderer::setViewportSize(int width, int height)
@@ -1566,26 +1573,67 @@ float terrainLevelAt(vec2 world)
   return texture(uHeightmap, texel / uHeightmapTexSize).r;
 }
 
+// Elevation of the exact tile a position stands on, with no bilinear blending.
+// Used to anchor a light/fragment to its own tile: a linear sample near a cliff
+// bleeds toward the taller neighbour, which would raise the anchor several levels
+// and let the light cast over terrain it is standing at the foot of.
+//
+// Sampling the tile CENTRE with the normal bilinear fetch returns that tile's
+// own value (the centre lands exactly on the texel centre, weight 1), so it is
+// effectively a nearest read without needing texelFetch -- which is unreliable
+// on the legacy GL driver here (the heightmap reads back garbage and disables
+// occlusion entirely).
+float terrainTileLevelAt(vec2 world)
+{
+  if (uHeightmapSize.x < 1.0 || uHeightmapSize.y < 1.0)
+    return -1e9;
+
+  vec2 texel = world - uHeightmapOrigin;
+
+  if (texel.x < 0.0 || texel.x >= uHeightmapSize.x || texel.y < 0.0 ||
+      texel.y >= uHeightmapSize.y)
+    return -1e9;
+
+  vec2 tileCentre = floor(texel) + 0.5;
+  return texture(uHeightmap, tileCentre / uHeightmapTexSize).r;
+}
+
 // How much of the light reaches the fragment, 0 (fully blocked) .. 1 (clear).
 // Terrain taller than the lamp strictly between the two blocks it, i.e. a
-// mountain taller than the lamp casts a shadow. The fragment's and the lamp's
-// own tiles never occlude. The threshold is soft (a 1-level penumbra) and the
-// heightmap samples bilinearly, so the shadow edge isn't tile-blocky.
-float pointLightVisibility(vec2 fragXY, vec2 lightXY, float fragLevel,
+// mountain taller than the lamp casts a shadow. The fragment's own tile never
+// occludes. The shadow edge is soft (a ~1-level penumbra) and the heightmap
+// samples bilinearly, so it isn't tile-blocky.
+//
+// This is a horizon-angle test: terrain blocks the light where its elevation
+// ANGLE seen from the fragment's ground rises above the angle to the light, not
+// where it crosses a straight elevation lerp between the two ends. The lerp
+// degenerates for a fragment high on a plateau -- near the fragment the sight
+// line starts at the fragment's own (high) elevation, so an equally tall ridge
+// barely pokes above it and the light leaks across the whole plateau. Comparing
+// angles (height gained per tile of distance) anchors every occluder to the
+// fragment, so a flat ridge (angle 0) still beats a light that sits below the
+// fragment (negative angle) and the far side stays dark.
+float pointLightVisibility(vec2 fragXY, vec2 lightXY, float fragGround,
                            float lightLevel)
 {
   if (uHeightmapSize.x < 1.0)
     return 1.0;
 
-  // The fragment stands on its own tile, so it never self-occludes. The light's
-  // own tile is handled by lightLevel (terrain there sits below the light), so it
-  // is NOT skipped: skipping it makes a moving light pop occlusion on/off in one
-  // frame as it crosses a peak. Letting lightLevel handle it keeps that smooth.
   ivec2 fragTile = ivec2(floor(fragXY));
 
-  // A fragment outside the grid has no valid ground level; anchor the line of
-  // sight at the light's level there, which reduces to the old flat-plane test.
-  float anchorLevel = fragLevel < -1.0e8 ? lightLevel : fragLevel;
+  // A fragment outside the grid has no valid ground; fall back to a flat plane at
+  // the light's height there.
+  float anchor = fragGround < -1.0e8 ? lightLevel : fragGround;
+
+  vec2 toLight = lightXY - fragXY;
+  float distTotal = length(toLight);
+
+  if (distTotal < 1.0e-4)
+    return 1.0;
+
+  // Angle (levels per tile of horizontal distance) from the fragment's ground up
+  // to the light. Negative when the light sits below the fragment.
+  float lightAngle = (lightLevel - anchor) / distTotal;
 
   // Dense, evenly-spaced samples (no per-fragment jitter). Jitter dithers away
   // streaks for a static light, but for a moving light it turns the penumbra
@@ -1593,29 +1641,30 @@ float pointLightVisibility(vec2 fragXY, vec2 lightXY, float fragLevel,
   // march removes the streaks without that flicker.
   const int STEPS = 48;
 
-  float visibility = 1.0;
+  float maxAngle = -1.0e9;
 
   for (int s = 0; s < STEPS; s++)
   {
     float t = (float(s) + 0.5) / float(STEPS);
     vec2 samplePos = mix(fragXY, lightXY, t);
-    ivec2 sampleTile = ivec2(floor(samplePos));
 
-    if (sampleTile == fragTile)
+    if (ivec2(floor(samplePos)) == fragTile)
       continue;
 
-    // Occlude against the straight line of sight from the fragment's ground up
-    // to the light, not a flat plane at the light's height. Comparing to a flat
-    // lightLevel makes a ridge between the two flip occlusion on/off in one frame
-    // as the light's level sweeps across the ridge height (a moving light "pops"
-    // crossing a peak). The interpolated line of sight rises smoothly along the
-    // ray, so that transition becomes a continuous penumbra instead of a flash.
-    float lineOfSight = mix(anchorLevel, lightLevel, t);
-    float over = terrainLevelAt(samplePos) - lineOfSight;
-    visibility = min(visibility, 1.0 - smoothstep(0.5, 1.5, over));
+    // Clamp the lever arm so the first ring of samples just outside the fragment
+    // tile can't blow the angle up to infinity.
+    float d = max(distTotal * t, 0.5);
+    float terrainAngle = (terrainLevelAt(samplePos) - anchor) / d;
+    maxAngle = max(maxAngle, terrainAngle);
   }
 
-  return visibility;
+  // How far (in angle) the highest occluder rises above the line to the light.
+  // Feathering in ANGLE space keeps the penumbra a consistent softness at any
+  // light distance (the level-equivalent width would shrink with range and read
+  // as a hard edge far from the light). The wide band also smears the per-tile
+  // anchor steps into a gradient, so the lit->dark transition is gradual.
+  float over = maxAngle - lightAngle;
+  return 1.0 - smoothstep(0.0, 0.30, over);
 }
 
 float hash21(vec2 p)
@@ -1730,9 +1779,17 @@ vec3 calculatePointLighting(vec3 normal)
   float totalWeight = 0.0;
   float strongestAmount = 0.0;
 
-  // The fragment's own ground level anchors the occlusion line of sight; it is
-  // the same for every light, so sample it once.
-  float fragLevel = terrainLevelAt(vWorldPosition);
+  // The fragment's own tile elevation anchors the OCCLUSION ray: use the discrete
+  // tile level (not a bilinear sample that lifts toward taller neighbours and
+  // bleeds light up cliff feet). Same for every light, so sample once.
+  float fragGround = terrainTileLevelAt(vWorldPosition);
+
+  // The distance ATTENUATION (the visible lit->dark pool edge) instead uses a
+  // bilinear ground so the falloff ramps continuously across elevation steps
+  // rather than jumping a whole level per tile. Attenuation is just a distance,
+  // so the bilinear lift that would bleed the occlusion is harmless here, and the
+  // smooth gradient is what reads as production-grade rather than blocky.
+  float fragGroundSmooth = terrainLevelAt(vWorldPosition);
 
   for (int i = 0; i < MAX_LIGHTS; i++)
   {
@@ -1740,38 +1797,62 @@ vec3 calculatePointLighting(vec3 normal)
       break;
 
     vec2 delta = uLightPositions[i] - vWorldPosition;
-    float dist = length(delta);
+    float distXY = length(delta);
 
-    if (dist >= uLightRadii[i])
+    // Cheap horizontal reject (the full 3D distance only grows from here).
+    if (distXY >= uLightRadii[i])
       continue;
 
     // Terrain between the fragment and the light blocks it, the same way a
-    // mountain blocks the sun. The light sits at its tile's elevation plus its
-    // emitter height (in levels). Sample the light's ground clamped into the
-    // grid so a light near/just past the loaded edge (e.g. as terrain streams
-    // while moving) never reads the out-of-bounds sentinel - that would flip the
-    // whole light's occlusion for a frame and flash its shadowed area bright.
+    // mountain blocks the sun. The light sits at its own tile's elevation plus
+    // its emitter height (in levels). Anchor to the tile elevation (not a linear
+    // sample) so a light at the foot of a cliff isn't lifted toward the cliff top
+    // and made to shine over it. Clamp the lookup into the grid so a light near/
+    // just past the loaded edge never reads the out-of-bounds sentinel - that
+    // would flip the whole light's occlusion for a frame and flash it bright.
     vec2 lightGroundPos = clamp(uLightPositions[i],
                                 uHeightmapOrigin + 0.5,
                                 uHeightmapOrigin + uHeightmapSize - 0.5);
     float lightLevel =
-        terrainLevelAt(lightGroundPos) + uLightHeights[i] * uHeightScale;
+        terrainTileLevelAt(lightGroundPos) + uLightHeights[i] * uHeightScale;
+
+    // A point light is 3D: fold the elevation gap between the light and the
+    // fragment's ground into the distance. Without this the light is a flat disc
+    // that lights a whole mountain face at full strength just because its XY
+    // distance is small -- it "climbs" and bleeds over tall terrain regardless of
+    // height. LEVEL_TO_TILE is how many tiles of reach one elevation level costs;
+    // higher = the light hugs the ground more and climbs tall terrain less.
+    const float LEVEL_TO_TILE = 1.0;
+    float fragGroundSafe =
+        fragGroundSmooth < -1.0e8 ? lightLevel : fragGroundSmooth;
+    float dz = (lightLevel - fragGroundSafe) * LEVEL_TO_TILE;
+    float dist = sqrt(distXY * distXY + dz * dz);
+
+    if (dist >= uLightRadii[i])
+      continue;
 
     float visibility = pointLightVisibility(
-        vWorldPosition, uLightPositions[i], fragLevel, lightLevel);
+        vWorldPosition, uLightPositions[i], fragGround, lightLevel);
 
     if (visibility <= 0.001)
       continue;
 
-    float attenuation = 1.0 - dist / uLightRadii[i];
-    attenuation = clamp(attenuation, 0.0, 1.0);
-    attenuation = pow(attenuation, 1.35);
+    // Smootherstep falloff (3rd-order ease at both ends) so the pool fades into
+    // darkness with no hard ring at the radius and no abrupt onset -- a plain
+    // linear or pow() ramp leaves a visible edge.
+    float reach = clamp(1.0 - dist / uLightRadii[i], 0.0, 1.0);
+    float attenuation = reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0);
 
-    vec3 lightVector = vec3(delta.x, delta.y, uLightHeights[i] * 0.65);
+    // The vertical leg of the light vector is the same elevation gap (dz, in
+    // tiles) used for the 3D distance, NOT the raw emitter height in pixels.
+    // Mixing pixels into a world-tile vector made the direction nonsense and the
+    // height slider near-inert; sharing dz means raising the emitter genuinely
+    // tilts the light more overhead.
+    vec3 lightVector = vec3(delta.x, delta.y, max(dz, 0.0));
     vec3 pointDir = normalize(lightVector);
 
     float ndotl = max(dot(normal, pointDir), 0.0);
-    float diffuse = mix(0.25, 1.0, pow(ndotl, 0.55));
+    float diffuse = mix(0.12, 1.0, pow(ndotl, 0.8));
 
     float amount =
         uLightIntensities[i] *

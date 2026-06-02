@@ -1,6 +1,7 @@
 
 #include "gameScene.h"
 #include "engine/TextRenderer/textRenderer.h"
+#include "engine/components/lightEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
 #include "engine/systems/cameraSystem.h"
@@ -58,7 +59,7 @@ void GameScene::onInit()
 
 void GameScene::createEntities()
 {
-  createObject<Player>();
+  m_player = &createObject<Player>();
 
   createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
   createObject<Lamp>(glm::vec2{16.5, 11.5}, Lamp::Color::Moonlight);
@@ -112,6 +113,12 @@ void GameScene::onRender()
         m_hoveredElevation,
         SDL_Color{255, 255, 0, 255});
   }
+
+  // DEBUG: mark the player's light world position. The drawn diamond's top
+  // corner sits exactly on the light origin, so it should land on the sprite's
+  // feet.
+  getSystem<sfs::IsometricRenderSystem>().drawDebugTile(
+      position, SDL_Color{0, 255, 255, 255});
 }
 
 void GameScene::onUpdate(double deltaTime)
@@ -152,5 +159,21 @@ void GameScene::onDebugUI()
     sun.setTimeMultiplier(multiplier);
 
   ImGui::End();
+
+  if (m_player && m_player->entity().hasComponent<sfs::LightEmitterComponent>())
+  {
+    auto& light = m_player->entity().getComponent<sfs::LightEmitterComponent>();
+
+    ImGui::SetNextWindowSize(ImVec2(300, 180), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Player Light");
+
+    // radius and height are in screen pixels (see LightEmitterComponent).
+    ImGui::SliderFloat("Radius (px)", &light.radius, 0.0f, 2000.0f);
+    ImGui::SliderFloat("Strength", &light.intensity, 0.0f, 4.0f);
+    ImGui::SliderFloat("Height (px)", &light.height, 0.0f, 256.0f);
+    ImGui::ColorEdit3("Color", &light.color.x);
+
+    ImGui::End();
+  }
 #endif
 }
