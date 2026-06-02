@@ -57,6 +57,16 @@ public:
 
   // The frame's point lights, bound to every subsequent lit/surface draw.
   virtual void setPointLights(const PointLightSet& lights) = 0;
+
+  // Terrain elevation grid (one int level per tile, row-major from origin) used
+  // to occlude point lights against terrain. heightScale converts a light's
+  // emitter height into elevation levels. width <= 0 disables occlusion.
+  virtual void setHeightmap(const int* elevations,
+                            int width,
+                            int height,
+                            int originX,
+                            int originY,
+                            float heightScale) = 0;
 };
 
 } // namespace sfs

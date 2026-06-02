@@ -73,6 +73,13 @@ public:
 
   void setPointLights(const PointLightSet& lights) override;
 
+  void setHeightmap(const int* elevations,
+                    int width,
+                    int height,
+                    int originX,
+                    int originY,
+                    float heightScale) override;
+
 private:
   enum class Pipeline
   {
@@ -276,6 +283,22 @@ private:
   GLint uLightHeightsLocation = -1;
   int uSurfaceEffectLocation = -1;
   int uSurfaceEffectTimeLocation = -1;
+
+  // Terrain heightmap used to occlude point lights against terrain. A fixed-size
+  // texture updated in place (glTexSubImage2D); the render system throttles how
+  // often it re-uploads so the per-upload occlusion flicker stays rare.
+  unsigned int heightmapTexture = 0;
+  int m_heightmapTexSize = 0; // allocated texture dimension (fixed, >= grid)
+  int m_heightmapWidth = 0;
+  int m_heightmapHeight = 0;
+  int m_heightmapOriginX = 0;
+  int m_heightmapOriginY = 0;
+  float m_heightScale = 0.0f;
+  int uHeightmapLocation = -1;
+  int uHeightmapOriginLocation = -1;
+  int uHeightmapSizeLocation = -1;
+  int uHeightmapTexSizeLocation = -1;
+  int uHeightScaleLocation = -1;
 
   unsigned int surfaceShaderProgram = 0;
   unsigned int surfaceVao = 0;

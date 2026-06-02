@@ -126,6 +126,16 @@ void OpenGLQuadRenderer::initialize()
   uSurfaceEffectTimeLocation = glGetUniformLocation(shaderProgram, "uTime");
   uSurfaceEffectLocation =
       glGetUniformLocation(shaderProgram, "uSurfaceEffect");
+  uHeightmapLocation = glGetUniformLocation(shaderProgram, "uHeightmap");
+  uHeightmapOriginLocation =
+      glGetUniformLocation(shaderProgram, "uHeightmapOrigin");
+  uHeightmapSizeLocation =
+      glGetUniformLocation(shaderProgram, "uHeightmapSize");
+  uHeightmapTexSizeLocation =
+      glGetUniformLocation(shaderProgram, "uHeightmapTexSize");
+  uHeightScaleLocation = glGetUniformLocation(shaderProgram, "uHeightScale");
+
+  glGenTextures(1, &heightmapTexture);
 
   // ===========================================================================
   // Surface shader uniform locations
@@ -1408,6 +1418,20 @@ void OpenGLQuadRenderer::drawQuadInternal(
     glUniform1fv(uLightHeightsLocation, clampedLightCount, lightHeights);
   }
 
+  // Terrain heightmap for point-light occlusion (texture unit 2).
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, heightmapTexture);
+  glUniform1i(uHeightmapLocation, 2);
+  glUniform2f(uHeightmapOriginLocation,
+              static_cast<float>(m_heightmapOriginX),
+              static_cast<float>(m_heightmapOriginY));
+  glUniform2f(uHeightmapSizeLocation,
+              static_cast<float>(m_heightmapWidth),
+              static_cast<float>(m_heightmapHeight));
+  glUniform1f(uHeightmapTexSizeLocation,
+              static_cast<float>(m_heightmapTexSize));
+  glUniform1f(uHeightScaleLocation, m_heightScale);
+
   glActiveTexture(GL_TEXTURE0);
 
   glBindVertexArray(vao);
@@ -1517,6 +1541,70 @@ uniform float uLightHeights[MAX_LIGHTS];
 
 uniform float uTime;
 uniform int uSurfaceEffect;
+
+// Terrain heightmap: one texel per tile holding the tile elevation in levels.
+uniform sampler2D uHeightmap;
+uniform vec2 uHeightmapOrigin;    // min tile, world space
+uniform vec2 uHeightmapSize;      // valid grid dimensions in tiles (0 = disabled)
+uniform float uHeightmapTexSize;  // allocated texture dimension (>= grid)
+uniform float uHeightScale;       // light emitter height -> elevation levels
+
+// Terrain elevation (levels) at a world-space position, or a very low value
+// outside the grid so it never occludes. The grid lives in the corner of a
+// larger fixed texture, so normalize tile coords by the texture size.
+float terrainLevelAt(vec2 world)
+{
+  if (uHeightmapSize.x < 1.0 || uHeightmapSize.y < 1.0)
+    return -1e9;
+
+  vec2 texel = world - uHeightmapOrigin; // grid tile coordinates
+
+  if (texel.x < 0.0 || texel.x >= uHeightmapSize.x || texel.y < 0.0 ||
+      texel.y >= uHeightmapSize.y)
+    return -1e9;
+
+  return texture(uHeightmap, texel / uHeightmapTexSize).r;
+}
+
+// How much of the light reaches the fragment, 0 (fully blocked) .. 1 (clear).
+// Terrain taller than the lamp strictly between the two blocks it, i.e. a
+// mountain taller than the lamp casts a shadow. The fragment's and the lamp's
+// own tiles never occlude. The threshold is soft (a 1-level penumbra) and the
+// heightmap samples bilinearly, so the shadow edge isn't tile-blocky.
+float pointLightVisibility(vec2 fragXY, vec2 lightXY, float lightLevel)
+{
+  if (uHeightmapSize.x < 1.0)
+    return 1.0;
+
+  // The fragment stands on its own tile, so it never self-occludes. The light's
+  // own tile is handled by lightLevel (terrain there sits below the light), so it
+  // is NOT skipped: skipping it makes a moving light pop occlusion on/off in one
+  // frame as it crosses a peak. Letting lightLevel handle it keeps that smooth.
+  ivec2 fragTile = ivec2(floor(fragXY));
+
+  // Dense, evenly-spaced samples (no per-fragment jitter). Jitter dithers away
+  // streaks for a static light, but for a moving light it turns the penumbra
+  // into noise that shimmers along the shadow edge as the light moves. A finer
+  // march removes the streaks without that flicker.
+  const int STEPS = 48;
+
+  float visibility = 1.0;
+
+  for (int s = 0; s < STEPS; s++)
+  {
+    float t = (float(s) + 0.5) / float(STEPS);
+    vec2 samplePos = mix(fragXY, lightXY, t);
+    ivec2 sampleTile = ivec2(floor(samplePos));
+
+    if (sampleTile == fragTile)
+      continue;
+
+    float over = terrainLevelAt(samplePos) - lightLevel;
+    visibility = min(visibility, 1.0 - smoothstep(0.5, 1.5, over));
+  }
+
+  return visibility;
+}
 
 float hash21(vec2 p)
 {
@@ -1641,6 +1729,24 @@ vec3 calculatePointLighting(vec3 normal)
     if (dist >= uLightRadii[i])
       continue;
 
+    // Terrain between the fragment and the light blocks it, the same way a
+    // mountain blocks the sun. The light sits at its tile's elevation plus its
+    // emitter height (in levels). Sample the light's ground clamped into the
+    // grid so a light near/just past the loaded edge (e.g. as terrain streams
+    // while moving) never reads the out-of-bounds sentinel - that would flip the
+    // whole light's occlusion for a frame and flash its shadowed area bright.
+    vec2 lightGroundPos = clamp(uLightPositions[i],
+                                uHeightmapOrigin + 0.5,
+                                uHeightmapOrigin + uHeightmapSize - 0.5);
+    float lightLevel =
+        terrainLevelAt(lightGroundPos) + uLightHeights[i] * uHeightScale;
+
+    float visibility =
+        pointLightVisibility(vWorldPosition, uLightPositions[i], lightLevel);
+
+    if (visibility <= 0.001)
+      continue;
+
     float attenuation = 1.0 - dist / uLightRadii[i];
     attenuation = clamp(attenuation, 0.0, 1.0);
     attenuation = pow(attenuation, 1.35);
@@ -1654,7 +1760,8 @@ vec3 calculatePointLighting(vec3 normal)
     float amount =
         uLightIntensities[i] *
         attenuation *
-        diffuse;
+        diffuse *
+        visibility;
 
     vec3 color = uLightColors[i];
 
@@ -2391,6 +2498,73 @@ void OpenGLQuadRenderer::setPointLights(const PointLightSet& lights)
 {
   m_pointLights = lights;
   m_pointLights.count = std::clamp(m_pointLights.count, 0, MaxShaderLights);
+}
+
+void OpenGLQuadRenderer::setHeightmap(const int* elevations,
+                                      int width,
+                                      int height,
+                                      int originX,
+                                      int originY,
+                                      float heightScale)
+{
+  // An empty grid (e.g. a transient rebuild) would turn occlusion off and flash
+  // the lights. Keep the previous heightmap instead.
+  if (width <= 0 || height <= 0 || elevations == nullptr)
+    return;
+
+  m_heightmapWidth = width;
+  m_heightmapHeight = height;
+  m_heightmapOriginX = originX;
+  m_heightmapOriginY = originY;
+  m_heightScale = heightScale;
+
+  const int texSize = std::max({128, width, height});
+
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, heightmapTexture);
+
+  // Keep one fixed-size texture and update it in place. The grid size oscillates
+  // by a tile as the camera moves, so reallocating with glTexImage2D every frame
+  // thrashes the texture and flickers the occlusion; glTexSubImage2D into a
+  // larger fixed texture avoids that. Reallocation only happens if the grid ever
+  // outgrows the current texture (rare).
+  if (texSize > m_heightmapTexSize)
+  {
+    const std::vector<float> empty(static_cast<size_t>(texSize) * texSize,
+                                   -1000.0f);
+
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_R32F,
+                 texSize,
+                 texSize,
+                 0,
+                 GL_RED,
+                 GL_FLOAT,
+                 empty.data());
+    // Linear filtering ramps elevation smoothly between tiles so the occlusion
+    // edge isn't tile-blocky.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    m_heightmapTexSize = texSize;
+  }
+
+  // One float texel per tile holds the tile's elevation in levels. Empty tiles
+  // get a finite low value so they never occlude and bilinear sampling near them
+  // stays sane (the real empty sentinel is INT_MIN).
+  std::vector<float> texels(static_cast<size_t>(width) * height);
+  for (size_t i = 0; i < texels.size(); i++)
+    texels[i] =
+        elevations[i] < -100000 ? -1000.0f : static_cast<float>(elevations[i]);
+
+  glTexSubImage2D(
+      GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED, GL_FLOAT, texels.data());
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glActiveTexture(GL_TEXTURE0);
 }
 
 } // namespace sfs
