@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/ecs/entity.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 
@@ -15,6 +16,10 @@ struct IsometricPointLightSnapshot
   glm::vec3 color{1.0f, 1.0f, 1.0f};
   float intensity = 1.0f;
   float radius = 1.0f;
+
+  // Emitting entity, so the render system can pair the light with the smoothed
+  // ground elevation it tracks per actor (InvalidId if not from an entity).
+  Entity::EntityId entityId = Entity::InvalidId;
 };
 
 struct IsometricAmbientLighting

@@ -93,10 +93,21 @@ public:
 
 protected:
   void create() override;
+  void update(double deltaTime) override;
   void render() override;
 
 private:
   void beginBatches();
+
+  // Eases each actor's rendered ground elevation toward the tile it stands on, so
+  // crossing an elevation step ramps smoothly instead of teleporting a whole
+  // level (which jumps both the sprite and any light it carries).
+  void updateActorElevations(double deltaTime);
+
+  // Smoothed ground elevation (levels) for the actor, or its instantaneous tile
+  // elevation if it isn't being tracked yet.
+  float smoothedElevationOf(const Entity& entity,
+                            const glm::vec2& samplePosition) const;
 
   void flushBatches();
 
@@ -104,8 +115,8 @@ private:
 
   bool isTileEntity(const Entity& entity) const;
 
-  int getRenderElevationLevel(const Entity& entity,
-                              const glm::vec2& samplePosition) const;
+  float getRenderElevationLevel(const Entity& entity,
+                                const glm::vec2& samplePosition) const;
 
   glm::vec2 getGroundSamplePosition(const Entity& entity,
                                     const TransformComponent& transform) const;
@@ -141,6 +152,10 @@ private:
   std::vector<int> tileElevationGridData;
   TerrainElevationGridView tileElevationGridView;
   bool tileElevationCacheDirty = true;
+
+  // Per-actor eased ground elevation (levels), keyed by entity id. Updated in
+  // update(); read when placing sprites and when filling each light's ground.
+  std::unordered_map<Entity::EntityId, float> m_actorElevation;
 
   // Optional authoritative terrain heights. When present the heightmap window is
   // filled from this (complete, no streaming holes) rather than the ECS tiles.

@@ -52,6 +52,7 @@ void IsometricLightingService::updateCacheIfDirty()
         light.color,
         light.intensity,
         light.radius,
+        entity.getId(),
     });
   }
 

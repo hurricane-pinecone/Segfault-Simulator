@@ -288,6 +288,7 @@ private:
   GLint uLightIntensitiesLocation = -1;
   GLint uLightRadiiLocation = -1;
   GLint uLightHeightsLocation = -1;
+  GLint uLightGroundLevelsLocation = -1;
   int uSurfaceEffectLocation = -1;
   int uSurfaceEffectTimeLocation = -1;
 
