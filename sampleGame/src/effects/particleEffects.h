@@ -61,10 +61,13 @@ inline sfs::ParticleEffectDesc makeBloodSprayEffect()
   d.shapeRadius = 0.06f;
   d.burstCount = 44; // minimal -- the mist + gobs carry the rest of the read
 
-  d.lifetime = sfs::FloatRange::of(0.3f, 0.95f);
+  // Lifetime must exceed the airtime, or droplets die mid-arc and never land
+  // (which starved the ground of stains vs walls). Max launch ~3 + the gore's
+  // vertical kick gives ~0.5 s airtime, so 0.7 s min comfortably lands them.
+  d.lifetime = sfs::FloatRange::of(0.7f, 1.2f);
   // Scatter kept below the spawn impulse so the bulk push sets the direction.
   d.speed = sfs::FloatRange::of(1.5f, 6.0f);
-  d.launchHeightSpeed = sfs::FloatRange::of(1.5f, 5.0f);
+  d.launchHeightSpeed = sfs::FloatRange::of(1.0f, 3.0f);
   d.startHeight = sfs::FloatRange::of(0.1f, 0.4f);
   d.size = sfs::FloatRange::of(0.05f, 0.15f);
   d.angularVelocity = sfs::FloatRange::of(-9.0f, 9.0f);
@@ -108,9 +111,9 @@ inline sfs::ParticleEffectDesc makeBloodGobsEffect()
   d.shapeRadius = 0.05f;
   d.burstCount = 10; // just a handful of chunks
 
-  d.lifetime = sfs::FloatRange::of(0.5f, 1.3f);          // linger and arc
+  d.lifetime = sfs::FloatRange::of(0.9f, 1.6f);          // linger; outlast the arc
   d.speed = sfs::FloatRange::of(1.0f, 3.0f);             // low internal scatter
-  d.launchHeightSpeed = sfs::FloatRange::of(2.0f, 4.5f); // tossed up to arc
+  d.launchHeightSpeed = sfs::FloatRange::of(1.5f, 3.5f); // tossed up to arc
   d.startHeight = sfs::FloatRange::of(0.1f, 0.4f);
   d.size = sfs::FloatRange::of(0.14f, 0.3f); // fat gobs
   d.angularVelocity = sfs::FloatRange::of(-5.0f, 5.0f);
@@ -245,12 +248,12 @@ inline void spawnGore(sfs::ParticleSystem& particles,
 
   sfs::ParticleSpawnParams spray;
   spray.velocity = direction * power;
-  spray.velocityZ = 3.0f;
+  spray.velocityZ = 1.5f; // modest kick so droplets land within their lifetime
 
   sfs::ParticleSpawnParams gobs;
   gobs.velocity =
       direction * (power * 0.4f); // heavy chunks: much less velocity
-  gobs.velocityZ = 3.5f;          // but tossed up more, so they arc
+  gobs.velocityZ = 2.5f;          // arc, but still lands within its lifetime
 
   sfs::ParticleSpawnParams drip;
   drip.velocity = direction * (power * 0.04f); // essentially drops in place

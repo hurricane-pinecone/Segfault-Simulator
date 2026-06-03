@@ -447,6 +447,17 @@ private:
   int uDecalNdcScaleLocation = -1;
   int uDecalDepthMinLocation = -1;
   int uDecalDepthInvRangeLocation = -1;
+  // lighting (ambient + the frame's point lights, same data as the lit shader)
+  int uDecalAmbientLocation = -1;
+  int uDecalAmbientColorLocation = -1;
+  int uDecalHeightScaleLocation = -1;
+  int uDecalLightCountLocation = -1;
+  int uDecalLightPositionsLocation = -1;
+  int uDecalLightColorsLocation = -1;
+  int uDecalLightIntensitiesLocation = -1;
+  int uDecalLightRadiiLocation = -1;
+  int uDecalLightHeightsLocation = -1;
+  int uDecalLightGroundLevelsLocation = -1;
 
   DecalFrameParams m_decalParams;
   std::unordered_map<std::int64_t, DecalChunkBuffer> m_decalChunks;

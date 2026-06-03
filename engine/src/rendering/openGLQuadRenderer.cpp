@@ -501,6 +501,25 @@ void OpenGLQuadRenderer::initialize()
       glGetUniformLocation(decalShaderProgram, "uDepthMin");
   uDecalDepthInvRangeLocation =
       glGetUniformLocation(decalShaderProgram, "uDepthInvRange");
+  uDecalAmbientLocation = glGetUniformLocation(decalShaderProgram, "uAmbient");
+  uDecalAmbientColorLocation =
+      glGetUniformLocation(decalShaderProgram, "uAmbientColor");
+  uDecalHeightScaleLocation =
+      glGetUniformLocation(decalShaderProgram, "uHeightScale");
+  uDecalLightCountLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightCount");
+  uDecalLightPositionsLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightPositions[0]");
+  uDecalLightColorsLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightColors[0]");
+  uDecalLightIntensitiesLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightIntensities[0]");
+  uDecalLightRadiiLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightRadii[0]");
+  uDecalLightHeightsLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightHeights[0]");
+  uDecalLightGroundLevelsLocation =
+      glGetUniformLocation(decalShaderProgram, "uLightGroundLevels[0]");
 
   glGenVertexArrays(1, &decalDynamicVao);
   glGenBuffers(1, &decalDynamicVbo);
@@ -1425,6 +1444,35 @@ void OpenGLQuadRenderer::beginDecalPipeline()
   glUniform2f(uDecalNdcScaleLocation, m_ndcScaleX, m_ndcScaleY);
   glUniform1f(uDecalDepthMinLocation, m_decalParams.depthMin);
   glUniform1f(uDecalDepthInvRangeLocation, m_decalParams.depthInvRange);
+
+  // Lighting: ambient (day/night) + the frame's point lights (same set the lit
+  // shader uses), so blood darkens in the dark and lights up near lamps.
+  glUniform1f(uDecalAmbientLocation, m_decalParams.ambient);
+  glUniform3f(uDecalAmbientColorLocation,
+              m_decalParams.ambientColor.x,
+              m_decalParams.ambientColor.y,
+              m_decalParams.ambientColor.z);
+  glUniform1f(uDecalHeightScaleLocation, m_heightScale);
+  glUniform1i(uDecalLightCountLocation, m_pointLights.count);
+  if (m_pointLights.count > 0)
+  {
+    glUniform2fv(uDecalLightPositionsLocation,
+                 m_pointLights.count,
+                 &m_pointLights.positions[0].x);
+    glUniform3fv(uDecalLightColorsLocation,
+                 m_pointLights.count,
+                 &m_pointLights.colors[0].x);
+    glUniform1fv(uDecalLightIntensitiesLocation,
+                 m_pointLights.count,
+                 m_pointLights.intensities);
+    glUniform1fv(
+        uDecalLightRadiiLocation, m_pointLights.count, m_pointLights.radii);
+    glUniform1fv(
+        uDecalLightHeightsLocation, m_pointLights.count, m_pointLights.heights);
+    glUniform1fv(uDecalLightGroundLevelsLocation,
+                 m_pointLights.count,
+                 m_pointLights.groundLevels);
+  }
 
   glActiveTexture(GL_TEXTURE0);
 }
@@ -2905,6 +2953,8 @@ layout(location = 4) in float aSortKey;
 
 out vec2 vUv;
 out vec4 vColor;
+out vec2 vWorldPos;
+out float vGround;
 
 uniform vec2 uTileSize;       // (tileWidth, tileHeight)
 uniform float uWorldScale;
@@ -2920,6 +2970,8 @@ void main()
 {
   vUv = aUv;
   vColor = aColor;
+  vWorldPos = aWorldPos;
+  vGround = aElevation;
 
   vec2 iso = vec2(aWorldPos.x - aWorldPos.y, aWorldPos.x + aWorldPos.y)
              * uTileSize * uWorldScale * 0.5;
@@ -2936,20 +2988,101 @@ void main()
 )";
 
   const std::string fragmentSource = glslVersion + R"(
+#define MAX_LIGHTS 16
+
 in vec2 vUv;
 in vec4 vColor;
+in vec2 vWorldPos;
+in float vGround;
 
 out vec4 FragColor;
 
 uniform sampler2D uTexture;
 
+uniform float uAmbient;
+uniform vec3 uAmbientColor;
+uniform float uHeightScale;
+
+uniform int uLightCount;
+uniform vec2 uLightPositions[MAX_LIGHTS];
+uniform vec3 uLightColors[MAX_LIGHTS];
+uniform float uLightIntensities[MAX_LIGHTS];
+uniform float uLightRadii[MAX_LIGHTS];
+uniform float uLightHeights[MAX_LIGHTS];
+uniform float uLightGroundLevels[MAX_LIGHTS];
+
+// Point-light contribution, matching the lit shader's model (3D distance with
+// the elevation gap, smootherstep falloff, colour-normalised blend) but without
+// the terrain horizon occlusion -- a decal lies on a surface, and skipping the
+// per-pixel march keeps it cheap. Normal is treated as up (ground-facing).
+vec3 decalPointLight()
+{
+  vec3 weightedColor = vec3(0.0);
+  float totalWeight = 0.0;
+  float strongest = 0.0;
+
+  for (int i = 0; i < MAX_LIGHTS; i++)
+  {
+    if (i >= uLightCount)
+      break;
+
+    vec2 delta = uLightPositions[i] - vWorldPos;
+    float distXY = length(delta);
+    if (distXY >= uLightRadii[i])
+      continue;
+
+    float lightLevel = uLightGroundLevels[i] + uLightHeights[i] * uHeightScale;
+    float dz = lightLevel - vGround;
+    float dist = sqrt(distXY * distXY + dz * dz);
+    if (dist >= uLightRadii[i])
+      continue;
+
+    float reach = clamp(1.0 - dist / uLightRadii[i], 0.0, 1.0);
+    float attenuation =
+        reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0);
+
+    vec3 pointDir = normalize(vec3(delta.x, delta.y, max(dz, 0.0)));
+    float ndotl = max(pointDir.z, 0.0); // surface normal up
+    float diffuse = mix(0.12, 1.0, pow(ndotl, 0.8));
+
+    float amount = uLightIntensities[i] * attenuation * diffuse;
+
+    vec3 color = uLightColors[i];
+    float mc = max(max(color.r, color.g), color.b);
+    color = mc > 0.001 ? color / mc : vec3(1.0);
+
+    weightedColor += color * amount;
+    totalWeight += amount;
+    strongest = max(strongest, amount);
+  }
+
+  if (totalWeight <= 0.001)
+    return vec3(0.0);
+
+  vec3 blended = weightedColor / totalWeight;
+  float capped = (strongest / (1.0 + strongest)) * 1.65;
+  return blended * capped;
+}
+
 void main()
 {
-  vec4 tex = texture(uTexture, vUv);
-  FragColor = tex * vColor;
-
-  if (FragColor.a <= 0.0)
+  vec4 tex = texture(uTexture, vUv) * vColor;
+  if (tex.a <= 0.0)
     discard;
+
+  // Point lights only assert themselves as ambient drops (same gating as the lit
+  // shader), so blood near a lamp lights up at night but day ambient dominates.
+  float daylight = smoothstep(0.20, 0.75, uAmbient);
+  float pointVisibility = 1.0 - daylight;
+  pointVisibility *= pointVisibility;
+
+  vec3 pointLight = vec3(0.0);
+  if (pointVisibility > 0.001)
+    pointLight = decalPointLight() * (pointVisibility * 2.0);
+
+  vec3 lighting = uAmbientColor * uAmbient + pointLight;
+
+  FragColor = vec4(tex.rgb * lighting, tex.a);
 }
 )";
 

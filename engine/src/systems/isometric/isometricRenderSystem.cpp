@@ -614,6 +614,12 @@ void IsometricRenderSystem::flushBatches()
     dp.depthMin = depthMin;
     dp.depthInvRange = range > 1e-6f ? 1.0f / range : 0.0f;
 
+    if (m_context.ambientLighting)
+    {
+      dp.ambient = m_context.ambientLighting->ambient;
+      dp.ambientColor = m_context.ambientLighting->color;
+    }
+
     quadRenderer.setDecalFrameParams(dp);
   }
 
