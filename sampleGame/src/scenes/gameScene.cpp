@@ -1,7 +1,9 @@
 
 #include "gameScene.h"
+#include "effects/particleEffects.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "engine/components/lightEmitterComponent.h"
+#include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
 #include "engine/systems/cameraSystem.h"
@@ -10,10 +12,8 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #include "engine/systems/isometric/isometricWaterSystem.h"
-#include "engine/components/particleEmitterComponent.h"
 #include "engine/systems/particleSystem.h"
 #include "engine/utils/isometricLightingUtils.h"
-#include "effects/particleEffects.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
 #include "systems/TerrainGeneratorSystem.h"
@@ -22,6 +22,7 @@
 #include <engine/mapLoader/mapLoader.h>
 #include <engine/systems/movementSystem.h>
 #include <engine/systems/renderSystem.h>
+#include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
 #include <iomanip>
 #include <sstream>
@@ -46,18 +47,16 @@ void GameScene::onInit()
 
   // Terrain and sprite shadows share one length so equal heights match.
   constexpr float shadowMaxLength = 3.5f;
-  sfs::IsometricShadowSettings shadowSettings = {shadowMaxLength, shadowMaxLength};
+  sfs::IsometricShadowSettings shadowSettings = {
+      shadowMaxLength, shadowMaxLength};
 
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
   addSystem<sfs::IsometricWaterSystem>();
 
-  addSystem<sfs::ParticleSystem>();
-  {
-    auto& particles = getSystem<sfs::ParticleSystem>();
-    particles.registerEffect("blood", makeBloodEffect());
-    particles.registerEffect("embers", makeEmberEffect());
-  }
+  auto& particles = addSystem<sfs::ParticleSystem>();
+  registerGoreEffects(particles); // blood_mist / blood_spray / blood_gobs
+  particles.registerEffect("embers", makeEmberEffect());
 
   addSystem<SunController>();
 
@@ -73,7 +72,8 @@ void GameScene::createEntities()
 
   // The first lamp also carries a continuous ember emitter (component-driven
   // particle path); the others are plain lights.
-  auto& emberLamp = createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
+  auto& emberLamp =
+      createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
   emberLamp.entity().addComponent<sfs::ParticleEmitterComponent>(
       "embers", glm::vec2{0.0f, 0.0f}, 0.4f);
 
@@ -96,11 +96,24 @@ void GameScene::onProcessInput(const sfs::Input& input)
   m_hoveredElevation = pick.elevation;
   m_hasHoveredTile = pick.valid;
 
-  // Left-click splatters blood on the hovered tile (one-shot burst path).
-  if (m_hasHoveredTile && input.mouse().mousePressed(sfs::MouseButton::Left))
+  // Left-click splatters blood on the hovered tile, sprayed in the direction
+  // from the player to the click (as if a shot travelled that way).
+  if (m_hasHoveredTile && m_player &&
+      input.mouse().mousePressed(sfs::MouseButton::Left))
   {
-    getSystem<sfs::ParticleSystem>().spawnBurst(
-        "blood", pick.world, static_cast<float>(pick.elevation));
+    const glm::vec2 from =
+        m_player->entity().getComponent<sfs::TransformComponent>().position;
+
+    glm::vec2 dir = pick.world - from;
+    const float len = glm::length(dir);
+    dir = len > 0.0001f ? dir / len : glm::vec2{1.0f, 0.0f};
+
+    // Layered shotgun gore blast along the shot direction.
+    spawnGore(getSystem<sfs::ParticleSystem>(),
+              pick.world,
+              static_cast<float>(pick.elevation),
+              dir,
+              16.0f);
   }
 }
 

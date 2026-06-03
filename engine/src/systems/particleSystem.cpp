@@ -3,7 +3,8 @@
 #include "engine/components/elevationComponent.h"
 #include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
-#include "engine/ecs/registry.h" // entity.inl: Entity::getComponent<T> definitions
+// Pulled in for the Entity::getComponent<T> template definitions in entity.inl.
+#include "engine/ecs/registry.h" // IWYU pragma: keep
 #include "engine/utils/profiling.h"
 
 #include <algorithm>
@@ -17,8 +18,8 @@ namespace
 
 constexpr float kTwoPi = 6.28318530718f;
 
-// Small forward bias so a particle sitting on a tile sorts just in front of that
-// tile's surface (matches how sprites sit above the ground they stand on).
+// Small forward bias so a particle sitting on a tile sorts just in front of
+// that tile's surface (matches how sprites sit above the ground they stand on).
 constexpr float kParticleBias = 0.02f;
 
 inline uint32_t nextRand(uint32_t& state)
@@ -69,15 +70,32 @@ bool ParticleSystem::hasEffect(const std::string& name) const
   return m_effectIds.find(name) != m_effectIds.end();
 }
 
-ParticleSystem::EffectId ParticleSystem::effectIdOf(const std::string& name) const
+ParticleSystem::EffectId
+ParticleSystem::effectIdOf(const std::string& name) const
 {
   auto it = m_effectIds.find(name);
   return it != m_effectIds.end() ? it->second : -1;
 }
 
+void ParticleSystem::applySpawnParams(EmitterInstance& inst,
+                                      const ParticleSpawnParams& spawn)
+{
+  inst.baseVelocity = spawn.velocity;
+  inst.baseVelocityZ = spawn.velocityZ;
+
+  const float vlen2 =
+      spawn.velocity.x * spawn.velocity.x + spawn.velocity.y * spawn.velocity.y;
+
+  // Centre the emission spread on the impact direction (else fan around +X).
+  inst.aimAngle = (spawn.aimAlongVelocity && vlen2 > 1e-8f)
+                      ? std::atan2(spawn.velocity.y, spawn.velocity.x)
+                      : 0.0f;
+}
+
 bool ParticleSystem::spawnBurst(const std::string& effect,
                                 glm::vec2 worldPos,
-                                float elevation)
+                                float elevation,
+                                const ParticleSpawnParams& spawn)
 {
   const EffectId fx = effectIdOf(effect);
 
@@ -94,13 +112,15 @@ bool ParticleSystem::spawnBurst(const std::string& effect,
   inst.emitting = false; // one-shot: emit the pending burst, then drain
   inst.pendingBurst = desc.burstCount > 0 ? desc.burstCount : 1;
   inst.rng = (m_burstSeed += 0x9e3779b9u) | 1u;
+  applySpawnParams(inst, spawn);
 
   m_bursts.push_back(std::move(inst));
   return true;
 }
 
 bool ParticleSystem::spawnScreenBurst(const std::string& effect,
-                                      glm::vec2 screenPos)
+                                      glm::vec2 screenPos,
+                                      const ParticleSpawnParams& spawn)
 {
   const EffectId fx = effectIdOf(effect);
 
@@ -117,6 +137,7 @@ bool ParticleSystem::spawnScreenBurst(const std::string& effect,
   inst.emitting = false;
   inst.pendingBurst = desc.burstCount > 0 ? desc.burstCount : 1;
   inst.rng = (m_burstSeed += 0x9e3779b9u) | 1u;
+  applySpawnParams(inst, spawn);
 
   m_bursts.push_back(std::move(inst));
   return true;
@@ -166,8 +187,8 @@ void ParticleSystem::emit(EmitterInstance& inst,
     case EmissionShape::Ring:
     {
       const float ang = randf(inst.rng) * kTwoPi;
-      offset = {std::cos(ang) * desc.shapeRadius,
-                std::sin(ang) * desc.shapeRadius};
+      offset = {
+          std::cos(ang) * desc.shapeRadius, std::sin(ang) * desc.shapeRadius};
       break;
     }
     case EmissionShape::Box:
@@ -178,22 +199,25 @@ void ParticleSystem::emit(EmitterInstance& inst,
 
     p.pos = inst.origin + offset;
 
-    // Planar launch direction within the configured spread (Cone narrows it).
-    float dirAngle;
+    // Planar launch direction: a random offset within the spread (Cone narrows
+    // it), centred on the spawn's aim direction (0 = +X for undirected
+    // effects).
+    float dirAngle = inst.aimAngle;
     if (desc.shape == EmissionShape::Cone)
     {
       const float half = desc.coneAngleDegrees * (kTwoPi / 360.0f);
-      dirAngle = (randf(inst.rng) * 2.0f - 1.0f) * half;
+      dirAngle += (randf(inst.rng) * 2.0f - 1.0f) * half;
     }
     else
     {
       const float half = desc.directionSpread * 0.5f;
-      dirAngle = (randf(inst.rng) * 2.0f - 1.0f) * half;
+      dirAngle += (randf(inst.rng) * 2.0f - 1.0f) * half;
     }
 
     const float speed = sampleRange(inst.rng, desc.speed);
     p.vel = {std::cos(dirAngle) * speed, std::sin(dirAngle) * speed};
-    p.velZ = sampleRange(inst.rng, desc.launchHeightSpeed);
+    p.vel += inst.baseVelocity; // inherited impact momentum
+    p.velZ = sampleRange(inst.rng, desc.launchHeightSpeed) + inst.baseVelocityZ;
 
     p.height = sampleRange(inst.rng, desc.startHeight) + inst.spawnHeightBias;
     p.lifetime = std::max(0.0001f, sampleRange(inst.rng, desc.lifetime));
@@ -397,8 +421,7 @@ void ParticleSystem::appendBatch(const EmitterInstance& inst,
   cmd.order.pass = screen ? RenderPass::UI : RenderPass::Particles;
   cmd.order.subpass = 0;
   cmd.order.depth =
-      screen ? 0.0f
-             : (inst.origin.x + inst.origin.y + inst.groundLevel * 0.5f);
+      screen ? 0.0f : (inst.origin.x + inst.origin.y + inst.groundLevel * 0.5f);
 
   const float pixelPerTile =
       static_cast<float>(proj.tileWidth) * proj.worldScale * proj.zoom;
