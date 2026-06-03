@@ -84,6 +84,14 @@ public:
   // Project live particles into batched draw commands.
   void computeCommands(const IsometricRenderContext& context) override;
 
+  std::vector<ModuleSetting> settings(const IsometricRenderContext&) override
+  {
+    return {
+        settings::text("Live particles",
+                       [this] { return std::to_string(liveParticleCount()); }),
+    };
+  }
+
 private:
   Registry* registry = nullptr;
 

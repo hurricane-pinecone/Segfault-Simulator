@@ -33,6 +33,26 @@ public:
 
   IsometricShadowSettings& shadowSettings() { return m_shadowSettings; }
 
+  std::vector<ModuleSetting> settings(const IsometricRenderContext&) override
+  {
+    // Actor shadows are draped billboards in both render styles (actors aren't
+    // in the heightmap), so they always apply.
+    return {
+        settings::floatRange(
+            "Sprite shadow length",
+            0.0f,
+            5.0f,
+            [this] { return m_shadowSettings.spriteShadowMaxLength; },
+            [this](float v) { m_shadowSettings.spriteShadowMaxLength = v; }),
+        settings::floatRange(
+            "Sprite alpha",
+            0.0f,
+            1.0f,
+            [this] { return m_shadowSettings.spriteShadowAlpha; },
+            [this](float v) { m_shadowSettings.spriteShadowAlpha = v; }),
+    };
+  }
+
 private:
   void constructSpriteShadows(const IsometricRenderContext& context,
                               const Entity& caster);

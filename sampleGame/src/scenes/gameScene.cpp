@@ -6,7 +6,6 @@
 #include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
-#include "engine/rendering/modules/blockGeometry.h"
 #include "engine/rendering/modules/decals.h"
 #include "engine/rendering/modules/isometricWater.h"
 #include "engine/rendering/modules/particles.h"
@@ -48,8 +47,8 @@ void GameScene::onInit()
                                                          quadRenderer());
 
   // Compose the render features as modules; registration is the enable. Terrain
-  // tiles stay billboards (BlockGeometry is opt-in: press G to add it and
-  // compare the real-block path live).
+  // tiles stay billboards by default -- block geometry, water, and shadows are
+  // toggled live from the debug UI (engine/utils/ui.h renderDebugControls).
   renderer.withModules<sfs::TerrainShadow,
                        sfs::SpriteShadow,
                        sfs::IsometricWater,
@@ -102,45 +101,8 @@ void GameScene::onProcessInput(const sfs::Input& input)
 {
   auto& render = getSystem<sfs::IsometricRenderSystem>();
 
-  if (input.keyboard().keyPressed(sfs::Key::F))
-    m_sunController.toggleSun();
-
-  // Wipe all blood stains (demonstrates decal removal).
-  if (input.keyboard().keyPressed(sfs::Key::C))
-    render.module<sfs::Decals>()->clearAll();
-
-  // Toggle billboard tiles vs real block geometry by adding/removing its module.
-  if (input.keyboard().keyPressed(sfs::Key::G))
-  {
-    if (render.hasModule<sfs::BlockGeometry>())
-      render.removeModule<sfs::BlockGeometry>();
-    else
-      render.withModule<sfs::BlockGeometry>();
-  }
-
-  // Toggle the heightmap march's sampling look: soft/rounded vs blocky.
-  if (input.keyboard().keyPressed(sfs::Key::H))
-  {
-    m_sharpShadows = !m_sharpShadows;
-    render.setSunShadowStyle(m_sharpShadows ? sfs::SunShadowStyle::Sharp
-                                            : sfs::SunShadowStyle::Smooth);
-  }
-
-  // Toggle engine-baked sun shadows by adding/removing the shadow modules. The
-  // active technique follows the render style (projected for billboards,
-  // heightmap march for block geometry).
-  if (input.keyboard().keyPressed(sfs::Key::J))
-  {
-    if (render.hasModule<sfs::TerrainShadow>())
-    {
-      render.removeModule<sfs::TerrainShadow>();
-      render.removeModule<sfs::SpriteShadow>();
-    }
-    else
-    {
-      render.withModules<sfs::TerrainShadow, sfs::SpriteShadow>();
-    }
-  }
+  // Render modules (block geometry, water, shadows + style, decal clearing) are
+  // driven from the debug UI; see engine/utils/ui.h renderDebugControls.
 
   m_mousePos = input.mouse().getPosition();
 

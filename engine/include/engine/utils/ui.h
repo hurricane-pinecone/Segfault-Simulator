@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine/rendering/modules/blockGeometry.h"
+#include "engine/rendering/modules/decals.h"
+#include "engine/rendering/modules/isometricWater.h"
 #include "engine/rendering/modules/spriteShadow.h"
 #include "engine/rendering/modules/terrainShadow.h"
 #include "engine/sceneManager/scene.h"
@@ -15,7 +18,9 @@
 
   #include <cstdlib>
   #include <string>
+  #include <typeindex>
   #include <typeinfo>
+  #include <vector>
   #if defined(__GNUC__) || defined(__clang__)
     #include <cxxabi.h>
   #endif
@@ -23,16 +28,17 @@
 namespace sfs
 {
 
-// Human-readable system name from RTTI, with the sfs:: namespace stripped.
-inline static std::string prettyTypeName(const std::type_info& info)
+// Human-readable name from a mangled RTTI symbol, with the sfs:: namespace
+// stripped.
+inline static std::string prettyTypeName(const char* mangled)
 {
   #if defined(__GNUC__) || defined(__clang__)
   int status = 0;
-  char* demangled = abi::__cxa_demangle(info.name(), nullptr, nullptr, &status);
-  std::string name = (status == 0 && demangled) ? demangled : info.name();
+  char* demangled = abi::__cxa_demangle(mangled, nullptr, nullptr, &status);
+  std::string name = (status == 0 && demangled) ? demangled : mangled;
   std::free(demangled);
   #else
-  std::string name = info.name();
+  std::string name = mangled;
   #endif
 
   const std::string prefix = "sfs::";
@@ -40,6 +46,11 @@ inline static std::string prettyTypeName(const std::type_info& info)
     name = name.substr(prefix.size());
 
   return name;
+}
+
+inline static std::string prettyTypeName(const std::type_info& info)
+{
+  return prettyTypeName(info.name());
 }
 
 inline static void renderDebugStats()
@@ -81,8 +92,79 @@ inline static void renderDebugStats()
   ImGui::End();
 }
 
-// Debug-only controls: toggle each system (except the render system) and tweak
-// shadow settings live.
+// Checkbox bound to a render module's presence: registering the module when
+// ticked, removing it when unticked. Use only for modules that are safe to
+// default-construct -- modules carrying game-side configuration (e.g. Particles
+// effects) would lose it on re-creation and should not be toggled this way.
+template <class TModule>
+inline static void moduleCheckbox(IsometricRenderSystem& render,
+                                  const char* label)
+{
+  bool on = render.hasModule<TModule>();
+  if (ImGui::Checkbox(label, &on))
+  {
+    if (on)
+      render.withModule<TModule>();
+    else
+      render.removeModule<TModule>();
+  }
+}
+
+// Render one module setting descriptor with the matching ImGui control, binding
+// edits straight back through its accessors. Generic over the setting type, so
+// any module's settings() drive the panel without per-module UI code here.
+inline static void renderModuleSetting(const ModuleSetting& setting)
+{
+  if (!setting.enabled)
+    ImGui::BeginDisabled();
+
+  switch (setting.type)
+  {
+  case ModuleSetting::Type::Float:
+  {
+    float value = setting.getFloat();
+    if (ImGui::SliderFloat(
+            setting.label.c_str(), &value, setting.min, setting.max))
+      setting.setFloat(value);
+    break;
+  }
+  case ModuleSetting::Type::Bool:
+  {
+    bool value = setting.getBool();
+    if (ImGui::Checkbox(setting.label.c_str(), &value))
+      setting.setBool(value);
+    break;
+  }
+  case ModuleSetting::Type::Enum:
+  {
+    std::vector<const char*> options;
+    options.reserve(setting.options.size());
+    for (const auto& option : setting.options)
+      options.push_back(option.c_str());
+
+    int index = setting.getEnum();
+    if (ImGui::Combo(setting.label.c_str(),
+                     &index,
+                     options.data(),
+                     static_cast<int>(options.size())))
+      setting.setEnum(index);
+    break;
+  }
+  case ModuleSetting::Type::Action:
+    if (ImGui::Button(setting.label.c_str()))
+      setting.onInvoke();
+    break;
+  case ModuleSetting::Type::Text:
+    ImGui::Text("%s: %s", setting.label.c_str(), setting.getText().c_str());
+    break;
+  }
+
+  if (!setting.enabled)
+    ImGui::EndDisabled();
+}
+
+// Debug-only controls: toggle each system (except the render system), enable or
+// disable render modules, and tweak each module's own settings live.
 inline static void renderDebugControls(Scene* scene)
 {
   if (!scene)
@@ -108,45 +190,76 @@ inline static void renderDebugControls(Scene* scene)
           system.setEnabled(enabled);
       });
 
-  const bool hasTerrain = scene->hasSystem<IsometricRenderSystem>();
-
-  if (hasTerrain)
+  if (scene->hasSystem<IsometricRenderSystem>())
   {
     auto& render = scene->getSystem<IsometricRenderSystem>();
+    const bool geometryActive = render.hasModule<BlockGeometry>();
 
-    auto* terrain = render.module<TerrainShadow>();
-    auto* sprite = render.module<SpriteShadow>();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Render Modules");
 
-    // Shadow controls reach into the shadow modules; they only show while those
-    // modules are registered (shadows enabled).
-    if (terrain && sprite)
+    // Block geometry and water hold no game-side configuration, so toggling
+    // them just adds/removes the module (re-registration rebuilds per frame).
+    moduleCheckbox<BlockGeometry>(render, "Block geometry");
+    moduleCheckbox<IsometricWater>(render, "Water");
+
+    // Sun shadows are a paired terrain+actor feature; the active technique
+    // follows the render style, so the two modules toggle together.
+    bool shadowsOn = render.hasModule<TerrainShadow>();
+    if (ImGui::Checkbox("Shadows", &shadowsOn))
     {
-      ImGui::Separator();
-      ImGui::TextUnformatted("Shadows");
-
-      // One length drives both so terrain and sprite shadows stay tied. The
-      // terrain length feeds the cached terrain geometry, so a change forces a
-      // rebuild.
-      float length = sprite->shadowSettings().spriteShadowMaxLength;
-
-      if (ImGui::SliderFloat("Shadow length", &length, 0.0f, 5.0f))
+      if (shadowsOn)
+        render.withModules<TerrainShadow, SpriteShadow>();
+      else
       {
-        sprite->shadowSettings().spriteShadowMaxLength = length;
-        terrain->shadowSettings().terrainShadowMaxLength = length;
-        terrain->markTerrainDirty();
+        render.removeModule<TerrainShadow>();
+        render.removeModule<SpriteShadow>();
       }
-
-      if (ImGui::SliderFloat("Terrain alpha",
-                             &terrain->shadowSettings().terrainShadowAlpha,
-                             0.0f,
-                             1.0f))
-        terrain->markTerrainDirty();
-
-      ImGui::SliderFloat("Sprite alpha",
-                         &sprite->shadowSettings().spriteShadowAlpha,
-                         0.0f,
-                         1.0f);
     }
+
+    // Sun shadow style is a backend/march property (not a module setting): the
+    // smooth/sharp choice only exists for the block-geometry march, so the
+    // dropdown offers only what the active render style supports.
+    if (render.hasModule<TerrainShadow>())
+    {
+      if (geometryActive)
+      {
+        const char* styles[] = {"Smooth", "Sharp"};
+        int style = render.sunShadowStyle() == SunShadowStyle::Sharp ? 1 : 0;
+        if (ImGui::Combo("Sun shadow style", &style, styles, 2))
+          render.setSunShadowStyle(style == 1 ? SunShadowStyle::Sharp
+                                              : SunShadowStyle::Smooth);
+      }
+      else
+      {
+        // Billboard terrain shadows are projected quads -- tile-aligned, so
+        // "Sharp" is the only supported look (the march needs block geometry).
+        ImGui::BeginDisabled();
+        const char* projected[] = {"Sharp"};
+        int style = 0;
+        ImGui::Combo("Sun shadow style", &style, projected, 1);
+        ImGui::EndDisabled();
+      }
+    }
+
+    // Each module owns its settings as UI-agnostic descriptors; pull them in
+    // and render generically. A module that exposes none is skipped. The render
+    // context lets a module return only the settings that apply to the current
+    // render mode.
+    render.forEachModule(
+        [](std::type_index type,
+           IRenderModule& module,
+           const IsometricRenderContext& context)
+        {
+          const std::vector<ModuleSetting> moduleSettings =
+              module.settings(context);
+          if (moduleSettings.empty())
+            return;
+
+          ImGui::SeparatorText(prettyTypeName(type.name()).c_str());
+          for (const ModuleSetting& setting : moduleSettings)
+            renderModuleSetting(setting);
+        });
   }
 
   ImGui::End();
