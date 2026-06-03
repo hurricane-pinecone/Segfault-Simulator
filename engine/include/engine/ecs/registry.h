@@ -1,5 +1,23 @@
 #pragma once
 
+// Internal engine header — not part of the public client API.
+//
+// Registry is the sole owner of all ECS state. Game code never reaches for it
+// directly: entities are spawned and queried through Scene (createEntity,
+// addSystem, getSystem, ...) and components are mutated through Entity
+// (addComponent, ...). The one place that uses Registry's interface directly is
+// a System subclass, through the protected `registry` pointer it inherits —
+// that is the supported extension point for system authors.
+//
+// This header cannot be hidden from client translation units: Scene holds a
+// Registry by value, and Entity/Scene expose template methods (addComponent<T>,
+// addSystem<T>) that clients instantiate over their own types, so the
+// definition must be visible wherever those instantiations happen. The boundary
+// is therefore enforced by access control (private ctor, friended Scene), not
+// by the include graph. Prefer including the gateway header below.
+//
+// IWYU pragma: private, include "engine/sceneManager/scene.h"
+
 #include "engine/ecs/entity.h"
 #include "pool.h"
 #include "system.h"
@@ -56,8 +74,8 @@ public:
   void forEachSystem(Fn&& fn);
 
 private:
-  // TODO: Figure out how to hide registry.h from client completely. For now
-  // this stops anything but Scene being able to create Registry.
+  // Only Scene constructs a Registry; everything else goes through Scene. See
+  // the header note above on why the type is still visible to client TUs.
   Registry() = default;
   ~Registry() = default;
 
