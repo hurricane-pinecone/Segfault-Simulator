@@ -1,13 +1,13 @@
 #pragma once
 
 #include "engine/particles/particleEffect.h"
-#include "engine/systems/particleSystem.h"
+#include "engine/rendering/modules/particles.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 
 // Sample-game particle effect presets. These are plain ParticleEffectDesc
 // builders (the same struct a future Lua/JSON loader would fill), registered on
-// the engine's ParticleSystem by name.
+// the engine's Particles module by name.
 
 // A shotgun gore blast is three layered effects fired at the same point and
 // direction (see spawnGore): a bright fast MIST haze, the main directional
@@ -223,7 +223,7 @@ inline sfs::ParticleEffectDesc makeBloodDripEffect()
 }
 
 // Register the gore layers under the names spawnGore() fires.
-inline void registerGoreEffects(sfs::ParticleSystem& particles)
+inline void registerGoreEffects(sfs::Particles& particles)
 {
   particles.registerEffect("blood_mist", makeBloodMistEffect());
   particles.registerEffect("blood_spray", makeBloodSprayEffect());
@@ -236,7 +236,7 @@ inline void registerGoreEffects(sfs::ParticleSystem& particles)
 // layer gets its own share of that impulse: the mist races slightly ahead, the
 // spray takes the full push, and the heavy gobs get only a fraction so they lag
 // behind and splat.
-inline void spawnGore(sfs::ParticleSystem& particles,
+inline void spawnGore(sfs::Particles& particles,
                       glm::vec2 worldPos,
                       float elevation,
                       glm::vec2 direction,

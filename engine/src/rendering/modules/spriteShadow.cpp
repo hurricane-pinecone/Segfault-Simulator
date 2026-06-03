@@ -1,4 +1,4 @@
-#include "engine/rendering/providers/isometricSpriteShadowProvider.h"
+#include "engine/rendering/modules/spriteShadow.h"
 
 #include "engine/assetStore/assetStore.h"
 #include "engine/components/shadowCasterComponent.h"
@@ -17,17 +17,17 @@
 namespace sfs
 {
 
-void IsometricSpriteShadowProvider::setSpriteShadowMaxLength(float length)
+void SpriteShadow::setSpriteShadowMaxLength(float length)
 {
   m_shadowSettings.spriteShadowMaxLength = std::max(length, 0.0f);
 }
 
-void IsometricSpriteShadowProvider::setSpriteShadowAlpha(float alpha)
+void SpriteShadow::setSpriteShadowAlpha(float alpha)
 {
   m_shadowSettings.spriteShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
 }
 
-void IsometricSpriteShadowProvider::computeCommands(
+void SpriteShadow::computeCommands(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("SpriteShadow: computeCommands");
@@ -42,7 +42,7 @@ void IsometricSpriteShadowProvider::computeCommands(
   }
 }
 
-void IsometricSpriteShadowProvider::constructSpriteShadows(
+void SpriteShadow::constructSpriteShadows(
     const IsometricRenderContext& context,
     const Entity& entity)
 {

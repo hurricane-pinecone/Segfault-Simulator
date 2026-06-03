@@ -1,14 +1,14 @@
 #pragma once
 
 #include "engine/ecs/entity.h"
-#include "engine/ecs/system.h"
+#include "engine/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
 #include "engine/particles/decal.h"
 #include "engine/particles/particle.h"
 #include "engine/particles/particleEffect.h"
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/iTerrainSurfaceSource.h"
 #include "engine/rendering/isometricRenderContext.h"
-#include "engine/rendering/renderProvider.h"
+#include "engine/rendering/modules/renderModule.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include <cstdint>
@@ -34,19 +34,18 @@ struct ParticleSpawnParams
   bool aimAlongVelocity = true;
 };
 
-// Engine particle system. Simulates particles in update() and emits batched draw
-// commands in computeCommands(), pulled into the isometric render queue by
-// IsometricRenderSystem (the same RenderProvider seam used by shadows/water), so
-// world particles share the frame's depth normalization and occlude correctly.
+// Render module that simulates particles in update() and emits batched draw
+// commands in computeCommands(), so world particles share the frame's depth
+// normalization and occlude correctly against the rest of the scene.
 //
 // Effects are registered by name as POD ParticleEffectDesc. Two spawn paths:
 //   - spawnBurst(name, worldPos, elevation): fire-and-forget one-shots.
 //   - ParticleEmitterComponent on an entity: continuous effect that follows it.
-class ParticleSystem
-    : public System,
-      public RenderProvider<IsometricRenderContext, ParticleBatchCommand>
+class Particles : public CommandModule<ParticleBatchCommand>
 {
 public:
+  void init(const ModuleInit& m) override { registry = m.registry; }
+
   // Register (or replace) an effect under a name. The name keys spawnBurst() and
   // ParticleEmitterComponent::effect.
   void registerEffect(const std::string& name, const ParticleEffectDesc& desc);
@@ -79,14 +78,15 @@ public:
 
   int liveParticleCount() const;
 
-  // RenderProvider: project live particles into batched draw commands.
-  void computeCommands(const IsometricRenderContext& context) override;
-
-protected:
-  void create() override;
+  // Advance every emitter and burst.
   void update(double deltaTime) override;
 
+  // Project live particles into batched draw commands.
+  void computeCommands(const IsometricRenderContext& context) override;
+
 private:
+  Registry* registry = nullptr;
+
   using EffectId = int;
 
   struct EmitterInstance
@@ -122,7 +122,9 @@ private:
 
   static void applySpawnParams(EmitterInstance& inst,
                                const ParticleSpawnParams& spawn);
-  void emit(EmitterInstance& inst, const ParticleEffectDesc& desc, int count);
+  void emitParticles(EmitterInstance& inst,
+                     const ParticleEffectDesc& desc,
+                     int count);
   void
   stepInstance(EmitterInstance& inst, const ParticleEffectDesc& desc, float dt);
 

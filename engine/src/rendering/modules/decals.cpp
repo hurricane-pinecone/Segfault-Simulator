@@ -1,4 +1,4 @@
-#include "engine/systems/decalSystem.h"
+#include "engine/rendering/modules/decals.h"
 
 #include "engine/utils/profiling.h"
 
@@ -30,25 +30,25 @@ inline glm::ivec2 floorTile(const glm::vec2& p)
 
 } // namespace
 
-glm::ivec2 DecalSystem::chunkOf(const glm::vec2& worldPos) const
+glm::ivec2 Decals::chunkOf(const glm::vec2& worldPos) const
 {
   const glm::ivec2 t = floorTile(worldPos);
   return {floorDiv(t.x, kChunkTiles), floorDiv(t.y, kChunkTiles)};
 }
 
-std::int64_t DecalSystem::chunkKey(glm::ivec2 chunk)
+std::int64_t Decals::chunkKey(glm::ivec2 chunk)
 {
   // Pack both halves as unsigned 32-bit so the key is a clean bijection.
   return (static_cast<std::int64_t>(static_cast<std::uint32_t>(chunk.x)) << 32) |
          static_cast<std::uint32_t>(chunk.y);
 }
 
-const std::string* DecalSystem::internTexture(const std::string& id)
+const std::string* Decals::internTexture(const std::string& id)
 {
   return &*m_textureIds.insert(id).first;
 }
 
-bool DecalSystem::isStatic(const Decal& d)
+bool Decals::isStatic(const Decal& d)
 {
   // Static = never changes per frame: not fading, and not a wall drip still
   // running down. (Permanent water with fadeRate 0 counts as static too.)
@@ -56,7 +56,7 @@ bool DecalSystem::isStatic(const Decal& d)
          !(d.surface == DecalSurface::Wall && !d.settled);
 }
 
-void DecalSystem::addDecal(const DecalSpawn& spawn)
+void Decals::addDecal(const DecalSpawn& spawn)
 {
   Decal d;
   d.worldPos = spawn.worldPos;
@@ -88,7 +88,7 @@ void DecalSystem::addDecal(const DecalSpawn& spawn)
   chunk.decals.push_back(d);
 }
 
-void DecalSystem::clearAll()
+void Decals::clearAll()
 {
   for (const auto& [chunk, data] : m_chunks)
     m_pendingFree.push_back(chunkKey(chunk));
@@ -98,7 +98,7 @@ void DecalSystem::clearAll()
   m_animatingCount = 0;
 }
 
-void DecalSystem::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
+void Decals::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
 {
   for (auto it = m_chunks.begin(); it != m_chunks.end();)
   {
@@ -151,7 +151,7 @@ void DecalSystem::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
   }
 }
 
-std::size_t DecalSystem::decalCount() const
+std::size_t Decals::decalCount() const
 {
   std::size_t total = 0;
   for (const auto& [chunk, data] : m_chunks)
@@ -159,9 +159,9 @@ std::size_t DecalSystem::decalCount() const
   return total;
 }
 
-void DecalSystem::update(double deltaTime)
+void Decals::update(double deltaTime)
 {
-  ZoneScopedN("DecalSystem::update");
+  ZoneScopedN("Decals::update");
 
   // Settled/static decals never change, so only do work while something fades
   // (water) or is still running down (wall drips).
@@ -227,7 +227,7 @@ void DecalSystem::update(double deltaTime)
   }
 }
 
-void DecalSystem::buildDecalVerts(const Decal& decal,
+void Decals::buildDecalVerts(const Decal& decal,
                                   std::vector<DecalVertex>& out) const
 {
   glm::vec4 color = decal.color;
@@ -306,9 +306,9 @@ void DecalSystem::buildDecalVerts(const Decal& decal,
   push(ca, bot, {0.0f, 1.0f}, key);
 }
 
-void DecalSystem::computeCommands(const IsometricRenderContext& context)
+void Decals::computeCommands(const IsometricRenderContext& context)
 {
-  ZoneScopedN("DecalSystem::computeCommands");
+  ZoneScopedN("Decals::computeCommands");
 
   flush(); // clears m_commands
 

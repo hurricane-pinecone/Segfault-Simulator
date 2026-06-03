@@ -1,4 +1,4 @@
-#include "engine/systems/blockGeometrySystem.h"
+#include "engine/rendering/modules/blockGeometry.h"
 
 #include "SDL2/SDL_surface.h"
 #include "engine/assetStore/assetStore.h"
@@ -58,20 +58,7 @@ constexpr UvF kRightBotInner{0.5f, 1.0f};
 
 } // namespace
 
-BlockGeometrySystem::BlockGeometrySystem(AssetStore& assetStore)
-    : m_assetStore(assetStore)
-{
-}
-
-void BlockGeometrySystem::create()
-{
-  registerComponent<TransformComponent>();
-  registerComponent<ElevationComponent>();
-  registerComponent<SpriteComponent>();
-  registerComponent<IsometricTile>();
-}
-
-glm::vec2 BlockGeometrySystem::textureSize(const std::string& textureId)
+glm::vec2 BlockGeometry::textureSize(const std::string& textureId)
 {
   if (const auto it = m_textureSizeCache.find(textureId);
       it != m_textureSizeCache.end())
@@ -79,16 +66,16 @@ glm::vec2 BlockGeometrySystem::textureSize(const std::string& textureId)
 
   glm::vec2 size{1.0f, 1.0f};
 
-  if (SDL_Surface* surface = m_assetStore.getSurface(textureId))
+  if (SDL_Surface* surface = m_assetStore->getSurface(textureId))
     size = {static_cast<float>(surface->w), static_cast<float>(surface->h)};
 
   m_textureSizeCache.emplace(textureId, size);
   return size;
 }
 
-void BlockGeometrySystem::computeCommands(const IsometricRenderContext& context)
+void BlockGeometry::computeCommands(const IsometricRenderContext& context)
 {
-  ZoneScopedN("BlockGeometrySystem::computeCommands");
+  ZoneScopedN("BlockGeometry::computeCommands");
 
   flush();
   m_textureSizeCache.clear();
@@ -139,13 +126,17 @@ void BlockGeometrySystem::computeCommands(const IsometricRenderContext& context)
     out.push_back(v[3]);
   };
 
-  for (const auto& entity : getEntities())
+  for (const auto& entity :
+       registry->view<TransformComponent,
+                      ElevationComponent,
+                      SpriteComponent,
+                      IsometricTile>())
   {
     const auto& transform = entity.getComponent<TransformComponent>();
     const int elevation = entity.getComponent<ElevationComponent>().level;
     const auto& spriteComponent = entity.getComponent<SpriteComponent>();
 
-    const Sprite* sprite = m_assetStore.getSprite(spriteComponent.spriteId);
+    const Sprite* sprite = m_assetStore->getSprite(spriteComponent.spriteId);
     if (!sprite)
       continue;
 

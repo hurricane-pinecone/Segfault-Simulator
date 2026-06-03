@@ -21,7 +21,7 @@ struct SurfaceVertex
 };
 
 // A vertex of opt-in block geometry (real terrain faces: tops + sides). Built
-// per frame by BlockGeometrySystem. `position` is screen pixels (the renderer
+// per frame by the BlockGeometry module. `position` is screen pixels (the renderer
 // converts to NDC); `worldPos` + `ground` (elevation level) drive the per-pixel
 // point lighting (a side face's ground varies down the face, so it lights from
 // its base up); `normal` is the real world-space face normal; `z` is the world

@@ -33,6 +33,11 @@ struct IsometricRenderContext
 
   TerrainElevationGridView terrainElevationGrid;
 
+  // True while terrain renders as real block-face geometry (the BlockGeometry
+  // module is registered) rather than billboard sprites. Modules that differ
+  // between the two render styles (e.g. projected terrain shadows) branch on it.
+  bool geometryActive = false;
+
   glm::ivec2 gridCellOf(const glm::vec2& position) const
   {
     return sfs::gridCellOf(position);

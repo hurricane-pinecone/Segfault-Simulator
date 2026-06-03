@@ -17,7 +17,7 @@ enum class DecalSurface : uint8_t
 };
 
 // A request to lay down one persistent mark on the terrain, produced when a
-// particle collides with the world and consumed by an IDecalSink (DecalSystem).
+// particle collides with the world and consumed by an IDecalSink (the Decals module).
 struct DecalSpawn
 {
   glm::vec2 worldPos{0.0f, 0.0f};
@@ -48,7 +48,7 @@ struct DecalSpawn
   float sortKey = 0.0f;
 };
 
-// Receives decals from collisions. DecalSystem implements this; ParticleSystem
+// Receives decals from collisions. The Decals module implements this; the Particles module
 // holds a pointer to it (bridged by the scene, so neither depends on the other).
 class IDecalSink
 {

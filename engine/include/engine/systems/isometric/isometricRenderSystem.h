@@ -7,15 +7,17 @@
 #include "engine/rendering/iIsometricRenderer.h"
 #include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/rendering/isometricRenderContext.h"
-#include "engine/rendering/providers/isometricSpriteShadowProvider.h"
-#include "engine/rendering/providers/isometricTerrainShadowProvider.h"
-#include "engine/rendering/providers/isometricWaterProvider.h"
+#include "engine/rendering/modules/renderModule.h"
 #include "engine/rendering/renderQueue.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
+#include <cassert>
+#include <memory>
+#include <typeindex>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -29,32 +31,6 @@ extern int gTileRenderItems;
 extern int gSpriteRenderItems;
 extern int gSpriteProjectedShadowItems;
 extern int gTerrainShadowBatchCount;
-
-/**
- * Registerable render pass for game-supplied content. Implement this and
- * register an instance via IsometricRenderSystem::addRenderProvider to inject
- * commands into the frame; they are ordered against the built-in passes by
- * their RenderPass. The built-in isometric passes (terrain/sprite shadows,
- * water, particles, decals, geometry) are pulled by the render system directly
- * and are not registered through this interface.
- */
-class IRenderProvider
-{
-public:
-  virtual ~IRenderProvider() = default;
-
-  /** @return whether this provider should emit commands this frame. */
-  virtual bool providerEnabled() const = 0;
-
-  /**
-   * Compute and append this provider's render commands for the frame.
-   *
-   * @param context the frame's render context (projection, lighting, terrain)
-   * @param out      queue to append the provider's commands to
-   */
-  virtual void emit(const IsometricRenderContext& context,
-                    std::vector<AnyRenderCommand>& out) = 0;
-};
 
 struct WallFaceKey
 {
@@ -103,28 +79,75 @@ public:
   void setSunShadowStyle(SunShadowStyle style);
 
   /**
-   * Enable or disable engine-baked sun terrain shadows. When on, the billboard
-   * render style draws projected shadow quads and the block-geometry style runs
-   * the in-shader heightmap march; actor shadows are also dropped when off.
+   * Compose a render module into the frame. Registration is the enable: the
+   * module's commands draw every frame, ordered against the others by their
+   * RenderPass. The system constructs + owns the module, init()s it with the
+   * registry + asset store, and forwards update()/emit() to it. A module type
+   * may be registered only once.
+   *
+   * @return a reference to the constructed module, for configuration.
    */
-  void setShadowsEnabled(bool enabled) { m_shadowsEnabled = enabled; }
-
-  /** Access the settings (length, alpha). */
-  IsometricShadowSettings& shadowSettings()
+  template <class T, class... A>
+  T& withModule(A&&... args)
   {
-    return m_terrainShadows.shadowSettings();
+    assert(!hasModule<T>() && "module type already registered");
+
+    auto module = std::make_unique<T>(std::forward<A>(args)...);
+    module->init({registry, &assetStore});
+
+    T& ref = *module;
+    m_modules.emplace_back(std::type_index(typeid(T)), std::move(module));
+    return ref;
   }
 
-  /** Invalidate the cached terrain-shadow geometry so it rebuilds next frame.
-   */
-  void markTerrainShadowsDirty();
+  /** Compose several default-constructed modules at once. */
+  template <class... Ts>
+  void withModules()
+  {
+    (withModule<Ts>(), ...);
+  }
 
-  /**
-   * Register a game-supplied render pass. Its commands are emitted each frame
-   * after the built-in passes and ordered with them by RenderPass. The system
-   * does not take ownership; the provider must outlive the system.
-   */
-  void addRenderProvider(IRenderProvider* provider);
+  /** @return whether a module of type T is registered. */
+  template <class T>
+  bool hasModule() const
+  {
+    const std::type_index key(typeid(T));
+
+    for (const auto& [type, module] : m_modules)
+      if (type == key)
+        return true;
+
+    return false;
+  }
+
+  /** @return the registered module of type T, or nullptr if absent. */
+  template <class T>
+  T* module()
+  {
+    const std::type_index key(typeid(T));
+
+    for (const auto& [type, module] : m_modules)
+      if (type == key)
+        return static_cast<T*>(module.get());
+
+    return nullptr;
+  }
+
+  /** Unregister (and destroy) the module of type T, disabling its feature. */
+  template <class T>
+  void removeModule()
+  {
+    const std::type_index key(typeid(T));
+
+    for (auto it = m_modules.begin(); it != m_modules.end(); ++it)
+    {
+      if (it->first == key)
+      {
+        m_modules.erase(it);
+        return;
+      }
+    }
+  }
 
   void drawDebugTile(const glm::vec2& gridPosition,
                      SDL_Color color = SDL_Color{255, 255, 0, 255});
@@ -232,12 +255,11 @@ private:
   bool m_hasAmbient = false;
   std::vector<IsometricPointLightSnapshot> m_pointLights;
 
-  std::vector<IRenderProvider*> m_renderProviders;
-
-  IsometricTerrainShadowProvider m_terrainShadows;
-  IsometricSpriteShadowProvider m_spriteShadows;
-  IsometricWaterProvider m_water;
-  bool m_shadowsEnabled = true;
+  // Composed render modules, owned by the system and kept in registration
+  // order. A feature is on iff its module is present; cross-cutting state (e.g.
+  // whether terrain renders as geometry) is derived from this set each frame.
+  std::vector<std::pair<std::type_index, std::unique_ptr<IRenderModule>>>
+      m_modules;
 };
 
 template <typename T>

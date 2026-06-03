@@ -3,7 +3,7 @@
 #include "engine/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/isometricRenderContext.h"
-#include "engine/rendering/renderProvider.h"
+#include "engine/rendering/modules/renderModule.h"
 
 namespace sfs
 {
@@ -24,15 +24,14 @@ struct WaterSurfaceBuild
 };
 
 /**
- * Builds the water surface mesh from WaterTileComponent entities. A RenderProvider
- * owned by the render system: set the registry, then computeCommands() each frame
- * emits one SurfaceCommand per water tile cluster.
+ * Render module that builds the water surface mesh from WaterTileComponent
+ * entities. computeCommands() each frame emits one SurfaceCommand per water tile
+ * cluster.
  */
-class IsometricWaterProvider
-    : public RenderProvider<IsometricRenderContext, SurfaceCommand>
+class IsometricWater : public CommandModule<SurfaceCommand>
 {
 public:
-  void setRegistry(Registry* r) { registry = r; }
+  void init(const ModuleInit& m) override { registry = m.registry; }
 
   void computeCommands(const IsometricRenderContext& context) override;
 
