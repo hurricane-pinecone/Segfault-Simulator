@@ -8,7 +8,6 @@
 #include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/renderQueue.h"
-#include "engine/rendering/util/isometric/camera.h"
 #include "engine/systems/isometric/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
@@ -32,10 +31,10 @@ extern int gTerrainShadowBatchCount;
 /**
  * Registerable render pass for game-supplied content. Implement this and
  * register an instance via IsometricRenderSystem::addRenderProvider to inject
- * commands into the frame; they are ordered against the built-in passes by their
- * RenderPass. The built-in isometric passes (terrain/sprite shadows, water,
- * particles, decals, geometry) are pulled by the render system directly and are
- * not registered through this interface.
+ * commands into the frame; they are ordered against the built-in passes by
+ * their RenderPass. The built-in isometric passes (terrain/sprite shadows,
+ * water, particles, decals, geometry) are pulled by the render system directly
+ * and are not registered through this interface.
  */
 class IRenderProvider
 {
@@ -89,8 +88,9 @@ public:
   void setProjection(const IsometricProjection* projection);
 
   // Authoritative terrain heights for the point-light occlusion heightmap. When
-  // set, the heightmap samples this instead of the per-tile ECS entities, so its
-  // window is hole-free even while terrain streams in (see ITerrainHeightSource).
+  // set, the heightmap samples this instead of the per-tile ECS entities, so
+  // its window is hole-free even while terrain streams in (see
+  // ITerrainHeightSource).
   void setTerrainHeightSource(const ITerrainHeightSource* source);
 
   void setWaveTime(float time);
@@ -136,8 +136,8 @@ protected:
 private:
   void beginBatches();
 
-  // Eases each actor's rendered ground elevation toward the tile it stands on, so
-  // crossing an elevation step ramps smoothly instead of teleporting a whole
+  // Eases each actor's rendered ground elevation toward the tile it stands on,
+  // so crossing an elevation step ramps smoothly instead of teleporting a whole
   // level (which jumps both the sprite and any light it carries).
   void updateActorElevations(double deltaTime);
 
@@ -194,8 +194,9 @@ private:
   // update(); read when placing sprites and when filling each light's ground.
   std::unordered_map<Entity::EntityId, float> m_actorElevation;
 
-  // Optional authoritative terrain heights. When present the heightmap window is
-  // filled from this (complete, no streaming holes) rather than the ECS tiles.
+  // Optional authoritative terrain heights. When present the heightmap window
+  // is filled from this (complete, no streaming holes) rather than the ECS
+  // tiles.
   const ITerrainHeightSource* m_terrainHeightSource = nullptr;
 
   IsometricRenderContext m_context;
@@ -246,7 +247,8 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
 
   // Opt-in real-geometry terrain: a lit, textured face mesh. The renderer can't
   // resolve string texture ids, so resolve here, then hand it the projected,
-  // depth-stamped triangle list (assignClipDepth already remapped each vertex z).
+  // depth-stamped triangle list (assignClipDepth already remapped each vertex
+  // z).
   else if constexpr (std::is_same_v<T, GeometryCommand>)
   {
     const unsigned int texture = resolveTexture(concrete.textureId);

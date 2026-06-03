@@ -3,7 +3,6 @@
 #include "SDL2/SDL_pixels.h"
 #include "SDL2/SDL_surface.h"
 #include "engine/rendering/blendMode.h"
-#include "engine/rendering/commands/commands.h"
 #include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <cstddef>
@@ -13,14 +12,14 @@ namespace sfs
 {
 
 /**
- * Backend-agnostic 2D quad renderer: the core rendering contract a render system
- * draws through. Provides texture management, batched and immediate quad
+ * Backend-agnostic 2D quad renderer: the core rendering contract a render
+ * system draws through. Provides texture management, batched and immediate quad
  * submission, lighting, and frame lifecycle. A render system is any sfs::System
  * that holds an IQuadRenderer& and issues draws between begin() and flush().
  *
  * Isometric-heightfield capabilities (block geometry, sun shadows, projected
- * shadow pipelines, world-projected decals, the elevation heightmap) are defined
- * by the IIsometricRenderer extension.
+ * shadow pipelines, world-projected decals, the elevation heightmap) are
+ * defined by the IIsometricRenderer extension.
  */
 class IQuadRenderer
 {
@@ -67,9 +66,11 @@ public:
    *
    * @param batch         the quads to draw
    * @param texture       material albedo texture handle
-   * @param normalTexture material normal-map handle (ignored if hasNormalMap is false)
+   * @param normalTexture material normal-map handle (ignored if hasNormalMap is
+   * false)
    * @param hasNormalMap  whether normalTexture is valid
-   * @param surfaceEffect SurfaceEffect::Type as an int, applied across the batch
+   * @param surfaceEffect SurfaceEffect::Type as an int, applied across the
+   * batch
    */
   virtual void submitLitBatch(const LitQuadBatch& batch,
                               unsigned int texture,
@@ -85,7 +86,8 @@ public:
    * @param texture     shared texture handle
    * @param blend       blend mode for the batch
    * @param depthTested true tests against scene depth (world particles occlude
-   *                    behind terrain); false ignores depth (screen-space overlays)
+   *                    behind terrain); false ignores depth (screen-space
+   * overlays)
    */
   virtual void submitParticleBatch(const ParticleBatch& batch,
                                    unsigned int texture,

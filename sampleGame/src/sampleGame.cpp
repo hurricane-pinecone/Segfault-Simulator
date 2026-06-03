@@ -3,11 +3,13 @@
 #include "config.h"
 #include "scenes/gameScene.h"
 #include <engine/input/keyboardInput.h>
+#include <engine/rendering/isometricGeometryRenderer.h>
 #include <engine/rendering/util/isometric/camera.h>
 #include <engine/sceneManager/scene.h>
 #include <engine/systems/cameraSystem.h>
 #include <engine/systems/isometric/isometricRenderSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
+#include <memory>
 #include <string>
 
 void SampleGame::onSetup()
@@ -61,3 +63,10 @@ void SampleGame::onProcessInput(const sfs::Input& input)
 }
 
 void SampleGame::onDestroy() {};
+
+std::unique_ptr<sfs::IQuadRenderer>
+SampleGame::createQuadRenderer(int windowWidth, int windowHeight)
+{
+  return std::make_unique<sfs::IsometricGeometryRenderer>(windowWidth,
+                                                          windowHeight);
+}
