@@ -2,6 +2,7 @@
 
 #include "SDL2/SDL_pixels.h"
 #include "SDL2/SDL_surface.h"
+#include "engine/rendering/blendMode.h"
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -42,6 +43,15 @@ public:
 
   // Projected sprite shadows, batched by texture (one draw per shadow atlas).
   virtual void submitSpriteShadow(const FreeformQuad& command) = 0;
+
+  // A batch of unlit particle billboards sharing one texture + blend mode, drawn
+  // in one call. Never depth-writes. depthTested = true (world particles) tests
+  // against the scene depth so terrain occludes them; false (screen-space
+  // overlays) ignores depth and always draws on top.
+  virtual void submitParticleBatch(const ParticleBatch& batch,
+                                   unsigned int texture,
+                                   BlendMode blend,
+                                   bool depthTested) = 0;
 
   // Immediate-mode draw (text, UI, simple sprites), bypassing the batch queue.
   virtual void drawImmediate(const TexturedQuad& command) = 0;

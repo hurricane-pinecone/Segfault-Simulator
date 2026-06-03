@@ -9,7 +9,9 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include <map>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 #ifdef __EMSCRIPTEN__
@@ -59,6 +61,11 @@ public:
 
   void submitSpriteShadow(const FreeformQuad& command) override;
 
+  void submitParticleBatch(const ParticleBatch& batch,
+                           unsigned int texture,
+                           BlendMode blend,
+                           bool depthTested) override;
+
   void
   drawImmediate(const TexturedQuad& command) override; // Text, UI, sprites
 
@@ -90,11 +97,13 @@ private:
     SpriteShadow,
     Textured,
     Freeform,
-    LitSprite
+    LitSprite,
+    Particle
   };
 
   unsigned int createSolidShaderProgram() const;
   unsigned int createSpriteShadowShaderProgram() const;
+  unsigned int createParticleShaderProgram() const;
 
   void beginPipeline(Pipeline stage);
   void flushCurrentPipeline();
@@ -102,6 +111,7 @@ private:
   void flushFreeform();
   void flushLit();
   void flushSpriteShadow();
+  void flushParticles();
 
   // Binds the terrain heightmap to texture unit 2 and pushes its uniforms on the
   // currently-bound program. Every path that does point-light occlusion must call
@@ -112,6 +122,10 @@ private:
   void appendSolidVertices(const Quad& command);
   void appendLitVertices(const LitQuad& command);
   void appendSpriteShadowVertices(const FreeformQuad& command);
+  void appendParticleVertices(const ParticleBatch& batch,
+                              unsigned int texture,
+                              BlendMode blend,
+                              bool depthTested);
 
   void drawQuad(const Quad& command);
   void drawQuad(const FreeformQuad& command); // Shadows
@@ -254,6 +268,14 @@ private:
     float z = 0.0f; // clip-space depth (gl_Position.z)
   };
 
+  struct ParticleVertex
+  {
+    glm::vec2 position;
+    glm::vec2 uv;
+    glm::vec4 color;
+    float z = 0.0f; // clip-space depth (gl_Position.z)
+  };
+
 private:
   int windowWidth = 0;
   int windowHeight = 0;
@@ -351,6 +373,11 @@ private:
   unsigned int spriteShadowVbo = 0;
   int uSpriteShadowTextureLocation = -1;
 
+  unsigned int particleShaderProgram = 0;
+  unsigned int particleVao = 0;
+  unsigned int particleVbo = 0;
+  int uParticleTextureLocation = -1;
+
   std::vector<SolidVertex> m_solidVertices;
   std::vector<Vertex> m_litVertices;
   std::optional<LitBatchKey> m_litBatchKey;
@@ -359,6 +386,12 @@ private:
   // irrelevant. Bucket by texture and draw one batch per shadow atlas.
   std::unordered_map<unsigned int, std::vector<ShadowVertex>>
       m_spriteShadowBatches;
+
+  // Particles bucketed by (texture, blend mode, depthTested); one draw call per
+  // bucket. A std::map keeps the bucket set tiny and avoids needing a hash.
+  std::map<std::tuple<unsigned int, BlendMode, bool>,
+           std::vector<ParticleVertex>>
+      m_particleBatches;
 };
 
 } // namespace sfs

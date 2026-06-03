@@ -13,6 +13,7 @@ enum class RenderPass : uint8_t
   SpriteShadow, // projected actor/sprite shadows, drawn over terrain shadows
   Surfaces,
   Objects,
+  Particles, // translucent particle billboards, over objects, under foreground
   Foreground,
   UI,
 };

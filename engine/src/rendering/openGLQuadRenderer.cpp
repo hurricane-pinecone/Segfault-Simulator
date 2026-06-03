@@ -96,6 +96,21 @@ void OpenGLQuadRenderer::initialize()
   uSpriteShadowTextureLocation =
       glGetUniformLocation(spriteShadowShaderProgram, "uTexture");
 
+  // Particle shader.
+  // Used by:
+  // - unlit particle billboards (texture * per-vertex colour), batched by
+  //   texture + blend mode.
+  particleShaderProgram = createParticleShaderProgram();
+
+  if (particleShaderProgram == 0)
+  {
+    LOG_ERROR("Failed to create OpenGLQuadRenderer particle shader");
+    return;
+  }
+
+  uParticleTextureLocation =
+      glGetUniformLocation(particleShaderProgram, "uTexture");
+
   // ===========================================================================
   // Main textured/lit shader uniform locations
   // ===========================================================================
@@ -400,6 +415,65 @@ void OpenGLQuadRenderer::initialize()
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
   // ===========================================================================
+  // Particle VAO/VBO
+  // Textured billboard + per-vertex RGBA modulate colour, batched by texture +
+  // blend mode. Same vertex layout as sprite shadows.
+  // ===========================================================================
+
+  glGenVertexArrays(1, &particleVao);
+  glGenBuffers(1, &particleVbo);
+
+  glBindVertexArray(particleVao);
+  glBindBuffer(GL_ARRAY_BUFFER, particleVbo);
+
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sizeof(ParticleVertex) * 6),
+               nullptr,
+               GL_DYNAMIC_DRAW);
+
+  // position
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(ParticleVertex),
+      reinterpret_cast<void*>(offsetof(ParticleVertex, position)));
+
+  // uv
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1,
+                        2,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(ParticleVertex),
+                        reinterpret_cast<void*>(offsetof(ParticleVertex, uv)));
+
+  // color (modulate)
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(
+      2,
+      4,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(ParticleVertex),
+      reinterpret_cast<void*>(offsetof(ParticleVertex, color)));
+
+  // clip-space depth
+  glEnableVertexAttribArray(3);
+  glVertexAttribPointer(
+      3,
+      1,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(ParticleVertex),
+      reinterpret_cast<void*>(offsetof(ParticleVertex, z)));
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+  // ===========================================================================
   // Default uniforms: textured/lit sprite shader
   // ===========================================================================
 
@@ -562,6 +636,15 @@ void OpenGLQuadRenderer::shutdown()
   if (spriteShadowShaderProgram != 0)
     glDeleteProgram(spriteShadowShaderProgram);
 
+  if (particleVbo != 0)
+    glDeleteBuffers(1, &particleVbo);
+
+  if (particleVao != 0)
+    glDeleteVertexArrays(1, &particleVao);
+
+  if (particleShaderProgram != 0)
+    glDeleteProgram(particleShaderProgram);
+
   if (surfaceEbo != 0)
     glDeleteBuffers(1, &surfaceEbo);
 
@@ -583,6 +666,11 @@ void OpenGLQuadRenderer::shutdown()
   spriteShadowVao = 0;
   spriteShadowShaderProgram = 0;
   m_spriteShadowBatches.clear();
+
+  particleVbo = 0;
+  particleVao = 0;
+  particleShaderProgram = 0;
+  m_particleBatches.clear();
 
   solidVbo = 0;
   solidVao = 0;
@@ -1079,6 +1167,123 @@ void OpenGLQuadRenderer::flushSpriteShadow()
   glUseProgram(0);
 
   m_spriteShadowBatches.clear();
+}
+
+void OpenGLQuadRenderer::submitParticleBatch(const ParticleBatch& batch,
+                                             unsigned int texture,
+                                             BlendMode blend,
+                                             bool depthTested)
+{
+  initialize();
+
+  if (!initialized || texture == 0 || batch.quads.empty())
+    return;
+
+  if (m_pipeline != Pipeline::Particle)
+  {
+    flushCurrentPipeline();
+    m_pipeline = Pipeline::Particle;
+  }
+
+  appendParticleVertices(batch, texture, blend, depthTested);
+}
+
+void OpenGLQuadRenderer::appendParticleVertices(const ParticleBatch& batch,
+                                                unsigned int texture,
+                                                BlendMode blend,
+                                                bool depthTested)
+{
+  std::vector<ParticleVertex>& verts =
+      m_particleBatches[{texture, blend, depthTested}];
+  verts.reserve(verts.size() + batch.quads.size() * 6);
+
+  for (const auto& quad : batch.quads)
+  {
+    const glm::vec2 p0 = toNdc(quad.points[0]);
+    const glm::vec2 p1 = toNdc(quad.points[1]);
+    const glm::vec2 p2 = toNdc(quad.points[2]);
+    const glm::vec2 p3 = toNdc(quad.points[3]);
+
+    const float z = quad.z;
+
+    verts.push_back({p0, quad.uvs[0], quad.color, z});
+    verts.push_back({p1, quad.uvs[1], quad.color, z});
+    verts.push_back({p2, quad.uvs[2], quad.color, z});
+
+    verts.push_back({p0, quad.uvs[0], quad.color, z});
+    verts.push_back({p2, quad.uvs[2], quad.color, z});
+    verts.push_back({p3, quad.uvs[3], quad.color, z});
+  }
+}
+
+void OpenGLQuadRenderer::flushParticles()
+{
+  ZoneScopedN("GL: flushParticles");
+  TracyGpuZone("GPU: particles");
+
+  initialize();
+
+  if (!initialized || m_particleBatches.empty())
+    return;
+
+  glUseProgram(particleShaderProgram);
+
+  // Never depth-write, so particles blend among themselves rather than
+  // z-fighting. World particles depth-test against the opaque scene (terrain
+  // occludes them); screen-space overlays skip the test (handled per bucket).
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+
+  glActiveTexture(GL_TEXTURE0);
+  glUniform1i(uParticleTextureLocation, 0);
+
+  glBindVertexArray(particleVao);
+  glBindBuffer(GL_ARRAY_BUFFER, particleVbo);
+
+  // One draw per (texture, blend, depthTested) bucket.
+  for (auto& [key, verts] : m_particleBatches)
+  {
+    if (verts.empty())
+      continue;
+
+    const auto& [texture, blend, depthTested] = key;
+
+    if (depthTested)
+    {
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_LEQUAL);
+    }
+    else
+    {
+      glDisable(GL_DEPTH_TEST);
+    }
+
+    if (blend == BlendMode::Additive)
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    else
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(ParticleVertex)),
+                 verts.data(),
+                 GL_DYNAMIC_DRAW);
+
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size()));
+  }
+
+  // Restore default state for whatever draws next.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+  glUseProgram(0);
+
+  m_particleBatches.clear();
 }
 
 void OpenGLQuadRenderer::flushSolid()
@@ -2110,6 +2315,7 @@ void OpenGLQuadRenderer::begin()
   m_solidVertices.clear();
   m_litVertices.clear();
   m_spriteShadowBatches.clear();
+  m_particleBatches.clear();
 
   m_litBatchKey.reset();
 
@@ -2281,6 +2487,92 @@ void main()
   return program;
 }
 
+unsigned int OpenGLQuadRenderer::createParticleShaderProgram() const
+{
+#ifdef __EMSCRIPTEN__
+  const std::string glslVersion = "#version 300 es\n"
+                                  "precision mediump float;\n";
+#else
+  const std::string glslVersion = "#version 330 core\n";
+#endif
+
+  const std::string vertexSource = glslVersion + R"(
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aUv;
+layout(location = 2) in vec4 aColor;
+layout(location = 3) in float aZ;
+
+out vec2 vUv;
+out vec4 vColor;
+
+void main()
+{
+  vUv = aUv;
+  vColor = aColor;
+  gl_Position = vec4(aPosition, aZ, 1.0);
+}
+)";
+
+  const std::string fragmentSource = glslVersion + R"(
+in vec2 vUv;
+in vec4 vColor;
+
+out vec4 FragColor;
+
+uniform sampler2D uTexture;
+
+void main()
+{
+  // Unlit: the particle's colour fully modulates the sprite texture (RGB and
+  // alpha). Premultiply-free; the blend mode decides how it combines.
+  vec4 tex = texture(uTexture, vUv);
+  FragColor = tex * vColor;
+
+  if (FragColor.a <= 0.0)
+    discard;
+}
+)";
+
+  GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+  GLuint fragmentShader =
+      compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+
+  if (vertexShader == 0 || fragmentShader == 0)
+  {
+    if (vertexShader != 0)
+      glDeleteShader(vertexShader);
+
+    if (fragmentShader != 0)
+      glDeleteShader(fragmentShader);
+
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+  if (!success)
+  {
+    char infoLog[1024];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+    LOG_ERROR(infoLog);
+
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
+}
+
 void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
 {
   if (m_pipeline == pipeline)
@@ -2313,6 +2605,10 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
 
   case Pipeline::SpriteShadow:
     flushSpriteShadow();
+    break;
+
+  case Pipeline::Particle:
+    flushParticles();
     break;
 
   case Pipeline::Textured:

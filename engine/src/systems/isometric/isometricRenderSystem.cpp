@@ -20,6 +20,7 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #include "engine/systems/isometric/isometricWaterSystem.h"
+#include "engine/systems/particleSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <algorithm>
@@ -535,6 +536,13 @@ void IsometricRenderSystem::render()
   {
     waterSystem->computeCommands(m_context);
     m_renderQueue.submitAll(waterSystem->commands());
+  }
+
+  if (const auto particleSystem = registry->tryGetSystem<ParticleSystem>();
+      particleSystem && particleSystem->enabled())
+  {
+    particleSystem->computeCommands(m_context);
+    m_renderQueue.submitAll(particleSystem->commands());
   }
 
   flushBatches();

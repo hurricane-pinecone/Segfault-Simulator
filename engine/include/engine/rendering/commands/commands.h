@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/components/surfaceEffect.h"
+#include "engine/rendering/blendMode.h"
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/quads.h"
@@ -52,6 +53,15 @@ struct SurfaceCommand
   RenderOrder order{RenderPass::Surfaces, 0, 0};
 };
 
+// A pre-batched set of particles sharing one texture + blend mode. assignClipDepth
+// remaps each quad's z (set to its world sort-key) to clip-space depth, so the
+// batch occludes against terrain per particle.
+struct ParticleBatchCommand : RenderCommand<ParticleBatch>
+{
+  const std::string* textureId = nullptr;
+  BlendMode blend = BlendMode::Alpha;
+};
+
 using AnyRenderCommand = std::variant<QuadCommand,
                                       TexturedQuadCommand,
                                       FreeformQuadCommand,
@@ -60,5 +70,6 @@ using AnyRenderCommand = std::variant<QuadCommand,
                                       TerrainShadowCommand,
                                       SurfaceCommand,
                                       TerrainShadowBatchCommand,
-                                      SpriteShadowCommand>;
+                                      SpriteShadowCommand,
+                                      ParticleBatchCommand>;
 } // namespace sfs
