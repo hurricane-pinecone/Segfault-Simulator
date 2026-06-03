@@ -47,16 +47,12 @@ void GameScene::onInit()
   auto& renderer =
       addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
 
-  // Compose the render features as modules; registration is the enable. Terrain
-  // tiles stay billboards by default -- block geometry, water, and shadows are
-  // toggled live from the debug UI (engine/utils/ui.h renderDebugControls).
   renderer.withModules<sfs::TerrainShadow,
                        sfs::SpriteShadow,
                        sfs::IsometricWater,
                        sfs::BlockGeometry,
                        sfs::Decals>();
 
-  // Terrain and sprite shadows share one length so equal heights match.
   constexpr float shadowMaxLength = 3.5f;
   renderer.module<sfs::TerrainShadow>()
       ->shadowSettings()
@@ -88,8 +84,6 @@ void GameScene::createEntities()
 {
   m_player = &createObject<Player>();
 
-  // The first lamp also carries a continuous ember emitter (component-driven
-  // particle path); the others are plain lights.
   auto& emberLamp =
       createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
   emberLamp.entity().addComponent<sfs::ParticleEmitterComponent>(
@@ -103,9 +97,6 @@ void GameScene::createEntities()
 void GameScene::onProcessInput(const sfs::Input& input)
 {
   auto& render = getSystem<sfs::IsometricRenderSystem>();
-
-  // Render modules (block geometry, water, shadows + style, decal clearing) are
-  // driven from the debug UI; see engine/utils/ui.h renderDebugControls.
 
   m_mousePos = input.mouse().getPosition();
 
