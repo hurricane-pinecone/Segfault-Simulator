@@ -49,6 +49,39 @@ public:
 
   IsometricShadowSettings& shadowSettings() { return m_shadowSettings; }
 
+  std::vector<ModuleSetting>
+  settings(const IsometricRenderContext& context) override
+  {
+    // Projected terrain shadows only render in the billboard style; under block
+    // geometry the in-shader heightmap march replaces them and reads the
+    // heightmap directly, so these values do nothing there.
+    if (context.geometryActive)
+      return {};
+
+    return {
+        settings::floatRange(
+            "Terrain shadow length",
+            0.0f,
+            5.0f,
+            [this] { return m_shadowSettings.terrainShadowMaxLength; },
+            [this](float v)
+            {
+              m_shadowSettings.terrainShadowMaxLength = v;
+              markTerrainDirty();
+            }),
+        settings::floatRange(
+            "Terrain alpha",
+            0.0f,
+            1.0f,
+            [this] { return m_shadowSettings.terrainShadowAlpha; },
+            [this](float v)
+            {
+              m_shadowSettings.terrainShadowAlpha = v;
+              markTerrainDirty();
+            }),
+    };
+  }
+
 private:
   void computeTerrainShadows(const IsometricRenderContext& context);
 

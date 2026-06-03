@@ -41,6 +41,15 @@ public:
 
   void computeCommands(const IsometricRenderContext& context) override;
 
+  std::vector<ModuleSetting> settings(const IsometricRenderContext&) override
+  {
+    return {
+        settings::text("Decals",
+                       [this] { return std::to_string(decalCount()); }),
+        settings::action("Clear decals", [this] { clearAll(); }),
+    };
+  }
+
 private:
   struct Decal
   {

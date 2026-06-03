@@ -2,6 +2,7 @@
 
 #include "engine/rendering/commands/commands.h" // AnyRenderCommand
 #include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/modules/moduleSettings.h"
 #include <vector>
 
 namespace sfs
@@ -36,6 +37,17 @@ public:
   /** Append this module's render commands for the frame. */
   virtual void emit(const IsometricRenderContext& context,
                     std::vector<AnyRenderCommand>& out) = 0;
+
+  /**
+   * UI-agnostic descriptors for this module's settings, for a debug panel or
+   * editor. The render context lets a module expose only the settings that
+   * apply to the active render mode (e.g. hide projected-shadow settings while
+   * block geometry self-shadows). Default: none.
+   */
+  virtual std::vector<ModuleSetting> settings(const IsometricRenderContext&)
+  {
+    return {};
+  }
 };
 
 /** Helper base for modules that build a vector of one command type. */

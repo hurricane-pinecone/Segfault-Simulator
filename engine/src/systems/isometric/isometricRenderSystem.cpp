@@ -1002,7 +1002,21 @@ void IsometricRenderSystem::submitRenderCommand(
 
 void IsometricRenderSystem::setSunShadowStyle(SunShadowStyle style)
 {
+  m_sunShadowStyle = style;
   m_quadRenderer.setSunShadowStyle(style);
+}
+
+void IsometricRenderSystem::forEachModule(
+    const std::function<void(std::type_index,
+                             IRenderModule&,
+                             const IsometricRenderContext&)>& fn)
+{
+  // Refresh the cross-cutting flags a module reads to pick mode-appropriate
+  // settings (the same derivation render() performs each frame).
+  m_context.geometryActive = hasModule<BlockGeometry>();
+
+  for (auto& [type, module] : m_modules)
+    fn(type, *module, m_context);
 }
 
 } // namespace sfs

@@ -15,6 +15,7 @@
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
 #include <cassert>
+#include <functional>
 #include <memory>
 #include <typeindex>
 #include <utility>
@@ -77,6 +78,9 @@ public:
   /** Select the sun-shadow sampling style for the heightmap march
    * (smooth/sharp). */
   void setSunShadowStyle(SunShadowStyle style);
+
+  /** The current sun-shadow sampling style. */
+  SunShadowStyle sunShadowStyle() const { return m_sunShadowStyle; }
 
   /**
    * Compose a render module into the frame. Registration is the enable: the
@@ -148,6 +152,17 @@ public:
       }
     }
   }
+
+  /**
+   * Visit each registered module with its type and the current render context,
+   * for debug/editor UIs that read module settings(). Cross-cutting context
+   * flags (e.g. geometryActive) are refreshed first so a module returns
+   * settings appropriate to the active render mode.
+   */
+  void forEachModule(
+      const std::function<void(std::type_index,
+                               IRenderModule&,
+                               const IsometricRenderContext&)>& fn);
 
   void drawDebugTile(const glm::vec2& gridPosition,
                      SDL_Color color = SDL_Color{255, 255, 0, 255});
@@ -254,6 +269,10 @@ private:
   IsometricAmbientLighting m_ambient;
   bool m_hasAmbient = false;
   std::vector<IsometricPointLightSnapshot> m_pointLights;
+
+  // Mirrors the backend's sun-shadow march style so the value can be read back
+  // (e.g. for the debug UI dropdown); set via setSunShadowStyle.
+  SunShadowStyle m_sunShadowStyle = SunShadowStyle::Smooth;
 
   // Composed render modules, owned by the system and kept in registration
   // order. A feature is on iff its module is present; cross-cutting state (e.g.

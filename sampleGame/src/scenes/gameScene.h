@@ -16,7 +16,7 @@ public:
   GameScene(sfs::SceneId id,
             sfs::AssetStore& assetStore,
             const std::string& name)
-      : sfs::Scene(id, assetStore, name), m_sunController()
+      : sfs::Scene(id, assetStore, name)
   {
   }
 
@@ -38,9 +38,5 @@ private:
   glm::ivec2 m_hoveredTile{0, 0};
   int m_hoveredElevation = 0;
   bool m_hasHoveredTile = false;
-  SunController m_sunController;
   Player* m_player = nullptr;
-
-  // Heightmap-march sampling look; soft/rounded by default, H toggles.
-  bool m_sharpShadows = false;
 };
