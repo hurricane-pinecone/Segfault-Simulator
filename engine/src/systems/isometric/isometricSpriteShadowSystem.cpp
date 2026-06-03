@@ -571,15 +571,27 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
   if (!pointLights)
     return;
 
+  // Light radius is authored in screen pixels (see LightEmitterComponent), but
+  // the shadow math runs in world tiles. Convert by the on-screen tile width, the
+  // same conversion IsometricRenderSystem applies for the lit shader, so a
+  // caster's shadow fades out exactly at the light's reach.
+  const float tilePixelWidth =
+      static_cast<float>(context.projection->tileWidth) *
+      context.projection->worldScale;
+  const float radiusToWorld =
+      tilePixelWidth > 0.0001f ? 1.0f / tilePixelWidth : 0.0f;
+
   for (const auto& light : *pointLights)
   {
     const glm::vec2 toCaster = worldSample - light.worldPosition;
     const float distance = glm::length(toCaster);
 
-    if (distance <= 0.001f || distance >= light.radius)
+    const float radiusWorld = light.radius * radiusToWorld;
+
+    if (distance <= 0.001f || distance >= radiusWorld)
       continue;
 
-    float attenuation = 1.0f - distance / light.radius;
+    float attenuation = 1.0f - distance / radiusWorld;
     attenuation = std::clamp(attenuation, 0.0f, 1.0f);
     attenuation *= attenuation;
 
@@ -617,20 +629,25 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
         context.gridCellOf(glm::floor(light.worldPosition));
 
     bool lightBlocked = false;
-    constexpr int OcclusionSteps = 24;
-    for (int s = 1; s < OcclusionSteps && !lightBlocked; s++)
     {
-      const float t = static_cast<float>(s) / static_cast<float>(OcclusionSteps);
-      const glm::ivec2 tile = context.gridCellOf(
-          glm::floor(glm::mix(worldSample, light.worldPosition, t)));
+      ZoneScopedN("SpriteShadow: point-light occlusion march");
 
-      if (tile == casterTile || tile == lightTile)
-        continue;
+      constexpr int OcclusionSteps = 24;
+      for (int s = 1; s < OcclusionSteps && !lightBlocked; s++)
+      {
+        const float t =
+            static_cast<float>(s) / static_cast<float>(OcclusionSteps);
+        const glm::ivec2 tile = context.gridCellOf(
+            glm::floor(glm::mix(worldSample, light.worldPosition, t)));
 
-      int e = 0;
-      if (context.terrainElevationGrid.tryGet(tile, e) &&
-          static_cast<float>(e) > lightLevel + 0.5f)
-        lightBlocked = true;
+        if (tile == casterTile || tile == lightTile)
+          continue;
+
+        int e = 0;
+        if (context.terrainElevationGrid.tryGet(tile, e) &&
+            static_cast<float>(e) > lightLevel + 0.5f)
+          lightBlocked = true;
+      }
     }
 
     if (lightBlocked)
