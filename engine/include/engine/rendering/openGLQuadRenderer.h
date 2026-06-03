@@ -292,16 +292,18 @@ private:
   int uSurfaceEffectLocation = -1;
   int uSurfaceEffectTimeLocation = -1;
 
-  // Terrain heightmap used to occlude point lights against terrain. A fixed-size
-  // texture whose grid region is refreshed in place with a synchronous
-  // glTexSubImage2D, which the render system re-stamps every frame: a sparse
-  // upload that lands after a gap of idle frames glitches the sampled texture
-  // for one frame on the macOS GL driver (flashing the occlusion), and uploading
-  // every frame leaves no such gap. The copy is tiny (one R32F texel per tile)
-  // and in-order, so it can't desync from the matching origin uniform.
-  // m_heightmapScratch holds the float conversion so the upload doesn't allocate
-  // each time.
-  unsigned int heightmapTexture = 0;
+  // Terrain heightmap used to occlude point lights against terrain. The grid is
+  // re-stamped every frame (a sparse upload landing after a gap of idle frames
+  // glitches the sampled texture for one frame on the macOS GL driver). To keep
+  // that per-frame upload cheap it ring-buffers across several textures: writing
+  // the texture the GPU is still sampling from the previous frame's draws stalls
+  // the CPU until those reads drain (~a full frame), so each frame uploads into
+  // the next slot in the ring -- one the GPU finished with frames ago -- and
+  // binds that slot. m_heightmapScratch holds the float conversion so the upload
+  // doesn't allocate each time.
+  static constexpr int kHeightmapRingSize = 3;
+  unsigned int heightmapTextures[kHeightmapRingSize] = {};
+  int m_heightmapRing = 0; // slot written/bound this frame
   std::vector<float> m_heightmapScratch;
   int m_heightmapTexSize = 0; // allocated texture dimension (fixed, >= grid)
   int m_heightmapWidth = 0;

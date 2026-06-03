@@ -137,7 +137,7 @@ void OpenGLQuadRenderer::initialize()
       glGetUniformLocation(shaderProgram, "uHeightmapTexSize");
   uHeightScaleLocation = glGetUniformLocation(shaderProgram, "uHeightScale");
 
-  glGenTextures(1, &heightmapTexture);
+  glGenTextures(kHeightmapRingSize, heightmapTextures);
 
   // ===========================================================================
   // Surface shader uniform locations
@@ -1443,8 +1443,10 @@ void OpenGLQuadRenderer::drawQuadInternal(
 // Terrain heightmap for point-light occlusion (texture unit 2).
 void OpenGLQuadRenderer::bindHeightmapUniforms()
 {
+  ZoneScopedN("GL: bind occlusion heightmap");
+
   glActiveTexture(GL_TEXTURE2);
-  glBindTexture(GL_TEXTURE_2D, heightmapTexture);
+  glBindTexture(GL_TEXTURE_2D, heightmapTextures[m_heightmapRing]);
   glUniform1i(uHeightmapLocation, 2);
   glUniform2f(uHeightmapOriginLocation,
               static_cast<float>(m_heightmapOriginX),
@@ -1933,9 +1935,10 @@ else if (uSurfaceEffect == 4) // Sand
 
   sunlight = max(sunlight, vec3(0.03));
 
-  vec3 pointLight =
-      calculatePointLighting(normal);
-
+  // How much point lights assert themselves, driven purely by the ambient sky
+  // level (uAmbient) -- NOT a day/night clock. Bright ambient drowns them out;
+  // any time ambient drops they fade back in, so a storm darkening the sky at
+  // midday lets point lights and their occlusion work normally.
   float daylight =
       smoothstep(0.20, 0.75, uAmbient);
 
@@ -1945,7 +1948,14 @@ else if (uSurfaceEffect == 4) // Sand
   pointVisibility =
       pointVisibility * pointVisibility;
 
-  pointLight *= pointVisibility * 2.0;
+  // Skip the point-light pass entirely when its contribution would round to
+  // nothing. calculatePointLighting runs a 48-tap occlusion march per light per
+  // pixel, so this reclaims that GPU cost whenever the sky is bright -- and since
+  // the test is on uAmbient (uniform), the branch is coherent across the draw.
+  vec3 pointLight = vec3(0.0);
+
+  if (pointVisibility > 0.001)
+    pointLight = calculatePointLighting(normal) * (pointVisibility * 2.0);
 
   float sunlightAmount =
       max(max(sunlight.r, sunlight.g), sunlight.b);
@@ -2571,6 +2581,9 @@ void OpenGLQuadRenderer::setHeightmap(const int* elevations,
                                       int originY,
                                       float heightScale)
 {
+  ZoneScopedN("GL: upload occlusion heightmap");
+  TracyGpuZone("GPU: occlusion heightmap upload");
+
   // An empty grid (e.g. a transient rebuild) would turn occlusion off and flash
   // the lights. Keep the previous heightmap instead.
   if (width <= 0 || height <= 0 || elevations == nullptr)
@@ -2585,40 +2598,45 @@ void OpenGLQuadRenderer::setHeightmap(const int* elevations,
   const int texSize = std::max({128, width, height});
 
   glActiveTexture(GL_TEXTURE2);
-  glBindTexture(GL_TEXTURE_2D, heightmapTexture);
 
-  // Allocate the fixed-size texture once. The grid size oscillates by a tile as
-  // the camera moves, so a larger fixed texture lets us always update in place.
-  // Reallocation only happens if the grid ever outgrows the current texture
-  // (rare).
+  // (Re)allocate the whole ring when the grid outgrows the current texture (only
+  // the first call in practice -- the window is a fixed size). Every slot is
+  // allocated at the same dimension so any of them can be bound for sampling.
   if (texSize > m_heightmapTexSize)
   {
     const std::vector<float> empty(static_cast<size_t>(texSize) * texSize,
                                    -1000.0f);
 
-    glTexImage2D(GL_TEXTURE_2D,
-                 0,
-                 GL_R32F,
-                 texSize,
-                 texSize,
-                 0,
-                 GL_RED,
-                 GL_FLOAT,
-                 empty.data());
-    // Linear filtering ramps elevation smoothly between tiles so the occlusion
-    // edge isn't tile-blocky.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    for (int i = 0; i < kHeightmapRingSize; i++)
+    {
+      glBindTexture(GL_TEXTURE_2D, heightmapTextures[i]);
+      glTexImage2D(GL_TEXTURE_2D,
+                   0,
+                   GL_R32F,
+                   texSize,
+                   texSize,
+                   0,
+                   GL_RED,
+                   GL_FLOAT,
+                   empty.data());
+      // Linear filtering ramps elevation smoothly between tiles so the occlusion
+      // edge isn't tile-blocky.
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
 
     m_heightmapTexSize = texSize;
   }
 
-  // Convert to float and upload the grid region synchronously. A synchronous
-  // glTexSubImage2D from client memory completes before the draws that sample it
-  // this frame, so the texture and the origin uniform never disagree. Empty
-  // tiles get a finite low value so they never occlude (the sentinel is INT_MIN).
+  // Advance to the next ring slot and upload into it. Writing a slot the GPU
+  // finished sampling frames ago avoids the read-after-write stall that an
+  // in-place update of the just-sampled texture would incur. Empty tiles get a
+  // finite low value so they never occlude (the sentinel is INT_MIN).
+  m_heightmapRing = (m_heightmapRing + 1) % kHeightmapRingSize;
+  glBindTexture(GL_TEXTURE_2D, heightmapTextures[m_heightmapRing]);
+
   const size_t count = static_cast<size_t>(width) * height;
   m_heightmapScratch.resize(count);
 
