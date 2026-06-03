@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --ink:#e6edf3; --mut:#8b949e;
+    --line:#30363d;
+    --blue:#58a6ff; --bluebg:rgba(88,166,255,.09); --bluebd:rgba(88,166,255,.5);
+    --purp:#bc8cff; --purpbg:rgba(188,140,255,.09); --purpbd:rgba(188,140,255,.5);
+    --oran:#f0883e; --oranbg:rgba(240,136,62,.09); --oranbd:rgba(240,136,62,.5);
+    --green:#3fb950; --greenbg:rgba(63,185,80,.09); --greenbd:rgba(63,185,80,.5);
+    --teal:#39c5cf; --tealbg:rgba(57,197,207,.09); --tealbd:rgba(57,197,207,.5);
+    --yel:#d29922; --yelbg:rgba(210,153,34,.09); --yelbd:rgba(210,153,34,.5);
+    --pink:#db61a2;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+  .canvas{width:1680px;padding:34px 38px 30px}
+  h1{font-size:30px;margin:0}
+  h1 .sub{color:var(--mut);font-weight:500;font-size:17px;margin-left:14px}
+  .tagline{color:var(--mut);font-size:14px;margin:6px 0 22px}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  .grid{display:grid;grid-template-columns:1fr 560px;gap:22px;align-items:start}
+
+  /* generic owning box */
+  .own{border:1.5px solid var(--line);border-radius:13px;padding:13px 15px 15px;position:relative;background:var(--panel)}
+  .own > .hd{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .own > .hd .nm{font-weight:800;font-size:17px;letter-spacing:.2px}
+  .own > .hd .ty{font-size:12px;color:var(--mut);font-family:"SF Mono",ui-monospace,monospace}
+  .own > .desc{font-size:12.5px;color:var(--mut);line-height:1.5;margin-bottom:11px}
+  .own.game{border-color:var(--bluebd);background:linear-gradient(180deg,var(--bluebg),var(--panel))}
+  .own.game > .hd .nm{color:var(--blue)}
+  .own.scene{border-color:var(--purpbd);background:linear-gradient(180deg,var(--purpbg),#15171f)}
+  .own.scene > .hd .nm{color:var(--purp)}
+  .own.registry{border-color:var(--oranbd);background:linear-gradient(180deg,var(--oranbg),#15171f)}
+  .own.registry > .hd .nm{color:#ffb37a}
+
+  /* member chips */
+  .members{display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;gap:8px}
+  .row > *{flex:1}
+  .chip{border:1px solid var(--line);border-radius:9px;padding:8px 11px;background:var(--panel2)}
+  .chip .ct{font-weight:700;font-size:13.5px}
+  .chip .cd{font-size:11.5px;color:var(--mut);line-height:1.45;margin-top:2px}
+  .chip .own-tag{font-size:10.5px;font-family:"SF Mono",ui-monospace,monospace;color:var(--green);float:right;font-weight:600}
+  .chip.ref{border-style:dashed;border-color:#4b5563;background:repeating-linear-gradient(135deg,#161b22,#161b22 8px,#13171e 8px,#13171e 16px)}
+  .chip.ref .own-tag{color:var(--mut)}
+  .holds{font-size:11.5px;color:var(--mut);margin:9px 2px 9px;display:flex;align-items:center;gap:8px}
+  .holds .ar{color:var(--purp);font-size:15px}
+
+  /* right column panels */
+  .side{border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:15px 16px 16px;margin-bottom:22px}
+  .side .sh{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .side .sh .dot{width:11px;height:11px;border-radius:3px}
+  .side .sh h2{font-size:18px;margin:0}
+  .side .sh .k{margin-left:auto;font-size:11.5px;color:var(--mut)}
+  .side p.intro{font-size:12.5px;color:var(--mut);line-height:1.55;margin:0 0 12px}
+
+  .go{border:1px solid var(--greenbd);background:var(--greenbg);border-radius:10px;padding:11px 13px;margin-bottom:10px}
+  .go .gt{font-weight:700;font-size:14px;color:var(--green)}
+  .go .gd{font-size:12px;color:var(--mut);line-height:1.5;margin-top:3px}
+  .go .gd .m{font-family:"SF Mono",ui-monospace,monospace;color:#c9d1d9}
+  .ex{display:flex;gap:9px}
+  .ex .e{flex:1;border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:9px 11px}
+  .ex .e .et{font-weight:700;font-size:13px}
+  .ex .e .ed{font-size:11px;color:var(--mut);line-height:1.4;margin-top:3px}
+
+  /* engine/game split */
+  .split{display:flex;gap:11px}
+  .col{flex:1;border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:var(--panel2)}
+  .col h3{margin:0 0 3px;font-size:14px}
+  .col .path{font-size:11px;color:var(--mut);font-family:"SF Mono",ui-monospace,monospace;margin-bottom:9px}
+  .col.lib h3{color:var(--blue)}
+  .col.app h3{color:var(--teal)}
+  .li{font-size:12px;line-height:1.55;color:#c9d1d9;padding:3px 0;border-top:1px solid #20262f}
+  .li:first-of-type{border-top:none}
+  .li b{color:var(--ink)}
+  .li .base{color:var(--mut)}
+  .li .x{color:var(--pink);font-family:"SF Mono",ui-monospace,monospace}
+
+  /* lifecycle */
+  .life{margin-top:0;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:15px 18px 17px}
+  .life .lh{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .life .lh .dot{width:11px;height:11px;border-radius:3px;background:var(--yel)}
+  .life .lh h2{font-size:18px;margin:0}
+  .life .lh .k{margin-left:auto;color:var(--mut);font-size:12px}
+  .track{display:flex;align-items:stretch}
+  .ph{flex:1;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:9px 12px}
+  .ph .pn{font-weight:700;font-size:13.5px}
+  .ph .pd{font-size:11px;color:var(--mut);line-height:1.45;margin-top:3px;font-family:"SF Mono",ui-monospace,monospace}
+  .ph.loop{border-color:var(--yelbd);background:linear-gradient(180deg,var(--yelbg),var(--panel2))}
+  .sep{flex:none;width:34px;display:flex;align-items:center;justify-content:center;color:var(--line);font-size:22px}
+  .hooks{margin-top:13px;display:flex;gap:11px}
+  .hk{flex:1;border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:#12161f}
+  .hk .ht{font-size:12px;font-weight:700;margin-bottom:5px}
+  .hk.s .ht{color:var(--purp)} .hk.g .ht{color:var(--green)} .hk.y .ht{color:var(--blue)}
+  .hk .hl{font-size:11.5px;color:var(--mut);line-height:1.7;font-family:"SF Mono",ui-monospace,monospace}
+
+  .legend{display:flex;gap:22px;margin-top:18px;font-size:12px;color:var(--mut);align-items:center;flex-wrap:wrap}
+  .legend .it{display:flex;align-items:center;gap:8px}
+  .legend .sw{width:26px;height:14px;border-radius:4px;border:1px solid var(--line)}
+  .legend .sw.solid{background:var(--panel2)}
+  .legend .sw.dash{border-style:dashed;border-color:#4b5563;background:repeating-linear-gradient(135deg,#161b22,#161b22 6px,#13171e 6px,#13171e 12px)}
+  .legend .sw.nest{background:transparent;border-color:var(--bluebd)}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <h1>Ownership &amp; Lifecycle<span class="sub">who owns what · how the OOP layer sits on the ECS core</span></h1>
+  <div class="tagline">A reusable ECS engine (<span class="mono">sfs::</span>) with a thin Unity-style OOP layer on top. Nesting below = <b>ownership</b> (a box owns the boxes inside it); dashed boxes are non-owning references injected by the parent.</div>
+
+  <div class="grid">
+    <!-- LEFT: ownership containment tree -->
+    <div class="own game">
+      <div class="hd"><span class="nm">Game</span><span class="ty">sfs::Game — application root</span></div>
+      <div class="desc">Owns the SDL window + GL context and the whole subsystem stack. Drives the frame loop in <span class="mono">run()</span>.</div>
+      <div class="members">
+        <div class="row">
+          <div class="chip"><span class="own-tag">unique_ptr</span><div class="ct">AssetStore</div><div class="cd">textures, sprites, fonts</div></div>
+          <div class="chip"><span class="own-tag">unique_ptr</span><div class="ct">IQuadRenderer</div><div class="cd">OpenGLQuadRenderer — GL backend</div></div>
+          <div class="chip"><span class="own-tag">unique_ptr</span><div class="ct">TextRenderer</div><div class="cd">text → quads</div></div>
+          <div class="chip"><span class="own-tag">value</span><div class="ct">Input</div><div class="cd">keyboard + mouse state</div></div>
+        </div>
+
+        <div class="own" style="border-color:var(--line);background:#12161c">
+          <div class="hd"><span class="nm" style="font-size:15px">SceneManager</span><span class="ty">owned by value</span></div>
+          <div class="desc" style="margin-bottom:8px">Owns scenes in a <span class="mono">map&lt;SceneId, unique_ptr&lt;Scene&gt;&gt;</span>, tracks the current scene, and <b>injects</b> the renderer / text renderer / asset store into each scene on creation.</div>
+
+          <div class="own scene">
+            <div class="hd"><span class="nm">Scene</span><span class="ty">sfs::Scene — owned by SceneManager</span></div>
+            <div class="desc">A world: holds its own Registry and the GameObjects living in it.</div>
+            <div class="members">
+              <div class="own registry">
+                <div class="hd"><span class="nm" style="font-size:15px">Registry</span><span class="ty">owned by value — sole owner of ECS state</span></div>
+                <div class="row" style="margin-top:9px">
+                  <div class="chip"><span class="own-tag">unique_ptr[]</span><div class="ct">Component Pools</div><div class="cd">vector&lt;unique_ptr&lt;IPool&gt;&gt; — the component data</div></div>
+                  <div class="chip"><span class="own-tag">unique_ptr[]</span><div class="ct">Systems</div><div class="cd">vector&lt;unique_ptr&lt;System&gt;&gt; — the logic</div></div>
+                </div>
+              </div>
+              <div class="row">
+                <div class="chip"><span class="own-tag">unique_ptr[]</span><div class="ct">GameObjects</div><div class="cd">vector&lt;unique_ptr&lt;GameObject&gt;&gt; — the OOP layer →</div></div>
+              </div>
+              <div class="holds"><span class="ar">⤳</span> non-owning, injected by SceneManager:</div>
+              <div class="row">
+                <div class="chip ref"><span class="own-tag">ref</span><div class="ct">AssetStore&amp;</div></div>
+                <div class="chip ref"><span class="own-tag">ptr</span><div class="ct">IQuadRenderer*</div></div>
+                <div class="chip ref"><span class="own-tag">ptr</span><div class="ct">TextRenderer*</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div>
+      <div class="side">
+        <div class="sh"><span class="dot" style="background:var(--green)"></span><h2>The OOP layer</h2><span class="k mono">GameObject</span></div>
+        <p class="intro">A <b>GameObject</b> is a thin OOP wrapper that <b>owns an Entity handle</b> into the scene's Registry — it does not store component data itself. <span class="mono">Scene::createObject&lt;T&gt;()</span> constructs it and calls <span class="mono">onCreate(scene)</span>, where it spawns its entity and attaches components.</p>
+        <div class="go">
+          <div class="gt">GameObject &nbsp;<span style="color:var(--mut);font-weight:500;font-size:12px">(base)</span></div>
+          <div class="gd"><span class="m">Entity m_entity;</span> &nbsp;·&nbsp; hooks: <span class="m">onCreate</span> / <span class="m">onUpdate</span> / <span class="m">onProcessInput</span>.<br>Composes behaviour over the ECS — input &amp; per-object logic live here, simulation lives in Systems.</div>
+        </div>
+        <div class="ex">
+          <div class="e"><div class="et">Player</div><div class="ed">entity + Sprite · Transform · Collider · RigidBody · Light · ShadowCaster; reads input → velocity.</div></div>
+          <div class="e"><div class="et">Lamp</div><div class="ed">entity + Transform · Sprite · Elevation · Light · ShadowCaster; static point light.</div></div>
+        </div>
+      </div>
+
+      <div class="side" style="margin-bottom:0">
+        <div class="sh"><span class="dot" style="background:var(--teal)"></span><h2>Engine ╱ Game split</h2><span class="k">reusable library vs sample</span></div>
+        <div class="split">
+          <div class="col lib">
+            <h3>engine/</h3>
+            <div class="path">library · namespace sfs</div>
+            <div class="li"><b>Game</b> <span class="base">· base loop</span></div>
+            <div class="li"><b>Scene</b> · <b>SceneManager</b></div>
+            <div class="li"><b>Registry</b> · <b>System</b> · <b>GameObject</b></div>
+            <div class="li">Components &amp; built-in Systems</div>
+            <div class="li">AssetStore · Renderer · Input</div>
+          </div>
+          <div class="col app">
+            <h3>sampleGame/</h3>
+            <div class="path">executable · entry point</div>
+            <div class="li">SampleGame <span class="x">: Game</span></div>
+            <div class="li">GameScene <span class="x">: Scene</span></div>
+            <div class="li">Player · Lamp · blocks <span class="x">: GameObject</span></div>
+            <div class="li">TerrainGeneratorSystem <span class="x">: System</span></div>
+            <div class="li">SunController <span class="x">: System</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIFECYCLE -->
+  <div class="life" style="margin-top:22px">
+    <div class="lh"><span class="dot"></span><h2>Lifecycle</h2><span class="k mono">Game owns the timeline · Scene &amp; GameObject expose virtual hooks</span></div>
+    <div class="track">
+      <div class="ph"><div class="pn">init()</div><div class="pd">SDL + GL + ImGui; create renderer</div></div>
+      <div class="sep">→</div>
+      <div class="ph"><div class="pn">setup()</div><div class="pd">AssetStore; create scenes</div></div>
+      <div class="sep">→</div>
+      <div class="ph loop"><div class="pn">run()  ↻ per frame</div><div class="pd">processInput → update(dt) → render</div></div>
+      <div class="sep">→</div>
+      <div class="ph"><div class="pn">destroy()</div><div class="pd">tear down GL resources, SDL_Quit</div></div>
+    </div>
+    <div class="hooks">
+      <div class="hk y"><div class="ht">Game hooks (override)</div><div class="hl">onInit · onSetup · onProcessInput<br>onUpdate · onRender · onDestroy</div></div>
+      <div class="hk s"><div class="ht">Scene hooks (override)</div><div class="hl">onInit · onEnter · onExit · onProcessInput<br>onUpdate · onRender · onDebugUI</div></div>
+      <div class="hk g"><div class="ht">GameObject hooks (override)</div><div class="hl">onCreate(scene)<br>onUpdate(dt) · onProcessInput(input)</div></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="it"><span class="sw nest"></span>nested box = <b style="color:var(--ink);font-weight:600">&nbsp;owns&nbsp;</b> (unique_ptr / by value)</div>
+    <div class="it"><span class="sw dash"></span>dashed = non-owning reference (injected)</div>
+    <div class="it"><span class="x mono" style="color:var(--pink)">: Base</span> = inherits / overrides</div>
+    <div class="it"><span class="mono">↻</span> = per-frame loop</div>
+  </div>
+</div>
+</body>
+</html>

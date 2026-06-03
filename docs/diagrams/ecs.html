@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --ink:#e6edf3; --mut:#8b949e;
+    --line:#30363d; --code:#c9d1d9;
+    --green:#3fb950; --greenbg:rgba(63,185,80,.10); --greenbd:rgba(63,185,80,.45);
+    --blue:#58a6ff;  --bluebg:rgba(88,166,255,.10);  --bluebd:rgba(88,166,255,.45);
+    --purp:#bc8cff;  --purpbg:rgba(188,140,255,.10); --purpbd:rgba(188,140,255,.45);
+    --oran:#f0883e;  --oranbg:rgba(240,136,62,.10);  --oranbd:rgba(240,136,62,.45);
+    --teal:#39c5cf;  --tealbg:rgba(57,197,207,.10);  --tealbd:rgba(57,197,207,.40);
+    --yel:#d29922;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+  .canvas{width:1680px;padding:34px 38px 30px;}
+  h1{font-size:30px;margin:0;letter-spacing:.2px}
+  h1 .sub{color:var(--mut);font-weight:500;font-size:17px;margin-left:14px}
+  .tagline{color:var(--mut);font-size:14px;margin:6px 0 22px}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  .cols{display:grid;grid-template-columns:300px 56px 1fr 56px 388px;align-items:stretch}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 18px}
+  .ph{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+  .ph .dot{width:11px;height:11px;border-radius:3px}
+  .ph h2{font-size:19px;margin:0}
+  .ph .k{font-size:12px;color:var(--mut);margin-left:auto}
+  .card{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:10px;background:var(--panel2)}
+  .card .t{font-weight:700;font-size:14.5px;margin-bottom:3px}
+  .card .d{font-size:12.5px;color:var(--mut);line-height:1.5}
+  .field{font-size:12.5px;color:var(--code);line-height:1.7}
+  .field b{color:var(--ink)}
+  .field .c{color:var(--mut)}
+  .note{font-size:12px;color:var(--mut);line-height:1.5;margin-top:4px}
+
+  /* entities column */
+  .ent .pill{display:flex;align-items:center;gap:9px;border:1px solid var(--greenbd);background:var(--greenbg);border-radius:9px;padding:8px 11px;margin-bottom:8px;font-size:13.5px}
+  .ent .pill .id{margin-left:auto;color:var(--green);font-weight:700;font-family:"SF Mono",ui-monospace,monospace}
+  .ent .pill .ic{font-size:15px}
+
+  /* registry sub-blocks */
+  .sub{border:1px solid var(--line);border-radius:10px;padding:11px 12px 13px;margin-bottom:12px;background:#12161f}
+  .sub .st{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+  .sub .st b{font-size:14px}
+  .sub .st .ty{font-size:11.5px;color:var(--blue)}
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  .sig td{padding:3px 7px;border:1px solid var(--line)}
+  .sig td.e{color:var(--green);font-weight:700;white-space:nowrap;width:64px}
+  .sig td.b{color:var(--code)}
+  .sig td .on{color:var(--purp)}
+  /* pools */
+  .poolrow{display:flex;align-items:stretch;gap:8px;margin-bottom:7px}
+  .poolrow .name{width:140px;flex:none;font-size:11.5px;border:1px solid var(--purpbd);background:var(--purpbg);border-radius:7px;padding:6px 8px;color:var(--purp);font-weight:700}
+  .poolrow .name span{display:block;color:var(--mut);font-weight:500;font-size:10.5px;margin-top:2px}
+  .cells{display:flex;gap:5px;flex:1}
+  .cell{flex:1;border:1px solid var(--line);border-radius:6px;background:#0d1117;font-size:10.5px;color:var(--code);padding:5px 4px;text-align:center;line-height:1.35}
+  .cell.empty{color:#454c56;background:repeating-linear-gradient(45deg,#10141c,#10141c 5px,#0d1117 5px,#0d1117 10px)}
+  .cell .h{display:block;color:var(--mut);font-size:9px;margin-bottom:2px}
+
+  /* systems column */
+  .sys .srow{border:1px solid var(--oranbd);background:var(--oranbg);border-radius:9px;padding:9px 11px;margin-bottom:8px}
+  .sys .srow .nm{font-weight:700;font-size:13.5px;color:#ffb37a}
+  .sys .srow .rq{font-size:11.5px;color:var(--mut);margin-top:3px;font-family:"SF Mono",ui-monospace,monospace}
+  .sys .srow .rq b{color:var(--code);font-weight:600}
+  .sys .game{border-color:var(--tealbd);background:var(--tealbg)}
+  .sys .game .nm{color:#7fe3ea}
+
+  /* connectors */
+  .rail{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--mut)}
+  .rail .lbl{font-size:11px;text-align:center;line-height:1.4;max-width:54px}
+  .rail .arr{font-size:26px;color:var(--line)}
+  .rail .arr b{color:var(--blue)}
+
+  /* loop strip */
+  .loop{margin-top:20px;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:15px 18px 17px}
+  .loop .lh{display:flex;align-items:center;gap:10px;margin-bottom:13px}
+  .loop .lh h2{font-size:18px;margin:0}
+  .loop .lh .dot{width:11px;height:11px;border-radius:3px;background:var(--yel)}
+  .loop .lh .src{margin-left:auto;color:var(--mut);font-size:12px}
+  .flow{display:flex;align-items:stretch;gap:0}
+  .step{flex:1;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:10px 12px}
+  .step .s1{font-weight:700;font-size:14px}
+  .step .s2{font-size:12px;color:var(--mut);line-height:1.5;margin-top:4px}
+  .step .s2 .m{color:var(--code);font-family:"SF Mono",ui-monospace,monospace}
+  .step.hot{border-color:var(--bluebd);background:linear-gradient(180deg,rgba(88,166,255,.07),var(--panel2))}
+  .gap{flex:none;width:46px;display:flex;align-items:center;justify-content:center;color:var(--line);font-size:24px}
+  .loopback{margin-top:11px;font-size:12px;color:var(--mut);text-align:center}
+  .loopback b{color:var(--yel)}
+  .legend{display:flex;gap:20px;margin-top:16px;font-size:12px;color:var(--mut);align-items:center;flex-wrap:wrap}
+  .legend .it{display:flex;align-items:center;gap:7px}
+  .legend .sw{width:13px;height:13px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <h1>ECS Architecture<span class="sub">sfs::Registry — data layout &amp; system dispatch</span></h1>
+  <div class="tagline">Entities are bare handles · components are plain structs stored in pools · systems own logic and run over the entities whose components match their signature.</div>
+
+  <div class="cols">
+    <!-- ENTITIES -->
+    <div class="panel ent">
+      <div class="ph"><span class="dot" style="background:var(--green)"></span><h2>Entities</h2><span class="k mono">Entity</span></div>
+      <div class="card">
+        <div class="t">Just a handle — no data, no logic</div>
+        <div class="field">
+          <b>id</b> <span class="c">: uint32  — slot, recycled on destroy</span><br>
+          <b>generation</b> <span class="c">: uint32 — stale-handle guard</span><br>
+          <b>debugId</b> <span class="c">: uint64 — stable, never reused</span><br>
+          <b>registry</b> <span class="c">: Registry* — back-pointer</span>
+        </div>
+        <div class="note">add/get/hasComponent just forward to the Registry.</div>
+      </div>
+      <div class="pill"><span class="ic">🧍</span> Player <span class="id">#12</span></div>
+      <div class="pill"><span class="ic">💡</span> Lamp <span class="id">#7</span></div>
+      <div class="pill"><span class="ic">🟩</span> Terrain tile <span class="id">#103</span></div>
+      <div class="pill"><span class="ic">🎥</span> Camera <span class="id">#1</span></div>
+      <div class="note" style="margin-top:12px">createEntity() / destroyEntity() are <b>deferred</b> — applied next frame in <span class="mono">flushEntities()</span>.</div>
+    </div>
+
+    <div class="rail"><div class="lbl">stored in</div><div class="arr">→</div></div>
+
+    <!-- REGISTRY -->
+    <div class="panel">
+      <div class="ph"><span class="dot" style="background:var(--blue)"></span><h2>Registry</h2><span class="k">single owner of all ECS state</span></div>
+
+      <div class="sub">
+        <div class="st"><b>Component Signatures</b><span class="ty mono">vector&lt;bitset&lt;32&gt;&gt; — index = entity id</span></div>
+        <table class="sig">
+          <tr><td class="e">#12 Player</td><td class="b"><span class="on">Transform · Sprite · RigidBody · Collider · Light · ShadowCaster</span></td></tr>
+          <tr><td class="e">#7 Lamp</td><td class="b"><span class="on">Transform · Sprite · Elevation · Collider · Light · ShadowCaster</span></td></tr>
+          <tr><td class="e">#103 Tile</td><td class="b"><span class="on">Transform · Sprite · Elevation · TerrainBoundary</span></td></tr>
+        </table>
+        <div class="note">One bit per component type (MAX_COMPONENTS = 32). Component type ids are handed out by <span class="mono">Component&lt;T&gt;::getId()</span>.</div>
+      </div>
+
+      <div class="sub">
+        <div class="st"><b>Component Pools</b><span class="ty mono">vector&lt;unique_ptr&lt;IPool&gt;&gt; — index = component type id</span></div>
+        <div class="poolrow">
+          <div class="name">Pool&lt;Transform&gt;<span>vector&lt;optional&lt;T&gt;&gt;</span></div>
+          <div class="cells">
+            <div class="cell"><span class="h">#12</span>pos·scale·rot</div>
+            <div class="cell"><span class="h">#7</span>pos·scale·rot</div>
+            <div class="cell"><span class="h">#103</span>pos·scale·rot</div>
+          </div>
+        </div>
+        <div class="poolrow">
+          <div class="name">Pool&lt;RigidBody&gt;<span>vector&lt;optional&lt;T&gt;&gt;</span></div>
+          <div class="cells">
+            <div class="cell"><span class="h">#12</span>velocity</div>
+            <div class="cell empty"><span class="h">#7</span>—</div>
+            <div class="cell empty"><span class="h">#103</span>—</div>
+          </div>
+        </div>
+        <div class="poolrow">
+          <div class="name">Pool&lt;LightEmitter&gt;<span>vector&lt;optional&lt;T&gt;&gt;</span></div>
+          <div class="cells">
+            <div class="cell"><span class="h">#12</span>radius·height·color</div>
+            <div class="cell"><span class="h">#7</span>radius·height·color</div>
+            <div class="cell empty"><span class="h">#103</span>—</div>
+          </div>
+        </div>
+        <div class="note">Each pool is indexed by entity id (sparse — empty slots are <span class="mono">std::nullopt</span>). The id is the join key across every pool.</div>
+      </div>
+
+      <div class="sub" style="margin-bottom:0">
+        <div class="st"><b>Systems</b><span class="ty mono">vector&lt;unique_ptr&lt;System&gt;&gt;</span></div>
+        <div class="note">On <span class="mono">flushEntities()</span> the Registry tests each entity:
+        <span class="mono">(entitySig &amp; systemSig) == systemSig</span> → if matched, the entity is cached on that system. →</div>
+      </div>
+    </div>
+
+    <div class="rail"><div class="lbl">matched entities</div><div class="arr"><b>⇒</b></div></div>
+
+    <!-- SYSTEMS -->
+    <div class="panel sys">
+      <div class="ph"><span class="dot" style="background:var(--oran)"></span><h2>Systems</h2><span class="k">logic · cache matched entities</span></div>
+      <div class="note" style="margin-top:-4px;margin-bottom:11px">A System declares required components via <span class="mono">registerComponent&lt;T&gt;()</span>, keeps its own <span class="mono">entities</span> list, and runs <span class="mono">update(dt)</span> / <span class="mono">render()</span>. Disabled systems are skipped.</div>
+
+      <div class="srow"><div class="nm">MovementSystem</div><div class="rq">needs <b>Transform · RigidBody</b></div></div>
+      <div class="srow"><div class="nm">CollisionSystem</div><div class="rq">needs <b>Collider · RigidBody · Transform</b></div></div>
+      <div class="srow"><div class="nm">CameraSystem</div><div class="rq">needs <b>Transform · Camera</b></div></div>
+      <div class="srow"><div class="nm">IsometricRenderSystem</div><div class="rq">needs <b>Sprite · Transform</b></div></div>
+      <div class="srow"><div class="nm">IsometricShadowSystem</div><div class="rq">needs <b>Transform · TerrainBoundary · Elevation</b></div></div>
+      <div class="srow"><div class="nm">IsometricSpriteShadowSystem</div><div class="rq">needs <b>Transform · Sprite · ShadowCaster</b></div></div>
+      <div class="srow"><div class="nm">IsometricWaterSystem</div><div class="rq">needs <b>WaterTile · Transform · Elevation</b></div></div>
+      <div class="srow game"><div class="nm">TerrainGeneratorSystem &middot; SunController</div><div class="rq">game-side systems (sampleGame) — same base class</div></div>
+    </div>
+  </div>
+
+  <!-- LOOP -->
+  <div class="loop">
+    <div class="lh"><span class="dot"></span><h2>Frame loop</h2><span class="src mono">Game::run → SceneManager::current() → Scene</span></div>
+    <div class="flow">
+      <div class="step">
+        <div class="s1">1 · processInput</div>
+        <div class="s2"><span class="m">Scene::processInput</span> → GameObjects' <span class="m">onProcessInput</span> (poll input, set velocities).</div>
+      </div>
+      <div class="gap">→</div>
+      <div class="step hot">
+        <div class="s1">2 · update(dt)</div>
+        <div class="s2"><span class="m">Scene::update</span>: <b>flushEntities()</b> applies deferred add/remove &amp; re-matches systems → every enabled <span class="m">system.update(dt)</span> → GameObjects' <span class="m">onUpdate</span>.</div>
+      </div>
+      <div class="gap">→</div>
+      <div class="step hot">
+        <div class="s1">3 · render</div>
+        <div class="s2"><span class="m">Scene::render</span>: every enabled <span class="m">system.render()</span> submits quads to the renderer → <span class="m">SDL_GL_SwapWindow</span>.</div>
+      </div>
+    </div>
+    <div class="loopback">↻ repeat — <b>structural changes (create/destroy) are queued and applied at the top of the next update</b>, so a frame iterates a stable set of entities.</div>
+  </div>
+
+  <div class="legend">
+    <div class="it"><span class="sw" style="background:var(--green)"></span>Entity (handle / id)</div>
+    <div class="it"><span class="sw" style="background:var(--blue)"></span>Registry (owns all state)</div>
+    <div class="it"><span class="sw" style="background:var(--purp)"></span>Component pool (data)</div>
+    <div class="it"><span class="sw" style="background:var(--oran)"></span>System (logic)</div>
+    <div class="it"><span class="sw" style="background:var(--teal)"></span>Game-side system</div>
+    <div class="it"><span class="sw" style="background:var(--yel)"></span>Frame loop</div>
+  </div>
+</div>
+</body>
+</html>
