@@ -7,8 +7,10 @@
 #include "engine/rendering/iIsometricRenderer.h"
 #include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/providers/isometricSpriteShadowProvider.h"
+#include "engine/rendering/providers/isometricTerrainShadowProvider.h"
+#include "engine/rendering/providers/isometricWaterProvider.h"
 #include "engine/rendering/renderQueue.h"
-#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -78,21 +80,6 @@ struct WallFaceKeyHash
   }
 };
 
-/**
- * How sun terrain shadows are produced. Independent of the render style
- * (billboard vs block geometry), so any combination is valid.
- *
- * Projected uses IsometricShadowSystem's flat projected shadow quads.
- * Heightmap uses the in-shader heightmap horizon march (lit + geometry shaders).
- * None disables sun terrain shadows.
- */
-enum class SunShadowMode
-{
-  Projected,
-  Heightmap,
-  None,
-};
-
 class IsometricRenderSystem : public System
 {
 public:
@@ -111,15 +98,26 @@ public:
   void setWaveTime(float time);
   void setWaveEnabled(bool enabled);
 
-  /** Select the sun-shadow sampling style for the heightmap march (smooth/sharp). */
+  /** Select the sun-shadow sampling style for the heightmap march
+   * (smooth/sharp). */
   void setSunShadowStyle(SunShadowStyle style);
 
   /**
-   * Select how sun terrain shadows are produced. Switches the projected shadow
-   * system and the in-shader heightmap march so exactly one technique is active
-   * (or none); works with either render style.
+   * Enable or disable engine-baked sun terrain shadows. When on, the billboard
+   * render style draws projected shadow quads and the block-geometry style runs
+   * the in-shader heightmap march; actor shadows are also dropped when off.
    */
-  void setSunShadowMode(SunShadowMode mode);
+  void setShadowsEnabled(bool enabled) { m_shadowsEnabled = enabled; }
+
+  /** Access the settings (length, alpha). */
+  IsometricShadowSettings& shadowSettings()
+  {
+    return m_terrainShadows.shadowSettings();
+  }
+
+  /** Invalidate the cached terrain-shadow geometry so it rebuilds next frame.
+   */
+  void markTerrainShadowsDirty();
 
   /**
    * Register a game-supplied render pass. Its commands are emitted each frame
@@ -137,8 +135,9 @@ public:
 
   void markTerrainDirty();
 
-  IsometricLightingService& lighting();
-  const IsometricLightingService& lighting() const;
+  /** Set the scene's sun/sky ambient lighting (e.g. driven by a day/night
+   * cycle). */
+  void setAmbientLighting(const IsometricAmbientLighting& ambient);
 
   glm::vec2 screenToWorld(const glm::vec2& screenPosition,
                           float elevation = 0.0f) const;
@@ -157,6 +156,9 @@ protected:
 
 private:
   void beginBatches();
+
+  // Rebuild m_pointLights from the scene's LightEmitterComponent entities.
+  void gatherPointLights();
 
   // Eases each actor's rendered ground elevation toward the tile it stands on,
   // so crossing an elevation step ramps smoothly instead of teleporting a whole
@@ -222,11 +224,20 @@ private:
   const ITerrainHeightSource* m_terrainHeightSource = nullptr;
 
   IsometricRenderContext m_context;
-  IsometricLightingService m_lightingService;
+
+  // Sun/sky ambient (set externally) + the frame's point lights gathered from
+  // LightEmitterComponent entities. Both are published into m_context each
+  // frame.
+  IsometricAmbientLighting m_ambient;
+  bool m_hasAmbient = false;
+  std::vector<IsometricPointLightSnapshot> m_pointLights;
 
   std::vector<IRenderProvider*> m_renderProviders;
 
-  SunShadowMode m_sunShadowMode = SunShadowMode::Heightmap;
+  IsometricTerrainShadowProvider m_terrainShadows;
+  IsometricSpriteShadowProvider m_spriteShadows;
+  IsometricWaterProvider m_water;
+  bool m_shadowsEnabled = true;
 };
 
 template <typename T>

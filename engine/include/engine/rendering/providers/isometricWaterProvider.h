@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/ecs/ecs.h" // IWYU pragma: keep
+#include "engine/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/renderProvider.h"
@@ -23,17 +23,22 @@ struct WaterSurfaceBuild
   glm::ivec2 maxTile{};
 };
 
-class IsometricWaterSystem
-    : public System,
-      public RenderProvider<IsometricRenderContext, SurfaceCommand>
+/**
+ * Builds the water surface mesh from WaterTileComponent entities. A RenderProvider
+ * owned by the render system: set the registry, then computeCommands() each frame
+ * emits one SurfaceCommand per water tile cluster.
+ */
+class IsometricWaterProvider
+    : public RenderProvider<IsometricRenderContext, SurfaceCommand>
 {
 public:
+  void setRegistry(Registry* r) { registry = r; }
+
   void computeCommands(const IsometricRenderContext& context) override;
 
-protected:
-  void create() override;
-
 private:
+  Registry* registry = nullptr;
+
   WaterSurfaceBuild
   collectWaterSurfaceBuild(const IsometricRenderContext& context) const;
   SurfaceCommand

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/ecs/system.h"
-#include "engine/systems/isometric/isometricLightingSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
@@ -22,14 +21,14 @@ public:
 
     auto& renderSystem = registry->getSystem<sfs::IsometricRenderSystem>();
 
-    m_lighting = &renderSystem.lighting();
+    m_renderSystem = &renderSystem;
 
     applyTimeOfDay(m_timeOfDay);
   }
 
   void update(double deltaTime) override
   {
-    if (!m_lighting)
+    if (!m_renderSystem)
       return;
 
     if (!m_isSunEnabled)
@@ -68,7 +67,7 @@ public:
   {
     m_timeOfDay = time01 - std::floor(time01);
 
-    if (m_lighting)
+    if (m_renderSystem)
       applyTimeOfDay(m_timeOfDay);
   }
 
@@ -110,7 +109,7 @@ private:
     ambient.diffuseStrength = 0.0f;
     ambient.color = glm::vec3{0.08f, 0.13f, 0.30f};
 
-    m_lighting->setAmbientLighting(ambient);
+    m_renderSystem->setAmbientLighting(ambient);
   }
 
   void applyTimeOfDay(float t)
@@ -182,11 +181,11 @@ private:
 
     ambient.color = glm::mix(nightColor, daylightColor, daylight);
 
-    m_lighting->setAmbientLighting(ambient);
+    m_renderSystem->setAmbientLighting(ambient);
   }
 
 private:
-  sfs::IsometricLightingService* m_lighting = nullptr;
+  sfs::IsometricRenderSystem* m_renderSystem = nullptr;
 
   bool m_isSunEnabled = true;
 

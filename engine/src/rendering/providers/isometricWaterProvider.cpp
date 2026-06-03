@@ -1,4 +1,4 @@
-#include "engine/systems/isometric/isometricWaterSystem.h"
+#include "engine/rendering/providers/isometricWaterProvider.h"
 #include "engine/Color/Color.h"
 #include "engine/components/elevationComponent.h"
 #include "engine/components/surfaceEffect.h"
@@ -13,14 +13,7 @@
 namespace sfs
 {
 
-void IsometricWaterSystem::create()
-{
-  registerComponent<WaterTileComponent>();
-  registerComponent<TransformComponent>();
-  registerComponent<ElevationComponent>();
-}
-
-void IsometricWaterSystem::computeCommands(
+void IsometricWaterProvider::computeCommands(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("Water: computeCommands");
@@ -86,7 +79,7 @@ void IsometricWaterSystem::computeCommands(
     m_commands.push_back(std::move(command));
 }
 
-SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
+SurfaceCommand IsometricWaterProvider::createWaterSurfaceCommand(
     const IsometricRenderContext& context,
     const WaterCell& cell) const
 {
@@ -116,15 +109,19 @@ SurfaceCommand IsometricWaterSystem::createWaterSurfaceCommand(
   return command;
 }
 
-WaterSurfaceBuild IsometricWaterSystem::collectWaterSurfaceBuild(
+WaterSurfaceBuild IsometricWaterProvider::collectWaterSurfaceBuild(
     const IsometricRenderContext& context) const
 {
   WaterSurfaceBuild build;
-  build.cells.reserve(getEntities().size());
+
+  const auto waterTiles =
+      registry
+          ->view<WaterTileComponent, TransformComponent, ElevationComponent>();
+  build.cells.reserve(waterTiles.size());
 
   bool hasBounds = false;
 
-  for (const auto& entity : getEntities())
+  for (const auto& entity : waterTiles)
   {
     const auto& transform = entity.getComponent<TransformComponent>();
     const auto& water = entity.getComponent<WaterTileComponent>();
@@ -158,7 +155,7 @@ WaterSurfaceBuild IsometricWaterSystem::collectWaterSurfaceBuild(
 }
 
 uint32_t
-IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
+IsometricWaterProvider::addSurfaceVertex(const IsometricRenderContext& context,
                                        const glm::ivec2& gridPoint,
                                        int waterElevation,
                                        float depth,
@@ -210,7 +207,7 @@ IsometricWaterSystem::addSurfaceVertex(const IsometricRenderContext& context,
   return index;
 }
 
-void IsometricWaterSystem::buildSingleWaterTileMesh(
+void IsometricWaterProvider::buildSingleWaterTileMesh(
     const IsometricRenderContext& context,
     const WaterSurfaceBuild& build,
     const WaterCell& cell,
@@ -265,7 +262,7 @@ void IsometricWaterSystem::buildSingleWaterTileMesh(
   command.indices.insert(command.indices.end(), {i0, i1, i2, i0, i2, i3});
 }
 
-float IsometricWaterSystem::sampleSurfaceVertexDepth(
+float IsometricWaterProvider::sampleSurfaceVertexDepth(
     const glm::ivec2& gridPoint,
     const glm::ivec2& minTile,
     int cellWidth,

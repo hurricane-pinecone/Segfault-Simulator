@@ -16,12 +16,12 @@
 #include "engine/utils/profiling.h"
 
 #include "engine/rendering/renderPass.h"
-#include "engine/systems/isometric/isometricLightingSystem.h"
-#include "engine/systems/isometric/isometricShadowSystem.h"
-#include "engine/systems/isometric/isometricSpriteShadowSystem.h"
-#include "engine/systems/isometric/isometricWaterSystem.h"
 #include "engine/systems/blockGeometrySystem.h"
 #include "engine/systems/decalSystem.h"
+#include "engine/components/lightEmitterComponent.h"
+#include "engine/rendering/providers/isometricSpriteShadowProvider.h"
+#include "engine/rendering/providers/isometricTerrainShadowProvider.h"
+#include "engine/rendering/providers/isometricWaterProvider.h"
 #include "engine/systems/particleSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -56,7 +56,8 @@ float orderKey(const RenderOrder& order)
 // its own depth even after tiles are merged into texture batches.
 //
 // Returns the frame's (minKey, maxKey) so the decal pipeline can normalise its
-// GPU-side depth identically (decals own their depth, computed in their shader).
+// GPU-side depth identically (decals own their depth, computed in their
+// shader).
 std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
 {
   ZoneScopedN("Render: assignClipDepth");
@@ -89,11 +90,12 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
 
             if constexpr (std::is_same_v<T, SurfaceCommand> ||
                           std::is_same_v<T, GeometryCommand>)
-          {
-            // A merged surface / geometry mesh carries a per-vertex world sort-key.
-            for (const auto& vertex : concrete.vertices)
-              includeKey(vertex.z);
-          }
+            {
+              // A merged surface / geometry mesh carries a per-vertex world
+              // sort-key.
+              for (const auto& vertex : concrete.vertices)
+                includeKey(vertex.z);
+            }
             else if constexpr (requires { concrete.quad.quads; })
             {
               // A merged quad batch (terrain shadows) carries a per-quad world
@@ -195,7 +197,12 @@ void IsometricRenderSystem::create()
   registerComponent<SpriteComponent>();
   registerComponent<TransformComponent>();
 
-  m_lightingService.setRegistry(registry);
+  m_terrainShadows.setRegistry(registry);
+
+  m_spriteShadows.setRegistry(registry);
+  m_spriteShadows.setAssetStore(&assetStore);
+
+  m_water.setRegistry(registry);
 }
 
 void IsometricRenderSystem::render()
@@ -229,8 +236,8 @@ void IsometricRenderSystem::render()
       rebuildTileElevationCache();
 
     // The camera grid position maps to the screen centre, so inverting it gives
-    // the tile the heightmap window should be centered on. The window only needs
-    // rebuilding when the camera crosses a tile.
+    // the tile the heightmap window should be centered on. The window only
+    // needs rebuilding when the camera crosses a tile.
     const glm::ivec2 cameraTile =
         gridCellOf(proj.screenToWorld(proj.screenCenter, 0.0f));
     rebuildTerrainElevationGridView(cameraTile);
@@ -262,17 +269,14 @@ void IsometricRenderSystem::render()
                                 heightScale);
   }
 
-  // Lights move (the player emits one), so refresh the list every frame. The
-  // cache is otherwise only invalidated at setup, which would freeze every light
-  // at its first-frame position.
-  m_lightingService.invalidateCache();
-  m_lightingService.updateCacheIfDirty();
-  const auto* ambientLighting = m_lightingService.ambient();
-  const auto& pointLights = m_lightingService.pointLights();
+  // Lights move (the player emits one), so refresh the list every frame.
+  gatherPointLights();
+  const auto* ambientLighting = m_hasAmbient ? &m_ambient : nullptr;
+  const auto& pointLights = m_pointLights;
 
   m_context.terrainElevationGrid = tileElevationGridView;
   m_context.ambientLighting = ambientLighting;
-  m_context.pointLights = &pointLights;
+  m_context.pointLights = &m_pointLights;
 
   // Sun/ambient is identical for every sprite this frame, and the fragment
   // shader applies point lights per pixel, so the directional term is computed
@@ -297,9 +301,9 @@ void IsometricRenderSystem::render()
 
   // Light radius is authored in screen pixels; the lighting math runs in world
   // tiles, so convert by the on-screen tile width. (Emitter height is converted
-  // to elevation levels on the GPU via uHeightScale.) Drop the worldScale factor
-  // here -- and the matching one in heightScale -- to make these world-scale
-  // independent.
+  // to elevation levels on the GPU via uHeightScale.) Drop the worldScale
+  // factor here -- and the matching one in heightScale -- to make these
+  // world-scale independent.
   const float tilePixelWidth =
       static_cast<float>(proj.tileWidth) * proj.worldScale;
   const float radiusPixelsToWorld =
@@ -317,20 +321,27 @@ void IsometricRenderSystem::render()
     // moving light ramps between tile heights), falling back to the raw tile
     // elevation for lights that aren't tracked actors.
     const auto elevationIt = m_actorElevation.find(pointLights[i].entityId);
-    pointLightSet.groundLevels[i] =
-        elevationIt != m_actorElevation.end()
-            ? elevationIt->second
-            : static_cast<float>(getTileElevationAt(pointLights[i].worldPosition));
+    pointLightSet.groundLevels[i] = elevationIt != m_actorElevation.end()
+                                        ? elevationIt->second
+                                        : static_cast<float>(getTileElevationAt(
+                                              pointLights[i].worldPosition));
   }
 
   m_quadRenderer.setPointLights(pointLightSet);
 
-  // Opt-in extension: when a BlockGeometrySystem is present and enabled, terrain
-  // tiles render as real face geometry (emitted by that system below) instead of
-  // billboard sprites. Non-tile sprites (actors, props) stay billboards either
-  // way, so a scene without the system renders exactly as the simple iso path.
+  // Opt-in extension: when a BlockGeometrySystem is present and enabled,
+  // terrain tiles render as real face geometry (emitted by that system below)
+  // instead of billboard sprites. Non-tile sprites (actors, props) stay
+  // billboards either way, so a scene without the system renders exactly as the
+  // simple iso path.
   const auto geometrySystem = registry->tryGetSystem<BlockGeometrySystem>();
   const bool geometryTilesActive = geometrySystem && geometrySystem->enabled();
+
+  // The block-geometry render style takes the in-shader heightmap march; the
+  // billboard style takes projected shadow quads (pulled below). Exactly one
+  // technique is active, and both are gated on shadows being enabled.
+  m_quadRenderer.setSunShadowMarchEnabled(m_shadowsEnabled &&
+                                          geometryTilesActive);
 
   for (const auto& entity : getEntities())
   {
@@ -538,15 +549,13 @@ void IsometricRenderSystem::render()
     m_renderQueue.submit(command);
   }
 
-  // Projected terrain shadows are pulled only when that sun-shadow technique is
-  // selected; the Heightmap mode produces them in-shader instead.
-  if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>();
-      m_sunShadowMode == SunShadowMode::Projected && shadowSystem &&
-      shadowSystem->enabled())
+  // Projected terrain shadows back the billboard render style; the geometry
+  // style produces them through the in-shader heightmap march instead.
+  if (m_shadowsEnabled && !geometryTilesActive)
   {
-    shadowSystem->computeCommands(m_context);
+    m_terrainShadows.computeCommands(m_context);
 
-    const auto& shadowCommands = shadowSystem->commands();
+    const auto& shadowCommands = m_terrainShadows.commands();
     gTerrainShadowBatchCount = static_cast<int>(shadowCommands.size());
     for (const auto& batch : shadowCommands)
       gTerrainShadowItems += static_cast<int>(batch.quad.quads.size());
@@ -554,24 +563,18 @@ void IsometricRenderSystem::render()
     m_renderQueue.submitAll(shadowCommands);
   }
 
-  if (const auto spriteShadowSystem =
-          registry->tryGetSystem<IsometricSpriteShadowSystem>();
-      spriteShadowSystem && spriteShadowSystem->enabled())
+  if (m_shadowsEnabled)
   {
-    spriteShadowSystem->computeCommands(m_context);
+    m_spriteShadows.computeCommands(m_context);
 
     gSpriteProjectedShadowItems =
-        static_cast<int>(spriteShadowSystem->commands().size());
+        static_cast<int>(m_spriteShadows.commands().size());
 
-    m_renderQueue.submitAll(spriteShadowSystem->commands());
+    m_renderQueue.submitAll(m_spriteShadows.commands());
   }
 
-  if (const auto waterSystem = registry->tryGetSystem<IsometricWaterSystem>();
-      waterSystem && waterSystem->enabled())
-  {
-    waterSystem->computeCommands(m_context);
-    m_renderQueue.submitAll(waterSystem->commands());
-  }
+  m_water.computeCommands(m_context);
+  m_renderQueue.submitAll(m_water.commands());
 
   if (const auto particleSystem = registry->tryGetSystem<ParticleSystem>();
       particleSystem && particleSystem->enabled())
@@ -755,12 +758,14 @@ float IsometricRenderSystem::getRenderElevationLevel(
   if (isTileEntity(entity))
   {
     if (entity.hasComponent<ElevationComponent>())
-      return static_cast<float>(entity.getComponent<ElevationComponent>().level);
+      return static_cast<float>(
+          entity.getComponent<ElevationComponent>().level);
 
     return 0.0f;
   }
 
-  // Actors ride the eased elevation so a step up/down ramps instead of snapping.
+  // Actors ride the eased elevation so a step up/down ramps instead of
+  // snapping.
   return smoothedElevationOf(entity, samplePosition);
 }
 
@@ -788,10 +793,11 @@ void IsometricRenderSystem::updateActorElevations(double deltaTime)
   if (!tileElevationGridView.valid())
     return;
 
-  // Frame-rate independent exponential ease. ~0.08s to close most of the gap, so
-  // a step up/down reads as a quick smooth move rather than a teleport.
+  // Frame-rate independent exponential ease. ~0.08s to close most of the gap,
+  // so a step up/down reads as a quick smooth move rather than a teleport.
   constexpr float kElevationEaseRate = 14.0f;
-  const float factor = static_cast<float>(1.0 - std::exp(-deltaTime * kElevationEaseRate));
+  const float factor =
+      static_cast<float>(1.0 - std::exp(-deltaTime * kElevationEaseRate));
 
   for (const auto& entity : getEntities())
   {
@@ -801,8 +807,9 @@ void IsometricRenderSystem::updateActorElevations(double deltaTime)
     const auto& transform = entity.getComponent<TransformComponent>();
 
     // Target is the discrete tile the actor stands on (floor()), matching the
-    // gameplay elevation -- the easing only smooths how the render/light catch up
-    // to it, so the actor never floats up a cliff before it's actually on top.
+    // gameplay elevation -- the easing only smooths how the render/light catch
+    // up to it, so the actor never floats up a cliff before it's actually on
+    // top.
     const float target =
         static_cast<float>(getTileElevationAt(glm::floor(transform.position)));
 
@@ -845,8 +852,12 @@ void IsometricRenderSystem::markTerrainDirty()
 {
   tileElevationCacheDirty = true;
 
-  if (registry && registry->hasSystem<IsometricShadowSystem>())
-    registry->getSystem<IsometricShadowSystem>().markTerrainDirty();
+  m_terrainShadows.markTerrainDirty();
+}
+
+void IsometricRenderSystem::markTerrainShadowsDirty()
+{
+  m_terrainShadows.markTerrainDirty();
 }
 
 void IsometricRenderSystem::rebuildTileElevationCache()
@@ -920,14 +931,35 @@ void IsometricRenderSystem::rebuildTerrainElevationGridView(
   tileElevationGridView.origin = min;
 }
 
-IsometricLightingService& IsometricRenderSystem::lighting()
+void IsometricRenderSystem::setAmbientLighting(
+    const IsometricAmbientLighting& ambient)
 {
-  return m_lightingService;
+  m_ambient = ambient;
+  m_hasAmbient = true;
 }
 
-const IsometricLightingService& IsometricRenderSystem::lighting() const
+void IsometricRenderSystem::gatherPointLights()
 {
-  return m_lightingService;
+  m_pointLights.clear();
+
+  if (!registry)
+    return;
+
+  for (const auto& entity :
+       registry->view<TransformComponent, LightEmitterComponent>())
+  {
+    const auto& transform = entity.getComponent<TransformComponent>();
+    const auto& light = entity.getComponent<LightEmitterComponent>();
+
+    m_pointLights.push_back({
+        transform.position,
+        light.height,
+        light.color,
+        light.intensity,
+        light.radius,
+        entity.getId(),
+    });
+  }
 }
 
 void IsometricRenderSystem::sortRenderCommands(
@@ -967,10 +999,9 @@ void IsometricRenderSystem::batchTerrainTiles(
   // depth: the depth buffer resolves occlusion, so all tiles and sprites
   // sharing a material merge into one draw call regardless of depth, keeping
   // the batch-flush count down to one per material per frame.
-  std::map<std::tuple<const std::string*,
-                      const std::string*,
-                      SurfaceEffect::Type>,
-           LitQuadBatchCommand>
+  std::map<
+      std::tuple<const std::string*, const std::string*, SurfaceEffect::Type>,
+      LitQuadBatchCommand>
       litBatches;
 
   for (const auto& command : commands)
@@ -984,9 +1015,8 @@ void IsometricRenderSystem::batchTerrainTiles(
           {
             if (concrete.order.pass == RenderPass::Terrain)
             {
-              auto key = std::make_tuple(concrete.textureId,
-                                         concrete.normalTextureId,
-                                         concrete.type);
+              auto key = std::make_tuple(
+                  concrete.textureId, concrete.normalTextureId, concrete.type);
 
               auto& batch = litBatches[key];
 
@@ -1022,14 +1052,6 @@ void IsometricRenderSystem::submitRenderCommand(
 void IsometricRenderSystem::setSunShadowStyle(SunShadowStyle style)
 {
   m_quadRenderer.setSunShadowStyle(style);
-}
-
-void IsometricRenderSystem::setSunShadowMode(SunShadowMode mode)
-{
-  m_sunShadowMode = mode;
-  // The in-shader heightmap march and the projected shadow system are mutually
-  // exclusive; the projected system's pull is gated per frame in render().
-  m_quadRenderer.setSunShadowMarchEnabled(mode == SunShadowMode::Heightmap);
 }
 
 void IsometricRenderSystem::addRenderProvider(IRenderProvider* provider)
