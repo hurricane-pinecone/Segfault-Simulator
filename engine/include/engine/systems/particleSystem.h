@@ -2,12 +2,15 @@
 
 #include "engine/ecs/entity.h"
 #include "engine/ecs/system.h"
+#include "engine/particles/decal.h"
 #include "engine/particles/particle.h"
 #include "engine/particles/particleEffect.h"
 #include "engine/rendering/commands/commands.h"
+#include "engine/rendering/iTerrainSurfaceSource.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/renderProvider.h"
 #include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_int2.hpp"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -62,6 +65,18 @@ public:
                         glm::vec2 screenPos,
                         const ParticleSpawnParams& spawn = {});
 
+  // Optional terrain awareness. When set, world particles whose effect has a
+  // GroundBehavior collide with the real terrain (ground/walls/water) instead of
+  // their spawn plane. Required for decals to land on the right surface.
+  void setTerrainSource(const ITerrainSurfaceSource* source)
+  {
+    m_terrainSource = source;
+  }
+
+  // Optional decal sink. When set, particles whose effect has leavesDecal stamp
+  // a persistent mark on the surface they hit.
+  void setDecalSink(IDecalSink* sink) { m_decalSink = sink; }
+
   int liveParticleCount() const;
 
   // RenderProvider: project live particles into batched draw commands.
@@ -110,10 +125,26 @@ private:
   void emit(EmitterInstance& inst, const ParticleEffectDesc& desc, int count);
   void
   stepInstance(EmitterInstance& inst, const ParticleEffectDesc& desc, float dt);
+
+  // Stamp a decal for a particle that just collided with `surface` at `hitPos`/
+  // `hitElev` (tile = the tile it hit, for the water fade-rate lookup).
+  void emitDecal(EmitterInstance& inst,
+                 const ParticleEffectDesc& desc,
+                 const Particle& p,
+                 glm::vec2 hitPos,
+                 float hitElev,
+                 DecalSurface surface,
+                 uint8_t wallSide,
+                 float wallBottom,
+                 float wallTop,
+                 glm::ivec2 tile);
   void syncComponentEmitters();
   void appendBatch(const EmitterInstance& inst,
                    const ParticleEffectDesc& desc,
                    const IsometricRenderContext& context);
+
+  const ITerrainSurfaceSource* m_terrainSource = nullptr;
+  IDecalSink* m_decalSink = nullptr;
 
   std::vector<ParticleEffectDesc> m_effects;
   std::unordered_map<std::string, EffectId> m_effectIds;

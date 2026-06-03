@@ -46,6 +46,17 @@ struct FloatRange
   static FloatRange of(float a, float b) { return {a, b}; }
 };
 
+// The persistent mark a particle leaves where it lands (see ParticleEffectDesc::
+// leavesDecal). Consumed by the DecalSystem via an IDecalSink.
+struct DecalSpec
+{
+  std::string texture = "white_pixel"; // resolved by the renderer
+  FloatRange size{0.1f, 0.22f};        // mark size in tiles
+  bool useParticleColor = true;        // tint from the particle's current colour
+  glm::vec3 color{0.35f, 0.0f, 0.0f};  // used when !useParticleColor
+  float alpha = 0.85f;
+};
+
 // The authoring description of a particle effect. Plain data with fixed-capacity
 // members (Curve/Gradient) and no std::function, so a Lua/JSON loader can build
 // one later and hand it to ParticleSystem::registerEffect unchanged.
@@ -98,6 +109,12 @@ struct ParticleEffectDesc
   SimulationSpace space = SimulationSpace::World;
   GroundBehavior ground = GroundBehavior::None;
   float stickDuration = 0.0f; // Stick: extra seconds a grounded particle lingers
+
+  // --- persistent decals ---
+  // When true (and a decal sink + terrain source are wired), a particle leaves a
+  // permanent mark on the surface it collides with. Ignored for Screen effects.
+  bool leavesDecal = false;
+  DecalSpec decal;
 
   // --- budget ---
   int maxParticles = 512; // capacity per live occurrence of this effect

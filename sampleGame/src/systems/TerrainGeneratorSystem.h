@@ -2,7 +2,7 @@
 
 #include "engine/ecs/system.h"
 #include "engine/noise/noise.h"
-#include "engine/rendering/iTerrainHeightSource.h"
+#include "engine/rendering/iTerrainSurfaceSource.h"
 #include "engine/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <unordered_map>
@@ -29,7 +29,7 @@ struct TilePosHash
 };
 
 class TerrainGeneratorSystem : public sfs::System,
-                               public sfs::ITerrainHeightSource
+                               public sfs::ITerrainSurfaceSource
 {
 public:
   explicit TerrainGeneratorSystem(sfs::Scene& scene);
@@ -41,6 +41,11 @@ public:
   int terrainHeightAt(int tileX, int tileY) const override
   {
     return getElevation(tileX, tileY);
+  }
+
+  bool isWaterAt(int tileX, int tileY) const override
+  {
+    return getElevation(tileX, tileY) <= m_waterLevel;
   }
 
 private:

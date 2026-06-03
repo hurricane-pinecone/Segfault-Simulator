@@ -6,6 +6,7 @@
 
 #include <SDL_image.h>
 
+#include <cmath>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -324,6 +325,53 @@ void AssetStore::addWhitePixelTexture(const std::string& textureId)
 
   Uint32 white = SDL_MapRGBA(surface->format, 255, 255, 255, 255);
   SDL_FillRect(surface, nullptr, white);
+
+  m_surfaces.insert_or_assign(
+      textureId,
+      std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(
+          surface, SDL_FreeSurface));
+}
+
+void AssetStore::addRadialTexture(const std::string& textureId, int size)
+{
+  if (size < 2)
+    size = 2;
+
+  SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(
+      0, size, size, 32, SDL_PIXELFORMAT_RGBA32);
+
+  if (!surface)
+  {
+    LOG_ERROR("Failed to create radial texture surface");
+    return;
+  }
+
+  SDL_LockSurface(surface);
+
+  auto* pixels = static_cast<Uint32*>(surface->pixels);
+  const int pitch = surface->pitch / 4;
+  const float center = (static_cast<float>(size) - 1.0f) * 0.5f;
+  const float radius = center > 0.0f ? center : 1.0f;
+
+  for (int y = 0; y < size; ++y)
+  {
+    for (int x = 0; x < size; ++x)
+    {
+      const float dx = (static_cast<float>(x) - center) / radius;
+      const float dy = (static_cast<float>(y) - center) / radius;
+      const float dist = std::sqrt(dx * dx + dy * dy); // 0 centre -> 1 edge
+
+      float a = 1.0f - dist;
+      if (a < 0.0f)
+        a = 0.0f;
+      a *= a; // soften the falloff toward the rim
+
+      const Uint8 alpha = static_cast<Uint8>(a * 255.0f + 0.5f);
+      pixels[y * pitch + x] = SDL_MapRGBA(surface->format, 255, 255, 255, alpha);
+    }
+  }
+
+  SDL_UnlockSurface(surface);
 
   m_surfaces.insert_or_assign(
       textureId,
