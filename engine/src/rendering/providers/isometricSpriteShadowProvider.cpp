@@ -1,4 +1,4 @@
-#include "engine/systems/isometric/isometricSpriteShadowSystem.h"
+#include "engine/rendering/providers/isometricSpriteShadowProvider.h"
 
 #include "engine/assetStore/assetStore.h"
 #include "engine/components/shadowCasterComponent.h"
@@ -17,37 +17,32 @@
 namespace sfs
 {
 
-void IsometricSpriteShadowSystem::create()
-{
-  registerComponent<TransformComponent>();
-  registerComponent<SpriteComponent>();
-  registerComponent<ShadowCasterComponent>();
-}
-
-void IsometricSpriteShadowSystem::setSpriteShadowMaxLength(float length)
+void IsometricSpriteShadowProvider::setSpriteShadowMaxLength(float length)
 {
   m_shadowSettings.spriteShadowMaxLength = std::max(length, 0.0f);
 }
 
-void IsometricSpriteShadowSystem::setSpriteShadowAlpha(float alpha)
+void IsometricSpriteShadowProvider::setSpriteShadowAlpha(float alpha)
 {
   m_shadowSettings.spriteShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
 }
 
-void IsometricSpriteShadowSystem::computeCommands(
+void IsometricSpriteShadowProvider::computeCommands(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("SpriteShadow: computeCommands");
 
   flush();
 
-  for (const auto& e : getEntities())
+  for (const auto& e : registry->view<TransformComponent,
+                                      SpriteComponent,
+                                      ShadowCasterComponent>())
   {
     constructSpriteShadows(context, e);
   }
 }
 
-void IsometricSpriteShadowSystem::constructSpriteShadows(
+void IsometricSpriteShadowProvider::constructSpriteShadows(
     const IsometricRenderContext& context,
     const Entity& entity)
 {
@@ -62,11 +57,11 @@ void IsometricSpriteShadowSystem::constructSpriteShadows(
   const auto& transform = entity.getComponent<TransformComponent>();
   const auto& spriteComponent = entity.getComponent<SpriteComponent>();
 
-  const auto sprite = m_assetStore.getSprite(spriteComponent.spriteId);
+  const auto sprite = m_assetStore->getSprite(spriteComponent.spriteId);
   if (!sprite)
     return;
 
-  SDL_Surface* surface = m_assetStore.getSurface(sprite->textureId);
+  SDL_Surface* surface = m_assetStore->getSurface(sprite->textureId);
   if (!surface)
     return;
 

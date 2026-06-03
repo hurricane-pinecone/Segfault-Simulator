@@ -1,7 +1,6 @@
 #pragma once
 
-#include "engine/assetStore/assetStore.h"
-#include "engine/ecs/ecs.h" // IWYU pragma: keep
+#include "engine/ecs/registry.h" // IWYU pragma: keep
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/renderProvider.h"
@@ -16,18 +15,26 @@ namespace sfs
 extern std::atomic<uint64_t> gShadowPathChecks;
 extern std::atomic<uint64_t> gShadowTilesTraversed;
 
-class IsometricShadowSystem
-    : public System,
-      public RenderProvider<IsometricRenderContext, TerrainShadowBatchCommand>
+/**
+ * Builds projected sun-shadow quads for terrain edges, occluding them against
+ * the render context's terrain elevation grid. A render-helper owned by the
+ * isometric render system: it pulls tiles from a Registry view and emits batched
+ * shadow commands through the RenderProvider interface.
+ */
+class IsometricTerrainShadowProvider
+    : public RenderProvider<IsometricRenderContext, TerrainShadowBatchCommand>
 {
 public:
-  IsometricShadowSystem();
-  IsometricShadowSystem(IsometricShadowSettings settings,
-                        const AssetStore* assetStore = nullptr)
+  IsometricTerrainShadowProvider() = default;
+  explicit IsometricTerrainShadowProvider(IsometricShadowSettings settings)
       : m_shadowSettings(settings) {};
+
+  /** Set the registry the terrain-tile view reads from. */
+  void setRegistry(Registry* r) { registry = r; }
 
   void computeCommands(const IsometricRenderContext& context) override;
 
+  /** Invalidate the cached edge geometry so it rebuilds next frame. */
   void markTerrainDirty();
 
   IsometricShadowSettings& shadowSettings() { return m_shadowSettings; }
@@ -77,10 +84,9 @@ private:
                       const ClippedPolygon& poly,
                       float alpha);
 
-protected:
-  void create() override;
-
 private:
+  Registry* registry = nullptr;
+
   struct TerrainShadowCache
   {
     std::vector<TerrainShadowEdge> edges;

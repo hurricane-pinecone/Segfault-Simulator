@@ -1,4 +1,4 @@
-#include "engine/systems/isometric/isometricShadowSystem.h"
+#include "engine/rendering/providers/isometricTerrainShadowProvider.h"
 #include "engine/components/tags/isometricTile.h"
 #include "engine/components/transformComponent.h"
 #include "engine/rendering/util/isometric/geometry.h"
@@ -23,22 +23,13 @@ namespace sfs
 std::atomic<uint64_t> gShadowPathChecks{0};
 std::atomic<uint64_t> gShadowTilesTraversed{0};
 
-IsometricShadowSystem::IsometricShadowSystem() {}
-
-void IsometricShadowSystem::create()
-{
-  registerComponent<TransformComponent>();
-  registerComponent<TerrainBoundaryComponent>();
-  registerComponent<ElevationComponent>();
-}
-
-void IsometricShadowSystem::markTerrainDirty()
+void IsometricTerrainShadowProvider::markTerrainDirty()
 {
   m_cache.edgesDirty = true;
   m_cache.itemsDirty = true;
 }
 
-void IsometricShadowSystem::computeCommands(
+void IsometricTerrainShadowProvider::computeCommands(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("ShadowSystem: computeCommands");
@@ -53,7 +44,7 @@ void IsometricShadowSystem::computeCommands(
   computeTerrainShadows(context);
 }
 
-void IsometricShadowSystem::computeTerrainShadows(
+void IsometricTerrainShadowProvider::computeTerrainShadows(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("Compute terrain shadows");
@@ -149,7 +140,7 @@ void IsometricShadowSystem::computeTerrainShadows(
   m_cache.alpha = alpha;
 }
 
-std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
+std::vector<TerrainShadowEdge> IsometricTerrainShadowProvider::getTerrainShadowEdges(
     const IsometricRenderContext& context) const
 {
   std::vector<TerrainShadowEdge> edges;
@@ -226,7 +217,7 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::getTerrainShadowEdges(
   return edges;
 }
 
-void IsometricShadowSystem::emitTileShadow(
+void IsometricTerrainShadowProvider::emitTileShadow(
     const IsometricRenderContext& context,
     std::vector<Quad>& outQuads,
     const glm::ivec2& tile,
@@ -274,7 +265,7 @@ void IsometricShadowSystem::emitTileShadow(
   }
 }
 
-void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
+void IsometricTerrainShadowProvider::constructTerrainEdgeShadowProjectedClipped(
     const IsometricRenderContext& context,
     std::vector<Quad>& outQuads,
     const TerrainShadowEdge& edge,
@@ -331,7 +322,7 @@ void IsometricShadowSystem::constructTerrainEdgeShadowProjectedClipped(
   }
 }
 
-bool IsometricShadowSystem::terrainShadowPathBlocked(
+bool IsometricTerrainShadowProvider::terrainShadowPathBlocked(
     const IsometricRenderContext& context,
     const TerrainShadowEdge& edge,
     const glm::ivec2& receiverTile,
@@ -395,7 +386,7 @@ bool IsometricShadowSystem::terrainShadowPathBlocked(
   return blocked;
 }
 
-bool IsometricShadowSystem::shouldCastTerrainShadow(
+bool IsometricTerrainShadowProvider::shouldCastTerrainShadow(
     const TerrainShadowEdge& edge,
     const glm::vec2& shadowDir)
 {
@@ -417,7 +408,7 @@ bool IsometricShadowSystem::shouldCastTerrainShadow(
   return false;
 }
 
-std::vector<TerrainShadowEdge> IsometricShadowSystem::mergeTerrainShadowEdges(
+std::vector<TerrainShadowEdge> IsometricTerrainShadowProvider::mergeTerrainShadowEdges(
     const std::vector<TerrainShadowEdge>& input) const
 {
   ZoneScopedN("mergeTerrainShadowEdges()") struct Run
@@ -532,21 +523,21 @@ std::vector<TerrainShadowEdge> IsometricShadowSystem::mergeTerrainShadowEdges(
   return merged;
 }
 
-void IsometricShadowSystem::setTerrainShadowMaxLength(float length)
+void IsometricTerrainShadowProvider::setTerrainShadowMaxLength(float length)
 {
   m_shadowSettings.terrainShadowMaxLength = std::max(length, 0.0f);
 
   markTerrainDirty();
 }
 
-void IsometricShadowSystem::setTerrainShadowAlpha(float alpha)
+void IsometricTerrainShadowProvider::setTerrainShadowAlpha(float alpha)
 {
   m_shadowSettings.terrainShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
 
   markTerrainDirty();
 }
 
-float IsometricShadowSystem::calculateTerrainShadowLength(
+float IsometricTerrainShadowProvider::calculateTerrainShadowLength(
     const TerrainShadowEdge& edge,
     float sunHeight,
     float maxShadowLength)
@@ -561,7 +552,7 @@ float IsometricShadowSystem::calculateTerrainShadowLength(
       heightDelta, 1.0f / std::max(sunHeight, 0.001f), maxShadowLength);
 }
 
-void IsometricShadowSystem::buildTerrainEdgeShadowItems(
+void IsometricTerrainShadowProvider::buildTerrainEdgeShadowItems(
     const IsometricRenderContext& context,
     const glm::vec2& shadowDir,
     float sunHeight,

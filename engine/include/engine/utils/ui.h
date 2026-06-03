@@ -2,8 +2,6 @@
 
 #include "engine/sceneManager/scene.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
-#include "engine/systems/isometric/isometricShadowSystem.h"
-#include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #ifndef ENGINE_WEB
   #include "imgui/backends/imgui_impl_opengl3.h"
   #include "imgui/backends/imgui_impl_sdl2.h"
@@ -108,56 +106,35 @@ inline static void renderDebugControls(Scene* scene)
           system.setEnabled(enabled);
       });
 
-  const bool hasTerrain = scene->hasSystem<IsometricShadowSystem>();
-  const bool hasSprite = scene->hasSystem<IsometricSpriteShadowSystem>();
+  const bool hasTerrain = scene->hasSystem<IsometricRenderSystem>();
 
-  if (hasTerrain || hasSprite)
+  if (hasTerrain)
   {
+    auto& render = scene->getSystem<IsometricRenderSystem>();
+
     ImGui::Separator();
     ImGui::TextUnformatted("Shadows");
 
-    // One length drives both systems so terrain and sprite shadows stay tied.
-    // Length/alpha feed the cached terrain geometry, so changes force a rebuild.
-    float length =
-        hasSprite ? scene->getSystem<IsometricSpriteShadowSystem>()
-                        .shadowSettings()
-                        .spriteShadowMaxLength
-                  : scene->getSystem<IsometricShadowSystem>()
-                        .shadowSettings()
-                        .terrainShadowMaxLength;
+    // One length drives both so terrain and sprite shadows stay tied. The
+    // terrain length feeds the cached terrain geometry, so a change forces a
+    // rebuild.
+    float length = render.shadowSettings().spriteShadowMaxLength;
 
     if (ImGui::SliderFloat("Shadow length", &length, 0.0f, 5.0f))
     {
-      if (hasSprite)
-        scene->getSystem<IsometricSpriteShadowSystem>()
-            .shadowSettings()
-            .spriteShadowMaxLength = length;
-
-      if (hasTerrain)
-      {
-        auto& shadow = scene->getSystem<IsometricShadowSystem>();
-        shadow.shadowSettings().terrainShadowMaxLength = length;
-        shadow.markTerrainDirty();
-      }
+      render.shadowSettings().spriteShadowMaxLength = length;
+      render.shadowSettings().terrainShadowMaxLength = length;
+      render.markTerrainShadowsDirty();
     }
 
-    if (hasTerrain)
-    {
-      auto& shadow = scene->getSystem<IsometricShadowSystem>();
-      if (ImGui::SliderFloat("Terrain alpha",
-                             &shadow.shadowSettings().terrainShadowAlpha,
-                             0.0f,
-                             1.0f))
-        shadow.markTerrainDirty();
-    }
+    if (ImGui::SliderFloat("Terrain alpha",
+                           &render.shadowSettings().terrainShadowAlpha,
+                           0.0f,
+                           1.0f))
+      render.markTerrainShadowsDirty();
 
-    if (hasSprite)
-      ImGui::SliderFloat("Sprite alpha",
-                         &scene->getSystem<IsometricSpriteShadowSystem>()
-                              .shadowSettings()
-                              .spriteShadowAlpha,
-                         0.0f,
-                         1.0f);
+    ImGui::SliderFloat(
+        "Sprite alpha", &render.shadowSettings().spriteShadowAlpha, 0.0f, 1.0f);
   }
 
   ImGui::End();

@@ -4,7 +4,7 @@
 #include "engine/assetStore/assetStore.h"
 #include "engine/input/input.h"
 #include "engine/sceneManager/scene.h"
-#include "engine/systems/isometric/isometricRenderSystem.h" // sfs::SunShadowMode
+#include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -44,6 +44,6 @@ private:
   // Heightmap-march sampling look; soft/rounded by default, H toggles.
   bool m_sharpShadows = false;
 
-  // Sun-shadow technique; heightmap march by default, J cycles.
-  sfs::SunShadowMode m_sunShadowMode = sfs::SunShadowMode::Heightmap;
+  // Engine-baked sun terrain shadows; on by default, J toggles.
+  bool m_shadowsEnabled = true;
 };

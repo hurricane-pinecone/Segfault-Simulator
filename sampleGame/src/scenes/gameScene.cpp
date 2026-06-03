@@ -11,9 +11,6 @@
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/decalSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
-#include "engine/systems/isometric/isometricShadowSystem.h"
-#include "engine/systems/isometric/isometricSpriteShadowSystem.h"
-#include "engine/systems/isometric/isometricWaterSystem.h"
 #include "engine/systems/particleSystem.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "gameObjects/lamp.h"
@@ -48,26 +45,24 @@ void GameScene::onInit()
 
   // Terrain and sprite shadows share one length so equal heights match.
   constexpr float shadowMaxLength = 3.5f;
-  sfs::IsometricShadowSettings shadowSettings = {
-      shadowMaxLength, shadowMaxLength};
 
-  // Projected terrain shadows. Active only in SunShadowMode::Projected; the
-  // render system gates the pull, so this can stay added in every mode.
-  addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
-  addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
-  addSystem<sfs::IsometricWaterSystem>();
+  auto& renderer = getSystem<sfs::IsometricRenderSystem>();
+  auto& shadowSettings = renderer.shadowSettings();
+  shadowSettings.terrainShadowMaxLength = shadowMaxLength;
+  shadowSettings.spriteShadowMaxLength = shadowMaxLength;
 
   // Opt-in extension: render terrain as real block faces instead of billboard
   // sprites. A simple iso game just omits this line and keeps the billboard
   // path. Added disabled so billboards stay the default; press G to toggle and
   // compare the two live (real side faces light from a wall's base up).
-  addSystem<sfs::BlockGeometrySystem>(m_assetStore).setEnabled(false);
+  addSystem<sfs::BlockGeometrySystem>(m_assetStore);
 
   // Soft round texture so particles/decals don't read as hard squares.
   m_assetStore.addRadialTexture("blood_dot", 32);
 
   auto& particles = addSystem<sfs::ParticleSystem>();
-  registerGoreEffects(particles); // blood_mist / blood_spray / blood_gobs / drip
+  registerGoreEffects(
+      particles); // blood_mist / blood_spray / blood_gobs / drip
   particles.registerEffect("embers", makeEmberEffect());
 
   // Persistent terrain stains, fed by particle landings.
@@ -124,17 +119,13 @@ void GameScene::onProcessInput(const sfs::Input& input)
                        : sfs::SunShadowStyle::Smooth);
   }
 
-  // Cycle the sun-shadow technique: projected (billboard charm) -> heightmap
-  // march -> none. Works with either render style (billboard or geometry).
+  // Toggle engine-baked sun terrain shadows on/off. The active technique
+  // follows the render style (projected for billboards, heightmap march for
+  // block geometry).
   if (input.keyboard().keyPressed(sfs::Key::J))
   {
-    m_sunShadowMode =
-        m_sunShadowMode == sfs::SunShadowMode::Projected
-            ? sfs::SunShadowMode::Heightmap
-            : m_sunShadowMode == sfs::SunShadowMode::Heightmap
-                  ? sfs::SunShadowMode::None
-                  : sfs::SunShadowMode::Projected;
-    getSystem<sfs::IsometricRenderSystem>().setSunShadowMode(m_sunShadowMode);
+    m_shadowsEnabled = !m_shadowsEnabled;
+    getSystem<sfs::IsometricRenderSystem>().setShadowsEnabled(m_shadowsEnabled);
   }
 
   m_mousePos = input.mouse().getPosition();
