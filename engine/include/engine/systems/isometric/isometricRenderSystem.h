@@ -251,6 +251,22 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
       quadRenderer.submit(quad);
   }
 
+  // Particle billboards: one unlit batch per (texture, blend). World particles
+  // (Particles pass) depth-test against the scene; screen-space ones (UI pass)
+  // draw on top without depth.
+  else if constexpr (std::is_same_v<std::decay_t<decltype(concrete.quad)>,
+                                    ParticleBatch>)
+  {
+    const unsigned int batchTexture = resolveTexture(concrete.textureId);
+
+    if (batchTexture != 0)
+    {
+      const bool depthTested = concrete.order.pass != RenderPass::UI;
+      quadRenderer.submitParticleBatch(
+          concrete.quad, batchTexture, concrete.blend, depthTested);
+    }
+  }
+
   // Everything else:
   // sprites, UI, standalone lit quads, etc.
   else

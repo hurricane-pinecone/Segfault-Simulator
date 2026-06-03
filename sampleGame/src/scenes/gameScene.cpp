@@ -10,7 +10,10 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #include "engine/systems/isometric/isometricWaterSystem.h"
+#include "engine/components/particleEmitterComponent.h"
+#include "engine/systems/particleSystem.h"
 #include "engine/utils/isometricLightingUtils.h"
+#include "effects/particleEffects.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
 #include "systems/TerrainGeneratorSystem.h"
@@ -49,6 +52,13 @@ void GameScene::onInit()
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
   addSystem<sfs::IsometricWaterSystem>();
 
+  addSystem<sfs::ParticleSystem>();
+  {
+    auto& particles = getSystem<sfs::ParticleSystem>();
+    particles.registerEffect("blood", makeBloodEffect());
+    particles.registerEffect("embers", makeEmberEffect());
+  }
+
   addSystem<SunController>();
 
   // Feed terrain heights straight from the generator so the point-light
@@ -61,7 +71,12 @@ void GameScene::createEntities()
 {
   m_player = &createObject<Player>();
 
-  createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
+  // The first lamp also carries a continuous ember emitter (component-driven
+  // particle path); the others are plain lights.
+  auto& emberLamp = createObject<Lamp>(glm::vec2{16.5, 16.5}, Lamp::Color::Pink);
+  emberLamp.entity().addComponent<sfs::ParticleEmitterComponent>(
+      "embers", glm::vec2{0.0f, 0.0f}, 0.4f);
+
   createObject<Lamp>(glm::vec2{16.5, 11.5}, Lamp::Color::Moonlight);
   createObject<Lamp>(glm::vec2{5.5, 13.5});
   createObject<Lamp>(glm::vec2{6.5, 13.5});
@@ -80,6 +95,13 @@ void GameScene::onProcessInput(const sfs::Input& input)
   m_hoveredTile = pick.tile;
   m_hoveredElevation = pick.elevation;
   m_hasHoveredTile = pick.valid;
+
+  // Left-click splatters blood on the hovered tile (one-shot burst path).
+  if (m_hasHoveredTile && input.mouse().mousePressed(sfs::MouseButton::Left))
+  {
+    getSystem<sfs::ParticleSystem>().spawnBurst(
+        "blood", pick.world, static_cast<float>(pick.elevation));
+  }
 }
 
 void GameScene::onRender()
@@ -105,6 +127,11 @@ void GameScene::onRender()
       20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
   textRenderer().drawText(
       20, 60, "Time: " + getSystem<SunController>().timeString12Hour());
+  textRenderer().drawText(
+      20,
+      80,
+      "Particles: " +
+          std::to_string(getSystem<sfs::ParticleSystem>().liveParticleCount()));
 
   if (m_hasHoveredTile)
   {
