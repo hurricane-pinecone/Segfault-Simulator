@@ -39,4 +39,7 @@ private:
   bool m_hasHoveredTile = false;
   SunController m_sunController;
   Player* m_player = nullptr;
+
+  // Sun-shadow look for the geometry path; soft/rounded by default, H toggles.
+  bool m_sharpShadows = false;
 };

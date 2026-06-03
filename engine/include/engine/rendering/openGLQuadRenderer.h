@@ -50,6 +50,21 @@ public:
                       bool hasNormalMap,
                       int surfaceEffect) override;
   void submit(const SurfaceCommand& command) override;
+
+  void drawGeometry(const GeometryVertex* vertices,
+                    std::size_t count,
+                    unsigned int texture,
+                    int surfaceEffect) override;
+  void setGeometryLighting(float ambient,
+                           glm::vec3 lightColor,
+                           glm::vec3 sunDirection,
+                           float diffuseStrength) override;
+
+  void setSunShadowStyle(SunShadowStyle style) override
+  {
+    m_sunShadowStyle = style;
+  }
+
   void submitTerrainShadow(const Quad& command) override
   {
     initialize();
@@ -114,13 +129,19 @@ private:
     Freeform,
     LitSprite,
     Particle,
-    Decal
+    Decal,
+    Geometry
   };
 
   unsigned int createSolidShaderProgram() const;
   unsigned int createSpriteShadowShaderProgram() const;
   unsigned int createParticleShaderProgram() const;
   unsigned int createDecalShaderProgram() const;
+  unsigned int createGeometryShaderProgram() const;
+
+  // Bind the geometry program + opaque state + frame lighting/point-light/heightmap
+  // uniforms (flushing any pending pipeline first).
+  void beginGeometryPipeline();
 
   void beginPipeline(Pipeline stage);
   void flushCurrentPipeline();
@@ -461,6 +482,24 @@ private:
 
   DecalFrameParams m_decalParams;
   std::unordered_map<std::int64_t, DecalChunkBuffer> m_decalChunks;
+
+  // --- Opt-in block geometry (real terrain faces) ---
+  // A lit, textured face mesh built per frame by BlockGeometrySystem. Uses the
+  // frame's point lights + heightmap (already on the renderer) and a real
+  // per-vertex normal + per-vertex elevation, so side faces light from the base.
+  unsigned int geometryShaderProgram = 0;
+  unsigned int geometryVao = 0;
+  unsigned int geometryVbo = 0;
+
+  float m_geomAmbient = 1.0f;
+  glm::vec3 m_geomLightColor{1.0f, 1.0f, 1.0f};
+  glm::vec3 m_geomSunDirection{0.0f, 0.0f, 1.0f};
+  float m_geomDiffuseStrength = 0.0f;
+
+  std::vector<GeometryVertex> m_geometryScratch; // NDC-converted upload buffer
+
+  // Sun-shadow sampling style for the geometry path; defaults to the soft look.
+  SunShadowStyle m_sunShadowStyle = SunShadowStyle::Smooth;
 };
 
 } // namespace sfs

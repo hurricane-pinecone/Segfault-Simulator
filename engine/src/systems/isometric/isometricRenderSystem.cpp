@@ -20,6 +20,7 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #include "engine/systems/isometric/isometricWaterSystem.h"
+#include "engine/systems/blockGeometrySystem.h"
 #include "engine/systems/decalSystem.h"
 #include "engine/systems/particleSystem.h"
 #include "glm/glm/common.hpp"
@@ -86,9 +87,10 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
             if (concrete.order.pass == RenderPass::UI)
               return;
 
-            if constexpr (std::is_same_v<T, SurfaceCommand>)
+            if constexpr (std::is_same_v<T, SurfaceCommand> ||
+                          std::is_same_v<T, GeometryCommand>)
           {
-            // A merged surface mesh carries a per-vertex world sort-key.
+            // A merged surface / geometry mesh carries a per-vertex world sort-key.
             for (const auto& vertex : concrete.vertices)
               includeKey(vertex.z);
           }
@@ -132,7 +134,8 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
           // returned range.
           if constexpr (std::is_same_v<T, DecalDrawCommand>)
             return;
-          else if constexpr (std::is_same_v<T, SurfaceCommand>)
+          else if constexpr (std::is_same_v<T, SurfaceCommand> ||
+                             std::is_same_v<T, GeometryCommand>)
           {
             // Remap each vertex's world sort-key to clip-space z in place.
             for (auto& vertex : concrete.vertices)
@@ -321,8 +324,18 @@ void IsometricRenderSystem::render()
 
   m_quadRenderer.setPointLights(pointLightSet);
 
+  // Opt-in extension: when a BlockGeometrySystem is present and enabled, terrain
+  // tiles render as real face geometry (emitted by that system below) instead of
+  // billboard sprites. Non-tile sprites (actors, props) stay billboards either
+  // way, so a scene without the system renders exactly as the simple iso path.
+  const auto geometrySystem = registry->tryGetSystem<BlockGeometrySystem>();
+  const bool geometryTilesActive = geometrySystem && geometrySystem->enabled();
+
   for (const auto& entity : getEntities())
   {
+    if (geometryTilesActive && isTileEntity(entity))
+      continue;
+
     const auto& transform = entity.getComponent<TransformComponent>();
     const auto& spriteComponent = entity.getComponent<SpriteComponent>();
 
@@ -524,8 +537,10 @@ void IsometricRenderSystem::render()
     m_renderQueue.submit(command);
   }
 
+  // The sun shadow map (geometry path) replaces the projected terrain shadows,
+  // so skip this provider when geometry is active to avoid doubling them up.
   if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>();
-      shadowSystem && shadowSystem->enabled())
+      !geometryTilesActive && shadowSystem && shadowSystem->enabled())
   {
     shadowSystem->computeCommands(m_context);
 
@@ -568,6 +583,12 @@ void IsometricRenderSystem::render()
   {
     decalSystem->computeCommands(m_context);
     m_renderQueue.submitAll(decalSystem->commands());
+  }
+
+  if (geometryTilesActive)
+  {
+    geometrySystem->computeCommands(m_context);
+    m_renderQueue.submitAll(geometrySystem->commands());
   }
 
   flushBatches();
@@ -621,6 +642,15 @@ void IsometricRenderSystem::flushBatches()
     }
 
     quadRenderer.setDecalFrameParams(dp);
+  }
+
+  // Geometry faces share the scene's sun + ambient lighting (point lights and
+  // the heightmap are already bound via setPointLights / setHeightmap).
+  if (m_context.ambientLighting)
+  {
+    const auto& al = *m_context.ambientLighting;
+    quadRenderer.setGeometryLighting(
+        al.ambient, al.color, al.direction, al.diffuseStrength);
   }
 
   {
