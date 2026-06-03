@@ -1,4 +1,4 @@
-#include "engine/rendering/openGLIsometricRenderer.h"
+#include "engine/rendering/openGLQuadRenderer.h"
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
 #else
@@ -115,24 +115,12 @@ bool Game::init(int windowWidth, int windowHeight)
   }
 #endif
 
-  m_quadRenderer =
-      std::make_unique<OpenGLIsometricRenderer>(windowWidth, windowHeight);
+  m_quadRenderer = createQuadRenderer(windowWidth, windowHeight);
   m_quadRenderer->initialize();
   m_quadRenderer->setViewportSize(windowWidth, windowHeight);
 
   // GL context is current and loaded; set up Tracy's GPU timing context.
   TracyGpuContext;
-
-  // renderer = SDL_CreateRenderer(
-  //     window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-
-  // if (!renderer)
-  // {
-  //   LOG_INFO(std::string("Error creating renderer: ") + SDL_GetError());
-  //   return false;
-  // }
-
-  // SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
 
 #ifndef ENGINE_WEB
   IMGUI_CHECKVERSION();
@@ -147,6 +135,12 @@ bool Game::init(int windowWidth, int windowHeight)
   isRunning = true;
 
   return true;
+}
+
+std::unique_ptr<IQuadRenderer> Game::createQuadRenderer(int windowWidth,
+                                                        int windowHeight)
+{
+  return std::make_unique<OpenGLQuadRenderer>(windowWidth, windowHeight);
 }
 
 void Game::setup()

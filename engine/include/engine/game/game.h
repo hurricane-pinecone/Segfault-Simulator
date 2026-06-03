@@ -40,6 +40,18 @@ protected:
   virtual void onRender() {};
   virtual void onDestroy() = 0;
 
+  /**
+   * Create the quad-rendering backend the game draws through. The default backs
+   * the core 2D renderer; a game needing the isometric heightfield path
+   * overrides this to return an isometric backend.
+   *
+   * @param windowWidth  viewport width in pixels
+   * @param windowHeight viewport height in pixels
+   * @return owning handle to the renderer
+   */
+  virtual std::unique_ptr<IQuadRenderer> createQuadRenderer(int windowWidth,
+                                                            int windowHeight);
+
 protected:
   SceneManager sceneManager;
   std::unique_ptr<AssetStore> assetStore;

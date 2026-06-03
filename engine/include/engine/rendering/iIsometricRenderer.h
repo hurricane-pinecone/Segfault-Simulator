@@ -65,7 +65,7 @@ struct DecalFrameParams
  * world-projected decal store. A backend used by IsometricRenderSystem must
  * implement this interface.
  */
-class IIsometricRenderer : public IQuadRenderer
+class IIsometricRenderer : public virtual IQuadRenderer
 {
 public:
   using IQuadRenderer::submit;

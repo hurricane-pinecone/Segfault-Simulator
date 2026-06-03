@@ -19,16 +19,23 @@ the core. See *Seams* below.
 ## Layering
 
 ```
-Game (your subclass)         window/config, onInit/onSetup/onUpdate hooks
+Game (your subclass)         window/config; createQuadRenderer() picks the backend
   └─ Scene                   a bag of Systems; render() calls every system's render()
        └─ System(s)          gameplay + rendering live here as ECS systems
             └─ IQuadRenderer core 2D draw API the render systems draw through
-                 └─ OpenGLIsometricRenderer   the concrete OpenGL backend
+                 ├─ OpenGLQuadRenderer          core 2D OpenGL backend (default)
+                 └─ IsometricGeometryRenderer   iso subclass (adds IIsometricRenderer)
 ```
 
 - **ECS core** (`engine/ecs`): `Entity`, `Registry`, `System`. Generic.
-- **Backend** (`IQuadRenderer`): backend-agnostic 2D primitives. Owned by `Game`,
+- **Backend** (`IQuadRenderer`): backend-agnostic 2D primitives. Created by the
+  game via `Game::createQuadRenderer` (defaults to the flat-2D `OpenGLQuadRenderer`;
+  the iso sample overrides it to `IsometricGeometryRenderer`), owned by `Game`,
   injected into every `Scene`, reached by systems via `Scene::quadRenderer()`.
+- **Backends**: `OpenGLQuadRenderer` implements the core `IQuadRenderer`.
+  `IsometricGeometryRenderer : OpenGLQuadRenderer, IIsometricRenderer` adds the
+  heightfield pipelines (`IQuadRenderer` is a virtual base, so there's one shared
+  subobject).
 - **Render systems**: ordinary `System`s that draw through the renderer. The
   isometric renderer (`IsometricRenderSystem`) is one; `SpriteRenderSystem` is a
   flat-2D one.
@@ -60,13 +67,19 @@ and the engine renders them.
 
 ## Seams (extension points)
 
+- **Backend selection.** `Game::createQuadRenderer(w, h)` is a virtual factory
+  the game overrides to choose its backend. It defaults to the flat-2D
+  `OpenGLQuadRenderer`; the iso sample overrides it to `IsometricGeometryRenderer`.
 - **Core vs isometric renderer.** `IQuadRenderer` (`iQuadRenderer.h`) is the core
   2D contract (textures, quad/lit/particle submission, lighting, frame
-  lifecycle). `IIsometricRenderer : IQuadRenderer` (`iIsometricRenderer.h`) adds
-  the heightfield surface (elevation heightmap, block geometry, sun-shadow style,
-  projected terrain/sprite shadows, world-projected decals). `IsometricRenderSystem`
-  requires the extension (it obtains it from the injected core renderer via
-  `dynamic_cast`); a flat-2D render system needs only the core.
+  lifecycle), implemented by `OpenGLQuadRenderer`. `IIsometricRenderer : virtual
+  IQuadRenderer` (`iIsometricRenderer.h`) adds the heightfield surface (elevation
+  heightmap, block geometry, sun-shadow style, projected terrain/sprite shadows,
+  world-projected decals), implemented by `IsometricGeometryRenderer` (a subclass
+  of `OpenGLQuadRenderer`). `IsometricRenderSystem` requires the extension (it
+  obtains it from the injected core renderer via `dynamic_cast`); a flat-2D render
+  system needs only the core. The core's lit pipeline carries the heightmap as
+  optional occlusion infra — inert until an iso backend uploads one.
 - **Projection.** `IProjection` (`iProjection.h`) is the world↔screen transform a
   render system depends on. `IsometricProjection` implements it.
 - **Custom render passes.** A game can inject its own render pass by implementing
@@ -81,10 +94,6 @@ and the engine renders them.
 
 These are intentionally not built yet, to avoid abstraction without a consumer:
 
-- **Generic OpenGL backend.** `OpenGLIsometricRenderer` currently contains both
-  the core 2D GL pipelines and the iso pipelines. When a flat-2D renderer is
-  built, extract a reusable `OpenGLQuadRenderer : IQuadRenderer` base (the name is
-  reserved for it) and make the iso renderer a subclass.
 - **Projection through the context.** `IsometricRenderContext` holds a concrete
   `IsometricProjection` because the iso systems use iso-specific fields directly;
   routing render systems through `IProjection` generically waits on a non-iso
