@@ -23,7 +23,6 @@
 #include <engine/input/input.h>
 #include <engine/mapLoader/mapLoader.h>
 #include <engine/systems/movementSystem.h>
-#include <engine/systems/renderSystem.h>
 #include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
 #include <iomanip>
@@ -118,8 +117,9 @@ void GameScene::onProcessInput(const sfs::Input& input)
   if (input.keyboard().keyPressed(sfs::Key::H))
   {
     m_sharpShadows = !m_sharpShadows;
-    quadRenderer().setSunShadowStyle(m_sharpShadows ? sfs::SunShadowStyle::Sharp
-                                                     : sfs::SunShadowStyle::Smooth);
+    getSystem<sfs::IsometricRenderSystem>().setSunShadowStyle(
+        m_sharpShadows ? sfs::SunShadowStyle::Sharp
+                       : sfs::SunShadowStyle::Smooth);
   }
 
   m_mousePos = input.mouse().getPosition();

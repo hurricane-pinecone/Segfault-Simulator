@@ -3,7 +3,6 @@
 #include "engine/input/input.h"
 #include <engine/ecs/registry.h>
 #include <engine/sceneManager/scene.h>
-#include <engine/systems/renderSystem.h>
 #include <engine/utils/profiling.h>
 #include <string>
 

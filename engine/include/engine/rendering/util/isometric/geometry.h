@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/components/elevationComponent.h"
+#include "engine/rendering/iProjection.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
@@ -459,7 +460,13 @@ struct IsometricProjectionConfig
   glm::vec2 screenCenter{0.0f, 0.0f};
 };
 
-struct IsometricProjection
+/**
+ * Isometric heightfield projection: maps a grid position plus an integer
+ * elevation level to screen pixels (and back). `elevation` is in elevation
+ * levels, not pixels. Overrides are `final` so calls through the concrete type
+ * devirtualize on the per-sprite/per-vertex hot path.
+ */
+struct IsometricProjection : public IProjection
 {
   int tileWidth = 0;
   int tileHeight = 0;
@@ -468,16 +475,16 @@ struct IsometricProjection
   float worldScale = 1.0f;
   float zoom = 1.0f;
 
-  // Screen-space iso offset of the camera, i.e.
-  // gridToIsometric(cameraGridPosition, tileWidth, tileHeight, worldScale).
+  /// Screen-space iso offset of the camera, i.e.
+  /// gridToIsometric(cameraGridPosition, tileWidth, tileHeight, worldScale).
   glm::vec2 cameraIso{0.0f, 0.0f};
 
-  // Pixel position that grid origin maps to before the camera offset is
-  // applied (typically the window centre).
+  /// Pixel position that grid origin maps to before the camera offset is
+  /// applied (typically the window centre).
   glm::vec2 screenCenter{0.0f, 0.0f};
 
-  // Grid -> screen (pixels). elevation is in elevation levels (not pixels).
-  glm::vec2 worldToScreen(const glm::vec2& world, float elevation) const
+  glm::vec2 worldToScreen(const glm::vec2& world,
+                          float elevation) const final
   {
     glm::vec2 p = (gridToIsometric(world, tileWidth, tileHeight, worldScale) -
                    cameraIso) *
@@ -489,9 +496,8 @@ struct IsometricProjection
     return p;
   }
 
-  // Screen (pixels) -> grid, assuming the cursor lies on the plane at the
-  // given elevation. This is the exact inverse of worldToScreen.
-  glm::vec2 screenToWorld(const glm::vec2& screen, float elevation) const
+  glm::vec2 screenToWorld(const glm::vec2& screen,
+                          float elevation) const final
   {
     glm::vec2 p = screen;
 

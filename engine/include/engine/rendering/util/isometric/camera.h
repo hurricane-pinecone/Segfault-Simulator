@@ -36,15 +36,17 @@ inline IsometricProjection makeProjection(const IsometricProjectionConfig& confi
 {
   const float zoom = camera.camera ? camera.camera->zoom : 1.0f;
 
-  return IsometricProjection{
-      config.tileWidth,
-      config.tileHeight,
-      config.elevationStep,
-      config.worldScale,
-      zoom,
-      camera.isoPosition(config.tileWidth, config.tileHeight, config.worldScale),
-      config.screenCenter,
-  };
+  IsometricProjection projection;
+  projection.tileWidth = config.tileWidth;
+  projection.tileHeight = config.tileHeight;
+  projection.elevationStep = config.elevationStep;
+  projection.worldScale = config.worldScale;
+  projection.zoom = zoom;
+  projection.cameraIso =
+      camera.isoPosition(config.tileWidth, config.tileHeight, config.worldScale);
+  projection.screenCenter = config.screenCenter;
+
+  return projection;
 }
 
 } // namespace sfs

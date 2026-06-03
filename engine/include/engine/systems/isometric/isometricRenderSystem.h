@@ -4,7 +4,7 @@
 #include "engine/components/transformComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/commands/commands.h"
-#include "engine/rendering/iQuadRenderer.h"
+#include "engine/rendering/iIsometricRenderer.h"
 #include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/renderQueue.h"
@@ -15,6 +15,7 @@
 
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
+#include <vector>
 
 namespace sfs
 {
@@ -27,6 +28,32 @@ extern int gTileRenderItems;
 extern int gSpriteRenderItems;
 extern int gSpriteProjectedShadowItems;
 extern int gTerrainShadowBatchCount;
+
+/**
+ * Registerable render pass for game-supplied content. Implement this and
+ * register an instance via IsometricRenderSystem::addRenderProvider to inject
+ * commands into the frame; they are ordered against the built-in passes by their
+ * RenderPass. The built-in isometric passes (terrain/sprite shadows, water,
+ * particles, decals, geometry) are pulled by the render system directly and are
+ * not registered through this interface.
+ */
+class IRenderProvider
+{
+public:
+  virtual ~IRenderProvider() = default;
+
+  /** @return whether this provider should emit commands this frame. */
+  virtual bool providerEnabled() const = 0;
+
+  /**
+   * Compute and append this provider's render commands for the frame.
+   *
+   * @param context the frame's render context (projection, lighting, terrain)
+   * @param out      queue to append the provider's commands to
+   */
+  virtual void emit(const IsometricRenderContext& context,
+                    std::vector<AnyRenderCommand>& out) = 0;
+};
 
 struct WallFaceKey
 {
@@ -68,6 +95,16 @@ public:
 
   void setWaveTime(float time);
   void setWaveEnabled(bool enabled);
+
+  /** Select the sun-shadow sampling style for the geometry path. */
+  void setSunShadowStyle(SunShadowStyle style);
+
+  /**
+   * Register a game-supplied render pass. Its commands are emitted each frame
+   * after the built-in passes and ordered with them by RenderPass. The system
+   * does not take ownership; the provider must outlive the system.
+   */
+  void addRenderProvider(IRenderProvider* provider);
 
   void drawDebugTile(const glm::vec2& gridPosition,
                      SDL_Color color = SDL_Color{255, 255, 0, 255});
@@ -136,15 +173,15 @@ private:
   void batchTerrainTiles(std::vector<AnyRenderCommand>& commands);
 
   void submitRenderCommand(const AnyRenderCommand& command,
-                           IQuadRenderer& quadRenderer);
+                           IIsometricRenderer& quadRenderer);
 
   template <typename T>
   void submitConcreteRenderCommand(const T& concrete,
-                                   IQuadRenderer& quadRenderer);
+                                   IIsometricRenderer& quadRenderer);
 
 private:
   AssetStore& assetStore;
-  IQuadRenderer& m_quadRenderer;
+  IIsometricRenderer& m_quadRenderer;
 
   RenderQueue<AnyRenderCommand> m_renderQueue;
 
@@ -163,12 +200,14 @@ private:
 
   IsometricRenderContext m_context;
   IsometricLightingService m_lightingService;
+
+  std::vector<IRenderProvider*> m_renderProviders;
 };
 
 template <typename T>
 void IsometricRenderSystem::submitConcreteRenderCommand(
     const T& concrete,
-    IQuadRenderer& quadRenderer)
+    IIsometricRenderer& quadRenderer)
 {
   // Most paths only read the command, so they use `concrete` directly. Only
   // the branches that resolve a texture onto the quad take a mutable copy, and

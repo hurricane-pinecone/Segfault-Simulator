@@ -1,10 +1,15 @@
 #include "engine/Color/Color.h"
 #include "engine/logger/logger.h"
-#include "engine/rendering/openGLQuadRenderer.h"
+#include "engine/rendering/iQuadRenderer.h"
 #include "engine/rendering/quads.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
 #include <engine/TextRenderer/textRenderer.h>
+#ifdef __EMSCRIPTEN__
+  #include <GLES3/gl3.h>
+#else
+  #include <GL/glew.h>
+#endif
 
 namespace sfs
 {

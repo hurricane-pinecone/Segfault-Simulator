@@ -1,5 +1,5 @@
 
-#include "engine/rendering/openGLQuadRenderer.h"
+#include "engine/rendering/openGLIsometricRenderer.h"
 
 #include "engine/logger/logger.h"
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
@@ -24,7 +24,7 @@
 namespace sfs
 {
 
-OpenGLQuadRenderer::OpenGLQuadRenderer(int windowWidth, int windowHeight)
+OpenGLIsometricRenderer::OpenGLIsometricRenderer(int windowWidth, int windowHeight)
     : windowWidth(windowWidth), windowHeight(windowHeight)
 {
   m_ndcScaleX = windowWidth > 0 ? 2.0f / static_cast<float>(windowWidth) : 0.0f;
@@ -32,9 +32,9 @@ OpenGLQuadRenderer::OpenGLQuadRenderer(int windowWidth, int windowHeight)
       windowHeight > 0 ? 2.0f / static_cast<float>(windowHeight) : 0.0f;
 }
 
-OpenGLQuadRenderer::~OpenGLQuadRenderer() { shutdown(); }
+OpenGLIsometricRenderer::~OpenGLIsometricRenderer() { shutdown(); }
 
-void OpenGLQuadRenderer::initialize()
+void OpenGLIsometricRenderer::initialize()
 {
   if (initialized)
     return;
@@ -53,7 +53,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (shaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer shader program");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer shader program");
     return;
   }
 
@@ -65,7 +65,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (solidShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer solid shader program");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer solid shader program");
     return;
   }
 
@@ -77,7 +77,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (surfaceShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer surface shader program");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer surface shader program");
     return;
   }
 
@@ -89,7 +89,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (spriteShadowShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer sprite shadow shader");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer sprite shadow shader");
     return;
   }
 
@@ -104,7 +104,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (particleShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer particle shader");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer particle shader");
     return;
   }
 
@@ -481,7 +481,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (decalShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer decal shader");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer decal shader");
     return;
   }
 
@@ -541,7 +541,7 @@ void OpenGLQuadRenderer::initialize()
 
   if (geometryShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create OpenGLQuadRenderer geometry shader");
+    LOG_ERROR("Failed to create OpenGLIsometricRenderer geometry shader");
     return;
   }
 
@@ -718,7 +718,7 @@ void OpenGLQuadRenderer::initialize()
   initialized = true;
 }
 
-void OpenGLQuadRenderer::shutdown()
+void OpenGLIsometricRenderer::shutdown()
 {
   if (!initialized)
     return;
@@ -853,7 +853,7 @@ void OpenGLQuadRenderer::shutdown()
   initialized = false;
 }
 
-void OpenGLQuadRenderer::submit(const Quad& command)
+void OpenGLIsometricRenderer::submit(const Quad& command)
 {
   initialize();
 
@@ -864,19 +864,19 @@ void OpenGLQuadRenderer::submit(const Quad& command)
   appendSolidVertices(command);
 }
 
-void OpenGLQuadRenderer::submit(const TexturedQuad& command)
+void OpenGLIsometricRenderer::submit(const TexturedQuad& command)
 {
   flush();
   drawImmediate(command);
 }
 
-void OpenGLQuadRenderer::submit(const FreeformQuad& command)
+void OpenGLIsometricRenderer::submit(const FreeformQuad& command)
 {
   flush();
   drawQuad(command);
 }
 
-void OpenGLQuadRenderer::submit(const LitQuad& command)
+void OpenGLIsometricRenderer::submit(const LitQuad& command)
 {
   initialize();
 
@@ -905,7 +905,7 @@ void OpenGLQuadRenderer::submit(const LitQuad& command)
   appendLitVertices(command);
 }
 
-void OpenGLQuadRenderer::submitLitBatch(const LitQuadBatch& batch,
+void OpenGLIsometricRenderer::submitLitBatch(const LitQuadBatch& batch,
                                         unsigned int texture,
                                         unsigned int normalTexture,
                                         bool hasNormalMap,
@@ -955,7 +955,7 @@ void OpenGLQuadRenderer::submitLitBatch(const LitQuadBatch& batch,
   }
 }
 
-void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
+void OpenGLIsometricRenderer::submit(const SurfaceCommand& command)
 {
   ZoneScopedN("GL: submit surface");
   TracyGpuZone("GPU: surface");
@@ -1046,7 +1046,7 @@ void OpenGLQuadRenderer::submit(const SurfaceCommand& command)
   glUseProgram(0);
 }
 
-void OpenGLQuadRenderer::appendSolidVertices(const Quad& command)
+void OpenGLIsometricRenderer::appendSolidVertices(const Quad& command)
 {
   initialize();
 
@@ -1076,7 +1076,7 @@ void OpenGLQuadRenderer::appendSolidVertices(const Quad& command)
   m_solidVertices.push_back({p3, color, z});
 }
 
-void OpenGLQuadRenderer::drawImmediate(const TexturedQuad& command)
+void OpenGLIsometricRenderer::drawImmediate(const TexturedQuad& command)
 {
   initialize();
 
@@ -1116,7 +1116,7 @@ void OpenGLQuadRenderer::drawImmediate(const TexturedQuad& command)
                    command.tint);
 }
 
-void OpenGLQuadRenderer::drawQuad(const FreeformQuad& command)
+void OpenGLIsometricRenderer::drawQuad(const FreeformQuad& command)
 {
   initialize();
 
@@ -1138,7 +1138,7 @@ void OpenGLQuadRenderer::drawQuad(const FreeformQuad& command)
       command.texture, p0, p1, p2, p3, command.uvs, command.tint, command.z);
 }
 
-void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
+void OpenGLIsometricRenderer::drawQuadInternalWithUvs(unsigned int texture,
                                                  const glm::vec2& p0,
                                                  const glm::vec2& p1,
                                                  const glm::vec2& p2,
@@ -1202,7 +1202,7 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
   glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
+void OpenGLIsometricRenderer::appendLitVertices(const LitQuad& command)
 {
   const float left = static_cast<float>(command.destRect.x);
   const float right =
@@ -1236,7 +1236,7 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3], z});
 }
 
-void OpenGLQuadRenderer::submitSpriteShadow(const FreeformQuad& command)
+void OpenGLIsometricRenderer::submitSpriteShadow(const FreeformQuad& command)
 {
   initialize();
 
@@ -1252,7 +1252,7 @@ void OpenGLQuadRenderer::submitSpriteShadow(const FreeformQuad& command)
   appendSpriteShadowVertices(command);
 }
 
-void OpenGLQuadRenderer::appendSpriteShadowVertices(const FreeformQuad& command)
+void OpenGLIsometricRenderer::appendSpriteShadowVertices(const FreeformQuad& command)
 {
   const glm::vec2 p0 = toNdc(command.points[0]);
   const glm::vec2 p1 = toNdc(command.points[1]);
@@ -1281,7 +1281,7 @@ void OpenGLQuadRenderer::appendSpriteShadowVertices(const FreeformQuad& command)
   verts.push_back({p3, command.uvs[3], color, z});
 }
 
-void OpenGLQuadRenderer::flushSpriteShadow()
+void OpenGLIsometricRenderer::flushSpriteShadow()
 {
   ZoneScopedN("GL: flushSpriteShadow");
   TracyGpuZone("GPU: sprite shadow");
@@ -1331,7 +1331,7 @@ void OpenGLQuadRenderer::flushSpriteShadow()
   m_spriteShadowBatches.clear();
 }
 
-void OpenGLQuadRenderer::submitParticleBatch(const ParticleBatch& batch,
+void OpenGLIsometricRenderer::submitParticleBatch(const ParticleBatch& batch,
                                              unsigned int texture,
                                              BlendMode blend,
                                              bool depthTested)
@@ -1350,7 +1350,7 @@ void OpenGLQuadRenderer::submitParticleBatch(const ParticleBatch& batch,
   appendParticleVertices(batch, texture, blend, depthTested);
 }
 
-void OpenGLQuadRenderer::appendParticleVertices(const ParticleBatch& batch,
+void OpenGLIsometricRenderer::appendParticleVertices(const ParticleBatch& batch,
                                                 unsigned int texture,
                                                 BlendMode blend,
                                                 bool depthTested)
@@ -1378,7 +1378,7 @@ void OpenGLQuadRenderer::appendParticleVertices(const ParticleBatch& batch,
   }
 }
 
-void OpenGLQuadRenderer::flushParticles()
+void OpenGLIsometricRenderer::flushParticles()
 {
   ZoneScopedN("GL: flushParticles");
   TracyGpuZone("GPU: particles");
@@ -1448,7 +1448,7 @@ void OpenGLQuadRenderer::flushParticles()
   m_particleBatches.clear();
 }
 
-void OpenGLQuadRenderer::configureDecalAttribs()
+void OpenGLIsometricRenderer::configureDecalAttribs()
 {
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0,
@@ -1488,12 +1488,12 @@ void OpenGLQuadRenderer::configureDecalAttribs()
                         reinterpret_cast<void*>(offsetof(DecalVertex, sortKey)));
 }
 
-void OpenGLQuadRenderer::setDecalFrameParams(const DecalFrameParams& params)
+void OpenGLIsometricRenderer::setDecalFrameParams(const DecalFrameParams& params)
 {
   m_decalParams = params;
 }
 
-void OpenGLQuadRenderer::beginDecalPipeline()
+void OpenGLIsometricRenderer::beginDecalPipeline()
 {
   if (m_pipeline == Pipeline::Decal)
     return;
@@ -1559,8 +1559,8 @@ void OpenGLQuadRenderer::beginDecalPipeline()
   glActiveTexture(GL_TEXTURE0);
 }
 
-OpenGLQuadRenderer::DecalChunkBuffer&
-OpenGLQuadRenderer::ensureDecalChunk(std::int64_t key)
+OpenGLIsometricRenderer::DecalChunkBuffer&
+OpenGLIsometricRenderer::ensureDecalChunk(std::int64_t key)
 {
   DecalChunkBuffer& buf = m_decalChunks[key];
   if (buf.vao == 0)
@@ -1578,7 +1578,7 @@ OpenGLQuadRenderer::ensureDecalChunk(std::int64_t key)
   return buf;
 }
 
-void OpenGLQuadRenderer::uploadDecalChunk(std::int64_t key,
+void OpenGLIsometricRenderer::uploadDecalChunk(std::int64_t key,
                                           const DecalVertex* vertices,
                                           std::size_t count)
 {
@@ -1605,7 +1605,7 @@ void OpenGLQuadRenderer::uploadDecalChunk(std::int64_t key,
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void OpenGLQuadRenderer::appendDecalChunk(std::int64_t key,
+void OpenGLIsometricRenderer::appendDecalChunk(std::int64_t key,
                                           const DecalVertex* vertices,
                                           std::size_t count)
 {
@@ -1671,7 +1671,7 @@ void OpenGLQuadRenderer::appendDecalChunk(std::int64_t key,
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void OpenGLQuadRenderer::freeDecalChunk(std::int64_t key)
+void OpenGLIsometricRenderer::freeDecalChunk(std::int64_t key)
 {
   auto it = m_decalChunks.find(key);
   if (it == m_decalChunks.end())
@@ -1685,7 +1685,7 @@ void OpenGLQuadRenderer::freeDecalChunk(std::int64_t key)
   m_decalChunks.erase(it);
 }
 
-void OpenGLQuadRenderer::drawDecalChunk(std::int64_t key, unsigned int texture)
+void OpenGLIsometricRenderer::drawDecalChunk(std::int64_t key, unsigned int texture)
 {
   initialize();
   if (!initialized || texture == 0)
@@ -1702,7 +1702,7 @@ void OpenGLQuadRenderer::drawDecalChunk(std::int64_t key, unsigned int texture)
   glBindVertexArray(0);
 }
 
-void OpenGLQuadRenderer::drawDecalsDynamic(const DecalVertex* vertices,
+void OpenGLIsometricRenderer::drawDecalsDynamic(const DecalVertex* vertices,
                                            std::size_t count,
                                            unsigned int texture)
 {
@@ -1726,7 +1726,7 @@ void OpenGLQuadRenderer::drawDecalsDynamic(const DecalVertex* vertices,
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void OpenGLQuadRenderer::setGeometryLighting(float ambient,
+void OpenGLIsometricRenderer::setGeometryLighting(float ambient,
                                              glm::vec3 lightColor,
                                              glm::vec3 sunDirection,
                                              float diffuseStrength)
@@ -1737,7 +1737,7 @@ void OpenGLQuadRenderer::setGeometryLighting(float ambient,
   m_geomDiffuseStrength = diffuseStrength;
 }
 
-void OpenGLQuadRenderer::beginGeometryPipeline()
+void OpenGLIsometricRenderer::beginGeometryPipeline()
 {
   if (m_pipeline == Pipeline::Geometry)
     return;
@@ -1811,7 +1811,7 @@ void OpenGLQuadRenderer::beginGeometryPipeline()
   glActiveTexture(GL_TEXTURE0);
 }
 
-void OpenGLQuadRenderer::drawGeometry(const GeometryVertex* vertices,
+void OpenGLIsometricRenderer::drawGeometry(const GeometryVertex* vertices,
                                       std::size_t count,
                                       unsigned int texture,
                                       int surfaceEffect)
@@ -1845,7 +1845,7 @@ void OpenGLQuadRenderer::drawGeometry(const GeometryVertex* vertices,
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void OpenGLQuadRenderer::flushSolid()
+void OpenGLIsometricRenderer::flushSolid()
 {
   ZoneScopedN("GL: flushSolid");
   TracyGpuZone("GPU: solid");
@@ -1886,7 +1886,7 @@ void OpenGLQuadRenderer::flushSolid()
   m_solidVertices.clear();
 }
 
-void OpenGLQuadRenderer::flushLit()
+void OpenGLIsometricRenderer::flushLit()
 {
   ZoneScopedN("GL: flushLit");
   TracyGpuZone("GPU: lit");
@@ -1984,7 +1984,7 @@ void OpenGLQuadRenderer::flushLit()
   m_litBatchKey.reset();
 }
 
-void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
+void OpenGLIsometricRenderer::drawLineLoop(const glm::vec2* points,
                                       int count,
                                       SDL_Color color)
 {
@@ -2037,7 +2037,7 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
   glUseProgram(0);
 }
 
-void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
+void OpenGLIsometricRenderer::drawQuadInternal(unsigned int texture,
                                           const SDL_Rect& srcRect,
                                           int textureWidth,
                                           int textureHeight,
@@ -2086,7 +2086,7 @@ void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
                    lightHeights);
 }
 
-void OpenGLQuadRenderer::drawQuadInternal(
+void OpenGLIsometricRenderer::drawQuadInternal(
     unsigned int texture,
     const SDL_Rect& srcRect,
     int textureWidth,
@@ -2205,7 +2205,7 @@ void OpenGLQuadRenderer::drawQuadInternal(
 }
 
 // Terrain heightmap for point-light occlusion (texture unit 2).
-void OpenGLQuadRenderer::bindHeightmapUniforms()
+void OpenGLIsometricRenderer::bindHeightmapUniforms()
 {
   ZoneScopedN("GL: bind occlusion heightmap");
 
@@ -2223,7 +2223,7 @@ void OpenGLQuadRenderer::bindHeightmapUniforms()
   glUniform1f(uHeightScaleLocation, m_heightScale);
 }
 
-void OpenGLQuadRenderer::setViewportSize(int width, int height)
+void OpenGLIsometricRenderer::setViewportSize(int width, int height)
 {
   windowWidth = width;
   windowHeight = height;
@@ -2231,7 +2231,7 @@ void OpenGLQuadRenderer::setViewportSize(int width, int height)
   m_ndcScaleY = height > 0 ? 2.0f / static_cast<float>(height) : 0.0f;
 }
 
-glm::vec2 OpenGLQuadRenderer::toNdc(const glm::vec2& pixelPosition) const
+glm::vec2 OpenGLIsometricRenderer::toNdc(const glm::vec2& pixelPosition) const
 {
   return {
       pixelPosition.x * m_ndcScaleX - 1.0f,
@@ -2239,7 +2239,7 @@ glm::vec2 OpenGLQuadRenderer::toNdc(const glm::vec2& pixelPosition) const
   };
 }
 
-unsigned int OpenGLQuadRenderer::compileShader(unsigned int type,
+unsigned int OpenGLIsometricRenderer::compileShader(unsigned int type,
                                                const char* source) const
 {
   GLuint shader = glCreateShader(type);
@@ -2263,7 +2263,7 @@ unsigned int OpenGLQuadRenderer::compileShader(unsigned int type,
   return shader;
 }
 
-unsigned int OpenGLQuadRenderer::createShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -2792,7 +2792,7 @@ else if (uSurfaceEffect == 4) // Sand
   return program;
 }
 
-unsigned int OpenGLQuadRenderer::uploadSurfaceTexture(SDL_Surface* surface)
+unsigned int OpenGLIsometricRenderer::uploadSurfaceTexture(SDL_Surface* surface)
 {
   initialize();
 
@@ -2836,7 +2836,7 @@ unsigned int OpenGLQuadRenderer::uploadSurfaceTexture(SDL_Surface* surface)
 }
 
 unsigned int
-OpenGLQuadRenderer::getOrCreateTexture(const std::string& textureId,
+OpenGLIsometricRenderer::getOrCreateTexture(const std::string& textureId,
                                        SDL_Surface* surface)
 {
   initialize();
@@ -2859,13 +2859,13 @@ OpenGLQuadRenderer::getOrCreateTexture(const std::string& textureId,
   return texture;
 }
 
-void OpenGLQuadRenderer::deleteTexture(unsigned int texture)
+void OpenGLIsometricRenderer::deleteTexture(unsigned int texture)
 {
   if (texture != 0)
     glDeleteTextures(1, &texture);
 }
 
-void OpenGLQuadRenderer::begin()
+void OpenGLIsometricRenderer::begin()
 {
   initialize();
 
@@ -2886,7 +2886,7 @@ void OpenGLQuadRenderer::begin()
   glDepthMask(GL_TRUE);
 }
 
-unsigned int OpenGLQuadRenderer::createSolidShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createSolidShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -2959,7 +2959,7 @@ void main()
   return program;
 }
 
-unsigned int OpenGLQuadRenderer::createSpriteShadowShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createSpriteShadowShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -3046,7 +3046,7 @@ void main()
   return program;
 }
 
-unsigned int OpenGLQuadRenderer::createParticleShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createParticleShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -3132,7 +3132,7 @@ void main()
   return program;
 }
 
-unsigned int OpenGLQuadRenderer::createDecalShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createDecalShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -3321,7 +3321,7 @@ void main()
   return program;
 }
 
-unsigned int OpenGLQuadRenderer::createGeometryShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createGeometryShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -3732,7 +3732,7 @@ void main()
   return program;
 }
 
-void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
+void OpenGLIsometricRenderer::beginPipeline(Pipeline pipeline)
 {
   if (m_pipeline == pipeline)
     return;
@@ -3741,7 +3741,7 @@ void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
   m_pipeline = pipeline;
 }
 
-void OpenGLQuadRenderer::flushCurrentPipeline()
+void OpenGLIsometricRenderer::flushCurrentPipeline()
 {
   ZoneScopedN("GL: pipeline flush");
 
@@ -3783,9 +3783,9 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
   m_pipeline = Pipeline::None;
 }
 
-void OpenGLQuadRenderer::flush() { flushCurrentPipeline(); }
+void OpenGLIsometricRenderer::flush() { flushCurrentPipeline(); }
 
-unsigned int OpenGLQuadRenderer::createSurfaceShaderProgram() const
+unsigned int OpenGLIsometricRenderer::createSurfaceShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
   const std::string glslVersion = "#version 300 es\n"
@@ -4025,15 +4025,15 @@ void main()
   return program;
 }
 
-void OpenGLQuadRenderer::setSurfaceTime(float time) { m_surfaceTime = time; }
+void OpenGLIsometricRenderer::setSurfaceTime(float time) { m_surfaceTime = time; }
 
-void OpenGLQuadRenderer::setPointLights(const PointLightSet& lights)
+void OpenGLIsometricRenderer::setPointLights(const PointLightSet& lights)
 {
   m_pointLights = lights;
   m_pointLights.count = std::clamp(m_pointLights.count, 0, MaxShaderLights);
 }
 
-void OpenGLQuadRenderer::setHeightmap(const int* elevations,
+void OpenGLIsometricRenderer::setHeightmap(const int* elevations,
                                       int width,
                                       int height,
                                       int originX,
