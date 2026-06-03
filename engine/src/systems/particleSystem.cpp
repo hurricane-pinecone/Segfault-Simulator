@@ -22,6 +22,10 @@ constexpr float kTwoPi = 6.28318530718f;
 // that tile's surface (matches how sprites sit above the ground they stand on).
 constexpr float kParticleBias = 0.02f;
 
+// A step-up of at least this many elevation levels counts as a wall, so blood
+// sticks to short ("half block") steps too, not just tall cliffs.
+constexpr int kMinWallStep = 1;
+
 inline uint32_t nextRand(uint32_t& state)
 {
   // xorshift32 -- cheap, deterministic per emitter.
@@ -39,6 +43,11 @@ inline float randf(uint32_t& state)
 inline float sampleRange(uint32_t& state, const FloatRange& r)
 {
   return r.min + (r.max - r.min) * randf(state);
+}
+
+inline glm::ivec2 floorTile(const glm::vec2& p)
+{
+  return {static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y))};
 }
 
 } // namespace
@@ -290,6 +299,8 @@ void ParticleSystem::stepInstance(EmitterInstance& inst,
       continue;
     }
 
+    const glm::vec2 prevPos = p.pos;
+
     p.vel += desc.gravity * dt;
     p.velZ += desc.gravityZ * dt;
     p.vel *= damp;
@@ -298,8 +309,131 @@ void ParticleSystem::stepInstance(EmitterInstance& inst,
     p.height += p.velZ * dt;
     p.rotation += p.angularVel * dt;
 
-    if (!inst.screenSpace && desc.ground != GroundBehavior::None &&
-        p.height <= 0.0f)
+    // Screen particles and effects without a GroundBehavior never collide.
+    if (inst.screenSpace || desc.ground == GroundBehavior::None)
+    {
+      ++i;
+      continue;
+    }
+
+    // Terrain-aware collision: splat on the actual surface the droplet hits.
+    if (m_terrainSource)
+    {
+      const float zAbs = inst.groundLevel + p.height;
+      const glm::ivec2 oldTile = floorTile(prevPos);
+      const glm::ivec2 newTile = floorTile(p.pos);
+
+      bool collided = false;
+      DecalSurface surface = DecalSurface::Ground;
+      uint8_t wallSide = 0;
+      float wallBottom = 0.0f;
+      float wallTop = 0.0f;
+      glm::vec2 hitPos = p.pos;
+      float hitElev = zAbs;
+
+      // Slammed into the vertical face of a tile that genuinely steps UP from the
+      // one it came from (a step down or same level is not a wall -- otherwise a
+      // fast droplet skimming flat ground reads every tile crossing as a wall).
+      if (newTile != oldTile)
+      {
+        const int newTop =
+            m_terrainSource->terrainHeightAt(newTile.x, newTile.y);
+        const int oldTop =
+            m_terrainSource->terrainHeightAt(oldTile.x, oldTile.y);
+
+        if (newTop > oldTop && zAbs < static_cast<float>(newTop))
+        {
+          const int dx = newTile.x - oldTile.x;
+          const int dy = newTile.y - oldTile.y;
+          uint8_t side;
+          if (dx > 0)
+            side = 0; // hit newTile's west face
+          else if (dx < 0)
+            side = 2; // east
+          else if (dy > 0)
+            side = 1; // north
+          else
+            side = 3; // south
+
+          collided = true;
+
+          // A wall stain needs a real cliff on a camera-facing face. Only the
+          // south (3) and east (2) faces point toward the camera (the hidden
+          // west/north faces would draw over the block), and the step must be
+          // tall enough. Everything else pools as ground at the wall's base.
+          const bool visibleFace = side == 2 || side == 3;
+          const bool tallEnough = (newTop - oldTop) >= kMinWallStep;
+
+          if (visibleFace && tallEnough)
+          {
+            surface = DecalSurface::Wall;
+            wallSide = side;
+            wallBottom = static_cast<float>(oldTop);
+            wallTop = static_cast<float>(newTop);
+            hitPos = prevPos;
+            hitElev = zAbs;
+          }
+          else
+          {
+            surface = DecalSurface::Ground;
+            hitPos = prevPos;
+            hitElev = static_cast<float>(oldTop);
+          }
+        }
+      }
+
+      // Otherwise, dropped onto the ground/water beneath it.
+      if (!collided)
+      {
+        const int top = m_terrainSource->terrainHeightAt(newTile.x, newTile.y);
+        if (zAbs <= static_cast<float>(top))
+        {
+          collided = true;
+          hitPos = p.pos;
+          hitElev = static_cast<float>(top);
+          surface = m_terrainSource->isWaterAt(newTile.x, newTile.y)
+                        ? DecalSurface::Water
+                        : DecalSurface::Ground;
+        }
+      }
+
+      if (collided)
+      {
+        emitDecal(inst,
+                  desc,
+                  p,
+                  hitPos,
+                  hitElev,
+                  surface,
+                  wallSide,
+                  wallBottom,
+                  wallTop,
+                  newTile);
+
+        // Walls splatter and die; ground/water honour the GroundBehavior.
+        if (surface == DecalSurface::Wall || desc.ground == GroundBehavior::Die)
+        {
+          ps[i] = ps.back();
+          ps.pop_back();
+          continue;
+        }
+
+        p.grounded = true;
+        p.vel = {0.0f, 0.0f};
+        p.velZ = 0.0f;
+        p.height = hitElev - inst.groundLevel;
+        p.lifetime =
+            std::min(p.lifetime, p.age + std::max(0.0f, desc.stickDuration));
+        ++i;
+        continue;
+      }
+
+      ++i;
+      continue;
+    }
+
+    // No terrain source: fall back to the spawn-plane ground test.
+    if (p.height <= 0.0f)
     {
       p.height = 0.0f;
 
@@ -310,7 +444,6 @@ void ParticleSystem::stepInstance(EmitterInstance& inst,
         continue;
       }
 
-      // Stick: pin to the ground and linger up to stickDuration.
       p.grounded = true;
       p.vel = {0.0f, 0.0f};
       p.velZ = 0.0f;
@@ -320,6 +453,92 @@ void ParticleSystem::stepInstance(EmitterInstance& inst,
 
     ++i;
   }
+}
+
+void ParticleSystem::emitDecal(EmitterInstance& inst,
+                               const ParticleEffectDesc& desc,
+                               const Particle& p,
+                               glm::vec2 hitPos,
+                               float hitElev,
+                               DecalSurface surface,
+                               uint8_t wallSide,
+                               float wallBottom,
+                               float wallTop,
+                               glm::ivec2 tile)
+{
+  if (!m_decalSink || !desc.leavesDecal)
+    return;
+
+  const float n =
+      p.lifetime > 0.0f ? std::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
+
+  const glm::vec3 rgb = desc.decal.useParticleColor
+                            ? desc.colorOverLife.sample(n)
+                            : desc.decal.color;
+  const glm::vec4 color{rgb, desc.decal.alpha};
+  const float baseSize = sampleRange(inst.rng, desc.decal.size);
+
+  if (surface == DecalSurface::Wall)
+  {
+    // Anchor drips to the actual wall-face edge of `tile` so they stay within the
+    // wall's width instead of floating in the air beside it. East (2) face is the
+    // plane x = tile.x+1 running along Y; south (3) is y = tile.y+1 running along X.
+    const bool east = wallSide == 2;
+    const float faceX = static_cast<float>(tile.x) + 1.0f;
+    const float faceY = static_cast<float>(tile.y) + 1.0f;
+    const float lo =
+        east ? static_cast<float>(tile.y) : static_cast<float>(tile.x);
+    const float hi = lo + 1.0f;
+    const float hitAlong = std::clamp(east ? hitPos.y : hitPos.x, lo, hi);
+
+    // Co-sort key of the host block (corner + top elevation), matching how the
+    // render system keys terrain tiles, so drips occlude with their block.
+    const float sortKey = static_cast<float>(tile.x) +
+                          static_cast<float>(tile.y) + wallTop * 0.5f;
+
+    int drips = 1 + static_cast<int>(baseSize * 8.0f);
+    drips = std::clamp(drips, 1, 3);
+
+    for (int k = 0; k < drips; ++k)
+    {
+      DecalSpawn spawn;
+      // Spread a little along the face, clamped inside the tile edge. Start
+      // elevation is biased toward the wall TOP (1 - r^2), so a heavy hit packs
+      // the top edge and the streaks run down from there.
+      const float along = std::clamp(
+          hitAlong + (randf(inst.rng) - 0.5f) * 0.5f, lo + 0.05f, hi - 0.05f);
+      const float r = randf(inst.rng);
+      const float bias = 1.0f - r * r;
+      spawn.worldPos = east ? glm::vec2{faceX, along} : glm::vec2{along, faceY};
+      spawn.elevation = hitElev + bias * std::max(0.0f, wallTop - hitElev);
+      spawn.surface = DecalSurface::Wall;
+      spawn.wallSide = wallSide;
+      spawn.wallBottom = wallBottom;
+      spawn.size = baseSize * (0.3f + randf(inst.rng) * 0.3f); // thin streak
+      spawn.color = color;
+      spawn.textureId = &desc.decal.texture;
+      spawn.dripSpeed = 3.0f + randf(inst.rng) * 4.0f; // levels/sec
+      spawn.sortKey = sortKey;
+      // fadeRate stays 0: the drip runs down, then persists permanently.
+      m_decalSink->addDecal(spawn);
+    }
+    return;
+  }
+
+  // Ground / water: a single mark. Ground is permanent; water fades.
+  DecalSpawn spawn;
+  spawn.worldPos = hitPos;
+  spawn.elevation = hitElev;
+  spawn.surface = surface;
+  spawn.size = baseSize;
+  spawn.rotation = p.rotation;
+  spawn.color = color;
+  spawn.textureId = &desc.decal.texture;
+  spawn.fadeRate = (surface == DecalSurface::Water && m_terrainSource)
+                       ? m_terrainSource->waterFadeRateAt(tile.x, tile.y)
+                       : 0.0f;
+
+  m_decalSink->addDecal(spawn);
 }
 
 void ParticleSystem::syncComponentEmitters()

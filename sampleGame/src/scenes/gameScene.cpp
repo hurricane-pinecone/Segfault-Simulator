@@ -8,6 +8,7 @@
 #include "engine/logger/logger.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/collisionSystem.h"
+#include "engine/systems/decalSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
@@ -54,9 +55,17 @@ void GameScene::onInit()
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
   addSystem<sfs::IsometricWaterSystem>();
 
+  // Soft round texture so particles/decals don't read as hard squares.
+  m_assetStore.addRadialTexture("blood_dot", 32);
+
   auto& particles = addSystem<sfs::ParticleSystem>();
-  registerGoreEffects(particles); // blood_mist / blood_spray / blood_gobs
+  registerGoreEffects(particles); // blood_mist / blood_spray / blood_gobs / drip
   particles.registerEffect("embers", makeEmberEffect());
+
+  // Persistent terrain stains, fed by particle landings.
+  auto& decals = addSystem<sfs::DecalSystem>();
+  particles.setDecalSink(&decals);
+  particles.setTerrainSource(&getSystem<TerrainGeneratorSystem>());
 
   addSystem<SunController>();
 
@@ -87,6 +96,10 @@ void GameScene::onProcessInput(const sfs::Input& input)
   if (input.keyboard().keyPressed(sfs::Key::F))
     m_sunController.toggleSun();
 
+  // Wipe all blood stains (demonstrates decal removal).
+  if (input.keyboard().keyPressed(sfs::Key::C))
+    getSystem<sfs::DecalSystem>().clearAll();
+
   m_mousePos = input.mouse().getPosition();
 
   const sfs::TilePick pick =
@@ -99,7 +112,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
   // Left-click splatters blood on the hovered tile, sprayed in the direction
   // from the player to the click (as if a shot travelled that way).
   if (m_hasHoveredTile && m_player &&
-      input.mouse().mousePressed(sfs::MouseButton::Left))
+      input.mouse().mouseHeld(sfs::MouseButton::Left))
   {
     const glm::vec2 from =
         m_player->entity().getComponent<sfs::TransformComponent>().position;

@@ -20,6 +20,7 @@
 #include "engine/systems/isometric/isometricShadowSystem.h"
 #include "engine/systems/isometric/isometricSpriteShadowSystem.h"
 #include "engine/systems/isometric/isometricWaterSystem.h"
+#include "engine/systems/decalSystem.h"
 #include "engine/systems/particleSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -543,6 +544,13 @@ void IsometricRenderSystem::render()
   {
     particleSystem->computeCommands(m_context);
     m_renderQueue.submitAll(particleSystem->commands());
+  }
+
+  if (const auto decalSystem = registry->tryGetSystem<DecalSystem>();
+      decalSystem && decalSystem->enabled())
+  {
+    decalSystem->computeCommands(m_context);
+    m_renderQueue.submitAll(decalSystem->commands());
   }
 
   flushBatches();

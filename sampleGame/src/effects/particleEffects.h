@@ -19,7 +19,7 @@ inline sfs::ParticleEffectDesc makeBloodMistEffect()
 {
   sfs::ParticleEffectDesc d;
 
-  d.texture = "white_pixel";
+  d.texture = "blood_dot";
   d.blend = sfs::BlendMode::Additive; // bright pink haze
   d.space = sfs::SimulationSpace::World;
 
@@ -53,7 +53,7 @@ inline sfs::ParticleEffectDesc makeBloodSprayEffect()
 {
   sfs::ParticleEffectDesc d;
 
-  d.texture = "white_pixel";
+  d.texture = "blood_dot";
   d.blend = sfs::BlendMode::Alpha;
   d.space = sfs::SimulationSpace::World;
 
@@ -83,17 +83,24 @@ inline sfs::ParticleEffectDesc makeBloodSprayEffect()
   d.ground = sfs::GroundBehavior::Stick;
   d.stickDuration = 1.1f;
 
+  // Each droplet leaves a small permanent stain where it lands.
+  d.leavesDecal = true;
+  d.decal.texture = "blood_dot";
+  d.decal.size = sfs::FloatRange::of(0.07f, 0.16f);
+  d.decal.useParticleColor = true;
+  d.decal.alpha = 0.8f;
+
   d.maxParticles = 256;
   return d;
 }
 
-// Layer 3: a few big, heavy chunks. They get LESS of the impulse (see spawnGore)
-// so they lag the spray, arc, and leave fat splats that linger.
+// Layer 3: a few big, heavy chunks. They get LESS of the impulse (see
+// spawnGore) so they lag the spray, arc, and leave fat splats that linger.
 inline sfs::ParticleEffectDesc makeBloodGobsEffect()
 {
   sfs::ParticleEffectDesc d;
 
-  d.texture = "white_pixel";
+  d.texture = "blood_dot";
   d.blend = sfs::BlendMode::Alpha;
   d.space = sfs::SimulationSpace::World;
 
@@ -101,8 +108,8 @@ inline sfs::ParticleEffectDesc makeBloodGobsEffect()
   d.shapeRadius = 0.05f;
   d.burstCount = 10; // just a handful of chunks
 
-  d.lifetime = sfs::FloatRange::of(0.5f, 1.3f); // linger and arc
-  d.speed = sfs::FloatRange::of(1.0f, 3.0f);    // low internal scatter
+  d.lifetime = sfs::FloatRange::of(0.5f, 1.3f);          // linger and arc
+  d.speed = sfs::FloatRange::of(1.0f, 3.0f);             // low internal scatter
   d.launchHeightSpeed = sfs::FloatRange::of(2.0f, 4.5f); // tossed up to arc
   d.startHeight = sfs::FloatRange::of(0.1f, 0.4f);
   d.size = sfs::FloatRange::of(0.14f, 0.3f); // fat gobs
@@ -116,11 +123,19 @@ inline sfs::ParticleEffectDesc makeBloodGobsEffect()
       glm::vec3{0.5f, 0.0f, 0.0f}, glm::vec3{0.16f, 0.0f, 0.0f});
   d.alphaOverLife =
       sfs::Curve{}.add(0.0f, 1.0f).add(0.8f, 1.0f).add(1.0f, 0.0f);
-  d.sizeOverLife =
-      sfs::Curve{}.add(0.0f, 0.7f).add(0.2f, 1.0f).add(1.0f, 0.9f);
+  d.sizeOverLife = sfs::Curve{}.add(0.0f, 0.7f).add(0.2f, 1.0f).add(1.0f, 0.9f);
 
   d.ground = sfs::GroundBehavior::Stick;
   d.stickDuration = 1.6f; // big splats stay a while
+
+  // Heavy gobs leave fat splats -- but the decal is smaller than the in-air gob
+  // so it reads as a mark on the surface, not a floating blob.
+  d.leavesDecal = true;
+  d.decal.texture = "blood_dot";
+  d.decal.size = sfs::FloatRange::of(0.12f, 0.22f);
+  d.decal.useParticleColor = true;
+  d.decal.alpha = 0.9f;
+
   d.maxParticles = 96;
   return d;
 }
@@ -139,7 +154,7 @@ inline sfs::ParticleEffectDesc makeEmberEffect()
   d.shapeRadius = 0.12f;
   d.emitRate = 16.0f; // particles/second
 
-  d.lifetime = sfs::FloatRange::of(0.8f, 1.7f);
+  d.lifetime = sfs::FloatRange::of(0.8f, 1.9f);
   d.speed = sfs::FloatRange::of(0.1f, 0.5f);
   d.launchHeightSpeed = sfs::FloatRange::of(0.6f, 1.3f); // drift upward
   d.startHeight = sfs::FloatRange::of(0.15f, 0.45f);
@@ -159,12 +174,58 @@ inline sfs::ParticleEffectDesc makeEmberEffect()
   return d;
 }
 
-// Register the three gore layers under the names spawnGore() fires.
+// Layer 4: blood that just drops at the impact. Almost no outward velocity (and
+// spawnGore gives it almost no impulse), so it pops up a little and falls back
+// onto the spawn tile, reliably staining the spot the shot landed.
+inline sfs::ParticleEffectDesc makeBloodDripEffect()
+{
+  sfs::ParticleEffectDesc d;
+
+  d.texture = "blood_dot";
+  d.blend = sfs::BlendMode::Alpha;
+  d.space = sfs::SimulationSpace::World;
+
+  d.shape = sfs::EmissionShape::Circle;
+  d.shapeRadius = 0.1f;
+  d.burstCount = 20;
+
+  d.lifetime = sfs::FloatRange::of(0.3f, 0.8f);
+  d.speed = sfs::FloatRange::of(0.1f, 1.0f); // barely spreads
+  d.launchHeightSpeed =
+      sfs::FloatRange::of(0.5f, 2.4f); // small pop straight up
+  d.startHeight = sfs::FloatRange::of(0.05f, 0.25f);
+  d.size = sfs::FloatRange::of(0.05f, 0.12f);
+  d.angularVelocity = sfs::FloatRange::of(-4.0f, 4.0f);
+  d.directionSpread = 6.28318530718f; // omnidirectional little plops
+
+  d.gravityZ = -16.0f;
+  d.drag = 3.2f; // kills the little outward speed fast -> stays put
+
+  d.colorOverLife = sfs::Gradient::twoStop(
+      glm::vec3{0.7f, 0.03f, 0.03f}, glm::vec3{0.2f, 0.0f, 0.0f});
+  d.alphaOverLife =
+      sfs::Curve{}.add(0.0f, 1.0f).add(0.8f, 1.0f).add(1.0f, 0.0f);
+
+  d.ground = sfs::GroundBehavior::Stick;
+  d.stickDuration = 1.0f;
+
+  d.leavesDecal = true;
+  d.decal.texture = "blood_dot";
+  d.decal.size = sfs::FloatRange::of(0.06f, 0.13f);
+  d.decal.useParticleColor = true;
+  d.decal.alpha = 0.85f;
+
+  d.maxParticles = 128;
+  return d;
+}
+
+// Register the gore layers under the names spawnGore() fires.
 inline void registerGoreEffects(sfs::ParticleSystem& particles)
 {
   particles.registerEffect("blood_mist", makeBloodMistEffect());
   particles.registerEffect("blood_spray", makeBloodSprayEffect());
   particles.registerEffect("blood_gobs", makeBloodGobsEffect());
+  particles.registerEffect("blood_drip", makeBloodDripEffect());
 }
 
 // Fire a full shotgun gore blast at a world tile. `direction` should be a unit
@@ -187,10 +248,16 @@ inline void spawnGore(sfs::ParticleSystem& particles,
   spray.velocityZ = 3.0f;
 
   sfs::ParticleSpawnParams gobs;
-  gobs.velocity = direction * (power * 0.4f); // heavy chunks: much less velocity
-  gobs.velocityZ = 3.5f;                       // but tossed up more, so they arc
+  gobs.velocity =
+      direction * (power * 0.4f); // heavy chunks: much less velocity
+  gobs.velocityZ = 3.5f;          // but tossed up more, so they arc
+
+  sfs::ParticleSpawnParams drip;
+  drip.velocity = direction * (power * 0.04f); // essentially drops in place
+  drip.velocityZ = 1.5f;
 
   particles.spawnBurst("blood_mist", worldPos, elevation, mist);
   particles.spawnBurst("blood_spray", worldPos, elevation, spray);
   particles.spawnBurst("blood_gobs", worldPos, elevation, gobs);
+  particles.spawnBurst("blood_drip", worldPos, elevation, drip);
 }
