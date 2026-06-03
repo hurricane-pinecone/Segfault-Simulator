@@ -6,12 +6,15 @@
 #include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
-#include "engine/systems/blockGeometrySystem.h"
+#include "engine/rendering/modules/blockGeometry.h"
+#include "engine/rendering/modules/decals.h"
+#include "engine/rendering/modules/isometricWater.h"
+#include "engine/rendering/modules/particles.h"
+#include "engine/rendering/modules/spriteShadow.h"
+#include "engine/rendering/modules/terrainShadow.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/collisionSystem.h"
-#include "engine/systems/decalSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
-#include "engine/systems/particleSystem.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
@@ -41,33 +44,34 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   addSystem<TerrainGeneratorSystem>(*this);
 
-  addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
+  auto& renderer = addSystem<sfs::IsometricRenderSystem>(m_assetStore,
+                                                         quadRenderer());
+
+  // Compose the render features as modules; registration is the enable. Terrain
+  // tiles stay billboards (BlockGeometry is opt-in: press G to add it and
+  // compare the real-block path live).
+  renderer.withModules<sfs::TerrainShadow,
+                       sfs::SpriteShadow,
+                       sfs::IsometricWater,
+                       sfs::Decals>();
 
   // Terrain and sprite shadows share one length so equal heights match.
   constexpr float shadowMaxLength = 3.5f;
-
-  auto& renderer = getSystem<sfs::IsometricRenderSystem>();
-  auto& shadowSettings = renderer.shadowSettings();
-  shadowSettings.terrainShadowMaxLength = shadowMaxLength;
-  shadowSettings.spriteShadowMaxLength = shadowMaxLength;
-
-  // Opt-in extension: render terrain as real block faces instead of billboard
-  // sprites. A simple iso game just omits this line and keeps the billboard
-  // path. Added disabled so billboards stay the default; press G to toggle and
-  // compare the two live (real side faces light from a wall's base up).
-  addSystem<sfs::BlockGeometrySystem>(m_assetStore);
+  renderer.module<sfs::TerrainShadow>()->shadowSettings().terrainShadowMaxLength =
+      shadowMaxLength;
+  renderer.module<sfs::SpriteShadow>()->shadowSettings().spriteShadowMaxLength =
+      shadowMaxLength;
 
   // Soft round texture so particles/decals don't read as hard squares.
   m_assetStore.addRadialTexture("blood_dot", 32);
 
-  auto& particles = addSystem<sfs::ParticleSystem>();
+  auto& particles = renderer.withModule<sfs::Particles>();
   registerGoreEffects(
       particles); // blood_mist / blood_spray / blood_gobs / drip
   particles.registerEffect("embers", makeEmberEffect());
 
   // Persistent terrain stains, fed by particle landings.
-  auto& decals = addSystem<sfs::DecalSystem>();
-  particles.setDecalSink(&decals);
+  particles.setDecalSink(renderer.module<sfs::Decals>());
   particles.setTerrainSource(&getSystem<TerrainGeneratorSystem>());
 
   addSystem<SunController>();
@@ -96,42 +100,51 @@ void GameScene::createEntities()
 
 void GameScene::onProcessInput(const sfs::Input& input)
 {
+  auto& render = getSystem<sfs::IsometricRenderSystem>();
+
   if (input.keyboard().keyPressed(sfs::Key::F))
     m_sunController.toggleSun();
 
   // Wipe all blood stains (demonstrates decal removal).
   if (input.keyboard().keyPressed(sfs::Key::C))
-    getSystem<sfs::DecalSystem>().clearAll();
+    render.module<sfs::Decals>()->clearAll();
 
-  // Toggle billboard tiles vs real block geometry (the opt-in extension).
+  // Toggle billboard tiles vs real block geometry by adding/removing its module.
   if (input.keyboard().keyPressed(sfs::Key::G))
   {
-    auto& geometry = getSystem<sfs::BlockGeometrySystem>();
-    geometry.setEnabled(!geometry.enabled());
+    if (render.hasModule<sfs::BlockGeometry>())
+      render.removeModule<sfs::BlockGeometry>();
+    else
+      render.withModule<sfs::BlockGeometry>();
   }
 
   // Toggle the heightmap march's sampling look: soft/rounded vs blocky.
   if (input.keyboard().keyPressed(sfs::Key::H))
   {
     m_sharpShadows = !m_sharpShadows;
-    getSystem<sfs::IsometricRenderSystem>().setSunShadowStyle(
-        m_sharpShadows ? sfs::SunShadowStyle::Sharp
-                       : sfs::SunShadowStyle::Smooth);
+    render.setSunShadowStyle(m_sharpShadows ? sfs::SunShadowStyle::Sharp
+                                            : sfs::SunShadowStyle::Smooth);
   }
 
-  // Toggle engine-baked sun terrain shadows on/off. The active technique
-  // follows the render style (projected for billboards, heightmap march for
-  // block geometry).
+  // Toggle engine-baked sun shadows by adding/removing the shadow modules. The
+  // active technique follows the render style (projected for billboards,
+  // heightmap march for block geometry).
   if (input.keyboard().keyPressed(sfs::Key::J))
   {
-    m_shadowsEnabled = !m_shadowsEnabled;
-    getSystem<sfs::IsometricRenderSystem>().setShadowsEnabled(m_shadowsEnabled);
+    if (render.hasModule<sfs::TerrainShadow>())
+    {
+      render.removeModule<sfs::TerrainShadow>();
+      render.removeModule<sfs::SpriteShadow>();
+    }
+    else
+    {
+      render.withModules<sfs::TerrainShadow, sfs::SpriteShadow>();
+    }
   }
 
   m_mousePos = input.mouse().getPosition();
 
-  const sfs::TilePick pick =
-      getSystem<sfs::IsometricRenderSystem>().pickTile(m_mousePos);
+  const sfs::TilePick pick = render.pickTile(m_mousePos);
 
   m_hoveredTile = pick.tile;
   m_hoveredElevation = pick.elevation;
@@ -150,7 +163,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
     dir = len > 0.0001f ? dir / len : glm::vec2{1.0f, 0.0f};
 
     // Layered shotgun gore blast along the shot direction.
-    spawnGore(getSystem<sfs::ParticleSystem>(),
+    spawnGore(*render.module<sfs::Particles>(),
               pick.world,
               static_cast<float>(pick.elevation),
               dir,
@@ -185,7 +198,9 @@ void GameScene::onRender()
       20,
       80,
       "Particles: " +
-          std::to_string(getSystem<sfs::ParticleSystem>().liveParticleCount()));
+          std::to_string(getSystem<sfs::IsometricRenderSystem>()
+                             .module<sfs::Particles>()
+                             ->liveParticleCount()));
 
   if (m_hasHoveredTile)
   {

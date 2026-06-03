@@ -1,4 +1,4 @@
-#include "engine/rendering/providers/isometricWaterProvider.h"
+#include "engine/rendering/modules/isometricWater.h"
 #include "engine/Color/Color.h"
 #include "engine/components/elevationComponent.h"
 #include "engine/components/surfaceEffect.h"
@@ -13,7 +13,7 @@
 namespace sfs
 {
 
-void IsometricWaterProvider::computeCommands(
+void IsometricWater::computeCommands(
     const IsometricRenderContext& context)
 {
   ZoneScopedN("Water: computeCommands");
@@ -79,7 +79,7 @@ void IsometricWaterProvider::computeCommands(
     m_commands.push_back(std::move(command));
 }
 
-SurfaceCommand IsometricWaterProvider::createWaterSurfaceCommand(
+SurfaceCommand IsometricWater::createWaterSurfaceCommand(
     const IsometricRenderContext& context,
     const WaterCell& cell) const
 {
@@ -109,7 +109,7 @@ SurfaceCommand IsometricWaterProvider::createWaterSurfaceCommand(
   return command;
 }
 
-WaterSurfaceBuild IsometricWaterProvider::collectWaterSurfaceBuild(
+WaterSurfaceBuild IsometricWater::collectWaterSurfaceBuild(
     const IsometricRenderContext& context) const
 {
   WaterSurfaceBuild build;
@@ -155,7 +155,7 @@ WaterSurfaceBuild IsometricWaterProvider::collectWaterSurfaceBuild(
 }
 
 uint32_t
-IsometricWaterProvider::addSurfaceVertex(const IsometricRenderContext& context,
+IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
                                        const glm::ivec2& gridPoint,
                                        int waterElevation,
                                        float depth,
@@ -207,7 +207,7 @@ IsometricWaterProvider::addSurfaceVertex(const IsometricRenderContext& context,
   return index;
 }
 
-void IsometricWaterProvider::buildSingleWaterTileMesh(
+void IsometricWater::buildSingleWaterTileMesh(
     const IsometricRenderContext& context,
     const WaterSurfaceBuild& build,
     const WaterCell& cell,
@@ -262,7 +262,7 @@ void IsometricWaterProvider::buildSingleWaterTileMesh(
   command.indices.insert(command.indices.end(), {i0, i1, i2, i0, i2, i3});
 }
 
-float IsometricWaterProvider::sampleSurfaceVertexDepth(
+float IsometricWater::sampleSurfaceVertexDepth(
     const glm::ivec2& gridPoint,
     const glm::ivec2& minTile,
     int cellWidth,

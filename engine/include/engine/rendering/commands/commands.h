@@ -89,7 +89,7 @@ struct DecalDrawCommand
 
 // Opt-in real-geometry terrain: a lit, textured mesh of block faces (tops +
 // exposed sides) sharing one material (texture + surface effect). Built per frame
-// by BlockGeometrySystem; assignClipDepth remaps each vertex's z (world key) to
+// by the BlockGeometry module; assignClipDepth remaps each vertex's z (world key) to
 // clip-space depth, like a SurfaceCommand mesh.
 struct GeometryCommand
 {

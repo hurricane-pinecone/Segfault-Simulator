@@ -3,7 +3,7 @@
 #include "engine/ecs/registry.h" // IWYU pragma: keep
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/isometricRenderContext.h"
-#include "engine/rendering/renderProvider.h"
+#include "engine/rendering/modules/renderModule.h"
 #include "engine/rendering/util/isometric/geometry.h"
 #include "engine/utils/isometricLightingUtils.h"
 #include <atomic>
@@ -16,23 +16,33 @@ extern std::atomic<uint64_t> gShadowPathChecks;
 extern std::atomic<uint64_t> gShadowTilesTraversed;
 
 /**
- * Builds projected sun-shadow quads for terrain edges, occluding them against
- * the render context's terrain elevation grid. A render-helper owned by the
- * isometric render system: it pulls tiles from a Registry view and emits batched
- * shadow commands through the RenderProvider interface.
+ * Render module that builds projected sun-shadow quads for terrain edges,
+ * occluding them against the render context's terrain elevation grid. It pulls
+ * tiles from a Registry view and emits batched shadow commands. It contributes
+ * nothing while terrain self-shadows through block geometry, so its emit() is a
+ * no-op when the context's geometryActive flag is set.
  */
-class IsometricTerrainShadowProvider
-    : public RenderProvider<IsometricRenderContext, TerrainShadowBatchCommand>
+class TerrainShadow : public CommandModule<TerrainShadowBatchCommand>
 {
 public:
-  IsometricTerrainShadowProvider() = default;
-  explicit IsometricTerrainShadowProvider(IsometricShadowSettings settings)
+  TerrainShadow() = default;
+  explicit TerrainShadow(IsometricShadowSettings settings)
       : m_shadowSettings(settings) {};
 
-  /** Set the registry the terrain-tile view reads from. */
-  void setRegistry(Registry* r) { registry = r; }
+  void init(const ModuleInit& m) override { registry = m.registry; }
 
   void computeCommands(const IsometricRenderContext& context) override;
+
+  // The block-geometry render style self-shadows via the in-shader heightmap
+  // march, so projected quads must not also draw.
+  void emit(const IsometricRenderContext& context,
+            std::vector<AnyRenderCommand>& out) override
+  {
+    if (context.geometryActive)
+      return;
+
+    CommandModule::emit(context, out);
+  }
 
   /** Invalidate the cached edge geometry so it rebuilds next frame. */
   void markTerrainDirty();

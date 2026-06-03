@@ -47,7 +47,7 @@ struct FloatRange
 };
 
 // The persistent mark a particle leaves where it lands (see ParticleEffectDesc::
-// leavesDecal). Consumed by the DecalSystem via an IDecalSink.
+// leavesDecal). Consumed by the Decals module via an IDecalSink.
 struct DecalSpec
 {
   std::string texture = "white_pixel"; // resolved by the renderer
@@ -59,7 +59,7 @@ struct DecalSpec
 
 // The authoring description of a particle effect. Plain data with fixed-capacity
 // members (Curve/Gradient) and no std::function, so a Lua/JSON loader can build
-// one later and hand it to ParticleSystem::registerEffect unchanged.
+// one later and hand it to Particles::registerEffect unchanged.
 struct ParticleEffectDesc
 {
   // --- emission shape (spawn position offset from the emitter origin) ---

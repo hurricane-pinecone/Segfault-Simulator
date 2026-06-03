@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/rendering/modules/spriteShadow.h"
+#include "engine/rendering/modules/terrainShadow.h"
 #include "engine/sceneManager/scene.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #ifndef ENGINE_WEB
@@ -112,29 +114,39 @@ inline static void renderDebugControls(Scene* scene)
   {
     auto& render = scene->getSystem<IsometricRenderSystem>();
 
-    ImGui::Separator();
-    ImGui::TextUnformatted("Shadows");
+    auto* terrain = render.module<TerrainShadow>();
+    auto* sprite = render.module<SpriteShadow>();
 
-    // One length drives both so terrain and sprite shadows stay tied. The
-    // terrain length feeds the cached terrain geometry, so a change forces a
-    // rebuild.
-    float length = render.shadowSettings().spriteShadowMaxLength;
-
-    if (ImGui::SliderFloat("Shadow length", &length, 0.0f, 5.0f))
+    // Shadow controls reach into the shadow modules; they only show while those
+    // modules are registered (shadows enabled).
+    if (terrain && sprite)
     {
-      render.shadowSettings().spriteShadowMaxLength = length;
-      render.shadowSettings().terrainShadowMaxLength = length;
-      render.markTerrainShadowsDirty();
+      ImGui::Separator();
+      ImGui::TextUnformatted("Shadows");
+
+      // One length drives both so terrain and sprite shadows stay tied. The
+      // terrain length feeds the cached terrain geometry, so a change forces a
+      // rebuild.
+      float length = sprite->shadowSettings().spriteShadowMaxLength;
+
+      if (ImGui::SliderFloat("Shadow length", &length, 0.0f, 5.0f))
+      {
+        sprite->shadowSettings().spriteShadowMaxLength = length;
+        terrain->shadowSettings().terrainShadowMaxLength = length;
+        terrain->markTerrainDirty();
+      }
+
+      if (ImGui::SliderFloat("Terrain alpha",
+                             &terrain->shadowSettings().terrainShadowAlpha,
+                             0.0f,
+                             1.0f))
+        terrain->markTerrainDirty();
+
+      ImGui::SliderFloat("Sprite alpha",
+                         &sprite->shadowSettings().spriteShadowAlpha,
+                         0.0f,
+                         1.0f);
     }
-
-    if (ImGui::SliderFloat("Terrain alpha",
-                           &render.shadowSettings().terrainShadowAlpha,
-                           0.0f,
-                           1.0f))
-      render.markTerrainShadowsDirty();
-
-    ImGui::SliderFloat(
-        "Sprite alpha", &render.shadowSettings().spriteShadowAlpha, 0.0f, 1.0f);
   }
 
   ImGui::End();

@@ -1,4 +1,4 @@
-#include "engine/systems/particleSystem.h"
+#include "engine/rendering/modules/particles.h"
 
 #include "engine/components/elevationComponent.h"
 #include "engine/components/particleEmitterComponent.h"
@@ -52,13 +52,7 @@ inline glm::ivec2 floorTile(const glm::vec2& p)
 
 } // namespace
 
-void ParticleSystem::create()
-{
-  registerComponent<TransformComponent>();
-  registerComponent<ParticleEmitterComponent>();
-}
-
-void ParticleSystem::registerEffect(const std::string& name,
+void Particles::registerEffect(const std::string& name,
                                     const ParticleEffectDesc& desc)
 {
   auto it = m_effectIds.find(name);
@@ -74,19 +68,19 @@ void ParticleSystem::registerEffect(const std::string& name,
   m_effectIds.emplace(name, id);
 }
 
-bool ParticleSystem::hasEffect(const std::string& name) const
+bool Particles::hasEffect(const std::string& name) const
 {
   return m_effectIds.find(name) != m_effectIds.end();
 }
 
-ParticleSystem::EffectId
-ParticleSystem::effectIdOf(const std::string& name) const
+Particles::EffectId
+Particles::effectIdOf(const std::string& name) const
 {
   auto it = m_effectIds.find(name);
   return it != m_effectIds.end() ? it->second : -1;
 }
 
-void ParticleSystem::applySpawnParams(EmitterInstance& inst,
+void Particles::applySpawnParams(EmitterInstance& inst,
                                       const ParticleSpawnParams& spawn)
 {
   inst.baseVelocity = spawn.velocity;
@@ -101,7 +95,7 @@ void ParticleSystem::applySpawnParams(EmitterInstance& inst,
                       : 0.0f;
 }
 
-bool ParticleSystem::spawnBurst(const std::string& effect,
+bool Particles::spawnBurst(const std::string& effect,
                                 glm::vec2 worldPos,
                                 float elevation,
                                 const ParticleSpawnParams& spawn)
@@ -127,7 +121,7 @@ bool ParticleSystem::spawnBurst(const std::string& effect,
   return true;
 }
 
-bool ParticleSystem::spawnScreenBurst(const std::string& effect,
+bool Particles::spawnScreenBurst(const std::string& effect,
                                       glm::vec2 screenPos,
                                       const ParticleSpawnParams& spawn)
 {
@@ -152,7 +146,7 @@ bool ParticleSystem::spawnScreenBurst(const std::string& effect,
   return true;
 }
 
-int ParticleSystem::liveParticleCount() const
+int Particles::liveParticleCount() const
 {
   int total = 0;
   for (const auto& [id, inst] : m_entityEmitters)
@@ -162,9 +156,9 @@ int ParticleSystem::liveParticleCount() const
   return total;
 }
 
-void ParticleSystem::emit(EmitterInstance& inst,
-                          const ParticleEffectDesc& desc,
-                          int count)
+void Particles::emitParticles(EmitterInstance& inst,
+                              const ParticleEffectDesc& desc,
+                              int count)
 {
   const int room = desc.maxParticles - static_cast<int>(inst.particles.size());
 
@@ -240,7 +234,7 @@ void ParticleSystem::emit(EmitterInstance& inst,
   }
 }
 
-void ParticleSystem::stepInstance(EmitterInstance& inst,
+void Particles::stepInstance(EmitterInstance& inst,
                                   const ParticleEffectDesc& desc,
                                   float dt)
 {
@@ -270,7 +264,7 @@ void ParticleSystem::stepInstance(EmitterInstance& inst,
 
   if (inst.pendingBurst > 0)
   {
-    emit(inst, desc, inst.pendingBurst);
+    emitParticles(inst, desc, inst.pendingBurst);
     inst.pendingBurst = 0;
   }
 
@@ -455,7 +449,7 @@ void ParticleSystem::stepInstance(EmitterInstance& inst,
   }
 }
 
-void ParticleSystem::emitDecal(EmitterInstance& inst,
+void Particles::emitDecal(EmitterInstance& inst,
                                const ParticleEffectDesc& desc,
                                const Particle& p,
                                glm::vec2 hitPos,
@@ -541,7 +535,7 @@ void ParticleSystem::emitDecal(EmitterInstance& inst,
   m_decalSink->addDecal(spawn);
 }
 
-void ParticleSystem::syncComponentEmitters()
+void Particles::syncComponentEmitters()
 {
   // Assume nothing emits this frame; re-enable emitters whose entity still has
   // an enabled component. Entries left disabled (entity gone or disabled) keep
@@ -549,7 +543,8 @@ void ParticleSystem::syncComponentEmitters()
   for (auto& [id, inst] : m_entityEmitters)
     inst.emitting = false;
 
-  for (const auto& entity : getEntities())
+  for (const auto& entity :
+       registry->view<TransformComponent, ParticleEmitterComponent>())
   {
     const auto& emitter = entity.getComponent<ParticleEmitterComponent>();
 
@@ -588,9 +583,9 @@ void ParticleSystem::syncComponentEmitters()
   }
 }
 
-void ParticleSystem::update(double deltaTime)
+void Particles::update(double deltaTime)
 {
-  ZoneScopedN("ParticleSystem::update");
+  ZoneScopedN("Particles::update");
 
   const float dt = static_cast<float>(deltaTime);
   if (dt <= 0.0f)
@@ -626,7 +621,7 @@ void ParticleSystem::update(double deltaTime)
   }
 }
 
-void ParticleSystem::appendBatch(const EmitterInstance& inst,
+void Particles::appendBatch(const EmitterInstance& inst,
                                  const ParticleEffectDesc& desc,
                                  const IsometricRenderContext& context)
 {
@@ -729,9 +724,9 @@ void ParticleSystem::appendBatch(const EmitterInstance& inst,
     m_commands.push_back(std::move(cmd));
 }
 
-void ParticleSystem::computeCommands(const IsometricRenderContext& context)
+void Particles::computeCommands(const IsometricRenderContext& context)
 {
-  ZoneScopedN("ParticleSystem::computeCommands");
+  ZoneScopedN("Particles::computeCommands");
 
   flush(); // clears m_commands
 

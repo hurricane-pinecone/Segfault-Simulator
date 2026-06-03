@@ -1,10 +1,9 @@
 #pragma once
 
-#include "engine/ecs/system.h"
 #include "engine/particles/decal.h"
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/isometricRenderContext.h" // IVec2Hash
-#include "engine/rendering/renderProvider.h"
+#include "engine/rendering/modules/renderModule.h"
 #include "engine/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -18,18 +17,17 @@
 namespace sfs
 {
 
-// Persistent terrain stains (blood, ...). Decals are stored chunked in WORLD
-// space; settled ones live in the renderer's persistent per-chunk GPU buffers
-// and are projected on the GPU, so they cost nothing to re-derive as the camera
-// moves. Only the few animating decals (running wall drips, fading water) are
-// rebuilt per frame into a small dynamic buffer.
+// Render module for persistent terrain stains (blood, ...). Decals are stored
+// chunked in WORLD space; settled ones live in the renderer's persistent
+// per-chunk GPU buffers and are projected on the GPU, so they cost nothing to
+// re-derive as the camera moves. Only the few animating decals (running wall
+// drips, fading water) are rebuilt per frame into a small dynamic buffer.
 //
 // Emits one DecalDrawCommand/frame: dirty-chunk uploads + visible chunk keys +
 // the animating vertices + chunks to free. The renderer holds the heavy data.
-class DecalSystem
-    : public System,
-      public IDecalSink,
-      public RenderProvider<IsometricRenderContext, DecalDrawCommand>
+class Decals
+    : public IDecalSink,
+      public CommandModule<DecalDrawCommand>
 {
 public:
   void addDecal(const DecalSpawn& spawn) override; // IDecalSink
@@ -39,10 +37,9 @@ public:
 
   std::size_t decalCount() const;
 
-  void computeCommands(const IsometricRenderContext& context) override;
-
-protected:
   void update(double deltaTime) override;
+
+  void computeCommands(const IsometricRenderContext& context) override;
 
 private:
   struct Decal

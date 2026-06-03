@@ -43,7 +43,4 @@ private:
 
   // Heightmap-march sampling look; soft/rounded by default, H toggles.
   bool m_sharpShadows = false;
-
-  // Engine-baked sun terrain shadows; on by default, J toggles.
-  bool m_shadowsEnabled = true;
 };

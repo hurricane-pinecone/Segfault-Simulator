@@ -16,13 +16,9 @@
 #include "engine/utils/profiling.h"
 
 #include "engine/rendering/renderPass.h"
-#include "engine/systems/blockGeometrySystem.h"
-#include "engine/systems/decalSystem.h"
 #include "engine/components/lightEmitterComponent.h"
-#include "engine/rendering/providers/isometricSpriteShadowProvider.h"
-#include "engine/rendering/providers/isometricTerrainShadowProvider.h"
-#include "engine/rendering/providers/isometricWaterProvider.h"
-#include "engine/systems/particleSystem.h"
+#include "engine/rendering/modules/blockGeometry.h"
+#include "engine/rendering/modules/terrainShadow.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <algorithm>
@@ -196,13 +192,6 @@ void IsometricRenderSystem::create()
 {
   registerComponent<SpriteComponent>();
   registerComponent<TransformComponent>();
-
-  m_terrainShadows.setRegistry(registry);
-
-  m_spriteShadows.setRegistry(registry);
-  m_spriteShadows.setAssetStore(&assetStore);
-
-  m_water.setRegistry(registry);
 }
 
 void IsometricRenderSystem::render()
@@ -329,23 +318,23 @@ void IsometricRenderSystem::render()
 
   m_quadRenderer.setPointLights(pointLightSet);
 
-  // Opt-in extension: when a BlockGeometrySystem is present and enabled,
-  // terrain tiles render as real face geometry (emitted by that system below)
-  // instead of billboard sprites. Non-tile sprites (actors, props) stay
-  // billboards either way, so a scene without the system renders exactly as the
-  // simple iso path.
-  const auto geometrySystem = registry->tryGetSystem<BlockGeometrySystem>();
-  const bool geometryTilesActive = geometrySystem && geometrySystem->enabled();
+  // When the BlockGeometry module is registered, terrain tiles render as real
+  // face geometry (emitted by that module below) instead of billboard sprites.
+  // Non-tile sprites (actors, props) stay billboards either way, so a scene
+  // without the module renders exactly as the simple iso path. Cross-cutting
+  // state is derived from module presence and published into the context.
+  const bool geometryActive = hasModule<BlockGeometry>();
+  m_context.geometryActive = geometryActive;
 
   // The block-geometry render style takes the in-shader heightmap march; the
-  // billboard style takes projected shadow quads (pulled below). Exactly one
-  // technique is active, and both are gated on shadows being enabled.
-  m_quadRenderer.setSunShadowMarchEnabled(m_shadowsEnabled &&
-                                          geometryTilesActive);
+  // billboard style takes projected shadow quads (the TerrainShadow module).
+  // The march runs only when both geometry and terrain shadows are present.
+  m_quadRenderer.setSunShadowMarchEnabled(geometryActive &&
+                                          hasModule<TerrainShadow>());
 
   for (const auto& entity : getEntities())
   {
-    if (geometryTilesActive && isTileEntity(entity))
+    if (geometryActive && isTileEntity(entity))
       continue;
 
     const auto& transform = entity.getComponent<TransformComponent>();
@@ -549,61 +538,24 @@ void IsometricRenderSystem::render()
     m_renderQueue.submit(command);
   }
 
-  // Projected terrain shadows back the billboard render style; the geometry
-  // style produces them through the in-shader heightmap march instead.
-  if (m_shadowsEnabled && !geometryTilesActive)
+  // Each registered module appends its frame commands; the queue's sort orders
+  // them against the tiles/sprites above by (pass, depth, subpass), so emit
+  // order does not matter. A feature draws iff its module is present.
+  std::vector<AnyRenderCommand> scratch;
+  for (auto& [type, module] : m_modules)
   {
-    m_terrainShadows.computeCommands(m_context);
+    scratch.clear();
+    module->emit(m_context, scratch);
+    m_renderQueue.submitAll(scratch);
+  }
 
-    const auto& shadowCommands = m_terrainShadows.commands();
+  // Surface the terrain-shadow debug counters from the module when present.
+  if (const auto* terrainShadow = module<TerrainShadow>())
+  {
+    const auto& shadowCommands = terrainShadow->commands();
     gTerrainShadowBatchCount = static_cast<int>(shadowCommands.size());
     for (const auto& batch : shadowCommands)
       gTerrainShadowItems += static_cast<int>(batch.quad.quads.size());
-
-    m_renderQueue.submitAll(shadowCommands);
-  }
-
-  if (m_shadowsEnabled)
-  {
-    m_spriteShadows.computeCommands(m_context);
-
-    gSpriteProjectedShadowItems =
-        static_cast<int>(m_spriteShadows.commands().size());
-
-    m_renderQueue.submitAll(m_spriteShadows.commands());
-  }
-
-  m_water.computeCommands(m_context);
-  m_renderQueue.submitAll(m_water.commands());
-
-  if (const auto particleSystem = registry->tryGetSystem<ParticleSystem>();
-      particleSystem && particleSystem->enabled())
-  {
-    particleSystem->computeCommands(m_context);
-    m_renderQueue.submitAll(particleSystem->commands());
-  }
-
-  if (const auto decalSystem = registry->tryGetSystem<DecalSystem>();
-      decalSystem && decalSystem->enabled())
-  {
-    decalSystem->computeCommands(m_context);
-    m_renderQueue.submitAll(decalSystem->commands());
-  }
-
-  if (geometryTilesActive)
-  {
-    geometrySystem->computeCommands(m_context);
-    m_renderQueue.submitAll(geometrySystem->commands());
-  }
-
-  for (IRenderProvider* provider : m_renderProviders)
-  {
-    if (!provider || !provider->providerEnabled())
-      continue;
-
-    std::vector<AnyRenderCommand> custom;
-    provider->emit(m_context, custom);
-    m_renderQueue.submitAll(custom);
   }
 
   flushBatches();
@@ -784,6 +736,9 @@ float IsometricRenderSystem::smoothedElevationOf(
 void IsometricRenderSystem::update(double deltaTime)
 {
   updateActorElevations(deltaTime);
+
+  for (auto& [type, module] : m_modules)
+    module->update(deltaTime);
 }
 
 void IsometricRenderSystem::updateActorElevations(double deltaTime)
@@ -852,12 +807,8 @@ void IsometricRenderSystem::markTerrainDirty()
 {
   tileElevationCacheDirty = true;
 
-  m_terrainShadows.markTerrainDirty();
-}
-
-void IsometricRenderSystem::markTerrainShadowsDirty()
-{
-  m_terrainShadows.markTerrainDirty();
+  if (auto* terrainShadow = module<TerrainShadow>())
+    terrainShadow->markTerrainDirty();
 }
 
 void IsometricRenderSystem::rebuildTileElevationCache()
@@ -1052,12 +1003,6 @@ void IsometricRenderSystem::submitRenderCommand(
 void IsometricRenderSystem::setSunShadowStyle(SunShadowStyle style)
 {
   m_quadRenderer.setSunShadowStyle(style);
-}
-
-void IsometricRenderSystem::addRenderProvider(IRenderProvider* provider)
-{
-  if (provider)
-    m_renderProviders.push_back(provider);
 }
 
 } // namespace sfs

@@ -8,11 +8,11 @@ namespace sfs
 {
 
 // Attach to an entity to continuously emit a registered particle effect that
-// follows the entity. ParticleSystem reads the entity's TransformComponent (and
+// follows the entity. The Particles module reads the entity's TransformComponent (and
 // ElevationComponent, if present) each frame to place the emitter.
 struct ParticleEmitterComponent
 {
-  std::string effect;        // name of an effect registered on ParticleSystem
+  std::string effect;        // name of an effect registered on the Particles module
   glm::vec2 offset{0.0f, 0.0f}; // world-tile offset from the entity position
   float heightOffset = 0.0f; // additional emitter height above the ground
   bool enabled = true;

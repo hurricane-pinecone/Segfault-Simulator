@@ -264,7 +264,7 @@ private:
   std::unordered_map<std::int64_t, DecalChunkBuffer> m_decalChunks;
 
   // --- Opt-in block geometry (real terrain faces) ---
-  // A lit, textured face mesh built per frame by BlockGeometrySystem. Uses the
+  // A lit, textured face mesh built per frame by the BlockGeometry module. Uses the
   // frame's point lights + heightmap (already on the renderer) and a real
   // per-vertex normal + per-vertex elevation, so side faces light from the
   // base.
