@@ -78,6 +78,21 @@ struct WallFaceKeyHash
   }
 };
 
+/**
+ * How sun terrain shadows are produced. Independent of the render style
+ * (billboard vs block geometry), so any combination is valid.
+ *
+ * Projected uses IsometricShadowSystem's flat projected shadow quads.
+ * Heightmap uses the in-shader heightmap horizon march (lit + geometry shaders).
+ * None disables sun terrain shadows.
+ */
+enum class SunShadowMode
+{
+  Projected,
+  Heightmap,
+  None,
+};
+
 class IsometricRenderSystem : public System
 {
 public:
@@ -96,8 +111,15 @@ public:
   void setWaveTime(float time);
   void setWaveEnabled(bool enabled);
 
-  /** Select the sun-shadow sampling style for the geometry path. */
+  /** Select the sun-shadow sampling style for the heightmap march (smooth/sharp). */
   void setSunShadowStyle(SunShadowStyle style);
+
+  /**
+   * Select how sun terrain shadows are produced. Switches the projected shadow
+   * system and the in-shader heightmap march so exactly one technique is active
+   * (or none); works with either render style.
+   */
+  void setSunShadowMode(SunShadowMode mode);
 
   /**
    * Register a game-supplied render pass. Its commands are emitted each frame
@@ -203,6 +225,8 @@ private:
   IsometricLightingService m_lightingService;
 
   std::vector<IRenderProvider*> m_renderProviders;
+
+  SunShadowMode m_sunShadowMode = SunShadowMode::Heightmap;
 };
 
 template <typename T>

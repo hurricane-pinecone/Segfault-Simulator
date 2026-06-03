@@ -51,6 +51,8 @@ void GameScene::onInit()
   sfs::IsometricShadowSettings shadowSettings = {
       shadowMaxLength, shadowMaxLength};
 
+  // Projected terrain shadows. Active only in SunShadowMode::Projected; the
+  // render system gates the pull, so this can stay added in every mode.
   addSystem<sfs::IsometricShadowSystem>(shadowSettings, &m_assetStore);
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
   addSystem<sfs::IsometricWaterSystem>();
@@ -113,13 +115,26 @@ void GameScene::onProcessInput(const sfs::Input& input)
     geometry.setEnabled(!geometry.enabled());
   }
 
-  // Toggle the geometry path's sun-shadow look: soft/rounded vs blocky.
+  // Toggle the heightmap march's sampling look: soft/rounded vs blocky.
   if (input.keyboard().keyPressed(sfs::Key::H))
   {
     m_sharpShadows = !m_sharpShadows;
     getSystem<sfs::IsometricRenderSystem>().setSunShadowStyle(
         m_sharpShadows ? sfs::SunShadowStyle::Sharp
                        : sfs::SunShadowStyle::Smooth);
+  }
+
+  // Cycle the sun-shadow technique: projected (billboard charm) -> heightmap
+  // march -> none. Works with either render style (billboard or geometry).
+  if (input.keyboard().keyPressed(sfs::Key::J))
+  {
+    m_sunShadowMode =
+        m_sunShadowMode == sfs::SunShadowMode::Projected
+            ? sfs::SunShadowMode::Heightmap
+            : m_sunShadowMode == sfs::SunShadowMode::Heightmap
+                  ? sfs::SunShadowMode::None
+                  : sfs::SunShadowMode::Projected;
+    getSystem<sfs::IsometricRenderSystem>().setSunShadowMode(m_sunShadowMode);
   }
 
   m_mousePos = input.mouse().getPosition();
