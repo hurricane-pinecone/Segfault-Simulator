@@ -2,6 +2,7 @@
 
 #include "engine/utils/profiling.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace sfs
@@ -10,12 +11,8 @@ namespace sfs
 namespace
 {
 
-// Decals sit a hair in front of the surface they're on so they draw over it
-// (depth test is LEQUAL, no depth write). Walls need a touch more to clear the
-// block's own billboard face.
+// Decals sit a hair in front of the surface they're on so they draw over it.
 constexpr float kGroundBias = 0.01f;
-// Small: the wall decal shares its block's sort key, so it only needs to clear
-// that block's own billboard, not beat other blocks.
 constexpr float kWallBias = 0.02f;
 
 int floorDiv(int a, int b)
@@ -35,14 +32,28 @@ inline glm::ivec2 floorTile(const glm::vec2& p)
 
 glm::ivec2 DecalSystem::chunkOf(const glm::vec2& worldPos) const
 {
-  const glm::ivec2 tile = floorTile(worldPos);
-  return {floorDiv(tile.x, kChunkTiles), floorDiv(tile.y, kChunkTiles)};
+  const glm::ivec2 t = floorTile(worldPos);
+  return {floorDiv(t.x, kChunkTiles), floorDiv(t.y, kChunkTiles)};
+}
+
+std::int64_t DecalSystem::chunkKey(glm::ivec2 chunk)
+{
+  // Pack both halves as unsigned 32-bit so the key is a clean bijection.
+  return (static_cast<std::int64_t>(static_cast<std::uint32_t>(chunk.x)) << 32) |
+         static_cast<std::uint32_t>(chunk.y);
 }
 
 const std::string* DecalSystem::internTexture(const std::string& id)
 {
-  // unordered_set is node-based, so element addresses are stable across inserts.
   return &*m_textureIds.insert(id).first;
+}
+
+bool DecalSystem::isStatic(const Decal& d)
+{
+  // Static = never changes per frame: not fading, and not a wall drip still
+  // running down. (Permanent water with fadeRate 0 counts as static too.)
+  return d.fadeRate <= 0.0f &&
+         !(d.surface == DecalSurface::Wall && !d.settled);
 }
 
 void DecalSystem::addDecal(const DecalSpawn& spawn)
@@ -56,8 +67,8 @@ void DecalSystem::addDecal(const DecalSpawn& spawn)
   d.size = spawn.size;
   d.rotation = spawn.rotation;
   d.color = spawn.color;
-  d.textureId =
-      internTexture(spawn.textureId ? *spawn.textureId : std::string("white_pixel"));
+  d.textureId = internTexture(spawn.textureId ? *spawn.textureId
+                                              : std::string("white_pixel"));
   d.fadeRate = spawn.fadeRate;
   d.dripSpeed = spawn.dripSpeed;
   d.sortKey = spawn.sortKey;
@@ -66,14 +77,22 @@ void DecalSystem::addDecal(const DecalSpawn& spawn)
 
   if (d.fadeRate > 0.0f)
     ++m_fadingCount;
-  if (d.dripSpeed > 0.0f)
-    ++m_animatingCount; // animates while running down, then stays permanent
+  if (d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f)
+    ++m_animatingCount;
 
-  m_chunks[chunkOf(spawn.worldPos)].push_back(d);
+  ChunkData& chunk = m_chunks[chunkOf(d.worldPos)];
+  if (isStatic(d))
+    buildDecalVerts(d, chunk.pendingStatic); // append-only: O(new), not O(chunk)
+  else
+    ++chunk.animatingCount;
+  chunk.decals.push_back(d);
 }
 
 void DecalSystem::clearAll()
 {
+  for (const auto& [chunk, data] : m_chunks)
+    m_pendingFree.push_back(chunkKey(chunk));
+
   m_chunks.clear();
   m_fadingCount = 0;
   m_animatingCount = 0;
@@ -81,20 +100,28 @@ void DecalSystem::clearAll()
 
 void DecalSystem::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
 {
-  for (auto chunkIt = m_chunks.begin(); chunkIt != m_chunks.end();)
+  for (auto it = m_chunks.begin(); it != m_chunks.end();)
   {
-    auto& vec = chunkIt->second;
+    auto& vec = it->second.decals;
+    bool removedStatic = false;
+
     for (std::size_t i = 0; i < vec.size();)
     {
-      const glm::ivec2 tile = floorTile(vec[i].worldPos);
-      const bool inside = tile.x >= minTile.x && tile.x < maxTile.x &&
-                          tile.y >= minTile.y && tile.y < maxTile.y;
+      const glm::ivec2 t = floorTile(vec[i].worldPos);
+      const bool inside = t.x >= minTile.x && t.x < maxTile.x &&
+                          t.y >= minTile.y && t.y < maxTile.y;
       if (inside)
       {
-        if (vec[i].fadeRate > 0.0f)
+        const Decal& d = vec[i];
+        if (d.fadeRate > 0.0f)
           --m_fadingCount;
-        if (vec[i].dripSpeed > 0.0f && !vec[i].settled)
+        if (d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f && !d.settled)
           --m_animatingCount;
+        if (isStatic(d))
+          removedStatic = true;
+        else
+          --it->second.animatingCount;
+
         vec[i] = vec.back();
         vec.pop_back();
       }
@@ -104,18 +131,31 @@ void DecalSystem::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
       }
     }
 
+    if (removedStatic)
+    {
+      // Can't remove from the middle of the GPU buffer; rebuild it from what
+      // remains (rare path). Pending appends are part of that rebuild.
+      it->second.needsFullRebuild = true;
+      it->second.pendingStatic.clear();
+    }
+
     if (vec.empty())
-      chunkIt = m_chunks.erase(chunkIt);
+    {
+      m_pendingFree.push_back(chunkKey(it->first));
+      it = m_chunks.erase(it);
+    }
     else
-      ++chunkIt;
+    {
+      ++it;
+    }
   }
 }
 
 std::size_t DecalSystem::decalCount() const
 {
   std::size_t total = 0;
-  for (const auto& [chunk, vec] : m_chunks)
-    total += vec.size();
+  for (const auto& [chunk, data] : m_chunks)
+    total += data.decals.size();
   return total;
 }
 
@@ -123,8 +163,8 @@ void DecalSystem::update(double deltaTime)
 {
   ZoneScopedN("DecalSystem::update");
 
-  // Settled/permanent decals (the vast majority) never change, so only do work
-  // while something is fading (water) or still running down (wall drips).
+  // Settled/static decals never change, so only do work while something fades
+  // (water) or is still running down (wall drips).
   if (m_fadingCount == 0 && m_animatingCount == 0)
     return;
 
@@ -132,20 +172,23 @@ void DecalSystem::update(double deltaTime)
   if (dt <= 0.0f)
     return;
 
-  for (auto chunkIt = m_chunks.begin(); chunkIt != m_chunks.end();)
+  for (auto it = m_chunks.begin(); it != m_chunks.end();)
   {
-    auto& vec = chunkIt->second;
+    ChunkData& chunk = it->second;
+    auto& vec = chunk.decals;
+
     for (std::size_t i = 0; i < vec.size();)
     {
       Decal& d = vec[i];
 
-      // Water (and any fading decal): age and remove when invisible.
+      // Fading water: age and remove when invisible.
       if (d.fadeRate > 0.0f)
       {
         d.age += dt;
         if (d.age * d.fadeRate >= 1.0f)
         {
           --m_fadingCount;
+          --chunk.animatingCount;
           vec[i] = vec.back();
           vec.pop_back();
           continue;
@@ -154,15 +197,18 @@ void DecalSystem::update(double deltaTime)
         continue;
       }
 
-      // Wall drip: age until the head reaches the base, then settle (it becomes
-      // a permanent stain and stops needing updates).
-      if (d.dripSpeed > 0.0f && !d.settled)
+      // Running wall drip: age until the head reaches the base, then settle
+      // (it becomes a permanent static decal, so the chunk must re-upload).
+      if (d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f && !d.settled)
       {
         d.age += dt;
         if (d.elevation - d.dripSpeed * d.age <= d.wallBottom)
         {
           d.settled = true;
           --m_animatingCount;
+          --chunk.animatingCount;
+          // Now a permanent static decal -> append its verts to the GPU buffer.
+          buildDecalVerts(d, chunk.pendingStatic);
         }
       }
 
@@ -170,109 +216,94 @@ void DecalSystem::update(double deltaTime)
     }
 
     if (vec.empty())
-      chunkIt = m_chunks.erase(chunkIt);
+    {
+      m_pendingFree.push_back(chunkKey(it->first));
+      it = m_chunks.erase(it);
+    }
     else
-      ++chunkIt;
+    {
+      ++it;
+    }
   }
 }
 
-void DecalSystem::appendDecalQuad(const Decal& decal,
-                                  const IsometricRenderContext& context,
-                                  std::vector<ParticleQuad>& out) const
+void DecalSystem::buildDecalVerts(const Decal& decal,
+                                  std::vector<DecalVertex>& out) const
 {
-  const IsometricProjection& proj = *context.projection;
-
-  float alpha = decal.color.a;
+  glm::vec4 color = decal.color;
   if (decal.fadeRate > 0.0f)
-    alpha *= std::max(0.0f, 1.0f - decal.age * decal.fadeRate);
-
-  if (alpha <= 0.0f)
+    color.a *= std::max(0.0f, 1.0f - decal.age * decal.fadeRate);
+  if (color.a <= 0.0f)
     return;
 
-  const glm::vec4 color{decal.color.r, decal.color.g, decal.color.b, alpha};
-  const float pixelPerTile =
-      static_cast<float>(proj.tileWidth) * proj.worldScale * proj.zoom;
+  const auto push =
+      [&](glm::vec2 wp, float elev, glm::vec2 uv, float key)
+  { out.push_back(DecalVertex{wp, elev, uv, color, key}); };
 
-  ParticleQuad q;
-  q.color = color;
-
-  if (decal.surface == DecalSurface::Wall)
+  if (decal.surface != DecalSurface::Wall)
   {
-    // A thin drip: a streak from its start elevation down to a head that runs
-    // toward the wall base over time (decal.age), so it animates as running
-    // blood. Only the camera-facing east (2) / south (3) faces get wall drips.
-    const float headElev = std::max(
-        decal.wallBottom, decal.elevation - decal.dripSpeed * decal.age);
-
-    const glm::vec2 top = proj.worldToScreen(decal.worldPos, decal.elevation);
-    const glm::vec2 head = proj.worldToScreen(decal.worldPos, headElev);
-
-    // Horizontal axis runs along the visible edge: east face along +Y, south
-    // face along +X.
-    const glm::vec2 edgeDirWorld =
-        decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
-    const glm::vec2 edgeScreen =
-        proj.worldToScreen(decal.worldPos + edgeDirWorld, decal.elevation) - top;
-    const float len =
-        std::sqrt(edgeScreen.x * edgeScreen.x + edgeScreen.y * edgeScreen.y);
-    const glm::vec2 unitH =
-        len > 1e-4f ? edgeScreen / len : glm::vec2{1.0f, 0.0f};
-
-    const float halfW = decal.size * pixelPerTile * 0.5f;
-    const glm::vec2 axisH = unitH * halfW;
-    // Co-sort with the host block's billboard (not the face-edge position) so the
-    // streak is occluded by exactly what occludes the block -- otherwise a tall
-    // streak's inflated key draws over nearer, shorter blocks.
-    const float z = decal.sortKey + kWallBias;
-
-    // The streak. Sample the dot's horizontal centreline (v = 0.5) along the
-    // whole length: soft on the left/right edges (u 0->1), opaque top-to-bottom
-    // so it paints a continuous path instead of fading out at the ends.
-    q.points[0] = top - axisH; // streak top (fixed at the start elevation)
-    q.points[1] = top + axisH;
-    q.points[2] = head + axisH; // running head, descending toward the base
-    q.points[3] = head - axisH;
-    q.uvs[0] = {0.0f, 0.5f};
-    q.uvs[1] = {1.0f, 0.5f};
-    q.uvs[2] = {1.0f, 0.5f};
-    q.uvs[3] = {0.0f, 0.5f};
-    q.z = z;
-    out.push_back(q);
-
-    // A soft round blob at the leading edge so the running tip reads as a
-    // droplet rather than a flat cut (full radial UVs).
-    const float r = halfW * 1.3f;
-    ParticleQuad cap;
-    cap.color = color;
-    cap.points[0] = head + glm::vec2{-r, -r};
-    cap.points[1] = head + glm::vec2{r, -r};
-    cap.points[2] = head + glm::vec2{r, r};
-    cap.points[3] = head + glm::vec2{-r, r};
-    cap.z = z;
-    out.push_back(cap);
-    return;
-  }
-  else
-  {
-    // Ground/water: a rotated square lying flat on the surface (rotated in world
-    // space, then projected so it sits in the isometric plane).
+    // Ground/water: a rotated world square lying flat on the surface.
     const float h = decal.size * 0.5f;
     const float c = std::cos(decal.rotation);
     const float s = std::sin(decal.rotation);
-
     const auto rot = [&](float ox, float oy)
     { return glm::vec2{ox * c - oy * s, ox * s + oy * c}; };
 
-    const float elev = decal.elevation;
-    q.points[0] = proj.worldToScreen(decal.worldPos + rot(-h, -h), elev);
-    q.points[1] = proj.worldToScreen(decal.worldPos + rot(h, -h), elev);
-    q.points[2] = proj.worldToScreen(decal.worldPos + rot(h, h), elev);
-    q.points[3] = proj.worldToScreen(decal.worldPos + rot(-h, h), elev);
+    const float e = decal.elevation;
+    const float key = decal.worldPos.x + decal.worldPos.y + e * 0.5f + kGroundBias;
 
-    q.z = decal.worldPos.x + decal.worldPos.y + elev * 0.5f + kGroundBias;
+    const glm::vec2 w0 = decal.worldPos + rot(-h, -h);
+    const glm::vec2 w1 = decal.worldPos + rot(h, -h);
+    const glm::vec2 w2 = decal.worldPos + rot(h, h);
+    const glm::vec2 w3 = decal.worldPos + rot(-h, h);
+
+    push(w0, e, {0.0f, 0.0f}, key);
+    push(w1, e, {1.0f, 0.0f}, key);
+    push(w2, e, {1.0f, 1.0f}, key);
+    push(w0, e, {0.0f, 0.0f}, key);
+    push(w2, e, {1.0f, 1.0f}, key);
+    push(w3, e, {0.0f, 1.0f}, key);
+    return;
   }
 
-  out.push_back(q);
+  // Wall drip: a streak running down the face from its start elevation to the
+  // head, capped with a soft round blob at the head. Co-sorts with the host
+  // block (decal.sortKey). UVs: streak samples the dot's centreline (v=0.5) so
+  // it's solid top-to-bottom; the cap uses full radial UVs to read round.
+  const glm::vec2 edgeDir =
+      decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
+  const float headElev =
+      std::max(decal.wallBottom, decal.elevation - decal.dripSpeed * decal.age);
+  const float halfW = decal.size * 0.5f;
+  const float key = decal.sortKey + kWallBias;
+
+  const glm::vec2 a = decal.worldPos - edgeDir * halfW;
+  const glm::vec2 b = decal.worldPos + edgeDir * halfW;
+
+  push(a, decal.elevation, {0.0f, 0.5f}, key);
+  push(b, decal.elevation, {1.0f, 0.5f}, key);
+  push(b, headElev, {1.0f, 0.5f}, key);
+  push(a, decal.elevation, {0.0f, 0.5f}, key);
+  push(b, headElev, {1.0f, 0.5f}, key);
+  push(a, headElev, {0.0f, 0.5f}, key);
+
+  // Round cap at the head. capH (elevation levels) is sized from capW (tiles)
+  // by the projection's tile/elevation ratio so it reads roughly round.
+  const float capW = halfW;
+  const float capH = m_elevationStep > 0.0001f
+                         ? capW * (m_tileWidth * 0.5f / m_elevationStep)
+                         : capW;
+  const glm::vec2 ca = decal.worldPos - edgeDir * capW;
+  const glm::vec2 cb = decal.worldPos + edgeDir * capW;
+  const float top = headElev + capH;
+  const float bot = headElev - capH;
+
+  push(ca, top, {0.0f, 0.0f}, key);
+  push(cb, top, {1.0f, 0.0f}, key);
+  push(cb, bot, {1.0f, 1.0f}, key);
+  push(ca, top, {0.0f, 0.0f}, key);
+  push(cb, bot, {1.0f, 1.0f}, key);
+  push(ca, bot, {0.0f, 1.0f}, key);
 }
 
 void DecalSystem::computeCommands(const IsometricRenderContext& context)
@@ -281,55 +312,78 @@ void DecalSystem::computeCommands(const IsometricRenderContext& context)
 
   flush(); // clears m_commands
 
-  if (!context.projection)
-    return;
+  DecalDrawCommand cmd;
+  cmd.order.pass = RenderPass::Decals;
+  cmd.freeKeys = std::move(m_pendingFree);
+  m_pendingFree.clear();
 
-  // Only build quads for chunks inside the camera's tile window, so the cost
-  // tracks what's on screen, not the total number of stored decals.
   const TerrainElevationGridView& grid = context.terrainElevationGrid;
-  if (!grid.valid())
-    return;
 
-  const glm::ivec2 minTile = grid.origin;
-  const glm::ivec2 maxTile =
-      grid.origin + glm::ivec2{grid.width, grid.height};
-
-  const glm::ivec2 minChunk{floorDiv(minTile.x, kChunkTiles),
-                            floorDiv(minTile.y, kChunkTiles)};
-  const glm::ivec2 maxChunk{floorDiv(maxTile.x, kChunkTiles),
-                            floorDiv(maxTile.y, kChunkTiles)};
-
-  // Bucket visible decals by texture (usually just one).
-  std::unordered_map<const std::string*, ParticleBatch> buckets;
-
-  for (int cy = minChunk.y; cy <= maxChunk.y; ++cy)
+  if (context.projection && grid.valid())
   {
-    for (int cx = minChunk.x; cx <= maxChunk.x; ++cx)
-    {
-      const auto it = m_chunks.find(glm::ivec2{cx, cy});
-      if (it == m_chunks.end())
-        continue;
+    const IsometricProjection& proj = *context.projection;
+    // Cache for geometry built at add/settle time (constant in practice).
+    m_tileWidth = static_cast<float>(proj.tileWidth);
+    m_elevationStep = static_cast<float>(proj.elevationStep);
 
-      for (const Decal& decal : it->second)
-        appendDecalQuad(decal, context, buckets[decal.textureId].quads);
+    const glm::ivec2 minTile = grid.origin;
+    const glm::ivec2 maxTile =
+        grid.origin + glm::ivec2{grid.width, grid.height};
+    const glm::ivec2 minChunk{floorDiv(minTile.x, kChunkTiles),
+                              floorDiv(minTile.y, kChunkTiles)};
+    const glm::ivec2 maxChunk{floorDiv(maxTile.x, kChunkTiles),
+                              floorDiv(maxTile.y, kChunkTiles)};
+
+    for (int cy = minChunk.y; cy <= maxChunk.y; ++cy)
+    {
+      for (int cx = minChunk.x; cx <= maxChunk.x; ++cx)
+      {
+        const auto it = m_chunks.find(glm::ivec2{cx, cy});
+        if (it == m_chunks.end())
+          continue;
+
+        ChunkData& chunk = it->second;
+        const std::int64_t key = chunkKey(glm::ivec2{cx, cy});
+
+        if (!cmd.textureId && !chunk.decals.empty())
+          cmd.textureId = chunk.decals.front().textureId;
+
+        if (chunk.needsFullRebuild)
+        {
+          // Rare: a static decal was removed -> rebuild the whole buffer.
+          DecalChunkUpload upload;
+          upload.key = key;
+          for (const Decal& d : chunk.decals)
+            if (isStatic(d))
+              buildDecalVerts(d, upload.vertices);
+
+          cmd.uploads.push_back(std::move(upload));
+          chunk.needsFullRebuild = false;
+          chunk.pendingStatic.clear();
+        }
+        else if (!chunk.pendingStatic.empty())
+        {
+          // Common: append only the new static verts (O(new)).
+          DecalChunkUpload append;
+          append.key = key;
+          append.vertices = std::move(chunk.pendingStatic);
+          chunk.pendingStatic.clear();
+          cmd.appends.push_back(std::move(append));
+        }
+
+        cmd.drawKeys.push_back(key);
+
+        // Animating decals (running drips, fading water) rebuilt every frame.
+        // Settled chunks have none, so they do no per-decal work at all.
+        if (chunk.animatingCount > 0)
+          for (const Decal& d : chunk.decals)
+            if (!isStatic(d))
+              buildDecalVerts(d, cmd.dynamic);
+      }
     }
   }
 
-  for (auto& [texture, batch] : buckets)
-  {
-    if (batch.quads.empty())
-      continue;
-
-    ParticleBatchCommand cmd;
-    cmd.quad = std::move(batch);
-    cmd.textureId = texture;
-    cmd.blend = BlendMode::Alpha;
-    cmd.order.pass = RenderPass::Decals;
-    cmd.order.depth = 0.0f;
-    cmd.order.subpass = 0;
-
-    m_commands.push_back(std::move(cmd));
-  }
+  m_commands.push_back(std::move(cmd));
 }
 
 } // namespace sfs

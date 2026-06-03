@@ -474,6 +474,47 @@ void OpenGLQuadRenderer::initialize()
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
   // ===========================================================================
+  // Decal pipeline (persistent world-space stain buffers, GPU-projected)
+  // ===========================================================================
+
+  decalShaderProgram = createDecalShaderProgram();
+
+  if (decalShaderProgram == 0)
+  {
+    LOG_ERROR("Failed to create OpenGLQuadRenderer decal shader");
+    return;
+  }
+
+  uDecalTextureLocation = glGetUniformLocation(decalShaderProgram, "uTexture");
+  uDecalTileSizeLocation = glGetUniformLocation(decalShaderProgram, "uTileSize");
+  uDecalWorldScaleLocation =
+      glGetUniformLocation(decalShaderProgram, "uWorldScale");
+  uDecalZoomLocation = glGetUniformLocation(decalShaderProgram, "uZoom");
+  uDecalCameraIsoLocation =
+      glGetUniformLocation(decalShaderProgram, "uCameraIso");
+  uDecalScreenCenterLocation =
+      glGetUniformLocation(decalShaderProgram, "uScreenCenter");
+  uDecalElevationStepLocation =
+      glGetUniformLocation(decalShaderProgram, "uElevationStep");
+  uDecalNdcScaleLocation = glGetUniformLocation(decalShaderProgram, "uNdcScale");
+  uDecalDepthMinLocation =
+      glGetUniformLocation(decalShaderProgram, "uDepthMin");
+  uDecalDepthInvRangeLocation =
+      glGetUniformLocation(decalShaderProgram, "uDepthInvRange");
+
+  glGenVertexArrays(1, &decalDynamicVao);
+  glGenBuffers(1, &decalDynamicVbo);
+  glBindVertexArray(decalDynamicVao);
+  glBindBuffer(GL_ARRAY_BUFFER, decalDynamicVbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sizeof(DecalVertex) * 6),
+               nullptr,
+               GL_DYNAMIC_DRAW);
+  configureDecalAttribs();
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+  // ===========================================================================
   // Default uniforms: textured/lit sprite shader
   // ===========================================================================
 
@@ -645,6 +686,22 @@ void OpenGLQuadRenderer::shutdown()
   if (particleShaderProgram != 0)
     glDeleteProgram(particleShaderProgram);
 
+  for (auto& [key, buf] : m_decalChunks)
+  {
+    if (buf.vbo != 0)
+      glDeleteBuffers(1, &buf.vbo);
+    if (buf.vao != 0)
+      glDeleteVertexArrays(1, &buf.vao);
+  }
+  m_decalChunks.clear();
+
+  if (decalDynamicVbo != 0)
+    glDeleteBuffers(1, &decalDynamicVbo);
+  if (decalDynamicVao != 0)
+    glDeleteVertexArrays(1, &decalDynamicVao);
+  if (decalShaderProgram != 0)
+    glDeleteProgram(decalShaderProgram);
+
   if (surfaceEbo != 0)
     glDeleteBuffers(1, &surfaceEbo);
 
@@ -671,6 +728,10 @@ void OpenGLQuadRenderer::shutdown()
   particleVao = 0;
   particleShaderProgram = 0;
   m_particleBatches.clear();
+
+  decalDynamicVbo = 0;
+  decalDynamicVao = 0;
+  decalShaderProgram = 0;
 
   solidVbo = 0;
   solidVao = 0;
@@ -1284,6 +1345,255 @@ void OpenGLQuadRenderer::flushParticles()
   glUseProgram(0);
 
   m_particleBatches.clear();
+}
+
+void OpenGLQuadRenderer::configureDecalAttribs()
+{
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0,
+                        2,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(DecalVertex),
+                        reinterpret_cast<void*>(offsetof(DecalVertex, worldPos)));
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(
+      1,
+      1,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(DecalVertex),
+      reinterpret_cast<void*>(offsetof(DecalVertex, elevation)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2,
+                        2,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(DecalVertex),
+                        reinterpret_cast<void*>(offsetof(DecalVertex, uv)));
+  glEnableVertexAttribArray(3);
+  glVertexAttribPointer(3,
+                        4,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(DecalVertex),
+                        reinterpret_cast<void*>(offsetof(DecalVertex, color)));
+  glEnableVertexAttribArray(4);
+  glVertexAttribPointer(4,
+                        1,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(DecalVertex),
+                        reinterpret_cast<void*>(offsetof(DecalVertex, sortKey)));
+}
+
+void OpenGLQuadRenderer::setDecalFrameParams(const DecalFrameParams& params)
+{
+  m_decalParams = params;
+}
+
+void OpenGLQuadRenderer::beginDecalPipeline()
+{
+  if (m_pipeline == Pipeline::Decal)
+    return;
+
+  flushCurrentPipeline();
+  m_pipeline = Pipeline::Decal;
+
+  glUseProgram(decalShaderProgram);
+
+  // Translucent: occluded by the opaque scene depth, but never writes depth.
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glUniform1i(uDecalTextureLocation, 0);
+  glUniform2f(
+      uDecalTileSizeLocation, m_decalParams.tileWidth, m_decalParams.tileHeight);
+  glUniform1f(uDecalWorldScaleLocation, m_decalParams.worldScale);
+  glUniform1f(uDecalZoomLocation, m_decalParams.zoom);
+  glUniform2f(uDecalCameraIsoLocation,
+              m_decalParams.cameraIso.x,
+              m_decalParams.cameraIso.y);
+  glUniform2f(uDecalScreenCenterLocation,
+              m_decalParams.screenCenter.x,
+              m_decalParams.screenCenter.y);
+  glUniform1f(uDecalElevationStepLocation, m_decalParams.elevationStep);
+  glUniform2f(uDecalNdcScaleLocation, m_ndcScaleX, m_ndcScaleY);
+  glUniform1f(uDecalDepthMinLocation, m_decalParams.depthMin);
+  glUniform1f(uDecalDepthInvRangeLocation, m_decalParams.depthInvRange);
+
+  glActiveTexture(GL_TEXTURE0);
+}
+
+OpenGLQuadRenderer::DecalChunkBuffer&
+OpenGLQuadRenderer::ensureDecalChunk(std::int64_t key)
+{
+  DecalChunkBuffer& buf = m_decalChunks[key];
+  if (buf.vao == 0)
+  {
+    glGenVertexArrays(1, &buf.vao);
+    glGenBuffers(1, &buf.vbo);
+    glBindVertexArray(buf.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+    configureDecalAttribs();
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    buf.count = 0;
+    buf.capacity = 0;
+  }
+  return buf;
+}
+
+void OpenGLQuadRenderer::uploadDecalChunk(std::int64_t key,
+                                          const DecalVertex* vertices,
+                                          std::size_t count)
+{
+  initialize();
+  if (!initialized)
+    return;
+
+  // Entering the decal pipeline first flushes any pending batch, so binding
+  // buffers here can't corrupt another pipeline's VAO state.
+  beginDecalPipeline();
+
+  DecalChunkBuffer& buf = ensureDecalChunk(key);
+
+  glBindVertexArray(buf.vao);
+  glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(count * sizeof(DecalVertex)),
+               vertices,
+               GL_STATIC_DRAW);
+  buf.count = static_cast<int>(count);
+  buf.capacity = static_cast<int>(count);
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void OpenGLQuadRenderer::appendDecalChunk(std::int64_t key,
+                                          const DecalVertex* vertices,
+                                          std::size_t count)
+{
+  initialize();
+  if (!initialized || count == 0)
+    return;
+
+  beginDecalPipeline();
+
+  DecalChunkBuffer& buf = ensureDecalChunk(key);
+  const int needed = buf.count + static_cast<int>(count);
+
+  if (needed > buf.capacity)
+  {
+    // Grow: allocate a larger VBO (doubling), copy the existing verts over on
+    // the GPU (no CPU mirror), swap it in, and re-point the VAO at it.
+    int newCapacity = buf.capacity > 0 ? buf.capacity * 2 : 64;
+    if (newCapacity < needed)
+      newCapacity = needed;
+
+    unsigned int newVbo = 0;
+    glGenBuffers(1, &newVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, newVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(newCapacity * sizeof(DecalVertex)),
+                 nullptr,
+                 GL_STATIC_DRAW);
+
+    if (buf.count > 0)
+    {
+      glBindBuffer(GL_COPY_READ_BUFFER, buf.vbo);
+      glBindBuffer(GL_COPY_WRITE_BUFFER, newVbo);
+      glCopyBufferSubData(GL_COPY_READ_BUFFER,
+                          GL_COPY_WRITE_BUFFER,
+                          0,
+                          0,
+                          static_cast<GLsizeiptr>(buf.count * sizeof(DecalVertex)));
+      glBindBuffer(GL_COPY_READ_BUFFER, 0);
+      glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
+
+    glDeleteBuffers(1, &buf.vbo);
+    buf.vbo = newVbo;
+    buf.capacity = newCapacity;
+
+    glBindVertexArray(buf.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+    configureDecalAttribs(); // re-bind attribs to the new VBO
+  }
+  else
+  {
+    glBindVertexArray(buf.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+  }
+
+  glBufferSubData(GL_ARRAY_BUFFER,
+                  static_cast<GLintptr>(buf.count * sizeof(DecalVertex)),
+                  static_cast<GLsizeiptr>(count * sizeof(DecalVertex)),
+                  vertices);
+  buf.count = needed;
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void OpenGLQuadRenderer::freeDecalChunk(std::int64_t key)
+{
+  auto it = m_decalChunks.find(key);
+  if (it == m_decalChunks.end())
+    return;
+
+  if (it->second.vbo != 0)
+    glDeleteBuffers(1, &it->second.vbo);
+  if (it->second.vao != 0)
+    glDeleteVertexArrays(1, &it->second.vao);
+
+  m_decalChunks.erase(it);
+}
+
+void OpenGLQuadRenderer::drawDecalChunk(std::int64_t key, unsigned int texture)
+{
+  initialize();
+  if (!initialized || texture == 0)
+    return;
+
+  auto it = m_decalChunks.find(key);
+  if (it == m_decalChunks.end() || it->second.count == 0)
+    return;
+
+  beginDecalPipeline();
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glBindVertexArray(it->second.vao);
+  glDrawArrays(GL_TRIANGLES, 0, it->second.count);
+  glBindVertexArray(0);
+}
+
+void OpenGLQuadRenderer::drawDecalsDynamic(const DecalVertex* vertices,
+                                           std::size_t count,
+                                           unsigned int texture)
+{
+  initialize();
+  if (!initialized || texture == 0 || count == 0)
+    return;
+
+  beginDecalPipeline();
+
+  glBindVertexArray(decalDynamicVao);
+  glBindBuffer(GL_ARRAY_BUFFER, decalDynamicVbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(count * sizeof(DecalVertex)),
+               vertices,
+               GL_DYNAMIC_DRAW);
+
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(count));
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void OpenGLQuadRenderer::flushSolid()
@@ -2573,6 +2883,110 @@ void main()
   return program;
 }
 
+unsigned int OpenGLQuadRenderer::createDecalShaderProgram() const
+{
+#ifdef __EMSCRIPTEN__
+  const std::string glslVersion = "#version 300 es\n"
+                                  "precision mediump float;\n";
+#else
+  const std::string glslVersion = "#version 330 core\n";
+#endif
+
+  // World-space decal: the vertex shader reproduces gridToIsometric +
+  // worldToScreen + toNdc, and derives clip-space z from the painter sort-key
+  // using the frame's depth range (matching assignClipDepth's toClipZ). This is
+  // what lets settled decals live unchanged in GPU buffers across camera moves.
+  const std::string vertexSource = glslVersion + R"(
+layout(location = 0) in vec2 aWorldPos;
+layout(location = 1) in float aElevation;
+layout(location = 2) in vec2 aUv;
+layout(location = 3) in vec4 aColor;
+layout(location = 4) in float aSortKey;
+
+out vec2 vUv;
+out vec4 vColor;
+
+uniform vec2 uTileSize;       // (tileWidth, tileHeight)
+uniform float uWorldScale;
+uniform float uZoom;
+uniform vec2 uCameraIso;
+uniform vec2 uScreenCenter;
+uniform float uElevationStep;
+uniform vec2 uNdcScale;       // (2/width, 2/height)
+uniform float uDepthMin;
+uniform float uDepthInvRange;
+
+void main()
+{
+  vUv = aUv;
+  vColor = aColor;
+
+  vec2 iso = vec2(aWorldPos.x - aWorldPos.y, aWorldPos.x + aWorldPos.y)
+             * uTileSize * uWorldScale * 0.5;
+  vec2 screen = (iso - uCameraIso) * uZoom + uScreenCenter;
+  screen.y -= aElevation * uElevationStep * uWorldScale * uZoom;
+
+  vec2 ndc = vec2(screen.x * uNdcScale.x - 1.0, 1.0 - screen.y * uNdcScale.y);
+
+  float t = clamp((aSortKey - uDepthMin) * uDepthInvRange, 0.0, 1.0);
+  float clipZ = 0.9 - 1.8 * t;
+
+  gl_Position = vec4(ndc, clipZ, 1.0);
+}
+)";
+
+  const std::string fragmentSource = glslVersion + R"(
+in vec2 vUv;
+in vec4 vColor;
+
+out vec4 FragColor;
+
+uniform sampler2D uTexture;
+
+void main()
+{
+  vec4 tex = texture(uTexture, vUv);
+  FragColor = tex * vColor;
+
+  if (FragColor.a <= 0.0)
+    discard;
+}
+)";
+
+  GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+  GLuint fragmentShader =
+      compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+
+  if (vertexShader == 0 || fragmentShader == 0)
+  {
+    if (vertexShader != 0)
+      glDeleteShader(vertexShader);
+    if (fragmentShader != 0)
+      glDeleteShader(fragmentShader);
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+  if (!success)
+  {
+    char infoLog[1024];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+    LOG_ERROR(infoLog);
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
+}
+
 void OpenGLQuadRenderer::beginPipeline(Pipeline pipeline)
 {
   if (m_pipeline == pipeline)
@@ -2611,6 +3025,9 @@ void OpenGLQuadRenderer::flushCurrentPipeline()
     flushParticles();
     break;
 
+  // Decals draw immediately from persistent/dynamic buffers, so there's nothing
+  // queued to flush.
+  case Pipeline::Decal:
   case Pipeline::Textured:
   case Pipeline::Freeform:
   case Pipeline::None:
