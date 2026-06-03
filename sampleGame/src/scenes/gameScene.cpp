@@ -6,6 +6,7 @@
 #include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
+#include "engine/systems/blockGeometrySystem.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/decalSystem.h"
@@ -55,6 +56,12 @@ void GameScene::onInit()
   addSystem<sfs::IsometricSpriteShadowSystem>(shadowSettings, m_assetStore);
   addSystem<sfs::IsometricWaterSystem>();
 
+  // Opt-in extension: render terrain as real block faces instead of billboard
+  // sprites. A simple iso game just omits this line and keeps the billboard
+  // path. Added disabled so billboards stay the default; press G to toggle and
+  // compare the two live (real side faces light from a wall's base up).
+  addSystem<sfs::BlockGeometrySystem>(m_assetStore).setEnabled(false);
+
   // Soft round texture so particles/decals don't read as hard squares.
   m_assetStore.addRadialTexture("blood_dot", 32);
 
@@ -99,6 +106,21 @@ void GameScene::onProcessInput(const sfs::Input& input)
   // Wipe all blood stains (demonstrates decal removal).
   if (input.keyboard().keyPressed(sfs::Key::C))
     getSystem<sfs::DecalSystem>().clearAll();
+
+  // Toggle billboard tiles vs real block geometry (the opt-in extension).
+  if (input.keyboard().keyPressed(sfs::Key::G))
+  {
+    auto& geometry = getSystem<sfs::BlockGeometrySystem>();
+    geometry.setEnabled(!geometry.enabled());
+  }
+
+  // Toggle the geometry path's sun-shadow look: soft/rounded vs blocky.
+  if (input.keyboard().keyPressed(sfs::Key::H))
+  {
+    m_sharpShadows = !m_sharpShadows;
+    quadRenderer().setSunShadowStyle(m_sharpShadows ? sfs::SunShadowStyle::Sharp
+                                                     : sfs::SunShadowStyle::Smooth);
+  }
 
   m_mousePos = input.mouse().getPosition();
 

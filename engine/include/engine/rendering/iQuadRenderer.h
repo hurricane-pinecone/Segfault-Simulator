@@ -7,12 +7,22 @@
 #include "engine/rendering/quads.h"
 #include "engine/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_float3.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace sfs
 {
+
+// How the opt-in geometry path samples the heightmap for sun shadows. Smooth
+// reads the linearly-filtered heightmap (soft, rounded edges); Sharp walks tiles
+// (blocky, tile-aligned edges). Engine-side choice; the game picks the look.
+enum class SunShadowStyle
+{
+  Smooth,
+  Sharp,
+};
 
 // Per-frame inputs for the persistent decal pipeline: enough of the isometric
 // projection (kept as plain scalars so this stays backend/projection-agnostic)
@@ -65,6 +75,23 @@ public:
                               int surfaceEffect) = 0;
 
   virtual void submit(const SurfaceCommand& command) = 0;
+
+  // Opt-in real-geometry terrain (block faces). The render system resolves the
+  // material texture and calls this with a lit, textured face mesh (triangles,
+  // screen-pixel positions). setGeometryLighting sets the frame's sun/ambient
+  // (point lights + heightmap come from setPointLights/setHeightmap already).
+  virtual void drawGeometry(const GeometryVertex* vertices,
+                            std::size_t count,
+                            unsigned int texture,
+                            int surfaceEffect) = 0;
+  virtual void setGeometryLighting(float ambient,
+                                   glm::vec3 lightColor,
+                                   glm::vec3 sunDirection,
+                                   float diffuseStrength) = 0;
+
+  // Pick the geometry path's sun-shadow sampling style (smooth vs blocky).
+  virtual void setSunShadowStyle(SunShadowStyle style) = 0;
+
   virtual void submitTerrainShadow(const Quad& command) = 0;
 
   // Projected sprite shadows, batched by texture (one draw per shadow atlas).

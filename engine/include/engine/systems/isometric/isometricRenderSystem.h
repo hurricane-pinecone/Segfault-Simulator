@@ -205,6 +205,20 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
     quadRenderer.submit(concrete);
   }
 
+  // Opt-in real-geometry terrain: a lit, textured face mesh. The renderer can't
+  // resolve string texture ids, so resolve here, then hand it the projected,
+  // depth-stamped triangle list (assignClipDepth already remapped each vertex z).
+  else if constexpr (std::is_same_v<T, GeometryCommand>)
+  {
+    const unsigned int texture = resolveTexture(concrete.textureId);
+
+    if (texture != 0 && !concrete.vertices.empty())
+      quadRenderer.drawGeometry(concrete.vertices.data(),
+                                concrete.vertices.size(),
+                                texture,
+                                static_cast<int>(concrete.type));
+  }
+
   // Persistent decals: apply any dirty-chunk uploads, then draw the visible
   // chunks' persistent buffers + this frame's animating decals. The frame's
   // projection + depth-range uniforms were set in flushBatches.

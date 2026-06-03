@@ -87,6 +87,19 @@ struct DecalDrawCommand
   std::vector<DecalVertex> dynamic;        // animating decals, rebuilt this frame
 };
 
+// Opt-in real-geometry terrain: a lit, textured mesh of block faces (tops +
+// exposed sides) sharing one material (texture + surface effect). Built per frame
+// by BlockGeometrySystem; assignClipDepth remaps each vertex's z (world key) to
+// clip-space depth, like a SurfaceCommand mesh.
+struct GeometryCommand
+{
+  RenderOrder order{RenderPass::Terrain, 0, 0};
+  std::vector<GeometryVertex> vertices; // triangles (no index buffer)
+  const std::string* textureId = nullptr;
+  const std::string* normalTextureId = nullptr; // optional; geometry uses real normals
+  SurfaceEffect::Type type = SurfaceEffect::Type::None;
+};
+
 using AnyRenderCommand = std::variant<QuadCommand,
                                       TexturedQuadCommand,
                                       FreeformQuadCommand,
@@ -97,5 +110,6 @@ using AnyRenderCommand = std::variant<QuadCommand,
                                       TerrainShadowBatchCommand,
                                       SpriteShadowCommand,
                                       ParticleBatchCommand,
-                                      DecalDrawCommand>;
+                                      DecalDrawCommand,
+                                      GeometryCommand>;
 } // namespace sfs

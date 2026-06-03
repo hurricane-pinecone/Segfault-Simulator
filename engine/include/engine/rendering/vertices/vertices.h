@@ -1,6 +1,7 @@
 #pragma once
 
 #include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
 namespace sfs
@@ -16,6 +17,22 @@ struct SurfaceVertex
 
   // Painter sort-key at build time; assignClipDepth() remaps it in place to a
   // clip-space z (gl_Position.z) so a merged water mesh occludes per vertex.
+  float z = 0.0f;
+};
+
+// A vertex of opt-in block geometry (real terrain faces: tops + sides). Built
+// per frame by BlockGeometrySystem. `position` is screen pixels (the renderer
+// converts to NDC); `worldPos` + `ground` (elevation level) drive the per-pixel
+// point lighting (a side face's ground varies down the face, so it lights from
+// its base up); `normal` is the real world-space face normal; `z` is the world
+// painter sort-key that assignClipDepth remaps to clip-space depth per vertex.
+struct GeometryVertex
+{
+  glm::vec2 position{0.0f, 0.0f};
+  glm::vec2 worldPos{0.0f, 0.0f};
+  float ground = 0.0f;
+  glm::vec2 uv{0.0f, 0.0f};
+  glm::vec3 normal{0.0f, 0.0f, 1.0f};
   float z = 0.0f;
 };
 
