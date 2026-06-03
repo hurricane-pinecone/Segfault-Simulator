@@ -29,6 +29,12 @@ struct DecalFrameParams
   float elevationStep = 8.0f;
   float depthMin = 0.0f;
   float depthInvRange = 0.0f;
+
+  // Scene lighting so decals respond to day/night + point lights (the point
+  // light set itself is the one already bound via setPointLights). Without this
+  // blood glows full-red in the dark.
+  float ambient = 1.0f;
+  glm::vec3 ambientColor{1.0f, 1.0f, 1.0f};
 };
 
 // Backend-agnostic quad renderer interface implemented by concrete backends.
