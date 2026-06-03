@@ -1,4 +1,4 @@
-#include "engine/rendering/openGLQuadRenderer.h"
+#include "engine/rendering/openGLIsometricRenderer.h"
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
 #else
@@ -20,7 +20,6 @@
 #include <engine/logger/logger.h>
 #include <engine/mapLoader/mapLoader.h>
 #include <engine/systems/movementSystem.h>
-#include <engine/systems/renderSystem.h>
 #include <engine/utils/allocationMetrics.h>
 #include <engine/utils/gpuProfiling.h>
 #include <engine/utils/profiling.h>
@@ -117,7 +116,7 @@ bool Game::init(int windowWidth, int windowHeight)
 #endif
 
   m_quadRenderer =
-      std::make_unique<OpenGLQuadRenderer>(windowWidth, windowHeight);
+      std::make_unique<OpenGLIsometricRenderer>(windowWidth, windowHeight);
   m_quadRenderer->initialize();
   m_quadRenderer->setViewportSize(windowWidth, windowHeight);
 

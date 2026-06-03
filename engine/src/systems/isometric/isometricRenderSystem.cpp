@@ -172,7 +172,8 @@ int gTerrainShadowBatchCount = 0;
 
 IsometricRenderSystem::IsometricRenderSystem(AssetStore& assetStore,
                                              IQuadRenderer& quadRenderer)
-    : assetStore(assetStore), m_quadRenderer(quadRenderer)
+    : assetStore(assetStore),
+      m_quadRenderer(dynamic_cast<IIsometricRenderer&>(quadRenderer))
 {
 }
 
@@ -591,6 +592,16 @@ void IsometricRenderSystem::render()
     m_renderQueue.submitAll(geometrySystem->commands());
   }
 
+  for (IRenderProvider* provider : m_renderProviders)
+  {
+    if (!provider || !provider->providerEnabled())
+      continue;
+
+    std::vector<AnyRenderCommand> custom;
+    provider->emit(m_context, custom);
+    m_renderQueue.submitAll(custom);
+  }
+
   flushBatches();
 }
 
@@ -1000,11 +1011,22 @@ void IsometricRenderSystem::batchTerrainTiles(
 
 void IsometricRenderSystem::submitRenderCommand(
     const AnyRenderCommand& command,
-    IQuadRenderer& quadRenderer)
+    IIsometricRenderer& quadRenderer)
 {
   std::visit([&](const auto& concrete)
              { submitConcreteRenderCommand(concrete, quadRenderer); },
              command);
+}
+
+void IsometricRenderSystem::setSunShadowStyle(SunShadowStyle style)
+{
+  m_quadRenderer.setSunShadowStyle(style);
+}
+
+void IsometricRenderSystem::addRenderProvider(IRenderProvider* provider)
+{
+  if (provider)
+    m_renderProviders.push_back(provider);
 }
 
 } // namespace sfs

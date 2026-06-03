@@ -4,7 +4,7 @@
 #include "SDL2/SDL_surface.h"
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/rendering/commands/commands.h"
-#include "engine/rendering/iQuadRenderer.h"
+#include "engine/rendering/iIsometricRenderer.h"
 #include "engine/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -25,11 +25,17 @@
 namespace sfs
 {
 
-class OpenGLQuadRenderer : public IQuadRenderer
+/**
+ * OpenGL backend for the isometric heightfield path. Implements the core 2D
+ * quad primitives (IQuadRenderer) and the isometric extension (IIsometricRenderer):
+ * the elevation heightmap, block-face geometry, sun shadows, the projected
+ * terrain/sprite shadow pipelines, and persistent world-projected decals.
+ */
+class OpenGLIsometricRenderer : public IIsometricRenderer
 {
 public:
-  OpenGLQuadRenderer(int windowWidth, int windowHeight);
-  ~OpenGLQuadRenderer() override;
+  OpenGLIsometricRenderer(int windowWidth, int windowHeight);
+  ~OpenGLIsometricRenderer() override;
 
   void initialize() override;
   void shutdown() override;
