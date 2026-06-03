@@ -205,6 +205,35 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
     quadRenderer.submit(concrete);
   }
 
+  // Persistent decals: apply any dirty-chunk uploads, then draw the visible
+  // chunks' persistent buffers + this frame's animating decals. The frame's
+  // projection + depth-range uniforms were set in flushBatches.
+  else if constexpr (std::is_same_v<T, DecalDrawCommand>)
+  {
+    for (const auto key : concrete.freeKeys)
+      quadRenderer.freeDecalChunk(key);
+
+    for (const auto& upload : concrete.uploads)
+      quadRenderer.uploadDecalChunk(
+          upload.key, upload.vertices.data(), upload.vertices.size());
+
+    for (const auto& append : concrete.appends)
+      quadRenderer.appendDecalChunk(
+          append.key, append.vertices.data(), append.vertices.size());
+
+    const unsigned int texture = resolveTexture(concrete.textureId);
+
+    if (texture != 0)
+    {
+      for (const auto key : concrete.drawKeys)
+        quadRenderer.drawDecalChunk(key, texture);
+
+      if (!concrete.dynamic.empty())
+        quadRenderer.drawDecalsDynamic(
+            concrete.dynamic.data(), concrete.dynamic.size(), texture);
+    }
+  }
+
   // Batched lit terrain tiles.
   //
   // These are grouped earlier by texture + lighting state to reduce

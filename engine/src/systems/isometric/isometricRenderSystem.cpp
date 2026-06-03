@@ -29,6 +29,7 @@
 #include <limits>
 #include <map>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 namespace sfs
@@ -52,7 +53,10 @@ float orderKey(const RenderOrder& order)
 // the quad(s) for quad commands, and per-vertex for merged surface meshes.
 // Higher sort-key = nearer the camera. Runs before batching so each quad keeps
 // its own depth even after tiles are merged into texture batches.
-void assignClipDepth(std::vector<AnyRenderCommand>& commands)
+//
+// Returns the frame's (minKey, maxKey) so the decal pipeline can normalise its
+// GPU-side depth identically (decals own their depth, computed in their shader).
+std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
 {
   ZoneScopedN("Render: assignClipDepth");
 
@@ -72,26 +76,33 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
         {
           using T = std::decay_t<decltype(concrete)>;
 
-          // UI/text draws with depth disabled, so it must not skew the range.
-          if (concrete.order.pass == RenderPass::UI)
+          // Decals own their depth (computed in the decal shader from the range
+          // this function returns), and have no quad to stamp -- skip them.
+          if constexpr (std::is_same_v<T, DecalDrawCommand>)
             return;
+          else
+          {
+            // UI/text draws with depth disabled, so it must not skew the range.
+            if (concrete.order.pass == RenderPass::UI)
+              return;
 
-          if constexpr (std::is_same_v<T, SurfaceCommand>)
+            if constexpr (std::is_same_v<T, SurfaceCommand>)
           {
             // A merged surface mesh carries a per-vertex world sort-key.
             for (const auto& vertex : concrete.vertices)
               includeKey(vertex.z);
           }
-          else if constexpr (requires { concrete.quad.quads; })
-          {
-            // A merged quad batch (terrain shadows) carries a per-quad world
-            // sort-key in z.
-            for (const auto& quad : concrete.quad.quads)
-              includeKey(quad.z);
-          }
-          else
-          {
-            includeKey(orderKey(concrete.order));
+            else if constexpr (requires { concrete.quad.quads; })
+            {
+              // A merged quad batch (terrain shadows) carries a per-quad world
+              // sort-key in z.
+              for (const auto& quad : concrete.quad.quads)
+                includeKey(quad.z);
+            }
+            else
+            {
+              includeKey(orderKey(concrete.order));
+            }
           }
         },
         command);
@@ -117,7 +128,11 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
         {
           using T = std::decay_t<decltype(concrete)>;
 
-          if constexpr (std::is_same_v<T, SurfaceCommand>)
+          // Decals carry no quad to remap; their shader derives depth from the
+          // returned range.
+          if constexpr (std::is_same_v<T, DecalDrawCommand>)
+            return;
+          else if constexpr (std::is_same_v<T, SurfaceCommand>)
           {
             // Remap each vertex's world sort-key to clip-space z in place.
             for (auto& vertex : concrete.vertices)
@@ -137,6 +152,8 @@ void assignClipDepth(std::vector<AnyRenderCommand>& commands)
         },
         command);
   }
+
+  return {minKey, maxKey};
 }
 
 } // namespace
@@ -569,7 +586,7 @@ void IsometricRenderSystem::flushBatches()
 
   // Stamp each quad's clip-space depth before batching, so tiles merged by
   // texture occlude correctly via the depth buffer.
-  assignClipDepth(commands);
+  const auto [depthMin, depthMax] = assignClipDepth(commands);
 
   batchTerrainTiles(commands);
   sortRenderCommands(commands);
@@ -577,6 +594,28 @@ void IsometricRenderSystem::flushBatches()
   quadRenderer.begin();
 
   quadRenderer.setSurfaceTime(static_cast<float>(SDL_GetTicks()) / 1000.0f);
+
+  // Hand the decal pipeline the projection + the frame's depth range so its
+  // shader projects world-space decals and normalises clip-z exactly like the
+  // rest of the scene (so decals occlude against terrain correctly).
+  if (m_context.projection)
+  {
+    const IsometricProjection& proj = *m_context.projection;
+    const float range = depthMax - depthMin;
+
+    DecalFrameParams dp;
+    dp.tileWidth = static_cast<float>(proj.tileWidth);
+    dp.tileHeight = static_cast<float>(proj.tileHeight);
+    dp.worldScale = proj.worldScale;
+    dp.zoom = proj.zoom;
+    dp.cameraIso = proj.cameraIso;
+    dp.screenCenter = proj.screenCenter;
+    dp.elevationStep = static_cast<float>(proj.elevationStep);
+    dp.depthMin = depthMin;
+    dp.depthInvRange = range > 1e-6f ? 1.0f / range : 0.0f;
+
+    quadRenderer.setDecalFrameParams(dp);
+  }
 
   {
     ZoneScopedN("Render: submit loop");

@@ -5,11 +5,31 @@
 #include "engine/rendering/blendMode.h"
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/quads.h"
+#include "engine/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace sfs
 {
+
+// Per-frame inputs for the persistent decal pipeline: enough of the isometric
+// projection (kept as plain scalars so this stays backend/projection-agnostic)
+// for the decal vertex shader to project world-space decals, plus the frame's
+// depth-key range so its clip-z matches assignClipDepth's normalisation.
+struct DecalFrameParams
+{
+  float tileWidth = 0.0f;
+  float tileHeight = 0.0f;
+  float worldScale = 1.0f;
+  float zoom = 1.0f;
+  glm::vec2 cameraIso{0.0f, 0.0f};
+  glm::vec2 screenCenter{0.0f, 0.0f};
+  float elevationStep = 8.0f;
+  float depthMin = 0.0f;
+  float depthInvRange = 0.0f;
+};
 
 // Backend-agnostic quad renderer interface implemented by concrete backends.
 class IQuadRenderer
@@ -52,6 +72,29 @@ public:
                                    unsigned int texture,
                                    BlendMode blend,
                                    bool depthTested) = 0;
+
+  // --- Persistent decals (stains) ---
+  // Decals are stored world-space in per-chunk GPU buffers and projected in the
+  // decal vertex shader, so settled ones are never rebuilt per frame.
+  //
+  // Set once per frame (projection + depth range) before drawing decals.
+  virtual void setDecalFrameParams(const DecalFrameParams& params) = 0;
+  // Replace a chunk's persistent buffer (called only when its settled set changes).
+  virtual void uploadDecalChunk(std::int64_t key,
+                                const DecalVertex* vertices,
+                                std::size_t count) = 0;
+  // Append new vertices to a chunk's persistent buffer (grows it as needed) so
+  // adding decals is O(new), not O(chunk total) -- keeps sustained painting flat.
+  virtual void appendDecalChunk(std::int64_t key,
+                                const DecalVertex* vertices,
+                                std::size_t count) = 0;
+  virtual void freeDecalChunk(std::int64_t key) = 0;
+  // Draw a chunk's persistent buffer / the per-frame animating decals with the
+  // given texture. Depth-tested against the scene, no depth write, alpha blended.
+  virtual void drawDecalChunk(std::int64_t key, unsigned int texture) = 0;
+  virtual void drawDecalsDynamic(const DecalVertex* vertices,
+                                 std::size_t count,
+                                 unsigned int texture) = 0;
 
   // Immediate-mode draw (text, UI, simple sprites), bypassing the batch queue.
   virtual void drawImmediate(const TexturedQuad& command) = 0;

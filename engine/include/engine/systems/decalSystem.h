@@ -5,6 +5,7 @@
 #include "engine/rendering/commands/commands.h"
 #include "engine/rendering/isometricRenderContext.h" // IVec2Hash
 #include "engine/rendering/renderProvider.h"
+#include "engine/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
@@ -17,30 +18,27 @@
 namespace sfs
 {
 
-// Persistent terrain stains (blood, scorch, ...). Receives decals from collisions
-// (IDecalSink), stores them chunked so they survive terrain streaming, and emits
-// batched draw commands for the chunks near the camera (RenderProvider). Reuses
-// the particle GL pipeline -- decals are unlit, depth-tested, alpha quads.
+// Persistent terrain stains (blood, ...). Decals are stored chunked in WORLD
+// space; settled ones live in the renderer's persistent per-chunk GPU buffers
+// and are projected on the GPU, so they cost nothing to re-derive as the camera
+// moves. Only the few animating decals (running wall drips, fading water) are
+// rebuilt per frame into a small dynamic buffer.
 //
-// The store is the source of truth (so decals are removable); a future
-// optimisation can bake chunks into textures for extreme densities.
+// Emits one DecalDrawCommand/frame: dirty-chunk uploads + visible chunk keys +
+// the animating vertices + chunks to free. The renderer holds the heavy data.
 class DecalSystem
     : public System,
       public IDecalSink,
-      public RenderProvider<IsometricRenderContext, ParticleBatchCommand>
+      public RenderProvider<IsometricRenderContext, DecalDrawCommand>
 {
 public:
-  // IDecalSink
-  void addDecal(const DecalSpawn& spawn) override;
+  void addDecal(const DecalSpawn& spawn) override; // IDecalSink
 
-  // Removal. clearAll wipes everything; clearRegion wipes a tile rect (inclusive
-  // min, exclusive max).
   void clearAll();
   void clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile);
 
   std::size_t decalCount() const;
 
-  // RenderProvider
   void computeCommands(const IsometricRenderContext& context) override;
 
 protected:
@@ -53,35 +51,55 @@ private:
     float elevation = 0.0f;
     DecalSurface surface = DecalSurface::Ground;
     uint8_t wallSide = 0;
-    float wallBottom = 0.0f; // elevation of the wall face base (Wall only)
+    float wallBottom = 0.0f;
     float size = 0.15f;
     float rotation = 0.0f;
     glm::vec4 color{0.0f, 0.0f, 0.0f, 1.0f};
     const std::string* textureId = nullptr;
-    float fadeRate = 0.0f;   // 0 = permanent; > 0 = linear alpha decay/sec
-    float dripSpeed = 0.0f;  // wall drips: levels/sec the streak runs down
-    float sortKey = 0.0f;    // wall drips: co-sort key of the host block
+    float fadeRate = 0.0f;
+    float dripSpeed = 0.0f;
+    float sortKey = 0.0f; // wall co-sort key (host block); ground derives its own
     float age = 0.0f;
-    bool settled = false;    // wall drip finished running down -> now permanent
+    bool settled = false;
+  };
+
+  struct ChunkData
+  {
+    std::vector<Decal> decals;
+    // New static verts to append to the GPU buffer next frame (the common path:
+    // a ground decal landed or a drip settled). O(new), not O(chunk total).
+    std::vector<DecalVertex> pendingStatic;
+    // A static decal was removed -> the GPU buffer must be rebuilt from scratch
+    // (rare: clearRegion). Takes priority over pending appends.
+    bool needsFullRebuild = false;
+    int animatingCount = 0; // decals still animating (drips/fading water); when
+                            // 0 the chunk needs no per-frame work
   };
 
   static constexpr int kChunkTiles = 16;
 
   glm::ivec2 chunkOf(const glm::vec2& worldPos) const;
+  static std::int64_t chunkKey(glm::ivec2 chunk);
+
   const std::string* internTexture(const std::string& id);
 
-  void appendDecalQuad(const Decal& decal,
-                       const IsometricRenderContext& context,
-                       std::vector<ParticleQuad>& out) const;
+  static bool isStatic(const Decal& d);
 
-  std::unordered_map<glm::ivec2, std::vector<Decal>, IVec2Hash> m_chunks;
+  // Build a decal's world-space vertices (ground square / wall streak + cap) into
+  // `out`. Uses the cached tile size to size the wall cap to read round on screen.
+  void buildDecalVerts(const Decal& decal, std::vector<DecalVertex>& out) const;
 
-  // Stable storage for texture-id strings, so the pointers stored on decals and
-  // handed to render commands stay valid for the system's lifetime.
-  std::unordered_set<std::string> m_textureIds;
+  std::unordered_map<glm::ivec2, ChunkData, IVec2Hash> m_chunks;
+  std::unordered_set<std::string> m_textureIds; // stable id storage
+  std::vector<std::int64_t> m_pendingFree;       // chunks freed since last frame
 
-  std::size_t m_fadingCount = 0;    // decals with fadeRate > 0 (water)
-  std::size_t m_animatingCount = 0; // wall drips still running down (not settled)
+  // Cached from the projection each frame (constant in practice) so geometry can
+  // be built at add/settle time, not only during computeCommands.
+  float m_tileWidth = 32.0f;
+  float m_elevationStep = 8.0f;
+
+  std::size_t m_fadingCount = 0;    // fading (water) decals
+  std::size_t m_animatingCount = 0; // running wall drips (not yet settled)
 };
 
 } // namespace sfs

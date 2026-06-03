@@ -9,6 +9,8 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <tuple>
@@ -66,6 +68,19 @@ public:
                            BlendMode blend,
                            bool depthTested) override;
 
+  void setDecalFrameParams(const DecalFrameParams& params) override;
+  void uploadDecalChunk(std::int64_t key,
+                        const DecalVertex* vertices,
+                        std::size_t count) override;
+  void appendDecalChunk(std::int64_t key,
+                        const DecalVertex* vertices,
+                        std::size_t count) override;
+  void freeDecalChunk(std::int64_t key) override;
+  void drawDecalChunk(std::int64_t key, unsigned int texture) override;
+  void drawDecalsDynamic(const DecalVertex* vertices,
+                         std::size_t count,
+                         unsigned int texture) override;
+
   void
   drawImmediate(const TexturedQuad& command) override; // Text, UI, sprites
 
@@ -98,12 +113,14 @@ private:
     Textured,
     Freeform,
     LitSprite,
-    Particle
+    Particle,
+    Decal
   };
 
   unsigned int createSolidShaderProgram() const;
   unsigned int createSpriteShadowShaderProgram() const;
   unsigned int createParticleShaderProgram() const;
+  unsigned int createDecalShaderProgram() const;
 
   void beginPipeline(Pipeline stage);
   void flushCurrentPipeline();
@@ -112,6 +129,15 @@ private:
   void flushLit();
   void flushSpriteShadow();
   void flushParticles();
+
+  // Bind the decal program + state (flushing any pending pipeline first). Decals
+  // draw immediately from persistent/dynamic buffers, so there's nothing to
+  // accumulate -- this just makes the decal pipeline current once.
+  void beginDecalPipeline();
+
+  // Set the DecalVertex attribute layout on the currently-bound VAO+VBO (shared
+  // by the dynamic buffer and every persistent chunk buffer).
+  void configureDecalAttribs();
 
   // Binds the terrain heightmap to texture unit 2 and pushes its uniforms on the
   // currently-bound program. Every path that does point-light occlusion must call
@@ -392,6 +418,38 @@ private:
   std::map<std::tuple<unsigned int, BlendMode, bool>,
            std::vector<ParticleVertex>>
       m_particleBatches;
+
+  // --- Persistent decals ---
+  // Decals are stored world-space and projected in the vertex shader, so settled
+  // ones live in per-chunk GPU buffers and never rebuild on camera moves.
+  struct DecalChunkBuffer
+  {
+    unsigned int vao = 0;
+    unsigned int vbo = 0;
+    int count = 0;    // vertices in use
+    int capacity = 0; // vertices the VBO can hold before it must grow
+  };
+
+  // Create the chunk buffer if missing; returns it.
+  DecalChunkBuffer& ensureDecalChunk(std::int64_t key);
+
+  unsigned int decalShaderProgram = 0;
+  unsigned int decalDynamicVao = 0;
+  unsigned int decalDynamicVbo = 0;
+
+  int uDecalTextureLocation = -1;
+  int uDecalTileSizeLocation = -1;     // (tileWidth, tileHeight)
+  int uDecalWorldScaleLocation = -1;
+  int uDecalZoomLocation = -1;
+  int uDecalCameraIsoLocation = -1;
+  int uDecalScreenCenterLocation = -1;
+  int uDecalElevationStepLocation = -1;
+  int uDecalNdcScaleLocation = -1;
+  int uDecalDepthMinLocation = -1;
+  int uDecalDepthInvRangeLocation = -1;
+
+  DecalFrameParams m_decalParams;
+  std::unordered_map<std::int64_t, DecalChunkBuffer> m_decalChunks;
 };
 
 } // namespace sfs
