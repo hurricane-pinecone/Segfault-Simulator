@@ -6,6 +6,7 @@
 #include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
+#include "engine/rendering/modules/blockGeometry.h"
 #include "engine/rendering/modules/decals.h"
 #include "engine/rendering/modules/isometricWater.h"
 #include "engine/rendering/modules/particles.h"
@@ -43,8 +44,8 @@ void GameScene::onInit()
   addSystem<sfs::CameraSystem>();
   addSystem<TerrainGeneratorSystem>(*this);
 
-  auto& renderer = addSystem<sfs::IsometricRenderSystem>(m_assetStore,
-                                                         quadRenderer());
+  auto& renderer =
+      addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
 
   // Compose the render features as modules; registration is the enable. Terrain
   // tiles stay billboards by default -- block geometry, water, and shadows are
@@ -52,12 +53,14 @@ void GameScene::onInit()
   renderer.withModules<sfs::TerrainShadow,
                        sfs::SpriteShadow,
                        sfs::IsometricWater,
+                       sfs::BlockGeometry,
                        sfs::Decals>();
 
   // Terrain and sprite shadows share one length so equal heights match.
   constexpr float shadowMaxLength = 3.5f;
-  renderer.module<sfs::TerrainShadow>()->shadowSettings().terrainShadowMaxLength =
-      shadowMaxLength;
+  renderer.module<sfs::TerrainShadow>()
+      ->shadowSettings()
+      .terrainShadowMaxLength = shadowMaxLength;
   renderer.module<sfs::SpriteShadow>()->shadowSettings().spriteShadowMaxLength =
       shadowMaxLength;
 
@@ -159,10 +162,9 @@ void GameScene::onRender()
   textRenderer().drawText(
       20,
       80,
-      "Particles: " +
-          std::to_string(getSystem<sfs::IsometricRenderSystem>()
-                             .module<sfs::Particles>()
-                             ->liveParticleCount()));
+      "Particles: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
+                                         .module<sfs::Particles>()
+                                         ->liveParticleCount()));
 
   if (m_hasHoveredTile)
   {

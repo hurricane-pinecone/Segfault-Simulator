@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/rendering/modules/blockGeometry.h"
-#include "engine/rendering/modules/decals.h"
 #include "engine/rendering/modules/isometricWater.h"
 #include "engine/rendering/modules/spriteShadow.h"
 #include "engine/rendering/modules/terrainShadow.h"
