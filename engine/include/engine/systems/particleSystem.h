@@ -16,6 +16,21 @@
 namespace sfs
 {
 
+// Per-spawn physics override, layered on top of the effect's own emission. Lets
+// a caller inject the momentum of whatever produced the burst (a bullet hit, an
+// explosion, a footstep) so the same effect can spray in any direction.
+struct ParticleSpawnParams
+{
+  // Added to every emitted particle's initial velocity (world tiles/sec, and
+  // height/sec for Z). This is the inherited/impact momentum.
+  glm::vec2 velocity{0.0f, 0.0f};
+  float velocityZ = 0.0f;
+
+  // When true and `velocity` is non-zero, the emission spread/cone is centred on
+  // the velocity's direction instead of +X, so the spray fans along the impact.
+  bool aimAlongVelocity = true;
+};
+
 // Engine particle system. Simulates particles in update() and emits batched draw
 // commands in computeCommands(), pulled into the isometric render queue by
 // IsometricRenderSystem (the same RenderProvider seam used by shadows/water), so
@@ -35,12 +50,17 @@ public:
   bool hasEffect(const std::string& name) const;
 
   // Fire a one-shot burst at a world tile position sitting on the given ground
-  // elevation level. Returns false if the effect name is unknown.
-  bool
-  spawnBurst(const std::string& effect, glm::vec2 worldPos, float elevation = 0.0f);
+  // elevation level. The optional spawn params inject impact momentum/direction.
+  // Returns false if the effect name is unknown.
+  bool spawnBurst(const std::string& effect,
+                  glm::vec2 worldPos,
+                  float elevation = 0.0f,
+                  const ParticleSpawnParams& spawn = {});
 
   // Fire a one-shot burst of a SimulationSpace::Screen effect at a screen pixel.
-  bool spawnScreenBurst(const std::string& effect, glm::vec2 screenPos);
+  bool spawnScreenBurst(const std::string& effect,
+                        glm::vec2 screenPos,
+                        const ParticleSpawnParams& spawn = {});
 
   int liveParticleCount() const;
 
@@ -64,6 +84,12 @@ private:
     float groundLevel = 0.0f;
     float spawnHeightBias = 0.0f; // emitter height offset added to startHeight
 
+    // Impact momentum added to each emitted particle, and the spread centre
+    // (radians) the emission fans around (0 = +X). Set from ParticleSpawnParams.
+    glm::vec2 baseVelocity{0.0f, 0.0f};
+    float baseVelocityZ = 0.0f;
+    float aimAngle = 0.0f;
+
     // Continuous component emitters track an entity and re-emit; a finished
     // entity (removed/disabled) stops emitting and drains.
     bool emitting = true;
@@ -79,6 +105,8 @@ private:
 
   EffectId effectIdOf(const std::string& name) const;
 
+  static void applySpawnParams(EmitterInstance& inst,
+                               const ParticleSpawnParams& spawn);
   void emit(EmitterInstance& inst, const ParticleEffectDesc& desc, int count);
   void
   stepInstance(EmitterInstance& inst, const ParticleEffectDesc& desc, float dt);
