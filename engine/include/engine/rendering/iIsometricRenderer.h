@@ -100,8 +100,15 @@ public:
                                    glm::vec3 sunDirection,
                                    float diffuseStrength) = 0;
 
-  /** Select the sun-shadow sampling style for the geometry path. */
+  /** Select the sun-shadow sampling style for the heightmap march. */
   virtual void setSunShadowStyle(SunShadowStyle style) = 0;
+
+  /**
+   * Enable or disable the in-shader heightmap sun-shadow march (lit + geometry
+   * pipelines). Disable when terrain shadows come from another technique (e.g.
+   * the projected shadow system) to avoid double shadowing.
+   */
+  virtual void setSunShadowMarchEnabled(bool enabled) = 0;
 
   /** Queue a terrain shadow quad (stencil-merged so overlaps do not stack). */
   virtual void submitTerrainShadow(const Quad& command) = 0;

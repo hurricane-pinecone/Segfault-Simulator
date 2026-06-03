@@ -101,6 +101,8 @@ void OpenGLQuadRenderer::initialize()
   uAmbientLocation = glGetUniformLocation(shaderProgram, "uAmbient");
   uDiffuseStrengthLocation =
       glGetUniformLocation(shaderProgram, "uDiffuseStrength");
+  uSunShadowEnabledLocation =
+      glGetUniformLocation(shaderProgram, "uSunShadowEnabled");
   uLightColorLocation = glGetUniformLocation(shaderProgram, "uLightColor");
   uLightCountLocation = glGetUniformLocation(shaderProgram, "uLightCount");
   uLightPositionsLocation =
@@ -955,6 +957,7 @@ void OpenGLQuadRenderer::flushLit()
   glUniform1f(uLightIntensityLocation, key.lightIntensity);
   glUniform1f(uAmbientLocation, key.ambient);
   glUniform1f(uDiffuseStrengthLocation, key.diffuseStrength);
+  glUniform1i(uSunShadowEnabledLocation, m_sunShadowMarchEnabled ? 1 : 0);
 
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
 
@@ -1185,6 +1188,7 @@ void OpenGLQuadRenderer::drawQuadInternal(
   glUniform1f(uLightIntensityLocation, lightIntensity);
   glUniform1f(uAmbientLocation, ambient);
   glUniform1f(uDiffuseStrengthLocation, diffuseStrength);
+  glUniform1i(uSunShadowEnabledLocation, m_sunShadowMarchEnabled ? 1 : 0);
 
   glUniform4f(uColorLocation,
               tint.r / 255.0f,
@@ -1335,6 +1339,7 @@ uniform int uHasNormalMap;
 uniform vec3 uLightDirection;
 uniform float uAmbient;
 uniform float uDiffuseStrength;
+uniform int uSunShadowEnabled; // 1 = cast terrain shadows via the heightmap march
 
 uniform int uLightCount;
 uniform vec2 uLightPositions[MAX_LIGHTS];
@@ -1646,6 +1651,45 @@ vec3 calculatePointLighting(vec3 normal)
   return blendedColor * cappedAmount;
 }
 
+// Directional sun occlusion against the terrain heightmap: 1 = lit, 0 = in a
+// cast terrain shadow. Marches from the fragment along the sun azimuth and
+// compares the terrain's max horizon angle to the sun's altitude -- the same
+// horizon test the point lights use, fixed to the sun. Inert when no heightmap
+// is uploaded (uHeightmapSize 0), so a flat-2D game casts no terrain shadows.
+float sunVisibility()
+{
+  if (uHeightmapSize.x < 1.0)
+    return 1.0;
+
+  vec2 dir = uLightDirection.xy;
+  float horiz = length(dir);
+  if (horiz < 1.0e-4)
+    return 1.0;
+
+  dir /= horiz;
+  float sunSlope = uLightDirection.z / horiz; // rise (levels) per tile
+
+  float fragGround = terrainLevelAt(vWorldPosition);
+  if (fragGround < -1.0e8)
+    return 1.0; // outside the heightmap window
+
+  const int STEPS = 24;
+  const float kSunShadowMaxDist = 16.0; // tiles
+  float maxAngle = -1.0e9;
+  for (int s = 0; s < STEPS; s++)
+  {
+    float d = kSunShadowMaxDist * (float(s) + 1.0) / float(STEPS);
+    if (d < 0.5)
+      continue;
+    float th = terrainLevelAt(vWorldPosition + dir * d);
+    if (th < -1.0e8)
+      continue;
+    maxAngle = max(maxAngle, (th - fragGround) / d);
+  }
+
+  return 1.0 - smoothstep(0.0, 0.30, maxAngle - sunSlope);
+}
+
 void main()
 {
   vec4 albedo = texture(uTexture, vUv);
@@ -1721,7 +1765,15 @@ else if (uSurfaceEffect == 4) // Sand
   float litLevel = ambientLevel + sunDiffuse * uDiffuseStrength;
   float shadedLevel = min(1.0 - uDiffuseStrength, uAmbient);
 
-  vec3 sunlight = vec3(mix(litLevel, shadedLevel, shade));
+  float lit = mix(litLevel, shadedLevel, shade);
+
+  // Cast terrain shadows (heightmap horizon-march) pull the fragment toward its
+  // shaded level, so a tile or sprite in another block's shadow loses direct sun
+  // but keeps ambient. Disabled when the projected shadow technique is selected.
+  if (uSunShadowEnabled == 1)
+    lit = mix(shadedLevel, lit, sunVisibility());
+
+  vec3 sunlight = vec3(lit);
 
   sunlight = max(sunlight, vec3(0.03));
 

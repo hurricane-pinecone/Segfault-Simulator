@@ -538,10 +538,11 @@ void IsometricRenderSystem::render()
     m_renderQueue.submit(command);
   }
 
-  // The sun shadow map (geometry path) replaces the projected terrain shadows,
-  // so skip this provider when geometry is active to avoid doubling them up.
+  // Projected terrain shadows are pulled only when that sun-shadow technique is
+  // selected; the Heightmap mode produces them in-shader instead.
   if (const auto shadowSystem = registry->tryGetSystem<IsometricShadowSystem>();
-      !geometryTilesActive && shadowSystem && shadowSystem->enabled())
+      m_sunShadowMode == SunShadowMode::Projected && shadowSystem &&
+      shadowSystem->enabled())
   {
     shadowSystem->computeCommands(m_context);
 
@@ -1021,6 +1022,14 @@ void IsometricRenderSystem::submitRenderCommand(
 void IsometricRenderSystem::setSunShadowStyle(SunShadowStyle style)
 {
   m_quadRenderer.setSunShadowStyle(style);
+}
+
+void IsometricRenderSystem::setSunShadowMode(SunShadowMode mode)
+{
+  m_sunShadowMode = mode;
+  // The in-shader heightmap march and the projected shadow system are mutually
+  // exclusive; the projected system's pull is gated per frame in render().
+  m_quadRenderer.setSunShadowMarchEnabled(mode == SunShadowMode::Heightmap);
 }
 
 void IsometricRenderSystem::addRenderProvider(IRenderProvider* provider)

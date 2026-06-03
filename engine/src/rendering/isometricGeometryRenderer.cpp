@@ -1001,6 +1001,8 @@ void IsometricGeometryRenderer::beginGeometryPipeline()
 
   glUniform1i(glGetUniformLocation(geometryShaderProgram, "uShadowSharp"),
               m_sunShadowStyle == SunShadowStyle::Sharp ? 1 : 0);
+  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uSunShadowEnabled"),
+              m_sunShadowMarchEnabled ? 1 : 0);
 
   glActiveTexture(GL_TEXTURE0);
 }
@@ -1635,7 +1637,8 @@ uniform float uAmbient;
 uniform vec3 uLightDirection;
 uniform float uDiffuseStrength;
 uniform int uSurfaceEffect;
-uniform int uShadowSharp; // 0 = smooth (bilinear), 1 = sharp (per-tile DDA)
+uniform int uShadowSharp;      // 0 = smooth (bilinear), 1 = sharp (per-tile DDA)
+uniform int uSunShadowEnabled; // 1 = cast terrain shadows via the heightmap march
 
 uniform int uLightCount;
 uniform vec2 uLightPositions[MAX_LIGHTS];
@@ -1929,9 +1932,10 @@ void main()
   float lit = mix(litLevel, shadedLevel, shade);
 
   // Cast sun shadows pull the fragment toward its shaded (ambient-only) level,
-  // so a shadowed surface keeps ambient but loses the directional sun.
-  float sunVis = sunVisibility(vGround);
-  lit = mix(shadedLevel, lit, sunVis);
+  // so a shadowed surface keeps ambient but loses the directional sun. Disabled
+  // when the projected shadow technique is selected.
+  if (uSunShadowEnabled == 1)
+    lit = mix(shadedLevel, lit, sunVisibility(vGround));
 
   vec3 sunlight = vec3(lit);
   sunlight = max(sunlight, vec3(0.03));

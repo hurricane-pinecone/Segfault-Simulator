@@ -54,6 +54,11 @@ public:
     m_sunShadowStyle = style;
   }
 
+  void setSunShadowMarchEnabled(bool enabled) override
+  {
+    m_sunShadowMarchEnabled = enabled;
+  }
+
   void submitTerrainShadow(const Quad& command) override
   {
     initialize();

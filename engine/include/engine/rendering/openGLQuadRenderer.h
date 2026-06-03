@@ -147,6 +147,11 @@ protected:
 
   bool initialized = false;
 
+  // When true, lit/geometry draws cast terrain shadows via the heightmap horizon
+  // march; when false, that march is skipped (e.g. the projected shadow technique
+  // is in use). Set per frame by the render system; read by both shaders.
+  bool m_sunShadowMarchEnabled = true;
+
   PointLightSet m_pointLights;
 
   // Solid color pipeline (terrain shadows, debug fills). Shared with the iso
@@ -269,6 +274,7 @@ private:
   int uLightIntensityLocation = -1;
   int uAmbientLocation = -1;
   int uDiffuseStrengthLocation = -1;
+  int uSunShadowEnabledLocation = -1;
   int uTextureLocation = -1;
   int uColorLocation = -1;
   int uLightColorLocation = -1;
