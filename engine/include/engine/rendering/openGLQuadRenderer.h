@@ -272,13 +272,12 @@ private:
   int uNormalTextureLocation = -1;
   int uHasNormalMapLocation = -1;
   int uLightDirectionLocation = -1;
-  int uLightIntensityLocation = -1;
+  int uLightColorLocation = -1; // sun/ambient scene tint
   int uAmbientLocation = -1;
   int uDiffuseStrengthLocation = -1;
   int uSunShadowEnabledLocation = -1;
   int uTextureLocation = -1;
   int uColorLocation = -1;
-  int uLightColorLocation = -1;
   GLint uLightCountLocation = -1;
   GLint uLightPositionsLocation = -1;
   GLint uLightColorsLocation = -1;
@@ -287,7 +286,6 @@ private:
   GLint uLightHeightsLocation = -1;
   GLint uLightGroundLevelsLocation = -1;
   int uSurfaceEffectLocation = -1;
-  int uSurfaceEffectTimeLocation = -1;
 
   int uHeightmapLocation = -1;
   int uHeightmapOriginLocation = -1;

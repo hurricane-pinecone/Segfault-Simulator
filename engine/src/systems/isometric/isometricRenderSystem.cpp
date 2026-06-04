@@ -15,10 +15,10 @@
 #include "engine/logger/logger.h"
 #include "engine/utils/profiling.h"
 
-#include "engine/rendering/renderPass.h"
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/rendering/modules/blockGeometry.h"
 #include "engine/rendering/modules/terrainShadow.h"
+#include "engine/rendering/renderPass.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <algorithm>
@@ -272,12 +272,14 @@ void IsometricRenderSystem::render()
   // once for all sprites. Defaults (no ambient) are a straight-up light at full
   // ambient with no diffuse.
   glm::vec3 sunDirection{0.0f, 0.0f, 1.0f};
+  glm::vec3 sunColor{1.0f, 1.0f, 1.0f};
   float ambientLevel = 1.0f;
   float sunDiffuseStrength = 0.0f;
 
   if (ambientLighting)
   {
     sunDirection = ambientLighting->direction;
+    sunColor = ambientLighting->color;
     ambientLevel = ambientLighting->ambient;
     sunDiffuseStrength = ambientLighting->diffuseStrength;
   }
@@ -509,6 +511,7 @@ void IsometricRenderSystem::render()
     }
 
     command.quad.lightDirection = sunDirection;
+    command.quad.lightColor = sunColor;
     command.quad.ambient = ambientLevel;
     command.quad.diffuseStrength = sunDiffuseStrength;
 

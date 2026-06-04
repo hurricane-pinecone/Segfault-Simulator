@@ -94,12 +94,11 @@ bool OpenGLQuadRenderer::initialize()
   uNormalTextureLocation = SFS_GL_UNIFORM(shaderProgram, "uNormalTexture");
   uHasNormalMapLocation = SFS_GL_UNIFORM(shaderProgram, "uHasNormalMap");
   uLightDirectionLocation = SFS_GL_UNIFORM(shaderProgram, "uLightDirection");
-  uLightIntensityLocation = SFS_GL_UNIFORM(shaderProgram, "uLightIntensity");
+  uLightColorLocation = SFS_GL_UNIFORM(shaderProgram, "uLightColor");
   uAmbientLocation = SFS_GL_UNIFORM(shaderProgram, "uAmbient");
   uDiffuseStrengthLocation = SFS_GL_UNIFORM(shaderProgram, "uDiffuseStrength");
   uSunShadowEnabledLocation =
       SFS_GL_UNIFORM(shaderProgram, "uSunShadowEnabled");
-  uLightColorLocation = SFS_GL_UNIFORM(shaderProgram, "uLightColor");
   uLightCountLocation = SFS_GL_UNIFORM(shaderProgram, "uLightCount");
   uLightPositionsLocation = SFS_GL_UNIFORM(shaderProgram, "uLightPositions[0]");
   uLightColorsLocation = SFS_GL_UNIFORM(shaderProgram, "uLightColors[0]");
@@ -109,7 +108,6 @@ bool OpenGLQuadRenderer::initialize()
   uLightHeightsLocation = SFS_GL_UNIFORM(shaderProgram, "uLightHeights[0]");
   uLightGroundLevelsLocation =
       SFS_GL_UNIFORM(shaderProgram, "uLightGroundLevels[0]");
-  uSurfaceEffectTimeLocation = SFS_GL_UNIFORM(shaderProgram, "uTime");
   uSurfaceEffectLocation = SFS_GL_UNIFORM(shaderProgram, "uSurfaceEffect");
   uHeightmapLocation = SFS_GL_UNIFORM(shaderProgram, "uHeightmap");
   uHeightmapOriginLocation = SFS_GL_UNIFORM(shaderProgram, "uHeightmapOrigin");
@@ -294,13 +292,12 @@ bool OpenGLQuadRenderer::initialize()
   glUniform1i(uHasNormalMapLocation, 0);
 
   glUniform3f(uLightDirectionLocation, 0.0f, 0.0f, 1.0f);
-  glUniform1f(uLightIntensityLocation, 1.0f);
+  glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
 
   // Terrain/sprite default ambient light.
   glUniform1f(uAmbientLocation, 0.18f);
   glUniform1f(uDiffuseStrengthLocation, 0.85f);
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
-  glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
   glUniform1i(uSurfaceEffectLocation, 0);
 
   glUseProgram(0);
@@ -949,22 +946,19 @@ void OpenGLQuadRenderer::flushLit()
               key.lightDirection.x,
               key.lightDirection.y,
               key.lightDirection.z);
+  glUniform3f(uLightColorLocation,
+              key.lightColor.x,
+              key.lightColor.y,
+              key.lightColor.z);
 
-  glUniform1f(uLightIntensityLocation, key.lightIntensity);
   glUniform1f(uAmbientLocation, key.ambient);
   glUniform1f(uDiffuseStrengthLocation, key.diffuseStrength);
   glUniform1i(uSunShadowEnabledLocation, m_sunShadowMarchEnabled ? 1 : 0);
 
   glUniform4f(uColorLocation, 1.0f, 1.0f, 1.0f, 1.0f);
 
-  glUniform3f(uLightColorLocation,
-              key.lightColor.x,
-              key.lightColor.y,
-              key.lightColor.z);
-
   glUniform1i(uLightCountLocation, m_pointLights.count);
 
-  glUniform1f(uSurfaceEffectTimeLocation, m_surfaceTime);
   glUniform1i(uSurfaceEffectLocation, key.surfaceEffect);
 
   if (m_pointLights.count > 0)
@@ -1182,8 +1176,8 @@ void OpenGLQuadRenderer::drawQuadInternal(
               lightDirection.x,
               lightDirection.y,
               lightDirection.z);
+  glUniform3f(uLightColorLocation, lightColor.x, lightColor.y, lightColor.z);
 
-  glUniform1f(uLightIntensityLocation, lightIntensity);
   glUniform1f(uAmbientLocation, ambient);
   glUniform1f(uDiffuseStrengthLocation, diffuseStrength);
   glUniform1i(uSunShadowEnabledLocation, m_sunShadowMarchEnabled ? 1 : 0);
@@ -1193,7 +1187,6 @@ void OpenGLQuadRenderer::drawQuadInternal(
               tint.g / 255.0f,
               tint.b / 255.0f,
               tint.a / 255.0f);
-  glUniform3f(uLightColorLocation, lightColor.x, lightColor.y, lightColor.z);
   const int clampedLightCount = std::clamp(lightCount, 0, MaxShaderLights);
 
   glUniform1i(uLightCountLocation, clampedLightCount);
@@ -1336,6 +1329,7 @@ uniform int uUseLighting;
 uniform int uHasNormalMap;
 
 uniform vec3 uLightDirection;
+uniform vec3 uLightColor; // sun/ambient scene tint
 uniform float uAmbient;
 uniform float uDiffuseStrength;
 uniform int uSunShadowEnabled; // 1 = cast terrain shadows via the heightmap march
@@ -1348,7 +1342,6 @@ uniform float uLightRadii[MAX_LIGHTS];
 uniform float uLightHeights[MAX_LIGHTS];
 uniform float uLightGroundLevels[MAX_LIGHTS]; // terrain level under each light
 
-uniform float uTime;
 uniform int uSurfaceEffect;
 
 // Terrain heightmap: one texel per tile holding the tile elevation in levels.
@@ -1772,7 +1765,7 @@ else if (uSurfaceEffect == 4) // Sand
   if (uSunShadowEnabled == 1)
     lit = mix(shadedLevel, lit, sunVisibility());
 
-  vec3 sunlight = vec3(lit);
+  vec3 sunlight = vec3(lit) * uLightColor;
 
   sunlight = max(sunlight, vec3(0.03));
 
