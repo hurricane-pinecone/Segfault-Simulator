@@ -247,7 +247,7 @@ inline static void renderDebugControls(Scene* scene)
     // render mode.
     render.forEachModule(
         [](std::type_index type,
-           IRenderModule& module,
+           IRenderModule<IsometricRenderContext>& module,
            const IsometricRenderContext& context)
         {
           const std::vector<ModuleSetting> moduleSettings =

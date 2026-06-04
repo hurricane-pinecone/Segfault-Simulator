@@ -223,7 +223,7 @@ inline sfs::ParticleEffectDesc makeBloodDripEffect()
 }
 
 // Register the gore layers under the names spawnGore() fires.
-inline void registerGoreEffects(sfs::Particles& particles)
+inline void registerGoreEffects(sfs::ParticleEngine& particles)
 {
   particles.registerEffect("blood_mist", makeBloodMistEffect());
   particles.registerEffect("blood_spray", makeBloodSprayEffect());
@@ -236,7 +236,7 @@ inline void registerGoreEffects(sfs::Particles& particles)
 // layer gets its own share of that impulse: the mist races slightly ahead, the
 // spray takes the full push, and the heavy gobs get only a fraction so they lag
 // behind and splat.
-inline void spawnGore(sfs::Particles& particles,
+inline void spawnGore(sfs::ParticleEngine& particles,
                       glm::vec2 worldPos,
                       float elevation,
                       glm::vec2 direction,

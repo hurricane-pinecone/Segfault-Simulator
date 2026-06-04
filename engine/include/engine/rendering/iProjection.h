@@ -36,6 +36,14 @@ public:
    */
   virtual glm::vec2 screenToWorld(const glm::vec2& screen,
                                   float elevation) const = 0;
+
+  /**
+   * Pixels spanned by one world unit at the current view, for sizing
+   * world-space sprites (particles, billboards) in screen pixels.
+   *
+   * @return screen pixels per world unit
+   */
+  virtual float worldUnitToPixels() const = 0;
 };
 
 } // namespace sfs

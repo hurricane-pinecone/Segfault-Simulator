@@ -22,7 +22,8 @@ extern std::atomic<uint64_t> gShadowTilesTraversed;
  * nothing while terrain self-shadows through block geometry, so its emit() is a
  * no-op when the context's geometryActive flag is set.
  */
-class TerrainShadow : public CommandModule<TerrainShadowBatchCommand>
+class TerrainShadow
+    : public CommandModule<IsometricRenderContext, TerrainShadowBatchCommand>
 {
 public:
   TerrainShadow() = default;
