@@ -47,6 +47,15 @@ bool Game::init(int windowWidth, int windowHeight)
   this->windowWidth = windowWidth;
   this->windowHeight = windowHeight;
 
+#ifdef ENGINE_WEB
+  // Scope keyboard input to the canvas (default is the whole window). Otherwise
+  // SDL swallows every keystroke, so the on-page Lua editor can't be typed into
+  // and WASD drives the player even while editing. With this, keys only reach
+  // the game when the canvas is focused (click it); the editor gets them when
+  // it's focused.
+  SDL_SetHint(SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT, "#canvas");
+#endif
+
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0)
   {
     LOG_ERROR(std::string("Error initializing SDL: ") + SDL_GetError());
@@ -317,7 +326,7 @@ void Game::render()
   }
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
-  renderDebugUI(sceneManager.current());
+  renderDebugUI(sceneManager.current(), [this] { onDebugUI(); });
 #endif
 
   {

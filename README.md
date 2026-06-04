@@ -118,6 +118,13 @@ cd build-web/bin
 python3 server.py
 ```
 
+Or, with the [`crun-web`](#optional-aliases-zsh) alias (configures, builds, and
+serves in one step):
+
+```bash
+crun-web
+```
+
 ## LSP / clangd setup
 
 ```bash
@@ -213,17 +220,28 @@ This will break asset paths.
 
 ## Optional Aliases (zsh)
 
+Add these to your shell config (`~/.zshrc`):
+
 ```bash
-echo "alias crun='cmake --build --preset debug --target run'" >> ~/.zshrc
-echo "alias crun-release='cmake --build --preset release --target run'" >> ~/.zshrc
+alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug --target run'
+alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release --target run'
+alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
+alias crun-web='emcmake cmake -S . -B build-web && cmake --build build-web --target run'
+```
+
+Reload your shell:
+
+```bash
 source ~/.zshrc
 ```
 
-Run with:
+Then, from the project root:
 
 ```bash
-crun
-crun-release
+crun          # debug build + run
+crun-release  # release build + run
+crun-profile  # RelWithDebInfo build + run (Tracy enabled)
+crun-web      # wasm build + serve (requires emsdk on PATH)
 ```
 
 ## Tooling
@@ -260,19 +278,8 @@ tracy-profiler
 
 #### Build and Run in Profiling Mode
 
-Add this alias to your shell config (`~/.zshrc`, `~/.bashrc`, etc):
-
-```bash
-alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
-```
-
-Reload your shell:
-
-```bash
-source ~/.zshrc
-```
-
-Then build and run the engine with Tracy enabled:
+Build and run the engine with Tracy enabled via the [`crun-profile`](#optional-aliases-zsh)
+alias:
 
 ```bash
 crun-profile

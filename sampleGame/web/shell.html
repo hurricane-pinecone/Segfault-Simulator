@@ -6,6 +6,38 @@
     <link rel="shortcut icon" href="favicon.png" />
     <script src="coi-serviceworker.js"></script>
 
+    <!-- CodeMirror 5 for the Lua console (syntax highlight + autocomplete). -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/lua/lua.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
+
+    <style>
+      /* The editor is the only resizable thing (drag the bottom-right handle);
+         it has a definite size so the side panel hugs it. */
+      .CodeMirror {
+        width: 540px;
+        height: 420px;
+        min-width: 320px;
+        min-height: 160px;
+        resize: both;
+        overflow: auto !important;
+        font-size: 14px;
+        border: 1px solid #444;
+      }
+    </style>
+
     <title>Segfault Simulator</title>
 
     <style>
@@ -29,16 +61,18 @@
       #game-layout {
         height: 100%;
         display: flex;
-        align-items: center;
+        align-items: stretch;
         justify-content: center;
         gap: 20px;
       }
 
       #game-area {
+        flex: 1 1 auto;
         min-width: 0;
         display: flex;
         flex-direction: column;
         align-items: center;
+        justify-content: center;
         gap: 16px;
       }
 
@@ -50,9 +84,11 @@
       }
 
       #container {
+        /* Largest 4:3 box that fits the available width AND height, so the
+           canvas always keeps its ratio -- a wider side panel just shrinks it,
+           it never stretches. */
         aspect-ratio: 4 / 3;
-        width: min(75vw, 1600px);
-        max-height: calc(100vh - 90px);
+        width: min(100%, calc((100vh - 120px) * 4 / 3));
         box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
         border-radius: 8px;
         overflow: hidden;
@@ -66,8 +102,13 @@
       }
 
       #panel {
-        width: 280px;
-        flex: 0 0 280px;
+        /* Hugs its content (the editor sets the width); not resizable itself --
+           only the editor is. Scrolls vertically if content is taller than the
+           viewport. */
+        flex: 0 0 auto;
+        width: fit-content;
+        max-width: 75vw;
+        overflow-y: auto;
 
         background: rgba(20, 20, 20, 0.75);
         backdrop-filter: blur(8px);
@@ -81,6 +122,21 @@
         text-align: center;
 
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+      }
+
+      /* Collapsible Lua section: hugs to a small "Lua console" line until
+         expanded, so it's out of the way by default. */
+      .lua-panel {
+        text-align: left;
+      }
+
+      .lua-panel > summary {
+        cursor: pointer;
+        font-size: 14px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #aaa;
+        user-select: none;
       }
 
       #panel h2 {
@@ -194,10 +250,7 @@
         <aside id="panel">
           <h2>Controls</h2>
           <p>Use WASD to move</p>
-          <p>Move the mouse to control the sun</p>
-          <br />
-          <p>Left/right changes sun direction; up/down changes sun height</p>
-          <p>Top of screen = midday, bottom of screen = night</p>
+          <p>Click to spray blood (left = red, right = blue)</p>
           <br />
           <p>Press the buttons below on mobile</p>
 
@@ -212,6 +265,40 @@
               <div class="touch-button interactive" data-key="d">D</div>
             </div>
           </div>
+
+          <details class="lua-panel" style="margin-top: 16px">
+            <summary>Lua console</summary>
+            <p style="margin: 6px 0; font-size: 12px; opacity: 0.8">
+              Live-edit the running game (Ctrl-Space = autocomplete the sfs /
+              particles API). Try:
+            </p>
+            <textarea id="lua-source" spellcheck="false">
+splat()
+particles.spawn("blood_spray", 12, 12)
+particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</textarea
+            >
+            <button id="lua-run" type="button" style="margin-top: 6px">
+              Run
+            </button>
+            <pre
+              id="lua-output"
+              style="white-space: pre-wrap; font-size: 12px; min-height: 1em"
+            ></pre>
+
+            <div style="margin-top: 8px">
+              <input
+                id="lua-path"
+                value="sfs.colors"
+                spellcheck="false"
+                style="font-family: monospace"
+              />
+              <button id="lua-keys" type="button">Fields</button>
+              <pre
+                id="lua-keys-out"
+                style="white-space: pre-wrap; font-size: 12px"
+              ></pre>
+            </div>
+          </details>
         </aside>
       </main>
     </div>
@@ -262,6 +349,94 @@
           button.addEventListener("mouseup", release);
           button.addEventListener("mouseleave", release);
         });
+
+      // --- Lua live console -------------------------------------------------
+      // The wasm module exports these (see CMake EXPORTED_FUNCTIONS); ccall is
+      // available once the runtime has initialised. The VM state persists, so
+      // running a chunk hot-edits the running game.
+      const luaReady = () => Module && typeof Module.ccall === "function";
+      const evalLua = (src) =>
+        Module.ccall("sfsEvalLua", "string", ["string"], [src]);
+      // keysOf() over the bound API -> the data an editor uses for autocomplete.
+      const luaKeys = (path) =>
+        (Module.ccall("sfsLuaKeys", "string", ["string"], [path]) || "")
+          .split("\n")
+          .filter(Boolean);
+      // Exposed for experimenting from the devtools console.
+      window.evalLua = evalLua;
+      window.luaKeys = luaKeys;
+
+      // Turn the textarea into a proper code editor: Lua syntax highlighting +
+      // autocomplete sourced live from the bound API via luaKeys().
+      const editor = CodeMirror.fromTextArea(
+        document.getElementById("lua-source"),
+        {
+          mode: "lua",
+          theme: "material-darker",
+          lineNumbers: true,
+          matchBrackets: true,
+          tabSize: 2,
+          extraKeys: { "Ctrl-Space": "autocomplete" },
+          hintOptions: { hint: (cm) => luaHint(cm) },
+        },
+      );
+      // Both dimensions come from CSS (.CodeMirror) so the resize handle and the
+      // panel's hug-to-content width aren't overridden by inline sizes.
+      editor.setSize(null, null);
+
+      // The editor starts inside a collapsed <details> (display:none), so it
+      // measures to nothing -- refresh it the first time the section is opened.
+      const luaPanel = document.querySelector(".lua-panel");
+      luaPanel.addEventListener("toggle", () => {
+        if (luaPanel.open) editor.refresh();
+      });
+
+      // Completion: resolve the dotted path before the cursor and ask the VM for
+      // that table's fields (sfs.colors.* , particles.* , or all globals via _G).
+      function luaHint(cm) {
+        if (!luaReady()) return null;
+        const cur = cm.getCursor();
+        const upto = cm.getLine(cur.line).slice(0, cur.ch);
+        const token = (upto.match(/[\w.]*$/) || [""])[0];
+        const dot = token.lastIndexOf(".");
+        const path = dot >= 0 ? token.slice(0, dot) : "_G";
+        const prefix = dot >= 0 ? token.slice(dot + 1) : token;
+        const list = luaKeys(path).filter((k) => k.startsWith(prefix));
+        if (!list.length) return null;
+        return {
+          list,
+          from: CodeMirror.Pos(cur.line, cur.ch - prefix.length),
+          to: cur,
+        };
+      }
+
+      // Pop completions live as you type identifiers / after a dot.
+      editor.on("inputRead", (cm, change) => {
+        if (luaReady() && /[\w.]/.test(change.text[0]))
+          cm.showHint({ hint: luaHint, completeSingle: false });
+      });
+
+      const outEl = document.getElementById("lua-output");
+      document.getElementById("lua-run").addEventListener("click", () => {
+        if (!luaReady()) {
+          outEl.textContent = "still loading…";
+          return;
+        }
+        const err = evalLua(editor.getValue());
+        outEl.textContent = err ? "error: " + err : "ok";
+        canvas.focus();
+      });
+
+      const keysOutEl = document.getElementById("lua-keys-out");
+      document.getElementById("lua-keys").addEventListener("click", () => {
+        if (!luaReady()) {
+          keysOutEl.textContent = "still loading…";
+          return;
+        }
+        keysOutEl.textContent = luaKeys(
+          document.getElementById("lua-path").value,
+        ).join("  ");
+      });
     </script>
 
     {{{ SCRIPT }}}

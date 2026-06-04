@@ -38,6 +38,9 @@ protected:
   virtual void onProcessInput(const Input& input) {};
   virtual void onUpdate(double deltaTime) {};
   virtual void onRender() {};
+  // App-level debug UI, drawn inside the engine's ImGui frame (native debug
+  // builds only) alongside the per-scene debug UI.
+  virtual void onDebugUI() {};
   virtual void onDestroy() = 0;
 
   /**
