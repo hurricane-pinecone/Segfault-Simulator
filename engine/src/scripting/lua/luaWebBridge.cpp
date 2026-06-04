@@ -30,15 +30,17 @@ void setActiveLua(LuaScripting* lua) { g_lua = lua; }
 extern "C"
 {
 
-  // Run a chunk against the live VM. Returns "" on success, else the Lua error.
+  // Run a chunk against the live VM (REPL-style: a bare expression returns its
+  // stringified value; statements return ""). Errors come back prefixed
+  // "error: ".
   SFS_LUA_EXPORT const char* sfsEvalLua(const char* source)
   {
     if (!g_lua)
     {
-      g_result = "Lua VM not ready";
+      g_result = "error: Lua VM not ready";
       return g_result.c_str();
     }
-    g_result = g_lua->eval(source ? source : "");
+    g_result = g_lua->evalRepl(source ? source : "");
     return g_result.c_str();
   }
 

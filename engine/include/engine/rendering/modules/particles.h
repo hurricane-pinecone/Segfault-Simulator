@@ -61,6 +61,10 @@ public:
   // replaces by name) to reconfigure the running game.
   const ParticleEffectDesc* effect(const std::string& name) const;
 
+  // Names of every registered effect, for discovery (e.g. a Lua console listing
+  // what can be spawned/configured).
+  std::vector<std::string> effectNames() const;
+
   // Fire a one-shot burst at a world tile position sitting on the given ground
   // elevation level. The optional spawn params inject impact
   // momentum/direction. Returns false if the effect name is unknown.

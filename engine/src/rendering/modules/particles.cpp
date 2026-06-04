@@ -81,6 +81,16 @@ const ParticleEffectDesc* ParticleEngine::effect(const std::string& name) const
   return &m_effects[it->second];
 }
 
+std::vector<std::string> ParticleEngine::effectNames() const
+{
+  std::vector<std::string> names;
+  names.reserve(m_effectIds.size());
+  for (const auto& [name, id] : m_effectIds)
+    names.push_back(name);
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
 ParticleEngine::EffectId
 ParticleEngine::effectIdOf(const std::string& name) const
 {
