@@ -1,6 +1,7 @@
 #include "engine/rendering/modules/decals.h"
 
 #include "engine/utils/profiling.h"
+#include "glm/glm/geometric.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +27,18 @@ int floorDiv(int a, int b)
 inline glm::ivec2 floorTile(const glm::vec2& p)
 {
   return {static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y))};
+}
+
+// Pack a colour into RGBA8 (the DecalVertex format; uploaded as a normalised
+// ubyte4 attribute, so a vertex is 28B instead of 40B).
+std::uint32_t packRGBA8(const glm::vec4& c)
+{
+  const auto q = [](float v)
+  {
+    return static_cast<std::uint32_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f +
+                                      0.5f);
+  };
+  return q(c.r) | (q(c.g) << 8) | (q(c.b) << 16) | (q(c.a) << 24);
 }
 
 } // namespace
@@ -56,6 +69,17 @@ bool Decals::isStatic(const Decal& d)
   return d.fadeRate <= 0.0f && !(d.surface == DecalSurface::Wall && !d.settled);
 }
 
+bool Decals::sameColor(const glm::vec3& a, const glm::vec3& b)
+{
+  // Compare colour DIRECTION (cosine), so an effect's light->dark gradient
+  // reads as one paint but a different hue (blue over red) reads as a repaint.
+  const float la = glm::length(a);
+  const float lb = glm::length(b);
+  if (la < 1e-4f || lb < 1e-4f)
+    return true; // near-black: don't churn on it
+  return glm::dot(a, b) / (la * lb) >= kColorSimilarity;
+}
+
 void Decals::addDecal(const DecalSpawn& spawn)
 {
   Decal d;
@@ -74,18 +98,133 @@ void Decals::addDecal(const DecalSpawn& spawn)
   d.age = 0.0f;
   d.settled = false;
 
+  const glm::ivec2 chunkCoord = chunkOf(d.worldPos);
+  ChunkData& chunk = m_chunks[chunkCoord];
+
+  // Spatial saturation: a permanent decal (anything that doesn't fade --
+  // ground, walls, permanent water) fills its small world cell up to a quota of
+  // one colour, then stops -- spraying the SAME colour on a painted spot is
+  // dropped (memory tracks painted AREA, not spray count). A DIFFERENT colour
+  // replaces the cell's paint, so you can paint over. The stain is otherwise
+  // permanent (never time-fades). Fading decals (water) don't saturate a cell.
+  const bool permanent = d.fadeRate <= 0.0f;
+  if (permanent)
+  {
+    const std::int64_t key = coverageKey(chunkCoord, d);
+    CoverageCell& cell = chunk.coverage[key];
+    const glm::vec3 c{d.color};
+
+    // Wall streaks cover more surface each, so they saturate at a lower quota.
+    const int cap = d.surface == DecalSurface::Wall ? m_maxWallDecalsPerCell
+                                                    : m_maxDecalsPerCell;
+
+    if (cell.count == 0)
+    {
+      cell.color = c;
+    }
+    else if (sameColor(c, cell.color))
+    {
+      if (cell.count >= cap)
+        return; // already painted this colour here
+    }
+    else
+    {
+      // Different colour: drop the old paint in this cell and start the new
+      // one.
+      clearCell(chunkCoord, chunk, key);
+      cell.count = 0;
+      cell.color = c;
+    }
+    ++cell.count;
+  }
+
   if (d.fadeRate > 0.0f)
     ++m_fadingCount;
   if (d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f)
     ++m_animatingCount;
 
-  ChunkData& chunk = m_chunks[chunkOf(d.worldPos)];
   if (isStatic(d))
     buildDecalVerts(
         d, chunk.pendingStatic); // append-only: O(new), not O(chunk)
   else
     ++chunk.animatingCount;
   chunk.decals.push_back(d);
+}
+
+std::int64_t Decals::coverageKey(glm::ivec2 chunk, const Decal& d) const
+{
+  // Position local to the chunk so cell indices stay small (the chunk is
+  // kChunkTiles wide). Ground decals collapse by x,y; wall decals also key on
+  // an elevation band + side so a streak still stacks down a face. Each field
+  // has its own byte/word lane, so distinct cells never collide.
+  const glm::vec2 local =
+      d.worldPos - glm::vec2{chunk} * static_cast<float>(kChunkTiles);
+  const std::int64_t ix =
+      static_cast<std::int64_t>(std::floor(local.x / m_coverageCell)) & 0xFF;
+  const std::int64_t iy =
+      static_cast<std::int64_t>(std::floor(local.y / m_coverageCell)) & 0xFF;
+  const std::int64_t iz =
+      static_cast<std::int64_t>(std::floor(d.elevation / m_coverageElevCell)) &
+      0xFFFF;
+  const std::int64_t disc =
+      (static_cast<std::int64_t>(d.surface) * 4 + d.wallSide) & 0xFF;
+
+  return ix | (iy << 8) | (iz << 16) | (disc << 32);
+}
+
+void Decals::clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key)
+{
+  auto& vec = data.decals;
+  bool removed = false;
+
+  for (std::size_t i = 0; i < vec.size();)
+  {
+    const Decal& d = vec[i];
+    if (d.fadeRate <= 0.0f && coverageKey(chunk, d) == key)
+    {
+      // A running drip is permanent-to-be but still animating; keep the
+      // animating counters in step when it's replaced.
+      if (d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f && !d.settled)
+      {
+        --m_animatingCount;
+        --data.animatingCount;
+      }
+      vec[i] = vec.back();
+      vec.pop_back();
+      removed = true;
+    }
+    else
+    {
+      ++i;
+    }
+  }
+
+  if (removed)
+  {
+    // Can't trim the middle of the append-only GPU buffer; rebuild from what
+    // remains (done once this frame in computeCommands).
+    data.needsFullRebuild = true;
+    data.pendingStatic.clear();
+  }
+}
+
+void Decals::rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const
+{
+  data.coverage.clear();
+  for (const Decal& d : data.decals)
+    if (d.fadeRate <= 0.0f)
+    {
+      CoverageCell& cell = data.coverage[coverageKey(chunk, d)];
+      if (cell.count == 0)
+        cell.color = glm::vec3{d.color};
+      ++cell.count;
+    }
+}
+
+void Decals::rebuildAllCoverage()
+{
+  for (auto& [chunk, data] : m_chunks)
+    rebuildCoverage(chunk, data);
 }
 
 void Decals::clearAll()
@@ -104,6 +243,7 @@ void Decals::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
   {
     auto& vec = it->second.decals;
     bool removedStatic = false;
+    bool removedAny = false;
 
     for (std::size_t i = 0; i < vec.size();)
     {
@@ -124,6 +264,7 @@ void Decals::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
 
         vec[i] = vec.back();
         vec.pop_back();
+        removedAny = true;
       }
       else
       {
@@ -138,6 +279,12 @@ void Decals::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
       it->second.needsFullRebuild = true;
       it->second.pendingStatic.clear();
     }
+
+    // Coverage is only ever incremented on add, so recount it from the
+    // survivors after a removal -- else cleared cells stay marked "painted" and
+    // reject new paint.
+    if (removedAny && !vec.empty())
+      rebuildCoverage(it->first, it->second);
 
     if (vec.empty())
     {
@@ -236,8 +383,9 @@ void Decals::buildDecalVerts(const Decal& decal,
   if (color.a <= 0.0f)
     return;
 
+  const std::uint32_t packed = packRGBA8(color);
   const auto push = [&](glm::vec2 wp, float elev, glm::vec2 uv, float key)
-  { out.push_back(DecalVertex{wp, elev, uv, color, key}); };
+  { out.push_back(DecalVertex{wp, elev, uv, packed, key}); };
 
   if (decal.surface != DecalSurface::Wall)
   {
