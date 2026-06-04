@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/rendering/modules/blockGeometry.h"
+#include "engine/rendering/modules/decals.h"
 #include "engine/rendering/modules/isometricWater.h"
 #include "engine/rendering/modules/spriteShadow.h"
 #include "engine/rendering/modules/terrainShadow.h"
@@ -214,6 +215,17 @@ inline static void renderDebugControls(Scene* scene)
     // them just adds/removes the module (re-registration rebuilds per frame).
     moduleCheckbox<BlockGeometry>(render, "Block geometry");
     moduleCheckbox<IsometricWater>(render, "Water");
+
+    // Decals toggle HIDES drawing rather than removing the module: the module
+    // owns the accumulated stains (and the particle engine holds a raw sink
+    // pointer to it), so removing it would drop the stains and dangle the sink.
+    // Hiding keeps both, so the stains persist across the toggle.
+    if (auto* decals = render.module<Decals>())
+    {
+      bool show = decals->visible();
+      if (ImGui::Checkbox("Decals", &show))
+        decals->setVisible(show);
+    }
 
     // Sun shadows are a paired terrain+actor feature; the active technique
     // follows the render style, so the two modules toggle together.
