@@ -665,11 +665,12 @@ void IsometricGeometryRenderer::configureDecalAttribs()
                         GL_FALSE,
                         sizeof(DecalVertex),
                         reinterpret_cast<void*>(offsetof(DecalVertex, uv)));
+  // Colour is a packed RGBA8; GL normalises the ubyte4 back to a vec4 in [0,1].
   glEnableVertexAttribArray(3);
   glVertexAttribPointer(3,
                         4,
-                        GL_FLOAT,
-                        GL_FALSE,
+                        GL_UNSIGNED_BYTE,
+                        GL_TRUE,
                         sizeof(DecalVertex),
                         reinterpret_cast<void*>(offsetof(DecalVertex, color)));
   glEnableVertexAttribArray(4);

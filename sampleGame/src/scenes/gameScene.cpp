@@ -69,6 +69,11 @@ void GameScene::onInit()
   auto& particles = renderer.withModule<IsometricParticles>();
   registerGoreEffects(
       particles); // blood_mist / blood_spray / blood_gobs / drip
+  // Second blood colour (right-click) to test two colours mixing on one face.
+  registerGoreEffects(particles,
+                      "ichor",
+                      glm::vec3{0.15f, 0.55f, 1.0f},
+                      glm::vec3{0.0f, 0.08f, 0.35f});
   particles.registerEffect("embers", makeEmberEffect());
 
   // Persistent terrain stains, fed by particle landings.
@@ -114,10 +119,14 @@ void GameScene::onProcessInput(const sfs::Input& input)
   m_hoveredElevation = pick.elevation;
   m_hasHoveredTile = pick.valid;
 
-  // Left-click splatters blood on the hovered tile, sprayed in the direction
-  // from the player to the click (as if a shot travelled that way).
-  if (m_hasHoveredTile && m_player &&
-      input.mouse().mouseHeld(sfs::MouseButton::Left))
+  // Click splatters blood on the hovered tile, sprayed in the direction from
+  // the player to the click (as if a shot travelled that way). Left = red
+  // blood, right = a second colour (ichor) so two colours can be layered on one
+  // face.
+  const bool leftSpray = input.mouse().mouseHeld(sfs::MouseButton::Left);
+  const bool rightSpray = input.mouse().mouseHeld(sfs::MouseButton::Right);
+
+  if (m_hasHoveredTile && m_player && (leftSpray || rightSpray))
   {
     const glm::vec2 from =
         m_player->entity().getComponent<sfs::TransformComponent>().position;
@@ -131,7 +140,8 @@ void GameScene::onProcessInput(const sfs::Input& input)
               pick.world,
               static_cast<float>(pick.elevation),
               dir,
-              16.0f);
+              12.0f,
+              leftSpray ? "blood" : "ichor");
   }
 }
 

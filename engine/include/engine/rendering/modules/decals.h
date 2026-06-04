@@ -6,6 +6,7 @@
 #include "engine/rendering/modules/renderModule.h"
 #include "engine/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include <cstdint>
@@ -45,6 +46,40 @@ public:
     return {
         settings::text(
             "Decals", [this] { return std::to_string(decalCount()); }),
+        settings::floatRange(
+            "Ground per cell",
+            1.0f,
+            16.0f,
+            [this] { return static_cast<float>(m_maxDecalsPerCell); },
+            [this](float v)
+            { m_maxDecalsPerCell = static_cast<int>(v + 0.5f); }),
+        settings::floatRange(
+            "Wall per cell",
+            1.0f,
+            16.0f,
+            [this] { return static_cast<float>(m_maxWallDecalsPerCell); },
+            [this](float v)
+            { m_maxWallDecalsPerCell = static_cast<int>(v + 0.5f); }),
+        settings::floatRange(
+            "Cell size (tiles)",
+            0.03f,
+            0.5f,
+            [this] { return m_coverageCell; },
+            [this](float v)
+            {
+              m_coverageCell = v;
+              rebuildAllCoverage();
+            }),
+        settings::floatRange(
+            "Wall band (levels)",
+            0.25f,
+            4.0f,
+            [this] { return m_coverageElevCell; },
+            [this](float v)
+            {
+              m_coverageElevCell = v;
+              rebuildAllCoverage();
+            }),
         settings::action("Clear decals", [this] { clearAll(); }),
     };
   }
@@ -67,6 +102,14 @@ private:
     bool settled = false;
   };
 
+  // Per-cell coverage record: how many permanent decals occupy the cell and the
+  // paint colour that owns it (for repaint detection).
+  struct CoverageCell
+  {
+    std::uint16_t count = 0;
+    glm::vec3 color{0.0f};
+  };
+
   struct ChunkData
   {
     std::vector<Decal> decals;
@@ -74,13 +117,31 @@ private:
     // a ground decal landed or a drip settled). O(new), not O(chunk total).
     std::vector<DecalVertex> pendingStatic;
     // A static decal was removed -> the GPU buffer must be rebuilt from scratch
-    // (rare: clearRegion). Takes priority over pending appends.
+    // (rare: clearRegion / a cell repainted a different colour). Takes priority
+    // over pending appends.
     bool needsFullRebuild = false;
     int animatingCount = 0; // decals still animating (drips/fading water); when
                             // 0 the chunk needs no per-frame work
+    // Coverage per small world cell (see coverageKey). Bounds memory by painted
+    // AREA: once a cell holds its colour's quota, more of the same colour is
+    // dropped; a different colour replaces it instead.
+    std::unordered_map<std::int64_t, CoverageCell> coverage;
   };
 
   static constexpr int kChunkTiles = 16;
+
+  // Spatial saturation: permanent decals (anything that doesn't fade -- ground,
+  // walls, permanent water) are bucketed into small world cells. Once a cell
+  // holds its colour's quota, more of THAT colour is dropped (it's already
+  // painted) -- but a different colour replaces it, so you can paint over. A
+  // face fills to roughly one layer of paint and stays there; memory tracks
+  // painted area, not spray count. Fading decals don't count.
+  // (Tuning lives in member variables below, exposed live on the debug panel.)
+  // Cosine of the colour-direction angle below which two paints count as
+  // different (so an effect's light->dark gradient is one colour, but red vs
+  // blue is a repaint). Hue-based, so brightness doesn't trigger false
+  // repaints.
+  static constexpr float kColorSimilarity = 0.85f;
 
   glm::ivec2 chunkOf(const glm::vec2& worldPos) const;
   static std::int64_t chunkKey(glm::ivec2 chunk);
@@ -88,6 +149,26 @@ private:
   const std::string* internTexture(const std::string& id);
 
   static bool isStatic(const Decal& d);
+
+  // True if two paint colours are the "same paint" (similar hue direction),
+  // ignoring brightness.
+  static bool sameColor(const glm::vec3& a, const glm::vec3& b);
+
+  // Key a decal to its coverage cell (chunk-local position + elevation band +
+  // surface/side), so ground and wall paint saturate independently.
+  std::int64_t coverageKey(glm::ivec2 chunk, const Decal& d) const;
+
+  // Remove every permanent decal in a cell from the chunk (so a new colour can
+  // replace it), flagging a GPU rebuild.
+  void clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key);
+
+  // Rebuild a chunk's coverage from its current permanent decals (after a
+  // removal, since coverage is otherwise only updated incrementally).
+  void rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const;
+
+  // Re-key every chunk's coverage from its decals; called when the cell size or
+  // elevation band changes (the debug sliders) so saturation re-accounts.
+  void rebuildAllCoverage();
 
   // Build a decal's world-space vertices (ground square / wall streak + cap)
   // into `out`. Uses the cached tile size to size the wall cap to read round on
@@ -102,6 +183,17 @@ private:
   // can be built at add/settle time, not only during computeCommands.
   float m_tileWidth = 32.0f;
   float m_elevationStep = 8.0f;
+
+  // Coverage tuning (live via the debug panel). A cell holds up to its
+  // surface's quota of one paint colour, then drops more of that colour. Walls
+  // get a lower quota because each wall decal is a tall streak covering far
+  // more surface than a ground dot. The elevation band only affects walls
+  // (ground sits at one elevation per tile): a larger band keeps fewer drips
+  // down a face.
+  float m_coverageCell = 0.06f;    // world tiles
+  float m_coverageElevCell = 1.0f; // elevation levels per band (walls)
+  int m_maxDecalsPerCell = 16;     // ground / default quota
+  int m_maxWallDecalsPerCell = 3;  // wall-face quota
 
   std::size_t m_fadingCount = 0;    // fading (water) decals
   std::size_t m_animatingCount = 0; // running wall drips (not yet settled)

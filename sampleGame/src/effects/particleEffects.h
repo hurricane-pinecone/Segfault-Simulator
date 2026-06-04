@@ -4,6 +4,7 @@
 #include "engine/rendering/modules/particles.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
+#include <string>
 
 // Sample-game particle effect presets. These are plain ParticleEffectDesc
 // builders (the same struct a future Lua/JSON loader would fill), registered on
@@ -25,14 +26,14 @@ inline sfs::ParticleEffectDesc makeBloodMistEffect()
 
   d.shape = sfs::EmissionShape::Circle;
   d.shapeRadius = 0.05f;
-  d.burstCount = 28;
+  d.burstCount = 20;
 
   d.lifetime = sfs::FloatRange::of(0.12f, 0.34f); // gone almost immediately
-  d.speed = sfs::FloatRange::of(2.0f, 7.0f);
+  d.speed = sfs::FloatRange::of(2.0f, 5.0f);
   d.launchHeightSpeed = sfs::FloatRange::of(1.0f, 3.0f);
   d.startHeight = sfs::FloatRange::of(0.1f, 0.5f);
   d.size = sfs::FloatRange::of(0.04f, 0.11f);
-  d.directionSpread = 1.7f; // a touch wider than the spray -- it's a cloud
+  d.directionSpread = 1.4f; // a touch wider than the spray -- it's a cloud
 
   d.gravityZ = -3.0f; // barely falls
   d.drag = 4.5f;      // slows fast and hangs
@@ -59,32 +60,34 @@ inline sfs::ParticleEffectDesc makeBloodSprayEffect()
 
   d.shape = sfs::EmissionShape::Circle;
   d.shapeRadius = 0.06f;
-  d.burstCount = 44; // minimal -- the mist + gobs carry the rest of the read
+  d.burstCount = 28; // minimal -- the mist + gobs carry the rest of the read
 
-  // Lifetime must exceed the airtime, or droplets die mid-arc and never land
-  // (which starved the ground of stains vs walls). Max launch ~3 + the gore's
-  // vertical kick gives ~0.5 s airtime, so 0.7 s min comfortably lands them.
-  d.lifetime = sfs::FloatRange::of(0.7f, 1.2f);
+  // Droplets die on ground CONTACT (GroundBehavior::Die), not on a timer. This
+  // lifetime is only a backstop for any that never hit terrain, kept long so
+  // the air timer never pre-empts landing (which starved the ground of stains).
+  d.lifetime = sfs::FloatRange::of(4.0f, 6.0f);
   // Scatter kept below the spawn impulse so the bulk push sets the direction.
-  d.speed = sfs::FloatRange::of(1.5f, 6.0f);
-  d.launchHeightSpeed = sfs::FloatRange::of(1.0f, 3.0f);
+  d.speed = sfs::FloatRange::of(1.0f, 4.0f);
+  d.launchHeightSpeed = sfs::FloatRange::of(1.0f, 2.5f);
   d.startHeight = sfs::FloatRange::of(0.1f, 0.4f);
   d.size = sfs::FloatRange::of(0.05f, 0.15f);
   d.angularVelocity = sfs::FloatRange::of(-9.0f, 9.0f);
-  d.directionSpread = 1.2f; // ~70 deg forward beam
+  d.directionSpread = 0.9f; // tighter forward beam
 
   d.gravityZ = -18.0f;
-  d.drag = 2.6f; // punches out, then decelerates hard
+  d.drag = 3.0f; // punches out, then decelerates hard
 
   d.colorOverLife = sfs::Gradient::twoStop(
       glm::vec3{0.8f, 0.05f, 0.05f}, glm::vec3{0.2f, 0.0f, 0.0f});
+  // Full alpha/size through the (short) flight; the late tail only fades a rare
+  // straggler that never lands. So droplets don't fade out mid-air.
   d.alphaOverLife =
-      sfs::Curve{}.add(0.0f, 1.0f).add(0.78f, 1.0f).add(1.0f, 0.0f);
-  d.sizeOverLife =
-      sfs::Curve{}.add(0.0f, 0.55f).add(0.12f, 1.0f).add(1.0f, 0.8f);
+      sfs::Curve{}.add(0.0f, 1.0f).add(0.9f, 1.0f).add(1.0f, 0.0f);
+  d.sizeOverLife = sfs::Curve{}.add(0.0f, 1.0f).add(1.0f, 1.0f);
 
-  d.ground = sfs::GroundBehavior::Stick;
-  d.stickDuration = 1.1f;
+  // Land, stamp the stain, and vanish -- no lingering wet blob; the permanent
+  // decal carries the mark.
+  d.ground = sfs::GroundBehavior::Die;
 
   // Each droplet leaves a small permanent stain where it lands.
   d.leavesDecal = true;
@@ -98,7 +101,7 @@ inline sfs::ParticleEffectDesc makeBloodSprayEffect()
 }
 
 // Layer 3: a few big, heavy chunks. They get LESS of the impulse (see
-// spawnGore) so they lag the spray, arc, and leave fat splats that linger.
+// spawnGore) so they lag the spray, arc, and leave fat splats.
 inline sfs::ParticleEffectDesc makeBloodGobsEffect()
 {
   sfs::ParticleEffectDesc d;
@@ -109,27 +112,28 @@ inline sfs::ParticleEffectDesc makeBloodGobsEffect()
 
   d.shape = sfs::EmissionShape::Circle;
   d.shapeRadius = 0.05f;
-  d.burstCount = 10; // just a handful of chunks
+  d.burstCount = 7; // just a handful of chunks
 
-  d.lifetime = sfs::FloatRange::of(0.9f, 1.6f);          // linger; outlast the arc
-  d.speed = sfs::FloatRange::of(1.0f, 3.0f);             // low internal scatter
-  d.launchHeightSpeed = sfs::FloatRange::of(1.5f, 3.5f); // tossed up to arc
+  d.lifetime = sfs::FloatRange::of(4.0f, 6.0f); // backstop; die on contact
+  d.speed = sfs::FloatRange::of(1.0f, 2.5f);    // low internal scatter
+  d.launchHeightSpeed = sfs::FloatRange::of(1.5f, 3.0f); // tossed up to arc
   d.startHeight = sfs::FloatRange::of(0.1f, 0.4f);
   d.size = sfs::FloatRange::of(0.14f, 0.3f); // fat gobs
   d.angularVelocity = sfs::FloatRange::of(-5.0f, 5.0f);
-  d.directionSpread = 1.4f;
+  d.directionSpread = 1.1f;
 
   d.gravityZ = -14.0f; // arc down
   d.drag = 1.2f;       // less drag -- they carry their arc
 
   d.colorOverLife = sfs::Gradient::twoStop(
       glm::vec3{0.5f, 0.0f, 0.0f}, glm::vec3{0.16f, 0.0f, 0.0f});
+  // Full through the flight; late tail only for a straggler that never lands.
   d.alphaOverLife =
-      sfs::Curve{}.add(0.0f, 1.0f).add(0.8f, 1.0f).add(1.0f, 0.0f);
-  d.sizeOverLife = sfs::Curve{}.add(0.0f, 0.7f).add(0.2f, 1.0f).add(1.0f, 0.9f);
+      sfs::Curve{}.add(0.0f, 1.0f).add(0.9f, 1.0f).add(1.0f, 0.0f);
+  d.sizeOverLife = sfs::Curve{}.add(0.0f, 1.0f).add(1.0f, 1.0f);
 
-  d.ground = sfs::GroundBehavior::Stick;
-  d.stickDuration = 1.6f; // big splats stay a while
+  // Land, stamp the splat, and vanish -- the permanent decal carries the mark.
+  d.ground = sfs::GroundBehavior::Die;
 
   // Heavy gobs leave fat splats -- but the decal is smaller than the in-air gob
   // so it reads as a mark on the surface, not a floating blob.
@@ -190,10 +194,10 @@ inline sfs::ParticleEffectDesc makeBloodDripEffect()
 
   d.shape = sfs::EmissionShape::Circle;
   d.shapeRadius = 0.1f;
-  d.burstCount = 20;
+  d.burstCount = 14;
 
-  d.lifetime = sfs::FloatRange::of(0.3f, 0.8f);
-  d.speed = sfs::FloatRange::of(0.1f, 1.0f); // barely spreads
+  d.lifetime = sfs::FloatRange::of(3.0f, 5.0f); // backstop; die on contact
+  d.speed = sfs::FloatRange::of(0.1f, 1.0f);    // barely spreads
   d.launchHeightSpeed =
       sfs::FloatRange::of(0.5f, 2.4f); // small pop straight up
   d.startHeight = sfs::FloatRange::of(0.05f, 0.25f);
@@ -206,11 +210,12 @@ inline sfs::ParticleEffectDesc makeBloodDripEffect()
 
   d.colorOverLife = sfs::Gradient::twoStop(
       glm::vec3{0.7f, 0.03f, 0.03f}, glm::vec3{0.2f, 0.0f, 0.0f});
+  // Full through the flight; late tail only for a straggler that never lands.
   d.alphaOverLife =
-      sfs::Curve{}.add(0.0f, 1.0f).add(0.8f, 1.0f).add(1.0f, 0.0f);
+      sfs::Curve{}.add(0.0f, 1.0f).add(0.9f, 1.0f).add(1.0f, 0.0f);
 
-  d.ground = sfs::GroundBehavior::Stick;
-  d.stickDuration = 1.0f;
+  // Land, stamp the spot, and vanish -- the permanent decal carries the mark.
+  d.ground = sfs::GroundBehavior::Die;
 
   d.leavesDecal = true;
   d.decal.texture = "blood_dot";
@@ -231,6 +236,33 @@ inline void registerGoreEffects(sfs::ParticleEngine& particles)
   particles.registerEffect("blood_drip", makeBloodDripEffect());
 }
 
+// Recolour a gore layer's gradient. The decals it leaves follow (they use the
+// particle colour), so this is all a second blood colour needs.
+inline sfs::ParticleEffectDesc
+recolourGore(sfs::ParticleEffectDesc d, glm::vec3 hi, glm::vec3 lo)
+{
+  d.colorOverLife = sfs::Gradient::twoStop(hi, lo);
+  return d;
+}
+
+// Register a recoloured gore set under `<prefix>_mist/_spray/_gobs/_drip`, so a
+// second blood colour can be sprayed (see spawnGore's prefix). Reuses the same
+// tuned layers as the default red set; only the colour differs.
+inline void registerGoreEffects(sfs::ParticleEngine& particles,
+                                const std::string& prefix,
+                                glm::vec3 hi,
+                                glm::vec3 lo)
+{
+  particles.registerEffect(
+      prefix + "_mist", recolourGore(makeBloodMistEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_spray", recolourGore(makeBloodSprayEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_gobs", recolourGore(makeBloodGobsEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_drip", recolourGore(makeBloodDripEffect(), hi, lo));
+}
+
 // Fire a full shotgun gore blast at a world tile. `direction` should be a unit
 // vector (the shot's travel); `power` is the spray's impulse in tiles/sec. Each
 // layer gets its own share of that impulse: the mist races slightly ahead, the
@@ -240,7 +272,8 @@ inline void spawnGore(sfs::ParticleEngine& particles,
                       glm::vec2 worldPos,
                       float elevation,
                       glm::vec2 direction,
-                      float power)
+                      float power,
+                      const std::string& prefix = "blood")
 {
   sfs::ParticleSpawnParams mist;
   mist.velocity = direction * (power * 1.15f);
@@ -259,8 +292,8 @@ inline void spawnGore(sfs::ParticleEngine& particles,
   drip.velocity = direction * (power * 0.04f); // essentially drops in place
   drip.velocityZ = 1.5f;
 
-  particles.spawnBurst("blood_mist", worldPos, elevation, mist);
-  particles.spawnBurst("blood_spray", worldPos, elevation, spray);
-  particles.spawnBurst("blood_gobs", worldPos, elevation, gobs);
-  particles.spawnBurst("blood_drip", worldPos, elevation, drip);
+  particles.spawnBurst(prefix + "_mist", worldPos, elevation, mist);
+  particles.spawnBurst(prefix + "_spray", worldPos, elevation, spray);
+  particles.spawnBurst(prefix + "_gobs", worldPos, elevation, gobs);
+  particles.spawnBurst(prefix + "_drip", worldPos, elevation, drip);
 }
