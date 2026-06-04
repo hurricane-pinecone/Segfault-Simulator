@@ -84,8 +84,6 @@ bool IsometricGeometryRenderer::initialize()
   uSurfaceTimeLocation = SFS_GL_UNIFORM(surfaceShaderProgram, "uTime");
   uSurfaceRippleStrengthLocation =
       SFS_GL_UNIFORM(surfaceShaderProgram, "uRippleStrength");
-  uSurfaceRippleScaleLocation =
-      SFS_GL_UNIFORM(surfaceShaderProgram, "uRippleScale");
   uSurfaceAmbientLocation = SFS_GL_UNIFORM(surfaceShaderProgram, "uAmbient");
   uSurfaceLightCountLocation =
       SFS_GL_UNIFORM(surfaceShaderProgram, "uLightCount");
@@ -369,7 +367,6 @@ bool IsometricGeometryRenderer::initialize()
   glUseProgram(surfaceShaderProgram);
   glUniform1f(uSurfaceTimeLocation, 0.0f);
   glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
-  glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
 
   // Water/surface default ambient.
   glUniform1f(uSurfaceAmbientLocation, 1.0f);
@@ -501,7 +498,6 @@ void IsometricGeometryRenderer::submit(const SurfaceCommand& command)
 
   glUniform1f(uSurfaceTimeLocation, m_surfaceTime);
   glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
-  glUniform1f(uSurfaceRippleScaleLocation, 1.0f);
   glUniform1f(uSurfaceAmbientLocation, command.ambient);
   glUniform1i(uSurfaceLightCountLocation, m_pointLights.count);
 
@@ -968,6 +964,10 @@ void IsometricGeometryRenderer::beginGeometryPipeline()
               m_geomSunDirection.x,
               m_geomSunDirection.y,
               m_geomSunDirection.z);
+  glUniform3f(SFS_GL_UNIFORM(geometryShaderProgram, "uLightColor"),
+              m_geomLightColor.x,
+              m_geomLightColor.y,
+              m_geomLightColor.z);
   glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uDiffuseStrength"),
               m_geomDiffuseStrength);
 
@@ -1125,7 +1125,6 @@ out vec4 FragColor;
 
 uniform float uTime;
 uniform float uRippleStrength;
-uniform float uRippleScale;
 uniform float uAmbient;
 
 uniform int uLightCount;
@@ -1648,6 +1647,7 @@ out vec4 FragColor;
 uniform sampler2D uTexture;
 uniform float uAmbient;
 uniform vec3 uLightDirection;
+uniform vec3 uLightColor; // sun/ambient scene tint
 uniform float uDiffuseStrength;
 uniform int uSurfaceEffect;
 uniform int uShadowSharp;      // 0 = smooth (bilinear), 1 = sharp (per-tile DDA)
@@ -1950,7 +1950,7 @@ void main()
   if (uSunShadowEnabled == 1)
     lit = mix(shadedLevel, lit, sunVisibility(vGround));
 
-  vec3 sunlight = vec3(lit);
+  vec3 sunlight = vec3(lit) * uLightColor;
   sunlight = max(sunlight, vec3(0.03));
 
   float daylight = smoothstep(0.20, 0.75, uAmbient);

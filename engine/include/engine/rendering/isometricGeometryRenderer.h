@@ -203,7 +203,6 @@ private:
 
   int uSurfaceTimeLocation = -1;
   int uSurfaceRippleStrengthLocation = -1;
-  int uSurfaceRippleScaleLocation = -1;
   int uSurfaceAmbientLocation = -1;
   int uSurfaceLightCountLocation = -1;
   int uSurfaceLightPositionsLocation = -1;
