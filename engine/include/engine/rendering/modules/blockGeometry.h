@@ -25,7 +25,8 @@ class AssetStore;
 // elevation level, so the sprite's side art tiles cleanly down tall cliffs.
 //
 // Emits one GeometryCommand per (texture, surface effect) bucket each frame.
-class BlockGeometry : public CommandModule<GeometryCommand>
+class BlockGeometry
+    : public CommandModule<IsometricRenderContext, GeometryCommand>
 {
 public:
   void init(const ModuleInit& m) override

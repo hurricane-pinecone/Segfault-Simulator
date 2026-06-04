@@ -27,7 +27,7 @@ namespace sfs
 // the animating vertices + chunks to free. The renderer holds the heavy data.
 class Decals
     : public IDecalSink,
-      public CommandModule<DecalDrawCommand>
+      public CommandModule<IsometricRenderContext, DecalDrawCommand>
 {
 public:
   void addDecal(const DecalSpawn& spawn) override; // IDecalSink

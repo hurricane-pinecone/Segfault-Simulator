@@ -8,17 +8,15 @@
 #include "engine/rendering/iTerrainHeightSource.h"
 #include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/modules/renderModule.h"
+#include "engine/rendering/modules/renderModuleHost.h"
 #include "engine/rendering/renderQueue.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
-#include <cassert>
 #include <functional>
-#include <memory>
 #include <typeindex>
-#include <utility>
 #include <vector>
 
 namespace sfs
@@ -57,7 +55,8 @@ struct WallFaceKeyHash
   }
 };
 
-class IsometricRenderSystem : public System
+class IsometricRenderSystem : public System,
+                              public RenderModuleHost<IsometricRenderContext>
 {
 public:
   IsometricRenderSystem(AssetStore& assetStore, IQuadRenderer& quadRenderer);
@@ -82,76 +81,8 @@ public:
   /** The current sun-shadow sampling style. */
   SunShadowStyle sunShadowStyle() const { return m_sunShadowStyle; }
 
-  /**
-   * Compose a render module into the frame. Registration is the enable: the
-   * module's commands draw every frame, ordered against the others by their
-   * RenderPass. The system constructs + owns the module, init()s it with the
-   * registry + asset store, and forwards update()/emit() to it. A module type
-   * may be registered only once.
-   *
-   * @return a reference to the constructed module, for configuration.
-   */
-  template <class T, class... A>
-  T& withModule(A&&... args)
-  {
-    assert(!hasModule<T>() && "module type already registered");
-
-    auto module = std::make_unique<T>(std::forward<A>(args)...);
-    module->init({registry, &assetStore});
-
-    T& ref = *module;
-    m_modules.emplace_back(std::type_index(typeid(T)), std::move(module));
-    return ref;
-  }
-
-  /** Compose several default-constructed modules at once. */
-  template <class... Ts>
-  void withModules()
-  {
-    (withModule<Ts>(), ...);
-  }
-
-  /** @return whether a module of type T is registered. */
-  template <class T>
-  bool hasModule() const
-  {
-    const std::type_index key(typeid(T));
-
-    for (const auto& [type, module] : m_modules)
-      if (type == key)
-        return true;
-
-    return false;
-  }
-
-  /** @return the registered module of type T, or nullptr if absent. */
-  template <class T>
-  T* module()
-  {
-    const std::type_index key(typeid(T));
-
-    for (const auto& [type, module] : m_modules)
-      if (type == key)
-        return static_cast<T*>(module.get());
-
-    return nullptr;
-  }
-
-  /** Unregister (and destroy) the module of type T, disabling its feature. */
-  template <class T>
-  void removeModule()
-  {
-    const std::type_index key(typeid(T));
-
-    for (auto it = m_modules.begin(); it != m_modules.end(); ++it)
-    {
-      if (it->first == key)
-      {
-        m_modules.erase(it);
-        return;
-      }
-    }
-  }
+  // Module composition (withModule/withModules/hasModule/module/removeModule)
+  // is inherited from RenderModuleHost<IsometricRenderContext>.
 
   /**
    * Visit each registered module with its type and the current render context,
@@ -161,7 +92,7 @@ public:
    */
   void forEachModule(
       const std::function<void(std::type_index,
-                               IRenderModule&,
+                               Module&,
                                const IsometricRenderContext&)>& fn);
 
   void drawDebugTile(const glm::vec2& gridPosition,
@@ -241,6 +172,10 @@ private:
   void submitConcreteRenderCommand(const T& concrete,
                                    IIsometricRenderer& quadRenderer);
 
+protected:
+  // Dependencies handed to each module's init() (RenderModuleHost).
+  ModuleInit moduleInit() override { return {registry, &assetStore}; }
+
 private:
   AssetStore& assetStore;
   IIsometricRenderer& m_quadRenderer;
@@ -273,12 +208,6 @@ private:
   // Mirrors the backend's sun-shadow march style so the value can be read back
   // (e.g. for the debug UI dropdown); set via setSunShadowStyle.
   SunShadowStyle m_sunShadowStyle = SunShadowStyle::Smooth;
-
-  // Composed render modules, owned by the system and kept in registration
-  // order. A feature is on iff its module is present; cross-cutting state (e.g.
-  // whether terrain renders as geometry) is derived from this set each frame.
-  std::vector<std::pair<std::type_index, std::unique_ptr<IRenderModule>>>
-      m_modules;
 };
 
 template <typename T>

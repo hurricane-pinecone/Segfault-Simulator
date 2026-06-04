@@ -1,5 +1,6 @@
 
 #include "gameScene.h"
+#include "controllers/sunController.h"
 #include "effects/particleEffects.h"
 #include "engine/TextRenderer/textRenderer.h"
 #include "engine/components/lightEmitterComponent.h"
@@ -35,6 +36,8 @@
   #include <imgui.h>
 #endif
 
+using IsometricParticles = sfs::Particles<sfs::IsometricRenderContext>;
+
 void GameScene::onInit()
 {
   createEntities();
@@ -63,7 +66,7 @@ void GameScene::onInit()
   // Soft round texture so particles/decals don't read as hard squares.
   m_assetStore.addRadialTexture("blood_dot", 32);
 
-  auto& particles = renderer.withModule<sfs::Particles>();
+  auto& particles = renderer.withModule<IsometricParticles>();
   registerGoreEffects(
       particles); // blood_mist / blood_spray / blood_gobs / drip
   particles.registerEffect("embers", makeEmberEffect());
@@ -119,7 +122,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
     dir = len > 0.0001f ? dir / len : glm::vec2{1.0f, 0.0f};
 
     // Layered shotgun gore blast along the shot direction.
-    spawnGore(*render.module<sfs::Particles>(),
+    spawnGore(*render.module<IsometricParticles>(),
               pick.world,
               static_cast<float>(pick.elevation),
               dir,
@@ -154,7 +157,7 @@ void GameScene::onRender()
       20,
       80,
       "Particles: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
-                                         .module<sfs::Particles>()
+                                         .module<IsometricParticles>()
                                          ->liveParticleCount()));
 
   if (m_hasHoveredTile)

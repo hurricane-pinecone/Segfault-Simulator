@@ -737,8 +737,7 @@ void IsometricRenderSystem::update(double deltaTime)
 {
   updateActorElevations(deltaTime);
 
-  for (auto& [type, module] : m_modules)
-    module->update(deltaTime);
+  updateModules(deltaTime);
 }
 
 void IsometricRenderSystem::updateActorElevations(double deltaTime)
@@ -1008,7 +1007,7 @@ void IsometricRenderSystem::setSunShadowStyle(SunShadowStyle style)
 
 void IsometricRenderSystem::forEachModule(
     const std::function<void(std::type_index,
-                             IRenderModule&,
+                             IRenderModule<IsometricRenderContext>&,
                              const IsometricRenderContext&)>& fn)
 {
   // Refresh the cross-cutting flags a module reads to pick mode-appropriate

@@ -52,7 +52,7 @@ inline glm::ivec2 floorTile(const glm::vec2& p)
 
 } // namespace
 
-void Particles::registerEffect(const std::string& name,
+void ParticleEngine::registerEffect(const std::string& name,
                                     const ParticleEffectDesc& desc)
 {
   auto it = m_effectIds.find(name);
@@ -68,19 +68,19 @@ void Particles::registerEffect(const std::string& name,
   m_effectIds.emplace(name, id);
 }
 
-bool Particles::hasEffect(const std::string& name) const
+bool ParticleEngine::hasEffect(const std::string& name) const
 {
   return m_effectIds.find(name) != m_effectIds.end();
 }
 
-Particles::EffectId
-Particles::effectIdOf(const std::string& name) const
+ParticleEngine::EffectId
+ParticleEngine::effectIdOf(const std::string& name) const
 {
   auto it = m_effectIds.find(name);
   return it != m_effectIds.end() ? it->second : -1;
 }
 
-void Particles::applySpawnParams(EmitterInstance& inst,
+void ParticleEngine::applySpawnParams(EmitterInstance& inst,
                                       const ParticleSpawnParams& spawn)
 {
   inst.baseVelocity = spawn.velocity;
@@ -95,7 +95,7 @@ void Particles::applySpawnParams(EmitterInstance& inst,
                       : 0.0f;
 }
 
-bool Particles::spawnBurst(const std::string& effect,
+bool ParticleEngine::spawnBurst(const std::string& effect,
                                 glm::vec2 worldPos,
                                 float elevation,
                                 const ParticleSpawnParams& spawn)
@@ -121,7 +121,7 @@ bool Particles::spawnBurst(const std::string& effect,
   return true;
 }
 
-bool Particles::spawnScreenBurst(const std::string& effect,
+bool ParticleEngine::spawnScreenBurst(const std::string& effect,
                                       glm::vec2 screenPos,
                                       const ParticleSpawnParams& spawn)
 {
@@ -146,7 +146,7 @@ bool Particles::spawnScreenBurst(const std::string& effect,
   return true;
 }
 
-int Particles::liveParticleCount() const
+int ParticleEngine::liveParticleCount() const
 {
   int total = 0;
   for (const auto& [id, inst] : m_entityEmitters)
@@ -156,7 +156,7 @@ int Particles::liveParticleCount() const
   return total;
 }
 
-void Particles::emitParticles(EmitterInstance& inst,
+void ParticleEngine::emitParticles(EmitterInstance& inst,
                               const ParticleEffectDesc& desc,
                               int count)
 {
@@ -234,7 +234,7 @@ void Particles::emitParticles(EmitterInstance& inst,
   }
 }
 
-void Particles::stepInstance(EmitterInstance& inst,
+void ParticleEngine::stepInstance(EmitterInstance& inst,
                                   const ParticleEffectDesc& desc,
                                   float dt)
 {
@@ -449,7 +449,7 @@ void Particles::stepInstance(EmitterInstance& inst,
   }
 }
 
-void Particles::emitDecal(EmitterInstance& inst,
+void ParticleEngine::emitDecal(EmitterInstance& inst,
                                const ParticleEffectDesc& desc,
                                const Particle& p,
                                glm::vec2 hitPos,
@@ -535,7 +535,7 @@ void Particles::emitDecal(EmitterInstance& inst,
   m_decalSink->addDecal(spawn);
 }
 
-void Particles::syncComponentEmitters()
+void ParticleEngine::syncComponentEmitters()
 {
   // Assume nothing emits this frame; re-enable emitters whose entity still has
   // an enabled component. Entries left disabled (entity gone or disabled) keep
@@ -583,9 +583,9 @@ void Particles::syncComponentEmitters()
   }
 }
 
-void Particles::update(double deltaTime)
+void ParticleEngine::simulate(double deltaTime)
 {
-  ZoneScopedN("Particles::update");
+  ZoneScopedN("ParticleEngine::simulate");
 
   const float dt = static_cast<float>(deltaTime);
   if (dt <= 0.0f)
@@ -621,12 +621,11 @@ void Particles::update(double deltaTime)
   }
 }
 
-void Particles::appendBatch(const EmitterInstance& inst,
+void ParticleEngine::appendBatch(const EmitterInstance& inst,
                                  const ParticleEffectDesc& desc,
-                                 const IsometricRenderContext& context)
+                                 const IProjection& proj,
+                                 std::vector<ParticleBatchCommand>& out)
 {
-  const IsometricProjection& proj = *context.projection;
-
   ParticleBatchCommand cmd;
   cmd.textureId = &desc.texture;
   cmd.blend = desc.blend;
@@ -637,8 +636,7 @@ void Particles::appendBatch(const EmitterInstance& inst,
   cmd.order.depth =
       screen ? 0.0f : (inst.origin.x + inst.origin.y + inst.groundLevel * 0.5f);
 
-  const float pixelPerTile =
-      static_cast<float>(proj.tileWidth) * proj.worldScale * proj.zoom;
+  const float pixelPerTile = proj.worldUnitToPixels();
 
   const int frameCols = std::max(1, desc.frameCols);
   const int frameRows = std::max(1, desc.frameRows);
@@ -721,28 +719,24 @@ void Particles::appendBatch(const EmitterInstance& inst,
   }
 
   if (!quads.empty())
-    m_commands.push_back(std::move(cmd));
+    out.push_back(std::move(cmd));
 }
 
-void Particles::computeCommands(const IsometricRenderContext& context)
+void ParticleEngine::buildCommands(const IProjection& projection,
+                                   std::vector<ParticleBatchCommand>& out)
 {
-  ZoneScopedN("Particles::computeCommands");
-
-  flush(); // clears m_commands
-
-  if (!context.projection)
-    return;
+  ZoneScopedN("ParticleEngine::buildCommands");
 
   for (const auto& [id, inst] : m_entityEmitters)
   {
     if (!inst.particles.empty())
-      appendBatch(inst, m_effects[inst.effect], context);
+      appendBatch(inst, m_effects[inst.effect], projection, out);
   }
 
   for (const auto& inst : m_bursts)
   {
     if (!inst.particles.empty())
-      appendBatch(inst, m_effects[inst.effect], context);
+      appendBatch(inst, m_effects[inst.effect], projection, out);
   }
 }
 

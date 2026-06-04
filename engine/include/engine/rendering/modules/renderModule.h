@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/rendering/commands/commands.h" // AnyRenderCommand
-#include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/modules/moduleSettings.h"
 #include <vector>
 
@@ -19,10 +18,15 @@ struct ModuleInit
 };
 
 /**
- * A unit of rendering composed into IsometricRenderSystem via withModule<T>().
- * Registration is the enable. The render system constructs + owns modules,
- * init()s them, forwards update(), and calls emit() each frame.
+ * A unit of rendering composed into a render system via RenderModuleHost.
+ * Registration is the enable. The host constructs + owns modules, init()s them,
+ * forwards update(), and calls emit() each frame.
+ *
+ * Templated on the render context the module consumes (the isometric heightfield
+ * context today, a flat-2D context later), so a module is matched at compile
+ * time to the render systems that can host it.
  */
+template <typename TContext>
 class IRenderModule
 {
 public:
@@ -35,7 +39,7 @@ public:
   virtual void update(double /*deltaTime*/) {}
 
   /** Append this module's render commands for the frame. */
-  virtual void emit(const IsometricRenderContext& context,
+  virtual void emit(const TContext& context,
                     std::vector<AnyRenderCommand>& out) = 0;
 
   /**
@@ -44,23 +48,20 @@ public:
    * apply to the active render mode (e.g. hide projected-shadow settings while
    * block geometry self-shadows). Default: none.
    */
-  virtual std::vector<ModuleSetting> settings(const IsometricRenderContext&)
-  {
-    return {};
-  }
+  virtual std::vector<ModuleSetting> settings(const TContext&) { return {}; }
 };
 
 /** Helper base for modules that build a vector of one command type. */
-template <typename TCommand>
-class CommandModule : public IRenderModule
+template <typename TContext, typename TCommand>
+class CommandModule : public IRenderModule<TContext>
 {
 public:
   /** Build the frame's commands into m_commands. */
-  virtual void computeCommands(const IsometricRenderContext& context) = 0;
+  virtual void computeCommands(const TContext& context) = 0;
 
   const std::vector<TCommand>& commands() const { return m_commands; }
 
-  void emit(const IsometricRenderContext& context,
+  void emit(const TContext& context,
             std::vector<AnyRenderCommand>& out) override
   {
     computeCommands(context);

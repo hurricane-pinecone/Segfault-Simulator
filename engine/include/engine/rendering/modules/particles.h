@@ -6,8 +6,8 @@
 #include "engine/particles/particle.h"
 #include "engine/particles/particleEffect.h"
 #include "engine/rendering/commands/commands.h"
+#include "engine/rendering/iProjection.h"
 #include "engine/rendering/iTerrainSurfaceSource.h"
-#include "engine/rendering/isometricRenderContext.h"
 #include "engine/rendering/modules/renderModule.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
@@ -34,17 +34,20 @@ struct ParticleSpawnParams
   bool aimAlongVelocity = true;
 };
 
-// Render module that simulates particles in update() and emits batched draw
-// commands in computeCommands(), so world particles share the frame's depth
-// normalization and occlude correctly against the rest of the scene.
+// Context-free particle engine: simulates particles in simulate() and projects
+// live ones into batched draw commands through an IProjection in
+// buildCommands(). It depends only on the world-to-screen projection interface,
+// not on any render context, so the same engine drives the isometric path and a
+// flat-2D one. The Particles<TContext> module below wraps it as a render module.
 //
 // Effects are registered by name as POD ParticleEffectDesc. Two spawn paths:
 //   - spawnBurst(name, worldPos, elevation): fire-and-forget one-shots.
 //   - ParticleEmitterComponent on an entity: continuous effect that follows it.
-class Particles : public CommandModule<ParticleBatchCommand>
+class ParticleEngine
 {
 public:
-  void init(const ModuleInit& m) override { registry = m.registry; }
+  // The registry the entity-emitter sync reads from (set by the owning module).
+  void setRegistry(Registry* r) { registry = r; }
 
   // Register (or replace) an effect under a name. The name keys spawnBurst() and
   // ParticleEmitterComponent::effect.
@@ -79,18 +82,11 @@ public:
   int liveParticleCount() const;
 
   // Advance every emitter and burst.
-  void update(double deltaTime) override;
+  void simulate(double deltaTime);
 
-  // Project live particles into batched draw commands.
-  void computeCommands(const IsometricRenderContext& context) override;
-
-  std::vector<ModuleSetting> settings(const IsometricRenderContext&) override
-  {
-    return {
-        settings::text("Live particles",
-                       [this] { return std::to_string(liveParticleCount()); }),
-    };
-  }
+  // Project live particles into batched draw commands through the projection.
+  void buildCommands(const IProjection& projection,
+                     std::vector<ParticleBatchCommand>& out);
 
 private:
   Registry* registry = nullptr;
@@ -151,7 +147,8 @@ private:
   void syncComponentEmitters();
   void appendBatch(const EmitterInstance& inst,
                    const ParticleEffectDesc& desc,
-                   const IsometricRenderContext& context);
+                   const IProjection& projection,
+                   std::vector<ParticleBatchCommand>& out);
 
   const ITerrainSurfaceSource* m_terrainSource = nullptr;
   IDecalSink* m_decalSink = nullptr;
@@ -165,6 +162,41 @@ private:
   std::vector<EmitterInstance> m_bursts;
 
   uint32_t m_burstSeed = 0x6d2b79f5u;
+};
+
+/**
+ * Render module wrapping a ParticleEngine for a given render context. The
+ * module is the only context-typed piece -- it pulls the projection off the
+ * context and hands it to the engine -- so the particle simulation and its
+ * spawn/effect API stay context-free and reusable across render systems.
+ *
+ * Configure it through the inherited ParticleEngine API (registerEffect,
+ * spawnBurst, setDecalSink, setTerrainSource).
+ */
+template <typename TContext>
+class Particles : public CommandModule<TContext, ParticleBatchCommand>,
+                  public ParticleEngine
+{
+public:
+  void init(const ModuleInit& m) override { setRegistry(m.registry); }
+
+  void update(double deltaTime) override { simulate(deltaTime); }
+
+  void computeCommands(const TContext& context) override
+  {
+    this->flush();
+
+    if (context.projection)
+      buildCommands(*context.projection, this->m_commands);
+  }
+
+  std::vector<ModuleSetting> settings(const TContext&) override
+  {
+    return {
+        settings::text("Live particles",
+                       [this] { return std::to_string(liveParticleCount()); }),
+    };
+  }
 };
 
 } // namespace sfs

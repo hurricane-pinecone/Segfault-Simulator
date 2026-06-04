@@ -507,6 +507,11 @@ struct IsometricProjection : public IProjection
 
     return isometricTogrid(iso, tileWidth, tileHeight, worldScale);
   }
+
+  float worldUnitToPixels() const final
+  {
+    return static_cast<float>(tileWidth) * worldScale * zoom;
+  }
 };
 
 struct TilePick

@@ -28,7 +28,7 @@ struct WaterSurfaceBuild
  * entities. computeCommands() each frame emits one SurfaceCommand per water tile
  * cluster.
  */
-class IsometricWater : public CommandModule<SurfaceCommand>
+class IsometricWater : public CommandModule<IsometricRenderContext, SurfaceCommand>
 {
 public:
   void init(const ModuleInit& m) override { registry = m.registry; }
