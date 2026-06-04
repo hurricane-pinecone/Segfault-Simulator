@@ -73,6 +73,14 @@ bool ParticleEngine::hasEffect(const std::string& name) const
   return m_effectIds.find(name) != m_effectIds.end();
 }
 
+const ParticleEffectDesc* ParticleEngine::effect(const std::string& name) const
+{
+  auto it = m_effectIds.find(name);
+  if (it == m_effectIds.end())
+    return nullptr;
+  return &m_effects[it->second];
+}
+
 ParticleEngine::EffectId
 ParticleEngine::effectIdOf(const std::string& name) const
 {

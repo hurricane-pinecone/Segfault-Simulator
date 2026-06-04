@@ -19,7 +19,15 @@ file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
 
 if(ENGINE_WEB_BUILD)
     list(FILTER ENGINE_SRC EXCLUDE REGEX ".*/imgui/.*")
-    list(FILTER ENGINE_SRC EXCLUDE REGEX ".*/lua/.*")
+
+    # No Emscripten Lua port / Conan-for-wasm, so compile the vendored Lua 5.4
+    # sources into the wasm module (minus the standalone interpreter/compiler
+    # mains). The engine's own Lua bindings (src/scripting/lua) stay IN the build
+    # on web -- that's what the JS-driven editor calls into.
+    file(GLOB LUA_SRC "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua/*.c")
+    list(FILTER LUA_SRC EXCLUDE REGEX ".*/lua\\.c$")
+    list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
+    list(APPEND ENGINE_SRC ${LUA_SRC})
 endif()
 
 add_library(engine STATIC
@@ -61,6 +69,12 @@ endif()
 if(ENGINE_WEB_BUILD)
     target_compile_definitions(engine PUBLIC
         ENGINE_WEB=1
+    )
+
+    # Vendored Lua headers (so the bindings' <lua.hpp> resolves on web; native
+    # gets these from the Conan lua::lua target instead).
+    target_include_directories(engine PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua"
     )
 
     target_compile_options(engine PUBLIC

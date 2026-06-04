@@ -17,6 +17,7 @@
   #include <imgui.h>
 
   #include <cstdlib>
+  #include <functional>
   #include <string>
   #include <typeindex>
   #include <typeinfo>
@@ -289,7 +290,8 @@ inline static void renderDebugControls(Scene* scene)
   ImGui::End();
 }
 
-inline static void renderDebugUI(Scene* scene)
+inline static void renderDebugUI(Scene* scene,
+                                 const std::function<void()>& appUI = {})
 {
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplSDL2_NewFrame();
@@ -301,6 +303,10 @@ inline static void renderDebugUI(Scene* scene)
   // Game-specific debug controls (added by the active scene).
   if (scene)
     scene->debugUI();
+
+  // App-level debug controls (Game::onDebugUI), drawn in the same frame.
+  if (appUI)
+    appUI();
 
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

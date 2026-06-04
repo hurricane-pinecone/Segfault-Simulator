@@ -29,8 +29,9 @@ struct ParticleSpawnParams
   glm::vec2 velocity{0.0f, 0.0f};
   float velocityZ = 0.0f;
 
-  // When true and `velocity` is non-zero, the emission spread/cone is centred on
-  // the velocity's direction instead of +X, so the spray fans along the impact.
+  // When true and `velocity` is non-zero, the emission spread/cone is centred
+  // on the velocity's direction instead of +X, so the spray fans along the
+  // impact.
   bool aimAlongVelocity = true;
 };
 
@@ -38,7 +39,8 @@ struct ParticleSpawnParams
 // live ones into batched draw commands through an IProjection in
 // buildCommands(). It depends only on the world-to-screen projection interface,
 // not on any render context, so the same engine drives the isometric path and a
-// flat-2D one. The Particles<TContext> module below wraps it as a render module.
+// flat-2D one. The Particles<TContext> module below wraps it as a render
+// module.
 //
 // Effects are registered by name as POD ParticleEffectDesc. Two spawn paths:
 //   - spawnBurst(name, worldPos, elevation): fire-and-forget one-shots.
@@ -49,27 +51,33 @@ public:
   // The registry the entity-emitter sync reads from (set by the owning module).
   void setRegistry(Registry* r) { registry = r; }
 
-  // Register (or replace) an effect under a name. The name keys spawnBurst() and
-  // ParticleEmitterComponent::effect.
+  // Register (or replace) an effect under a name. The name keys spawnBurst()
+  // and ParticleEmitterComponent::effect.
   void registerEffect(const std::string& name, const ParticleEffectDesc& desc);
   bool hasEffect(const std::string& name) const;
 
+  // The registered effect's description, or nullptr if unknown. Lets a live
+  // editor read a desc, tweak fields, and re-register it (registerEffect
+  // replaces by name) to reconfigure the running game.
+  const ParticleEffectDesc* effect(const std::string& name) const;
+
   // Fire a one-shot burst at a world tile position sitting on the given ground
-  // elevation level. The optional spawn params inject impact momentum/direction.
-  // Returns false if the effect name is unknown.
+  // elevation level. The optional spawn params inject impact
+  // momentum/direction. Returns false if the effect name is unknown.
   bool spawnBurst(const std::string& effect,
                   glm::vec2 worldPos,
                   float elevation = 0.0f,
                   const ParticleSpawnParams& spawn = {});
 
-  // Fire a one-shot burst of a SimulationSpace::Screen effect at a screen pixel.
+  // Fire a one-shot burst of a SimulationSpace::Screen effect at a screen
+  // pixel.
   bool spawnScreenBurst(const std::string& effect,
                         glm::vec2 screenPos,
                         const ParticleSpawnParams& spawn = {});
 
   // Optional terrain awareness. When set, world particles whose effect has a
-  // GroundBehavior collide with the real terrain (ground/walls/water) instead of
-  // their spawn plane. Required for decals to land on the right surface.
+  // GroundBehavior collide with the real terrain (ground/walls/water) instead
+  // of their spawn plane. Required for decals to land on the right surface.
   void setTerrainSource(const ITerrainSurfaceSource* source)
   {
     m_terrainSource = source;
@@ -98,13 +106,15 @@ private:
     EffectId effect = -1;
     bool screenSpace = false;
 
-    // Origin: world tiles + ground elevation level, or screen pixels if screenSpace.
+    // Origin: world tiles + ground elevation level, or screen pixels if
+    // screenSpace.
     glm::vec2 origin{0.0f, 0.0f};
     float groundLevel = 0.0f;
     float spawnHeightBias = 0.0f; // emitter height offset added to startHeight
 
     // Impact momentum added to each emitted particle, and the spread centre
-    // (radians) the emission fans around (0 = +X). Set from ParticleSpawnParams.
+    // (radians) the emission fans around (0 = +X). Set from
+    // ParticleSpawnParams.
     glm::vec2 baseVelocity{0.0f, 0.0f};
     float baseVelocityZ = 0.0f;
     float aimAngle = 0.0f;
