@@ -39,7 +39,8 @@ glm::ivec2 Decals::chunkOf(const glm::vec2& worldPos) const
 std::int64_t Decals::chunkKey(glm::ivec2 chunk)
 {
   // Pack both halves as unsigned 32-bit so the key is a clean bijection.
-  return (static_cast<std::int64_t>(static_cast<std::uint32_t>(chunk.x)) << 32) |
+  return (static_cast<std::int64_t>(static_cast<std::uint32_t>(chunk.x))
+          << 32) |
          static_cast<std::uint32_t>(chunk.y);
 }
 
@@ -52,8 +53,7 @@ bool Decals::isStatic(const Decal& d)
 {
   // Static = never changes per frame: not fading, and not a wall drip still
   // running down. (Permanent water with fadeRate 0 counts as static too.)
-  return d.fadeRate <= 0.0f &&
-         !(d.surface == DecalSurface::Wall && !d.settled);
+  return d.fadeRate <= 0.0f && !(d.surface == DecalSurface::Wall && !d.settled);
 }
 
 void Decals::addDecal(const DecalSpawn& spawn)
@@ -71,7 +71,6 @@ void Decals::addDecal(const DecalSpawn& spawn)
                                               : std::string("white_pixel"));
   d.fadeRate = spawn.fadeRate;
   d.dripSpeed = spawn.dripSpeed;
-  d.sortKey = spawn.sortKey;
   d.age = 0.0f;
   d.settled = false;
 
@@ -82,7 +81,8 @@ void Decals::addDecal(const DecalSpawn& spawn)
 
   ChunkData& chunk = m_chunks[chunkOf(d.worldPos)];
   if (isStatic(d))
-    buildDecalVerts(d, chunk.pendingStatic); // append-only: O(new), not O(chunk)
+    buildDecalVerts(
+        d, chunk.pendingStatic); // append-only: O(new), not O(chunk)
   else
     ++chunk.animatingCount;
   chunk.decals.push_back(d);
@@ -228,7 +228,7 @@ void Decals::update(double deltaTime)
 }
 
 void Decals::buildDecalVerts(const Decal& decal,
-                                  std::vector<DecalVertex>& out) const
+                             std::vector<DecalVertex>& out) const
 {
   glm::vec4 color = decal.color;
   if (decal.fadeRate > 0.0f)
@@ -236,8 +236,7 @@ void Decals::buildDecalVerts(const Decal& decal,
   if (color.a <= 0.0f)
     return;
 
-  const auto push =
-      [&](glm::vec2 wp, float elev, glm::vec2 uv, float key)
+  const auto push = [&](glm::vec2 wp, float elev, glm::vec2 uv, float key)
   { out.push_back(DecalVertex{wp, elev, uv, color, key}); };
 
   if (decal.surface != DecalSurface::Wall)
@@ -250,7 +249,8 @@ void Decals::buildDecalVerts(const Decal& decal,
     { return glm::vec2{ox * c - oy * s, ox * s + oy * c}; };
 
     const float e = decal.elevation;
-    const float key = decal.worldPos.x + decal.worldPos.y + e * 0.5f + kGroundBias;
+    const float key =
+        decal.worldPos.x + decal.worldPos.y + e * 0.5f + kGroundBias;
 
     const glm::vec2 w0 = decal.worldPos + rot(-h, -h);
     const glm::vec2 w1 = decal.worldPos + rot(h, -h);
@@ -267,25 +267,30 @@ void Decals::buildDecalVerts(const Decal& decal,
   }
 
   // Wall drip: a streak running down the face from its start elevation to the
-  // head, capped with a soft round blob at the head. Co-sorts with the host
-  // block (decal.sortKey). UVs: streak samples the dot's centreline (v=0.5) so
-  // it's solid top-to-bottom; the cap uses full radial UVs to read round.
+  // head, capped with a soft round blob at the head. UVs: streak samples the
+  // dot's centreline (v=0.5) so it's solid top-to-bottom; the cap uses full
+  // radial UVs to read round.
   const glm::vec2 edgeDir =
       decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
   const float headElev =
       std::max(decal.wallBottom, decal.elevation - decal.dripSpeed * decal.age);
   const float halfW = decal.size * 0.5f;
-  const float key = decal.sortKey + kWallBias;
+
+  // Key each vertex off its own world position + elevation, matching the block
+  // face's depth (world.x + world.y + ground * 0.5); the bias lifts the drip
+  // just in front of the coplanar face so the depth test keeps it visible.
+  const auto wallKey = [](glm::vec2 wp, float elev)
+  { return wp.x + wp.y + elev * 0.5f + kWallBias; };
 
   const glm::vec2 a = decal.worldPos - edgeDir * halfW;
   const glm::vec2 b = decal.worldPos + edgeDir * halfW;
 
-  push(a, decal.elevation, {0.0f, 0.5f}, key);
-  push(b, decal.elevation, {1.0f, 0.5f}, key);
-  push(b, headElev, {1.0f, 0.5f}, key);
-  push(a, decal.elevation, {0.0f, 0.5f}, key);
-  push(b, headElev, {1.0f, 0.5f}, key);
-  push(a, headElev, {0.0f, 0.5f}, key);
+  push(a, decal.elevation, {0.0f, 0.5f}, wallKey(a, decal.elevation));
+  push(b, decal.elevation, {1.0f, 0.5f}, wallKey(b, decal.elevation));
+  push(b, headElev, {1.0f, 0.5f}, wallKey(b, headElev));
+  push(a, decal.elevation, {0.0f, 0.5f}, wallKey(a, decal.elevation));
+  push(b, headElev, {1.0f, 0.5f}, wallKey(b, headElev));
+  push(a, headElev, {0.0f, 0.5f}, wallKey(a, headElev));
 
   // Round cap at the head. capH (elevation levels) is sized from capW (tiles)
   // by the projection's tile/elevation ratio so it reads roughly round.
@@ -298,12 +303,12 @@ void Decals::buildDecalVerts(const Decal& decal,
   const float top = headElev + capH;
   const float bot = headElev - capH;
 
-  push(ca, top, {0.0f, 0.0f}, key);
-  push(cb, top, {1.0f, 0.0f}, key);
-  push(cb, bot, {1.0f, 1.0f}, key);
-  push(ca, top, {0.0f, 0.0f}, key);
-  push(cb, bot, {1.0f, 1.0f}, key);
-  push(ca, bot, {0.0f, 1.0f}, key);
+  push(ca, top, {0.0f, 0.0f}, wallKey(ca, top));
+  push(cb, top, {1.0f, 0.0f}, wallKey(cb, top));
+  push(cb, bot, {1.0f, 1.0f}, wallKey(cb, bot));
+  push(ca, top, {0.0f, 0.0f}, wallKey(ca, top));
+  push(cb, bot, {1.0f, 1.0f}, wallKey(cb, bot));
+  push(ca, bot, {0.0f, 1.0f}, wallKey(ca, bot));
 }
 
 void Decals::computeCommands(const IsometricRenderContext& context)
@@ -329,10 +334,10 @@ void Decals::computeCommands(const IsometricRenderContext& context)
     const glm::ivec2 minTile = grid.origin;
     const glm::ivec2 maxTile =
         grid.origin + glm::ivec2{grid.width, grid.height};
-    const glm::ivec2 minChunk{floorDiv(minTile.x, kChunkTiles),
-                              floorDiv(minTile.y, kChunkTiles)};
-    const glm::ivec2 maxChunk{floorDiv(maxTile.x, kChunkTiles),
-                              floorDiv(maxTile.y, kChunkTiles)};
+    const glm::ivec2 minChunk{
+        floorDiv(minTile.x, kChunkTiles), floorDiv(minTile.y, kChunkTiles)};
+    const glm::ivec2 maxChunk{
+        floorDiv(maxTile.x, kChunkTiles), floorDiv(maxTile.y, kChunkTiles)};
 
     for (int cy = minChunk.y; cy <= maxChunk.y; ++cy)
     {

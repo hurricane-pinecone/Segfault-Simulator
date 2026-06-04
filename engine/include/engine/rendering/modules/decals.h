@@ -25,9 +25,8 @@ namespace sfs
 //
 // Emits one DecalDrawCommand/frame: dirty-chunk uploads + visible chunk keys +
 // the animating vertices + chunks to free. The renderer holds the heavy data.
-class Decals
-    : public IDecalSink,
-      public CommandModule<IsometricRenderContext, DecalDrawCommand>
+class Decals : public IDecalSink,
+               public CommandModule<IsometricRenderContext, DecalDrawCommand>
 {
 public:
   void addDecal(const DecalSpawn& spawn) override; // IDecalSink
@@ -44,8 +43,8 @@ public:
   std::vector<ModuleSetting> settings(const IsometricRenderContext&) override
   {
     return {
-        settings::text("Decals",
-                       [this] { return std::to_string(decalCount()); }),
+        settings::text(
+            "Decals", [this] { return std::to_string(decalCount()); }),
         settings::action("Clear decals", [this] { clearAll(); }),
     };
   }
@@ -64,7 +63,6 @@ private:
     const std::string* textureId = nullptr;
     float fadeRate = 0.0f;
     float dripSpeed = 0.0f;
-    float sortKey = 0.0f; // wall co-sort key (host block); ground derives its own
     float age = 0.0f;
     bool settled = false;
   };
@@ -91,16 +89,17 @@ private:
 
   static bool isStatic(const Decal& d);
 
-  // Build a decal's world-space vertices (ground square / wall streak + cap) into
-  // `out`. Uses the cached tile size to size the wall cap to read round on screen.
+  // Build a decal's world-space vertices (ground square / wall streak + cap)
+  // into `out`. Uses the cached tile size to size the wall cap to read round on
+  // screen.
   void buildDecalVerts(const Decal& decal, std::vector<DecalVertex>& out) const;
 
   std::unordered_map<glm::ivec2, ChunkData, IVec2Hash> m_chunks;
   std::unordered_set<std::string> m_textureIds; // stable id storage
-  std::vector<std::int64_t> m_pendingFree;       // chunks freed since last frame
+  std::vector<std::int64_t> m_pendingFree;      // chunks freed since last frame
 
-  // Cached from the projection each frame (constant in practice) so geometry can
-  // be built at add/settle time, not only during computeCommands.
+  // Cached from the projection each frame (constant in practice) so geometry
+  // can be built at add/settle time, not only during computeCommands.
   float m_tileWidth = 32.0f;
   float m_elevationStep = 8.0f;
 

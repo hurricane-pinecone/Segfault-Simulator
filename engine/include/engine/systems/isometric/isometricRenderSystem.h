@@ -91,9 +91,8 @@ public:
    * settings appropriate to the active render mode.
    */
   void forEachModule(
-      const std::function<void(std::type_index,
-                               Module&,
-                               const IsometricRenderContext&)>& fn);
+      const std::function<
+          void(std::type_index, Module&, const IsometricRenderContext&)>& fn);
 
   void drawDebugTile(const glm::vec2& gridPosition,
                      SDL_Color color = SDL_Color{255, 255, 0, 255});
@@ -101,6 +100,12 @@ public:
   void drawDebugTile(const glm::vec2& gridPosition,
                      int elevation,
                      SDL_Color color = SDL_Color{255, 255, 0, 255});
+
+  // Debug overlay for tuning collider boxes: WorldColliders as a ground-plane
+  // diamond (world AABB projected at the entity's elevation), ScreenSpace
+  // colliders as a 1px box over the sprite in screen space.
+  void drawDebugColliders(SDL_Color worldColor = SDL_Color{0, 255, 0, 255},
+                          SDL_Color screenColor = SDL_Color{255, 0, 0, 255});
 
   void markTerrainDirty();
 
@@ -129,15 +134,11 @@ private:
   // Rebuild m_pointLights from the scene's LightEmitterComponent entities.
   void gatherPointLights();
 
-  // Eases each actor's rendered ground elevation toward the tile it stands on,
-  // so crossing an elevation step ramps smoothly instead of teleporting a whole
-  // level (which jumps both the sprite and any light it carries).
+  // Eases each actor's ground elevation (m_actorElevation) toward the tile it
+  // stands on, so a carried point light's occlusion ramps across an elevation
+  // step instead of snapping. The sprite itself uses the discrete elevation
+  // (snaps), so only the light reads this eased value.
   void updateActorElevations(double deltaTime);
-
-  // Smoothed ground elevation (levels) for the actor, or its instantaneous tile
-  // elevation if it isn't being tracked yet.
-  float smoothedElevationOf(const Entity& entity,
-                            const glm::vec2& samplePosition) const;
 
   void flushBatches();
 
@@ -145,11 +146,15 @@ private:
 
   bool isTileEntity(const Entity& entity) const;
 
-  float getRenderElevationLevel(const Entity& entity,
-                                const glm::vec2& samplePosition) const;
+  // Discrete elevation (levels) of a terrain tile entity, for its render height
+  // and depth. Actors derive theirs from the tile they stand on instead.
+  float tileElevationLevel(const Entity& entity) const;
 
-  glm::vec2 getGroundSamplePosition(const Entity& entity,
-                                    const TransformComponent& transform) const;
+  // Terrain elevation (levels) the actor stands on, driven by its
+  // FootColliderComponent footprint (falls back to the tile under its position
+  // when it has none).
+  float actorStandingElevation(const Entity& entity,
+                               const TransformComponent& transform) const;
 
   bool tryGetTileElevationAt(const glm::vec2& position,
                              int& outElevation) const;
@@ -188,7 +193,8 @@ private:
   bool tileElevationCacheDirty = true;
 
   // Per-actor eased ground elevation (levels), keyed by entity id. Updated in
-  // update(); read when placing sprites and when filling each light's ground.
+  // update(); read only when filling each carried light's ground level (so its
+  // occlusion ramps smoothly). The sprite itself uses the discrete elevation.
   std::unordered_map<Entity::EntityId, float> m_actorElevation;
 
   // Optional authoritative terrain heights. When present the heightmap window

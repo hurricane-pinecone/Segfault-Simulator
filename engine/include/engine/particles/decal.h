@@ -8,7 +8,8 @@
 namespace sfs
 {
 
-// Which terrain surface a decal sits on (set from particle-vs-terrain collision).
+// Which terrain surface a decal sits on (set from particle-vs-terrain
+// collision).
 enum class DecalSurface : uint8_t
 {
   Ground, // flat on a tile top
@@ -17,15 +18,16 @@ enum class DecalSurface : uint8_t
 };
 
 // A request to lay down one persistent mark on the terrain, produced when a
-// particle collides with the world and consumed by an IDecalSink (the Decals module).
+// particle collides with the world and consumed by an IDecalSink (the Decals
+// module).
 struct DecalSpawn
 {
   glm::vec2 worldPos{0.0f, 0.0f};
   float elevation = 0.0f; // surface elevation level it landed on
 
   DecalSurface surface = DecalSurface::Ground;
-  uint8_t wallSide = 0;       // 0=W 1=N 2=E 3=S, only when surface == Wall
-  float wallBottom = 0.0f;    // elevation of the wall face's base (Wall only)
+  uint8_t wallSide = 0;    // 0=W 1=N 2=E 3=S, only when surface == Wall
+  float wallBottom = 0.0f; // elevation of the wall face's base (Wall only)
 
   float size = 0.15f; // tiles
   float rotation = 0.0f;
@@ -35,21 +37,18 @@ struct DecalSpawn
   // (the sink interns it). null falls back to the sink's default.
   const std::string* textureId = nullptr;
 
-  // Per-second alpha decay. 0 = permanent (ground); > 0 = fades (water, wall drips).
+  // Per-second alpha decay. 0 = permanent (ground); > 0 = fades (water, wall
+  // drips).
   float fadeRate = 0.0f;
 
   // Wall drips only: how fast (elevation levels/sec) the streak runs down the
   // face. `elevation` is the streak's top; the head descends toward wallBottom.
   float dripSpeed = 0.0f;
-
-  // Wall drips only: world painter sort-key of the block the decal sits on, so
-  // it co-sorts with that block's billboard (occluded by exactly what occludes
-  // the block). 0 => derive from worldPos (ground/water).
-  float sortKey = 0.0f;
 };
 
-// Receives decals from collisions. The Decals module implements this; the Particles module
-// holds a pointer to it (bridged by the scene, so neither depends on the other).
+// Receives decals from collisions. The Decals module implements this; the
+// Particles module holds a pointer to it (bridged by the scene, so neither
+// depends on the other).
 class IDecalSink
 {
 public:

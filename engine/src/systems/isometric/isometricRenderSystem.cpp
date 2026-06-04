@@ -1,7 +1,9 @@
 
 #include "engine/assetStore/assetStore.h"
 #include "engine/components/elevationComponent.h"
+#include "engine/components/screenSpaceCollider.h"
 #include "engine/components/spriteComponent.h"
+#include "engine/components/worldCollider.h"
 
 #include "engine/components/surfaceEffect.h"
 #include "engine/components/tags/isometricTile.h"
@@ -101,7 +103,13 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
             }
             else
             {
-              includeKey(orderKey(concrete.order));
+              const float feetKey = orderKey(concrete.order);
+              includeKey(feetKey);
+
+              // A sprite's top edge sits nearer than its feet (vertical
+              // billboard), so its key reaches further toward the camera.
+              if constexpr (std::is_same_v<T, LitQuadCommand>)
+                includeKey(feetKey + concrete.quad.depthSpan);
             }
           }
         },
@@ -148,7 +156,14 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
           }
           else
           {
-            concrete.quad.z = toClipZ(orderKey(concrete.order));
+            const float feetKey = orderKey(concrete.order);
+            concrete.quad.z = toClipZ(feetKey);
+
+            // Give sprites a depth gradient over their height that matches the
+            // block-face geometry's elevation weighting, so a billboard sorts
+            // per-pixel like the vertical surface it depicts.
+            if constexpr (std::is_same_v<T, LitQuadCommand>)
+              concrete.quad.zTop = toClipZ(feetKey + concrete.quad.depthSpan);
           }
         },
         command);
@@ -381,11 +396,16 @@ void IsometricRenderSystem::render()
     const float anchorX = spriteComponent.anchor.x * static_cast<float>(width);
     const float anchorY = spriteComponent.anchor.y * static_cast<float>(height);
 
-    const glm::vec2 groundSamplePosition =
-        getGroundSamplePosition(entity, transform);
-
+    // The sprite's visual rise AND its depth both use the discrete standing
+    // elevation, so stepping a level snaps the sprite straight up/down instead
+    // of easing along a diagonal (the eased path slid the sprite through the
+    // block edge mid-step). The EASED elevation is kept only for point-light
+    // occlusion (m_actorElevation, applied in setPointLights), so lighting
+    // still ramps smoothly across a step. Actors derive it from their foot
+    // collider (if any); tiles use their own elevation.
     const float elevationLevel =
-        getRenderElevationLevel(entity, groundSamplePosition);
+        isTileEntity(entity) ? tileElevationLevel(entity)
+                             : actorStandingElevation(entity, transform);
 
     const int elevationOffset = static_cast<int>(std::round(
         elevationLevel * proj.elevationStep * proj.worldScale * zoom));
@@ -407,27 +427,12 @@ void IsometricRenderSystem::render()
 
     const bool tileEntity = isTileEntity(entity);
 
-    // exactPosition is where the entity really is in world/grid space.
-    // It is still used for rendering, lighting, and fractional tie-breaks.
-    glm::vec2 exactPosition = transform.position;
-
-    // sortPosition is intentionally different for non-tile sprites.
-    //
-    // Moving actors use fractional positions, which made them flip in front of
-    // nearby raised blocks just before stepping onto them. For depth ordering,
-    // sprites are grouped by the center of their current grid cell. Their exact
-    // fractional position is added later only as a tiny tie-break.
-    glm::vec2 sortPosition = exactPosition;
-
-    if (!tileEntity)
-    {
-      const glm::ivec2 cell = gridCellOf(exactPosition);
-
-      sortPosition = glm::vec2{
-          static_cast<float>(cell.x) + 0.5f,
-          static_cast<float>(cell.y) + 0.5f,
-      };
-    }
+    // Sort by the exact ground-contact position so the sprite's single quad
+    // depth matches where it is drawn. Quantising actors to the cell centre put
+    // their depth at the middle of the tile's depth range, so the near half of
+    // the tile's own top face read as nearer and the depth buffer clipped the
+    // actor through it (correct painter order pre-depth-buffer, wrong now).
+    const glm::vec2 sortPosition = transform.position;
 
     // Elevation contributes to sorting, but only partially.
     //
@@ -442,8 +447,14 @@ void IsometricRenderSystem::render()
     // it.
     constexpr float SpriteBias = 0.001f;
 
-    float sortKey = sortPosition.x + sortPosition.y +
-                    static_cast<float>(elevationLevel) * ElevationSortWeight;
+    float sortKey =
+        sortPosition.x + sortPosition.y + elevationLevel * ElevationSortWeight;
+
+    // Sprites sort just in front of the tile they stand on so they aren't
+    // z-fought by their own ground (the subpass also separates them from
+    // tiles).
+    if (!tileEntity)
+      sortKey += SpriteBias;
 
     // Tiles use the tile center for lighting because their lit surface spans
     // the whole tile. Sprites use their exact world position, which represents
@@ -487,27 +498,26 @@ void IsometricRenderSystem::render()
     }
     else
     {
-      // Tiny exact-position tie-break inside the current tile.
-      //
-      // The main sprite sort uses the tile center for stability against raised
-      // neighboring blocks. This tie-break restores local ordering between
-      // sprites/props inside the same tile, such as a player and a lamp both
-      // placed around the tile center.
-      const glm::vec2 fractional{
-          exactPosition.x - std::floor(exactPosition.x),
-          exactPosition.y - std::floor(exactPosition.y),
-      };
-
-      const float exactTieBreak =
-          (fractional.x + fractional.y - 1.0f) * 0.0001f;
-
-      sortKey += SpriteBias;
-      sortKey += exactTieBreak;
-
       command.quad.worldPoints[0] = spriteWorldSample;
       command.quad.worldPoints[1] = spriteWorldSample;
       command.quad.worldPoints[2] = spriteWorldSample;
       command.quad.worldPoints[3] = spriteWorldSample;
+
+      // Block geometry is real 3D faces whose depth rises with elevation
+      // (z = x+y + ground*ElevationSortWeight). A flat billboard would sort by
+      // a single depth and clip against those faces, so give the actor a
+      // matching depth gradient over its height -- feet at its standing depth,
+      // head one sprite-height of elevation nearer -- and let the depth buffer
+      // occlude it per-pixel like the vertical surface it depicts. Billboard
+      // terrain is flat, so there the actor stays flat (depthSpan 0) and sorts
+      // against the flat tiles exactly as before.
+      if (geometryActive)
+      {
+        const float spriteLevels = static_cast<float>(sprite->srcRect.h) *
+                                   transform.scale.y /
+                                   static_cast<float>(proj.elevationStep);
+        command.quad.depthSpan = spriteLevels * ElevationSortWeight;
+      }
     }
 
     command.quad.lightDirection = sunDirection;
@@ -662,6 +672,84 @@ void IsometricRenderSystem::drawDebugTile(const glm::vec2& gridPosition,
   quadRenderer.drawLineLoop(points, 5, color);
 }
 
+void IsometricRenderSystem::drawDebugColliders(SDL_Color worldColor,
+                                               SDL_Color screenColor)
+{
+  if (!m_context.projection)
+    return;
+
+  const auto& proj = *m_context.projection;
+
+  // WorldColliders are a ground-plane AABB (world tiles), so project their
+  // bounds isometrically: the outline is a diamond lying on the terrain at the
+  // entity's elevation.
+  for (const auto& entity : registry->view<WorldCollider, TransformComponent>())
+  {
+    const auto& collider = entity.getComponent<WorldCollider>();
+    const auto& transform = entity.getComponent<TransformComponent>();
+
+    const float e = isTileEntity(entity)
+                        ? tileElevationLevel(entity)
+                        : actorStandingElevation(entity, transform);
+
+    const glm::vec2 points[5] = {
+        m_context.worldToScreen({collider.left(), collider.top()}, e),
+        m_context.worldToScreen({collider.right(), collider.top()}, e),
+        m_context.worldToScreen({collider.right(), collider.bottom()}, e),
+        m_context.worldToScreen({collider.left(), collider.bottom()}, e),
+        m_context.worldToScreen({collider.left(), collider.top()}, e),
+    };
+
+    m_quadRenderer.drawLineLoop(points, 5, worldColor);
+  }
+
+  // ScreenSpaceColliders are authored in sprite pixels from the sprite's
+  // top-left, so they overlay the sprite directly in screen space (sprite Y and
+  // screen Y both grow downward -- no projection). Rebuild the same screen rect
+  // the render loop draws the sprite into, then place the box inside it.
+  for (const auto& entity :
+       registry
+           ->view<ScreenSpaceCollider, TransformComponent, SpriteComponent>())
+  {
+    const auto& collider = entity.getComponent<ScreenSpaceCollider>();
+    const auto& transform = entity.getComponent<TransformComponent>();
+    const auto& spriteComponent = entity.getComponent<SpriteComponent>();
+
+    const auto sprite = assetStore.getSprite(spriteComponent.spriteId);
+
+    if (!sprite)
+      continue;
+
+    const float elevation = isTileEntity(entity)
+                                ? tileElevationLevel(entity)
+                                : actorStandingElevation(entity, transform);
+
+    const glm::vec2 pxScale{transform.scale.x * proj.worldScale * proj.zoom,
+                            transform.scale.y * proj.worldScale * proj.zoom};
+
+    const glm::vec2 spriteSize{
+        sprite->srcRect.w * pxScale.x, sprite->srcRect.h * pxScale.y};
+
+    const glm::vec2 spriteTopLeft =
+        m_context.worldToScreen(transform.position, elevation) +
+        spriteComponent.renderOffset * proj.zoom -
+        spriteComponent.anchor * spriteSize;
+
+    const glm::vec2 topLeft = spriteTopLeft + collider.offset * pxScale;
+    const glm::vec2 boxSize = collider.size * pxScale;
+
+    const glm::vec2 points[5] = {
+        topLeft,
+        {topLeft.x + boxSize.x, topLeft.y},
+        {topLeft.x + boxSize.x, topLeft.y + boxSize.y},
+        {topLeft.x, topLeft.y + boxSize.y},
+        topLeft,
+    };
+
+    m_quadRenderer.drawLineLoop(points, 5, screenColor);
+  }
+}
+
 unsigned int IsometricRenderSystem::resolveTexture(const std::string* textureId)
 {
   ZoneScopedN("Render: resolveTexture");
@@ -706,34 +794,43 @@ bool IsometricRenderSystem::isTileEntity(const Entity& entity) const
   return entity.hasComponent<IsometricTile>();
 }
 
-float IsometricRenderSystem::getRenderElevationLevel(
-    const Entity& entity,
-    const glm::vec2& samplePosition) const
+float IsometricRenderSystem::tileElevationLevel(const Entity& entity) const
 {
-  if (isTileEntity(entity))
-  {
-    if (entity.hasComponent<ElevationComponent>())
-      return static_cast<float>(
-          entity.getComponent<ElevationComponent>().level);
+  if (entity.hasComponent<ElevationComponent>())
+    return static_cast<float>(entity.getComponent<ElevationComponent>().level);
 
-    return 0.0f;
-  }
-
-  // Actors ride the eased elevation so a step up/down ramps instead of
-  // snapping.
-  return smoothedElevationOf(entity, samplePosition);
+  return 0.0f;
 }
 
-float IsometricRenderSystem::smoothedElevationOf(
+float IsometricRenderSystem::actorStandingElevation(
     const Entity& entity,
-    const glm::vec2& samplePosition) const
+    const TransformComponent& transform) const
 {
-  const auto it = m_actorElevation.find(entity.getId());
+  // No world collider: stand on the tile under the actor's position.
+  if (!entity.hasComponent<WorldCollider>())
+    return static_cast<float>(
+        getTileElevationAt(glm::floor(transform.position)));
 
-  if (it != m_actorElevation.end())
-    return it->second;
+  // Drive elevation from the footprint: stand on the highest CLIMBABLE (<= +1)
+  // tile it covers, so the actor steps up the instant its feet reach a raised
+  // tile. A narrow footprint means the body/arms don't trigger it.
+  const auto& foot = entity.getComponent<WorldCollider>();
+  const glm::vec2 lo = transform.position + foot.worldOffset();
+  const glm::vec2 hi = lo + foot.worldSize();
+  const glm::vec2 center = (lo + hi) * 0.5f;
 
-  return static_cast<float>(getTileElevationAt(samplePosition));
+  const int centerLevel = getTileElevationAt(glm::floor(center));
+  int level = centerLevel;
+
+  const glm::vec2 corners[4] = {lo, {hi.x, lo.y}, {lo.x, hi.y}, hi};
+  for (const glm::vec2& corner : corners)
+  {
+    const int e = getTileElevationAt(glm::floor(corner));
+    if (e > level && e <= centerLevel + 1)
+      level = e;
+  }
+
+  return static_cast<float>(level);
 }
 
 void IsometricRenderSystem::update(double deltaTime)
@@ -777,19 +874,6 @@ void IsometricRenderSystem::updateActorElevations(double deltaTime)
     else
       it->second += (target - it->second) * factor;
   }
-}
-
-glm::vec2 IsometricRenderSystem::getGroundSamplePosition(
-    const Entity& entity,
-    const TransformComponent& transform) const
-{
-  if (isTileEntity(entity))
-    return transform.position;
-
-  // Sprites sample the tile they are standing on, not the neighboring raised
-  // tile they may visually overlap. This prevents early visual "step up"
-  // while approaching an elevated block.
-  return glm::floor(transform.position);
 }
 
 bool IsometricRenderSystem::tryGetTileElevationAt(const glm::vec2& position,

@@ -38,8 +38,16 @@ struct TexturedQuad
   SDL_Color tint{255, 255, 255, 255};
 
   // Clip-space depth (gl_Position.z), set from the command's painter sort-key
-  // so the depth buffer orders quads correctly.
+  // so the depth buffer orders quads correctly. z is the quad's bottom edge;
+  // zTop is its top edge. A billboard standing upright is a vertical surface,
+  // so its depth must increase with screen height the same way block-face
+  // geometry does -- otherwise its single flat depth lets a wall it stands in
+  // front of poke through it. depthSpan is the painter-key rise from bottom to
+  // top (0 = flat: zTop resolves equal to z), filled by the render system from
+  // the sprite's height in elevation levels; assignClipDepth maps it into zTop.
   float z = 0.0f;
+  float zTop = 0.0f;
+  float depthSpan = 0.0f;
 };
 
 struct FreeformQuad : Quad
@@ -73,9 +81,9 @@ struct PointLightSet
   float heights[MaxShaderLights] = {};
 
   // The emitter's ground elevation in levels (terrain height under the light).
-  // Supplied by the CPU rather than sampled from the heightmap in the shader so a
-  // moving emitter can ease between tile elevations instead of snapping a whole
-  // level as it crosses a tile border.
+  // Supplied by the CPU rather than sampled from the heightmap in the shader so
+  // a moving emitter can ease between tile elevations instead of snapping a
+  // whole level as it crosses a tile border.
   float groundLevels[MaxShaderLights] = {};
 };
 
