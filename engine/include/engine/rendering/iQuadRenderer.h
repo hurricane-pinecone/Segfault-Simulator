@@ -26,8 +26,13 @@ class IQuadRenderer
 public:
   virtual ~IQuadRenderer() = default;
 
-  /** Create GPU resources (shaders, buffers). Call once before any draw. */
-  virtual void initialize() = 0;
+  /**
+   * Create GPU resources (shaders, buffers). Call once before any draw.
+   *
+   * @return true if the renderer is ready to draw; false if a resource (e.g. a
+   * shader program) failed to build, leaving the renderer unusable.
+   */
+  virtual bool initialize() = 0;
   /** Release all GPU resources. */
   virtual void shutdown() = 0;
 

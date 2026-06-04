@@ -2,6 +2,7 @@
 #include "engine/rendering/isometricGeometryRenderer.h"
 
 #include "engine/logger/logger.h"
+#include "engine/rendering/glDebug.h"
 #include "engine/rendering/quads.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/gpuProfiling.h"
@@ -31,17 +32,15 @@ IsometricGeometryRenderer::IsometricGeometryRenderer(int windowWidth,
 
 IsometricGeometryRenderer::~IsometricGeometryRenderer() { shutdown(); }
 
-void IsometricGeometryRenderer::initialize()
+bool IsometricGeometryRenderer::initialize()
 {
   if (initialized)
-    return;
+    return true;
 
   // Core pipelines (lit, solid, particle), textures, heightmap ring, and the
   // shared GL state come up first.
-  OpenGLQuadRenderer::initialize();
-
-  if (!initialized)
-    return;
+  if (!OpenGLQuadRenderer::initialize())
+    return false;
 
   // ===========================================================================
   // Surface shader.
@@ -54,8 +53,9 @@ void IsometricGeometryRenderer::initialize()
 
   if (surfaceShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create IsometricGeometryRenderer surface shader program");
-    return;
+    LOG_ERROR(
+        "Failed to create IsometricGeometryRenderer surface shader program");
+    return false;
   }
 
   // ===========================================================================
@@ -69,34 +69,34 @@ void IsometricGeometryRenderer::initialize()
 
   if (spriteShadowShaderProgram == 0)
   {
-    LOG_ERROR("Failed to create IsometricGeometryRenderer sprite shadow shader");
-    return;
+    LOG_ERROR(
+        "Failed to create IsometricGeometryRenderer sprite shadow shader");
+    return false;
   }
 
   uSpriteShadowTextureLocation =
-      glGetUniformLocation(spriteShadowShaderProgram, "uTexture");
+      SFS_GL_UNIFORM(spriteShadowShaderProgram, "uTexture");
 
   // ===========================================================================
   // Surface shader uniform locations
   // ===========================================================================
 
-  uSurfaceTimeLocation = glGetUniformLocation(surfaceShaderProgram, "uTime");
+  uSurfaceTimeLocation = SFS_GL_UNIFORM(surfaceShaderProgram, "uTime");
   uSurfaceRippleStrengthLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uRippleStrength");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uRippleStrength");
   uSurfaceRippleScaleLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uRippleScale");
-  uSurfaceAmbientLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uAmbient");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uRippleScale");
+  uSurfaceAmbientLocation = SFS_GL_UNIFORM(surfaceShaderProgram, "uAmbient");
   uSurfaceLightCountLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uLightCount");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uLightCount");
   uSurfaceLightPositionsLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uLightPositions[0]");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uLightPositions[0]");
   uSurfaceLightColorsLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uLightColors[0]");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uLightColors[0]");
   uSurfaceLightIntensitiesLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uLightIntensities[0]");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uLightIntensities[0]");
   uSurfaceLightRadiiLocation =
-      glGetUniformLocation(surfaceShaderProgram, "uLightRadii[0]");
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uLightRadii[0]");
 
   // ===========================================================================
   // Surface rendering VAO/VBO/EBO
@@ -162,13 +162,12 @@ void IsometricGeometryRenderer::initialize()
 
   // clip-space depth
   glEnableVertexAttribArray(5);
-  glVertexAttribPointer(
-      5,
-      1,
-      GL_FLOAT,
-      GL_FALSE,
-      sizeof(SurfaceGpuVertex),
-      reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, z)));
+  glVertexAttribPointer(5,
+                        1,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(SurfaceGpuVertex),
+                        reinterpret_cast<void*>(offsetof(SurfaceGpuVertex, z)));
 
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surfaceEbo);
 
@@ -213,13 +212,12 @@ void IsometricGeometryRenderer::initialize()
 
   // color (tint)
   glEnableVertexAttribArray(2);
-  glVertexAttribPointer(
-      2,
-      4,
-      GL_FLOAT,
-      GL_FALSE,
-      sizeof(ShadowVertex),
-      reinterpret_cast<void*>(offsetof(ShadowVertex, color)));
+  glVertexAttribPointer(2,
+                        4,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(ShadowVertex),
+                        reinterpret_cast<void*>(offsetof(ShadowVertex, color)));
 
   // clip-space depth
   glEnableVertexAttribArray(3);
@@ -242,44 +240,40 @@ void IsometricGeometryRenderer::initialize()
   if (decalShaderProgram == 0)
   {
     LOG_ERROR("Failed to create IsometricGeometryRenderer decal shader");
-    return;
+    return false;
   }
 
-  uDecalTextureLocation = glGetUniformLocation(decalShaderProgram, "uTexture");
-  uDecalTileSizeLocation = glGetUniformLocation(decalShaderProgram, "uTileSize");
-  uDecalWorldScaleLocation =
-      glGetUniformLocation(decalShaderProgram, "uWorldScale");
-  uDecalZoomLocation = glGetUniformLocation(decalShaderProgram, "uZoom");
-  uDecalCameraIsoLocation =
-      glGetUniformLocation(decalShaderProgram, "uCameraIso");
+  uDecalTextureLocation = SFS_GL_UNIFORM(decalShaderProgram, "uTexture");
+  uDecalTileSizeLocation = SFS_GL_UNIFORM(decalShaderProgram, "uTileSize");
+  uDecalWorldScaleLocation = SFS_GL_UNIFORM(decalShaderProgram, "uWorldScale");
+  uDecalZoomLocation = SFS_GL_UNIFORM(decalShaderProgram, "uZoom");
+  uDecalCameraIsoLocation = SFS_GL_UNIFORM(decalShaderProgram, "uCameraIso");
   uDecalScreenCenterLocation =
-      glGetUniformLocation(decalShaderProgram, "uScreenCenter");
+      SFS_GL_UNIFORM(decalShaderProgram, "uScreenCenter");
   uDecalElevationStepLocation =
-      glGetUniformLocation(decalShaderProgram, "uElevationStep");
-  uDecalNdcScaleLocation = glGetUniformLocation(decalShaderProgram, "uNdcScale");
-  uDecalDepthMinLocation =
-      glGetUniformLocation(decalShaderProgram, "uDepthMin");
+      SFS_GL_UNIFORM(decalShaderProgram, "uElevationStep");
+  uDecalNdcScaleLocation = SFS_GL_UNIFORM(decalShaderProgram, "uNdcScale");
+  uDecalDepthMinLocation = SFS_GL_UNIFORM(decalShaderProgram, "uDepthMin");
   uDecalDepthInvRangeLocation =
-      glGetUniformLocation(decalShaderProgram, "uDepthInvRange");
-  uDecalAmbientLocation = glGetUniformLocation(decalShaderProgram, "uAmbient");
+      SFS_GL_UNIFORM(decalShaderProgram, "uDepthInvRange");
+  uDecalAmbientLocation = SFS_GL_UNIFORM(decalShaderProgram, "uAmbient");
   uDecalAmbientColorLocation =
-      glGetUniformLocation(decalShaderProgram, "uAmbientColor");
+      SFS_GL_UNIFORM(decalShaderProgram, "uAmbientColor");
   uDecalHeightScaleLocation =
-      glGetUniformLocation(decalShaderProgram, "uHeightScale");
-  uDecalLightCountLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightCount");
+      SFS_GL_UNIFORM(decalShaderProgram, "uHeightScale");
+  uDecalLightCountLocation = SFS_GL_UNIFORM(decalShaderProgram, "uLightCount");
   uDecalLightPositionsLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightPositions[0]");
+      SFS_GL_UNIFORM(decalShaderProgram, "uLightPositions[0]");
   uDecalLightColorsLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightColors[0]");
+      SFS_GL_UNIFORM(decalShaderProgram, "uLightColors[0]");
   uDecalLightIntensitiesLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightIntensities[0]");
+      SFS_GL_UNIFORM(decalShaderProgram, "uLightIntensities[0]");
   uDecalLightRadiiLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightRadii[0]");
+      SFS_GL_UNIFORM(decalShaderProgram, "uLightRadii[0]");
   uDecalLightHeightsLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightHeights[0]");
+      SFS_GL_UNIFORM(decalShaderProgram, "uLightHeights[0]");
   uDecalLightGroundLevelsLocation =
-      glGetUniformLocation(decalShaderProgram, "uLightGroundLevels[0]");
+      SFS_GL_UNIFORM(decalShaderProgram, "uLightGroundLevels[0]");
 
   glGenVertexArrays(1, &decalDynamicVao);
   glGenBuffers(1, &decalDynamicVbo);
@@ -302,7 +296,7 @@ void IsometricGeometryRenderer::initialize()
   if (geometryShaderProgram == 0)
   {
     LOG_ERROR("Failed to create IsometricGeometryRenderer geometry shader");
-    return;
+    return false;
   }
 
   glGenVertexArrays(1, &geometryVao);
@@ -315,28 +309,31 @@ void IsometricGeometryRenderer::initialize()
                GL_DYNAMIC_DRAW);
   // position
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0,
-                        2,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(GeometryVertex),
-                        reinterpret_cast<void*>(offsetof(GeometryVertex, position)));
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(GeometryVertex),
+      reinterpret_cast<void*>(offsetof(GeometryVertex, position)));
   // worldPos
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1,
-                        2,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(GeometryVertex),
-                        reinterpret_cast<void*>(offsetof(GeometryVertex, worldPos)));
+  glVertexAttribPointer(
+      1,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(GeometryVertex),
+      reinterpret_cast<void*>(offsetof(GeometryVertex, worldPos)));
   // ground (elevation)
   glEnableVertexAttribArray(2);
-  glVertexAttribPointer(2,
-                        1,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(GeometryVertex),
-                        reinterpret_cast<void*>(offsetof(GeometryVertex, ground)));
+  glVertexAttribPointer(
+      2,
+      1,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(GeometryVertex),
+      reinterpret_cast<void*>(offsetof(GeometryVertex, ground)));
   // uv
   glEnableVertexAttribArray(3);
   glVertexAttribPointer(3,
@@ -347,12 +344,13 @@ void IsometricGeometryRenderer::initialize()
                         reinterpret_cast<void*>(offsetof(GeometryVertex, uv)));
   // normal
   glEnableVertexAttribArray(4);
-  glVertexAttribPointer(4,
-                        3,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(GeometryVertex),
-                        reinterpret_cast<void*>(offsetof(GeometryVertex, normal)));
+  glVertexAttribPointer(
+      4,
+      3,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(GeometryVertex),
+      reinterpret_cast<void*>(offsetof(GeometryVertex, normal)));
   // clip-space depth
   glEnableVertexAttribArray(5);
   glVertexAttribPointer(5,
@@ -377,6 +375,10 @@ void IsometricGeometryRenderer::initialize()
   glUniform1f(uSurfaceAmbientLocation, 1.0f);
 
   glUseProgram(0);
+
+  SFS_GL_CHECK("IsometricGeometryRenderer::initialize");
+
+  return true;
 }
 
 void IsometricGeometryRenderer::shutdown()
@@ -538,6 +540,7 @@ void IsometricGeometryRenderer::submit(const SurfaceCommand& command)
                  static_cast<GLsizei>(command.indices.size()),
                  GL_UNSIGNED_INT,
                  nullptr);
+  SFS_GL_CHECK("surfaceFlush");
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
@@ -631,6 +634,7 @@ void IsometricGeometryRenderer::flushSpriteShadow()
                  GL_DYNAMIC_DRAW);
 
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size()));
+    SFS_GL_CHECK("spriteShadow");
   }
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -643,12 +647,13 @@ void IsometricGeometryRenderer::flushSpriteShadow()
 void IsometricGeometryRenderer::configureDecalAttribs()
 {
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0,
-                        2,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(DecalVertex),
-                        reinterpret_cast<void*>(offsetof(DecalVertex, worldPos)));
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(DecalVertex),
+      reinterpret_cast<void*>(offsetof(DecalVertex, worldPos)));
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(
       1,
@@ -672,12 +677,13 @@ void IsometricGeometryRenderer::configureDecalAttribs()
                         sizeof(DecalVertex),
                         reinterpret_cast<void*>(offsetof(DecalVertex, color)));
   glEnableVertexAttribArray(4);
-  glVertexAttribPointer(4,
-                        1,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(DecalVertex),
-                        reinterpret_cast<void*>(offsetof(DecalVertex, sortKey)));
+  glVertexAttribPointer(
+      4,
+      1,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(DecalVertex),
+      reinterpret_cast<void*>(offsetof(DecalVertex, sortKey)));
 }
 
 void IsometricGeometryRenderer::setDecalFrameParams(
@@ -705,8 +711,9 @@ void IsometricGeometryRenderer::beginDecalPipeline()
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
   glUniform1i(uDecalTextureLocation, 0);
-  glUniform2f(
-      uDecalTileSizeLocation, m_decalParams.tileWidth, m_decalParams.tileHeight);
+  glUniform2f(uDecalTileSizeLocation,
+              m_decalParams.tileWidth,
+              m_decalParams.tileHeight);
   glUniform1f(uDecalWorldScaleLocation, m_decalParams.worldScale);
   glUniform1f(uDecalZoomLocation, m_decalParams.zoom);
   glUniform2f(uDecalCameraIsoLocation,
@@ -831,11 +838,12 @@ void IsometricGeometryRenderer::appendDecalChunk(std::int64_t key,
     {
       glBindBuffer(GL_COPY_READ_BUFFER, buf.vbo);
       glBindBuffer(GL_COPY_WRITE_BUFFER, newVbo);
-      glCopyBufferSubData(GL_COPY_READ_BUFFER,
-                          GL_COPY_WRITE_BUFFER,
-                          0,
-                          0,
-                          static_cast<GLsizeiptr>(buf.count * sizeof(DecalVertex)));
+      glCopyBufferSubData(
+          GL_COPY_READ_BUFFER,
+          GL_COPY_WRITE_BUFFER,
+          0,
+          0,
+          static_cast<GLsizeiptr>(buf.count * sizeof(DecalVertex)));
       glBindBuffer(GL_COPY_READ_BUFFER, 0);
       glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
     }
@@ -893,6 +901,7 @@ void IsometricGeometryRenderer::drawDecalChunk(std::int64_t key,
   glBindTexture(GL_TEXTURE_2D, texture);
   glBindVertexArray(it->second.vao);
   glDrawArrays(GL_TRIANGLES, 0, it->second.count);
+  SFS_GL_CHECK("decalChunk");
   glBindVertexArray(0);
 }
 
@@ -915,6 +924,7 @@ void IsometricGeometryRenderer::drawDecalsDynamic(const DecalVertex* vertices,
 
   glBindTexture(GL_TEXTURE_2D, texture);
   glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(count));
+  SFS_GL_CHECK("decalsDynamic");
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -950,58 +960,58 @@ void IsometricGeometryRenderer::beginGeometryPipeline()
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
   // Frame uniforms (locations fetched once per frame; cheap). Sun/ambient from
-  // setGeometryLighting; point lights + heightmap from the renderer's frame state.
-  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uTexture"), 0);
-  glUniform1f(glGetUniformLocation(geometryShaderProgram, "uAmbient"), m_geomAmbient);
-  glUniform3f(glGetUniformLocation(geometryShaderProgram, "uLightDirection"),
+  // setGeometryLighting; point lights + heightmap from the renderer's frame
+  // state.
+  glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uTexture"), 0);
+  glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uAmbient"), m_geomAmbient);
+  glUniform3f(SFS_GL_UNIFORM(geometryShaderProgram, "uLightDirection"),
               m_geomSunDirection.x,
               m_geomSunDirection.y,
               m_geomSunDirection.z);
-  glUniform1f(glGetUniformLocation(geometryShaderProgram, "uDiffuseStrength"),
+  glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uDiffuseStrength"),
               m_geomDiffuseStrength);
 
-  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uLightCount"),
+  glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uLightCount"),
               m_pointLights.count);
   if (m_pointLights.count > 0)
   {
-    glUniform2fv(glGetUniformLocation(geometryShaderProgram, "uLightPositions[0]"),
+    glUniform2fv(SFS_GL_UNIFORM(geometryShaderProgram, "uLightPositions[0]"),
                  m_pointLights.count,
                  &m_pointLights.positions[0].x);
-    glUniform3fv(glGetUniformLocation(geometryShaderProgram, "uLightColors[0]"),
+    glUniform3fv(SFS_GL_UNIFORM(geometryShaderProgram, "uLightColors[0]"),
                  m_pointLights.count,
                  &m_pointLights.colors[0].x);
-    glUniform1fv(glGetUniformLocation(geometryShaderProgram, "uLightIntensities[0]"),
+    glUniform1fv(SFS_GL_UNIFORM(geometryShaderProgram, "uLightIntensities[0]"),
                  m_pointLights.count,
                  m_pointLights.intensities);
-    glUniform1fv(glGetUniformLocation(geometryShaderProgram, "uLightRadii[0]"),
+    glUniform1fv(SFS_GL_UNIFORM(geometryShaderProgram, "uLightRadii[0]"),
                  m_pointLights.count,
                  m_pointLights.radii);
-    glUniform1fv(glGetUniformLocation(geometryShaderProgram, "uLightHeights[0]"),
+    glUniform1fv(SFS_GL_UNIFORM(geometryShaderProgram, "uLightHeights[0]"),
                  m_pointLights.count,
                  m_pointLights.heights);
-    glUniform1fv(
-        glGetUniformLocation(geometryShaderProgram, "uLightGroundLevels[0]"),
-        m_pointLights.count,
-        m_pointLights.groundLevels);
+    glUniform1fv(SFS_GL_UNIFORM(geometryShaderProgram, "uLightGroundLevels[0]"),
+                 m_pointLights.count,
+                 m_pointLights.groundLevels);
   }
 
   glActiveTexture(GL_TEXTURE2);
   glBindTexture(GL_TEXTURE_2D, heightmapTextures[m_heightmapRing]);
-  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uHeightmap"), 2);
-  glUniform2f(glGetUniformLocation(geometryShaderProgram, "uHeightmapOrigin"),
+  glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uHeightmap"), 2);
+  glUniform2f(SFS_GL_UNIFORM(geometryShaderProgram, "uHeightmapOrigin"),
               static_cast<float>(m_heightmapOriginX),
               static_cast<float>(m_heightmapOriginY));
-  glUniform2f(glGetUniformLocation(geometryShaderProgram, "uHeightmapSize"),
+  glUniform2f(SFS_GL_UNIFORM(geometryShaderProgram, "uHeightmapSize"),
               static_cast<float>(m_heightmapWidth),
               static_cast<float>(m_heightmapHeight));
-  glUniform1f(glGetUniformLocation(geometryShaderProgram, "uHeightmapTexSize"),
+  glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uHeightmapTexSize"),
               static_cast<float>(m_heightmapTexSize));
-  glUniform1f(glGetUniformLocation(geometryShaderProgram, "uHeightScale"),
-              m_heightScale);
+  glUniform1f(
+      SFS_GL_UNIFORM(geometryShaderProgram, "uHeightScale"), m_heightScale);
 
-  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uShadowSharp"),
+  glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uShadowSharp"),
               m_sunShadowStyle == SunShadowStyle::Sharp ? 1 : 0);
-  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uSunShadowEnabled"),
+  glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uSunShadowEnabled"),
               m_sunShadowMarchEnabled ? 1 : 0);
 
   glActiveTexture(GL_TEXTURE0);
@@ -1018,10 +1028,11 @@ void IsometricGeometryRenderer::drawGeometry(const GeometryVertex* vertices,
 
   beginGeometryPipeline();
 
-  glUniform1i(glGetUniformLocation(geometryShaderProgram, "uSurfaceEffect"),
-              surfaceEffect);
+  glUniform1i(
+      SFS_GL_UNIFORM(geometryShaderProgram, "uSurfaceEffect"), surfaceEffect);
 
-  // Convert screen-pixel positions to NDC (the rest of the vertex passes through).
+  // Convert screen-pixel positions to NDC (the rest of the vertex passes
+  // through).
   m_geometryScratch.assign(vertices, vertices + count);
   for (auto& v : m_geometryScratch)
     v.position = toNdc(v.position);
@@ -1036,6 +1047,7 @@ void IsometricGeometryRenderer::drawGeometry(const GeometryVertex* vertices,
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture);
   glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(count));
+  SFS_GL_CHECK("drawGeometry");
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1594,7 +1606,8 @@ unsigned int IsometricGeometryRenderer::createGeometryShaderProgram() const
 #endif
 
   // Vertices arrive already projected to screen pixels -> NDC (CPU side), plus
-  // world XY + per-vertex elevation (ground) + a real world normal for lighting.
+  // world XY + per-vertex elevation (ground) + a real world normal for
+  // lighting.
   const std::string vertexSource = glslVersion + R"(
 layout(location = 0) in vec2 aPosition;   // NDC
 layout(location = 1) in vec2 aWorldPos;
@@ -1618,8 +1631,8 @@ void main()
 }
 )";
 
-  // Adapted from the lit terrain shader for REAL geometry: the surface normal is
-  // the real per-vertex normal (so "up" is normal.z, not the billboard
+  // Adapted from the lit terrain shader for REAL geometry: the surface normal
+  // is the real per-vertex normal (so "up" is normal.z, not the billboard
   // screen-space normal.y hack), and the fragment's ground is the interpolated
   // per-vertex elevation -- so a side face lights from its base up.
   const std::string fragmentSource = glslVersion + R"(

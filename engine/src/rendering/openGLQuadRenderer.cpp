@@ -3,6 +3,7 @@
 
 #include "engine/logger/logger.h"
 #include "engine/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/rendering/glDebug.h"
 #include "engine/rendering/quads.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/gpuProfiling.h"
@@ -34,10 +35,10 @@ OpenGLQuadRenderer::OpenGLQuadRenderer(int windowWidth, int windowHeight)
 
 OpenGLQuadRenderer::~OpenGLQuadRenderer() { shutdown(); }
 
-void OpenGLQuadRenderer::initialize()
+bool OpenGLQuadRenderer::initialize()
 {
   if (initialized)
-    return;
+    return true;
 
   // ===========================================================================
   // Create shader programs
@@ -54,7 +55,7 @@ void OpenGLQuadRenderer::initialize()
   if (shaderProgram == 0)
   {
     LOG_ERROR("Failed to create OpenGLQuadRenderer shader program");
-    return;
+    return false;
   }
 
   // Simple untextured solid-color shader.
@@ -66,7 +67,7 @@ void OpenGLQuadRenderer::initialize()
   if (solidShaderProgram == 0)
   {
     LOG_ERROR("Failed to create OpenGLQuadRenderer solid shader program");
-    return;
+    return false;
   }
 
   // Particle shader.
@@ -78,54 +79,44 @@ void OpenGLQuadRenderer::initialize()
   if (particleShaderProgram == 0)
   {
     LOG_ERROR("Failed to create OpenGLQuadRenderer particle shader");
-    return;
+    return false;
   }
 
-  uParticleTextureLocation =
-      glGetUniformLocation(particleShaderProgram, "uTexture");
+  uParticleTextureLocation = SFS_GL_UNIFORM(particleShaderProgram, "uTexture");
 
   // ===========================================================================
   // Main textured/lit shader uniform locations
   // ===========================================================================
 
-  uTextureLocation = glGetUniformLocation(shaderProgram, "uTexture");
-  uColorLocation = glGetUniformLocation(shaderProgram, "uColor");
-  uUseLightingLocation = glGetUniformLocation(shaderProgram, "uUseLighting");
-  uNormalTextureLocation =
-      glGetUniformLocation(shaderProgram, "uNormalTexture");
-  uHasNormalMapLocation = glGetUniformLocation(shaderProgram, "uHasNormalMap");
-  uLightDirectionLocation =
-      glGetUniformLocation(shaderProgram, "uLightDirection");
-  uLightIntensityLocation =
-      glGetUniformLocation(shaderProgram, "uLightIntensity");
-  uAmbientLocation = glGetUniformLocation(shaderProgram, "uAmbient");
-  uDiffuseStrengthLocation =
-      glGetUniformLocation(shaderProgram, "uDiffuseStrength");
+  uTextureLocation = SFS_GL_UNIFORM(shaderProgram, "uTexture");
+  uColorLocation = SFS_GL_UNIFORM(shaderProgram, "uColor");
+  uUseLightingLocation = SFS_GL_UNIFORM(shaderProgram, "uUseLighting");
+  uNormalTextureLocation = SFS_GL_UNIFORM(shaderProgram, "uNormalTexture");
+  uHasNormalMapLocation = SFS_GL_UNIFORM(shaderProgram, "uHasNormalMap");
+  uLightDirectionLocation = SFS_GL_UNIFORM(shaderProgram, "uLightDirection");
+  uLightIntensityLocation = SFS_GL_UNIFORM(shaderProgram, "uLightIntensity");
+  uAmbientLocation = SFS_GL_UNIFORM(shaderProgram, "uAmbient");
+  uDiffuseStrengthLocation = SFS_GL_UNIFORM(shaderProgram, "uDiffuseStrength");
   uSunShadowEnabledLocation =
-      glGetUniformLocation(shaderProgram, "uSunShadowEnabled");
-  uLightColorLocation = glGetUniformLocation(shaderProgram, "uLightColor");
-  uLightCountLocation = glGetUniformLocation(shaderProgram, "uLightCount");
-  uLightPositionsLocation =
-      glGetUniformLocation(shaderProgram, "uLightPositions[0]");
-  uLightColorsLocation = glGetUniformLocation(shaderProgram, "uLightColors[0]");
+      SFS_GL_UNIFORM(shaderProgram, "uSunShadowEnabled");
+  uLightColorLocation = SFS_GL_UNIFORM(shaderProgram, "uLightColor");
+  uLightCountLocation = SFS_GL_UNIFORM(shaderProgram, "uLightCount");
+  uLightPositionsLocation = SFS_GL_UNIFORM(shaderProgram, "uLightPositions[0]");
+  uLightColorsLocation = SFS_GL_UNIFORM(shaderProgram, "uLightColors[0]");
   uLightIntensitiesLocation =
-      glGetUniformLocation(shaderProgram, "uLightIntensities[0]");
-  uLightRadiiLocation = glGetUniformLocation(shaderProgram, "uLightRadii[0]");
-  uLightHeightsLocation =
-      glGetUniformLocation(shaderProgram, "uLightHeights[0]");
+      SFS_GL_UNIFORM(shaderProgram, "uLightIntensities[0]");
+  uLightRadiiLocation = SFS_GL_UNIFORM(shaderProgram, "uLightRadii[0]");
+  uLightHeightsLocation = SFS_GL_UNIFORM(shaderProgram, "uLightHeights[0]");
   uLightGroundLevelsLocation =
-      glGetUniformLocation(shaderProgram, "uLightGroundLevels[0]");
-  uSurfaceEffectTimeLocation = glGetUniformLocation(shaderProgram, "uTime");
-  uSurfaceEffectLocation =
-      glGetUniformLocation(shaderProgram, "uSurfaceEffect");
-  uHeightmapLocation = glGetUniformLocation(shaderProgram, "uHeightmap");
-  uHeightmapOriginLocation =
-      glGetUniformLocation(shaderProgram, "uHeightmapOrigin");
-  uHeightmapSizeLocation =
-      glGetUniformLocation(shaderProgram, "uHeightmapSize");
+      SFS_GL_UNIFORM(shaderProgram, "uLightGroundLevels[0]");
+  uSurfaceEffectTimeLocation = SFS_GL_UNIFORM(shaderProgram, "uTime");
+  uSurfaceEffectLocation = SFS_GL_UNIFORM(shaderProgram, "uSurfaceEffect");
+  uHeightmapLocation = SFS_GL_UNIFORM(shaderProgram, "uHeightmap");
+  uHeightmapOriginLocation = SFS_GL_UNIFORM(shaderProgram, "uHeightmapOrigin");
+  uHeightmapSizeLocation = SFS_GL_UNIFORM(shaderProgram, "uHeightmapSize");
   uHeightmapTexSizeLocation =
-      glGetUniformLocation(shaderProgram, "uHeightmapTexSize");
-  uHeightScaleLocation = glGetUniformLocation(shaderProgram, "uHeightScale");
+      SFS_GL_UNIFORM(shaderProgram, "uHeightmapTexSize");
+  uHeightScaleLocation = SFS_GL_UNIFORM(shaderProgram, "uHeightScale");
 
   glGenTextures(kHeightmapRingSize, heightmapTextures);
 
@@ -280,13 +271,12 @@ void OpenGLQuadRenderer::initialize()
 
   // clip-space depth
   glEnableVertexAttribArray(3);
-  glVertexAttribPointer(
-      3,
-      1,
-      GL_FLOAT,
-      GL_FALSE,
-      sizeof(ParticleVertex),
-      reinterpret_cast<void*>(offsetof(ParticleVertex, z)));
+  glVertexAttribPointer(3,
+                        1,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(ParticleVertex),
+                        reinterpret_cast<void*>(offsetof(ParticleVertex, z)));
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -388,7 +378,10 @@ void OpenGLQuadRenderer::initialize()
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+  SFS_GL_CHECK("OpenGLQuadRenderer::initialize");
+
   initialized = true;
+  return true;
 }
 
 void OpenGLQuadRenderer::shutdown()
@@ -720,6 +713,7 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
                GL_DYNAMIC_DRAW);
 
   glDrawArrays(GL_TRIANGLES, 0, 6);
+  SFS_GL_CHECK("drawImmediate");
 }
 
 void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
@@ -859,6 +853,7 @@ void OpenGLQuadRenderer::flushParticles()
                  GL_DYNAMIC_DRAW);
 
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size()));
+    SFS_GL_CHECK("particleBatch");
   }
 
   // Restore default state for whatever draws next.
@@ -906,6 +901,7 @@ void OpenGLQuadRenderer::flushSolid()
 
   gTerrainShadowFlushes++;
   glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
+  SFS_GL_CHECK("solidFlush");
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
@@ -981,11 +977,13 @@ void OpenGLQuadRenderer::flushLit()
                  m_pointLights.count,
                  reinterpret_cast<const float*>(m_pointLights.colors));
 
-    glUniform1fv(
-        uLightIntensitiesLocation, m_pointLights.count, m_pointLights.intensities);
+    glUniform1fv(uLightIntensitiesLocation,
+                 m_pointLights.count,
+                 m_pointLights.intensities);
 
     glUniform1fv(uLightRadiiLocation, m_pointLights.count, m_pointLights.radii);
-    glUniform1fv(uLightHeightsLocation, m_pointLights.count, m_pointLights.heights);
+    glUniform1fv(
+        uLightHeightsLocation, m_pointLights.count, m_pointLights.heights);
     glUniform1fv(uLightGroundLevelsLocation,
                  m_pointLights.count,
                  m_pointLights.groundLevels);
@@ -1004,6 +1002,7 @@ void OpenGLQuadRenderer::flushLit()
                GL_DYNAMIC_DRAW);
 
   glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_litVertices.size()));
+  SFS_GL_CHECK("litFlush");
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
@@ -1057,9 +1056,8 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
                vertices.data(),
                GL_DYNAMIC_DRAW);
 
-  glLineWidth(3.0f);
   glDrawArrays(GL_LINE_STRIP, 0, count);
-  glLineWidth(1.0f);
+  SFS_GL_CHECK("drawLineLoop");
 
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
@@ -1232,6 +1230,7 @@ void OpenGLQuadRenderer::drawQuadInternal(
                GL_DYNAMIC_DRAW);
 
   glDrawArrays(GL_TRIANGLES, 0, 6);
+  SFS_GL_CHECK("debugQuad");
 }
 
 // Terrain heightmap for point-light occlusion (texture unit 2).
@@ -1248,8 +1247,8 @@ void OpenGLQuadRenderer::bindHeightmapUniforms()
   glUniform2f(uHeightmapSizeLocation,
               static_cast<float>(m_heightmapWidth),
               static_cast<float>(m_heightmapHeight));
-  glUniform1f(uHeightmapTexSizeLocation,
-              static_cast<float>(m_heightmapTexSize));
+  glUniform1f(
+      uHeightmapTexSizeLocation, static_cast<float>(m_heightmapTexSize));
   glUniform1f(uHeightScaleLocation, m_heightScale);
 }
 
@@ -2199,13 +2198,14 @@ void OpenGLQuadRenderer::uploadHeightmap(const int* elevations,
 
   glActiveTexture(GL_TEXTURE2);
 
-  // (Re)allocate the whole ring when the grid outgrows the current texture (only
-  // the first call in practice -- the window is a fixed size). Every slot is
-  // allocated at the same dimension so any of them can be bound for sampling.
+  // (Re)allocate the whole ring when the grid outgrows the current texture
+  // (only the first call in practice -- the window is a fixed size). Every slot
+  // is allocated at the same dimension so any of them can be bound for
+  // sampling.
   if (texSize > m_heightmapTexSize)
   {
-    const std::vector<float> empty(static_cast<size_t>(texSize) * texSize,
-                                   -1000.0f);
+    const std::vector<float> empty(
+        static_cast<size_t>(texSize) * texSize, -1000.0f);
 
     for (int i = 0; i < kHeightmapRingSize; i++)
     {
@@ -2219,8 +2219,8 @@ void OpenGLQuadRenderer::uploadHeightmap(const int* elevations,
                    GL_RED,
                    GL_FLOAT,
                    empty.data());
-      // Linear filtering ramps elevation smoothly between tiles so the occlusion
-      // edge isn't tile-blocky.
+      // Linear filtering ramps elevation smoothly between tiles so the
+      // occlusion edge isn't tile-blocky.
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

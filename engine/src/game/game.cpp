@@ -95,13 +95,16 @@ bool Game::init(int windowWidth, int windowHeight)
 
   SDL_GL_MakeCurrent(window, m_glContext);
 
-  // The iso pipeline relies on a real depth buffer for occlusion. If the driver
-  // gave us 0 depth bits, depth-testing silently no-ops and occlusion breaks.
+  // The iso pipeline relies on a real depth buffer for occlusion; with too few
+  // depth bits, depth-testing silently no-ops and occlusion breaks.
   int depthBits = 0;
   SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &depthBits);
   if (depthBits < 16)
+  {
     LOG_ERROR("GL context has no usable depth buffer (" +
-              std::to_string(depthBits) + " bits); occlusion will be broken");
+              std::to_string(depthBits) + " bits); occlusion would be broken");
+    return false;
+  }
 
 #ifndef __EMSCRIPTEN__
   SDL_GL_SetSwapInterval(0);
@@ -116,7 +119,11 @@ bool Game::init(int windowWidth, int windowHeight)
 #endif
 
   m_quadRenderer = createQuadRenderer(windowWidth, windowHeight);
-  m_quadRenderer->initialize();
+  if (!m_quadRenderer->initialize())
+  {
+    LOG_ERROR("Failed to initialize quad renderer");
+    return false;
+  }
   m_quadRenderer->setViewportSize(windowWidth, windowHeight);
 
   // GL context is current and loaded; set up Tracy's GPU timing context.

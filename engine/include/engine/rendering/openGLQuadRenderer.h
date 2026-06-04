@@ -38,7 +38,7 @@ public:
   OpenGLQuadRenderer(int windowWidth, int windowHeight);
   ~OpenGLQuadRenderer() override;
 
-  void initialize() override;
+  bool initialize() override;
   void shutdown() override;
 
   unsigned int getOrCreateTexture(const std::string& textureId,
@@ -147,9 +147,10 @@ protected:
 
   bool initialized = false;
 
-  // When true, lit/geometry draws cast terrain shadows via the heightmap horizon
-  // march; when false, that march is skipped (e.g. the projected shadow technique
-  // is in use). Set per frame by the render system; read by both shaders.
+  // When true, lit/geometry draws cast terrain shadows via the heightmap
+  // horizon march; when false, that march is skipped (e.g. the projected shadow
+  // technique is in use). Set per frame by the render system; read by both
+  // shaders.
   bool m_sunShadowMarchEnabled = true;
 
   PointLightSet m_pointLights;
