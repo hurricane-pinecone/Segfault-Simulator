@@ -2,12 +2,12 @@
 
 #include "config.h"
 #include "engine/assetStore/assetStore.h"
-#include "engine/components/colliderComponent.h"
 #include "engine/components/elevationComponent.h"
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/components/shadowCasterComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
+#include "engine/components/worldCollider.h"
 #include "engine/game/gameObject.h"
 #include "engine/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -50,14 +50,17 @@ public:
             .addComponent<sfs::ElevationComponent>(0)
             .addComponent<sfs::SpriteComponent>(sprite, glm::vec2{0.5f, 1.0f})
             .addComponent<sfs::NormalMapComponent>(normal)
-            .addComponent<sfs::ColliderComponent>(
-                glm::vec2{-0.15f, -0.15f}, glm::vec2{0.3f, 0.3f})
+            // Ground footprint in pixels, relative to the feet: a small base
+            // centred on the lamp so the player is blocked by the base (not the
+            // whole sprite).
+            .addComponent<sfs::WorldCollider>(
+                glm::vec2{-2.0f, -2.0f}, glm::vec2{4.0f, 4.0f})
             .addComponent<sfs::LightEmitterComponent>(
                 640.0f, 1.0f, 32.0f, m_color)
             .addComponent<sfs::ShadowCasterComponent>()
             .addTag<sfs::SolidObject>();
 
-    m_entity.getComponent<sfs::ColliderComponent>().updateBounds(m_position);
+    m_entity.getComponent<sfs::WorldCollider>().updateBounds(m_position);
   }
 
 private:

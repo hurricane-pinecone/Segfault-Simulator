@@ -81,6 +81,11 @@ void GameScene::onInit()
   // occlusion heightmap never holes while tiles stream in.
   getSystem<sfs::IsometricRenderSystem>().setTerrainHeightSource(
       &getSystem<TerrainGeneratorSystem>());
+
+  // Same heights drive movement so actors are blocked by cliffs (step up to one
+  // level, slide along anything taller).
+  getSystem<sfs::MovementSystem>().setTerrainHeightSource(
+      &getSystem<TerrainGeneratorSystem>());
 }
 
 void GameScene::createEntities()
@@ -167,6 +172,9 @@ void GameScene::onRender()
         m_hoveredElevation,
         SDL_Color{255, 255, 0, 255});
   }
+
+  if (getSystem<sfs::CollisionSystem>().debugDraw())
+    getSystem<sfs::IsometricRenderSystem>().drawDebugColliders();
 }
 
 void GameScene::onUpdate(double deltaTime)

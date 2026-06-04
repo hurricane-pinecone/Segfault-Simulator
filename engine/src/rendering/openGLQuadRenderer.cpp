@@ -736,13 +736,18 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   const float v1 = static_cast<float>(command.srcRect.y + command.srcRect.h) /
                    command.textureHeight;
 
+  // p0/p1 are the top (head) edge, p2/p3 the bottom (feet). A standing sprite
+  // is a vertical surface, so its top sits nearer than its feet: zTop for the
+  // top edge, z for the feet. zTop resolves equal to z for flat quads
+  // (depthSpan 0).
   const float z = command.z;
+  const float zTop = command.zTop;
 
-  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], z});
-  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1], z});
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop});
+  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1], zTop});
   m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
 
-  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], z});
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop});
   m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
   m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3], z});
 }
@@ -924,7 +929,9 @@ void OpenGLQuadRenderer::flushLit()
 
   // Lit geometry is opaque: test + write depth. Cutout (discard on alpha <= 0
   // in the fragment shader) keeps transparent sprite corners from writing
-  // depth and punching holes in what's behind them.
+  // depth and punching holes in what's behind them. Actor sprites carry a depth
+  // gradient over their height (see the render system) so the depth buffer
+  // sorts them per-pixel against the real block faces.
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LEQUAL);
   glDepthMask(GL_TRUE);

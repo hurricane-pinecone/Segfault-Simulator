@@ -187,6 +187,19 @@ inline static void renderDebugControls(Scene* scene)
         bool enabled = system.enabled();
         if (ImGui::Checkbox(name.c_str(), &enabled))
           system.setEnabled(enabled);
+
+        // Systems expose live settings as the same UI-agnostic descriptors
+        // render modules use; render them indented under the toggle.
+        const std::vector<ModuleSetting> systemSettings = system.settings();
+        if (!systemSettings.empty())
+        {
+          ImGui::PushID(name.c_str());
+          ImGui::Indent();
+          for (const ModuleSetting& setting : systemSettings)
+            renderModuleSetting(setting);
+          ImGui::Unindent();
+          ImGui::PopID();
+        }
       });
 
   if (scene->hasSystem<IsometricRenderSystem>())

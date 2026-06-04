@@ -2,6 +2,7 @@
 #include "sampleGame.h"
 #include "config.h"
 #include "scenes/gameScene.h"
+#include <engine/components/worldCollider.h>
 #include <engine/input/keyboardInput.h>
 #include <engine/rendering/isometricGeometryRenderer.h>
 #include <engine/rendering/util/isometric/camera.h>
@@ -21,6 +22,11 @@ void SampleGame::onSetup()
       WORLD_SCALE,
       glm::vec2{WINDOW_WIDTH / 2.0f, WINDOW_HEIGHT / 2.0f},
   };
+
+  // WorldCollider offset/size are authored in pixels; one world tile is
+  // tileWidth px (render-scale independent -- worldScale magnifies the box on
+  // screen anyway).
+  sfs::WorldCollider::pixelsPerUnit = static_cast<float>(m_isoConfig.tileWidth);
 
   // TODO: Create actual title screen and refactor
   // sfs::Scene* titleScene = sceneManager.createScene("Title Scene");
@@ -67,6 +73,6 @@ void SampleGame::onDestroy() {};
 std::unique_ptr<sfs::IQuadRenderer>
 SampleGame::createQuadRenderer(int windowWidth, int windowHeight)
 {
-  return std::make_unique<sfs::IsometricGeometryRenderer>(windowWidth,
-                                                          windowHeight);
+  return std::make_unique<sfs::IsometricGeometryRenderer>(
+      windowWidth, windowHeight);
 }

@@ -2,12 +2,13 @@
 
 #include "config.h"
 #include "engine/components/cameraComponent.h"
-#include "engine/components/colliderComponent.h"
 #include "engine/components/lightEmitterComponent.h"
 #include "engine/components/rigidBodyComponent.h"
+#include "engine/components/screenSpaceCollider.h"
 #include "engine/components/shadowCasterComponent.h"
 #include "engine/components/spriteComponent.h"
 #include "engine/components/transformComponent.h"
+#include "engine/components/worldCollider.h"
 #include "engine/game/gameObject.h"
 #include "engine/input/input.h"
 #include "engine/sceneManager/scene.h"
@@ -28,8 +29,15 @@ public:
         scene.createEntity()
             .addComponent<sfs::SpriteComponent>(sprite, glm::vec2{0.5f, 1.0f})
             .addComponent<sfs::TransformComponent>(glm::vec2{12.0, 12.0})
-            .addComponent<sfs::ColliderComponent>(
-                glm::vec2{-0.25f, -0.25f}, glm::vec2{0.5f, 0.5f})
+            // Billboard hit box in sprite pixels from the top-left (covers the
+            // 16px sprite): bullet / sprite hits in screen space.
+            .addComponent<sfs::ScreenSpaceCollider>(
+                glm::vec2{0.0f, 0.0f}, glm::vec2{16.0f, 16.0f})
+            // Ground footprint at the feet: drives terrain elevation / step-up
+            // and world-object blocking, kept narrow so the body doesn't clip
+            // into raised faces while climbing.
+            .addComponent<sfs::WorldCollider>(
+                glm::vec2{-6.0f, -6.0f}, glm::vec2{12.0f, 12.0f})
             .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0})
             .addComponent<sfs::LightEmitterComponent>(640.0f, 1.0f, 10.0f)
             .addComponent<sfs::ShadowCasterComponent>();

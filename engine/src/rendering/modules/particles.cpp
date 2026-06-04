@@ -157,8 +157,8 @@ int ParticleEngine::liveParticleCount() const
 }
 
 void ParticleEngine::emitParticles(EmitterInstance& inst,
-                              const ParticleEffectDesc& desc,
-                              int count)
+                                   const ParticleEffectDesc& desc,
+                                   int count)
 {
   const int room = desc.maxParticles - static_cast<int>(inst.particles.size());
 
@@ -325,9 +325,10 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
       glm::vec2 hitPos = p.pos;
       float hitElev = zAbs;
 
-      // Slammed into the vertical face of a tile that genuinely steps UP from the
-      // one it came from (a step down or same level is not a wall -- otherwise a
-      // fast droplet skimming flat ground reads every tile crossing as a wall).
+      // Slammed into the vertical face of a tile that genuinely steps UP from
+      // the one it came from (a step down or same level is not a wall --
+      // otherwise a fast droplet skimming flat ground reads every tile crossing
+      // as a wall).
       if (newTile != oldTile)
       {
         const int newTop =
@@ -474,9 +475,10 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
 
   if (surface == DecalSurface::Wall)
   {
-    // Anchor drips to the actual wall-face edge of `tile` so they stay within the
-    // wall's width instead of floating in the air beside it. East (2) face is the
-    // plane x = tile.x+1 running along Y; south (3) is y = tile.y+1 running along X.
+    // Anchor drips to the actual wall-face edge of `tile` so they stay within
+    // the wall's width instead of floating in the air beside it. East (2) face
+    // is the plane x = tile.x+1 running along Y; south (3) is y = tile.y+1
+    // running along X.
     const bool east = wallSide == 2;
     const float faceX = static_cast<float>(tile.x) + 1.0f;
     const float faceY = static_cast<float>(tile.y) + 1.0f;
@@ -484,11 +486,6 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
         east ? static_cast<float>(tile.y) : static_cast<float>(tile.x);
     const float hi = lo + 1.0f;
     const float hitAlong = std::clamp(east ? hitPos.y : hitPos.x, lo, hi);
-
-    // Co-sort key of the host block (corner + top elevation), matching how the
-    // render system keys terrain tiles, so drips occlude with their block.
-    const float sortKey = static_cast<float>(tile.x) +
-                          static_cast<float>(tile.y) + wallTop * 0.5f;
 
     int drips = 1 + static_cast<int>(baseSize * 8.0f);
     drips = std::clamp(drips, 1, 3);
@@ -512,7 +509,6 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
       spawn.color = color;
       spawn.textureId = &desc.decal.texture;
       spawn.dripSpeed = 3.0f + randf(inst.rng) * 4.0f; // levels/sec
-      spawn.sortKey = sortKey;
       // fadeRate stays 0: the drip runs down, then persists permanently.
       m_decalSink->addDecal(spawn);
     }

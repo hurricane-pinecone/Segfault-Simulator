@@ -2,6 +2,7 @@
 
 #include "component.h"
 #include "engine/ecs/entity.h"
+#include "engine/rendering/modules/moduleSettings.h"
 
 #include <vector>
 
@@ -21,10 +22,15 @@ public:
   void addEntity(const Entity& entity);
   void removeEntity(const Entity& entity);
 
-  // Disabled systems are skipped by Scene update/render and by render providers.
-  // Intended for debug toggling; the render system is never disabled.
+  // Disabled systems are skipped by Scene update/render and by render
+  // providers. Intended for debug toggling; the render system is never
+  // disabled.
   bool enabled() const { return m_enabled; }
   void setEnabled(bool enabled) { m_enabled = enabled; }
+
+  // UI-agnostic descriptors for a system's debug settings, surfaced by the
+  // debug panel the same way render modules expose theirs. Default: none.
+  virtual std::vector<ModuleSetting> settings() { return {}; }
 
 protected:
   virtual void create() {};
