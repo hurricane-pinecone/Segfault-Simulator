@@ -13,12 +13,24 @@ namespace sfs
 namespace
 {
 
-// `sfs.log(value)`: stringify any Lua value and route it to the engine logger.
+// `print(...)` / `sfs.log(...)`: stringify all args (tab-separated, like Lua's
+// print) and route the line to the owning host's captured output + the logger.
 int luaLog(lua_State* L)
 {
-  const char* msg = luaL_tolstring(L, 1, nullptr); // pushes the string form
-  LOG_INFO(std::string(msg ? msg : ""));
-  lua_pop(L, 1);
+  const int n = lua_gettop(L);
+  std::string line;
+  for (int i = 1; i <= n; ++i)
+  {
+    if (i > 1)
+      line += "\t";
+    const char* s = luaL_tolstring(L, i, nullptr); // pushes the string form
+    line += s ? s : "";
+    lua_pop(L, 1);
+  }
+
+  auto* self = *static_cast<LuaScripting**>(lua_getextraspace(L));
+  if (self)
+    self->logLine(line);
   return 0;
 }
 
@@ -48,6 +60,57 @@ int callNumber2(lua_State* L)
   if (fn && *fn)
     (*fn)(luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
   return 0;
+}
+
+std::string indentOf(int depth)
+{
+  return std::string(static_cast<std::size_t>(depth) * 2, ' ');
+}
+
+// Render a Lua value at `idx` for the console: scalars plainly, strings quoted,
+// tables JSON-style pretty-printed (indented, one entry per line). Multi-line
+// keeps long results readable and -- crucially -- narrow, so the output doesn't
+// blow out the side panel's width.
+std::string valueToString(lua_State* L, int idx, int depth)
+{
+  const int type = lua_type(L, idx);
+
+  if (type == LUA_TSTRING)
+    return std::string("\"") + lua_tostring(L, idx) + "\"";
+
+  if (type == LUA_TFUNCTION)
+    return "function";
+
+  if (type == LUA_TTABLE && depth < 4)
+  {
+    const int table = lua_absindex(L, idx);
+    std::string body;
+    lua_pushnil(L);
+    while (lua_next(L, table) != 0)
+    {
+      // key at -2, value at -1. Prefix "key = " for string keys only (printing
+      // a numeric/array key via lua_tostring would corrupt the lua_next
+      // iterator).
+      body += indentOf(depth + 1);
+      if (lua_type(L, -2) == LUA_TSTRING)
+      {
+        body += lua_tostring(L, -2);
+        body += " = ";
+      }
+      body += valueToString(L, -1, depth + 1);
+      body += ",\n";
+      lua_pop(L, 1); // pop value, keep key for the next lua_next
+    }
+
+    if (body.empty())
+      return "{}";
+    return "{\n" + body + indentOf(depth) + "}";
+  }
+
+  const char* str = luaL_tolstring(L, idx, nullptr); // pushes the string form
+  std::string out = str ? str : "";
+  lua_pop(L, 1);
+  return out;
 }
 
 std::vector<std::string> splitPath(const std::string& path)
@@ -99,6 +162,10 @@ bool LuaScripting::init()
   if (!m_state)
     return false;
 
+  // Stash the host in the state's extra space so the C functions (luaLog) can
+  // reach it without an upvalue.
+  *static_cast<LuaScripting**>(lua_getextraspace(m_state)) = this;
+
   // Open a SAFE subset of the standard library: no io / os / package, which
   // both sandboxes the live console and keeps the wasm build off filesystem /
   // dlopen syscalls that don't exist in the browser.
@@ -121,6 +188,11 @@ bool LuaScripting::init()
 
   lua_pushcfunction(m_state, &luaLog);
   lua_setfield(m_state, -2, "log");
+
+  // Also expose the capturing logger as the global `print` (replaces the base
+  // print) so a REPL chunk's print() lines show in the console output box.
+  lua_pushcfunction(m_state, &luaLog);
+  lua_setglobal(m_state, "print");
 
   // sfs.colors: a real table (so it's usable AND introspectable for editor
   // autocomplete via keysOf / Lua's own pairs). Mirror sfs::Colors.
@@ -165,6 +237,66 @@ std::string LuaScripting::eval(const std::string& source)
   }
 
   return {};
+}
+
+std::string LuaScripting::evalRepl(const std::string& source)
+{
+  if (!m_state)
+    return "error: Lua VM not initialised";
+
+  m_log.clear();
+  const int base = lua_gettop(m_state);
+
+  // Try the input as an expression first (so a bare value prints), else run it
+  // as statements.
+  const std::string asExpr = "return " + source;
+  if (luaL_loadstring(m_state, asExpr.c_str()) != LUA_OK)
+  {
+    lua_pop(m_state, 1); // discard the expression-form compile error
+    if (luaL_loadstring(m_state, source.c_str()) != LUA_OK)
+    {
+      const char* err = lua_tostring(m_state, -1);
+      std::string message =
+          std::string("error: ") + (err ? err : "compile error");
+      lua_pop(m_state, 1);
+      return message;
+    }
+  }
+
+  if (lua_pcall(m_state, 0, LUA_MULTRET, 0) != LUA_OK)
+  {
+    const char* err = lua_tostring(m_state, -1);
+    std::string message =
+        std::string("error: ") + (err ? err : "runtime error");
+    lua_pop(m_state, 1);
+    return m_log + message; // show whatever printed before the error
+  }
+
+  std::string out;
+  for (int i = base + 1; i <= lua_gettop(m_state); ++i)
+  {
+    if (!out.empty())
+      out += "\t";
+    out += valueToString(m_state, i, 0);
+  }
+  lua_settop(m_state, base); // drop the results
+
+  // Captured print/log output first, then the expression's value (if any).
+  std::string result = m_log;
+  if (!out.empty())
+  {
+    if (!result.empty() && result.back() != '\n')
+      result += "\n";
+    result += out;
+  }
+  return result;
+}
+
+void LuaScripting::logLine(const std::string& line)
+{
+  m_log += line;
+  m_log += "\n";
+  LOG_INFO(line);
 }
 
 void LuaScripting::bind(const std::string& name, std::function<void()> fn)

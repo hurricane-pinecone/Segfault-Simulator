@@ -47,6 +47,20 @@ public:
   std::string eval(const std::string& source);
 
   /**
+   * REPL-style eval for an interactive console: if the whole input is a single
+   * expression it is evaluated and its value(s) are returned stringified
+   * (tables are expanded one level, e.g. "{a, b}" / "{k=v}"); otherwise it runs
+   * as statements and returns "". Errors come back prefixed with "error: ".
+   * Never throws.
+   */
+  std::string evalRepl(const std::string& source);
+
+  // Append a line to the current eval's captured output (what `print` / sfs.log
+  // write). evalRepl returns this prepended to the expression's value, so a
+  // multi-statement chunk that prints shows every line. Also logged.
+  void logLine(const std::string& line);
+
+  /**
    * Bind a global Lua callable to a C++ function. Two arities cover the common
    * live-edit cases: a no-arg trigger and a single-number setter. The game
    * passes a std::function, so it stays Lua-free.
@@ -71,6 +85,9 @@ public:
 
 private:
   lua_State* m_state = nullptr;
+
+  // Output captured during the current evalRepl (from print / sfs.log).
+  std::string m_log;
 
   // The bound std::functions, kept alive for the C trampolines that reference
   // them by pointer (stored as Lua closure upvalues).

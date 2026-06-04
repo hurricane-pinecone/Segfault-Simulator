@@ -139,6 +139,21 @@
         user-select: none;
       }
 
+      /* Output panes fill the panel (editor sets its width) and wrap/scroll
+         inside it -- a long result must never drive the panel wider (a pre's
+         intrinsic width is its longest unwrapped line, which would squish the
+         game). */
+      .lua-panel pre {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 6px 0 0;
+        max-height: 220px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+      }
+
       #panel h2 {
         margin: 0 0 8px 0;
         font-size: 14px;
@@ -269,21 +284,21 @@
           <details class="lua-panel" style="margin-top: 16px">
             <summary>Lua console</summary>
             <p style="margin: 6px 0; font-size: 12px; opacity: 0.8">
-              Live-edit the running game (Ctrl-Space = autocomplete the sfs /
-              particles API). Try:
+              Ctrl-Enter (or Run) runs the whole buffer. A bare expression prints
+              its value and <code>print()</code> lines show too &mdash; e.g. run
+              <code>particles</code> or <code>sfs.colors</code> to dump a whole
+              table at once. Ctrl-Space autocompletes.
             </p>
             <textarea id="lua-source" spellcheck="false">
-splat()
-particles.spawn("blood_spray", 12, 12)
-particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</textarea
+particles                 -- dump the whole particles API
+-- sfs.colors             -- all colours
+-- for _, n in ipairs(particles.effects()) do print(n) end
+-- particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</textarea
             >
             <button id="lua-run" type="button" style="margin-top: 6px">
               Run
             </button>
-            <pre
-              id="lua-output"
-              style="white-space: pre-wrap; font-size: 12px; min-height: 1em"
-            ></pre>
+            <pre id="lua-output"></pre>
 
             <div style="margin-top: 8px">
               <input
@@ -293,10 +308,7 @@ particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</te
                 style="font-family: monospace"
               />
               <button id="lua-keys" type="button">Fields</button>
-              <pre
-                id="lua-keys-out"
-                style="white-space: pre-wrap; font-size: 12px"
-              ></pre>
+              <pre id="lua-keys-out"></pre>
             </div>
           </details>
         </aside>
@@ -376,7 +388,11 @@ particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</te
           lineNumbers: true,
           matchBrackets: true,
           tabSize: 2,
-          extraKeys: { "Ctrl-Space": "autocomplete" },
+          extraKeys: {
+            "Ctrl-Space": "autocomplete",
+            "Ctrl-Enter": () => runLua(),
+            "Cmd-Enter": () => runLua(),
+          },
           hintOptions: { hint: (cm) => luaHint(cm) },
         },
       );
@@ -416,16 +432,21 @@ particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</te
           cm.showHint({ hint: luaHint, completeSingle: false });
       });
 
-      const outEl = document.getElementById("lua-output");
-      document.getElementById("lua-run").addEventListener("click", () => {
+      // Run the whole buffer (Run button or Ctrl/Cmd-Enter). evalLua returns the
+      // expression's value + any print()/sfs.log() output (REPL), "" for plain
+      // statements, or "error: ...".
+      function runLua() {
+        const outEl = document.getElementById("lua-output");
         if (!luaReady()) {
           outEl.textContent = "still loading…";
           return;
         }
-        const err = evalLua(editor.getValue());
-        outEl.textContent = err ? "error: " + err : "ok";
+        const out = evalLua(editor.getValue());
+        outEl.textContent = out || "ok";
+        outEl.style.color = out.startsWith("error:") ? "#f66" : "#9c9";
         canvas.focus();
-      });
+      }
+      document.getElementById("lua-run").addEventListener("click", runLua);
 
       const keysOutEl = document.getElementById("lua-keys-out");
       document.getElementById("lua-keys").addEventListener("click", () => {
