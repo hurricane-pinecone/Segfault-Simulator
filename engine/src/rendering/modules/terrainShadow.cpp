@@ -1,6 +1,7 @@
 #include "engine/rendering/modules/terrainShadow.h"
 #include "engine/components/tags/isometricTile.h"
 #include "engine/components/transformComponent.h"
+#include "engine/logger/logger.h"
 #include "engine/rendering/util/isometric/geometry.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "engine/utils/algorithms/gridDDA.h"
@@ -29,8 +30,7 @@ void TerrainShadow::markTerrainDirty()
   m_cache.itemsDirty = true;
 }
 
-void TerrainShadow::computeCommands(
-    const IsometricRenderContext& context)
+void TerrainShadow::computeCommands(const IsometricRenderContext& context)
 {
   ZoneScopedN("ShadowSystem: computeCommands");
 
@@ -44,8 +44,7 @@ void TerrainShadow::computeCommands(
   computeTerrainShadows(context);
 }
 
-void TerrainShadow::computeTerrainShadows(
-    const IsometricRenderContext& context)
+void TerrainShadow::computeTerrainShadows(const IsometricRenderContext& context)
 {
   ZoneScopedN("Compute terrain shadows");
 
@@ -125,7 +124,14 @@ void TerrainShadow::computeTerrainShadows(
     return;
   }
 
-  assert(context.terrainElevationGrid.valid());
+  // The shadow build indexes the elevation grid directly; an invalid grid would
+  // read out of bounds, so skip the rebuild this frame.
+  if (!context.terrainElevationGrid.valid())
+  {
+    LOG_ERROR(
+        "terrain shadow: elevation grid invalid; skipping shadow rebuild");
+    return;
+  }
 
   gShadowPathChecks.store(0, std::memory_order_relaxed);
   gShadowTilesTraversed.store(0, std::memory_order_relaxed);
@@ -217,13 +223,12 @@ std::vector<TerrainShadowEdge> TerrainShadow::getTerrainShadowEdges(
   return edges;
 }
 
-void TerrainShadow::emitTileShadow(
-    const IsometricRenderContext& context,
-    std::vector<Quad>& outQuads,
-    const glm::ivec2& tile,
-    int elevation,
-    const ClippedPolygon& poly,
-    float alpha)
+void TerrainShadow::emitTileShadow(const IsometricRenderContext& context,
+                                   std::vector<Quad>& outQuads,
+                                   const glm::ivec2& tile,
+                                   int elevation,
+                                   const ClippedPolygon& poly,
+                                   float alpha)
 {
   if (poly.count < 3)
     return;
@@ -386,9 +391,8 @@ bool TerrainShadow::terrainShadowPathBlocked(
   return blocked;
 }
 
-bool TerrainShadow::shouldCastTerrainShadow(
-    const TerrainShadowEdge& edge,
-    const glm::vec2& shadowDir)
+bool TerrainShadow::shouldCastTerrainShadow(const TerrainShadowEdge& edge,
+                                            const glm::vec2& shadowDir)
 {
   switch (edge.side)
   {
@@ -537,10 +541,9 @@ void TerrainShadow::setTerrainShadowAlpha(float alpha)
   markTerrainDirty();
 }
 
-float TerrainShadow::calculateTerrainShadowLength(
-    const TerrainShadowEdge& edge,
-    float sunHeight,
-    float maxShadowLength)
+float TerrainShadow::calculateTerrainShadowLength(const TerrainShadowEdge& edge,
+                                                  float sunHeight,
+                                                  float maxShadowLength)
 {
   // sunHeight here is the effective sun height (sun height / horizontal
   // amount), so its reciprocal is the horizontal reach per unit height. Shared
@@ -625,9 +628,8 @@ void TerrainShadow::buildTerrainEdgeShadowItems(
   batch.quad.quads.reserve(quadCount);
 
   for (std::vector<Quad>& buffer : m_shadowRangeQuads)
-    batch.quad.quads.insert(batch.quad.quads.end(),
-                            buffer.begin(),
-                            buffer.end());
+    batch.quad.quads.insert(
+        batch.quad.quads.end(), buffer.begin(), buffer.end());
 
   m_commands.push_back(std::move(batch));
 }

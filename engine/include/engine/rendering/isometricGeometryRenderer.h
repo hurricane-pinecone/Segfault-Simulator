@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/rendering/commands/commands.h"
+#include "engine/rendering/glDebug.h"
 #include "engine/rendering/iIsometricRenderer.h"
 #include "engine/rendering/openGLQuadRenderer.h"
 #include "engine/rendering/quads.h"
@@ -33,7 +34,7 @@ public:
   IsometricGeometryRenderer(int windowWidth, int windowHeight);
   ~IsometricGeometryRenderer() override;
 
-  void initialize() override;
+  bool initialize() override;
   void shutdown() override;
 
   using OpenGLQuadRenderer::submit;
@@ -158,6 +159,7 @@ private:
         GL_DYNAMIC_DRAW);
 
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
+    SFS_GL_CHECK("terrainShadowFlush");
 
     glDisable(GL_STENCIL_TEST);
     glStencilMask(0xFF);
@@ -264,8 +266,8 @@ private:
   std::unordered_map<std::int64_t, DecalChunkBuffer> m_decalChunks;
 
   // --- Opt-in block geometry (real terrain faces) ---
-  // A lit, textured face mesh built per frame by the BlockGeometry module. Uses the
-  // frame's point lights + heightmap (already on the renderer) and a real
+  // A lit, textured face mesh built per frame by the BlockGeometry module. Uses
+  // the frame's point lights + heightmap (already on the renderer) and a real
   // per-vertex normal + per-vertex elevation, so side faces light from the
   // base.
   unsigned int geometryShaderProgram = 0;
