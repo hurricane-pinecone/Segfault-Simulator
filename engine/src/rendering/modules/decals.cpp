@@ -465,6 +465,11 @@ void Decals::computeCommands(const IsometricRenderContext& context)
 
   flush(); // clears m_commands
 
+  // Hidden: emit nothing so no decals draw. Stains keep accumulating in the
+  // chunks (pending uploads/frees just queue up) and reappear when re-shown.
+  if (!m_visible)
+    return;
+
   DecalDrawCommand cmd;
   cmd.order.pass = RenderPass::Decals;
   cmd.freeKeys = std::move(m_pendingFree);

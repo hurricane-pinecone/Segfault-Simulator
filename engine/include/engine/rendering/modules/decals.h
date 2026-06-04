@@ -35,6 +35,12 @@ public:
   void clearAll();
   void clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile);
 
+  // Debug toggle: when hidden the module keeps accumulating stains but emits no
+  // draw, so toggling preserves them (vs removing the module, which drops
+  // them).
+  bool visible() const { return m_visible; }
+  void setVisible(bool visible) { m_visible = visible; }
+
   std::size_t decalCount() const;
 
   void update(double deltaTime) override;
@@ -190,6 +196,7 @@ private:
   // more surface than a ground dot. The elevation band only affects walls
   // (ground sits at one elevation per tile): a larger band keeps fewer drips
   // down a face.
+  bool m_visible = true;           // debug toggle: emit draws at all
   float m_coverageCell = 0.06f;    // world tiles
   float m_coverageElevCell = 1.0f; // elevation levels per band (walls)
   int m_maxDecalsPerCell = 16;     // ground / default quota
