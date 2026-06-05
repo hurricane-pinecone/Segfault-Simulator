@@ -5,10 +5,10 @@
 #include "engine/runtime/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/runtime/rendering/glDebug.h"
 #include "engine/runtime/rendering/quads.h"
-#include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #include "engine/runtime/rendering/gpuProfiling.h"
 #include "engine/core/util/profiling.h"
 #include <algorithm>
+#include <cmath>
 
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
@@ -517,9 +517,8 @@ void OpenGLQuadRenderer::submitLitBatch(const LitQuadBatch& batch,
   if (!initialized || texture == 0 || batch.quads.empty())
     return;
 
-  // Every quad in the batch shares one material and the frame-global
-  // directional lighting (see IsometricRenderSystem::render), so build the
-  // batch key once instead of per quad.
+  // Every quad in the batch shares one material and the frame-global lighting
+  // state, so build the batch key once instead of per quad.
   const LitQuad& first = batch.quads.front();
 
   LitBatchKey key;
@@ -722,10 +721,34 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   const float bottom =
       static_cast<float>(command.destRect.y + command.destRect.h);
 
-  const glm::vec2 p0 = toNdc({left, top});
-  const glm::vec2 p1 = toNdc({right, top});
-  const glm::vec2 p2 = toNdc({right, bottom});
-  const glm::vec2 p3 = toNdc({left, bottom});
+  glm::vec2 c0{left, top};
+  glm::vec2 c1{right, top};
+  glm::vec2 c2{right, bottom};
+  glm::vec2 c3{left, bottom};
+
+  // Rotate the corners about the quad centre so a sprite can face an arbitrary
+  // direction. Lighting samples (worldPoints) stay axis-aligned -- negligible
+  // for the small sprites that use this.
+  if (command.rotation != 0.0f)
+  {
+    const glm::vec2 center{(left + right) * 0.5f, (top + bottom) * 0.5f};
+    const float s = std::sin(command.rotation);
+    const float c = std::cos(command.rotation);
+    const auto rotate = [&](glm::vec2 p)
+    {
+      const glm::vec2 d = p - center;
+      return center + glm::vec2{d.x * c - d.y * s, d.x * s + d.y * c};
+    };
+    c0 = rotate(c0);
+    c1 = rotate(c1);
+    c2 = rotate(c2);
+    c3 = rotate(c3);
+  }
+
+  const glm::vec2 p0 = toNdc(c0);
+  const glm::vec2 p1 = toNdc(c1);
+  const glm::vec2 p2 = toNdc(c2);
+  const glm::vec2 p3 = toNdc(c3);
 
   const float u0 = static_cast<float>(command.srcRect.x) / command.textureWidth;
   const float u1 = static_cast<float>(command.srcRect.x + command.srcRect.w) /
@@ -901,7 +924,6 @@ void OpenGLQuadRenderer::flushSolid()
       m_solidVertices.data(),
       GL_DYNAMIC_DRAW);
 
-  gTerrainShadowFlushes++;
   glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
   SFS_GL_CHECK("solidFlush");
 
@@ -1325,7 +1347,7 @@ in vec2 vWorldPosition;
 
 out vec4 FragColor;
 
-#define MAX_LIGHTS 16
+#define MAX_LIGHTS 128
 
 uniform sampler2D uTexture;
 uniform sampler2D uNormalTexture;

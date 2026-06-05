@@ -10,6 +10,7 @@
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "engine/runtime/rendering/renderQueue.h"
+#include "engine/runtime/rendering/renderStats.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -21,15 +22,6 @@
 
 namespace sfs
 {
-
-extern int gTerrainShadowItems;
-extern int gTerrainShadowFlushes;
-extern int gRenderItemCount;
-extern int gTerrainShadowEdgesProcessed;
-extern int gTileRenderItems;
-extern int gSpriteRenderItems;
-extern int gSpriteProjectedShadowItems;
-extern int gTerrainShadowBatchCount;
 
 struct WallFaceKey
 {

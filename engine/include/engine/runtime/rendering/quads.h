@@ -38,6 +38,11 @@ struct TexturedQuad
 
   SDL_Color tint{255, 255, 255, 255};
 
+  // Rotation in radians about the quad's centre (0 = axis-aligned). Lets a
+  // sprite face an arbitrary direction (e.g. a projectile aligned to its
+  // velocity).
+  float rotation = 0.0f;
+
   // Clip-space depth (gl_Position.z), set from the command's painter sort-key
   // so the depth buffer orders quads correctly. z is the quad's bottom edge;
   // zTop is its top edge. A billboard standing upright is a vertical surface,
@@ -68,7 +73,7 @@ struct FreeformQuad : Quad
   };
 };
 
-static constexpr int MaxShaderLights = 16;
+static constexpr int MaxShaderLights = 128;
 
 // The frame's point lights, shared by every lit/surface draw and bound once on
 // the renderer.

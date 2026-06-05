@@ -5,6 +5,7 @@
 #include "engine/runtime/rendering/iIsometricRenderer.h"
 #include "engine/runtime/rendering/openGLQuadRenderer.h"
 #include "engine/runtime/rendering/quads.h"
+#include "engine/runtime/rendering/renderStats.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -158,6 +159,7 @@ private:
         m_solidVertices.data(),
         GL_DYNAMIC_DRAW);
 
+    gTerrainShadowFlushes++;
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(m_solidVertices.size()));
     SFS_GL_CHECK("terrainShadowFlush");
 

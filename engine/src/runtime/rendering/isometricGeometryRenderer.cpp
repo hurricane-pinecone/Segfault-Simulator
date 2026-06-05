@@ -1115,7 +1115,7 @@ void main()
 )";
 
   const std::string fragmentSource = glslVersion + R"(
-#define MAX_LIGHTS 16
+#define MAX_LIGHTS 128
 
 in vec2 vWorldPosition;
 in vec4 vColor;
@@ -1464,7 +1464,7 @@ void main()
 )";
 
   const std::string fragmentSource = glslVersion + R"(
-#define MAX_LIGHTS 16
+#define MAX_LIGHTS 128
 
 in vec2 vUv;
 in vec4 vColor;
@@ -1636,7 +1636,7 @@ void main()
   // screen-space normal.y hack), and the fragment's ground is the interpolated
   // per-vertex elevation -- so a side face lights from its base up.
   const std::string fragmentSource = glslVersion + R"(
-#define MAX_LIGHTS 16
+#define MAX_LIGHTS 128
 
 in vec2 vUv;
 in vec2 vWorldPos;
