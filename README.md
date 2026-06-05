@@ -1,6 +1,8 @@
 # Segfault Simulator
 
-This is a lightweight engine built using the ECS pattern, with a Unity style OOP layer on top for the game client.
+A lightweight 2.5D isometric game engine with an ECS core and a Unity-style OOP
+layer for game code. Build your game in C++ against the engine library, and
+optionally drive it with a live Lua scripting API.
 
 <p align="center">
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
@@ -15,317 +17,137 @@ This is a lightweight engine built using the ECS pattern, with a Unity style OOP
 
 - [Overview](#overview)
 - [Documentation](#documentation)
-- [Initial Setup](#initial-setup)
-- [Debug Build](#debug-build)
-- [Run](#run)
-- [Testing](#testing)
-- [Release Build](#release-build)
-  - [Web build](#web-build)
-- [LSP / clangd setup](#lsp--clangd-setup)
-- [Rebuilding](#rebuilding)
-  - [TL;DR](#tldr)
-  - [Normal rebuild](#normal-rebuild)
-  - [If `conanfile.txt` changes](#if-conanfiletxt-changes)
-  - [If `CMakeLists.txt` changes](#if-cmakeliststxt-changes)
-  - [If compiler/toolchain changes](#if-compilertoolchain-changes)
-- [Clean Build](#clean-build)
-- [Assets](#assets)
-- [Important](#important)
-- [Optional Aliases (zsh)](#optional-aliases-zsh)
-- [Tooling](#tooling)
-  - [Leak Detection](#leak-detection)
-  - [Tracy Profiling](#tracy-profiling)
-    - [Install Tracy Profiler (macOS)](#install-tracy-profiler-macos)
-    - [Build and Run in Profiling Mode](#build-and-run-in-profiling-mode)
-    - [Tracy Configuration](#tracy-configuration)
+- [Prerequisites](#prerequisites)
+- [Using SFS in Your Game](#using-sfs-in-your-game)
+  - [Get the Engine Package](#get-the-engine-package)
+  - [Require and Link It](#require-and-link-it)
+  - [Raw CMake Install (no Conan)](#raw-cmake-install-no-conan)
+  - [Runtime Assets](#runtime-assets)
+- [The Sample Game](#the-sample-game)
 
 ## Overview
 
-This project uses:
+SegFaultSimulator (SFS) is a 2.5D isometric heightfield engine:
 
-- **Conan (v2)** → dependency management
-- **CMake + Presets** → build system
+- An **ECS core** — entities, components, systems.
+- An **SDL2 + OpenGL render runtime** — isometric projection, per-elevation
+  lighting and shadows, particles, and decals.
+- A **live Lua scripting / modding API**.
+- **Native** (macOS / Linux) and **web** (Emscripten / WebGL2) targets.
 
-The project is structured as:
+It ships as two libraries:
 
-```text
-engine/ → library
-sampleGame/   → executable
-```
+| Target             | Contents                                              | Dependencies |
+| ------------------ | ----------------------------------------------------- | ------------ |
+| `sfs::engine`      | The full render runtime.                              | SDL2, OpenGL |
+| `sfs::engine-core` | The ECS, scripting, and particle core — no rendering. | none         |
 
-- Engine is a reusable **library**
-- sampleGame is the **entry point**
-- Assets live next to the executable at runtime
+Link `sfs::engine` to build a game; `sfs::engine-core` is for headless tools or
+projects that bring their own rendering.
 
 ## Documentation
 
-| Doc                                                          | What it covers                                                                               |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| [Architecture](./docs/ARCHITECTURE.md)                       | Engine design: ECS core, the render seam, ownership model                                    |
+| Doc                                                               | What it covers                                                                               |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [Architecture](./docs/ARCHITECTURE.md)                            | Engine design: ECS core, the render seam, ownership model                                    |
 | [Lua scripting](./engine/include/engine/core/scripting/README.md) | Giving a game a live Lua modding API (`ILuaApi` / `ILuaConfigurable`, bindings, runtime use) |
+| [Engine development](./engine/README.md)                          | Building this repo, running the bundled sample, tooling, and tests                           |
 
-## Initial Setup
+## Prerequisites
 
-### 1. Install dependencies (macOS)
+SFS is distributed with **Conan (v2)** and built with **CMake**. On macOS:
 
 ```bash
 brew install conan cmake
-```
-
-Initialize Conan:
-
-```bash
 conan profile detect --force
 ```
 
-## Debug Build
+## Using SFS in Your Game
 
-### 2. Install dependencies
+### Get the Engine Package
+
+SFS is not published to a public Conan remote, so build the package from source
+into your local Conan cache once:
 
 ```bash
-conan install . --build=missing -s build_type=Debug
+git clone https://github.com/hurricane-pinecone/Segfault-Simulator.git
+cd Segfault-Simulator
+conan create .                          # sfs::engine (full runtime)
 ```
 
-### 3. Configure
+To package only the dependency-free core (no SDL/OpenGL):
 
 ```bash
-cmake --preset debug
+conan create . -o "&:core_only=True"    # sfs::engine-core
 ```
 
-### 4. Build
+### Require and Link It
 
-```bash
-cmake --build --preset debug
+Add the engine to your game's `conanfile.txt`:
+
+```ini
+[requires]
+sfs-engine/0.1.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
 ```
 
-## Run
+Then link it in your `CMakeLists.txt`:
 
-```bash
-cmake --build --preset debug --target run
+```cmake
+find_package(engine REQUIRED)
+target_link_libraries(myGame PRIVATE sfs::engine)   # or sfs::engine-core
 ```
 
-## Release Build
+The SDL / imgui / GLEW closure comes in transitively — you do not list those
+yourself.
+
+### Raw CMake Install (no Conan)
+
+The engine also installs as a plain CMake package:
 
 ```bash
+cmake --install <engine-build-dir> --prefix /path/to/engine
+```
+
+Point your build at it and consume the same targets:
+
+```cmake
+# cmake -D CMAKE_PREFIX_PATH=/path/to/engine ...
+find_package(engine REQUIRED)
+target_link_libraries(myGame PRIVATE sfs::engine)
+```
+
+### Runtime Assets
+
+The engine loads a few runtime assets of its own (e.g. the default font).
+`find_package(engine)` sets `ENGINE_ASSET_DIR` to their location; copy them next
+to your executable:
+
+```cmake
+add_custom_command(TARGET myGame POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${ENGINE_ASSET_DIR}" "$<TARGET_FILE_DIR:myGame>/assets")
+```
+
+## The Sample Game
+
+`sampleGame/` is a complete game built on SFS and the worked example of
+everything above — it consumes the engine through `find_package(engine)` and
+`sfs::engine`, exactly as your game does. Build and run it against the package:
+
+```bash
+conan create .
+cd sampleGame
 conan install . --build=missing -s build_type=Release
-
-cmake --preset release
-cmake --build --preset release
-
-cmake --build --preset release --target run
+cmake --preset conan-release
+cmake --build --preset conan-release --target run
 ```
 
-### Web build
-
-The web build can't be run in debug because ImGUI is stripped from the build
-
-```bash
-rm -rf build-web
-emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
-cmake --build build-web
-cd build-web/bin
-python3 server.py
-```
-
-Or, with the [`crun-web`](#optional-aliases-zsh) alias (configures, builds, and
-serves in one step):
-
-```bash
-crun-web
-```
-
-## LSP / clangd setup
-
-```bash
-ln -sf build/Debug/compile_commands.json compile_commands.json
-```
-
-Restart your editor after this.
-
-## Rebuilding
-
-### TL;DR
-
-```bash
-conan install . --build=missing -s build_type=Debug
-cmake --preset debug
-cmake --build --preset debug --target run
-```
-
-### Normal rebuild
-
-```bash
-cmake --build --preset debug
-```
-
-### If `conanfile.txt` changes
-
-```bash
-conan install . --build=missing -s build_type=Debug
-cmake --preset debug
-```
-
-### If `CMakeLists.txt` changes
-
-```bash
-cmake --preset debug
-```
-
-### If compiler/toolchain changes
-
-```bash
-conan profile detect --force
-```
-
-## Clean Build
-
-```bash
-rm -rf build
-rm -rf engine/build
-
-conan install . --build=missing -s build_type=Debug
-cmake --preset debug
-cmake --build --preset debug
-```
-
-## Assets
-
-Assets are automatically copied to the executable directory:
-
-```text
-build/Debug/bin/
-  sampleGame
-  assets/
-```
-
-Game code uses:
-
-```cpp
-const std::string ASSET_ROOT = "./assets/";
-```
-
-## Important
-
-Always run the game using one of these:
-
-```bash
-cmake --build --preset debug --target run
-```
-
-or:
-
-```bash
-cd build/Debug/bin
-./sampleGame
-```
-
-Do **not** run from repo root:
-
-```bash
-./build/Debug/bin/sampleGame
-```
-
-This will break asset paths.
-
-## Optional Aliases (zsh)
-
-Add these to your shell config (`~/.zshrc`):
-
-```bash
-alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug --target run'
-alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release --target run'
-alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
-alias crun-tests='cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build-core --target luaTests && ctest --test-dir build-core --output-on-failure'
-alias crun-web='emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && cmake --build build-web --target run'
-```
-
-Reload your shell:
-
-```bash
-source ~/.zshrc
-```
-
-Then, from the project root:
-
-```bash
-crun          # debug build + run
-crun-release  # release build + run
-crun-profile  # RelWithDebInfo build + run (Tracy enabled)
-crun-tests    # debug build + run tests (CTest)
-crun-web      # wasm build + serve (requires emsdk on PATH)
-```
-
-## Testing
-
-Tests link `engine-core`, which has no third-party dependencies (vendored Lua +
-glm). With `ENGINE_CORE_ONLY` the suite builds from just CMake + a compiler — no
-Conan, SDL, or OpenGL — so it is fast, and is what CI runs:
-
-```bash
-cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-core --target luaTests
-ctest --test-dir build-core --output-on-failure
-```
-
-Or, with the [`crun-tests`](#optional-aliases-zsh) alias (configure, build, and
-run in one step):
-
-```bash
-crun-tests
-```
-
-The tests also build as part of a full `cmake --preset debug` build and can be
-run with `ctest --test-dir build/Debug`.
-
-## Tooling
-
-### Leak Detection
-
-```bash
-./scripts/run_leaks.sh
-```
-
-If it needs permissions
-
-```bash
-chmod +x scripts/run_leaks.sh
-```
-
-### Tracy Profiling
-
-![Tracy](./docs/images/tracy.png)
-
-#### Install Tracy Profiler (macOS)
-
-```bash
-brew install tracy
-```
-
-Launch the profiler UI:
-
-```bash
-tracy-profiler
-```
-
----
-
-#### Build and Run in Profiling Mode
-
-Build and run the engine with Tracy enabled via the [`crun-profile`](#optional-aliases-zsh)
-alias:
-
-```bash
-crun-profile
-```
-
----
-
-#### Tracy Configuration
-
-Tracy is only enabled in `RelWithDebInfo` builds.
-
-Use the shared profiling wrapper so Tracy is stripped from other build types automatically.
-
-```cpp
-#include "engine/utils/profiling.h"
-```
+The [`crun-sample-pkg`](./engine/README.md#optional-aliases-zsh) alias chains
+these steps into one command.
+
+For building the engine itself, the bundled workspace build, and tooling, see
+[engine development](./engine/README.md).

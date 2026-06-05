@@ -3,6 +3,8 @@
 /build-web/
 /build-core/
 /bin/
+# Standalone consumer build of the sample (built against the engine package)
+/sampleGame/build/
 
 # CMake
 CMakeCache.txt

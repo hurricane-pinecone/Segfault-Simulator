@@ -4,12 +4,12 @@
 #include "scenes/gameScene.h"
 #include "scripting/gameLuaApi.h"
 #include <engine/core/components/worldCollider.h>
-#include <engine/runtime/input/keyboardInput.h>
 #include <engine/core/logger/logger.h>
+#include <engine/core/scripting/luaScripting.h>
+#include <engine/runtime/input/keyboardInput.h>
 #include <engine/runtime/rendering/isometricGeometryRenderer.h>
 #include <engine/runtime/rendering/util/isometric/camera.h>
 #include <engine/runtime/sceneManager/scene.h>
-#include <engine/core/scripting/luaScripting.h>
 #include <engine/runtime/systems/cameraSystem.h>
 #include <engine/runtime/systems/isometric/isometricRenderSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
@@ -31,8 +31,8 @@ void SampleGame::onSetup()
   sfs::WorldCollider::pixelsPerUnit = static_cast<float>(m_isoConfig.tileWidth);
 
   // Stand up the VM before the scene: createScene() runs the scene's onInit()
-  // synchronously, and that's where scene systems register their ILuaConfigurable
-  // (e.g. the sun) -- so the active VM must already exist.
+  // synchronously, and that's where scene systems register their
+  // ILuaConfigurable (e.g. the sun) -- so the active VM must already exist.
   setupLua();
 
   // TODO: Create actual title screen and refactor

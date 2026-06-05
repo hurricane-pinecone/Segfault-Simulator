@@ -1,0 +1,31 @@
+@PACKAGE_INIT@
+
+# Config file backing `find_package(engine)` against an installed tree. Targets
+# are exported under the sfs:: namespace (sfs::engine-core, and sfs::engine when
+# the render lib was installed).
+
+include(CMakeFindDependencyMacro)
+
+# engine-core links the system threads library on native builds.
+find_dependency(Threads)
+
+# The render `engine` lib pulls in the desktop stack. These are the same
+# packages conanfile.txt provides; a consumer must make them findable the same
+# way (e.g. via their own Conan toolchain) for the imported targets to resolve.
+if(@ENGINE_HAS_RENDER_LIB@)
+    find_dependency(SDL2)
+    find_dependency(SDL2_image)
+    find_dependency(SDL2_ttf)
+    find_dependency(SDL2_mixer)
+    find_dependency(imgui)
+    find_dependency(OpenGL)
+    find_dependency(GLEW)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/engineTargets.cmake")
+
+# Location of the engine's installed runtime assets (default font, etc.), for
+# consumers that stage them next to their executable.
+set_and_check(ENGINE_ASSET_DIR "@PACKAGE_ENGINE_INSTALL_ASSETDIR@")
+
+check_required_components(engine)

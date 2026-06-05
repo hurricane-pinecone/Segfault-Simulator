@@ -1,7 +1,26 @@
+# Standalone-capable. When configured on its own (not pulled in by the engine
+# workspace's add_subdirectory), bootstrap the project and consume the engine as
+# an installed/Conan package -- exactly what an external user does. The in-tree
+# workspace build and the web build instead reach this file with sfs::engine
+# already defined, and skip straight to building the executable.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    cmake_minimum_required(VERSION 3.24)
+    project(sampleGame LANGUAGES CXX)
+    set(CMAKE_CXX_STANDARD 23)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
+
 set(IS_WEB_BUILD FALSE)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
     set(IS_WEB_BUILD TRUE)
+endif()
+
+# Resolve the engine. In-tree (workspace + web) the target already exists from
+# add_subdirectory; standalone, find the package an external consumer installed.
+if(NOT TARGET sfs::engine)
+    find_package(engine REQUIRED)
 endif()
 
 file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS
@@ -17,7 +36,7 @@ target_include_directories(sampleGame PRIVATE
 )
 
 target_link_libraries(sampleGame PRIVATE
-    engine
+    sfs::engine
 )
 
 set_target_properties(sampleGame PROPERTIES
@@ -89,6 +108,18 @@ else()
             "${CMAKE_CURRENT_SOURCE_DIR}/assets"
             "$<TARGET_FILE_DIR:sampleGame>/assets"
     )
+
+    # Standalone (package) build: the engine isn't built in-tree, so stage its
+    # runtime assets (default font) from the package next to the executable.
+    # ENGINE_ASSET_DIR is set by the engine's CMake/Conan config. In the
+    # workspace build the engine already copies these to bin, so this is skipped.
+    if(DEFINED ENGINE_ASSET_DIR)
+        add_custom_command(TARGET sampleGame POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${ENGINE_ASSET_DIR}"
+                "$<TARGET_FILE_DIR:sampleGame>/assets"
+        )
+    endif()
 
     add_custom_target(run
         COMMAND $<TARGET_FILE:sampleGame>

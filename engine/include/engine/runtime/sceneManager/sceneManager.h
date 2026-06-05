@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/logger/logger.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include <SDL_render.h>
@@ -49,19 +50,23 @@ private:
 template <typename TScene, typename... TArgs>
 TScene* SceneManager::createScene(TArgs&&... args)
 {
-  if (!m_assetStore)
+  // Every service must be wired (Game::setup does this) before a scene exists:
+  // they are constructor-injected as references, so a missing one can't be
+  // deferred to a null check later.
+  if (!m_assetStore || !m_quadRenderer || !m_textRenderer)
+  {
+    LOG_ERROR("createScene called before engine services were set");
     return nullptr;
+  }
 
   SceneId id = nextSceneId++;
 
+  SceneServices services{*m_assetStore, *m_quadRenderer, *m_textRenderer};
+
   auto scene =
-      std::make_unique<TScene>(id, *m_assetStore, std::forward<TArgs>(args)...);
+      std::make_unique<TScene>(id, services, std::forward<TArgs>(args)...);
 
   TScene* ptr = scene.get();
-
-  // Inject engine-owned services before the scene initialises its systems.
-  static_cast<Scene*>(ptr)->m_quadRenderer = m_quadRenderer;
-  static_cast<Scene*>(ptr)->m_textRenderer = m_textRenderer;
 
   if (m_scenes.empty())
   {
