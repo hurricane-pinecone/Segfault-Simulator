@@ -78,6 +78,10 @@ if(IS_WEB_BUILD)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${CMAKE_CURRENT_SOURCE_DIR}/web/coi-serviceworker.js"
           "$<TARGET_FILE_DIR:sampleGame>/coi-serviceworker.js"
+
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/web/favicon.png"
+          "$<TARGET_FILE_DIR:sampleGame>/favicon.png"
   )
 else()
     add_custom_command(TARGET sampleGame POST_BUILD
