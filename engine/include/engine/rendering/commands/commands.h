@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/components/surfaceEffect.h"
-#include "engine/rendering/blendMode.h"
+#include "engine/types/blendMode.h"
 #include "engine/rendering/commands/renderCommand.h"
 #include "engine/rendering/commands/shadowCommands.h"
 #include "engine/rendering/quads.h"

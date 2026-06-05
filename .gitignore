@@ -1,6 +1,7 @@
 # Build output
 /build/
 /build-web/
+/build-core/
 /bin/
 
 # CMake

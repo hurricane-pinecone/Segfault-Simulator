@@ -2,7 +2,7 @@
 
 #include "component.h"
 #include "engine/ecs/entity.h"
-#include "engine/rendering/modules/moduleSettings.h"
+#include "engine/ecs/moduleSettings.h"
 
 #include <vector>
 

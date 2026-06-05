@@ -1,6 +1,5 @@
 #pragma once
 
-#include "SDL_pixels.h"
 #include <cstdint>
 
 namespace sfs
@@ -12,8 +11,6 @@ struct Color
   uint8_t g = 255;
   uint8_t b = 255;
   uint8_t a = 255;
-
-  constexpr SDL_Color toSDL() const { return SDL_Color{r, g, b, a}; }
 };
 
 namespace Colors

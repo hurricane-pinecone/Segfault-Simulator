@@ -235,7 +235,7 @@ Add these to your shell config (`~/.zshrc`):
 alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug --target run'
 alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release --target run'
 alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
-alias crun-tests='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug && ctest --test-dir build/Debug --output-on-failure'
+alias crun-tests='cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build-core --target luaTests && ctest --test-dir build-core --output-on-failure'
 alias crun-web='emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && cmake --build build-web --target run'
 ```
 
@@ -257,19 +257,25 @@ crun-web      # wasm build + serve (requires emsdk on PATH)
 
 ## Testing
 
-Tests build with the debug preset and run under CTest:
+Tests link `engine-core`, which has no third-party dependencies (vendored Lua +
+glm). With `ENGINE_CORE_ONLY` the suite builds from just CMake + a compiler — no
+Conan, SDL, or OpenGL — so it is fast, and is what CI runs:
 
 ```bash
-cmake --build --preset debug
-ctest --test-dir build/Debug --output-on-failure
+cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-core --target luaTests
+ctest --test-dir build-core --output-on-failure
 ```
 
-Or, with the [`crun-tests`](#optional-aliases-zsh) alias (installs, builds, and
-runs the tests in one step):
+Or, with the [`crun-tests`](#optional-aliases-zsh) alias (configure, build, and
+run in one step):
 
 ```bash
 crun-tests
 ```
+
+The tests also build as part of a full `cmake --preset debug` build and can be
+run with `ctest --test-dir build/Debug`.
 
 ## Tooling
 

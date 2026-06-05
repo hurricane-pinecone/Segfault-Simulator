@@ -5,11 +5,87 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
 endif()
 
 message(STATUS "ENGINE_WEB_BUILD=${ENGINE_WEB_BUILD}")
-message(STATUS "CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}")
-message(STATUS "EMSCRIPTEN=${EMSCRIPTEN}")
+message(STATUS "ENGINE_CORE_ONLY=${ENGINE_CORE_ONLY}")
 
-file(GLOB_RECURSE ENGINE_SRC CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+# ----------------------------------------------------------------------------
+# engine-core: ECS, scripting, and plain-data subsystems. No SDL/GL/imgui and no
+# Conan dependencies -- it builds against vendored Lua + glm alone, so a consumer
+# (e.g. the test suite) can link it without the desktop/render stack.
+# ----------------------------------------------------------------------------
+
+file(GLOB_RECURSE ENGINE_CORE_SRC CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ecs/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/logger/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mapLoader/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/noise/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripting/*.cpp"
+)
+
+# The particle Lua table drives the render-side ParticleEngine, so it belongs to
+# the render library, not core.
+list(FILTER ENGINE_CORE_SRC EXCLUDE REGEX ".*/particleLuaApi\\.cpp$")
+
+list(APPEND ENGINE_CORE_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/parallelFor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/allocationMetrics.cpp"
+)
+
+# Vendored Lua 5.4 (minus the standalone interpreter/compiler mains), compiled
+# into core on every platform so scripting needs no external Lua.
+file(GLOB LUA_SRC "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua/*.c")
+list(FILTER LUA_SRC EXCLUDE REGEX ".*/lua\\.c$")
+list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
+
+add_library(engine-core STATIC ${ENGINE_CORE_SRC} ${LUA_SRC})
+
+target_include_directories(engine-core
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/glm"
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua"
+)
+
+target_compile_options(engine-core PRIVATE
+    -Wall
+    -Wno-unknown-warning-option
+)
+
+if(ENGINE_WEB_BUILD)
+    target_compile_definitions(engine-core PUBLIC ENGINE_WEB=1)
+    # Threads/atomics flags must match across every wasm object in the link.
+    target_compile_options(engine-core PUBLIC -pthread -matomics -mbulk-memory)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(engine-core PUBLIC Threads::Threads)
+endif()
+
+# Core-only configure (e.g. the CI test job) stops here: no render lib, no SDL,
+# nothing that needs Conan.
+if(ENGINE_CORE_ONLY)
+    return()
+endif()
+
+# ----------------------------------------------------------------------------
+# engine: the render/platform layer (SDL, OpenGL, imgui). Depends on engine-core.
+# ----------------------------------------------------------------------------
+
+file(GLOB_RECURSE ENGINE_RENDER_SRC CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/assetStore/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/input/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/rendering/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sceneManager/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/systems/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/TextRenderer/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/particles/*.cpp"
+)
+
+list(APPEND ENGINE_RENDER_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/isometricLightingUtils.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripting/lua/particleLuaApi.cpp"
 )
 
 file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
@@ -17,31 +93,16 @@ file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
 )
 
-if(ENGINE_WEB_BUILD)
-    list(FILTER ENGINE_SRC EXCLUDE REGEX ".*/imgui/.*")
-
-    # No Emscripten Lua port / Conan-for-wasm, so compile the vendored Lua 5.4
-    # sources into the wasm module (minus the standalone interpreter/compiler
-    # mains). The engine's own Lua bindings (src/scripting/lua) stay IN the build
-    # on web -- that's what the JS-driven editor calls into.
-    file(GLOB LUA_SRC "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua/*.c")
-    list(FILTER LUA_SRC EXCLUDE REGEX ".*/lua\\.c$")
-    list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
-    list(APPEND ENGINE_SRC ${LUA_SRC})
-endif()
-
 add_library(engine STATIC
-    ${ENGINE_SRC}
+    ${ENGINE_RENDER_SRC}
     ${ENGINE_HEADERS}
 )
 
-target_include_directories(engine
-    PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/glm"
-    PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+target_link_libraries(engine PUBLIC engine-core)
+
+target_include_directories(engine PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua" # particleLuaApi.cpp uses <lua.hpp>
 )
 
 target_compile_options(engine PRIVATE
@@ -67,25 +128,12 @@ if(NOT ENGINE_WEB_BUILD AND CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 endif()
 
 if(ENGINE_WEB_BUILD)
-    target_compile_definitions(engine PUBLIC
-        ENGINE_WEB=1
-    )
-
-    # Vendored Lua headers (so the bindings' <lua.hpp> resolves on web; native
-    # gets these from the Conan lua::lua target instead).
-    target_include_directories(engine PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua"
-    )
-
     target_compile_options(engine PUBLIC
         -sUSE_SDL=2
         -sUSE_SDL_IMAGE=2
         -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
         -sUSE_SDL_MIXER=2
-        -pthread
-        -matomics
-        -mbulk-memory
     )
 
     target_link_options(engine PUBLIC
@@ -101,8 +149,6 @@ if(ENGINE_WEB_BUILD)
         -sPTHREAD_POOL_SIZE=4
     )
 else()
-    find_package(Threads REQUIRED)
-    find_package(lua REQUIRED)
     find_package(SDL2 REQUIRED)
     find_package(SDL2_image REQUIRED)
     find_package(SDL2_ttf REQUIRED)
@@ -111,25 +157,23 @@ else()
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
 
-target_include_directories(engine PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui"
-)
+    target_include_directories(engine PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui"
+    )
 
-target_sources(engine PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
-)
+    target_sources(engine PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
+    )
 
     target_link_libraries(engine
         PUBLIC
             SDL2::SDL2
             SDL2_image::SDL2_image
             imgui::imgui
-            lua::lua
             sdl_ttf::sdl_ttf
             SDL2_mixer::SDL2_mixer
             OpenGL::GL
             GLEW::GLEW
-            Threads::Threads
     )
 endif()

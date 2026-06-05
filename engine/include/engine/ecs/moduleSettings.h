@@ -19,11 +19,11 @@ struct ModuleSetting
 {
   enum class Type
   {
-    Float,  ///< Continuous value in [min, max]; uses getFloat/setFloat.
-    Bool,   ///< Toggle; uses getBool/setBool.
-    Enum,   ///< One of @ref options (by index); uses getEnum/setEnum.
-    Action, ///< One-shot command (e.g. a button); uses onInvoke.
-    Text,   ///< Read-only label; uses getText.
+    Float,  // Continuous value in [min, max]; uses getFloat/setFloat.
+    Bool,   // Toggle; uses getBool/setBool.
+    Enum,   // One of @ref options (by index); uses getEnum/setEnum.
+    Action, // One-shot command (e.g. a button); uses onInvoke.
+    Text,   // Read-only label; uses getText.
   };
 
   /** Display label / identifier for the setting. */

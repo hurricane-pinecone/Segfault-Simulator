@@ -2,6 +2,7 @@
 #include "engine/logger/logger.h"
 #include "engine/rendering/iQuadRenderer.h"
 #include "engine/rendering/quads.h"
+#include "engine/rendering/sdlColor.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
 #include <engine/TextRenderer/textRenderer.h>
@@ -103,7 +104,7 @@ void TextRenderer::drawText(float x,
   if (it == m_textCache.end())
   {
     SDL_Surface* surface =
-        TTF_RenderText_Blended(font, text.c_str(), color.toSDL());
+        TTF_RenderText_Blended(font, text.c_str(), toSDL(color));
 
     if (!surface)
     {

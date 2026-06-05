@@ -97,7 +97,7 @@ bool TerrainGeneratorSystem::loadTile(TilePos tile)
   {
     sfs::WaterTileComponent water;
     water.elevation = m_waterLevel;
-    water.color = SDL_Color{35, 120, 190, 115};
+    water.color = sfs::Color{35, 120, 190, 115};
 
     block.entity().addComponent<sfs::WaterTileComponent>(water);
   }
