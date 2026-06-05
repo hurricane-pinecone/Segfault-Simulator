@@ -2,12 +2,14 @@
 
 #include "components/platformerComponents.h"
 #include "config.h"
+#include "systems/bloodSystem.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
 #include "engine/core/particles/particleEngine.h"
+#include "SDL_pixels.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
@@ -16,6 +18,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <random>
 #include <vector>
 
 namespace platformer
@@ -40,6 +43,9 @@ public:
   {
     m_onKill = std::move(onKill);
   }
+
+  // Physics blood: hits/kills spray sticking droplets through this system.
+  void setBlood(BloodSystem* blood) { m_blood = blood; }
 
 protected:
   void create() override
@@ -98,6 +104,13 @@ protected:
         enemyEntity.getComponent<sfs::RigidBodyComponent>().velocity.y =
             -ENEMY_KNOCKBACK;
         damageEnemy(enemyEntity, bullet.damage, transform.position);
+
+        // Spray blood along the bullet's travel; the droplets fly and stick to
+        // whatever platform they land on (BloodSystem), so the stains trace the
+        // actual impact, not a drawn shape.
+        if (m_blood)
+          m_blood->spray(transform.position, bullet.velocity, 12, 120.0f,
+                         520.0f, 60.0f, SDL_Color{200, 16, 16, 255}, 10.0f);
 
         if (bullet.chain)
           chainArc(enemyPos, bullet.color, enemyEntity);
@@ -223,6 +236,11 @@ private:
           entity.getComponent<sfs::TransformComponent>().position;
       if (m_particles)
         m_particles->spawnBurst("gore", pos, 0.0f);
+      // A heavy radial eruption of sticking droplets -- they fly up and out,
+      // then gravity rains them back onto the platforms as organic splatter.
+      if (m_blood)
+        m_blood->spray(pos, glm::vec2{0.0f, 0.0f}, 46, 140.0f, 680.0f, 260.0f,
+                       SDL_Color{180, 12, 12, 255}, 13.0f);
       if (m_onKill)
         m_onKill(pos);
       m_deadEnemies.push_back(entity);
@@ -301,8 +319,10 @@ private:
   }
 
   sfs::ParticleEngine* m_particles = nullptr;
+  BloodSystem* m_blood = nullptr;
   std::function<void(glm::vec2)> m_onKill;
   std::vector<sfs::Entity> m_deadEnemies;
+  std::mt19937 m_rng{99};
 };
 
 } // namespace platformer

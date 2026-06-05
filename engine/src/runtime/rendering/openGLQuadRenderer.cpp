@@ -171,6 +171,14 @@ bool OpenGLQuadRenderer::initialize()
                         sizeof(Vertex),
                         reinterpret_cast<void*>(offsetof(Vertex, z)));
 
+  glEnableVertexAttribArray(4);
+  glVertexAttribPointer(4,
+                        4,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(Vertex),
+                        reinterpret_cast<void*>(offsetof(Vertex, color)));
+
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -766,13 +774,16 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   const float z = command.z;
   const float zTop = command.zTop;
 
-  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop});
-  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1], zTop});
-  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
+  const glm::vec4 c{command.tint.r / 255.0f, command.tint.g / 255.0f,
+                    command.tint.b / 255.0f, command.tint.a / 255.0f};
 
-  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop});
-  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z});
-  m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3], z});
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop, c});
+  m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1], zTop, c});
+  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z, c});
+
+  m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop, c});
+  m_litVertices.push_back({p2, {u1, v1}, command.worldPoints[2], z, c});
+  m_litVertices.push_back({p3, {u0, v1}, command.worldPoints[3], z, c});
 }
 
 void OpenGLQuadRenderer::submitParticleBatch(const ParticleBatch& batch,
@@ -1328,14 +1339,17 @@ layout (location = 0) in vec2 aPosition;
 layout (location = 1) in vec2 aUv;
 layout (location = 2) in vec2 aWorldPosition;
 layout (location = 3) in float aZ;
+layout (location = 4) in vec4 aTint;
 
 out vec2 vUv;
 out vec2 vWorldPosition;
+out vec4 vTint;
 
 void main()
 {
   vUv = aUv;
   vWorldPosition = aWorldPosition;
+  vTint = aTint;
 
   gl_Position = vec4(aPosition, aZ, 1.0);
 }
@@ -1344,6 +1358,7 @@ void main()
   const std::string fragmentSource = glslVersion + R"(
 in vec2 vUv;
 in vec2 vWorldPosition;
+in vec4 vTint;
 
 out vec4 FragColor;
 
@@ -1714,6 +1729,7 @@ float sunVisibility()
 void main()
 {
   vec4 albedo = texture(uTexture, vUv);
+  albedo *= vTint; // per-quad tint (white by default -> no change)
 
 
 float top = isoTopMask(vUv);
