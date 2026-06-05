@@ -94,7 +94,7 @@ Conan, SDL, or OpenGL — so it is fast, and is what CI runs:
 
 ```bash
 cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-core --target luaTests
+cmake --build build-core
 ctest --test-dir build-core --output-on-failure
 ```
 
@@ -207,7 +207,7 @@ Add these to your shell config (`~/.zshrc`):
 alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug --target run'
 alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release --target run'
 alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
-alias crun-tests='cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build-core --target luaTests && ctest --test-dir build-core --output-on-failure'
+alias crun-tests='cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build-core && ctest --test-dir build-core --output-on-failure'
 alias crun-web='emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && cmake --build build-web --target run'
 alias crun-sample-pkg='conan create . -s build_type=Release --build=missing && (cd sampleGame && conan install . --build=missing -s build_type=Release && cmake --preset conan-release && cmake --build --preset conan-release --target run)'
 ```
