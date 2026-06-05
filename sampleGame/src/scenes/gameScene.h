@@ -1,6 +1,5 @@
 #pragma once
 
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -12,9 +11,9 @@ class GameScene : public sfs::Scene
 {
 public:
   GameScene(sfs::SceneId id,
-            sfs::AssetStore& assetStore,
+            const sfs::SceneServices& services,
             const std::string& name)
-      : sfs::Scene(id, assetStore, name)
+      : sfs::Scene(id, services, name)
   {
   }
 

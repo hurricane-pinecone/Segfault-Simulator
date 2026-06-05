@@ -1,0 +1,21 @@
+# Consumer manifest for building the sample game against the engine *package* --
+# the realistic out-of-tree flow (an external user would write exactly this).
+# Requires the engine to be available in the Conan cache first:
+#     conan create .            # from the repo root, packages sfs-engine
+# Then, from this directory:
+#     conan install . --build=missing
+#     cmake --preset conan-release   # (or conan-debug)
+#     cmake --build --preset conan-release
+#
+# The engine's SDL/imgui/GLEW closure comes in transitively via sfs-engine, so
+# it is not listed here.
+
+[requires]
+sfs-engine/0.1.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout

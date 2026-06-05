@@ -13,12 +13,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # and build with no third-party dependencies.
 option(ENGINE_CORE_ONLY "Build only engine-core and its tests" OFF)
 
+# Build the bundled sample game. Off when packaging the engine on its own (the
+# Conan recipe sets this) so the engine libs can be built/installed standalone.
+option(ENGINE_BUILD_SAMPLE "Build the bundled sample game" ON)
+
 # Enable testing at the top level so `ctest --test-dir <build>` finds tests
 # registered in subdirectories. The engine owns its own tests (engine/tests).
 enable_testing()
 
 add_subdirectory(engine)
 
-if(NOT ENGINE_CORE_ONLY)
+if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_SAMPLE)
     add_subdirectory(sampleGame)
 endif()

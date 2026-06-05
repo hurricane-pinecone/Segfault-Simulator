@@ -7,7 +7,11 @@
 namespace sfs
 {
 
-const unsigned int MAX_COMPONENTS = 32;
+// Width of the per-entity component Signature bitset, and therefore the maximum
+// number of distinct component types the ECS can register. Each component type
+// claims one id (Component<T>::getId), used as a bit index here; registering
+// more types than this is a hard misconfiguration (see component.h guard).
+const unsigned int MAX_COMPONENTS = 128;
 typedef std::bitset<MAX_COMPONENTS> Signature;
 
 class Registry;

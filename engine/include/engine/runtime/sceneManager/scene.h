@@ -19,17 +19,32 @@ using SceneId = uint32_t;
 class IQuadRenderer;
 class TextRenderer;
 
+// Engine-owned services a scene draws and loads assets through. Bundled into one
+// value so they can be constructor-injected as a unit: every Scene holds them as
+// references, valid for the scene's whole lifetime. The SceneManager builds this
+// (and verifies the services exist) before constructing any scene.
+struct SceneServices
+{
+  AssetStore& assetStore;
+  IQuadRenderer& quadRenderer;
+  TextRenderer& textRenderer;
+};
+
 class Scene
 {
 public:
-  Scene(SceneId id, AssetStore& assetStore)
-      : m_assetStore(assetStore), m_id(id),
+  Scene(SceneId id, const SceneServices& services)
+      : m_assetStore(services.assetStore),
+        m_quadRenderer(services.quadRenderer),
+        m_textRenderer(services.textRenderer), m_id(id),
         m_name("scene_" + std::to_string(id))
   {
   }
 
-  Scene(SceneId id, AssetStore& assetStore, const std::string& name)
-      : m_assetStore(assetStore), m_id(id), m_name(name)
+  Scene(SceneId id, const SceneServices& services, const std::string& name)
+      : m_assetStore(services.assetStore),
+        m_quadRenderer(services.quadRenderer),
+        m_textRenderer(services.textRenderer), m_id(id), m_name(name)
   {
   }
 
@@ -57,8 +72,8 @@ public:
   void destroyEntity(const Entity& entity);
 
   AssetStore& assetStore() const { return m_assetStore; }
-  IQuadRenderer& quadRenderer() const { return *m_quadRenderer; }
-  TextRenderer& textRenderer() const { return *m_textRenderer; }
+  IQuadRenderer& quadRenderer() const { return m_quadRenderer; }
+  TextRenderer& textRenderer() const { return m_textRenderer; }
 
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
@@ -106,13 +121,13 @@ protected:
   AssetStore& m_assetStore;
 
 private:
+  // Constructor-injected by SceneManager; references, so never null.
+  IQuadRenderer& m_quadRenderer;
+  TextRenderer& m_textRenderer;
+
   SceneId m_id = 0;
   std::string m_name = "";
   Registry m_registry;
-
-  // Set by SceneManager.
-  IQuadRenderer* m_quadRenderer = nullptr;
-  TextRenderer* m_textRenderer = nullptr;
 
   std::vector<std::unique_ptr<GameObject>> m_gameObjects;
 };

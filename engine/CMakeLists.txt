@@ -7,6 +7,10 @@ endif()
 message(STATUS "ENGINE_WEB_BUILD=${ENGINE_WEB_BUILD}")
 message(STATUS "ENGINE_CORE_ONLY=${ENGINE_CORE_ONLY}")
 
+# Standard install layout (CMAKE_INSTALL_INCLUDEDIR / LIBDIR), used both by the
+# INSTALL_INTERFACE include paths below and by the install/export section.
+include(GNUInstallDirs)
+
 # ----------------------------------------------------------------------------
 # engine-core: ECS, scripting, and plain-data subsystems. No SDL/GL/imgui and no
 # Conan dependencies -- it builds against vendored Lua + glm alone, so a consumer
@@ -25,11 +29,21 @@ list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
 
 add_library(engine-core STATIC ${ENGINE_CORE_SRC} ${LUA_SRC})
 
+# Namespaced alias so in-tree consumers (sample game, web build) link the exact
+# same target name an out-of-tree consumer gets from find_package(engine).
+add_library(sfs::engine-core ALIAS engine-core)
+
+# Public include roots use BUILD/INSTALL_INTERFACE so the exported target is
+# relocatable: in-tree builds see the source dirs; installed consumers see the
+# headers staged under the install prefix (see the install section below).
 target_include_directories(engine-core
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/glm"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/glm>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/lib>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/lib/glm>"
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua"
@@ -70,6 +84,8 @@ add_library(engine STATIC
     ${ENGINE_HEADERS}
 )
 
+add_library(sfs::engine ALIAS engine)
+
 target_link_libraries(engine PUBLIC engine-core)
 
 target_include_directories(engine PRIVATE
@@ -86,7 +102,8 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets
 
 if(NOT ENGINE_WEB_BUILD AND CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     target_include_directories(engine PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/tracy/public"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/tracy/public>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/lib/tracy/public>"
     )
 
     target_sources(engine PRIVATE
@@ -129,7 +146,8 @@ else()
     find_package(GLEW REQUIRED)
 
     target_include_directories(engine PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/lib/imgui>"
     )
 
     target_sources(engine PRIVATE
@@ -150,6 +168,101 @@ else()
 endif()
 
 endif() # NOT ENGINE_CORE_ONLY
+
+# ----------------------------------------------------------------------------
+# Install / export. Lets a consumer `find_package(engine)` against an installed
+# tree instead of vendoring this source (or pulling it in via add_subdirectory).
+# Always exports engine-core; also exports the render `engine` lib when it was
+# built. Skipped on the web toolchain, where an install has no meaning.
+# ----------------------------------------------------------------------------
+if(NOT ENGINE_WEB_BUILD)
+    include(CMakePackageConfigHelpers)
+
+    option(ENGINE_INSTALL_CMAKE_PACKAGE
+        "Generate + install the CMake package config (engineConfig.cmake)" ON)
+
+    set(ENGINE_INSTALL_TARGETS engine-core)
+    if(TARGET engine)
+        list(APPEND ENGINE_INSTALL_TARGETS engine)
+        set(ENGINE_HAS_RENDER_LIB TRUE)
+    else()
+        set(ENGINE_HAS_RENDER_LIB FALSE)
+    endif()
+
+    install(TARGETS ${ENGINE_INSTALL_TARGETS}
+        EXPORT engineTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+
+    # Public engine headers (engine/include/engine/...).
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING
+            PATTERN "*.h"
+            PATTERN "*.hpp"
+            PATTERN "*.inl"
+    )
+
+    # Vendored header-only dependencies the public headers expose (glm, imgui,
+    # tracy, nlohmann, FastNoiseLite, Lua). Staged under include/lib so the same
+    # include roots used in-tree (lib, lib/glm, lib/imgui, lib/tracy/public)
+    # resolve identically against the install prefix.
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lib/"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lib
+        FILES_MATCHING
+            PATTERN "*.h"
+            PATTERN "*.hpp"
+            PATTERN "*.inl"
+    )
+
+    # Runtime assets the engine itself loads (the default font). Shipped with
+    # every install/package so a standalone consumer can stage them next to its
+    # executable; engineAssets.cmake exposes ENGINE_ASSET_DIR (resolved relative
+    # to itself, so it works from any prefix / Conan package folder).
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/assets/"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/sfs-engine/assets
+        PATTERN ".DS_Store" EXCLUDE
+    )
+
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/engineAssets.cmake"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/sfs-engine/cmake
+    )
+
+    # The generated CMake package config (engineConfig.cmake) backs a plain
+    # `find_package(engine)` against a raw `cmake --install` tree. A Conan
+    # package generates its own config from the recipe's package_info, so the
+    # recipe turns this off to avoid shipping two competing configs.
+    if(ENGINE_INSTALL_CMAKE_PACKAGE)
+        install(EXPORT engineTargets
+            FILE engineTargets.cmake
+            NAMESPACE sfs::
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/engine
+        )
+
+        set(ENGINE_INSTALL_ASSETDIR "${CMAKE_INSTALL_DATADIR}/sfs-engine/assets")
+        configure_package_config_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/engineConfig.cmake.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/engineConfig.cmake"
+            INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/engine
+            PATH_VARS ENGINE_INSTALL_ASSETDIR
+        )
+
+        write_basic_package_version_file(
+            "${CMAKE_CURRENT_BINARY_DIR}/engineConfigVersion.cmake"
+            VERSION 0.1.0
+            COMPATIBILITY SameMajorVersion
+        )
+
+        install(FILES
+            "${CMAKE_CURRENT_BINARY_DIR}/engineConfig.cmake"
+            "${CMAKE_CURRENT_BINARY_DIR}/engineConfigVersion.cmake"
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/engine
+        )
+    endif()
+endif()
 
 # Engine tests (native only; the web build strips the desktop toolchain). Added
 # after both targets exist: core/ tests link engine-core, runtime/ tests link
