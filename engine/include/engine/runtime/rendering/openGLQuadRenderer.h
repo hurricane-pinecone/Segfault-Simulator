@@ -192,6 +192,7 @@ private:
     glm::vec2 uv;
     glm::vec2 worldPosition;
     float z = 0.0f; // clip-space depth (gl_Position.z)
+    glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // per-quad tint (white = none)
   };
 
   struct ParticleVertex

@@ -79,6 +79,7 @@ struct PlayerTag
 {
 };
 
+
 // The player's collected spells. Every shot applies all of them, stacked.
 struct Loadout
 {

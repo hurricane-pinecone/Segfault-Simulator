@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -225,6 +226,21 @@ void FlatRenderSystem::render()
     sprites.push_back({quad, sortKey});
   }
 
+  // Decals (blood, scorch...) draw as a blended, depth-TESTED overlay via the
+  // particle path (depth test on, depth WRITE off) rather than the lit pipeline.
+  // That's what makes accumulating blood look right: the lit pipeline writes
+  // depth even for a soft sprite's transparent rim, so each new blob CLEARED the
+  // one behind it (hard artifacts, no blending). With write off they layer and
+  // blend in stamp order; with test on they're still occluded by nearer
+  // characters. They contribute to the shared depth range first.
+  for (const FlatDecal& decal : m_decals)
+  {
+    const float sortKey =
+        static_cast<float>(decal.layer) * 1.0e6f + decal.worldPos.y;
+    minKey = std::min(minKey, sortKey);
+    maxKey = std::max(maxKey, sortKey);
+  }
+
   // Map sort-key -> clip depth: higher key (foreground / larger Y) gets the
   // nearer depth so it draws in front under the GL_LEQUAL depth test.
   const float range = maxKey - minKey;
@@ -232,8 +248,133 @@ void FlatRenderSystem::render()
   {
     const float t = range > 1e-6f ? (gathered.sortKey - minKey) / range : 0.0f;
     gathered.quad.z = 0.9f - 1.8f * t;
+    // Flat quads have no depth lean (that's an isometric standing-billboard
+    // feature the iso path fills via assignClipDepth). Without this the top edge
+    // keeps the default zTop = 0 while the bottom uses z, so every quad gets a
+    // spurious top-to-bottom depth gradient -- overlapping quads (e.g. a blood
+    // pool's many ribbons) then fight and cull each other. Flat = top depth ==
+    // bottom depth.
+    gathered.quad.zTop = gathered.quad.z;
     m_quadRenderer.submit(gathered.quad);
   }
+
+  // Build decal quads and submit them through the particle path (blended, depth
+  // test on / write off) AFTER the lit sprites have written the depth buffer, so
+  // blood is occluded by nearer characters yet blends over older blood instead
+  // of clearing it. Bucketed by texture (one draw per texture).
+  const float zoom = m_projection->worldUnitToPixels();
+  std::unordered_map<unsigned int, ParticleBatch> decalBatches;
+  for (const FlatDecal& decal : m_decals)
+  {
+    SDL_Rect srcRect{};
+    int texW = 0;
+    int texH = 0;
+    const unsigned int texture = resolveSpriteTexture(
+        m_assetStore, decal.sprite, srcRect, texW, texH, m_quadRenderer);
+    if (texture == 0 || texW == 0 || texH == 0)
+      continue;
+
+    const float w = decal.size.x * zoom;
+    const float h = decal.size.y * zoom;
+    const glm::vec2 screen = m_projection->worldToScreen(decal.worldPos, 0.0f);
+    // Quad centre (honour the anchor; blood is centre-anchored).
+    const glm::vec2 c{screen.x - (decal.anchor.x - 0.5f) * w,
+                      screen.y - (decal.anchor.y - 0.5f) * h};
+
+    float u0 = static_cast<float>(srcRect.x) / texW;
+    float v0 = static_cast<float>(srcRect.y) / texH;
+    float u1 = static_cast<float>(srcRect.x + srcRect.w) / texW;
+    float v1 = static_cast<float>(srcRect.y + srcRect.h) / texH;
+
+    ParticleQuad q;
+    const float sortKey =
+        static_cast<float>(decal.layer) * 1.0e6f + decal.worldPos.y;
+    const float t = range > 1e-6f ? (sortKey - minKey) / range : 0.0f;
+    q.z = 0.9f - 1.8f * t;
+
+    // The particle path is unlit, so bake the scene lighting at the decal's
+    // position into its colour: a dim ambient base plus each point light's
+    // smootherstep falloff. Blood is dark in shadow and lit near torches and
+    // muzzle/death flashes.
+    glm::vec3 lightAcc = m_lighting.ambient * m_lighting.ambientColor;
+    for (int li = 0; li < lights.count; ++li)
+    {
+      const float radius = lights.radii[li];
+      if (radius <= 0.0f)
+        continue;
+      const float dist = glm::length(lights.positions[li] - screen);
+      if (dist >= radius)
+        continue;
+      const float reach = 1.0f - dist / radius;
+      const float atten =
+          reach * reach * reach * (reach * (reach * 6.0f - 15.0f) + 10.0f);
+      glm::vec3 lc = lights.colors[li];
+      const float mx = std::max(std::max(lc.r, lc.g), lc.b);
+      lc = mx > 0.001f ? lc / mx : glm::vec3(1.0f);
+      lightAcc += lc * (lights.intensities[li] * atten);
+    }
+    q.color = {(decal.tint.r / 255.0f) * std::min(lightAcc.r, 1.0f),
+               (decal.tint.g / 255.0f) * std::min(lightAcc.g, 1.0f),
+               (decal.tint.b / 255.0f) * std::min(lightAcc.b, 1.0f),
+               decal.tint.a / 255.0f};
+
+    if (decal.clip && std::fabs(decal.rotation) < 1e-3f && w > 0.0f && h > 0.0f)
+    {
+      // Axis-aligned crop to the clip rect, with matching UV inset, so a mark
+      // near an edge is sliced at the edge (e.g. blood never above a surface).
+      const float l = c.x - w * 0.5f;
+      const float top = c.y - h * 0.5f;
+      const glm::vec2 cc0 = m_projection->worldToScreen(decal.clipMin, 0.0f);
+      const glm::vec2 cc1 = m_projection->worldToScreen(decal.clipMax, 0.0f);
+      const float nl = std::max(l, std::min(cc0.x, cc1.x));
+      const float nt = std::max(top, std::min(cc0.y, cc1.y));
+      const float nr = std::min(l + w, std::max(cc0.x, cc1.x));
+      const float nb = std::min(top + h, std::max(cc0.y, cc1.y));
+      if (nr <= nl || nb <= nt)
+        continue;
+      const float nu0 = u0 + ((nl - l) / w) * (u1 - u0);
+      const float nu1 = u1 - ((l + w - nr) / w) * (u1 - u0);
+      const float nv0 = v0 + ((nt - top) / h) * (v1 - v0);
+      const float nv1 = v1 - ((top + h - nb) / h) * (v1 - v0);
+      q.points[0] = {nl, nt};
+      q.points[1] = {nr, nt};
+      q.points[2] = {nr, nb};
+      q.points[3] = {nl, nb};
+      q.uvs[0] = {nu0, nv0};
+      q.uvs[1] = {nu1, nv0};
+      q.uvs[2] = {nu1, nv1};
+      q.uvs[3] = {nu0, nv1};
+    }
+    else
+    {
+      glm::vec2 p0{-w * 0.5f, -h * 0.5f};
+      glm::vec2 p1{w * 0.5f, -h * 0.5f};
+      glm::vec2 p2{w * 0.5f, h * 0.5f};
+      glm::vec2 p3{-w * 0.5f, h * 0.5f};
+      if (decal.rotation != 0.0f)
+      {
+        const float s = std::sin(decal.rotation);
+        const float co = std::cos(decal.rotation);
+        const auto rot = [&](glm::vec2 p)
+        { return glm::vec2{p.x * co - p.y * s, p.x * s + p.y * co}; };
+        p0 = rot(p0);
+        p1 = rot(p1);
+        p2 = rot(p2);
+        p3 = rot(p3);
+      }
+      q.points[0] = c + p0;
+      q.points[1] = c + p1;
+      q.points[2] = c + p2;
+      q.points[3] = c + p3;
+      q.uvs[0] = {u0, v0};
+      q.uvs[1] = {u1, v0};
+      q.uvs[2] = {u1, v1};
+      q.uvs[3] = {u0, v1};
+    }
+    decalBatches[texture].quads.push_back(q);
+  }
+  for (auto& [texture, batch] : decalBatches)
+    m_quadRenderer.submitParticleBatch(batch, texture, BlendMode::Alpha, true);
 
   // Drive render modules (e.g. Particles). They emit AnyRenderCommands; the flat
   // path consumes particle batches and draws them on top (screen-space), so the
@@ -279,6 +420,87 @@ void FlatRenderSystem::render()
   }
 
   m_quadRenderer.flush();
+}
+
+long long FlatRenderSystem::decalCell(const glm::vec2& worldPos) const
+{
+  const int cx = static_cast<int>(std::floor(worldPos.x / m_decalCellSize));
+  const int cy = static_cast<int>(std::floor(worldPos.y / m_decalCellSize));
+  // Pack two int cell coords into one key (clean bijection via unsigned halves).
+  return (static_cast<long long>(static_cast<unsigned int>(cx)) << 32) |
+         static_cast<unsigned int>(cy);
+}
+
+void FlatRenderSystem::stampDecal(const FlatDecal& decal)
+{
+  // Permanent decals (blood etc.) saturate a world cell: once it holds enough,
+  // further stamps there are dropped, so a hammered spot stays put instead of
+  // churning the ring buffer (which would erase older marks). Fading decals
+  // (lifetime >= 0) clear themselves, so they don't participate.
+  const bool permanent = decal.lifetime < 0.0f && m_decalsPerCell > 0;
+  if (permanent)
+  {
+    const auto it = m_decalCoverage.find(decalCell(decal.worldPos));
+    if (it != m_decalCoverage.end() && it->second >= m_decalsPerCell)
+      return;
+  }
+
+  if (static_cast<int>(m_decals.size()) >= m_maxDecals)
+  {
+    // Global backstop: drop the oldest, keeping its cell's coverage in step.
+    const FlatDecal& oldest = m_decals.front();
+    if (oldest.lifetime < 0.0f && m_decalsPerCell > 0)
+    {
+      const auto oit = m_decalCoverage.find(decalCell(oldest.worldPos));
+      if (oit != m_decalCoverage.end() && --oit->second <= 0)
+        m_decalCoverage.erase(oit);
+    }
+    m_decals.erase(m_decals.begin());
+  }
+
+  m_decals.push_back(decal);
+  if (permanent)
+    ++m_decalCoverage[decalCell(decal.worldPos)];
+}
+
+void FlatRenderSystem::ageDecals(float deltaTime)
+{
+  const auto approach = [](float current, float target, float step)
+  {
+    return current < target ? std::min(target, current + step)
+                            : std::max(target, current - step);
+  };
+
+  for (auto it = m_decals.begin(); it != m_decals.end();)
+  {
+    FlatDecal& decal = *it;
+
+    if (decal.follow.isValid() &&
+        decal.follow.hasComponent<TransformComponent>())
+      decal.worldPos =
+          decal.follow.getComponent<TransformComponent>().position +
+          decal.followOffset;
+
+    if (decal.growRate > 0.0f)
+    {
+      const float step = decal.growRate * deltaTime;
+      if (decal.growTo.x > 0.0f)
+        decal.size.x = approach(decal.size.x, decal.growTo.x, step);
+      if (decal.growTo.y > 0.0f)
+        decal.size.y = approach(decal.size.y, decal.growTo.y, step);
+    }
+
+    if (decal.lifetime >= 0.0f)
+    {
+      decal.lifetime -= deltaTime;
+      if (decal.lifetime <= 0.0f)
+      {
+        it = m_decals.erase(it);
+        continue;
+      }
+    }
+    ++it;
+  }
 }
 
 } // namespace sfs

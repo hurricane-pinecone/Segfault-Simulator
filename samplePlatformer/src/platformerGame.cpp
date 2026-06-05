@@ -35,5 +35,9 @@ void PlatformerGame::onUpdate(double /*deltaTime*/)
 void PlatformerGame::onProcessInput(const sfs::Input& input)
 {
   if (input.keyboard().keyPressed(sfs::Key::Escape))
-    isRunning = false;
+  {
+#ifndef ENGINE_WEB
+    isRunning = false; // on web, Esc must not kill the tab's game loop
+#endif
+  }
 }

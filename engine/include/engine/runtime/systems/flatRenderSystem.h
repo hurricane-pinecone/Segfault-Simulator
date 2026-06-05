@@ -2,9 +2,13 @@
 
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/flatProjection.h"
+#include "engine/runtime/rendering/flatDecal.h"
 #include "engine/runtime/rendering/flatRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "glm/glm/ext/vector_float3.hpp"
+
+#include <unordered_map>
+#include <vector>
 
 namespace sfs
 {
@@ -57,14 +61,41 @@ public:
   // exist than the shader can hold, the nearest to this point are kept.
   void setFocus(const glm::vec2& focus) { m_focus = focus; }
 
+  // Stamp a persistent decal (blood, scorch, ...). It is drawn each frame,
+  // depth-sorted with sprites by layer, until it expires. Any system can stamp
+  // one -- it isn't an entity. Spatially coverage-limited: once a small world
+  // cell holds `decalsPerCell` permanent decals it stops accepting more there,
+  // so a hammered spot SATURATES and stays put instead of churning the buffer
+  // (which would erase old marks as new ones land). Over the global cap the
+  // oldest is still dropped as a backstop.
+  void stampDecal(const FlatDecal& decal);
+
+  // Max live decals before the oldest is evicted (bounds memory/frame cost).
+  void setMaxDecals(int max) { m_maxDecals = max; }
+
+  // Spatial saturation: cell size (world units) and how many permanent decals
+  // one cell holds before further stamps there are dropped.
+  void setDecalCoverage(float cellSize, int decalsPerCell)
+  {
+    m_decalCellSize = cellSize > 1.0f ? cellSize : 1.0f;
+    m_decalsPerCell = decalsPerCell;
+  }
+
 protected:
   void create() override;
-  void update(double deltaTime) override { updateModules(deltaTime); }
+  void update(double deltaTime) override
+  {
+    updateModules(deltaTime);
+    ageDecals(static_cast<float>(deltaTime));
+  }
   void render() override;
 
   ModuleInit moduleInit() override { return {registry, &m_assetStore}; }
 
 private:
+  // Advance decals: follow their target, grow, and expire.
+  void ageDecals(float deltaTime);
+
   AssetStore& m_assetStore;
   IQuadRenderer& m_quadRenderer;
 
@@ -72,6 +103,18 @@ private:
   FlatRenderContext m_context;
   FlatLighting m_lighting;
   glm::vec2 m_focus{0.0f, 0.0f};
+
+  // World cell key for the coverage map (packs floor(p / cellSize)).
+  long long decalCell(const glm::vec2& worldPos) const;
+
+  std::vector<FlatDecal> m_decals;
+  int m_maxDecals = 4000;
+
+  // Coverage: live permanent-decal count per world cell (see stampDecal). A
+  // permanent decal (lifetime < 0) counts; fading decals are ignored.
+  std::unordered_map<long long, int> m_decalCoverage;
+  float m_decalCellSize = 14.0f;
+  int m_decalsPerCell = 10;
 };
 
 } // namespace sfs

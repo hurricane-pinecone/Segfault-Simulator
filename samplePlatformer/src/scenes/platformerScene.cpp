@@ -4,6 +4,7 @@
 #include "config.h"
 #include "gameObjects/player.h"
 #include "spells.h"
+#include "systems/bloodSystem.h"
 #include "systems/bulletSystem.h"
 #include "systems/enemySpawnerSystem.h"
 #include "systems/enemySystem.h"
@@ -66,11 +67,11 @@ sfs::ParticleEffectDesc makeBloodEffect()
 {
   sfs::ParticleEffectDesc desc;
   desc.shape = sfs::EmissionShape::Point;
-  desc.burstCount = 32;
-  desc.lifetime = {0.4f, 1.0f};
-  desc.speed = {180.0f, 520.0f};
-  desc.size = {10.0f, 26.0f};
-  desc.gravity = {0.0f, 1300.0f}; // +Y down: blood arcs and falls
+  desc.burstCount = 52;
+  desc.lifetime = {0.45f, 1.2f};
+  desc.speed = {200.0f, 640.0f};
+  desc.size = {12.0f, 34.0f};
+  desc.gravity = {0.0f, 1400.0f}; // +Y down: blood arcs and falls
   desc.drag = 0.4f;
   desc.sizeOverLife = sfs::Curve::linear(1.0f, 0.45f);
   desc.alphaOverLife = sfs::Curve::linear(1.0f, 0.0f);
@@ -83,45 +84,18 @@ sfs::ParticleEffectDesc makeBloodEffect()
   return desc;
 }
 
-// A blood stain that settles where the blood landed and lingers, so hits leave
-// a mark on the platform. Near-zero velocity + heavy drag + no gravity pins the
-// cluster in place; a long lifetime makes it "stick".
-sfs::ParticleEffectDesc makeBloodStainEffect()
-{
-  sfs::ParticleEffectDesc desc;
-  // A thin horizontal smear hugging the platform surface (Box, low height), that
-  // barely moves and settles at once -- so it reads as a stain on the surface.
-  desc.shape = sfs::EmissionShape::Box;
-  desc.boxExtents = {16.0f, 3.0f};
-  desc.burstCount = 18;
-  desc.lifetime = {10.0f, 20.0f};
-  desc.speed = {0.0f, 6.0f};
-  desc.size = {7.0f, 16.0f};
-  desc.gravity = {0.0f, 0.0f};
-  desc.drag = 9.0f;
-  desc.sizeOverLife = sfs::Curve::constant(1.0f);
-  desc.alphaOverLife = sfs::Curve::linear(0.85f, 0.0f);
-  desc.colorOverLife = sfs::Gradient::twoStop(glm::vec3{0.5f, 0.0f, 0.0f},
-                                              glm::vec3{0.28f, 0.0f, 0.0f});
-  desc.blend = sfs::BlendMode::Alpha;
-  desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
-  desc.maxParticles = 512;
-  return desc;
-}
-
 // A heavier gib burst fired when an enemy dies -- more, bigger, faster than the
 // per-hit spray.
 sfs::ParticleEffectDesc makeGoreEffect()
 {
   sfs::ParticleEffectDesc desc;
   desc.shape = sfs::EmissionShape::Point;
-  desc.burstCount = 60;
-  desc.lifetime = {0.5f, 1.4f};
-  desc.speed = {240.0f, 760.0f};
-  desc.size = {12.0f, 36.0f};
+  desc.burstCount = 110;
+  desc.lifetime = {0.5f, 1.7f};
+  desc.speed = {260.0f, 900.0f};
+  desc.size = {14.0f, 50.0f};
   desc.gravity = {0.0f, 1500.0f};
-  desc.drag = 0.3f;
+  desc.drag = 0.25f;
   desc.sizeOverLife = sfs::Curve::linear(1.0f, 0.5f);
   desc.alphaOverLife = sfs::Curve::linear(1.0f, 0.0f);
   desc.colorOverLife = sfs::Gradient::twoStop(glm::vec3{0.95f, 0.05f, 0.05f},
@@ -230,6 +204,10 @@ void PlatformerScene::onInit()
   addSystem<platformer::EnemySystem>();
   addSystem<platformer::PlatformerPhysicsSystem>();
   auto& bullets = addSystem<platformer::BulletSystem>();
+  // Physics blood runs right after bullets (so droplets sprayed this frame
+  // integrate immediately) and before the renderer (which draws + animates the
+  // stuck decals).
+  auto& blood = addSystem<platformer::BloodSystem>();
   addSystem<platformer::LifetimeSystem>(); // expires muzzle/death flash lights
 
   auto& render = addSystem<sfs::FlatRenderSystem>(m_assetStore, quadRenderer());
@@ -241,11 +219,18 @@ void PlatformerScene::onInit()
   lighting.ambientColor = glm::vec3{0.32f, 0.36f, 0.5f};
   lighting.diffuseStrength = 0.0f;
   render.setLighting(lighting);
+  render.setMaxDecals(24000); // global backstop (bounds memory/frame cost)
+  // Gore-heavy: a 12px cell holds up to 16 blood marks, then that spot is
+  // saturated and stops accepting more -- so platforms cake up and STAY bloody
+  // (no churn) instead of old blood being evicted as new blood lands.
+  render.setDecalCoverage(12.0f, 16);
 
   auto& particles = render.withModule<FlatParticles>();
+  // This game is gore-heavy (big splatter + persistent stains + drips), so it
+  // lifts the engine's default particle ceiling -- it has the frame headroom.
+  particles.setMaxParticles(14000);
   particles.registerEffect("sparkle", makeSparkleEffect());
   particles.registerEffect("blood", makeBloodEffect());
-  particles.registerEffect("blood_stain", makeBloodStainEffect());
   particles.registerEffect("gore", makeGoreEffect());
   particles.registerEffect("explosion", makeExplosionEffect());
   particles.registerEffect("spark", makeSparkEffect());
@@ -258,6 +243,12 @@ void PlatformerScene::onInit()
   // Bullet hits/effects fire through the same particle module; kills bump the
   // score, shake the screen, flash, and sometimes drop a spell.
   bullets.setParticles(&particles);
+  bullets.setBlood(&blood); // hits/kills spray physics blood through this
+
+  // Physics blood: droplets fly with gravity and stick to platforms as decals.
+  blood.setRenderer(&render);               // stamps the stuck decals
+  blood.setSprite(m_orbSprite);             // soft glow -> splatter blobs
+  blood.setSolidSprite(m_platformSprite);   // hard pixel -> thin sub-streaks
   bullets.setOnKill(
       [this](glm::vec2 pos)
       {
@@ -322,7 +313,7 @@ void PlatformerScene::generatePlatforms()
   for (int i = 0; i < PLATFORM_COUNT; ++i)
   {
     const glm::vec2 center{dx(m_rng), dy(m_rng)};
-    const glm::vec2 size{dw(m_rng), 28.0f};
+    const glm::vec2 size{dw(m_rng), 64.0f}; // chunky blocks: a face for blood to drip down
     const float halfX = size.x * 0.5f;
 
     // Skip a platform that would overlap one already placed nearby.
