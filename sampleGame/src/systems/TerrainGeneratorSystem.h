@@ -1,9 +1,9 @@
 #pragma once
 
-#include "engine/ecs/system.h"
-#include "engine/noise/noise.h"
-#include "engine/rendering/iTerrainSurfaceSource.h"
-#include "engine/sceneManager/scene.h"
+#include "engine/core/ecs/system.h"
+#include "engine/core/noise/noise.h"
+#include "engine/core/rendering/iTerrainSurfaceSource.h"
+#include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <unordered_map>
 

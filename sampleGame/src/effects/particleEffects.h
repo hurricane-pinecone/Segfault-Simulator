@@ -1,11 +1,11 @@
 #pragma once
 
-#include "engine/rendering/modules/particles.h"
+#include "engine/runtime/rendering/modules/particles.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <string>
 
 // Sample-game particle composition. The effect prefabs themselves (the blood
-// layers, embers) are engine-provided -- see engine/particles/particlePrefabs.h
+// layers, embers) are engine-provided -- see engine/core/particles/particlePrefabs.h
 // (registerBloodEffects / emberEffect). This file holds only the game-specific
 // way they're fired: a shotgun gore blast.
 

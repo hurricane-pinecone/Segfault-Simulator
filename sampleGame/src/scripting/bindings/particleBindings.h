@@ -2,11 +2,11 @@
 
 #include "effects/particleEffects.h"
 #include "sampleGame.h"
-#include <engine/rendering/modules/particles.h>
-#include <engine/sceneManager/scene.h>
-#include <engine/scripting/luaScripting.h>
-#include <engine/scripting/particleLuaApi.h>
-#include <engine/systems/isometric/isometricRenderSystem.h>
+#include <engine/runtime/rendering/modules/particles.h>
+#include <engine/runtime/sceneManager/scene.h>
+#include <engine/core/scripting/luaScripting.h>
+#include <engine/core/scripting/particleLuaApi.h>
+#include <engine/runtime/systems/isometric/isometricRenderSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
 // Particle Lua bindings (inline). registerParticleBindings() wires the game's

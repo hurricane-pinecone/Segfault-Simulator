@@ -47,7 +47,7 @@ Game (your subclass)         window/config; createQuadRenderer() picks the backe
 `render()` on every enabled system, so a scene "has a renderer" simply by adding
 the render system it wants. Nothing forces the isometric path.
 
-- Flat 2D game → add `SpriteRenderSystem` (`engine/systems/spriteRenderSystem.h`).
+- Flat 2D game → add `SpriteRenderSystem` (`engine/runtime/systems/spriteRenderSystem.h`).
 - Isometric game → add `IsometricRenderSystem` and the iso support systems.
 
 ## Engine vs game ownership

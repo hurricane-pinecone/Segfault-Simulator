@@ -3,15 +3,15 @@
 #include "config.h"
 #include "scenes/gameScene.h"
 #include "scripting/gameLuaApi.h"
-#include <engine/components/worldCollider.h>
-#include <engine/input/keyboardInput.h>
-#include <engine/logger/logger.h>
-#include <engine/rendering/isometricGeometryRenderer.h>
-#include <engine/rendering/util/isometric/camera.h>
-#include <engine/sceneManager/scene.h>
-#include <engine/scripting/luaScripting.h>
-#include <engine/systems/cameraSystem.h>
-#include <engine/systems/isometric/isometricRenderSystem.h>
+#include <engine/core/components/worldCollider.h>
+#include <engine/runtime/input/keyboardInput.h>
+#include <engine/core/logger/logger.h>
+#include <engine/runtime/rendering/isometricGeometryRenderer.h>
+#include <engine/runtime/rendering/util/isometric/camera.h>
+#include <engine/runtime/sceneManager/scene.h>
+#include <engine/core/scripting/luaScripting.h>
+#include <engine/runtime/systems/cameraSystem.h>
+#include <engine/runtime/systems/isometric/isometricRenderSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
 #include <memory>
 
