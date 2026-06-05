@@ -25,4 +25,5 @@ add_subdirectory(engine)
 
 if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_SAMPLE)
     add_subdirectory(sampleGame)
+    add_subdirectory(samplePlatformer)
 endif()

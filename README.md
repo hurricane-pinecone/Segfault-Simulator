@@ -1,7 +1,8 @@
 # Segfault Simulator
 
-A lightweight 2.5D isometric game engine with an ECS core and a Unity-style OOP
-layer for game code. Build your game in C++ against the engine library, and
+A lightweight 2D game engine with an ECS core and a Unity-style OOP layer for
+game code. It renders either flat 2D scenes or isometric heightfield scenes
+through a shared core. Build your game in C++ against the engine library, and
 optionally drive it with a live Lua scripting API.
 
 <p align="center">
@@ -27,11 +28,16 @@ optionally drive it with a live Lua scripting API.
 
 ## Overview
 
-SegFaultSimulator (SFS) is a 2.5D isometric heightfield engine:
+SegFaultSimulator (SFS) is a 2D game engine with two render paths over one core:
 
 - An **ECS core** — entities, components, systems.
-- An **SDL2 + OpenGL render runtime** — isometric projection, per-elevation
-  lighting and shadows, particles, and decals.
+- An **SDL2 + OpenGL render runtime** with per-pixel point lighting, normal maps,
+  and particles, drawn through one of two render systems:
+  - **Flat 2D** (`FlatRenderSystem`) — screen-space sprites for side-on or
+    top-down games, ordered by layer then Y.
+  - **Isometric heightfield** (`IsometricRenderSystem`) — a grid of elevated
+    columns with per-elevation lighting, terrain/sprite shadows, block geometry,
+    and world-projected decals.
 - A **live Lua scripting / modding API**.
 - **Native** (macOS / Linux) and **web** (Emscripten / WebGL2) targets.
 
