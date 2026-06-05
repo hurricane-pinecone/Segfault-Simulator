@@ -5,14 +5,10 @@
 #include <engine/game/game.h>
 #include <engine/rendering/iQuadRenderer.h>
 #include <engine/rendering/util/isometric/geometry.h>
+#include <engine/sceneManager/scene.h>
 #include <engine/scripting/luaScripting.h>
 #include <memory>
 #include <string>
-
-namespace sfs
-{
-class Scene;
-}
 
 class SampleGame : public sfs::Game
 {

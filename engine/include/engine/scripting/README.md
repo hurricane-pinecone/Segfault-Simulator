@@ -1,0 +1,334 @@
+# Lua scripting — game integration guide
+
+How to give a game built on **sfs** a live Lua modding API: editable at runtime,
+no rebuild, working on both native and web.
+
+This folder holds the engine's scripting contracts (`LuaScripting`, `ILuaApi`,
+`ILuaConfig`, the schema + particle helpers). The sample game
+(`sampleGame/src/scripting/`) is the **reference implementation** — use it as the
+template for your own game. The engine provides the VM and reusable building
+blocks; **your game decides what to expose** as its modding surface.
+
+---
+
+## The layering
+
+| Layer | Owns | Examples |
+|-------|------|----------|
+| **Engine** (`sfs::`) | the VM + reusable building blocks | `LuaScripting`, `ILuaApi`, `ILuaConfig`, `registerParticleLua`, the particle prefabs |
+| **Game** (your code) | a curated _modding API_ built from those blocks | `GameLuaApi`, `scripting/bindings/*` |
+
+The engine never decides your game's API. You implement one interface
+(`sfs::ILuaApi`) and compose the surface from the blocks below.
+
+---
+
+## Lifecycle
+
+```mermaid
+flowchart TD
+    subgraph startup["① Startup — app onSetup &rarr; setupLua()"]
+        A["new LuaScripting"] --> B["init(): open safe libs, build sfs table (sfs.colors, print)"]
+        B --> C["setActiveLua(vm): route the web editor's eval here"]
+        C --> D["construct GameLuaApi (transient)"]
+        D --> E["vm.registerApi(api) &rarr; api.registerBindings(vm)"]
+        E --> F["bind() globals: splat / spawnGore"]
+        E --> G["registerParticleLua: the particles table"]
+    end
+
+    subgraph sceneinit["② Scene onInit — per scene"]
+        H["addSystem(SunController)"] --> I["activeLua().registerConfig(sun): builds the sun table"]
+    end
+
+    subgraph runtime["③ Runtime — repeats, no rebuild"]
+        J["user edits Lua"] --> K{"web or native?"}
+        K -->|web| L["sfsEvalLua(src)"]
+        K -->|native| M["eval / evalRepl(src)"]
+        L --> N["run against the persistent VM"]
+        M --> N
+        N --> O["bound closures fire, resolve the live scene lazily (currentScene)"]
+        O --> P["mutate the running game"]
+        P --> J
+    end
+
+    subgraph teardown["④ Teardown — app onDestroy"]
+        Q["setActiveLua(nullptr)"] --> R["~LuaScripting: frees closures + config tables"]
+    end
+
+    startup -->|"before createScene()"| sceneinit
+    sceneinit --> runtime
+    runtime --> teardown
+```
+
+- **Startup** stands up the VM and installs the API once (§1–§3). `GameLuaApi` is
+  gone after this; the closures it left are owned by the VM.
+- The **before `createScene()`** edge is the ordering rule: the VM must exist
+  before a scene's `onInit` registers its config (§4).
+- **Runtime** reuses the *persistent* VM — re-running a chunk mutates the live
+  game (§7). Bindings resolve the current scene at call time, so they survive
+  scene changes.
+- **Teardown** clears the active VM, then destroys it (§6).
+
+---
+
+## 1. Stand up the VM (app level)
+
+Own the `LuaScripting` instance at the **application** level (it must persist
+across scenes), and install your API. In the sample this is `SampleGame`:
+
+```cpp
+// sampleGame.cpp
+#include "scripting/gameLuaApi.h"
+#include <engine/scripting/luaScripting.h>
+
+void SampleGame::setupLua()
+{
+  m_lua = std::make_unique<sfs::LuaScripting>();
+  m_lua->init();
+  sfs::setActiveLua(m_lua.get()); // routes the web editor's eval here
+
+  GameLuaApi api(*this);          // transient -- see "Lifetimes" below
+  m_lua->registerApi(api);        // calls api.registerBindings(*m_lua)
+}
+
+void SampleGame::onDestroy()
+{
+  sfs::setActiveLua(nullptr);     // m_lua is destroyed after this
+}
+```
+
+> **Ordering gotcha:** `SceneManager::createScene()` runs a scene's `onInit()`
+> _synchronously_. If any scene registers config in `onInit` (see §4), call
+> `setupLua()` **before** `createScene()` so the VM already exists.
+
+Keep `setupLua` minimal — _only_ VM lifecycle. All actual bindings live in the
+files below.
+
+---
+
+## 2. Implement the modding API: `sfs::ILuaApi`
+
+One interface, one method. This is the single entry point the host installs.
+
+```cpp
+// scripting/gameLuaApi.h
+#include <engine/scripting/iLuaApi.h>   // also fwd-declares sfs::LuaScripting
+
+class SampleGame;
+
+class GameLuaApi : public sfs::ILuaApi
+{
+public:
+  explicit GameLuaApi(SampleGame& game) : m_game(game) {}
+  void registerBindings(sfs::LuaScripting& lua) override;
+private:
+  SampleGame& m_game;
+};
+```
+
+`registerBindings` is _thin_ — it just composes per-API modules:
+
+```cpp
+// scripting/gameLuaApi.cpp
+#include "scripting/bindings/particleBindings.h"
+#include "scripting/bindings/playerBindings.h"
+
+void GameLuaApi::registerBindings(sfs::LuaScripting& lua)
+{
+  gamebindings::registerParticleBindings(lua, m_game);
+  gamebindings::registerPlayerBindings(lua, m_game);
+}
+```
+
+### Per-API binding modules (`scripting/bindings/`)
+
+Each slice of your API gets one **header-only** file (inline functions in
+`namespace gamebindings`). To add an API: drop a `bindings/<name>Bindings.h` with
+an inline `register<Name>Bindings(lua, game)` and add one line to
+`gameLuaApi.cpp`.
+
+```cpp
+// scripting/bindings/playerBindings.h
+namespace gamebindings
+{
+inline void registerPlayerBindings(sfs::LuaScripting& lua, SampleGame& game)
+{
+  lua.bind("splat",
+           [&game]
+           {
+             /* ... spray gore at the player ... */
+           });
+}
+} // namespace gamebindings
+```
+
+---
+
+## 3. The binding building blocks
+
+Pick the lightest tool that fits.
+
+### a) `lua.bind(name, fn)` — simple global functions
+
+For plain triggers and number setters. Your game stays Lua-header-free.
+
+```cpp
+lua.bind("pause",   [&game]            { game.pause(); });        // void()
+lua.bind("setHp",   [&game](double v)  { game.player().hp = v; });// void(double)
+lua.bind("warp",    [&game](double x, double y) { game.warp(x,y); }); // void(double,double)
+```
+
+Only those three arities exist. For anything richer (tables, strings, return
+values) use a config (§4), an engine helper (§5), or the raw Lua C API via
+`lua.state()`.
+
+### b) Resolve live game state _lazily_
+
+Bindings outlive any single scene, so resolve through the game **at call time**,
+never capture a scene/system pointer up front:
+
+```cpp
+sfs::ParticleEngine* particlesOf(sfs::Scene* scene) {
+  if (!scene || !scene->hasSystem<sfs::IsometricRenderSystem>()) return nullptr;
+  return scene->getSystem<sfs::IsometricRenderSystem>().module<...>();
+}
+// inside a bind: particlesOf(game.currentScene())  // re-resolved every call
+```
+
+---
+
+## 4. Make a class live-editable: `sfs::ILuaConfig`
+
+For a single object with tunable fields, implement `ILuaConfig` and the VM
+**auto-generates** a `<name>` table — no Lua code at all:
+
+```
+<name>.get()      -> table of current values
+<name>.set{ ... } -> apply edits, then onLuaConfigChanged()
+<name>.options    -> the field schema (key -> hint), for autocomplete
+```
+
+```cpp
+class SunController : public sfs::System, public sfs::ILuaConfig
+{
+public:
+  std::string luaConfigName() const override { return "sun"; }
+
+  sfs::LuaSchema luaConfigSchema() const override {
+    return {
+      sfs::field("enabled",          &SunController::m_enabled,  "bool"),
+      sfs::field("dayLengthSeconds", &SunController::m_dayLen,   "number"),
+      sfs::field("timeOfDay",        &SunController::m_time,     "0..1"),
+    };
+  }
+
+  void* luaConfigData() override { return this; }   // schema offsets apply here
+
+  // set{} writes raw fields (bypassing setters) -- re-validate / react here.
+  void onLuaConfigChanged() override { clampAndApply(); }
+};
+```
+
+Register it where the object lives. A scene can reach the app-owned VM via
+`sfs::activeLua()`:
+
+```cpp
+// in the scene's onInit, after creating the system
+auto& sun = addSystem<SunController>();
+if (sfs::LuaScripting* lua = sfs::activeLua())
+  lua->registerConfig(sun);
+```
+
+**Schema field builders** (`<engine/scripting/luaSchema.h>`):
+
+| Builder | Lua shape | C++ member |
+|---------|-----------|------------|
+| `field(name, &T::m, hint)` | scalar | `int` / `float` / `bool` / `glm::vec2` |
+| `rangeField(name, &T::m, hint)` | `nameMin` / `nameMax` | a `{float min,max}` (e.g. `FloatRange`) |
+| `colorField(name, hint)` | `sfs.colors` value | applied by you (maps to your own type) |
+
+> **`ILuaConfig` must OUTLIVE the VM** — the generated table stores a raw pointer
+> to it. Objects owned by a long-lived scene/system are fine. (Contrast with
+> `ILuaApi`, which is transient — see §6.)
+
+---
+
+## 5. Reuse engine-provided APIs
+
+Some subsystems ship a ready-made table you just wrap. Particles is the example:
+
+```cpp
+// scripting/bindings/particleBindings.h
+sfs::registerParticleLua(
+    lua, "particles",
+    [&game] { return particlesOf(game.currentScene()); }); // lazy resolver
+```
+
+This installs `particles.spawn / configure / describe / effects / options` driven
+by the engine's particle schema. Your game only chooses the table name and how to
+find the live engine.
+
+Effect **prefabs** live engine-side too (`<engine/particles/particlePrefabs.h>`):
+`registerBloodEffects(engine[, prefix, hi, lo])`, `emberEffect()`, etc. Use them
+as-is, recolour them, or register your own `ParticleEffectDesc`s — that's the
+"games override/extend" path.
+
+---
+
+## 6. Lifetimes & ownership (read this)
+
+- **`LuaScripting`** — app-lifetime. Owned by your `Game` subclass.
+- **`ILuaApi` (e.g. `GameLuaApi`)** — _transient_. `registerBindings` runs once;
+  the closures it leaves are owned by the VM. So stack-allocate it in `setupLua`.
+  Capture the **game** by reference in your lambdas (`SampleGame& game = m_game;`),
+  never the `ILuaApi` object — nothing should depend on its lifetime.
+- **`ILuaConfig`** — _must outlive the VM_ (the table holds a pointer to it).
+- **Don't re-open `namespace sfs`** in game code to forward-declare engine types.
+  Include the engine header that declares them (it forward-declares its own types
+  where useful). The game only ever _consumes_ `sfs::`.
+
+---
+
+## 7. Using it at runtime
+
+**Web:** the page's Lua console (CodeMirror editor) sends source to the VM via the
+exported `sfsEvalLua`; autocomplete comes from `sfsLuaKeys`. Run with
+Ctrl/Cmd-Enter or the Run button. (Click the canvas to give input back to the
+game; click the editor to type.)
+
+**Native:** drive `LuaScripting::eval` / `evalRepl` from wherever you like (the
+sample wires no native console by default).
+
+Example session (sample game API):
+
+```lua
+particles                          -- dump the whole API tree
+particles.options                  -- what configure() understands
+particles.configure("blood_spray", { burst = 60, color = sfs.colors.Lime })
+particles.spawn("embers", 10, 8)
+sun.set{ timeOfDay = 0.5, timeMultiplier = 10 }   -- live-edit an ILuaConfig
+spawnGore(12, 9)                   -- a bound global
+```
+
+---
+
+## File map
+
+**Engine scripting API — this folder** (`engine/include/engine/scripting/`):
+
+```
+luaScripting.h     the VM: init / eval / evalRepl / bind / registerApi / registerConfig
+iLuaApi.h          the contract your game implements (registerBindings)
+iLuaConfig.h       the contract for a live-editable object (get/set/options)
+luaSchema.h        field() / rangeField() / colorField() + the reflection reader
+particleLuaApi.h   registerParticleLua (the ready-made particle table)
+```
+
+**Reference implementation** (`sampleGame/src/scripting/`):
+
+```
+gameLuaApi.h/.cpp    sfs::ILuaApi adapter; composes the modules below
+bindings/
+  particleBindings.h registerParticleBindings (spawnGore global + particles table)
+  playerBindings.h   registerPlayerBindings (splat global)
+```

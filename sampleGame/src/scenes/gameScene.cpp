@@ -7,12 +7,14 @@
 #include "engine/components/particleEmitterComponent.h"
 #include "engine/components/transformComponent.h"
 #include "engine/logger/logger.h"
+#include "engine/particles/particlePrefabs.h"
 #include "engine/rendering/modules/blockGeometry.h"
 #include "engine/rendering/modules/decals.h"
 #include "engine/rendering/modules/isometricWater.h"
 #include "engine/rendering/modules/particles.h"
 #include "engine/rendering/modules/spriteShadow.h"
 #include "engine/rendering/modules/terrainShadow.h"
+#include "engine/scripting/luaScripting.h"
 #include "engine/systems/cameraSystem.h"
 #include "engine/systems/collisionSystem.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
@@ -63,24 +65,28 @@ void GameScene::onInit()
   renderer.module<sfs::SpriteShadow>()->shadowSettings().spriteShadowMaxLength =
       shadowMaxLength;
 
-  // Soft round texture so particles/decals don't read as hard squares.
-  m_assetStore.addRadialTexture("blood_dot", 32);
-
   auto& particles = renderer.withModule<IsometricParticles>();
-  registerGoreEffects(
-      particles); // blood_mist / blood_spray / blood_gobs / drip
-  // Second blood colour (right-click) to test two colours mixing on one face.
-  registerGoreEffects(particles,
-                      "ichor",
-                      glm::vec3{0.15f, 0.55f, 1.0f},
-                      glm::vec3{0.0f, 0.08f, 0.35f});
-  particles.registerEffect("embers", makeEmberEffect());
+  // Engine blood prefabs: blood_mist / blood_spray / blood_gobs / blood_drip.
+  sfs::registerBloodEffects(particles);
+  // Second blood colour (right-click) to test two colours mixing on one face --
+  // a recoloured copy of the same engine prefabs.
+  sfs::registerBloodEffects(particles,
+                            "ichor",
+                            glm::vec3{0.15f, 0.55f, 1.0f},
+                            glm::vec3{0.0f, 0.08f, 0.35f});
+  particles.registerEffect("embers", sfs::emberEffect());
 
   // Persistent terrain stains, fed by particle landings.
   particles.setDecalSink(renderer.module<sfs::Decals>());
   particles.setTerrainSource(&getSystem<TerrainGeneratorSystem>());
 
-  addSystem<SunController>();
+  auto& sun = addSystem<SunController>();
+
+  // Expose the sun's tunables to Lua as a live `sun` table (get/set/options),
+  // via the ILuaConfig contract -- the VM is app-owned, reached through the
+  // active-Lua accessor.
+  if (sfs::LuaScripting* lua = sfs::activeLua())
+    lua->registerConfig(sun);
 
   // Feed terrain heights straight from the generator so the point-light
   // occlusion heightmap never holes while tiles stream in.

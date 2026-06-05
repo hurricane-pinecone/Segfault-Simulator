@@ -165,6 +165,10 @@ void Game::setup()
 
   assetStore = std::make_unique<AssetStore>();
   assetStore->addWhitePixelTexture("white_pixel");
+  // Round sibling of white_pixel: a white dot with a radial alpha falloff, so
+  // particles/decals read as soft circles instead of hard squares. Tinted by
+  // colour at draw time, so it needs no art.
+  assetStore->addRadialTexture("white_dot", 32);
 
   m_textRenderer = std::make_unique<TextRenderer>(*m_quadRenderer, *assetStore);
   m_textRenderer->init();

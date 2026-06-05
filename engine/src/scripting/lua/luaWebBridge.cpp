@@ -25,6 +25,7 @@ std::string g_result;
 namespace sfs
 {
 void setActiveLua(LuaScripting* lua) { g_lua = lua; }
+LuaScripting* activeLua() { return g_lua; }
 } // namespace sfs
 
 extern "C"

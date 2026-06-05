@@ -79,7 +79,7 @@ struct DecalChunkUpload
 struct DecalDrawCommand
 {
   RenderOrder order{RenderPass::Decals, 0, 0};
-  const std::string* textureId = nullptr; // one texture for all decals (e.g. blood_dot)
+  const std::string* textureId = nullptr; // one texture for all decals (e.g. white_dot)
   std::vector<DecalChunkUpload> uploads;   // chunks to fully (re)upload (after removal)
   std::vector<DecalChunkUpload> appends;   // new static verts to append (the common path)
   std::vector<std::int64_t> freeKeys;      // chunks to drop (cleared/emptied)

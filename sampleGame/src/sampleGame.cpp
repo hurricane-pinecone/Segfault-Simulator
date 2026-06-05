@@ -2,7 +2,7 @@
 #include "sampleGame.h"
 #include "config.h"
 #include "scenes/gameScene.h"
-#include "scripting/luaBindings.h"
+#include "scripting/gameLuaApi.h"
 #include <engine/components/worldCollider.h>
 #include <engine/input/keyboardInput.h>
 #include <engine/rendering/isometricGeometryRenderer.h>
@@ -29,11 +29,14 @@ void SampleGame::onSetup()
   // screen anyway).
   sfs::WorldCollider::pixelsPerUnit = static_cast<float>(m_isoConfig.tileWidth);
 
+  // Stand up the VM before the scene: createScene() runs the scene's onInit()
+  // synchronously, and that's where scene systems register their ILuaConfig
+  // (e.g. the sun) -- so the active VM must already exist.
+  setupLua();
+
   // TODO: Create actual title screen and refactor
   // sfs::Scene* titleScene = sceneManager.createScene("Title Scene");
   auto gameScene = sceneManager.createScene<GameScene>("Game");
-
-  setupLua();
 
   isRunning = true;
 }
@@ -44,7 +47,11 @@ void SampleGame::setupLua()
   m_lua = std::make_unique<sfs::LuaScripting>();
   m_lua->init();
   sfs::setActiveLua(m_lua.get()); // route the web editor's eval entry here
-  registerGameLua(*m_lua, *this);
+
+  // Install the game's modding API. GameLuaApi is transient -- registerLua binds
+  // everything onto the VM (the closures it leaves behind are VM-owned).
+  GameLuaApi api(*this);
+  m_lua->registerApi(api);
 }
 
 void SampleGame::onUpdate(double deltaTime)
