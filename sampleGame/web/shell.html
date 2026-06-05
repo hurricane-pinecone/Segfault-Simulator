@@ -322,8 +322,11 @@ particles                 -- dump the whole particles API
         canvas,
       };
 
+      // Dispatch synthetic key events to the canvas: SDL listens on the canvas
+      // (SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT="#canvas"), not the window, so the
+      // touch buttons must target it for the game to receive them.
       function emitKey(type, key) {
-        window.dispatchEvent(
+        canvas.dispatchEvent(
           new KeyboardEvent(type, {
             key,
             code: "Key" + key.toUpperCase(),
