@@ -86,6 +86,12 @@ serves in one step):
 crun-web
 ```
 
+The web build emits both samples into the Pages artifact (`build-web/bin`): the
+isometric sample at the root (`index.html`) and the platformer under
+`samplePlatformer/`. The `deploy-web` workflow publishes that directory, so they
+land at the site root and `<site>/samplePlatformer` respectively. Serve the
+platformer locally with `python3 build-web/bin/samplePlatformer/server.py`.
+
 ## Testing
 
 Tests link `engine-core`, which has no third-party dependencies (vendored Lua +
