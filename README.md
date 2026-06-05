@@ -18,6 +18,7 @@ This is a lightweight engine built using the ECS pattern, with a Unity style OOP
 - [Initial Setup](#initial-setup)
 - [Debug Build](#debug-build)
 - [Run](#run)
+- [Testing](#testing)
 - [Release Build](#release-build)
   - [Web build](#web-build)
 - [LSP / clangd setup](#lsp--clangd-setup)
@@ -234,6 +235,7 @@ Add these to your shell config (`~/.zshrc`):
 alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug --target run'
 alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release --target run'
 alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
+alias crun-tests='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug && ctest --test-dir build/Debug --output-on-failure'
 alias crun-web='emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && cmake --build build-web --target run'
 ```
 
@@ -249,7 +251,24 @@ Then, from the project root:
 crun          # debug build + run
 crun-release  # release build + run
 crun-profile  # RelWithDebInfo build + run (Tracy enabled)
+crun-tests    # debug build + run tests (CTest)
 crun-web      # wasm build + serve (requires emsdk on PATH)
+```
+
+## Testing
+
+Tests build with the debug preset and run under CTest:
+
+```bash
+cmake --build --preset debug
+ctest --test-dir build/Debug --output-on-failure
+```
+
+Or, with the [`crun-tests`](#optional-aliases-zsh) alias (installs, builds, and
+runs the tests in one step):
+
+```bash
+crun-tests
 ```
 
 ## Tooling

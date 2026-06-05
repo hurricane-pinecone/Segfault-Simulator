@@ -3,6 +3,7 @@ name: Build and deploy web
 on:
   push:
     branches: [master]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -15,8 +16,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libglu1-mesa-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev \
+            libasound2-dev libpulse-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.txt') }}
+          restore-keys: conan-${{ runner.os }}-
+
+      - name: Install Conan
+        run: |
+          pip install "conan>=2.0"
+          conan profile detect --force
+
+      - name: Install dependencies (Debug)
+        run: conan install . --build=missing -s build_type=Debug
+
+      - name: Configure
+        run: cmake --preset debug
+
+      - name: Build engine + tests
+        run: cmake --build --preset debug --target luaTests
+
+      - name: Run tests
+        run: ctest --test-dir build/Debug --output-on-failure
+
   build:
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - name: Checkout
@@ -42,6 +89,8 @@ jobs:
           path: build-web/bin
 
   deploy:
+    if: github.ref == 'refs/heads/master'
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

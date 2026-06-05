@@ -65,7 +65,7 @@ flowchart TD
 - The **before `createScene()`** edge is the ordering rule: the VM must exist
   before a scene's `onInit` registers its config (§4).
 - **Runtime** reuses the *persistent* VM — re-running a chunk mutates the live
-  game (§7). Bindings resolve the current scene at call time, so they survive
+  game (§8). Bindings resolve the current scene at call time, so they survive
   scene changes.
 - **Teardown** clears the active VM, then destroys it (§6).
 
@@ -230,14 +230,26 @@ public:
 ```
 
 Register it where the object lives. A scene can reach the app-owned VM via
-`sfs::activeLua()`:
+`sfs::activeLua()`, and **unregister in the owner's destructor** so a torn-down
+object can't be reached from Lua:
 
 ```cpp
 // in the scene's onInit, after creating the system
 auto& sun = addSystem<SunController>();
 if (sfs::LuaScripting* lua = sfs::activeLua())
   lua->registerConfig(sun);
+
+// in the system/object destructor
+~SunController() override {
+  if (sfs::LuaScripting* lua = sfs::activeLua())
+    lua->unregisterConfig(*this);   // nils the table; lingering refs no-op
+}
 ```
+
+`unregisterConfig` invalidates the table's backing slot, so even Lua code that
+stored a reference (`local s = sun`) safely no-ops afterwards. At app shutdown
+`activeLua()` is already null (the VM dies first), making the destructor call a
+harmless no-op.
 
 **Schema field builders** (`<engine/scripting/luaSchema.h>`):
 
@@ -247,9 +259,10 @@ if (sfs::LuaScripting* lua = sfs::activeLua())
 | `rangeField(name, &T::m, hint)` | `nameMin` / `nameMax` | a `{float min,max}` (e.g. `FloatRange`) |
 | `colorField(name, hint)` | `sfs.colors` value | applied by you (maps to your own type) |
 
-> **`ILuaConfigurable` must OUTLIVE the VM** — the generated table stores a raw pointer
-> to it. Objects owned by a long-lived scene/system are fine. (Contrast with
-> `ILuaApi`, which is transient — see §6.)
+> **`ILuaConfigurable` lifetime** — the table reaches the object through an
+> invalidatable slot. Either let it outlive the VM, or call `unregisterConfig()`
+> before destroying it (as above). Forgetting both is the one way to dangle.
+> (Contrast with `ILuaApi`, which is transient — see §6.)
 
 ---
 
@@ -282,14 +295,45 @@ as-is, recolour them, or register your own `ParticleEffectDesc`s — that's the
   the closures it leaves are owned by the VM. So stack-allocate it in `setupLua`.
   Capture the **game** by reference in your lambdas (`SampleGame& game = m_game;`),
   never the `ILuaApi` object — nothing should depend on its lifetime.
-- **`ILuaConfigurable`** — _must outlive the VM_ (the table holds a pointer to it).
+- **`ILuaConfigurable`** — outlive the VM, _or_ `unregisterConfig()` before
+  destruction (the table's slot is then invalidated, so refs no-op).
 - **Don't re-open `namespace sfs`** in game code to forward-declare engine types.
   Include the engine header that declares them (it forward-declares its own types
   where useful). The game only ever _consumes_ `sfs::`.
 
 ---
 
-## 7. Using it at runtime
+## 7. Safety & sandboxing
+
+The VM is hardened for an interactive console: the common denial-of-service
+vectors (infinite loops, memory exhaustion, output flooding) and filesystem
+escape are all bounded — a stray or hostile script cannot hang, OOM, or read the
+disk. It's still safest to treat the console as a dev/owner tool rather than an
+open endpoint for anonymous code.
+
+- **Execution guard.** Every `eval`/`evalRepl` runs under an instruction budget
+  (a Lua count hook). A runaway chunk (`while true do end`) is aborted with an
+  error instead of hanging the thread — critical on web, where it would freeze
+  the tab. Tune with `LuaScripting::setInstructionLimit(n)` (`<= 0` disables).
+- **Memory cap.** The VM uses a byte-accounting allocator; an allocation past the
+  budget fails as a (caught) out-of-memory error, so a script can't exhaust host
+  RAM. Tune with `setMemoryLimit(bytes)` (default 64 MiB, `0` = unlimited);
+  `memoryUsed()` reports live bytes.
+- **Output cap.** `evalRepl`'s returned string (captured print/log + value) is
+  truncated past `setOutputLimit(bytes)` (default 256 KiB) with a marker, so a
+  script printing megabytes can't bloat the response handed to the editor.
+- **C++ exceptions** thrown by your bound functions / config hooks are caught at
+  the C boundary and turned into Lua errors (a raw exception crossing Lua's C
+  frames is UB). Your game code can throw without crashing the VM.
+- **Sandbox.** Only safe stdlib is opened (no `io` / `os` / `package`), and
+  `load` / `loadfile` / `dofile` are removed (they reach the filesystem or load
+  raw bytecode). Add a text-only `load` wrapper yourself if a script needs it.
+- **Single-threaded.** A `lua_State` is not thread-safe; only drive eval from the
+  main thread (where the game loop and the web editor entry already run).
+
+---
+
+## 8. Using it at runtime
 
 **Web:** the page's Lua console (CodeMirror editor) sends source to the VM via the
 exported `sfsEvalLua`; autocomplete comes from `sfsLuaKeys`. Run with
