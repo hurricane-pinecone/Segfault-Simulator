@@ -2,6 +2,7 @@
 
 #include <bitset>
 #include <cstdint>
+#include <limits>
 
 namespace sfs
 {
