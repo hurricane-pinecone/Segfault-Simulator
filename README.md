@@ -62,7 +62,7 @@ sampleGame/   → executable
 | Doc                                                          | What it covers                                                                               |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
 | [Architecture](./docs/ARCHITECTURE.md)                       | Engine design: ECS core, the render seam, ownership model                                    |
-| [Lua scripting](./engine/include/engine/scripting/README.md) | Giving a game a live Lua modding API (`ILuaApi` / `ILuaConfigurable`, bindings, runtime use) |
+| [Lua scripting](./engine/include/engine/core/scripting/README.md) | Giving a game a live Lua modding API (`ILuaApi` / `ILuaConfigurable`, bindings, runtime use) |
 
 ## Initial Setup
 

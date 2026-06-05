@@ -3,8 +3,8 @@
 #include "gameObjects/player.h"
 #include "sampleGame.h"
 #include "scripting/bindings/particleBindings.h" // particlesOf / spawnGoreAt
-#include <engine/components/transformComponent.h>
-#include <engine/scripting/luaScripting.h>
+#include <engine/core/components/transformComponent.h>
+#include <engine/core/scripting/luaScripting.h>
 
 // Player Lua bindings (inline). registerPlayerBindings() wires the game's
 // player-facing modding surface onto the VM.

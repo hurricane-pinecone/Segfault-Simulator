@@ -2,8 +2,8 @@
 #include "sampleGame.h"
 #include <cstddef>
 #include <cstdlib>
-#include <engine/game/game.h>
-#include <engine/logger/logger.h>
+#include <engine/runtime/game/game.h>
+#include <engine/core/logger/logger.h>
 
 int main(int argc, char* argv[])
 {

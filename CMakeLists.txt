@@ -13,14 +13,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # and build with no third-party dependencies.
 option(ENGINE_CORE_ONLY "Build only engine-core and its tests" OFF)
 
+# Enable testing at the top level so `ctest --test-dir <build>` finds tests
+# registered in subdirectories. The engine owns its own tests (engine/tests).
+enable_testing()
+
 add_subdirectory(engine)
 
 if(NOT ENGINE_CORE_ONLY)
     add_subdirectory(sampleGame)
-endif()
-
-# Native-only test targets (the web build strips the desktop toolchain).
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-    enable_testing()
-    add_subdirectory(tests)
 endif()

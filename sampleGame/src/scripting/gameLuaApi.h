@@ -1,6 +1,6 @@
 #pragma once
 
-#include <engine/scripting/iLuaApi.h>
+#include <engine/core/scripting/iLuaApi.h>
 
 class SampleGame;
 

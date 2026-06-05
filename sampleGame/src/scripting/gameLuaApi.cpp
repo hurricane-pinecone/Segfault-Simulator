@@ -2,7 +2,7 @@
 
 #include "scripting/bindings/particleBindings.h"
 #include "scripting/bindings/playerBindings.h"
-#include <engine/scripting/luaScripting.h>
+#include <engine/core/scripting/luaScripting.h>
 
 void GameLuaApi::registerBindings(sfs::LuaScripting& lua)
 {

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "engine/ecs/system.h"
-#include "engine/scripting/iLuaConfigurable.h"
-#include "engine/scripting/luaScripting.h"
-#include "engine/systems/isometric/isometricRenderSystem.h"
+#include "engine/core/ecs/system.h"
+#include "engine/core/scripting/iLuaConfigurable.h"
+#include "engine/core/scripting/luaScripting.h"
+#include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
 
