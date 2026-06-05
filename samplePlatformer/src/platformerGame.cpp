@@ -20,13 +20,16 @@ void PlatformerGame::onUpdate(double /*deltaTime*/)
     return;
 
   // Camera follows the player.
+  const glm::vec2 focus = m_scene->cameraTarget();
   m_projection = sfs::makeFlatProjection(
-      m_scene->cameraTarget(),
+      focus,
       glm::vec2{static_cast<float>(WINDOW_WIDTH),
                 static_cast<float>(WINDOW_HEIGHT)},
       1.0f);
 
-  m_scene->getSystem<sfs::FlatRenderSystem>().setProjection(&m_projection);
+  auto& render = m_scene->getSystem<sfs::FlatRenderSystem>();
+  render.setProjection(&m_projection);
+  render.setFocus(focus);
 }
 
 void PlatformerGame::onProcessInput(const sfs::Input& input)

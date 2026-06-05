@@ -105,6 +105,11 @@ public:
 
   int liveParticleCount() const;
 
+  // Global ceiling on total live particles across every emitter + burst. Once
+  // reached, new emissions are dropped (graceful) so stacked effects can't run
+  // the particle count -- and the frame cost -- away.
+  void setMaxParticles(int max) { m_maxParticles = max; }
+
   // Ground elevation level at a world tile, taken from the terrain source (0 if
   // none is set). Lets a caller spawn a burst on the terrain without doing its
   // own height lookup.
@@ -198,6 +203,9 @@ private:
   // fire-and-forget bursts. Both drain their particles before being dropped.
   std::unordered_map<Entity::EntityId, EmitterInstance> m_entityEmitters;
   std::vector<EmitterInstance> m_bursts;
+
+  // Global live-particle ceiling (see setMaxParticles).
+  int m_maxParticles = 6000;
 
   uint32_t m_burstSeed = 0x6d2b79f5u;
 };

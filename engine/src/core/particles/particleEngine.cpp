@@ -178,13 +178,17 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
                                    const ParticleEffectDesc& desc,
                                    int count)
 {
-  const int room = desc.maxParticles - static_cast<int>(inst.particles.size());
+  // Per-effect capacity and the global live-particle ceiling both clamp the
+  // emission; over-budget particles are dropped (graceful, never grows unbounded).
+  int room = desc.maxParticles - static_cast<int>(inst.particles.size());
+  const int globalRoom = m_maxParticles - liveParticleCount();
+  room = std::min(room, globalRoom);
 
   if (room <= 0)
     return;
 
   if (count > room)
-    count = room; // over-budget emissions are dropped
+    count = room;
 
   for (int i = 0; i < count; ++i)
   {
