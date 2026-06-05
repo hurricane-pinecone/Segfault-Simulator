@@ -23,15 +23,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgl1-mesa-dev libglu1-mesa-dev \
-            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev \
-            libasound2-dev libpulse-dev
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -49,8 +40,14 @@ jobs:
           pip install "conan>=2.0"
           conan profile detect --force
 
+      # Conan installs the exact system libraries its packages need (xorg, GL,
+      # audio) via apt. sudo + update so the apt step works on a fresh runner.
       - name: Install dependencies (Debug)
-        run: conan install . --build=missing -s build_type=Debug
+        run: |
+          sudo apt-get update
+          conan install . --build=missing -s build_type=Debug \
+            -c tools.system.package_manager:mode=install \
+            -c tools.system.package_manager:sudo=True
 
       - name: Configure
         run: cmake --preset debug
