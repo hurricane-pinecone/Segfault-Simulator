@@ -14,7 +14,7 @@ namespace sfs
 {
 
 class ILuaApi;
-class ILuaConfig;
+class ILuaConfigurable;
 
 /**
  * Embedded Lua VM for live scripting -- hot-editing the running game without a
@@ -73,17 +73,17 @@ public:
   void bind(const std::string& name, std::function<void(double, double)> fn);
 
   /**
-   * Install a game's modding API: just calls api.registerLua(*this). The verb
-   * keeps the host as the driver and reads symmetrically with registerConfig.
+   * Install a game's modding API: just calls api.registerBindings(*this). The
+   * verb keeps the host as the driver and reads symmetrically with registerConfig.
    */
   void registerApi(ILuaApi& api);
 
   /**
-   * Expose an ILuaConfig as a live-editable global table (get / set / options),
+   * Expose an ILuaConfigurable as a live-editable global table (get / set / options),
    * driven entirely by its schema. The config must outlive the VM (the table
-   * holds a pointer to it). See ILuaConfig for the generated surface.
+   * holds a pointer to it). See ILuaConfigurable for the generated surface.
    */
-  void registerConfig(ILuaConfig& config);
+  void registerConfig(ILuaConfigurable& config);
 
   /**
    * Sorted field names of the table at a dotted path (e.g. "sfs.colors"), or
@@ -119,7 +119,7 @@ private:
 void setActiveLua(LuaScripting* lua);
 
 // The host last passed to setActiveLua(), or nullptr. Lets app code (e.g. a
-// scene registering its ILuaConfig systems) reach the live VM without threading
+// scene registering its ILuaConfigurable systems) reach the live VM without threading
 // a back-pointer through the scene graph.
 LuaScripting* activeLua();
 

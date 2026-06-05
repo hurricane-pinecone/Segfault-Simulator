@@ -8,7 +8,7 @@ class LuaScripting;
 // Contract a game implements to expose a Lua modding API. registerBindings() is
 // the single place a client binds its globals and tables on the VM -- compose it
 // from the building blocks: LuaScripting::bind() (simple globals),
-// registerConfig() (an ILuaConfig object), registerParticleLua() (the engine's
+// registerConfig() (an ILuaConfigurable object), registerParticleLua() (the engine's
 // particle table), or the raw API for anything bespoke.
 //
 // The host installs it with LuaScripting::registerApi(api). A game can split its

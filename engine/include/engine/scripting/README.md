@@ -4,7 +4,7 @@ How to give a game built on **sfs** a live Lua modding API: editable at runtime,
 no rebuild, working on both native and web.
 
 This folder holds the engine's scripting contracts (`LuaScripting`, `ILuaApi`,
-`ILuaConfig`, the schema + particle helpers). The sample game
+`ILuaConfigurable`, the schema + particle helpers). The sample game
 (`sampleGame/src/scripting/`) is the **reference implementation** — use it as the
 template for your own game. The engine provides the VM and reusable building
 blocks; **your game decides what to expose** as its modding surface.
@@ -15,7 +15,7 @@ blocks; **your game decides what to expose** as its modding surface.
 
 | Layer | Owns | Examples |
 |-------|------|----------|
-| **Engine** (`sfs::`) | the VM + reusable building blocks | `LuaScripting`, `ILuaApi`, `ILuaConfig`, `registerParticleLua`, the particle prefabs |
+| **Engine** (`sfs::`) | the VM + reusable building blocks | `LuaScripting`, `ILuaApi`, `ILuaConfigurable`, `registerParticleLua`, the particle prefabs |
 | **Game** (your code) | a curated _modding API_ built from those blocks | `GameLuaApi`, `scripting/bindings/*` |
 
 The engine never decides your game's API. You implement one interface
@@ -197,9 +197,9 @@ sfs::ParticleEngine* particlesOf(sfs::Scene* scene) {
 
 ---
 
-## 4. Make a class live-editable: `sfs::ILuaConfig`
+## 4. Make a class live-editable: `sfs::ILuaConfigurable`
 
-For a single object with tunable fields, implement `ILuaConfig` and the VM
+For a single object with tunable fields, implement `ILuaConfigurable` and the VM
 **auto-generates** a `<name>` table — no Lua code at all:
 
 ```
@@ -209,7 +209,7 @@ For a single object with tunable fields, implement `ILuaConfig` and the VM
 ```
 
 ```cpp
-class SunController : public sfs::System, public sfs::ILuaConfig
+class SunController : public sfs::System, public sfs::ILuaConfigurable
 {
 public:
   std::string luaConfigName() const override { return "sun"; }
@@ -247,7 +247,7 @@ if (sfs::LuaScripting* lua = sfs::activeLua())
 | `rangeField(name, &T::m, hint)` | `nameMin` / `nameMax` | a `{float min,max}` (e.g. `FloatRange`) |
 | `colorField(name, hint)` | `sfs.colors` value | applied by you (maps to your own type) |
 
-> **`ILuaConfig` must OUTLIVE the VM** — the generated table stores a raw pointer
+> **`ILuaConfigurable` must OUTLIVE the VM** — the generated table stores a raw pointer
 > to it. Objects owned by a long-lived scene/system are fine. (Contrast with
 > `ILuaApi`, which is transient — see §6.)
 
@@ -282,7 +282,7 @@ as-is, recolour them, or register your own `ParticleEffectDesc`s — that's the
   the closures it leaves are owned by the VM. So stack-allocate it in `setupLua`.
   Capture the **game** by reference in your lambdas (`SampleGame& game = m_game;`),
   never the `ILuaApi` object — nothing should depend on its lifetime.
-- **`ILuaConfig`** — _must outlive the VM_ (the table holds a pointer to it).
+- **`ILuaConfigurable`** — _must outlive the VM_ (the table holds a pointer to it).
 - **Don't re-open `namespace sfs`** in game code to forward-declare engine types.
   Include the engine header that declares them (it forward-declares its own types
   where useful). The game only ever _consumes_ `sfs::`.
@@ -306,7 +306,7 @@ particles                          -- dump the whole API tree
 particles.options                  -- what configure() understands
 particles.configure("blood_spray", { burst = 60, color = sfs.colors.Lime })
 particles.spawn("embers", 10, 8)
-sun.set{ timeOfDay = 0.5, timeMultiplier = 10 }   -- live-edit an ILuaConfig
+sun.set{ timeOfDay = 0.5, timeMultiplier = 10 }   -- live-edit an ILuaConfigurable
 spawnGore(12, 9)                   -- a bound global
 ```
 
@@ -319,7 +319,7 @@ spawnGore(12, 9)                   -- a bound global
 ```
 luaScripting.h     the VM: init / eval / evalRepl / bind / registerApi / registerConfig
 iLuaApi.h          the contract your game implements (registerBindings)
-iLuaConfig.h       the contract for a live-editable object (get/set/options)
+iLuaConfigurable.h       the contract for a live-editable object (get/set/options)
 luaSchema.h        field() / rangeField() / colorField() + the reflection reader
 particleLuaApi.h   registerParticleLua (the ready-made particle table)
 ```

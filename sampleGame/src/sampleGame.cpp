@@ -30,7 +30,7 @@ void SampleGame::onSetup()
   sfs::WorldCollider::pixelsPerUnit = static_cast<float>(m_isoConfig.tileWidth);
 
   // Stand up the VM before the scene: createScene() runs the scene's onInit()
-  // synchronously, and that's where scene systems register their ILuaConfig
+  // synchronously, and that's where scene systems register their ILuaConfigurable
   // (e.g. the sun) -- so the active VM must already exist.
   setupLua();
 

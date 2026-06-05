@@ -3,7 +3,7 @@
 #include "engine/Color/Color.h"
 #include "engine/logger/logger.h"
 #include "engine/scripting/iLuaApi.h"
-#include "engine/scripting/iLuaConfig.h"
+#include "engine/scripting/iLuaConfigurable.h"
 #include "engine/scripting/luaSchema.h"
 
 #include <lua.hpp>
@@ -65,16 +65,16 @@ int callNumber2(lua_State* L)
   return 0;
 }
 
-// ILuaConfig table closures: the config pointer rides as the upvalue, so the
+// ILuaConfigurable table closures: the config pointer rides as the upvalue, so the
 // same three C functions back every registered config.
-ILuaConfig* configUpvalue(lua_State* L)
+ILuaConfigurable* configUpvalue(lua_State* L)
 {
-  return static_cast<ILuaConfig*>(lua_touserdata(L, lua_upvalueindex(1)));
+  return static_cast<ILuaConfigurable*>(lua_touserdata(L, lua_upvalueindex(1)));
 }
 
 int configGet(lua_State* L)
 {
-  ILuaConfig* config = configUpvalue(L);
+  ILuaConfigurable* config = configUpvalue(L);
   if (config)
     luaschema::pushValues(L, config->luaConfigData(), config->luaConfigSchema());
   else
@@ -84,7 +84,7 @@ int configGet(lua_State* L)
 
 int configSet(lua_State* L)
 {
-  ILuaConfig* config = configUpvalue(L);
+  ILuaConfigurable* config = configUpvalue(L);
   if (!config)
     return 0;
   luaL_checktype(L, 1, LUA_TTABLE);
@@ -369,7 +369,7 @@ void LuaScripting::bind(const std::string& name,
 
 void LuaScripting::registerApi(ILuaApi& api) { api.registerBindings(*this); }
 
-void LuaScripting::registerConfig(ILuaConfig& config)
+void LuaScripting::registerConfig(ILuaConfigurable& config)
 {
   if (!m_state)
     return;
