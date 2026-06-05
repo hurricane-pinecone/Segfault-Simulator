@@ -9,6 +9,10 @@ optionally drive it with a live Lua scripting API.
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
     <strong>▶ Play the dogshit sample game</strong>
   </a>
+  &nbsp;·&nbsp;
+  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/samplePlatformer" target="_blank" rel="noopener noreferrer">
+    <strong>▶ Play the sample platformer</strong>
+  </a>
 </p>
 
 ![ECS Diagram](./docs/images/ecs.png)
