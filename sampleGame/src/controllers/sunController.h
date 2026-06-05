@@ -1,12 +1,12 @@
 #pragma once
 
 #include "engine/ecs/system.h"
-#include "engine/scripting/iLuaConfig.h"
+#include "engine/scripting/iLuaConfigurable.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
 
-class SunController : public sfs::System, public sfs::ILuaConfig
+class SunController : public sfs::System, public sfs::ILuaConfigurable
 {
 public:
   SunController() = default;

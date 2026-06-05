@@ -83,7 +83,7 @@ void GameScene::onInit()
   auto& sun = addSystem<SunController>();
 
   // Expose the sun's tunables to Lua as a live `sun` table (get/set/options),
-  // via the ILuaConfig contract -- the VM is app-owned, reached through the
+  // via the ILuaConfigurable contract -- the VM is app-owned, reached through the
   // active-Lua accessor.
   if (sfs::LuaScripting* lua = sfs::activeLua())
     lua->registerConfig(sun);
