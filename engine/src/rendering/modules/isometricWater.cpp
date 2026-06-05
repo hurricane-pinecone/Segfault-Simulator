@@ -5,6 +5,7 @@
 #include "engine/components/waterTileComponent.h"
 #include "engine/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/rendering/isometricRenderContext.h"
+#include "engine/rendering/sdlColor.h"
 #include "engine/utils/profiling.h"
 #include <algorithm>
 #include <cstdint>
@@ -164,8 +165,8 @@ IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
 {
   const float depthFactor = std::clamp(depth / 6.0f, 0.0f, 1.0f);
 
-  const SDL_Color shallowColor = sfs::Colors::Turqoise.toSDL();
-  const SDL_Color deepColor = sfs::Colors::Navy.toSDL();
+  const SDL_Color shallowColor = sfs::toSDL(sfs::Colors::Turqoise);
+  const SDL_Color deepColor = sfs::toSDL(sfs::Colors::Navy);
 
   const glm::vec4 shallow{
       shallowColor.r / 255.0f,

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/rendering/commands/commands.h" // AnyRenderCommand
-#include "engine/rendering/modules/moduleSettings.h"
+#include "engine/ecs/moduleSettings.h"
 #include <vector>
 
 namespace sfs

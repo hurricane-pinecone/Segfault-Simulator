@@ -31,22 +31,10 @@ if(IS_WEB_BUILD)
         SUFFIX ".html"
     )
 
-    # Vendored Lua headers for the sample's raw-Lua particle bindings (native
-    # gets these transitively from the engine's Conan lua::lua link).
-    target_include_directories(sampleGame PRIVATE
-        "${CMAKE_SOURCE_DIR}/engine/lib/lua"
-    )
-
     # The shell is a link input (--shell-file); without this, editing it doesn't
     # relink and the embedded HTML goes stale.
     set_target_properties(sampleGame PROPERTIES
         LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
-    )
-
-    target_compile_options(engine PUBLIC
-        -pthread
-        -matomics
-        -mbulk-memory
     )
 
     target_link_options(sampleGame PRIVATE

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/particles/particleCurves.h"
-#include "engine/rendering/blendMode.h"
+#include "engine/types/blendMode.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include <cstdint>
