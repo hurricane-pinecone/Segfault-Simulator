@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -15,6 +16,14 @@ namespace sfs
 
 class ILuaApi;
 class ILuaConfigurable;
+
+// Live byte accounting for the VM's capped allocator (see setMemoryLimit). `cap`
+// of 0 means unlimited.
+struct LuaMemoryUsage
+{
+  std::size_t used = 0;
+  std::size_t cap = 0;
+};
 
 /**
  * Embedded Lua VM for live scripting -- hot-editing the running game without a
@@ -80,10 +89,46 @@ public:
 
   /**
    * Expose an ILuaConfigurable as a live-editable global table (get / set / options),
-   * driven entirely by its schema. The config must outlive the VM (the table
-   * holds a pointer to it). See ILuaConfigurable for the generated surface.
+   * driven entirely by its schema. See ILuaConfigurable for the generated surface.
+   *
+   * The table reaches the config through an invalidatable slot, so it is safe to
+   * destroy the config before the VM AS LONG AS unregisterConfig() is called
+   * first -- after that, the table's get/set become no-ops even if Lua still
+   * holds a reference to it.
    */
   void registerConfig(ILuaConfigurable& config);
+
+  /**
+   * Invalidate a registered config: nils its global table and makes any lingering
+   * get/set no-ops. Call before the config is destroyed (e.g. from its owner's
+   * destructor) so a torn-down object can't be reached from Lua.
+   */
+  void unregisterConfig(ILuaConfigurable& config);
+
+  /**
+   * Per-eval instruction budget (a Lua count hook). A chunk exceeding it is
+   * aborted with an error instead of hanging the thread -- essential for an
+   * interactive console (an infinite loop would otherwise freeze the app, and
+   * the browser tab on web). <= 0 disables the guard. Re-armed before each
+   * eval/evalRepl, so it is a per-call budget, not a lifetime total.
+   */
+  void setInstructionLimit(int maxInstructions) { m_instructionLimit = maxInstructions; }
+
+  /**
+   * Cap total bytes the VM may allocate (a custom Lua allocator). An allocation
+   * past the cap fails as a Lua out-of-memory error (caught, not a crash), so a
+   * script can't exhaust host memory. 0 = unlimited. Safe to set before or after
+   * init(); the cap is read live. `memoryUsed()` reports current bytes.
+   */
+  void setMemoryLimit(std::size_t bytes) { m_memory.cap = bytes; }
+  std::size_t memoryUsed() const { return m_memory.used; }
+
+  /**
+   * Cap the size (bytes) of the string evalRepl returns -- captured print/log
+   * output plus the value. A script printing megabytes is truncated with a
+   * marker instead of bloating the response handed to the editor. 0 = unlimited.
+   */
+  void setOutputLimit(std::size_t bytes) { m_outputLimit = bytes; }
 
   /**
    * Sorted field names of the table at a dotted path (e.g. "sfs.colors"), or
@@ -100,10 +145,36 @@ public:
   lua_State* state() { return m_state; }
 
 private:
+  // (Re)install the instruction-count hook before a chunk runs.
+  void armExecutionGuard();
+
+  // Truncate evalRepl output to m_outputLimit, appending a marker if anything
+  // (here or in logLine) was dropped.
+  std::string cappedOutput(std::string text);
+
   lua_State* m_state = nullptr;
+
+  // Byte budget for the capped allocator (passed to it as user data). Declared
+  // before m_state so it is still alive when ~LuaScripting closes the state
+  // (lua_close frees through this allocator). cap default ~64 MiB.
+  LuaMemoryUsage m_memory{0, 64 * 1024 * 1024};
+
+  // Per-eval instruction budget for the execution guard (0 = off).
+  int m_instructionLimit = 20'000'000;
+
+  // Max bytes evalRepl returns (0 = unlimited).
+  std::size_t m_outputLimit = 256 * 1024;
 
   // Output captured during the current evalRepl (from print / sfs.log).
   std::string m_log;
+
+  // Set when print/log output or the result was dropped for the output cap.
+  bool m_outputTruncated = false;
+
+  // Heap "slots" pointing at registered configs. The Lua closures hold a slot,
+  // not the config directly, so unregisterConfig() can null a slot and instantly
+  // neuter a table whose backing object is about to be destroyed.
+  std::vector<std::unique_ptr<ILuaConfigurable*>> m_configSlots;
 
   // The bound std::functions, kept alive for the C trampolines that reference
   // them by pointer (stored as Lua closure upvalues).

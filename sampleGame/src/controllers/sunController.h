@@ -2,6 +2,7 @@
 
 #include "engine/ecs/system.h"
 #include "engine/scripting/iLuaConfigurable.h"
+#include "engine/scripting/luaScripting.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
@@ -10,7 +11,15 @@ class SunController : public sfs::System, public sfs::ILuaConfigurable
 {
 public:
   SunController() = default;
-  ~SunController() override = default;
+
+  // Drop our `sun` table from the VM before we're destroyed, so a torn-down
+  // controller can't be reached from Lua. activeLua() is null during app
+  // shutdown (the VM is gone first), making this a safe no-op then.
+  ~SunController() override
+  {
+    if (sfs::LuaScripting* lua = sfs::activeLua())
+      lua->unregisterConfig(*this);
+  }
 
   void create() override
   {

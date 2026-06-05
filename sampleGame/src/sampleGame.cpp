@@ -5,6 +5,7 @@
 #include "scripting/gameLuaApi.h"
 #include <engine/components/worldCollider.h>
 #include <engine/input/keyboardInput.h>
+#include <engine/logger/logger.h>
 #include <engine/rendering/isometricGeometryRenderer.h>
 #include <engine/rendering/util/isometric/camera.h>
 #include <engine/sceneManager/scene.h>
@@ -45,11 +46,16 @@ void SampleGame::setupLua()
 {
   // Stand up the modding VM; the game's actual Lua API lives in luaBindings.
   m_lua = std::make_unique<sfs::LuaScripting>();
-  m_lua->init();
+  if (!m_lua->init())
+  {
+    LOG_ERROR("Lua VM failed to initialise; scripting disabled");
+    m_lua.reset(); // don't route the editor at a dead VM
+    return;
+  }
   sfs::setActiveLua(m_lua.get()); // route the web editor's eval entry here
 
-  // Install the game's modding API. GameLuaApi is transient -- registerLua binds
-  // everything onto the VM (the closures it leaves behind are VM-owned).
+  // Install the game's modding API. GameLuaApi is transient -- registerBindings
+  // binds everything onto the VM (the closures it leaves behind are VM-owned).
   GameLuaApi api(*this);
   m_lua->registerApi(api);
 }

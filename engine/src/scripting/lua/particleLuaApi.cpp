@@ -10,6 +10,7 @@
 #include "glm/glm/ext/vector_float3.hpp"
 #include <lua.hpp>
 
+#include <exception>
 #include <new>
 
 namespace sfs
@@ -37,14 +38,40 @@ int resolverGc(lua_State* L)
   return 0;
 }
 
+// Convert a C++ exception from engine calls into a Lua error rather than letting
+// it unwind through Lua's C frames (UB). The body unwinds before luaL_error
+// longjmps.
+template <typename Fn>
+int guarded(lua_State* L, Fn&& body)
+{
+  try
+  {
+    return body();
+  }
+  catch (const std::exception& e)
+  {
+    return luaL_error(L, "%s", e.what());
+  }
+  catch (...)
+  {
+    return luaL_error(L, "unknown C++ exception in particles binding");
+  }
+}
+
 int particlesSpawn(lua_State* L)
 {
-  const char* name = luaL_checkstring(L, 1);
-  const glm::vec2 pos{static_cast<float>(luaL_optnumber(L, 2, 0.0)),
-                      static_cast<float>(luaL_optnumber(L, 3, 0.0))};
-  if (ParticleEngine* engine = engineOf(L))
-    engine->spawnBurst(name, pos, engine->groundElevationAt(pos));
-  return 0;
+  return guarded(L,
+                 [&]
+                 {
+                   const char* name = luaL_checkstring(L, 1);
+                   const glm::vec2 pos{
+                       static_cast<float>(luaL_optnumber(L, 2, 0.0)),
+                       static_cast<float>(luaL_optnumber(L, 3, 0.0))};
+                   if (ParticleEngine* engine = engineOf(L))
+                     engine->spawnBurst(
+                         name, pos, engine->groundElevationAt(pos));
+                   return 0;
+                 });
 }
 
 // particles.configure(name, { color = sfs.colors.Green, burst = 30, sizeMin =,
@@ -52,68 +79,81 @@ int particlesSpawn(lua_State* L)
 // reflection reader; only `color` (which maps onto a Gradient) is applied here.
 int particlesConfigure(lua_State* L)
 {
-  const char* name = luaL_checkstring(L, 1);
-  luaL_checktype(L, 2, LUA_TTABLE);
+  return guarded(
+      L,
+      [&]
+      {
+        const char* name = luaL_checkstring(L, 1);
+        luaL_checktype(L, 2, LUA_TTABLE);
 
-  ParticleEngine* engine = engineOf(L);
-  if (!engine)
-    return 0;
+        ParticleEngine* engine = engineOf(L);
+        if (!engine)
+          return 0;
 
-  const ParticleEffectDesc* current = engine->effect(name);
-  if (!current)
-    return luaL_error(L, "unknown particle effect '%s'", name);
+        const ParticleEffectDesc* current = engine->effect(name);
+        if (!current)
+          return luaL_error(L, "unknown particle effect '%s'", name);
 
-  ParticleEffectDesc desc = *current;
-  luaschema::readTable(L, 2, &desc, particleEffectSchema());
+        ParticleEffectDesc desc = *current;
+        luaschema::readTable(L, 2, &desc, particleEffectSchema());
 
-  lua_getfield(L, 2, "color");
-  if (lua_istable(L, -1))
-  {
-    const glm::vec3 c = luaschema::readColor(L, lua_gettop(L));
-    desc.colorOverLife = Gradient::twoStop(c, c * 0.3f);
-  }
-  lua_pop(L, 1);
+        lua_getfield(L, 2, "color");
+        if (lua_istable(L, -1))
+        {
+          const glm::vec3 c = luaschema::readColor(L, lua_gettop(L));
+          desc.colorOverLife = Gradient::twoStop(c, c * 0.3f);
+        }
+        lua_pop(L, 1);
 
-  engine->registerEffect(name, desc);
-  return 0;
+        engine->registerEffect(name, desc);
+        return 0;
+      });
 }
 
 // particles.describe(name) -> table of the effect's current configurable values
 // (keyed exactly as configure reads them, so a dump round-trips as input).
 int particlesDescribe(lua_State* L)
 {
-  const char* name = luaL_checkstring(L, 1);
+  return guarded(L,
+                 [&]
+                 {
+                   const char* name = luaL_checkstring(L, 1);
 
-  ParticleEngine* engine = engineOf(L);
-  if (!engine)
-  {
-    lua_newtable(L);
-    return 1;
-  }
+                   ParticleEngine* engine = engineOf(L);
+                   if (!engine)
+                   {
+                     lua_newtable(L);
+                     return 1;
+                   }
 
-  const ParticleEffectDesc* current = engine->effect(name);
-  if (!current)
-    return luaL_error(L, "unknown particle effect '%s'", name);
+                   const ParticleEffectDesc* current = engine->effect(name);
+                   if (!current)
+                     return luaL_error(L, "unknown particle effect '%s'", name);
 
-  luaschema::pushValues(L, current, particleEffectSchema());
-  return 1;
+                   luaschema::pushValues(L, current, particleEffectSchema());
+                   return 1;
+                 });
 }
 
 // particles.effects() -> array of registered effect names (spawn/configure
 // targets).
 int particlesEffects(lua_State* L)
 {
-  lua_newtable(L);
-  if (ParticleEngine* engine = engineOf(L))
-  {
-    int i = 1;
-    for (const std::string& name : engine->effectNames())
-    {
-      lua_pushstring(L, name.c_str());
-      lua_rawseti(L, -2, i++);
-    }
-  }
-  return 1;
+  return guarded(L,
+                 [&]
+                 {
+                   lua_newtable(L);
+                   if (ParticleEngine* engine = engineOf(L))
+                   {
+                     int i = 1;
+                     for (const std::string& name : engine->effectNames())
+                     {
+                       lua_pushstring(L, name.c_str());
+                       lua_rawseti(L, -2, i++);
+                     }
+                   }
+                   return 1;
+                 });
 }
 
 } // namespace

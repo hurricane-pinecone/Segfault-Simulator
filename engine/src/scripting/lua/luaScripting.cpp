@@ -9,6 +9,8 @@
 #include <lua.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <exception>
 
 namespace sfs
 {
@@ -37,60 +39,154 @@ int luaLog(lua_State* L)
   return 0;
 }
 
+// Run a C-binding body, converting any C++ exception into a Lua error instead of
+// letting it propagate through Lua's C frames (Lua is built as C -- an exception
+// crossing a longjmp frame is undefined behaviour). The body has fully unwound
+// before luaL_error longjmps, so this is safe. Game-provided lambdas / config
+// hooks are the realistic throwers.
+template <typename Fn>
+int guarded(lua_State* L, Fn&& body)
+{
+  try
+  {
+    return body();
+  }
+  catch (const std::exception& e)
+  {
+    return luaL_error(L, "%s", e.what());
+  }
+  catch (...)
+  {
+    return luaL_error(L, "unknown C++ exception in bound function");
+  }
+}
+
+// Capped Lua allocator: tracks live bytes and fails an allocation that would push
+// past the budget (Lua turns the null return into an out-of-memory error, caught
+// by pcall). `ud` is the host's LuaMemoryUsage. When ptr is null, osize is a Lua
+// type tag, not a real size -- so old size counts only for an existing block.
+void* cappedAlloc(void* ud, void* ptr, size_t osize, size_t nsize)
+{
+  auto* mem = static_cast<LuaMemoryUsage*>(ud);
+  const size_t oldSize = ptr ? osize : 0;
+
+  if (nsize == 0)
+  {
+    std::free(ptr);
+    mem->used -= oldSize;
+    return nullptr;
+  }
+
+  if (mem->cap > 0 && nsize > oldSize &&
+      mem->used + (nsize - oldSize) > mem->cap)
+    return nullptr; // over budget -> reported as out-of-memory
+
+  void* block = std::realloc(ptr, nsize);
+  if (block) // on failure realloc leaves the old block intact; used unchanged
+    mem->used = mem->used - oldSize + nsize;
+  return block;
+}
+
+// Instruction-count hook: aborts a chunk that blows its budget (e.g. an infinite
+// loop) instead of hanging the thread / freezing the browser tab.
+void instructionGuard(lua_State* L, lua_Debug* /*ar*/)
+{
+  luaL_error(L,
+             "execution aborted: instruction budget exceeded (possible "
+             "infinite loop)");
+}
+
+// Last-resort: an unprotected Lua error would otherwise abort() silently. All our
+// entry points run under lua_pcall, so this should never fire -- but log if it
+// does. (Returning still aborts; the value is the diagnostic.)
+int panicHandler(lua_State* L)
+{
+  const char* msg = lua_tostring(L, -1);
+  LOG_ERROR(std::string("Lua PANIC: ") + (msg ? msg : "unknown error"));
+  return 0;
+}
+
 // Trampolines: the bound std::function pointer rides as the closure's upvalue.
 int callVoid(lua_State* L)
 {
   auto* fn = static_cast<std::function<void()>*>(
       lua_touserdata(L, lua_upvalueindex(1)));
-  if (fn && *fn)
-    (*fn)();
-  return 0;
+  return guarded(L,
+                 [&]
+                 {
+                   if (fn && *fn)
+                     (*fn)();
+                   return 0;
+                 });
 }
 
 int callNumber(lua_State* L)
 {
   auto* fn = static_cast<std::function<void(double)>*>(
       lua_touserdata(L, lua_upvalueindex(1)));
-  if (fn && *fn)
-    (*fn)(luaL_optnumber(L, 1, 0.0));
-  return 0;
+  return guarded(L,
+                 [&]
+                 {
+                   if (fn && *fn)
+                     (*fn)(luaL_optnumber(L, 1, 0.0));
+                   return 0;
+                 });
 }
 
 int callNumber2(lua_State* L)
 {
   auto* fn = static_cast<std::function<void(double, double)>*>(
       lua_touserdata(L, lua_upvalueindex(1)));
-  if (fn && *fn)
-    (*fn)(luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
-  return 0;
+  return guarded(L,
+                 [&]
+                 {
+                   if (fn && *fn)
+                     (*fn)(luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
+                   return 0;
+                 });
 }
 
-// ILuaConfigurable table closures: the config pointer rides as the upvalue, so the
-// same three C functions back every registered config.
+// ILuaConfigurable table closures: the upvalue is an invalidatable SLOT
+// (ILuaConfigurable**) so unregisterConfig can null it -- a torn-down config then
+// reads as empty / ignores writes instead of dangling.
 ILuaConfigurable* configUpvalue(lua_State* L)
 {
-  return static_cast<ILuaConfigurable*>(lua_touserdata(L, lua_upvalueindex(1)));
+  auto* slot =
+      static_cast<ILuaConfigurable**>(lua_touserdata(L, lua_upvalueindex(1)));
+  return slot ? *slot : nullptr;
 }
 
 int configGet(lua_State* L)
 {
-  ILuaConfigurable* config = configUpvalue(L);
-  if (config)
-    luaschema::pushValues(L, config->luaConfigData(), config->luaConfigSchema());
-  else
-    lua_newtable(L);
-  return 1;
+  return guarded(L,
+                 [&]
+                 {
+                   ILuaConfigurable* config = configUpvalue(L);
+                   if (config)
+                     luaschema::pushValues(
+                         L, config->luaConfigData(), config->luaConfigSchema());
+                   else
+                     lua_newtable(L);
+                   return 1;
+                 });
 }
 
 int configSet(lua_State* L)
 {
-  ILuaConfigurable* config = configUpvalue(L);
-  if (!config)
-    return 0;
-  luaL_checktype(L, 1, LUA_TTABLE);
-  luaschema::readTable(L, 1, config->luaConfigData(), config->luaConfigSchema());
-  config->onLuaConfigChanged();
-  return 0;
+  return guarded(L,
+                 [&]
+                 {
+                   ILuaConfigurable* config = configUpvalue(L);
+                   if (!config)
+                     return 0;
+                   luaL_checktype(L, 1, LUA_TTABLE);
+                   luaschema::readTable(L,
+                                        1,
+                                        config->luaConfigData(),
+                                        config->luaConfigSchema());
+                   config->onLuaConfigChanged();
+                   return 0;
+                 });
 }
 
 std::string indentOf(int depth)
@@ -189,13 +285,16 @@ LuaScripting::~LuaScripting()
 
 bool LuaScripting::init()
 {
-  m_state = luaL_newstate();
+  // Custom allocator so the memory budget covers every allocation from creation.
+  m_state = lua_newstate(&cappedAlloc, &m_memory);
   if (!m_state)
     return false;
 
   // Stash the host in the state's extra space so the C functions (luaLog) can
   // reach it without an upvalue.
   *static_cast<LuaScripting**>(lua_getextraspace(m_state)) = this;
+
+  lua_atpanic(m_state, &panicHandler);
 
   // Open a SAFE subset of the standard library: no io / os / package, which
   // both sandboxes the live console and keeps the wasm build off filesystem /
@@ -212,6 +311,17 @@ bool LuaScripting::init()
   {
     luaL_requiref(m_state, lib.name, lib.func, 1);
     lua_pop(m_state, 1);
+  }
+
+  // Close sandbox holes the base lib leaves open even without io/os/package:
+  //   - load: can compile arbitrary text AND raw bytecode (crafted bytecode can
+  //     crash the VM); we don't expose dynamic code loading to scripts.
+  //   - loadfile / dofile: read the filesystem via C stdio, bypassing the io
+  //     exclusion (native only, but absent on the safe surface regardless).
+  for (const char* unsafe : {"load", "loadfile", "dofile"})
+  {
+    lua_pushnil(m_state);
+    lua_setglobal(m_state, unsafe);
   }
 
   // Build the `sfs` API table.
@@ -253,11 +363,20 @@ bool LuaScripting::init()
   return true;
 }
 
+void LuaScripting::armExecutionGuard()
+{
+  if (m_instructionLimit > 0)
+    lua_sethook(m_state, &instructionGuard, LUA_MASKCOUNT, m_instructionLimit);
+  else
+    lua_sethook(m_state, nullptr, 0, 0);
+}
+
 std::string LuaScripting::eval(const std::string& source)
 {
   if (!m_state)
     return "Lua VM not initialised";
 
+  armExecutionGuard();
   if (luaL_loadstring(m_state, source.c_str()) != LUA_OK ||
       lua_pcall(m_state, 0, 0, 0) != LUA_OK)
   {
@@ -276,6 +395,7 @@ std::string LuaScripting::evalRepl(const std::string& source)
     return "error: Lua VM not initialised";
 
   m_log.clear();
+  m_outputTruncated = false;
   const int base = lua_gettop(m_state);
 
   // Try the input as an expression first (so a bare value prints), else run it
@@ -294,13 +414,14 @@ std::string LuaScripting::evalRepl(const std::string& source)
     }
   }
 
+  armExecutionGuard();
   if (lua_pcall(m_state, 0, LUA_MULTRET, 0) != LUA_OK)
   {
     const char* err = lua_tostring(m_state, -1);
     std::string message =
         std::string("error: ") + (err ? err : "runtime error");
     lua_pop(m_state, 1);
-    return m_log + message; // show whatever printed before the error
+    return cappedOutput(m_log + message); // show whatever printed before the error
   }
 
   std::string out;
@@ -320,14 +441,34 @@ std::string LuaScripting::evalRepl(const std::string& source)
       result += "\n";
     result += out;
   }
-  return result;
+  return cappedOutput(std::move(result));
+}
+
+std::string LuaScripting::cappedOutput(std::string text)
+{
+  if (m_outputLimit > 0 && text.size() > m_outputLimit)
+  {
+    text.resize(m_outputLimit);
+    m_outputTruncated = true;
+  }
+  if (m_outputTruncated)
+    text += "\n...[output truncated]";
+  return text;
 }
 
 void LuaScripting::logLine(const std::string& line)
 {
+  LOG_INFO(line); // the logger always gets the full line
+
+  // Bound the captured buffer so a tight print loop can't balloon it between
+  // truncation checks; the full result is capped again in cappedOutput.
+  if (m_outputLimit > 0 && m_log.size() >= m_outputLimit)
+  {
+    m_outputTruncated = true;
+    return;
+  }
   m_log += line;
   m_log += "\n";
-  LOG_INFO(line);
 }
 
 void LuaScripting::bind(const std::string& name, std::function<void()> fn)
@@ -374,13 +515,17 @@ void LuaScripting::registerConfig(ILuaConfigurable& config)
   if (!m_state)
     return;
 
+  // The closures share one invalidatable slot (ILuaConfigurable**), owned here.
+  m_configSlots.push_back(std::make_unique<ILuaConfigurable*>(&config));
+  ILuaConfigurable** slot = m_configSlots.back().get();
+
   lua_newtable(m_state);
 
-  lua_pushlightuserdata(m_state, &config);
+  lua_pushlightuserdata(m_state, slot);
   lua_pushcclosure(m_state, &configGet, 1);
   lua_setfield(m_state, -2, "get");
 
-  lua_pushlightuserdata(m_state, &config);
+  lua_pushlightuserdata(m_state, slot);
   lua_pushcclosure(m_state, &configSet, 1);
   lua_setfield(m_state, -2, "set");
 
@@ -389,6 +534,21 @@ void LuaScripting::registerConfig(ILuaConfigurable& config)
   luaschema::pushSchema(m_state, config.luaConfigSchema());
   lua_setfield(m_state, -2, "options");
 
+  lua_setglobal(m_state, config.luaConfigName().c_str());
+}
+
+void LuaScripting::unregisterConfig(ILuaConfigurable& config)
+{
+  if (!m_state)
+    return;
+
+  // Null every slot pointing at this config -- any lingering get/set closures
+  // (even ones Lua still references) become no-ops.
+  for (std::unique_ptr<ILuaConfigurable*>& slot : m_configSlots)
+    if (*slot == &config)
+      *slot = nullptr;
+
+  lua_pushnil(m_state);
   lua_setglobal(m_state, config.luaConfigName().c_str());
 }
 
