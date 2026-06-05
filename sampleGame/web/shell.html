@@ -2,6 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="favicon.png" type="image/png" />
     <link rel="shortcut icon" href="favicon.png" />
     <script src="coi-serviceworker.js"></script>
@@ -23,41 +24,39 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/lua/lua.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
 
-    <style>
-      /* The editor is the only resizable thing (drag the bottom-right handle);
-         it has a definite size so the side panel hugs it. */
-      .CodeMirror {
-        width: 540px;
-        height: 420px;
-        min-width: 320px;
-        min-height: 160px;
-        resize: both;
-        overflow: auto !important;
-        font-size: 14px;
-        border: 1px solid #444;
-      }
-    </style>
-
     <title>Segfault Simulator</title>
 
     <style>
+      :root {
+        --bg: #0c0d10;
+        --surface: rgba(22, 24, 28, 0.82);
+        --border: rgba(255, 255, 255, 0.09);
+        --text: #e7e9ee;
+        --muted: #8b90a0;
+        --accent: #e2554f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       html,
       body {
         margin: 0;
-        padding: 0;
         height: 100%;
-        background: radial-gradient(circle at center, #111 0%, #000 100%);
-        color: white;
-        font-family: "Segoe UI", system-ui, sans-serif;
+        background: radial-gradient(circle at 50% 30%, #16181d 0%, #050608 100%);
+        color: var(--text);
+        font-family:
+          "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
         overflow: hidden;
       }
 
       #root {
         height: 100%;
         padding: 20px;
-        box-sizing: border-box;
       }
 
+      /* Desktop: game fills remaining space, panel is a fixed-width sidebar. */
       #game-layout {
         height: 100%;
         display: flex;
@@ -70,178 +69,363 @@
         flex: 1 1 auto;
         min-width: 0;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 16px;
-      }
-
-      #title {
-        font-size: 28px;
-        font-weight: 700;
-        letter-spacing: 1px;
-        text-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
       }
 
       #container {
-        /* Largest 4:3 box that fits the available width AND height, so the
-           canvas always keeps its ratio -- a wider side panel just shrinks it,
-           it never stretches. */
+        /* Largest 4:3 box that fits the available height, so the canvas keeps
+           its ratio -- a wider panel shrinks it, never stretches it. dvh tracks
+           the visible viewport (excludes the mobile address bar); the vh line is
+           the fallback for browsers without dvh. */
         aspect-ratio: 4 / 3;
-        width: min(100%, calc((100vh - 120px) * 4 / 3));
-        box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
-        border-radius: 8px;
+        width: min(100%, calc((100vh - 40px) * 4 / 3));
+        width: min(100%, calc((100dvh - 40px) * 4 / 3));
+        border-radius: 10px;
         overflow: hidden;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
       }
 
       canvas {
         width: 100%;
         height: 100%;
         display: block;
-        background: black;
+        background: #000;
       }
 
+      /* The panel is a glass card; capped at 950px and scrolls vertically if its
+         content (a tall REPL dump) outgrows the viewport. */
       #panel {
-        /* Hugs its content (the editor sets the width); not resizable itself --
-           only the editor is. Scrolls vertically if content is taller than the
-           viewport. */
         flex: 0 0 auto;
-        width: fit-content;
-        max-width: 75vw;
+        width: clamp(300px, 32vw, 950px);
+        max-width: 950px;
+        height: 100%;
         overflow-y: auto;
-
-        background: rgba(20, 20, 20, 0.75);
-        backdrop-filter: blur(8px);
-
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 10px;
-
-        padding: 14px 18px;
-        box-sizing: border-box;
-
-        text-align: center;
-
-        box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 18px;
+        background: var(--surface);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
       }
 
-      /* Collapsible Lua section: hugs to a small "Lua console" line until
-         expanded, so it's out of the way by default. */
-      .lua-panel {
-        text-align: left;
-      }
-
-      .lua-panel > summary {
-        cursor: pointer;
-        font-size: 14px;
-        letter-spacing: 1px;
+      .card-title {
+        margin: 0 0 4px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1.4px;
         text-transform: uppercase;
-        color: #aaa;
-        user-select: none;
+        color: var(--muted);
       }
 
-      /* Output panes fill the panel (editor sets its width) and wrap/scroll
-         inside it -- a long result must never drive the panel wider (a pre's
-         intrinsic width is its longest unwrapped line, which would squish the
-         game). */
-      .lua-panel pre {
-        width: 100%;
-        box-sizing: border-box;
-        margin: 6px 0 0;
-        max-height: 220px;
-        overflow: auto;
-        white-space: pre-wrap;
-        word-break: break-word;
-        font-size: 12px;
-      }
-
-      #panel h2 {
-        margin: 0 0 8px 0;
-        font-size: 14px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        color: #aaa;
-      }
-
-      #panel p {
+      .hint {
         margin: 0;
-        font-size: 14px;
-        color: #ccc;
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--muted);
       }
 
+      .hint code {
+        font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        color: #cfd3dd;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+
+      /* --- control reference (one binding per line) ------------------------ */
+      /* Show/hide by device. Both toggled targets (the control lists and the
+         touch pad) are flex, so a single display:flex restores them on mobile. */
+      .mobile-only {
+        display: none !important;
+      }
+
+      .controls-list {
+        list-style: none;
+        margin: 12px 0 0;
+        padding: 0;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+
+      /* Key chip(s) on the left, description pushed to the right edge so it sits
+         clearly apart from the visual key. */
+      .controls-list li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        font-size: 13px;
+      }
+
+      .controls-list .keys {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .controls-list .action {
+        color: var(--muted);
+      }
+
+      kbd {
+        display: inline-block;
+        min-width: 16px;
+        padding: 2px 7px;
+        font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        font-weight: 600;
+        text-align: center;
+        color: #dfe3ec;
+        background: linear-gradient(180deg, #2c2f36, #191b20);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-bottom-width: 2px;
+        border-radius: 5px;
+      }
+
+      /* --- touch controls -------------------------------------------------- */
       .controls {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
         margin-top: 12px;
       }
 
       .touch-row {
         display: flex;
-        justify-content: center;
         gap: 8px;
-        margin-top: 8px;
       }
 
       .touch-button {
-        width: 56px;
-        height: 56px;
-
-        border-radius: 12px;
-        border: 1px solid #555;
-
-        background: linear-gradient(180deg, #333, #181818);
-
-        color: white;
-        font-weight: bold;
-        font-size: 20px;
-
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.12),
-          0 4px 8px rgba(0, 0, 0, 0.6);
-
+        width: 54px;
+        height: 54px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: linear-gradient(180deg, #2c2f36, #15171b);
+        color: var(--text);
+        font-weight: 600;
+        font-size: 18px;
+        user-select: none;
+        touch-action: none;
+        cursor: pointer;
+        transition:
+          transform 0.04s ease,
+          background 0.12s ease;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.1),
+          0 4px 10px rgba(0, 0, 0, 0.5);
+      }
 
+      .touch-button:active,
+      .touch-button.pressed {
+        transform: translateY(2px);
+        background: linear-gradient(180deg, #3a3e47, #1d2026);
+      }
+
+      /* --- Lua console ----------------------------------------------------- */
+      .lua-panel {
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+      }
+
+      .lua-panel > summary {
+        cursor: pointer;
+        list-style: none;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1.4px;
+        text-transform: uppercase;
+        color: var(--muted);
         user-select: none;
       }
 
-      .touch-button.interactive {
-        touch-action: none;
+      .lua-panel > summary::before {
+        content: "▸ ";
+        color: var(--accent);
+      }
+
+      .lua-panel[open] > summary::before {
+        content: "▾ ";
+      }
+
+      .lua-panel .hint {
+        margin: 10px 0;
+      }
+
+      /* One editor, one resize handle (vertical only). Width fills the panel, so
+         there's no horizontal scrollbar at the panel level -- only CodeMirror's
+         own when a code line is long. */
+      .CodeMirror {
+        height: 260px;
+        min-height: 140px;
+        resize: vertical;
+        border: 1px solid #2a2d34;
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .lua-run {
+        margin-top: 10px;
+        padding: 7px 18px;
+        border: none;
+        border-radius: 7px;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 600;
+        font-size: 13px;
         cursor: pointer;
+        transition: filter 0.12s ease;
       }
 
-      .touch-button.interactive:active,
-      .touch-button.interactive.pressed {
-        transform: translateY(2px);
-        background: linear-gradient(180deg, #444, #222);
+      .lua-run:hover {
+        filter: brightness(1.1);
       }
 
+      /* Output hugs its content (no inner scroll); the panel scrolls if the whole
+         section gets tall. Long lines wrap instead of widening the panel. */
+      #lua-output {
+        margin: 12px 0 0;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #aeb6a0;
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      #lua-output:empty {
+        display: none;
+      }
+
+      /* Touch / narrow: full-bleed (no page padding, no rounded screen corners)
+         and the on-screen pad replaces the keyboard list. Per-orientation layout
+         is below. */
       @media (pointer: coarse), (max-width: 900px) {
-        #game-layout {
-          flex-direction: column;
+        #root {
+          padding: 0;
         }
 
-        #title {
-          font-size: 22px;
+        #game-layout {
+          gap: 0;
+        }
+
+        .desktop-only {
+          display: none !important;
+        }
+
+        .mobile-only {
+          display: flex !important;
+        }
+
+        /* The Lua console is a desktop tool -- drop it on mobile entirely. */
+        .lua-panel {
+          display: none;
         }
 
         #container {
-          width: min(94vw, 900px);
-          max-height: 60vh;
+          border-radius: 0;
         }
 
         #panel {
-          width: min(94vw, 900px);
-          flex: none;
+          border-radius: 0;
         }
 
         .touch-button {
-          width: 100px;
-          height: 100px;
-          font-size: 28px;
+          width: 84px;
+          height: 84px;
+          font-size: 26px;
+        }
+      }
+
+      /* Touch landscape (rotated phone): panel on the LEFT, game fills the full
+         height beside it. game-area grows (so the panel never gets pushed under)
+         and the canvas is sized by height; the panel is a fixed, pad-width
+         column. */
+      @media (orientation: landscape) and (pointer: coarse) {
+        #game-layout {
+          flex-direction: row-reverse;
         }
 
-        .touch-row {
-          gap: 12px;
-          margin-top: 12px;
+        #container {
+          width: min(100%, calc(100vh * 4 / 3));
+          width: min(100%, calc(100dvh * 4 / 3));
+        }
+
+        #panel {
+          flex: 0 0 auto;
+          width: clamp(240px, 30vw, 320px);
+        }
+
+        /* Push the touch pad to the bottom of the panel so it sits under the
+           thumb; the control reference stays at the top. */
+        #panel > section {
+          flex: 1 1 auto;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .controls {
+          margin-top: auto;
+        }
+
+        .touch-button {
+          width: 60px;
+          height: 60px;
+          font-size: 18px;
+        }
+      }
+
+      /* Portrait: stack -- full-width game on top, full-width panel drawer below.
+         Sized by width (no max-height) so 4:3 holds and the panel has room. */
+      @media (orientation: portrait) {
+        #root {
+          overflow-y: auto;
+        }
+
+        #game-layout {
+          flex-direction: column;
+          align-items: center;
+          height: auto;
+          min-height: 100%;
+        }
+
+        #game-area {
+          flex: 0 0 auto;
+        }
+
+        #container {
+          width: min(100vw, calc(70vh * 4 / 3));
+          width: min(100vw, calc(70dvh * 4 / 3));
+        }
+
+        #panel {
+          flex: 0 0 auto;
+          width: 100%;
+          min-width: 0;
+          max-width: none;
+          height: auto;
+          align-items: center;
+          text-align: center;
+        }
+
+        .lua-panel {
+          width: 100%;
+          text-align: left;
         }
       }
     </style>
@@ -251,8 +435,6 @@
     <div id="root">
       <main id="game-layout">
         <section id="game-area">
-          <div id="title">Segfault Simulator</div>
-
           <div id="container">
             <canvas
               id="canvas"
@@ -263,53 +445,65 @@
         </section>
 
         <aside id="panel">
-          <h2>Controls</h2>
-          <p>Use WASD to move</p>
-          <p>Click to spray blood (left = red, right = blue)</p>
-          <br />
-          <p>Press the buttons below on mobile</p>
+          <section>
+            <h2 class="card-title">Controls</h2>
 
-          <div class="controls">
-            <div>
-              <div class="touch-button interactive" data-key="w">W</div>
+            <ul class="controls-list desktop-only">
+              <li>
+                <span class="keys">
+                  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>
+                </span>
+                <span class="action">Move</span>
+              </li>
+              <li>
+                <span class="keys"><kbd>Left click</kbd></span>
+                <span class="action">Spray blood</span>
+              </li>
+              <li>
+                <span class="keys"><kbd>Right click</kbd></span>
+                <span class="action">Spray ichor</span>
+              </li>
+            </ul>
+
+            <ul class="controls-list mobile-only">
+              <li>
+                <span class="keys"><kbd>Pad</kbd></span>
+                <span class="action">Move</span>
+              </li>
+              <li>
+                <span class="keys"><kbd>Tap</kbd></span>
+                <span class="action">Spray blood</span>
+              </li>
+            </ul>
+
+            <div class="controls mobile-only">
+              <div class="touch-row">
+                <div class="touch-button" data-key="w">W</div>
+              </div>
+              <div class="touch-row">
+                <div class="touch-button" data-key="a">A</div>
+                <div class="touch-button" data-key="s">S</div>
+                <div class="touch-button" data-key="d">D</div>
+              </div>
             </div>
+          </section>
 
-            <div class="touch-row">
-              <div class="touch-button interactive" data-key="a">A</div>
-              <div class="touch-button interactive" data-key="s">S</div>
-              <div class="touch-button interactive" data-key="d">D</div>
-            </div>
-          </div>
-
-          <details class="lua-panel" style="margin-top: 16px">
+          <details class="lua-panel">
             <summary>Lua console</summary>
-            <p style="margin: 6px 0; font-size: 12px; opacity: 0.8">
-              Ctrl-Enter (or Run) runs the whole buffer. A bare expression prints
-              its value and <code>print()</code> lines show too &mdash; e.g. run
-              <code>particles</code> or <code>sfs.colors</code> to dump a whole
-              table at once. Ctrl-Space autocompletes.
+            <p class="hint">
+              <strong>Ctrl-Enter</strong> runs the buffer. A bare expression
+              prints its value &mdash; try <code>particles</code> or
+              <code>sfs.colors</code>. <strong>Ctrl-Space</strong> autocompletes.
             </p>
+
             <textarea id="lua-source" spellcheck="false">
 particles                 -- dump the whole particles API
--- sfs.colors             -- all colours
 -- for _, n in ipairs(particles.effects()) do print(n) end
 -- particles.configure("blood_spray", { color = sfs.colors.Green, burst = 40 })</textarea
             >
-            <button id="lua-run" type="button" style="margin-top: 6px">
-              Run
-            </button>
-            <pre id="lua-output"></pre>
 
-            <div style="margin-top: 8px">
-              <input
-                id="lua-path"
-                value="sfs.colors"
-                spellcheck="false"
-                style="font-family: monospace"
-              />
-              <button id="lua-keys" type="button">Fields</button>
-              <pre id="lua-keys-out"></pre>
-            </div>
+            <button id="lua-run" class="lua-run" type="button">Run</button>
+            <pre id="lua-output"></pre>
           </details>
         </aside>
       </main>
@@ -336,34 +530,30 @@ particles                 -- dump the whole particles API
       }
 
       // Enable touch + mouse interaction (mobile + desktop)
-      document
-        .querySelectorAll(".touch-button.interactive")
-        .forEach((button) => {
-          const key = button.dataset.key;
+      document.querySelectorAll(".touch-button").forEach((button) => {
+        const key = button.dataset.key;
 
-          const press = (event) => {
-            event.preventDefault();
-            button.classList.add("pressed");
-            canvas.focus();
-            emitKey("keydown", key);
-          };
+        const press = (event) => {
+          event.preventDefault();
+          button.classList.add("pressed");
+          canvas.focus();
+          emitKey("keydown", key);
+        };
 
-          const release = (event) => {
-            event.preventDefault();
-            button.classList.remove("pressed");
-            emitKey("keyup", key);
-          };
+        const release = (event) => {
+          event.preventDefault();
+          button.classList.remove("pressed");
+          emitKey("keyup", key);
+        };
 
-          // touch
-          button.addEventListener("touchstart", press, { passive: false });
-          button.addEventListener("touchend", release, { passive: false });
-          button.addEventListener("touchcancel", release, { passive: false });
+        button.addEventListener("touchstart", press, { passive: false });
+        button.addEventListener("touchend", release, { passive: false });
+        button.addEventListener("touchcancel", release, { passive: false });
 
-          // mouse (so it works on desktop too)
-          button.addEventListener("mousedown", press);
-          button.addEventListener("mouseup", release);
-          button.addEventListener("mouseleave", release);
-        });
+        button.addEventListener("mousedown", press);
+        button.addEventListener("mouseup", release);
+        button.addEventListener("mouseleave", release);
+      });
 
       // --- Lua live console -------------------------------------------------
       // The wasm module exports these (see CMake EXPORTED_FUNCTIONS); ccall is
@@ -372,7 +562,7 @@ particles                 -- dump the whole particles API
       const luaReady = () => Module && typeof Module.ccall === "function";
       const evalLua = (src) =>
         Module.ccall("sfsEvalLua", "string", ["string"], [src]);
-      // keysOf() over the bound API -> the data an editor uses for autocomplete.
+      // keysOf() over the bound API -> the data the editor uses for autocomplete.
       const luaKeys = (path) =>
         (Module.ccall("sfsLuaKeys", "string", ["string"], [path]) || "")
           .split("\n")
@@ -399,9 +589,9 @@ particles                 -- dump the whole particles API
           hintOptions: { hint: (cm) => luaHint(cm) },
         },
       );
-      // Both dimensions come from CSS (.CodeMirror) so the resize handle and the
-      // panel's hug-to-content width aren't overridden by inline sizes.
-      editor.setSize(null, null);
+      // Height comes from CSS (.CodeMirror) so the vertical resize handle isn't
+      // overridden; width fills the panel.
+      editor.setSize("100%", null);
 
       // The editor starts inside a collapsed <details> (display:none), so it
       // measures to nothing -- refresh it the first time the section is opened.
@@ -446,21 +636,10 @@ particles                 -- dump the whole particles API
         }
         const out = evalLua(editor.getValue());
         outEl.textContent = out || "ok";
-        outEl.style.color = out.startsWith("error:") ? "#f66" : "#9c9";
+        outEl.style.color = out.startsWith("error:") ? "#e2554f" : "#aeb6a0";
         canvas.focus();
       }
       document.getElementById("lua-run").addEventListener("click", runLua);
-
-      const keysOutEl = document.getElementById("lua-keys-out");
-      document.getElementById("lua-keys").addEventListener("click", () => {
-        if (!luaReady()) {
-          keysOutEl.textContent = "still loading…";
-          return;
-        }
-        keysOutEl.textContent = luaKeys(
-          document.getElementById("lua-path").value,
-        ).join("  ");
-      });
     </script>
 
     {{{ SCRIPT }}}
