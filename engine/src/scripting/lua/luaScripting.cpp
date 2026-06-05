@@ -2,6 +2,9 @@
 
 #include "engine/Color/Color.h"
 #include "engine/logger/logger.h"
+#include "engine/scripting/iLuaApi.h"
+#include "engine/scripting/iLuaConfig.h"
+#include "engine/scripting/luaSchema.h"
 
 #include <lua.hpp>
 
@@ -59,6 +62,34 @@ int callNumber2(lua_State* L)
       lua_touserdata(L, lua_upvalueindex(1)));
   if (fn && *fn)
     (*fn)(luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
+  return 0;
+}
+
+// ILuaConfig table closures: the config pointer rides as the upvalue, so the
+// same three C functions back every registered config.
+ILuaConfig* configUpvalue(lua_State* L)
+{
+  return static_cast<ILuaConfig*>(lua_touserdata(L, lua_upvalueindex(1)));
+}
+
+int configGet(lua_State* L)
+{
+  ILuaConfig* config = configUpvalue(L);
+  if (config)
+    luaschema::pushValues(L, config->luaConfigData(), config->luaConfigSchema());
+  else
+    lua_newtable(L);
+  return 1;
+}
+
+int configSet(lua_State* L)
+{
+  ILuaConfig* config = configUpvalue(L);
+  if (!config)
+    return 0;
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaschema::readTable(L, 1, config->luaConfigData(), config->luaConfigSchema());
+  config->onLuaConfigChanged();
   return 0;
 }
 
@@ -334,6 +365,31 @@ void LuaScripting::bind(const std::string& name,
   lua_pushlightuserdata(m_state, m_number2Callbacks.back().get());
   lua_pushcclosure(m_state, &callNumber2, 1);
   lua_setglobal(m_state, name.c_str());
+}
+
+void LuaScripting::registerApi(ILuaApi& api) { api.registerBindings(*this); }
+
+void LuaScripting::registerConfig(ILuaConfig& config)
+{
+  if (!m_state)
+    return;
+
+  lua_newtable(m_state);
+
+  lua_pushlightuserdata(m_state, &config);
+  lua_pushcclosure(m_state, &configGet, 1);
+  lua_setfield(m_state, -2, "get");
+
+  lua_pushlightuserdata(m_state, &config);
+  lua_pushcclosure(m_state, &configSet, 1);
+  lua_setfield(m_state, -2, "set");
+
+  // Schema doc (key -> hint), generated from the config so autocomplete and the
+  // editable surface never drift apart.
+  luaschema::pushSchema(m_state, config.luaConfigSchema());
+  lua_setfield(m_state, -2, "options");
+
+  lua_setglobal(m_state, config.luaConfigName().c_str());
 }
 
 std::vector<std::string> LuaScripting::keysOf(const std::string& path) const

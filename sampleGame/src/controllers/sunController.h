@@ -1,11 +1,12 @@
 #pragma once
 
 #include "engine/ecs/system.h"
+#include "engine/scripting/iLuaConfig.h"
 #include "engine/systems/isometric/isometricRenderSystem.h"
 #include "glm/glm/geometric.hpp"
 #include <algorithm>
 
-class SunController : public sfs::System
+class SunController : public sfs::System, public sfs::ILuaConfig
 {
 public:
   SunController() = default;
@@ -98,6 +99,39 @@ public:
                   pm ? "PM" : "AM");
 
     return buffer;
+  }
+
+  std::string luaConfigName() const override { return "sun"; }
+
+  sfs::LuaSchema luaConfigSchema() const override
+  {
+    return {
+        sfs::field("enabled",
+                   &SunController::m_isSunEnabled,
+                   "bool: run the day/night cycle"),
+        sfs::field("dayLengthSeconds",
+                   &SunController::m_dayLengthSeconds,
+                   "number: real seconds per full day"),
+        sfs::field("timeMultiplier",
+                   &SunController::m_timeMultiplier,
+                   "number: cycle speed (0 = paused)"),
+        sfs::field("timeOfDay",
+                   &SunController::m_timeOfDay,
+                   "0..1: .0 midnight .25 sunrise .5 noon .75 sunset"),
+    };
+  }
+
+  void* luaConfigData() override { return this; }
+
+  // set{} writes the raw fields, bypassing the setters' clamps -- re-apply them
+  // and refresh the lighting so a live edit takes effect immediately.
+  void onLuaConfigChanged() override
+  {
+    m_dayLengthSeconds = std::max(m_dayLengthSeconds, 1.0f);
+    m_timeMultiplier = std::max(0.0f, m_timeMultiplier);
+    m_timeOfDay -= std::floor(m_timeOfDay);
+    if (m_renderSystem)
+      applyTimeOfDay(m_timeOfDay);
   }
 
 private:

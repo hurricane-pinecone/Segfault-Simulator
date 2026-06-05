@@ -82,7 +82,7 @@ private:
   // Tallest step (in elevation levels) an entity can climb in one move; a
   // larger rise is a cliff that blocks movement. Stepping down any amount is
   // allowed.
-  static constexpr int kMaxClimb = 1;
+  static constexpr int kMaxClimb = 2;
 
   int terrainHeightAt(const glm::vec2& position) const
   {

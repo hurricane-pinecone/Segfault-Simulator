@@ -11,6 +11,7 @@
 #include "engine/rendering/modules/renderModule.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -92,6 +93,18 @@ public:
   void setDecalSink(IDecalSink* sink) { m_decalSink = sink; }
 
   int liveParticleCount() const;
+
+  // Ground elevation level at a world tile, taken from the terrain source (0 if
+  // none is set). Lets a caller spawn a burst on the terrain without doing its
+  // own height lookup.
+  float groundElevationAt(glm::vec2 worldPos) const
+  {
+    if (!m_terrainSource)
+      return 0.0f;
+    return static_cast<float>(m_terrainSource->terrainHeightAt(
+        static_cast<int>(std::floor(worldPos.x)),
+        static_cast<int>(std::floor(worldPos.y))));
+  }
 
   // Advance every emitter and burst.
   void simulate(double deltaTime);

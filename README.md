@@ -14,6 +14,7 @@ This is a lightweight engine built using the ECS pattern, with a Unity style OOP
 ## Table of Contents
 
 - [Overview](#overview)
+- [Documentation](#documentation)
 - [Initial Setup](#initial-setup)
 - [Debug Build](#debug-build)
 - [Run](#run)
@@ -54,6 +55,13 @@ sampleGame/   → executable
 - Engine is a reusable **library**
 - sampleGame is the **entry point**
 - Assets live next to the executable at runtime
+
+## Documentation
+
+| Doc | What it covers |
+| --- | --- |
+| [Architecture](./docs/ARCHITECTURE.md) | Engine design: ECS core, the render seam, ownership model |
+| [Lua scripting](./engine/include/engine/scripting/README.md) | Giving a game a live Lua modding API (`ILuaApi` / `ILuaConfig`, bindings, runtime use) |
 
 ## Initial Setup
 
