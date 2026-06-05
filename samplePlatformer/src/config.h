@@ -45,3 +45,19 @@ inline constexpr float DEATH_FLASH_TIME = 0.18f;
 // Screen shake.
 inline constexpr float SHAKE_ON_KILL = 16.0f; // magnitude (px)
 inline constexpr float SHAKE_DECAY = 70.0f;    // px/s
+
+// Spells (Noita-style bullet modifiers).
+inline constexpr float SPELL_DROP_CHANCE = 0.45f; // per kill
+inline constexpr float PICKUP_RADIUS = 48.0f;     // collect distance (px)
+inline constexpr float SPREAD_DEGREES = 11.0f;    // per extra Triple bolt
+inline constexpr int BOUNCES_PER_SPELL = 4;
+inline constexpr float GRAVITY_PER_SPELL = 900.0f;
+inline constexpr float DAMAGE_PER_SPELL = 10.0f;
+inline constexpr float HOMING_TURN = 7.0f; // steering responsiveness
+// Explosive.
+inline constexpr float EXPLOSION_RADIUS = 160.0f;
+inline constexpr float EXPLOSION_DAMAGE = 26.0f;
+// Chain lightning.
+inline constexpr float CHAIN_RANGE = 280.0f;
+inline constexpr int CHAIN_TARGETS = 3;
+inline constexpr float CHAIN_DAMAGE = 16.0f;
