@@ -39,9 +39,13 @@ private:
   void spawnFlash(const glm::vec2& pos, const glm::vec3& color, float radius,
                   float time);
 
+  // Drop a random collectable spell orb at a kill position.
+  void dropSpell(const glm::vec2& pos);
+
   Player* m_player = nullptr;
   sfs::SpriteId m_platformSprite = 0;
   sfs::SpriteId m_guySprite = 0;
+  sfs::SpriteId m_orbSprite = 0;
   int m_kills = 0;
   double m_fps = 0.0;
 

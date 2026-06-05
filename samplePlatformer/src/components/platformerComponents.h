@@ -1,6 +1,10 @@
 #pragma once
 
+#include "spells.h"
 #include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_float3.hpp"
+
+#include <vector>
 
 // Game-local components for the platformer. These are plain structs used as ECS
 // components against the engine's generic registry -- no engine changes needed.
@@ -39,31 +43,56 @@ struct Enemy
   explicit Enemy(float health) : health(health) {}
 };
 
-// Marks the player entity so systems (e.g. enemy chase AI) can find its position
-// through the registry.
-struct PlayerTag
-{
-};
-
-// A straight-flying projectile. Moves by its own velocity (no gravity) and
-// expires after `life` seconds or on hitting an enemy.
+// A projectile carrying its accumulated spell modifiers. Built by the player
+// from its Loadout; the BulletSystem reads these to steer, bounce, pierce,
+// detonate, chain, and drop. Plain aggregate so the player can fill the fields
+// then copy it in via addComponent.
 struct Bullet
 {
   glm::vec2 velocity{0.0f, 0.0f};
   float life = 1.0f;
+  float damage = 12.0f;
 
-  Bullet() = default;
-  Bullet(glm::vec2 velocity, float life) : velocity(velocity), life(life) {}
+  int bounces = 0;        // ricochets off platforms remaining (Bounce)
+  bool pierce = false;    // pass through enemies (Pierce)
+  bool homing = false;    // steer toward nearest enemy (Homing)
+  bool explosive = false; // detonate on impact (Explosive)
+  bool chain = false;     // arc lightning to nearby enemies on hit (Chain)
+  float gravity = 0.0f;   // downward accel (Gravity)
+
+  glm::vec3 color{1.0f, 0.2f, 0.12f}; // bolt light / effect tint
 };
 
 // Destroys its entity after `remaining` seconds. Powers transient effects like
-// muzzle-flash and death-flash lights.
+// muzzle / death / explosion flash lights.
 struct Lifetime
 {
   float remaining = 1.0f;
 
   Lifetime() = default;
   explicit Lifetime(float remaining) : remaining(remaining) {}
+};
+
+// Marks the player entity so systems (enemy chase, pickup collection) can find
+// it through the registry.
+struct PlayerTag
+{
+};
+
+// The player's collected spells. Every shot applies all of them, stacked.
+struct Loadout
+{
+  std::vector<Spell> spells;
+};
+
+// A floating pickup orb that grants one spell when the player touches it.
+struct SpellPickup
+{
+  Spell spell = Spell::Triple;
+  float bob = 0.0f; // animation phase
+
+  SpellPickup() = default;
+  explicit SpellPickup(Spell spell) : spell(spell) {}
 };
 
 } // namespace platformer
