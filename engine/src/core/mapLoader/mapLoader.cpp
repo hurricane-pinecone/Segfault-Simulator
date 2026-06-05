@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <engine/core/logger/logger.h>
 #include <engine/core/mapLoader/mapLoader.h>
