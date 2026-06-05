@@ -3,6 +3,7 @@
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
 #include "engine/core/components/spriteComponent.h" // SpriteComponent + NormalMapComponent
+#include "engine/core/components/spriteTint.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- Entity::getComponent<T> defs
 #include "engine/core/particles/particleBatch.h"
@@ -11,7 +12,9 @@
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
 #include "engine/runtime/rendering/quads.h"
+#include "glm/glm/geometric.hpp"
 
+#include <SDL_pixels.h>
 #include <SDL_rect.h>
 #include <SDL_timer.h>
 #include <algorithm>
@@ -73,31 +76,56 @@ void FlatRenderSystem::render()
 
   m_context.projection = m_projection;
 
-  // Point lights, in screen space (worldPoints below are screen-space too, so
-  // distances and radii are consistent without a heightfield).
-  PointLightSet lights{};
+  // Gather point-light candidates (world space), then keep at most
+  // MaxShaderLights -- the nearest to the camera focus when there are more, so
+  // the cap degrades gracefully instead of dropping arbitrary lights.
+  struct LightCand
+  {
+    glm::vec2 worldPos;
+    glm::vec3 color;
+    float intensity;
+    float radius;
+  };
+  std::vector<LightCand> cands;
   if (registry)
   {
     for (const auto& entity :
          registry->view<TransformComponent, LightEmitterComponent>())
     {
-      if (lights.count >= MaxShaderLights)
-        break;
-
       const auto& transform = entity.getComponent<TransformComponent>();
       const auto& emitter = entity.getComponent<LightEmitterComponent>();
-
-      const glm::vec2 screen =
-          m_projection->worldToScreen(transform.position, 0.0f);
-
-      const int i = lights.count++;
-      lights.positions[i] = screen;
-      lights.colors[i] = emitter.color;
-      lights.intensities[i] = emitter.intensity;
-      lights.radii[i] = emitter.radius;
-      lights.heights[i] = 0.0f;       // flat: no elevation
-      lights.groundLevels[i] = 0.0f;
+      cands.push_back({transform.position, emitter.color, emitter.intensity,
+                       emitter.radius});
     }
+  }
+
+  if (static_cast<int>(cands.size()) > MaxShaderLights)
+  {
+    const glm::vec2 focus = m_focus;
+    std::nth_element(
+        cands.begin(), cands.begin() + MaxShaderLights, cands.end(),
+        [&focus](const LightCand& a, const LightCand& b)
+        {
+          const glm::vec2 da = a.worldPos - focus;
+          const glm::vec2 db = b.worldPos - focus;
+          return glm::dot(da, da) < glm::dot(db, db);
+        });
+    cands.resize(MaxShaderLights);
+  }
+
+  // Point lights are submitted in screen space (worldPoints below are
+  // screen-space too, so distances and radii are consistent without a
+  // heightfield).
+  PointLightSet lights{};
+  for (const LightCand& c : cands)
+  {
+    const int i = lights.count++;
+    lights.positions[i] = m_projection->worldToScreen(c.worldPos, 0.0f);
+    lights.colors[i] = c.color;
+    lights.intensities[i] = c.intensity;
+    lights.radii[i] = c.radius;
+    lights.heights[i] = 0.0f;       // flat: no elevation
+    lights.groundLevels[i] = 0.0f;
   }
   m_quadRenderer.setPointLights(lights);
 
@@ -125,8 +153,11 @@ void FlatRenderSystem::render()
     if (texture == 0)
       continue;
 
-    const float w = srcRect.w * transform.scale.x;
-    const float h = srcRect.h * transform.scale.y;
+    // Sprite size scales with the camera zoom (worldUnitToPixels), matching the
+    // zoom worldToScreen applies to position.
+    const float zoom = m_projection->worldUnitToPixels();
+    const float w = srcRect.w * transform.scale.x * zoom;
+    const float h = srcRect.h * transform.scale.y * zoom;
 
     const glm::vec2 screen =
         m_projection->worldToScreen(transform.position, 0.0f) +
@@ -158,6 +189,15 @@ void FlatRenderSystem::render()
     quad.lightColor = m_lighting.ambientColor;
     quad.lightDirection = m_lighting.sunDirection;
     quad.diffuseStrength = m_lighting.diffuseStrength;
+
+    if (entity.hasComponent<SpriteTint>())
+    {
+      const auto& tint = entity.getComponent<SpriteTint>();
+      const auto to8 = [](float v)
+      { return static_cast<Uint8>(std::clamp(v, 0.0f, 1.0f) * 255.0f); };
+      quad.tint = SDL_Color{to8(tint.color.r), to8(tint.color.g),
+                            to8(tint.color.b), to8(tint.alpha)};
+    }
 
     if (entity.hasComponent<NormalMapComponent>())
     {

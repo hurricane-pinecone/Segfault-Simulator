@@ -53,6 +53,10 @@ public:
 
   void setLighting(const FlatLighting& lighting) { m_lighting = lighting; }
 
+  // Camera focus in world units (usually the followed entity). When more lights
+  // exist than the shader can hold, the nearest to this point are kept.
+  void setFocus(const glm::vec2& focus) { m_focus = focus; }
+
 protected:
   void create() override;
   void update(double deltaTime) override { updateModules(deltaTime); }
@@ -67,6 +71,7 @@ private:
   const FlatProjection* m_projection = nullptr;
   FlatRenderContext m_context;
   FlatLighting m_lighting;
+  glm::vec2 m_focus{0.0f, 0.0f};
 };
 
 } // namespace sfs
