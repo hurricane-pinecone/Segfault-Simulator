@@ -6,6 +6,7 @@
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/spriteComponent.h"
+#include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldCollider.h"
 #include "engine/runtime/game/gameObject.h"

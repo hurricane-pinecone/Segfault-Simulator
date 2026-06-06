@@ -1,21 +1,24 @@
 #pragma once
 
+#include "SDL_pixels.h"
 #include "components/platformerComponents.h"
 #include "config.h"
-#include "systems/bloodSystem.h"
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
 #include "engine/core/particles/particleEngine.h"
-#include "SDL_pixels.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
+#include "systems/bloodSystem.h"
 
 #include <algorithm>
-#include <cmath>
 #include <functional>
 #include <limits>
 #include <random>
@@ -78,7 +81,7 @@ protected:
       if (bullet.bounces > 0)
         bounceOffPlatforms(transform.position, bulletHalf, bullet);
 
-      transform.rotation = std::atan2(bullet.velocity.y, bullet.velocity.x);
+      transform.rotation = glm::atan(bullet.velocity.y, bullet.velocity.x);
 
       bullet.life -= dt;
       if (bullet.life <= 0.0f)
@@ -89,7 +92,7 @@ protected:
 
       bool consumed = false;
       for (const auto& enemyEntity :
-           registry->view<Enemy, sfs::TransformComponent, BoxCollider>())
+           registry->view<Enemy, sfs::TransformComponent, sfs::BoxCollider2D>())
       {
         auto& enemy = enemyEntity.getComponent<Enemy>();
         if (enemy.health <= 0.0f)
@@ -97,7 +100,8 @@ protected:
 
         const glm::vec2 enemyPos =
             enemyEntity.getComponent<sfs::TransformComponent>().position;
-        const glm::vec2 enemyHalf = enemyEntity.getComponent<BoxCollider>().half;
+        const glm::vec2 enemyHalf =
+            enemyEntity.getComponent<sfs::BoxCollider2D>().half;
         if (!overlaps(transform.position, bulletHalf, enemyPos, enemyHalf))
           continue;
 
@@ -109,8 +113,14 @@ protected:
         // whatever platform they land on (BloodSystem), so the stains trace the
         // actual impact, not a drawn shape.
         if (m_blood)
-          m_blood->spray(transform.position, bullet.velocity, 12, 120.0f,
-                         520.0f, 60.0f, SDL_Color{200, 16, 16, 255}, 10.0f);
+          m_blood->spray(transform.position,
+                         bullet.velocity,
+                         12,
+                         120.0f,
+                         520.0f,
+                         60.0f,
+                         SDL_Color{200, 16, 16, 255},
+                         10.0f);
 
         if (bullet.chain)
           chainArc(enemyPos, bullet.color, enemyEntity);
@@ -140,26 +150,29 @@ protected:
   }
 
 private:
-  static bool overlaps(const glm::vec2& ac, const glm::vec2& ah,
-                       const glm::vec2& bc, const glm::vec2& bh)
+  static bool overlaps(const glm::vec2& ac,
+                       const glm::vec2& ah,
+                       const glm::vec2& bc,
+                       const glm::vec2& bh)
   {
-    return std::fabs(ac.x - bc.x) < ah.x + bh.x &&
-           std::fabs(ac.y - bc.y) < ah.y + bh.y;
+    return glm::abs(ac.x - bc.x) < ah.x + bh.x &&
+           glm::abs(ac.y - bc.y) < ah.y + bh.y;
   }
 
-  bool nearestEnemyPos(const glm::vec2& from, glm::vec2& out,
+  bool nearestEnemyPos(const glm::vec2& from,
+                       glm::vec2& out,
                        const sfs::Entity& exclude)
   {
     float best = std::numeric_limits<float>::max();
     bool found = false;
     for (const auto& e :
-         registry->view<Enemy, sfs::TransformComponent, BoxCollider>())
+         registry->view<Enemy, sfs::TransformComponent, sfs::BoxCollider2D>())
     {
       if (e == exclude || e.getComponent<Enemy>().health <= 0.0f)
         continue;
       const glm::vec2 p = e.getComponent<sfs::TransformComponent>().position;
-      const float d2 = (p.x - from.x) * (p.x - from.x) +
-                       (p.y - from.y) * (p.y - from.y);
+      const float d2 =
+          (p.x - from.x) * (p.x - from.x) + (p.y - from.y) * (p.y - from.y);
       if (d2 < best)
       {
         best = d2;
@@ -182,7 +195,7 @@ private:
 
     const glm::vec2 cur = bullet.velocity / speed;
     const glm::vec2 desired = glm::normalize(target - pos);
-    glm::vec2 next = cur + (desired - cur) * std::min(1.0f, HOMING_TURN * dt);
+    glm::vec2 next = cur + (desired - cur) * glm::min(1.0f, HOMING_TURN * dt);
     const float len = glm::length(next);
     if (len > 0.001f)
       bullet.velocity = (next / len) * speed;
@@ -190,18 +203,19 @@ private:
 
   void bounceOffPlatforms(glm::vec2& pos, const glm::vec2& half, Bullet& bullet)
   {
-    for (const auto& solid :
-         registry->view<Solid, sfs::TransformComponent, BoxCollider>())
+    for (const auto& solid : registry->view<sfs::SolidObject,
+                                            sfs::TransformComponent,
+                                            sfs::BoxCollider2D>())
     {
       const glm::vec2 sc =
           solid.getComponent<sfs::TransformComponent>().position;
-      const glm::vec2 sh = solid.getComponent<BoxCollider>().half;
+      const glm::vec2 sh = solid.getComponent<sfs::BoxCollider2D>().half;
       if (!overlaps(pos, half, sc, sh))
         continue;
 
       // Reflect off whichever face is shallowest (the one being crossed).
-      const float ox = (sh.x + half.x) - std::fabs(pos.x - sc.x);
-      const float oy = (sh.y + half.y) - std::fabs(pos.y - sc.y);
+      const float ox = (sh.x + half.x) - glm::abs(pos.x - sc.x);
+      const float oy = (sh.y + half.y) - glm::abs(pos.y - sc.y);
       if (ox < oy)
       {
         bullet.velocity.x = -bullet.velocity.x;
@@ -219,8 +233,8 @@ private:
     }
   }
 
-  void damageEnemy(const sfs::Entity& entity, float amount,
-                   const glm::vec2& hitPos)
+  void
+  damageEnemy(const sfs::Entity& entity, float amount, const glm::vec2& hitPos)
   {
     auto& enemy = entity.getComponent<Enemy>();
     if (enemy.health <= 0.0f)
@@ -239,8 +253,14 @@ private:
       // A heavy radial eruption of sticking droplets -- they fly up and out,
       // then gravity rains them back onto the platforms as organic splatter.
       if (m_blood)
-        m_blood->spray(pos, glm::vec2{0.0f, 0.0f}, 46, 140.0f, 680.0f, 260.0f,
-                       SDL_Color{180, 12, 12, 255}, 13.0f);
+        m_blood->spray(pos,
+                       glm::vec2{0.0f, 0.0f},
+                       46,
+                       140.0f,
+                       680.0f,
+                       260.0f,
+                       SDL_Color{180, 12, 12, 255},
+                       13.0f);
       if (m_onKill)
         m_onKill(pos);
       m_deadEnemies.push_back(entity);
@@ -251,11 +271,11 @@ private:
   {
     if (m_particles)
       m_particles->spawnBurst("explosion", center, 0.0f);
-    spawnFlash(center, glm::vec3{1.0f, 0.6f, 0.25f}, EXPLOSION_RADIUS * 2.0f,
-               0.22f);
+    spawnFlash(
+        center, glm::vec3{1.0f, 0.6f, 0.25f}, EXPLOSION_RADIUS * 2.0f, 0.22f);
 
     for (const auto& e :
-         registry->view<Enemy, sfs::TransformComponent, BoxCollider>())
+         registry->view<Enemy, sfs::TransformComponent, sfs::BoxCollider2D>())
     {
       if (e.getComponent<Enemy>().health <= 0.0f)
         continue;
@@ -274,7 +294,8 @@ private:
     (void)color;
   }
 
-  void chainArc(const glm::vec2& from, const glm::vec3& color,
+  void chainArc(const glm::vec2& from,
+                const glm::vec3& color,
                 const sfs::Entity& source)
   {
     struct Target
@@ -285,21 +306,21 @@ private:
     };
     std::vector<Target> targets;
     for (const auto& e :
-         registry->view<Enemy, sfs::TransformComponent, BoxCollider>())
+         registry->view<Enemy, sfs::TransformComponent, sfs::BoxCollider2D>())
     {
       if (e == source || e.getComponent<Enemy>().health <= 0.0f)
         continue;
       const glm::vec2 p = e.getComponent<sfs::TransformComponent>().position;
-      const float d2 = (p.x - from.x) * (p.x - from.x) +
-                       (p.y - from.y) * (p.y - from.y);
+      const float d2 =
+          (p.x - from.x) * (p.x - from.x) + (p.y - from.y) * (p.y - from.y);
       if (d2 < CHAIN_RANGE * CHAIN_RANGE)
         targets.push_back({e, p, d2});
     }
-    std::sort(targets.begin(), targets.end(),
+    std::sort(targets.begin(),
+              targets.end(),
               [](const Target& a, const Target& b) { return a.d2 < b.d2; });
 
-    const int count = std::min<int>(CHAIN_TARGETS,
-                                    static_cast<int>(targets.size()));
+    const int count = glm::min(CHAIN_TARGETS, static_cast<int>(targets.size()));
     for (int i = 0; i < count; ++i)
     {
       if (m_particles)
@@ -309,7 +330,9 @@ private:
     }
   }
 
-  void spawnFlash(const glm::vec2& pos, const glm::vec3& color, float radius,
+  void spawnFlash(const glm::vec2& pos,
+                  const glm::vec3& color,
+                  float radius,
                   float time)
   {
     registry->createEntity()

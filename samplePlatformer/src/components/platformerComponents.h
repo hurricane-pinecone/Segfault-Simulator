@@ -1,33 +1,20 @@
 #pragma once
 
-#include "spells.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
+#include "spells.h"
 
 #include <vector>
 
 // Game-local components for the platformer. These are plain structs used as ECS
-// components against the engine's generic registry -- no engine changes needed.
+// components against the engine's generic registry. The box collider is the
+// engine's shared sfs::BoxCollider2D and static platforms tag sfs::SolidObject.
 namespace platformer
 {
 
-// Axis-aligned box collider, half-extents in world pixels, centred on the
-// entity's TransformComponent.position.
-struct BoxCollider
-{
-  glm::vec2 half{8.0f, 8.0f};
-
-  BoxCollider() = default;
-  explicit BoxCollider(glm::vec2 half) : half(half) {}
-};
-
-// Tags a static, immovable, solid platform that dynamic bodies collide with.
-struct Solid
-{
-};
-
 // Marks a dynamic body affected by gravity and platform collision. onGround is
-// written by PlatformerPhysicsSystem each frame (true when standing on a solid).
+// written by PlatformerPhysicsSystem each frame (true when standing on a
+// solid).
 struct PlatformerBody
 {
   bool onGround = false;
@@ -78,7 +65,6 @@ struct Lifetime
 struct PlayerTag
 {
 };
-
 
 // The player's collected spells. Every shot applies all of them, stacked.
 struct Loadout

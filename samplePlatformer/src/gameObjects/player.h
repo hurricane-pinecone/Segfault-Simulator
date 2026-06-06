@@ -2,7 +2,7 @@
 
 #include "components/platformerComponents.h"
 #include "config.h"
-#include "spells.h"
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
@@ -13,17 +13,21 @@
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "glm/glm/common.hpp"
+#include "glm/glm/exponential.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
+#include "spells.h"
 
 #include <algorithm>
-#include <cmath>
 
 // The player: walks (A/D), jumps (Space), and sprays laser bolts toward the
-// mouse (hold left-click). Each shot is built from the player's collected spells
-// (Loadout), stacking modifiers (Triple/Bounce/Homing/Pierce/Explosive/Chain/
-// Giant/Gravity/DamageUp/Rapid) onto every bolt.
+// mouse (hold left-click). Each shot is built from the player's collected
+// spells (Loadout), stacking modifiers
+// (Triple/Bounce/Homing/Pierce/Explosive/Chain/ Giant/Gravity/DamageUp/Rapid)
+// onto every bolt.
 class Player : public sfs::GameObject
 {
 public:
@@ -35,21 +39,20 @@ public:
     const sfs::Sprite* bolt = scene.assetStore().getSprite("bolt");
     m_boltSprite = bolt ? bolt->id : 0;
 
-    m_entity =
-        scene.createEntity()
-            .addComponent<sfs::SpriteComponent>(guy ? guy->id : 0,
-                                                glm::vec2{0.5f, 0.5f})
-            .addComponent<sfs::TransformComponent>(
-                glm::vec2{PLAYER_START_X, PLAYER_START_Y},
-                glm::vec2{3.0f, 3.0f})
-            .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0f, 0.0f})
-            .addComponent<platformer::BoxCollider>(glm::vec2{20.0f, 24.0f})
-            .addComponent<platformer::PlatformerBody>()
-            .addComponent<platformer::PlayerTag>()
-            .addComponent<platformer::Loadout>()
-            .addComponent<sfs::LightEmitterComponent>(
-                380.0f, 1.3f, 0.0f, glm::vec3{1.0f, 0.85f, 0.55f})
-            .addComponent<sfs::RenderLayerComponent>(10);
+    m_entity = scene.createEntity()
+                   .addComponent<sfs::SpriteComponent>(
+                       guy ? guy->id : 0, glm::vec2{0.5f, 0.5f})
+                   .addComponent<sfs::TransformComponent>(
+                       glm::vec2{PLAYER_START_X, PLAYER_START_Y},
+                       glm::vec2{3.0f, 3.0f})
+                   .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0f, 0.0f})
+                   .addComponent<sfs::BoxCollider2D>(glm::vec2{20.0f, 24.0f})
+                   .addComponent<platformer::PlatformerBody>()
+                   .addComponent<platformer::PlayerTag>()
+                   .addComponent<platformer::Loadout>()
+                   .addComponent<sfs::LightEmitterComponent>(
+                       380.0f, 1.3f, 0.0f, glm::vec3{1.0f, 0.85f, 0.55f})
+                   .addComponent<sfs::RenderLayerComponent>(10);
   }
 
   void onUpdate(double deltaTime) override
@@ -73,22 +76,24 @@ public:
     if (state.onGround && input.keyboard().keyPressed(sfs::Key::Space))
       body.velocity.y = -JUMP_SPEED;
 
-    if (input.mouse().mouseHeld(sfs::MouseButton::Left) && m_fireCooldown <= 0.0)
+    if (input.mouse().mouseHeld(sfs::MouseButton::Left) &&
+        m_fireCooldown <= 0.0)
     {
       const auto& spells = m_entity.getComponent<platformer::Loadout>().spells;
       fire(input.mouse().getPosition(), spells);
 
       const int rapid = static_cast<int>(
           std::count(spells.begin(), spells.end(), platformer::Spell::Rapid));
-      m_fireCooldown = std::max(0.02, FIRE_INTERVAL * std::pow(0.62, rapid));
+      m_fireCooldown = glm::max(
+          0.02, FIRE_INTERVAL * glm::pow(0.62, static_cast<double>(rapid)));
     }
   }
 
 private:
   static glm::vec2 rotate(const glm::vec2& v, float radians)
   {
-    const float s = std::sin(radians);
-    const float c = std::cos(radians);
+    const float s = glm::sin(radians);
+    const float c = glm::cos(radians);
     return {v.x * c - v.y * s, v.x * s + v.y * c};
   }
 
@@ -115,16 +120,34 @@ private:
     {
       switch (spell)
       {
-      case platformer::Spell::Triple: shots += 2; break;
-      case platformer::Spell::Bounce: bullet.bounces += BOUNCES_PER_SPELL; break;
-      case platformer::Spell::Homing: bullet.homing = true; break;
-      case platformer::Spell::Pierce: bullet.pierce = true; break;
-      case platformer::Spell::Explosive: bullet.explosive = true; break;
-      case platformer::Spell::Chain: bullet.chain = true; break;
-      case platformer::Spell::Gravity: bullet.gravity += GRAVITY_PER_SPELL; break;
-      case platformer::Spell::DamageUp: bullet.damage += DAMAGE_PER_SPELL; break;
-      case platformer::Spell::Rapid: break; // affects fire cooldown
-      default: break;
+      case platformer::Spell::Triple:
+        shots += 2;
+        break;
+      case platformer::Spell::Bounce:
+        bullet.bounces += BOUNCES_PER_SPELL;
+        break;
+      case platformer::Spell::Homing:
+        bullet.homing = true;
+        break;
+      case platformer::Spell::Pierce:
+        bullet.pierce = true;
+        break;
+      case platformer::Spell::Explosive:
+        bullet.explosive = true;
+        break;
+      case platformer::Spell::Chain:
+        bullet.chain = true;
+        break;
+      case platformer::Spell::Gravity:
+        bullet.gravity += GRAVITY_PER_SPELL;
+        break;
+      case platformer::Spell::DamageUp:
+        bullet.damage += DAMAGE_PER_SPELL;
+        break;
+      case platformer::Spell::Rapid:
+        break; // affects fire cooldown
+      default:
+        break;
       }
       colorSum += spellColor(spell);
       ++colorCount;
@@ -132,7 +155,7 @@ private:
 
     bullet.color = colorCount > 0 ? colorSum / static_cast<float>(colorCount)
                                   : glm::vec3{1.0f, 0.2f, 0.12f};
-    shots = std::min(shots, 13);
+    shots = glm::min(shots, 13);
 
     // Bounce / homing bolts live longer so they have time to ricochet / curve.
     if (bullet.bounces > 0 || bullet.homing)
@@ -154,21 +177,22 @@ private:
 
       m_scene->createEntity()
           .addComponent<sfs::TransformComponent>(
-              origin, glm::vec2{1.3f * sizeMul, 0.32f * sizeMul},
-              std::atan2(dir.y, dir.x))
-          .addComponent<sfs::SpriteComponent>(m_boltSprite,
-                                              glm::vec2{0.5f, 0.5f})
+              origin,
+              glm::vec2{1.3f * sizeMul, 0.32f * sizeMul},
+              glm::atan(dir.y, dir.x))
+          .addComponent<sfs::SpriteComponent>(
+              m_boltSprite, glm::vec2{0.5f, 0.5f})
           .addComponent<platformer::Bullet>(b)
-          .addComponent<sfs::LightEmitterComponent>(170.0f * sizeMul, 2.2f, 0.0f,
-                                                    b.color)
+          .addComponent<sfs::LightEmitterComponent>(
+              170.0f * sizeMul, 2.2f, 0.0f, b.color)
           .addComponent<sfs::RenderLayerComponent>(11);
     }
 
     // Muzzle flash, tinted by the current bolt colour.
     m_scene->createEntity()
         .addComponent<sfs::TransformComponent>(origin + aim * 30.0f)
-        .addComponent<sfs::LightEmitterComponent>(240.0f, 2.4f, 0.0f,
-                                                  bullet.color)
+        .addComponent<sfs::LightEmitterComponent>(
+            240.0f, 2.4f, 0.0f, bullet.color)
         .addComponent<platformer::Lifetime>(MUZZLE_FLASH_TIME);
   }
 

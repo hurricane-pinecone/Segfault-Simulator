@@ -1,7 +1,7 @@
 
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/core/components/elevationComponent.h"
-#include "engine/core/components/screenSpaceCollider.h"
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/worldCollider.h"
 
@@ -703,22 +703,15 @@ void IsometricRenderSystem::drawDebugColliders(SDL_Color worldColor,
     m_quadRenderer.drawLineLoop(points, 5, worldColor);
   }
 
-  // ScreenSpaceColliders are authored in sprite pixels from the sprite's
-  // top-left, so they overlay the sprite directly in screen space (sprite Y and
-  // screen Y both grow downward -- no projection). Rebuild the same screen rect
-  // the render loop draws the sprite into, then place the box inside it.
+  // BoxCollider2D is a screen-space hit box centred on the entity (position +
+  // offset), in sprite pixels scaled like the sprite -- so it overlays the art
+  // directly (sprite Y and screen Y both grow downward, elevation already baked
+  // into the screen position). Draw a centred box of half-extents * pxScale.
   for (const auto& entity :
-       registry
-           ->view<ScreenSpaceCollider, TransformComponent, SpriteComponent>())
+       registry->view<BoxCollider2D, TransformComponent, SpriteComponent>())
   {
-    const auto& collider = entity.getComponent<ScreenSpaceCollider>();
+    const auto& collider = entity.getComponent<BoxCollider2D>();
     const auto& transform = entity.getComponent<TransformComponent>();
-    const auto& spriteComponent = entity.getComponent<SpriteComponent>();
-
-    const auto sprite = assetStore.getSprite(spriteComponent.spriteId);
-
-    if (!sprite)
-      continue;
 
     const float elevation = isTileEntity(entity)
                                 ? tileElevationLevel(entity)
@@ -727,16 +720,12 @@ void IsometricRenderSystem::drawDebugColliders(SDL_Color worldColor,
     const glm::vec2 pxScale{transform.scale.x * proj.worldScale * proj.zoom,
                             transform.scale.y * proj.worldScale * proj.zoom};
 
-    const glm::vec2 spriteSize{
-        sprite->srcRect.w * pxScale.x, sprite->srcRect.h * pxScale.y};
-
-    const glm::vec2 spriteTopLeft =
+    const glm::vec2 center =
         m_context.worldToScreen(transform.position, elevation) +
-        spriteComponent.renderOffset * proj.zoom -
-        spriteComponent.anchor * spriteSize;
-
-    const glm::vec2 topLeft = spriteTopLeft + collider.offset * pxScale;
-    const glm::vec2 boxSize = collider.size * pxScale;
+        collider.offset * pxScale;
+    const glm::vec2 boxHalf = collider.half * pxScale;
+    const glm::vec2 topLeft = center - boxHalf;
+    const glm::vec2 boxSize = boxHalf * 2.0f;
 
     const glm::vec2 points[5] = {
         topLeft,
