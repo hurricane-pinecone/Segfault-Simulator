@@ -106,6 +106,16 @@ public:
   void unregisterConfig(ILuaConfigurable& config);
 
   /**
+   * Opt a game into the in-app developer console. The console (toggled with the
+   * backtick key) routes the lines it runs through this VM via activeLua(), so a
+   * Lua-enabled game turns it on with a single call after init(). Off by default
+   * -- a game with no VM has nothing for the console to run. The host reads this
+   * flag each frame, so it can be flipped live.
+   */
+  void setConsoleEnabled(bool enabled) { m_consoleEnabled = enabled; }
+  bool consoleEnabled() const { return m_consoleEnabled; }
+
+  /**
    * Per-eval instruction budget (a Lua count hook). A chunk exceeding it is
    * aborted with an error instead of hanging the thread -- essential for an
    * interactive console (an infinite loop would otherwise freeze the app, and
@@ -170,6 +180,10 @@ private:
 
   // Set when print/log output or the result was dropped for the output cap.
   bool m_outputTruncated = false;
+
+  // Whether the host should expose its in-app developer console (see
+  // setConsoleEnabled). Off until a game opts in.
+  bool m_consoleEnabled = false;
 
   // Heap "slots" pointing at registered configs. The Lua closures hold a slot,
   // not the config directly, so unregisterConfig() can null a slot and instantly

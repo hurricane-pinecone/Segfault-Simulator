@@ -86,6 +86,7 @@ void SampleGame::setupLua()
   m_lua = std::make_unique<sfs::LuaScripting>();
   m_lua->init();
   sfs::setActiveLua(m_lua.get()); // routes the web editor's eval here
+  m_lua->setConsoleEnabled(true); // expose the in-app console (backtick) -- §8
 
   GameLuaApi api(*this);          // transient -- see "Lifetimes" below
   m_lua->registerApi(api);        // calls api.registerBindings(*m_lua)
@@ -335,13 +336,47 @@ open endpoint for anonymous code.
 
 ## 8. Using it at runtime
 
-**Web:** the page's Lua console (CodeMirror editor) sends source to the VM via the
+### In-app dev console (built in)
+
+A one-line console — toggled with the **backtick** (`` ` ``) key — runs commands
+against the live VM without a rebuild. It draws through the engine's
+`TextRenderer` (no ImGui dependency), so it ships in **every** build: native
+(debug or release) and web.
+
+It's **opt-in**, since it needs a VM to run against: call
+`setConsoleEnabled(true)` once after `init()` (see §1). The host then exposes it
+automatically — no per-frame code.
+
+While open it owns the keyboard (the game ignores input as you type):
+
+| Key | Action |
+|-----|--------|
+| `` ` `` | toggle the console |
+| Enter | run the line (result / error shows above the prompt) |
+| Up / Down | recall previous commands |
+| Backspace | edit |
+| Escape | close |
+
+Anything bound onto the VM is callable here. With the sample game's API, e.g.
+`splat()`, `spawnGore(12, 9)`, `sun.set{ timeOfDay = 0.5 }`, or
+`toggleDebug()` (the sample's bound toggle for the native ImGui overlay).
+
+> The flag is read every frame, so it can be flipped live. On web the console and
+> the on-page editor share the **same** VM, so a value or binding set in one is
+> visible in the other.
+
+### Web editor
+
+The page's Lua console (CodeMirror editor) sends source to the VM via the
 exported `sfsEvalLua`; autocomplete comes from `sfsLuaKeys`. Run with
 Ctrl/Cmd-Enter or the Run button. (Click the canvas to give input back to the
-game; click the editor to type.)
+game and the in-app console; click the editor to type into it.)
 
-**Native:** drive `LuaScripting::eval` / `evalRepl` from wherever you like (the
-sample wires no native console by default).
+### Driving eval directly
+
+You can also call `LuaScripting::eval` / `evalRepl` from your own code (a custom
+overlay, a hotkey, a test) — that's all the console and web editor do under the
+hood.
 
 Example session (sample game API):
 
