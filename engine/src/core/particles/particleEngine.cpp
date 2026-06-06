@@ -8,6 +8,7 @@
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
+#include "glm/glm/geometric.hpp"
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
@@ -511,6 +512,37 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
     const float hi = lo + 1.0f;
     const float hitAlong = glm::clamp(east ? hitPos.y : hitPos.x, lo, hi);
 
+    // Directional impact mark on the face: a static, rotated splat at the hit,
+    // oriented by the in-plane impact direction (along-edge component + the
+    // vertical velocity). The running drips below then bleed down from it.
+    {
+      // The face only shows the in-plane velocity (tangential along the edge +
+      // vertical). The vertical part is damped so the mark leans HORIZONTAL --
+      // the drips already carry "down", so a near-horizontal smear is what makes
+      // a wall hit read as a sideways splat instead of yet another vertical
+      // streak.
+      const float alongVel = east ? p.vel.y : p.vel.x;
+      const float wallSpeed =
+          glm::sqrt(p.vel.x * p.vel.x + p.vel.y * p.vel.y + p.velZ * p.velZ);
+      const float energy = glm::clamp(wallSpeed / 5.0f, 0.0f, 1.0f);
+      DecalSpawn mark;
+      mark.worldPos =
+          east ? glm::vec2{faceX, hitAlong} : glm::vec2{hitAlong, faceY};
+      mark.elevation = hitElev;
+      mark.surface = DecalSurface::Wall;
+      mark.wallSide = wallSide;
+      mark.wallBottom = wallBottom;
+      // Long along the smear, kept wide enough to read as a splat (not a
+      // hairline); rounder for a soft hit, longer/thinner for a fast one.
+      mark.size = glm::vec2{baseSize * (1.2f + energy * 2.5f),
+                            baseSize * (0.7f + (1.0f - energy) * 0.5f)};
+      mark.rotation = glm::atan(p.velZ * 0.35f, alongVel);
+      mark.color = color;
+      mark.textureId = &desc.decal.texture;
+      // dripSpeed stays 0 -> a static directional mark, not a running drip.
+      m_decalSink->addDecal(mark);
+    }
+
     int drips = 1 + static_cast<int>(baseSize * 8.0f);
     drips = glm::clamp(drips, 1, 3);
 
@@ -529,7 +561,9 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
       spawn.surface = DecalSurface::Wall;
       spawn.wallSide = wallSide;
       spawn.wallBottom = wallBottom;
-      spawn.size = baseSize * (0.3f + randf(inst.rng) * 0.3f); // thin streak
+      // Thin streak: width is size.y; length comes from the elevation run.
+      const float dripW = baseSize * (0.3f + randf(inst.rng) * 0.3f);
+      spawn.size = glm::vec2{dripW, dripW};
       spawn.color = color;
       spawn.textureId = &desc.decal.texture;
       spawn.dripSpeed = 3.0f + randf(inst.rng) * 4.0f; // levels/sec
@@ -539,20 +573,60 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
     return;
   }
 
-  // Ground / water: a single mark. Ground is permanent; water fades.
-  DecalSpawn spawn;
-  spawn.worldPos = hitPos;
-  spawn.elevation = hitElev;
-  spawn.surface = surface;
-  spawn.size = baseSize;
-  spawn.rotation = p.rotation;
-  spawn.color = color;
-  spawn.textureId = &desc.decal.texture;
-  spawn.fadeRate = (surface == DecalSurface::Water && m_terrainSource)
-                       ? m_terrainSource->waterFadeRateAt(tile.x, tile.y)
-                       : 0.0f;
+  // Ground / water: orient the mark along the impact direction, and on solid
+  // ground throw a few fanned sub-streaks so a hit reads as directional splatter
+  // rather than a round blob. Faster hits stretch longer and fan wider. Ground
+  // is permanent (saturation-capped); water fades.
+  // Blood lands at only ~1-4 tiles/s planar, so the strengths below are
+  // normalised to that range (and pushed hard to read at iso scale). `drift` is
+  // how directional the hit was (horizontal travel), `energy` its overall force.
+  const float planar = glm::length(p.vel);
+  const float impact = glm::sqrt(planar * planar + p.velZ * p.velZ);
+  const glm::vec2 dir =
+      planar > 0.05f
+          ? p.vel / planar
+          : glm::vec2{glm::cos(p.rotation), glm::sin(p.rotation)};
+  const float base = glm::atan(dir.y, dir.x);
+  const float drift = glm::clamp(planar / 3.0f, 0.0f, 1.0f);
+  const float energy = glm::clamp(impact / 5.0f, 0.0f, 1.0f);
+  const float fadeRate = (surface == DecalSurface::Water && m_terrainSource)
+                             ? m_terrainSource->waterFadeRateAt(tile.x, tile.y)
+                             : 0.0f;
 
-  m_decalSink->addDecal(spawn);
+  const auto stamp = [&](glm::vec2 size, float rotation)
+  {
+    DecalSpawn spawn;
+    spawn.worldPos = hitPos;
+    spawn.elevation = hitElev;
+    spawn.surface = surface;
+    spawn.size = size;
+    spawn.rotation = rotation;
+    spawn.color = color;
+    spawn.textureId = &desc.decal.texture;
+    spawn.fadeRate = fadeRate;
+    m_decalSink->addDecal(spawn);
+  };
+
+  // Main splat: round for a near-vertical drop, a long teardrop along travel for
+  // a fast sideways hit.
+  stamp(glm::vec2{baseSize * (1.0f + drift * 2.2f), baseSize}, base);
+
+  // Fanned sub-streaks on solid ground: tight around the drift when directional,
+  // splayed wide when the hit came mostly straight down. Capped at 2 permanent
+  // decals per hit (the coverage cap bounds repeated hits on a spot).
+  if (surface == DecalSurface::Ground && energy > 0.15f)
+  {
+    const int streaks = glm::clamp(1 + static_cast<int>(energy * 2.5f), 1, 2);
+    const float spread = glm::mix(1.4f, 0.45f, drift);
+    for (int k = 0; k < streaks; ++k)
+    {
+      const float a = base + (randf(inst.rng) - 0.5f) * 2.0f * spread;
+      const float len =
+          baseSize * (1.6f + energy * 3.0f) * (0.6f + randf(inst.rng) * 0.6f);
+      const float wid = baseSize * (0.25f + randf(inst.rng) * 0.2f);
+      stamp(glm::vec2{len, wid}, a);
+    }
+  }
 }
 
 void ParticleEngine::syncComponentEmitters()

@@ -66,8 +66,10 @@ const std::string* Decals::internTexture(const std::string& id)
 bool Decals::isStatic(const Decal& d)
 {
   // Static = never changes per frame: not fading, and not a wall drip still
-  // running down. (Permanent water with fadeRate 0 counts as static too.)
-  return d.fadeRate <= 0.0f && !(d.surface == DecalSurface::Wall && !d.settled);
+  // running down. A wall mark with no drip (dripSpeed 0) is static at once;
+  // permanent water (fadeRate 0) counts as static too.
+  return d.fadeRate <= 0.0f &&
+         !(d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f && !d.settled);
 }
 
 bool Decals::sameColor(const glm::vec3& a, const glm::vec3& b)
@@ -390,8 +392,11 @@ void Decals::buildDecalVerts(const Decal& decal,
 
   if (decal.surface != DecalSurface::Wall)
   {
-    // Ground/water: a rotated world square lying flat on the surface.
-    const float h = decal.size * 0.5f;
+    // Ground/water: a rotated world rectangle lying flat on the surface. Local
+    // +X is the length (along the impact direction), +Y the width, so an
+    // elongated splat streaks along travel.
+    const float hx = decal.size.x * 0.5f;
+    const float hy = decal.size.y * 0.5f;
     const float c = glm::cos(decal.rotation);
     const float s = glm::sin(decal.rotation);
     const auto rot = [&](float ox, float oy)
@@ -401,10 +406,10 @@ void Decals::buildDecalVerts(const Decal& decal,
     const float key =
         decal.worldPos.x + decal.worldPos.y + e * 0.5f + kGroundBias;
 
-    const glm::vec2 w0 = decal.worldPos + rot(-h, -h);
-    const glm::vec2 w1 = decal.worldPos + rot(h, -h);
-    const glm::vec2 w2 = decal.worldPos + rot(h, h);
-    const glm::vec2 w3 = decal.worldPos + rot(-h, h);
+    const glm::vec2 w0 = decal.worldPos + rot(-hx, -hy);
+    const glm::vec2 w1 = decal.worldPos + rot(hx, -hy);
+    const glm::vec2 w2 = decal.worldPos + rot(hx, hy);
+    const glm::vec2 w3 = decal.worldPos + rot(-hx, hy);
 
     push(w0, e, {0.0f, 0.0f}, key);
     push(w1, e, {1.0f, 0.0f}, key);
@@ -415,21 +420,57 @@ void Decals::buildDecalVerts(const Decal& decal,
     return;
   }
 
+  // Wall faces run along one tile axis (east face along Y, south along X). Decals
+  // on the face live in (u along the edge, v in elevation).
+  const glm::vec2 edgeDir =
+      decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
+
+  // Key each vertex off its own world position + elevation, matching the block
+  // face's depth (world.x + world.y + ground * 0.5); the bias lifts the decal
+  // just in front of the coplanar face so the depth test keeps it visible.
+  const auto wallKey = [](glm::vec2 wp, float elev)
+  { return wp.x + wp.y + elev * 0.5f + kWallBias; };
+
+  // Elevation levels per tile-unit of screen height, so a face decal rotates by
+  // a true on-screen angle and isn't squashed by the projection.
+  const float aspect = m_elevationStep > 0.0001f
+                           ? (m_tileWidth * 0.5f / m_elevationStep)
+                           : 1.0f;
+
+  // No drip: a directional impact mark, a rotated rectangle on the face. Rotated
+  // in screen-proportional space (elevation scaled by `aspect`), then mapped to
+  // world (u -> edge) and elevation.
+  if (decal.dripSpeed <= 0.0f)
+  {
+    const float hx = decal.size.x * 0.5f; // length (local +X)
+    const float hy = decal.size.y * 0.5f; // width  (local +Y)
+    const float c = glm::cos(decal.rotation);
+    const float s = glm::sin(decal.rotation);
+    const auto mark = [&](float ox, float oy, glm::vec2 uv)
+    {
+      const float ru = ox * c - oy * s; // along the edge (tiles)
+      const float rv = ox * s + oy * c; // vertical (tile-equiv)
+      const glm::vec2 wp = decal.worldPos + edgeDir * ru;
+      const float elev = decal.elevation + rv * aspect;
+      push(wp, elev, uv, wallKey(wp, elev));
+    };
+
+    mark(-hx, -hy, {0.0f, 0.0f});
+    mark(hx, -hy, {1.0f, 0.0f});
+    mark(hx, hy, {1.0f, 1.0f});
+    mark(-hx, -hy, {0.0f, 0.0f});
+    mark(hx, hy, {1.0f, 1.0f});
+    mark(-hx, hy, {0.0f, 1.0f});
+    return;
+  }
+
   // Wall drip: a streak running down the face from its start elevation to the
   // head, capped with a soft round blob at the head. UVs: streak samples the
   // dot's centreline (v=0.5) so it's solid top-to-bottom; the cap uses full
   // radial UVs to read round.
-  const glm::vec2 edgeDir =
-      decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
   const float headElev =
       glm::max(decal.wallBottom, decal.elevation - decal.dripSpeed * decal.age);
-  const float halfW = decal.size * 0.5f;
-
-  // Key each vertex off its own world position + elevation, matching the block
-  // face's depth (world.x + world.y + ground * 0.5); the bias lifts the drip
-  // just in front of the coplanar face so the depth test keeps it visible.
-  const auto wallKey = [](glm::vec2 wp, float elev)
-  { return wp.x + wp.y + elev * 0.5f + kWallBias; };
+  const float halfW = decal.size.y * 0.5f;
 
   const glm::vec2 a = decal.worldPos - edgeDir * halfW;
   const glm::vec2 b = decal.worldPos + edgeDir * halfW;

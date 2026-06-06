@@ -29,7 +29,11 @@ struct DecalSpawn
   uint8_t wallSide = 0;    // 0=W 1=N 2=E 3=S, only when surface == Wall
   float wallBottom = 0.0f; // elevation of the wall face's base (Wall only)
 
-  float size = 0.15f; // tiles
+  // Footprint in tiles. size.x = length (along `rotation`'s local +X axis),
+  // size.y = width (across). Equal = a round splat; x > y = a directional streak.
+  // Wall drips use size.y as the streak width (length comes from the elevation
+  // run, not size).
+  glm::vec2 size{0.15f, 0.15f};
   float rotation = 0.0f;
   glm::vec4 color{0.35f, 0.0f, 0.0f, 0.85f};
 
