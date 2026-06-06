@@ -16,8 +16,10 @@ actors.
 
 You create entities and systems through the **`Scene`** (your level/screen), and
 mutate components through the **`Entity`** handle. The engine's `Registry` owns the
-storage, but game code never touches it directly — only a `System` subclass does,
-through its protected `registry` pointer.
+storage. In a Scene-based game, your code never touches it directly: entities and
+systems go through `Scene`, and a `System` subclass reaches it through its protected
+`registry` pointer. For headless contexts (a tool, a test, or a host that brings its
+own rendering), you can construct and use `Registry` directly without the runtime.
 
 ## Components
 

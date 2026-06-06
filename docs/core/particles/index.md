@@ -6,6 +6,11 @@ dependency-free, no rendering. *Using* it in a rendered game (registering the
 module, spawning, making decals stick) is a runtime concern — see
 [Particles in your game](../../runtime/particles/index.md).
 
+`ParticleEngine` can also be used without an ECS registry (for example, in a tool
+or a test). In that mode only `spawnBurst` is available; component-bound entity
+emitters require a registry. Call `setRegistry(nullptr)` (or simply never call
+`setRegistry`) to stay in this burst-only mode.
+
 - **Effect** — the authored description of a kind of particle (a
   `ParticleEffectDesc`), registered under a name.
 - **Particle** — one live sprite, simulated until it dies.
