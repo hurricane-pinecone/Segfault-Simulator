@@ -6,7 +6,7 @@
 
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/particles/particleEffect.h>
-#include <engine/core/rendering/flatProjection.h>
+#include <engine/core/rendering/projection/flatProjection.h>
 #include <engine/runtime/TextRenderer/textRenderer.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering/flatRenderContext.h>

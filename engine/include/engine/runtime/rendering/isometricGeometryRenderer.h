@@ -1,10 +1,10 @@
 #pragma once
 
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/glDebug.h"
 #include "engine/runtime/rendering/iIsometricRenderer.h"
 #include "engine/runtime/rendering/openGLQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
 #include "engine/runtime/rendering/renderStats.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"

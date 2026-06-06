@@ -1,10 +1,10 @@
 #pragma once
 
 #include "engine/core/particles/decal.h"
+#include "engine/core/rendering/vertices.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/isometricRenderContext.h" // IVec2Hash
 #include "engine/runtime/rendering/modules/renderModule.h"
-#include "engine/runtime/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -26,8 +26,9 @@ namespace sfs
 //
 // Emits one DecalDrawCommand/frame: dirty-chunk uploads + visible chunk keys +
 // the animating vertices + chunks to free. The renderer holds the heavy data.
-class Decals : public IDecalSink,
-               public CommandModule<IsometricRenderContext, DecalDrawCommand>
+class IsometricDecalSink
+    : public IDecalSink,
+      public CommandModule<IsometricRenderContext, DecalDrawCommand>
 {
 public:
   void addDecal(const DecalSpawn& spawn) override; // IDecalSink

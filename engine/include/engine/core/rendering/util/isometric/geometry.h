@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/core/components/elevationComponent.h"
-#include "engine/core/rendering/iProjection.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
@@ -448,71 +447,6 @@ inline static glm::ivec2 gridCellOf(const glm::vec2& position)
   };
 }
 
-struct IsometricProjectionConfig
-{
-  int tileWidth = 0;
-  int tileHeight = 0;
-  int elevationStep = 8;
-
-  float worldScale = 1.0f;
-
-  glm::vec2 screenCenter{0.0f, 0.0f};
-};
-
-/**
- * Isometric heightfield projection: maps a grid position plus an integer
- * elevation level to screen pixels (and back). `elevation` is in elevation
- * levels, not pixels. Overrides are `final` so calls through the concrete type
- * devirtualize on the per-sprite/per-vertex hot path.
- */
-struct IsometricProjection : public IProjection
-{
-  int tileWidth = 0;
-  int tileHeight = 0;
-  int elevationStep = 8;
-
-  float worldScale = 1.0f;
-  float zoom = 1.0f;
-
-  /// Screen-space iso offset of the camera, i.e.
-  /// gridToIsometric(cameraGridPosition, tileWidth, tileHeight, worldScale).
-  glm::vec2 cameraIso{0.0f, 0.0f};
-
-  /// Pixel position that grid origin maps to before the camera offset is
-  /// applied (typically the window centre).
-  glm::vec2 screenCenter{0.0f, 0.0f};
-
-  glm::vec2 worldToScreen(const glm::vec2& world,
-                          float elevation) const final
-  {
-    glm::vec2 p = (gridToIsometric(world, tileWidth, tileHeight, worldScale) -
-                   cameraIso) *
-                      zoom +
-                  screenCenter;
-
-    p.y -= elevation * static_cast<float>(elevationStep) * worldScale * zoom;
-
-    return p;
-  }
-
-  glm::vec2 screenToWorld(const glm::vec2& screen,
-                          float elevation) const final
-  {
-    glm::vec2 p = screen;
-
-    p.y += elevation * static_cast<float>(elevationStep) * worldScale * zoom;
-
-    const glm::vec2 iso = (p - screenCenter) / zoom + cameraIso;
-
-    return isometricTogrid(iso, tileWidth, tileHeight, worldScale);
-  }
-
-  float worldUnitToPixels() const final
-  {
-    return static_cast<float>(tileWidth) * worldScale * zoom;
-  }
-};
-
 struct TilePick
 {
   glm::ivec2 tile{0, 0};
@@ -543,36 +477,6 @@ inline static int maxTerrainElevation(const TerrainElevationGridView& grid)
   }
 
   return maxElevation;
-}
-
-inline static TilePick pickTile(const glm::vec2& screen,
-                                const IsometricProjection& projection,
-                                const TerrainElevationGridView& terrain)
-{
-  const int maxElevation = maxTerrainElevation(terrain);
-
-  for (int elevation = maxElevation; elevation >= 0; elevation--)
-  {
-    const glm::vec2 world =
-        projection.screenToWorld(screen, static_cast<float>(elevation));
-
-    const glm::ivec2 tile = gridCellOf(world);
-
-    int tileElevation = 0;
-
-    // Take the first (topmost) cell whose column reaches the tested plane.
-    // The >= also resolves a block's vertical walls, where the cursor projects
-    // onto the tile only at planes below its top. Report the tile's true top
-    // elevation so the highlight lands on the top face.
-    if (terrain.tryGet(tile, tileElevation) && tileElevation >= elevation)
-      return TilePick{tile, world, tileElevation, true};
-  }
-
-  // No tile under the cursor: fall back to the flat ground projection so
-  // callers still get a usable grid coordinate.
-  const glm::vec2 ground = projection.screenToWorld(screen, 0.0f);
-
-  return TilePick{gridCellOf(ground), ground, 0, false};
 }
 
 } // namespace sfs

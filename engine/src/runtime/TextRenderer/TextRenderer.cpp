@@ -1,7 +1,7 @@
 #include "engine/core/Color/Color.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
 #include "engine/runtime/rendering/sdlColor.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
@@ -164,14 +164,14 @@ void TextRenderer::drawText(float x,
 
   command.texture = it->second.texture;
 
-  command.srcRect = SDL_Rect{
+  command.srcRect = {
       0,
       0,
       it->second.width,
       it->second.height,
   };
 
-  command.destRect = SDL_Rect{
+  command.destRect = {
       static_cast<int>(x),
       static_cast<int>(y),
       it->second.width,
@@ -181,7 +181,7 @@ void TextRenderer::drawText(float x,
   command.textureWidth = it->second.width;
   command.textureHeight = it->second.height;
 
-  command.tint = SDL_Color{
+  command.tint = {
       255,
       255,
       255,

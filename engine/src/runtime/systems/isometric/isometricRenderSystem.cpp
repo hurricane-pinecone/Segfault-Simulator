@@ -1,16 +1,16 @@
 
-#include "engine/runtime/assetStore/assetStore.h"
-#include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/boxCollider2D.h"
+#include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/worldCollider.h"
+#include "engine/runtime/assetStore/assetStore.h"
 
 #include "engine/core/components/surfaceEffect.h"
 #include "engine/core/components/tags/isometricTile.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/commands/renderCommand.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
-#include "engine/runtime/rendering/quads.h"
 #include "engine/runtime/rendering/renderStats.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 
@@ -19,10 +19,10 @@
 #include "engine/core/util/profiling.h"
 
 #include "engine/core/components/lightEmitterComponent.h"
+#include "engine/core/rendering/renderPass.h"
 #include "engine/runtime/rendering/modules/blockGeometry.h"
-#include "engine/runtime/rendering/modules/decals.h"
+#include "engine/runtime/rendering/modules/isometricDecalSink.h"
 #include "engine/runtime/rendering/modules/terrainShadow.h"
-#include "engine/runtime/rendering/renderPass.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -208,9 +208,9 @@ IsometricRenderSystem::~IsometricRenderSystem() = default;
 
 IDecalSink* IsometricRenderSystem::decalSink()
 {
-  Decals* decals = module<Decals>();
+  IsometricDecalSink* decals = module<IsometricDecalSink>();
   if (!decals)
-    decals = &withModule<Decals>();
+    decals = &withModule<IsometricDecalSink>();
   return decals;
 }
 
@@ -492,8 +492,11 @@ void IsometricRenderSystem::render()
                         ? RenderOrder{RenderPass::Terrain, sortKey, 0}
                         : RenderOrder{RenderPass::Terrain, sortKey, 1};
     command.textureId = &sprite->textureId;
-    command.quad.srcRect = sprite->srcRect;
-    command.quad.destRect = dest;
+    command.quad.srcRect = {sprite->srcRect.x,
+                            sprite->srcRect.y,
+                            sprite->srcRect.w,
+                            sprite->srcRect.h};
+    command.quad.destRect = {dest.x, dest.y, dest.w, dest.h};
     command.quad.textureWidth = surface->w;
     command.quad.textureHeight = surface->h;
 

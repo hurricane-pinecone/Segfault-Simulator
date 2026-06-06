@@ -1,11 +1,11 @@
 #pragma once
 
+#include "engine/core/Color/Color.h"
 #include "engine/core/particles/particleBatch.h" // ParticleQuad / ParticleBatch
-#include "SDL_pixels.h"
+#include "engine/core/rendering/rect.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
-#include <SDL_rect.h>
 #include <vector>
 
 namespace sfs
@@ -13,7 +13,7 @@ namespace sfs
 
 struct Quad
 {
-  SDL_Color tint{255, 255, 255, 255};
+  Color tint{255, 255, 255, 255};
   glm::vec2 points[4] = {};
 
   // Clip-space depth (gl_Position.z), set from the command's painter sort-key
@@ -30,13 +30,13 @@ struct TexturedQuad
 {
   unsigned int texture = 0;
 
-  SDL_Rect srcRect{0, 0, 0, 0};
-  SDL_Rect destRect{0, 0, 0, 0};
+  Rect srcRect{0, 0, 0, 0};
+  Rect destRect{0, 0, 0, 0};
 
   int textureWidth = 0;
   int textureHeight = 0;
 
-  SDL_Color tint{255, 255, 255, 255};
+  Color tint{255, 255, 255, 255};
 
   // Rotation in radians about the quad's centre (0 = axis-aligned). Lets a
   // sprite face an arbitrary direction (e.g. a projectile aligned to its
@@ -60,7 +60,7 @@ struct FreeformQuad : Quad
 {
   unsigned int texture = 0;
 
-  SDL_Rect srcRect{0, 0, 0, 0};
+  Rect srcRect{0, 0, 0, 0};
 
   int textureWidth = 0;
   int textureHeight = 0;

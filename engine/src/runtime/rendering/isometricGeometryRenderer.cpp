@@ -3,7 +3,7 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/rendering/glDebug.h"
-#include "engine/runtime/rendering/quads.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #include "engine/runtime/rendering/gpuProfiling.h"
 #include "engine/core/util/profiling.h"

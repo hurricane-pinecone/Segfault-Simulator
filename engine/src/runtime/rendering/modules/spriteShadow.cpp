@@ -4,9 +4,9 @@
 #include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
-#include "engine/runtime/rendering/util/isometric/geometry.h"
+#include "engine/core/rendering/util/isometric/geometry.h"
 #include "engine/core/util/algorithms/gridDDA.h"
-#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
+#include "engine/core/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
@@ -64,7 +64,10 @@ void SpriteShadow::constructSpriteShadows(
     return;
 
   const std::string* textureId = &sprite->textureId;
-  const SDL_Rect srcRect = sprite->srcRect;
+  const sfs::Rect srcRect{sprite->srcRect.x,
+                          sprite->srcRect.y,
+                          sprite->srcRect.w,
+                          sprite->srcRect.h};
   const int textureWidth = surface->w;
   const int textureHeight = surface->h;
   const glm::vec2 worldSample = transform.position;
@@ -291,7 +294,7 @@ void SpriteShadow::constructSpriteShadows(
         shadow.quad.textureWidth = textureWidth;
         shadow.quad.textureHeight = textureHeight;
 
-        shadow.quad.tint = SDL_Color{
+        shadow.quad.tint = {
             0,
             0,
             0,
@@ -385,7 +388,7 @@ void SpriteShadow::constructSpriteShadows(
       shadow.quad.textureWidth = textureWidth;
       shadow.quad.textureHeight = textureHeight;
 
-      shadow.quad.tint = SDL_Color{
+      shadow.quad.tint = {
           0,
           0,
           0,

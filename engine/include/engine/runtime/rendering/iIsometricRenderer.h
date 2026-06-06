@@ -1,9 +1,9 @@
 #pragma once
 
+#include "engine/core/rendering/quads.h"
+#include "engine/core/rendering/vertices.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
-#include "engine/runtime/rendering/vertices/vertices.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include <cstddef>
@@ -15,8 +15,8 @@ namespace sfs
 /**
  * Sun-shadow sampling style for the block-geometry path.
  *
- * Smooth samples the linearly-filtered heightmap for soft, rounded shadow edges.
- * Sharp walks tiles for blocky, tile-aligned edges.
+ * Smooth samples the linearly-filtered heightmap for soft, rounded shadow
+ * edges. Sharp walks tiles for blocky, tile-aligned edges.
  */
 enum class SunShadowStyle
 {
@@ -38,7 +38,8 @@ enum class SunShadowStyle
  * @param screenCenter   screen pixel that grid origin maps to
  * @param elevationStep  pixels of vertical rise per elevation level
  * @param depthMin       minimum painter sort-key this frame
- * @param depthInvRange  reciprocal of the frame's sort-key range (0 if degenerate)
+ * @param depthInvRange  reciprocal of the frame's sort-key range (0 if
+ * degenerate)
  * @param ambient        scene ambient level, so decals dim at night
  * @param ambientColor   scene ambient colour
  */
@@ -70,13 +71,14 @@ class IIsometricRenderer : public virtual IQuadRenderer
 public:
   using IQuadRenderer::submit;
 
-  /** Queue a merged surface mesh (water, lava, fog), projected and depth-stamped. */
+  /** Queue a merged surface mesh (water, lava, fog), projected and
+   * depth-stamped. */
   virtual void submit(const SurfaceCommand& command) = 0;
 
   /**
    * Draw a lit, textured mesh of terrain block faces. Positions are screen
-   * pixels; lighting uses the bound point lights, heightmap, and the sun set via
-   * setGeometryLighting.
+   * pixels; lighting uses the bound point lights, heightmap, and the sun set
+   * via setGeometryLighting.
    *
    * @param vertices      triangle vertices (screen-pixel positions)
    * @param count         number of vertices
@@ -160,7 +162,8 @@ public:
    * Upload the terrain elevation grid used to occlude point lights and the sun
    * against terrain.
    *
-   * @param elevations  row-major grid of integer elevation levels from the origin
+   * @param elevations  row-major grid of integer elevation levels from the
+   * origin
    * @param width       grid width in tiles (<= 0 disables occlusion)
    * @param height      grid height in tiles
    * @param originX     world tile x of the grid origin

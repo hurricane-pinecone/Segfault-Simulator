@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace sfs

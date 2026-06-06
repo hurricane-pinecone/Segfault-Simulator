@@ -1,7 +1,6 @@
 #pragma once
 
-#include "engine/runtime/rendering/quads.h"
-#include "glm/glm/ext/vector_float2.hpp"
+#include "engine/core/rendering/quads.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
 namespace sfs

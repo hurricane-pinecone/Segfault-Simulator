@@ -14,7 +14,6 @@ or `FlatRenderContext`), which keeps host and modules matched at compile time.
 
 ```cpp
 // Register features on a render system. Order doesn't matter; registration enables.
-renderSystem.withModule<sfs::Decals>();
 renderSystem.withModules<sfs::TerrainShadow, sfs::SpriteShadow, sfs::BlockGeometry>();
 
 auto& particles = renderSystem.withModule<sfs::Particles<Context>>();
@@ -27,8 +26,9 @@ it on; removing it (`removeModule<T>()`) turns it off and drops its accumulated
 state. There is no separate "enabled" flag to track.
 
 Built-in modules include terrain shadows, sprite shadows, water, block geometry,
-decals, and particles (the isometric system); the flat system hosts particles the
-same way.
+and particles (the isometric system); the flat system hosts particles the same
+way. Decals are a module too, but the render system registers that one for you the
+first time a feature asks for its decal sink — a game never registers it directly.
 
 ## Modules are independent
 

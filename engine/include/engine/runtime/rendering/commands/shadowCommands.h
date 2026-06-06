@@ -1,8 +1,7 @@
 #pragma once
 
-#include "SDL2/SDL_pixels.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/commands/renderCommand.h"
-#include "engine/runtime/rendering/quads.h"
 #include <variant>
 
 namespace sfs
@@ -12,7 +11,7 @@ struct TerrainShadowCommand : RenderCommand<Quad>
 {
   TerrainShadowCommand()
   {
-    quad.tint = SDL_Color{0, 0, 0, 255};
+    quad.tint = {0, 0, 0, 255};
     order = {RenderPass::Shadow, 0, 1};
   }
 };
@@ -29,7 +28,7 @@ struct SpriteShadowCommand : RenderCommand<FreeformQuad>
     // shadows. The depth buffer makes a block in front occlude the shadow;
     // per-command depth comes from the receiver tile.
     order = {RenderPass::SpriteShadow, 0, 0};
-    quad.tint = SDL_Color{0, 0, 0, 255};
+    quad.tint = {0, 0, 0, 255};
   }
 };
 

@@ -9,12 +9,12 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- Entity::getComponent<T> defs
 #include "engine/core/particles/particleBatch.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/core/util/algorithms/polygonClip.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/trigonometric.hpp"
@@ -45,13 +45,14 @@ void FlatRenderSystem::create()
   registerComponent<SpriteComponent>();
 }
 
-void FlatRenderSystem::setDecalSprites(SpriteId soft, SpriteId streak, int layer)
+void FlatRenderSystem::setDecalSprites(SpriteId soft,
+                                       SpriteId streak,
+                                       int layer)
 {
   m_decalSoft = soft;
   m_decalStreak = streak;
   m_decalLayer = layer;
-  m_decalSink =
-      std::make_unique<FlatDecalSink>(*this, soft, streak, layer);
+  m_decalSink = std::make_unique<FlatDecalSink>(*this, soft, streak, layer);
 }
 
 IDecalSink* FlatRenderSystem::decalSink()
@@ -72,19 +73,22 @@ IDecalSink* FlatRenderSystem::decalSink()
 
 namespace
 {
-// A sprite gathered for this frame, with its painter sort-key (layer, then world
-// Y) resolved to a clip-space depth in a second pass once the frame's key range
-// is known -- so the depth buffer orders sprites without the render system
-// caring about submission order.
+// A sprite gathered for this frame, with its painter sort-key (layer, then
+// world Y) resolved to a clip-space depth in a second pass once the frame's key
+// range is known -- so the depth buffer orders sprites without the render
+// system caring about submission order.
 struct GatheredSprite
 {
   LitQuad quad;
   float sortKey = 0.0f;
 };
 
-unsigned int
-resolveSpriteTexture(AssetStore& store, std::uint32_t spriteId, SDL_Rect& srcOut,
-                     int& texWOut, int& texHOut, IQuadRenderer& renderer)
+unsigned int resolveSpriteTexture(AssetStore& store,
+                                  std::uint32_t spriteId,
+                                  SDL_Rect& srcOut,
+                                  int& texWOut,
+                                  int& texHOut,
+                                  IQuadRenderer& renderer)
 {
   const Sprite* sprite = store.getSprite(spriteId);
   if (!sprite)
@@ -127,7 +131,9 @@ void FlatRenderSystem::render()
     {
       const auto& transform = entity.getComponent<TransformComponent>();
       const auto& emitter = entity.getComponent<LightEmitterComponent>();
-      cands.push_back({transform.position, emitter.color, emitter.intensity,
+      cands.push_back({transform.position,
+                       emitter.color,
+                       emitter.intensity,
                        emitter.radius});
     }
   }
@@ -135,14 +141,15 @@ void FlatRenderSystem::render()
   if (static_cast<int>(cands.size()) > MaxShaderLights)
   {
     const glm::vec2 focus = m_focus;
-    std::nth_element(
-        cands.begin(), cands.begin() + MaxShaderLights, cands.end(),
-        [&focus](const LightCand& a, const LightCand& b)
-        {
-          const glm::vec2 da = a.worldPos - focus;
-          const glm::vec2 db = b.worldPos - focus;
-          return glm::dot(da, da) < glm::dot(db, db);
-        });
+    std::nth_element(cands.begin(),
+                     cands.begin() + MaxShaderLights,
+                     cands.end(),
+                     [&focus](const LightCand& a, const LightCand& b)
+                     {
+                       const glm::vec2 da = a.worldPos - focus;
+                       const glm::vec2 db = b.worldPos - focus;
+                       return glm::dot(da, da) < glm::dot(db, db);
+                     });
     cands.resize(MaxShaderLights);
   }
 
@@ -157,7 +164,7 @@ void FlatRenderSystem::render()
     lights.colors[i] = c.color;
     lights.intensities[i] = c.intensity;
     lights.radii[i] = c.radius;
-    lights.heights[i] = 0.0f;       // flat: no elevation
+    lights.heights[i] = 0.0f; // flat: no elevation
     lights.groundLevels[i] = 0.0f;
   }
   m_quadRenderer.setPointLights(lights);
@@ -180,9 +187,12 @@ void FlatRenderSystem::render()
     SDL_Rect srcRect{};
     int texW = 0;
     int texH = 0;
-    const unsigned int texture = resolveSpriteTexture(
-        m_assetStore, spriteComponent.spriteId, srcRect, texW, texH,
-        m_quadRenderer);
+    const unsigned int texture = resolveSpriteTexture(m_assetStore,
+                                                      spriteComponent.spriteId,
+                                                      srcRect,
+                                                      texW,
+                                                      texH,
+                                                      m_quadRenderer);
     if (texture == 0)
       continue;
 
@@ -203,11 +213,11 @@ void FlatRenderSystem::render()
 
     LitQuad quad;
     quad.texture = texture;
-    quad.srcRect = srcRect;
-    quad.destRect = SDL_Rect{static_cast<int>(glm::round(left)),
-                             static_cast<int>(glm::round(top)),
-                             static_cast<int>(glm::round(w)),
-                             static_cast<int>(glm::round(h))};
+    quad.srcRect = {srcRect.x, srcRect.y, srcRect.w, srcRect.h};
+    quad.destRect = {static_cast<int>(glm::round(left)),
+                     static_cast<int>(glm::round(top)),
+                     static_cast<int>(glm::round(w)),
+                     static_cast<int>(glm::round(h))};
     quad.textureWidth = texW;
     quad.textureHeight = texH;
     quad.rotation = static_cast<float>(transform.rotation);
@@ -228,8 +238,10 @@ void FlatRenderSystem::render()
       const auto& tint = entity.getComponent<SpriteTint>();
       const auto to8 = [](float v)
       { return static_cast<Uint8>(glm::clamp(v, 0.0f, 1.0f) * 255.0f); };
-      quad.tint = SDL_Color{to8(tint.color.r), to8(tint.color.g),
-                            to8(tint.color.b), to8(tint.alpha)};
+      quad.tint = {to8(tint.color.r),
+                   to8(tint.color.g),
+                   to8(tint.color.b),
+                   to8(tint.alpha)};
     }
 
     if (entity.hasComponent<NormalMapComponent>())
@@ -259,12 +271,12 @@ void FlatRenderSystem::render()
   }
 
   // Decals (blood, scorch...) draw as a blended, depth-TESTED overlay via the
-  // particle path (depth test on, depth WRITE off) rather than the lit pipeline.
-  // That's what makes accumulating blood look right: the lit pipeline writes
-  // depth even for a soft sprite's transparent rim, so each new blob CLEARED the
-  // one behind it (hard artifacts, no blending). With write off they layer and
-  // blend in stamp order; with test on they're still occluded by nearer
-  // characters. They contribute to the shared depth range first.
+  // particle path (depth test on, depth WRITE off) rather than the lit
+  // pipeline. That's what makes accumulating blood look right: the lit pipeline
+  // writes depth even for a soft sprite's transparent rim, so each new blob
+  // CLEARED the one behind it (hard artifacts, no blending). With write off
+  // they layer and blend in stamp order; with test on they're still occluded by
+  // nearer characters. They contribute to the shared depth range first.
   for (const FlatDecal& decal : m_decals)
   {
     const float sortKey =
@@ -281,19 +293,19 @@ void FlatRenderSystem::render()
     const float t = range > 1e-6f ? (gathered.sortKey - minKey) / range : 0.0f;
     gathered.quad.z = 0.9f - 1.8f * t;
     // Flat quads have no depth lean (that's an isometric standing-billboard
-    // feature the iso path fills via assignClipDepth). Without this the top edge
-    // keeps the default zTop = 0 while the bottom uses z, so every quad gets a
-    // spurious top-to-bottom depth gradient -- overlapping quads (e.g. a blood
-    // pool's many ribbons) then fight and cull each other. Flat = top depth ==
-    // bottom depth.
+    // feature the iso path fills via assignClipDepth). Without this the top
+    // edge keeps the default zTop = 0 while the bottom uses z, so every quad
+    // gets a spurious top-to-bottom depth gradient -- overlapping quads (e.g. a
+    // blood pool's many ribbons) then fight and cull each other. Flat = top
+    // depth == bottom depth.
     gathered.quad.zTop = gathered.quad.z;
     m_quadRenderer.submit(gathered.quad);
   }
 
   // Build decal quads and submit them through the particle path (blended, depth
-  // test on / write off) AFTER the lit sprites have written the depth buffer, so
-  // blood is occluded by nearer characters yet blends over older blood instead
-  // of clearing it. Bucketed by texture (one draw per texture).
+  // test on / write off) AFTER the lit sprites have written the depth buffer,
+  // so blood is occluded by nearer characters yet blends over older blood
+  // instead of clearing it. Bucketed by texture (one draw per texture).
   const float zoom = m_projection->worldUnitToPixels();
   std::unordered_map<unsigned int, ParticleBatch> decalBatches;
   for (const FlatDecal& decal : m_decals)
@@ -399,8 +411,8 @@ void FlatRenderSystem::render()
     if (count < 3)
       continue;
 
-    // Emit the clipped convex polygon as a triangle fan, packed one triangle per
-    // quad (4th corner duplicated -> a degenerate second triangle).
+    // Emit the clipped convex polygon as a triangle fan, packed one triangle
+    // per quad (4th corner duplicated -> a degenerate second triangle).
     for (int i = 1; i + 1 < count; ++i)
     {
       ParticleQuad fan = q; // keeps colour + depth
@@ -418,9 +430,9 @@ void FlatRenderSystem::render()
   for (auto& [texture, batch] : decalBatches)
     m_quadRenderer.submitParticleBatch(batch, texture, BlendMode::Alpha, true);
 
-  // Drive render modules (e.g. Particles). They emit AnyRenderCommands; the flat
-  // path consumes particle batches and draws them on top (screen-space), so the
-  // 2D scene needs no depth coupling between sprites and effects.
+  // Drive render modules (e.g. Particles). They emit AnyRenderCommands; the
+  // flat path consumes particle batches and draws them on top (screen-space),
+  // so the 2D scene needs no depth coupling between sprites and effects.
   std::vector<AnyRenderCommand> scratch;
   for (auto& [type, module] : m_modules)
   {
@@ -437,18 +449,20 @@ void FlatRenderSystem::render()
             {
               if (!concrete.textureId)
                 return;
-              SDL_Surface* surface = m_assetStore.getSurface(*concrete.textureId);
+              SDL_Surface* surface =
+                  m_assetStore.getSurface(*concrete.textureId);
               if (!surface)
                 return;
-              const unsigned int texture =
-                  m_quadRenderer.getOrCreateTexture(*concrete.textureId, surface);
+              const unsigned int texture = m_quadRenderer.getOrCreateTexture(
+                  *concrete.textureId, surface);
               if (texture != 0)
               {
                 // buildBatches sets each quad's z to a raw world sort-key for
                 // the iso depth pass (assignClipDepth) to normalise. The flat
-                // path draws particles as an on-top overlay (depthTested=false),
-                // so it needs no depth ordering -- but the raw z would fall
-                // outside the clip volume and cull the quad. Flatten it to 0.
+                // path draws particles as an on-top overlay
+                // (depthTested=false), so it needs no depth ordering -- but the
+                // raw z would fall outside the clip volume and cull the quad.
+                // Flatten it to 0.
                 ParticleBatch batch = concrete.quad;
                 for (ParticleQuad& q : batch.quads)
                   q.z = 0.0f;
@@ -468,7 +482,8 @@ long long FlatRenderSystem::decalCell(const glm::vec2& worldPos) const
 {
   const int cx = static_cast<int>(glm::floor(worldPos.x / m_decalCellSize));
   const int cy = static_cast<int>(glm::floor(worldPos.y / m_decalCellSize));
-  // Pack two int cell coords into one key (clean bijection via unsigned halves).
+  // Pack two int cell coords into one key (clean bijection via unsigned
+  // halves).
   return (static_cast<long long>(static_cast<unsigned int>(cx)) << 32) |
          static_cast<unsigned int>(cy);
 }

@@ -1,12 +1,12 @@
 #pragma once
 
 #include "engine/core/components/surfaceEffect.h"
+#include "engine/core/rendering/quads.h"
+#include "engine/core/rendering/renderPass.h"
+#include "engine/core/rendering/vertices.h"
 #include "engine/core/types/blendMode.h"
 #include "engine/runtime/rendering/commands/renderCommand.h"
 #include "engine/runtime/rendering/commands/shadowCommands.h"
-#include "engine/runtime/rendering/quads.h"
-#include "engine/runtime/rendering/renderPass.h"
-#include "engine/runtime/rendering/vertices/vertices.h"
 #include <cstdint>
 #include <variant>
 #include <vector>
@@ -55,9 +55,9 @@ struct SurfaceCommand
   RenderOrder order{RenderPass::Surfaces, 0, 0};
 };
 
-// A pre-batched set of particles sharing one texture + blend mode. assignClipDepth
-// remaps each quad's z (set to its world sort-key) to clip-space depth, so the
-// batch occludes against terrain per particle.
+// A pre-batched set of particles sharing one texture + blend mode.
+// assignClipDepth remaps each quad's z (set to its world sort-key) to
+// clip-space depth, so the batch occludes against terrain per particle.
 struct ParticleBatchCommand : RenderCommand<ParticleBatch>
 {
   const std::string* textureId = nullptr;
@@ -79,24 +79,28 @@ struct DecalChunkUpload
 struct DecalDrawCommand
 {
   RenderOrder order{RenderPass::Decals, 0, 0};
-  const std::string* textureId = nullptr; // one texture for all decals (e.g. white_dot)
-  std::vector<DecalChunkUpload> uploads;   // chunks to fully (re)upload (after removal)
-  std::vector<DecalChunkUpload> appends;   // new static verts to append (the common path)
-  std::vector<std::int64_t> freeKeys;      // chunks to drop (cleared/emptied)
-  std::vector<std::int64_t> drawKeys;      // visible chunks to draw
-  std::vector<DecalVertex> dynamic;        // animating decals, rebuilt this frame
+  const std::string* textureId =
+      nullptr; // one texture for all decals (e.g. white_dot)
+  std::vector<DecalChunkUpload>
+      uploads; // chunks to fully (re)upload (after removal)
+  std::vector<DecalChunkUpload>
+      appends; // new static verts to append (the common path)
+  std::vector<std::int64_t> freeKeys; // chunks to drop (cleared/emptied)
+  std::vector<std::int64_t> drawKeys; // visible chunks to draw
+  std::vector<DecalVertex> dynamic;   // animating decals, rebuilt this frame
 };
 
 // Opt-in real-geometry terrain: a lit, textured mesh of block faces (tops +
-// exposed sides) sharing one material (texture + surface effect). Built per frame
-// by the BlockGeometry module; assignClipDepth remaps each vertex's z (world key) to
-// clip-space depth, like a SurfaceCommand mesh.
+// exposed sides) sharing one material (texture + surface effect). Built per
+// frame by the BlockGeometry module; assignClipDepth remaps each vertex's z
+// (world key) to clip-space depth, like a SurfaceCommand mesh.
 struct GeometryCommand
 {
   RenderOrder order{RenderPass::Terrain, 0, 0};
   std::vector<GeometryVertex> vertices; // triangles (no index buffer)
   const std::string* textureId = nullptr;
-  const std::string* normalTextureId = nullptr; // optional; geometry uses real normals
+  const std::string* normalTextureId =
+      nullptr; // optional; geometry uses real normals
   SurfaceEffect::Type type = SurfaceEffect::Type::None;
 };
 

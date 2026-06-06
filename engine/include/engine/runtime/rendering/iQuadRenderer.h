@@ -2,8 +2,8 @@
 
 #include "SDL2/SDL_pixels.h"
 #include "SDL2/SDL_surface.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/core/types/blendMode.h"
-#include "engine/runtime/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <cstddef>
 #include <string>

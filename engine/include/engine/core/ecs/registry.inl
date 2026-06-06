@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/registry.h"
 #include <algorithm>
+#include <stdexcept>
 
 namespace sfs
 {

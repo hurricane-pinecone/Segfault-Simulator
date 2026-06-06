@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/system.h"
-#include "engine/core/rendering/flatProjection.h"
+#include "engine/core/rendering/projection/flatProjection.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/flatDecal.h"
 #include "engine/runtime/rendering/flatRenderContext.h"
@@ -35,13 +35,13 @@ struct FlatLighting
 
 /**
  * Flat 2D render system: the general-purpose counterpart to
- * IsometricRenderSystem. Draws every SpriteComponent + TransformComponent entity
- * through the core IQuadRenderer as a lit screen-space quad, lit by the scene's
- * LightEmitterComponent point lights, ordered by RenderLayerComponent then world
- * Y via the depth buffer. Hosts generic render modules (e.g. Particles) through
- * the templated RenderModuleHost, exactly as the isometric system does, but with
- * no heightfield, projection-baked shaders, or dynamic_cast to an iso backend --
- * it needs only the core renderer.
+ * IsometricRenderSystem. Draws every SpriteComponent + TransformComponent
+ * entity through the core IQuadRenderer as a lit screen-space quad, lit by the
+ * scene's LightEmitterComponent point lights, ordered by RenderLayerComponent
+ * then world Y via the depth buffer. Hosts generic render modules (e.g.
+ * Particles) through the templated RenderModuleHost, exactly as the isometric
+ * system does, but with no heightfield, projection-baked shaders, or
+ * dynamic_cast to an iso backend -- it needs only the core renderer.
  *
  * The game feeds it a FlatProjection each frame (from its camera) via
  * setProjection.

@@ -2,6 +2,7 @@
 #include "engine/core/Color/Color.h"
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/surfaceEffect.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/components/waterTileComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/runtime/rendering/isometricRenderContext.h"
