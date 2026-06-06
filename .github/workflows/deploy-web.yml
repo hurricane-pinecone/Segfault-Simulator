@@ -53,6 +53,18 @@ jobs:
       - name: Build web
         run: cmake --build build-web --config Release
 
+      # Docs share the game's single Pages site: the game at the root, the MkDocs
+      # site under /docs. --strict fails the deploy on a broken link or nav entry.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build docs (into /docs)
+        run: |
+          pip install mkdocs-material
+          mkdocs build --strict --site-dir build-web/bin/docs
+
       - name: Add nojekyll
         run: touch build-web/bin/.nojekyll
 
