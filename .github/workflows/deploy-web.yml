@@ -62,7 +62,7 @@ jobs:
 
       - name: Build docs (into /docs)
         run: |
-          pip install mkdocs-material
+          pip install "mkdocs-material==9.*"
           mkdocs build --strict --site-dir build-web/bin/docs
 
       - name: Add nojekyll

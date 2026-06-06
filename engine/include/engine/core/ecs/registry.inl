@@ -132,7 +132,8 @@ std::vector<Entity> Registry::view()
 
   std::vector<Entity> result;
 
-  for (int entityId = 0; entityId < entityComponentSignatures.size();
+  for (Entity::EntityId entityId = 0;
+       entityId < entityComponentSignatures.size();
        entityId++)
   {
     const Signature& entitySignature = entityComponentSignatures[entityId];
