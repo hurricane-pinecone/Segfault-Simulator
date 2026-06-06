@@ -32,25 +32,10 @@
 }
 
 /* ---- Top bar: a clean light/dark surface, not a saturated colour slab ---- */
-.md-header,
-.md-tabs {
+.md-header {
   background-color: var(--sfs-bar);
   color: var(--sfs-ink);
-}
-.md-header {
   box-shadow: 0 1px 0 var(--sfs-line);
-}
-.md-tabs {
-  border-bottom: 1px solid var(--sfs-line);
-}
-.md-tabs__link {
-  color: var(--sfs-body);
-  opacity: 1;
-  font-weight: 500;
-}
-.md-tabs__link--active,
-.md-tabs__link:hover {
-  color: var(--sfs-blurple);
 }
 .md-search__form {
   background-color: var(--sfs-surface);
@@ -118,7 +103,3 @@
   font-weight: 600;
 }
 
-/* ---- Slightly wider, more readable content column ---- */
-.md-grid {
-  max-width: 70rem;
-}

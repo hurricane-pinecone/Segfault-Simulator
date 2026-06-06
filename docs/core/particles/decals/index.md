@@ -1,29 +1,14 @@
 # Decals & splatter
 
 A decal is a **permanent mark stamped onto a surface** where a particle lands —
-blood pooling on the ground, streaking down a wall, soaking into a platform.
-
-## Enabling stains
-
-An effect with `leavesDecal = true` marks the surface a particle hits. Turn the
-feature on once, per particle module, with `enableStains`:
-
-```cpp
-// Isometric: stick to the terrain heightfield (walls, ground, water).
-particles.enableStains(&yourTerrain); // an ITerrainSurfaceSource
-
-// Flat: stick to the scene's solids (SolidObject + BoxCollider2D).
-particles.enableStains();
-```
-
-`enableStains` wires both the **collision** (what particles hit) and the **decal
-sink** (where marks are stamped) for your render path — you don't register or
-connect anything else. With no stains enabled, decal-leaving particles simply fall
-to their spawn plane and leave nothing.
+blood pooling on the ground, streaking down a wall, soaking into a platform. This
+page is the authoring side: what a mark looks like and how it's shaped. *Enabling*
+stains in a game (wiring collision + the decal sink) is runtime — see
+[Particles in your game](../../../runtime/particles/index.md#making-decals-stick).
 
 ## Landing behaviour
 
-For a particle to land and mark, give it a ground behaviour:
+For a particle to land and mark, give its effect a ground behaviour:
 
 ```cpp
 d.ground = sfs::GroundBehavior::Die;  // land, stamp, vanish (most splatter)
@@ -57,8 +42,8 @@ On the heightfield, a hit is classified by what it struck and the mark adapts:
 
 - **Ground** — a pool with directional streaks at the landing tile.
 - **Wall** — splatter on the camera-facing face at the impact height, scattered
-  along the travel direction (faster hits throw a wider splash) with a drip
-  running down from the hit.
+  along the travel direction (faster hits throw a wider splash) with a drip running
+  down from the hit.
 - **Water** — a single mark that fades over time.
 
 The flat path stamps onto the collider it hit and clips the mark to that collider
@@ -66,19 +51,11 @@ so it never spills off the platform.
 
 ## Custom splatter topology
 
-To replace the default pool-and-streaks pattern entirely, implement
-`ISplatterShaper` and point the spec at it — it produces the set of marks for each
-hit:
+To replace the default pool-and-streaks pattern entirely, implement `ISplatterShaper`
+and point the spec at it — it produces the set of marks for each hit:
 
 ```cpp
 d.decal.shaper = &myShaper; // owned by you
 ```
 
 The default (`defaultSplatterShaper()`) is used when `shaper` is null.
-
-## Keeping decals cheap
-
-Settled marks live in persistent GPU buffers, so a stained level costs nothing
-extra to re-draw as the camera moves. The surface limits how many marks a small
-area accepts before it saturates, so a hammered spot stays put instead of churning
-the buffer.

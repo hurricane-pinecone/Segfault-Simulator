@@ -30,9 +30,8 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.tabs        # top-level sections as a tab bar
-    - navigation.tabs.sticky # keep the tabs visible on scroll
     - navigation.indexes     # a folder's index.md is its section landing page
+    - navigation.expand      # show the full section tree in the left sidebar
     - navigation.top         # back-to-top button
     - navigation.tracking
     - toc.follow             # right-hand per-page section list follows scroll
@@ -59,16 +58,21 @@ plugins:
 
 nav:
   - Home: index.md
-  - Architecture:
-      - architecture/index.md
-      - Rendering: architecture/rendering.md
-      - Render modules: architecture/render-modules.md
-  - Particles & decals:
-      - particles/index.md
-      - Authoring effects: particles/effects.md
-      - Decals & splatter: particles/decals.md
-  - Scripting:
-      - scripting/index.md
-      - Modding API: scripting/modding-api.md
-      - Live config: scripting/live-config.md
-      - Runtime & safety: scripting/runtime.md
+  - Engine core:
+      - core/index.md
+      - Entities, components & systems: core/ecs/index.md
+      - Particles:
+          - core/particles/index.md
+          - Decals & splatter: core/particles/decals/index.md
+      - Scripting:
+          - core/scripting/index.md
+          - Modding API: core/scripting/modding-api/index.md
+          - Live config: core/scripting/live-config/index.md
+          - Running & safety: core/scripting/running/index.md
+  - Runtime:
+      - runtime/index.md
+      - Game & scenes: runtime/game-and-scenes/index.md
+      - Rendering:
+          - runtime/rendering/index.md
+          - Render modules: runtime/rendering/render-modules/index.md
+      - Particles in your game: runtime/particles/index.md
