@@ -75,9 +75,9 @@ jobs:
           Then update the Markdown documentation under docs/ ONLY where these changes alter what a game developer relies on (public API, behaviour, structure, or example snippets). If the change is internal-only (a refactor, a comment, a private detail) and the docs still read correctly, make NO edits.
 
           Match the existing docs exactly: product-doc voice; game-agnostic snippets (never reference sampleGame/samplePlatformer, SampleGame, GameScene, or getSystem<TerrainGeneratorSystem> etc. -- use neutral placeholders); each folder's index.md stays brief with depth in its sub-pages; pages have NO in-content cross-links (the site sidebar handles all navigation -- do not add 'see also' links or link lists); don't touch mkdocs.yml unless a page is added or removed. Only edit files under docs/."
-          claude -p --permission-mode acceptEdits --max-turns 20 \
-            --allowedTools "Read,Edit,Write,Grep,Glob" \
-            "$PROMPT"
+          printf '%s' "$PROMPT" | claude -p \
+            --permission-mode acceptEdits --max-turns 20 \
+            --allowedTools "Read,Edit,Write,Grep,Glob"
 
       - name: Open a PR if docs changed
         if: steps.changed.outputs.empty == 'false'
