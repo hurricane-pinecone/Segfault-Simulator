@@ -16,7 +16,6 @@
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/trigonometric.hpp"
-#include "systems/bloodSystem.h"
 
 #include <algorithm>
 #include <functional>
@@ -46,9 +45,6 @@ public:
   {
     m_onKill = std::move(onKill);
   }
-
-  // Physics blood: hits/kills spray sticking droplets through this system.
-  void setBlood(BloodSystem* blood) { m_blood = blood; }
 
 protected:
   void create() override
@@ -107,20 +103,11 @@ protected:
 
         enemyEntity.getComponent<sfs::RigidBodyComponent>().velocity.y =
             -ENEMY_KNOCKBACK;
-        damageEnemy(enemyEntity, bullet.damage, transform.position);
-
-        // Spray blood along the bullet's travel; the droplets fly and stick to
-        // whatever platform they land on (BloodSystem), so the stains trace the
-        // actual impact, not a drawn shape.
-        if (m_blood)
-          m_blood->spray(transform.position,
-                         bullet.velocity,
-                         12,
-                         120.0f,
-                         520.0f,
-                         60.0f,
-                         SDL_Color{200, 16, 16, 255},
-                         10.0f);
+        // Blood is biased along the bullet's travel; droplets fly, then stick to
+        // whatever platform they land on (generic particle->decal path), so the
+        // stains trace the actual impact rather than a drawn shape.
+        damageEnemy(enemyEntity, bullet.damage, transform.position,
+                    bullet.velocity);
 
         if (bullet.chain)
           chainArc(enemyPos, bullet.color, enemyEntity);
@@ -233,8 +220,10 @@ private:
     }
   }
 
-  void
-  damageEnemy(const sfs::Entity& entity, float amount, const glm::vec2& hitPos)
+  void damageEnemy(const sfs::Entity& entity,
+                   float amount,
+                   const glm::vec2& hitPos,
+                   const glm::vec2& impactVel = {0.0f, 0.0f})
   {
     auto& enemy = entity.getComponent<Enemy>();
     if (enemy.health <= 0.0f)
@@ -242,25 +231,22 @@ private:
 
     enemy.health -= amount;
     if (m_particles)
-      m_particles->spawnBurst("blood", hitPos, 0.0f);
+    {
+      // Bias the spray along the impact so droplets fan the way the hit
+      // travelled (the engine then sticks each one as a directional decal).
+      sfs::ParticleSpawnParams bloodSpray;
+      bloodSpray.velocity = impactVel * 0.35f;
+      m_particles->spawnBurst("blood", hitPos, 0.0f, bloodSpray);
+    }
 
     if (enemy.health <= 0.0f)
     {
       const glm::vec2 pos =
           entity.getComponent<sfs::TransformComponent>().position;
+      // A heavy radial eruption of gibs -- they fly up and out, then gravity
+      // rains them onto the platforms where they stick as organic splatter.
       if (m_particles)
         m_particles->spawnBurst("gore", pos, 0.0f);
-      // A heavy radial eruption of sticking droplets -- they fly up and out,
-      // then gravity rains them back onto the platforms as organic splatter.
-      if (m_blood)
-        m_blood->spray(pos,
-                       glm::vec2{0.0f, 0.0f},
-                       46,
-                       140.0f,
-                       680.0f,
-                       260.0f,
-                       SDL_Color{180, 12, 12, 255},
-                       13.0f);
       if (m_onKill)
         m_onKill(pos);
       m_deadEnemies.push_back(entity);
@@ -342,7 +328,6 @@ private:
   }
 
   sfs::ParticleEngine* m_particles = nullptr;
-  BloodSystem* m_blood = nullptr;
   std::function<void(glm::vec2)> m_onKill;
   std::vector<sfs::Entity> m_deadEnemies;
   std::mt19937 m_rng{99};

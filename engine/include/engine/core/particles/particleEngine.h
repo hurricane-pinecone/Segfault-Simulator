@@ -3,6 +3,7 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
 #include "engine/core/particles/decal.h"
+#include "engine/core/particles/iParticleCollisionSource.h"
 #include "engine/core/particles/particle.h"
 #include "engine/core/particles/particleBatch.h"
 #include "engine/core/particles/particleEffect.h"
@@ -103,6 +104,15 @@ public:
   // a persistent mark on the surface they hit.
   void setDecalSink(IDecalSink* sink) { m_decalSink = sink; }
 
+  // Optional flat collision source (no terrain heightfield). When set instead of
+  // a terrain source, world particles with a GroundBehavior stick to its
+  // surfaces (e.g. BoxCollider2D platforms) and leave decals via the sink. Lets
+  // a flat game get particle-stick splatter without iso terrain.
+  void setCollisionSource(const IParticleCollisionSource* source)
+  {
+    m_collisionSource = source;
+  }
+
   int liveParticleCount() const;
 
   // Global ceiling on total live particles across every emitter + burst. Once
@@ -187,6 +197,12 @@ private:
                  float wallBottom,
                  float wallTop,
                  glm::ivec2 tile);
+  // Stamp a decal for a particle that stuck to a flat collision surface (no
+  // terrain/elevation). Shares the splatter shaping with emitDecal.
+  void emitFlatDecal(EmitterInstance& inst,
+                     const ParticleEffectDesc& desc,
+                     const Particle& p,
+                     const ParticleHit& hit);
   void syncComponentEmitters();
   void appendBatch(const EmitterInstance& inst,
                    const ParticleEffectDesc& desc,
@@ -194,6 +210,7 @@ private:
                    std::vector<ParticleRenderBatch>& out);
 
   const ITerrainSurfaceSource* m_terrainSource = nullptr;
+  const IParticleCollisionSource* m_collisionSource = nullptr;
   IDecalSink* m_decalSink = nullptr;
 
   std::vector<ParticleEffectDesc> m_effects;

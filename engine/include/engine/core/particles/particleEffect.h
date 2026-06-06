@@ -55,6 +55,11 @@ struct DecalSpec
   bool useParticleColor = true;        // tint from the particle's current colour
   glm::vec3 color{0.35f, 0.0f, 0.0f};  // used when !useParticleColor
   float alpha = 0.85f;
+
+  // Impact speed (in the effect's velocity units) at which the splatter shaping
+  // elongates / fans fully -- a few tiles/sec on the iso path, a few hundred
+  // px/sec on the flat path. See buildSplatShapes.
+  float impactRef = 4.0f;
 };
 
 // The authoring description of a particle effect. Plain data with fixed-capacity

@@ -17,6 +17,15 @@ enum class DecalSurface : uint8_t
   Water,  // floating on a water surface (fades; see fadeRate)
 };
 
+// How a decal is bounded to the surface it sits on. Default keeps it on that
+// surface (a mark never spills past a platform edge); None lets it extend freely
+// (e.g. a streak meant to trail off an edge).
+enum class Clipping : uint8_t
+{
+  Surface,
+  None,
+};
+
 // A request to lay down one persistent mark on the terrain, produced when a
 // particle collides with the world and consumed by an IDecalSink (the Decals
 // module).
@@ -48,6 +57,18 @@ struct DecalSpawn
   // Wall drips only: how fast (elevation levels/sec) the streak runs down the
   // face. `elevation` is the streak's top; the head descends toward wallBottom.
   float dripSpeed = 0.0f;
+
+  // Keep the mark on the surface it hit (clip to clipMin..clipMax, world-space).
+  // Default clips; set None to let it extend past the rect. The flat path fills
+  // the rect from the collider it stuck to; the isometric sink ignores this and
+  // clips per tile/face.
+  Clipping clipping = Clipping::Surface;
+  glm::vec2 clipMin{0.0f, 0.0f};
+  glm::vec2 clipMax{0.0f, 0.0f};
+
+  // Hint for sinks that keep a hard + soft sprite: true = a crisp streak (hard
+  // edge), false = a soft area blob. The isometric sink ignores it.
+  bool crisp = false;
 };
 
 // Receives decals from collisions. The Decals module implements this; the
