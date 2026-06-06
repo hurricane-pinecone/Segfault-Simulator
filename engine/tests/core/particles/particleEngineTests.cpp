@@ -1,7 +1,3 @@
-// Tests for the render-context-free ParticleEngine: effect registration, the
-// fire-and-forget burst path, lifetime decay, the global particle cap, and
-// projecting live particles into render batches through a stub IProjection.
-
 #include "../../testHarness.h"
 
 #include <engine/core/particles/particleEngine.h>

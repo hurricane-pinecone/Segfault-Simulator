@@ -1,6 +1,3 @@
-// Tests for the small core utilities: string lowering, byte formatting, the
-// Color value type, and the global allocation-metrics tracker.
-
 #include "../../testHarness.h"
 
 #include <engine/core/Color/Color.h>
