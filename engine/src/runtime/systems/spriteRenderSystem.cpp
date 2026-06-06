@@ -1,14 +1,14 @@
 #include "engine/runtime/systems/spriteRenderSystem.h"
 
 #include "SDL2/SDL_rect.h"
-#include "engine/runtime/assetStore/assetStore.h"
-#include "engine/runtime/assetStore/sprite.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- Entity::getComponent<T> defs
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/quads.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
 #include "glm/glm/common.hpp"
 
 namespace sfs
@@ -66,9 +66,13 @@ void SpriteRenderSystem::render()
         transform.position - m_cameraOffset + spriteComponent.renderOffset;
 
     TexturedQuad quad;
-    quad.texture = m_quadRenderer.getOrCreateTexture(sprite->textureId, surface);
-    quad.srcRect = sprite->srcRect;
-    quad.destRect = SDL_Rect{
+    quad.texture =
+        m_quadRenderer.getOrCreateTexture(sprite->textureId, surface);
+    quad.srcRect = {sprite->srcRect.x,
+                    sprite->srcRect.y,
+                    sprite->srcRect.w,
+                    sprite->srcRect.h};
+    quad.destRect = {
         static_cast<int>(glm::round(screen.x - anchorX)),
         static_cast<int>(glm::round(screen.y - anchorY)),
         width,

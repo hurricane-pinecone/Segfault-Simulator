@@ -27,8 +27,7 @@ enum class Clipping : uint8_t
 };
 
 // A request to lay down one persistent mark on the terrain, produced when a
-// particle collides with the world and consumed by an IDecalSink (the Decals
-// module).
+// particle collides with the world and consumed by an IDecalSink.
 struct DecalSpawn
 {
   glm::vec2 worldPos{0.0f, 0.0f};
@@ -72,8 +71,8 @@ struct DecalSpawn
   bool crisp = false;
 };
 
-// Receives decals from collisions. The Decals module implements this; the
-// Particles module holds a pointer to it (bridged by the scene, so neither
+// Receives decals from collisions. A render path's decal sink implements this;
+// the Particles module holds a pointer to it (bridged by the scene, so neither
 // depends on the other).
 class IDecalSink
 {

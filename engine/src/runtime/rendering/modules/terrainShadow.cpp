@@ -3,10 +3,10 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/rendering/renderStats.h"
-#include "engine/runtime/rendering/util/isometric/geometry.h"
+#include "engine/core/rendering/util/isometric/geometry.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #include "engine/core/util/algorithms/gridDDA.h"
-#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
+#include "engine/core/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/core/util/parallelFor.h"
 
 #include <algorithm>
@@ -245,11 +245,11 @@ void TerrainShadow::emitTileShadow(const IsometricRenderContext& context,
                         static_cast<float>(tile.y) +
                         elevationF * ElevationSortWeight + 0.0005f;
 
-  const SDL_Color tint{
+  const sfs::Color tint{
       0,
       0,
       0,
-      static_cast<Uint8>(glm::clamp(alpha, 0.0f, 1.0f) * 255.0f),
+      static_cast<std::uint8_t>(glm::clamp(alpha, 0.0f, 1.0f) * 255.0f),
   };
 
   glm::vec2 screenPoly[8];

@@ -65,7 +65,7 @@ struct FloatRange
 };
 
 // The persistent mark a particle leaves where it lands (see ParticleEffectDesc::
-// leavesDecal). Consumed by the Decals module via an IDecalSink.
+// leavesDecal). Consumed by an IDecalSink.
 struct DecalSpec
 {
   // The mark's look: a built-in shape, or an explicit `texture` for custom art

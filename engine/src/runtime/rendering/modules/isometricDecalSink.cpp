@@ -1,4 +1,4 @@
-#include "engine/runtime/rendering/modules/decals.h"
+#include "engine/runtime/rendering/modules/isometricDecalSink.h"
 
 #include "engine/core/util/algorithms/polygonClip.h"
 #include "engine/core/util/profiling.h"
@@ -45,13 +45,13 @@ std::uint32_t packRGBA8(const glm::vec4& c)
 
 } // namespace
 
-glm::ivec2 Decals::chunkOf(const glm::vec2& worldPos) const
+glm::ivec2 IsometricDecalSink::chunkOf(const glm::vec2& worldPos) const
 {
   const glm::ivec2 t = floorTile(worldPos);
   return {floorDiv(t.x, kChunkTiles), floorDiv(t.y, kChunkTiles)};
 }
 
-std::int64_t Decals::chunkKey(glm::ivec2 chunk)
+std::int64_t IsometricDecalSink::chunkKey(glm::ivec2 chunk)
 {
   // Pack both halves as unsigned 32-bit so the key is a clean bijection.
   return (static_cast<std::int64_t>(static_cast<std::uint32_t>(chunk.x))
@@ -59,12 +59,12 @@ std::int64_t Decals::chunkKey(glm::ivec2 chunk)
          static_cast<std::uint32_t>(chunk.y);
 }
 
-const std::string* Decals::internTexture(const std::string& id)
+const std::string* IsometricDecalSink::internTexture(const std::string& id)
 {
   return &*m_textureIds.insert(id).first;
 }
 
-bool Decals::isStatic(const Decal& d)
+bool IsometricDecalSink::isStatic(const Decal& d)
 {
   // Static = never changes per frame: not fading, and not a wall drip still
   // running down. A wall mark with no drip (dripSpeed 0) is static at once;
@@ -73,7 +73,7 @@ bool Decals::isStatic(const Decal& d)
          !(d.surface == DecalSurface::Wall && d.dripSpeed > 0.0f && !d.settled);
 }
 
-bool Decals::sameColor(const glm::vec3& a, const glm::vec3& b)
+bool IsometricDecalSink::sameColor(const glm::vec3& a, const glm::vec3& b)
 {
   // Compare colour DIRECTION (cosine), so an effect's light->dark gradient
   // reads as one paint but a different hue (blue over red) reads as a repaint.
@@ -84,7 +84,7 @@ bool Decals::sameColor(const glm::vec3& a, const glm::vec3& b)
   return glm::dot(a, b) / (la * lb) >= kColorSimilarity;
 }
 
-void Decals::addDecal(const DecalSpawn& spawn)
+void IsometricDecalSink::addDecal(const DecalSpawn& spawn)
 {
   Decal d;
   d.worldPos = spawn.worldPos;
@@ -157,7 +157,7 @@ void Decals::addDecal(const DecalSpawn& spawn)
   chunk.decals.push_back(d);
 }
 
-std::int64_t Decals::coverageKey(glm::ivec2 chunk, const Decal& d) const
+std::int64_t IsometricDecalSink::coverageKey(glm::ivec2 chunk, const Decal& d) const
 {
   // Position local to the chunk so cell indices stay small (the chunk is
   // kChunkTiles wide). Ground decals collapse by x,y; wall decals also key on
@@ -178,7 +178,7 @@ std::int64_t Decals::coverageKey(glm::ivec2 chunk, const Decal& d) const
   return ix | (iy << 8) | (iz << 16) | (disc << 32);
 }
 
-void Decals::clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key)
+void IsometricDecalSink::clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key)
 {
   auto& vec = data.decals;
   bool removed = false;
@@ -214,7 +214,7 @@ void Decals::clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key)
   }
 }
 
-void Decals::rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const
+void IsometricDecalSink::rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const
 {
   data.coverage.clear();
   for (const Decal& d : data.decals)
@@ -227,13 +227,13 @@ void Decals::rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const
     }
 }
 
-void Decals::rebuildAllCoverage()
+void IsometricDecalSink::rebuildAllCoverage()
 {
   for (auto& [chunk, data] : m_chunks)
     rebuildCoverage(chunk, data);
 }
 
-void Decals::clearAll()
+void IsometricDecalSink::clearAll()
 {
   for (const auto& [chunk, data] : m_chunks)
     m_pendingFree.push_back(chunkKey(chunk));
@@ -243,7 +243,7 @@ void Decals::clearAll()
   m_animatingCount = 0;
 }
 
-void Decals::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
+void IsometricDecalSink::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
 {
   for (auto it = m_chunks.begin(); it != m_chunks.end();)
   {
@@ -304,7 +304,7 @@ void Decals::clearRegion(glm::ivec2 minTile, glm::ivec2 maxTile)
   }
 }
 
-std::size_t Decals::decalCount() const
+std::size_t IsometricDecalSink::decalCount() const
 {
   std::size_t total = 0;
   for (const auto& [chunk, data] : m_chunks)
@@ -312,9 +312,9 @@ std::size_t Decals::decalCount() const
   return total;
 }
 
-void Decals::update(double deltaTime)
+void IsometricDecalSink::update(double deltaTime)
 {
-  ZoneScopedN("Decals::update");
+  ZoneScopedN("IsometricDecalSink::update");
 
   // Settled/static decals never change, so only do work while something fades
   // (water) or is still running down (wall drips).
@@ -380,7 +380,7 @@ void Decals::update(double deltaTime)
   }
 }
 
-void Decals::buildDecalVerts(const Decal& decal,
+void IsometricDecalSink::buildDecalVerts(const Decal& decal,
                              std::vector<DecalVertex>& out) const
 {
   glm::vec4 color = decal.color;
@@ -546,9 +546,9 @@ void Decals::buildDecalVerts(const Decal& decal,
   push(ca, bot, {0.0f, 1.0f}, wallKey(ca, bot));
 }
 
-void Decals::computeCommands(const IsometricRenderContext& context)
+void IsometricDecalSink::computeCommands(const IsometricRenderContext& context)
 {
-  ZoneScopedN("Decals::computeCommands");
+  ZoneScopedN("IsometricDecalSink::computeCommands");
 
   flush(); // clears m_commands
 

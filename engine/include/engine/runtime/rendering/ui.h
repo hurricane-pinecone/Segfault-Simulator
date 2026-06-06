@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/runtime/rendering/modules/blockGeometry.h"
-#include "engine/runtime/rendering/modules/decals.h"
+#include "engine/runtime/rendering/modules/isometricDecalSink.h"
 #include "engine/runtime/rendering/modules/isometricWater.h"
 #include "engine/runtime/rendering/modules/spriteShadow.h"
 #include "engine/runtime/rendering/modules/terrainShadow.h"
@@ -222,7 +222,7 @@ inline static void renderDebugControls(Scene* scene)
     // owns the accumulated stains (and the particle engine holds a raw sink
     // pointer to it), so removing it would drop the stains and dangle the sink.
     // Hiding keeps both, so the stains persist across the toggle.
-    if (auto* decals = render.module<Decals>())
+    if (auto* decals = render.module<IsometricDecalSink>())
     {
       bool show = decals->visible();
       if (ImGui::Checkbox("Decals", &show))

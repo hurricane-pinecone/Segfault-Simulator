@@ -2,9 +2,9 @@
 #include "engine/runtime/rendering/openGLQuadRenderer.h"
 
 #include "engine/core/logger/logger.h"
-#include "engine/runtime/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/core/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/runtime/rendering/glDebug.h"
-#include "engine/runtime/rendering/quads.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/gpuProfiling.h"
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
@@ -661,7 +661,7 @@ void OpenGLQuadRenderer::drawQuadInternalWithUvs(unsigned int texture,
                                                  const glm::vec2& p2,
                                                  const glm::vec2& p3,
                                                  const glm::vec2 uvs[4],
-                                                 SDL_Color tint,
+                                                 Color tint,
                                                  float z)
 {
   const glm::vec2 worldPoints[4] = {
@@ -1099,14 +1099,14 @@ void OpenGLQuadRenderer::drawLineLoop(const glm::vec2* points,
 }
 
 void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
-                                          const SDL_Rect& srcRect,
+                                          const Rect& srcRect,
                                           int textureWidth,
                                           int textureHeight,
                                           const glm::vec2& p0,
                                           const glm::vec2& p1,
                                           const glm::vec2& p2,
                                           const glm::vec2& p3,
-                                          SDL_Color tint)
+                                          Color tint)
 {
   const glm::vec2 worldPoints[4] = {
       glm::vec2{0.0f, 0.0f},
@@ -1149,14 +1149,14 @@ void OpenGLQuadRenderer::drawQuadInternal(unsigned int texture,
 
 void OpenGLQuadRenderer::drawQuadInternal(
     unsigned int texture,
-    const SDL_Rect& srcRect,
+    const Rect& srcRect,
     int textureWidth,
     int textureHeight,
     const glm::vec2& p0,
     const glm::vec2& p1,
     const glm::vec2& p2,
     const glm::vec2& p3,
-    SDL_Color tint,
+    Color tint,
     bool useLighting,
     bool hasNormalMap,
     unsigned int normalTexture,

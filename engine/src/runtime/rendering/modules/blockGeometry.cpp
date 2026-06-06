@@ -10,7 +10,7 @@
 #include "engine/core/components/terrainBoundaryComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- Entity::getComponent<T> defs
-#include "engine/runtime/rendering/renderPass.h"
+#include "engine/core/rendering/renderPass.h"
 #include "engine/core/util/profiling.h"
 #include "glm/glm/ext/vector_float3.hpp"
 

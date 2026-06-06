@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/rendering/flatProjection.h"
+#include "engine/core/rendering/projection/flatProjection.h"
 #include "glm/glm/ext/vector_float2.hpp"
 
 namespace sfs

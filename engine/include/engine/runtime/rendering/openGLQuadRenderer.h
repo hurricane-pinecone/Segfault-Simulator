@@ -2,9 +2,10 @@
 
 #include "SDL2/SDL_rect.h"
 #include "SDL2/SDL_surface.h"
-#include "engine/runtime/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/core/rendering/batchKeys/LitQuadBatchKey.h"
+#include "engine/core/rendering/batchKeys/ParticleBatchKey.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -12,7 +13,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <unordered_map>
 #include <vector>
 #ifdef __EMSCRIPTEN__
@@ -191,7 +191,7 @@ private:
     glm::vec2 position;
     glm::vec2 uv;
     glm::vec2 worldPosition;
-    float z = 0.0f; // clip-space depth (gl_Position.z)
+    float z = 0.0f;                          // clip-space depth (gl_Position.z)
     glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // per-quad tint (white = none)
   };
 
@@ -220,24 +220,24 @@ private:
   void drawQuad(const FreeformQuad& command); // Shadows
 
   void drawQuadInternal(unsigned int texture,
-                        const SDL_Rect& srcRect,
+                        const Rect& srcRect,
                         int textureWidth,
                         int textureHeight,
                         const glm::vec2& p0,
                         const glm::vec2& p1,
                         const glm::vec2& p2,
                         const glm::vec2& p3,
-                        SDL_Color tint);
+                        Color tint);
 
   void drawQuadInternal(unsigned int texture,
-                        const SDL_Rect& srcRect,
+                        const Rect& srcRect,
                         int textureWidth,
                         int textureHeight,
                         const glm::vec2& p0,
                         const glm::vec2& p1,
                         const glm::vec2& p2,
                         const glm::vec2& p3,
-                        SDL_Color tint,
+                        Color tint,
                         bool useLighting,
                         bool hasNormalMap,
                         unsigned int normalTexture,
@@ -259,7 +259,7 @@ private:
                                const glm::vec2& p2,
                                const glm::vec2& p3,
                                const glm::vec2 uvs[4],
-                               SDL_Color tint,
+                               Color tint,
                                float z);
 
   unsigned int shaderProgram = 0;
@@ -304,11 +304,9 @@ private:
   std::vector<Vertex> m_litVertices;
   std::optional<LitBatchKey> m_litBatchKey;
 
-  // Particles bucketed by (texture, blend mode, depthTested); one draw call per
-  // bucket. A std::map keeps the bucket set tiny and avoids needing a hash.
-  std::map<std::tuple<unsigned int, BlendMode, bool>,
-           std::vector<ParticleVertex>>
-      m_particleBatches;
+  // Particles bucketed by ParticleBatchKey (texture, blend mode, depthTested);
+  // one draw call per bucket. A std::map keeps the bucket set tiny.
+  std::map<ParticleBatchKey, std::vector<ParticleVertex>> m_particleBatches;
 };
 
 } // namespace sfs

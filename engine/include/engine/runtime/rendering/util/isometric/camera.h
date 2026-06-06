@@ -2,7 +2,8 @@
 
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/transformComponent.h"
-#include "engine/runtime/rendering/util/isometric/geometry.h"
+#include "engine/core/rendering/projection/isometricProjection.h"
+#include "engine/core/rendering/util/isometric/geometry.h"
 #include "glm/glm/ext/vector_float2.hpp"
 
 namespace sfs
@@ -31,8 +32,9 @@ struct ActiveCamera
 
 // Bakes the camera into plain values, so the result stays valid even after ECS
 // component storage moves and invalidates the camera's component pointers.
-inline IsometricProjection makeProjection(const IsometricProjectionConfig& config,
-                                          const ActiveCamera& camera)
+inline IsometricProjection
+makeProjection(const IsometricProjectionConfig& config,
+               const ActiveCamera& camera)
 {
   const float zoom = camera.camera ? camera.camera->zoom : 1.0f;
 
@@ -42,8 +44,8 @@ inline IsometricProjection makeProjection(const IsometricProjectionConfig& confi
   projection.elevationStep = config.elevationStep;
   projection.worldScale = config.worldScale;
   projection.zoom = zoom;
-  projection.cameraIso =
-      camera.isoPosition(config.tileWidth, config.tileHeight, config.worldScale);
+  projection.cameraIso = camera.isoPosition(
+      config.tileWidth, config.tileHeight, config.worldScale);
   projection.screenCenter = config.screenCenter;
 
   return projection;

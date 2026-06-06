@@ -1,13 +1,11 @@
 #pragma once
 
-#include "engine/runtime/rendering/util/isometric/camera.h"
-#include "engine/runtime/rendering/util/isometric/geometry.h"
-#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
+#include "engine/core/rendering/projection/isometricProjection.h"
+#include "engine/core/rendering/util/isometric/geometry.h"
+#include "engine/core/rendering/util/isometric/isometricLightingUtils.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
-#include <cmath>
 #include <cstdint>
-#include <unordered_map>
 
 namespace sfs
 {
@@ -35,7 +33,8 @@ struct IsometricRenderContext
 
   // True while terrain renders as real block-face geometry (the BlockGeometry
   // module is registered) rather than billboard sprites. Modules that differ
-  // between the two render styles (e.g. projected terrain shadows) branch on it.
+  // between the two render styles (e.g. projected terrain shadows) branch on
+  // it.
   bool geometryActive = false;
 
   glm::ivec2 gridCellOf(const glm::vec2& position) const

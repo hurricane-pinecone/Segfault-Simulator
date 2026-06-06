@@ -1,11 +1,11 @@
 #include "engine/runtime/console/devConsole.h"
 
 #include "engine/core/Color/Color.h"
+#include "engine/core/rendering/quads.h"
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/quads.h"
 
 #include <SDL.h>
 
@@ -109,8 +109,8 @@ void DevConsole::recallNewer()
     return; // already on the live line
 
   ++m_historyPos;
-  m_input = m_historyPos < m_history.size() ? m_history[m_historyPos]
-                                            : std::string{};
+  m_input =
+      m_historyPos < m_history.size() ? m_history[m_historyPos] : std::string{};
 }
 
 void DevConsole::render(TextRenderer& text,
@@ -125,16 +125,17 @@ void DevConsole::render(TextRenderer& text,
   constexpr int barHeight = 28;
   const int barTop = viewportHeight - barHeight;
 
-  // Dark translucent bar from the 1x1 white_pixel texture (no dedicated shader).
+  // Dark translucent bar from the 1x1 white_pixel texture (no dedicated
+  // shader).
   if (SDL_Surface* pixel = assets.getSurface("white_pixel"))
   {
     TexturedQuad bar;
     bar.texture = quads.getOrCreateTexture("white_pixel", pixel);
-    bar.srcRect = SDL_Rect{0, 0, 1, 1};
-    bar.destRect = SDL_Rect{0, barTop, viewportWidth, barHeight};
+    bar.srcRect = {0, 0, 1, 1};
+    bar.destRect = {0, barTop, viewportWidth, barHeight};
     bar.textureWidth = 1;
     bar.textureHeight = 1;
-    bar.tint = SDL_Color{12, 12, 16, 220};
+    bar.tint = {12, 12, 16, 220};
     quads.drawImmediate(bar);
   }
 

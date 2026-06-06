@@ -1,7 +1,7 @@
 // Dependency-free tests for FlatProjection: the flat 2D world<->screen transform
 // the general 2D render path uses. Returns non-zero on any failure (CTest test).
 
-#include <engine/core/rendering/flatProjection.h>
+#include <engine/core/rendering/projection/flatProjection.h>
 
 #include <cmath>
 #include <cstdio>
