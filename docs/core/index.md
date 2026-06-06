@@ -21,8 +21,8 @@ What lives here:
 their components, terrain, projection config, gameplay, input, and art.
 
 **The engine owns the mechanics:** the ECS storage and scheduling, particle
-simulation, and the scripting VM here in the core — and, in the
-[runtime](../runtime/index.md), projection math, batching, lighting, shadows, and
-decals.
+simulation, world–screen projection types (`FlatProjection`,
+`IsometricProjection`), and the scripting VM here in the core — and, in the
+[runtime](../runtime/index.md), batching, lighting, shadows, and decals.
 
 The game describes *what*; the engine runs *how*.
