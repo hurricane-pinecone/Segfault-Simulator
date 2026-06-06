@@ -1,60 +1,16 @@
-# Authoring particle effects
+# Particle engine
 
-Everything for building and firing effects.
+The particle engine simulates short-lived sprites — sparks, blood, smoke, embers,
+magic — from a plain-data description you author once. It's **engine-core**:
+dependency-free, no rendering. *Using* it in a rendered game (registering the
+module, spawning, making decals stick) is a runtime concern — see
+[Particles in your game](../../runtime/particles/index.md).
 
-## Spawning
-
-### One-shot burst
-
-```cpp
-particles.spawnBurst("blood", worldPos, elevation);
-```
-
-`elevation` is the ground level the burst sits on (isometric); pass `0` on the
-flat path. `spawnBurst` returns `false` if the effect name isn't registered.
-
-To spawn "on the ground" without looking up the height yourself (isometric, once
-stains/terrain are wired):
-
-```cpp
-particles.spawnBurst("blood", pos, particles.groundElevationAt(pos));
-```
-
-### Screen-space burst
-
-Effects authored with `space = SimulationSpace::Screen` simulate in screen pixels
-and draw as a flat overlay (no world occlusion) — good for UI hit-sparks:
-
-```cpp
-particles.spawnScreenBurst("ui_spark", screenPixel);
-```
-
-### Continuous emitter on an entity
-
-Attach a `ParticleEmitterComponent` to emit continuously from a moving entity (a
-torch, a wounded actor). The module follows the entity's transform each frame:
-
-```cpp
-entity.addComponent<sfs::ParticleEmitterComponent>(
-    "embers",              // a registered effect with an emitRate
-    glm::vec2{0.0f, 0.0f}, // world offset from the entity
-    0.4f);                 // height above the ground
-```
-
-Set `enabled = false` on the component to stop emitting; existing particles drain
-out naturally.
-
-### Spawn momentum
-
-Inject the impulse of whatever caused the burst (a bullet, an explosion) so the
-same effect sprays along the impact direction:
-
-```cpp
-sfs::ParticleSpawnParams impact;
-impact.velocity = dir * 12.0f;   // added to every particle's launch velocity
-impact.aimAlongVelocity = true;  // fan the spray along that direction
-particles.spawnBurst("blood", pos, elevation, impact);
-```
+- **Effect** — the authored description of a kind of particle (a
+  `ParticleEffectDesc`), registered under a name.
+- **Particle** — one live sprite, simulated until it dies.
+- **Decal** — a permanent mark an effect can leave where a particle lands; see
+  [Decals & splatter](./decals/index.md).
 
 ## The effect description
 
@@ -71,7 +27,7 @@ sfs::ParticleEffectDesc makeSparkEffect()
   d.shapeRadius = 0.1f;
 
   // How many, how often.
-  d.burstCount = 24;        // per spawnBurst
+  d.burstCount = 24;        // per spawn
   // d.emitRate = 30.0f;    // OR continuous particles/sec for entity emitters
   // d.burstInterval = 0.5f;// OR an emitter that re-bursts every N seconds
 
@@ -117,8 +73,8 @@ Field groups, in brief:
 | Budget | `maxParticles` |
 
 `FloatRange` fields take `{min, max}` (or a single value) and are sampled per
-particle. `EmissionShape::Cone` narrows the launch direction to
-`coneAngleDegrees`; otherwise `directionSpread` sets the fan.
+particle. `EmissionShape::Cone` narrows the launch direction to `coneAngleDegrees`;
+otherwise `directionSpread` sets the fan.
 
 ## Shapes and textures
 
@@ -175,35 +131,9 @@ particles.registerEffect("embers", sfs::emberEffect());
 ```
 
 The four blood layers (`bloodMistEffect`, `bloodSprayEffect`, `bloodGobsEffect`,
-`bloodDripEffect`) are meant to be fired together at one point for a layered
-burst; spray, gobs, and drip leave decals. `recolourBlood(desc, hi, lo)` returns a
-colour variant (its decals follow the particle colour).
-
-## Performance & budgets
-
-- **Global cap.** `particles.setMaxParticles(n)` bounds total live particles
-  across every effect; over the cap, new emissions are dropped gracefully so
-  stacked effects can't run the frame cost away. Each effect also has its own
-  `maxParticles` capacity per live occurrence.
-- **World vs screen.** `SimulationSpace::World` particles are occluded by terrain
-  and depth-sorted; `Screen` particles draw flat on top. Use `Screen` for UI.
-
-## API reference
-
-On the `Particles` module:
-
-| Call | Purpose |
-| --- | --- |
-| `registerEffect(name, desc)` | Register or replace an effect by name |
-| `spawnBurst(name, worldPos, elevation, spawn={})` | One-shot world burst |
-| `spawnScreenBurst(name, screenPos, spawn={})` | One-shot screen-space burst |
-| `enableStains(terrain = nullptr)` | Make decal effects stick |
-| `groundElevationAt(worldPos)` | Surface elevation for a terrain-aware spawn |
-| `setMaxParticles(n)` | Global live-particle ceiling |
-| `liveParticleCount()` | Current live count (debug / HUD) |
-| `hasEffect(name)` / `effect(name)` / `effectNames()` | Inspect registered effects |
-
-Components: `ParticleEmitterComponent` (continuous entity-bound emitter).
+`bloodDripEffect`) are meant to be fired together at one point for a layered burst;
+spray, gobs, and drip leave decals. `recolourBlood(desc, hi, lo)` returns a colour
+variant (its decals follow the particle colour).
 
 Authoring types: `ParticleEffectDesc`, `DecalSpec`, `ParticleSpawnParams`,
 `ParticleShape`, `EmissionShape`, `GroundBehavior`, `SimulationSpace`, `BlendMode`,
