@@ -3,6 +3,7 @@
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/worldCollider.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
@@ -11,7 +12,7 @@ namespace sfs
 {
 
 // Solid world collision runs on WorldCollider (the ground footprint), not
-// ScreenSpaceCollider (which is only a billboard / bullet hit box).
+// BoxCollider2D (which is only a billboard / bullet hit box).
 class CollisionSystem : public System
 {
 public:

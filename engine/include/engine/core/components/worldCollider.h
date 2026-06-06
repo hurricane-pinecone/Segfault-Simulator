@@ -21,7 +21,7 @@ namespace sfs
  * changing when the view is zoomed.
  *
  * Solver: AABB-vs-AABB on the ground plane, gated by matching elevation. For
- * billboard / bullet hits use ScreenSpaceCollider instead.
+ * billboard / bullet hits use BoxCollider2D instead.
  */
 struct WorldCollider
 {
@@ -63,10 +63,6 @@ struct WorldCollider
   float top() const { return bounds.y; }
   float right() const { return bounds.z; }
   float bottom() const { return bounds.w; }
-};
-
-struct SolidObject
-{
 };
 
 } // namespace sfs

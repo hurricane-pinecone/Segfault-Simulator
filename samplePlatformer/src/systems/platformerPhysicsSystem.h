@@ -2,13 +2,15 @@
 
 #include "components/platformerComponents.h"
 #include "config.h"
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 
-#include <cmath>
 #include <vector>
 
 namespace platformer
@@ -17,9 +19,9 @@ namespace platformer
 /**
  * Side-on platformer physics: a game-local sfs::System (no engine changes).
  * Applies gravity to every dynamic body (TransformComponent + RigidBody +
- * BoxCollider + PlatformerBody), integrates velocity, and resolves AABB
- * collisions against static Solid platforms one axis at a time, setting
- * onGround when a body lands on top of a platform.
+ * sfs::BoxCollider2D + PlatformerBody), integrates velocity, and resolves AABB
+ * collisions against static sfs::SolidObject platforms one axis at a time,
+ * setting onGround when a body lands on top of a platform.
  */
 class PlatformerPhysicsSystem : public sfs::System
 {
@@ -28,7 +30,7 @@ protected:
   {
     registerComponent<sfs::TransformComponent>();
     registerComponent<sfs::RigidBodyComponent>();
-    registerComponent<BoxCollider>();
+    registerComponent<sfs::BoxCollider2D>();
     registerComponent<PlatformerBody>();
   }
 
@@ -46,12 +48,12 @@ protected:
       glm::vec2 half;
     };
     std::vector<Box> solids;
-    for (const auto& entity :
-         registry->view<Solid, sfs::TransformComponent, BoxCollider>())
+    for (const auto& entity : registry->view<sfs::SolidObject,
+                                             sfs::TransformComponent,
+                                             sfs::BoxCollider2D>())
     {
-      solids.push_back(
-          {entity.getComponent<sfs::TransformComponent>().position,
-           entity.getComponent<BoxCollider>().half});
+      solids.push_back({entity.getComponent<sfs::TransformComponent>().position,
+                        entity.getComponent<sfs::BoxCollider2D>().half});
     }
 
     for (const auto& entity : getEntities())
@@ -59,7 +61,7 @@ protected:
       auto& transform = entity.getComponent<sfs::TransformComponent>();
       auto& body = entity.getComponent<sfs::RigidBodyComponent>();
       auto& state = entity.getComponent<PlatformerBody>();
-      const glm::vec2 half = entity.getComponent<BoxCollider>().half;
+      const glm::vec2 half = entity.getComponent<sfs::BoxCollider2D>().half;
 
       body.velocity.y += GRAVITY * dt;
       state.onGround = false;
@@ -67,27 +69,43 @@ protected:
       // Move and resolve on X, then Y, so a body slides along walls/floors.
       transform.position.x += body.velocity.x * dt;
       for (const auto& solid : solids)
-        resolve(transform.position, half, body.velocity, solid.center,
-                solid.half, true, state);
+        resolve(transform.position,
+                half,
+                body.velocity,
+                solid.center,
+                solid.half,
+                true,
+                state);
 
       transform.position.y += body.velocity.y * dt;
       for (const auto& solid : solids)
-        resolve(transform.position, half, body.velocity, solid.center,
-                solid.half, false, state);
+        resolve(transform.position,
+                half,
+                body.velocity,
+                solid.center,
+                solid.half,
+                false,
+                state);
     }
   }
 
 private:
-  static bool overlaps(const glm::vec2& ac, const glm::vec2& ah,
-                       const glm::vec2& bc, const glm::vec2& bh)
+  static bool overlaps(const glm::vec2& ac,
+                       const glm::vec2& ah,
+                       const glm::vec2& bc,
+                       const glm::vec2& bh)
   {
-    return std::fabs(ac.x - bc.x) < ah.x + bh.x &&
-           std::fabs(ac.y - bc.y) < ah.y + bh.y;
+    return glm::abs(ac.x - bc.x) < ah.x + bh.x &&
+           glm::abs(ac.y - bc.y) < ah.y + bh.y;
   }
 
-  static void resolve(glm::vec2& pos, const glm::vec2& half, glm::vec2& velocity,
-                      const glm::vec2& solidCenter, const glm::vec2& solidHalf,
-                      bool axisX, PlatformerBody& state)
+  static void resolve(glm::vec2& pos,
+                      const glm::vec2& half,
+                      glm::vec2& velocity,
+                      const glm::vec2& solidCenter,
+                      const glm::vec2& solidHalf,
+                      bool axisX,
+                      PlatformerBody& state)
   {
     if (!overlaps(pos, half, solidCenter, solidHalf))
       return;

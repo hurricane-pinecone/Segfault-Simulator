@@ -10,8 +10,8 @@
 #include "engine/core/particles/particleEngine.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
 
-#include <cmath>
 #include <vector>
 
 namespace platformer
@@ -65,7 +65,7 @@ protected:
       pickup.bob += dt;
       if (entity.hasComponent<sfs::LightEmitterComponent>())
         entity.getComponent<sfs::LightEmitterComponent>().intensity =
-            1.7f + 0.7f * std::sin(pickup.bob * 6.0f);
+            1.7f + 0.7f * glm::sin(pickup.bob * 6.0f);
 
       if (!havePlayer)
         continue;

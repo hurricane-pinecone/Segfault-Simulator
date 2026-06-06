@@ -9,11 +9,11 @@
 #include "engine/runtime/rendering/flatDecal.h"
 #include "engine/runtime/systems/flatRenderSystem.h"
 #include "SDL_pixels.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
 
-#include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <random>
 #include <vector>
@@ -51,7 +51,7 @@ public:
              float dropSize)
   {
     const bool radial = glm::length(dir) <= 0.01f;
-    const float base = radial ? 0.0f : std::atan2(dir.y, dir.x);
+    const float base = radial ? 0.0f : glm::atan(dir.y, dir.x);
     std::uniform_real_distribution<float> fan(-0.9f, 0.9f);
     std::uniform_real_distribution<float> full(0.0f, 6.2831f);
     std::uniform_real_distribution<float> spd(speedMin, speedMax);
@@ -61,7 +61,7 @@ public:
       const float a = radial ? full(m_rng) : base + fan(m_rng);
       const float s = spd(m_rng);
       m_drops.push_back(Drop{origin,
-                             {std::cos(a) * s, std::sin(a) * s - up},
+                             {glm::cos(a) * s, glm::sin(a) * s - up},
                              dropSize * sz(m_rng),
                              vary(color),
                              2.5f});
@@ -121,7 +121,7 @@ private:
     std::uniform_int_distribution<int> gbj(-3, 12);         // slight warmth
     const float m = mul(m_rng);
     const auto cl = [](float v)
-    { return static_cast<Uint8>(std::clamp(v, 0.0f, 255.0f)); };
+    { return static_cast<Uint8>(glm::clamp(v, 0.0f, 255.0f)); };
     return SDL_Color{cl((base.r + rj(m_rng)) * m), cl((base.g + gbj(m_rng)) * m),
                      cl((base.b + gbj(m_rng)) * m), base.a};
   }
@@ -141,11 +141,12 @@ private:
     bool hit = false;
 
     for (const auto& solid :
-         registry->view<Solid, sfs::TransformComponent, BoxCollider>())
+         registry->view<sfs::SolidObject, sfs::TransformComponent,
+                        sfs::BoxCollider2D>())
     {
       const glm::vec2 c =
           solid.getComponent<sfs::TransformComponent>().position;
-      const glm::vec2 h = solid.getComponent<BoxCollider>().half;
+      const glm::vec2 h = solid.getComponent<sfs::BoxCollider2D>().half;
       float tEnter = 0.0f;
       float tExit = 0.0f;
       if (!segmentBox(prev, seg, c - h, c + h, tEnter, tExit))
@@ -181,7 +182,7 @@ private:
       const float dr = axis == 0 ? seg.x : seg.y;
       const float l = axis == 0 ? lo.x : lo.y;
       const float hgh = axis == 0 ? hi.x : hi.y;
-      if (std::fabs(dr) < 1e-6f)
+      if (glm::abs(dr) < 1e-6f)
       {
         if (p < l || p > hgh)
           return false; // parallel to this slab and outside it
@@ -195,8 +196,8 @@ private:
         t1 = t2;
         t2 = tmp;
       }
-      tmin = std::max(tmin, t1);
-      tmax = std::min(tmax, t2);
+      tmin = glm::max(tmin, t1);
+      tmax = glm::min(tmax, t2);
       if (tmin > tmax)
         return false;
     }
@@ -230,7 +231,7 @@ private:
             const SDL_Color& tint)
   {
     const glm::vec2 mid = at + dir * (len * 0.5f);
-    const float rot = std::atan2(-dir.x, dir.y); // local +Y -> dir
+    const float rot = glm::atan(-dir.x, dir.y); // local +Y -> dir
     sfs::FlatDecal s;
     s.sprite = m_solidSprite;
     s.worldPos = mid;
@@ -250,11 +251,11 @@ private:
     const glm::vec2 lo = center - half;
     const glm::vec2 hi = center + half;
     float t = 1e30f;
-    if (std::fabs(dir.x) > 1e-6f)
-      t = std::min(t, ((dir.x > 0.0f ? hi.x : lo.x) - at.x) / dir.x);
-    if (std::fabs(dir.y) > 1e-6f)
-      t = std::min(t, ((dir.y > 0.0f ? hi.y : lo.y) - at.y) / dir.y);
-    return std::max(t, 0.0f);
+    if (glm::abs(dir.x) > 1e-6f)
+      t = glm::min(t, ((dir.x > 0.0f ? hi.x : lo.x) - at.x) / dir.x);
+    if (glm::abs(dir.y) > 1e-6f)
+      t = glm::min(t, ((dir.y > 0.0f ? hi.y : lo.y) - at.y) / dir.y);
+    return glm::max(t, 0.0f);
   }
 
   // Stick blood at a surface impact, Noita-style: a dynamic, irregular SPLATTER
@@ -269,7 +270,7 @@ private:
     const float speed = glm::length(d.vel);
     const glm::vec2 dir = speed > 1.0f ? d.vel / speed : glm::vec2{0.0f, 1.0f};
     const glm::vec2 perp{-dir.y, dir.x};
-    const float base = std::atan2(d.vel.y, d.vel.x);
+    const float base = glm::atan(d.vel.y, d.vel.x);
     // Moderate splatter -- big enough that spray accumulates and saturates, not
     // a giant blob. The blobs blend (depth-write off) so they layer cleanly.
     const float splat = d.size * (1.25f + speed * 0.0013f);
@@ -304,9 +305,9 @@ private:
     for (int i = 0; i < n; ++i)
     {
       const float a = base + fan(m_rng);
-      const glm::vec2 sd{std::cos(a), std::sin(a)};
+      const glm::vec2 sd{glm::cos(a), glm::sin(a)};
       const float reach = boxReach(at, sd, center, half);
-      const float len = std::min((8.0f + speed * 0.085f) * lenf(m_rng), reach);
+      const float len = glm::min((8.0f + speed * 0.085f) * lenf(m_rng), reach);
       if (len < 4.0f)
         continue;
       line(at, sd, wid(m_rng), len, d.color);
