@@ -8,30 +8,40 @@ docs_dir: docs
 
 theme:
   name: material
+  font:
+    text: Inter           # clean, Stripe-like sans (replaces default Roboto)
+    code: Roboto Mono
   icon:
     repo: fontawesome/brands/github
+  # Brand colours are 'custom' -- defined in docs/stylesheets/extra.css.
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.indexes   # a folder's index.md is its section landing page
-    - navigation.top       # back-to-top button
+    - navigation.tabs        # top-level sections as a tab bar
+    - navigation.tabs.sticky # keep the tabs visible on scroll
+    - navigation.indexes     # a folder's index.md is its section landing page
+    - navigation.top         # back-to-top button
     - navigation.tracking
-    - toc.follow           # right-hand per-page section list follows scroll
+    - toc.follow             # right-hand per-page section list follows scroll
     - search.suggest
-    - content.code.copy    # copy button on code blocks
+    - search.highlight
+    - content.code.copy      # copy button on code blocks
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition

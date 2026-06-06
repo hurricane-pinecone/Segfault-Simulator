@@ -51,7 +51,8 @@ target_include_directories(engine-core
 
 target_compile_options(engine-core PRIVATE
     -Wall
-    -Wno-unknown-warning-option
+    # Clang-only (silences unknown -Wno-* flags); GCC doesn't recognise it.
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
 )
 
 if(ENGINE_WEB_BUILD)
@@ -94,7 +95,8 @@ target_include_directories(engine PRIVATE
 
 target_compile_options(engine PRIVATE
     -Wall
-    -Wno-unknown-warning-option
+    # Clang-only (silences unknown -Wno-* flags); GCC doesn't recognise it.
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
 )
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets

@@ -1,0 +1,124 @@
+/* ============================================================
+   Stripe-inspired polish for MkDocs Material.
+   Brand tokens are scheme-scoped so light and dark both apply.
+   ============================================================ */
+
+[data-md-color-scheme="default"] {
+  --sfs-blurple: #635bff;
+  --sfs-ink:     #1a1f36; /* headings / near-black */
+  --sfs-body:    #3c4257; /* body text */
+  --sfs-muted:   #697386;
+  --sfs-line:    rgba(26, 31, 54, 0.08);
+  --sfs-surface: #f6f9fc; /* subtle panels */
+  --sfs-bar:     #ffffff; /* top bar */
+
+  --md-primary-fg-color: var(--sfs-blurple);
+  --md-accent-fg-color:  var(--sfs-blurple);
+  --md-typeset-a-color:  var(--sfs-blurple);
+}
+
+[data-md-color-scheme="slate"] {
+  --sfs-blurple: #8b85ff;
+  --sfs-ink:     #e6e9f0;
+  --sfs-body:    #c2c8d6;
+  --sfs-muted:   #8b93a7;
+  --sfs-line:    rgba(255, 255, 255, 0.10);
+  --sfs-surface: #0f1b34;
+  --sfs-bar:     #0a1530;
+
+  --md-primary-fg-color: var(--sfs-blurple);
+  --md-accent-fg-color:  var(--sfs-blurple);
+  --md-typeset-a-color:  var(--sfs-blurple);
+}
+
+/* ---- Top bar: a clean light/dark surface, not a saturated colour slab ---- */
+.md-header,
+.md-tabs {
+  background-color: var(--sfs-bar);
+  color: var(--sfs-ink);
+}
+.md-header {
+  box-shadow: 0 1px 0 var(--sfs-line);
+}
+.md-tabs {
+  border-bottom: 1px solid var(--sfs-line);
+}
+.md-tabs__link {
+  color: var(--sfs-body);
+  opacity: 1;
+  font-weight: 500;
+}
+.md-tabs__link--active,
+.md-tabs__link:hover {
+  color: var(--sfs-blurple);
+}
+.md-search__form {
+  background-color: var(--sfs-surface);
+  box-shadow: none;
+}
+.md-search__input,
+.md-search__input::placeholder {
+  color: var(--sfs-muted);
+}
+
+/* ---- Typography: roomier and calmer ---- */
+.md-typeset {
+  font-size: 0.8rem;
+  line-height: 1.72;
+  color: var(--sfs-body);
+}
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--sfs-ink);
+}
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 2.6rem;
+  color: var(--sfs-ink);
+}
+.md-typeset h3 {
+  font-weight: 600;
+  color: var(--sfs-ink);
+}
+
+/* ---- Code ---- */
+.md-typeset pre > code {
+  border-radius: 10px;
+}
+.md-typeset code {
+  border-radius: 4px;
+  font-size: 0.84em;
+  padding: 0.15em 0.4em;
+}
+
+/* ---- Tables: bordered + rounded with a soft header ---- */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--sfs-line);
+  border-radius: 10px;
+  font-size: 0.78rem;
+}
+.md-typeset table:not([class]) th {
+  background-color: var(--sfs-surface);
+  color: var(--sfs-ink);
+  font-weight: 600;
+}
+
+/* ---- Sidebar / nav ---- */
+.md-nav {
+  font-size: 0.72rem;
+}
+.md-nav__title {
+  color: var(--sfs-muted);
+  font-weight: 600;
+}
+.md-nav__link--active {
+  color: var(--sfs-blurple);
+  font-weight: 600;
+}
+
+/* ---- Slightly wider, more readable content column ---- */
+.md-grid {
+  max-width: 70rem;
+}
