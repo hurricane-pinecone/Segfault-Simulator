@@ -1,8 +1,9 @@
 #include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 
+#include "glm/glm/common.hpp"
+#include "glm/glm/exponential.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/geometric.hpp"
-#include <algorithm>
 
 namespace sfs
 {
@@ -35,7 +36,7 @@ float projectedShadowLength(float heightLevels,
 
   const float length = heightLevels * projectionFactor;
 
-  return std::min(length, maxLength * std::max(1.0f, heightLevels));
+  return glm::min(length, maxLength * glm::max(1.0f, heightLevels));
 }
 
 std::vector<IsometricShadowResult>
@@ -61,16 +62,16 @@ computeIsometricShadows(const std::vector<IsometricPointLightSnapshot>& lights,
     glm::vec2 shadowWorldDir = delta / distance;
 
     float attenuation = 1.0f - distance / light.radius;
-    attenuation = std::pow(std::clamp(attenuation, 0.0f, 1.0f), 0.75f);
+    attenuation = glm::pow(glm::clamp(attenuation, 0.0f, 1.0f), 0.75f);
 
     float casterHeight = static_cast<float>(casterPixelHeight) * 0.75f;
-    float visualLightHeight = std::max(light.height * 0.0625f, 1.0f);
+    float visualLightHeight = glm::max(light.height * 0.0625f, 1.0f);
     float shadowLength = casterHeight * distance / visualLightHeight;
 
     glm::vec2 isoDir = gridDirectionToIsometricDirection(
         shadowWorldDir, worldScale, tileWidth, tileHeight);
 
-    float alpha = 0.42f * attenuation * std::clamp(light.intensity, 0.0f, 2.0f);
+    float alpha = 0.42f * attenuation * glm::clamp(light.intensity, 0.0f, 2.0f);
 
     shadows.push_back({isoDir * shadowLength, alpha});
   }
@@ -93,8 +94,8 @@ computeIsometricShadows(const std::vector<IsometricPointLightSnapshot>& lights,
       {
         float noonFade = glm::smoothstep(0.0f, 0.25f, horizontalLength);
 
-        float lowSunStretch = std::clamp(
-            horizontalLength / std::max(sunDirection.z, 0.03f), 0.0f, 12.0f);
+        float lowSunStretch = glm::clamp(
+            horizontalLength / glm::max(sunDirection.z, 0.03f), 0.0f, 12.0f);
 
         float shadowLength = static_cast<float>(casterPixelHeight) *
                              lowSunStretch * 0.45f * noonFade;

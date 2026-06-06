@@ -9,8 +9,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
 #include "engine/runtime/rendering/quads.h"
-
-#include <cmath>
+#include "glm/glm/common.hpp"
 
 namespace sfs
 {
@@ -70,8 +69,8 @@ void SpriteRenderSystem::render()
     quad.texture = m_quadRenderer.getOrCreateTexture(sprite->textureId, surface);
     quad.srcRect = sprite->srcRect;
     quad.destRect = SDL_Rect{
-        static_cast<int>(std::round(screen.x - anchorX)),
-        static_cast<int>(std::round(screen.y - anchorY)),
+        static_cast<int>(glm::round(screen.x - anchorX)),
+        static_cast<int>(glm::round(screen.y - anchorY)),
         width,
         height,
     };

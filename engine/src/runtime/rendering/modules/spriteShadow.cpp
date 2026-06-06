@@ -10,8 +10,6 @@
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
-#include <algorithm>
-#include <cmath>
 #include <unordered_set>
 
 namespace sfs
@@ -19,12 +17,12 @@ namespace sfs
 
 void SpriteShadow::setSpriteShadowMaxLength(float length)
 {
-  m_shadowSettings.spriteShadowMaxLength = std::max(length, 0.0f);
+  m_shadowSettings.spriteShadowMaxLength = glm::max(length, 0.0f);
 }
 
 void SpriteShadow::setSpriteShadowAlpha(float alpha)
 {
-  m_shadowSettings.spriteShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
+  m_shadowSettings.spriteShadowAlpha = glm::clamp(alpha, 0.0f, 1.0f);
 }
 
 void SpriteShadow::computeCommands(
@@ -90,10 +88,10 @@ void SpriteShadow::constructSpriteShadows(
       static_cast<float>(context.projection->elevationStep) *
       context.projection->worldScale * zoom;
   const float casterHeightLevels =
-      static_cast<float>(dest.h) / std::max(elevationStepPixels, 0.001f);
+      static_cast<float>(dest.h) / glm::max(elevationStepPixels, 0.001f);
 
   const float sunStrength =
-      ambientLighting ? std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f)
+      ambientLighting ? glm::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f)
                       : 0.0f;
 
   const float pointShadowStrength = 1.0f - sunStrength;
@@ -127,8 +125,8 @@ void SpriteShadow::constructSpriteShadows(
                        static_cast<float>(textureHeight);
 
       return glm::vec2{
-          glm::mix(u0, u1, std::clamp(uv.x, 0.0f, 1.0f)),
-          glm::mix(v0, v1, std::clamp(uv.y, 0.0f, 1.0f)),
+          glm::mix(u0, u1, glm::clamp(uv.x, 0.0f, 1.0f)),
+          glm::mix(v0, v1, glm::clamp(uv.y, 0.0f, 1.0f)),
       };
     };
 
@@ -185,12 +183,12 @@ void SpriteShadow::constructSpriteShadows(
 
       walkGridDDA(columnStart,
                   dir,
-                  std::max(along, 0.0f),
+                  glm::max(along, 0.0f),
                   [&](const glm::ivec2& tile, float)
                   {
                     int e = 0;
                     if (context.terrainElevationGrid.tryGet(tile, e))
-                      peak = std::max(peak, static_cast<float>(e));
+                      peak = glm::max(peak, static_cast<float>(e));
 
                     return true;
                   });
@@ -206,20 +204,20 @@ void SpriteShadow::constructSpriteShadows(
     auto computeShadowUv = [&](const glm::vec2& p, float surfaceElevation)
     {
       const float rise =
-          climbScale * std::max(0.0f, surfaceElevation - casterElevation);
+          climbScale * glm::max(0.0f, surfaceElevation - casterElevation);
 
       if (!pointShadow)
       {
         const glm::vec2 local = p - base;
 
         float v = (glm::dot(local, dir) + rise) / shadowLength;
-        v = std::clamp(v, 0.0f, 1.0f);
+        v = glm::clamp(v, 0.0f, 1.0f);
 
         const float width =
             glm::mix(SpriteShadowBaseWidth, SpriteShadowTipWidth, v);
 
         float u = glm::dot(local, side) / width + 0.5f;
-        u = std::clamp(u, 0.0f, 1.0f);
+        u = glm::clamp(u, 0.0f, 1.0f);
 
         return glm::vec2{u, v};
       }
@@ -235,15 +233,15 @@ void SpriteShadow::constructSpriteShadows(
 
       const float denom = cross(ray, edge);
 
-      if (std::abs(denom) < 0.0001f)
+      if (glm::abs(denom) < 0.0001f)
         return glm::vec2{0.5f, 0.0f};
 
       const glm::vec2 diff = baseA - light;
       const float edgeT = cross(diff, ray) / denom;
 
-      float u = std::clamp(edgeT, 0.0f, 1.0f);
+      float u = glm::clamp(edgeT, 0.0f, 1.0f);
       float v =
-          std::clamp((glm::dot(p - base, dir) + rise) / shadowLength, 0.0f, 1.0f);
+          glm::clamp((glm::dot(p - base, dir) + rise) / shadowLength, 0.0f, 1.0f);
 
       return glm::vec2{u, v};
     };
@@ -297,7 +295,7 @@ void SpriteShadow::constructSpriteShadows(
             0,
             0,
             0,
-            static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f),
+            static_cast<Uint8>(glm::clamp(alpha, 0.0f, 1.0f) * 255.0f),
         };
 
         shadow.quad.points[0] =
@@ -351,7 +349,7 @@ void SpriteShadow::constructSpriteShadows(
       // flicker the climbing shadows at low sun.
       const float wallAlong = glm::dot(mid - base, dir);
       const float arcBase = wallAlong +
-                            climbScale * std::max(0.0f, eLowF - casterElevation);
+                            climbScale * glm::max(0.0f, eLowF - casterElevation);
 
       if (arcBase >= shadowLength)
         return; // shadow ran out before reaching this wall
@@ -362,7 +360,7 @@ void SpriteShadow::constructSpriteShadows(
       // (the cliff case); otherwise it climbs the whole wall and continues.
       const float heightCap = casterElevation + casterHeightLevels;
       const float budgetCap = eLowF + (shadowLength - arcBase) / climbScale;
-      const float eTopClamped = std::min({eHighF, heightCap, budgetCap});
+      const float eTopClamped = glm::min(eHighF, glm::min(heightCap, budgetCap));
 
       if (eTopClamped <= eLowF + 0.001f)
         return;
@@ -391,7 +389,7 @@ void SpriteShadow::constructSpriteShadows(
           0,
           0,
           0,
-          static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f),
+          static_cast<Uint8>(glm::clamp(alpha, 0.0f, 1.0f) * 255.0f),
       };
 
       shadow.quad.points[0] = context.worldToScreen(edgeA, eLowF);
@@ -450,7 +448,7 @@ void SpriteShadow::constructSpriteShadows(
 
     for (const FootprintTile& ft : footprint)
     {
-      const float peak = std::max(peakElevationUpTo(ft.along, ft.perp),
+      const float peak = glm::max(peakElevationUpTo(ft.along, ft.perp),
                                   static_cast<float>(ft.elevation));
 
       // Terrain at or above the caster's top blocks the shadow: it can't climb
@@ -467,7 +465,7 @@ void SpriteShadow::constructSpriteShadows(
       // wall the shadow only partly climbs lies beyond the shadow's end even
       // though it still falls inside the flat horizontal march. The tile's
       // nearest corner is used so the tile holding the shadow's tip survives.
-      const float rise = climbScale * std::max(0.0f, peak - casterElevation);
+      const float rise = climbScale * glm::max(0.0f, peak - casterElevation);
 
       float nearestAlong = glm::dot(glm::vec2(ft.tile) - base, dir);
       for (int corner = 1; corner < 4; corner++)
@@ -475,7 +473,7 @@ void SpriteShadow::constructSpriteShadows(
         const glm::vec2 c = glm::vec2(ft.tile) +
                             glm::vec2(static_cast<float>(corner & 1),
                                       static_cast<float>((corner >> 1) & 1));
-        nearestAlong = std::min(nearestAlong, glm::dot(c - base, dir));
+        nearestAlong = glm::min(nearestAlong, glm::dot(c - base, dir));
       }
 
       if (nearestAlong + rise >= shadowLength)
@@ -526,7 +524,7 @@ void SpriteShadow::constructSpriteShadows(
   {
     const glm::vec3 sunDir3D = ambientLighting->direction;
     const float diffuse =
-        std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
+        glm::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
 
     if (sunDir3D.z > 0.02f && diffuse > 0.01f)
     {
@@ -537,7 +535,7 @@ void SpriteShadow::constructSpriteShadows(
       {
         shadowDir /= horizontalAmount;
 
-        const float sunHeight = std::max(sunDir3D.z, 0.08f);
+        const float sunHeight = glm::max(sunDir3D.z, 0.08f);
 
         // Shadow length is the caster's actual height projected by the sun. A
         // caster taller than a wall therefore climbs the whole wall and spills
@@ -587,13 +585,13 @@ void SpriteShadow::constructSpriteShadows(
       continue;
 
     float attenuation = 1.0f - distance / radiusWorld;
-    attenuation = std::clamp(attenuation, 0.0f, 1.0f);
+    attenuation = glm::clamp(attenuation, 0.0f, 1.0f);
     attenuation *= attenuation;
 
     const float lightFactor =
-        std::clamp(light.intensity * attenuation, 0.0f, 1.0f);
+        glm::clamp(light.intensity * attenuation, 0.0f, 1.0f);
 
-    const float alpha = std::clamp(
+    const float alpha = glm::clamp(
         m_shadowSettings.spriteShadowAlpha * lightFactor * pointShadowStrength,
         0.0f,
         1.0f);
@@ -607,7 +605,7 @@ void SpriteShadow::constructSpriteShadows(
         static_cast<float>(context.projection->elevationStep) *
         context.projection->worldScale;
     const float lightHeightWorld =
-        std::max(light.height / elevationStepPixels, 0.08f);
+        glm::max(light.height / elevationStepPixels, 0.08f);
 
     // Terrain taller than the light between it and the caster blocks the light,
     // so the caster casts no shadow from it - the same occlusion the lit shader
@@ -650,7 +648,7 @@ void SpriteShadow::constructSpriteShadows(
 
     float shadowLength = SpriteCasterHeightWorld * distance / lightHeightWorld;
     shadowLength =
-        std::clamp(shadowLength, 0.15f, m_shadowSettings.spriteShadowMaxLength);
+        glm::clamp(shadowLength, 0.15f, m_shadowSettings.spriteShadowMaxLength);
 
     // Point-light shadows climb walls like the sun's, costing one budget unit
     // per elevation level. The textured-shadow UV already has a point-light

@@ -5,6 +5,7 @@
 #include <engine/core/ecs/system.h>
 #include <engine/runtime/rendering/util/isometric/camera.h>
 #include <glm/glm/common.hpp>
+#include <glm/glm/exponential.hpp>
 #include <glm/glm/ext/vector_float2.hpp>
 
 #include <engine/core/ecs/registry.h>
@@ -41,7 +42,7 @@ public:
       glm::vec2 desiredPosition = targetTransform.position + camera.offset;
 
       float t =
-          1.0f - std::exp(-camera.smoothing * static_cast<float>(deltaTime));
+          1.0f - glm::exp(-camera.smoothing * static_cast<float>(deltaTime));
 
       cameraTransform.position =
           glm::mix(cameraTransform.position, desiredPosition, t);

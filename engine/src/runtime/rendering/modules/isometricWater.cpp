@@ -7,6 +7,8 @@
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/sdlColor.h"
 #include "engine/core/util/profiling.h"
+#include "glm/glm/common.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -137,7 +139,7 @@ WaterSurfaceBuild IsometricWater::collectWaterSurfaceBuild(
         tile,
         water.elevation,
         terrainElevation,
-        static_cast<float>(std::max(0, water.elevation - terrainElevation))});
+        static_cast<float>(glm::max(0, water.elevation - terrainElevation))});
 
     if (!hasBounds)
     {
@@ -163,7 +165,7 @@ IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
                                        float sortDepth,
                                        SurfaceCommand& command) const
 {
-  const float depthFactor = std::clamp(depth / 6.0f, 0.0f, 1.0f);
+  const float depthFactor = glm::clamp(depth / 6.0f, 0.0f, 1.0f);
 
   const SDL_Color shallowColor = sfs::toSDL(sfs::Colors::Turqoise);
   const SDL_Color deepColor = sfs::toSDL(sfs::Colors::Navy);

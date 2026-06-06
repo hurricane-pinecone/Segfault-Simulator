@@ -1,6 +1,6 @@
 #include "engine/core/util/parallelFor.h"
+#include "glm/glm/common.hpp"
 
-#include <algorithm>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -35,7 +35,7 @@ unsigned int desiredWorkerThreads()
   constexpr unsigned int kCap = 4;
 #endif
 
-  return std::min(available, kCap);
+  return glm::min(available, kCap);
 }
 
 // Persistent fork-join pool: worker `i` runs range `i`, the caller runs the

@@ -1,10 +1,11 @@
 #include "engine/runtime/rendering/modules/decals.h"
 
 #include "engine/core/util/profiling.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
 
-#include <algorithm>
-#include <cmath>
+#include <utility>
 
 namespace sfs
 {
@@ -26,7 +27,7 @@ int floorDiv(int a, int b)
 
 inline glm::ivec2 floorTile(const glm::vec2& p)
 {
-  return {static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y))};
+  return {static_cast<int>(glm::floor(p.x)), static_cast<int>(glm::floor(p.y))};
 }
 
 // Pack a colour into RGBA8 (the DecalVertex format; uploaded as a normalised
@@ -35,7 +36,7 @@ std::uint32_t packRGBA8(const glm::vec4& c)
 {
   const auto q = [](float v)
   {
-    return static_cast<std::uint32_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f +
+    return static_cast<std::uint32_t>(glm::clamp(v, 0.0f, 1.0f) * 255.0f +
                                       0.5f);
   };
   return q(c.r) | (q(c.g) << 8) | (q(c.b) << 16) | (q(c.a) << 24);
@@ -160,11 +161,11 @@ std::int64_t Decals::coverageKey(glm::ivec2 chunk, const Decal& d) const
   const glm::vec2 local =
       d.worldPos - glm::vec2{chunk} * static_cast<float>(kChunkTiles);
   const std::int64_t ix =
-      static_cast<std::int64_t>(std::floor(local.x / m_coverageCell)) & 0xFF;
+      static_cast<std::int64_t>(glm::floor(local.x / m_coverageCell)) & 0xFF;
   const std::int64_t iy =
-      static_cast<std::int64_t>(std::floor(local.y / m_coverageCell)) & 0xFF;
+      static_cast<std::int64_t>(glm::floor(local.y / m_coverageCell)) & 0xFF;
   const std::int64_t iz =
-      static_cast<std::int64_t>(std::floor(d.elevation / m_coverageElevCell)) &
+      static_cast<std::int64_t>(glm::floor(d.elevation / m_coverageElevCell)) &
       0xFFFF;
   const std::int64_t disc =
       (static_cast<std::int64_t>(d.surface) * 4 + d.wallSide) & 0xFF;
@@ -379,7 +380,7 @@ void Decals::buildDecalVerts(const Decal& decal,
 {
   glm::vec4 color = decal.color;
   if (decal.fadeRate > 0.0f)
-    color.a *= std::max(0.0f, 1.0f - decal.age * decal.fadeRate);
+    color.a *= glm::max(0.0f, 1.0f - decal.age * decal.fadeRate);
   if (color.a <= 0.0f)
     return;
 
@@ -391,8 +392,8 @@ void Decals::buildDecalVerts(const Decal& decal,
   {
     // Ground/water: a rotated world square lying flat on the surface.
     const float h = decal.size * 0.5f;
-    const float c = std::cos(decal.rotation);
-    const float s = std::sin(decal.rotation);
+    const float c = glm::cos(decal.rotation);
+    const float s = glm::sin(decal.rotation);
     const auto rot = [&](float ox, float oy)
     { return glm::vec2{ox * c - oy * s, ox * s + oy * c}; };
 
@@ -421,7 +422,7 @@ void Decals::buildDecalVerts(const Decal& decal,
   const glm::vec2 edgeDir =
       decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
   const float headElev =
-      std::max(decal.wallBottom, decal.elevation - decal.dripSpeed * decal.age);
+      glm::max(decal.wallBottom, decal.elevation - decal.dripSpeed * decal.age);
   const float halfW = decal.size * 0.5f;
 
   // Key each vertex off its own world position + elevation, matching the block

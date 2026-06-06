@@ -3,10 +3,10 @@
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/worldCollider.h"
 #include "engine/core/rendering/iTerrainHeightSource.h"
-#include <cmath>
 #include <engine/core/components/rigidBodyComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/system.h>
+#include <glm/glm/common.hpp>
 #include <glm/glm/ext/vector_float2.hpp>
 
 namespace sfs
@@ -87,8 +87,8 @@ private:
   int terrainHeightAt(const glm::vec2& position) const
   {
     return m_terrainHeightSource->terrainHeightAt(
-        static_cast<int>(std::floor(position.x)),
-        static_cast<int>(std::floor(position.y)));
+        static_cast<int>(glm::floor(position.x)),
+        static_cast<int>(glm::floor(position.y)));
   }
 
   bool isCliff(float worldX, float worldY, int fromLevel) const

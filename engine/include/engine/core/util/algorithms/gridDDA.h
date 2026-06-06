@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
@@ -160,8 +161,8 @@ void walkGridDDA(glm::vec2 start,
   const glm::vec2 dir = glm::normalize(direction);
 
   glm::ivec2 tile{
-      static_cast<int>(std::floor(start.x)),
-      static_cast<int>(std::floor(start.y)),
+      static_cast<int>(glm::floor(start.x)),
+      static_cast<int>(glm::floor(start.y)),
   };
 
   if (!visit(tile, 0.0f))
@@ -176,25 +177,25 @@ void walkGridDDA(glm::vec2 start,
   const float nextBoundaryY = dir.y >= 0.0f ? static_cast<float>(tile.y + 1)
                                             : static_cast<float>(tile.y);
 
-  float tMaxX = std::abs(dir.x) > 0.0001f
+  float tMaxX = glm::abs(dir.x) > 0.0001f
                     ? (nextBoundaryX - start.x) / dir.x
                     : std::numeric_limits<float>::infinity();
 
-  float tMaxY = std::abs(dir.y) > 0.0001f
+  float tMaxY = glm::abs(dir.y) > 0.0001f
                     ? (nextBoundaryY - start.y) / dir.y
                     : std::numeric_limits<float>::infinity();
 
-  const float tDeltaX = std::abs(dir.x) > 0.0001f
-                            ? std::abs(1.0f / dir.x)
+  const float tDeltaX = glm::abs(dir.x) > 0.0001f
+                            ? glm::abs(1.0f / dir.x)
                             : std::numeric_limits<float>::infinity();
 
-  const float tDeltaY = std::abs(dir.y) > 0.0001f
-                            ? std::abs(1.0f / dir.y)
+  const float tDeltaY = glm::abs(dir.y) > 0.0001f
+                            ? glm::abs(1.0f / dir.y)
                             : std::numeric_limits<float>::infinity();
 
   while (true)
   {
-    const float travelled = std::min(tMaxX, tMaxY);
+    const float travelled = glm::min(tMaxX, tMaxY);
 
     if (travelled > maxDistance)
       break;

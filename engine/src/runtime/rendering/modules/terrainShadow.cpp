@@ -9,11 +9,11 @@
 #include "engine/core/util/parallelFor.h"
 
 #include <algorithm>
-#include <cmath>
 #include <vector>
 
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/terrainBoundaryComponent.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 
 #include "engine/core/util/profiling.h"
@@ -86,12 +86,12 @@ void TerrainShadow::computeTerrainShadows(const IsometricRenderContext& context)
 
   shadowDir /= horizontalAmount;
 
-  const float sunHeight = std::max(sunDir3D.z, 0.08f);
+  const float sunHeight = glm::max(sunDir3D.z, 0.08f);
   const float effectiveSunHeight =
-      sunHeight / std::max(horizontalAmount, 0.001f);
+      sunHeight / glm::max(horizontalAmount, 0.001f);
 
   const float diffuse =
-      std::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
+      glm::clamp(ambientLighting->diffuseStrength, 0.0f, 1.0f);
 
   if (diffuse <= 0.01f)
   {
@@ -116,8 +116,8 @@ void TerrainShadow::computeTerrainShadows(const IsometricRenderContext& context)
 
   const bool cameraChanged =
       glm::length(isoCameraPosition - m_cache.isoCameraPosition) > 0.001f ||
-      std::abs(zoom - m_cache.zoom) > 0.001f;
-  const bool alphaChanged = std::abs(alpha - m_cache.alpha) > 0.005f;
+      glm::abs(zoom - m_cache.zoom) > 0.001f;
+  const bool alphaChanged = glm::abs(alpha - m_cache.alpha) > 0.005f;
 
   if (!m_cache.itemsDirty && !sunChanged && !cameraChanged && !alphaChanged)
   {
@@ -248,7 +248,7 @@ void TerrainShadow::emitTileShadow(const IsometricRenderContext& context,
       0,
       0,
       0,
-      static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f),
+      static_cast<Uint8>(glm::clamp(alpha, 0.0f, 1.0f) * 255.0f),
   };
 
   glm::vec2 screenPoly[8];
@@ -429,7 +429,7 @@ std::vector<TerrainShadowEdge> TerrainShadow::mergeTerrainShadowEdges(
 
   for (const TerrainShadowEdge& edge : input)
   {
-    const bool vertical = std::abs(edge.a.x - edge.b.x) < 0.001f;
+    const bool vertical = glm::abs(edge.a.x - edge.b.x) < 0.001f;
 
     Run run;
     run.edge = edge;
@@ -437,15 +437,15 @@ std::vector<TerrainShadowEdge> TerrainShadow::mergeTerrainShadowEdges(
 
     if (vertical)
     {
-      run.constant = static_cast<int>(std::round(edge.a.x));
-      run.start = static_cast<int>(std::round(std::min(edge.a.y, edge.b.y)));
-      run.end = static_cast<int>(std::round(std::max(edge.a.y, edge.b.y)));
+      run.constant = static_cast<int>(glm::round(edge.a.x));
+      run.start = static_cast<int>(glm::round(glm::min(edge.a.y, edge.b.y)));
+      run.end = static_cast<int>(glm::round(glm::max(edge.a.y, edge.b.y)));
     }
     else
     {
-      run.constant = static_cast<int>(std::round(edge.a.y));
-      run.start = static_cast<int>(std::round(std::min(edge.a.x, edge.b.x)));
-      run.end = static_cast<int>(std::round(std::max(edge.a.x, edge.b.x)));
+      run.constant = static_cast<int>(glm::round(edge.a.y));
+      run.start = static_cast<int>(glm::round(glm::min(edge.a.x, edge.b.x)));
+      run.end = static_cast<int>(glm::round(glm::max(edge.a.x, edge.b.x)));
     }
 
     runs.push_back(run);
@@ -479,7 +479,7 @@ std::vector<TerrainShadowEdge> TerrainShadow::mergeTerrainShadowEdges(
 
     TerrainShadowEdge& last = merged.back();
 
-    const bool lastVertical = std::abs(last.a.x - last.b.x) < 0.001f;
+    const bool lastVertical = glm::abs(last.a.x - last.b.x) < 0.001f;
 
     bool canMerge = lastVertical == run.vertical &&
                     last.topElevation == run.edge.topElevation &&
@@ -490,17 +490,17 @@ std::vector<TerrainShadowEdge> TerrainShadow::mergeTerrainShadowEdges(
     {
       if (run.vertical)
       {
-        const int lastX = static_cast<int>(std::round(last.a.x));
+        const int lastX = static_cast<int>(glm::round(last.a.x));
         const int lastEnd =
-            static_cast<int>(std::round(std::max(last.a.y, last.b.y)));
+            static_cast<int>(glm::round(glm::max(last.a.y, last.b.y)));
 
         canMerge = lastX == run.constant && lastEnd == run.start;
       }
       else
       {
-        const int lastY = static_cast<int>(std::round(last.a.y));
+        const int lastY = static_cast<int>(glm::round(last.a.y));
         const int lastEnd =
-            static_cast<int>(std::round(std::max(last.a.x, last.b.x)));
+            static_cast<int>(glm::round(glm::max(last.a.x, last.b.x)));
 
         canMerge = lastY == run.constant && lastEnd == run.start;
       }
@@ -529,14 +529,14 @@ std::vector<TerrainShadowEdge> TerrainShadow::mergeTerrainShadowEdges(
 
 void TerrainShadow::setTerrainShadowMaxLength(float length)
 {
-  m_shadowSettings.terrainShadowMaxLength = std::max(length, 0.0f);
+  m_shadowSettings.terrainShadowMaxLength = glm::max(length, 0.0f);
 
   markTerrainDirty();
 }
 
 void TerrainShadow::setTerrainShadowAlpha(float alpha)
 {
-  m_shadowSettings.terrainShadowAlpha = std::clamp(alpha, 0.0f, 1.0f);
+  m_shadowSettings.terrainShadowAlpha = glm::clamp(alpha, 0.0f, 1.0f);
 
   markTerrainDirty();
 }
@@ -552,7 +552,7 @@ float TerrainShadow::calculateTerrainShadowLength(const TerrainShadowEdge& edge,
       static_cast<float>(edge.topElevation - edge.bottomElevation);
 
   return projectedShadowLength(
-      heightDelta, 1.0f / std::max(sunHeight, 0.001f), maxShadowLength);
+      heightDelta, 1.0f / glm::max(sunHeight, 0.001f), maxShadowLength);
 }
 
 void TerrainShadow::buildTerrainEdgeShadowItems(
