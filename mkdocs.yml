@@ -26,7 +26,7 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.indexes   # a folder's overview.md is its section landing page
+    - navigation.indexes   # a folder's index.md is its section landing page
     - navigation.top       # back-to-top button
     - navigation.tracking
     - toc.follow           # right-hand per-page section list follows scroll
@@ -48,17 +48,17 @@ plugins:
   - search
 
 nav:
-  - Home: overview.md
+  - Home: index.md
   - Architecture:
-      - architecture/overview.md
+      - architecture/index.md
       - Rendering: architecture/rendering.md
       - Render modules: architecture/render-modules.md
   - Particles & decals:
-      - particles/overview.md
+      - particles/index.md
       - Authoring effects: particles/effects.md
       - Decals & splatter: particles/decals.md
   - Scripting:
-      - scripting/overview.md
+      - scripting/index.md
       - Modding API: scripting/modding-api.md
       - Live config: scripting/live-config.md
       - Runtime & safety: scripting/runtime.md

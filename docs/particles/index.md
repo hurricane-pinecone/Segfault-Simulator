@@ -8,13 +8,6 @@ only the units differ — world **tiles** (isometric) or **pixels** (flat).
 You author an effect once as plain data, register it under a name, then fire it by
 name. No per-frame work, no manual draw calls.
 
-Deeper pages:
-
-- [Authoring effects](./effects.md) — every `ParticleEffectDesc` field, curves,
-  shapes, emitters, spawn momentum, and the built-in prefabs.
-- [Decals & splatter](./decals.md) — making effects stick and stain, and tuning
-  the splatter look.
-
 ## Quick start
 
 ```cpp
@@ -55,6 +48,3 @@ particles.spawnBurst("blood", worldPos, elevation);
 // Or a continuous emitter that follows an entity:
 entity.addComponent<sfs::ParticleEmitterComponent>("embers", offset, heightOffset);
 ```
-
-See [Authoring effects](./effects.md) for the full spawn API and effect fields,
-and [Decals & splatter](./decals.md) for persistent marks.

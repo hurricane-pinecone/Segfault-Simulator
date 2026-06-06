@@ -1,17 +1,8 @@
 # Scripting
 
-Give a game built on **sfs** a live Lua modding API: editable at runtime, no
-rebuild, working on both native and web. The engine provides the VM and reusable
-building blocks; **your game decides what to expose** as its modding surface.
-
-Deeper pages:
-
-- [Modding API](./modding-api.md) — implement `ILuaApi`, compose bindings, and the
-  building blocks (`bind`, lazy resolution, engine-provided tables).
-- [Live config](./live-config.md) — make a class live-editable with
-  `ILuaConfigurable` and a field schema, no Lua code required.
-- [Runtime & safety](./runtime.md) — the in-app console, the web editor, driving
-  eval yourself, the sandbox, and lifetimes.
+Give a game built on **sfs** a live Lua modding API: tune and script the running
+game from a console, no rebuild. The engine provides the VM and reusable building
+blocks; **your game decides what to expose** as its modding surface.
 
 ## The layering
 
@@ -28,7 +19,7 @@ The engine never decides your game's API. You implement one interface
 - **Startup** (app level) — create the `LuaScripting` VM, `init()` it, mark it
   active, and install your API once. The VM persists for the whole app.
 - **Before the first scene** — the VM must exist before any scene's `onInit`
-  registers config against it (see [live config](./live-config.md)).
+  registers config against it.
 - **Runtime** — re-running a chunk against the *persistent* VM mutates the live
   game; bindings resolve the current scene at call time, so they survive scene
   changes.
@@ -44,7 +35,7 @@ void YourGame::setupLua()
 {
   m_lua = std::make_unique<sfs::LuaScripting>();
   m_lua->init();
-  sfs::setActiveLua(m_lua.get()); // routes the web editor's eval here
+  sfs::setActiveLua(m_lua.get()); // publish as the active VM (sfs::activeLua())
   m_lua->setConsoleEnabled(true); // optional in-app console (backtick)
 
   GameLuaApi api(*this);          // your ILuaApi; transient
@@ -61,4 +52,4 @@ void YourGame::onDestroy()
 > `onInit` runs synchronously and may register config against the VM.
 
 Keep `setupLua` minimal — *only* VM lifecycle. The actual API surface lives in
-your `ILuaApi`; see [Modding API](./modding-api.md).
+your `ILuaApi`.

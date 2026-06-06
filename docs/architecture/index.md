@@ -1,11 +1,6 @@
 # Architecture
 
-A high-level map of how the engine fits together. Deeper pages:
-
-- [Rendering](./rendering.md) — the render contract, the core/isometric backend
-  seam, projection, and render settings.
-- [Render modules](./render-modules.md) — how render systems compose their
-  features as pluggable modules.
+A high-level map of how the engine fits together.
 
 ## What this engine is
 
@@ -46,14 +41,12 @@ Game (your subclass)         window/config; createQuadRenderer() picks the backe
   `IsometricRenderSystem` (heightfield), `FlatRenderSystem` (lit flat 2D), and
   `SpriteRenderSystem` (minimal unlit flat 2D).
 
-See [Rendering](./rendering.md) for the backend seam and the render contract.
-
 ## Composing a render system
 
 A render system isn't a monolith: its optional features — shadows, water, block
 geometry, decals, particles — are **render modules** registered onto it, and
 *registration is the enable*. A game adds only the features it wants and can write
-its own. See [Render modules](./render-modules.md).
+its own.
 
 ## Engine vs game ownership
 

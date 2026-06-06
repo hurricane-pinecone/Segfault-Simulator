@@ -1,8 +1,7 @@
 # Modding API
 
 How to build your game's Lua surface: implement one interface, compose bindings,
-and reuse the building blocks. For standing up the VM see the
-[overview](./overview.md).
+and reuse the building blocks.
 
 ## Implement `sfs::ILuaApi`
 
@@ -61,8 +60,8 @@ lua.bind("warp",  [&game](double x, double y)   { game.warp(x, y); });    // voi
 ```
 
 Only those three arities exist. For anything richer (tables, strings, return
-values) use a [config](./live-config.md), an engine helper (below), or the raw Lua
-C API via `lua.state()`.
+values) use a config, an engine helper (below), or the raw Lua C API via
+`lua.state()`.
 
 ### b) Resolve live game state *lazily*
 
@@ -92,8 +91,7 @@ sfs::registerParticleLua(
 
 This installs `particles.spawn / configure / describe / effects / options`, driven
 by the engine's particle schema. Your game only chooses the table name and how to
-find the live engine. (Effect prefabs live engine-side too — see
-[particles](../particles/effects.md#built-in-prefabs).)
+find the live engine. (Effect prefabs live engine-side too.)
 
 ## Engine scripting headers
 

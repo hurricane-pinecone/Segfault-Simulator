@@ -1,7 +1,6 @@
 # Authoring particle effects
 
-Everything for building and firing effects. For the big picture and quick start,
-see the [overview](./overview.md); for persistent marks see [decals & splatter](./decals.md).
+Everything for building and firing effects.
 
 ## Spawning
 
@@ -114,7 +113,7 @@ Field groups, in brief:
 | Over life | `sizeOverLife`, `colorOverLife`, `alphaOverLife` |
 | Look | `look`, `texture`, `frameCols`/`frameRows`/`frameFps`/`frameOverLife` (sprite-sheet animation) |
 | Render / sim | `blend`, `space`, `ground`, `stickDuration` |
-| Decals | `leavesDecal`, `decal` (see [decals & splatter](./decals.md)) |
+| Decals | `leavesDecal`, `decal` |
 | Budget | `maxParticles` |
 
 `FloatRange` fields take `{min, max}` (or a single value) and are sampled per
@@ -198,7 +197,7 @@ On the `Particles` module:
 | `registerEffect(name, desc)` | Register or replace an effect by name |
 | `spawnBurst(name, worldPos, elevation, spawn={})` | One-shot world burst |
 | `spawnScreenBurst(name, screenPos, spawn={})` | One-shot screen-space burst |
-| `enableStains(terrain = nullptr)` | Make decal effects stick (see [decals](./decals.md)) |
+| `enableStains(terrain = nullptr)` | Make decal effects stick |
 | `groundElevationAt(worldPos)` | Surface elevation for a terrain-aware spawn |
 | `setMaxParticles(n)` | Global live-particle ceiling |
 | `liveParticleCount()` | Current live count (debug / HUD) |

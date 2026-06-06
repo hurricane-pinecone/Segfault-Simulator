@@ -2,8 +2,7 @@
 
 Each render system composes its features as **render modules** rather than baking
 them in. This is how a game enables the built-in rendering features and how it
-adds its own. See also the [architecture overview](./overview.md) and
-[rendering](./rendering.md).
+adds its own.
 
 ## The model
 

@@ -1,8 +1,7 @@
 # Rendering
 
 How a scene draws, and the seam between the core 2D renderer and the isometric
-extension. For the conceptual map see the [architecture overview](./overview.md);
-for composing features onto a render system see [render modules](./render-modules.md).
+extension.
 
 ## The render contract
 

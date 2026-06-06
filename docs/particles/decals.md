@@ -1,9 +1,7 @@
 # Decals & splatter
 
 A decal is a **permanent mark stamped onto a surface** where a particle lands —
-blood pooling on the ground, streaking down a wall, soaking into a platform. For
-the big picture see the [overview](./overview.md); for effect authoring see
-[authoring effects](./effects.md).
+blood pooling on the ground, streaking down a wall, soaking into a platform.
 
 ## Enabling stains
 

@@ -1,0 +1,98 @@
+name: Sync docs
+
+# On a master push that touches source, draft documentation updates with Claude
+# Code and open a PR with them. The PR is the review gate -- nothing lands on
+# master unreviewed. Docs-only pushes (e.g. merging this PR) don't match the
+# source paths below, so there is no loop.
+on:
+  push:
+    branches: [master]
+    paths:
+      - engine/**
+      - sampleGame/**
+      - samplePlatformer/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: docs-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed source files
+        id: changed
+        run: |
+          base='${{ github.event.before }}'
+          if [ -z "$base" ] \
+             || [ "$base" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          files="$(git diff --name-only "$base" HEAD -- engine sampleGame samplePlatformer | grep -vE '\.md$' || true)"
+          if [ -z "$files" ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+            { echo "files<<EOF"; echo "$files"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            # The actual before->after diff Claude reviews (excluded from the PR
+            # by add-paths: docs; lives at the repo root so Claude can Read it).
+            git diff "$base" HEAD -- engine sampleGame samplePlatformer > source.diff
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.empty == 'false'
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        if: steps.changed.outputs.empty == 'false'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Update docs for the changed source
+        if: steps.changed.outputs.empty == 'false'
+        env:
+          # Long-lived subscription token from `claude setup-token`
+          # (use ANTHROPIC_API_KEY instead if you switch to Console API billing).
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CHANGED: ${{ steps.changed.outputs.files }}
+        run: |
+          PROMPT="A push to master changed these source files:
+          $CHANGED
+
+          The exact before->after changes are in source.diff at the repo root -- READ IT FIRST to see what actually changed. The whole repository is checked out, so Read/Grep/Glob any source or doc file you need to judge the impact.
+
+          Then update the Markdown documentation under docs/ ONLY where these changes alter what a game developer relies on (public API, behaviour, structure, or example snippets). If the change is internal-only (a refactor, a comment, a private detail) and the docs still read correctly, make NO edits.
+
+          Match the existing docs exactly: product-doc voice; game-agnostic snippets (never reference sampleGame/samplePlatformer, SampleGame, GameScene, or getSystem<TerrainGeneratorSystem> etc. -- use neutral placeholders); each folder's index.md stays brief with depth in its sub-pages; pages have NO in-content cross-links (the site sidebar handles all navigation -- do not add 'see also' links or link lists); don't touch mkdocs.yml unless a page is added or removed. Only edit files under docs/."
+          claude -p --permission-mode acceptEdits --max-turns 20 \
+            --allowedTools "Read,Edit,Write,Grep,Glob" \
+            "$PROMPT"
+
+      - name: Open a PR if docs changed
+        if: steps.changed.outputs.empty == 'false'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: docs
+          branch: docs/auto-sync
+          base: master
+          delete-branch: true
+          title: "docs: sync with recent source changes"
+          commit-message: "docs: auto-sync with recent source changes"
+          labels: documentation
+          body: |
+            Automated documentation update for source changes on `master`, drafted by
+            Claude Code from the files changed in the triggering push.
+
+            **Review before merging.** If the docs didn't actually need changing, just
+            close this PR — no harm done.
