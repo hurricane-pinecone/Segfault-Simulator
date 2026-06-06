@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/runtime/TextRenderer/textRenderer.h"
+#include "engine/runtime/console/devConsole.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
 #include "engine/runtime/sceneManager/sceneManager.h"
 #include <SDL_events.h>
@@ -31,6 +32,14 @@ public:
   void run();
   void tick();
   void destroy();
+
+  // Show/hide the debug overlay (stats, engine render controls, and the
+  // per-scene / app debug panels). Native debug builds only -- the overlay is
+  // compiled out elsewhere, so these are harmless no-ops there. Intended to be
+  // driven live (e.g. a Lua command or a key).
+  void setDebugUiVisible(bool visible) { m_debugUiVisible = visible; }
+  void toggleDebugUi() { m_debugUiVisible = !m_debugUiVisible; }
+  bool isDebugUiVisible() const { return m_debugUiVisible; }
 
 protected:
   virtual void onInit() {};
@@ -70,13 +79,21 @@ private:
   void update(double deltaTime);
   void render();
 
+  // Whether the active Lua VM (if any) has opted into the dev console.
+  bool devConsoleEnabled() const;
+
 private:
   Uint64 previousTime;
   Input input;
   SDL_GLContext m_glContext;
 
+  bool m_debugUiVisible = true;
+
   std::unique_ptr<IQuadRenderer> m_quadRenderer;
   std::unique_ptr<TextRenderer> m_textRenderer;
+
+  // Backtick-toggled Lua console, drawn over the frame (native builds only).
+  DevConsole m_console;
 };
 
 } // namespace sfs

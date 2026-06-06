@@ -53,6 +53,7 @@ void SampleGame::setupLua()
     return;
   }
   sfs::setActiveLua(m_lua.get()); // route the web editor's eval entry here
+  m_lua->setConsoleEnabled(true); // expose the in-app console (backtick key)
 
   // Install the game's modding API. GameLuaApi is transient -- registerBindings
   // binds everything onto the VM (the closures it leaves behind are VM-owned).

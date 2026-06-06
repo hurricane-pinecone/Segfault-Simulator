@@ -10,6 +10,7 @@
 #include <engine/runtime/game/game.h>
 
 #include "SDL.h"
+#include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/TextRenderer/textRenderer.h"
 
 #include <engine/runtime/assetStore/sprite.h>
@@ -231,6 +232,12 @@ void Game::run()
 #endif
 }
 
+bool Game::devConsoleEnabled() const
+{
+  const LuaScripting* lua = activeLua();
+  return lua && lua->consoleEnabled();
+}
+
 void Game::processInput()
 {
   ZoneScopedN("Game::processInput");
@@ -240,6 +247,12 @@ void Game::processInput()
   SDL_Event sdlEvent;
   while (SDL_PollEvent(&sdlEvent))
   {
+
+    // The console gets first refusal on input: while open it owns the keyboard
+    // so typing a command doesn't leak through to ImGui or the game. Available
+    // on web too -- it shares the VM the on-page editor drives.
+    if (devConsoleEnabled() && m_console.handleEvent(sdlEvent))
+      continue;
 
 #ifndef ENGINE_WEB
     ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
@@ -288,8 +301,13 @@ void Game::processInput()
   {
     sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Input};
 
-    sceneManager.current()->processInput(input);
-    onProcessInput(input);
+    // While the console is open it has keyboard focus; the game must not also
+    // act on the keys being typed (input is polled, not event-driven).
+    if (!(devConsoleEnabled() && m_console.isOpen()))
+    {
+      sceneManager.current()->processInput(input);
+      onProcessInput(input);
+    }
   }
 }
 
@@ -329,8 +347,16 @@ void Game::render()
     }
   }
 
+  if (devConsoleEnabled())
+    m_console.render(*m_textRenderer,
+                     *m_quadRenderer,
+                     *assetStore,
+                     windowWidth,
+                     windowHeight);
+
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
-  renderDebugUI(sceneManager.current(), [this] { onDebugUI(); });
+  if (m_debugUiVisible)
+    renderDebugUI(sceneManager.current(), [this] { onDebugUI(); });
 #endif
 
   {
