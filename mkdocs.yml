@@ -1,6 +1,6 @@
 site_name: SegFaultSimulator
 site_description: A 2D game engine with an ECS core and two render paths.
-site_url: https://hurricane-pinecone.github.io/Segfault-Simulator/
+site_url: https://hurricane-pinecone.github.io/Segfault-Simulator/docs/
 repo_url: https://github.com/hurricane-pinecone/Segfault-Simulator
 repo_name: hurricane-pinecone/Segfault-Simulator
 edit_uri: edit/master/docs/

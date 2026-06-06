@@ -57,9 +57,10 @@ projects that bring their own rendering.
 
 ## Documentation
 
-Documentation: **[hurricane-pinecone.github.io/Segfault-Simulator](https://hurricane-pinecone.github.io/Segfault-Simulator/)**
+Documentation: **[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**
 — architecture, particles & decals, and scripting, each with an overview and
-deep-dive pages. Built from [`docs/`](./docs/overview.md) with MkDocs Material.
+deep-dive pages. Built from [`docs/`](./docs/overview.md) with MkDocs Material,
+deployed alongside the web build (game at the root, docs under `/docs`).
 
 ## Prerequisites
 
