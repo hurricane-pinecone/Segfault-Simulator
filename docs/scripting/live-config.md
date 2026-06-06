@@ -1,8 +1,7 @@
 # Live config
 
 For a single object with tunable fields, implement `sfs::ILuaConfigurable` and the
-VM **auto-generates** a `<name>` table — no Lua code at all. For the broader API
-see the [modding API](./modding-api.md).
+VM **auto-generates** a `<name>` table — no Lua code at all.
 
 The generated table:
 
@@ -76,4 +75,4 @@ From `<engine/core/scripting/luaSchema.h>`:
 The table reaches the object through an invalidatable slot. Either let the object
 **outlive the VM**, or call `unregisterConfig()` **before destroying it** (as
 above). Forgetting both is the one way to dangle. (Contrast with `ILuaApi`, which
-is transient — see [runtime & safety](./runtime.md#lifetimes-and-ownership).)
+is transient.)
