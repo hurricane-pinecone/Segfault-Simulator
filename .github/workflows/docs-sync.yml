@@ -60,8 +60,8 @@ jobs:
           else
             echo "empty=false" >> "$GITHUB_OUTPUT"
             { echo "files<<EOF"; echo "$files"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-            # The actual before->after diff Claude reviews (excluded from the PR
-            # by add-paths: docs; lives at the repo root so Claude can Read it).
+            # The actual before->after diff Claude reviews (kept out of the PR by
+            # the add-paths allowlist; lives at the repo root so Claude can Read it).
             git diff "$base" HEAD -- engine sampleGame samplePlatformer > source.diff
           fi
 
@@ -86,7 +86,7 @@ jobs:
           # in the secret makes that header invalid ("Header has invalid value").
           # Strip whitespace defensively so it doesn't matter how the secret was pasted.
           export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
-          PROMPT="A push to master changed these source files:
+          PROMPT="The following source files changed (diff against the base ref):
           $CHANGED
 
           The exact before->after changes are in source.diff at the repo root -- READ IT FIRST to see what actually changed. The whole repository is checked out, so Read/Grep/Glob any source or doc file you need to judge the impact.
