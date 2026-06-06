@@ -1,4 +1,4 @@
-#include "engine/core/particles/particlePrefabs.h"
+#include "engine/runtime/particles/prefabs.h"
 
 #include "engine/core/particles/particleEngine.h"
 

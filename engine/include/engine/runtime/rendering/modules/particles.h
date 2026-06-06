@@ -1,8 +1,8 @@
 #pragma once
 
-#include "engine/core/particles/colliderParticleCollision.h"
 #include "engine/core/particles/particleEngine.h"
-#include "engine/core/particles/terrainParticleCollision.h"
+#include "engine/runtime/particles/colliderParticleCollision.h"
+#include "engine/runtime/particles/terrainParticleCollision.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"

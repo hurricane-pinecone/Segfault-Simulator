@@ -18,6 +18,30 @@ particles.registerEffect("spark", makeSparkEffect()); // your authored effect
 
 Everything below is on the module you get back from `withModule`.
 
+## Built-in prefabs
+
+The engine ships ready-made effects so you get good results with no art — colour
+does the work. They are ordinary `ParticleEffectDesc` builders you register as-is
+or copy and tweak.
+
+```cpp
+#include "engine/runtime/particles/prefabs.h"
+
+// Four-layer blood, registered as "<prefix>_mist/_spray/_gobs/_drip":
+sfs::registerBloodEffects(particles);          // default red, prefix "blood"
+sfs::registerBloodEffects(particles, "ichor",  // a second colour
+                          glm::vec3{0.15f, 0.55f, 1.0f},
+                          glm::vec3{0.0f, 0.08f, 0.35f});
+
+// A continuous additive ember drift, for an emitter on a light:
+particles.registerEffect("embers", sfs::emberEffect());
+```
+
+The four blood layers (`bloodMistEffect`, `bloodSprayEffect`, `bloodGobsEffect`,
+`bloodDripEffect`) are meant to be fired together at one point for a layered burst;
+spray, gobs, and drip leave decals. `recolourBlood(desc, hi, lo)` returns a colour
+variant (its decals follow the particle colour).
+
 ## Spawning
 
 ### One-shot burst
