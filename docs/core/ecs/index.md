@@ -130,3 +130,28 @@ Player* p = scene.tryFindObject<Player>();   // find one later (or nullptr)
 Rule of thumb: use **systems** for behaviour over many homogeneous entities
 (movement, physics, rendering); use **GameObjects** for individually scripted
 actors. Both sit on the same entities, so they compose freely.
+
+## Headless use
+
+`Registry` is directly constructable, so the full runtime is not required. This
+is the path for engine tools, stand-alone tests, or a custom host that provides
+its own rendering:
+
+```cpp
+sfs::Registry reg;
+
+sfs::Entity e = reg.createEntity();
+e.addComponent<Position>(Position{1.0f, 2.0f});
+e.addComponent<Velocity>(Velocity{0.0f, 1.0f});
+
+reg.addSystem<MovementSystem>(); // create() runs immediately
+reg.flushEntities();             // distributes new entities to matched systems
+
+reg.destroyEntity(e);
+reg.flushEntities();             // destruction is deferred until flush
+```
+
+Entity destruction is deferred: a destroyed entity stays alive (and its
+components remain readable) until the next `flushEntities()` call. Views and
+system membership update at flush time, so call `flushEntities()` whenever the
+caller needs a consistent snapshot.
