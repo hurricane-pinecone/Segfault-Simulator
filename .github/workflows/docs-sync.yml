@@ -101,8 +101,22 @@ jobs:
             --permission-mode acceptEdits --max-turns 30 \
             --allowedTools "Read,Edit,Write,Grep,Glob"
 
-      - name: Open a PR if docs changed
+      - name: Did Claude change any docs?
+        id: edited
         if: steps.changed.outputs.empty == 'false'
+        run: |
+          # Only the docs/ tree and mkdocs.yml count (source.diff sits at the repo
+          # root and is ignored). If Claude made no edits, the PR step is skipped
+          # so a no-op run leaves any open docs PR untouched instead of letting
+          # create-pull-request close it for having no diff.
+          if [ -n "$(git status --porcelain -- docs mkdocs.yml)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open a PR if docs changed
+        if: steps.edited.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
           # docs/ plus mkdocs.yml (repo root) so a newly added page ships with
