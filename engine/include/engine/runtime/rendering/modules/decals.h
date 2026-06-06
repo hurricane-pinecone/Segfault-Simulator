@@ -98,7 +98,8 @@ private:
     DecalSurface surface = DecalSurface::Ground;
     uint8_t wallSide = 0;
     float wallBottom = 0.0f;
-    float size = 0.15f;
+    // size.x = length (along rotation's local +X), size.y = width (across).
+    glm::vec2 size{0.15f, 0.15f};
     float rotation = 0.0f;
     glm::vec4 color{0.0f, 0.0f, 0.0f, 1.0f};
     const std::string* textureId = nullptr;
@@ -200,7 +201,7 @@ private:
   float m_coverageCell = 0.06f;    // world tiles
   float m_coverageElevCell = 1.0f; // elevation levels per band (walls)
   int m_maxDecalsPerCell = 16;     // ground / default quota
-  int m_maxWallDecalsPerCell = 3;  // wall-face quota
+  int m_maxWallDecalsPerCell = 5;  // wall-face quota (impact mark + drips)
 
   std::size_t m_fadingCount = 0;    // fading (water) decals
   std::size_t m_animatingCount = 0; // running wall drips (not yet settled)
