@@ -1,0 +1,64 @@
+site_name: SegFaultSimulator
+site_description: A 2D game engine with an ECS core and two render paths.
+site_url: https://hurricane-pinecone.github.io/Segfault-Simulator/
+repo_url: https://github.com/hurricane-pinecone/Segfault-Simulator
+repo_name: hurricane-pinecone/Segfault-Simulator
+edit_uri: edit/master/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.indexes   # a folder's overview.md is its section landing page
+    - navigation.top       # back-to-top button
+    - navigation.tracking
+    - toc.follow           # right-hand per-page section list follows scroll
+    - search.suggest
+    - content.code.copy    # copy button on code blocks
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Home: overview.md
+  - Architecture:
+      - architecture/overview.md
+      - Rendering: architecture/rendering.md
+      - Render modules: architecture/render-modules.md
+  - Particles & decals:
+      - particles/overview.md
+      - Authoring effects: particles/effects.md
+      - Decals & splatter: particles/decals.md
+  - Scripting:
+      - scripting/overview.md
+      - Modding API: scripting/modding-api.md
+      - Live config: scripting/live-config.md
+      - Runtime & safety: scripting/runtime.md
