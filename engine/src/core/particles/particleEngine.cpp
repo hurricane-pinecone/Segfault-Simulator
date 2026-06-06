@@ -562,6 +562,11 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
 
 void ParticleEngine::syncComponentEmitters()
 {
+  // No registry means no entity-component emitters to sync (e.g. a headless
+  // burst-only host). The spawnBurst path in simulate() still runs.
+  if (!registry)
+    return;
+
   // Assume nothing emits this frame; re-enable emitters whose entity still has
   // an enabled component. Entries left disabled (entity gone or disabled) keep
   // their particles and drain.

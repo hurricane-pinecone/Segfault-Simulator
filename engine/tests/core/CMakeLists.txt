@@ -1,9 +1,21 @@
-add_executable(luaTests scripting/luaTests.cpp)
-target_link_libraries(luaTests PRIVATE engine-core)
+# engine-core tests: each is a standalone executable linking engine-core (no
+# third-party deps) and registered with CTest. add_core_test(name source)
+# declares one in a line.
+function(add_core_test name source)
+    add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE engine-core)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
 
-add_test(NAME luaTests COMMAND luaTests)
-
-add_executable(flatProjectionTests rendering/flatProjectionTests.cpp)
-target_link_libraries(flatProjectionTests PRIVATE engine-core)
-
-add_test(NAME flatProjectionTests COMMAND flatProjectionTests)
+add_core_test(luaTests scripting/luaTests.cpp)
+add_core_test(ecsTests ecs/ecsTests.cpp)
+add_core_test(noiseTests noise/noiseTests.cpp)
+add_core_test(flatProjectionTests rendering/flatProjectionTests.cpp)
+add_core_test(isometricProjectionTests rendering/isometricProjectionTests.cpp)
+add_core_test(isometricGeometryTests rendering/isometricGeometryTests.cpp)
+add_core_test(particleCurvesTests particles/particleCurvesTests.cpp)
+add_core_test(particleEngineTests particles/particleEngineTests.cpp)
+add_core_test(decalSplatterTests particles/decalSplatterTests.cpp)
+add_core_test(particleSchemaTests particles/particleSchemaTests.cpp)
+add_core_test(algorithmsTests util/algorithmsTests.cpp)
+add_core_test(utilTests util/utilTests.cpp)

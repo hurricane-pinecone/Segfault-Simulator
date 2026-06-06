@@ -6,6 +6,8 @@
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
 
+#include <limits>
+
 namespace sfs
 {
 
