@@ -12,6 +12,16 @@ on:
       - sampleGame/**
       - samplePlatformer/**
   workflow_dispatch:
+    inputs:
+      base:
+        description: >-
+          Git ref to diff from (e.g. a commit SHA). Manual runs default to the
+          previous commit, which is the workflow-YAML commit itself after you
+          push a workflow change -- set this to the commit BEFORE the source
+          changes you want documented (e.g. 90dc33d to cover 1ecf031), or to an
+          older ref to backfill docs for already-merged work.
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -33,7 +43,12 @@ jobs:
       - name: Collect changed source files
         id: changed
         run: |
-          base='${{ github.event.before }}'
+          # A manual run's explicit base wins; otherwise use the push's
+          # before-sha. Either is validated below and falls back to HEAD~1.
+          base='${{ github.event.inputs.base }}'
+          if [ -z "$base" ]; then
+            base='${{ github.event.before }}'
+          fi
           if [ -z "$base" ] \
              || [ "$base" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
@@ -59,7 +74,7 @@ jobs:
         if: steps.changed.outputs.empty == 'false'
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Update docs for the changed source
+      - name: Create or update docs for the changed source
         if: steps.changed.outputs.empty == 'false'
         env:
           # Long-lived subscription token from `claude setup-token`
@@ -76,18 +91,25 @@ jobs:
 
           The exact before->after changes are in source.diff at the repo root -- READ IT FIRST to see what actually changed. The whole repository is checked out, so Read/Grep/Glob any source or doc file you need to judge the impact.
 
-          Then update the Markdown documentation under docs/ ONLY where these changes alter what a game developer relies on (public API, behaviour, structure, or example snippets). If the change is internal-only (a refactor, a comment, a private detail) and the docs still read correctly, make NO edits.
+          Then bring the Markdown documentation under docs/ in line with these changes wherever they alter what a game developer relies on (public API, behaviour, structure, or example snippets). There are two cases, and you should do BOTH as needed:
+          - UPDATE an existing page when a change alters a feature that docs/ already covers.
+          - CREATE a new page when a change introduces a public feature or subsystem a game developer relies on and NO page documents it yet (this is expected for new architecture -- do not skip it just because nothing exists to edit). Place it per the layout rules below and register it in the mkdocs.yml nav so it appears on the site.
+          If the change is internal-only (a refactor, a comment, a private detail) and the docs still read correctly, make NO edits. Document the public surface, not every changed file.
 
-          Match the existing docs exactly: product-doc voice; game-agnostic snippets (never reference sampleGame/samplePlatformer, SampleGame, GameScene, or getSystem<TerrainGeneratorSystem> etc. -- use neutral placeholders); docs mirror the source layout (docs/core mirrors engine-core, docs/runtime mirrors the runtime; a feature's ENGINE is documented under core/ and its USAGE under runtime/, e.g. the particle engine vs particles in your game); every page is its own folder with an index.md (e.g. core/ecs/index.md -- no raw name.md pages); a section's index.md stays brief with depth in sub-page folders; contextual 'Read more' cross-links between related pages are fine (especially core<->runtime for one feature), but do NOT add redundant navigation lists that just duplicate the sidebar; don't touch mkdocs.yml unless a page is added or removed. Only edit files under docs/."
+          Match the existing docs exactly: product-doc voice; game-agnostic snippets (never reference sampleGame/samplePlatformer, SampleGame, GameScene, or getSystem<TerrainGeneratorSystem> etc. -- use neutral placeholders); docs mirror the source layout (docs/core mirrors engine-core, docs/runtime mirrors the runtime; a feature's ENGINE is documented under core/ and its USAGE under runtime/, e.g. the particle engine vs particles in your game); every page is its own folder with an index.md (e.g. core/ecs/index.md -- no raw name.md pages); a section's index.md stays brief with depth in sub-page folders; contextual 'Read more' cross-links between related pages are fine (especially core<->runtime for one feature), but do NOT add redundant navigation lists that just duplicate the sidebar. When (and only when) you add or remove a page, edit mkdocs.yml's nav to match -- place the entry in the section that mirrors its source location and follow the existing nav style (a folder's index.md is listed first, then its sub-pages). Edit only files under docs/ and, if a page was added or removed, mkdocs.yml."
           printf '%s' "$PROMPT" | claude -p \
-            --permission-mode acceptEdits --max-turns 20 \
+            --permission-mode acceptEdits --max-turns 30 \
             --allowedTools "Read,Edit,Write,Grep,Glob"
 
       - name: Open a PR if docs changed
         if: steps.changed.outputs.empty == 'false'
         uses: peter-evans/create-pull-request@v7
         with:
-          add-paths: docs
+          # docs/ plus mkdocs.yml (repo root) so a newly added page ships with
+          # its nav entry; source.diff and other root files stay out of the PR.
+          add-paths: |
+            docs
+            mkdocs.yml
           branch: docs/auto-sync
           base: master
           delete-branch: true
