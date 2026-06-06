@@ -67,6 +67,10 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CHANGED: ${{ steps.changed.outputs.files }}
         run: |
+          # The CLI sends the token as an HTTP auth header; a stray newline or space
+          # in the secret makes that header invalid ("Header has invalid value").
+          # Strip whitespace defensively so it doesn't matter how the secret was pasted.
+          export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
           PROMPT="A push to master changed these source files:
           $CHANGED
 
