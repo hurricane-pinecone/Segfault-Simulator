@@ -2,11 +2,13 @@
 
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/flatProjection.h"
+#include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/flatDecal.h"
 #include "engine/runtime/rendering/flatRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -15,6 +17,7 @@ namespace sfs
 
 class AssetStore;
 class IQuadRenderer;
+class FlatDecalSink;
 
 /**
  * Frame-global lighting for the flat 2D lit path. Sprites are lit by this plus
@@ -48,6 +51,7 @@ class FlatRenderSystem : public System,
 {
 public:
   FlatRenderSystem(AssetStore& assetStore, IQuadRenderer& quadRenderer);
+  ~FlatRenderSystem();
 
   // The world->screen projection for the frame (owned by the game/camera).
   void setProjection(const FlatProjection* projection)
@@ -69,6 +73,17 @@ public:
   // (which would erase old marks as new ones land). Over the global cap the
   // oldest is still dropped as a backstop.
   void stampDecal(const FlatDecal& decal);
+
+  // The sprites stamped decals use: a soft one for round drops and a hard one
+  // for crisp directional streaks (pass the same id twice for a single look).
+  // Sets up the decal sink returned by decalSink(), so a game's particle module
+  // can enableStains() against this system.
+  void setDecalSprites(SpriteId soft, SpriteId streak, int layer = 1);
+
+  // The flat decal sink (built from setDecalSprites). Particles pull this in
+  // enableStains() so a game never wires the sink by hand. Null until sprites
+  // are set.
+  IDecalSink* decalSink() override;
 
   // Max live decals before the oldest is evicted (bounds memory/frame cost).
   void setMaxDecals(int max) { m_maxDecals = max; }
@@ -106,6 +121,13 @@ private:
 
   // World cell key for the coverage map (packs floor(p / cellSize)).
   long long decalCell(const glm::vec2& worldPos) const;
+
+  // The decal sink wrapping this system, built on demand by setDecalSprites /
+  // decalSink(). Owned here so it outlives any particle module pointing at it.
+  std::unique_ptr<FlatDecalSink> m_decalSink;
+  SpriteId m_decalSoft = 0;
+  SpriteId m_decalStreak = 0;
+  int m_decalLayer = 1;
 
   std::vector<FlatDecal> m_decals;
   int m_maxDecals = 4000;

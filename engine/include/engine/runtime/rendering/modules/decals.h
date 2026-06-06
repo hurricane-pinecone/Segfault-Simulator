@@ -98,6 +98,7 @@ private:
     DecalSurface surface = DecalSurface::Ground;
     uint8_t wallSide = 0;
     float wallBottom = 0.0f;
+    float wallTop = 0.0f;
     // size.x = length (along rotation's local +X), size.y = width (across).
     glm::vec2 size{0.15f, 0.15f};
     float rotation = 0.0f;
@@ -105,6 +106,10 @@ private:
     const std::string* textureId = nullptr;
     float fadeRate = 0.0f;
     float dripSpeed = 0.0f;
+    // Sample the texture's solid centre (crisp streak) vs the full sprite (soft
+    // blob). Lets a single dot texture read as both, since the chunked store
+    // draws one texture for the whole pass.
+    bool crisp = false;
     float age = 0.0f;
     bool settled = false;
   };

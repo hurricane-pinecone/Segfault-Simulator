@@ -53,7 +53,6 @@ sfs::ParticleEffectDesc makeSparkleEffect()
       glm::vec3{1.0f, 0.9f, 0.5f}, glm::vec3{1.0f, 0.35f, 0.1f});
   desc.blend = sfs::BlendMode::Additive;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot"; // soft round texture added by Game::setup
   desc.maxParticles = 256;
   return desc;
 }
@@ -77,17 +76,18 @@ sfs::ParticleEffectDesc makeBloodEffect()
       glm::vec3{0.9f, 0.02f, 0.02f}, glm::vec3{0.4f, 0.0f, 0.0f});
   desc.blend = sfs::BlendMode::Alpha;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
   desc.maxParticles = 256;
   // Stick to platforms and leave a directional mark (generic particle->decal
   // path; needs a collision source + decal sink wired on the module).
   desc.ground = sfs::GroundBehavior::Die;
   desc.leavesDecal = true;
-  desc.decal.texture = "white_dot";
-  desc.decal.size = {6.0f, 16.0f};       // px
+  desc.decal.pool.size = {6.0f, 16.0f}; // px
+  desc.decal.pool.soft = true;          // soft pooled blood
   desc.decal.useParticleColor = true;
-  desc.decal.alpha = 0.85f;
-  desc.decal.impactRef = 500.0f;         // flat blood lands at ~200-640 px/s
+  desc.decal.pool.alpha = 0.85f;
+  desc.decal.impactRef = 500.0f;        // flat blood lands at ~200-640 px/s
+  desc.decal.streaks.width = 1.5f;      // crisp 1-2px lines
+  desc.decal.streaks.maxCount = 2;
   return desc;
 }
 
@@ -109,16 +109,17 @@ sfs::ParticleEffectDesc makeGoreEffect()
       glm::vec3{0.95f, 0.05f, 0.05f}, glm::vec3{0.3f, 0.0f, 0.0f});
   desc.blend = sfs::BlendMode::Alpha;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
   desc.maxParticles = 256;
   // Gibs stick to platforms too (bigger marks than the per-hit spray).
   desc.ground = sfs::GroundBehavior::Die;
   desc.leavesDecal = true;
-  desc.decal.texture = "white_dot";
-  desc.decal.size = {10.0f, 26.0f};      // px
+  desc.decal.pool.size = {10.0f, 26.0f}; // px
+  desc.decal.pool.soft = true;
   desc.decal.useParticleColor = true;
-  desc.decal.alpha = 0.9f;
+  desc.decal.pool.alpha = 0.9f;
   desc.decal.impactRef = 700.0f;         // gore flies faster (~260-900 px/s)
+  desc.decal.streaks.width = 2.0f;
+  desc.decal.streaks.maxCount = 3;
   return desc;
 }
 
@@ -139,7 +140,6 @@ sfs::ParticleEffectDesc makeExplosionEffect()
       glm::vec3{1.0f, 0.9f, 0.4f}, glm::vec3{1.0f, 0.25f, 0.0f});
   desc.blend = sfs::BlendMode::Additive;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
   desc.maxParticles = 256;
   return desc;
 }
@@ -160,7 +160,6 @@ sfs::ParticleEffectDesc makeSparkEffect()
       glm::vec3{0.7f, 0.9f, 1.0f}, glm::vec3{0.2f, 0.45f, 1.0f});
   desc.blend = sfs::BlendMode::Additive;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
   desc.maxParticles = 128;
   return desc;
 }
@@ -182,7 +181,6 @@ sfs::ParticleEffectDesc makePickupEffect()
       glm::vec3{1.0f, 1.0f, 0.85f}, glm::vec3{1.0f, 0.8f, 0.3f});
   desc.blend = sfs::BlendMode::Additive;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
   desc.maxParticles = 128;
   return desc;
 }
@@ -204,7 +202,6 @@ sfs::ParticleEffectDesc makeAuraEffect()
   desc.colorOverLife = sfs::Gradient::constant(glm::vec3{1.0f, 1.0f, 1.0f});
   desc.blend = sfs::BlendMode::Additive;
   desc.space = sfs::SimulationSpace::World;
-  desc.texture = "white_dot";
   desc.maxParticles = 128;
   return desc;
 }
@@ -253,13 +250,9 @@ void PlatformerScene::onInit()
 
   // Generic particle->decal stick: any effect with leavesDecal now sticks to the
   // platforms (SolidObject + BoxCollider2D) and stamps a flat decal, using the
-  // shaping shared with the iso path. Same plumbing any flat game can wire.
-  auto& particleCollision = addSystem<sfs::ParticleCollisionSystem>();
-  // Soft dot for round drops, hard 1px for crisp directional streaks.
-  m_particleDecalSink = std::make_unique<sfs::FlatDecalSink>(
-      render, m_orbSprite, m_platformSprite);
-  particles.setCollisionSource(&particleCollision);
-  particles.setDecalSink(m_particleDecalSink.get());
+  // shaping shared with the iso path. enableStains() with no terrain picks the
+  // collider collision and the sink wired above -- the iso game calls the same.
+  particles.enableStains();
 
   // Spell pickups: collecting an orb appends its spell to the player's loadout.
   addSystem<platformer::PickupSystem>().setParticles(&particles);

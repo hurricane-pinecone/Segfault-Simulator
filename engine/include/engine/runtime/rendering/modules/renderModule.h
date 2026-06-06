@@ -9,6 +9,8 @@ namespace sfs
 
 class Registry;
 class AssetStore;
+template <typename TContext>
+class RenderModuleHost;
 
 /** Dependencies injected into a render module at registration. */
 struct ModuleInit
@@ -34,6 +36,13 @@ public:
 
   /** Receive registration-time dependencies (registry, asset store). */
   virtual void init(const ModuleInit&) {}
+
+  /**
+   * Receive the host this module was registered on. Lets a module reach
+   * host-provided capabilities (e.g. the decal sink) without depending on a
+   * sibling module. Default: ignored.
+   */
+  virtual void setHost(RenderModuleHost<TContext>&) {}
 
   /** Advance any per-frame simulation the module owns. */
   virtual void update(double /*deltaTime*/) {}

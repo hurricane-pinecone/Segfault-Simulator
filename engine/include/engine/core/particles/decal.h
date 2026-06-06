@@ -37,6 +37,7 @@ struct DecalSpawn
   DecalSurface surface = DecalSurface::Ground;
   uint8_t wallSide = 0;    // 0=W 1=N 2=E 3=S, only when surface == Wall
   float wallBottom = 0.0f; // elevation of the wall face's base (Wall only)
+  float wallTop = 0.0f;    // elevation of the wall face's top (Wall only)
 
   // Footprint in tiles. size.x = length (along `rotation`'s local +X axis),
   // size.y = width (across). Equal = a round splat; x > y = a directional streak.

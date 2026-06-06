@@ -26,10 +26,6 @@ constexpr float kTwoPi = 6.28318530718f;
 // that tile's surface (matches how sprites sit above the ground they stand on).
 constexpr float kParticleBias = 0.02f;
 
-// A step-up of at least this many elevation levels counts as a wall, so blood
-// sticks to short ("half block") steps too, not just tall cliffs.
-constexpr int kMinWallStep = 1;
-
 inline uint32_t nextRand(uint32_t& state)
 {
   // xorshift32 -- cheap, deterministic per emitter.
@@ -49,26 +45,29 @@ inline float sampleRange(uint32_t& state, const FloatRange& r)
   return r.min + (r.max - r.min) * randf(state);
 }
 
-inline glm::ivec2 floorTile(const glm::vec2& p)
-{
-  return {static_cast<int>(glm::floor(p.x)), static_cast<int>(glm::floor(p.y))};
-}
-
 } // namespace
 
 void ParticleEngine::registerEffect(const std::string& name,
                                     const ParticleEffectDesc& desc)
 {
+  // Resolve each built-in shape to its engine texture, unless the effect set an
+  // explicit one -- so an effect names a shape, not "white_dot"/"white_pixel".
+  ParticleEffectDesc resolved = desc;
+  if (resolved.texture.empty())
+    resolved.texture = builtinShapeTexture(resolved.look);
+  if (resolved.decal.texture.empty())
+    resolved.decal.texture = builtinShapeTexture(resolved.decal.look);
+
   auto it = m_effectIds.find(name);
 
   if (it != m_effectIds.end())
   {
-    m_effects[it->second] = desc;
+    m_effects[it->second] = resolved;
     return;
   }
 
   const EffectId id = static_cast<EffectId>(m_effects.size());
-  m_effects.push_back(desc);
+  m_effects.push_back(resolved);
   m_effectIds.emplace(name, id);
 }
 
@@ -320,6 +319,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     }
 
     const glm::vec2 prevPos = p.pos;
+    const float prevHeight = p.height;
 
     p.vel += desc.gravity * dt;
     p.velZ += desc.gravityZ * dt;
@@ -336,141 +336,33 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
       continue;
     }
 
-    // Terrain-aware collision: splat on the actual surface the droplet hits.
-    if (m_terrainSource)
-    {
-      const float zAbs = inst.groundLevel + p.height;
-      const glm::ivec2 oldTile = floorTile(prevPos);
-      const glm::ivec2 newTile = floorTile(p.pos);
-
-      bool collided = false;
-      DecalSurface surface = DecalSurface::Ground;
-      uint8_t wallSide = 0;
-      float wallBottom = 0.0f;
-      float wallTop = 0.0f;
-      glm::vec2 hitPos = p.pos;
-      float hitElev = zAbs;
-
-      // Slammed into the vertical face of a tile that genuinely steps UP from
-      // the one it came from (a step down or same level is not a wall --
-      // otherwise a fast droplet skimming flat ground reads every tile crossing
-      // as a wall).
-      if (newTile != oldTile)
-      {
-        const int newTop =
-            m_terrainSource->terrainHeightAt(newTile.x, newTile.y);
-        const int oldTop =
-            m_terrainSource->terrainHeightAt(oldTile.x, oldTile.y);
-
-        if (newTop > oldTop && zAbs < static_cast<float>(newTop))
-        {
-          const int dx = newTile.x - oldTile.x;
-          const int dy = newTile.y - oldTile.y;
-          uint8_t side;
-          if (dx > 0)
-            side = 0; // hit newTile's west face
-          else if (dx < 0)
-            side = 2; // east
-          else if (dy > 0)
-            side = 1; // north
-          else
-            side = 3; // south
-
-          collided = true;
-
-          // A wall stain needs a real cliff on a camera-facing face. Only the
-          // south (3) and east (2) faces point toward the camera (the hidden
-          // west/north faces would draw over the block), and the step must be
-          // tall enough. Everything else pools as ground at the wall's base.
-          const bool visibleFace = side == 2 || side == 3;
-          const bool tallEnough = (newTop - oldTop) >= kMinWallStep;
-
-          if (visibleFace && tallEnough)
-          {
-            surface = DecalSurface::Wall;
-            wallSide = side;
-            wallBottom = static_cast<float>(oldTop);
-            wallTop = static_cast<float>(newTop);
-            hitPos = prevPos;
-            hitElev = zAbs;
-          }
-          else
-          {
-            surface = DecalSurface::Ground;
-            hitPos = prevPos;
-            hitElev = static_cast<float>(oldTop);
-          }
-        }
-      }
-
-      // Otherwise, dropped onto the ground/water beneath it.
-      if (!collided)
-      {
-        const int top = m_terrainSource->terrainHeightAt(newTile.x, newTile.y);
-        if (zAbs <= static_cast<float>(top))
-        {
-          collided = true;
-          hitPos = p.pos;
-          hitElev = static_cast<float>(top);
-          surface = m_terrainSource->isWaterAt(newTile.x, newTile.y)
-                        ? DecalSurface::Water
-                        : DecalSurface::Ground;
-        }
-      }
-
-      if (collided)
-      {
-        emitDecal(inst,
-                  desc,
-                  p,
-                  hitPos,
-                  hitElev,
-                  surface,
-                  wallSide,
-                  wallBottom,
-                  wallTop,
-                  newTile);
-
-        // Walls splatter and die; ground/water honour the GroundBehavior.
-        if (surface == DecalSurface::Wall || desc.ground == GroundBehavior::Die)
-        {
-          ps[i] = ps.back();
-          ps.pop_back();
-          continue;
-        }
-
-        p.grounded = true;
-        p.vel = {0.0f, 0.0f};
-        p.velZ = 0.0f;
-        p.height = hitElev - inst.groundLevel;
-        p.lifetime =
-            glm::min(p.lifetime, p.age + glm::max(0.0f, desc.stickDuration));
-        ++i;
-        continue;
-      }
-
-      ++i;
-      continue;
-    }
-
-    // Flat collision source (no terrain): stick to its surfaces and leave a
-    // decal where the particle crosses one this step.
+    // Collide against the surface -- terrain on the iso path, colliders on the
+    // flat path -- and splat where the droplet sticks.
     if (m_collisionSource)
     {
-      const ParticleHit hit = m_collisionSource->sweep(prevPos, p.pos);
+      const ParticleHit hit = m_collisionSource->sweep(
+          {prevPos,
+           p.pos,
+           inst.groundLevel + prevHeight,
+           inst.groundLevel + p.height});
       if (hit.hit)
       {
-        emitFlatDecal(inst, desc, p, hit);
-        if (desc.ground == GroundBehavior::Die)
+        emitDecal(inst, desc, p, hit);
+
+        // Walls splatter and die; ground/water honour the GroundBehavior.
+        if (hit.surface == DecalSurface::Wall ||
+            desc.ground == GroundBehavior::Die)
         {
           ps[i] = ps.back();
           ps.pop_back();
           continue;
         }
+
         p.pos = hit.pos;
         p.grounded = true;
         p.vel = {0.0f, 0.0f};
         p.velZ = 0.0f;
+        p.height = hit.elevation - inst.groundLevel;
         p.lifetime =
             glm::min(p.lifetime, p.age + glm::max(0.0f, desc.stickDuration));
       }
@@ -478,7 +370,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
       continue;
     }
 
-    // No terrain source: fall back to the spawn-plane ground test.
+    // No collision source: fall back to the spawn-plane ground test.
     if (p.height <= 0.0f)
     {
       p.height = 0.0f;
@@ -504,196 +396,165 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
 void ParticleEngine::emitDecal(EmitterInstance& inst,
                                const ParticleEffectDesc& desc,
                                const Particle& p,
-                               glm::vec2 hitPos,
-                               float hitElev,
-                               DecalSurface surface,
-                               uint8_t wallSide,
-                               float wallBottom,
-                               float wallTop,
-                               glm::ivec2 tile)
+                               const ParticleHit& hit)
 {
   if (!m_decalSink || !desc.leavesDecal)
     return;
 
   const float n =
       p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
-
   const glm::vec3 rgb = desc.decal.useParticleColor
                             ? desc.colorOverLife.sample(n)
                             : desc.decal.color;
-  const glm::vec4 color{rgb, desc.decal.alpha};
-  const float baseSize = sampleRange(inst.rng, desc.decal.size);
+  const glm::vec4 color{rgb, desc.decal.pool.alpha};
+  const float baseSize = sampleRange(inst.rng, desc.decal.pool.size);
 
-  if (surface == DecalSurface::Wall)
+  // Topology comes from the effect's shaper (default = soft pool + crisp fan).
+  SplatParams splat;
+  splat.refSpeed = desc.decal.impactRef;
+  splat.streakMaxCount = desc.decal.streaks.maxCount;
+  splat.streakWidth = desc.decal.streaks.width;
+  splat.streakLengthScale = desc.decal.streaks.lengthScale;
+  splat.poolSoft = desc.decal.pool.soft;
+  splat.streakCrisp = desc.decal.streaks.crisp;
+  const ISplatterShaper& shaper =
+      desc.decal.shaper ? *desc.decal.shaper : defaultSplatterShaper();
+
+  if (hit.surface == DecalSurface::Wall)
   {
-    // Anchor drips to the actual wall-face edge of `tile` so they stay within
-    // the wall's width instead of floating in the air beside it. East (2) face
-    // is the plane x = tile.x+1 running along Y; south (3) is y = tile.y+1
-    // running along X.
-    const bool east = wallSide == 2;
-    const float faceX = static_cast<float>(tile.x) + 1.0f;
-    const float faceY = static_cast<float>(tile.y) + 1.0f;
-    const float lo =
-        east ? static_cast<float>(tile.y) : static_cast<float>(tile.x);
+    // Anchor the splatter to the actual wall-face edge of `hit.tile` so it stays
+    // within the wall's width. East (2) face is the plane x = tile.x+1 running
+    // along Y; south (3) is y = tile.y+1 running along X.
+    const bool east = hit.wallSide == 2;
+    const float faceX = static_cast<float>(hit.tile.x) + 1.0f;
+    const float faceY = static_cast<float>(hit.tile.y) + 1.0f;
+    const float lo = east ? static_cast<float>(hit.tile.y)
+                          : static_cast<float>(hit.tile.x);
     const float hi = lo + 1.0f;
-    const float hitAlong = glm::clamp(east ? hitPos.y : hitPos.x, lo, hi);
+    const float hitAlong = glm::clamp(east ? hit.pos.y : hit.pos.x, lo, hi);
+    const glm::vec2 facePos =
+        east ? glm::vec2{faceX, hitAlong} : glm::vec2{hitAlong, faceY};
 
-    // Directional impact mark on the face: a static, rotated splat at the hit,
-    // oriented by the in-plane impact direction (along-edge component + the
-    // vertical velocity). The running drips below then bleed down from it.
-    {
-      // The face only shows the in-plane velocity (tangential along the edge +
-      // vertical). The vertical part is damped so the mark leans HORIZONTAL --
-      // the drips already carry "down", so a near-horizontal smear is what makes
-      // a wall hit read as a sideways splat instead of yet another vertical
-      // streak.
-      const float alongVel = east ? p.vel.y : p.vel.x;
-      const float wallSpeed =
-          glm::sqrt(p.vel.x * p.vel.x + p.vel.y * p.vel.y + p.velZ * p.velZ);
-      const float energy = glm::clamp(wallSpeed / 5.0f, 0.0f, 1.0f);
-      DecalSpawn mark;
-      mark.worldPos =
-          east ? glm::vec2{faceX, hitAlong} : glm::vec2{hitAlong, faceY};
-      mark.elevation = hitElev;
-      mark.surface = DecalSurface::Wall;
-      mark.wallSide = wallSide;
-      mark.wallBottom = wallBottom;
-      // Long along the smear, kept wide enough to read as a splat (not a
-      // hairline); rounder for a soft hit, longer/thinner for a fast one.
-      mark.size = glm::vec2{baseSize * (1.2f + energy * 2.5f),
-                            baseSize * (0.7f + (1.0f - energy) * 0.5f)};
-      mark.rotation = glm::atan(p.velZ * 0.35f, alongVel);
-      mark.color = color;
-      mark.textureId = &desc.decal.texture;
-      // dripSpeed stays 0 -> a static directional mark, not a running drip.
-      m_decalSink->addDecal(mark);
-    }
+    // Splash: a single hit point makes a whole burst paint a flat horizontal
+    // line, since the droplets strike at nearly the same height. Scatter each
+    // mark across the face instead -- spread growing with the in-plane impact
+    // speed and stretched along the direction the blood was travelling, so a
+    // fast hit throws an elongated splash and a slow drip stays tight.
+    const float alongVel = east ? p.vel.y : p.vel.x;
+    const float speed = glm::length(glm::vec2{alongVel, p.velZ});
+    const float splash =
+        glm::clamp(speed / glm::max(desc.decal.impactRef, 0.001f), 0.0f, 1.0f);
+    const float spread = baseSize * (0.3f + 3.0f * splash);
+    const glm::vec2 travel = speed > 0.001f
+                                 ? glm::vec2{alongVel, p.velZ} / speed
+                                 : glm::vec2{0.0f, 1.0f};
+    const glm::vec2 across{-travel.y, travel.x};
 
-    int drips = 1 + static_cast<int>(baseSize * 8.0f);
-    drips = glm::clamp(drips, 1, 3);
-
-    for (int k = 0; k < drips; ++k)
+    const auto stampWall = [&](glm::vec2 size,
+                               float rotation,
+                               bool crisp,
+                               float dripSpeed,
+                               glm::vec2 offset)
     {
       DecalSpawn spawn;
-      // Spread a little along the face, clamped inside the tile edge. Start
-      // elevation is biased toward the wall TOP (1 - r^2), so a heavy hit packs
-      // the top edge and the streaks run down from there.
-      const float along = glm::clamp(
-          hitAlong + (randf(inst.rng) - 0.5f) * 0.5f, lo + 0.05f, hi - 0.05f);
-      const float r = randf(inst.rng);
-      const float bias = 1.0f - r * r;
-      spawn.worldPos = east ? glm::vec2{faceX, along} : glm::vec2{along, faceY};
-      spawn.elevation = hitElev + bias * glm::max(0.0f, wallTop - hitElev);
+      glm::vec2 pos = facePos;
+      const float along = glm::clamp((east ? pos.y : pos.x) + offset.x, lo, hi);
+      if (east)
+        pos.y = along;
+      else
+        pos.x = along;
+      spawn.worldPos = pos;
+      // AT the hit elevation (+ splash) -- a low hit marks low on the wall
+      // instead of every streak packing the top and running the full height.
+      spawn.elevation =
+          glm::clamp(hit.elevation + offset.y, hit.wallBottom, hit.wallTop);
       spawn.surface = DecalSurface::Wall;
-      spawn.wallSide = wallSide;
-      spawn.wallBottom = wallBottom;
-      // Thin streak: width is size.y; length comes from the elevation run.
-      const float dripW = baseSize * (0.3f + randf(inst.rng) * 0.3f);
-      spawn.size = glm::vec2{dripW, dripW};
+      spawn.wallSide = hit.wallSide;
+      spawn.wallBottom = hit.wallBottom;
+      spawn.wallTop = hit.wallTop;
+      spawn.size = size;
+      spawn.rotation = rotation;
       spawn.color = color;
       spawn.textureId = &desc.decal.texture;
-      spawn.dripSpeed = 3.0f + randf(inst.rng) * 4.0f; // levels/sec
-      // fadeRate stays 0: the drip runs down, then persists permanently.
+      spawn.crisp = crisp;
+      spawn.dripSpeed = dripSpeed;
       m_decalSink->addDecal(spawn);
-    }
+    };
+
+    // Per-mark scatter in the face plane: wide along the travel axis, tighter
+    // across it.
+    const auto splashOffset = [&]
+    {
+      const float a = (randf(inst.rng) * 2.0f - 1.0f) * spread;
+      const float b = (randf(inst.rng) * 2.0f - 1.0f) * spread * 0.5f;
+      return travel * a + across * b;
+    };
+
+    // Directional splatter ON the face: the face shows only the in-plane
+    // velocity (along-edge + a damped vertical, so it leans the way the blood
+    // travelled rather than straight down). Soft pool + crisp fan, at the hit.
+    splat.fan = true;
+    SplatImpact impact;
+    impact.velocity = glm::vec2{alongVel, p.velZ * 0.5f};
+    impact.baseSize = baseSize;
+    const SplatPattern pattern = shaper.shape(impact, splat, inst.rng);
+    for (int s = 0; s < pattern.count; ++s)
+      stampWall(pattern.shapes[s].size,
+                pattern.shapes[s].rotation,
+                pattern.shapes[s].crisp,
+                0.0f,
+                splashOffset());
+
+    // One drip running down FROM the hit (short for a low hit, longer high up).
+    stampWall(glm::vec2{baseSize * 0.45f, baseSize * 0.45f},
+              0.0f,
+              desc.decal.streaks.crisp,
+              2.0f + randf(inst.rng) * 3.0f,
+              glm::vec2{0.0f, 0.0f});
     return;
   }
 
-  // Ground / water: orient the mark along the impact direction, and on solid
-  // ground throw a few fanned sub-streaks so a hit reads as directional splatter
-  // rather than a round blob. Faster hits stretch longer and fan wider. Ground
-  // is permanent (saturation-capped); water fades.
-  // Directional splatter shapes (shared with the flat path), then stamp each as
-  // a ground/water decal. Fan only on solid ground; water marks stay single.
-  const float fadeRate = (surface == DecalSurface::Water && m_terrainSource)
-                             ? m_terrainSource->waterFadeRateAt(tile.x, tile.y)
-                             : 0.0f;
+  // Ground / water (and any flat surface). A flat SIDE hit (mostly-horizontal
+  // entry normal) runs down instead of fanning; an iso ground hit reads top
+  // (normal 0 -> not a side). Water marks stay single.
+  const bool side = glm::abs(hit.normal.x) > glm::abs(hit.normal.y);
+  splat.fan = hit.surface != DecalSurface::Water && !side;
 
-  const SplatPattern pattern =
-      buildSplatShapes(p.vel,
-                       p.velZ,
-                       baseSize,
-                       desc.decal.impactRef,
-                       surface == DecalSurface::Ground,
-                       inst.rng);
+  SplatImpact impact;
+  impact.velocity = p.vel;
+  impact.velZ = p.velZ;
+  impact.baseSize = baseSize;
+  const SplatPattern pattern = shaper.shape(impact, splat, inst.rng);
   for (int s = 0; s < pattern.count; ++s)
   {
     DecalSpawn spawn;
-    spawn.worldPos = hitPos;
-    spawn.elevation = hitElev;
-    spawn.surface = surface;
+    spawn.worldPos = hit.pos;
+    spawn.elevation = hit.elevation;
+    spawn.surface = hit.surface;
     spawn.size = pattern.shapes[s].size;
     spawn.rotation = pattern.shapes[s].rotation;
     spawn.color = color;
     spawn.textureId = &desc.decal.texture;
-    spawn.fadeRate = fadeRate;
-    m_decalSink->addDecal(spawn);
-  }
-}
-
-void ParticleEngine::emitFlatDecal(EmitterInstance& inst,
-                                   const ParticleEffectDesc& desc,
-                                   const Particle& p,
-                                   const ParticleHit& hit)
-{
-  if (!m_decalSink || !desc.leavesDecal)
-    return;
-
-  const float n =
-      p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
-  const glm::vec3 rgb = desc.decal.useParticleColor
-                            ? desc.colorOverLife.sample(n)
-                            : desc.decal.color;
-  const glm::vec4 color{rgb, desc.decal.alpha};
-  const float baseSize = sampleRange(inst.rng, desc.decal.size);
-
-  // A side hit (mostly-horizontal entry normal) runs down the face; a top hit
-  // splatters outward. Fan only on top hits.
-  const bool side = glm::abs(hit.normal.x) > glm::abs(hit.normal.y);
-
-  // Stamp a mark at the hit, clipped to the surface it stuck to: the flat
-  // renderer slices it to these bounds (even when rotated), so it never spills
-  // off the platform. The main splat is a soft blob; the fan streaks are thin and
-  // crisp.
-  const auto stamp = [&](glm::vec2 size, float rotation, bool crisp)
-  {
-    DecalSpawn spawn;
-    spawn.worldPos = hit.pos;
-    spawn.surface = DecalSurface::Ground; // flat sink ignores surface/elevation
-    spawn.size = size;
-    spawn.rotation = rotation;
-    spawn.color = color;
-    spawn.textureId = &desc.decal.texture;
-    spawn.crisp = crisp;
-    spawn.clipMin = hit.boundsMin; // clipping defaults to Surface
+    spawn.fadeRate = hit.fadeRate;
+    spawn.crisp = pattern.shapes[s].crisp;
+    spawn.clipMin = hit.boundsMin; // flat clips to the collider; iso ignores
     spawn.clipMax = hit.boundsMax;
     m_decalSink->addDecal(spawn);
-  };
-
-  const SplatPattern pattern = buildSplatShapes(
-      p.vel, 0.0f, baseSize, desc.decal.impactRef, !side, inst.rng);
-  for (int s = 0; s < pattern.count; ++s)
-  {
-    glm::vec2 size = pattern.shapes[s].size;
-    const bool isStreak = s > 0;
-    if (isStreak)
-      size.y = 1.0f + randf(inst.rng); // thin crisp line (px wide)
-    stamp(size, pattern.shapes[s].rotation, isStreak);
   }
 
-  // Side hit: a thin crisp streak that runs DOWN the face over time (the flat
-  // sink maps dripSpeed -> a downward grow). size = (width, height); height grows.
+  // Flat side hit: a streak that runs DOWN the face over time (the flat sink
+  // maps dripSpeed -> a downward grow). size = (width, height); height grows.
   if (side)
   {
     DecalSpawn drip;
     drip.worldPos = hit.pos;
     drip.surface = DecalSurface::Ground;
-    drip.size = glm::vec2{1.0f + randf(inst.rng), baseSize * 0.5f};
+    drip.size = glm::vec2{desc.decal.streaks.width, baseSize * 0.5f};
     drip.color = color;
     drip.textureId = &desc.decal.texture;
-    drip.crisp = true;
+    drip.crisp = desc.decal.streaks.crisp;
     drip.dripSpeed = baseSize * 6.0f; // grow units/sec; flat-sink interpreted
-    drip.clipMin = hit.boundsMin;     // clip to the platform like the rest
+    drip.clipMin = hit.boundsMin;
     drip.clipMax = hit.boundsMax;
     m_decalSink->addDecal(drip);
   }

@@ -11,6 +11,7 @@
 #include "engine/runtime/rendering/commands/renderCommand.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/quads.h"
+#include "engine/runtime/rendering/renderStats.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 
 #include "engine/core/ecs/registry.h"
@@ -19,6 +20,7 @@
 
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/runtime/rendering/modules/blockGeometry.h"
+#include "engine/runtime/rendering/modules/decals.h"
 #include "engine/runtime/rendering/modules/terrainShadow.h"
 #include "engine/runtime/rendering/renderPass.h"
 #include "glm/glm/common.hpp"
@@ -203,6 +205,14 @@ void IsometricRenderSystem::setTerrainHeightSource(
 }
 
 IsometricRenderSystem::~IsometricRenderSystem() = default;
+
+IDecalSink* IsometricRenderSystem::decalSink()
+{
+  Decals* decals = module<Decals>();
+  if (!decals)
+    decals = &withModule<Decals>();
+  return decals;
+}
 
 void IsometricRenderSystem::create()
 {

@@ -2,6 +2,7 @@
 #include "engine/core/components/tags/isometricTile.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/logger/logger.h"
+#include "engine/runtime/rendering/renderStats.h"
 #include "engine/runtime/rendering/util/isometric/geometry.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #include "engine/core/util/algorithms/gridDDA.h"

@@ -1,16 +1,15 @@
 #pragma once
 
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
+#include "engine/core/rendering/iTerrainHeightSource.h"
+#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/iIsometricRenderer.h"
-#include "engine/core/rendering/iTerrainHeightSource.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "engine/runtime/rendering/renderQueue.h"
-#include "engine/runtime/rendering/renderStats.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -75,6 +74,10 @@ public:
 
   // Module composition (withModule/withModules/hasModule/module/removeModule)
   // is inherited from RenderModuleHost<IsometricRenderContext>.
+
+  // The persistent terrain-stain sink (the Decals module), registering it on
+  // first use so a game enabling particle stains never wires decals by hand.
+  IDecalSink* decalSink() override;
 
   /**
    * Visit each registered module with its type and the current render context,

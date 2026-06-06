@@ -1,6 +1,5 @@
 #pragma once
 
-#include "SDL_pixels.h"
 #include "components/platformerComponents.h"
 #include "config.h"
 #include "engine/core/components/boxCollider2D.h"
@@ -103,11 +102,11 @@ protected:
 
         enemyEntity.getComponent<sfs::RigidBodyComponent>().velocity.y =
             -ENEMY_KNOCKBACK;
-        // Blood is biased along the bullet's travel; droplets fly, then stick to
-        // whatever platform they land on (generic particle->decal path), so the
-        // stains trace the actual impact rather than a drawn shape.
-        damageEnemy(enemyEntity, bullet.damage, transform.position,
-                    bullet.velocity);
+        // Blood is biased along the bullet's travel; droplets fly, then stick
+        // to whatever platform they land on (generic particle->decal path), so
+        // the stains trace the actual impact rather than a drawn shape.
+        damageEnemy(
+            enemyEntity, bullet.damage, transform.position, bullet.velocity);
 
         if (bullet.chain)
           chainArc(enemyPos, bullet.color, enemyEntity);

@@ -10,7 +10,6 @@ ParticleEffectDesc bloodMistEffect()
 {
   ParticleEffectDesc d;
 
-  d.texture = "white_dot";
   d.blend = BlendMode::Additive; // bright pink haze
   d.space = SimulationSpace::World;
 
@@ -43,7 +42,6 @@ ParticleEffectDesc bloodSprayEffect()
 {
   ParticleEffectDesc d;
 
-  d.texture = "white_dot";
   d.blend = BlendMode::Alpha;
   d.space = SimulationSpace::World;
 
@@ -79,10 +77,9 @@ ParticleEffectDesc bloodSprayEffect()
 
   // Each droplet leaves a small permanent stain where it lands.
   d.leavesDecal = true;
-  d.decal.texture = "white_dot";
-  d.decal.size = FloatRange::of(0.07f, 0.16f);
+  d.decal.pool.size = FloatRange::of(0.07f, 0.16f);
   d.decal.useParticleColor = true;
-  d.decal.alpha = 0.8f;
+  d.decal.pool.alpha = 0.8f;
   d.decal.impactRef = 3.0f; // iso blood lands at ~1-4 tiles/s
 
   d.maxParticles = 256;
@@ -95,7 +92,6 @@ ParticleEffectDesc bloodGobsEffect()
 {
   ParticleEffectDesc d;
 
-  d.texture = "white_dot";
   d.blend = BlendMode::Alpha;
   d.space = SimulationSpace::World;
 
@@ -126,10 +122,9 @@ ParticleEffectDesc bloodGobsEffect()
   // Heavy gobs leave fat splats -- but the decal is smaller than the in-air gob
   // so it reads as a mark on the surface, not a floating blob.
   d.leavesDecal = true;
-  d.decal.texture = "white_dot";
-  d.decal.size = FloatRange::of(0.12f, 0.22f);
+  d.decal.pool.size = FloatRange::of(0.12f, 0.22f);
   d.decal.useParticleColor = true;
-  d.decal.alpha = 0.9f;
+  d.decal.pool.alpha = 0.9f;
   d.decal.impactRef = 3.0f;
 
   d.maxParticles = 96;
@@ -142,7 +137,6 @@ ParticleEffectDesc bloodDripEffect()
 {
   ParticleEffectDesc d;
 
-  d.texture = "white_dot";
   d.blend = BlendMode::Alpha;
   d.space = SimulationSpace::World;
 
@@ -170,10 +164,9 @@ ParticleEffectDesc bloodDripEffect()
   d.ground = GroundBehavior::Die;
 
   d.leavesDecal = true;
-  d.decal.texture = "white_dot";
-  d.decal.size = FloatRange::of(0.06f, 0.13f);
+  d.decal.pool.size = FloatRange::of(0.06f, 0.13f);
   d.decal.useParticleColor = true;
-  d.decal.alpha = 0.85f;
+  d.decal.pool.alpha = 0.85f;
   d.decal.impactRef = 3.0f;
 
   d.maxParticles = 128;
@@ -186,7 +179,7 @@ ParticleEffectDesc emberEffect()
 {
   ParticleEffectDesc d;
 
-  d.texture = "white_pixel";
+  d.look = ParticleShape::Pixel; // tiny crisp ember speck
   d.blend = BlendMode::Additive;
   d.space = SimulationSpace::World;
 
