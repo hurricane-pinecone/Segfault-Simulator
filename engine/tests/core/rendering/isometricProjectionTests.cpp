@@ -1,6 +1,3 @@
-// Tests for IsometricProjection: the world<->screen transform of the isometric
-// heightfield path, and pickTile (topmost terrain tile under a screen point).
-
 #include "../../testHarness.h"
 
 #include <engine/core/rendering/projection/isometricProjection.h>

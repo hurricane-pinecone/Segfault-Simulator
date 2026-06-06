@@ -1,7 +1,3 @@
-// Tests for the particle effect reflection schema: it exposes the Lua-editable
-// fields with sane offsets and kinds, so the table->desc reader and the
-// autocomplete doc are driven from one list.
-
 #include "../../testHarness.h"
 
 #include <engine/core/scripting/luaSchema.h>

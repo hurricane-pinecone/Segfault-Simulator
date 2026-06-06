@@ -1,7 +1,3 @@
-// Tests for the isometric geometry helpers: grid<->isometric round-trip, the
-// terrain elevation grid view, max-elevation scan, point-in-quad, and clipping a
-// polygon to a tile.
-
 #include "../../testHarness.h"
 
 #include <engine/core/components/elevationComponent.h>

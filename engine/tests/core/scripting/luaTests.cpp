@@ -1,8 +1,3 @@
-// Minimal dependency-free tests for the Lua scripting layer. Exercises the
-// hardening added for prod-readiness (execution guard, exception guard, sandbox
-// lockdown, config slot invalidation) plus the schema read/write round-trip and
-// eval error paths. Returns non-zero on any failure (wired as a CTest test).
-
 #include <engine/core/scripting/iLuaConfigurable.h>
 #include <engine/core/scripting/luaSchema.h>
 #include <engine/core/scripting/luaScripting.h>
@@ -36,7 +31,8 @@ bool contains(const std::string& haystack, const std::string& needle)
   return haystack.find(needle) != std::string::npos;
 }
 
-// A configurable used to exercise the ILuaConfigurable + schema path end to end.
+// A configurable used to exercise the ILuaConfigurable + schema path end to
+// end.
 struct Range2
 {
   float min = 0.0f;
@@ -76,10 +72,10 @@ int main()
 
   // --- eval / evalRepl basics + error paths --------------------------------
   CHECK(vm.evalRepl("return 1 + 1") == "2");
-  CHECK(contains(vm.evalRepl("return 1 +"), "error:"));   // compile error
-  CHECK(contains(vm.evalRepl("error('boom')"), "boom"));  // runtime error caught
-  CHECK(vm.eval("x = 5").empty());                        // statements -> ""
-  CHECK(vm.evalRepl("return x") == "5");                  // state persists
+  CHECK(contains(vm.evalRepl("return 1 +"), "error:"));  // compile error
+  CHECK(contains(vm.evalRepl("error('boom')"), "boom")); // runtime error caught
+  CHECK(vm.eval("x = 5").empty());                       // statements -> ""
+  CHECK(vm.evalRepl("return x") == "5");                 // state persists
 
   // --- execution guard: an infinite loop must abort, not hang --------------
   // (reaching the next line at all proves it returned.)
@@ -88,8 +84,9 @@ int main()
     CHECK(contains(r, "error:"));
   }
   // a finite loop under budget still runs fine
-  CHECK(vm.evalRepl("local s = 0; for i = 1, 1000 do s = s + i end; return s") ==
-        "500500");
+  CHECK(
+      vm.evalRepl("local s = 0; for i = 1, 1000 do s = s + i end; return s") ==
+      "500500");
 
   // --- sandbox lockdown ----------------------------------------------------
   CHECK(vm.evalRepl("return load") == "nil");
@@ -118,14 +115,14 @@ int main()
   CHECK(cfg.flag == true);
   CHECK(cfg.span.min == 1.0f && cfg.span.max == 2.0f);
   CHECK(cfg.changedCount == 1); // onLuaConfigChanged fired
-  CHECK(vm.evalRepl("return cfg.get().count") == "5");      // values round-trip
+  CHECK(vm.evalRepl("return cfg.get().count") == "5"); // values round-trip
   CHECK(contains(vm.evalRepl("return cfg.options.count"), "int")); // schema doc
 
   // --- unregister: a lingering Lua reference must NOT dangle ----------------
-  vm.eval("saved = cfg");      // Lua still holds the table after unregister
+  vm.eval("saved = cfg"); // Lua still holds the table after unregister
   vm.unregisterConfig(cfg);
-  CHECK(vm.evalRepl("return cfg") == "nil");                 // global cleared
-  CHECK(vm.evalRepl("return saved.get().count") == "nil");  // slot neutered
+  CHECK(vm.evalRepl("return cfg") == "nil");               // global cleared
+  CHECK(vm.evalRepl("return saved.get().count") == "nil"); // slot neutered
 
   // --- memory cap: a huge allocation fails as an error, not an OOM crash ----
   {
@@ -134,8 +131,8 @@ int main()
     memVm.setMemoryLimit(4 * 1024 * 1024); // 4 MiB
     const std::string r =
         memVm.evalRepl("return string.rep('x', 50 * 1024 * 1024)");
-    CHECK(contains(r, "error:"));                   // out-of-memory, caught
-    CHECK(memVm.memoryUsed() <= 4 * 1024 * 1024);   // cap never blown
+    CHECK(contains(r, "error:"));                 // out-of-memory, caught
+    CHECK(memVm.memoryUsed() <= 4 * 1024 * 1024); // cap never blown
   }
 
   // --- output cap: a giant print is truncated, not returned whole -----------

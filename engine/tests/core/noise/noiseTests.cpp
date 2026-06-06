@@ -1,6 +1,3 @@
-// Tests for sfs::Noise: determinism under a fixed seed, a sensible value range,
-// seed/type sensitivity, and move semantics.
-
 #include "../../testHarness.h"
 
 #include <engine/core/noise/noise.h>

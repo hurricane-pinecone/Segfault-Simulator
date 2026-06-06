@@ -1,6 +1,3 @@
-// Tests for the pure geometry algorithms in core/util/algorithms: swept
-// segment-vs-AABB, grid DDA traversal, and Sutherland-Hodgman polygon clipping.
-
 #include "../../testHarness.h"
 
 #include <engine/core/util/algorithms/aabbSweep.h>

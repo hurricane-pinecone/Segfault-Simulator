@@ -1,13 +1,8 @@
-// Tests for the core ECS: Entity lifecycle, component pools, queries (view),
-// and system entity-matching. The Registry is constructed directly (no Scene),
-// which exercises engine-core headless.
-
 #include "../../testHarness.h"
 
 #include <engine/core/ecs/ecs.h>
 
 #include <cstddef>
-#include <stdexcept>
 
 using namespace sfs;
 
@@ -153,7 +148,7 @@ int main()
     hurt.addComponent<Health>();
 
     CHECK(reg.view<Position>().size() == 2);           // moving + still
-    CHECK(reg.view<Position, Velocity>().size() == 1);  // moving only
+    CHECK(reg.view<Position, Velocity>().size() == 1); // moving only
     CHECK(reg.view<Health>().size() == 1);
     CHECK(reg.view<Velocity, Health>().empty());
   }
@@ -171,7 +166,8 @@ int main()
     CHECK(!a.isAlive());
     CHECK(!reg.isAlive(a));
 
-    // id is reused with a bumped generation, so the old handle no longer matches
+    // id is reused with a bumped generation, so the old handle no longer
+    // matches
     Entity b = reg.createEntity();
     CHECK(b.getId() == aid);
     CHECK(b.getGeneration() == gen + 1);

@@ -6,7 +6,9 @@
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
 
-#include <limits>
+// std::numeric_limits (below): libc++ pulls it in transitively, but GCC/libstdc++
+// needs it explicit.
+#include <limits> // IWYU pragma: keep -- for GCC
 
 namespace sfs
 {

@@ -1,7 +1,3 @@
-// Tests for the built-in splatter shaper (defaultSplatterShaper): it always lays
-// a pool, adds directional fan streaks only for an energetic hit, and honours the
-// soft/crisp and fan flags.
-
 #include "../../testHarness.h"
 
 #include <engine/core/particles/decalSplatter.h>

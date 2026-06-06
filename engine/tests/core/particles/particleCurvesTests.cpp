@@ -1,7 +1,3 @@
-// Tests for the POD keyframed Curve and Gradient samplers used by particle
-// effects: clamping outside the range, interpolation, capacity, and the
-// constant/linear factory helpers.
-
 #include "../../testHarness.h"
 
 #include <engine/core/particles/particleCurves.h>

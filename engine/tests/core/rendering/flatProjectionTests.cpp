@@ -1,6 +1,3 @@
-// Dependency-free tests for FlatProjection: the flat 2D world<->screen transform
-// the general 2D render path uses. Returns non-zero on any failure (CTest test).
-
 #include <engine/core/rendering/projection/flatProjection.h>
 
 #include <cmath>
@@ -59,10 +56,13 @@ int main()
   CHECK(near(p.screenToWorld(p.worldToScreen(world, 0.0f), 0.0f), world));
 
   if (g_failures == 0)
-    std::fprintf(stderr, "flatProjectionTests: all %d checks passed\n", g_passed);
+    std::fprintf(
+        stderr, "flatProjectionTests: all %d checks passed\n", g_passed);
   else
-    std::fprintf(stderr, "flatProjectionTests: %d FAILED, %d passed\n",
-                 g_failures, g_passed);
+    std::fprintf(stderr,
+                 "flatProjectionTests: %d FAILED, %d passed\n",
+                 g_failures,
+                 g_passed);
 
   return g_failures == 0 ? 0 : 1;
 }
