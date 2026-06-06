@@ -4,32 +4,36 @@
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
-#include "engine/core/ecs/system.h"
 #include "engine/core/particles/iParticleCollisionSource.h"
 #include "engine/core/util/algorithms/aabbSweep.h"
+#include "glm/glm/ext/vector_float2.hpp"
 
 namespace sfs
 {
 
-// Default flat collision source: sticks particles to every static solid
-// (SolidObject + BoxCollider2D) in the scene via a swept-AABB test. A passive
-// System so it gets the registry injected -- add it and hand it to
-// ParticleEngine::setCollisionSource, and any flat game gets particle-stick
-// decals out of the box.
-class ParticleCollisionSystem : public System, public IParticleCollisionSource
+// Sticks particles to the scene's static solids (SolidObject + BoxCollider2D) by
+// swept AABB, filling the collider's world bounds so a flat decal can be clipped
+// to it. Reads the ECS directly, so it lives with the particle engine rather than
+// the renderer.
+class ColliderParticleCollision : public IParticleCollisionSource
 {
 public:
-  ParticleHit sweep(glm::vec2 from, glm::vec2 to) const override
+  explicit ColliderParticleCollision(Registry* registry)
+      : m_registry(registry)
+  {
+  }
+
+  ParticleHit sweep(const ParticleSweep& m) const override
   {
     ParticleHit best;
-    if (!registry)
+    if (!m_registry)
       return best;
 
-    const glm::vec2 seg = to - from;
+    const glm::vec2 seg = m.to - m.from;
     float bestT = 2.0f;
 
     for (const auto& solid :
-         registry->view<SolidObject, TransformComponent, BoxCollider2D>())
+         m_registry->view<SolidObject, TransformComponent, BoxCollider2D>())
     {
       const auto& box = solid.getComponent<BoxCollider2D>();
       const glm::vec2 centre =
@@ -37,14 +41,15 @@ public:
 
       float t = 0.0f;
       glm::vec2 normal{0.0f, 0.0f};
-      if (!sweepAabb(from, seg, centre - box.half, centre + box.half, t, normal))
+      if (!sweepAabb(m.from, seg, centre - box.half, centre + box.half, t,
+                     normal))
         continue;
 
       if (t < bestT)
       {
         bestT = t;
         best.hit = true;
-        best.pos = from + seg * t;
+        best.pos = m.from + seg * t;
         best.normal = normal;
         best.boundsMin = centre - box.half;
         best.boundsMax = centre + box.half;
@@ -53,6 +58,9 @@ public:
 
     return best;
   }
+
+private:
+  Registry* m_registry = nullptr;
 };
 
 } // namespace sfs

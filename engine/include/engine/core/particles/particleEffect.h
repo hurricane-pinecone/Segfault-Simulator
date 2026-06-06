@@ -10,6 +10,24 @@
 namespace sfs
 {
 
+class ISplatterShaper; // decalSplatter.h -- pluggable splatter topology
+
+// The built-in look of a particle or decal mark, so a game picks a shape instead
+// of naming an engine texture. Radial = the soft round "white_dot"; Pixel = the
+// crisp 1x1 "white_pixel". Set an explicit `texture` to override with custom art.
+enum class ParticleShape : uint8_t
+{
+  Radial,
+  Pixel,
+};
+
+// The engine texture a ParticleShape resolves to (filled into an empty `texture`
+// at registerEffect time).
+inline const char* builtinShapeTexture(ParticleShape shape)
+{
+  return shape == ParticleShape::Pixel ? "white_pixel" : "white_dot";
+}
+
 // Where a particle's spawn position is sampled from, relative to the emitter.
 enum class EmissionShape : uint8_t
 {
@@ -50,16 +68,41 @@ struct FloatRange
 // leavesDecal). Consumed by the Decals module via an IDecalSink.
 struct DecalSpec
 {
-  std::string texture = "white_pixel"; // resolved by the renderer
-  FloatRange size{0.1f, 0.22f};        // mark size in tiles
-  bool useParticleColor = true;        // tint from the particle's current colour
-  glm::vec3 color{0.35f, 0.0f, 0.0f};  // used when !useParticleColor
-  float alpha = 0.85f;
+  // The mark's look: a built-in shape, or an explicit `texture` for custom art
+  // (a non-empty texture wins). The flat path also picks crisp streaks vs soft
+  // drops from its own sprite pair; this drives the iso path's single texture.
+  ParticleShape look = ParticleShape::Radial;
+  std::string texture;                // custom override; empty -> look's built-in
+  bool useParticleColor = true;       // tint from the particle's current colour
+  glm::vec3 color{0.35f, 0.0f, 0.0f}; // used when !useParticleColor
 
   // Impact speed (in the effect's velocity units) at which the splatter shaping
   // elongates / fans fully -- a few tiles/sec on the iso path, a few hundred
-  // px/sec on the flat path. See buildSplatShapes.
+  // px/sec on the flat path. See decalSplatter.h.
   float impactRef = 4.0f;
+
+  // The soft area "pool" laid at the hit -- the main blob a stain reads as.
+  struct Pool
+  {
+    FloatRange size{0.1f, 0.22f}; // footprint (effect's world units)
+    float alpha = 0.85f;
+    bool soft = true; // soft radial blob vs a crisp filled mark
+  } pool;
+
+  // The crisp directional streaks flung along the impact direction.
+  struct Streaks
+  {
+    int maxCount = 2;         // up to this many, scaled by impact energy
+    float width = 0.03f;      // thickness (effect's world units)
+    float lengthScale = 1.0f; // multiplies the speed-driven length
+    bool crisp = true;
+  } streaks;
+
+  // The splatter TOPOLOGY: how a hit becomes a set of marks. Null = the engine
+  // default (soft pool + crisp fan streaks, tuned by pool/streaks above). Point
+  // it at a game-owned ISplatterShaper for a fully custom pattern. See
+  // decalSplatter.h.
+  const ISplatterShaper* shaper = nullptr;
 };
 
 // The authoring description of a particle effect. Plain data with fixed-capacity
@@ -103,7 +146,10 @@ struct ParticleEffectDesc
   Curve alphaOverLife = Curve::constant(1.0f);
 
   // --- texture / sprite-sheet animation ---
-  std::string texture;        // texture id resolved by the renderer
+  // The billboard's look: a built-in shape, or an explicit `texture` to override
+  // with custom art (a non-empty texture wins).
+  ParticleShape look = ParticleShape::Radial;
+  std::string texture;        // custom override; empty -> look's built-in
   int frameCols = 1;          // sprite-sheet columns
   int frameRows = 1;          // sprite-sheet rows
   float frameFps = 0.0f;      // >0 animates frames over time

@@ -19,49 +19,60 @@ float randf(std::uint32_t& state)
   state ^= state << 5;
   return static_cast<float>(state & 0xFFFFFFu) / static_cast<float>(0x1000000);
 }
+
+// Built-in topology: a soft round pool plus crisp directional fan streaks.
+class PoolStreakShaper : public ISplatterShaper
+{
+public:
+  SplatPattern shape(const SplatImpact& impact,
+                     const SplatParams& sp,
+                     std::uint32_t& rng) const override
+  {
+    const float planar = glm::length(impact.velocity);
+    const float mag = glm::sqrt(planar * planar + impact.velZ * impact.velZ);
+    const float ref = sp.refSpeed > 0.0001f ? sp.refSpeed : 1.0f;
+
+    // How directional the hit was (horizontal travel) and its overall force. The
+    // 1.6 keeps energy a little behind drift, so a hit elongates before it fans.
+    const float drift = glm::clamp(planar / ref, 0.0f, 1.0f);
+    const float energy = glm::clamp(mag / (ref * 1.6f), 0.0f, 1.0f);
+    const float base = planar > 0.05f
+                           ? glm::atan(impact.velocity.y, impact.velocity.x)
+                           : randf(rng) * 6.2831853f;
+
+    SplatPattern out;
+
+    // Pool: a round blob (orientation irrelevant; kept square).
+    out.shapes[out.count++] = {
+        glm::vec2{impact.baseSize, impact.baseSize}, base, !sp.poolSoft};
+
+    if (!sp.fan || energy <= 0.15f || sp.streakMaxCount <= 0)
+      return out;
+
+    // Fanned streaks: tight around the drift when directional, splayed wide when
+    // the hit came mostly straight down. Count scales with impact energy.
+    const int streaks = glm::clamp(
+        1 + static_cast<int>(energy * static_cast<float>(sp.streakMaxCount)),
+        1,
+        sp.streakMaxCount);
+    const float spread = glm::mix(1.4f, 0.45f, drift);
+    for (int k = 0; k < streaks && out.count < SplatPattern::kMax; ++k)
+    {
+      const float a = base + (randf(rng) - 0.5f) * 2.0f * spread;
+      const float len = impact.baseSize * (1.0f + energy * 3.0f) *
+                        sp.streakLengthScale * (0.6f + randf(rng) * 0.6f);
+      out.shapes[out.count++] = {glm::vec2{len, sp.streakWidth}, a, sp.streakCrisp};
+    }
+
+    return out;
+  }
+};
 } // namespace
 
-SplatPattern buildSplatShapes(glm::vec2 vel,
-                              float velZ,
-                              float baseSize,
-                              float refSpeed,
-                              bool fan,
-                              std::uint32_t& rng)
+const ISplatterShaper& defaultSplatterShaper()
 {
-  const float planar = glm::length(vel);
-  const float impact = glm::sqrt(planar * planar + velZ * velZ);
-  const float ref = refSpeed > 0.0001f ? refSpeed : 1.0f;
-
-  // How directional the hit was (horizontal travel) and its overall force. The
-  // 1.6 keeps energy a little behind drift, so a hit elongates before it fans.
-  const float drift = glm::clamp(planar / ref, 0.0f, 1.0f);
-  const float energy = glm::clamp(impact / (ref * 1.6f), 0.0f, 1.0f);
-  const float base =
-      planar > 0.05f ? glm::atan(vel.y, vel.x) : randf(rng) * 6.2831853f;
-
-  SplatPattern out;
-
-  // Main splat: round for a near-vertical drop, a teardrop along travel.
-  out.shapes[out.count++] = {
-      glm::vec2{baseSize * (1.0f + drift * 2.2f), baseSize}, base};
-
-  if (!fan || energy <= 0.15f)
-    return out;
-
-  // Fanned sub-streaks: tight around the drift when directional, splayed wide
-  // when the hit came mostly straight down.
-  const int streaks = glm::clamp(1 + static_cast<int>(energy * 2.5f), 1, 2);
-  const float spread = glm::mix(1.4f, 0.45f, drift);
-  for (int k = 0; k < streaks && out.count < SplatPattern::kMax; ++k)
-  {
-    const float a = base + (randf(rng) - 0.5f) * 2.0f * spread;
-    const float len =
-        baseSize * (1.6f + energy * 3.0f) * (0.6f + randf(rng) * 0.6f);
-    const float wid = baseSize * (0.25f + randf(rng) * 0.2f);
-    out.shapes[out.count++] = {glm::vec2{len, wid}, a};
-  }
-
-  return out;
+  static const PoolStreakShaper shaper;
+  return shaper;
 }
 
 } // namespace sfs

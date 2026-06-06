@@ -10,6 +10,8 @@
 namespace sfs
 {
 
+class IDecalSink;
+
 /**
  * Mixin that lets a render system compose render modules. Registration is the
  * enable: a feature is on iff its module type is registered. The host
@@ -50,6 +52,7 @@ public:
 
     auto module = std::make_unique<T>(std::forward<A>(args)...);
     module->init(moduleInit());
+    module->setHost(*this);
 
     T& ref = *module;
     m_modules.emplace_back(std::type_index(typeid(T)), std::move(module));
@@ -104,6 +107,13 @@ public:
       }
     }
   }
+
+  /**
+   * The host's decal sink, if it has one -- where particles stamp persistent
+   * marks. A module (e.g. Particles) pulls this in its enableStains() so a game
+   * never wires the sink by hand. Null on a host with no decal surface.
+   */
+  virtual IDecalSink* decalSink() { return nullptr; }
 
 protected:
   /** Dependencies passed to each module's init(); supplied by the host. */

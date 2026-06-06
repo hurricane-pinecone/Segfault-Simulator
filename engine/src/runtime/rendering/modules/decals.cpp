@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/modules/decals.h"
 
+#include "engine/core/util/algorithms/polygonClip.h"
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
@@ -91,8 +92,10 @@ void Decals::addDecal(const DecalSpawn& spawn)
   d.surface = spawn.surface;
   d.wallSide = spawn.wallSide;
   d.wallBottom = spawn.wallBottom;
+  d.wallTop = spawn.wallTop;
   d.size = spawn.size;
   d.rotation = spawn.rotation;
+  d.crisp = spawn.crisp;
   d.color = spawn.color;
   d.textureId = internTexture(spawn.textureId ? *spawn.textureId
                                               : std::string("white_pixel"));
@@ -390,6 +393,11 @@ void Decals::buildDecalVerts(const Decal& decal,
   const auto push = [&](glm::vec2 wp, float elev, glm::vec2 uv, float key)
   { out.push_back(DecalVertex{wp, elev, uv, packed, key}); };
 
+  // Crisp marks sample the dot's solid centre (a sharp filled streak); soft marks
+  // sample the whole sprite (the round radial falloff). One texture, two looks.
+  const float uLo = decal.crisp ? 0.42f : 0.0f;
+  const float uHi = decal.crisp ? 0.58f : 1.0f;
+
   if (decal.surface != DecalSurface::Wall)
   {
     // Ground/water: a rotated world rectangle lying flat on the surface. Local
@@ -406,17 +414,32 @@ void Decals::buildDecalVerts(const Decal& decal,
     const float key =
         decal.worldPos.x + decal.worldPos.y + e * 0.5f + kGroundBias;
 
-    const glm::vec2 w0 = decal.worldPos + rot(-hx, -hy);
-    const glm::vec2 w1 = decal.worldPos + rot(hx, -hy);
-    const glm::vec2 w2 = decal.worldPos + rot(hx, hy);
-    const glm::vec2 w3 = decal.worldPos + rot(-hx, hy);
+    const glm::vec2 pts[4] = {decal.worldPos + rot(-hx, -hy),
+                              decal.worldPos + rot(hx, -hy),
+                              decal.worldPos + rot(hx, hy),
+                              decal.worldPos + rot(-hx, hy)};
+    const glm::vec2 uvs[4] = {
+        {uLo, uLo}, {uHi, uLo}, {uHi, uHi}, {uLo, uHi}};
 
-    push(w0, e, {0.0f, 0.0f}, key);
-    push(w1, e, {1.0f, 0.0f}, key);
-    push(w2, e, {1.0f, 1.0f}, key);
-    push(w0, e, {0.0f, 0.0f}, key);
-    push(w2, e, {1.0f, 1.0f}, key);
-    push(w3, e, {0.0f, 1.0f}, key);
+    // Keep the mark on the tile it landed on (clip to that tile's world rect), so
+    // a streak doesn't bleed across a tile/elevation boundary. Same key for all
+    // verts (the rect is one tile, one depth band).
+    const glm::vec2 tileMin{glm::floor(decal.worldPos.x),
+                            glm::floor(decal.worldPos.y)};
+    ClipVertex poly[12];
+    const int cnt = clipQuadToRect(pts,
+                                   uvs,
+                                   tileMin.x,
+                                   tileMin.y,
+                                   tileMin.x + 1.0f,
+                                   tileMin.y + 1.0f,
+                                   poly);
+    for (int i = 1; i + 1 < cnt; ++i)
+    {
+      push(poly[0].p, e, poly[0].uv, key);
+      push(poly[i].p, e, poly[i].uv, key);
+      push(poly[i + 1].p, e, poly[i + 1].uv, key);
+    }
     return;
   }
 
@@ -446,21 +469,43 @@ void Decals::buildDecalVerts(const Decal& decal,
     const float hy = decal.size.y * 0.5f; // width  (local +Y)
     const float c = glm::cos(decal.rotation);
     const float s = glm::sin(decal.rotation);
-    const auto mark = [&](float ox, float oy, glm::vec2 uv)
+    const bool east = decal.wallSide == 2;
+    const float alongCenter = east ? decal.worldPos.y : decal.worldPos.x;
+    const float fixedCoord = east ? decal.worldPos.x : decal.worldPos.y;
+
+    // Corners in (along-edge, elevation) face space, then clip to the face rect
+    // [tile edge] x [wallBottom, wallTop] so the mark can't spill above the wall
+    // top, off its sides, or onto the ground below -- even when rotated.
+    const auto faceCorner = [&](float ox, float oy)
     {
       const float ru = ox * c - oy * s; // along the edge (tiles)
       const float rv = ox * s + oy * c; // vertical (tile-equiv)
-      const glm::vec2 wp = decal.worldPos + edgeDir * ru;
-      const float elev = decal.elevation + rv * aspect;
-      push(wp, elev, uv, wallKey(wp, elev));
+      return glm::vec2{alongCenter + ru, decal.elevation + rv * aspect};
     };
+    const glm::vec2 pts[4] = {faceCorner(-hx, -hy),
+                              faceCorner(hx, -hy),
+                              faceCorner(hx, hy),
+                              faceCorner(-hx, hy)};
+    const glm::vec2 uvs[4] = {
+        {uLo, uLo}, {uHi, uLo}, {uHi, uHi}, {uLo, uHi}};
 
-    mark(-hx, -hy, {0.0f, 0.0f});
-    mark(hx, -hy, {1.0f, 0.0f});
-    mark(hx, hy, {1.0f, 1.0f});
-    mark(-hx, -hy, {0.0f, 0.0f});
-    mark(hx, hy, {1.0f, 1.0f});
-    mark(-hx, hy, {0.0f, 1.0f});
+    const float lo = glm::floor(alongCenter);
+    ClipVertex poly[12];
+    const int cnt = clipQuadToRect(
+        pts, uvs, lo, decal.wallBottom, lo + 1.0f, decal.wallTop, poly);
+
+    const auto emit = [&](const ClipVertex& v)
+    {
+      const glm::vec2 wp =
+          east ? glm::vec2{fixedCoord, v.p.x} : glm::vec2{v.p.x, fixedCoord};
+      push(wp, v.p.y, v.uv, wallKey(wp, v.p.y));
+    };
+    for (int i = 1; i + 1 < cnt; ++i)
+    {
+      emit(poly[0]);
+      emit(poly[i]);
+      emit(poly[i + 1]);
+    }
     return;
   }
 

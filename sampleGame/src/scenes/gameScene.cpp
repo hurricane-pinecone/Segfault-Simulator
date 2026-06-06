@@ -2,29 +2,28 @@
 #include "gameScene.h"
 #include "controllers/sunController.h"
 #include "effects/particleEffects.h"
-#include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/particles/particlePrefabs.h"
+#include "engine/core/scripting/luaScripting.h"
+#include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/rendering/modules/blockGeometry.h"
-#include "engine/runtime/rendering/modules/decals.h"
 #include "engine/runtime/rendering/modules/isometricWater.h"
 #include "engine/runtime/rendering/modules/particles.h"
 #include "engine/runtime/rendering/modules/spriteShadow.h"
 #include "engine/runtime/rendering/modules/terrainShadow.h"
-#include "engine/core/scripting/luaScripting.h"
+#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/runtime/systems/cameraSystem.h"
 #include "engine/runtime/systems/collisionSystem.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
-#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
 #include "systems/TerrainGeneratorSystem.h"
 #include <engine/core/ecs/entity.h>
-#include <engine/runtime/input/input.h>
 #include <engine/core/mapLoader/mapLoader.h>
+#include <engine/runtime/input/input.h>
 #include <engine/runtime/systems/movementSystem.h>
 #include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
@@ -47,7 +46,7 @@ void GameScene::onInit()
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
-  addSystem<TerrainGeneratorSystem>(*this);
+  auto& terrain = addSystem<TerrainGeneratorSystem>(*this);
 
   auto& renderer =
       addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
@@ -55,8 +54,7 @@ void GameScene::onInit()
   renderer.withModules<sfs::TerrainShadow,
                        sfs::SpriteShadow,
                        sfs::IsometricWater,
-                       sfs::BlockGeometry,
-                       sfs::Decals>();
+                       sfs::BlockGeometry>();
 
   constexpr float shadowMaxLength = 3.5f;
   renderer.module<sfs::TerrainShadow>()
@@ -66,37 +64,26 @@ void GameScene::onInit()
       shadowMaxLength;
 
   auto& particles = renderer.withModule<IsometricParticles>();
-  // Engine blood prefabs: blood_mist / blood_spray / blood_gobs / blood_drip.
   sfs::registerBloodEffects(particles);
-  // Second blood colour (right-click) to test two colours mixing on one face --
-  // a recoloured copy of the same engine prefabs.
   sfs::registerBloodEffects(particles,
                             "ichor",
                             glm::vec3{0.15f, 0.55f, 1.0f},
                             glm::vec3{0.0f, 0.08f, 0.35f});
   particles.registerEffect("embers", sfs::emberEffect());
-
-  // Persistent terrain stains, fed by particle landings.
-  particles.setDecalSink(renderer.module<sfs::Decals>());
-  particles.setTerrainSource(&getSystem<TerrainGeneratorSystem>());
+  particles.enableStains(&getSystem<TerrainGeneratorSystem>());
 
   auto& sun = addSystem<SunController>();
 
-  // Expose the sun's tunables to Lua as a live `sun` table (get/set/options),
-  // via the ILuaConfigurable contract -- the VM is app-owned, reached through the
-  // active-Lua accessor.
   if (sfs::LuaScripting* lua = sfs::activeLua())
     lua->registerConfig(sun);
 
   // Feed terrain heights straight from the generator so the point-light
   // occlusion heightmap never holes while tiles stream in.
-  getSystem<sfs::IsometricRenderSystem>().setTerrainHeightSource(
-      &getSystem<TerrainGeneratorSystem>());
+  getSystem<sfs::IsometricRenderSystem>().setTerrainHeightSource(&terrain);
 
   // Same heights drive movement so actors are blocked by cliffs (step up to one
   // level, slide along anything taller).
-  getSystem<sfs::MovementSystem>().setTerrainHeightSource(
-      &getSystem<TerrainGeneratorSystem>());
+  getSystem<sfs::MovementSystem>().setTerrainHeightSource(&terrain);
 }
 
 void GameScene::createEntities()

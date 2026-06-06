@@ -1,5 +1,7 @@
 #include "engine/runtime/systems/flatRenderSystem.h"
 
+#include "engine/runtime/rendering/flatDecalSink.h"
+
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
 #include "engine/core/components/spriteComponent.h" // SpriteComponent + NormalMapComponent
@@ -7,6 +9,7 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- Entity::getComponent<T> defs
 #include "engine/core/particles/particleBatch.h"
+#include "engine/core/util/algorithms/polygonClip.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/commands/commands.h"
@@ -34,10 +37,37 @@ FlatRenderSystem::FlatRenderSystem(AssetStore& assetStore,
 {
 }
 
+FlatRenderSystem::~FlatRenderSystem() = default;
+
 void FlatRenderSystem::create()
 {
   registerComponent<TransformComponent>();
   registerComponent<SpriteComponent>();
+}
+
+void FlatRenderSystem::setDecalSprites(SpriteId soft, SpriteId streak, int layer)
+{
+  m_decalSoft = soft;
+  m_decalStreak = streak;
+  m_decalLayer = layer;
+  m_decalSink =
+      std::make_unique<FlatDecalSink>(*this, soft, streak, layer);
+}
+
+IDecalSink* FlatRenderSystem::decalSink()
+{
+  // Default to the engine's built-in decal shapes -- a soft round drop and a
+  // crisp 1px streak -- so a game gets stains with no setDecalSprites call.
+  if (!m_decalSink)
+  {
+    const SpriteId soft = m_assetStore.addSprite(
+        "white_dot", "sfs_decal_soft", SDL_Rect{0, 0, 32, 32});
+    const SpriteId crisp = m_assetStore.addSprite(
+        "white_pixel", "sfs_decal_crisp", SDL_Rect{0, 0, 1, 1});
+    m_decalSink =
+        std::make_unique<FlatDecalSink>(*this, soft, crisp, m_decalLayer);
+  }
+  return m_decalSink.get();
 }
 
 namespace
@@ -70,56 +100,6 @@ resolveSpriteTexture(AssetStore& store, std::uint32_t spriteId, SDL_Rect& srcOut
   return renderer.getOrCreateTexture(sprite->textureId, surface);
 }
 
-// A decal corner carried through clipping: screen position + its texture UV, so a
-// slice gets the right UV at the cut.
-struct ClipVert
-{
-  glm::vec2 p{0.0f, 0.0f};
-  glm::vec2 uv{0.0f, 0.0f};
-};
-
-// Clip a polygon against one axis-aligned half-plane (Sutherland-Hodgman): keep
-// the side where coord >= limit (keepGreater) or coord <= limit, interpolating
-// position + UV at each crossing. Returns the new vertex count.
-int clipHalfPlane(const ClipVert* in, int n, int axis, float limit,
-                  bool keepGreater, ClipVert* out)
-{
-  int m = 0;
-  for (int i = 0; i < n; ++i)
-  {
-    const ClipVert& a = in[i];
-    const ClipVert& b = in[(i + 1) % n];
-    const float ca = axis == 0 ? a.p.x : a.p.y;
-    const float cb = axis == 0 ? b.p.x : b.p.y;
-    const bool aIn = keepGreater ? ca >= limit : ca <= limit;
-    const bool bIn = keepGreater ? cb >= limit : cb <= limit;
-    if (aIn)
-      out[m++] = a;
-    if (aIn != bIn)
-    {
-      const float denom = cb - ca;
-      const float s = denom != 0.0f ? (limit - ca) / denom : 0.0f;
-      out[m++] = ClipVert{a.p + (b.p - a.p) * s, a.uv + (b.uv - a.uv) * s};
-    }
-  }
-  return m;
-}
-
-// Clip a (possibly rotated) quad to an axis-aligned screen rect. Returns the
-// clipped convex polygon in `out` (up to 8 verts); count < 3 means fully clipped.
-int clipQuadToRect(const glm::vec2* pts, const glm::vec2* uvs, float left,
-                   float top, float right, float bottom, ClipVert* out)
-{
-  ClipVert a[12];
-  ClipVert b[12];
-  for (int i = 0; i < 4; ++i)
-    a[i] = ClipVert{pts[i], uvs[i]};
-  int n = clipHalfPlane(a, 4, 0, left, true, b);
-  n = clipHalfPlane(b, n, 0, right, false, a);
-  n = clipHalfPlane(a, n, 1, top, true, b);
-  n = clipHalfPlane(b, n, 1, bottom, false, out);
-  return n;
-}
 } // namespace
 
 void FlatRenderSystem::render()
@@ -408,7 +388,7 @@ void FlatRenderSystem::render()
 
     const glm::vec2 cc0 = m_projection->worldToScreen(decal.clipMin, 0.0f);
     const glm::vec2 cc1 = m_projection->worldToScreen(decal.clipMax, 0.0f);
-    ClipVert poly[12];
+    ClipVertex poly[12];
     const int count = clipQuadToRect(pts,
                                      uvArr,
                                      glm::min(cc0.x, cc1.x),

@@ -8,7 +8,6 @@
 #include "engine/core/particles/particleBatch.h"
 #include "engine/core/particles/particleEffect.h"
 #include "engine/core/rendering/iProjection.h"
-#include "engine/core/rendering/iTerrainSurfaceSource.h"
 #include "engine/core/types/blendMode.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -92,22 +91,14 @@ public:
                         glm::vec2 screenPos,
                         const ParticleSpawnParams& spawn = {});
 
-  // Optional terrain awareness. When set, world particles whose effect has a
-  // GroundBehavior collide with the real terrain (ground/walls/water) instead
-  // of their spawn plane. Required for decals to land on the right surface.
-  void setTerrainSource(const ITerrainSurfaceSource* source)
-  {
-    m_terrainSource = source;
-  }
-
   // Optional decal sink. When set, particles whose effect has leavesDecal stamp
   // a persistent mark on the surface they hit.
   void setDecalSink(IDecalSink* sink) { m_decalSink = sink; }
 
-  // Optional flat collision source (no terrain heightfield). When set instead of
-  // a terrain source, world particles with a GroundBehavior stick to its
-  // surfaces (e.g. BoxCollider2D platforms) and leave decals via the sink. Lets
-  // a flat game get particle-stick splatter without iso terrain.
+  // The surface particles collide with and stick to (terrain heightfield or
+  // scene colliders). When set, world particles with a GroundBehavior stick to
+  // it and leave decals via the sink; it also answers ground-elevation for
+  // terrain-aware spawns. Without one, particles fall to their spawn plane.
   void setCollisionSource(const IParticleCollisionSource* source)
   {
     m_collisionSource = source;
@@ -120,16 +111,12 @@ public:
   // the particle count -- and the frame cost -- away.
   void setMaxParticles(int max) { m_maxParticles = max; }
 
-  // Ground elevation level at a world tile, taken from the terrain source (0 if
-  // none is set). Lets a caller spawn a burst on the terrain without doing its
-  // own height lookup.
+  // Ground elevation at a world position, from the collision source (0 if none
+  // is set). Lets a caller spawn a burst on the terrain without its own lookup.
   float groundElevationAt(glm::vec2 worldPos) const
   {
-    if (!m_terrainSource)
-      return 0.0f;
-    return static_cast<float>(m_terrainSource->terrainHeightAt(
-        static_cast<int>(glm::floor(worldPos.x)),
-        static_cast<int>(glm::floor(worldPos.y))));
+    return m_collisionSource ? m_collisionSource->groundElevation(worldPos)
+                             : 0.0f;
   }
 
   // Advance every emitter and burst.
@@ -185,31 +172,18 @@ private:
   void
   stepInstance(EmitterInstance& inst, const ParticleEffectDesc& desc, float dt);
 
-  // Stamp a decal for a particle that just collided with `surface` at `hitPos`/
-  // `hitElev` (tile = the tile it hit, for the water fade-rate lookup).
+  // Stamp the splatter for a collision: the shaper produces the marks, then the
+  // hit's surface (ground/water vs wall) decides how they're placed.
   void emitDecal(EmitterInstance& inst,
                  const ParticleEffectDesc& desc,
                  const Particle& p,
-                 glm::vec2 hitPos,
-                 float hitElev,
-                 DecalSurface surface,
-                 uint8_t wallSide,
-                 float wallBottom,
-                 float wallTop,
-                 glm::ivec2 tile);
-  // Stamp a decal for a particle that stuck to a flat collision surface (no
-  // terrain/elevation). Shares the splatter shaping with emitDecal.
-  void emitFlatDecal(EmitterInstance& inst,
-                     const ParticleEffectDesc& desc,
-                     const Particle& p,
-                     const ParticleHit& hit);
+                 const ParticleHit& hit);
   void syncComponentEmitters();
   void appendBatch(const EmitterInstance& inst,
                    const ParticleEffectDesc& desc,
                    const IProjection& projection,
                    std::vector<ParticleRenderBatch>& out);
 
-  const ITerrainSurfaceSource* m_terrainSource = nullptr;
   const IParticleCollisionSource* m_collisionSource = nullptr;
   IDecalSink* m_decalSink = nullptr;
 
