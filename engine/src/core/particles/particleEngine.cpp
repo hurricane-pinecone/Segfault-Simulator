@@ -6,9 +6,11 @@
 // Pulled in for the Entity::getComponent<T> template definitions in entity.inl.
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
 #include "engine/core/util/profiling.h"
+#include "glm/glm/common.hpp"
+#include "glm/glm/exponential.hpp"
+#include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
-#include <cmath>
 
 namespace sfs
 {
@@ -47,7 +49,7 @@ inline float sampleRange(uint32_t& state, const FloatRange& r)
 
 inline glm::ivec2 floorTile(const glm::vec2& p)
 {
-  return {static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y))};
+  return {static_cast<int>(glm::floor(p.x)), static_cast<int>(glm::floor(p.y))};
 }
 
 } // namespace
@@ -109,7 +111,7 @@ void ParticleEngine::applySpawnParams(EmitterInstance& inst,
 
   // Centre the emission spread on the impact direction (else fan around +X).
   inst.aimAngle = (spawn.aimAlongVelocity && vlen2 > 1e-8f)
-                      ? std::atan2(spawn.velocity.y, spawn.velocity.x)
+                      ? glm::atan(spawn.velocity.y, spawn.velocity.x)
                       : 0.0f;
 }
 
@@ -182,7 +184,7 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
   // emission; over-budget particles are dropped (graceful, never grows unbounded).
   int room = desc.maxParticles - static_cast<int>(inst.particles.size());
   const int globalRoom = m_maxParticles - liveParticleCount();
-  room = std::min(room, globalRoom);
+  room = glm::min(room, globalRoom);
 
   if (room <= 0)
     return;
@@ -205,15 +207,15 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
     case EmissionShape::Circle:
     {
       const float ang = randf(inst.rng) * kTwoPi;
-      const float rad = std::sqrt(randf(inst.rng)) * desc.shapeRadius;
-      offset = {std::cos(ang) * rad, std::sin(ang) * rad};
+      const float rad = glm::sqrt(randf(inst.rng)) * desc.shapeRadius;
+      offset = {glm::cos(ang) * rad, glm::sin(ang) * rad};
       break;
     }
     case EmissionShape::Ring:
     {
       const float ang = randf(inst.rng) * kTwoPi;
       offset = {
-          std::cos(ang) * desc.shapeRadius, std::sin(ang) * desc.shapeRadius};
+          glm::cos(ang) * desc.shapeRadius, glm::sin(ang) * desc.shapeRadius};
       break;
     }
     case EmissionShape::Box:
@@ -240,12 +242,12 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
     }
 
     const float speed = sampleRange(inst.rng, desc.speed);
-    p.vel = {std::cos(dirAngle) * speed, std::sin(dirAngle) * speed};
+    p.vel = {glm::cos(dirAngle) * speed, glm::sin(dirAngle) * speed};
     p.vel += inst.baseVelocity; // inherited impact momentum
     p.velZ = sampleRange(inst.rng, desc.launchHeightSpeed) + inst.baseVelocityZ;
 
     p.height = sampleRange(inst.rng, desc.startHeight) + inst.spawnHeightBias;
-    p.lifetime = std::max(0.0001f, sampleRange(inst.rng, desc.lifetime));
+    p.lifetime = glm::max(0.0001f, sampleRange(inst.rng, desc.lifetime));
     p.age = 0.0f;
     p.baseSize = sampleRange(inst.rng, desc.size);
     p.rotation = sampleRange(inst.rng, desc.rotation);
@@ -291,7 +293,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
   }
 
   const float damp =
-      desc.drag > 0.0f ? std::max(0.0f, 1.0f - desc.drag * dt) : 1.0f;
+      desc.drag > 0.0f ? glm::max(0.0f, 1.0f - desc.drag * dt) : 1.0f;
 
   auto& ps = inst.particles;
 
@@ -440,7 +442,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
         p.velZ = 0.0f;
         p.height = hitElev - inst.groundLevel;
         p.lifetime =
-            std::min(p.lifetime, p.age + std::max(0.0f, desc.stickDuration));
+            glm::min(p.lifetime, p.age + glm::max(0.0f, desc.stickDuration));
         ++i;
         continue;
       }
@@ -465,7 +467,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
       p.vel = {0.0f, 0.0f};
       p.velZ = 0.0f;
       p.lifetime =
-          std::min(p.lifetime, p.age + std::max(0.0f, desc.stickDuration));
+          glm::min(p.lifetime, p.age + glm::max(0.0f, desc.stickDuration));
     }
 
     ++i;
@@ -487,7 +489,7 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
     return;
 
   const float n =
-      p.lifetime > 0.0f ? std::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
+      p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
 
   const glm::vec3 rgb = desc.decal.useParticleColor
                             ? desc.colorOverLife.sample(n)
@@ -507,10 +509,10 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
     const float lo =
         east ? static_cast<float>(tile.y) : static_cast<float>(tile.x);
     const float hi = lo + 1.0f;
-    const float hitAlong = std::clamp(east ? hitPos.y : hitPos.x, lo, hi);
+    const float hitAlong = glm::clamp(east ? hitPos.y : hitPos.x, lo, hi);
 
     int drips = 1 + static_cast<int>(baseSize * 8.0f);
-    drips = std::clamp(drips, 1, 3);
+    drips = glm::clamp(drips, 1, 3);
 
     for (int k = 0; k < drips; ++k)
     {
@@ -518,12 +520,12 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
       // Spread a little along the face, clamped inside the tile edge. Start
       // elevation is biased toward the wall TOP (1 - r^2), so a heavy hit packs
       // the top edge and the streaks run down from there.
-      const float along = std::clamp(
+      const float along = glm::clamp(
           hitAlong + (randf(inst.rng) - 0.5f) * 0.5f, lo + 0.05f, hi - 0.05f);
       const float r = randf(inst.rng);
       const float bias = 1.0f - r * r;
       spawn.worldPos = east ? glm::vec2{faceX, along} : glm::vec2{along, faceY};
-      spawn.elevation = hitElev + bias * std::max(0.0f, wallTop - hitElev);
+      spawn.elevation = hitElev + bias * glm::max(0.0f, wallTop - hitElev);
       spawn.surface = DecalSurface::Wall;
       spawn.wallSide = wallSide;
       spawn.wallBottom = wallBottom;
@@ -655,8 +657,8 @@ void ParticleEngine::appendBatch(const EmitterInstance& inst,
 
   const float pixelPerTile = proj.worldUnitToPixels();
 
-  const int frameCols = std::max(1, desc.frameCols);
-  const int frameRows = std::max(1, desc.frameRows);
+  const int frameCols = glm::max(1, desc.frameCols);
+  const int frameRows = glm::max(1, desc.frameRows);
   const int frameCount = frameCols * frameRows;
   const float invCols = 1.0f / static_cast<float>(frameCols);
   const float invRows = 1.0f / static_cast<float>(frameRows);
@@ -667,7 +669,7 @@ void ParticleEngine::appendBatch(const EmitterInstance& inst,
   for (const auto& p : inst.particles)
   {
     const float n =
-        p.lifetime > 0.0f ? std::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
+        p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
 
     const glm::vec3 rgb = desc.colorOverLife.sample(n);
     const float alpha = desc.alphaOverLife.sample(n);
@@ -695,8 +697,8 @@ void ParticleEngine::appendBatch(const EmitterInstance& inst,
     }
 
     // Billboard corners, rotated in screen space.
-    const float c = std::cos(p.rotation);
-    const float s = std::sin(p.rotation);
+    const float c = glm::cos(p.rotation);
+    const float s = glm::sin(p.rotation);
     const glm::vec2 ex{c * halfPx, s * halfPx};
     const glm::vec2 ey{-s * halfPx, c * halfPx};
 
@@ -714,7 +716,7 @@ void ParticleEngine::appendBatch(const EmitterInstance& inst,
     {
       int frame = 0;
       if (desc.frameOverLife)
-        frame = std::min(frameCount - 1, static_cast<int>(n * frameCount));
+        frame = glm::min(frameCount - 1, static_cast<int>(n * frameCount));
       else if (desc.frameFps > 0.0f)
         frame = static_cast<int>(p.age * desc.frameFps) % frameCount;
 

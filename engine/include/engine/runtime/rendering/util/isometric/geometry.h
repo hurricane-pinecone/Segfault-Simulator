@@ -2,11 +2,10 @@
 
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/rendering/iProjection.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/geometric.hpp"
-#include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <limits>
 
@@ -191,7 +190,7 @@ segmentIntersectsSegment(glm::vec2 p1, glm::vec2 p2, glm::vec2 q1, glm::vec2 q2)
 
   const float denom = cross2D(r, s);
 
-  if (std::abs(denom) < 0.0001f)
+  if (glm::abs(denom) < 0.0001f)
     return false;
 
   const float t = cross2D(q1 - p1, s) / denom;
@@ -217,8 +216,8 @@ inline static bool projectShadowOntoWallEdge(const glm::vec2 shadowPoly[4],
 
   auto addT = [&](float t)
   {
-    outMinT = std::min(outMinT, t);
-    outMaxT = std::max(outMaxT, t);
+    outMinT = glm::min(outMinT, t);
+    outMaxT = glm::max(outMaxT, t);
   };
 
   constexpr int Samples = 12;
@@ -276,12 +275,12 @@ void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
 
   for (int i = 1; i < 4; i++)
   {
-    minY = std::min(minY, points[i].y);
-    maxY = std::max(maxY, points[i].y);
+    minY = glm::min(minY, points[i].y);
+    maxY = glm::max(maxY, points[i].y);
   }
 
-  const int tileMinY = static_cast<int>(std::floor(minY));
-  const int tileMaxY = static_cast<int>(std::floor(maxY));
+  const int tileMinY = static_cast<int>(glm::floor(minY));
+  const int tileMaxY = static_cast<int>(glm::floor(maxY));
 
   constexpr float kEps = 1e-4f;
 
@@ -301,15 +300,15 @@ void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
       const glm::vec2& p = points[i];
       if (p.y >= bandLo && p.y <= bandHi)
       {
-        rowMinX = std::min(rowMinX, p.x);
-        rowMaxX = std::max(rowMaxX, p.x);
+        rowMinX = glm::min(rowMinX, p.x);
+        rowMaxX = glm::max(rowMaxX, p.x);
         any = true;
       }
 
       const glm::vec2& q = points[(i + 1) & 3];
       const float dy = q.y - p.y;
 
-      if (std::abs(dy) < 1e-12f)
+      if (glm::abs(dy) < 1e-12f)
         continue;
 
       for (const float band : {bandLo, bandHi})
@@ -317,8 +316,8 @@ void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
         const float t = (band - p.y) / dy;
         if (t >= 0.0f && t <= 1.0f)
         {
-          rowMinX = std::min(rowMinX, p.x + t * (q.x - p.x));
-          rowMaxX = std::max(rowMaxX, p.x + t * (q.x - p.x));
+          rowMinX = glm::min(rowMinX, p.x + t * (q.x - p.x));
+          rowMaxX = glm::max(rowMaxX, p.x + t * (q.x - p.x));
           any = true;
         }
       }
@@ -327,8 +326,8 @@ void forEachTileOverlappingShadowQuad(const glm::vec2 points[4],
     if (!any)
       continue;
 
-    const int xLo = static_cast<int>(std::floor(rowMinX - kEps));
-    const int xHi = static_cast<int>(std::floor(rowMaxX + kEps));
+    const int xLo = static_cast<int>(glm::floor(rowMinX - kEps));
+    const int xHi = static_cast<int>(glm::floor(rowMaxX + kEps));
 
     for (int x = xLo; x <= xHi; x++)
     {
@@ -382,10 +381,10 @@ inline static bool shadowQuadOverlapsTileBounds(const glm::vec2 points[4],
 
   for (int i = 1; i < 4; i++)
   {
-    minX = std::min(minX, points[i].x);
-    maxX = std::max(maxX, points[i].x);
-    minY = std::min(minY, points[i].y);
-    maxY = std::max(maxY, points[i].y);
+    minX = glm::min(minX, points[i].x);
+    maxX = glm::max(maxX, points[i].x);
+    minY = glm::min(minY, points[i].y);
+    maxY = glm::max(maxY, points[i].y);
   }
 
   return maxX >= static_cast<float>(bounds.min.x) &&
@@ -444,8 +443,8 @@ inline glm::vec2 gridToIsometric(const glm::vec2& gridPosition,
 inline static glm::ivec2 gridCellOf(const glm::vec2& position)
 {
   return {
-      static_cast<int>(std::floor(position.x)),
-      static_cast<int>(std::floor(position.y)),
+      static_cast<int>(glm::floor(position.x)),
+      static_cast<int>(glm::floor(position.y)),
   };
 }
 
@@ -539,7 +538,7 @@ inline static int maxTerrainElevation(const TerrainElevationGridView& grid)
       const int value = grid.elevations[y * grid.stride + x];
 
       if (value != EmptyElevation)
-        maxElevation = std::max(maxElevation, value);
+        maxElevation = glm::max(maxElevation, value);
     }
   }
 

@@ -3,10 +3,10 @@
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/string.h"
+#include "glm/glm/exponential.hpp"
 
 #include <SDL_image.h>
 
-#include <cmath>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -359,7 +359,7 @@ void AssetStore::addRadialTexture(const std::string& textureId, int size)
     {
       const float dx = (static_cast<float>(x) - center) / radius;
       const float dy = (static_cast<float>(y) - center) / radius;
-      const float dist = std::sqrt(dx * dx + dy * dy); // 0 centre -> 1 edge
+      const float dist = glm::sqrt(dx * dx + dy * dy); // 0 centre -> 1 edge
 
       float a = 1.0f - dist;
       if (a < 0.0f)

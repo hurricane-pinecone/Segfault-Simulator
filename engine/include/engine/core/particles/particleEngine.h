@@ -9,9 +9,9 @@
 #include "engine/core/rendering/iProjection.h"
 #include "engine/core/rendering/iTerrainSurfaceSource.h"
 #include "engine/core/types/blendMode.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
-#include <cmath>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -118,8 +118,8 @@ public:
     if (!m_terrainSource)
       return 0.0f;
     return static_cast<float>(m_terrainSource->terrainHeightAt(
-        static_cast<int>(std::floor(worldPos.x)),
-        static_cast<int>(std::floor(worldPos.y))));
+        static_cast<int>(glm::floor(worldPos.x)),
+        static_cast<int>(glm::floor(worldPos.y))));
   }
 
   // Advance every emitter and burst.

@@ -22,6 +22,7 @@
 #include "engine/runtime/rendering/modules/terrainShadow.h"
 #include "engine/runtime/rendering/renderPass.h"
 #include "glm/glm/common.hpp"
+#include "glm/glm/exponential.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -65,8 +66,8 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
 
   const auto includeKey = [&](float key)
   {
-    minKey = std::min(minKey, key);
-    maxKey = std::max(maxKey, key);
+    minKey = glm::min(minKey, key);
+    maxKey = glm::max(maxKey, key);
   };
 
   for (const auto& command : commands)
@@ -125,7 +126,7 @@ std::pair<float, float> assignClipDepth(std::vector<AnyRenderCommand>& commands)
   const auto toClipZ = [&](float key)
   {
     const float t = invRange > 0.0f ? (key - minKey) * invRange : 0.5f;
-    const float clamped = std::clamp(t, 0.0f, 1.0f);
+    const float clamped = glm::clamp(t, 0.0f, 1.0f);
     return 0.9f - 1.8f * clamped;
   };
 
@@ -303,7 +304,7 @@ void IsometricRenderSystem::render()
   // on the renderer.
   PointLightSet pointLightSet;
   pointLightSet.count =
-      std::min(static_cast<int>(pointLights.size()), MaxShaderLights);
+      glm::min(static_cast<int>(pointLights.size()), MaxShaderLights);
 
   // Light radius is authored in screen pixels; the lighting math runs in world
   // tiles, so convert by the on-screen tile width. (Emitter height is converted
@@ -407,7 +408,7 @@ void IsometricRenderSystem::render()
         isTileEntity(entity) ? tileElevationLevel(entity)
                              : actorStandingElevation(entity, transform);
 
-    const int elevationOffset = static_cast<int>(std::round(
+    const int elevationOffset = static_cast<int>(glm::round(
         elevationLevel * proj.elevationStep * proj.worldScale * zoom));
 
     const glm::vec2 surfacePosition{
@@ -419,8 +420,8 @@ void IsometricRenderSystem::render()
         surfacePosition + spriteComponent.renderOffset * zoom;
 
     SDL_Rect dest{
-        static_cast<int>(std::round(visualPosition.x - anchorX)),
-        static_cast<int>(std::round(visualPosition.y - anchorY)),
+        static_cast<int>(glm::round(visualPosition.x - anchorX)),
+        static_cast<int>(glm::round(visualPosition.y - anchorY)),
         width,
         height,
     };
@@ -840,7 +841,7 @@ void IsometricRenderSystem::updateActorElevations(double deltaTime)
   // so a step up/down reads as a quick smooth move rather than a teleport.
   constexpr float kElevationEaseRate = 14.0f;
   const float factor =
-      static_cast<float>(1.0 - std::exp(-deltaTime * kElevationEaseRate));
+      static_cast<float>(1.0 - glm::exp(-deltaTime * kElevationEaseRate));
 
   for (const auto& entity : getEntities())
   {
@@ -905,7 +906,7 @@ void IsometricRenderSystem::rebuildTileElevationCache()
     if (it == tileElevationCache.end())
       tileElevationCache.emplace(tile, elevation);
     else
-      it->second = std::max(it->second, elevation);
+      it->second = glm::max(it->second, elevation);
   }
 }
 

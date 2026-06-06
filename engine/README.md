@@ -18,6 +18,7 @@ engine in your own game, see the [root README](../README.md).
 - [Assets](#assets)
 - [Running the Game](#running-the-game)
 - [Optional Aliases (zsh)](#optional-aliases-zsh)
+- [CI Build Check (macOS only)](#ci-build-check-macos-only)
 - [Tooling](#tooling)
   - [Leak Detection](#leak-detection)
   - [Tracy Profiling](#tracy-profiling)
@@ -234,6 +235,30 @@ crun-tests      # build + run tests (CTest)
 crun-web        # wasm build + serve (requires emsdk on PATH)
 crun-sample-pkg # release: publish the engine package, build + run the sample against it
 ```
+
+## CI Build Check (macOS only)
+
+CI compiles on **Linux (GCC + libstdc++)**. The macOS toolchain (**Clang +
+libc++**) pulls many standard headers in transitively while libstdc++ does not, so
+a file that uses a `std::` symbol without including its header builds fine locally
+but fails CI with `X is not a member of std`. This check is only for macOS devs —
+it reproduces the CI compiler in Docker so you can confirm the pipeline is green
+before pushing, rather than discovering a missing include through repeated
+push-and-wait cycles.
+
+With the Docker daemon running, from the project root:
+
+```bash
+docker run --rm -v "$PWD":/work:ro ubuntu:24.04 bash -c '
+  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq g++ cmake
+  cmake -S /work -B /tmp/bc -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
+  cmake --build /tmp/bc --target luaTests -- -k'   # -k: keep going, list every error
+```
+
+This builds `engine-core` (the target CI gates on) under GCC/libstdc++. A missing
+include surfaces as a compile error; the fix is to add the explicit header — e.g.
+`<limits>` for `std::numeric_limits`, `<algorithm>` for `std::sort`, `<utility>`
+for `std::move`, `<cstring>` for `std::strrchr`.
 
 ## Tooling
 

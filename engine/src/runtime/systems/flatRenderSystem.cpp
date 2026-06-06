@@ -12,13 +12,14 @@
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
 #include "engine/runtime/rendering/quads.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
 
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
 #include <SDL_timer.h>
 #include <algorithm>
-#include <cmath>
 #include <limits>
 #include <unordered_map>
 #include <variant>
@@ -172,10 +173,10 @@ void FlatRenderSystem::render()
     LitQuad quad;
     quad.texture = texture;
     quad.srcRect = srcRect;
-    quad.destRect = SDL_Rect{static_cast<int>(std::round(left)),
-                             static_cast<int>(std::round(top)),
-                             static_cast<int>(std::round(w)),
-                             static_cast<int>(std::round(h))};
+    quad.destRect = SDL_Rect{static_cast<int>(glm::round(left)),
+                             static_cast<int>(glm::round(top)),
+                             static_cast<int>(glm::round(w)),
+                             static_cast<int>(glm::round(h))};
     quad.textureWidth = texW;
     quad.textureHeight = texH;
     quad.rotation = static_cast<float>(transform.rotation);
@@ -195,7 +196,7 @@ void FlatRenderSystem::render()
     {
       const auto& tint = entity.getComponent<SpriteTint>();
       const auto to8 = [](float v)
-      { return static_cast<Uint8>(std::clamp(v, 0.0f, 1.0f) * 255.0f); };
+      { return static_cast<Uint8>(glm::clamp(v, 0.0f, 1.0f) * 255.0f); };
       quad.tint = SDL_Color{to8(tint.color.r), to8(tint.color.g),
                             to8(tint.color.b), to8(tint.alpha)};
     }
@@ -221,8 +222,8 @@ void FlatRenderSystem::render()
     const float sortKey =
         static_cast<float>(layer) * 1.0e6f + transform.position.y;
 
-    minKey = std::min(minKey, sortKey);
-    maxKey = std::max(maxKey, sortKey);
+    minKey = glm::min(minKey, sortKey);
+    maxKey = glm::max(maxKey, sortKey);
     sprites.push_back({quad, sortKey});
   }
 
@@ -237,8 +238,8 @@ void FlatRenderSystem::render()
   {
     const float sortKey =
         static_cast<float>(decal.layer) * 1.0e6f + decal.worldPos.y;
-    minKey = std::min(minKey, sortKey);
-    maxKey = std::max(maxKey, sortKey);
+    minKey = glm::min(minKey, sortKey);
+    maxKey = glm::max(maxKey, sortKey);
   }
 
   // Map sort-key -> clip depth: higher key (foreground / larger Y) gets the
@@ -309,16 +310,16 @@ void FlatRenderSystem::render()
       const float atten =
           reach * reach * reach * (reach * (reach * 6.0f - 15.0f) + 10.0f);
       glm::vec3 lc = lights.colors[li];
-      const float mx = std::max(std::max(lc.r, lc.g), lc.b);
+      const float mx = glm::max(glm::max(lc.r, lc.g), lc.b);
       lc = mx > 0.001f ? lc / mx : glm::vec3(1.0f);
       lightAcc += lc * (lights.intensities[li] * atten);
     }
-    q.color = {(decal.tint.r / 255.0f) * std::min(lightAcc.r, 1.0f),
-               (decal.tint.g / 255.0f) * std::min(lightAcc.g, 1.0f),
-               (decal.tint.b / 255.0f) * std::min(lightAcc.b, 1.0f),
+    q.color = {(decal.tint.r / 255.0f) * glm::min(lightAcc.r, 1.0f),
+               (decal.tint.g / 255.0f) * glm::min(lightAcc.g, 1.0f),
+               (decal.tint.b / 255.0f) * glm::min(lightAcc.b, 1.0f),
                decal.tint.a / 255.0f};
 
-    if (decal.clip && std::fabs(decal.rotation) < 1e-3f && w > 0.0f && h > 0.0f)
+    if (decal.clip && glm::abs(decal.rotation) < 1e-3f && w > 0.0f && h > 0.0f)
     {
       // Axis-aligned crop to the clip rect, with matching UV inset, so a mark
       // near an edge is sliced at the edge (e.g. blood never above a surface).
@@ -326,10 +327,10 @@ void FlatRenderSystem::render()
       const float top = c.y - h * 0.5f;
       const glm::vec2 cc0 = m_projection->worldToScreen(decal.clipMin, 0.0f);
       const glm::vec2 cc1 = m_projection->worldToScreen(decal.clipMax, 0.0f);
-      const float nl = std::max(l, std::min(cc0.x, cc1.x));
-      const float nt = std::max(top, std::min(cc0.y, cc1.y));
-      const float nr = std::min(l + w, std::max(cc0.x, cc1.x));
-      const float nb = std::min(top + h, std::max(cc0.y, cc1.y));
+      const float nl = glm::max(l, glm::min(cc0.x, cc1.x));
+      const float nt = glm::max(top, glm::min(cc0.y, cc1.y));
+      const float nr = glm::min(l + w, glm::max(cc0.x, cc1.x));
+      const float nb = glm::min(top + h, glm::max(cc0.y, cc1.y));
       if (nr <= nl || nb <= nt)
         continue;
       const float nu0 = u0 + ((nl - l) / w) * (u1 - u0);
@@ -353,8 +354,8 @@ void FlatRenderSystem::render()
       glm::vec2 p3{-w * 0.5f, h * 0.5f};
       if (decal.rotation != 0.0f)
       {
-        const float s = std::sin(decal.rotation);
-        const float co = std::cos(decal.rotation);
+        const float s = glm::sin(decal.rotation);
+        const float co = glm::cos(decal.rotation);
         const auto rot = [&](glm::vec2 p)
         { return glm::vec2{p.x * co - p.y * s, p.x * s + p.y * co}; };
         p0 = rot(p0);
@@ -424,8 +425,8 @@ void FlatRenderSystem::render()
 
 long long FlatRenderSystem::decalCell(const glm::vec2& worldPos) const
 {
-  const int cx = static_cast<int>(std::floor(worldPos.x / m_decalCellSize));
-  const int cy = static_cast<int>(std::floor(worldPos.y / m_decalCellSize));
+  const int cx = static_cast<int>(glm::floor(worldPos.x / m_decalCellSize));
+  const int cy = static_cast<int>(glm::floor(worldPos.y / m_decalCellSize));
   // Pack two int cell coords into one key (clean bijection via unsigned halves).
   return (static_cast<long long>(static_cast<unsigned int>(cx)) << 32) |
          static_cast<unsigned int>(cy);
@@ -467,8 +468,8 @@ void FlatRenderSystem::ageDecals(float deltaTime)
 {
   const auto approach = [](float current, float target, float step)
   {
-    return current < target ? std::min(target, current + step)
-                            : std::max(target, current - step);
+    return current < target ? glm::min(target, current + step)
+                            : glm::max(target, current - step);
   };
 
   for (auto it = m_decals.begin(); it != m_decals.end();)

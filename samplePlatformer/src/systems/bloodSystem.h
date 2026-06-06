@@ -1,14 +1,15 @@
 #pragma once
 
-#include "components/platformerComponents.h"
+#include "SDL_pixels.h"
 #include "config.h"
+#include "engine/core/components/boxCollider2D.h"
+#include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/flatDecal.h"
 #include "engine/runtime/systems/flatRenderSystem.h"
-#include "SDL_pixels.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/geometric.hpp"
@@ -46,8 +47,13 @@ public:
   // Spray `count` sticking droplets from `origin`, fanned around `dir` (pass a
   // zero `dir` for a full radial burst). `up` biases them upward (-Y) so a kill
   // erupts before gravity pulls the blood back down onto the platforms.
-  void spray(const glm::vec2& origin, const glm::vec2& dir, int count,
-             float speedMin, float speedMax, float up, const SDL_Color& color,
+  void spray(const glm::vec2& origin,
+             const glm::vec2& dir,
+             int count,
+             float speedMin,
+             float speedMax,
+             float up,
+             const SDL_Color& color,
              float dropSize)
   {
     const bool radial = glm::length(dir) <= 0.01f;
@@ -122,8 +128,10 @@ private:
     const float m = mul(m_rng);
     const auto cl = [](float v)
     { return static_cast<Uint8>(glm::clamp(v, 0.0f, 255.0f)); };
-    return SDL_Color{cl((base.r + rj(m_rng)) * m), cl((base.g + gbj(m_rng)) * m),
-                     cl((base.b + gbj(m_rng)) * m), base.a};
+    return SDL_Color{cl((base.r + rj(m_rng)) * m),
+                     cl((base.g + gbj(m_rng)) * m),
+                     cl((base.b + gbj(m_rng)) * m),
+                     base.a};
   }
 
   // Land the droplet on the first platform surface its path crosses this step.
@@ -140,9 +148,9 @@ private:
     glm::vec2 bestHalf{0.0f, 0.0f};
     bool hit = false;
 
-    for (const auto& solid :
-         registry->view<sfs::SolidObject, sfs::TransformComponent,
-                        sfs::BoxCollider2D>())
+    for (const auto& solid : registry->view<sfs::SolidObject,
+                                            sfs::TransformComponent,
+                                            sfs::BoxCollider2D>())
     {
       const glm::vec2 c =
           solid.getComponent<sfs::TransformComponent>().position;
@@ -170,8 +178,11 @@ private:
 
   // Segment p0 + t*seg vs AABB [lo,hi] (slab method). Sets the entry/exit t
   // along the segment line; returns false if the line misses the box.
-  static bool segmentBox(const glm::vec2& p0, const glm::vec2& seg,
-                         const glm::vec2& lo, const glm::vec2& hi, float& tEnter,
+  static bool segmentBox(const glm::vec2& p0,
+                         const glm::vec2& seg,
+                         const glm::vec2& lo,
+                         const glm::vec2& hi,
+                         float& tEnter,
                          float& tExit)
   {
     float tmin = -1e30f;
@@ -209,8 +220,13 @@ private:
   // A soft round blood blob (white_dot) -- the area-filling splatter. Clipped
   // to the platform rectangle [clipMin,clipMax] so it's sliced at the edge and
   // never spills past the surface.
-  void blob(float x, float y, float w, float h, const SDL_Color& tint,
-            const glm::vec2& clipMin, const glm::vec2& clipMax)
+  void blob(float x,
+            float y,
+            float w,
+            float h,
+            const SDL_Color& tint,
+            const glm::vec2& clipMin,
+            const glm::vec2& clipMax)
   {
     sfs::FlatDecal b;
     b.sprite = m_sprite;
@@ -227,7 +243,10 @@ private:
 
   // A thin crisp blood line (hard white_pixel, ~1px wide) running from `at`
   // along unit `dir` for `len` -- a sub-streak. No bead; just a line.
-  void line(const glm::vec2& at, const glm::vec2& dir, float width, float len,
+  void line(const glm::vec2& at,
+            const glm::vec2& dir,
+            float width,
+            float len,
             const SDL_Color& tint)
   {
     const glm::vec2 mid = at + dir * (len * 0.5f);
@@ -245,8 +264,10 @@ private:
 
   // Distance from `at` (on the box surface) along unit `dir` until it exits the
   // box -- so a sub-streak can be clamped to the platform it struck.
-  static float boxReach(const glm::vec2& at, const glm::vec2& dir,
-                        const glm::vec2& center, const glm::vec2& half)
+  static float boxReach(const glm::vec2& at,
+                        const glm::vec2& dir,
+                        const glm::vec2& center,
+                        const glm::vec2& half)
   {
     const glm::vec2 lo = center - half;
     const glm::vec2 hi = center + half;
@@ -264,8 +285,10 @@ private:
   // droplet's raw impact direction (any direction -- down a face, sideways, or
   // up under a platform), each clamped to the platform. The splats fill area so
   // enough spray reddens the whole edge; the streaks give it direction.
-  void stickOnSurface(const glm::vec2& at, const Drop& d,
-                      const glm::vec2& center, const glm::vec2& half)
+  void stickOnSurface(const glm::vec2& at,
+                      const Drop& d,
+                      const glm::vec2& center,
+                      const glm::vec2& half)
   {
     const float speed = glm::length(d.vel);
     const glm::vec2 dir = speed > 1.0f ? d.vel / speed : glm::vec2{0.0f, 1.0f};
@@ -284,8 +307,13 @@ private:
     std::uniform_real_distribution<float> along(-0.2f, 0.7f);
     std::uniform_real_distribution<float> sz(0.45f, 1.0f);
     std::uniform_int_distribution<int> lobes(4, 7);
-    blob(at.x + dir.x * splat * 0.45f, at.y + dir.y * splat * 0.45f, splat,
-         splat, d.color, clipMin, clipMax);
+    blob(at.x + dir.x * splat * 0.45f,
+         at.y + dir.y * splat * 0.45f,
+         splat,
+         splat,
+         d.color,
+         clipMin,
+         clipMax);
     const int nl = lobes(m_rng);
     for (int i = 0; i < nl; ++i)
     {

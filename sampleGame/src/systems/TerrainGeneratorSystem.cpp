@@ -6,9 +6,9 @@
 #include "gameObjects/blocks/block.h"
 #include "gameObjects/blocks/grass.h"
 #include "gameObjects/blocks/sand.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 
-#include <cmath>
 #include <vector>
 
 TerrainGeneratorSystem::TerrainGeneratorSystem(sfs::Scene& scene)
@@ -39,8 +39,8 @@ void TerrainGeneratorSystem::update(double deltaTime)
 void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
 {
   const glm::ivec2 centerTile{
-      static_cast<int>(std::floor(cameraWorldPos.x)),
-      static_cast<int>(std::floor(cameraWorldPos.y)),
+      static_cast<int>(glm::floor(cameraWorldPos.x)),
+      static_cast<int>(glm::floor(cameraWorldPos.y)),
   };
 
   if (centerTile == m_lastCenterTile)
@@ -52,8 +52,8 @@ void TerrainGeneratorSystem::update(const glm::vec2& cameraWorldPos)
   constexpr int viewTilesY = 50;
   constexpr int padding = 0;
 
-  const int centerX = static_cast<int>(std::floor(cameraWorldPos.x));
-  const int centerY = static_cast<int>(std::floor(cameraWorldPos.y));
+  const int centerX = static_cast<int>(glm::floor(cameraWorldPos.x));
+  const int centerY = static_cast<int>(glm::floor(cameraWorldPos.y));
 
   const int minX = centerX - viewTilesX / 2 - padding;
   const int maxX = centerX + viewTilesX / 2 + padding;

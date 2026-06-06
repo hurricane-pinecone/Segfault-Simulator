@@ -7,8 +7,8 @@
 #include "engine/runtime/rendering/quads.h"
 #include "engine/runtime/rendering/gpuProfiling.h"
 #include "engine/core/util/profiling.h"
-#include <algorithm>
-#include <cmath>
+#include "glm/glm/common.hpp"
+#include "glm/glm/trigonometric.hpp"
 
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
@@ -740,8 +740,8 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   if (command.rotation != 0.0f)
   {
     const glm::vec2 center{(left + right) * 0.5f, (top + bottom) * 0.5f};
-    const float s = std::sin(command.rotation);
-    const float c = std::cos(command.rotation);
+    const float s = glm::sin(command.rotation);
+    const float c = glm::cos(command.rotation);
     const auto rotate = [&](glm::vec2 p)
     {
       const glm::vec2 d = p - center;
@@ -1227,7 +1227,7 @@ void OpenGLQuadRenderer::drawQuadInternal(
               tint.g / 255.0f,
               tint.b / 255.0f,
               tint.a / 255.0f);
-  const int clampedLightCount = std::clamp(lightCount, 0, MaxShaderLights);
+  const int clampedLightCount = glm::clamp(lightCount, 0, MaxShaderLights);
 
   glUniform1i(uLightCountLocation, clampedLightCount);
   glUniform1i(uSurfaceEffectLocation, 0);
@@ -2208,7 +2208,7 @@ void OpenGLQuadRenderer::setSurfaceTime(float time) { m_surfaceTime = time; }
 void OpenGLQuadRenderer::setPointLights(const PointLightSet& lights)
 {
   m_pointLights = lights;
-  m_pointLights.count = std::clamp(m_pointLights.count, 0, MaxShaderLights);
+  m_pointLights.count = glm::clamp(m_pointLights.count, 0, MaxShaderLights);
 }
 
 void OpenGLQuadRenderer::uploadHeightmap(const int* elevations,
@@ -2232,7 +2232,7 @@ void OpenGLQuadRenderer::uploadHeightmap(const int* elevations,
   m_heightmapOriginY = originY;
   m_heightScale = heightScale;
 
-  const int texSize = std::max({128, width, height});
+  const int texSize = glm::max(128, glm::max(width, height));
 
   glActiveTexture(GL_TEXTURE2);
 

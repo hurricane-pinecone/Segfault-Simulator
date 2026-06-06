@@ -4,8 +4,10 @@
 #include "engine/core/scripting/iLuaConfigurable.h"
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
+#include "glm/glm/common.hpp"
+#include "glm/glm/exponential.hpp"
 #include "glm/glm/geometric.hpp"
-#include <algorithm>
+#include "glm/glm/trigonometric.hpp"
 
 class SunController : public sfs::System, public sfs::ILuaConfigurable
 {
@@ -50,7 +52,7 @@ public:
     m_timeOfDay +=
         static_cast<float>(deltaTime) / m_dayLengthSeconds * m_timeMultiplier;
 
-    m_timeOfDay -= std::floor(m_timeOfDay);
+    m_timeOfDay -= glm::floor(m_timeOfDay);
 
     applyTimeOfDay(m_timeOfDay);
   }
@@ -62,20 +64,20 @@ public:
 
   void setDayLengthSeconds(float seconds)
   {
-    m_dayLengthSeconds = std::max(seconds, 1.0f);
+    m_dayLengthSeconds = glm::max(seconds, 1.0f);
   }
 
   // 0 = paused, 1 = normal speed, >1 = faster day/night cycle.
   float timeMultiplier() const { return m_timeMultiplier; }
   void setTimeMultiplier(float multiplier)
   {
-    m_timeMultiplier = std::max(0.0f, multiplier);
+    m_timeMultiplier = glm::max(0.0f, multiplier);
   }
 
   float timeOfDay() const { return m_timeOfDay; }
   void setTimeOfDay(float time01)
   {
-    m_timeOfDay = time01 - std::floor(time01);
+    m_timeOfDay = time01 - glm::floor(time01);
 
     if (m_renderSystem)
       applyTimeOfDay(m_timeOfDay);
@@ -86,10 +88,10 @@ public:
     // 0.0 -> 24.0 hours
     const float totalHours = m_timeOfDay * 24.0f;
 
-    int hour24 = static_cast<int>(std::floor(totalHours)) % 24;
+    int hour24 = static_cast<int>(glm::floor(totalHours)) % 24;
 
     const int minutes =
-        static_cast<int>((totalHours - std::floor(totalHours)) * 60.0f);
+        static_cast<int>((totalHours - glm::floor(totalHours)) * 60.0f);
 
     const bool pm = hour24 >= 12;
 
@@ -136,9 +138,9 @@ public:
   // and refresh the lighting so a live edit takes effect immediately.
   void onLuaConfigChanged() override
   {
-    m_dayLengthSeconds = std::max(m_dayLengthSeconds, 1.0f);
-    m_timeMultiplier = std::max(0.0f, m_timeMultiplier);
-    m_timeOfDay -= std::floor(m_timeOfDay);
+    m_dayLengthSeconds = glm::max(m_dayLengthSeconds, 1.0f);
+    m_timeMultiplier = glm::max(0.0f, m_timeMultiplier);
+    m_timeOfDay -= glm::floor(m_timeOfDay);
     if (m_renderSystem)
       applyTimeOfDay(m_timeOfDay);
   }
@@ -159,7 +161,7 @@ private:
   {
     constexpr float TwoPi = 6.28318530718f;
 
-    auto saturate = [](float x) { return std::clamp(x, 0.0f, 1.0f); };
+    auto saturate = [](float x) { return glm::clamp(x, 0.0f, 1.0f); };
 
     auto ramp = [&](float start, float end, float x)
     { return saturate((x - start) / (end - start)); };
@@ -168,11 +170,11 @@ private:
     const float dayProgress = ramp(6.0f / 24.0f, 18.0f / 24.0f, t);
 
     // Sideways sun motion: morning east, noon center, evening west.
-    const float sunX = std::cos(dayProgress * 3.14159265359f);
+    const float sunX = glm::cos(dayProgress * 3.14159265359f);
 
     // Very high at midday, lower near sunrise/sunset.
     const float noonAmount =
-        saturate(1.0f - std::abs(dayProgress * 2.0f - 1.0f));
+        saturate(1.0f - glm::abs(dayProgress * 2.0f - 1.0f));
 
     const float smoothNoon =
         noonAmount * noonAmount * (3.0f - 2.0f * noonAmount);
@@ -196,7 +198,7 @@ private:
       horizontalDir = glm::vec2{0.0f, -1.0f};
 
     const float horizontalAmount =
-        std::sqrt(std::max(0.0f, 1.0f - sunZ * sunZ));
+        glm::sqrt(glm::max(0.0f, 1.0f - sunZ * sunZ));
 
     glm::vec3 sunDir{
         horizontalDir.x * horizontalAmount,
