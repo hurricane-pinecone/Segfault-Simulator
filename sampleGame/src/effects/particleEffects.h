@@ -5,7 +5,7 @@
 #include <string>
 
 // Sample-game particle composition. The effect prefabs themselves (the blood
-// layers, embers) are engine-provided -- see engine/core/particles/particlePrefabs.h
+// layers, embers) are engine-provided -- see engine/runtime/particles/prefabs.h
 // (registerBloodEffects / emberEffect). This file holds only the game-specific
 // way they're fired: a shotgun gore blast.
 

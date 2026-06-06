@@ -111,29 +111,9 @@ sfs::Gradient{}.add(0.0f, {1,1,1}).add(1.0f, {1,0.5f,0});
 
 Up to 8 stops; sampling clamps outside the first/last stop.
 
-## Built-in prefabs
-
-The engine ships ready-made effects so you get good results with no art — colour
-does the work. They are ordinary `ParticleEffectDesc` builders you register as-is
-or copy and tweak.
-
-```cpp
-#include "engine/core/particles/particlePrefabs.h"
-
-// Four-layer blood, registered as "<prefix>_mist/_spray/_gobs/_drip":
-sfs::registerBloodEffects(particles);          // default red, prefix "blood"
-sfs::registerBloodEffects(particles, "ichor",  // a second colour
-                          glm::vec3{0.15f, 0.55f, 1.0f},
-                          glm::vec3{0.0f, 0.08f, 0.35f});
-
-// A continuous additive ember drift, for an emitter on a light:
-particles.registerEffect("embers", sfs::emberEffect());
-```
-
-The four blood layers (`bloodMistEffect`, `bloodSprayEffect`, `bloodGobsEffect`,
-`bloodDripEffect`) are meant to be fired together at one point for a layered burst;
-spray, gobs, and drip leave decals. `recolourBlood(desc, hi, lo)` returns a colour
-variant (its decals follow the particle colour).
+The engine also ships **ready-made effect prefabs** (blood layers, embers) you can
+register as-is or copy and tweak — those are a runtime helper, covered in
+[Particles in your game](../../runtime/particles/index.md#built-in-prefabs).
 
 Authoring types: `ParticleEffectDesc`, `DecalSpec`, `ParticleSpawnParams`,
 `ParticleShape`, `EmissionShape`, `GroundBehavior`, `SimulationSpace`, `BlendMode`,
