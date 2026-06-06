@@ -69,6 +69,57 @@ resolveSpriteTexture(AssetStore& store, std::uint32_t spriteId, SDL_Rect& srcOut
   texHOut = surface->h;
   return renderer.getOrCreateTexture(sprite->textureId, surface);
 }
+
+// A decal corner carried through clipping: screen position + its texture UV, so a
+// slice gets the right UV at the cut.
+struct ClipVert
+{
+  glm::vec2 p{0.0f, 0.0f};
+  glm::vec2 uv{0.0f, 0.0f};
+};
+
+// Clip a polygon against one axis-aligned half-plane (Sutherland-Hodgman): keep
+// the side where coord >= limit (keepGreater) or coord <= limit, interpolating
+// position + UV at each crossing. Returns the new vertex count.
+int clipHalfPlane(const ClipVert* in, int n, int axis, float limit,
+                  bool keepGreater, ClipVert* out)
+{
+  int m = 0;
+  for (int i = 0; i < n; ++i)
+  {
+    const ClipVert& a = in[i];
+    const ClipVert& b = in[(i + 1) % n];
+    const float ca = axis == 0 ? a.p.x : a.p.y;
+    const float cb = axis == 0 ? b.p.x : b.p.y;
+    const bool aIn = keepGreater ? ca >= limit : ca <= limit;
+    const bool bIn = keepGreater ? cb >= limit : cb <= limit;
+    if (aIn)
+      out[m++] = a;
+    if (aIn != bIn)
+    {
+      const float denom = cb - ca;
+      const float s = denom != 0.0f ? (limit - ca) / denom : 0.0f;
+      out[m++] = ClipVert{a.p + (b.p - a.p) * s, a.uv + (b.uv - a.uv) * s};
+    }
+  }
+  return m;
+}
+
+// Clip a (possibly rotated) quad to an axis-aligned screen rect. Returns the
+// clipped convex polygon in `out` (up to 8 verts); count < 3 means fully clipped.
+int clipQuadToRect(const glm::vec2* pts, const glm::vec2* uvs, float left,
+                   float top, float right, float bottom, ClipVert* out)
+{
+  ClipVert a[12];
+  ClipVert b[12];
+  for (int i = 0; i < 4; ++i)
+    a[i] = ClipVert{pts[i], uvs[i]};
+  int n = clipHalfPlane(a, 4, 0, left, true, b);
+  n = clipHalfPlane(b, n, 0, right, false, a);
+  n = clipHalfPlane(a, n, 1, top, true, b);
+  n = clipHalfPlane(b, n, 1, bottom, false, out);
+  return n;
+}
 } // namespace
 
 void FlatRenderSystem::render()
@@ -319,60 +370,70 @@ void FlatRenderSystem::render()
                (decal.tint.b / 255.0f) * glm::min(lightAcc.b, 1.0f),
                decal.tint.a / 255.0f};
 
-    if (decal.clip && glm::abs(decal.rotation) < 1e-3f && w > 0.0f && h > 0.0f)
+    // The (possibly rotated) quad corners in screen space, with their UVs.
+    glm::vec2 p0{-w * 0.5f, -h * 0.5f};
+    glm::vec2 p1{w * 0.5f, -h * 0.5f};
+    glm::vec2 p2{w * 0.5f, h * 0.5f};
+    glm::vec2 p3{-w * 0.5f, h * 0.5f};
+    if (decal.rotation != 0.0f)
     {
-      // Axis-aligned crop to the clip rect, with matching UV inset, so a mark
-      // near an edge is sliced at the edge (e.g. blood never above a surface).
-      const float l = c.x - w * 0.5f;
-      const float top = c.y - h * 0.5f;
-      const glm::vec2 cc0 = m_projection->worldToScreen(decal.clipMin, 0.0f);
-      const glm::vec2 cc1 = m_projection->worldToScreen(decal.clipMax, 0.0f);
-      const float nl = glm::max(l, glm::min(cc0.x, cc1.x));
-      const float nt = glm::max(top, glm::min(cc0.y, cc1.y));
-      const float nr = glm::min(l + w, glm::max(cc0.x, cc1.x));
-      const float nb = glm::min(top + h, glm::max(cc0.y, cc1.y));
-      if (nr <= nl || nb <= nt)
-        continue;
-      const float nu0 = u0 + ((nl - l) / w) * (u1 - u0);
-      const float nu1 = u1 - ((l + w - nr) / w) * (u1 - u0);
-      const float nv0 = v0 + ((nt - top) / h) * (v1 - v0);
-      const float nv1 = v1 - ((top + h - nb) / h) * (v1 - v0);
-      q.points[0] = {nl, nt};
-      q.points[1] = {nr, nt};
-      q.points[2] = {nr, nb};
-      q.points[3] = {nl, nb};
-      q.uvs[0] = {nu0, nv0};
-      q.uvs[1] = {nu1, nv0};
-      q.uvs[2] = {nu1, nv1};
-      q.uvs[3] = {nu0, nv1};
+      const float s = glm::sin(decal.rotation);
+      const float co = glm::cos(decal.rotation);
+      const auto rot = [&](glm::vec2 p)
+      { return glm::vec2{p.x * co - p.y * s, p.x * s + p.y * co}; };
+      p0 = rot(p0);
+      p1 = rot(p1);
+      p2 = rot(p2);
+      p3 = rot(p3);
     }
-    else
+    const glm::vec2 pts[4] = {c + p0, c + p1, c + p2, c + p3};
+    const glm::vec2 uvArr[4] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
+
+    // Clip to the surface the decal stuck to (default), so a mark never spills
+    // past the platform edge -- even a rotated streak. Clipping::None opts out
+    // (e.g. a free-floating mark). A zero rect means "no surface" -> no clip.
+    const bool doClip = decal.clipping == Clipping::Surface &&
+                        decal.clipMax.x > decal.clipMin.x &&
+                        decal.clipMax.y > decal.clipMin.y;
+    if (!doClip)
     {
-      glm::vec2 p0{-w * 0.5f, -h * 0.5f};
-      glm::vec2 p1{w * 0.5f, -h * 0.5f};
-      glm::vec2 p2{w * 0.5f, h * 0.5f};
-      glm::vec2 p3{-w * 0.5f, h * 0.5f};
-      if (decal.rotation != 0.0f)
+      for (int i = 0; i < 4; ++i)
       {
-        const float s = glm::sin(decal.rotation);
-        const float co = glm::cos(decal.rotation);
-        const auto rot = [&](glm::vec2 p)
-        { return glm::vec2{p.x * co - p.y * s, p.x * s + p.y * co}; };
-        p0 = rot(p0);
-        p1 = rot(p1);
-        p2 = rot(p2);
-        p3 = rot(p3);
+        q.points[i] = pts[i];
+        q.uvs[i] = uvArr[i];
       }
-      q.points[0] = c + p0;
-      q.points[1] = c + p1;
-      q.points[2] = c + p2;
-      q.points[3] = c + p3;
-      q.uvs[0] = {u0, v0};
-      q.uvs[1] = {u1, v0};
-      q.uvs[2] = {u1, v1};
-      q.uvs[3] = {u0, v1};
+      decalBatches[texture].quads.push_back(q);
+      continue;
     }
-    decalBatches[texture].quads.push_back(q);
+
+    const glm::vec2 cc0 = m_projection->worldToScreen(decal.clipMin, 0.0f);
+    const glm::vec2 cc1 = m_projection->worldToScreen(decal.clipMax, 0.0f);
+    ClipVert poly[12];
+    const int count = clipQuadToRect(pts,
+                                     uvArr,
+                                     glm::min(cc0.x, cc1.x),
+                                     glm::min(cc0.y, cc1.y),
+                                     glm::max(cc0.x, cc1.x),
+                                     glm::max(cc0.y, cc1.y),
+                                     poly);
+    if (count < 3)
+      continue;
+
+    // Emit the clipped convex polygon as a triangle fan, packed one triangle per
+    // quad (4th corner duplicated -> a degenerate second triangle).
+    for (int i = 1; i + 1 < count; ++i)
+    {
+      ParticleQuad fan = q; // keeps colour + depth
+      fan.points[0] = poly[0].p;
+      fan.points[1] = poly[i].p;
+      fan.points[2] = poly[i + 1].p;
+      fan.points[3] = poly[i + 1].p;
+      fan.uvs[0] = poly[0].uv;
+      fan.uvs[1] = poly[i].uv;
+      fan.uvs[2] = poly[i + 1].uv;
+      fan.uvs[3] = poly[i + 1].uv;
+      decalBatches[texture].quads.push_back(fan);
+    }
   }
   for (auto& [texture, batch] : decalBatches)
     m_quadRenderer.submitParticleBatch(batch, texture, BlendMode::Alpha, true);

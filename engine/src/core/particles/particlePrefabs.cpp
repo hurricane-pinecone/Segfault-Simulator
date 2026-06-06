@@ -83,6 +83,7 @@ ParticleEffectDesc bloodSprayEffect()
   d.decal.size = FloatRange::of(0.07f, 0.16f);
   d.decal.useParticleColor = true;
   d.decal.alpha = 0.8f;
+  d.decal.impactRef = 3.0f; // iso blood lands at ~1-4 tiles/s
 
   d.maxParticles = 256;
   return d;
@@ -129,6 +130,7 @@ ParticleEffectDesc bloodGobsEffect()
   d.decal.size = FloatRange::of(0.12f, 0.22f);
   d.decal.useParticleColor = true;
   d.decal.alpha = 0.9f;
+  d.decal.impactRef = 3.0f;
 
   d.maxParticles = 96;
   return d;
@@ -172,6 +174,7 @@ ParticleEffectDesc bloodDripEffect()
   d.decal.size = FloatRange::of(0.06f, 0.13f);
   d.decal.useParticleColor = true;
   d.decal.alpha = 0.85f;
+  d.decal.impactRef = 3.0f;
 
   d.maxParticles = 128;
   return d;

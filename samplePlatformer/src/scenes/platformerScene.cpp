@@ -4,7 +4,6 @@
 #include "config.h"
 #include "gameObjects/player.h"
 #include "spells.h"
-#include "systems/bloodSystem.h"
 #include "systems/bulletSystem.h"
 #include "systems/enemySpawnerSystem.h"
 #include "systems/enemySystem.h"
@@ -80,6 +79,15 @@ sfs::ParticleEffectDesc makeBloodEffect()
   desc.space = sfs::SimulationSpace::World;
   desc.texture = "white_dot";
   desc.maxParticles = 256;
+  // Stick to platforms and leave a directional mark (generic particle->decal
+  // path; needs a collision source + decal sink wired on the module).
+  desc.ground = sfs::GroundBehavior::Die;
+  desc.leavesDecal = true;
+  desc.decal.texture = "white_dot";
+  desc.decal.size = {6.0f, 16.0f};       // px
+  desc.decal.useParticleColor = true;
+  desc.decal.alpha = 0.85f;
+  desc.decal.impactRef = 500.0f;         // flat blood lands at ~200-640 px/s
   return desc;
 }
 
@@ -103,6 +111,14 @@ sfs::ParticleEffectDesc makeGoreEffect()
   desc.space = sfs::SimulationSpace::World;
   desc.texture = "white_dot";
   desc.maxParticles = 256;
+  // Gibs stick to platforms too (bigger marks than the per-hit spray).
+  desc.ground = sfs::GroundBehavior::Die;
+  desc.leavesDecal = true;
+  desc.decal.texture = "white_dot";
+  desc.decal.size = {10.0f, 26.0f};      // px
+  desc.decal.useParticleColor = true;
+  desc.decal.alpha = 0.9f;
+  desc.decal.impactRef = 700.0f;         // gore flies faster (~260-900 px/s)
   return desc;
 }
 
@@ -206,7 +222,6 @@ void PlatformerScene::onInit()
   // Physics blood runs right after bullets (so droplets sprayed this frame
   // integrate immediately) and before the renderer (which draws + animates the
   // stuck decals).
-  auto& blood = addSystem<platformer::BloodSystem>();
   addSystem<platformer::LifetimeSystem>(); // expires muzzle/death flash lights
 
   auto& render = addSystem<sfs::FlatRenderSystem>(m_assetStore, quadRenderer());
@@ -236,18 +251,24 @@ void PlatformerScene::onInit()
   particles.registerEffect("pickup", makePickupEffect());
   particles.registerEffect("aura", makeAuraEffect());
 
+  // Generic particle->decal stick: any effect with leavesDecal now sticks to the
+  // platforms (SolidObject + BoxCollider2D) and stamps a flat decal, using the
+  // shaping shared with the iso path. Same plumbing any flat game can wire.
+  auto& particleCollision = addSystem<sfs::ParticleCollisionSystem>();
+  // Soft dot for round drops, hard 1px for crisp directional streaks.
+  m_particleDecalSink = std::make_unique<sfs::FlatDecalSink>(
+      render, m_orbSprite, m_platformSprite);
+  particles.setCollisionSource(&particleCollision);
+  particles.setDecalSink(m_particleDecalSink.get());
+
   // Spell pickups: collecting an orb appends its spell to the player's loadout.
   addSystem<platformer::PickupSystem>().setParticles(&particles);
 
   // Bullet hits/effects fire through the same particle module; kills bump the
-  // score, shake the screen, flash, and sometimes drop a spell.
+  // score, shake the screen, flash, and sometimes drop a spell. Blood is the
+  // generic particle->decal stick (blood/gore effects + the collision source and
+  // sink wired above) -- no bespoke blood system.
   bullets.setParticles(&particles);
-  bullets.setBlood(&blood); // hits/kills spray physics blood through this
-
-  // Physics blood: droplets fly with gravity and stick to platforms as decals.
-  blood.setRenderer(&render);             // stamps the stuck decals
-  blood.setSprite(m_orbSprite);           // soft glow -> splatter blobs
-  blood.setSolidSprite(m_platformSprite); // hard pixel -> thin sub-streaks
   bullets.setOnKill(
       [this](glm::vec2 pos)
       {

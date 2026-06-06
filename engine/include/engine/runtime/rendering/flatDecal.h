@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/particles/decal.h" // Clipping
 #include "engine/runtime/assetStore/sprite.h"
 #include "SDL_pixels.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -31,11 +32,12 @@ struct FlatDecal
   // against a dark, moodily-lit level instead of washing out to near-black.
   bool unlit = false;
 
-  // Optional clip: when `clip` is set the decal is cropped to the world-space
-  // rectangle `clipMin`..`clipMax` (e.g. the platform it stuck to), so blood
-  // stamped near an edge is sliced off cleanly at the edge instead of spilling
-  // past it. Applied for axis-aligned decals (rotation == 0).
-  bool clip = false;
+  // Clip the decal to the world-space rectangle `clipMin`..`clipMax` (e.g. the
+  // platform it stuck to), so a mark near an edge is sliced cleanly instead of
+  // spilling past it -- even when rotated. On by default; set Clipping::None to
+  // let it extend freely. A zero rect (clipMax <= clipMin) means "no surface" and
+  // skips clipping.
+  Clipping clipping = Clipping::Surface;
   glm::vec2 clipMin{0.0f, 0.0f};
   glm::vec2 clipMax{0.0f, 0.0f};
 

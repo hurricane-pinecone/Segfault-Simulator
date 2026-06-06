@@ -1,11 +1,14 @@
 #pragma once
 
+#include "engine/core/particles/particleCollisionSystem.h"
 #include "engine/runtime/assetStore/sprite.h"
+#include "engine/runtime/rendering/flatDecalSink.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -41,6 +44,11 @@ private:
 
   // Drop a random collectable spell orb at a kill position.
   void dropSpell(const glm::vec2& pos);
+
+  // Generic particle->decal plumbing: the collision source is a passive System
+  // (registry-owned); the sink is owned here so it outlives the particle module
+  // that points at it.
+  std::unique_ptr<sfs::FlatDecalSink> m_particleDecalSink;
 
   Player* m_player = nullptr;
   sfs::SpriteId m_platformSprite = 0;
