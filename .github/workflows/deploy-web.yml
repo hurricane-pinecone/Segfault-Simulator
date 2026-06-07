@@ -99,7 +99,7 @@ jobs:
             -c tools.system.package_manager:mode=install \
             -c tools.system.package_manager:sudo=True
 
-      - name: Configure (no sample game)
+      - name: Configure (engine and tests)
         run: >
           cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -113,9 +113,9 @@ jobs:
   # Build the full engine and the whole test suite with AddressSanitizer +
   # UndefinedBehaviorSanitizer and run every test (core + runtime) under them, so
   # memory errors and UB that the functional jobs pass over still fail CI. Same
-  # headless seams as test-runtime; just instrumented. The vendored libraries are
-  # excluded via sanitize-ignorelist.txt (they are not ours to fix and lean on
-  # conventions the standard calls UB).
+  # headless seams as test-runtime; just instrumented. ENGINE_SANITIZE applies the
+  # flags to the engine libraries and tests only, so the prebuilt Conan
+  # dependencies stay uninstrumented.
   sanitize:
     runs-on: ubuntu-latest
 
@@ -145,10 +145,9 @@ jobs:
       - name: Detect Conan profile
         run: conan profile detect --force
 
-      # Shares the test-runtime Conan cache: the sanitizer flags below go through
-      # tools.build, which doesn't change a dependency's package_id, so the same
-      # uninstrumented SDL/imgui/glew binaries are reused (instrumenting them adds
-      # nothing -- the engine's own code is what's under test).
+      # Shares the test-runtime Conan cache. The dependencies are built without
+      # sanitizer flags (ENGINE_SANITIZE instruments only our targets), so these
+      # are the same binaries that job uses.
       - name: Cache Conan packages
         uses: actions/cache@v4
         with:
@@ -157,25 +156,16 @@ jobs:
           restore-keys: |
             conan-${{ runner.os }}-
 
-      # The sanitizer flags ride in on tools.build:*flags so Conan's generated
-      # CMakeToolchain applies them to our build without us overriding
-      # CMAKE_CXX_FLAGS (which would drop the toolchain's own flags).
       - name: Install dependencies
         run: |
-          SAN="['-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-fsanitize-ignorelist=${{ github.workspace }}/sanitize-ignorelist.txt']"
-          LINK="['-fsanitize=address,undefined']"
           conan install . --build=missing -s build_type=Debug \
             -c tools.build:jobs="$(nproc)" \
             -c tools.system.package_manager:mode=install \
-            -c tools.system.package_manager:sudo=True \
-            -c tools.build:cxxflags="$SAN" \
-            -c tools.build:cflags="$SAN" \
-            -c tools.build:exelinkflags="$LINK" \
-            -c tools.build:sharedlinkflags="$LINK"
+            -c tools.system.package_manager:sudo=True
 
-      - name: Configure (no sample game)
+      - name: Configure (engine and tests)
         run: >
-          cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
+          cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF -DENGINE_SANITIZE=ON
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build

@@ -154,9 +154,11 @@ Three blocking jobs run on every push and pull request:
 - **test-core**: core-only configure, runs the `core` label under GCC. Needs no
   dependencies, and is the gate a standalone core release would rely on.
 - **test-runtime**: full native build, runs the `runtime` label.
-- **sanitize**: builds the whole engine and suite with AddressSanitizer and
-  UndefinedBehaviorSanitizer and runs every test under them. Vendored third-party
-  code is excluded from instrumentation via `sanitize-ignorelist.txt`.
+- **sanitize**: configures with `ENGINE_SANITIZE=ON` to build the engine and tests
+  with AddressSanitizer and UndefinedBehaviorSanitizer, then runs every test under
+  them. The flags apply to the engine targets only, so the prebuilt dependencies
+  stay uninstrumented. You can run it locally with
+  `cmake -DENGINE_SANITIZE=ON ...` on any sanitizer-capable compiler.
 
 The web deploy waits on all three. The core job builds under GCC, which is stricter
 about includes than the macOS toolchain. See

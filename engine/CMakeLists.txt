@@ -7,6 +7,16 @@ endif()
 message(STATUS "ENGINE_WEB_BUILD=${ENGINE_WEB_BUILD}")
 message(STATUS "ENGINE_CORE_ONLY=${ENGINE_CORE_ONLY}")
 
+# AddressSanitizer + UndefinedBehaviorSanitizer build, used by the sanitize CI
+# job. The flags apply to the engine libraries and the tests, which are the only
+# targets defined under this directory; Conan dependencies are prebuilt and stay
+# uninstrumented.
+option(ENGINE_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ENGINE_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 # Standard install layout (CMAKE_INSTALL_INCLUDEDIR / LIBDIR), used both by the
 # INSTALL_INTERFACE include paths below and by the install/export section.
 include(GNUInstallDirs)
@@ -28,6 +38,15 @@ list(FILTER LUA_SRC EXCLUDE REGEX ".*/lua\\.c$")
 list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
 
 add_library(engine-core STATIC ${ENGINE_CORE_SRC} ${LUA_SRC})
+
+if(ENGINE_SANITIZE)
+    # FastNoiseLite's hash multiply relies on signed integer overflow wrapping,
+    # defined by convention but flagged by UBSan. noise.cpp is the only unit that
+    # includes it, so drop just that one check for just this file.
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/core/noise/noise.cpp"
+        PROPERTIES COMPILE_OPTIONS -fno-sanitize=signed-integer-overflow)
+endif()
 
 # Namespaced alias so in-tree consumers (sample game, web build) link the exact
 # same target name an out-of-tree consumer gets from find_package(engine).
