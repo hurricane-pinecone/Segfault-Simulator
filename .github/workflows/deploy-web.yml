@@ -44,12 +44,42 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-core --output-on-failure --parallel "$(nproc)"
 
+  # The core-only build instrumented with ASan + UBSan. Pairs with test-core so a
+  # standalone engine-core release gates on sanitized core tests too, without
+  # pulling in the runtime stack (no Conan, SDL, or apt packages).
+  sanitize-core:
+    runs-on: ubuntu-latest
+
+    env:
+      ASAN_OPTIONS: halt_on_error=1:detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}-${{ runner.os }}
+
+      - name: Configure (engine-core only, sanitized)
+        run: >
+          cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DENGINE_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build tests
+        run: cmake --build build-core -j "$(nproc)"
+
+      - name: Run tests under sanitizers
+        run: ctest --test-dir build-core --output-on-failure --parallel "$(nproc)"
+
   # Runtime tests link the full engine (SDL/OpenGL), so this job restores the
   # Conan dependency closure and runs a native build. They drive systems and
   # render modules through mock seams (a fake IQuadRenderer, stub services), so
   # they run headless: no window, no GPU, no display. Split from the core test
-  # job only so a standalone engine-core release can gate on core tests alone;
-  # the web deploy ships the runtime (both sample games), so it needs both.
+  # job so a standalone engine-core release can gate on the core jobs alone; the
+  # web deploy ships the runtime (both sample games), so it needs all of them.
   test-runtime:
     runs-on: ubuntu-latest
 
@@ -110,13 +140,13 @@ jobs:
       - name: Run runtime tests
         run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
-  # Build the full engine and the whole test suite with AddressSanitizer +
-  # UndefinedBehaviorSanitizer and run every test (core + runtime) under them, so
-  # memory errors and UB that the functional jobs pass over still fail CI. Same
-  # headless seams as test-runtime; just instrumented. ENGINE_SANITIZE applies the
-  # flags to the engine libraries and tests only, so the prebuilt Conan
+  # The runtime build instrumented with ASan + UBSan, running the runtime tests
+  # under them so memory errors and UB the functional job passes over still fail
+  # CI. Same headless seams as test-runtime; just instrumented. Core is sanitized
+  # in sanitize-core, so this runs the runtime label only. ENGINE_SANITIZE applies
+  # the flags to the engine libraries and tests only, so the prebuilt Conan
   # dependencies stay uninstrumented.
-  sanitize:
+  sanitize-runtime:
     runs-on: ubuntu-latest
 
     env:
@@ -171,12 +201,12 @@ jobs:
       - name: Build
         run: cmake --build build/Debug -j "$(nproc)"
 
-      - name: Run all tests under sanitizers
-        run: ctest --test-dir build/Debug --output-on-failure --parallel "$(nproc)"
+      - name: Run runtime tests under sanitizers
+        run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
   build:
     runs-on: ubuntu-latest
-    needs: [test-core, test-runtime, sanitize]
+    needs: [test-core, sanitize-core, test-runtime, sanitize-runtime]
 
     steps:
       - name: Checkout
