@@ -47,20 +47,18 @@ SegFaultSimulator (SFS) is a 2D game engine with two render paths over one core:
 
 It ships as two libraries:
 
-| Target             | Contents                                              | Dependencies |
-| ------------------ | ----------------------------------------------------- | ------------ |
-| `sfs::engine`      | The full render runtime.                              | SDL2, OpenGL |
-| `sfs::engine-core` | The ECS, scripting, and particle core, no rendering.  | none         |
+| Target             | Contents                                             | Dependencies |
+| ------------------ | ---------------------------------------------------- | ------------ |
+| `sfs::engine`      | The full render runtime.                             | SDL2, OpenGL |
+| `sfs::engine-core` | The ECS, scripting, and particle core, no rendering. | none         |
 
 Link `sfs::engine` to build a game; `sfs::engine-core` is for headless tools or
 projects that bring their own rendering.
 
 ## Documentation
 
-Documentation: **[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**.
-It covers architecture, particles and decals, and scripting, each with an overview and
-deep-dive pages. Built from [`docs/`](./docs/index.md) with MkDocs Material,
-deployed alongside the web build (game at the root, docs under `/docs`).
+For in-depth documentation, see: **[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**.
+A bot auto writes the docs, so if they're shit blame Bill Gates or whoever birthed Claude.
 
 ## Prerequisites
 
