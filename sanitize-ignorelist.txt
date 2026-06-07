@@ -1,0 +1,7 @@
+# Sanitizer ignorelist (-fsanitize-ignorelist). Excludes vendored third-party
+# code from ASan/UBSan instrumentation so the sanitizer CI job reports only on
+# the engine's own code. The vendored libraries (Lua, glm, imgui, tracy,
+# FastNoiseLite) are not ours to fix, and some lean on defined-by-convention
+# behaviour the standard still calls UB, e.g. FastNoiseLite's hash multiply
+# relies on signed integer overflow wrapping.
+src:*/engine/lib/*

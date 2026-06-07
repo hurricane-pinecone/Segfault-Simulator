@@ -1,8 +1,11 @@
 #pragma once
 
 #include "engine/core/ecs/registry.h"
+#include "engine/core/logger/logger.h"
 #include <algorithm>
-#include <stdexcept>
+#include <cstdlib>
+#include <string>
+#include <typeinfo>
 
 namespace sfs
 {
@@ -96,15 +99,18 @@ bool Registry::hasSystem() const
 template <typename TSystem>
 TSystem& Registry::getSystem() const
 {
-  for (const auto& system : systems)
+  if (auto* casted = tryGetSystem<TSystem>())
   {
-    if (auto* casted = dynamic_cast<TSystem*>(system.get()))
-    {
-      return *casted;
-    }
+    return *casted;
   }
 
-  throw std::runtime_error("System not found");
+  // getSystem assumes the caller registered the system; reaching here is a setup
+  // bug, not a recoverable runtime error. Log which type is missing and stop
+  // deterministically rather than throwing through Lua/wasm C frames. Callers
+  // that may legitimately have no such system use tryGetSystem.
+  LOG_ERROR(std::string("getSystem: no registered system of type ") +
+            typeid(TSystem).name());
+  std::abort();
 }
 
 template <typename TSystem>

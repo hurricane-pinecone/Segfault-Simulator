@@ -18,8 +18,8 @@ engine in your own game, see the [root README](../README.md).
 - [Assets](#assets)
 - [Running the Game](#running-the-game)
 - [Optional Aliases (zsh)](#optional-aliases-zsh)
-- [CI Build Check (macOS only)](#ci-build-check-macos-only)
 - [Tooling](#tooling)
+  - [Cross-Compiler Lint (GCC)](#cross-compiler-lint-gcc)
   - [Leak Detection](#leak-detection)
   - [Tracy Profiling](#tracy-profiling)
 
@@ -95,9 +95,35 @@ platformer locally with `python3 build-web/bin/samplePlatformer/server.py`.
 
 ## Testing
 
-Tests link `engine-core`, which has no third-party dependencies (vendored Lua +
-glm). With `ENGINE_CORE_ONLY` the suite builds from just CMake + a compiler — no
-Conan, SDL, or OpenGL — so it is fast, and is what CI runs:
+The engine ships its own tests, built on a small hand-rolled harness in
+`engine/tests/testHarness.h`. It uses no third-party test framework, which keeps the
+core dependency-free. A test is a standalone executable: group checks with `TEST("...")`,
+assert with `CHECK(...)`, and end with `return testing::report("name")`. `CHECK`
+decomposes the expression, so a failing `CHECK(a == b)` prints the actual operand
+values; `testing::approx(a, b)` compares floats with a tolerance.
+
+The tests split to match the two libraries:
+
+- **Core tests** (`engine/tests/core/`) link `engine-core` only, with no SDL, GL, or
+  Conan. Register one with `add_core_test(name path/to/test.cpp)` in
+  `engine/tests/core/CMakeLists.txt`.
+- **Runtime tests** (`engine/tests/runtime/`) link the full `engine` and drive
+  systems and render modules through their seams (a mock `IQuadRenderer`, stub
+  services), so they run headless: no window, no GPU, no display. Register one with
+  `add_runtime_test(name path/to/test.cpp)` in `engine/tests/runtime/CMakeLists.txt`.
+
+Test files mirror the source tree they cover. A module test for
+`src/runtime/rendering/modules/` lives in `engine/tests/runtime/rendering/modules/`.
+Each test carries a CTest label (`core` or `runtime`) so you can run one group on
+its own. The line for what is tested is drawn at rendered pixels: everything up to
+the GL draw call (command building, batching, depth assignment) is covered by
+inspecting what a system submits to the mock renderer, but framebuffer contents are
+not asserted.
+
+### Build and run
+
+With `ENGINE_CORE_ONLY` the core suite builds from just CMake and a compiler, with no
+Conan, SDL, or OpenGL, so it is fast, and is what CI's core job runs:
 
 ```bash
 cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
@@ -112,8 +138,29 @@ run in one step):
 crun-tests
 ```
 
-The tests also build as part of a full `cmake --preset debug` build and run with
-`ctest --test-dir build/Debug`.
+The runtime tests build as part of a full `cmake --preset debug` build. Filter by
+label with `ctest`:
+
+```bash
+ctest --test-dir build/Debug --output-on-failure   # core + runtime
+ctest --test-dir build/Debug -L core               # core only
+ctest --test-dir build/Debug -L runtime            # runtime only
+```
+
+### Continuous integration
+
+Three blocking jobs run on every push and pull request:
+
+- **test-core**: core-only configure, runs the `core` label under GCC. Needs no
+  dependencies, and is the gate a standalone core release would rely on.
+- **test-runtime**: full native build, runs the `runtime` label.
+- **sanitize**: builds the whole engine and suite with AddressSanitizer and
+  UndefinedBehaviorSanitizer and runs every test under them. Vendored third-party
+  code is excluded from instrumentation via `sanitize-ignorelist.txt`.
+
+The web deploy waits on all three. The core job builds under GCC, which is stricter
+about includes than the macOS toolchain. See
+[Cross-Compiler Lint (GCC)](#cross-compiler-lint-gcc) to catch that locally.
 
 ## Rebuilding
 
@@ -236,31 +283,33 @@ crun-web        # wasm build + serve (requires emsdk on PATH)
 crun-sample-pkg # release: publish the engine package, build + run the sample against it
 ```
 
-## CI Build Check (macOS only)
+## Tooling
+
+### Cross-Compiler Lint (GCC)
 
 CI compiles on **Linux (GCC + libstdc++)**. The macOS toolchain (**Clang +
 libc++**) pulls many standard headers in transitively while libstdc++ does not, so
 a file that uses a `std::` symbol without including its header builds fine locally
-but fails CI with `X is not a member of std`. This check is only for macOS devs —
-it reproduces the CI compiler in Docker so you can confirm the pipeline is green
-before pushing, rather than discovering a missing include through repeated
-push-and-wait cycles.
+but fails CI with `X is not a member of std`. `scripts/gcc-lint.sh` catches this
+before you push: it runs a GCC syntax-only pass (parse only, no link) over the core
+and runtime sources and tests inside a cached Docker image, reproducing the CI
+compiler so you do not discover a missing include through repeated push-and-wait
+cycles.
 
 With the Docker daemon running, from the project root:
 
 ```bash
-docker run --rm -v "$PWD":/work:ro ubuntu:24.04 bash -c '
-  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq g++ cmake
-  cmake -S /work -B /tmp/bc -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
-  cmake --build /tmp/bc --target luaTests -- -k'   # -k: keep going, list every error
+./scripts/gcc-lint.sh                       # lint every core and runtime TU + tests
+./scripts/gcc-lint.sh engine/src/foo.cpp    # lint only the given file(s)
 ```
 
-This builds `engine-core` (the target CI gates on) under GCC/libstdc++. A missing
-include surfaces as a compile error; the fix is to add the explicit header — e.g.
-`<limits>` for `std::numeric_limits`, `<algorithm>` for `std::sort`, `<utility>`
-for `std::move`, `<cstring>` for `std::strrchr`.
-
-## Tooling
+It exits non-zero on a failure and prints the offending file with GCC's own
+diagnostic, which names the exact header to add, for example `<limits>` for
+`std::numeric_limits`, `<algorithm>` for `std::sort`, `<utility>` for `std::move`,
+`<cstring>` for `std::strrchr`. The first run builds the image (gcc:14 plus the SDL
+and GLEW headers, from `scripts/gcc-lint.Dockerfile`); later runs finish in a few
+seconds. Vendored code under `engine/lib` is not linted, since it is not ours to
+change.
 
 ### Leak Detection
 
