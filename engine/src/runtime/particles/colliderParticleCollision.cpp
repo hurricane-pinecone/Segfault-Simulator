@@ -28,7 +28,8 @@ ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
 
     float t = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
-    if (!sweepAabb(m.from, seg, centre - box.half, centre + box.half, t, normal))
+    if (!sweepAabb(
+            m.from, seg, centre - box.half, centre + box.half, t, normal))
       continue;
 
     if (t < bestT)

@@ -13,8 +13,8 @@ class IQuadRenderer;
  * Flat 2D sprite renderer. Draws every entity that has a SpriteComponent and a
  * TransformComponent as a screen-space textured quad through the core
  * IQuadRenderer, offset by an optional camera pan. It has no dependency on the
- * isometric projection, elevation, or heightmap, so adding it to a scene renders
- * a plain 2D game; the isometric path is a separate render system.
+ * isometric projection, elevation, or heightmap, so adding it to a scene
+ * renders a plain 2D game; the isometric path is a separate render system.
  */
 class SpriteRenderSystem : public System
 {

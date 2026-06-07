@@ -32,12 +32,17 @@ public:
   void submit(const sfs::TexturedQuad&) override {}
   void submit(const sfs::FreeformQuad&) override {}
   void submit(const sfs::LitQuad&) override { ++litQuads; }
-  void submitLitBatch(const sfs::LitQuadBatch&, unsigned int, unsigned int, bool,
+  void submitLitBatch(const sfs::LitQuadBatch&,
+                      unsigned int,
+                      unsigned int,
+                      bool,
                       int) override
   {
   }
-  void submitParticleBatch(const sfs::ParticleBatch& batch, unsigned int,
-                           sfs::BlendMode, bool) override
+  void submitParticleBatch(const sfs::ParticleBatch& batch,
+                           unsigned int,
+                           sfs::BlendMode,
+                           bool) override
   {
     for (const auto& q : batch.quads)
       particleZ.push_back(q.z);
@@ -83,8 +88,8 @@ int main()
   projection.zoom = 1.0f;
   render.setProjection(&projection);
 
-  // World position far from the origin: its raw particle sort-key is well outside
-  // the clip volume, so a missing clip-depth fix would show here.
+  // World position far from the origin: its raw particle sort-key is well
+  // outside the clip volume, so a missing clip-depth fix would show here.
   particles.spawnBurst("t", glm::vec2{900.0f, 600.0f}, 0.0f);
 
   scene.update(0.016); // simulate -> emit the burst

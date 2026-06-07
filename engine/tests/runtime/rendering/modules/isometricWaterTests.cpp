@@ -27,8 +27,8 @@ IsometricProjection makeProjection()
 
 // A water tile: its surface sits at `waterLevel`, the terrain under it at
 // `terrainLevel`. Water shows only where its surface is above the terrain.
-Entity addWaterTile(Registry& reg, glm::vec2 pos, int waterLevel,
-                    int terrainLevel)
+Entity
+addWaterTile(Registry& reg, glm::vec2 pos, int waterLevel, int terrainLevel)
 {
   Entity e = reg.createEntity();
   e.addComponent<TransformComponent>(TransformComponent{pos});

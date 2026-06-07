@@ -1,13 +1,13 @@
 #include "engine/runtime/rendering/modules/spriteShadow.h"
 
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/rendering/util/isometric/geometry.h"
 #include "engine/core/util/algorithms/gridDDA.h"
-#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/core/util/profiling.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 #include <unordered_set>
@@ -25,24 +25,22 @@ void SpriteShadow::setSpriteShadowAlpha(float alpha)
   m_shadowSettings.spriteShadowAlpha = glm::clamp(alpha, 0.0f, 1.0f);
 }
 
-void SpriteShadow::computeCommands(
-    const IsometricRenderContext& context)
+void SpriteShadow::computeCommands(const IsometricRenderContext& context)
 {
   ZoneScopedN("SpriteShadow: computeCommands");
 
   flush();
 
-  for (const auto& e : registry->view<TransformComponent,
-                                      SpriteComponent,
-                                      ShadowCasterComponent>())
+  for (const auto& e :
+       registry
+           ->view<TransformComponent, SpriteComponent, ShadowCasterComponent>())
   {
     constructSpriteShadows(context, e);
   }
 }
 
-void SpriteShadow::constructSpriteShadows(
-    const IsometricRenderContext& context,
-    const Entity& entity)
+void SpriteShadow::constructSpriteShadows(const IsometricRenderContext& context,
+                                          const Entity& entity)
 {
   ZoneScopedN("SpriteShadow: constructSpriteShadows");
 
@@ -172,12 +170,13 @@ void SpriteShadow::constructSpriteShadows(
     std::vector<FootprintTile> footprint;
 
     // Highest ground reached along a single column of the shadow — the line at
-    // lateral offset `perp` running in the sun direction, from the caster out to
-    // distance `along`. Per-column (not full-width) so a rise only shortens the
-    // strip that actually climbs it: a shadow grazing a block by its edge keeps
-    // its length everywhere else. Clamped to at least the caster's elevation so
-    // flat ground contributes no rise. Continuity along the column is intrinsic
-    // (the high-water mark only grows), so the drape never restarts.
+    // lateral offset `perp` running in the sun direction, from the caster out
+    // to distance `along`. Per-column (not full-width) so a rise only shortens
+    // the strip that actually climbs it: a shadow grazing a block by its edge
+    // keeps its length everywhere else. Clamped to at least the caster's
+    // elevation so flat ground contributes no rise. Continuity along the column
+    // is intrinsic (the high-water mark only grows), so the drape never
+    // restarts.
     auto peakElevationUpTo = [&](float along, float perp)
     {
       float peak = casterElevation;
@@ -202,8 +201,8 @@ void SpriteShadow::constructSpriteShadows(
     // Silhouette length parameter is ARC LENGTH along the draped path:
     // horizontal travel plus vertical rise (climbScale * elevation above the
     // caster). This makes higher surfaces show later parts of the silhouette,
-    // so the shadow climbs walls and a cliff at the sprite's feet maps the whole
-    // silhouette up the face.
+    // so the shadow climbs walls and a cliff at the sprite's feet maps the
+    // whole silhouette up the face.
     auto computeShadowUv = [&](const glm::vec2& p, float surfaceElevation)
     {
       const float rise =
@@ -243,8 +242,8 @@ void SpriteShadow::constructSpriteShadows(
       const float edgeT = cross(diff, ray) / denom;
 
       float u = glm::clamp(edgeT, 0.0f, 1.0f);
-      float v =
-          glm::clamp((glm::dot(p - base, dir) + rise) / shadowLength, 0.0f, 1.0f);
+      float v = glm::clamp(
+          (glm::dot(p - base, dir) + rise) / shadowLength, 0.0f, 1.0f);
 
       return glm::vec2{u, v};
     };
@@ -252,8 +251,8 @@ void SpriteShadow::constructSpriteShadows(
     // peakElevation is the highest ground reached so far along the ray (a
     // high-water mark), used only for the silhouette's arc-length parameter so
     // the drape stays continuous when terrain steps back down.
-    auto constructSpriteShadowOnTile = [&](const glm::ivec2& tile,
-                                           float peakElevation)
+    auto constructSpriteShadowOnTile =
+        [&](const glm::ivec2& tile, float peakElevation)
     {
       int receiverElevation = 0;
 
@@ -346,13 +345,13 @@ void SpriteShadow::constructSpriteShadows(
       const float eHighF = static_cast<float>(eHigh);
 
       // Budget consumed reaching this wall: horizontal travel plus the climb to
-      // the wall's own base relative to the caster. Kept to the wall's base (not
-      // a per-column terrain high-water mark) so it varies continuously as the
-      // sun sweeps; a grid-marched high-water mark would jump tile-to-tile and
-      // flicker the climbing shadows at low sun.
+      // the wall's own base relative to the caster. Kept to the wall's base
+      // (not a per-column terrain high-water mark) so it varies continuously as
+      // the sun sweeps; a grid-marched high-water mark would jump tile-to-tile
+      // and flicker the climbing shadows at low sun.
       const float wallAlong = glm::dot(mid - base, dir);
-      const float arcBase = wallAlong +
-                            climbScale * glm::max(0.0f, eLowF - casterElevation);
+      const float arcBase =
+          wallAlong + climbScale * glm::max(0.0f, eLowF - casterElevation);
 
       if (arcBase >= shadowLength)
         return; // shadow ran out before reaching this wall
@@ -363,7 +362,8 @@ void SpriteShadow::constructSpriteShadows(
       // (the cliff case); otherwise it climbs the whole wall and continues.
       const float heightCap = casterElevation + casterHeightLevels;
       const float budgetCap = eLowF + (shadowLength - arcBase) / climbScale;
-      const float eTopClamped = glm::min(eHighF, glm::min(heightCap, budgetCap));
+      const float eTopClamped =
+          glm::min(eHighF, glm::min(heightCap, budgetCap));
 
       if (eTopClamped <= eLowF + 0.001f)
         return;
@@ -442,11 +442,12 @@ void SpriteShadow::constructSpriteShadows(
     walkGridDDA(groundPoints[1], dir, shadowLength, collectTile);
 
     // The silhouette's arc-length parameter must stay continuous as the shadow
-    // drapes over terrain. Each tile samples the silhouette using the high-water
-    // mark of the highest ground reached along its own column, so a partial/side
-    // climb shortens only the strip that climbs while the rest keeps its length.
-    // The shadow can never climb above the caster's own top, so terrain that
-    // reaches that height blocks it entirely (the same cap the wall climb uses).
+    // drapes over terrain. Each tile samples the silhouette using the
+    // high-water mark of the highest ground reached along its own column, so a
+    // partial/side climb shortens only the strip that climbs while the rest
+    // keeps its length. The shadow can never climb above the caster's own top,
+    // so terrain that reaches that height blocks it entirely (the same cap the
+    // wall climb uses).
     const float casterTop = casterElevation + casterHeightLevels;
 
     for (const FootprintTile& ft : footprint)
@@ -458,8 +459,8 @@ void SpriteShadow::constructSpriteShadows(
       // higher, so this tile and everything farther along the column (the far
       // side of a mountain, a ledge above a too-tall wall) lie in the terrain's
       // own shadow rather than the caster's. The high-water mark carries the
-      // block forward, and it applies toward the camera too, where no wall climb
-      // shows the step.
+      // block forward, and it applies toward the camera too, where no wall
+      // climb shows the step.
       if (peak >= casterTop)
         continue;
 
@@ -491,7 +492,8 @@ void SpriteShadow::constructSpriteShadows(
     // Only the high tile's camera-facing faces are visible in this iso view
     // (+x East and +y South go toward the camera; West/North are hidden behind
     // the block), so we only climb those. The high tile sits to the West of the
-    // low tile (its East face, side 2) or to the North (its South face, side 3).
+    // low tile (its East face, side 2) or to the North (its South face, side
+    // 3).
     if (climbScale > 0.0f)
     {
       const glm::ivec2 offsets[2] = {{-1, 0}, {0, -1}};
@@ -559,7 +561,8 @@ void SpriteShadow::constructSpriteShadows(
         // tall block.
         const float climbScale = 1.0f;
 
-        constructTexturedSpriteShadow(shadowDir, shadowLength, alpha, climbScale);
+        constructTexturedSpriteShadow(
+            shadowDir, shadowLength, alpha, climbScale);
       }
     }
   }
@@ -568,8 +571,8 @@ void SpriteShadow::constructSpriteShadows(
     return;
 
   // Light radius is authored in screen pixels (see LightEmitterComponent), but
-  // the shadow math runs in world tiles. Convert by the on-screen tile width, the
-  // same conversion IsometricRenderSystem applies for the lit shader, so a
+  // the shadow math runs in world tiles. Convert by the on-screen tile width,
+  // the same conversion IsometricRenderSystem applies for the lit shader, so a
   // caster's shadow fades out exactly at the light's reach.
   const float tilePixelWidth =
       static_cast<float>(context.projection->tileWidth) *

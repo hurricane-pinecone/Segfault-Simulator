@@ -6,8 +6,8 @@
 // dependency on the runtime.
 //
 // In a Scene-based game, code does not handle the Registry directly: entities
-// are spawned and queried through Scene (createEntity, addSystem, getSystem, ...)
-// and components are mutated through Entity (addComponent, ...); a System
+// are spawned and queried through Scene (createEntity, addSystem, getSystem,
+// ...) and components are mutated through Entity (addComponent, ...); a System
 // subclass reaches it through the protected `registry` pointer it inherits.
 // Scene owns a Registry by value and keeps it private, so that routing holds
 // even though this header is visible to client translation units: Entity/Scene

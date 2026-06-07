@@ -13,9 +13,9 @@ namespace sfs
 // Adapts the engine's particle decal stream onto the flat 2D decal renderer:
 // implement IDecalSink so any ParticleEngine (with a flat collision source) can
 // stick particles to flat surfaces and leave marks. Maps the terrain-aware
-// DecalSpawn onto a FlatDecal, ignoring the iso-only fields (elevation, wallSide,
-// wallBottom) and translating dripSpeed -> a downward grow and fadeRate ->
-// lifetime.
+// DecalSpawn onto a FlatDecal, ignoring the iso-only fields (elevation,
+// wallSide, wallBottom) and translating dripSpeed -> a downward grow and
+// fadeRate -> lifetime.
 //
 // Two sprites: a soft one for round marks and a hard (crisp) one for elongated
 // streaks, chosen by footprint aspect -- so directional streaks read as sharp
@@ -27,9 +27,7 @@ public:
                 SpriteId softSprite,
                 SpriteId streakSprite,
                 int layer = 1)
-      : m_renderer(&renderer),
-        m_soft(softSprite),
-        m_streak(streakSprite),
+      : m_renderer(&renderer), m_soft(softSprite), m_streak(streakSprite),
         m_layer(layer)
   {
   }
@@ -59,7 +57,8 @@ public:
     // fadeRate (alpha/sec) -> lifetime (sec); 0 = permanent.
     decal.lifetime = spawn.fadeRate > 0.0f ? 1.0f / spawn.fadeRate : -1.0f;
 
-    // A drip runs down the face: anchor at the top and grow the height over time.
+    // A drip runs down the face: anchor at the top and grow the height over
+    // time.
     if (spawn.dripSpeed > 0.0f)
     {
       decal.anchor = {0.5f, 0.0f};

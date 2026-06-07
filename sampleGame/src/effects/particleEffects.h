@@ -11,9 +11,10 @@
 
 // Fire a full shotgun gore blast at a world tile. `direction` should be a unit
 // vector (the shot's travel); `power` is the spray's impulse in tiles/sec. Each
-// engine blood layer gets its own share of that impulse: the mist races slightly
-// ahead, the spray takes the full push, and the heavy gobs get only a fraction
-// so they lag behind and splat. `prefix` selects the registered colour set
+// engine blood layer gets its own share of that impulse: the mist races
+// slightly ahead, the spray takes the full push, and the heavy gobs get only a
+// fraction so they lag behind and splat. `prefix` selects the registered colour
+// set
 // ("blood", "ichor", ...).
 inline void spawnGore(sfs::ParticleEngine& particles,
                       glm::vec2 worldPos,

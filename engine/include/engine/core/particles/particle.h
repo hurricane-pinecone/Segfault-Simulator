@@ -5,8 +5,9 @@
 namespace sfs
 {
 
-// One live particle. Colour/size/alpha/frame are derived at render time from the
-// owning effect's curves and the normalized age, so they are not stored here.
+// One live particle. Colour/size/alpha/frame are derived at render time from
+// the owning effect's curves and the normalized age, so they are not stored
+// here.
 struct Particle
 {
   // World tile position (or screen pixels when SimulationSpace::Screen).

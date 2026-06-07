@@ -12,7 +12,8 @@ class ParticleEngine;
 // Register the engine's base particle modding API on the VM as a global table:
 //
 //   <name>.spawn(effect, x, y)     -- one-shot burst at a world tile (ground
-//                                     elevation from the engine's terrain source)
+//                                     elevation from the engine's terrain
+//                                     source)
 //   <name>.configure(effect, opts) -- live-tweak a registered effect (schema-
 //                                     driven; opts mirrors particle.options)
 //   <name>.describe(effect)        -- the effect's current configurable values

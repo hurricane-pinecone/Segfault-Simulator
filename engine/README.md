@@ -19,6 +19,7 @@ engine in your own game, see the [root README](../README.md).
 - [Running the Game](#running-the-game)
 - [Optional Aliases (zsh)](#optional-aliases-zsh)
 - [Tooling](#tooling)
+  - [Code Formatting](#code-formatting)
   - [Cross-Compiler Lint (GCC)](#cross-compiler-lint-gcc)
   - [Leak Detection](#leak-detection)
   - [Tracy Profiling](#tracy-profiling)
@@ -149,19 +150,22 @@ ctest --test-dir build/Debug -L runtime            # runtime only
 
 ### Continuous integration
 
-Three blocking jobs run on every push and pull request:
+These blocking jobs run on every push and pull request:
 
 - **test-core**: core-only configure, runs the `core` label under GCC. Needs no
-  dependencies, and is the gate a standalone core release would rely on.
+  dependencies.
+- **sanitize-core**: the same core-only build under AddressSanitizer and
+  UndefinedBehaviorSanitizer. With test-core, this is the gate a standalone core
+  release relies on, so it stays free of the runtime stack.
 - **test-runtime**: full native build, runs the `runtime` label.
-- **sanitize**: configures with `ENGINE_SANITIZE=ON` to build the engine and tests
-  with AddressSanitizer and UndefinedBehaviorSanitizer, then runs every test under
-  them. The flags apply to the engine targets only, so the prebuilt dependencies
-  stay uninstrumented. You can run it locally with
-  `cmake -DENGINE_SANITIZE=ON ...` on any sanitizer-capable compiler.
+- **sanitize-runtime**: the full build with `ENGINE_SANITIZE=ON` (the flags apply
+  to the engine targets only, so the prebuilt dependencies stay uninstrumented),
+  running the runtime tests under the sanitizers.
+- **format**: enforces `.clang-format` (see [Code Formatting](#code-formatting)).
+- **build**: the web build, gated on the four test jobs.
 
-The web deploy waits on all three. The core job builds under GCC, which is stricter
-about includes than the macOS toolchain. See
+The web deploy waits on all of them. The core jobs build under GCC, which is
+stricter about includes than the macOS toolchain. See
 [Cross-Compiler Lint (GCC)](#cross-compiler-lint-gcc) to catch that locally.
 
 ## Rebuilding
@@ -286,6 +290,39 @@ crun-sample-pkg # release: publish the engine package, build + run the sample ag
 ```
 
 ## Tooling
+
+### Code Formatting
+
+C and C++ sources are formatted with clang-format against the repository's
+`.clang-format` (an LLVM base with Allman braces, an 80 column limit, and one
+parameter per line). The vendored `engine/lib` tree keeps its own style and is left
+alone.
+
+CI pins **clang-format 17.0.6** and fails a pull request on any unformatted file.
+The version is pinned because output differs across clang-format releases, and a
+system clang-format (such as the one Apple ships) is a slightly different fork.
+Install the same version so your formatting matches CI:
+
+```bash
+python3 -m venv ~/.local/share/sfs-clang-format
+~/.local/share/sfs-clang-format/bin/pip install clang-format==17.0.6
+ln -sf ~/.local/share/sfs-clang-format/bin/clang-format ~/.local/bin/clang-format
+```
+
+A pre-commit hook formats staged sources for you. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`git commit` then reformats the staged C and C++ files and restages them, so
+nothing unformatted reaches a commit. To format the whole tree by hand:
+
+```bash
+find engine/src engine/include engine/tests sampleGame/src samplePlatformer/src \
+  \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.inl' \) \
+  ! -path '*/engine/lib/*' -print0 | xargs -0 clang-format -i
+```
 
 ### Cross-Compiler Lint (GCC)
 

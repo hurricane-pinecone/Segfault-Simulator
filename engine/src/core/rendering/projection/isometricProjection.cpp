@@ -8,10 +8,10 @@ namespace sfs
 glm::vec2 IsometricProjection::worldToScreen(const glm::vec2& world,
                                              float elevation) const
 {
-  glm::vec2 p = (gridToIsometric(world, tileWidth, tileHeight, worldScale) -
-                 cameraIso) *
-                    zoom +
-                screenCenter;
+  glm::vec2 p =
+      (gridToIsometric(world, tileWidth, tileHeight, worldScale) - cameraIso) *
+          zoom +
+      screenCenter;
 
   p.y -= elevation * static_cast<float>(elevationStep) * worldScale * zoom;
 

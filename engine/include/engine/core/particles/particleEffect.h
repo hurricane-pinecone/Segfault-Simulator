@@ -12,17 +12,18 @@ namespace sfs
 
 class ISplatterShaper; // decalSplatter.h -- pluggable splatter topology
 
-// The built-in look of a particle or decal mark, so a game picks a shape instead
-// of naming an engine texture. Radial = the soft round "white_dot"; Pixel = the
-// crisp 1x1 "white_pixel". Set an explicit `texture` to override with custom art.
+// The built-in look of a particle or decal mark, so a game picks a shape
+// instead of naming an engine texture. Radial = the soft round "white_dot";
+// Pixel = the crisp 1x1 "white_pixel". Set an explicit `texture` to override
+// with custom art.
 enum class ParticleShape : uint8_t
 {
   Radial,
   Pixel,
 };
 
-// The engine texture a ParticleShape resolves to (filled into an empty `texture`
-// at registerEffect time).
+// The engine texture a ParticleShape resolves to (filled into an empty
+// `texture` at registerEffect time).
 inline const char* builtinShapeTexture(ParticleShape shape)
 {
   return shape == ParticleShape::Pixel ? "white_pixel" : "white_dot";
@@ -39,7 +40,8 @@ enum class EmissionShape : uint8_t
 };
 
 // World = simulates in tile/elevation space and is occluded by terrain.
-// Screen = simulates in screen pixels and draws as a flat overlay (no occlusion).
+// Screen = simulates in screen pixels and draws as a flat overlay (no
+// occlusion).
 enum class SimulationSpace : uint8_t
 {
   World,
@@ -54,7 +56,8 @@ enum class GroundBehavior : uint8_t
   Stick // pin it to the ground and let it linger for stickDuration
 };
 
-// Inclusive [min,max] range; a value is drawn uniformly between them per particle.
+// Inclusive [min,max] range; a value is drawn uniformly between them per
+// particle.
 struct FloatRange
 {
   float min = 0.0f;
@@ -64,16 +67,16 @@ struct FloatRange
   static FloatRange of(float a, float b) { return {a, b}; }
 };
 
-// The persistent mark a particle leaves where it lands (see ParticleEffectDesc::
-// leavesDecal). Consumed by an IDecalSink.
+// The persistent mark a particle leaves where it lands (see
+// ParticleEffectDesc:: leavesDecal). Consumed by an IDecalSink.
 struct DecalSpec
 {
   // The mark's look: a built-in shape, or an explicit `texture` for custom art
   // (a non-empty texture wins). The flat path also picks crisp streaks vs soft
   // drops from its own sprite pair; this drives the iso path's single texture.
   ParticleShape look = ParticleShape::Radial;
-  std::string texture;                // custom override; empty -> look's built-in
-  bool useParticleColor = true;       // tint from the particle's current colour
+  std::string texture;          // custom override; empty -> look's built-in
+  bool useParticleColor = true; // tint from the particle's current colour
   glm::vec3 color{0.35f, 0.0f, 0.0f}; // used when !useParticleColor
 
   // Impact speed (in the effect's velocity units) at which the splatter shaping
@@ -105,16 +108,17 @@ struct DecalSpec
   const ISplatterShaper* shaper = nullptr;
 };
 
-// The authoring description of a particle effect. Plain data with fixed-capacity
-// members (Curve/Gradient) and no std::function, so a Lua/JSON loader can build
-// one later and hand it to Particles::registerEffect unchanged.
+// The authoring description of a particle effect. Plain data with
+// fixed-capacity members (Curve/Gradient) and no std::function, so a Lua/JSON
+// loader can build one later and hand it to Particles::registerEffect
+// unchanged.
 struct ParticleEffectDesc
 {
   // --- emission shape (spawn position offset from the emitter origin) ---
   EmissionShape shape = EmissionShape::Point;
-  float shapeRadius = 0.0f;          // Circle/Ring base radius (world tiles)
-  float coneAngleDegrees = 30.0f;    // Cone launch half-angle
-  glm::vec2 boxExtents{0.0f, 0.0f};  // Box half-extents (world tiles)
+  float shapeRadius = 0.0f;         // Circle/Ring base radius (world tiles)
+  float coneAngleDegrees = 30.0f;   // Cone launch half-angle
+  glm::vec2 boxExtents{0.0f, 0.0f}; // Box half-extents (world tiles)
 
   // --- emission rate / bursts ---
   float emitRate = 0.0f;      // continuous particles/sec (component emitters)
@@ -123,22 +127,23 @@ struct ParticleEffectDesc
 
   // --- per-particle initial state (sampled per particle) ---
   FloatRange lifetime{1.0f, 1.0f};
-  FloatRange speed{0.0f, 0.0f};             // planar launch speed (tiles/sec)
-  FloatRange launchHeightSpeed{0.0f, 0.0f}; // vertical launch speed (height/sec)
-  FloatRange startHeight{0.0f, 0.0f};       // initial height above ground
-  FloatRange size{1.0f, 1.0f};              // base size in tiles (x sizeOverLife)
-  FloatRange rotation{0.0f, 0.0f};          // initial rotation (radians)
-  FloatRange angularVelocity{0.0f, 0.0f};   // spin (radians/sec)
+  FloatRange speed{0.0f, 0.0f}; // planar launch speed (tiles/sec)
+  FloatRange launchHeightSpeed{0.0f,
+                               0.0f};     // vertical launch speed (height/sec)
+  FloatRange startHeight{0.0f, 0.0f};     // initial height above ground
+  FloatRange size{1.0f, 1.0f};            // base size in tiles (x sizeOverLife)
+  FloatRange rotation{0.0f, 0.0f};        // initial rotation (radians)
+  FloatRange angularVelocity{0.0f, 0.0f}; // spin (radians/sec)
 
-  // Planar launch direction is a random angle within this full spread (radians),
-  // centred on +X. Default = full circle (omnidirectional spray). Cone overrides
-  // this with coneAngleDegrees.
+  // Planar launch direction is a random angle within this full spread
+  // (radians), centred on +X. Default = full circle (omnidirectional spray).
+  // Cone overrides this with coneAngleDegrees.
   float directionSpread = 6.28318530718f;
 
   // --- forces (world units) ---
   glm::vec2 gravity{0.0f, 0.0f}; // planar acceleration (tiles/sec^2)
   float gravityZ = 0.0f;         // vertical acceleration; negative = falls
-  float drag = 0.0f;             // linear velocity damping per second (0 = none)
+  float drag = 0.0f; // linear velocity damping per second (0 = none)
 
   // --- appearance over normalized life (age / lifetime) ---
   Curve sizeOverLife = Curve::constant(1.0f);
@@ -146,8 +151,8 @@ struct ParticleEffectDesc
   Curve alphaOverLife = Curve::constant(1.0f);
 
   // --- texture / sprite-sheet animation ---
-  // The billboard's look: a built-in shape, or an explicit `texture` to override
-  // with custom art (a non-empty texture wins).
+  // The billboard's look: a built-in shape, or an explicit `texture` to
+  // override with custom art (a non-empty texture wins).
   ParticleShape look = ParticleShape::Radial;
   std::string texture;        // custom override; empty -> look's built-in
   int frameCols = 1;          // sprite-sheet columns
@@ -159,11 +164,13 @@ struct ParticleEffectDesc
   BlendMode blend = BlendMode::Alpha;
   SimulationSpace space = SimulationSpace::World;
   GroundBehavior ground = GroundBehavior::None;
-  float stickDuration = 0.0f; // Stick: extra seconds a grounded particle lingers
+  float stickDuration =
+      0.0f; // Stick: extra seconds a grounded particle lingers
 
   // --- persistent decals ---
-  // When true (and a decal sink + terrain source are wired), a particle leaves a
-  // permanent mark on the surface it collides with. Ignored for Screen effects.
+  // When true (and a decal sink + terrain source are wired), a particle leaves
+  // a permanent mark on the surface it collides with. Ignored for Screen
+  // effects.
   bool leavesDecal = false;
   DecalSpec decal;
 

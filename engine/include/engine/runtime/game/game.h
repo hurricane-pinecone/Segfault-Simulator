@@ -10,8 +10,8 @@
 #include <SDL_video.h>
 #include <engine/runtime/input/input.h>
 
-#include <engine/runtime/assetStore/assetStore.h>
 #include <engine/core/ecs/registry.h>
+#include <engine/runtime/assetStore/assetStore.h>
 
 #include <memory>
 
@@ -42,14 +42,14 @@ public:
   bool isDebugUiVisible() const { return m_debugUiVisible; }
 
 protected:
-  virtual void onInit() {};
-  virtual void onSetup() {};
-  virtual void onProcessInput(const Input& input) {};
-  virtual void onUpdate(double deltaTime) {};
-  virtual void onRender() {};
+  virtual void onInit(){};
+  virtual void onSetup(){};
+  virtual void onProcessInput(const Input& input){};
+  virtual void onUpdate(double deltaTime){};
+  virtual void onRender(){};
   // App-level debug UI, drawn inside the engine's ImGui frame (native debug
   // builds only) alongside the per-scene debug UI.
-  virtual void onDebugUI() {};
+  virtual void onDebugUI(){};
   virtual void onDestroy() = 0;
 
   /**

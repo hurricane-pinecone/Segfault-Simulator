@@ -1,10 +1,10 @@
 #pragma once
 
 #include "config.h"
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
-#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
@@ -32,8 +32,8 @@ public:
             // Billboard hit box centred over the 16px sprite (half-extents +
             // offset from the feet anchor): bullet / sprite hits in screen
             // space.
-            .addComponent<sfs::BoxCollider2D>(glm::vec2{8.0f, 8.0f},
-                                              glm::vec2{0.0f, -8.0f})
+            .addComponent<sfs::BoxCollider2D>(
+                glm::vec2{8.0f, 8.0f}, glm::vec2{0.0f, -8.0f})
             // Ground footprint at the feet: drives terrain elevation / step-up
             // and world-object blocking, kept narrow so the body doesn't clip
             // into raised faces while climbing.

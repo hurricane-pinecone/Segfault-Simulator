@@ -10,8 +10,8 @@ namespace sfs
  * Render context for the flat 2D path: the per-frame state render modules read
  * through. Holds the projection (a FlatProjection in practice) and forwards the
  * world<->screen transform. The render-module host is templated on the context
- * type, so generic modules (e.g. Particles) work against this exactly as they do
- * against IsometricRenderContext, without any heightfield fields.
+ * type, so generic modules (e.g. Particles) work against this exactly as they
+ * do against IsometricRenderContext, without any heightfield fields.
  */
 struct FlatRenderContext
 {

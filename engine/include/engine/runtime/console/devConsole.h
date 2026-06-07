@@ -14,14 +14,15 @@ class AssetStore;
 
 /**
  * In-app developer console: a single-line input with multi-line output. Toggle
- * with the backtick key, type a Lua statement, and press Enter to run it against
- * the live VM (sfs::activeLua). A table result prints pretty, one key per line.
+ * with the backtick key, type a Lua statement, and press Enter to run it
+ * against the live VM (sfs::activeLua). A table result prints pretty, one key
+ * per line.
  *
  * It draws through the engine's TextRenderer, so it carries no ImGui dependency
- * and ships in every build -- on web it shares the VM the on-page editor drives.
- * Input is fed from the host's SDL event stream; while the console is open the
- * host withholds input from the game (keyboard state is polled, so swallowing
- * events alone wouldn't stop the player moving as you type).
+ * and ships in every build -- on web it shares the VM the on-page editor
+ * drives. Input is fed from the host's SDL event stream; while the console is
+ * open the host withholds input from the game (keyboard state is polled, so
+ * swallowing events alone wouldn't stop the player moving as you type).
  */
 class DevConsole
 {
@@ -57,7 +58,7 @@ private:
   bool m_open = false;
   std::string m_input;
   std::size_t m_cursor = 0; // caret position within m_input (0..size)
-  std::string m_output; // last result or error, shown above the input line
+  std::string m_output;     // last result or error, shown above the input line
 
   // Submitted commands, oldest first. m_historyPos is the recall cursor: it
   // equals m_history.size() when not browsing (the live, editable line).

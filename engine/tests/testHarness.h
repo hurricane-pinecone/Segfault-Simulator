@@ -1,7 +1,7 @@
 #pragma once
 
-// Lightweight test bed for the engine-core test executables (dependency-free, no
-// GoogleTest). A program groups its checks into named TESTs and ends with
+// Lightweight test bed for the engine-core test executables (dependency-free,
+// no GoogleTest). A program groups its checks into named TESTs and ends with
 // report():
 //
 //   TEST("the thing should do its job")
@@ -38,8 +38,8 @@ namespace detail
 {
 inline Stats g_total;
 
-// Failures are buffered while inside a TEST and flushed under its header line, so
-// they read beneath the test they belong to rather than streaming above it.
+// Failures are buffered while inside a TEST and flushed under its header line,
+// so they read beneath the test they belong to rather than streaming above it.
 inline int g_testDepth = 0;
 inline std::string g_buffer;
 
@@ -180,10 +180,11 @@ inline std::string failDetail(const char* file,
                               const std::string& expected,
                               const std::string& actual)
 {
-  return std::string("      ") + cFail() + "FAIL" + cReset() + " " + file + ":" +
-         std::to_string(line) + ": " + expr + "\n" + "             " + cDim() +
-         "Expected:" + cReset() + " " + expected + "\n" + "             " +
-         cDim() + "Actual:" + cReset() + "   " + actual + "\n";
+  return std::string("      ") + cFail() + "FAIL" + cReset() + " " + file +
+         ":" + std::to_string(line) + ": " + expr + "\n" + "             " +
+         cDim() + "Expected:" + cReset() + " " + expected + "\n" +
+         "             " + cDim() + "Actual:" + cReset() + "   " + actual +
+         "\n";
 }
 
 inline void check(const Result& r, const char* expr, const char* file, int line)
@@ -194,11 +195,10 @@ inline void check(const Result& r, const char* expr, const char* file, int line)
     return;
   }
   ++detail::g_total.failed;
-  // For a == the right operand is the expected value; for the other operators it
-  // is a bound, so keep the operator with it (e.g. "> 0", "!= 3").
-  const std::string expected = std::string(r.op) == "=="
-                                   ? r.rhs
-                                   : std::string(r.op) + " " + r.rhs;
+  // For a == the right operand is the expected value; for the other operators
+  // it is a bound, so keep the operator with it (e.g. "> 0", "!= 3").
+  const std::string expected =
+      std::string(r.op) == "==" ? r.rhs : std::string(r.op) + " " + r.rhs;
   detail::emit(failDetail(file, line, expr, expected, r.lhs));
 }
 
@@ -288,33 +288,34 @@ inline int report(const char* program)
 // comparison, which trips a precedence warning at every call site; silence just
 // that warning around the expansion.
 #if defined(__clang__)
-#define SFS_CHECK_PUSH                                                         \
-  _Pragma("clang diagnostic push")                                            \
-      _Pragma("clang diagnostic ignored \"-Woverloaded-shift-op-parentheses\"")
-#define SFS_CHECK_POP _Pragma("clang diagnostic pop")
+  #define SFS_CHECK_PUSH                                                       \
+    _Pragma("clang diagnostic push") _Pragma(                                  \
+        "clang diagnostic ignored \"-Woverloaded-shift-op-parentheses\"")
+  #define SFS_CHECK_POP _Pragma("clang diagnostic pop")
 #elif defined(__GNUC__)
-#define SFS_CHECK_PUSH                                                         \
-  _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
-#define SFS_CHECK_POP _Pragma("GCC diagnostic pop")
+  #define SFS_CHECK_PUSH                                                       \
+    _Pragma("GCC diagnostic push")                                             \
+        _Pragma("GCC diagnostic ignored \"-Wparentheses\"")
+  #define SFS_CHECK_POP _Pragma("GCC diagnostic pop")
 #else
-#define SFS_CHECK_PUSH
-#define SFS_CHECK_POP
+  #define SFS_CHECK_PUSH
+  #define SFS_CHECK_POP
 #endif
 
-// Variadic so a condition containing commas (e.g. view<A, B>()) isn't split into
-// multiple macro arguments by the preprocessor.
+// Variadic so a condition containing commas (e.g. view<A, B>()) isn't split
+// into multiple macro arguments by the preprocessor.
 #define CHECK(...)                                                             \
-  do                                                                          \
-  {                                                                           \
-    SFS_CHECK_PUSH                                                            \
-    ::testing::check(::testing::Decomposer{} << __VA_ARGS__,                  \
-                     #__VA_ARGS__,                                            \
-                     __FILE__,                                                \
-                     __LINE__);                                               \
-    SFS_CHECK_POP                                                            \
+  do                                                                           \
+  {                                                                            \
+    SFS_CHECK_PUSH                                                             \
+    ::testing::check(::testing::Decomposer{} << __VA_ARGS__,                   \
+                     #__VA_ARGS__,                                             \
+                     __FILE__,                                                 \
+                     __LINE__);                                                \
+    SFS_CHECK_POP                                                              \
   } while (false)
 
-// TEST("name") { ... } runs the following block as a named test that reports its
-// own tally. A one-shot for-loop, so the block reads naturally and its locals
-// stay scoped to it.
+// TEST("name") { ... } runs the following block as a named test that reports
+// its own tally. A one-shot for-loop, so the block reads naturally and its
+// locals stay scoped to it.
 #define TEST(name) for (::testing::TestScope _sfs_test{name}; _sfs_test;)

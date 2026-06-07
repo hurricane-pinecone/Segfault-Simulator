@@ -93,8 +93,10 @@ int main()
     CHECK(clipped.count >= 4);
     for (int i = 0; i < clipped.count; ++i)
     {
-      CHECK(clipped.points[i].x >= -1e-4f && clipped.points[i].x <= 1.0f + 1e-4f);
-      CHECK(clipped.points[i].y >= -1e-4f && clipped.points[i].y <= 1.0f + 1e-4f);
+      CHECK(clipped.points[i].x >= -1e-4f &&
+            clipped.points[i].x <= 1.0f + 1e-4f);
+      CHECK(clipped.points[i].y >= -1e-4f &&
+            clipped.points[i].y <= 1.0f + 1e-4f);
     }
   }
 

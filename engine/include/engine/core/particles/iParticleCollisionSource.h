@@ -9,8 +9,8 @@ namespace sfs
 {
 
 // A particle's motion this step, in the engine's world space: planar from->to
-// plus the elevation either end (toZ is the current height; the flat path leaves
-// the Z fields 0 and ignores them).
+// plus the elevation either end (toZ is the current height; the flat path
+// leaves the Z fields 0 and ignores them).
 struct ParticleSweep
 {
   glm::vec2 from{0.0f, 0.0f};
@@ -20,8 +20,8 @@ struct ParticleSweep
 };
 
 // The result of sweeping a particle against a collision surface. Carries enough
-// to place a decal on any path: the contact, the surface it hit (ground / wall /
-// water), and -- for walls -- the face it stuck to. The flat path leaves the
+// to place a decal on any path: the contact, the surface it hit (ground / wall
+// / water), and -- for walls -- the face it stuck to. The flat path leaves the
 // surface fields at their defaults (Ground) and fills `boundsMin/Max` for
 // clipping; the iso path fills the surface fields and leaves bounds zero (its
 // sink clips per tile/face).
@@ -32,7 +32,7 @@ struct ParticleHit
   glm::vec2 normal{0.0f, 0.0f}; // entry-face outward normal (flat: top vs side)
 
   DecalSurface surface = DecalSurface::Ground;
-  glm::ivec2 tile{0, 0};   // tile hit (wall face placement)
+  glm::ivec2 tile{0, 0}; // tile hit (wall face placement)
   std::uint8_t wallSide = 0;
   float wallBottom = 0.0f; // wall face base elevation
   float wallTop = 0.0f;    // wall face top elevation

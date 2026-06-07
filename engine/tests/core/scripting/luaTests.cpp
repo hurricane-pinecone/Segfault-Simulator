@@ -14,7 +14,8 @@ bool contains(const std::string& haystack, const std::string& needle)
   return haystack.find(needle) != std::string::npos;
 }
 
-// A configurable used to exercise the ILuaConfigurable + schema path end to end.
+// A configurable used to exercise the ILuaConfigurable + schema path end to
+// end.
 struct Range2
 {
   float min = 0.0f;
@@ -50,18 +51,16 @@ int main()
 {
   sfs::LuaScripting vm;
 
-  TEST("the VM should initialise")
-  {
-    CHECK(vm.init());
-  }
+  TEST("the VM should initialise") { CHECK(vm.init()); }
 
   TEST("eval and evalRepl should handle expressions and report errors")
   {
     CHECK(vm.evalRepl("return 1 + 1") == "2");
-    CHECK(contains(vm.evalRepl("return 1 +"), "error:"));  // compile error
-    CHECK(contains(vm.evalRepl("error('boom')"), "boom")); // runtime error caught
-    CHECK(vm.eval("x = 5").empty());                       // statements -> ""
-    CHECK(vm.evalRepl("return x") == "5");                 // state persists
+    CHECK(contains(vm.evalRepl("return 1 +"), "error:")); // compile error
+    CHECK(
+        contains(vm.evalRepl("error('boom')"), "boom")); // runtime error caught
+    CHECK(vm.eval("x = 5").empty());                     // statements -> ""
+    CHECK(vm.evalRepl("return x") == "5");               // state persists
   }
 
   TEST("the execution guard should abort an infinite loop")
@@ -69,9 +68,9 @@ int main()
     // reaching past this at all proves it returned rather than hung
     CHECK(contains(vm.evalRepl("while true do end"), "error:"));
     // a finite loop under budget still runs fine
-    CHECK(
-        vm.evalRepl("local s = 0; for i = 1, 1000 do s = s + i end; return s") ==
-        "500500");
+    CHECK(vm.evalRepl(
+              "local s = 0; for i = 1, 1000 do s = s + i end; return s") ==
+          "500500");
   }
 
   TEST("the sandbox should hide unsafe globals")
@@ -106,9 +105,10 @@ int main()
     CHECK(cfg.count == 5);
     CHECK(cfg.flag == true);
     CHECK(cfg.span.min == 1.0f && cfg.span.max == 2.0f);
-    CHECK(cfg.changedCount == 1);                        // onLuaConfigChanged fired
+    CHECK(cfg.changedCount == 1); // onLuaConfigChanged fired
     CHECK(vm.evalRepl("return cfg.get().count") == "5"); // values round-trip
-    CHECK(contains(vm.evalRepl("return cfg.options.count"), "int")); // schema doc
+    CHECK(
+        contains(vm.evalRepl("return cfg.options.count"), "int")); // schema doc
   }
 
   TEST("unregister should neutralise a lingering reference")

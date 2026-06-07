@@ -157,7 +157,8 @@ void IsometricDecalSink::addDecal(const DecalSpawn& spawn)
   chunk.decals.push_back(d);
 }
 
-std::int64_t IsometricDecalSink::coverageKey(glm::ivec2 chunk, const Decal& d) const
+std::int64_t IsometricDecalSink::coverageKey(glm::ivec2 chunk,
+                                             const Decal& d) const
 {
   // Position local to the chunk so cell indices stay small (the chunk is
   // kChunkTiles wide). Ground decals collapse by x,y; wall decals also key on
@@ -178,7 +179,9 @@ std::int64_t IsometricDecalSink::coverageKey(glm::ivec2 chunk, const Decal& d) c
   return ix | (iy << 8) | (iz << 16) | (disc << 32);
 }
 
-void IsometricDecalSink::clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key)
+void IsometricDecalSink::clearCell(glm::ivec2 chunk,
+                                   ChunkData& data,
+                                   std::int64_t key)
 {
   auto& vec = data.decals;
   bool removed = false;
@@ -214,7 +217,8 @@ void IsometricDecalSink::clearCell(glm::ivec2 chunk, ChunkData& data, std::int64
   }
 }
 
-void IsometricDecalSink::rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const
+void IsometricDecalSink::rebuildCoverage(glm::ivec2 chunk,
+                                         ChunkData& data) const
 {
   data.coverage.clear();
   for (const Decal& d : data.decals)
@@ -381,7 +385,7 @@ void IsometricDecalSink::update(double deltaTime)
 }
 
 void IsometricDecalSink::buildDecalVerts(const Decal& decal,
-                             std::vector<DecalVertex>& out) const
+                                         std::vector<DecalVertex>& out) const
 {
   glm::vec4 color = decal.color;
   if (decal.fadeRate > 0.0f)
@@ -390,11 +394,13 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
     return;
 
   const std::uint32_t packed = packRGBA8(color);
-  const auto push = [&](glm::vec2 wp, float elev, glm::vec2 uv, float key)
-  { out.push_back(DecalVertex{wp, elev, uv, packed, key}); };
+  const auto push = [&](glm::vec2 wp, float elev, glm::vec2 uv, float key) {
+    out.push_back(DecalVertex{wp, elev, uv, packed, key});
+  };
 
-  // Crisp marks sample the dot's solid centre (a sharp filled streak); soft marks
-  // sample the whole sprite (the round radial falloff). One texture, two looks.
+  // Crisp marks sample the dot's solid centre (a sharp filled streak); soft
+  // marks sample the whole sprite (the round radial falloff). One texture, two
+  // looks.
   const float uLo = decal.crisp ? 0.42f : 0.0f;
   const float uHi = decal.crisp ? 0.58f : 1.0f;
 
@@ -407,8 +413,9 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
     const float hy = decal.size.y * 0.5f;
     const float c = glm::cos(decal.rotation);
     const float s = glm::sin(decal.rotation);
-    const auto rot = [&](float ox, float oy)
-    { return glm::vec2{ox * c - oy * s, ox * s + oy * c}; };
+    const auto rot = [&](float ox, float oy) {
+      return glm::vec2{ox * c - oy * s, ox * s + oy * c};
+    };
 
     const float e = decal.elevation;
     const float key =
@@ -418,14 +425,13 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
                               decal.worldPos + rot(hx, -hy),
                               decal.worldPos + rot(hx, hy),
                               decal.worldPos + rot(-hx, hy)};
-    const glm::vec2 uvs[4] = {
-        {uLo, uLo}, {uHi, uLo}, {uHi, uHi}, {uLo, uHi}};
+    const glm::vec2 uvs[4] = {{uLo, uLo}, {uHi, uLo}, {uHi, uHi}, {uLo, uHi}};
 
-    // Keep the mark on the tile it landed on (clip to that tile's world rect), so
-    // a streak doesn't bleed across a tile/elevation boundary. Same key for all
-    // verts (the rect is one tile, one depth band).
-    const glm::vec2 tileMin{glm::floor(decal.worldPos.x),
-                            glm::floor(decal.worldPos.y)};
+    // Keep the mark on the tile it landed on (clip to that tile's world rect),
+    // so a streak doesn't bleed across a tile/elevation boundary. Same key for
+    // all verts (the rect is one tile, one depth band).
+    const glm::vec2 tileMin{
+        glm::floor(decal.worldPos.x), glm::floor(decal.worldPos.y)};
     ClipVertex poly[12];
     const int cnt = clipQuadToRect(pts,
                                    uvs,
@@ -443,8 +449,8 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
     return;
   }
 
-  // Wall faces run along one tile axis (east face along Y, south along X). Decals
-  // on the face live in (u along the edge, v in elevation).
+  // Wall faces run along one tile axis (east face along Y, south along X).
+  // Decals on the face live in (u along the edge, v in elevation).
   const glm::vec2 edgeDir =
       decal.wallSide == 2 ? glm::vec2{0.0f, 1.0f} : glm::vec2{1.0f, 0.0f};
 
@@ -456,13 +462,12 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
 
   // Elevation levels per tile-unit of screen height, so a face decal rotates by
   // a true on-screen angle and isn't squashed by the projection.
-  const float aspect = m_elevationStep > 0.0001f
-                           ? (m_tileWidth * 0.5f / m_elevationStep)
-                           : 1.0f;
+  const float aspect =
+      m_elevationStep > 0.0001f ? (m_tileWidth * 0.5f / m_elevationStep) : 1.0f;
 
-  // No drip: a directional impact mark, a rotated rectangle on the face. Rotated
-  // in screen-proportional space (elevation scaled by `aspect`), then mapped to
-  // world (u -> edge) and elevation.
+  // No drip: a directional impact mark, a rotated rectangle on the face.
+  // Rotated in screen-proportional space (elevation scaled by `aspect`), then
+  // mapped to world (u -> edge) and elevation.
   if (decal.dripSpeed <= 0.0f)
   {
     const float hx = decal.size.x * 0.5f; // length (local +X)
@@ -474,8 +479,8 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
     const float fixedCoord = east ? decal.worldPos.x : decal.worldPos.y;
 
     // Corners in (along-edge, elevation) face space, then clip to the face rect
-    // [tile edge] x [wallBottom, wallTop] so the mark can't spill above the wall
-    // top, off its sides, or onto the ground below -- even when rotated.
+    // [tile edge] x [wallBottom, wallTop] so the mark can't spill above the
+    // wall top, off its sides, or onto the ground below -- even when rotated.
     const auto faceCorner = [&](float ox, float oy)
     {
       const float ru = ox * c - oy * s; // along the edge (tiles)
@@ -486,8 +491,7 @@ void IsometricDecalSink::buildDecalVerts(const Decal& decal,
                               faceCorner(hx, -hy),
                               faceCorner(hx, hy),
                               faceCorner(-hx, hy)};
-    const glm::vec2 uvs[4] = {
-        {uLo, uLo}, {uHi, uLo}, {uHi, uHi}, {uLo, uHi}};
+    const glm::vec2 uvs[4] = {{uLo, uLo}, {uHi, uLo}, {uHi, uHi}, {uLo, uHi}};
 
     const float lo = glm::floor(alongCenter);
     ClipVertex poly[12];

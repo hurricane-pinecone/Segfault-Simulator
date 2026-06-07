@@ -33,9 +33,9 @@ public:
   virtual std::vector<ModuleSetting> settings() { return {}; }
 
 protected:
-  virtual void create() {};
-  virtual void update(double deltatime) {};
-  virtual void render() {};
+  virtual void create(){};
+  virtual void update(double deltatime){};
+  virtual void render(){};
 
   template <typename TComponent>
   void registerComponent();

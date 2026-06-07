@@ -2,8 +2,8 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/runtime/input/input.h"
 #include <engine/core/ecs/registry.h>
-#include <engine/runtime/sceneManager/scene.h>
 #include <engine/core/util/profiling.h>
+#include <engine/runtime/sceneManager/scene.h>
 #include <string>
 
 namespace sfs

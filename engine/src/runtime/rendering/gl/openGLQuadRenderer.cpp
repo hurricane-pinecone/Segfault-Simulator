@@ -3,10 +3,10 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/batchKeys/LitQuadBatchKey.h"
-#include "engine/runtime/rendering/gl/glDebug.h"
 #include "engine/core/rendering/quads.h"
-#include "engine/runtime/rendering/gl/gpuProfiling.h"
 #include "engine/core/util/profiling.h"
+#include "engine/runtime/rendering/gl/glDebug.h"
+#include "engine/runtime/rendering/gl/gpuProfiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/trigonometric.hpp"
 
@@ -774,8 +774,10 @@ void OpenGLQuadRenderer::appendLitVertices(const LitQuad& command)
   const float z = command.z;
   const float zTop = command.zTop;
 
-  const glm::vec4 c{command.tint.r / 255.0f, command.tint.g / 255.0f,
-                    command.tint.b / 255.0f, command.tint.a / 255.0f};
+  const glm::vec4 c{command.tint.r / 255.0f,
+                    command.tint.g / 255.0f,
+                    command.tint.b / 255.0f,
+                    command.tint.a / 255.0f};
 
   m_litVertices.push_back({p0, {u0, v0}, command.worldPoints[0], zTop, c});
   m_litVertices.push_back({p1, {u1, v0}, command.worldPoints[1], zTop, c});

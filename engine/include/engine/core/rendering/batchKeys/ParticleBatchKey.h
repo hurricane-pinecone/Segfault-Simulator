@@ -6,7 +6,8 @@ namespace sfs
 {
 
 // Buckets particle geometry into one draw call per (texture, blend mode,
-// depth-test state) -- the renderer's particle batcher uses it as a std::map key.
+// depth-test state) -- the renderer's particle batcher uses it as a std::map
+// key.
 struct ParticleBatchKey
 {
   unsigned int texture = 0;

@@ -13,8 +13,8 @@ namespace gamebindings
 // toggleDebug()               -- flip its current visibility.
 inline void registerDebugBindings(sfs::LuaScripting& lua, SampleGame& game)
 {
-  lua.bind("showDebug",
-           [&game](double on) { game.setDebugUiVisible(on != 0.0); });
+  lua.bind(
+      "showDebug", [&game](double on) { game.setDebugUiVisible(on != 0.0); });
 
   lua.bind("toggleDebug", [&game] { game.toggleDebugUi(); });
 }

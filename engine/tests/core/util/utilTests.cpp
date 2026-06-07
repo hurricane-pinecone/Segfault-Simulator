@@ -26,8 +26,8 @@ int main()
     CHECK(std::string(formatBytes(1024)) == "1.00 KB");
     CHECK(std::string(formatBytes(1536)) == "1.50 KB");
     CHECK(std::string(formatBytes(1024 * 1024)) == "1.00 MB");
-    CHECK(std::string(formatBytes(static_cast<std::size_t>(1024) * 1024 * 1024)) ==
-          "1.00 GB");
+    CHECK(std::string(formatBytes(static_cast<std::size_t>(1024) * 1024 *
+                                  1024)) == "1.00 GB");
   }
 
   TEST("Color should default to white and expose named constants")
@@ -45,11 +45,12 @@ int main()
     MemoryMetrics& m = getMemoryMetrics();
     CHECK(&getMemoryMetrics() == &m); // the metrics singleton is stable
 
-    // The counters are fed only by the global operator new/delete replacement in
-    // allocationMetrics.cpp. Whether that replacement intercepts this binary's
-    // allocations depends on how it was linked (it does in the core-only/CI
-    // build, where the object is pulled in). Probe it, and assert the accounting
-    // only when it is actually in effect rather than fail where it is not.
+    // The counters are fed only by the global operator new/delete replacement
+    // in allocationMetrics.cpp. Whether that replacement intercepts this
+    // binary's allocations depends on how it was linked (it does in the
+    // core-only/CI build, where the object is pulled in). Probe it, and assert
+    // the accounting only when it is actually in effect rather than fail where
+    // it is not.
     const std::size_t probeAllocs = m.allocationCount.load();
     int* probe = nullptr;
     {

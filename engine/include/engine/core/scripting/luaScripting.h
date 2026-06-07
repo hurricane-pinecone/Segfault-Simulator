@@ -17,8 +17,8 @@ namespace sfs
 class ILuaApi;
 class ILuaConfigurable;
 
-// Live byte accounting for the VM's capped allocator (see setMemoryLimit). `cap`
-// of 0 means unlimited.
+// Live byte accounting for the VM's capped allocator (see setMemoryLimit).
+// `cap` of 0 means unlimited.
 struct LuaMemoryUsage
 {
   std::size_t used = 0;
@@ -83,34 +83,37 @@ public:
 
   /**
    * Install a game's modding API: just calls api.registerBindings(*this). The
-   * verb keeps the host as the driver and reads symmetrically with registerConfig.
+   * verb keeps the host as the driver and reads symmetrically with
+   * registerConfig.
    */
   void registerApi(ILuaApi& api);
 
   /**
-   * Expose an ILuaConfigurable as a live-editable global table (get / set / options),
-   * driven entirely by its schema. See ILuaConfigurable for the generated surface.
+   * Expose an ILuaConfigurable as a live-editable global table (get / set /
+   * options), driven entirely by its schema. See ILuaConfigurable for the
+   * generated surface.
    *
-   * The table reaches the config through an invalidatable slot, so it is safe to
-   * destroy the config before the VM AS LONG AS unregisterConfig() is called
+   * The table reaches the config through an invalidatable slot, so it is safe
+   * to destroy the config before the VM AS LONG AS unregisterConfig() is called
    * first -- after that, the table's get/set become no-ops even if Lua still
    * holds a reference to it.
    */
   void registerConfig(ILuaConfigurable& config);
 
   /**
-   * Invalidate a registered config: nils its global table and makes any lingering
-   * get/set no-ops. Call before the config is destroyed (e.g. from its owner's
-   * destructor) so a torn-down object can't be reached from Lua.
+   * Invalidate a registered config: nils its global table and makes any
+   * lingering get/set no-ops. Call before the config is destroyed (e.g. from
+   * its owner's destructor) so a torn-down object can't be reached from Lua.
    */
   void unregisterConfig(ILuaConfigurable& config);
 
   /**
    * Opt a game into the in-app developer console. The console (toggled with the
-   * backtick key) routes the lines it runs through this VM via activeLua(), so a
-   * Lua-enabled game turns it on with a single call after init(). Off by default
-   * -- a game with no VM has nothing for the console to run. The host reads this
-   * flag each frame, so it can be flipped live.
+   * backtick key) routes the lines it runs through this VM via activeLua(), so
+   * a Lua-enabled game turns it on with a single call after init(). Off by
+   * default
+   * -- a game with no VM has nothing for the console to run. The host reads
+   * this flag each frame, so it can be flipped live.
    */
   void setConsoleEnabled(bool enabled) { m_consoleEnabled = enabled; }
   bool consoleEnabled() const { return m_consoleEnabled; }
@@ -122,13 +125,16 @@ public:
    * the browser tab on web). <= 0 disables the guard. Re-armed before each
    * eval/evalRepl, so it is a per-call budget, not a lifetime total.
    */
-  void setInstructionLimit(int maxInstructions) { m_instructionLimit = maxInstructions; }
+  void setInstructionLimit(int maxInstructions)
+  {
+    m_instructionLimit = maxInstructions;
+  }
 
   /**
    * Cap total bytes the VM may allocate (a custom Lua allocator). An allocation
    * past the cap fails as a Lua out-of-memory error (caught, not a crash), so a
-   * script can't exhaust host memory. 0 = unlimited. Safe to set before or after
-   * init(); the cap is read live. `memoryUsed()` reports current bytes.
+   * script can't exhaust host memory. 0 = unlimited. Safe to set before or
+   * after init(); the cap is read live. `memoryUsed()` reports current bytes.
    */
   void setMemoryLimit(std::size_t bytes) { m_memory.cap = bytes; }
   std::size_t memoryUsed() const { return m_memory.used; }
@@ -136,7 +142,8 @@ public:
   /**
    * Cap the size (bytes) of the string evalRepl returns -- captured print/log
    * output plus the value. A script printing megabytes is truncated with a
-   * marker instead of bloating the response handed to the editor. 0 = unlimited.
+   * marker instead of bloating the response handed to the editor. 0 =
+   * unlimited.
    */
   void setOutputLimit(std::size_t bytes) { m_outputLimit = bytes; }
 
@@ -186,8 +193,8 @@ private:
   bool m_consoleEnabled = false;
 
   // Heap "slots" pointing at registered configs. The Lua closures hold a slot,
-  // not the config directly, so unregisterConfig() can null a slot and instantly
-  // neuter a table whose backing object is about to be destroyed.
+  // not the config directly, so unregisterConfig() can null a slot and
+  // instantly neuter a table whose backing object is about to be destroyed.
   std::vector<std::unique_ptr<ILuaConfigurable*>> m_configSlots;
 
   // The bound std::functions, kept alive for the C trampolines that reference
@@ -204,8 +211,8 @@ private:
 void setActiveLua(LuaScripting* lua);
 
 // The host last passed to setActiveLua(), or nullptr. Lets app code (e.g. a
-// scene registering its ILuaConfigurable systems) reach the live VM without threading
-// a back-pointer through the scene graph.
+// scene registering its ILuaConfigurable systems) reach the live VM without
+// threading a back-pointer through the scene graph.
 LuaScripting* activeLua();
 
 } // namespace sfs

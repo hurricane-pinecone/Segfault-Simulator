@@ -25,7 +25,7 @@ public:
   static constexpr EntityId InvalidId = std::numeric_limits<EntityId>::max();
   static constexpr DebugId InvalidDebugId = std::numeric_limits<DebugId>::max();
 
-  Entity() : id(InvalidId), debugId(InvalidDebugId), generation(0) {};
+  Entity() : id(InvalidId), debugId(InvalidDebugId), generation(0){};
   Entity(EntityId id, uint32_t generation, DebugId debugId)
       : id(id), debugId(debugId), generation(generation)
   {

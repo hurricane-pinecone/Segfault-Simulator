@@ -7,8 +7,9 @@ namespace sfs
 {
 
 // One stamped piece of a splatter: a decal footprint (size.x = length along
-// `rotation`'s local +X, size.y = width across), its orientation, and whether it
-// reads crisp (hard-edged streak) or soft (the sink chooses the sprite/sampling).
+// `rotation`'s local +X, size.y = width across), its orientation, and whether
+// it reads crisp (hard-edged streak) or soft (the sink chooses the
+// sprite/sampling).
 struct SplatShape
 {
   glm::vec2 size{0.0f, 0.0f};
@@ -39,8 +40,8 @@ struct SplatParams
 };
 
 // One impact handed to a shaper. `velocity` is the in-plane impact velocity
-// (path-mapped: world XY on the ground, along-edge + vertical on a wall); `velZ`
-// is any out-of-plane vertical; `baseSize` the sampled pool footprint.
+// (path-mapped: world XY on the ground, along-edge + vertical on a wall);
+// `velZ` is any out-of-plane vertical; `baseSize` the sampled pool footprint.
 struct SplatImpact
 {
   glm::vec2 velocity{0.0f, 0.0f};
@@ -52,10 +53,10 @@ struct SplatImpact
 // TOPOLOGY. Implement this for fully custom splatter (rings, cross-hatches,
 // stamps, whatever) and point a DecalSpec at it; the engine ships
 // defaultSplatterShaper() (a soft round pool + crisp directional fan streaks),
-// which both samples use. The shaper produces relative shapes; the engine places
-// them on the surface (elevation, wall face, clipping). A near-zero planar
-// velocity should fall back to a random orientation (a round drop reads the same
-// at any angle).
+// which both samples use. The shaper produces relative shapes; the engine
+// places them on the surface (elevation, wall face, clipping). A near-zero
+// planar velocity should fall back to a random orientation (a round drop reads
+// the same at any angle).
 class ISplatterShaper
 {
 public:

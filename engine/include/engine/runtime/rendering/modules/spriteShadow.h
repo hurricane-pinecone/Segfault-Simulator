@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
+#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/commands/shadowCommands.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
@@ -15,7 +15,8 @@ namespace sfs
  * point lights. It pulls casters from a Registry view and emits textured shadow
  * commands.
  */
-class SpriteShadow : public CommandModule<IsometricRenderContext, SpriteShadowCommand>
+class SpriteShadow
+    : public CommandModule<IsometricRenderContext, SpriteShadowCommand>
 {
 public:
   SpriteShadow() = default;
