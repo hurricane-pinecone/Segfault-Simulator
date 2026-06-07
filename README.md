@@ -34,13 +34,13 @@ optionally drive it with a live Lua scripting API.
 
 SegFaultSimulator (SFS) is a 2D game engine with two render paths over one core:
 
-- An **ECS core** — entities, components, systems.
+- An **ECS core** of entities, components, and systems.
 - An **SDL2 + OpenGL render runtime** with per-pixel point lighting, normal maps,
   and particles, drawn through one of two render systems:
-  - **Flat 2D** (`FlatRenderSystem`) — screen-space sprites for side-on or
+  - **Flat 2D** (`FlatRenderSystem`) draws screen-space sprites for side-on or
     top-down games, ordered by layer then Y.
-  - **Isometric heightfield** (`IsometricRenderSystem`) — a grid of elevated
-    columns with per-elevation lighting, terrain/sprite shadows, block geometry,
+  - **Isometric heightfield** (`IsometricRenderSystem`) draws a grid of elevated
+    columns with per-elevation lighting, terrain and sprite shadows, block geometry,
     and world-projected decals.
 - A **live Lua scripting / modding API**.
 - **Native** (macOS / Linux) and **web** (Emscripten / WebGL2) targets.
@@ -50,15 +50,15 @@ It ships as two libraries:
 | Target             | Contents                                              | Dependencies |
 | ------------------ | ----------------------------------------------------- | ------------ |
 | `sfs::engine`      | The full render runtime.                              | SDL2, OpenGL |
-| `sfs::engine-core` | The ECS, scripting, and particle core — no rendering. | none         |
+| `sfs::engine-core` | The ECS, scripting, and particle core, no rendering.  | none         |
 
 Link `sfs::engine` to build a game; `sfs::engine-core` is for headless tools or
 projects that bring their own rendering.
 
 ## Documentation
 
-Documentation: **[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**
-— architecture, particles & decals, and scripting, each with an overview and
+Documentation: **[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**.
+It covers architecture, particles and decals, and scripting, each with an overview and
 deep-dive pages. Built from [`docs/`](./docs/index.md) with MkDocs Material,
 deployed alongside the web build (game at the root, docs under `/docs`).
 
@@ -110,7 +110,7 @@ find_package(engine REQUIRED)
 target_link_libraries(myGame PRIVATE sfs::engine)   # or sfs::engine-core
 ```
 
-The SDL / imgui / GLEW closure comes in transitively — you do not list those
+The SDL / imgui / GLEW closure comes in transitively, so you do not list those
 yourself.
 
 ### Raw CMake Install (no Conan)
@@ -144,7 +144,7 @@ add_custom_command(TARGET myGame POST_BUILD
 ## The Sample Game
 
 `sampleGame/` is a complete game built on SFS and the worked example of
-everything above — it consumes the engine through `find_package(engine)` and
+everything above. It consumes the engine through `find_package(engine)` and
 `sfs::engine`, exactly as your game does. Build and run it against the package:
 
 ```bash

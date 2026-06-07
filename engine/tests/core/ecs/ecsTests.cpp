@@ -3,7 +3,6 @@
 #include <engine/core/ecs/ecs.h>
 
 #include <cstddef>
-#include <stdexcept>
 
 using namespace sfs;
 
@@ -201,19 +200,12 @@ int main()
     CHECK(reg.tryGetSystem<MovementSystem>() == nullptr);
   }
 
-  TEST("getSystem should throw when the system is absent")
+  TEST("tryGetSystem should return null when the system is absent")
   {
+    // getSystem asserts presence and aborts on a missing system, so the
+    // recoverable lookup is tryGetSystem, which reports absence as a null.
     Registry reg;
-    bool threw = false;
-    try
-    {
-      reg.getSystem<MovementSystem>();
-    }
-    catch (const std::exception&)
-    {
-      threw = true;
-    }
-    CHECK(threw);
+    CHECK(reg.tryGetSystem<MovementSystem>() == nullptr);
   }
 
   TEST("a system should gain and lose entities on flush")

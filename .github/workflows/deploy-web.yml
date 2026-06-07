@@ -110,9 +110,83 @@ jobs:
       - name: Run runtime tests
         run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
+  # Build the full engine and the whole test suite with AddressSanitizer +
+  # UndefinedBehaviorSanitizer and run every test (core + runtime) under them, so
+  # memory errors and UB that the functional jobs pass over still fail CI. Same
+  # headless seams as test-runtime; just instrumented. The vendored libraries are
+  # excluded via sanitize-ignorelist.txt (they are not ours to fix and lean on
+  # conventions the standard calls UB).
+  sanitize:
+    runs-on: ubuntu-latest
+
+    env:
+      # Abort on the first finding (UBSan otherwise logs and continues), and
+      # print a stack so the failing line is in the CI log.
+      ASAN_OPTIONS: halt_on_error=1:detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}-${{ runner.os }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Conan
+        run: pip install "conan==2.*"
+
+      - name: Detect Conan profile
+        run: conan profile detect --force
+
+      # Shares the test-runtime Conan cache: the sanitizer flags below go through
+      # tools.build, which doesn't change a dependency's package_id, so the same
+      # uninstrumented SDL/imgui/glew binaries are reused (instrumenting them adds
+      # nothing -- the engine's own code is what's under test).
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      # The sanitizer flags ride in on tools.build:*flags so Conan's generated
+      # CMakeToolchain applies them to our build without us overriding
+      # CMAKE_CXX_FLAGS (which would drop the toolchain's own flags).
+      - name: Install dependencies
+        run: |
+          SAN="['-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer','-fsanitize-ignorelist=${{ github.workspace }}/sanitize-ignorelist.txt']"
+          LINK="['-fsanitize=address,undefined']"
+          conan install . --build=missing -s build_type=Debug \
+            -c tools.build:jobs="$(nproc)" \
+            -c tools.system.package_manager:mode=install \
+            -c tools.system.package_manager:sudo=True \
+            -c tools.build:cxxflags="$SAN" \
+            -c tools.build:cflags="$SAN" \
+            -c tools.build:exelinkflags="$LINK" \
+            -c tools.build:sharedlinkflags="$LINK"
+
+      - name: Configure (no sample game)
+        run: >
+          cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/Debug -j "$(nproc)"
+
+      - name: Run all tests under sanitizers
+        run: ctest --test-dir build/Debug --output-on-failure --parallel "$(nproc)"
+
   build:
     runs-on: ubuntu-latest
-    needs: [test-core, test-runtime]
+    needs: [test-core, test-runtime, sanitize]
 
     steps:
       - name: Checkout
