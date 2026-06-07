@@ -107,7 +107,9 @@ jobs:
           - CREATE a new page when a change introduces a public feature or subsystem a game developer relies on and NO page documents it yet (this is expected for new architecture -- do not skip it just because nothing exists to edit). Place it and register it in the mkdocs.yml nav per .github/docs-structure.md so it appears on the site.
           If the change is internal-only (a refactor, a comment, a private detail) and the docs still read correctly, make NO edits. Document the public surface, not every changed file.
 
-          Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) before editing, and follow both. Match the voice and structure of the existing docs."
+          Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) before editing, and follow both. Match the voice and structure of the existing docs.
+
+          Finally, if (and only if) you edited any docs, write a single-line pull request title to the file docs-pr-title.txt at the repository root. Start it with 'docs: ' and concisely name what you actually changed -- the page(s) or feature(s) touched, not 'recent source changes' (e.g. 'docs: document the block geometry system' or 'docs: update the particle API reference and add a decals page'). Keep it under ~70 characters and write nothing else to that file. If you made no doc edits, do not create the file."
           printf '%s' "$PROMPT" | claude -p \
             --permission-mode acceptEdits --max-turns 30 \
             --allowedTools "Read,Edit,Write,Grep,Glob"
@@ -126,6 +128,21 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve the PR title
+        id: title
+        if: steps.edited.outputs.changed == 'true'
+        run: |
+          # Claude writes a title describing the actual doc changes to
+          # docs-pr-title.txt (repo root, kept out of the PR by add-paths). Take
+          # its first non-empty line; fall back to the generic title if the file
+          # is missing or empty so the PR always has a sensible name.
+          default="docs: sync with recent source changes"
+          title="$(grep -m1 . docs-pr-title.txt 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+          if [ -z "$title" ]; then
+            title="$default"
+          fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
       - name: Open a PR if docs changed
         if: steps.edited.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
@@ -138,8 +155,8 @@ jobs:
           branch: docs/auto-sync
           base: master
           delete-branch: true
-          title: "docs: sync with recent source changes"
-          commit-message: "docs: auto-sync with recent source changes"
+          title: ${{ steps.title.outputs.title }}
+          commit-message: ${{ steps.title.outputs.title }}
           labels: documentation
           body: |
             Automated documentation update for source changes on `master`, drafted by
