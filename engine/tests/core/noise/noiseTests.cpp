@@ -9,7 +9,7 @@ using namespace sfs;
 
 int main()
 {
-  // --- determinism: same seed + coords -> identical values ----------------
+  TEST("the same seed and coordinates should give the same value")
   {
     Noise a;
     a.setSeed(1234);
@@ -25,7 +25,7 @@ int main()
     }
   }
 
-  // --- value stays within roughly [-1, 1] and is not constant -------------
+  TEST("noise should stay within roughly [-1, 1] and vary across the field")
   {
     Noise n;
     n.setSeed(99);
@@ -43,7 +43,7 @@ int main()
     CHECK(varied);
   }
 
-  // --- different seeds generally produce different fields -----------------
+  TEST("different seeds should produce different fields")
   {
     Noise a;
     a.setSeed(1);
@@ -59,7 +59,7 @@ int main()
     CHECK(differences > 0);
   }
 
-  // --- Perlin type is also deterministic ----------------------------------
+  TEST("Perlin noise should be deterministic too")
   {
     Noise a;
     a.setType(Noise::Type::Perlin);
@@ -72,7 +72,7 @@ int main()
     CHECK(testing::approx(a.get(3.0f, 4.0f), b.get(3.0f, 4.0f), 1e-6f));
   }
 
-  // --- move construction preserves output ---------------------------------
+  TEST("move construction should preserve the generator's output")
   {
     Noise a;
     a.setSeed(55);

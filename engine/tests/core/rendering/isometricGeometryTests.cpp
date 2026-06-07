@@ -17,7 +17,7 @@ bool nearVec(const glm::vec2& a, const glm::vec2& b, float eps = 1e-3f)
 
 int main()
 {
-  // --- grid <-> isometric round-trip --------------------------------------
+  TEST("grid and isometric coordinates should round-trip")
   {
     const int tw = 64, th = 32;
     const float scale = 1.0f;
@@ -30,13 +30,13 @@ int main()
     }
   }
 
-  // --- gridCellOf floors to the containing cell ---------------------------
+  TEST("gridCellOf should floor to the containing cell")
   {
     CHECK(gridCellOf({2.9f, 1.1f}) == glm::ivec2(2, 1));
     CHECK(gridCellOf({-0.1f, -0.1f}) == glm::ivec2(-1, -1));
   }
 
-  // --- TerrainElevationGridView: validity, bounds, empty cells ------------
+  TEST("the elevation grid view should respect bounds and empty cells")
   {
     std::vector<int> e = {0, 1, 2, 3};
     TerrainElevationGridView grid;
@@ -61,7 +61,7 @@ int main()
     CHECK(grid.tryGet({0, 1}, out) && out == 5);
   }
 
-  // --- maxTerrainElevation ignores empty cells ----------------------------
+  TEST("maxTerrainElevation should ignore empty cells")
   {
     std::vector<int> e = {0, 4, EmptyElevation, 2};
     TerrainElevationGridView grid;
@@ -76,7 +76,7 @@ int main()
     CHECK(maxTerrainElevation(invalid) == 0);
   }
 
-  // --- pointInConvexQuad --------------------------------------------------
+  TEST("pointInConvexQuad should classify points inside and outside")
   {
     const glm::vec2 unit[4] = {
         {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
@@ -85,7 +85,7 @@ int main()
     CHECK(!pointInConvexQuad({-0.5f, 0.5f}, unit));
   }
 
-  // --- clipPolygonToTile clips a large quad to the tile's unit square ------
+  TEST("clipPolygonToTile should clip a large quad to the tile's unit square")
   {
     const glm::vec2 big[4] = {
         {-1.0f, -1.0f}, {2.0f, -1.0f}, {2.0f, 2.0f}, {-1.0f, 2.0f}};

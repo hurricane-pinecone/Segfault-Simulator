@@ -10,7 +10,7 @@ using namespace sfs;
 
 int main()
 {
-  // --- sweepAabb: hit, entry parameter, entry-face normal -----------------
+  TEST("sweepAabb should report the entry parameter and face normal on a hit")
   {
     float tEnter = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
@@ -23,16 +23,16 @@ int main()
     CHECK(testing::approx(normal.y, 0.0f));
   }
 
-  // --- sweepAabb: parallel miss -------------------------------------------
+  TEST("sweepAabb should miss a segment running alongside the box")
   {
     float tEnter = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
     const bool hit = sweepAabb(
         {-2.0f, 5.0f}, {4.0f, 0.0f}, {-1.0f, -1.0f}, {1.0f, 1.0f}, tEnter, normal);
-    CHECK(!hit); // runs alongside the box, never crossing in
+    CHECK(!hit);
   }
 
-  // --- sweepAabb: starting inside is not a crossing-in --------------------
+  TEST("sweepAabb should not report a hit when the segment starts inside")
   {
     float tEnter = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
@@ -41,7 +41,7 @@ int main()
     CHECK(!hit);
   }
 
-  // --- walkGridDDA: a horizontal ray visits the start tile then crossings --
+  TEST("walkGridDDA should visit the start tile then each crossing")
   {
     std::vector<glm::ivec2> visited;
     walkGridDDA({0.5f, 0.5f},
@@ -59,7 +59,7 @@ int main()
     CHECK(visited[3] == glm::ivec2(3, 0));
   }
 
-  // --- walkGridDDA: returning false stops traversal early -----------------
+  TEST("walkGridDDA should stop early when the visitor returns false")
   {
     int count = 0;
     walkGridDDA({0.5f, 0.5f},
@@ -73,7 +73,7 @@ int main()
     CHECK(count == 2);
   }
 
-  // --- walkGridDDA: zero direction / distance does nothing harmful --------
+  TEST("walkGridDDA should do nothing with a zero direction")
   {
     int count = 0;
     walkGridDDA({0.0f, 0.0f},
@@ -87,7 +87,7 @@ int main()
     CHECK(count == 0);
   }
 
-  // --- clipQuadToRect: a large quad clips down to the unit rect -----------
+  TEST("clipQuadToRect should clip a large quad to the unit rect")
   {
     const glm::vec2 pts[4] = {
         {-1.0f, -1.0f}, {2.0f, -1.0f}, {2.0f, 2.0f}, {-1.0f, 2.0f}};
@@ -105,7 +105,7 @@ int main()
     }
   }
 
-  // --- clipQuadToRect: a quad fully outside the rect clips away -----------
+  TEST("clipQuadToRect should clip away a fully-outside quad")
   {
     const glm::vec2 pts[4] = {
         {5.0f, 5.0f}, {6.0f, 5.0f}, {6.0f, 6.0f}, {5.0f, 6.0f}};
