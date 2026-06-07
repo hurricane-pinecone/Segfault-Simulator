@@ -7,8 +7,8 @@
 namespace sfs
 {
 
-// One particle's screen-space billboard: four corners, UVs, and colour. Unlit --
-// particles carry their own colour rather than sampling scene lighting.
+// One particle's screen-space billboard: four corners, UVs, and colour. Unlit
+// -- particles carry their own colour rather than sampling scene lighting.
 struct ParticleQuad
 {
   glm::vec2 points[4] = {};
@@ -20,9 +20,9 @@ struct ParticleQuad
   };
   glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
 
-  // Holds the world painter sort-key when the batch is built; the render system's
-  // assignClipDepth() remaps it in place to clip-space depth (gl_Position.z) so
-  // each particle occludes against terrain individually.
+  // Holds the world painter sort-key when the batch is built; the render
+  // system's assignClipDepth() remaps it in place to clip-space depth
+  // (gl_Position.z) so each particle occludes against terrain individually.
   float z = 0.0f;
 };
 

@@ -182,7 +182,8 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
                                    int count)
 {
   // Per-effect capacity and the global live-particle ceiling both clamp the
-  // emission; over-budget particles are dropped (graceful, never grows unbounded).
+  // emission; over-budget particles are dropped (graceful, never grows
+  // unbounded).
   int room = desc.maxParticles - static_cast<int>(inst.particles.size());
   const int globalRoom = m_maxParticles - liveParticleCount();
   room = glm::min(room, globalRoom);
@@ -340,11 +341,11 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     // flat path -- and splat where the droplet sticks.
     if (m_collisionSource)
     {
-      const ParticleHit hit = m_collisionSource->sweep(
-          {prevPos,
-           p.pos,
-           inst.groundLevel + prevHeight,
-           inst.groundLevel + p.height});
+      const ParticleHit hit =
+          m_collisionSource->sweep({prevPos,
+                                    p.pos,
+                                    inst.groundLevel + prevHeight,
+                                    inst.groundLevel + p.height});
       if (hit.hit)
       {
         emitDecal(inst, desc, p, hit);
@@ -422,14 +423,14 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
 
   if (hit.surface == DecalSurface::Wall)
   {
-    // Anchor the splatter to the actual wall-face edge of `hit.tile` so it stays
-    // within the wall's width. East (2) face is the plane x = tile.x+1 running
-    // along Y; south (3) is y = tile.y+1 running along X.
+    // Anchor the splatter to the actual wall-face edge of `hit.tile` so it
+    // stays within the wall's width. East (2) face is the plane x = tile.x+1
+    // running along Y; south (3) is y = tile.y+1 running along X.
     const bool east = hit.wallSide == 2;
     const float faceX = static_cast<float>(hit.tile.x) + 1.0f;
     const float faceY = static_cast<float>(hit.tile.y) + 1.0f;
-    const float lo = east ? static_cast<float>(hit.tile.y)
-                          : static_cast<float>(hit.tile.x);
+    const float lo =
+        east ? static_cast<float>(hit.tile.y) : static_cast<float>(hit.tile.x);
     const float hi = lo + 1.0f;
     const float hitAlong = glm::clamp(east ? hit.pos.y : hit.pos.x, lo, hi);
     const glm::vec2 facePos =

@@ -371,8 +371,9 @@ void FlatRenderSystem::render()
     {
       const float s = glm::sin(decal.rotation);
       const float co = glm::cos(decal.rotation);
-      const auto rot = [&](glm::vec2 p)
-      { return glm::vec2{p.x * co - p.y * s, p.x * s + p.y * co}; };
+      const auto rot = [&](glm::vec2 p) {
+        return glm::vec2{p.x * co - p.y * s, p.x * s + p.y * co};
+      };
       p0 = rot(p0);
       p1 = rot(p1);
       p2 = rot(p2);

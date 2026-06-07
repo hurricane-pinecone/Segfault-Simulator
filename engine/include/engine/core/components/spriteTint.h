@@ -13,7 +13,9 @@ struct SpriteTint
   float alpha = 1.0f;
 
   SpriteTint() = default;
-  SpriteTint(glm::vec3 color, float alpha = 1.0f) : color(color), alpha(alpha) {}
+  SpriteTint(glm::vec3 color, float alpha = 1.0f) : color(color), alpha(alpha)
+  {
+  }
 };
 
 } // namespace sfs

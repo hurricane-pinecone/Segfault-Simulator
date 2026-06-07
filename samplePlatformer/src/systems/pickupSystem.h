@@ -2,7 +2,6 @@
 
 #include "components/platformerComponents.h"
 #include "config.h"
-#include "spells.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
@@ -11,6 +10,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/trigonometric.hpp"
+#include "spells.h"
 
 #include <vector>
 
@@ -85,7 +85,9 @@ protected:
   }
 
 private:
-  void spawnFlash(const glm::vec2& pos, const glm::vec3& color, float radius,
+  void spawnFlash(const glm::vec2& pos,
+                  const glm::vec3& color,
+                  float radius,
                   float time)
   {
     registry->createEntity()

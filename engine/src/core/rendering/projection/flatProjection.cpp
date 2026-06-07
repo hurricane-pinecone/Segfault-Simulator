@@ -15,9 +15,6 @@ glm::vec2 FlatProjection::screenToWorld(const glm::vec2& screen,
   return (screen - screenCenter) / zoom + cameraCenter;
 }
 
-float FlatProjection::worldUnitToPixels() const
-{
-  return zoom;
-}
+float FlatProjection::worldUnitToPixels() const { return zoom; }
 
 } // namespace sfs

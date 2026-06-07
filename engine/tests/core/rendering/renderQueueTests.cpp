@@ -37,8 +37,8 @@ int main()
   {
     RenderQueue<int> q;
     const int a = 1;
-    q.submit(a);   // copy
-    q.submit(2);   // move
+    q.submit(a); // copy
+    q.submit(2); // move
     CHECK(q.size() == 2);
     CHECK(!q.empty());
     CHECK(q.items()[0] == 1);

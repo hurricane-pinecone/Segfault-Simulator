@@ -2,10 +2,10 @@
 
 #include "effects/particleEffects.h"
 #include "sampleGame.h"
-#include <engine/runtime/rendering/modules/particles.h>
-#include <engine/runtime/sceneManager/scene.h>
 #include <engine/core/scripting/luaScripting.h>
 #include <engine/core/scripting/particleLuaApi.h>
+#include <engine/runtime/rendering/modules/particles.h>
+#include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/systems/isometric/isometricRenderSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
@@ -38,24 +38,22 @@ inline void spawnGoreAt(sfs::ParticleEngine& particles, glm::vec2 pos)
             12.0f);
 }
 
-// spawnGore(x, y) global + the engine's base particle table (spawn / configure /
-// describe / effects / options). Both resolve the live engine lazily, so they
+// spawnGore(x, y) global + the engine's base particle table (spawn / configure
+// / describe / effects / options). Both resolve the live engine lazily, so they
 // work whatever scene is up.
 inline void registerParticleBindings(sfs::LuaScripting& lua, SampleGame& game)
 {
-  lua.bind("spawnGore",
-           [&game](double x, double y)
-           {
-             if (sfs::ParticleEngine* particles =
-                     particlesOf(game.currentScene()))
-               spawnGoreAt(
-                   *particles,
-                   glm::vec2{static_cast<float>(x), static_cast<float>(y)});
-           });
+  lua.bind(
+      "spawnGore",
+      [&game](double x, double y)
+      {
+        if (sfs::ParticleEngine* particles = particlesOf(game.currentScene()))
+          spawnGoreAt(*particles,
+                      glm::vec2{static_cast<float>(x), static_cast<float>(y)});
+      });
 
-  sfs::registerParticleLua(lua,
-                           "particles",
-                           [&game] { return particlesOf(game.currentScene()); });
+  sfs::registerParticleLua(
+      lua, "particles", [&game] { return particlesOf(game.currentScene()); });
 }
 
 } // namespace gamebindings

@@ -15,8 +15,12 @@ int main()
     float tEnter = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
     // segment from (-2,0) moving +X by 4 into box [-1,-1]..[1,1]
-    const bool hit = sweepAabb(
-        {-2.0f, 0.0f}, {4.0f, 0.0f}, {-1.0f, -1.0f}, {1.0f, 1.0f}, tEnter, normal);
+    const bool hit = sweepAabb({-2.0f, 0.0f},
+                               {4.0f, 0.0f},
+                               {-1.0f, -1.0f},
+                               {1.0f, 1.0f},
+                               tEnter,
+                               normal);
     CHECK(hit);
     CHECK(testing::approx(tEnter, 0.25f)); // enters the low x face at t=0.25
     CHECK(testing::approx(normal.x, -1.0f));
@@ -27,8 +31,12 @@ int main()
   {
     float tEnter = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
-    const bool hit = sweepAabb(
-        {-2.0f, 5.0f}, {4.0f, 0.0f}, {-1.0f, -1.0f}, {1.0f, 1.0f}, tEnter, normal);
+    const bool hit = sweepAabb({-2.0f, 5.0f},
+                               {4.0f, 0.0f},
+                               {-1.0f, -1.0f},
+                               {1.0f, 1.0f},
+                               tEnter,
+                               normal);
     CHECK(!hit);
   }
 
@@ -36,8 +44,12 @@ int main()
   {
     float tEnter = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};
-    const bool hit = sweepAabb(
-        {0.0f, 0.0f}, {4.0f, 0.0f}, {-1.0f, -1.0f}, {1.0f, 1.0f}, tEnter, normal);
+    const bool hit = sweepAabb({0.0f, 0.0f},
+                               {4.0f, 0.0f},
+                               {-1.0f, -1.0f},
+                               {1.0f, 1.0f},
+                               tEnter,
+                               normal);
     CHECK(!hit);
   }
 

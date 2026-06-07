@@ -11,8 +11,8 @@ using namespace sfs;
 
 namespace
 {
-// A terrain heightfield with optional per-tile water, driven by functions so each
-// test shapes its own cliffs.
+// A terrain heightfield with optional per-tile water, driven by functions so
+// each test shapes its own cliffs.
 struct StubSurface : ITerrainSurfaceSource
 {
   std::function<int(int, int)> height;
@@ -46,7 +46,8 @@ int main()
     terrain.height = [](int x, int) { return x <= 0 ? 5 : 0; }; // cliff at x=0
     TerrainParticleCollision coll(&terrain);
 
-    // Moving -x into the tall tile presents its east face (a camera-facing side).
+    // Moving -x into the tall tile presents its east face (a camera-facing
+    // side).
     const ParticleHit hit =
         coll.sweep(sweepAt({1.5f, 0.5f}, {0.5f, 0.5f}, 0.0f));
     CHECK(hit.hit);
@@ -103,8 +104,8 @@ int main()
     terrain.height = [](int, int) { return 0; };
     TerrainParticleCollision coll(&terrain);
 
-    const ParticleHit hit =
-        coll.sweep(sweepAt({0.5f, 0.5f}, {0.6f, 0.6f}, 5.0f)); // still in the air
+    const ParticleHit hit = coll.sweep(
+        sweepAt({0.5f, 0.5f}, {0.6f, 0.6f}, 5.0f)); // still in the air
     CHECK(!hit.hit);
   }
 

@@ -39,11 +39,11 @@ int luaLog(lua_State* L)
   return 0;
 }
 
-// Run a C-binding body, converting any C++ exception into a Lua error instead of
-// letting it propagate through Lua's C frames (Lua is built as C -- an exception
-// crossing a longjmp frame is undefined behaviour). The body has fully unwound
-// before luaL_error longjmps, so this is safe. Game-provided lambdas / config
-// hooks are the realistic throwers.
+// Run a C-binding body, converting any C++ exception into a Lua error instead
+// of letting it propagate through Lua's C frames (Lua is built as C -- an
+// exception crossing a longjmp frame is undefined behaviour). The body has
+// fully unwound before luaL_error longjmps, so this is safe. Game-provided
+// lambdas / config hooks are the realistic throwers.
 template <typename Fn>
 int guarded(lua_State* L, Fn&& body)
 {
@@ -61,10 +61,11 @@ int guarded(lua_State* L, Fn&& body)
   }
 }
 
-// Capped Lua allocator: tracks live bytes and fails an allocation that would push
-// past the budget (Lua turns the null return into an out-of-memory error, caught
-// by pcall). `ud` is the host's LuaMemoryUsage. When ptr is null, osize is a Lua
-// type tag, not a real size -- so old size counts only for an existing block.
+// Capped Lua allocator: tracks live bytes and fails an allocation that would
+// push past the budget (Lua turns the null return into an out-of-memory error,
+// caught by pcall). `ud` is the host's LuaMemoryUsage. When ptr is null, osize
+// is a Lua type tag, not a real size -- so old size counts only for an existing
+// block.
 void* cappedAlloc(void* ud, void* ptr, size_t osize, size_t nsize)
 {
   auto* mem = static_cast<LuaMemoryUsage*>(ud);
@@ -87,8 +88,8 @@ void* cappedAlloc(void* ud, void* ptr, size_t osize, size_t nsize)
   return block;
 }
 
-// Instruction-count hook: aborts a chunk that blows its budget (e.g. an infinite
-// loop) instead of hanging the thread / freezing the browser tab.
+// Instruction-count hook: aborts a chunk that blows its budget (e.g. an
+// infinite loop) instead of hanging the thread / freezing the browser tab.
 void instructionGuard(lua_State* L, lua_Debug* /*ar*/)
 {
   luaL_error(L,
@@ -96,9 +97,9 @@ void instructionGuard(lua_State* L, lua_Debug* /*ar*/)
              "infinite loop)");
 }
 
-// Last-resort: an unprotected Lua error would otherwise abort() silently. All our
-// entry points run under lua_pcall, so this should never fire -- but log if it
-// does. (Returning still aborts; the value is the diagnostic.)
+// Last-resort: an unprotected Lua error would otherwise abort() silently. All
+// our entry points run under lua_pcall, so this should never fire -- but log if
+// it does. (Returning still aborts; the value is the diagnostic.)
 int panicHandler(lua_State* L)
 {
   const char* msg = lua_tostring(L, -1);
@@ -141,14 +142,15 @@ int callNumber2(lua_State* L)
                  [&]
                  {
                    if (fn && *fn)
-                     (*fn)(luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
+                     (*fn)(
+                         luaL_optnumber(L, 1, 0.0), luaL_optnumber(L, 2, 0.0));
                    return 0;
                  });
 }
 
 // ILuaConfigurable table closures: the upvalue is an invalidatable SLOT
-// (ILuaConfigurable**) so unregisterConfig can null it -- a torn-down config then
-// reads as empty / ignores writes instead of dangling.
+// (ILuaConfigurable**) so unregisterConfig can null it -- a torn-down config
+// then reads as empty / ignores writes instead of dangling.
 ILuaConfigurable* configUpvalue(lua_State* L)
 {
   auto* slot =
@@ -173,20 +175,19 @@ int configGet(lua_State* L)
 
 int configSet(lua_State* L)
 {
-  return guarded(L,
-                 [&]
-                 {
-                   ILuaConfigurable* config = configUpvalue(L);
-                   if (!config)
-                     return 0;
-                   luaL_checktype(L, 1, LUA_TTABLE);
-                   luaschema::readTable(L,
-                                        1,
-                                        config->luaConfigData(),
-                                        config->luaConfigSchema());
-                   config->onLuaConfigChanged();
-                   return 0;
-                 });
+  return guarded(
+      L,
+      [&]
+      {
+        ILuaConfigurable* config = configUpvalue(L);
+        if (!config)
+          return 0;
+        luaL_checktype(L, 1, LUA_TTABLE);
+        luaschema::readTable(
+            L, 1, config->luaConfigData(), config->luaConfigSchema());
+        config->onLuaConfigChanged();
+        return 0;
+      });
 }
 
 std::string indentOf(int depth)
@@ -285,7 +286,8 @@ LuaScripting::~LuaScripting()
 
 bool LuaScripting::init()
 {
-  // Custom allocator so the memory budget covers every allocation from creation.
+  // Custom allocator so the memory budget covers every allocation from
+  // creation.
   m_state = lua_newstate(&cappedAlloc, &m_memory);
   if (!m_state)
     return false;
@@ -421,7 +423,8 @@ std::string LuaScripting::evalRepl(const std::string& source)
     std::string message =
         std::string("error: ") + (err ? err : "runtime error");
     lua_pop(m_state, 1);
-    return cappedOutput(m_log + message); // show whatever printed before the error
+    return cappedOutput(m_log +
+                        message); // show whatever printed before the error
   }
 
   std::string out;

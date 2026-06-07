@@ -25,7 +25,8 @@ struct StubTerrain : ITerrainHeightSource
   }
 };
 
-// A mover with the components MovementSystem matches on, flushed into the system.
+// A mover with the components MovementSystem matches on, flushed into the
+// system.
 Entity addMover(Registry& reg, glm::vec2 position, glm::vec2 velocity)
 {
   Entity e = reg.createEntity();
@@ -57,7 +58,8 @@ int main()
     Registry reg;
     MovementSystem& sys = reg.addSystem<MovementSystem>();
     StubTerrain terrain;
-    terrain.heightAt = [](int x, int) { return x >= 1 ? 10 : 0; }; // cliff at x=1
+    terrain.heightAt = [](int x, int)
+    { return x >= 1 ? 10 : 0; }; // cliff at x=1
     sys.setTerrainHeightSource(&terrain);
 
     Entity e = addMover(reg, {0.0f, 0.0f}, {10.0f, 0.0f}); // desired x = 1.0
@@ -82,7 +84,8 @@ int main()
     reg.flushEntities();
     sys.update(0.1);
 
-    CHECK(testing::approx(e.getComponent<TransformComponent>().position.x, 1.0f));
+    CHECK(
+        testing::approx(e.getComponent<TransformComponent>().position.x, 1.0f));
   }
 
   TEST("stepping down any drop should be allowed")
@@ -97,7 +100,8 @@ int main()
     reg.flushEntities();
     sys.update(0.1);
 
-    CHECK(testing::approx(e.getComponent<TransformComponent>().position.x, 1.0f));
+    CHECK(
+        testing::approx(e.getComponent<TransformComponent>().position.x, 1.0f));
   }
 
   TEST("a body should slide along a wall it cannot cross")
@@ -109,7 +113,8 @@ int main()
     terrain.heightAt = [](int x, int) { return x == 1 ? 10 : 0; };
     sys.setTerrainHeightSource(&terrain);
 
-    Entity e = addMover(reg, {0.5f, 0.5f}, {10.0f, 10.0f}); // desired (1.5, 1.5)
+    Entity e =
+        addMover(reg, {0.5f, 0.5f}, {10.0f, 10.0f}); // desired (1.5, 1.5)
     reg.flushEntities();
     sys.update(0.1);
 

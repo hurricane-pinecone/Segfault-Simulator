@@ -232,8 +232,11 @@ void DevConsole::render(TextRenderer& text,
   const bool blink = (SDL_GetTicks() / 500) % 2 == 0;
   const std::string line = "> " + m_input.substr(0, m_cursor) +
                            (blink ? "|" : " ") + m_input.substr(m_cursor);
-  text.drawText(
-      static_cast<float>(marginX), static_cast<float>(y), line, font, Colors::White);
+  text.drawText(static_cast<float>(marginX),
+                static_cast<float>(y),
+                line,
+                font,
+                Colors::White);
 }
 
 } // namespace sfs

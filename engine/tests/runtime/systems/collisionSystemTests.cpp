@@ -18,8 +18,8 @@ WorldCollider tileCollider()
   return WorldCollider{glm::vec2{0.0f}, glm::vec2{32.0f}};
 }
 
-// A moving body, with previousPosition distinct from the current position so the
-// solver can tell which edge it crossed.
+// A moving body, with previousPosition distinct from the current position so
+// the solver can tell which edge it crossed.
 Entity addBody(Registry& reg, glm::vec2 prev, glm::vec2 pos, glm::vec2 vel)
 {
   Entity e = reg.createEntity();
@@ -71,8 +71,8 @@ int main()
 
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 2.0f));
-    CHECK(testing::approx(mover.getComponent<RigidBodyComponent>().velocity.x,
-                          0.0f));
+    CHECK(testing::approx(
+        mover.getComponent<RigidBodyComponent>().velocity.x, 0.0f));
   }
 
   TEST("a downward body should stop at a solid's top edge")
@@ -87,8 +87,8 @@ int main()
 
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.y, 0.0f));
-    CHECK(testing::approx(mover.getComponent<RigidBodyComponent>().velocity.y,
-                          0.0f));
+    CHECK(testing::approx(
+        mover.getComponent<RigidBodyComponent>().velocity.y, 0.0f));
   }
 
   TEST("solids on a different elevation should not block")
@@ -104,8 +104,8 @@ int main()
 
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 0.5f)); // passes through, unresolved
-    CHECK(testing::approx(mover.getComponent<RigidBodyComponent>().velocity.x,
-                          5.0f));
+    CHECK(testing::approx(
+        mover.getComponent<RigidBodyComponent>().velocity.x, 5.0f));
   }
 
   TEST("a stationary body should be skipped by the solver")
@@ -118,8 +118,8 @@ int main()
 
     sys.update(0.016);
 
-    CHECK(testing::approx(mover.getComponent<TransformComponent>().position.x,
-                          0.5f));
+    CHECK(testing::approx(
+        mover.getComponent<TransformComponent>().position.x, 0.5f));
   }
 
   TEST("a collider without the solid tag should not block")
@@ -137,8 +137,8 @@ int main()
 
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 0.5f));
-    CHECK(testing::approx(mover.getComponent<RigidBodyComponent>().velocity.x,
-                          5.0f));
+    CHECK(testing::approx(
+        mover.getComponent<RigidBodyComponent>().velocity.x, 5.0f));
   }
 
   return testing::report("collisionSystemTests");

@@ -1,8 +1,8 @@
 #include "engine/runtime/assetStore/assetStore.h"
 
-#include "engine/runtime/assetStore/sprite.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/string.h"
+#include "engine/runtime/assetStore/sprite.h"
 #include "glm/glm/exponential.hpp"
 
 #include <SDL_image.h>
@@ -337,8 +337,8 @@ void AssetStore::addRadialTexture(const std::string& textureId, int size)
   if (size < 2)
     size = 2;
 
-  SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(
-      0, size, size, 32, SDL_PIXELFORMAT_RGBA32);
+  SDL_Surface* surface =
+      SDL_CreateRGBSurfaceWithFormat(0, size, size, 32, SDL_PIXELFORMAT_RGBA32);
 
   if (!surface)
   {
@@ -367,7 +367,8 @@ void AssetStore::addRadialTexture(const std::string& textureId, int size)
       a *= a; // soften the falloff toward the rim
 
       const Uint8 alpha = static_cast<Uint8>(a * 255.0f + 0.5f);
-      pixels[y * pitch + x] = SDL_MapRGBA(surface->format, 255, 255, 255, alpha);
+      pixels[y * pitch + x] =
+          SDL_MapRGBA(surface->format, 255, 255, 255, alpha);
     }
   }
 

@@ -13,18 +13,18 @@
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/TextRenderer/textRenderer.h"
 
-#include <engine/runtime/assetStore/sprite.h>
 #include <engine/core/components/rigidBodyComponent.h>
 #include <engine/core/components/spriteComponent.h>
 #include <engine/core/components/transformComponent.h>
-#include <engine/runtime/game/game.h>
 #include <engine/core/logger/logger.h>
 #include <engine/core/mapLoader/mapLoader.h>
-#include <engine/runtime/systems/movementSystem.h>
 #include <engine/core/util/allocationMetrics.h>
-#include <engine/runtime/rendering/gl/gpuProfiling.h>
 #include <engine/core/util/profiling.h>
+#include <engine/runtime/assetStore/sprite.h>
+#include <engine/runtime/game/game.h>
 #include <engine/runtime/rendering/debug/ui.h>
+#include <engine/runtime/rendering/gl/gpuProfiling.h>
+#include <engine/runtime/systems/movementSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
 #include <glm/glm/ext/vector_float3.hpp>

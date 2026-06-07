@@ -2,10 +2,10 @@
 
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
 #include "engine/core/rendering/util/isometric/geometry.h"
-#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/runtime/rendering/commands/shadowCommands.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
+#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include <atomic>
 #include <vector>
 
@@ -28,7 +28,7 @@ class TerrainShadow
 public:
   TerrainShadow() = default;
   explicit TerrainShadow(IsometricShadowSettings settings)
-      : m_shadowSettings(settings) {};
+      : m_shadowSettings(settings){};
 
   void init(const ModuleInit& m) override { registry = m.registry; }
 

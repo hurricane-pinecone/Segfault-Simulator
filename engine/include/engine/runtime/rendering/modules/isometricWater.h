@@ -25,10 +25,11 @@ struct WaterSurfaceBuild
 
 /**
  * Render module that builds the water surface mesh from WaterTileComponent
- * entities. computeCommands() each frame emits one SurfaceCommand per water tile
- * cluster.
+ * entities. computeCommands() each frame emits one SurfaceCommand per water
+ * tile cluster.
  */
-class IsometricWater : public CommandModule<IsometricRenderContext, SurfaceCommand>
+class IsometricWater
+    : public CommandModule<IsometricRenderContext, SurfaceCommand>
 {
 public:
   void init(const ModuleInit& m) override { registry = m.registry; }

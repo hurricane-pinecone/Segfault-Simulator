@@ -10,7 +10,7 @@ struct ElevationComponent
 {
   int level = EmptyElevation;
 
-  ElevationComponent(int level = EmptyElevation) : level(level) {};
+  ElevationComponent(int level = EmptyElevation) : level(level){};
 };
 
 } // namespace sfs

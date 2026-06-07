@@ -30,11 +30,16 @@ public:
   void submit(const TexturedQuad& q) override { quads.push_back(q); }
   void submit(const FreeformQuad&) override {}
   void submit(const LitQuad&) override {}
-  void submitLitBatch(const LitQuadBatch&, unsigned int, unsigned int, bool,
+  void submitLitBatch(const LitQuadBatch&,
+                      unsigned int,
+                      unsigned int,
+                      bool,
                       int) override
   {
   }
-  void submitParticleBatch(const ParticleBatch&, unsigned int, BlendMode,
+  void submitParticleBatch(const ParticleBatch&,
+                           unsigned int,
+                           BlendMode,
                            bool) override
   {
   }
@@ -49,15 +54,17 @@ public:
   std::vector<TexturedQuad> quads;
 };
 
-// A scene wired to a mock renderer, with the sprite system attached. Returns the
-// renderer (holds the captured quads) and keeps the scene alive via `holder`.
+// A scene wired to a mock renderer, with the sprite system attached. Returns
+// the renderer (holds the captured quads) and keeps the scene alive via
+// `holder`.
 struct Harness
 {
   AssetStore store;
   MockRenderer mock;
   TextRenderer text{mock, store};
   Scene scene{0, SceneServices{store, mock, text}};
-  SpriteRenderSystem& sprites = scene.addSystem<SpriteRenderSystem>(store, mock);
+  SpriteRenderSystem& sprites =
+      scene.addSystem<SpriteRenderSystem>(store, mock);
 
   SpriteId sprite16()
   {

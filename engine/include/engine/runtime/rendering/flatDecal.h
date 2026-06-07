@@ -1,9 +1,9 @@
 #pragma once
 
+#include "SDL_pixels.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/particles/decal.h" // Clipping
 #include "engine/runtime/assetStore/sprite.h"
-#include "SDL_pixels.h"
 #include "glm/glm/ext/vector_float2.hpp"
 
 namespace sfs
@@ -19,13 +19,13 @@ namespace sfs
 struct FlatDecal
 {
   glm::vec2 worldPos{0.0f, 0.0f};
-  glm::vec2 size{16.0f, 16.0f};      // world units
-  glm::vec2 anchor{0.5f, 0.5f};      // 0,0 = top-left .. 1,1 = bottom-right
-  float rotation = 0.0f;             // radians
+  glm::vec2 size{16.0f, 16.0f}; // world units
+  glm::vec2 anchor{0.5f, 0.5f}; // 0,0 = top-left .. 1,1 = bottom-right
+  float rotation = 0.0f;        // radians
   SDL_Color tint{255, 255, 255, 255};
-  SpriteId sprite = 0;               // resolved via the asset store
-  int layer = 0;                     // draw order (same key as RenderLayerComponent)
-  float lifetime = -1.0f;            // seconds; < 0 = permanent
+  SpriteId sprite = 0;    // resolved via the asset store
+  int layer = 0;          // draw order (same key as RenderLayerComponent)
+  float lifetime = -1.0f; // seconds; < 0 = permanent
 
   // When true the decal renders at full brightness, ignoring the scene's
   // ambient/point lighting -- so vivid marks (fresh blood, paint) read clearly
@@ -35,8 +35,8 @@ struct FlatDecal
   // Clip the decal to the world-space rectangle `clipMin`..`clipMax` (e.g. the
   // platform it stuck to), so a mark near an edge is sliced cleanly instead of
   // spilling past it -- even when rotated. On by default; set Clipping::None to
-  // let it extend freely. A zero rect (clipMax <= clipMin) means "no surface" and
-  // skips clipping.
+  // let it extend freely. A zero rect (clipMax <= clipMin) means "no surface"
+  // and skips clipping.
   Clipping clipping = Clipping::Surface;
   glm::vec2 clipMin{0.0f, 0.0f};
   glm::vec2 clipMax{0.0f, 0.0f};

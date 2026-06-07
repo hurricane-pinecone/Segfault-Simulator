@@ -1,7 +1,6 @@
 #pragma once
 
 #include "config.h"
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/shadowCasterComponent.h"
@@ -9,6 +8,7 @@
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldCollider.h"
+#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float3.hpp"

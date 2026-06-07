@@ -25,8 +25,7 @@ constexpr float kClipSubpassEpsilon = 1e-4f;
 
 inline float clipOrderKey(const RenderOrder& order)
 {
-  return order.depth +
-         static_cast<float>(order.subpass) * kClipSubpassEpsilon;
+  return order.depth + static_cast<float>(order.subpass) * kClipSubpassEpsilon;
 }
 } // namespace detail
 

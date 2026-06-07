@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Auto-format staged C/C++ sources with clang-format before each commit, then
+# re-stage them, so nothing unformatted reaches a commit (or CI). Vendored code
+# under engine/lib keeps its own style and is left alone.
+#
+# Enable once per clone: git config core.hooksPath .githooks
+# Needs clang-format on PATH. For parity with CI, pin the same version:
+#   python3 -m venv ~/.local/share/sfs-clang-format \
+#     && ~/.local/share/sfs-clang-format/bin/pip install clang-format==17.0.6 \
+#     && ln -sf ~/.local/share/sfs-clang-format/bin/clang-format ~/.local/bin/clang-format
+set -euo pipefail
+
+cf="$(command -v clang-format || true)"
+if [ -z "$cf" ]; then
+  echo "pre-commit: clang-format not found on PATH; skipping format." >&2
+  echo "            install clang-format 17.0.6 (see .githooks/pre-commit)." >&2
+  exit 0
+fi
+
+# CI pins 17.0.6; a different version can format differently and fail CI.
+case "$("$cf" --version)" in
+*17.0.6*) ;;
+*) echo "pre-commit: warning: $("$cf" --version) is not 17.0.6 (CI's version);" \
+        "formatting may differ from CI." >&2 ;;
+esac
+
+# Staged, still-present C/C++ files, excluding the vendored lib tree.
+files="$(git diff --cached --name-only --diff-filter=ACM \
+         | grep -E '\.(cpp|h|hpp|inl)$' \
+         | grep -vE '(^|/)engine/lib/' || true)"
+[ -z "$files" ] && exit 0
+
+printf '%s\n' "$files" | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  "$cf" -i -- "$f"
+  git add -- "$f"
+done

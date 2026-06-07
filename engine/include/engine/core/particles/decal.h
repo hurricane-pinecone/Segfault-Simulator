@@ -18,8 +18,8 @@ enum class DecalSurface : uint8_t
 };
 
 // How a decal is bounded to the surface it sits on. Default keeps it on that
-// surface (a mark never spills past a platform edge); None lets it extend freely
-// (e.g. a streak meant to trail off an edge).
+// surface (a mark never spills past a platform edge); None lets it extend
+// freely (e.g. a streak meant to trail off an edge).
 enum class Clipping : uint8_t
 {
   Surface,
@@ -39,9 +39,9 @@ struct DecalSpawn
   float wallTop = 0.0f;    // elevation of the wall face's top (Wall only)
 
   // Footprint in tiles. size.x = length (along `rotation`'s local +X axis),
-  // size.y = width (across). Equal = a round splat; x > y = a directional streak.
-  // Wall drips use size.y as the streak width (length comes from the elevation
-  // run, not size).
+  // size.y = width (across). Equal = a round splat; x > y = a directional
+  // streak. Wall drips use size.y as the streak width (length comes from the
+  // elevation run, not size).
   glm::vec2 size{0.15f, 0.15f};
   float rotation = 0.0f;
   glm::vec4 color{0.35f, 0.0f, 0.0f, 0.85f};
@@ -58,10 +58,10 @@ struct DecalSpawn
   // face. `elevation` is the streak's top; the head descends toward wallBottom.
   float dripSpeed = 0.0f;
 
-  // Keep the mark on the surface it hit (clip to clipMin..clipMax, world-space).
-  // Default clips; set None to let it extend past the rect. The flat path fills
-  // the rect from the collider it stuck to; the isometric sink ignores this and
-  // clips per tile/face.
+  // Keep the mark on the surface it hit (clip to clipMin..clipMax,
+  // world-space). Default clips; set None to let it extend past the rect. The
+  // flat path fills the rect from the collider it stuck to; the isometric sink
+  // ignores this and clips per tile/face.
   Clipping clipping = Clipping::Surface;
   glm::vec2 clipMin{0.0f, 0.0f};
   glm::vec2 clipMax{0.0f, 0.0f};

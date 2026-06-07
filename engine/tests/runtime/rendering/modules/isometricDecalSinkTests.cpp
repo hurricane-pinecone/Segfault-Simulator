@@ -112,8 +112,8 @@ int main()
   TEST("clearRegion should drop only decals inside the tile rect")
   {
     IsometricDecalSink sink;
-    sink.addDecal(ground({0.5f, 0.5f}, kRed));  // tile (0, 0)
-    sink.addDecal(ground({5.5f, 5.5f}, kBlue)); // tile (5, 5)
+    sink.addDecal(ground({0.5f, 0.5f}, kRed));            // tile (0, 0)
+    sink.addDecal(ground({5.5f, 5.5f}, kBlue));           // tile (5, 5)
     sink.clearRegion(glm::ivec2{0, 0}, glm::ivec2{1, 1}); // max is exclusive
     CHECK(sink.decalCount() == 1);
   }
@@ -140,9 +140,9 @@ int main()
 
     CHECK(sink.commands().size() == 1);
     const DecalDrawCommand& cmd = sink.commands().front();
-    CHECK(cmd.drawKeys.size() == 1);        // the chunk is visible
-    CHECK(cmd.appends.size() == 1);         // its new static verts get appended
-    CHECK(cmd.textureId != nullptr);        // a texture to draw it with
+    CHECK(cmd.drawKeys.size() == 1); // the chunk is visible
+    CHECK(cmd.appends.size() == 1);  // its new static verts get appended
+    CHECK(cmd.textureId != nullptr); // a texture to draw it with
     CHECK(cmd.freeKeys.empty());
   }
 
