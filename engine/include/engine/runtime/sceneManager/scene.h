@@ -75,7 +75,7 @@ public:
   IQuadRenderer& quadRenderer() const { return m_quadRenderer; }
   TextRenderer& textRenderer() const { return m_textRenderer; }
 
-  template <typename TObject, typename... TArgs>
+  template <typename TObject = GameObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
 
   template <typename TObject>
@@ -132,7 +132,7 @@ private:
   std::vector<std::unique_ptr<GameObject>> m_gameObjects;
 };
 
-template <typename TObject = GameObject, typename... TArgs>
+template <typename TObject, typename... TArgs>
 TObject& Scene::createObject(TArgs&&... args)
 {
   auto object = std::make_unique<TObject>(std::forward<TArgs>(args)...);
