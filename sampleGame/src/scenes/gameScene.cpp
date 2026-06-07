@@ -6,7 +6,7 @@
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/logger/logger.h"
-#include "engine/core/rendering/util/isometric/isometricLightingUtils.h"
+#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/particles/prefabs.h"

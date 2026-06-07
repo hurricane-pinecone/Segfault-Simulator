@@ -5,7 +5,7 @@
 #include "engine/runtime/rendering/modules/isometricWater.h"
 #include "engine/runtime/rendering/modules/spriteShadow.h"
 #include "engine/runtime/rendering/modules/terrainShadow.h"
-#include "engine/runtime/rendering/renderStats.h"
+#include "engine/runtime/rendering/util/renderStats.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #ifndef ENGINE_WEB

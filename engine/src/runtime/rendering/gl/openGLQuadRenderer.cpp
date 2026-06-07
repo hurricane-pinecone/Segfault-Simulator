@@ -1,11 +1,11 @@
 
-#include "engine/runtime/rendering/openGLQuadRenderer.h"
+#include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/batchKeys/LitQuadBatchKey.h"
-#include "engine/runtime/rendering/glDebug.h"
+#include "engine/runtime/rendering/gl/glDebug.h"
 #include "engine/core/rendering/quads.h"
-#include "engine/runtime/rendering/gpuProfiling.h"
+#include "engine/runtime/rendering/gl/gpuProfiling.h"
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/trigonometric.hpp"

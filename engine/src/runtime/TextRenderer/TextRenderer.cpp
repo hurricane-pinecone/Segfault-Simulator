@@ -2,7 +2,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
-#include "engine/runtime/rendering/sdlColor.h"
+#include "engine/runtime/rendering/util/sdlColor.h"
 #include <SDL_hints.h>
 #include <SDL_ttf.h>
 #include <engine/runtime/TextRenderer/textRenderer.h>

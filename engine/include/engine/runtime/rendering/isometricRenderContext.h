@@ -2,7 +2,7 @@
 
 #include "engine/core/rendering/projection/isometricProjection.h"
 #include "engine/core/rendering/util/isometric/geometry.h"
-#include "engine/core/rendering/util/isometric/isometricLightingUtils.h"
+#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include <cstdint>

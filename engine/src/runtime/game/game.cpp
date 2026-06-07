@@ -1,4 +1,4 @@
-#include "engine/runtime/rendering/openGLQuadRenderer.h"
+#include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
 #ifdef __EMSCRIPTEN__
   #include <GLES3/gl3.h>
 #else
@@ -22,9 +22,9 @@
 #include <engine/core/mapLoader/mapLoader.h>
 #include <engine/runtime/systems/movementSystem.h>
 #include <engine/core/util/allocationMetrics.h>
-#include <engine/runtime/rendering/gpuProfiling.h>
+#include <engine/runtime/rendering/gl/gpuProfiling.h>
 #include <engine/core/util/profiling.h>
-#include <engine/runtime/rendering/ui.h>
+#include <engine/runtime/rendering/debug/ui.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
 #include <glm/glm/ext/vector_float3.hpp>
