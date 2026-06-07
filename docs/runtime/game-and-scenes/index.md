@@ -85,6 +85,10 @@ Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` 
 `getSystem<T>()` / `hasSystem<T>()`, plus the engine services `assetStore()`,
 `quadRenderer()`, and `textRenderer()`.
 
+`createObject<T>()` defaults `T` to `GameObject`, so `createObject()` (no type
+argument) creates and registers a plain `GameObject`. Pass a subclass to get a
+typed reference back: `createObject<Player>()` returns `Player&`.
+
 Manage scenes through the scene manager: `sceneManager.createScene<T>(name)` builds
 one (and makes it current), `sceneManager.load(name)` switches to an existing one,
 and `sceneManager.current()` returns the active scene.
