@@ -61,8 +61,32 @@ bool TextRenderer::init()
 
   TTF_SetFontHinting(font, TTF_HINTING_MONO);
 
+  // A smaller font for the dev console: a system monospace where one is
+  // available, falling back to the bundled pixel font elsewhere (e.g. web).
+  TTF_Font* consoleFont = nullptr;
+#if defined(__APPLE__)
+  consoleFont =
+      m_assetStore.addFont("console", "/System/Library/Fonts/Menlo.ttc", 14);
+#endif
+  if (consoleFont)
+  {
+    TTF_SetFontHinting(consoleFont, TTF_HINTING_NORMAL);
+  }
+  else
+  {
+    consoleFont = m_assetStore.addFont("console", "assets/fonts/m6x11.ttf", 16);
+    if (consoleFont)
+      TTF_SetFontHinting(consoleFont, TTF_HINTING_MONO);
+  }
+
   m_initialized = true;
   return true;
+}
+
+int TextRenderer::lineHeight(const std::string& fontId) const
+{
+  TTF_Font* font = m_assetStore.getFont(fontId);
+  return font ? TTF_FontLineSkip(font) : 0;
 }
 
 bool TextRenderer::isInitialized() const { return m_initialized; }
