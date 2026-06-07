@@ -126,6 +126,33 @@ target_compile_options(engine PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
 )
 
+# Embed the GLSL shaders. The renderers' shaders live in real .vert/.frag files
+# under src/.../gl/shaders; embedShaders.cmake bakes them into a generated header
+# (byte arrays -> no runtime file loading, and no string-literal-size limit). The
+# renderers include <engine/generated/embeddedShaders.h>. Regenerated whenever a
+# shader file changes (custom-command DEPENDS); CONFIGURE_DEPENDS picks up
+# adding/removing one.
+set(ENGINE_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/rendering/gl/shaders")
+file(GLOB ENGINE_SHADER_FILES CONFIGURE_DEPENDS
+    "${ENGINE_SHADER_DIR}/*.vert" "${ENGINE_SHADER_DIR}/*.frag")
+set(ENGINE_SHADERS_HEADER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/engine/generated/embeddedShaders.h")
+add_custom_command(
+    OUTPUT "${ENGINE_SHADERS_HEADER}"
+    COMMAND ${CMAKE_COMMAND}
+        "-DSHADER_DIR=${ENGINE_SHADER_DIR}"
+        "-DOUT=${ENGINE_SHADERS_HEADER}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
+    DEPENDS ${ENGINE_SHADER_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
+    COMMENT "Embedding GLSL shaders"
+    VERBATIM)
+# custom_target + add_dependencies guarantees the header is generated before the
+# engine compiles on every generator (including the multi-config VS build).
+add_custom_target(engineShaders DEPENDS "${ENGINE_SHADERS_HEADER}")
+add_dependencies(engine engineShaders)
+target_sources(engine PRIVATE "${ENGINE_SHADERS_HEADER}")
+target_include_directories(engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets
      DESTINATION ${CMAKE_BINARY_DIR}/bin)
 

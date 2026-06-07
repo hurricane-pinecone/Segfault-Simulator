@@ -4,6 +4,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/quads.h"
 #include "engine/core/util/profiling.h"
+#include "engine/generated/embeddedShaders.h"
 #include "engine/runtime/rendering/gl/glDebug.h"
 #include "engine/runtime/rendering/gl/gpuProfiling.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
@@ -817,8 +818,8 @@ void IsometricGeometryRenderer::appendDecalChunk(std::int64_t key,
 
   if (needed > buf.capacity)
   {
-    // Grow: allocate a larger VBO (doubling), copy the existing verts over on
-    // the GPU (no CPU mirror), swap it in, and re-point the VAO at it.
+    // Grow: allocate a larger VBO (doubling), carry the existing verts over,
+    // swap it in, and re-point the VAO at it.
     int newCapacity = buf.capacity > 0 ? buf.capacity * 2 : 64;
     if (newCapacity < needed)
       newCapacity = needed;
@@ -833,16 +834,21 @@ void IsometricGeometryRenderer::appendDecalChunk(std::int64_t key,
 
     if (buf.count > 0)
     {
-      glBindBuffer(GL_COPY_READ_BUFFER, buf.vbo);
-      glBindBuffer(GL_COPY_WRITE_BUFFER, newVbo);
-      glCopyBufferSubData(
-          GL_COPY_READ_BUFFER,
-          GL_COPY_WRITE_BUFFER,
-          0,
-          0,
-          static_cast<GLsizeiptr>(buf.count * sizeof(DecalVertex)));
-      glBindBuffer(GL_COPY_READ_BUFFER, 0);
-      glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+      // Apple's GL driver leaves glCopyBufferSubData unimplemented (it no-ops,
+      // dropping the chunk's existing decals on every grow). Map the old buffer
+      // and re-upload instead: glMapBufferRange is supported on desktop GL,
+      // GLES3, and macOS alike.
+      const GLsizeiptr usedBytes =
+          static_cast<GLsizeiptr>(buf.count * sizeof(DecalVertex));
+      glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+      if (auto* src = static_cast<const DecalVertex*>(
+              glMapBufferRange(GL_ARRAY_BUFFER, 0, usedBytes, GL_MAP_READ_BIT)))
+      {
+        std::vector<DecalVertex> existing(src, src + buf.count);
+        glUnmapBuffer(GL_ARRAY_BUFFER);
+        glBindBuffer(GL_ARRAY_BUFFER, newVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, usedBytes, existing.data());
+      }
     }
 
     glDeleteBuffers(1, &buf.vbo);
@@ -1090,195 +1096,11 @@ unsigned int IsometricGeometryRenderer::createSurfaceShaderProgram() const
   const std::string glslVersion = "#version 330 core\n";
 #endif
 
-  const std::string vertexSource = glslVersion + R"(
-layout(location = 0) in vec2 aPosition;
-layout(location = 1) in vec2 aWorldPosition;
-layout(location = 2) in vec4 aColor;
-layout(location = 3) in vec2 aUv;
-layout(location = 4) in vec4 aParams;
-layout(location = 5) in float aZ;
+  const std::string vertexSource =
+      glslVersion + std::string(sfs::shaders::surfaceVert);
 
-out vec2 vWorldPosition;
-out vec4 vColor;
-out vec2 vUv;
-out vec4 vParams;
-
-void main()
-{
-  vWorldPosition = aWorldPosition;
-  vColor = aColor;
-  vUv = aUv;
-  vParams = aParams;
-
-  gl_Position = vec4(aPosition, aZ, 1.0);
-}
-)";
-
-  const std::string fragmentSource = glslVersion + R"(
-#define MAX_LIGHTS 128
-
-in vec2 vWorldPosition;
-in vec4 vColor;
-in vec2 vUv;
-in vec4 vParams;
-
-out vec4 FragColor;
-
-uniform float uTime;
-uniform float uRippleStrength;
-uniform float uAmbient;
-
-uniform int uLightCount;
-uniform vec2 uLightPositions[MAX_LIGHTS];
-uniform vec3 uLightColors[MAX_LIGHTS];
-uniform float uLightIntensities[MAX_LIGHTS];
-uniform float uLightRadii[MAX_LIGHTS];
-
-float hash21(vec2 p)
-{
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
-}
-
-vec2 hash22(vec2 p)
-{
-  return vec2(
-      hash21(p),
-      hash21(p + 19.19));
-}
-
-float causticCells(vec2 p)
-{
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-
-  float d1 = 10.0;
-  float d2 = 10.0;
-
-  for (int y = -1; y <= 1; y++)
-  {
-    for (int x = -1; x <= 1; x++)
-    {
-      vec2 g = vec2(float(x), float(y));
-      vec2 o = hash22(i + g);
-
-      o = 0.5 + 0.5 * sin(uTime * 0.75 + 6.2831 * o);
-
-      vec2 r = g + o - f;
-      float d = dot(r, r);
-
-      if (d < d1)
-      {
-        d2 = d1;
-        d1 = d;
-      }
-      else if (d < d2)
-      {
-        d2 = d;
-      }
-    }
-  }
-
-  float edge = sqrt(d2) - sqrt(d1);
-
-  return 1.0 - smoothstep(0.035, 0.105, edge);
-}
-
-void main()
-{
-  float r1 = sin(
-      vWorldPosition.x * 1.25 +
-      vWorldPosition.y * 0.55 +
-      uTime * 2.2);
-
-  float r2 = sin(
-      vWorldPosition.x * -0.75 +
-      vWorldPosition.y * 1.10 +
-      uTime * 1.6);
-
-  float ripple = (r1 + r2) * 0.5;
-
-  vec3 color = vColor.rgb;
-  color += ripple * uRippleStrength;
-
-  vec3 pointLight = vec3(0.0);
-
-  for (int i = 0; i < MAX_LIGHTS; i++)
-  {
-    if (i >= uLightCount)
-      break;
-
-    float dist = length(uLightPositions[i] - vWorldPosition);
-
-    if (dist >= uLightRadii[i])
-      continue;
-
-    float attenuation = 1.0 - dist / uLightRadii[i];
-    attenuation = clamp(attenuation, 0.0, 1.0);
-    attenuation = pow(attenuation, 1.35);
-
-    pointLight +=
-        uLightColors[i] *
-        uLightIntensities[i] *
-        attenuation *
-        0.45;
-  }
-
-  float depth = vParams.x;
-
-  vec2 p = vWorldPosition * 1.75;
-
-  float c1 = causticCells(p + vec2(uTime * 0.08, uTime * 0.04));
-  float c2 = causticCells(p * 1.7 - vec2(uTime * 0.05, uTime * 0.09));
-
-  float caustic = max(c1, c2 * 0.25);
-  caustic = pow(caustic, 2.4);
-
-  float shallowFactor =
-      1.0 - smoothstep(0.25, 3.0, depth);
-
-  shallowFactor = pow(shallowFactor, 1.8);
-
-  float pointLightAmount =
-      max(max(pointLight.r, pointLight.g), pointLight.b);
-
-  float sunCausticVisibility =
-      smoothstep(0.18, 0.75, uAmbient);
-
-  float pointCausticVisibility =
-      smoothstep(0.02, 0.35, pointLightAmount);
-
-  float causticVisibility =
-      max(sunCausticVisibility, pointCausticVisibility);
-
-  float causticStrength =
-      0.25 * shallowFactor;
-
-  causticStrength *=
-      1.0 + clamp(pointLightAmount, 0.0, 1.0) * 2.5;
-
-  vec3 causticColor = vec3(0.85, 0.97, 1.0);
-  float ambientVisibility = mix(0.25, 1.0, clamp(uAmbient, 0.0, 1.0));
-
-  float lightFloor = mix(0.06, 0.82, clamp(uAmbient, 0.0, 1.0));
-  color *= max(uAmbient, lightFloor);
-
-  // Keep transparent water readable at night.
-  vec3 nightWaterFloor = vColor.rgb * 0.22;
-  color = max(color, nightWaterFloor);
-
-  color +=
-      causticColor *
-      caustic *
-      causticStrength *
-      causticVisibility;
-
-  color += pointLight;
-  color = clamp(color, 0.0, 1.0);
-
-  FragColor = vec4(color, vColor.a);
-})";
+  const std::string fragmentSource =
+      glslVersion + std::string(sfs::shaders::surfaceFrag);
 
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
   GLuint fragmentShader =
@@ -1329,43 +1151,11 @@ unsigned int IsometricGeometryRenderer::createSpriteShadowShaderProgram() const
   const std::string glslVersion = "#version 330 core\n";
 #endif
 
-  const std::string vertexSource = glslVersion + R"(
-layout(location = 0) in vec2 aPosition;
-layout(location = 1) in vec2 aUv;
-layout(location = 2) in vec4 aColor;
-layout(location = 3) in float aZ;
+  const std::string vertexSource =
+      glslVersion + std::string(sfs::shaders::spriteShadowVert);
 
-out vec2 vUv;
-out vec4 vColor;
-
-void main()
-{
-  vUv = aUv;
-  vColor = aColor;
-  gl_Position = vec4(aPosition, aZ, 1.0);
-}
-)";
-
-  const std::string fragmentSource = glslVersion + R"(
-in vec2 vUv;
-in vec4 vColor;
-
-out vec4 FragColor;
-
-uniform sampler2D uTexture;
-
-void main()
-{
-  // Silhouette alpha comes from the sprite texture; the tint (typically black)
-  // comes from the per-vertex color.
-  float silhouette = texture(uTexture, vUv).a;
-
-  if (silhouette <= 0.0)
-    discard;
-
-  FragColor = vec4(vColor.rgb, vColor.a * silhouette);
-}
-)";
+  const std::string fragmentSource =
+      glslVersion + std::string(sfs::shaders::spriteShadowFrag);
 
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
   GLuint fragmentShader =
@@ -1420,147 +1210,11 @@ unsigned int IsometricGeometryRenderer::createDecalShaderProgram() const
   // worldToScreen + toNdc, and derives clip-space z from the painter sort-key
   // using the frame's depth range (matching assignClipDepth's toClipZ). This is
   // what lets settled decals live unchanged in GPU buffers across camera moves.
-  const std::string vertexSource = glslVersion + R"(
-layout(location = 0) in vec2 aWorldPos;
-layout(location = 1) in float aElevation;
-layout(location = 2) in vec2 aUv;
-layout(location = 3) in vec4 aColor;
-layout(location = 4) in float aSortKey;
+  const std::string vertexSource =
+      glslVersion + std::string(sfs::shaders::decalVert);
 
-out vec2 vUv;
-out vec4 vColor;
-out vec2 vWorldPos;
-out float vGround;
-
-uniform vec2 uTileSize;       // (tileWidth, tileHeight)
-uniform float uWorldScale;
-uniform float uZoom;
-uniform vec2 uCameraIso;
-uniform vec2 uScreenCenter;
-uniform float uElevationStep;
-uniform vec2 uNdcScale;       // (2/width, 2/height)
-uniform float uDepthMin;
-uniform float uDepthInvRange;
-
-void main()
-{
-  vUv = aUv;
-  vColor = aColor;
-  vWorldPos = aWorldPos;
-  vGround = aElevation;
-
-  vec2 iso = vec2(aWorldPos.x - aWorldPos.y, aWorldPos.x + aWorldPos.y)
-             * uTileSize * uWorldScale * 0.5;
-  vec2 screen = (iso - uCameraIso) * uZoom + uScreenCenter;
-  screen.y -= aElevation * uElevationStep * uWorldScale * uZoom;
-
-  vec2 ndc = vec2(screen.x * uNdcScale.x - 1.0, 1.0 - screen.y * uNdcScale.y);
-
-  float t = clamp((aSortKey - uDepthMin) * uDepthInvRange, 0.0, 1.0);
-  float clipZ = 0.9 - 1.8 * t;
-
-  gl_Position = vec4(ndc, clipZ, 1.0);
-}
-)";
-
-  const std::string fragmentSource = glslVersion + R"(
-#define MAX_LIGHTS 128
-
-in vec2 vUv;
-in vec4 vColor;
-in vec2 vWorldPos;
-in float vGround;
-
-out vec4 FragColor;
-
-uniform sampler2D uTexture;
-
-uniform float uAmbient;
-uniform vec3 uAmbientColor;
-uniform float uHeightScale;
-
-uniform int uLightCount;
-uniform vec2 uLightPositions[MAX_LIGHTS];
-uniform vec3 uLightColors[MAX_LIGHTS];
-uniform float uLightIntensities[MAX_LIGHTS];
-uniform float uLightRadii[MAX_LIGHTS];
-uniform float uLightHeights[MAX_LIGHTS];
-uniform float uLightGroundLevels[MAX_LIGHTS];
-
-// Point-light contribution, matching the lit shader's model (3D distance with
-// the elevation gap, smootherstep falloff, colour-normalised blend) but without
-// the terrain horizon occlusion -- a decal lies on a surface, and skipping the
-// per-pixel march keeps it cheap. Normal is treated as up (ground-facing).
-vec3 decalPointLight()
-{
-  vec3 weightedColor = vec3(0.0);
-  float totalWeight = 0.0;
-  float strongest = 0.0;
-
-  for (int i = 0; i < MAX_LIGHTS; i++)
-  {
-    if (i >= uLightCount)
-      break;
-
-    vec2 delta = uLightPositions[i] - vWorldPos;
-    float distXY = length(delta);
-    if (distXY >= uLightRadii[i])
-      continue;
-
-    float lightLevel = uLightGroundLevels[i] + uLightHeights[i] * uHeightScale;
-    float dz = lightLevel - vGround;
-    float dist = sqrt(distXY * distXY + dz * dz);
-    if (dist >= uLightRadii[i])
-      continue;
-
-    float reach = clamp(1.0 - dist / uLightRadii[i], 0.0, 1.0);
-    float attenuation =
-        reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0);
-
-    vec3 pointDir = normalize(vec3(delta.x, delta.y, max(dz, 0.0)));
-    float ndotl = max(pointDir.z, 0.0); // surface normal up
-    float diffuse = mix(0.12, 1.0, pow(ndotl, 0.8));
-
-    float amount = uLightIntensities[i] * attenuation * diffuse;
-
-    vec3 color = uLightColors[i];
-    float mc = max(max(color.r, color.g), color.b);
-    color = mc > 0.001 ? color / mc : vec3(1.0);
-
-    weightedColor += color * amount;
-    totalWeight += amount;
-    strongest = max(strongest, amount);
-  }
-
-  if (totalWeight <= 0.001)
-    return vec3(0.0);
-
-  vec3 blended = weightedColor / totalWeight;
-  float capped = (strongest / (1.0 + strongest)) * 1.65;
-  return blended * capped;
-}
-
-void main()
-{
-  vec4 tex = texture(uTexture, vUv) * vColor;
-  if (tex.a <= 0.0)
-    discard;
-
-  // Point lights only assert themselves as ambient drops (same gating as the lit
-  // shader), so blood near a lamp lights up at night but day ambient dominates.
-  float daylight = smoothstep(0.20, 0.75, uAmbient);
-  float pointVisibility = 1.0 - daylight;
-  pointVisibility *= pointVisibility;
-
-  vec3 pointLight = vec3(0.0);
-  if (pointVisibility > 0.001)
-    pointLight = decalPointLight() * (pointVisibility * 2.0);
-
-  vec3 lighting = uAmbientColor * uAmbient + pointLight;
-
-  FragColor = vec4(tex.rgb * lighting, tex.a);
-}
-)";
+  const std::string fragmentSource =
+      glslVersion + std::string(sfs::shaders::decalFrag);
 
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
   GLuint fragmentShader =
@@ -1608,369 +1262,15 @@ unsigned int IsometricGeometryRenderer::createGeometryShaderProgram() const
   // Vertices arrive already projected to screen pixels -> NDC (CPU side), plus
   // world XY + per-vertex elevation (ground) + a real world normal for
   // lighting.
-  const std::string vertexSource = glslVersion + R"(
-layout(location = 0) in vec2 aPosition;   // NDC
-layout(location = 1) in vec2 aWorldPos;
-layout(location = 2) in float aGround;
-layout(location = 3) in vec2 aUv;
-layout(location = 4) in vec3 aNormal;
-layout(location = 5) in float aZ;         // clip-space depth
-
-out vec2 vUv;
-out vec2 vWorldPos;
-out float vGround;
-out vec3 vNormal;
-
-void main()
-{
-  vUv = aUv;
-  vWorldPos = aWorldPos;
-  vGround = aGround;
-  vNormal = aNormal;
-  gl_Position = vec4(aPosition, aZ, 1.0);
-}
-)";
+  const std::string vertexSource =
+      glslVersion + std::string(sfs::shaders::geometryVert);
 
   // Adapted from the lit terrain shader for REAL geometry: the surface normal
   // is the real per-vertex normal (so "up" is normal.z, not the billboard
   // screen-space normal.y hack), and the fragment's ground is the interpolated
   // per-vertex elevation -- so a side face lights from its base up.
-  const std::string fragmentSource = glslVersion + R"(
-#define MAX_LIGHTS 128
-
-in vec2 vUv;
-in vec2 vWorldPos;
-in float vGround;
-in vec3 vNormal;
-
-out vec4 FragColor;
-
-uniform sampler2D uTexture;
-uniform float uAmbient;
-uniform vec3 uLightDirection;
-uniform vec3 uLightColor; // sun/ambient scene tint
-uniform float uDiffuseStrength;
-uniform int uSurfaceEffect;
-uniform int uShadowSharp;      // 0 = smooth (bilinear), 1 = sharp (per-tile DDA)
-uniform int uSunShadowEnabled; // 1 = cast terrain shadows via the heightmap march
-
-uniform int uLightCount;
-uniform vec2 uLightPositions[MAX_LIGHTS];
-uniform vec3 uLightColors[MAX_LIGHTS];
-uniform float uLightIntensities[MAX_LIGHTS];
-uniform float uLightRadii[MAX_LIGHTS];
-uniform float uLightHeights[MAX_LIGHTS];
-uniform float uLightGroundLevels[MAX_LIGHTS];
-
-uniform sampler2D uHeightmap;
-uniform vec2 uHeightmapOrigin;
-uniform vec2 uHeightmapSize;
-uniform float uHeightmapTexSize;
-uniform float uHeightScale;
-
-float hash21(vec2 p)
-{
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
-}
-
-float valueNoise(vec2 p)
-{
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float a = hash21(i);
-  float b = hash21(i + vec2(1.0, 0.0));
-  float c = hash21(i + vec2(0.0, 1.0));
-  float d = hash21(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
-vec3 applyGrassEffect(vec3 color, vec2 uv, vec2 worldPos)
-{
-  vec2 p = worldPos * 12.0 + uv * 28.0;
-  float n1 = valueNoise(p);
-  float n2 = valueNoise(p * 2.7);
-  float variation = n1 * 0.65 + n2 * 0.35;
-  vec3 dark = vec3(0.55, 0.85, 0.45);
-  vec3 light = vec3(1.15, 1.28, 0.82);
-  color *= mix(dark, light, variation);
-  float blade = smoothstep(0.72, 0.92, valueNoise(vec2(p.x * 0.7, p.y * 3.5)));
-  color *= mix(vec3(1.0), vec3(0.75, 1.12, 0.65), blade * 0.35);
-  return color;
-}
-
-vec3 applySandEffect(vec3 color, vec2 uv, vec2 worldPos)
-{
-  vec2 p = worldPos * 18.0 + uv * 72.0;
-  float along = p.x * 0.85 + p.y * 0.32;
-  float across = p.x * -0.28 + p.y * 0.96;
-  float warp = valueNoise(vec2(along * 0.08, across * 0.18)) * 2.0 - 1.0;
-  float dune = sin(along * 0.42 + warp * 2.8) * 0.5 + 0.5;
-  dune = smoothstep(0.38, 0.72, dune);
-  float fineDune = sin(along * 1.4 + warp * 3.5) * 0.5 + 0.5;
-  fineDune = smoothstep(0.48, 0.82, fineDune);
-  float grain = valueNoise(p * 3.7);
-  float specks = smoothstep(0.90, 0.985, valueNoise(p * 10.0));
-  vec3 sand = color;
-  sand *= mix(0.90, 1.10, dune * 0.25);
-  sand *= mix(0.96, 1.06, fineDune * 0.15);
-  sand *= mix(0.97, 1.03, grain * 0.5);
-  sand -= specks * 0.025;
-  return sand;
-}
-
-float terrainLevelAt(vec2 world)
-{
-  if (uHeightmapSize.x < 1.0 || uHeightmapSize.y < 1.0)
-    return -1e9;
-  vec2 texel = world - uHeightmapOrigin;
-  if (texel.x < 0.0 || texel.x >= uHeightmapSize.x || texel.y < 0.0 ||
-      texel.y >= uHeightmapSize.y)
-    return -1e9;
-  return texture(uHeightmap, texel / uHeightmapTexSize).r;
-}
-
-float pointLightVisibility(vec2 fragXY, vec2 lightXY, float fragGround,
-                           float lightLevel)
-{
-  if (uHeightmapSize.x < 1.0)
-    return 1.0;
-  float anchor = fragGround < -1.0e8 ? lightLevel : fragGround;
-  vec2 toLight = lightXY - fragXY;
-  float distTotal = length(toLight);
-  if (distTotal < 1.0e-4)
-    return 1.0;
-  float lightAngle = (lightLevel - anchor) / distTotal;
-  const int STEPS = 48;
-  float maxAngle = -1.0e9;
-  for (int s = 0; s < STEPS; s++)
-  {
-    float t = (float(s) + 0.5) / float(STEPS);
-    float d = distTotal * t;
-    if (d < 0.85)
-      continue;
-    vec2 samplePos = mix(fragXY, lightXY, t);
-    float terrainAngle = (terrainLevelAt(samplePos) - anchor) / d;
-    maxAngle = max(maxAngle, terrainAngle);
-  }
-  float over = maxAngle - lightAngle;
-  return 1.0 - smoothstep(0.0, 0.30, over);
-}
-
-// Real-normal point lighting. fragGround is the fragment's own elevation (vGround),
-// so a side face's lower fragments are close to a low light and light up.
-vec3 calculatePointLighting(vec3 normal)
-{
-  vec3 weightedColor = vec3(0.0);
-  float totalWeight = 0.0;
-  float strongestAmount = 0.0;
-
-  float fragGroundSmooth = vGround;
-
-  for (int i = 0; i < MAX_LIGHTS; i++)
-  {
-    if (i >= uLightCount)
-      break;
-
-    vec2 delta = uLightPositions[i] - vWorldPos;
-    float distXY = length(delta);
-    if (distXY >= uLightRadii[i])
-      continue;
-
-    float lightLevel = uLightGroundLevels[i] + uLightHeights[i] * uHeightScale;
-    float dz = (lightLevel - fragGroundSmooth);
-    float dist = sqrt(distXY * distXY + dz * dz);
-    if (dist >= uLightRadii[i])
-      continue;
-
-    float visibility =
-        pointLightVisibility(vWorldPos, uLightPositions[i], fragGroundSmooth, lightLevel);
-    if (visibility <= 0.001)
-      continue;
-
-    float reach = clamp(1.0 - dist / uLightRadii[i], 0.0, 1.0);
-    float attenuation = reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0);
-
-    vec3 lightVector = vec3(delta.x, delta.y, max(dz, 0.0));
-    vec3 pointDir = normalize(lightVector);
-    float ndotl = max(dot(normal, pointDir), 0.0);
-    float diffuse = mix(0.12, 1.0, pow(ndotl, 0.8));
-
-    float amount = uLightIntensities[i] * attenuation * diffuse * visibility;
-
-    vec3 color = uLightColors[i];
-    float maxChannel = max(max(color.r, color.g), color.b);
-    if (maxChannel > 0.001)
-      color /= maxChannel;
-    else
-      color = vec3(1.0);
-
-    weightedColor += color * amount;
-    totalWeight += amount;
-    strongestAmount = max(strongestAmount, amount);
-  }
-
-  if (totalWeight <= 0.001)
-    return vec3(0.0);
-
-  vec3 blendedColor = weightedColor / totalWeight;
-  float cappedAmount = (strongestAmount / (1.0 + strongestAmount)) * 1.65;
-  return blendedColor * cappedAmount;
-}
-
-// Directional sun occlusion: the same horizon-angle test the point lights use,
-// marched along the sun azimuth and compared to the sun's altitude. 1 = lit,
-// 0 = shadowed. Analytic against the heightmap, so no bias/acne/peter-panning.
-//
-// Two user-selectable styles (uShadowSharp):
-//  - Smooth: fixed-distance samples read the LINEAR-filtered heightmap, so the
-//    occluder horizon ramps between tiles -> soft, rounded shadow edges.
-//  - Sharp: a grid DDA visits every tile the ray crosses and reads its centre
-//    (the exact discrete elevation) -> blocky, tile-aligned shadow edges.
-float sunVisibility(float fragGround)
-{
-  if (uHeightmapSize.x < 1.0)
-    return 1.0;
-
-  vec2 dir = uLightDirection.xy; // horizontal direction toward the sun
-  float horiz = length(dir);
-  if (horiz < 1.0e-4)
-    return 1.0; // sun ~straight up: nothing casts
-
-  dir /= horiz;
-  float sunSlope = uLightDirection.z / horiz; // rise (levels) per tile
-
-  float maxAngle = -1.0e9;
-
-  if (uShadowSharp == 1)
-  {
-    // Grid DDA (Amanatides-Woo) from the fragment toward the sun: visit EVERY
-    // tile the ray crosses, in order, reading each tile's centre. Visiting every
-    // crossed tile (vs fixed-distance samples) means no occluder is skipped, so a
-    // block casts one coherent silhouette instead of scattered bits.
-    ivec2 tile = ivec2(floor(vWorldPos));
-    ivec2 stepDir = ivec2(sign(dir.x), sign(dir.y));
-    vec2 invDir = 1.0 / max(abs(dir), vec2(1.0e-6));
-    vec2 tMax;
-    tMax.x = (dir.x >= 0.0 ? float(tile.x) + 1.0 - vWorldPos.x
-                           : vWorldPos.x - float(tile.x)) *
-             invDir.x;
-    tMax.y = (dir.y >= 0.0 ? float(tile.y) + 1.0 - vWorldPos.y
-                           : vWorldPos.y - float(tile.y)) *
-             invDir.y;
-
-    const int MAX_STEPS = 28;
-    const float kSunShadowMaxDist = 18.0; // tiles
-    for (int i = 0; i < MAX_STEPS; i++)
-    {
-      // Step to the next tile boundary (the fragment's own tile is passed first,
-      // so it never self-occludes).
-      if (tMax.x < tMax.y)
-      {
-        tile.x += stepDir.x;
-        tMax.x += invDir.x;
-      }
-      else
-      {
-        tile.y += stepDir.y;
-        tMax.y += invDir.y;
-      }
-
-      vec2 center = vec2(tile) + 0.5;
-      float dist = length(center - vWorldPos);
-      if (dist > kSunShadowMaxDist)
-        break;
-
-      float th = terrainLevelAt(center);
-      if (th < -1.0e8)
-        continue;
-
-      maxAngle = max(maxAngle, (th - fragGround) / dist);
-    }
-
-    // Tight penumbra keeps the blocky silhouette crisp.
-    return 1.0 - smoothstep(0.0, 0.06, maxAngle - sunSlope);
-  }
-
-  // Smooth: even point samples against the linearly-filtered heightmap.
-  const int STEPS = 24;
-  const float kSunShadowMaxDist = 16.0; // tiles
-  for (int s = 0; s < STEPS; s++)
-  {
-    float d = kSunShadowMaxDist * (float(s) + 1.0) / float(STEPS);
-    if (d < 0.5)
-      continue;
-    float th = terrainLevelAt(vWorldPos + dir * d);
-    if (th < -1.0e8)
-      continue;
-    maxAngle = max(maxAngle, (th - fragGround) / d);
-  }
-
-  // Wider penumbra for soft, rounded edges.
-  return 1.0 - smoothstep(0.0, 0.30, maxAngle - sunSlope);
-}
-
-void main()
-{
-  vec3 normal = normalize(vNormal);
-
-  vec4 albedo = texture(uTexture, vUv);
-
-  // Surface shimmer applies to top faces (real up-facing).
-  if (normal.z > 0.5)
-  {
-    if (uSurfaceEffect == 3)
-      albedo.rgb = applyGrassEffect(albedo.rgb, vUv, vWorldPos);
-    else if (uSurfaceEffect == 4)
-      albedo.rgb = applySandEffect(albedo.rgb, vUv, vWorldPos);
-  }
-
-  if (albedo.a <= 0.0)
-    discard;
-
-  vec3 lightDir = normalize(uLightDirection);
-  float sunDiffuse = max(dot(normal, lightDir), 0.0);
-
-  // Real geometry: "up-ness" is the world Z of the normal (top faces ~1, sides ~0).
-  float upness = smoothstep(0.0, 0.5, normal.z);
-  float sunFacing = smoothstep(0.0, 0.6, sunDiffuse);
-  float shade = (1.0 - upness) * (1.0 - sunFacing);
-
-  float sunHeight = clamp(lightDir.z, 0.0, 1.0);
-  float ambientLevel = uAmbient * mix(mix(0.8, 1.0, sunHeight), 1.0, 1.0 - upness);
-
-  float litLevel = ambientLevel + sunDiffuse * uDiffuseStrength;
-  float shadedLevel = min(1.0 - uDiffuseStrength, uAmbient);
-  float lit = mix(litLevel, shadedLevel, shade);
-
-  // Cast sun shadows pull the fragment toward its shaded (ambient-only) level,
-  // so a shadowed surface keeps ambient but loses the directional sun. Disabled
-  // when the projected shadow technique is selected.
-  if (uSunShadowEnabled == 1)
-    lit = mix(shadedLevel, lit, sunVisibility(vGround));
-
-  vec3 sunlight = vec3(lit) * uLightColor;
-  sunlight = max(sunlight, vec3(0.03));
-
-  float daylight = smoothstep(0.20, 0.75, uAmbient);
-  float pointVisibility = 1.0 - daylight;
-  pointVisibility *= pointVisibility;
-
-  vec3 pointLight = vec3(0.0);
-  if (pointVisibility > 0.001)
-    pointLight = calculatePointLighting(normal) * (pointVisibility * 2.0);
-
-  float sunlightAmount = max(max(sunlight.r, sunlight.g), sunlight.b);
-  float shadowRoom =
-      mix(1.0, 1.0 - smoothstep(0.65, 1.0, sunlightAmount), daylight);
-
-  vec3 totalLight = clamp(sunlight + pointLight * shadowRoom, 0.0, 1.0);
-
-  FragColor = vec4(albedo.rgb * totalLight, albedo.a);
-}
-)";
+  const std::string fragmentSource =
+      glslVersion + std::string(sfs::shaders::geometryFrag);
 
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
   GLuint fragmentShader =
