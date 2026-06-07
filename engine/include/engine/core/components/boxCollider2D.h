@@ -16,11 +16,14 @@ namespace sfs
  *
  * For isometric GROUND movement and solid-object blocking (which need
  * elevation) use WorldCollider instead.
+ *
+ * @param glm::vec2 half - half-extents
+ * @param glm::vec2 offset - centre offset from the entity, default (0, 0)
  */
 struct BoxCollider2D
 {
-  glm::vec2 half{8.0f, 8.0f};   // half-extents
-  glm::vec2 offset{0.0f, 0.0f}; // centre offset from the entity position
+  glm::vec2 half{8.0f, 8.0f};
+  glm::vec2 offset{0.0f, 0.0f};
 
   BoxCollider2D() = default;
   explicit BoxCollider2D(glm::vec2 half, glm::vec2 offset = {0.0f, 0.0f})

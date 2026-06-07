@@ -104,5 +104,94 @@ int main()
     CHECK(testing::approx(active.transform->position.x, 1.0f));
   }
 
+  TEST("shake produces a bounded offset without moving the base position")
+  {
+    Registry reg;
+    CameraSystem& sys = reg.addSystem<CameraSystem>();
+
+    // No valid target, so the followed base position stays put and only the
+    // shake offset can change.
+    CameraComponent cam;
+    cam.target = 9999;
+    cam.shakeMaxOffset = 1.0f;
+    Entity camera = addCamera(reg, {5.0f, 5.0f}, cam);
+    reg.flushEntities();
+
+    auto& c = camera.getComponent<CameraComponent>();
+    c.shake(1.0f, 1.0f, 1.0f); // full strength, 1s, linear
+    sys.update(0.1);
+
+    // Some displacement this frame, each axis bounded by strength * maxOffset.
+    const glm::vec2 o = c.shakeOffset();
+    CHECK(std::abs(o.x) > 0.0f || std::abs(o.y) > 0.0f);
+    CHECK(std::abs(o.x) <= 1.0f + 1e-4f);
+    CHECK(std::abs(o.y) <= 1.0f + 1e-4f);
+
+    // The base transform is untouched by the shake (no drift).
+    const auto& t = camera.getComponent<TransformComponent>();
+    CHECK(testing::approx(t.position.x, 5.0f));
+    CHECK(testing::approx(t.position.y, 5.0f));
+  }
+
+  TEST("shake fades to nothing after its duration")
+  {
+    Registry reg;
+    CameraSystem& sys = reg.addSystem<CameraSystem>();
+
+    CameraComponent cam;
+    cam.target = 9999;
+    cam.shakeMaxOffset = 1.0f;
+    Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
+    reg.flushEntities();
+
+    auto& c = camera.getComponent<CameraComponent>();
+    c.shake(1.0f, 0.5f);
+
+    for (int i = 0; i < 10; i++) // 1.0s elapsed > 0.5s duration
+      sys.update(0.1);
+
+    CHECK(testing::approx(c.shakeOffset().x, 0.0f));
+    CHECK(testing::approx(c.shakeOffset().y, 0.0f));
+  }
+
+  TEST("shake clamps strength so the offset never exceeds maxOffset")
+  {
+    Registry reg;
+    CameraSystem& sys = reg.addSystem<CameraSystem>();
+
+    CameraComponent cam;
+    cam.target = 9999;
+    cam.shakeMaxOffset = 1.0f;
+    Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
+    reg.flushEntities();
+
+    auto& c = camera.getComponent<CameraComponent>();
+    c.shake(5.0f, 1.0f); // over-strength: clamps to 1.0
+    sys.update(0.05);    // early in the shake, amplitude ~ strength
+
+    CHECK(std::abs(c.shakeOffset().x) <= 1.0f + 1e-4f);
+    CHECK(std::abs(c.shakeOffset().y) <= 1.0f + 1e-4f);
+  }
+
+  TEST("the active camera position includes the shake offset")
+  {
+    Registry reg;
+    CameraSystem& sys = reg.addSystem<CameraSystem>();
+
+    CameraComponent cam;
+    cam.target = 9999;
+    cam.shakeMaxOffset = 1.0f;
+    Entity camera = addCamera(reg, {2.0f, 3.0f}, cam);
+    reg.flushEntities();
+
+    auto& c = camera.getComponent<CameraComponent>();
+    c.shake(1.0f, 1.0f);
+    sys.update(0.1);
+
+    const glm::vec2 pos = sys.activeCamera().getCameraPosition();
+    CHECK(testing::approx(pos.x, 2.0f + c.shakeOffset().x));
+    CHECK(testing::approx(pos.y, 3.0f + c.shakeOffset().y));
+  }
+
   return testing::report("cameraSystemTests");
 }

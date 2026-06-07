@@ -11,6 +11,7 @@
 #include "systems/pickupSystem.h"
 #include "systems/platformerPhysicsSystem.h"
 
+#include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
@@ -22,9 +23,9 @@
 #include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/rendering/flatRenderContext.h"
 #include "engine/runtime/rendering/modules/particles.h"
+#include "engine/runtime/systems/cameraSystem.h"
 #include "engine/runtime/systems/flatRenderSystem.h"
 #include "glm/glm/common.hpp"
-#include "glm/glm/trigonometric.hpp"
 
 #include <SDL_rect.h>
 #include <string>
@@ -215,6 +216,9 @@ void PlatformerScene::onInit()
   // frame; bullets advance + resolve hits before the particle sim runs.
   addSystem<platformer::EnemySystem>();
   addSystem<platformer::PlatformerPhysicsSystem>();
+  // Camera follows the player after physics has moved it this frame, and
+  // advances any active shake.
+  addSystem<sfs::CameraSystem>();
   auto& bullets = addSystem<platformer::BulletSystem>();
   // Physics blood runs right after bullets (so droplets sprayed this frame
   // integrate immediately) and before the renderer (which draws + animates the
@@ -267,7 +271,8 @@ void PlatformerScene::onInit()
       [this](glm::vec2 pos)
       {
         ++m_kills;
-        m_shake = SHAKE_ON_KILL;
+        m_camera.getComponent<sfs::CameraComponent>().shake(
+            1.0f, SHAKE_DURATION);
         spawnFlash(pos, glm::vec3{1.0f, 0.3f, 0.15f}, 340.0f, DEATH_FLASH_TIME);
 
         std::uniform_real_distribution<float> roll(0.0f, 1.0f);
@@ -297,6 +302,20 @@ void PlatformerScene::createEntities()
   generatePlatforms();
 
   m_player = &createObject<Player>();
+
+  // Camera: an ECS entity the engine CameraSystem follows (and shakes). Started
+  // on the player so it doesn't pan in from the origin.
+  const glm::vec2 cameraStart =
+      m_player->entity().getComponent<sfs::TransformComponent>().position;
+  m_camera = createEntity()
+                 .addComponent<sfs::TransformComponent>(cameraStart)
+                 .addComponent<sfs::CameraComponent>(
+                     static_cast<int>(m_player->entity().getId()),
+                     glm::vec2{0.0f, 0.0f},
+                     CAMERA_SMOOTHING,
+                     1.0f);
+  m_camera.getComponent<sfs::CameraComponent>().shakeMaxOffset =
+      SHAKE_MAX_OFFSET;
 
   // Coloured torches on a few generated platforms; they light the dark level
   // and emit sparks (generic Particles module + point lighting on the flat
@@ -412,26 +431,10 @@ void PlatformerScene::spawnRandomEnemy()
   createEnemy({p.x + ox(m_rng), top - 22.0f}); // rest just above the surface
 }
 
-glm::vec2 PlatformerScene::cameraTarget() const
-{
-  if (!m_player)
-    return m_shakeOffset;
-
-  return m_player->entity().getComponent<sfs::TransformComponent>().position +
-         m_shakeOffset;
-}
-
 void PlatformerScene::onUpdate(double deltaTime)
 {
   if (deltaTime > 0.0001)
     m_fps += (1.0 / deltaTime - m_fps) * 0.1;
-
-  // Decay screen shake and pick this frame's camera jolt.
-  m_shakeTime += deltaTime;
-  m_shake =
-      glm::max(0.0f, m_shake - SHAKE_DECAY * static_cast<float>(deltaTime));
-  m_shakeOffset = {glm::sin(static_cast<float>(m_shakeTime) * 73.0f) * m_shake,
-                   glm::cos(static_cast<float>(m_shakeTime) * 91.0f) * m_shake};
 }
 
 void PlatformerScene::onRender()

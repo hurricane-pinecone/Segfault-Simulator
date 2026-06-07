@@ -44,15 +44,19 @@ public:
             .addComponent<sfs::ShadowCasterComponent>();
 
     // Camera
-    scene.createEntity()
-        .addComponent<sfs::TransformComponent>(
-            glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
-        .addComponent<sfs::CameraComponent>(
-            m_entity.getId(), glm::vec2{0.0f, 0.0f}, 8.0f, 1.0f);
+    m_camera = scene.createEntity()
+                   .addComponent<sfs::TransformComponent>(
+                       glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}, 0.0f)
+                   .addComponent<sfs::CameraComponent>(
+                       m_entity.getId(), glm::vec2{0.0f, 0.0f}, 8.0f, 1.0f);
   }
 
   void onProcessInput(const sfs::Input& input) override
   {
+    // Debug: Space shakes the camera.
+    if (input.keyboard().keyPressed(sfs::Key::Space))
+      m_camera.getComponent<sfs::CameraComponent>().shake(0.8f);
+
     glm::vec2 screenDirection(0.0f);
 
     if (input.keyboard().keyHeld(sfs::Key::A))
@@ -80,4 +84,7 @@ public:
     auto& rb = m_entity.getComponent<sfs::RigidBodyComponent>();
     rb.velocity = gridDirection * 5.0f;
   }
+
+private:
+  sfs::Entity m_camera;
 };

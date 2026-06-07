@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/ecs/entity.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -19,9 +20,6 @@ class PlatformerScene : public sfs::Scene
 {
 public:
   using sfs::Scene::Scene; // inherit (SceneId, SceneServices[, name]) ctors
-
-  // World position the camera should centre on (the player).
-  glm::vec2 cameraTarget() const;
 
 protected:
   void onInit() override;
@@ -46,6 +44,7 @@ private:
   void dropSpell(const glm::vec2& pos);
 
   Player* m_player = nullptr;
+  sfs::Entity m_camera; // ECS camera (engine CameraSystem) following the player
   sfs::SpriteId m_platformSprite = 0;
   sfs::SpriteId m_guySprite = 0;
   sfs::SpriteId m_orbSprite = 0;
@@ -56,9 +55,4 @@ private:
   // halfY) so enemies can be spawned on a random platform's surface.
   std::mt19937 m_rng{1337};
   std::vector<glm::vec4> m_platforms;
-
-  // Screen shake (applied to the camera target).
-  float m_shake = 0.0f;
-  double m_shakeTime = 0.0;
-  glm::vec2 m_shakeOffset{0.0f, 0.0f};
 };

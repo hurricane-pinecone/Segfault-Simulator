@@ -3,7 +3,7 @@
 #include <engine/core/components/cameraComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/system.h>
-#include <engine/runtime/rendering/util/isometric/camera.h>
+#include <engine/runtime/rendering/util/activeCamera.h>
 #include <glm/glm/common.hpp>
 #include <glm/glm/exponential.hpp>
 #include <glm/glm/ext/vector_float2.hpp>
@@ -28,6 +28,10 @@ public:
     {
       auto& cameraTransform = cameraEntity.getComponent<TransformComponent>();
       auto& camera = cameraEntity.getComponent<CameraComponent>();
+
+      // Shake is independent of following, so advance it before the target
+      // checks below can `continue` past the rest of the loop.
+      camera.updateShake(static_cast<float>(deltaTime));
 
       auto target = registry->getEntity(camera.target);
 

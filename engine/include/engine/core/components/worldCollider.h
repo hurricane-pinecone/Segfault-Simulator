@@ -22,6 +22,9 @@ namespace sfs
  *
  * Solver: AABB-vs-AABB on the ground plane, gated by matching elevation. For
  * billboard / bullet hits use BoxCollider2D instead.
+ *
+ * @param glm::vec2 offset - footprint offset in pixels from the feet
+ * @param glm::vec2 size - footprint size in pixels
  */
 struct WorldCollider
 {

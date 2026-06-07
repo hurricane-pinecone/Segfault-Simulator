@@ -42,9 +42,14 @@ inline constexpr float ENEMY_KNOCKBACK = 360.0f; // upward pop when hit (px/s)
 inline constexpr float MUZZLE_FLASH_TIME = 0.05f;
 inline constexpr float DEATH_FLASH_TIME = 0.18f;
 
-// Screen shake.
-inline constexpr float SHAKE_ON_KILL = 16.0f; // magnitude (px)
-inline constexpr float SHAKE_DECAY = 70.0f;   // px/s
+// Camera (engine CameraSystem / CameraComponent).
+// Smoothing is huge so the follow is effectively instant (matching the previous
+// direct-follow feel); lower it for a trailing camera.
+inline constexpr float CAMERA_SMOOTHING = 1000.0f;
+
+// Screen shake, driven by the engine CameraComponent shake.
+inline constexpr float SHAKE_MAX_OFFSET = 16.0f; // px at full strength
+inline constexpr float SHAKE_DURATION = 0.23f;   // seconds (linear fade)
 
 // Spells (Noita-style bullet modifiers).
 inline constexpr float SPELL_DROP_CHANCE = 0.45f; // per kill

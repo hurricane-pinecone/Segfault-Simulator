@@ -1,37 +1,16 @@
 #pragma once
 
-#include "engine/core/components/cameraComponent.h"
-#include "engine/core/components/transformComponent.h"
 #include "engine/core/rendering/projection/isometricProjection.h"
 #include "engine/core/rendering/util/isometric/geometry.h"
+#include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/ext/vector_float2.hpp"
 
 namespace sfs
 {
 
-struct ActiveCamera
-{
-  const CameraComponent* camera = nullptr;
-  const TransformComponent* transform = nullptr;
-
-  glm::vec2 getCameraPosition() const
-  {
-
-    if (!camera || !transform)
-      return {0.0f, 0.0f};
-
-    return transform->position + camera->offset;
-  }
-
-  glm::vec2 isoPosition(int tileWidth, int tileHeight, float worldScale) const
-  {
-    return gridToIsometric(
-        getCameraPosition(), tileWidth, tileHeight, worldScale);
-  }
-};
-
-// Bakes the camera into plain values, so the result stays valid even after ECS
-// component storage moves and invalidates the camera's component pointers.
+// Bakes the (projection-agnostic) ActiveCamera into an isometric projection.
+// The result holds plain values, so it stays valid even after ECS component
+// storage moves and invalidates the camera's component pointers.
 inline IsometricProjection
 makeProjection(const IsometricProjectionConfig& config,
                const ActiveCamera& camera)
@@ -44,8 +23,10 @@ makeProjection(const IsometricProjectionConfig& config,
   projection.elevationStep = config.elevationStep;
   projection.worldScale = config.worldScale;
   projection.zoom = zoom;
-  projection.cameraIso = camera.isoPosition(
-      config.tileWidth, config.tileHeight, config.worldScale);
+  projection.cameraIso = gridToIsometric(camera.getCameraPosition(),
+                                         config.tileWidth,
+                                         config.tileHeight,
+                                         config.worldScale);
   projection.screenCenter = config.screenCenter;
 
   return projection;

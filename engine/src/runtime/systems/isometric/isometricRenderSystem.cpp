@@ -29,7 +29,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include <algorithm>
 #include <cstddef>
-#include <limits>
+#include <limits> // IWYU pragma: keep -- GCC include
 #include <map>
 #include <type_traits>
 #include <utility>
