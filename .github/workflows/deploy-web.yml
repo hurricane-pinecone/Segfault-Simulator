@@ -25,8 +25,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Caches compiled object files (the vendored Lua sources and the engine's
+      # own) across runs, keyed by preprocessed source + flags. Namespaced per
+      # job so each compiler/flag set keeps its own store.
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}-${{ runner.os }}
+
       - name: Configure (engine-core only)
-        run: cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
+        run: >
+          cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build tests
         run: cmake --build build-core -j "$(nproc)"
@@ -46,6 +56,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Caches compiled object files (vendored Lua/imgui/tracy and the engine's
+      # own) across runs. Separate from the Conan cache below, which holds the
+      # third-party dependency binaries (SDL/imgui/glew).
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}-${{ runner.os }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -82,7 +100,9 @@ jobs:
             -c tools.system.package_manager:sudo=True
 
       - name: Configure (no sample game)
-        run: cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
+        run: >
+          cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build/Debug -j "$(nproc)"
@@ -103,8 +123,17 @@ jobs:
         with:
           version: latest
 
+      # ccache also fronts emcc, so the wasm build reuses object files (vendored
+      # libs + engine + both sample games) across runs.
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ github.job }}-${{ runner.os }}
+
       - name: Configure web build
-        run: emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+        run: >
+          emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build web
         run: cmake --build build-web --config Release -j "$(nproc)"
