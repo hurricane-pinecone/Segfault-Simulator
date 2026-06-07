@@ -17,6 +17,8 @@ Game     your application — window, the main loop, which scenes exist
 
 - **[Game & scenes](./game-and-scenes/index.md)** — the `Game → Scene → System` lifecycle
   and the per-frame hooks where your code runs.
+- **[Runtime systems](./systems/index.md)** — built-in systems for common mechanics
+  such as camera follow.
 - **[Rendering](./rendering/index.md)** — the render contract, the core/isometric
   backend seam, and how render features compose as modules.
 - **[Particles in your game](./particles/index.md)** — registering the particle render

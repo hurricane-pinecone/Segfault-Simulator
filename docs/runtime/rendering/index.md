@@ -10,11 +10,34 @@ extension.
 `render()` on every enabled system, so a scene "has a renderer" simply by adding
 the render system it wants. Nothing forces a particular path.
 
-- **Flat 2D game** → add `FlatRenderSystem` (lit sprites + point lights +
-  particles) or `SpriteRenderSystem` (minimal unlit), and feed a `FlatProjection`
-  from the camera (`makeFlatProjection`).
+- **Flat 2D game** → add `FlatRenderSystem` (lit sprites, point lights,
+  particles) or `SpriteRenderSystem` (unlit sprites only), and feed a
+  `FlatProjection` from the camera (`makeFlatProjection`).
 - **Isometric game** → add `IsometricRenderSystem` and the isometric support
   systems.
+
+### SpriteRenderSystem
+
+`SpriteRenderSystem` draws every entity that has both a `TransformComponent` and
+a `SpriteComponent`. It is the lightest render system: no lighting, no particles,
+one textured quad per sprite.
+
+**Anchors.** `SpriteComponent` takes an anchor point `{anchorX, anchorY}` in
+normalised sprite coordinates. The anchor lands at the entity's world position.
+An anchor of `{0.5, 1.0}` (centre-bottom) places the sprite so its bottom edge
+sits at the transform position, which is the standard for ground-level actors.
+
+```cpp
+e.addComponent<SpriteComponent>(SpriteComponent{spriteId, {0.5f, 1.0f}});
+```
+
+**Camera offset.** Call `setCameraOffset` each frame with the camera's world
+position so sprites scroll correctly. All quads are shifted by the negative of
+the offset before submission.
+
+```cpp
+spriteRenderSystem.setCameraOffset(cameras.activeCamera().transform->position);
+```
 
 ## The backend seam
 

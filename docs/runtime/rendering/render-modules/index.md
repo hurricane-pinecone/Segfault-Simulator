@@ -57,6 +57,50 @@ to build one command type), then register it with `withModule<T>()`. Emit your
 commands in the module's per-frame hook; they are ordered with everything else by
 `RenderPass`.
 
+## Built-in modules
+
+The engine ships the following optional modules for the isometric render path.
+Register whichever subset your scene needs; they compose in any order.
+
+### BlockGeometry
+
+`BlockGeometry` meshes every `IsometricTile`-tagged entity as a 3D block. Each
+entity needs a `TransformComponent`, an `ElevationComponent`, and a
+`SpriteComponent` that supplies the top-face texture. Adding a
+`TerrainBoundaryComponent` exposes the south and east side faces where a block
+drops to a lower neighbour.
+
+Tiles that share a texture merge into one draw command. Tiles with different
+textures produce separate commands. No geometry is emitted when the render
+context carries no projection.
+
+```cpp
+renderSystem.withModule<sfs::BlockGeometry>();
+```
+
+### IsometricWater
+
+`IsometricWater` renders water tiles. Each entity needs a `TransformComponent`,
+an `ElevationComponent` for the terrain height beneath it, and a
+`WaterTileComponent` that carries the water-surface elevation. Tiles where the
+terrain is at or above the water surface are skipped. All visible water merges
+into a single draw command.
+
+```cpp
+renderSystem.withModule<sfs::IsometricWater>();
+```
+
+### SpriteShadow
+
+`SpriteShadow` casts a projected shadow for every entity that has a
+`ShadowCasterComponent` and a resolvable `SpriteComponent`. The module emits
+nothing when the render context supplies no light source (no ambient lighting
+and no point lights).
+
+```cpp
+renderSystem.withModule<sfs::SpriteShadow>();
+```
+
 ## Deferred: core passes as modules
 
 The optional isometric features (shadows, water, block geometry, decals,
