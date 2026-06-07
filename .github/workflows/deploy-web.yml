@@ -11,8 +11,11 @@ permissions:
   pages: write
   id-token: write
 
+# One run per branch or pull request: a new push supersedes an in-flight run of
+# the same ref, but a master push never cancels a pull request's run (and vice
+# versa). Pages-deploy serialization lives on the deploy job, not here.
 concurrency:
-  group: pages
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -254,6 +257,12 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/master'
+
+    # Serialize Pages deployments. Queue rather than cancel, since interrupting a
+    # deploy mid-flight can leave the site half-published.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
 
     environment:
       name: github-pages
