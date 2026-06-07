@@ -93,9 +93,20 @@ update). Add it to a scene and fetch it later:
 
 ```cpp
 scene.addSystem<MovementSystem>();
-auto& move = scene.getSystem<MovementSystem>();
+
+MovementSystem& move = scene.getSystem<MovementSystem>(); // system must be present
 if (scene.hasSystem<MovementSystem>()) { /* ... */ }
+
+// When presence is conditional, use tryGetSystem -- it returns null if absent.
+if (MovementSystem* opt = scene.tryGetSystem<MovementSystem>())
+{
+  // ...
+}
 ```
+
+`getSystem<T>()` asserts the system was registered. Calling it for an absent
+system is a programming error: the engine logs the missing type and aborts.
+Use `tryGetSystem<T>()` when a system may or may not be present.
 
 `setEnabled(false)` skips a system's update/render (handy for debug toggles).
 
