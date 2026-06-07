@@ -62,23 +62,33 @@ private:
 
 inline const char* __log_file_name(const char* path)
 {
-  const char* file = std::strrchr(path, '/');
-  return file ? file + 1 : path;
+  const char* slash = std::strrchr(path, '/');
+  const char* backslash = std::strrchr(path, '\\');
+  const char* sep = slash > backslash ? slash : backslash;
+  return sep ? sep + 1 : path;
 }
 
 } // namespace sfs
 
+// Compiler-decorated function name for log call sites. GCC/Clang spell it
+// __PRETTY_FUNCTION__; MSVC spells it __FUNCSIG__.
+#if defined(_MSC_VER)
+  #define SFS_PRETTY_FUNCTION __FUNCSIG__
+#else
+  #define SFS_PRETTY_FUNCTION __PRETTY_FUNCTION__
+#endif
+
 #define LOG_INFO(message)                                                      \
   sfs::Logger::info(                                                           \
-      message, sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+      message, sfs::__log_file_name(__FILE__), __LINE__, SFS_PRETTY_FUNCTION)
 
 #define LOG_DEBUG(message)                                                     \
   sfs::Logger::debug(                                                          \
-      message, sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+      message, sfs::__log_file_name(__FILE__), __LINE__, SFS_PRETTY_FUNCTION)
 
 #define LOG_DEBUG_SIZE(label, value)                                           \
   sfs::Logger::debug(label, value, sfs::__log_file_name(__FILE__))
 
 #define LOG_ERROR(message)                                                     \
   sfs::Logger::error(                                                          \
-      message, sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+      message, sfs::__log_file_name(__FILE__), __LINE__, SFS_PRETTY_FUNCTION)

@@ -207,6 +207,63 @@ jobs:
       - name: Run runtime tests under sanitizers
         run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
+  # Native Windows build with MSVC. The dev machines and every other job are
+  # GCC/Clang (Linux + macOS) or emcc (web); this is the only thing that
+  # actually compiles the engine with the Microsoft toolchain, so it catches the
+  # MSVC-specific issues those compilers don't (e.g. __FUNCSIG__ vs
+  # __PRETTY_FUNCTION__, /bigobj, stricter template parsing). Builds the engine
+  # and both sample games (exercising the Windows SDL entry-point link) and runs
+  # the full headless test suite. Independent of the web deploy: a failure here
+  # reports a red check without blocking the Pages publish.
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.x"
+
+      - name: Install Conan
+        run: pip install "conan==2.*"
+
+      - name: Detect Conan profile
+        run: conan profile detect --force
+
+      # Same dependency-binary cache as the Linux runtime jobs, but keyed by OS
+      # so the MSVC binaries never mix with the GCC ones.
+      - name: Cache Conan packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      # cppstd=23: `conan profile detect` defaults MSVC to C++14, which the
+      # toolchain would otherwise force onto our C++23 build. shared=False keeps
+      # the dependency closure static, so the test/sample executables are
+      # self-contained (no DLLs to stage on PATH before ctest).
+      - name: Install dependencies
+        run: >
+          conan install . --build=missing -s build_type=Release
+          -s compiler.cppstd=23 -o "*:shared=False"
+
+      # Use the presets Conan generates (conan-default / conan-release): they
+      # carry the Visual Studio generator + the Conan toolchain, so the build
+      # tree and config flags match what the dependency closure was built with.
+      - name: Configure
+        run: cmake --preset conan-default
+
+      - name: Build
+        run: cmake --build --preset conan-release
+
+      - name: Run tests
+        run: ctest --preset conan-release --output-on-failure
+
   # Enforce .clang-format on the engine and game sources. Pinned to the same
   # clang-format version the pre-commit hook uses, so local formatting and CI
   # never disagree (the vendored lib/ tree is excluded -- it has its own style).

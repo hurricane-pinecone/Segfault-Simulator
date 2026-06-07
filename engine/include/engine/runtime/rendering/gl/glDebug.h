@@ -78,7 +78,7 @@ inline GLint uniformLocation(GLuint program,
 /** Drain + log any pending GL errors, tagging them with the call site. */
 #define SFS_GL_CHECK(tag)                                                      \
   sfs::gl::checkErrors(                                                        \
-      (tag), sfs::__log_file_name(__FILE__), __LINE__, __PRETTY_FUNCTION__)
+      (tag), sfs::__log_file_name(__FILE__), __LINE__, SFS_PRETTY_FUNCTION)
 
 /** Checked glGetUniformLocation: warns (debug) when the uniform is absent. */
 #define SFS_GL_UNIFORM(program, name)                                          \
@@ -86,4 +86,4 @@ inline GLint uniformLocation(GLuint program,
                            (name),                                             \
                            sfs::__log_file_name(__FILE__),                     \
                            __LINE__,                                           \
-                           __PRETTY_FUNCTION__)
+                           SFS_PRETTY_FUNCTION)

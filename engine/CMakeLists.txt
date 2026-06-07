@@ -69,9 +69,13 @@ target_include_directories(engine-core
 )
 
 target_compile_options(engine-core PRIVATE
-    -Wall
+    # -Wall is GCC/Clang syntax; MSVC's /Wall is a different, far noisier set.
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall>
     # Clang-only (silences unknown -Wno-* flags); GCC doesn't recognise it.
     $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
+    # MSVC caps a single object at 64k sections; the template-heavy units exceed
+    # it without /bigobj.
+    $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
 )
 
 if(ENGINE_WEB_BUILD)
@@ -113,9 +117,13 @@ target_include_directories(engine PRIVATE
 )
 
 target_compile_options(engine PRIVATE
-    -Wall
+    # -Wall is GCC/Clang syntax; MSVC's /Wall is a different, far noisier set.
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall>
     # Clang-only (silences unknown -Wno-* flags); GCC doesn't recognise it.
     $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
+    # MSVC caps a single object at 64k sections; the big GL render units
+    # (openGLQuadRenderer, isometricGeometryRenderer) exceed it without /bigobj.
+    $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
 )
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets
