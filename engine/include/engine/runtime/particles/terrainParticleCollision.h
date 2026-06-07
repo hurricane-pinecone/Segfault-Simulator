@@ -8,9 +8,9 @@ namespace sfs
 
 class ITerrainSurfaceSource;
 
-// Sticks particles to a terrain heightfield: stepping up into a taller tile on a
-// camera-facing face is a wall, otherwise the drop lands on the ground or water
-// beneath. The game's terrain generator is the ITerrainSurfaceSource.
+// Sticks particles to a terrain heightfield: stepping up into a taller tile on
+// a camera-facing face is a wall, otherwise the drop lands on the ground or
+// water beneath. The game's terrain generator is the ITerrainSurfaceSource.
 class TerrainParticleCollision : public IParticleCollisionSource
 {
 public:

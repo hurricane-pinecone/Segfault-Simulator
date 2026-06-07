@@ -30,9 +30,9 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
   const glm::ivec2 oldTile = floorTile(m.from);
   const glm::ivec2 newTile = floorTile(m.to);
 
-  // Slammed into the vertical face of a tile that genuinely steps UP from the one
-  // it came from (a step down or same level is not a wall -- otherwise a fast
-  // droplet skimming flat ground reads every tile crossing as a wall).
+  // Slammed into the vertical face of a tile that genuinely steps UP from the
+  // one it came from (a step down or same level is not a wall -- otherwise a
+  // fast droplet skimming flat ground reads every tile crossing as a wall).
   if (newTile != oldTile)
   {
     const int newTop = m_terrain->terrainHeightAt(newTile.x, newTile.y);
@@ -44,9 +44,9 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
       const int dy = newTile.y - oldTile.y;
       const std::uint8_t side = dx > 0 ? 0 : (dx < 0 ? 2 : (dy > 0 ? 1 : 3));
 
-      // A wall stain needs a real cliff on a camera-facing face (south/east); the
-      // hidden west/north faces would draw over the block, and the step must be
-      // tall enough. Everything else pools as ground at the base.
+      // A wall stain needs a real cliff on a camera-facing face (south/east);
+      // the hidden west/north faces would draw over the block, and the step
+      // must be tall enough. Everything else pools as ground at the base.
       const bool visibleFace = side == 2 || side == 3;
       const bool tallEnough = (newTop - oldTop) >= kMinWallStep;
 

@@ -68,7 +68,8 @@ struct Curve
   }
 };
 
-// Keyframed RGB gradient over normalized time t in [0,1]. Same POD shape as Curve.
+// Keyframed RGB gradient over normalized time t in [0,1]. Same POD shape as
+// Curve.
 struct Gradient
 {
   static constexpr int MaxStops = 8;

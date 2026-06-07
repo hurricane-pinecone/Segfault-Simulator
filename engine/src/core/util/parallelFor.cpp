@@ -12,8 +12,7 @@ namespace sfs
 namespace
 {
 
-using RangeFn =
-    std::function<void(std::size_t, std::size_t, std::size_t)>;
+using RangeFn = std::function<void(std::size_t, std::size_t, std::size_t)>;
 
 // Below this many items the fork/join overhead outweighs the parallelism.
 // (Unused on web, which always runs serially.)
@@ -125,8 +124,9 @@ private:
       {
         std::unique_lock<std::mutex> lock(m_mutex);
         m_startCv.wait(lock,
-                       [this, &seenGeneration]
-                       { return m_shutdown || m_generation != seenGeneration; });
+                       [this, &seenGeneration] {
+                         return m_shutdown || m_generation != seenGeneration;
+                       });
 
         if (m_shutdown)
           return;
@@ -191,8 +191,7 @@ void parallelFor(std::size_t count, const RangeFn& fn)
   fn(0, count, 0);
   return;
 #else
-  if (count < kSerialThreshold ||
-      ForkJoinPool::instance().participants() <= 1)
+  if (count < kSerialThreshold || ForkJoinPool::instance().participants() <= 1)
   {
     fn(0, count, 0);
     return;

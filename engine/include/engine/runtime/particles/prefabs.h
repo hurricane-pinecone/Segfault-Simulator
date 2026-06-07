@@ -11,9 +11,9 @@ class ParticleEngine;
 
 // Built-in particle effect prefabs. These are plain ParticleEffectDesc builders
 // (the same struct a Lua/JSON loader fills), so a game can use them as-is,
-// register them under its own names, or copy-and-tweak to extend them. They draw
-// with the engine's built-in "white_dot" texture (a soft round white pixel), so
-// they need no art -- colour does the work.
+// register them under its own names, or copy-and-tweak to extend them. They
+// draw with the engine's built-in "white_dot" texture (a soft round white
+// pixel), so they need no art -- colour does the work.
 
 // --- Blood: a four-layer splatter meant to be fired together at one point ---
 // A bright fast MIST haze, the main directional SPRAY of droplets, a few heavy
@@ -29,11 +29,12 @@ ParticleEffectDesc emberEffect();
 
 // Recolour a blood layer's gradient. The decals it leaves follow (they use the
 // particle colour), so this is all a recoloured blood variant needs.
-ParticleEffectDesc recolourBlood(ParticleEffectDesc desc, glm::vec3 hi, glm::vec3 lo);
+ParticleEffectDesc
+recolourBlood(ParticleEffectDesc desc, glm::vec3 hi, glm::vec3 lo);
 
-// Register the four blood layers under "<prefix>_mist/_spray/_gobs/_drip" -- the
-// names a shotgun-style spawn fires together. Default colours, or a recoloured
-// set for a second blood colour.
+// Register the four blood layers under "<prefix>_mist/_spray/_gobs/_drip" --
+// the names a shotgun-style spawn fires together. Default colours, or a
+// recoloured set for a second blood colour.
 void registerBloodEffects(ParticleEngine& particles,
                           const std::string& prefix = "blood");
 void registerBloodEffects(ParticleEngine& particles,

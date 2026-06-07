@@ -80,8 +80,8 @@ public:
   void addWhitePixelTexture(const std::string& textureId);
 
   // Generates a soft round texture: white RGB with a radial alpha falloff (1 at
-  // the centre, 0 at the edge). Handy for particles/decals so they don't read as
-  // hard squares. `size` is the texture's pixel dimension.
+  // the centre, 0 at the edge). Handy for particles/decals so they don't read
+  // as hard squares. `size` is the texture's pixel dimension.
   void addRadialTexture(const std::string& textureId, int size);
 
 private:

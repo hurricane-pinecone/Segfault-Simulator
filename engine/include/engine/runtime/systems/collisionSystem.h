@@ -2,8 +2,8 @@
 
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
-#include "engine/core/components/transformComponent.h"
 #include "engine/core/components/tags/solidObject.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldCollider.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"

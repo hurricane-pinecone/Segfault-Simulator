@@ -85,8 +85,8 @@ sfs::ParticleEffectDesc makeBloodEffect()
   desc.decal.pool.soft = true;          // soft pooled blood
   desc.decal.useParticleColor = true;
   desc.decal.pool.alpha = 0.85f;
-  desc.decal.impactRef = 500.0f;        // flat blood lands at ~200-640 px/s
-  desc.decal.streaks.width = 1.5f;      // crisp 1-2px lines
+  desc.decal.impactRef = 500.0f;   // flat blood lands at ~200-640 px/s
+  desc.decal.streaks.width = 1.5f; // crisp 1-2px lines
   desc.decal.streaks.maxCount = 2;
   return desc;
 }
@@ -117,7 +117,7 @@ sfs::ParticleEffectDesc makeGoreEffect()
   desc.decal.pool.soft = true;
   desc.decal.useParticleColor = true;
   desc.decal.pool.alpha = 0.9f;
-  desc.decal.impactRef = 700.0f;         // gore flies faster (~260-900 px/s)
+  desc.decal.impactRef = 700.0f; // gore flies faster (~260-900 px/s)
   desc.decal.streaks.width = 2.0f;
   desc.decal.streaks.maxCount = 3;
   return desc;
@@ -248,10 +248,11 @@ void PlatformerScene::onInit()
   particles.registerEffect("pickup", makePickupEffect());
   particles.registerEffect("aura", makeAuraEffect());
 
-  // Generic particle->decal stick: any effect with leavesDecal now sticks to the
-  // platforms (SolidObject + BoxCollider2D) and stamps a flat decal, using the
-  // shaping shared with the iso path. enableStains() with no terrain picks the
-  // collider collision and the sink wired above -- the iso game calls the same.
+  // Generic particle->decal stick: any effect with leavesDecal now sticks to
+  // the platforms (SolidObject + BoxCollider2D) and stamps a flat decal, using
+  // the shaping shared with the iso path. enableStains() with no terrain picks
+  // the collider collision and the sink wired above -- the iso game calls the
+  // same.
   particles.enableStains();
 
   // Spell pickups: collecting an orb appends its spell to the player's loadout.
@@ -259,8 +260,8 @@ void PlatformerScene::onInit()
 
   // Bullet hits/effects fire through the same particle module; kills bump the
   // score, shake the screen, flash, and sometimes drop a spell. Blood is the
-  // generic particle->decal stick (blood/gore effects + the collision source and
-  // sink wired above) -- no bespoke blood system.
+  // generic particle->decal stick (blood/gore effects + the collision source
+  // and sink wired above) -- no bespoke blood system.
   bullets.setParticles(&particles);
   bullets.setOnKill(
       [this](glm::vec2 pos)

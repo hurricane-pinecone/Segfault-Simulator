@@ -32,7 +32,8 @@ enum class FieldKind : std::uint8_t
 };
 
 // One reflected field: the Lua key, the byte offset of the member within its
-// struct, its wire type, and a human hint shown in the autocomplete/options doc.
+// struct, its wire type, and a human hint shown in the autocomplete/options
+// doc.
 struct LuaField
 {
   std::string name;
@@ -44,8 +45,8 @@ struct LuaField
 using LuaSchema = std::vector<LuaField>;
 
 // Byte offset of a member within its struct, computed from a member pointer via
-// a real (default-constructed) instance -- well-defined, unlike the null-pointer
-// offsetof trick. The struct must be default-constructible.
+// a real (default-constructed) instance -- well-defined, unlike the
+// null-pointer offsetof trick. The struct must be default-constructible.
 template <typename C, typename M>
 std::size_t memberOffset(M C::*member)
 {
@@ -55,13 +56,15 @@ std::size_t memberOffset(M C::*member)
       reinterpret_cast<const char*>(&probe));
 }
 
-// Field builders -- the kind is deduced from the member's type, so a schema reads
-// as a plain list of (key, member, hint). Composite kinds (Range/Color) have
-// their own builders because they don't map one-to-one onto a single Lua scalar.
+// Field builders -- the kind is deduced from the member's type, so a schema
+// reads as a plain list of (key, member, hint). Composite kinds (Range/Color)
+// have their own builders because they don't map one-to-one onto a single Lua
+// scalar.
 template <typename C>
 LuaField field(std::string name, int C::*member, std::string hint)
 {
-  return {std::move(name), memberOffset(member), FieldKind::Int, std::move(hint)};
+  return {
+      std::move(name), memberOffset(member), FieldKind::Int, std::move(hint)};
 }
 
 template <typename C>
@@ -111,8 +114,9 @@ namespace luaschema
 // the caller applies its own colour-to-target mapping.
 void readTable(lua_State* L, int tableIdx, void* obj, const LuaSchema& schema);
 
-// Push a new table mapping each key to its hint -- the self-describing `options`
-// doc used for autocomplete. Range fields expand to `<name>Min` / `<name>Max`.
+// Push a new table mapping each key to its hint -- the self-describing
+// `options` doc used for autocomplete. Range fields expand to `<name>Min` /
+// `<name>Max`.
 void pushSchema(lua_State* L, const LuaSchema& schema);
 
 // Push a new table of `obj`'s current values keyed the same way configure reads

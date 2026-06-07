@@ -77,23 +77,23 @@ TSystem& Registry::addSystem(TArgs&&... args)
 template <typename TSystem>
 void Registry::removeSystem()
 {
-  systems.erase(
-      std::remove_if(
-          systems.begin(),
-          systems.end(),
-          [](const std::unique_ptr<System>& system)
-          { return dynamic_cast<TSystem*>(system.get()) != nullptr; }),
-      systems.end());
+  systems.erase(std::remove_if(systems.begin(),
+                               systems.end(),
+                               [](const std::unique_ptr<System>& system) {
+                                 return dynamic_cast<TSystem*>(system.get()) !=
+                                        nullptr;
+                               }),
+                systems.end());
 }
 
 template <typename TSystem>
 bool Registry::hasSystem() const
 {
-  return std::any_of(
-      systems.begin(),
-      systems.end(),
-      [](const std::unique_ptr<System>& system)
-      { return dynamic_cast<TSystem*>(system.get()) != nullptr; });
+  return std::any_of(systems.begin(),
+                     systems.end(),
+                     [](const std::unique_ptr<System>& system) {
+                       return dynamic_cast<TSystem*>(system.get()) != nullptr;
+                     });
 }
 
 template <typename TSystem>
@@ -104,10 +104,10 @@ TSystem& Registry::getSystem() const
     return *casted;
   }
 
-  // getSystem assumes the caller registered the system; reaching here is a setup
-  // bug, not a recoverable runtime error. Log which type is missing and stop
-  // deterministically rather than throwing through Lua/wasm C frames. Callers
-  // that may legitimately have no such system use tryGetSystem.
+  // getSystem assumes the caller registered the system; reaching here is a
+  // setup bug, not a recoverable runtime error. Log which type is missing and
+  // stop deterministically rather than throwing through Lua/wasm C frames.
+  // Callers that may legitimately have no such system use tryGetSystem.
   LOG_ERROR(std::string("getSystem: no registered system of type ") +
             typeid(TSystem).name());
   std::abort();

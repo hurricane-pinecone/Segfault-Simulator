@@ -1,8 +1,8 @@
 #pragma once
 
-#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"
 #include <SDL_render.h>
@@ -19,10 +19,10 @@ using SceneId = uint32_t;
 class IQuadRenderer;
 class TextRenderer;
 
-// Engine-owned services a scene draws and loads assets through. Bundled into one
-// value so they can be constructor-injected as a unit: every Scene holds them as
-// references, valid for the scene's whole lifetime. The SceneManager builds this
-// (and verifies the services exist) before constructing any scene.
+// Engine-owned services a scene draws and loads assets through. Bundled into
+// one value so they can be constructor-injected as a unit: every Scene holds
+// them as references, valid for the scene's whole lifetime. The SceneManager
+// builds this (and verifies the services exist) before constructing any scene.
 struct SceneServices
 {
   AssetStore& assetStore;
@@ -107,13 +107,13 @@ private:
   const Registry& registry() const;
 
 protected:
-  virtual void onInit() {};
-  virtual void onEnter() {};
-  virtual void onExit() {};
-  virtual void onUpdate(double deltaTime) {};
-  virtual void onRender() {};
-  virtual void onProcessInput(const Input& input) {};
-  virtual void onDebugUI() {};
+  virtual void onInit(){};
+  virtual void onEnter(){};
+  virtual void onExit(){};
+  virtual void onUpdate(double deltaTime){};
+  virtual void onRender(){};
+  virtual void onProcessInput(const Input& input){};
+  virtual void onDebugUI(){};
 
   friend class SceneManager;
 

@@ -29,7 +29,10 @@ IsometricProjection makeProjection()
 
 // A terrain tile entity BlockGeometry meshes: transform + elevation + sprite +
 // the IsometricTile tag.
-Entity addTile(Registry& reg, AssetStore& store, glm::vec2 pos, int level,
+Entity addTile(Registry& reg,
+               AssetStore& store,
+               glm::vec2 pos,
+               int level,
                SpriteId sprite)
 {
   Entity e = reg.createEntity();
@@ -113,7 +116,7 @@ int main()
     ctx.projection = &proj;
     geo.computeCommands(ctx);
 
-    CHECK(geo.commands().size() == 1);       // one material bucket
+    CHECK(geo.commands().size() == 1);                   // one material bucket
     CHECK(geo.commands().front().vertices.size() == 12); // two top faces
   }
 

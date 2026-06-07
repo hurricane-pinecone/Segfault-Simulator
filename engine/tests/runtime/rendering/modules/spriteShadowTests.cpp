@@ -5,10 +5,10 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/rendering/projection/isometricProjection.h>
-#include <engine/runtime/rendering/util/isometric/isometricLightingUtils.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering/isometricRenderContext.h>
 #include <engine/runtime/rendering/modules/spriteShadow.h>
+#include <engine/runtime/rendering/util/isometric/isometricLightingUtils.h>
 
 #include <vector>
 
@@ -48,7 +48,8 @@ int main()
     Registry reg;
     AssetStore store;
     store.addRadialTexture("tex", 16);
-    const SpriteId sprite = store.addSprite("tex", "spr", SDL_Rect{0, 0, 16, 16});
+    const SpriteId sprite =
+        store.addSprite("tex", "spr", SDL_Rect{0, 0, 16, 16});
     addCaster(reg, sprite);
 
     SpriteShadow shadows;

@@ -67,8 +67,9 @@ std::string Logger::formatMessage(Logger::Level level,
 
   if (verbosity == Logger::Verbosity::FULL || level == Logger::Level::ERROR)
   {
-    ss << currentTime() << " | " << "[" << Logger::toString(level) << "] | "
-       << file << " | " << func << " | " << line << ": " << message;
+    ss << currentTime() << " | "
+       << "[" << Logger::toString(level) << "] | " << file << " | " << func
+       << " | " << line << ": " << message;
   }
   else
   {

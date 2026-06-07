@@ -5,10 +5,10 @@
 namespace sfs
 {
 
-// A polygon vertex carried through clipping: a position plus its interpolated UV,
-// so a slice gets the right texture coordinate at the cut. The position is in
-// whatever 2D space the caller clips in (screen pixels on the flat path, world
-// tiles or face along/elevation on the isometric path).
+// A polygon vertex carried through clipping: a position plus its interpolated
+// UV, so a slice gets the right texture coordinate at the cut. The position is
+// in whatever 2D space the caller clips in (screen pixels on the flat path,
+// world tiles or face along/elevation on the isometric path).
 struct ClipVertex
 {
   glm::vec2 p{0.0f, 0.0f};

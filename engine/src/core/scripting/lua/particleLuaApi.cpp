@@ -26,7 +26,8 @@ constexpr const char* kResolverMeta = "sfs.ParticleResolver";
 // five entry points reach the same live engine without a global.
 ParticleEngine* engineOf(lua_State* L)
 {
-  auto* resolver = static_cast<Resolver*>(lua_touserdata(L, lua_upvalueindex(1)));
+  auto* resolver =
+      static_cast<Resolver*>(lua_touserdata(L, lua_upvalueindex(1)));
   return (resolver && *resolver) ? (*resolver)() : nullptr;
 }
 
@@ -38,9 +39,9 @@ int resolverGc(lua_State* L)
   return 0;
 }
 
-// Convert a C++ exception from engine calls into a Lua error rather than letting
-// it unwind through Lua's C frames (UB). The body unwinds before luaL_error
-// longjmps.
+// Convert a C++ exception from engine calls into a Lua error rather than
+// letting it unwind through Lua's C frames (UB). The body unwinds before
+// luaL_error longjmps.
 template <typename Fn>
 int guarded(lua_State* L, Fn&& body)
 {
@@ -60,18 +61,17 @@ int guarded(lua_State* L, Fn&& body)
 
 int particlesSpawn(lua_State* L)
 {
-  return guarded(L,
-                 [&]
-                 {
-                   const char* name = luaL_checkstring(L, 1);
-                   const glm::vec2 pos{
-                       static_cast<float>(luaL_optnumber(L, 2, 0.0)),
-                       static_cast<float>(luaL_optnumber(L, 3, 0.0))};
-                   if (ParticleEngine* engine = engineOf(L))
-                     engine->spawnBurst(
-                         name, pos, engine->groundElevationAt(pos));
-                   return 0;
-                 });
+  return guarded(
+      L,
+      [&]
+      {
+        const char* name = luaL_checkstring(L, 1);
+        const glm::vec2 pos{static_cast<float>(luaL_optnumber(L, 2, 0.0)),
+                            static_cast<float>(luaL_optnumber(L, 3, 0.0))};
+        if (ParticleEngine* engine = engineOf(L))
+          engine->spawnBurst(name, pos, engine->groundElevationAt(pos));
+        return 0;
+      });
 }
 
 // particles.configure(name, { color = sfs.colors.Green, burst = 30, sizeMin =,
@@ -79,35 +79,34 @@ int particlesSpawn(lua_State* L)
 // reflection reader; only `color` (which maps onto a Gradient) is applied here.
 int particlesConfigure(lua_State* L)
 {
-  return guarded(
-      L,
-      [&]
-      {
-        const char* name = luaL_checkstring(L, 1);
-        luaL_checktype(L, 2, LUA_TTABLE);
+  return guarded(L,
+                 [&]
+                 {
+                   const char* name = luaL_checkstring(L, 1);
+                   luaL_checktype(L, 2, LUA_TTABLE);
 
-        ParticleEngine* engine = engineOf(L);
-        if (!engine)
-          return 0;
+                   ParticleEngine* engine = engineOf(L);
+                   if (!engine)
+                     return 0;
 
-        const ParticleEffectDesc* current = engine->effect(name);
-        if (!current)
-          return luaL_error(L, "unknown particle effect '%s'", name);
+                   const ParticleEffectDesc* current = engine->effect(name);
+                   if (!current)
+                     return luaL_error(L, "unknown particle effect '%s'", name);
 
-        ParticleEffectDesc desc = *current;
-        luaschema::readTable(L, 2, &desc, particleEffectSchema());
+                   ParticleEffectDesc desc = *current;
+                   luaschema::readTable(L, 2, &desc, particleEffectSchema());
 
-        lua_getfield(L, 2, "color");
-        if (lua_istable(L, -1))
-        {
-          const glm::vec3 c = luaschema::readColor(L, lua_gettop(L));
-          desc.colorOverLife = Gradient::twoStop(c, c * 0.3f);
-        }
-        lua_pop(L, 1);
+                   lua_getfield(L, 2, "color");
+                   if (lua_istable(L, -1))
+                   {
+                     const glm::vec3 c = luaschema::readColor(L, lua_gettop(L));
+                     desc.colorOverLife = Gradient::twoStop(c, c * 0.3f);
+                   }
+                   lua_pop(L, 1);
 
-        engine->registerEffect(name, desc);
-        return 0;
-      });
+                   engine->registerEffect(name, desc);
+                   return 0;
+                 });
 }
 
 // particles.describe(name) -> table of the effect's current configurable values
@@ -179,7 +178,8 @@ void registerParticleLua(LuaScripting& lua,
   lua_setmetatable(L, -2);
 
   // Build the API table; every closure shares the one resolver userdata upvalue
-  // (which sits just below the table at -2 throughout). Stack: [..., resolver, table].
+  // (which sits just below the table at -2 throughout). Stack: [..., resolver,
+  // table].
   lua_newtable(L);
 
   const auto bindFn = [&](const char* field, lua_CFunction fn)
@@ -199,7 +199,7 @@ void registerParticleLua(LuaScripting& lua,
   lua_setfield(L, -2, "options");
 
   lua_setglobal(L, tableName.c_str()); // pops the table
-  lua_pop(L, 1);                        // pop the resolver (closures keep their ref)
+  lua_pop(L, 1); // pop the resolver (closures keep their ref)
 }
 
 } // namespace sfs

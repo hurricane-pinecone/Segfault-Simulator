@@ -8,10 +8,10 @@
 #include "engine/core/components/surfaceEffect.h"
 #include "engine/core/components/tags/isometricTile.h"
 #include "engine/core/rendering/quads.h"
-#include "engine/runtime/rendering/util/clipDepth.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/commands/renderCommand.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
+#include "engine/runtime/rendering/util/clipDepth.h"
 #include "engine/runtime/rendering/util/renderStats.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 

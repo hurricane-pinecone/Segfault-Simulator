@@ -2,8 +2,8 @@
 
 #include <engine/core/rendering/renderPass.h>
 #include <engine/core/rendering/vertices.h>
-#include <engine/runtime/rendering/util/clipDepth.h>
 #include <engine/runtime/rendering/commands/commands.h>
+#include <engine/runtime/rendering/util/clipDepth.h>
 
 #include <variant>
 #include <vector>
@@ -65,8 +65,8 @@ int main()
   {
     std::vector<AnyRenderCommand> cmds;
     LitQuadCommand sprite;
-    sprite.order.depth = 0.0f;     // feet sort-key
-    sprite.quad.depthSpan = 5.0f;  // top reaches +5 toward the camera
+    sprite.order.depth = 0.0f;    // feet sort-key
+    sprite.quad.depthSpan = 5.0f; // top reaches +5 toward the camera
     cmds.push_back(sprite);
 
     assignClipDepth(cmds);
@@ -89,7 +89,7 @@ int main()
     cmds.push_back(DecalDrawCommand{}); // owns its depth; must be skipped
 
     const auto [minKey, maxKey] = assignClipDepth(cmds);
-    CHECK(testing::approx(minKey, 0.0f));  // decal didn't touch the range
+    CHECK(testing::approx(minKey, 0.0f)); // decal didn't touch the range
     CHECK(testing::approx(maxKey, 10.0f));
 
     const SurfaceCommand& out = std::get<SurfaceCommand>(cmds[0]);

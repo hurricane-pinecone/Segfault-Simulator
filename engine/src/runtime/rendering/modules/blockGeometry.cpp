@@ -1,8 +1,6 @@
 #include "engine/runtime/rendering/modules/blockGeometry.h"
 
 #include "SDL2/SDL_surface.h"
-#include "engine/runtime/assetStore/assetStore.h"
-#include "engine/runtime/assetStore/sprite.h"
 #include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/surfaceEffect.h"
@@ -12,6 +10,8 @@
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- Entity::getComponent<T> defs
 #include "engine/core/rendering/renderPass.h"
 #include "engine/core/util/profiling.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/sprite.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
 #include <string>
@@ -26,7 +26,8 @@ namespace
 {
 
 // Elevation's weight in the painter sort-key, matching the billboard tile sort
-// in IsometricRenderSystem so geometry and sprites (actors) interleave the same.
+// in IsometricRenderSystem so geometry and sprites (actors) interleave the
+// same.
 constexpr float kElevationSortWeight = 0.5f;
 
 // A cube sprite (e.g. block.png) packs a 2:1 top diamond over two side faces.
@@ -45,12 +46,13 @@ constexpr UvF kDiamondBottom{0.5f, 0.5f};
 constexpr UvF kDiamondLeft{0.0f, 0.25f};
 
 // Left face (the screen-left wall = +y / south edge), one elevation level tall.
-constexpr UvF kLeftTopOuter{0.0f, 0.25f};  // along the diamond's left edge
-constexpr UvF kLeftTopInner{0.5f, 0.5f};   // the diamond's bottom vertex
+constexpr UvF kLeftTopOuter{0.0f, 0.25f}; // along the diamond's left edge
+constexpr UvF kLeftTopInner{0.5f, 0.5f};  // the diamond's bottom vertex
 constexpr UvF kLeftBotInner{0.5f, 1.0f};
 constexpr UvF kLeftBotOuter{0.0f, 0.75f};
 
-// Right face (the screen-right wall = +x / east edge), one elevation level tall.
+// Right face (the screen-right wall = +x / east edge), one elevation level
+// tall.
 constexpr UvF kRightTopInner{0.5f, 0.5f};  // the diamond's bottom vertex
 constexpr UvF kRightTopOuter{1.0f, 0.25f}; // the diamond's right vertex
 constexpr UvF kRightBotOuter{1.0f, 0.75f};
@@ -83,8 +85,8 @@ void BlockGeometry::computeCommands(const IsometricRenderContext& context)
   if (!context.projection)
     return;
 
-  // One accumulating triangle list per material (texture + surface effect), so a
-  // whole material draws in a single GeometryCommand.
+  // One accumulating triangle list per material (texture + surface effect), so
+  // a whole material draws in a single GeometryCommand.
   struct Bucket
   {
     const std::string* textureId = nullptr;
@@ -94,8 +96,9 @@ void BlockGeometry::computeCommands(const IsometricRenderContext& context)
   std::unordered_map<std::string, Bucket> buckets;
 
   // Project a grid corner (with elevation in levels) to screen pixels.
-  const auto ws = [&](float gx, float gy, float elev)
-  { return context.worldToScreen({gx, gy}, elev); };
+  const auto ws = [&](float gx, float gy, float elev) {
+    return context.worldToScreen({gx, gy}, elev);
+  };
 
   // Push a quad (4 screen corners + their world XY, elevation, uv) as two
   // triangles into `out`, stamping each vertex's painter sort-key into z.
@@ -126,11 +129,10 @@ void BlockGeometry::computeCommands(const IsometricRenderContext& context)
     out.push_back(v[3]);
   };
 
-  for (const auto& entity :
-       registry->view<TransformComponent,
-                      ElevationComponent,
-                      SpriteComponent,
-                      IsometricTile>())
+  for (const auto& entity : registry->view<TransformComponent,
+                                           ElevationComponent,
+                                           SpriteComponent,
+                                           IsometricTile>())
   {
     const auto& transform = entity.getComponent<TransformComponent>();
     const int elevation = entity.getComponent<ElevationComponent>().level;
@@ -204,8 +206,8 @@ void BlockGeometry::computeCommands(const IsometricRenderContext& context)
 
     // --- South face (+y edge, screen-left = sprite's left face). ---
     // One quad per elevation level so the side art tiles down the drop.
-    for (int level = elevation; boundary.southExposed &&
-                                level > boundary.southBottomElevation;
+    for (int level = elevation;
+         boundary.southExposed && level > boundary.southBottomElevation;
          level--)
     {
       const float t = static_cast<float>(level);
@@ -235,7 +237,8 @@ void BlockGeometry::computeCommands(const IsometricRenderContext& context)
 
     // --- East face (+x edge, screen-right = sprite's right face). ---
     for (int level = elevation;
-         boundary.eastExposed && level > boundary.eastBottomElevation; level--)
+         boundary.eastExposed && level > boundary.eastBottomElevation;
+         level--)
     {
       const float t = static_cast<float>(level);
       const float b = static_cast<float>(level - 1);

@@ -37,8 +37,9 @@ struct ParticleSpawnParams
 };
 
 // A drawable batch of particles: the projected geometry plus the render
-// attributes a renderer needs to pack it into a draw command. Render-command and
-// render-pass types stay out of here so the engine has no render dependency.
+// attributes a renderer needs to pack it into a draw command. Render-command
+// and render-pass types stay out of here so the engine has no render
+// dependency.
 struct ParticleRenderBatch
 {
   ParticleBatch geometry;

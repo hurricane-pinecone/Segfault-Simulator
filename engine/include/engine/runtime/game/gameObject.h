@@ -17,9 +17,9 @@ public:
   const sfs::Entity& entity() const { return m_entity; }
 
 protected:
-  virtual void onCreate(Scene& scene) {};
-  virtual void onUpdate(double deltaTime) {};
-  virtual void onProcessInput(const sfs::Input& input) {};
+  virtual void onCreate(Scene& scene){};
+  virtual void onUpdate(double deltaTime){};
+  virtual void onProcessInput(const sfs::Input& input){};
 
 private:
   friend class Scene;

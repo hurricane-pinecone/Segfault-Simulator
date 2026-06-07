@@ -5,9 +5,9 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/waterTileComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
+#include "engine/core/util/profiling.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/util/sdlColor.h"
-#include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 
 #include <algorithm>
@@ -17,8 +17,7 @@
 namespace sfs
 {
 
-void IsometricWater::computeCommands(
-    const IsometricRenderContext& context)
+void IsometricWater::computeCommands(const IsometricRenderContext& context)
 {
   ZoneScopedN("Water: computeCommands");
 
@@ -83,9 +82,9 @@ void IsometricWater::computeCommands(
     m_commands.push_back(std::move(command));
 }
 
-SurfaceCommand IsometricWater::createWaterSurfaceCommand(
-    const IsometricRenderContext& context,
-    const WaterCell& cell) const
+SurfaceCommand
+IsometricWater::createWaterSurfaceCommand(const IsometricRenderContext& context,
+                                          const WaterCell& cell) const
 {
   SurfaceCommand command;
   command.type = SurfaceEffect::Type::Water;
@@ -158,13 +157,12 @@ WaterSurfaceBuild IsometricWater::collectWaterSurfaceBuild(
   return build;
 }
 
-uint32_t
-IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
-                                       const glm::ivec2& gridPoint,
-                                       int waterElevation,
-                                       float depth,
-                                       float sortDepth,
-                                       SurfaceCommand& command) const
+uint32_t IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
+                                          const glm::ivec2& gridPoint,
+                                          int waterElevation,
+                                          float depth,
+                                          float sortDepth,
+                                          SurfaceCommand& command) const
 {
   const float depthFactor = glm::clamp(depth / 6.0f, 0.0f, 1.0f);
 

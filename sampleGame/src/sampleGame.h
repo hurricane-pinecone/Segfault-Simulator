@@ -2,11 +2,11 @@
 #pragma once
 
 #include <SDL_events.h>
+#include <engine/core/rendering/projection/isometricProjection.h>
+#include <engine/core/scripting/luaScripting.h>
 #include <engine/runtime/game/game.h>
 #include <engine/runtime/rendering/iQuadRenderer.h>
-#include <engine/core/rendering/projection/isometricProjection.h>
 #include <engine/runtime/sceneManager/scene.h>
-#include <engine/core/scripting/luaScripting.h>
 #include <memory>
 #include <string>
 

@@ -19,7 +19,7 @@ std::size_t parallelForRangeCount(std::size_t count);
 // to a single serial range for small counts or single-core machines.
 void parallelFor(
     std::size_t count,
-    const std::function<void(std::size_t begin, std::size_t end, std::size_t rangeIndex)>&
-        fn);
+    const std::function<
+        void(std::size_t begin, std::size_t end, std::size_t rangeIndex)>& fn);
 
 } // namespace sfs

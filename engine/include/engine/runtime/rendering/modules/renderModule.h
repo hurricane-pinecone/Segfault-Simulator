@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/runtime/rendering/commands/commands.h" // AnyRenderCommand
 #include "engine/core/ecs/moduleSettings.h"
+#include "engine/runtime/rendering/commands/commands.h" // AnyRenderCommand
 #include <vector>
 
 namespace sfs
@@ -24,9 +24,9 @@ struct ModuleInit
  * Registration is the enable. The host constructs + owns modules, init()s them,
  * forwards update(), and calls emit() each frame.
  *
- * Templated on the render context the module consumes (the isometric heightfield
- * context today, a flat-2D context later), so a module is matched at compile
- * time to the render systems that can host it.
+ * Templated on the render context the module consumes (the isometric
+ * heightfield context today, a flat-2D context later), so a module is matched
+ * at compile time to the render systems that can host it.
  */
 template <typename TContext>
 class IRenderModule

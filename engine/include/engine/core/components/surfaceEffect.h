@@ -19,7 +19,7 @@ struct SurfaceEffect
     Snow
   };
 
-  SurfaceEffect(Type type) : type(type) {};
+  SurfaceEffect(Type type) : type(type){};
 
   Type type = Type::None;
 };

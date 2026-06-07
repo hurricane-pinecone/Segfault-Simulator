@@ -27,8 +27,8 @@ ParticleEffectDesc bloodMistEffect()
   d.gravityZ = -3.0f; // barely falls
   d.drag = 4.5f;      // slows fast and hangs
 
-  d.colorOverLife = Gradient::twoStop(glm::vec3{1.0f, 0.3f, 0.3f},
-                                      glm::vec3{0.4f, 0.04f, 0.04f});
+  d.colorOverLife = Gradient::twoStop(
+      glm::vec3{1.0f, 0.3f, 0.3f}, glm::vec3{0.4f, 0.04f, 0.04f});
   d.alphaOverLife = Curve{}.add(0.0f, 0.0f).add(0.1f, 0.7f).add(1.0f, 0.0f);
   d.sizeOverLife = Curve{}.add(0.0f, 0.6f).add(1.0f, 1.4f); // expands
 
@@ -64,8 +64,8 @@ ParticleEffectDesc bloodSprayEffect()
   d.gravityZ = -18.0f;
   d.drag = 3.0f; // punches out, then decelerates hard
 
-  d.colorOverLife = Gradient::twoStop(glm::vec3{0.8f, 0.05f, 0.05f},
-                                      glm::vec3{0.2f, 0.0f, 0.0f});
+  d.colorOverLife = Gradient::twoStop(
+      glm::vec3{0.8f, 0.05f, 0.05f}, glm::vec3{0.2f, 0.0f, 0.0f});
   // Full alpha/size through the (short) flight; the late tail only fades a rare
   // straggler that never lands. So droplets don't fade out mid-air.
   d.alphaOverLife = Curve{}.add(0.0f, 1.0f).add(0.9f, 1.0f).add(1.0f, 0.0f);
@@ -86,8 +86,8 @@ ParticleEffectDesc bloodSprayEffect()
   return d;
 }
 
-// Layer 3: a few big, heavy chunks. They get LESS of the impulse so they lag the
-// spray, arc, and leave fat splats.
+// Layer 3: a few big, heavy chunks. They get LESS of the impulse so they lag
+// the spray, arc, and leave fat splats.
 ParticleEffectDesc bloodGobsEffect()
 {
   ParticleEffectDesc d;
@@ -99,8 +99,8 @@ ParticleEffectDesc bloodGobsEffect()
   d.shapeRadius = 0.05f;
   d.burstCount = 7; // just a handful of chunks
 
-  d.lifetime = FloatRange::of(4.0f, 6.0f); // backstop; die on contact
-  d.speed = FloatRange::of(1.0f, 2.5f);    // low internal scatter
+  d.lifetime = FloatRange::of(4.0f, 6.0f);          // backstop; die on contact
+  d.speed = FloatRange::of(1.0f, 2.5f);             // low internal scatter
   d.launchHeightSpeed = FloatRange::of(1.5f, 3.0f); // tossed up to arc
   d.startHeight = FloatRange::of(0.1f, 0.4f);
   d.size = FloatRange::of(0.14f, 0.3f); // fat gobs
@@ -110,8 +110,8 @@ ParticleEffectDesc bloodGobsEffect()
   d.gravityZ = -14.0f; // arc down
   d.drag = 1.2f;       // less drag -- they carry their arc
 
-  d.colorOverLife = Gradient::twoStop(glm::vec3{0.5f, 0.0f, 0.0f},
-                                      glm::vec3{0.16f, 0.0f, 0.0f});
+  d.colorOverLife = Gradient::twoStop(
+      glm::vec3{0.5f, 0.0f, 0.0f}, glm::vec3{0.16f, 0.0f, 0.0f});
   // Full through the flight; late tail only for a straggler that never lands.
   d.alphaOverLife = Curve{}.add(0.0f, 1.0f).add(0.9f, 1.0f).add(1.0f, 0.0f);
   d.sizeOverLife = Curve{}.add(0.0f, 1.0f).add(1.0f, 1.0f);
@@ -131,8 +131,8 @@ ParticleEffectDesc bloodGobsEffect()
   return d;
 }
 
-// Layer 4: blood that just drops at the impact. Almost no outward velocity, so it
-// pops up a little and falls back onto the spawn tile, staining the spot.
+// Layer 4: blood that just drops at the impact. Almost no outward velocity, so
+// it pops up a little and falls back onto the spawn tile, staining the spot.
 ParticleEffectDesc bloodDripEffect()
 {
   ParticleEffectDesc d;
@@ -144,8 +144,8 @@ ParticleEffectDesc bloodDripEffect()
   d.shapeRadius = 0.1f;
   d.burstCount = 14;
 
-  d.lifetime = FloatRange::of(3.0f, 5.0f); // backstop; die on contact
-  d.speed = FloatRange::of(0.1f, 1.0f);    // barely spreads
+  d.lifetime = FloatRange::of(3.0f, 5.0f);          // backstop; die on contact
+  d.speed = FloatRange::of(0.1f, 1.0f);             // barely spreads
   d.launchHeightSpeed = FloatRange::of(0.5f, 2.4f); // small pop straight up
   d.startHeight = FloatRange::of(0.05f, 0.25f);
   d.size = FloatRange::of(0.05f, 0.12f);
@@ -155,8 +155,8 @@ ParticleEffectDesc bloodDripEffect()
   d.gravityZ = -16.0f;
   d.drag = 3.2f; // kills the little outward speed fast -> stays put
 
-  d.colorOverLife = Gradient::twoStop(glm::vec3{0.7f, 0.03f, 0.03f},
-                                      glm::vec3{0.2f, 0.0f, 0.0f});
+  d.colorOverLife = Gradient::twoStop(
+      glm::vec3{0.7f, 0.03f, 0.03f}, glm::vec3{0.2f, 0.0f, 0.0f});
   // Full through the flight; late tail only for a straggler that never lands.
   d.alphaOverLife = Curve{}.add(0.0f, 1.0f).add(0.9f, 1.0f).add(1.0f, 0.0f);
 
@@ -196,8 +196,8 @@ ParticleEffectDesc emberEffect()
   d.gravityZ = 0.4f; // gentle rise
   d.drag = 0.6f;
 
-  d.colorOverLife = Gradient::twoStop(glm::vec3{1.0f, 0.6f, 0.2f},
-                                      glm::vec3{0.85f, 0.12f, 0.0f});
+  d.colorOverLife = Gradient::twoStop(
+      glm::vec3{1.0f, 0.6f, 0.2f}, glm::vec3{0.85f, 0.12f, 0.0f});
   d.alphaOverLife = Curve{}.add(0.0f, 0.0f).add(0.15f, 1.0f).add(1.0f, 0.0f);
 
   d.ground = GroundBehavior::None;
@@ -205,7 +205,8 @@ ParticleEffectDesc emberEffect()
   return d;
 }
 
-ParticleEffectDesc recolourBlood(ParticleEffectDesc desc, glm::vec3 hi, glm::vec3 lo)
+ParticleEffectDesc
+recolourBlood(ParticleEffectDesc desc, glm::vec3 hi, glm::vec3 lo)
 {
   desc.colorOverLife = Gradient::twoStop(hi, lo);
   return desc;
@@ -224,14 +225,14 @@ void registerBloodEffects(ParticleEngine& particles,
                           glm::vec3 hi,
                           glm::vec3 lo)
 {
-  particles.registerEffect(prefix + "_mist",
-                           recolourBlood(bloodMistEffect(), hi, lo));
-  particles.registerEffect(prefix + "_spray",
-                           recolourBlood(bloodSprayEffect(), hi, lo));
-  particles.registerEffect(prefix + "_gobs",
-                           recolourBlood(bloodGobsEffect(), hi, lo));
-  particles.registerEffect(prefix + "_drip",
-                           recolourBlood(bloodDripEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_mist", recolourBlood(bloodMistEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_spray", recolourBlood(bloodSprayEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_gobs", recolourBlood(bloodGobsEffect(), hi, lo));
+  particles.registerEffect(
+      prefix + "_drip", recolourBlood(bloodDripEffect(), hi, lo));
 }
 
 } // namespace sfs
