@@ -29,10 +29,10 @@ jobs:
         run: cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build tests
-        run: cmake --build build-core -j 2
+        run: cmake --build build-core -j "$(nproc)"
 
       - name: Run tests
-        run: ctest --test-dir build-core --output-on-failure --parallel 2
+        run: ctest --test-dir build-core --output-on-failure --parallel "$(nproc)"
 
   # Runtime tests link the full engine (SDL/OpenGL), so this job restores the
   # Conan dependency closure and runs a native build. They drive systems and
@@ -63,6 +63,7 @@ jobs:
       - name: Install dependencies
         run: |
           conan install . --build=missing -s build_type=Debug \
+            -c tools.build:jobs="$(nproc)" \
             -c tools.system.package_manager:mode=install \
             -c tools.system.package_manager:sudo=True
 
@@ -70,10 +71,10 @@ jobs:
         run: cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
 
       - name: Build
-        run: cmake --build build/Debug -j 2
+        run: cmake --build build/Debug -j "$(nproc)"
 
       - name: Run runtime tests
-        run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel 2
+        run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
   build:
     runs-on: ubuntu-latest
@@ -92,7 +93,7 @@ jobs:
         run: emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
 
       - name: Build web
-        run: cmake --build build-web --config Release -j 2
+        run: cmake --build build-web --config Release -j "$(nproc)"
 
       # Docs share the game's single Pages site: the game at the root, the MkDocs
       # site under /docs. --strict fails the deploy on a broken link or nav entry.
