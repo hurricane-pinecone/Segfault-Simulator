@@ -30,8 +30,7 @@ private:
 
 private:
   glm::vec2 m_mousePos;
-  float m_worldWaveTime;
-  double m_fps;
+  double m_fps = 0.0;
   glm::ivec2 m_hoveredTile{0, 0};
   int m_hoveredElevation = 0;
   bool m_hasHoveredTile = false;

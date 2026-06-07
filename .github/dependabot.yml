@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Keep the SHA-pinned GitHub Actions current. Dependabot reads the version
+  # comment next to each pin, opens PRs to bump the SHA, and updates the comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      # One PR for all action bumps per run, rather than one per action.
+      actions:
+        patterns:
+          - "*"

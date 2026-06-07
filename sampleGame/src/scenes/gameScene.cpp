@@ -27,8 +27,6 @@
 #include <engine/runtime/systems/movementSystem.h>
 #include <glm/glm/geometric.hpp>
 #include <glm/glm/vec2.hpp>
-#include <iomanip>
-#include <sstream>
 
 #include <engine/core/util/profiling.h>
 #include <string>
@@ -148,25 +146,10 @@ void GameScene::onRender()
     return;
   }
 
-  const auto position =
-      player->entity().getComponent<sfs::TransformComponent>().position;
-
-  std::ostringstream stream;
-
-  stream << std::fixed << std::setprecision(2) << "Pos: " << position.x << ", "
-         << position.y;
-
-  textRenderer().drawText(20, 20, stream.str());
   textRenderer().drawText(
-      20, 40, "FPS: " + std::to_string(static_cast<int>(m_fps)));
+      20, 20, "FPS: " + std::to_string(static_cast<int>(m_fps)));
   textRenderer().drawText(
-      20, 60, "Time: " + getSystem<SunController>().timeString12Hour());
-  textRenderer().drawText(
-      20,
-      80,
-      "Particles: " + std::to_string(getSystem<sfs::IsometricRenderSystem>()
-                                         .module<IsometricParticles>()
-                                         ->liveParticleCount()));
+      20, 40, "Time: " + getSystem<SunController>().timeString12Hour());
 
   if (m_hasHoveredTile)
   {
