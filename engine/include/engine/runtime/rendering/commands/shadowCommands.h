@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/commands/renderCommand.h"
+#include <string>
 #include <variant>
 
 namespace sfs

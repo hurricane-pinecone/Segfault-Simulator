@@ -8,6 +8,7 @@
 #include "engine/runtime/rendering/commands/renderCommand.h"
 #include "engine/runtime/rendering/commands/shadowCommands.h"
 #include <cstdint>
+#include <string>
 #include <variant>
 #include <vector>
 
