@@ -72,6 +72,9 @@ nav:
   - Runtime:
       - runtime/index.md
       - Game & scenes: runtime/game-and-scenes/index.md
+      - Runtime systems:
+          - runtime/systems/index.md
+          - Camera system: runtime/systems/camera-system/index.md
       - Rendering:
           - runtime/rendering/index.md
           - Render modules: runtime/rendering/render-modules/index.md
