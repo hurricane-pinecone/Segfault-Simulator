@@ -1,6 +1,7 @@
 #include <engine/core/logger/logger.h>
 
 #include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -85,7 +86,12 @@ std::string Logger::currentTime()
   std::time_t now_c = std::chrono::system_clock::to_time_t(now);
 
   std::tm local{};
+  // localtime_r is POSIX; MSVC provides localtime_s with the arguments swapped.
+#if defined(_WIN32)
+  localtime_s(&local, &now_c);
+#else
   localtime_r(&now_c, &local);
+#endif
 
   std::ostringstream ss;
   ss << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
