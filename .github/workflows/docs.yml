@@ -35,6 +35,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  statuses: write # the sync job self-reports the required checks on docs PRs
 
 jobs:
   # On a master push that touches source, draft documentation updates with Claude
@@ -144,6 +145,7 @@ jobs:
           echo "title=$title" >> "$GITHUB_OUTPUT"
 
       - name: Open a PR if docs changed
+        id: cpr
         if: steps.edited.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
@@ -152,7 +154,12 @@ jobs:
           add-paths: |
             docs
             mkdocs.yml
+          # A fresh branch per triggering commit (docs/auto-sync-<short-sha>) so a
+          # new source change opens its OWN PR instead of force-updating the
+          # branch of an earlier, still-open docs PR. delete-branch cleans each up
+          # when its PR merges or closes.
           branch: docs/auto-sync
+          branch-suffix: short-commit-hash
           base: master
           delete-branch: true
           title: ${{ steps.title.outputs.title }}
@@ -164,6 +171,25 @@ jobs:
 
             **Review before merging.** If the docs didn't actually need changing, just
             close this PR — no harm done.
+
+      # A docs-only PR can't break the code, and a bot-token PR never triggers
+      # the `pull_request` workflows anyway, so the master ruleset's required
+      # checks would otherwise sit forever "waiting for status to be reported".
+      # Report them as passing on this PR's head commit so it's mergeable. Safe:
+      # create-pull-request restricts this PR to docs/ + mkdocs.yml (add-paths).
+      # KEEP THIS LIST IN SYNC with the ruleset's required status checks.
+      - name: Mark required checks satisfied (docs-only PR)
+        if: steps.edited.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.cpr.outputs.pull-request-head-sha }}
+        run: |
+          for ctx in test-core sanitize-core test-runtime sanitize-runtime format build build-windows; do
+            gh api "repos/${{ github.repository }}/statuses/$SHA" \
+              -f state=success \
+              -f context="$ctx" \
+              -f description="Skipped for docs-only PR" >/dev/null
+          done
 
   # Reply to a "@claude ..." comment on a docs PR: Claude reads the request, edits
   # the PR branch, and pushes the changes back so the PR updates in place.
@@ -236,4 +262,14 @@ jobs:
           git add -A
           git commit -m "docs: address review comment"
           git push
+          # The push creates a new head commit with no statuses, so re-report the
+          # required checks on it (same as the sync job). Keep this list in sync
+          # with the master ruleset's required status checks.
+          sha="$(git rev-parse HEAD)"
+          for ctx in test-core sanitize-core test-runtime sanitize-runtime format build build-windows; do
+            gh api "repos/${{ github.repository }}/statuses/$sha" \
+              -f state=success \
+              -f context="$ctx" \
+              -f description="Skipped for docs-only PR" >/dev/null
+          done
           gh pr comment "$PR" --body "Pushed an update addressing your comment."

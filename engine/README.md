@@ -6,6 +6,7 @@ engine in your own game, see the [root README](../README.md).
 ## Table of Contents
 
 - [Repo Layout](#repo-layout)
+- [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
 - [Debug Build](#debug-build)
 - [Run](#run)
@@ -30,12 +31,27 @@ build itself.
 ## Repo Layout
 
 ```text
-engine/      → the engine library (engine-core + render runtime)
-sampleGame/  → a game built on the engine
+engine/       → the engine library (engine-core + render runtime)
+engine/docs/  → contributor docs (internal engine design)
+sampleGame/   → a game built on the engine
 ```
 
 The workspace build below compiles the engine and the sample together in one
 tree, which is the fast path for iterating on engine code.
+
+## Documentation
+
+There are two separate documentation sets, by audience:
+
+- **Contributor docs** live in `engine/docs/`. They cover how the engine is built internally
+  and why, for people working **on** the engine. Plain Markdown, read on GitHub,
+  not published anywhere.
+- **User docs** live in the repo-root [`docs/`](../docs/) tree and are published
+  as the MkDocs site. They are game-developer guides for people building games
+  **with** the engine (and are auto-drafted by the docs workflow).
+
+Rule of thumb: how a subsystem works internally goes in `engine/docs/`; how a
+game developer uses a feature goes in `docs/`.
 
 ## Prerequisites
 

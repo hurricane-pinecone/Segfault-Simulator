@@ -88,11 +88,10 @@ across the whole frame by `RenderPass` (and depth), so registration order doesn'
 dictate draw order. World particles depth-test against the scene; screen-space
 effects draw on top in the UI pass.
 
-## Deferred: heightfield shader purity
+## Lighting and surface effects
 
-`OpenGLQuadRenderer`'s lit shader still physically contains the heightfield
-occlusion / sun-shadow / iso-top-mask GLSL and the heightmap state, even though it
-is dormant for a flat game (the occlusion march early-returns when no heightmap is
-uploaded). Relocating that GLSL into an `IsometricGeometryRenderer`-only shader
-variant — so the base lit shader is literally plain 2D lighting — is deferred
-because it needs visual verification that the isometric path stays pixel-identical.
+Lighting and surface materials are driven by data, not shader code. Add a
+`LightEmitterComponent` for a point light, configure ambient and sun lighting on
+the render system, and tag tiles with a `SurfaceEffect` (grass, sand, water). The
+renderer selects the matching lit shader for you, so a flat 2D game never carries
+any isometric or heightfield shading.
