@@ -75,7 +75,7 @@ public:
   IQuadRenderer& quadRenderer() const { return m_quadRenderer; }
   TextRenderer& textRenderer() const { return m_textRenderer; }
 
-  template <typename TObject = GameObject, typename... TArgs>
+  template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
 
   template <typename TObject>

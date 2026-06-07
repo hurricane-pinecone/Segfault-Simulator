@@ -43,7 +43,7 @@ SegFaultSimulator (SFS) is a 2D game engine with two render paths over one core:
     columns with per-elevation lighting, terrain and sprite shadows, block geometry,
     and world-projected decals.
 - A **live Lua scripting / modding API**.
-- **Native** (macOS / Linux) and **web** (Emscripten / WebGL2) targets.
+- **Native** (macOS / Linux / Windows) and **web** (Emscripten / WebGL2) targets.
 
 It ships as two libraries:
 
