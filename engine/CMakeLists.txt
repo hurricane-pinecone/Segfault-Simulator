@@ -133,7 +133,7 @@ target_compile_options(engine PRIVATE
 # shader file changes (custom-command DEPENDS); CONFIGURE_DEPENDS picks up
 # adding/removing one.
 set(ENGINE_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/rendering/gl/shaders")
-file(GLOB ENGINE_SHADER_FILES CONFIGURE_DEPENDS
+file(GLOB_RECURSE ENGINE_SHADER_FILES CONFIGURE_DEPENDS
     "${ENGINE_SHADER_DIR}/*.vert" "${ENGINE_SHADER_DIR}/*.frag")
 set(ENGINE_SHADERS_HEADER
     "${CMAKE_CURRENT_BINARY_DIR}/generated/engine/generated/embeddedShaders.h")

@@ -100,6 +100,10 @@ public:
 protected:
   void flushCurrentPipeline() override;
 
+  // Complete the lit shader with the heightfield/terrain hook impls (terrain
+  // sun shadows, point-light terrain occlusion, iso surface effects).
+  std::string litShaderImpl() const override;
+
 private:
   unsigned int createSurfaceShaderProgram() const;
   unsigned int createSpriteShadowShaderProgram() const;

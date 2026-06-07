@@ -1,6 +1,5 @@
 #pragma once
 
-#include "SDL2/SDL_rect.h"
 #include "SDL2/SDL_surface.h"
 #include "engine/core/rendering/batchKeys/LitQuadBatchKey.h"
 #include "engine/core/rendering/batchKeys/ParticleBatchKey.h"
@@ -77,6 +76,12 @@ public:
   void setPointLights(const PointLightSet& lights) override;
 
 protected:
+  // The lit shader's variant hooks (surfaceEffect / sunShadow / pointLighting),
+  // appended after the shared quad.frag to complete the program. The base
+  // returns the pure-2D impls (quadBase.frag); the isometric renderer overrides
+  // it with the heightfield/terrain impls (isometric/quadIso.frag).
+  virtual std::string litShaderImpl() const;
+
   enum class Pipeline
   {
     None,

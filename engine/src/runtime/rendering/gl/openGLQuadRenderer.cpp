@@ -1328,6 +1328,11 @@ unsigned int OpenGLQuadRenderer::compileShader(unsigned int type,
   return shader;
 }
 
+std::string OpenGLQuadRenderer::litShaderImpl() const
+{
+  return std::string(sfs::shaders::quadBaseFrag);
+}
+
 unsigned int OpenGLQuadRenderer::createShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
@@ -1341,7 +1346,7 @@ unsigned int OpenGLQuadRenderer::createShaderProgram() const
       glslVersion + std::string(sfs::shaders::quadVert);
 
   const std::string fragmentSource =
-      glslVersion + std::string(sfs::shaders::quadFrag);
+      glslVersion + std::string(sfs::shaders::quadFrag) + litShaderImpl();
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
 
   GLuint fragmentShader =

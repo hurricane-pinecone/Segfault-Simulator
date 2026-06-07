@@ -1087,6 +1087,11 @@ void IsometricGeometryRenderer::flushCurrentPipeline()
   }
 }
 
+std::string IsometricGeometryRenderer::litShaderImpl() const
+{
+  return std::string(sfs::shaders::quadIsoFrag);
+}
+
 unsigned int IsometricGeometryRenderer::createSurfaceShaderProgram() const
 {
 #ifdef __EMSCRIPTEN__
