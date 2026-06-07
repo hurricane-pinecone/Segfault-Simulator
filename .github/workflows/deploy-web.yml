@@ -1,4 +1,4 @@
-name: Build and deploy web
+name: Build, test, and deploy
 
 on:
   push:
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  test-core:
     runs-on: ubuntu-latest
 
     # engine-core has no third-party dependencies (vendored Lua + glm), so the
@@ -112,7 +112,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [test, test-runtime]
+    needs: [test-core, test-runtime]
 
     steps:
       - name: Checkout
