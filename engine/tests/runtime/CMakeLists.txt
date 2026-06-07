@@ -21,6 +21,8 @@ add_runtime_test(terrainParticleCollisionTests particles/terrainParticleCollisio
 
 # rendering/
 add_runtime_test(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)
+add_runtime_test(clipDepthTests rendering/clipDepthTests.cpp)
+add_runtime_test(lightingUtilsTests rendering/lightingUtilsTests.cpp)
 
 # rendering/modules/
 add_runtime_test(blockGeometryTests rendering/modules/blockGeometryTests.cpp)

@@ -7,7 +7,7 @@
 #include <engine/core/logger/logger.h>
 #include <engine/core/scripting/luaScripting.h>
 #include <engine/runtime/input/keyboardInput.h>
-#include <engine/runtime/rendering/isometricGeometryRenderer.h>
+#include <engine/runtime/rendering/gl/isometricGeometryRenderer.h>
 #include <engine/runtime/rendering/util/isometric/camera.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/systems/cameraSystem.h>

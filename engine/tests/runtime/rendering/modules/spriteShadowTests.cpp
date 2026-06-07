@@ -5,7 +5,7 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/rendering/projection/isometricProjection.h>
-#include <engine/core/rendering/util/isometric/isometricLightingUtils.h>
+#include <engine/runtime/rendering/util/isometric/isometricLightingUtils.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering/isometricRenderContext.h>
 #include <engine/runtime/rendering/modules/spriteShadow.h>

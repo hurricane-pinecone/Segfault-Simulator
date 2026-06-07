@@ -6,7 +6,7 @@
 #include "engine/core/components/waterTileComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/runtime/rendering/isometricRenderContext.h"
-#include "engine/runtime/rendering/sdlColor.h"
+#include "engine/runtime/rendering/util/sdlColor.h"
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
 

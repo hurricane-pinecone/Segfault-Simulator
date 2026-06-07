@@ -1,11 +1,11 @@
 
-#include "engine/runtime/rendering/isometricGeometryRenderer.h"
+#include "engine/runtime/rendering/gl/isometricGeometryRenderer.h"
 
 #include "engine/core/logger/logger.h"
-#include "engine/runtime/rendering/glDebug.h"
+#include "engine/runtime/rendering/gl/glDebug.h"
 #include "engine/core/rendering/quads.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
-#include "engine/runtime/rendering/gpuProfiling.h"
+#include "engine/runtime/rendering/gl/gpuProfiling.h"
 #include "engine/core/util/profiling.h"
 #include <algorithm>
 

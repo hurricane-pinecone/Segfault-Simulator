@@ -1,4 +1,4 @@
-#include "engine/core/rendering/util/isometric/isometricLightingUtils.h"
+#include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"

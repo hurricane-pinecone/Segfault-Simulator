@@ -2,10 +2,10 @@
 
 #include "engine/core/rendering/quads.h"
 #include "engine/runtime/rendering/commands/commands.h"
-#include "engine/runtime/rendering/glDebug.h"
+#include "engine/runtime/rendering/gl/glDebug.h"
 #include "engine/runtime/rendering/iIsometricRenderer.h"
-#include "engine/runtime/rendering/openGLQuadRenderer.h"
-#include "engine/runtime/rendering/renderStats.h"
+#include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
+#include "engine/runtime/rendering/util/renderStats.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
