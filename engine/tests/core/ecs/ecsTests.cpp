@@ -3,6 +3,7 @@
 #include <engine/core/ecs/ecs.h>
 
 #include <cstddef>
+#include <stdexcept>
 
 using namespace sfs;
 
@@ -44,7 +45,7 @@ protected:
 
 int main()
 {
-  // --- Entity defaults ----------------------------------------------------
+  TEST("a default-constructed entity should be invalid")
   {
     Entity none;
     CHECK(!none.isValid());
@@ -52,7 +53,7 @@ int main()
     CHECK(none.getId() == Entity::InvalidId);
   }
 
-  // --- create / alive / unique ids ----------------------------------------
+  TEST("createEntity should return unique, live entities")
   {
     Registry reg;
     Entity a = reg.createEntity();
@@ -65,7 +66,7 @@ int main()
     CHECK(a != b);
   }
 
-  // --- Pool<T> directly ---------------------------------------------------
+  TEST("a pool should store, fetch, and remove elements")
   {
     Pool<int> pool;
     CHECK(pool.isEmpty());
@@ -81,17 +82,16 @@ int main()
     pool.remove(static_cast<std::size_t>(2));
     CHECK(!pool.has(2));
 
-    // remove(const T&) clears the slot holding that value.
     pool.set(0, 7);
     CHECK(pool.has(0));
-    pool.remove(7);
+    pool.remove(7); // remove(const T&) clears the slot holding that value
     CHECK(!pool.has(0));
 
     pool.clear();
     CHECK(pool.isEmpty());
   }
 
-  // --- components: add / has / get / mutate / remove ----------------------
+  TEST("an entity should add, read, mutate, and remove components")
   {
     Registry reg;
     Entity e = reg.createEntity();
@@ -106,8 +106,8 @@ int main()
     CHECK(testing::approx(e.getComponent<Position>().x, 1.0f));
     CHECK(testing::approx(e.getComponent<Velocity>().dy, 4.0f));
 
-    // mutation through the returned reference persists
-    e.getComponent<Position>().x = 9.0f;
+    e.getComponent<Position>().x =
+        9.0f; // mutation through the reference persists
     CHECK(testing::approx(e.getComponent<Position>().x, 9.0f));
 
     e.removeComponent<Position>();
@@ -115,7 +115,7 @@ int main()
     CHECK(e.hasComponent<Velocity>());
   }
 
-  // --- per-entity component independence ----------------------------------
+  TEST("components should be independent per entity")
   {
     Registry reg;
     Entity a = reg.createEntity();
@@ -126,7 +126,7 @@ int main()
     CHECK(b.getComponent<Health>().hp == 70);
   }
 
-  // --- tags ---------------------------------------------------------------
+  TEST("addTag should attach a marker component")
   {
     Registry reg;
     Entity e = reg.createEntity();
@@ -134,7 +134,7 @@ int main()
     CHECK(e.hasComponent<Enemy>());
   }
 
-  // --- view: matches entities having ALL requested components -------------
+  TEST("view should match entities having all requested components")
   {
     Registry reg;
     Entity moving = reg.createEntity();
@@ -153,7 +153,7 @@ int main()
     CHECK(reg.view<Velocity, Health>().empty());
   }
 
-  // --- destroy + flush: generation bump, id reuse, stale handle invalid ----
+  TEST("destroying an entity should bump the generation and reuse its id")
   {
     Registry reg;
     Entity a = reg.createEntity();
@@ -166,16 +166,14 @@ int main()
     CHECK(!a.isAlive());
     CHECK(!reg.isAlive(a));
 
-    // id is reused with a bumped generation, so the old handle no longer
-    // matches
     Entity b = reg.createEntity();
-    CHECK(b.getId() == aid);
-    CHECK(b.getGeneration() == gen + 1);
-    CHECK(!reg.isAlive(a)); // stale handle stays dead
+    CHECK(b.getId() == aid);             // id reused
+    CHECK(b.getGeneration() == gen + 1); // with a bumped generation
+    CHECK(!reg.isAlive(a));              // stale handle stays dead
     CHECK(reg.isAlive(b));
   }
 
-  // --- view drops a destroyed entity after flush --------------------------
+  TEST("view should drop a destroyed entity after flush")
   {
     Registry reg;
     Entity e = reg.createEntity();
@@ -186,7 +184,7 @@ int main()
     CHECK(reg.view<Position>().empty());
   }
 
-  // --- systems: registration, lookup, removal -----------------------------
+  TEST("systems should register, look up, and remove")
   {
     Registry reg;
     CHECK(!reg.hasSystem<MovementSystem>());
@@ -203,7 +201,7 @@ int main()
     CHECK(reg.tryGetSystem<MovementSystem>() == nullptr);
   }
 
-  // --- getSystem throws when absent ---------------------------------------
+  TEST("getSystem should throw when the system is absent")
   {
     Registry reg;
     bool threw = false;
@@ -218,7 +216,7 @@ int main()
     CHECK(threw);
   }
 
-  // --- system entity-matching on flush ------------------------------------
+  TEST("a system should gain and lose entities on flush")
   {
     Registry reg;
     MovementSystem& sys = reg.addSystem<MovementSystem>();
@@ -234,13 +232,12 @@ int main()
     CHECK(sys.getEntities().size() == 1);
     CHECK(sys.getEntities()[0] == moving);
 
-    // destroying a matched entity removes it from the system on flush
     reg.destroyEntity(moving);
     reg.flushEntities();
     CHECK(sys.getEntities().empty());
   }
 
-  // --- enabled flag -------------------------------------------------------
+  TEST("setEnabled should toggle a system on and off")
   {
     Registry reg;
     MovementSystem& sys = reg.addSystem<MovementSystem>();

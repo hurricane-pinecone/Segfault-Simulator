@@ -39,7 +39,7 @@ ParticleEffectDesc burstEffect(int count, float lifetime)
 
 int main()
 {
-  // --- register / has / effect / effectNames ------------------------------
+  TEST("effects should register, replace by name, and list sorted")
   {
     ParticleEngine engine;
     CHECK(!engine.hasEffect("spark"));
@@ -64,7 +64,7 @@ int main()
     CHECK(engine.effect("spark")->burstCount == 9);
   }
 
-  // --- spawnBurst: unknown effect fails, known one emits on simulate ------
+  TEST("spawnBurst should reject an unknown effect and emit on simulate")
   {
     ParticleEngine engine;
     engine.registerEffect("spark", burstEffect(5, 1.0f));
@@ -78,7 +78,7 @@ int main()
     CHECK(engine.liveParticleCount() == 5);
   }
 
-  // --- particles age out and the burst drains -----------------------------
+  TEST("particles should age out and drain the burst")
   {
     ParticleEngine engine;
     engine.registerEffect("spark", burstEffect(4, 1.0f));
@@ -89,7 +89,7 @@ int main()
     CHECK(engine.liveParticleCount() == 0);
   }
 
-  // --- global particle cap drops over-budget emissions --------------------
+  TEST("the global cap should drop over-budget emissions")
   {
     ParticleEngine engine;
     engine.setMaxParticles(3);
@@ -99,7 +99,7 @@ int main()
     CHECK(engine.liveParticleCount() == 3);
   }
 
-  // --- buildBatches projects live particles into one batch ----------------
+  TEST("buildBatches should project live particles into one batch")
   {
     ParticleEngine engine;
     engine.registerEffect("spark", burstEffect(6, 1.0f));
@@ -121,7 +121,7 @@ int main()
     CHECK(empty.empty());
   }
 
-  // --- additive blend carried through to the batch ------------------------
+  TEST("an additive effect should carry its blend mode to the batch")
   {
     ParticleEngine engine;
     ParticleEffectDesc d = burstEffect(2, 1.0f);

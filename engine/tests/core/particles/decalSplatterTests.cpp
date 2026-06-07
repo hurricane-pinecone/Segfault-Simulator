@@ -24,7 +24,7 @@ int main()
 {
   const ISplatterShaper& shaper = defaultSplatterShaper();
 
-  // --- energetic directional hit: pool + fan streaks ----------------------
+  TEST("an energetic directional hit should emit a pool plus fan streaks")
   {
     SplatParams sp = defaultParams();
     std::uint32_t rng = 12345u;
@@ -41,11 +41,10 @@ int main()
     CHECK(testing::approx(p.shapes[0].size.y, 0.15f));
     CHECK(p.shapes[0].crisp == false);
 
-    // the remaining shapes are the crisp streaks
-    CHECK(p.shapes[1].crisp == true);
+    CHECK(p.shapes[1].crisp == true); // streaks are crisp
   }
 
-  // --- still drop: pool only ----------------------------------------------
+  TEST("a still drop should emit only a pool")
   {
     SplatParams sp = defaultParams();
     std::uint32_t rng = 999u;
@@ -57,7 +56,7 @@ int main()
     CHECK(p.count == 1);
   }
 
-  // --- fan disabled: pool only even for a fast hit ------------------------
+  TEST("a disabled fan should emit only a pool even for a fast hit")
   {
     SplatParams sp = defaultParams();
     sp.fan = false;
@@ -70,7 +69,7 @@ int main()
     CHECK(p.count == 1);
   }
 
-  // --- poolSoft=false makes the pool crisp --------------------------------
+  TEST("poolSoft=false should make the pool crisp")
   {
     SplatParams sp = defaultParams();
     sp.poolSoft = false;

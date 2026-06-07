@@ -29,10 +29,10 @@ jobs:
         run: cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build tests
-        run: cmake --build build-core
+        run: cmake --build build-core -j 2
 
       - name: Run tests
-        run: ctest --test-dir build-core --output-on-failure
+        run: ctest --test-dir build-core --output-on-failure --parallel 2
 
   build:
     runs-on: ubuntu-latest
@@ -51,7 +51,7 @@ jobs:
         run: emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
 
       - name: Build web
-        run: cmake --build build-web --config Release
+        run: cmake --build build-web --config Release -j 2
 
       # Docs share the game's single Pages site: the game at the root, the MkDocs
       # site under /docs. --strict fails the deploy on a broken link or nav entry.
