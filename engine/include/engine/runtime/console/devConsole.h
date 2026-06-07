@@ -13,8 +13,9 @@ class IQuadRenderer;
 class AssetStore;
 
 /**
- * One-line in-app developer console. Toggle with the backtick key, type a Lua
- * statement, and press Enter to run it against the live VM (sfs::activeLua).
+ * In-app developer console: a single-line input with multi-line output. Toggle
+ * with the backtick key, type a Lua statement, and press Enter to run it against
+ * the live VM (sfs::activeLua). A table result prints pretty, one key per line.
  *
  * It draws through the engine's TextRenderer, so it carries no ImGui dependency
  * and ships in every build -- on web it shares the VM the on-page editor drives.
@@ -32,8 +33,9 @@ public:
 
   // Feed one SDL event. Returns true when the console consumed it, so the host
   // skips its own handling. Backtick toggles from any state; while open, this
-  // captures typing, Backspace, Enter (runs the line), Up/Down (recall previous
-  // commands), and Escape (closes).
+  // captures typing, Backspace/Delete, Left/Right/Home/End (move the caret),
+  // Enter (runs the line), Up/Down (recall previous commands), and Escape
+  // (closes).
   bool handleEvent(const SDL_Event& event);
 
   // Draw the console bar (background, last result, prompt + input) along the
@@ -54,6 +56,7 @@ private:
 
   bool m_open = false;
   std::string m_input;
+  std::size_t m_cursor = 0; // caret position within m_input (0..size)
   std::string m_output; // last result or error, shown above the input line
 
   // Submitted commands, oldest first. m_historyPos is the recall cursor: it

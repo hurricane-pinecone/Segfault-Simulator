@@ -36,6 +36,9 @@ public:
                 const std::string& fontId,
                 Color color = Colors::White);
 
+  // Line spacing in pixels for a loaded font, for stacking multiple lines.
+  int lineHeight(const std::string& fontId) const;
+
 private:
   static std::string buildCacheKey(const std::string& text,
                                    const std::string& fontId,
