@@ -4,23 +4,31 @@ Running Lua against the live game, and the guarantees around it.
 
 ## In-app dev console (built in)
 
-A one-line console — toggled with the **backtick** (`` ` ``) key — runs commands
+A developer console toggled with the **backtick** (`` ` ``) key runs commands
 against the live VM without a rebuild. The engine's `Game` base owns and draws it
 through `TextRenderer` (no ImGui dependency), so it ships in every build of your
 game (debug or release) with nothing extra to wire up.
 
 It is **opt-in**, since it needs a VM to run against: call `setConsoleEnabled(true)`
-once after `init()`. The host then exposes it automatically — no per-frame code.
+once after `init()`. The host then exposes it automatically, with no per-frame code.
+
+You type into a single input line at the bottom. Output appears above it, one
+screen line per newline in the result. A table result prints one key per line.
+If the output grows tall enough to fill most of the screen, it is capped and
+`...` marks the overflow.
 
 While open it owns the keyboard (the game ignores input as you type):
 
-| Key       | Action                                               |
-| --------- | ---------------------------------------------------- |
-| `` ` ``   | toggle the console                                   |
-| Enter     | run the line (result / error shows above the prompt) |
-| Up / Down | recall previous commands                             |
-| Backspace | edit                                                 |
-| Escape    | close                                                |
+| Key            | Action                                               |
+| -------------- | ---------------------------------------------------- |
+| `` ` ``        | toggle the console                                   |
+| Enter          | run the line (result / error shows above the prompt) |
+| Up / Down      | recall previous commands                             |
+| Left / Right   | move the caret within the input                      |
+| Home / End     | jump to the start or end of the input                |
+| Backspace      | delete the character to the left of the caret        |
+| Delete         | delete the character to the right of the caret       |
+| Escape         | close                                                |
 
 Anything bound onto the VM is callable here — your bound globals, the engine
 tables (`particles.spawn("embers", 10, 8)`), and any live config table
