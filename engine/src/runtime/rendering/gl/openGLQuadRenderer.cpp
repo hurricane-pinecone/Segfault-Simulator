@@ -1727,7 +1727,7 @@ float sunVisibility()
 
   return 1.0 - smoothstep(0.0, 0.30, maxAngle - sunSlope);
 }
-
+)" /* split literal: MSVC caps a single string at ~16KB (C2026) */ R"(
 void main()
 {
   vec4 albedo = texture(uTexture, vUv);

@@ -24,7 +24,14 @@
 #include <cstdio>
 #include <string>
 #include <type_traits>
-#include <unistd.h>
+
+// isatty/fileno (terminal detection for coloured output) live in <unistd.h> on
+// POSIX and in <io.h> as _isatty/_fileno on MSVC.
+#if defined(_WIN32)
+  #include <io.h>
+#else
+  #include <unistd.h>
+#endif
 
 namespace testing
 {
@@ -45,7 +52,11 @@ inline std::string g_buffer;
 
 inline bool colorEnabled()
 {
+#if defined(_WIN32)
+  static const bool on = _isatty(_fileno(stderr)) != 0;
+#else
   static const bool on = ::isatty(fileno(stderr)) != 0;
+#endif
   return on;
 }
 
