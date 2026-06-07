@@ -34,9 +34,50 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-core --output-on-failure --parallel 2
 
+  # Runtime tests link the full engine (SDL/OpenGL), so this job restores the
+  # Conan dependency closure and runs a native build. They drive systems and
+  # render modules through mock seams (a fake IQuadRenderer, stub services), so
+  # they run headless: no window, no GPU, no display. Split from the core test
+  # job only so a standalone engine-core release can gate on core tests alone;
+  # the web deploy ships the runtime (both sample games), so it needs both.
+  test-runtime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Conan
+        run: pip install "conan==2.*"
+
+      - name: Detect Conan profile
+        run: conan profile detect --force
+
+      # Conan installs the deps' own system requirements (X11/GL dev packages the
+      # SDL build needs) via apt, so the runner needs nothing pre-installed.
+      - name: Install dependencies
+        run: |
+          conan install . --build=missing -s build_type=Debug \
+            -c tools.system.package_manager:mode=install \
+            -c tools.system.package_manager:sudo=True
+
+      - name: Configure (no sample game)
+        run: cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF
+
+      - name: Build
+        run: cmake --build build/Debug -j 2
+
+      - name: Run runtime tests
+        run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel 2
+
   build:
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, test-runtime]
 
     steps:
       - name: Checkout

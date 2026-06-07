@@ -1,5 +1,15 @@
-# Runtime tests link the full engine (SDL/OpenGL/imgui).
+# Runtime tests link the full engine (SDL/OpenGL/imgui). They drive systems and
+# render modules through their seams (a mock IQuadRenderer, stub services), so
+# they run headless with no window or GL context. add_runtime_test(name source)
+# declares one in a line.
+function(add_runtime_test name source)
+    add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE engine)
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES LABELS runtime)
+endfunction()
 
-add_executable(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)
-target_link_libraries(flatRenderSmokeTest PRIVATE engine)
-add_test(NAME flatRenderSmokeTest COMMAND flatRenderSmokeTest)
+add_runtime_test(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)
+add_runtime_test(isometricDecalSinkTests rendering/isometricDecalSinkTests.cpp)
+add_runtime_test(movementSystemTests systems/movementSystemTests.cpp)
+add_runtime_test(collisionSystemTests systems/collisionSystemTests.cpp)
