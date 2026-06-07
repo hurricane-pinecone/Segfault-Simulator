@@ -5,6 +5,7 @@ function(add_core_test name source)
     add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE engine-core)
     add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES LABELS core)
 endfunction()
 
 add_core_test(luaTests scripting/luaTests.cpp)
