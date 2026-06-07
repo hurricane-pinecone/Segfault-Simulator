@@ -1,9 +1,14 @@
-name: Sync docs
+name: Docs
 
-# On a master push that touches source, draft documentation updates with Claude
-# Code and open a PR with them. The PR is the review gate -- nothing lands on
-# master unreviewed. Docs-only pushes (e.g. merging this PR) don't match the
-# source paths below, so there is no loop.
+# Two flows in one workflow so they share a single Actions entry:
+#  - sync:    a master push (or manual run) that touches source drafts doc
+#             updates with Claude Code and opens a PR (the review gate -- nothing
+#             lands on master unreviewed). Docs-only pushes don't match the source
+#             paths below, so there is no loop.
+#  - iterate: a "@claude ..." comment on a docs PR has Claude apply the request
+#             and push it back, so the PR updates in place.
+# Each job is gated by event type, so a push runs only `sync` and a comment runs
+# only `iterate`.
 on:
   push:
     branches: [master]
@@ -22,19 +27,25 @@ on:
           older ref to backfill docs for already-merged work.
         required: false
         default: ""
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
 
 permissions:
   contents: write
   pull-requests: write
 
-concurrency:
-  group: docs-sync
-  cancel-in-progress: true
-
 jobs:
+  # On a master push that touches source, draft documentation updates with Claude
+  # Code and open a PR with them.
   sync:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: docs-sync
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,3 +147,76 @@ jobs:
 
             **Review before merging.** If the docs didn't actually need changing, just
             close this PR — no harm done.
+
+  # Reply to a "@claude ..." comment on a docs PR: Claude reads the request, edits
+  # the PR branch, and pushes the changes back so the PR updates in place.
+  iterate:
+    # Only act on a PR comment that mentions @claude, from someone with write
+    # access (this runs with repo secrets, so never an arbitrary commenter), and
+    # never on our own bot comments (which would loop).
+    if: >-
+      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment')
+      && github.event.comment.user.type != 'Bot'
+      && contains(github.event.comment.body, '@claude')
+      && (github.event.issue.pull_request || github.event.pull_request)
+      && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      # One run per PR, queued (not cancelled) so two comments can't push over
+      # each other mid-commit.
+      group: docs-iterate-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    env:
+      PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr checkout "$PR"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Apply the requested change
+        env:
+          # Same subscription token the sync job uses.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          COMMENT: ${{ github.event.comment.body }}
+        run: |
+          # Strip whitespace so a stray newline in the secret can't make the auth
+          # header invalid (see the sync job for the full note).
+          export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
+          PROMPT="A reviewer left this comment on a documentation pull request:
+
+          $COMMENT
+
+          Do what it asks. The whole repository is checked out on the PR branch, so Read/Grep/Glob any source or doc file you need. Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) first, and follow both.
+
+          Make the smallest change that satisfies the request and do not touch anything it didn't ask about. If the request is unclear, or is not a documentation change you should make here, make no edits."
+          printf '%s' "$PROMPT" | claude -p \
+            --permission-mode acceptEdits --max-turns 30 \
+            --allowedTools "Read,Edit,Write,Grep,Glob"
+
+      - name: Push the changes back to the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet && git diff --cached --quiet; then
+            gh pr comment "$PR" --body "I didn't change anything. The request looked already satisfied, or it was outside the docs I should edit here."
+            exit 0
+          fi
+          git add -A
+          git commit -m "docs: address review comment"
+          git push
+          gh pr comment "$PR" --body "Pushed an update addressing your comment."
