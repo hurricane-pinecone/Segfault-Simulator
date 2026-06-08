@@ -3,16 +3,18 @@
 #include "engine/core/noise/noise.h"
 #include "engine/core/voxel/voxelChunk.h"
 #include "engine/core/voxel/voxelView.h"
+#include "engine/core/voxel/waterChunk.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
 #include "voxel/blockRegistry.h"
 
 // Sample world generation: solid ground from the floor up to a 2D noise surface
 // measured in ELEVATION LEVELS (half-blocks), so an odd height is capped with a
-// half-block slab -- demonstrating both block sizes. Sand at/under the
-// shoreline with water filling the dips, grass above. Caves/overhangs (a 3D
-// carve) are the next phase -- the engine already supports air anywhere, so
-// only this file changes for them.
+// half-block slab -- demonstrating both block sizes (including underwater).
+// Sand at/under the shoreline, grass above. Water is filled as SETTLED per-cell
+// amounts up to sea level (a flat sea over the seabed); the fluid sim leaves it
+// alone until something disturbs it. Caves/overhangs (a 3D carve) are the next
+// phase -- the engine already supports air anywhere, so only this file changes.
 class GameVoxelGenerator : public sfs::IVoxelGenerator
 {
 public:
@@ -38,11 +40,13 @@ public:
     for (int ly = 0; ly < sfs::kChunkSize; ++ly)
       for (int lx = 0; lx < sfs::kChunkSize; ++lx)
       {
+        const int seaLevel = kWaterLevelBlocks * L; // sea surface in levels
         const int levels = surfaceLevels(baseX + lx, baseY + ly);
         const int fullBlocks = levels / L; // whole cube cells
         const bool slab = (levels % L) != 0;
-        const bool beach = fullBlocks <= kWaterLevelBlocks;
-        const bool underwater = fullBlocks < kWaterLevelBlocks;
+        const int solidCells = fullBlocks + (slab ? 1 : 0);
+        const bool underwater = levels < seaLevel;
+        const bool beach = levels <= seaLevel;
 
         const sfs::BlockId cube =
             beach ? GameBlockRegistry::kSand : GameBlockRegistry::kGrass;
@@ -66,14 +70,16 @@ public:
 
           if (wz < fullBlocks)
             out.set(lx, ly, lz, cube);
-          else if (wz == fullBlocks && slab && !underwater)
-            // Half-block cap only ABOVE water. A slab's top is an odd level, so
-            // it's always below the (even) water surface -- underwater it
-            // leaves the water with no full block to meet at its edge (holes),
-            // so the seabed stays full cubes.
+          else if (wz == fullBlocks && slab)
+          {
             out.set(lx, ly, lz, slabId);
-          else if (underwater && wz >= fullBlocks && wz < kWaterLevelBlocks)
-            out.set(lx, ly, lz, GameBlockRegistry::kWater);
+            // A submerged slab holds water in its empty upper level, so the sea
+            // surface meets the half block instead of leaving a hole.
+            if (underwater)
+              out.setWater(lx, ly, lz, sfs::kWaterFull / 2);
+          }
+          else if (underwater && wz >= solidCells && wz < kWaterLevelBlocks)
+            out.setWater(lx, ly, lz, sfs::kWaterFull); // full cell below sea
         }
       }
   }

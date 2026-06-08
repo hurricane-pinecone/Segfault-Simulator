@@ -13,15 +13,26 @@ namespace sfs
 
 namespace
 {
-// A writer that drops a generator's blocks into one chunk (clamped to bounds).
+bool inChunk(int lx, int ly, int lz)
+{
+  return lx >= 0 && lx < kChunkSize && ly >= 0 && ly < kChunkSize && lz >= 0 &&
+         lz < kChunkSize;
+}
+
+// A writer that drops a generator's blocks + water into one chunk pair.
 struct ChunkWriter : IChunkWriter
 {
   VoxelChunk* chunk = nullptr;
+  WaterChunk* waterChunk = nullptr;
   void set(int lx, int ly, int lz, BlockId id) override
   {
-    if (lx >= 0 && lx < kChunkSize && ly >= 0 && ly < kChunkSize && lz >= 0 &&
-        lz < kChunkSize)
+    if (inChunk(lx, ly, lz))
       chunk->set(lx, ly, lz, id);
+  }
+  void setWater(int lx, int ly, int lz, std::uint16_t amount) override
+  {
+    if (inChunk(lx, ly, lz))
+      waterChunk->set(lx, ly, lz, amount);
   }
 };
 } // namespace
@@ -65,16 +76,27 @@ bool VoxelWorld::isSolid(BlockId id) const
   return m_registry ? m_registry->type(id).solid : true;
 }
 
-bool VoxelWorld::isLiquid(BlockId id) const
-{
-  return m_registry && id != kAirBlock && m_registry->type(id).liquid;
-}
-
 int VoxelWorld::topLevel(BlockId id, int z) const
 {
   const bool slab =
       m_registry && m_registry->type(id).shape == BlockShape::Slab;
   return slab ? z * kLevelsPerBlock + 1 : (z + 1) * kLevelsPerBlock;
+}
+
+void VoxelWorld::recomputeSurfaceTop(int x, int y)
+{
+  const int top = (m_maxChunkZ + 1) * kChunkSize - 1;
+  const int floor = m_minChunkZ * kChunkSize;
+  for (int z = top; z >= floor; --z)
+  {
+    const BlockId id = blockAt(x, y, z);
+    if (id != kAirBlock && isSolid(id))
+    {
+      m_surfaceTop[{x, y}] = topLevel(id, z);
+      return;
+    }
+  }
+  m_surfaceTop.erase({x, y});
 }
 
 int VoxelWorld::terrainHeightAt(int tileX, int tileY) const
@@ -87,29 +109,157 @@ int VoxelWorld::terrainHeightAt(int tileX, int tileY) const
 
 bool VoxelWorld::isWaterAt(int tileX, int tileY) const
 {
-  const auto it = m_waterTop.find({tileX, tileY});
-  if (it == m_waterTop.end())
+  const auto it = m_waterTopCell.find({tileX, tileY});
+  if (it == m_waterTopCell.end())
     return false;
-  return (it->second + 1) * kLevelsPerBlock > terrainHeightAt(tileX, tileY);
+  const glm::ivec3 top{tileX, tileY, it->second};
+  return surface(top) > static_cast<float>(terrainHeightAt(tileX, tileY));
 }
 
 void VoxelWorld::collectWaterColumns(std::vector<WaterColumn>& out) const
 {
-  for (const auto& [tile, waterZ] : m_waterTop)
+  for (const auto& [tile, topZ] : m_waterTopCell)
   {
-    // Skip stale entries left by unloaded columns -- only draw water in the
-    // currently streamed window.
+    // Only the currently streamed window.
     if (tile.x < m_lastFocus.x - m_radiusTiles ||
         tile.x > m_lastFocus.x + m_radiusTiles ||
         tile.y < m_lastFocus.y - m_radiusTiles ||
         tile.y > m_lastFocus.y + m_radiusTiles)
       continue;
 
-    const int surfaceLevel = (waterZ + 1) * kLevelsPerBlock;
-    const int floorLevel = terrainHeightAt(tile.x, tile.y);
+    const glm::ivec3 top{tile.x, tile.y, topZ};
+    if (water(top) <= 0)
+      continue;
+    const float surfaceLevel = surface(top);
+    const float floorLevel =
+        static_cast<float>(terrainHeightAt(tile.x, tile.y));
     if (surfaceLevel > floorLevel)
       out.push_back(WaterColumn{tile, surfaceLevel, floorLevel});
   }
+}
+
+// --- Water grid + sim ------------------------------------------------------
+
+int VoxelWorld::water(const glm::ivec3& c) const
+{
+  const glm::ivec3 cc = chunkOf(c.x, c.y, c.z);
+  const auto it = m_waterChunks.find(cc);
+  if (it == m_waterChunks.end())
+    return 0;
+  return it->second.at(c.x - cc.x * kChunkSize,
+                       c.y - cc.y * kChunkSize,
+                       c.z - cc.z * kChunkSize);
+}
+
+int VoxelWorld::capacity(const glm::ivec3& c) const
+{
+  if (!m_registry)
+    return 0;
+  // An unloaded block chunk is a barrier -- water doesn't flow off the streamed
+  // edge or out of the world's z range.
+  if (m_chunks.find(chunkOf(c.x, c.y, c.z)) == m_chunks.end())
+    return 0;
+  return cellWaterCapacity(blockAt(c.x, c.y, c.z), *m_registry);
+}
+
+float VoxelWorld::surface(const glm::ivec3& c) const
+{
+  if (!m_registry)
+    return static_cast<float>(c.z * kLevelsPerBlock);
+  return cellWaterSurface(c.z, blockAt(c.x, c.y, c.z), *m_registry, water(c));
+}
+
+void VoxelWorld::setWater(const glm::ivec3& c, int amount)
+{
+  amount = glm::clamp(amount, 0, 65535);
+  const glm::ivec3 cc = chunkOf(c.x, c.y, c.z);
+  const int lx = c.x - cc.x * kChunkSize;
+  const int ly = c.y - cc.y * kChunkSize;
+  const int lz = c.z - cc.z * kChunkSize;
+
+  if (amount == 0)
+  {
+    const auto it = m_waterChunks.find(cc);
+    if (it != m_waterChunks.end())
+      it->second.set(lx, ly, lz, 0);
+  }
+  else
+  {
+    m_waterChunks[cc].set(lx, ly, lz, static_cast<WaterAmount>(amount));
+  }
+  updateWaterTop(c, amount);
+}
+
+void VoxelWorld::updateWaterTop(const glm::ivec3& c, int amount)
+{
+  const glm::ivec2 col{c.x, c.y};
+  const auto it = m_waterTopCell.find(col);
+  if (amount > 0)
+  {
+    if (it == m_waterTopCell.end() || c.z > it->second)
+      m_waterTopCell[col] = c.z;
+    return;
+  }
+  // Emptied a cell: if it was the column's top, find the next water below.
+  if (it == m_waterTopCell.end() || c.z != it->second)
+    return;
+  const int floor = m_minChunkZ * kChunkSize;
+  for (int z = c.z - 1; z >= floor; --z)
+    if (water({c.x, c.y, z}) > 0)
+    {
+      it->second = z;
+      return;
+    }
+  m_waterTopCell.erase(it);
+}
+
+void VoxelWorld::activate(const glm::ivec3& c)
+{
+  m_activeWater.insert(c);
+  m_activeWater.insert({c.x + 1, c.y, c.z});
+  m_activeWater.insert({c.x - 1, c.y, c.z});
+  m_activeWater.insert({c.x, c.y + 1, c.z});
+  m_activeWater.insert({c.x, c.y - 1, c.z});
+  m_activeWater.insert({c.x, c.y, c.z + 1});
+  m_activeWater.insert({c.x, c.y, c.z - 1});
+}
+
+void VoxelWorld::addWater(int x, int y, int z, int amount)
+{
+  const glm::ivec3 c{x, y, z};
+  const int room = capacity(c) - water(c);
+  const int add = glm::min(glm::max(amount, 0), glm::max(room, 0));
+  if (add <= 0)
+    return;
+  setWater(c, water(c) + add);
+  activate(c);
+}
+
+void VoxelWorld::simulateWater(double deltaTime)
+{
+  ZoneScopedN("VoxelWorld::simulateWater");
+
+  constexpr double kTick = 1.0 / 15.0;
+  m_simAccum += deltaTime;
+
+  int ticks = 0;
+  while (m_simAccum >= kTick && ticks < 4)
+  {
+    m_simAccum -= kTick;
+    ++ticks;
+    if (m_activeWater.empty())
+      break;
+
+    const std::vector<glm::ivec3> active(
+        m_activeWater.begin(), m_activeWater.end());
+    std::vector<glm::ivec3> next;
+    stepWater(active, *this, next);
+    m_activeWater.clear();
+    m_activeWater.insert(next.begin(), next.end());
+  }
+
+  if (m_activeWater.empty())
+    m_simAccum = 0.0; // don't bank time while idle
 }
 
 void VoxelWorld::markDirty(const glm::ivec3& coord)
@@ -128,16 +278,13 @@ void VoxelWorld::setBlock(int x, int y, int z, BlockId id)
   it->second->set(
       x - c.x * kChunkSize, y - c.y * kChunkSize, z - c.z * kChunkSize, id);
 
-  if (isSolid(id))
-  {
-    int& top = m_surfaceTop[{x, y}];
-    top = glm::max(top, topLevel(id, z));
-  }
-  else if (isLiquid(id))
-  {
-    int& top = m_waterTop[{x, y}];
-    top = glm::max(top, z);
-  }
+  // The edit may raise OR lower the column's surface, so rescan it.
+  recomputeSurfaceTop(x, y);
+
+  // Changing a block changes water capacity here -- wake the water at and above
+  // it so it can flow into a dug hole or be displaced by a placed block.
+  activate({x, y, z});
+  activate({x, y, z + 1});
 
   // The block's own chunk, plus the chunks whose +x/+y/+z face abuts it.
   markDirty(c);
@@ -149,16 +296,19 @@ void VoxelWorld::setBlock(int x, int y, int z, BlockId id)
 void VoxelWorld::loadChunk(const glm::ivec3& coord)
 {
   auto chunk = std::make_unique<VoxelChunk>();
+  WaterChunk waterChunk;
 
   if (m_generator)
   {
     ChunkWriter writer;
     writer.chunk = chunk.get();
+    writer.waterChunk = &waterChunk;
     m_generator->generate(coord, writer);
   }
 
-  // Record the topmost solid (walkable floor) and topmost liquid (water
-  // surface) for each column this chunk covers.
+  // Record the topmost solid (walkable floor) and topmost water cell for each
+  // column this chunk covers. Generated water is assumed settled (the generator
+  // fills to a flat level), so it is NOT woken -- a loaded sea costs nothing.
   for (int ly = 0; ly < kChunkSize; ++ly)
     for (int lx = 0; lx < kChunkSize; ++lx)
     {
@@ -168,25 +318,27 @@ void VoxelWorld::loadChunk(const glm::ivec3& coord)
       bool gotWater = false;
       for (int lz = kChunkSize - 1; lz >= 0 && !(gotSolid && gotWater); --lz)
       {
-        const BlockId id = chunk->at(lx, ly, lz);
-        if (id == kAirBlock)
-          continue;
         const int wz = coord.z * kChunkSize + lz;
-        if (!gotSolid && isSolid(id))
+        if (!gotWater && waterChunk.at(lx, ly, lz) > 0)
         {
-          int& top = m_surfaceTop[{wx, wy}];
-          top = glm::max(top, topLevel(id, wz));
-          gotSolid = true;
-        }
-        if (!gotWater && isLiquid(id))
-        {
-          int& top = m_waterTop[{wx, wy}];
-          top = glm::max(top, wz);
+          const glm::ivec2 col{wx, wy};
+          const auto wit = m_waterTopCell.find(col);
+          m_waterTopCell[col] =
+              wit == m_waterTopCell.end() ? wz : glm::max(wit->second, wz);
           gotWater = true;
+        }
+        const BlockId id = chunk->at(lx, ly, lz);
+        if (!gotSolid && id != kAirBlock && isSolid(id))
+        {
+          int& sTop = m_surfaceTop[{wx, wy}];
+          sTop = glm::max(sTop, topLevel(id, wz));
+          gotSolid = true;
         }
       }
     }
 
+  if (!waterChunk.empty())
+    m_waterChunks.emplace(coord, std::move(waterChunk));
   m_chunks.emplace(coord, std::move(chunk));
   // New chunk + the chunks whose +face now abuts it.
   markDirty(coord);
@@ -227,8 +379,11 @@ void VoxelWorld::streamAround(const glm::ivec2& focusTile)
   }
 }
 
-void VoxelWorld::update(double /*deltaTime*/)
+void VoxelWorld::update(double deltaTime)
 {
+  // The fluid sim runs every frame regardless of camera movement.
+  simulateWater(deltaTime);
+
   auto cameras = registry->view<CameraComponent, TransformComponent>();
   if (cameras.empty())
     return;

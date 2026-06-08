@@ -12,18 +12,15 @@
 // The sample's block types. Owns the interned texture-id strings the engine's
 // BlockType points at, so it must live as long as the world renders (held as a
 // scene member). Grass + sand are opaque cubes (block.png / sand.png,
-// grass/dirt sides show on stacked voxels). Water is a physical liquid block:
-// it occupies its cell (actors stand on the floor beneath, future water
-// movement reads it) but draws nothing as geometry -- the water render path
-// draws its surface.
+// grass/dirt sides show on stacked voxels); slabs reuse the cube texture. Water
+// is NOT a block -- it's a per-cell amount in VoxelWorld's water layer.
 class GameBlockRegistry : public sfs::IBlockRegistry
 {
 public:
   static constexpr sfs::BlockId kGrass = 1;
   static constexpr sfs::BlockId kSand = 2;
-  static constexpr sfs::BlockId kWater = 3;
-  static constexpr sfs::BlockId kGrassSlab = 4;
-  static constexpr sfs::BlockId kSandSlab = 5;
+  static constexpr sfs::BlockId kGrassSlab = 3;
+  static constexpr sfs::BlockId kSandSlab = 4;
 
   void setup(sfs::AssetStore& assets)
   {
@@ -44,14 +41,6 @@ public:
     m_grassSlab.shape = sfs::BlockShape::Slab;
     m_sandSlab = m_sand;
     m_sandSlab.shape = sfs::BlockShape::Slab;
-
-    m_water = sfs::BlockType{};
-    m_water.shape = sfs::BlockShape::Cube;
-    m_water.textureId = nullptr;
-    m_water.opaque = false;
-    m_water.solid = false;
-    m_water.liquid = true;
-    m_water.effect = sfs::SurfaceEffect::Type::Water;
   }
 
   const sfs::BlockType& type(sfs::BlockId id) const override
@@ -62,8 +51,6 @@ public:
       return m_grass;
     case kSand:
       return m_sand;
-    case kWater:
-      return m_water;
     case kGrassSlab:
       return m_grassSlab;
     case kSandSlab:
@@ -118,5 +105,4 @@ private:
   sfs::BlockType m_sand{};
   sfs::BlockType m_grassSlab{};
   sfs::BlockType m_sandSlab{};
-  sfs::BlockType m_water{};
 };

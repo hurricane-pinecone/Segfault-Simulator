@@ -5,6 +5,9 @@
 #include "engine/core/rendering/iWaterSurfaceSource.h"
 #include "engine/core/voxel/voxelChunk.h"
 #include "engine/core/voxel/voxelView.h"
+#include "engine/core/voxel/waterCell.h"
+#include "engine/core/voxel/waterChunk.h"
+#include "engine/core/voxel/waterSim.h"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
 #include <cstdint>
@@ -46,7 +49,8 @@ struct IVec2HashKey
 class VoxelWorld : public System,
                    public IVoxelView,
                    public ITerrainSurfaceSource,
-                   public IWaterSurfaceSource
+                   public IWaterSurfaceSource,
+                   public IWaterGrid
 {
 public:
   // World height in BLOCK layers [minBlockZ, maxBlockZ); radiusTiles is the
@@ -85,6 +89,17 @@ public:
   // abut it) dirty so the renderer remeshes only what changed.
   void setBlock(int x, int y, int z, BlockId id);
 
+  // Add water to a cell and wake the sim around it (a source / a splash / a
+  // bucket). Clamped to the cell's free capacity.
+  void addWater(int x, int y, int z, int amount);
+  int waterAt(int x, int y, int z) const { return water({x, y, z}); }
+
+  // IWaterGrid (the fluid sim reads/writes the world through this).
+  int water(const glm::ivec3& cell) const override;
+  int capacity(const glm::ivec3& cell) const override;
+  float surface(const glm::ivec3& cell) const override;
+  void setWater(const glm::ivec3& cell, int amount) override;
+
   // --- consumed by the VoxelTerrain render module ---
   bool hasChunk(const glm::ivec3& c) const { return m_chunks.count(c) != 0; }
   const std::unordered_map<glm::ivec3, std::unique_ptr<VoxelChunk>, IVec3Hash>&
@@ -110,10 +125,19 @@ private:
   void markDirty(const glm::ivec3& coord);
 
   bool isSolid(BlockId id) const;
-  bool isLiquid(BlockId id) const;
   // The block's top surface in elevation levels at cell z (a slab tops out one
   // level up; a cube two).
   int topLevel(BlockId id, int z) const;
+  // Rescan a column for its topmost solid and refresh m_surfaceTop -- needed
+  // after an edit that could LOWER the surface (e.g. destroying the top block).
+  void recomputeSurfaceTop(int x, int y);
+
+  // Wake a cell + its neighbours for the next sim tick.
+  void activate(const glm::ivec3& cell);
+  // Advance the fluid sim on a fixed timestep (independent of streaming).
+  void simulateWater(double deltaTime);
+  // Refresh the topmost-water-cell-per-column cache after a cell changed.
+  void updateWaterTop(const glm::ivec3& cell, int amount);
 
   int m_minChunkZ;
   int m_maxChunkZ;
@@ -127,8 +151,14 @@ private:
   // Top solid (walkable) surface in elevation levels per column, for
   // terrainHeightAt (already accounts for slab vs cube height).
   std::unordered_map<glm::ivec2, int, IVec2HashKey> m_surfaceTop;
-  // Topmost liquid (water) block z per column, for the water surface.
-  std::unordered_map<glm::ivec2, int, IVec2HashKey> m_waterTop;
+
+  // --- Water: a per-cell amount layer (NOT blocks), simulated as a conserving
+  // fluid. Surfaces can rest at any height (meeting half blocks). ---
+  std::unordered_map<glm::ivec3, WaterChunk, IVec3Hash> m_waterChunks;
+  std::unordered_set<glm::ivec3, IVec3Hash> m_activeWater; // cells to sim next
+  // Topmost water-bearing cell z per column, for the render surface.
+  std::unordered_map<glm::ivec2, int, IVec2HashKey> m_waterTopCell;
+  double m_simAccum = 0.0;
 
   glm::ivec2 m_lastFocus;
   bool m_streamed = false;

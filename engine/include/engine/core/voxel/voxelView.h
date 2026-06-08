@@ -31,6 +31,12 @@ class IChunkWriter
 public:
   virtual ~IChunkWriter() = default;
   virtual void set(int lx, int ly, int lz, BlockId id) = 0;
+  // Optional per-cell water amount (a fill level, separate from blocks).
+  // Default no-op so block-only generators are unaffected.
+  virtual void
+  setWater(int /*lx*/, int /*ly*/, int /*lz*/, std::uint16_t /*amount*/)
+  {
+  }
 };
 
 // Produces world content. The game implements it (noise, structures, ...); the

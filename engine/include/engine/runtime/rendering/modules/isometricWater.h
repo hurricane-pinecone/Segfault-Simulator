@@ -12,8 +12,10 @@ namespace sfs
 struct WaterCell
 {
   glm::ivec2 tile{};
-  int elevation = 0;
-  int terrainElevation;
+  // Fractional so a per-cell water amount can rest at any height (e.g. on a
+  // half block), not just on full-cell boundaries.
+  float elevation = 0.0f;
+  float terrainElevation = 0.0f;
   float depth = 0.0f;
 };
 
@@ -56,7 +58,7 @@ private:
 
   uint32_t addSurfaceVertex(const IsometricRenderContext& context,
                             const glm::ivec2& gridPoint,
-                            int waterElevation,
+                            float waterElevation,
                             float depth,
                             float sortDepth,
                             SurfaceCommand& command) const;
@@ -67,13 +69,17 @@ private:
                                 int cellWidth,
                                 int cellHeight,
                                 const std::vector<float>& cellDepths,
+                                const std::vector<float>& cellElevations,
                                 SurfaceCommand& command) const;
 
-  float sampleSurfaceVertexDepth(const glm::ivec2& gridPoint,
-                                 const glm::ivec2& minTile,
-                                 int cellWidth,
-                                 int cellHeight,
-                                 const std::vector<float>& cellDepths) const;
+  // Averages a per-tile field over the up-to-four tiles around a shared grid
+  // vertex, so the surface is a continuous heightfield (no gaps/steps where
+  // neighbouring tiles sit at different water levels while flowing).
+  float sampleSurfaceVertex(const glm::ivec2& gridPoint,
+                            const glm::ivec2& minTile,
+                            int cellWidth,
+                            int cellHeight,
+                            const std::vector<float>& field) const;
 };
 
 } // namespace sfs

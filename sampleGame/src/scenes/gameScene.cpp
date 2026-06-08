@@ -127,14 +127,10 @@ void GameScene::onProcessInput(const sfs::Input& input)
   m_hoveredElevation = pick.elevation;
   m_hasHoveredTile = pick.valid;
 
-  // Click splatters blood on the hovered tile, sprayed in the direction from
-  // the player to the click (as if a shot travelled that way). Left = red
-  // blood, right = a second colour (ichor) so two colours can be layered on one
-  // face.
-  const bool leftSpray = input.mouse().mouseHeld(sfs::MouseButton::Left);
-  const bool rightSpray = input.mouse().mouseHeld(sfs::MouseButton::Right);
-
-  if (m_hasHoveredTile && m_player && (leftSpray || rightSpray))
+  // Right-click sprays blood on the hovered tile, in the direction from the
+  // player to the click (as if a shot travelled that way).
+  if (m_hasHoveredTile && m_player &&
+      input.mouse().mouseHeld(sfs::MouseButton::Right))
   {
     const glm::vec2 from =
         m_player->entity().getComponent<sfs::TransformComponent>().position;
@@ -149,7 +145,18 @@ void GameScene::onProcessInput(const sfs::Input& input)
               static_cast<float>(pick.elevation),
               dir,
               12.0f,
-              leftSpray ? "blood" : "ichor");
+              "blood");
+  }
+
+  // Left-click destroys the top block at the hovered tile, exposing whatever
+  // sat beneath it (whose top face was previously culled). The surface
+  // elevation maps to the top block's cell: a cube tops out at (z+1)*L, a slab
+  // at z*L+1, so (elevation-1)/L recovers z for both.
+  if (m_hasHoveredTile && input.mouse().mouseHeld(sfs::MouseButton::Left))
+  {
+    const int z = (m_hoveredElevation - 1) / sfs::kLevelsPerBlock;
+    getSystem<sfs::VoxelWorld>().setBlock(
+        m_hoveredTile.x, m_hoveredTile.y, z, sfs::kAirBlock);
   }
 }
 
