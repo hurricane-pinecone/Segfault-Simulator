@@ -7,14 +7,18 @@
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
 #include "voxel/blockRegistry.h"
+#include <cstdint>
 
-// Sample world generation: solid ground from the floor up to a 2D noise surface
-// measured in ELEVATION LEVELS (half-blocks), so an odd height is capped with a
-// half-block slab -- demonstrating both block sizes (including underwater).
-// Sand at/under the shoreline, grass above. Water is filled as SETTLED per-cell
-// amounts up to sea level (a flat sea over the seabed); the fluid sim leaves it
-// alone until something disturbs it. Caves/overhangs (a 3D carve) are the next
-// phase -- the engine already supports air anywhere, so only this file changes.
+// Sample world generation: solid ground up to a 2D noise surface (in ELEVATION
+// LEVELS / half-blocks, so odd heights get a half-block slab cap). Water is a
+// GLOBAL SEA LEVEL -- every column whose terrain dips below it fills to it.
+// That makes water a pure per-column function, so it is perfectly seamless
+// across streamed chunks (the neighbour computes the same level by definition)
+// with no flood/fill pass. Caves are carved out of the solid; the sea only
+// fills air ABOVE the terrain surface, so enclosed caves stay dry. Sand rings
+// the waterline (bed + beach band); everything else is grass. High "crater"
+// lakes and dry sub-sea pits will be deterministic, self-contained FEATURES
+// layered on top of this base (each brings its own walls, so it can't seam).
 class GameVoxelGenerator : public sfs::IVoxelGenerator
 {
 public:
@@ -37,78 +41,78 @@ public:
     const int baseY = chunkCoord.y * sfs::kChunkSize;
     const int baseZ = chunkCoord.z * sfs::kChunkSize;
 
+    const int seaCells = kWaterLevelBlocks; // sea level in whole cells
+    const int seaLevel = seaCells * L;      // sea level in elevation levels
+
     for (int ly = 0; ly < sfs::kChunkSize; ++ly)
       for (int lx = 0; lx < sfs::kChunkSize; ++lx)
       {
-        const int seaLevel = kWaterLevelBlocks * L; // sea surface in levels
-        const int levels = surfaceLevels(baseX + lx, baseY + ly);
+        const int wx = baseX + lx;
+        const int wy = baseY + ly;
+        const int levels = surfaceLevels(wx, wy);
         const int fullBlocks = levels / L; // whole cube cells
         const bool slab = (levels % L) != 0;
         const int solidCells = fullBlocks + (slab ? 1 : 0);
         const bool underwater = levels < seaLevel;
-        const bool beach = levels <= seaLevel;
+        const bool sandy =
+            levels <= seaLevel + kShoreMargin; // bed + beach band
 
         const sfs::BlockId cube =
-            beach ? GameBlockRegistry::kSand : GameBlockRegistry::kGrass;
-        const sfs::BlockId slabId = beach ? GameBlockRegistry::kSandSlab
+            sandy ? GameBlockRegistry::kSand : GameBlockRegistry::kGrass;
+        const sfs::BlockId slabId = sandy ? GameBlockRegistry::kSandSlab
                                           : GameBlockRegistry::kGrassSlab;
 
         for (int lz = 0; lz < sfs::kChunkSize; ++lz)
         {
           const int wz = baseZ + lz;
-          const int wx = baseX + lx;
-          const int wy = baseY + ly;
 
-          // Carve caves out of the solid (not water). A cave that breaches the
-          // surface or a cliff shows; a fully-enclosed one is invisible until
-          // exposed -- exactly the voxel behaviour we want to prove.
-          // TEMP: caves disabled to test half blocks in isolation.
-          // if (wz <= fullBlocks && carved(wx, wy, wz))
-          //   continue;
-          (void)wx;
-          (void)wy;
+          // Carve caves out of the solid, BELOW the top crust so the surface
+          // (and any sea resting on it) stays intact -- caves show at cliffs or
+          // when dug into, and an enclosed one stays dry (the sea never fills
+          // inside the solid).
+          if (wz < solidCells - 1 && carved(wx, wy, wz))
+            continue;
 
           if (wz < fullBlocks)
+          {
             out.set(lx, ly, lz, cube);
+          }
           else if (wz == fullBlocks && slab)
           {
             out.set(lx, ly, lz, slabId);
             // A submerged slab holds water in its empty upper level, so the sea
-            // surface meets the half block instead of leaving a hole.
+            // meets the half block instead of leaving a gap.
             if (underwater)
               out.setWater(lx, ly, lz, sfs::kWaterFull / 2);
           }
-          else if (underwater && wz >= solidCells && wz < kWaterLevelBlocks)
+          else if (underwater && wz >= solidCells && wz < seaCells)
+          {
             out.setWater(lx, ly, lz, sfs::kWaterFull); // full cell below sea
+          }
         }
       }
   }
 
-  // Sea level in whole cells. Water depth = sea level - seabed, and the seabed
-  // bottoms out at the bedrock floor (one cube), so this is the knob for how
-  // deep the water gets: deepest water = (kWaterLevelBlocks - 1) cells.
-  static constexpr int kWaterLevelBlocks =
-      4; // ~3 blocks of water in the basins
+  // Sea level in whole cells. Lower = less water (only the deeper valleys
+  // flood).
+  static constexpr int kWaterLevelBlocks = 5;
 
 private:
   int surfaceLevels(int x, int y) const
   {
     const float n = m_noise.get(static_cast<float>(x), static_cast<float>(y));
-    float t = (n + 1.0f) * 0.5f;
-    t = t * t;
-    // Tall enough that plenty of land still rises above the (now higher) sea --
-    // otherwise the low-biased noise floods most of the map.
-    constexpr int kMaxLevels = 24;
-    // Floor at one full block so every column (seabed included) has a solid
-    // cube floor -- otherwise the deepest water sits over nothing and shows a
-    // hole.
+    // Balanced [0,1] -- NO low-biasing square, so most land sits above the sea
+    // and only genuine valleys dip below it (keeps lakes from covering the
+    // map).
+    const float t = (n + 1.0f) * 0.5f;
+    constexpr int kMaxLevels = 22;
+    // Floor at one full block so every column has a solid cube floor.
     return glm::max(sfs::kLevelsPerBlock,
                     static_cast<int>(t * static_cast<float>(kMaxLevels)));
   }
 
   // Pseudo-3D density from 2D noise: fold z into both sample planes so the
-  // field varies on all three axes (a true 3D noise would be cleaner, but this
-  // proves the concept). Above the threshold = carved (air).
+  // field varies on all three axes. Above the threshold = carved (air).
   bool carved(int x, int y, int z) const
   {
     const float fz = static_cast<float>(z);
@@ -120,6 +124,7 @@ private:
   }
 
   static constexpr float kCaveThreshold = 0.55f;
+  static constexpr int kShoreMargin = 3; // sandy beach band above the waterline
 
   sfs::Noise m_noise;
   sfs::Noise m_caveNoise;
