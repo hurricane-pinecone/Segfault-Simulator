@@ -57,6 +57,12 @@ to build one command type), then register it with `withModule<T>()`. Emit your
 commands in the module's per-frame hook; they are ordered with everything else by
 `RenderPass`.
 
+If your module renders the terrain surface itself (real face geometry rather
+than billboard tiles), override `providesTerrainGeometry()` to return `true`.
+The render system checks this flag to suppress billboard tiles and report the
+`geometryActive` context flag; it does not hard-code which concrete module owns
+terrain geometry.
+
 ## Built-in modules
 
 The engine ships the following optional modules for the isometric render path.
@@ -78,17 +84,53 @@ context carries no projection.
 renderSystem.withModule<sfs::BlockGeometry>();
 ```
 
+### VoxelTerrain
+
+`VoxelTerrain` draws a `VoxelWorld` as real block-face geometry. It reads the
+world through the injected reference, meshes only the dirty chunks each frame
+(caching everything else, since full rebuilds are expensive), and emits one
+`GeometryCommand` per material.
+
+Registering `VoxelTerrain` suppresses billboard terrain tiles, the same as
+`BlockGeometry` does. Do not register both modules at the same time.
+
+```cpp
+auto& terrain = renderSystem.withModule<sfs::VoxelTerrain>();
+terrain.setWorld(world, blockRegistry);
+```
+
+See [Voxel world](../../runtime/voxel/index.md) for a full setup walkthrough.
+
 ### IsometricWater
 
-`IsometricWater` renders water tiles. Each entity needs a `TransformComponent`,
-an `ElevationComponent` for the terrain height beneath it, and a
-`WaterTileComponent` that carries the water-surface elevation. Tiles where the
-terrain is at or above the water surface are skipped. All visible water merges
-into a single draw command.
+`IsometricWater` renders water tiles as a single animated surface mesh. In the
+ECS path each tile entity needs a `TransformComponent`, an `ElevationComponent`
+for the terrain height beneath it, and a `WaterTileComponent` that carries the
+water-surface elevation. For a voxel world, supply a `VoxelWorld` (or any
+`IWaterSurfaceSource`) instead and the ECS path is bypassed.
+
+All visible water merges into a single draw command. Neighbouring tiles at
+different water levels blend into a continuous heightfield, so a flowing water
+body has no visible seams.
 
 ```cpp
 renderSystem.withModule<sfs::IsometricWater>();
 ```
+
+When drawing voxel water, set the water source and wave style on the module:
+
+```cpp
+auto& water = renderSystem.withModule<sfs::IsometricWater>();
+water.setWaterSurfaceSource(&voxelWorld); // bypasses WaterTileComponent ECS scan
+water.setWaveStrength(1.0f);              // Gerstner 3D displacement (0 = flat)
+water.setRippleStrength(0.0f);            // flat colour-ripple animation (0 = off)
+```
+
+`setWaveStrength` controls the Gerstner wave displacement applied in the vertex
+shader. A value of 0 leaves the surface flat, which suits ECS water. A value of
+1 gives the default 3D wave look suited to voxel terrain. `setRippleStrength`
+controls the old flat colour-ripple animation; ECS water uses it by default,
+voxel water turns it off.
 
 ### SpriteShadow
 

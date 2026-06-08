@@ -61,6 +61,7 @@ nav:
   - Engine core:
       - core/index.md
       - Entities, components & systems: core/ecs/index.md
+      - Voxel terrain: core/voxel/index.md
       - Particles:
           - core/particles/index.md
           - Decals & splatter: core/particles/decals/index.md
@@ -75,6 +76,7 @@ nav:
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md
+      - Voxel world: runtime/voxel/index.md
       - Rendering:
           - runtime/rendering/index.md
           - Render modules: runtime/rendering/render-modules/index.md
