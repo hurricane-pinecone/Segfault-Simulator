@@ -14,6 +14,12 @@ uniform float uTime;
 uniform float uRippleStrength;
 uniform float uAmbient;
 
+// Cutaway: drop surface water above the clip level / outside the radius, so it
+// doesn't hang over the player when they're in a cave (matches the terrain cut).
+uniform float uClipElevation;
+uniform vec2 uClipCenter;
+uniform float uClipRadius;
+
 uniform int uLightCount;
 uniform vec2 uLightPositions[MAX_LIGHTS];
 uniform vec3 uLightColors[MAX_LIGHTS];
@@ -190,6 +196,12 @@ vec2 detailGradient(vec2 p)
 
 void main()
 {
+  // Cutaway: hide water above the player's roof / outside the cave bubble.
+  if (vParams.z > uClipElevation)
+    discard;
+  if (uClipRadius > 0.0 && distance(vWorldPosition, uClipCenter) > uClipRadius)
+    discard;
+
   float r1 = sin(
       vWorldPosition.x * 1.25 +
       vWorldPosition.y * 0.55 +

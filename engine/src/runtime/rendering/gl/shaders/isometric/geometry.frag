@@ -30,9 +30,13 @@ uniform vec2 uHeightmapSize;
 uniform float uHeightmapTexSize;
 uniform float uHeightScale;
 
-// Cutaway: terrain whose elevation is above this level is dropped, so the view
-// can see down into a cave the player has entered. A large value = no cut.
+// Cutaway: when the player is in a cave, terrain above uClipElevation (the roof)
+// and outside uClipRadius of uClipCenter (the surrounding rock + far world) is
+// dropped, so only the cave around the player shows. uClipRadius <= 0 disables
+// the localization; a large uClipElevation disables the roof cut.
 uniform float uClipElevation;
+uniform vec2 uClipCenter;
+uniform float uClipRadius;
 
 float hash21(vec2 p)
 {
@@ -280,8 +284,11 @@ float sunVisibility(float fragGround)
 
 void main()
 {
-  // Cutaway: hide terrain above the clip level so an entered cave isn't buried.
+  // Cutaway: hide the roof above the player, and (when localized) everything
+  // outside a radius of them, so only the cave around the player shows.
   if (vGround > uClipElevation)
+    discard;
+  if (uClipRadius > 0.0 && distance(vWorldPos, uClipCenter) > uClipRadius)
     discard;
 
   vec3 normal = normalize(vNormal);

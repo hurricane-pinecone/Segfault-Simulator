@@ -587,6 +587,15 @@ void IsometricGeometryRenderer::submit(const SurfaceCommand& command)
   glUniform1f(uSurfaceWaveStrengthLocation, command.waveStrength);
   glUniform1f(uSurfaceRippleStrengthLocation, command.rippleStrength);
   glUniform1f(uSurfaceAmbientLocation, command.ambient);
+  // Same cutaway as the terrain pass, so surface water doesn't hang over a
+  // cave.
+  glUniform1f(SFS_GL_UNIFORM(surfaceShaderProgram, "uClipElevation"),
+              m_geomClipElevation);
+  glUniform2f(SFS_GL_UNIFORM(surfaceShaderProgram, "uClipCenter"),
+              m_geomClipCenter.x,
+              m_geomClipCenter.y);
+  glUniform1f(
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uClipRadius"), m_geomClipRadius);
   glUniform1i(uSurfaceLightCountLocation, m_pointLights.count);
 
   if (m_pointLights.count > 0)
@@ -1155,6 +1164,11 @@ void IsometricGeometryRenderer::beginGeometryPipeline()
               m_geomDiffuseStrength);
   glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uClipElevation"),
               m_geomClipElevation);
+  glUniform2f(SFS_GL_UNIFORM(geometryShaderProgram, "uClipCenter"),
+              m_geomClipCenter.x,
+              m_geomClipCenter.y);
+  glUniform1f(
+      SFS_GL_UNIFORM(geometryShaderProgram, "uClipRadius"), m_geomClipRadius);
 
   glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uLightCount"),
               m_pointLights.count);

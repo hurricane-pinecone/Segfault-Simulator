@@ -173,7 +173,7 @@ private:
   static constexpr int kFloorRange = 2;          // floor undulation (cells)
   // Sinkhole bowls: lower threshold = more openings; depth scales the bowl so
   // it reaches the caves (peak sink ~ (1 - threshold) * depth levels).
-  static constexpr float kEntranceThreshold = 0.66f;
+  static constexpr float kEntranceThreshold = 0.58f;
   static constexpr float kEntranceDepth = 30.0f;
 
   sfs::Noise m_noise;

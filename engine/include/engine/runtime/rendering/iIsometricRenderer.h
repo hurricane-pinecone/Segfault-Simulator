@@ -103,11 +103,16 @@ public:
                                    float diffuseStrength) = 0;
 
   /**
-   * Cutaway clip: terrain whose elevation (in levels) is above `clipElevation`
-   * is dropped by the geometry pass, so the view can see into a cave the player
-   * has entered. A large value disables the cut. Default: no cut.
+   * Cutaway clip: the geometry pass drops terrain above `clipElevation` (the
+   * roof) and, when `radius > 0`, outside `radius` of `center` (world tiles),
+   * so only the cave around the player shows. A large `clipElevation` + `radius
+   * <= 0` disables it. Default: no cut.
    */
-  virtual void setGeometryClip(float /*clipElevation*/) {}
+  virtual void setGeometryClip(float /*clipElevation*/,
+                               glm::vec2 /*center*/,
+                               float /*radius*/)
+  {
+  }
 
   /** Select the sun-shadow sampling style for the heightmap march. */
   virtual void setSunShadowStyle(SunShadowStyle style) = 0;

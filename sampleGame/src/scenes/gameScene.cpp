@@ -151,13 +151,13 @@ void GameScene::onProcessInput(const sfs::Input& input)
   }
 
   // Cutaway: when the player drops below the surface (into a cave / dug shaft),
-  // hide the terrain ABOVE them (the roof + higher ground) so the iso view
-  // isn't buried -- but keep a block of wall around them (level +
-  // kCaveWallReveal) so the cave still reads as walls rather than clipping them
-  // away too.
+  // show ONLY the cave around them -- hide the roof above (keeping a block of
+  // wall, level + kCaveWallReveal) and everything outside kCaveViewRadius
+  // tiles, so the surrounding rock and the whole surface world fall away.
   if (m_player)
   {
     constexpr int kCaveWallReveal = 2; // levels of wall kept above the player
+    constexpr float kCaveViewRadius = 14.0f; // tiles of cave shown around them
     const sfs::Entity& pe = m_player->entity();
     const glm::vec2 pos = pe.getComponent<sfs::TransformComponent>().position;
     const int level = pe.getComponent<sfs::ElevationComponent>().level;
@@ -165,7 +165,10 @@ void GameScene::onProcessInput(const sfs::Input& input)
         static_cast<int>(glm::floor(pos.x)),
         static_cast<int>(glm::floor(pos.y)));
     const bool inCave = level != sfs::EmptyElevation && level < surface;
-    render.setGeometryClip(static_cast<float>(level + kCaveWallReveal), inCave);
+    render.setGeometryClip(static_cast<float>(level + kCaveWallReveal),
+                           pos,
+                           kCaveViewRadius,
+                           inCave);
   }
 }
 

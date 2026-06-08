@@ -109,13 +109,16 @@ public:
   void setAmbientLighting(const IsometricAmbientLighting& ambient);
 
   /**
-   * Cutaway: when `active`, terrain whose elevation is above `level` is hidden
-   * by the geometry pass, so a cave the player has entered isn't buried. The
-   * scene drives this from the player's elevation each frame.
+   * Cutaway: when `active`, the geometry pass hides terrain above `level` (the
+   * roof) and outside `radius` world-tiles of `center` (the surrounding rock +
+   * far world), so a cave the player has entered shows alone. The scene drives
+   * this from the player each frame.
    */
-  void setGeometryClip(float level, bool active)
+  void setGeometryClip(float level, glm::vec2 center, float radius, bool active)
   {
     m_geomClipElevation = level;
+    m_geomClipCenter = center;
+    m_geomClipRadius = radius;
     m_geomClipActive = active;
   }
 
@@ -221,8 +224,10 @@ private:
   // LightEmitterComponent entities. Both are published into m_context each
   // frame.
   IsometricAmbientLighting m_ambient;
-  float m_geomClipElevation = 1.0e9f; // cutaway clip level (levels)
-  bool m_geomClipActive = false;      // whether the cutaway is engaged
+  float m_geomClipElevation = 1.0e9f;     // cutaway clip level (levels)
+  glm::vec2 m_geomClipCenter{0.0f, 0.0f}; // localized cutaway centre (world)
+  float m_geomClipRadius = 0.0f;          // localized cutaway radius (tiles)
+  bool m_geomClipActive = false;          // whether the cutaway is engaged
   bool m_hasAmbient = false;
   std::vector<IsometricPointLightSnapshot> m_pointLights;
 

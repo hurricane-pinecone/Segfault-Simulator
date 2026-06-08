@@ -51,9 +51,12 @@ public:
                            glm::vec3 sunDirection,
                            float diffuseStrength) override;
 
-  void setGeometryClip(float clipElevation) override
+  void
+  setGeometryClip(float clipElevation, glm::vec2 center, float radius) override
   {
     m_geomClipElevation = clipElevation;
+    m_geomClipCenter = center;
+    m_geomClipRadius = radius;
   }
 
   void setSunShadowStyle(SunShadowStyle style) override
@@ -313,8 +316,10 @@ private:
   glm::vec3 m_geomLightColor{1.0f, 1.0f, 1.0f};
   glm::vec3 m_geomSunDirection{0.0f, 0.0f, 1.0f};
   float m_geomDiffuseStrength = 0.0f;
-  // Cutaway clip level; the large default cuts nothing (whole world visible).
+  // Cutaway clip; the large level + non-positive radius default cut nothing.
   float m_geomClipElevation = 1.0e9f;
+  glm::vec2 m_geomClipCenter{0.0f, 0.0f};
+  float m_geomClipRadius = 0.0f;
 
   std::vector<GeometryVertex> m_geometryScratch; // NDC-converted upload buffer
 

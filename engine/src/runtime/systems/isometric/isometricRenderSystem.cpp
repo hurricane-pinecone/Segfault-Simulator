@@ -518,9 +518,13 @@ void IsometricRenderSystem::flushBatches()
         al.ambient, al.color, al.direction, al.diffuseStrength);
   }
 
-  // Cutaway: hide terrain above the player when they're in a cave (set by the
-  // scene each frame); a large value when inactive leaves the world whole.
-  quadRenderer.setGeometryClip(m_geomClipActive ? m_geomClipElevation : 1.0e9f);
+  // Cutaway: show only the cave around the player when they're in one (set by
+  // the scene each frame); a large level + zero radius leaves the world whole.
+  if (m_geomClipActive)
+    quadRenderer.setGeometryClip(
+        m_geomClipElevation, m_geomClipCenter, m_geomClipRadius);
+  else
+    quadRenderer.setGeometryClip(1.0e9f, glm::vec2{0.0f, 0.0f}, 0.0f);
 
   {
     ZoneScopedN("Render: submit loop");
