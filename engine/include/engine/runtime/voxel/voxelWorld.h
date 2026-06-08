@@ -76,6 +76,15 @@ public:
   // don't change it), so lighting/decals/picking keep working unchanged.
   int terrainHeightAt(int tileX, int tileY) const override;
 
+  // The nearest reachable floor for an actor at `fromLevel` (the surface, a
+  // step, or a cave floor below ground), plus whether a wall/ceiling blocks it.
+  // Lets actors walk through caves while cliffs still stop them.
+  WalkableFloor walkableFloor(int tileX,
+                              int tileY,
+                              int fromLevel,
+                              int maxClimb,
+                              int clearance) const override;
+
   // ITerrainSurfaceSource: a column whose water surface sits above its solid
   // floor reads as water (so blood landing there fades like a puddle/lake).
   bool isWaterAt(int tileX, int tileY) const override;

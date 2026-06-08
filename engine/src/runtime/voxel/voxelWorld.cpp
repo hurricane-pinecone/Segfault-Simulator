@@ -107,6 +107,55 @@ int VoxelWorld::terrainHeightAt(int tileX, int tileY) const
   return it->second;
 }
 
+WalkableFloor VoxelWorld::walkableFloor(int tileX,
+                                        int tileY,
+                                        int fromLevel,
+                                        int maxClimb,
+                                        int clearance) const
+{
+  const int worldTop = (m_maxChunkZ + 1) * kChunkSize - 1;
+  const int worldFloor = m_minChunkZ * kChunkSize;
+
+  // The floor is the highest solid whose top the actor can reach -- at or below
+  // its feet, or up to maxClimb above (a step it can climb). Anything taller is
+  // a wall and is left above the floor for the headroom test to catch.
+  const int reach = fromLevel + maxClimb;
+  int floorLevel = worldFloor * kLevelsPerBlock;
+  int z = reach / kLevelsPerBlock;
+  if (z > worldTop)
+    z = worldTop;
+  for (; z >= worldFloor; --z)
+  {
+    const BlockId id = blockAt(tileX, tileY, z);
+    if (id != kAirBlock && isSolid(id))
+    {
+      const int top = topLevel(id, z);
+      if (top <= reach)
+      {
+        floorLevel = top;
+        break;
+      }
+    }
+  }
+
+  // Blocked if any solid rises above that floor into the actor's body height --
+  // a cliff face it can't step over, or a ceiling too low to stand under.
+  bool blocked = false;
+  for (int cz = floorLevel / kLevelsPerBlock;
+       cz * kLevelsPerBlock < floorLevel + clearance && cz <= worldTop;
+       ++cz)
+  {
+    const BlockId id = blockAt(tileX, tileY, cz);
+    if (id != kAirBlock && isSolid(id) && topLevel(id, cz) > floorLevel)
+    {
+      blocked = true;
+      break;
+    }
+  }
+
+  return {floorLevel, blocked};
+}
+
 bool VoxelWorld::isWaterAt(int tileX, int tileY) const
 {
   const auto it = m_waterTopCell.find({tileX, tileY});

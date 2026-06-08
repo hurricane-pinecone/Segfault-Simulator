@@ -2,6 +2,7 @@
 #include "gameScene.h"
 #include "controllers/sunController.h"
 #include "effects/particleEffects.h"
+#include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
@@ -147,6 +148,24 @@ void GameScene::onProcessInput(const sfs::Input& input)
     const int z = (m_hoveredElevation - 1) / sfs::kLevelsPerBlock;
     getSystem<sfs::VoxelWorld>().setBlock(
         m_hoveredTile.x, m_hoveredTile.y, z, sfs::kAirBlock);
+  }
+
+  // Cutaway: when the player drops below the surface (into a cave / dug shaft),
+  // hide the terrain ABOVE them (the roof + higher ground) so the iso view
+  // isn't buried -- but keep a block of wall around them (level +
+  // kCaveWallReveal) so the cave still reads as walls rather than clipping them
+  // away too.
+  if (m_player)
+  {
+    constexpr int kCaveWallReveal = 2; // levels of wall kept above the player
+    const sfs::Entity& pe = m_player->entity();
+    const glm::vec2 pos = pe.getComponent<sfs::TransformComponent>().position;
+    const int level = pe.getComponent<sfs::ElevationComponent>().level;
+    const int surface = getSystem<sfs::VoxelWorld>().terrainHeightAt(
+        static_cast<int>(glm::floor(pos.x)),
+        static_cast<int>(glm::floor(pos.y)));
+    const bool inCave = level != sfs::EmptyElevation && level < surface;
+    render.setGeometryClip(static_cast<float>(level + kCaveWallReveal), inCave);
   }
 }
 

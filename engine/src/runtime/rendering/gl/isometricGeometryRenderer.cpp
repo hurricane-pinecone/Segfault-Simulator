@@ -1153,6 +1153,8 @@ void IsometricGeometryRenderer::beginGeometryPipeline()
               m_geomLightColor.z);
   glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uDiffuseStrength"),
               m_geomDiffuseStrength);
+  glUniform1f(SFS_GL_UNIFORM(geometryShaderProgram, "uClipElevation"),
+              m_geomClipElevation);
 
   glUniform1i(SFS_GL_UNIFORM(geometryShaderProgram, "uLightCount"),
               m_pointLights.count);

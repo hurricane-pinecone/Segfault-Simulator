@@ -30,6 +30,10 @@ uniform vec2 uHeightmapSize;
 uniform float uHeightmapTexSize;
 uniform float uHeightScale;
 
+// Cutaway: terrain whose elevation is above this level is dropped, so the view
+// can see down into a cave the player has entered. A large value = no cut.
+uniform float uClipElevation;
+
 float hash21(vec2 p)
 {
   p = fract(p * vec2(123.34, 456.21));
@@ -276,6 +280,10 @@ float sunVisibility(float fragGround)
 
 void main()
 {
+  // Cutaway: hide terrain above the clip level so an entered cave isn't buried.
+  if (vGround > uClipElevation)
+    discard;
+
   vec3 normal = normalize(vNormal);
 
   vec4 albedo = texture(uTexture, vUv);

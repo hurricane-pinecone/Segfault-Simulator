@@ -3,6 +3,7 @@
 #include "config.h"
 #include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/lightEmitterComponent.h"
 #include "engine/core/components/rigidBodyComponent.h"
 #include "engine/core/components/shadowCasterComponent.h"
@@ -39,6 +40,9 @@ public:
             // into raised faces while climbing.
             .addComponent<sfs::WorldCollider>(
                 glm::vec2{-6.0f, -6.0f}, glm::vec2{12.0f, 12.0f})
+            // Cave-aware vertical position: MovementSystem drives it so the
+            // player can fall into and stand inside caves below the surface.
+            .addComponent<sfs::ElevationComponent>()
             .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0, 0.0})
             .addComponent<sfs::LightEmitterComponent>(640.0f, 1.0f, 10.0f)
             .addComponent<sfs::ShadowCasterComponent>();

@@ -518,6 +518,10 @@ void IsometricRenderSystem::flushBatches()
         al.ambient, al.color, al.direction, al.diffuseStrength);
   }
 
+  // Cutaway: hide terrain above the player when they're in a cave (set by the
+  // scene each frame); a large value when inactive leaves the world whole.
+  quadRenderer.setGeometryClip(m_geomClipActive ? m_geomClipElevation : 1.0e9f);
+
   {
     ZoneScopedN("Render: submit loop");
 
@@ -680,6 +684,16 @@ float IsometricRenderSystem::actorStandingElevation(
     const Entity& entity,
     const TransformComponent& transform) const
 {
+  // A driven (cave-aware) elevation wins: MovementSystem already resolved the
+  // floor the actor rests on -- the surface OR a cave floor below it -- so the
+  // sprite draws at its true depth instead of snapping back to the surface.
+  if (entity.hasComponent<ElevationComponent>())
+  {
+    const int driven = entity.getComponent<ElevationComponent>().level;
+    if (driven != EmptyElevation)
+      return static_cast<float>(driven);
+  }
+
   // No world collider: stand on the tile under the actor's position.
   if (!entity.hasComponent<WorldCollider>())
     return static_cast<float>(
@@ -744,9 +758,16 @@ void IsometricRenderSystem::updateActorElevations(double deltaTime)
     // Target is the discrete tile the actor stands on (floor()), matching the
     // gameplay elevation -- the easing only smooths how the render/light catch
     // up to it, so the actor never floats up a cliff before it's actually on
-    // top.
-    const float target =
+    // top. A cave-aware actor uses its driven elevation so its light follows it
+    // underground instead of staying pinned to the surface.
+    float target =
         static_cast<float>(getTileElevationAt(glm::floor(transform.position)));
+    if (entity.hasComponent<ElevationComponent>())
+    {
+      const int driven = entity.getComponent<ElevationComponent>().level;
+      if (driven != EmptyElevation)
+        target = static_cast<float>(driven);
+    }
 
     const auto it = m_actorElevation.find(entity.getId());
 

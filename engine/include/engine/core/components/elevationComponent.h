@@ -16,6 +16,11 @@ constexpr static int EmptyElevation = std::numeric_limits<int>::min();
 struct ElevationComponent
 {
   int level = EmptyElevation;
+  // Continuous elevation in levels (cave-aware), driven by MovementSystem so an
+  // actor can fall into and stand inside caves. `level` is its rounded form,
+  // the discrete value render/sort read. EmptyElevation `level` = not yet
+  // placed.
+  float height = 0.0f;
 
   ElevationComponent(int level = EmptyElevation) : level(level){};
 };

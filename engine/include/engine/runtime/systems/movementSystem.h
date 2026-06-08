@@ -42,6 +42,13 @@ public:
       const glm::vec2 desired =
           transform.position + rb.velocity * static_cast<float>(deltaTime);
 
+      // An actor with an ElevationComponent carries a real (cave-aware) height,
+      // so its walls/floors are sampled at its current depth -- it can be
+      // inside a cave below the surface. `cave` only turns on once the actor is
+      // placed, which waits for real terrain (an unstreamed column reads as the
+      // void floor and must not bury the actor at spawn).
+      bool cave = false;
+
       if (m_terrainHeightSource)
       {
         // Resolve against the world-collider footprint so the entity stops with
@@ -56,18 +63,40 @@ public:
           size = collider.worldSize();
         }
 
-        transform.position =
-            resolveTerrainStep(transform.position, desired, offset, size, rb);
+        int fromLevel = terrainHeightAt(transform.position);
+        if (entity.hasComponent<ElevationComponent>())
+        {
+          auto& elevation = entity.getComponent<ElevationComponent>();
+          if (elevation.level == EmptyElevation)
+          {
+            // Place on the surface, but only once the column has streamed in
+            // (a missing column reads as the void floor, level 0).
+            if (fromLevel > 0)
+            {
+              elevation.height = static_cast<float>(fromLevel);
+              elevation.level = fromLevel;
+              cave = true;
+            }
+          }
+          else
+          {
+            cave = true;
+            fromLevel = elevation.level; // snapped, so exact
+          }
+        }
+
+        transform.position = resolveTerrainStep(
+            transform.position, desired, offset, size, rb, fromLevel);
       }
       else
       {
         transform.position = desired;
       }
 
-      if (m_terrainHeightSource && entity.hasComponent<ElevationComponent>())
+      if (cave)
       {
         auto& elevation = entity.getComponent<ElevationComponent>();
-        elevation.level = terrainHeightAt(transform.position);
+        updateElevation(elevation, transform.position);
       }
 
       if (entity.hasComponent<WorldCollider>())
@@ -81,8 +110,10 @@ public:
 private:
   // Tallest step (in elevation levels) an entity can climb in one move; a
   // larger rise is a cliff that blocks movement. Stepping down any amount is
-  // allowed.
+  // allowed (the actor then falls to the floor below).
   static constexpr int kMaxClimb = 2;
+  // Headroom (levels) an actor needs to stand/move: roughly one block tall.
+  static constexpr int kBodyClearance = 2;
 
   int terrainHeightAt(const glm::vec2& position) const
   {
@@ -91,9 +122,31 @@ private:
         static_cast<int>(glm::floor(position.y)));
   }
 
-  bool isCliff(float worldX, float worldY, int fromLevel) const
+  // The floor + block test an actor at `fromLevel` gets at (x,y): the surface,
+  // a climbable step, or a cave floor when below ground -- and whether a wall
+  // or low ceiling stops it. This unified query is why surface cliffs still
+  // block while cave tunnels stay walkable.
+  WalkableFloor floorAt(float worldX, float worldY, int fromLevel) const
   {
-    return terrainHeightAt(glm::vec2{worldX, worldY}) - fromLevel > kMaxClimb;
+    return m_terrainHeightSource->walkableFloor(
+        static_cast<int>(glm::floor(worldX)),
+        static_cast<int>(glm::floor(worldY)),
+        fromLevel,
+        kMaxClimb,
+        kBodyClearance);
+  }
+
+  // Snap the actor to the floor it stands on (its surface, a step it climbed,
+  // or a cave floor it dropped onto). Snapping -- not easing -- keeps the
+  // gameplay elevation exact, so the cliff checks above sample the actor's true
+  // level and can't spuriously read a step as a wall (the render eases the
+  // visual itself).
+  void updateElevation(ElevationComponent& elevation,
+                       const glm::vec2& position) const
+  {
+    const int floor = floorAt(position.x, position.y, elevation.level).floor;
+    elevation.height = static_cast<float>(floor);
+    elevation.level = floor;
   }
 
   // Resolve movement against terrain steps per axis, sampling the collider's
@@ -103,10 +156,9 @@ private:
                                const glm::vec2& desired,
                                const glm::vec2& colliderOffset,
                                const glm::vec2& colliderSize,
-                               RigidBodyComponent& rb) const
+                               RigidBodyComponent& rb,
+                               int fromLevel) const
   {
-    const int currentLevel = terrainHeightAt(current);
-
     glm::vec2 result = current;
 
     if (desired.x != current.x)
@@ -116,8 +168,8 @@ private:
       const float yLo = current.y + colliderOffset.y;
       const float yHi = yLo + colliderSize.y;
 
-      if (isCliff(edgeX, yLo, currentLevel) ||
-          isCliff(edgeX, yHi, currentLevel))
+      if (floorAt(edgeX, yLo, fromLevel).blocked ||
+          floorAt(edgeX, yHi, fromLevel).blocked)
         rb.velocity.x = 0.0f;
       else
         result.x = desired.x;
@@ -130,8 +182,8 @@ private:
       const float xLo = result.x + colliderOffset.x;
       const float xHi = xLo + colliderSize.x;
 
-      if (isCliff(xLo, edgeY, currentLevel) ||
-          isCliff(xHi, edgeY, currentLevel))
+      if (floorAt(xLo, edgeY, fromLevel).blocked ||
+          floorAt(xHi, edgeY, fromLevel).blocked)
         rb.velocity.y = 0.0f;
       else
         result.y = desired.y;

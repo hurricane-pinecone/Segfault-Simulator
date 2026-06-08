@@ -28,10 +28,21 @@ public:
     m_noise.setFrequency(0.035f);
     m_noise.setType(sfs::Noise::Type::OpenSimplex);
 
-    // Caves: a separate, higher-frequency field carved out of the solid.
-    m_caveNoise.setSeed(9001);
-    m_caveNoise.setFrequency(0.09f);
-    m_caveNoise.setType(sfs::Noise::Type::OpenSimplex);
+    // Caves carve a vertical air span below the surface crust. Winding tunnels
+    // are the intersection of two fields (both near zero -> a tube); rooms are
+    // a rare cheese field; the floor undulates; entrances rarely breach the
+    // surface. All 2D fields (the world has no 3D noise).
+    const auto setup = [](sfs::Noise& n, int seed, float freq)
+    {
+      n.setSeed(seed);
+      n.setFrequency(freq);
+      n.setType(sfs::Noise::Type::OpenSimplex);
+    };
+    setup(m_tunnelA, 9001, 0.055f);
+    setup(m_tunnelB, 4242, 0.055f);
+    setup(m_caveNoise, 7777, 0.045f);     // room cheese
+    setup(m_caveFloor, 3131, 0.050f);     // floor undulation
+    setup(m_entranceNoise, 8088, 0.025f); // sinkhole bowls
   }
 
   void generate(glm::ivec3 chunkCoord, sfs::IChunkWriter& out) const override
@@ -49,8 +60,27 @@ public:
       {
         const int wx = baseX + lx;
         const int wy = baseY + ly;
-        const int levels = surfaceLevels(wx, wy);
-        const int fullBlocks = levels / L; // whole cube cells
+        const float fx = static_cast<float>(wx);
+        const float fy = static_cast<float>(wy);
+
+        const int baseLevels = surfaceLevels(wx, wy);
+        const int baseFull = baseLevels / L; // original rock depth (for caves)
+
+        // Sinkhole bowl: smoothly lower the surface where the entrance field is
+        // high (above sea only, clamped to sea so it can't flood). The bowl
+        // follows the noise gradient, so its walls stay gentle enough to walk
+        // in and out of, and it digs straight down into the caves below.
+        int sink = 0;
+        if (baseLevels > seaLevel)
+        {
+          const float ent = m_entranceNoise.get(fx, fy);
+          if (ent > kEntranceThreshold)
+            sink =
+                static_cast<int>((ent - kEntranceThreshold) * kEntranceDepth);
+        }
+        const int levels =
+            sink > 0 ? glm::max(seaLevel, baseLevels - sink) : baseLevels;
+        const int fullBlocks = levels / L; // whole cube cells (bowled surface)
         const bool slab = (levels % L) != 0;
         const int solidCells = fullBlocks + (slab ? 1 : 0);
         const bool underwater = levels < seaLevel;
@@ -62,15 +92,36 @@ public:
         const sfs::BlockId slabId = sandy ? GameBlockRegistry::kSandSlab
                                           : GameBlockRegistry::kGrassSlab;
 
+        // Caves are carved relative to the ORIGINAL rock depth (baseFull), so a
+        // sinkhole bowl digs straight down into them. Winding tunnels (two
+        // fields both near zero -> a tube) open into the occasional room.
+        bool caveColumn = false;
+        int caveBotCell = 0;
+        int caveTopCell = -1;
+        if (baseFull >= kCaveMinDepth)
+        {
+          const bool tunnel = glm::abs(m_tunnelA.get(fx, fy)) < kTunnelBand &&
+                              glm::abs(m_tunnelB.get(fx, fy)) < kTunnelBand;
+          const bool room = m_caveNoise.get(fx, fy) > kRoomThreshold;
+          if (tunnel || room)
+          {
+            const float fl = (m_caveFloor.get(fx, fy) + 1.0f) * 0.5f; // [0,1]
+            const int span = room ? kRoomCells : kTunnelCells;
+            caveTopCell = baseFull - 2 - static_cast<int>(fl * kFloorRange);
+            caveBotCell = glm::max(1, caveTopCell - span + 1);
+            caveColumn = caveTopCell >= caveBotCell;
+          }
+        }
+
         for (int lz = 0; lz < sfs::kChunkSize; ++lz)
         {
           const int wz = baseZ + lz;
 
-          // Carve caves out of the solid, BELOW the top crust so the surface
-          // (and any sea resting on it) stays intact -- caves show at cliffs or
-          // when dug into, and an enclosed one stays dry (the sea never fills
-          // inside the solid).
-          if (wz < solidCells - 1 && carved(wx, wy, wz))
+          // Carve the cave's air span out of the solid. Where a sinkhole bowl
+          // has lowered the surface past it, the column is already open and the
+          // cave just continues it -- that's the walk-in entrance. An enclosed
+          // cave stays dry (the sea only fills air above the surface).
+          if (caveColumn && wz >= caveBotCell && wz <= caveTopCell)
             continue;
 
           if (wz < fullBlocks)
@@ -111,21 +162,24 @@ private:
                     static_cast<int>(t * static_cast<float>(kMaxLevels)));
   }
 
-  // Pseudo-3D density from 2D noise: fold z into both sample planes so the
-  // field varies on all three axes. Above the threshold = carved (air).
-  bool carved(int x, int y, int z) const
-  {
-    const float fz = static_cast<float>(z);
-    const float a = m_caveNoise.get(
-        static_cast<float>(x) + fz * 31.7f, static_cast<float>(y));
-    const float b = m_caveNoise.get(
-        static_cast<float>(x), static_cast<float>(y) + fz * 53.3f);
-    return (a + b) * 0.5f > kCaveThreshold;
-  }
-
-  static constexpr float kCaveThreshold = 0.55f;
   static constexpr int kShoreMargin = 3; // sandy beach band above the waterline
 
+  // Cave shape dials. A column needs this many cubes to fit a cave + crust.
+  static constexpr int kCaveMinDepth = 4;
+  static constexpr float kTunnelBand = 0.28f;    // corridor half-width (tubes)
+  static constexpr float kRoomThreshold = 0.58f; // lower = more, bigger rooms
+  static constexpr int kTunnelCells = 2;         // tunnel air height (cells)
+  static constexpr int kRoomCells = 4;           // room air height (cells)
+  static constexpr int kFloorRange = 2;          // floor undulation (cells)
+  // Sinkhole bowls: lower threshold = more openings; depth scales the bowl so
+  // it reaches the caves (peak sink ~ (1 - threshold) * depth levels).
+  static constexpr float kEntranceThreshold = 0.66f;
+  static constexpr float kEntranceDepth = 30.0f;
+
   sfs::Noise m_noise;
+  sfs::Noise m_tunnelA;
+  sfs::Noise m_tunnelB;
   sfs::Noise m_caveNoise;
+  sfs::Noise m_caveFloor;
+  sfs::Noise m_entranceNoise;
 };

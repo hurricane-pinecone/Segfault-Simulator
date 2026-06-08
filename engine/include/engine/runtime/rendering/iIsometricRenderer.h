@@ -102,6 +102,13 @@ public:
                                    glm::vec3 sunDirection,
                                    float diffuseStrength) = 0;
 
+  /**
+   * Cutaway clip: terrain whose elevation (in levels) is above `clipElevation`
+   * is dropped by the geometry pass, so the view can see into a cave the player
+   * has entered. A large value disables the cut. Default: no cut.
+   */
+  virtual void setGeometryClip(float /*clipElevation*/) {}
+
   /** Select the sun-shadow sampling style for the heightmap march. */
   virtual void setSunShadowStyle(SunShadowStyle style) = 0;
 
