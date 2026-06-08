@@ -49,7 +49,7 @@ flat game never pays for heightfield machinery:
   implemented by `OpenGLQuadRenderer`.
 - **`IIsometricRenderer : virtual IQuadRenderer`** (`iIsometricRenderer.h`) adds
   the heightfield surface: the elevation heightmap, block geometry, sun-shadow
-  style, projected terrain/sprite shadows, and world-projected decals. It is
+  style, projected terrain/sprite shadows, and terrain stains (decals baked into paint textures). It is
   implemented by `IsometricGeometryRenderer`, a subclass of `OpenGLQuadRenderer`
   (`IQuadRenderer` is a virtual base, so there is one shared subobject).
 
