@@ -123,8 +123,10 @@ shaping — is authoring; see [Decals & splatter](../../core/particles/decals/in
   `maxParticles` capacity per live occurrence.
 - **World vs screen.** `SimulationSpace::World` particles are occluded by terrain
   and depth-sorted; `Screen` particles draw flat on top. Use `Screen` for UI.
-- **Decals are cheap to keep.** Settled marks live in persistent GPU buffers, so a
-  stained level costs nothing extra to re-draw as the camera moves.
+- **Decals are cheap to keep.** Permanent marks are baked into paint textures keyed
+  by painted area, so a stained level costs nothing extra to redraw as the camera
+  moves. Spraying the same spot repeatedly does not grow memory; subsequent splats
+  paint over the same texels.
 
 ## Module API
 

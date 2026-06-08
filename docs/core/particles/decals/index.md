@@ -49,6 +49,18 @@ On the heightfield, a hit is classified by what it struck and the mark adapts:
 The flat path stamps onto the collider it hit and clips the mark to that collider
 so it never spills off the platform.
 
+## Memory model
+
+Permanent marks on the isometric path (ground and wall stains) are baked into paint
+textures the first time a tile or wall face is hit. Each subsequent splat on the same
+spot paints over the same texels rather than adding geometry. Memory scales with the
+number of distinct tiles and wall faces that have been painted, not with how many
+times each was hit, so a level that gets hammered by particle effects stays bounded.
+
+Baked stains also shade with the sun shadow. A stain on a surface that sits in
+cast shadow darkens to match the shadow the terrain beneath it receives, so marks
+read as painted on rather than floating above the scene.
+
 ## Custom splatter topology
 
 To replace the default pool-and-streaks pattern entirely, implement `ISplatterShaper`
