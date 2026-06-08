@@ -47,6 +47,15 @@ public:
   /** Advance any per-frame simulation the module owns. */
   virtual void update(double /*deltaTime*/) {}
 
+  /**
+   * True if this module renders the terrain surface itself (real face
+   * geometry), so the host suppresses billboard tiles and reports
+   * geometryActive. Lets any terrain-geometry module (block geometry, voxels)
+   * take over from billboards without the render system hard-coding concrete
+   * module types. Default: false.
+   */
+  virtual bool providesTerrainGeometry() const { return false; }
+
   /** Append this module's render commands for the frame. */
   virtual void emit(const TContext& context,
                     std::vector<AnyRenderCommand>& out) = 0;

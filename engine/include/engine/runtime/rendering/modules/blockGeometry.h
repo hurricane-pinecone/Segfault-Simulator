@@ -35,6 +35,8 @@ public:
     m_assetStore = m.assetStore;
   }
 
+  bool providesTerrainGeometry() const override { return true; }
+
   void computeCommands(const IsometricRenderContext& context) override;
 
 private:

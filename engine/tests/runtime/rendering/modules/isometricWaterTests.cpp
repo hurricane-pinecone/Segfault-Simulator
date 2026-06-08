@@ -57,8 +57,10 @@ int main()
     CHECK(water.commands().size() == 1);
     const SurfaceCommand& cmd = water.commands().front();
     CHECK(cmd.type == SurfaceEffect::Type::Water);
-    CHECK(cmd.vertices.size() == 4); // one tile quad
-    CHECK(cmd.indices.size() == 6);  // two triangles
+    // Each tile is tessellated into a 4x4 grid (for the per-vertex wave): a
+    // 5x5 vertex grid = 25 verts, 16 quads * 2 tris * 3 = 96 indices.
+    CHECK(cmd.vertices.size() == 25);
+    CHECK(cmd.indices.size() == 96);
     CHECK(cmd.order.pass == RenderPass::Surfaces);
   }
 
@@ -91,8 +93,9 @@ int main()
     water.computeCommands(ctx);
 
     CHECK(water.commands().size() == 1); // all water in one draw
-    CHECK(water.commands().front().vertices.size() == 8);
-    CHECK(water.commands().front().indices.size() == 12);
+    // Two tessellated tiles (25 verts + 96 indices each).
+    CHECK(water.commands().front().vertices.size() == 50);
+    CHECK(water.commands().front().indices.size() == 192);
   }
 
   TEST("no water tiles should mesh nothing")

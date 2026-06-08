@@ -212,6 +212,10 @@ private:
   unsigned int surfaceEbo = 0;
 
   int uSurfaceTimeLocation = -1;
+  int uSurfaceWaveStrengthLocation = -1;
+  int uSurfaceWorldToClipXLocation = -1;
+  int uSurfaceWorldToClipYLocation = -1;
+  int uSurfaceWorldToClipELocation = -1;
   int uSurfaceRippleStrengthLocation = -1;
   int uSurfaceAmbientLocation = -1;
   int uSurfaceLightCountLocation = -1;

@@ -103,20 +103,30 @@ void IsometricRenderSystem::render()
 
   beginBatches();
 
-  if (tileElevationCacheDirty)
+  // The camera grid position maps to the screen centre, so inverting it gives
+  // the tile the heightmap window should be centered on.
+  const glm::ivec2 cameraTile =
+      gridCellOf(proj.screenToWorld(proj.screenCenter, 0.0f));
+
+  // Rebuild the window when terrain changes OR the camera crosses a tile. The
+  // latter is essential for a streaming source (voxels) that moves the visible
+  // terrain without flagging the ECS dirty: without it the heightmap + actor
+  // standing elevation stay frozen on the spawn area.
+  const bool recenter =
+      !tileElevationGridCentered || cameraTile != tileElevationGridCenter;
+
+  if (tileElevationCacheDirty || recenter)
   {
     // A terrain height source answers directly from the generator, so the ECS
-    // scan (one entity per tile) is only needed as the fallback when no source
-    // is wired in.
-    if (!m_terrainHeightSource)
+    // scan (one entity per tile) is only the fallback when no source is wired
+    // in
+    // -- and only needs rebuilding when the ECS terrain actually changed.
+    if (!m_terrainHeightSource && tileElevationCacheDirty)
       rebuildTileElevationCache();
 
-    // The camera grid position maps to the screen centre, so inverting it gives
-    // the tile the heightmap window should be centered on. The window only
-    // needs rebuilding when the camera crosses a tile.
-    const glm::ivec2 cameraTile =
-        gridCellOf(proj.screenToWorld(proj.screenCenter, 0.0f));
     rebuildTerrainElevationGridView(cameraTile);
+    tileElevationGridCenter = cameraTile;
+    tileElevationGridCentered = true;
     tileElevationCacheDirty = false;
   }
 
@@ -207,12 +217,12 @@ void IsometricRenderSystem::render()
 
   m_quadRenderer.setPointLights(pointLightSet);
 
-  // When the BlockGeometry module is registered, terrain tiles render as real
-  // face geometry (emitted by that module below) instead of billboard sprites.
-  // Non-tile sprites (actors, props) stay billboards either way, so a scene
-  // without the module renders exactly as the simple iso path. Cross-cutting
-  // state is derived from module presence and published into the context.
-  const bool geometryActive = hasModule<BlockGeometry>();
+  // When a terrain-geometry module is registered (block geometry, voxels),
+  // terrain tiles render as real face geometry (emitted by that module below)
+  // instead of billboard sprites. Non-tile sprites (actors, props) stay
+  // billboards either way, so a scene without such a module renders exactly as
+  // the simple iso path. Cross-cutting state is published into the context.
+  const bool geometryActive = terrainGeometryActive();
   m_context.geometryActive = geometryActive;
 
   // The block-geometry render style takes the in-shader heightmap march; the
@@ -675,9 +685,16 @@ float IsometricRenderSystem::actorStandingElevation(
     return static_cast<float>(
         getTileElevationAt(glm::floor(transform.position)));
 
-  // Drive elevation from the footprint: stand on the highest CLIMBABLE (<= +1)
-  // tile it covers, so the actor steps up the instant its feet reach a raised
-  // tile. A narrow footprint means the body/arms don't trigger it.
+  // Drive elevation from the footprint: stand on the highest CLIMBABLE tile it
+  // covers, so the actor steps up the instant its feet reach a raised tile. A
+  // narrow footprint means the body/arms don't trigger it.
+  //
+  // "Climbable" must match MovementSystem's climb limit (kMaxClimb), else the
+  // actor's position steps up but its render elevation lags and the sprite
+  // sinks into the riser. A heightfield steps one level at a time; a voxel
+  // block is two levels, so this is kMaxClimb (2), not 1.
+  constexpr int kClimbLevels = 2;
+
   const auto& foot = entity.getComponent<WorldCollider>();
   const glm::vec2 lo = transform.position + foot.worldOffset();
   const glm::vec2 hi = lo + foot.worldSize();
@@ -690,7 +707,7 @@ float IsometricRenderSystem::actorStandingElevation(
   for (const glm::vec2& corner : corners)
   {
     const int e = getTileElevationAt(glm::floor(corner));
-    if (e > level && e <= centerLevel + 1)
+    if (e > level && e <= centerLevel + kClimbLevels)
       level = e;
   }
 
@@ -793,15 +810,31 @@ void IsometricRenderSystem::rebuildTerrainElevationGridView(
   if (!m_terrainHeightSource && tileElevationCache.empty())
     return;
 
-  // A fixed-size window centered on the camera. A height source answers every
-  // cell directly, so the window is always complete. The ECS fallback instead
-  // reads tiles that briefly linger after being unloaded or are missing while
-  // streaming in; a window a tile inside the loaded area on each side keeps the
-  // bounds stable, but its leading edge can still hole for a frame -- which is
-  // exactly the flicker the height source removes.
-  constexpr int kHalfSpan = 24; // the terrain loads 25 tiles in each direction
-  const glm::ivec2 min = centerTile - glm::ivec2(kHalfSpan);
-  const int span = kHalfSpan * 2 + 1;
+  // A square window centered on the camera, sized to cover the screen. The
+  // screen is a diamond in tile space; its corners sit (A + B) / 2 tiles from
+  // the camera, where A/B are the half-extents along the two iso axes (screen
+  // half-size / per-tile screen step). A square of that radius (+ a margin for
+  // elevation and the chunk grain) covers the whole visible rectangle, so sun
+  // shadows + actor standing elevation reach the screen corners instead of a
+  // fixed 49x49 that left them unshadowed/unloaded.
+  int halfSpan = 24;
+  if (m_context.projection)
+  {
+    const auto& p = *m_context.projection;
+    const float kx =
+        static_cast<float>(p.tileWidth) * p.worldScale * p.zoom * 0.5f;
+    const float ky =
+        static_cast<float>(p.tileHeight) * p.worldScale * p.zoom * 0.5f;
+    if (kx > 0.01f && ky > 0.01f)
+    {
+      const float a = p.screenCenter.x / kx;
+      const float b = p.screenCenter.y / ky;
+      halfSpan = static_cast<int>((a + b) * 0.5f + 0.999f) + 6;
+      halfSpan = glm::clamp(halfSpan, 16, 80);
+    }
+  }
+  const glm::ivec2 min = centerTile - glm::ivec2(halfSpan);
+  const int span = halfSpan * 2 + 1;
 
   tileElevationGridData.assign(span * span, EmptyElevation);
 
@@ -963,7 +996,7 @@ void IsometricRenderSystem::forEachModule(
 {
   // Refresh the cross-cutting flags a module reads to pick mode-appropriate
   // settings (the same derivation render() performs each frame).
-  m_context.geometryActive = hasModule<BlockGeometry>();
+  m_context.geometryActive = terrainGeometryActive();
 
   for (auto& [type, module] : m_modules)
     fn(type, *module, m_context);

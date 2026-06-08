@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
+#include "engine/core/rendering/iWaterSurfaceSource.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
@@ -11,8 +12,10 @@ namespace sfs
 struct WaterCell
 {
   glm::ivec2 tile{};
-  int elevation = 0;
-  int terrainElevation;
+  // Fractional so a per-cell water amount can rest at any height (e.g. on a
+  // half block), not just on full-cell boundaries.
+  float elevation = 0.0f;
+  float terrainElevation = 0.0f;
   float depth = 0.0f;
 };
 
@@ -34,10 +37,27 @@ class IsometricWater
 public:
   void init(const ModuleInit& m) override { registry = m.registry; }
 
+  // Draw water from a voxel world (or any column source) instead of scanning
+  // WaterTileComponent entities. When set, the ECS path is bypassed.
+  void setWaterSurfaceSource(const IWaterSurfaceSource* source)
+  {
+    m_waterSource = source;
+  }
+
+  // Surface style. 3D-wave water (e.g. voxel) usually wants the Gerstner waves
+  // and NO flat ripple; flat water wants the ripple and no displacement.
+  // Strength of the Gerstner wave displacement (0 = a flat plane).
+  void setWaveStrength(float strength) { m_waveStrength = strength; }
+  // Strength of the old flat colour-ripple animation (0 = remove it).
+  void setRippleStrength(float strength) { m_rippleStrength = strength; }
+
   void computeCommands(const IsometricRenderContext& context) override;
 
 private:
   Registry* registry = nullptr;
+  const IWaterSurfaceSource* m_waterSource = nullptr;
+  float m_waveStrength = 1.0f;
+  float m_rippleStrength = 0.000f;
 
   WaterSurfaceBuild
   collectWaterSurfaceBuild(const IsometricRenderContext& context) const;
@@ -46,8 +66,8 @@ private:
                             const WaterCell& cell) const;
 
   uint32_t addSurfaceVertex(const IsometricRenderContext& context,
-                            const glm::ivec2& gridPoint,
-                            int waterElevation,
+                            const glm::vec2& worldPosition,
+                            float waterElevation,
                             float depth,
                             float sortDepth,
                             SurfaceCommand& command) const;
@@ -58,13 +78,17 @@ private:
                                 int cellWidth,
                                 int cellHeight,
                                 const std::vector<float>& cellDepths,
+                                const std::vector<float>& cellElevations,
                                 SurfaceCommand& command) const;
 
-  float sampleSurfaceVertexDepth(const glm::ivec2& gridPoint,
-                                 const glm::ivec2& minTile,
-                                 int cellWidth,
-                                 int cellHeight,
-                                 const std::vector<float>& cellDepths) const;
+  // Averages a per-tile field over the up-to-four tiles around a shared grid
+  // vertex, so the surface is a continuous heightfield (no gaps/steps where
+  // neighbouring tiles sit at different water levels while flowing).
+  float sampleSurfaceVertex(const glm::ivec2& gridPoint,
+                            const glm::ivec2& minTile,
+                            int cellWidth,
+                            int cellHeight,
+                            const std::vector<float>& field) const;
 };
 
 } // namespace sfs

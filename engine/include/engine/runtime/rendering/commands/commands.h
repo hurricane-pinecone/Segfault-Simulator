@@ -52,6 +52,20 @@ struct SurfaceCommand
 
   float ambient = 1.0f;
 
+  // Surface wave style, set per water source so 3D (voxel) and flat (ECS) water
+  // can differ. waveStrength scales the Gerstner displacement (0 = a flat
+  // plane); rippleStrength is the old flat colour-ripple animation (0 = off).
+  float waveStrength = 1.0f;
+  float rippleStrength = 0.025f;
+
+  // The projection's linear basis: clip-space delta per unit of world-x,
+  // world-y, and elevation. Lets the water vertex shader displace the surface
+  // in world space (Gerstner waves) and re-project. Zero = no wave
+  // displacement.
+  glm::vec2 worldToClipX{0.0f, 0.0f};
+  glm::vec2 worldToClipY{0.0f, 0.0f};
+  glm::vec2 worldToClipE{0.0f, 0.0f};
+
   SurfaceEffect::Type type = SurfaceEffect::Type::None;
   RenderOrder order{RenderPass::Surfaces, 0, 0};
 };

@@ -4,6 +4,8 @@
 #include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
+#include "voxel/blockRegistry.h"
+#include "voxel/voxelGenerator.h"
 
 class Player;
 
@@ -35,4 +37,7 @@ private:
   int m_hoveredElevation = 0;
   bool m_hasHoveredTile = false;
   Player* m_player = nullptr;
+
+  GameBlockRegistry m_blockRegistry;
+  GameVoxelGenerator m_voxelGenerator;
 };
