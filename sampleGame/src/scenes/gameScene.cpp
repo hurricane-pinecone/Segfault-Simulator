@@ -75,8 +75,10 @@ void GameScene::onInit()
       voxelWorld, m_blockRegistry);
 
   // The animated water surface reads the voxel world's water columns instead of
-  // WaterTileComponent entities.
+  // WaterTileComponent entities. It uses the 3D Gerstner waves, so drop the old
+  // flat colour-ripple animation (that style is for flat / non-voxel water).
   renderer.module<sfs::IsometricWater>()->setWaterSurfaceSource(&voxelWorld);
+  renderer.module<sfs::IsometricWater>()->setRippleStrength(0.0f);
 
   auto& particles = renderer.withModule<IsometricParticles>();
   sfs::registerBloodEffects(particles);

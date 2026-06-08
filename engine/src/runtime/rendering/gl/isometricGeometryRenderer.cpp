@@ -83,6 +83,14 @@ bool IsometricGeometryRenderer::initialize()
   // ===========================================================================
 
   uSurfaceTimeLocation = SFS_GL_UNIFORM(surfaceShaderProgram, "uTime");
+  uSurfaceWaveStrengthLocation =
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uWaveStrength");
+  uSurfaceWorldToClipXLocation =
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uWorldToClipX");
+  uSurfaceWorldToClipYLocation =
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uWorldToClipY");
+  uSurfaceWorldToClipELocation =
+      SFS_GL_UNIFORM(surfaceShaderProgram, "uWorldToClipE");
   uSurfaceRippleStrengthLocation =
       SFS_GL_UNIFORM(surfaceShaderProgram, "uRippleStrength");
   uSurfaceAmbientLocation = SFS_GL_UNIFORM(surfaceShaderProgram, "uAmbient");
@@ -564,7 +572,20 @@ void IsometricGeometryRenderer::submit(const SurfaceCommand& command)
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
   glUniform1f(uSurfaceTimeLocation, m_surfaceTime);
-  glUniform1f(uSurfaceRippleStrengthLocation, 0.025f);
+  // The command's basis is a SCREEN-PIXEL delta; the vertices reach the shader
+  // in NDC (toNdc), so convert the delta the same way: dx*scaleX, -dy*scaleY
+  // (toNdc flips y). Without this the wave displacement is ~viewport-sized.
+  glUniform2f(uSurfaceWorldToClipXLocation,
+              command.worldToClipX.x * m_ndcScaleX,
+              -command.worldToClipX.y * m_ndcScaleY);
+  glUniform2f(uSurfaceWorldToClipYLocation,
+              command.worldToClipY.x * m_ndcScaleX,
+              -command.worldToClipY.y * m_ndcScaleY);
+  glUniform2f(uSurfaceWorldToClipELocation,
+              command.worldToClipE.x * m_ndcScaleX,
+              -command.worldToClipE.y * m_ndcScaleY);
+  glUniform1f(uSurfaceWaveStrengthLocation, command.waveStrength);
+  glUniform1f(uSurfaceRippleStrengthLocation, command.rippleStrength);
   glUniform1f(uSurfaceAmbientLocation, command.ambient);
   glUniform1i(uSurfaceLightCountLocation, m_pointLights.count);
 
@@ -582,6 +603,32 @@ void IsometricGeometryRenderer::submit(const SurfaceCommand& command)
     glUniform1fv(
         uSurfaceLightRadiiLocation, m_pointLights.count, m_pointLights.radii);
   }
+
+  // Sun shadow: the same heightmap + sun direction the geometry/decal shaders
+  // use, so a cliff/mountain casts its shadow onto the water surface (same
+  // horizon march). Locations looked up inline like the decal path.
+  glUniform3f(SFS_GL_UNIFORM(surfaceShaderProgram, "uLightDirection"),
+              m_geomSunDirection.x,
+              m_geomSunDirection.y,
+              m_geomSunDirection.z);
+  glUniform1f(SFS_GL_UNIFORM(surfaceShaderProgram, "uDiffuseStrength"),
+              m_geomDiffuseStrength);
+  glUniform1i(SFS_GL_UNIFORM(surfaceShaderProgram, "uSunShadowEnabled"),
+              m_sunShadowMarchEnabled ? 1 : 0);
+  // (water always uses the smooth march, so no uShadowSharp here.)
+
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, heightmapTextures[m_heightmapRing]);
+  glUniform1i(SFS_GL_UNIFORM(surfaceShaderProgram, "uHeightmap"), 2);
+  glUniform2f(SFS_GL_UNIFORM(surfaceShaderProgram, "uHeightmapOrigin"),
+              static_cast<float>(m_heightmapOriginX),
+              static_cast<float>(m_heightmapOriginY));
+  glUniform2f(SFS_GL_UNIFORM(surfaceShaderProgram, "uHeightmapSize"),
+              static_cast<float>(m_heightmapWidth),
+              static_cast<float>(m_heightmapHeight));
+  glUniform1f(SFS_GL_UNIFORM(surfaceShaderProgram, "uHeightmapTexSize"),
+              static_cast<float>(m_heightmapTexSize));
+  glActiveTexture(GL_TEXTURE0);
 
   glBindVertexArray(surfaceVao);
 

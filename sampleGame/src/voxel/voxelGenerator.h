@@ -84,7 +84,11 @@ public:
       }
   }
 
-  static constexpr int kWaterLevelBlocks = 2; // sea level in whole cells
+  // Sea level in whole cells. Water depth = sea level - seabed, and the seabed
+  // bottoms out at the bedrock floor (one cube), so this is the knob for how
+  // deep the water gets: deepest water = (kWaterLevelBlocks - 1) cells.
+  static constexpr int kWaterLevelBlocks =
+      4; // ~3 blocks of water in the basins
 
 private:
   int surfaceLevels(int x, int y) const
@@ -92,7 +96,9 @@ private:
     const float n = m_noise.get(static_cast<float>(x), static_cast<float>(y));
     float t = (n + 1.0f) * 0.5f;
     t = t * t;
-    constexpr int kMaxLevels = 16;
+    // Tall enough that plenty of land still rises above the (now higher) sea --
+    // otherwise the low-biased noise floods most of the map.
+    constexpr int kMaxLevels = 24;
     // Floor at one full block so every column (seabed included) has a solid
     // cube floor -- otherwise the deepest water sits over nothing and shows a
     // hole.

@@ -121,6 +121,16 @@ IsometricWater::createWaterSurfaceCommand(const IsometricRenderContext& context,
       2};
   command.ambient =
       context.ambientLighting ? context.ambientLighting->ambient : 1.0f;
+  command.waveStrength = m_waveStrength;
+  command.rippleStrength = m_rippleStrength;
+
+  // The projection is affine, so a world delta maps to a constant clip-space
+  // delta -- capture its basis vectors (the translation cancels) so the vertex
+  // shader can project the Gerstner displacement.
+  const glm::vec2 origin = context.worldToScreen({0.0f, 0.0f}, 0.0f);
+  command.worldToClipX = context.worldToScreen({1.0f, 0.0f}, 0.0f) - origin;
+  command.worldToClipY = context.worldToScreen({0.0f, 1.0f}, 0.0f) - origin;
+  command.worldToClipE = context.worldToScreen({0.0f, 0.0f}, 1.0f) - origin;
 
   return command;
 }
@@ -203,7 +213,7 @@ WaterSurfaceBuild IsometricWater::collectWaterSurfaceBuild(
 }
 
 uint32_t IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
-                                          const glm::ivec2& gridPoint,
+                                          const glm::vec2& worldPosition,
                                           float waterElevation,
                                           float depth,
                                           float sortDepth,
@@ -226,11 +236,6 @@ uint32_t IsometricWater::addSurfaceVertex(const IsometricRenderContext& context,
       deepColor.g / 255.0f,
       deepColor.b / 255.0f,
       deepColor.a / 255.0f,
-  };
-
-  const glm::vec2 worldPosition{
-      static_cast<float>(gridPoint.x),
-      static_cast<float>(gridPoint.y),
   };
 
   SurfaceVertex vertex;
@@ -286,19 +291,42 @@ void IsometricWater::buildSingleWaterTileMesh(
   const float sortDepth =
       static_cast<float>(cell.tile.x + cell.tile.y + 1) + cell.elevation * 0.5f;
 
-  const uint32_t i0 = addSurfaceVertex(
-      context, tile + corners[0], e[0], d[0], sortDepth, command);
+  // Bilinear interpolation across the tile (corners are 00,10,11,01).
+  const auto bilerp = [](const float c[4], float u, float v)
+  {
+    const float top = c[0] + (c[1] - c[0]) * u;    // 00 -> 10
+    const float bottom = c[3] + (c[2] - c[3]) * u; // 01 -> 11
+    return top + (bottom - top) * v;
+  };
 
-  const uint32_t i1 = addSurfaceVertex(
-      context, tile + corners[1], e[1], d[1], sortDepth, command);
+  // Tessellate the tile into an N x N grid so the per-vertex wave displacement
+  // (surface.vert) has the resolution to look choppy, not blocky. Elevation +
+  // depth interpolate smoothly across the grid.
+  constexpr int kTess = 4;
+  const uint32_t base = static_cast<uint32_t>(command.vertices.size());
 
-  const uint32_t i2 = addSurfaceVertex(
-      context, tile + corners[2], e[2], d[2], sortDepth, command);
+  for (int sy = 0; sy <= kTess; ++sy)
+    for (int sx = 0; sx <= kTess; ++sx)
+    {
+      const float u = static_cast<float>(sx) / kTess;
+      const float v = static_cast<float>(sy) / kTess;
+      const glm::vec2 world{
+          static_cast<float>(tile.x) + u, static_cast<float>(tile.y) + v};
+      addSurfaceVertex(
+          context, world, bilerp(e, u, v), bilerp(d, u, v), sortDepth, command);
+    }
 
-  const uint32_t i3 = addSurfaceVertex(
-      context, tile + corners[3], e[3], d[3], sortDepth, command);
-
-  command.indices.insert(command.indices.end(), {i0, i1, i2, i0, i2, i3});
+  constexpr int stride = kTess + 1;
+  for (int sy = 0; sy < kTess; ++sy)
+    for (int sx = 0; sx < kTess; ++sx)
+    {
+      const uint32_t v00 = base + static_cast<uint32_t>(sy * stride + sx);
+      const uint32_t v10 = v00 + 1;
+      const uint32_t v01 = v00 + stride;
+      const uint32_t v11 = v01 + 1;
+      command.indices.insert(
+          command.indices.end(), {v00, v10, v11, v00, v11, v01});
+    }
 }
 
 float IsometricWater::sampleSurfaceVertex(const glm::ivec2& gridPoint,

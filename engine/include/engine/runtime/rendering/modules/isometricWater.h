@@ -44,11 +44,20 @@ public:
     m_waterSource = source;
   }
 
+  // Surface style. 3D-wave water (e.g. voxel) usually wants the Gerstner waves
+  // and NO flat ripple; flat water wants the ripple and no displacement.
+  // Strength of the Gerstner wave displacement (0 = a flat plane).
+  void setWaveStrength(float strength) { m_waveStrength = strength; }
+  // Strength of the old flat colour-ripple animation (0 = remove it).
+  void setRippleStrength(float strength) { m_rippleStrength = strength; }
+
   void computeCommands(const IsometricRenderContext& context) override;
 
 private:
   Registry* registry = nullptr;
   const IWaterSurfaceSource* m_waterSource = nullptr;
+  float m_waveStrength = 1.0f;
+  float m_rippleStrength = 0.025f;
 
   WaterSurfaceBuild
   collectWaterSurfaceBuild(const IsometricRenderContext& context) const;
@@ -57,7 +66,7 @@ private:
                             const WaterCell& cell) const;
 
   uint32_t addSurfaceVertex(const IsometricRenderContext& context,
-                            const glm::ivec2& gridPoint,
+                            const glm::vec2& worldPosition,
                             float waterElevation,
                             float depth,
                             float sortDepth,
