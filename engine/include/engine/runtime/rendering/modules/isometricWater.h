@@ -57,7 +57,7 @@ private:
   Registry* registry = nullptr;
   const IWaterSurfaceSource* m_waterSource = nullptr;
   float m_waveStrength = 1.0f;
-  float m_rippleStrength = 0.025f;
+  float m_rippleStrength = 0.000f;
 
   WaterSurfaceBuild
   collectWaterSurfaceBuild(const IsometricRenderContext& context) const;

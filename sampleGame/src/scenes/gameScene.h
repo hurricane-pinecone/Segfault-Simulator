@@ -38,8 +38,6 @@ private:
   bool m_hasHoveredTile = false;
   Player* m_player = nullptr;
 
-  // Voxel terrain data the engine renders + queries. Members so the registry's
-  // interned texture ids (referenced by BlockType) stay valid for the scene.
   GameBlockRegistry m_blockRegistry;
   GameVoxelGenerator m_voxelGenerator;
 };

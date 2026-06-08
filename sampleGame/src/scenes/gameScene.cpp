@@ -69,16 +69,10 @@ void GameScene::onInit()
   renderer.module<sfs::SpriteShadow>()->shadowSettings().spriteShadowMaxLength =
       shadowMaxLength;
 
-  // Renders the voxel world as real block-face geometry (replaces billboard
-  // tiles, like BlockGeometry did for the heightfield path).
   renderer.withModule<sfs::VoxelTerrain>().setWorld(
       voxelWorld, m_blockRegistry);
 
-  // The animated water surface reads the voxel world's water columns instead of
-  // WaterTileComponent entities. It uses the 3D Gerstner waves, so drop the old
-  // flat colour-ripple animation (that style is for flat / non-voxel water).
   renderer.module<sfs::IsometricWater>()->setWaterSurfaceSource(&voxelWorld);
-  renderer.module<sfs::IsometricWater>()->setRippleStrength(0.0f);
 
   auto& particles = renderer.withModule<IsometricParticles>();
   sfs::registerBloodEffects(particles);
@@ -129,8 +123,6 @@ void GameScene::onProcessInput(const sfs::Input& input)
   m_hoveredElevation = pick.elevation;
   m_hasHoveredTile = pick.valid;
 
-  // Right-click sprays blood on the hovered tile, in the direction from the
-  // player to the click (as if a shot travelled that way).
   if (m_hasHoveredTile && m_player &&
       input.mouse().mouseHeld(sfs::MouseButton::Right))
   {
@@ -150,10 +142,6 @@ void GameScene::onProcessInput(const sfs::Input& input)
               "blood");
   }
 
-  // Left-click destroys the top block at the hovered tile, exposing whatever
-  // sat beneath it (whose top face was previously culled). The surface
-  // elevation maps to the top block's cell: a cube tops out at (z+1)*L, a slab
-  // at z*L+1, so (elevation-1)/L recovers z for both.
   if (m_hasHoveredTile && input.mouse().mouseHeld(sfs::MouseButton::Left))
   {
     const int z = (m_hoveredElevation - 1) / sfs::kLevelsPerBlock;
