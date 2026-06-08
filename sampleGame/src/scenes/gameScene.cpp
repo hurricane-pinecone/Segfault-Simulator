@@ -9,18 +9,18 @@
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/particles/prefabs.h"
-#include "engine/runtime/rendering/modules/blockGeometry.h"
 #include "engine/runtime/rendering/modules/isometricWater.h"
 #include "engine/runtime/rendering/modules/particles.h"
 #include "engine/runtime/rendering/modules/spriteShadow.h"
 #include "engine/runtime/rendering/modules/terrainShadow.h"
+#include "engine/runtime/rendering/modules/voxelTerrain.h"
 #include "engine/runtime/rendering/util/isometric/isometricLightingUtils.h"
 #include "engine/runtime/systems/cameraSystem.h"
 #include "engine/runtime/systems/collisionSystem.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
+#include "engine/runtime/voxel/voxelWorld.h"
 #include "gameObjects/lamp.h"
 #include "gameObjects/player.h"
-#include "systems/TerrainGeneratorSystem.h"
 #include <engine/core/ecs/entity.h>
 #include <engine/core/mapLoader/mapLoader.h>
 #include <engine/runtime/input/input.h>
@@ -44,15 +44,23 @@ void GameScene::onInit()
   addSystem<sfs::MovementSystem>();
   addSystem<sfs::CollisionSystem>();
   addSystem<sfs::CameraSystem>();
-  auto& terrain = addSystem<TerrainGeneratorSystem>(*this);
+
+  // Voxel terrain: the engine owns storage/streaming/meshing; the game supplies
+  // the block types + generator. World height 0..16 blocks; streamed wide
+  // enough (a square) to cover the screen's diamond corners + the shadow
+  // window. The VoxelTerrain module culls drawing to the on-screen diamond, so
+  // the wide radius costs storage/meshing (cached) but not per-frame draw.
+  m_blockRegistry.setup(m_assetStore);
+  auto& voxelWorld = addSystem<sfs::VoxelWorld>(0, 16, 38);
+  voxelWorld.setGenerator(&m_voxelGenerator);
+  voxelWorld.setBlockRegistry(&m_blockRegistry);
 
   auto& renderer =
       addSystem<sfs::IsometricRenderSystem>(m_assetStore, quadRenderer());
 
   renderer.withModules<sfs::TerrainShadow,
                        sfs::SpriteShadow,
-                       sfs::IsometricWater,
-                       sfs::BlockGeometry>();
+                       sfs::IsometricWater>();
 
   constexpr float shadowMaxLength = 3.5f;
   renderer.module<sfs::TerrainShadow>()
@@ -61,6 +69,15 @@ void GameScene::onInit()
   renderer.module<sfs::SpriteShadow>()->shadowSettings().spriteShadowMaxLength =
       shadowMaxLength;
 
+  // Renders the voxel world as real block-face geometry (replaces billboard
+  // tiles, like BlockGeometry did for the heightfield path).
+  renderer.withModule<sfs::VoxelTerrain>().setWorld(
+      voxelWorld, m_blockRegistry);
+
+  // The animated water surface reads the voxel world's water columns instead of
+  // WaterTileComponent entities.
+  renderer.module<sfs::IsometricWater>()->setWaterSurfaceSource(&voxelWorld);
+
   auto& particles = renderer.withModule<IsometricParticles>();
   sfs::registerBloodEffects(particles);
   sfs::registerBloodEffects(particles,
@@ -68,20 +85,20 @@ void GameScene::onInit()
                             glm::vec3{0.15f, 0.55f, 1.0f},
                             glm::vec3{0.0f, 0.08f, 0.35f});
   particles.registerEffect("embers", sfs::emberEffect());
-  particles.enableStains(&getSystem<TerrainGeneratorSystem>());
+  particles.enableStains(&voxelWorld);
 
   auto& sun = addSystem<SunController>();
 
   if (sfs::LuaScripting* lua = sfs::activeLua())
     lua->registerConfig(sun);
 
-  // Feed terrain heights straight from the generator so the point-light
-  // occlusion heightmap never holes while tiles stream in.
-  getSystem<sfs::IsometricRenderSystem>().setTerrainHeightSource(&terrain);
+  // The voxel world's surface (topmost solid) feeds the point-light occlusion
+  // heightmap, decals, and picking -- hole-free as chunks stream in.
+  getSystem<sfs::IsometricRenderSystem>().setTerrainHeightSource(&voxelWorld);
 
-  // Same heights drive movement so actors are blocked by cliffs (step up to one
-  // level, slide along anything taller).
-  getSystem<sfs::MovementSystem>().setTerrainHeightSource(&terrain);
+  // Same surface drives movement so actors are blocked by cliffs (step up to
+  // one level, slide along anything taller).
+  getSystem<sfs::MovementSystem>().setTerrainHeightSource(&voxelWorld);
 }
 
 void GameScene::createEntities()

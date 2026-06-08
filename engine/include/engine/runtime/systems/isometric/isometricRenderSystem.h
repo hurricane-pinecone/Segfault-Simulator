@@ -186,6 +186,13 @@ private:
   std::vector<int> tileElevationGridData;
   TerrainElevationGridView tileElevationGridView;
   bool tileElevationCacheDirty = true;
+  // The camera tile the elevation/heightmap window is centered on; the window
+  // recenters when the camera crosses a tile, so the heightmap (sun shadows +
+  // point-light occlusion) and actor standing elevation follow a moving camera
+  // even when terrain isn't otherwise flagged dirty (e.g. a streaming voxel
+  // world that doesn't touch the ECS).
+  glm::ivec2 tileElevationGridCenter{0, 0};
+  bool tileElevationGridCentered = false;
 
   // Per-actor eased ground elevation (levels), keyed by entity id. Updated in
   // update(); read only when filling each carried light's ground level (so its

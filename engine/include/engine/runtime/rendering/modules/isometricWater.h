@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
+#include "engine/core/rendering/iWaterSurfaceSource.h"
 #include "engine/runtime/rendering/commands/commands.h"
 #include "engine/runtime/rendering/isometricRenderContext.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
@@ -34,10 +35,18 @@ class IsometricWater
 public:
   void init(const ModuleInit& m) override { registry = m.registry; }
 
+  // Draw water from a voxel world (or any column source) instead of scanning
+  // WaterTileComponent entities. When set, the ECS path is bypassed.
+  void setWaterSurfaceSource(const IWaterSurfaceSource* source)
+  {
+    m_waterSource = source;
+  }
+
   void computeCommands(const IsometricRenderContext& context) override;
 
 private:
   Registry* registry = nullptr;
+  const IWaterSurfaceSource* m_waterSource = nullptr;
 
   WaterSurfaceBuild
   collectWaterSurfaceBuild(const IsometricRenderContext& context) const;

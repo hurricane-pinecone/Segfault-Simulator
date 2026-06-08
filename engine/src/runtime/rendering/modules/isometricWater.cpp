@@ -117,6 +117,39 @@ WaterSurfaceBuild IsometricWater::collectWaterSurfaceBuild(
 {
   WaterSurfaceBuild build;
 
+  // Voxel (or other) source: build cells from water columns instead of the ECS.
+  if (m_waterSource)
+  {
+    std::vector<WaterColumn> columns;
+    m_waterSource->collectWaterColumns(columns);
+    build.cells.reserve(columns.size());
+
+    bool hasBounds = false;
+    for (const WaterColumn& column : columns)
+    {
+      build.cells.push_back(
+          WaterCell{column.tile,
+                    column.surfaceLevel,
+                    column.floorLevel,
+                    static_cast<float>(
+                        glm::max(0, column.surfaceLevel - column.floorLevel))});
+
+      if (!hasBounds)
+      {
+        build.minTile = column.tile;
+        build.maxTile = column.tile;
+        hasBounds = true;
+      }
+      else
+      {
+        build.minTile = glm::min(build.minTile, column.tile);
+        build.maxTile = glm::max(build.maxTile, column.tile);
+      }
+    }
+
+    return build;
+  }
+
   const auto waterTiles =
       registry
           ->view<WaterTileComponent, TransformComponent, ElevationComponent>();

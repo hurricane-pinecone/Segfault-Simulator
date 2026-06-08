@@ -66,6 +66,19 @@ public:
     (withModule<Ts>(), ...);
   }
 
+  /**
+   * @return whether any registered module renders the terrain surface itself
+   * (block geometry, voxels), so the host suppresses billboard tiles. Keeps the
+   * render system from hard-coding which concrete module owns terrain geometry.
+   */
+  bool terrainGeometryActive() const
+  {
+    for (const auto& [type, module] : m_modules)
+      if (module->providesTerrainGeometry())
+        return true;
+    return false;
+  }
+
   /** @return whether a module of type T is registered. */
   template <class T>
   bool hasModule() const
