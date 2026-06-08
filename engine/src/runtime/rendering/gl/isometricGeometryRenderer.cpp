@@ -286,6 +286,56 @@ bool IsometricGeometryRenderer::initialize()
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+  // ---------------------------------------------------------------------------
+  // Decal bake pass: stamps permanent splats into per-target paint textures via
+  // one shared FBO whose colour attachment is swapped to the target per bake.
+  // ---------------------------------------------------------------------------
+  decalBakeProgram = createDecalBakeShaderProgram();
+
+  if (decalBakeProgram == 0)
+  {
+    LOG_ERROR("Failed to create IsometricGeometryRenderer decal bake shader");
+    return false;
+  }
+
+  uDecalBakeSpriteLocation = SFS_GL_UNIFORM(decalBakeProgram, "uSprite");
+
+  glGenFramebuffers(1, &decalBakeFbo);
+
+  glGenVertexArrays(1, &decalBakeVao);
+  glGenBuffers(1, &decalBakeVbo);
+  glBindVertexArray(decalBakeVao);
+  glBindBuffer(GL_ARRAY_BUFFER, decalBakeVbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sizeof(DecalBakeVertex) * 6),
+               nullptr,
+               GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0); // local [0,1]
+  glVertexAttribPointer(
+      0,
+      2,
+      GL_FLOAT,
+      GL_FALSE,
+      sizeof(DecalBakeVertex),
+      reinterpret_cast<void*>(offsetof(DecalBakeVertex, local)));
+  glEnableVertexAttribArray(1); // sprite uv
+  glVertexAttribPointer(1,
+                        2,
+                        GL_FLOAT,
+                        GL_FALSE,
+                        sizeof(DecalBakeVertex),
+                        reinterpret_cast<void*>(offsetof(DecalBakeVertex, uv)));
+  glEnableVertexAttribArray(2); // packed RGBA8 colour
+  glVertexAttribPointer(
+      2,
+      4,
+      GL_UNSIGNED_BYTE,
+      GL_TRUE,
+      sizeof(DecalBakeVertex),
+      reinterpret_cast<void*>(offsetof(DecalBakeVertex, color)));
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
   // ===========================================================================
   // Block geometry pipeline (opt-in real terrain faces)
   // ===========================================================================
@@ -396,14 +446,25 @@ void IsometricGeometryRenderer::shutdown()
   if (spriteShadowShaderProgram != 0)
     glDeleteProgram(spriteShadowShaderProgram);
 
-  for (auto& [key, buf] : m_decalChunks)
+  for (auto& [key, target] : m_paintTargets)
   {
-    if (buf.vbo != 0)
-      glDeleteBuffers(1, &buf.vbo);
-    if (buf.vao != 0)
-      glDeleteVertexArrays(1, &buf.vao);
+    if (target.tex != 0)
+      glDeleteTextures(1, &target.tex);
+    if (target.vbo != 0)
+      glDeleteBuffers(1, &target.vbo);
+    if (target.vao != 0)
+      glDeleteVertexArrays(1, &target.vao);
   }
-  m_decalChunks.clear();
+  m_paintTargets.clear();
+
+  if (decalBakeFbo != 0)
+    glDeleteFramebuffers(1, &decalBakeFbo);
+  if (decalBakeVbo != 0)
+    glDeleteBuffers(1, &decalBakeVbo);
+  if (decalBakeVao != 0)
+    glDeleteVertexArrays(1, &decalBakeVao);
+  if (decalBakeProgram != 0)
+    glDeleteProgram(decalBakeProgram);
 
   if (decalDynamicVbo != 0)
     glDeleteBuffers(1, &decalDynamicVbo);
@@ -444,6 +505,11 @@ void IsometricGeometryRenderer::shutdown()
   decalDynamicVbo = 0;
   decalDynamicVao = 0;
   decalShaderProgram = 0;
+
+  decalBakeFbo = 0;
+  decalBakeVbo = 0;
+  decalBakeVao = 0;
+  decalBakeProgram = 0;
 
   geometryVbo = 0;
   geometryVao = 0;
@@ -754,31 +820,146 @@ void IsometricGeometryRenderer::beginDecalPipeline()
                  m_pointLights.groundLevels);
   }
 
+  // Sun shadow: the same sun direction + heightmap the geometry/lit shaders
+  // use, so a stain darkens in the cast shadows its surface sits in. Bound to
+  // the decal program here (bindHeightmapUniforms targets the lit program's
+  // cached locations, so the decal looks its own up each frame like the
+  // geometry path).
+  glUniform3f(SFS_GL_UNIFORM(decalShaderProgram, "uLightDirection"),
+              m_geomSunDirection.x,
+              m_geomSunDirection.y,
+              m_geomSunDirection.z);
+  glUniform1f(SFS_GL_UNIFORM(decalShaderProgram, "uDiffuseStrength"),
+              m_geomDiffuseStrength);
+  glUniform1i(SFS_GL_UNIFORM(decalShaderProgram, "uSunShadowEnabled"),
+              m_sunShadowMarchEnabled ? 1 : 0);
+  glUniform1i(SFS_GL_UNIFORM(decalShaderProgram, "uShadowSharp"),
+              m_sunShadowStyle == SunShadowStyle::Sharp ? 1 : 0);
+
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, heightmapTextures[m_heightmapRing]);
+  glUniform1i(SFS_GL_UNIFORM(decalShaderProgram, "uHeightmap"), 2);
+  glUniform2f(SFS_GL_UNIFORM(decalShaderProgram, "uHeightmapOrigin"),
+              static_cast<float>(m_heightmapOriginX),
+              static_cast<float>(m_heightmapOriginY));
+  glUniform2f(SFS_GL_UNIFORM(decalShaderProgram, "uHeightmapSize"),
+              static_cast<float>(m_heightmapWidth),
+              static_cast<float>(m_heightmapHeight));
+  glUniform1f(SFS_GL_UNIFORM(decalShaderProgram, "uHeightmapTexSize"),
+              static_cast<float>(m_heightmapTexSize));
+
   glActiveTexture(GL_TEXTURE0);
 }
 
-IsometricGeometryRenderer::DecalChunkBuffer&
-IsometricGeometryRenderer::ensureDecalChunk(std::int64_t key)
+IsometricGeometryRenderer::PaintTarget*
+IsometricGeometryRenderer::findPaintTarget(std::int64_t key)
 {
-  DecalChunkBuffer& buf = m_decalChunks[key];
-  if (buf.vao == 0)
-  {
-    glGenVertexArrays(1, &buf.vao);
-    glGenBuffers(1, &buf.vbo);
-    glBindVertexArray(buf.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
-    configureDecalAttribs();
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    buf.count = 0;
-    buf.capacity = 0;
-  }
-  return buf;
+  auto it = m_paintTargets.find(key);
+  return it == m_paintTargets.end() ? nullptr : &it->second;
 }
 
-void IsometricGeometryRenderer::uploadDecalChunk(std::int64_t key,
-                                                 const DecalVertex* vertices,
-                                                 std::size_t count)
+IsometricGeometryRenderer::PaintTarget&
+IsometricGeometryRenderer::ensurePaintTexture(std::int64_t key,
+                                              int texW,
+                                              int texH)
+{
+  PaintTarget& target = m_paintTargets[key];
+  if (target.tex == 0)
+  {
+    // Allocate the paint texture zero-filled (transparent), so the first splat
+    // bakes onto a clean surface without needing an FBO clear.
+    const std::vector<unsigned char> zeros(
+        static_cast<std::size_t>(texW) * static_cast<std::size_t>(texH) * 4, 0);
+    glGenTextures(1, &target.tex);
+    glBindTexture(GL_TEXTURE_2D, target.tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 texW,
+                 texH,
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 zeros.data());
+    target.texW = texW;
+    target.texH = texH;
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+  return target;
+}
+
+void IsometricGeometryRenderer::bakeDecals(std::int64_t key,
+                                           int texW,
+                                           int texH,
+                                           unsigned int sprite,
+                                           const DecalBakeVertex* verts,
+                                           std::size_t count)
+{
+  initialize();
+  if (!initialized || count == 0 || sprite == 0 || texW <= 0 || texH <= 0)
+    return;
+
+  PaintTarget& target = ensurePaintTexture(key, texW, texH);
+
+  // Baking renders into an offscreen texture, so flush any pending batch, then
+  // capture the bound framebuffer + viewport to restore afterward.
+  flushCurrentPipeline();
+
+  GLint prevFbo = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+  GLint prevViewport[4] = {0, 0, 0, 0};
+  glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, decalBakeFbo);
+  glFramebufferTexture2D(
+      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.tex, 0);
+  glViewport(0, 0, target.texW, target.texH);
+
+  glUseProgram(decalBakeProgram);
+  glDisable(GL_DEPTH_TEST);
+  glDepthMask(GL_FALSE);
+  glDisable(GL_STENCIL_TEST);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  // Premultiplied-alpha "over": the bake frag premultiplies the sprite, so the
+  // same colour saturates and a new colour paints over -- never growing memory.
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, sprite);
+  glUniform1i(uDecalBakeSpriteLocation, 0);
+
+  glBindVertexArray(decalBakeVao);
+  glBindBuffer(GL_ARRAY_BUFFER, decalBakeVbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(count * sizeof(DecalBakeVertex)),
+               verts,
+               GL_DYNAMIC_DRAW);
+  glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(count));
+  SFS_GL_CHECK("decalBake");
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+  // Detach the target texture and restore the previous render target/viewport.
+  glFramebufferTexture2D(
+      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+  glViewport(
+      prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+
+  // The bake swapped program/blend/FBO out from under the decal pipeline; force
+  // the next decal draw to re-establish it.
+  m_pipeline = Pipeline::None;
+}
+
+void IsometricGeometryRenderer::uploadPaintDraw(std::int64_t key,
+                                                const DecalVertex* verts,
+                                                std::size_t count)
 {
   initialize();
   if (!initialized)
@@ -788,123 +969,68 @@ void IsometricGeometryRenderer::uploadDecalChunk(std::int64_t key,
   // buffers here can't corrupt another pipeline's VAO state.
   beginDecalPipeline();
 
-  DecalChunkBuffer& buf = ensureDecalChunk(key);
-
-  glBindVertexArray(buf.vao);
-  glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
-  glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(count * sizeof(DecalVertex)),
-               vertices,
-               GL_STATIC_DRAW);
-  buf.count = static_cast<int>(count);
-  buf.capacity = static_cast<int>(count);
-
-  glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-void IsometricGeometryRenderer::appendDecalChunk(std::int64_t key,
-                                                 const DecalVertex* vertices,
-                                                 std::size_t count)
-{
-  initialize();
-  if (!initialized || count == 0)
-    return;
-
-  beginDecalPipeline();
-
-  DecalChunkBuffer& buf = ensureDecalChunk(key);
-  const int needed = buf.count + static_cast<int>(count);
-
-  if (needed > buf.capacity)
+  PaintTarget& target = m_paintTargets[key];
+  if (target.vao == 0)
   {
-    // Grow: allocate a larger VBO (doubling), carry the existing verts over,
-    // swap it in, and re-point the VAO at it.
-    int newCapacity = buf.capacity > 0 ? buf.capacity * 2 : 64;
-    if (newCapacity < needed)
-      newCapacity = needed;
-
-    unsigned int newVbo = 0;
-    glGenBuffers(1, &newVbo);
-    glBindBuffer(GL_ARRAY_BUFFER, newVbo);
-    glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(newCapacity * sizeof(DecalVertex)),
-                 nullptr,
-                 GL_STATIC_DRAW);
-
-    if (buf.count > 0)
-    {
-      // Apple's GL driver leaves glCopyBufferSubData unimplemented (it no-ops,
-      // dropping the chunk's existing decals on every grow). Map the old buffer
-      // and re-upload instead: glMapBufferRange is supported on desktop GL,
-      // GLES3, and macOS alike.
-      const GLsizeiptr usedBytes =
-          static_cast<GLsizeiptr>(buf.count * sizeof(DecalVertex));
-      glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
-      if (auto* src = static_cast<const DecalVertex*>(
-              glMapBufferRange(GL_ARRAY_BUFFER, 0, usedBytes, GL_MAP_READ_BIT)))
-      {
-        std::vector<DecalVertex> existing(src, src + buf.count);
-        glUnmapBuffer(GL_ARRAY_BUFFER);
-        glBindBuffer(GL_ARRAY_BUFFER, newVbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, usedBytes, existing.data());
-      }
-    }
-
-    glDeleteBuffers(1, &buf.vbo);
-    buf.vbo = newVbo;
-    buf.capacity = newCapacity;
-
-    glBindVertexArray(buf.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
-    configureDecalAttribs(); // re-bind attribs to the new VBO
+    glGenVertexArrays(1, &target.vao);
+    glGenBuffers(1, &target.vbo);
+    glBindVertexArray(target.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, target.vbo);
+    configureDecalAttribs();
   }
   else
   {
-    glBindVertexArray(buf.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+    glBindVertexArray(target.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, target.vbo);
   }
 
-  glBufferSubData(GL_ARRAY_BUFFER,
-                  static_cast<GLintptr>(buf.count * sizeof(DecalVertex)),
-                  static_cast<GLsizeiptr>(count * sizeof(DecalVertex)),
-                  vertices);
-  buf.count = needed;
+  // Draw geometry is one fixed quad per painted tile/face -- bounded, so a full
+  // re-upload on the (infrequent) change is cheap.
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(count * sizeof(DecalVertex)),
+               verts,
+               GL_STATIC_DRAW);
+  target.count = static_cast<int>(count);
+  target.capacity = static_cast<int>(count);
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void IsometricGeometryRenderer::freeDecalChunk(std::int64_t key)
+void IsometricGeometryRenderer::freePaintTarget(std::int64_t key)
 {
-  auto it = m_decalChunks.find(key);
-  if (it == m_decalChunks.end())
+  auto it = m_paintTargets.find(key);
+  if (it == m_paintTargets.end())
     return;
 
+  if (it->second.tex != 0)
+    glDeleteTextures(1, &it->second.tex);
   if (it->second.vbo != 0)
     glDeleteBuffers(1, &it->second.vbo);
   if (it->second.vao != 0)
     glDeleteVertexArrays(1, &it->second.vao);
 
-  m_decalChunks.erase(it);
+  m_paintTargets.erase(it);
 }
 
-void IsometricGeometryRenderer::drawDecalChunk(std::int64_t key,
-                                               unsigned int texture)
+void IsometricGeometryRenderer::drawPaintTarget(std::int64_t key)
 {
   initialize();
-  if (!initialized || texture == 0)
+  if (!initialized)
     return;
 
-  auto it = m_decalChunks.find(key);
-  if (it == m_decalChunks.end() || it->second.count == 0)
+  PaintTarget* target = findPaintTarget(key);
+  if (target == nullptr || target->tex == 0 || target->count == 0)
     return;
 
   beginDecalPipeline();
-  glBindTexture(GL_TEXTURE_2D, texture);
-  glBindVertexArray(it->second.vao);
-  glDrawArrays(GL_TRIANGLES, 0, it->second.count);
-  SFS_GL_CHECK("decalChunk");
+  // The paint texture stores premultiplied alpha; composite it over the scene
+  // with premultiplied "over" (drawDecalsDynamic restores straight alpha).
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glBindTexture(GL_TEXTURE_2D, target->tex);
+  glBindVertexArray(target->vao);
+  glDrawArrays(GL_TRIANGLES, 0, target->count);
+  SFS_GL_CHECK("paintTarget");
   glBindVertexArray(0);
 }
 
@@ -917,6 +1043,9 @@ void IsometricGeometryRenderer::drawDecalsDynamic(const DecalVertex* vertices,
     return;
 
   beginDecalPipeline();
+  // Dynamic decals carry straight-alpha colour; restore straight "over" in case
+  // a baked paint target left premultiplied blend set.
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
   glBindVertexArray(decalDynamicVao);
   glBindBuffer(GL_ARRAY_BUFFER, decalDynamicVbo);
@@ -1220,6 +1349,58 @@ unsigned int IsometricGeometryRenderer::createDecalShaderProgram() const
 
   const std::string fragmentSource =
       glslVersion + std::string(sfs::shaders::decalFrag);
+
+  GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+  GLuint fragmentShader =
+      compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+
+  if (vertexShader == 0 || fragmentShader == 0)
+  {
+    if (vertexShader != 0)
+      glDeleteShader(vertexShader);
+    if (fragmentShader != 0)
+      glDeleteShader(fragmentShader);
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+  if (!success)
+  {
+    char infoLog[1024];
+    glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+    LOG_ERROR(infoLog);
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
+}
+
+unsigned int IsometricGeometryRenderer::createDecalBakeShaderProgram() const
+{
+#ifdef __EMSCRIPTEN__
+  const std::string glslVersion = "#version 300 es\n"
+                                  "precision mediump float;\n";
+#else
+  const std::string glslVersion = "#version 330 core\n";
+#endif
+
+  // Flat splat stamp: maps the target-local [0,1] coordinate straight to NDC
+  // and writes the sprite premultiplied, so the paint texture accumulates by
+  // area.
+  const std::string vertexSource =
+      glslVersion + std::string(sfs::shaders::decalBakeVert);
+
+  const std::string fragmentSource =
+      glslVersion + std::string(sfs::shaders::decalBakeFrag);
 
   GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
   GLuint fragmentShader =

@@ -75,14 +75,17 @@ public:
   void submitSpriteShadow(const FreeformQuad& command) override;
 
   void setDecalFrameParams(const DecalFrameParams& params) override;
-  void uploadDecalChunk(std::int64_t key,
-                        const DecalVertex* vertices,
-                        std::size_t count) override;
-  void appendDecalChunk(std::int64_t key,
-                        const DecalVertex* vertices,
-                        std::size_t count) override;
-  void freeDecalChunk(std::int64_t key) override;
-  void drawDecalChunk(std::int64_t key, unsigned int texture) override;
+  void bakeDecals(std::int64_t key,
+                  int texW,
+                  int texH,
+                  unsigned int sprite,
+                  const DecalBakeVertex* verts,
+                  std::size_t count) override;
+  void uploadPaintDraw(std::int64_t key,
+                       const DecalVertex* verts,
+                       std::size_t count) override;
+  void freePaintTarget(std::int64_t key) override;
+  void drawPaintTarget(std::int64_t key) override;
   void drawDecalsDynamic(const DecalVertex* vertices,
                          std::size_t count,
                          unsigned int texture) override;
@@ -108,6 +111,7 @@ private:
   unsigned int createSurfaceShaderProgram() const;
   unsigned int createSpriteShadowShaderProgram() const;
   unsigned int createDecalShaderProgram() const;
+  unsigned int createDecalBakeShaderProgram() const;
   unsigned int createGeometryShaderProgram() const;
 
   // Bind the geometry program + opaque state + frame
@@ -226,24 +230,41 @@ private:
   std::unordered_map<unsigned int, std::vector<ShadowVertex>>
       m_spriteShadowBatches;
 
-  // --- Persistent decals ---
-  // Decals are stored world-space and projected in the vertex shader, so
-  // settled ones live in per-chunk GPU buffers and never rebuild on camera
-  // moves.
-  struct DecalChunkBuffer
+  // --- Baked decals ---
+  // Permanent stains are baked into per-target paint textures (ground: one per
+  // chunk's world-XY footprint; walls: one per face). The draw geometry is a
+  // fixed quad per painted tile/face that samples the texture, so memory is
+  // bounded by painted area, not by spray count. Still-animating decals (fading
+  // water, running drips) bypass baking and draw from the dynamic buffer.
+  struct PaintTarget
   {
-    unsigned int vao = 0;
+    unsigned int tex = 0; // RGBA8 paint texture (FBO colour attachment to bake)
+    int texW = 0;
+    int texH = 0;
+    unsigned int vao = 0; // persistent draw-quad buffer (DecalVertex)
     unsigned int vbo = 0;
-    int count = 0;    // vertices in use
-    int capacity = 0; // vertices the VBO can hold before it must grow
+    int count = 0;    // draw vertices in use
+    int capacity = 0; // draw vertices the VBO can hold before it must grow
   };
 
-  // Create the chunk buffer if missing; returns it.
-  DecalChunkBuffer& ensureDecalChunk(std::int64_t key);
+  // Look up a target; returns nullptr if it doesn't exist yet.
+  PaintTarget* findPaintTarget(std::int64_t key);
+  // Ensure the target's paint texture exists (sized texW x texH, cleared
+  // transparent); returns the target.
+  PaintTarget& ensurePaintTexture(std::int64_t key, int texW, int texH);
 
   unsigned int decalShaderProgram = 0;
   unsigned int decalDynamicVao = 0;
   unsigned int decalDynamicVbo = 0;
+
+  // Bake pass: one shared FBO whose colour attachment is swapped to the target
+  // texture per bake, a tiny program that stamps the sprite, and a transient
+  // upload buffer for the bake vertices.
+  unsigned int decalBakeProgram = 0;
+  unsigned int decalBakeFbo = 0;
+  unsigned int decalBakeVao = 0;
+  unsigned int decalBakeVbo = 0;
+  int uDecalBakeSpriteLocation = -1;
 
   int uDecalTextureLocation = -1;
   int uDecalTileSizeLocation = -1; // (tileWidth, tileHeight)
@@ -268,7 +289,7 @@ private:
   int uDecalLightGroundLevelsLocation = -1;
 
   DecalFrameParams m_decalParams;
-  std::unordered_map<std::int64_t, DecalChunkBuffer> m_decalChunks;
+  std::unordered_map<std::int64_t, PaintTarget> m_paintTargets;
 
   // --- Opt-in block geometry (real terrain faces) ---
   // A lit, textured face mesh built per frame by the BlockGeometry module. Uses

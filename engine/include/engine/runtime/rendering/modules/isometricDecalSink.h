@@ -18,14 +18,19 @@
 namespace sfs
 {
 
-// Render module for persistent terrain stains (blood, ...). Decals are stored
-// chunked in WORLD space; settled ones live in the renderer's persistent
-// per-chunk GPU buffers and are projected on the GPU, so they cost nothing to
-// re-derive as the camera moves. Only the few animating decals (running wall
-// drips, fading water) are rebuilt per frame into a small dynamic buffer.
+// Render module for persistent terrain stains (blood, ...). Permanent decals
+// are BAKED: each splat is stamped once into a paint texture (a chunk's
+// world-XY footprint for ground, a single face for walls) and its geometry is
+// thrown away. A hammered spot then costs the same as one hit, so memory is
+// bounded by painted area, not spray count -- the texture is allocated once per
+// painted chunk/face. Only still-animating decals (fading water, running wall
+// drips) keep per-frame geometry, drawn from a small dynamic buffer until they
+// settle (a settled drip bakes into its face).
 //
-// Emits one DecalDrawCommand/frame: dirty-chunk uploads + visible chunk keys +
-// the animating vertices + chunks to free. The renderer holds the heavy data.
+// Emits one DecalDrawCommand/frame: new splats to bake, draw-quad refreshes for
+// targets whose painted set grew, the visible target keys to draw, the
+// animating vertices, and targets to free. The renderer holds the textures +
+// buffers.
 class IsometricDecalSink
     : public IDecalSink,
       public CommandModule<IsometricRenderContext, DecalDrawCommand>
@@ -53,40 +58,6 @@ public:
     return {
         settings::text(
             "Decals", [this] { return std::to_string(decalCount()); }),
-        settings::floatRange(
-            "Ground per cell",
-            1.0f,
-            16.0f,
-            [this] { return static_cast<float>(m_maxDecalsPerCell); },
-            [this](float v)
-            { m_maxDecalsPerCell = static_cast<int>(v + 0.5f); }),
-        settings::floatRange(
-            "Wall per cell",
-            1.0f,
-            16.0f,
-            [this] { return static_cast<float>(m_maxWallDecalsPerCell); },
-            [this](float v)
-            { m_maxWallDecalsPerCell = static_cast<int>(v + 0.5f); }),
-        settings::floatRange(
-            "Cell size (tiles)",
-            0.03f,
-            0.5f,
-            [this] { return m_coverageCell; },
-            [this](float v)
-            {
-              m_coverageCell = v;
-              rebuildAllCoverage();
-            }),
-        settings::floatRange(
-            "Wall band (levels)",
-            0.25f,
-            4.0f,
-            [this] { return m_coverageElevCell; },
-            [this](float v)
-            {
-              m_coverageElevCell = v;
-              rebuildAllCoverage();
-            }),
         settings::action("Clear decals", [this] { clearAll(); }),
     };
   }
@@ -108,106 +79,103 @@ private:
     float fadeRate = 0.0f;
     float dripSpeed = 0.0f;
     // Sample the texture's solid centre (crisp streak) vs the full sprite (soft
-    // blob). Lets a single dot texture read as both, since the chunked store
-    // draws one texture for the whole pass.
+    // blob). Lets a single dot texture read as both.
     bool crisp = false;
     float age = 0.0f;
     bool settled = false;
   };
 
-  // Per-cell coverage record: how many permanent decals occupy the cell and the
-  // paint colour that owns it (for repaint detection).
-  struct CoverageCell
+  // A baked wall face (one tile edge, wallBottom..wallTop): its paint texture
+  // size, the single quad that draws it, and any splats waiting to bake in.
+  struct WallFace
   {
-    std::uint16_t count = 0;
-    glm::vec3 color{0.0f};
+    std::int64_t targetId = 0; // renderer paint-target id (0 = unassigned)
+    int texW = 0;
+    int texH = 0;
+    std::vector<DecalVertex> drawQuad;        // the face quad (built once)
+    std::vector<DecalBakeVertex> pendingBake; // splats to bake this frame
+    bool drawDirty = false;                   // draw quad needs (re)upload
   };
 
   struct ChunkData
   {
+    // Animating decals only (fading water, running drips). Settled/baked decals
+    // are not kept here -- they live in the paint textures.
     std::vector<Decal> decals;
-    // New static verts to append to the GPU buffer next frame (the common path:
-    // a ground decal landed or a drip settled). O(new), not O(chunk total).
-    std::vector<DecalVertex> pendingStatic;
-    // A static decal was removed -> the GPU buffer must be rebuilt from scratch
-    // (rare: clearRegion / a cell repainted a different colour). Takes priority
-    // over pending appends.
-    bool needsFullRebuild = false;
-    int animatingCount = 0; // decals still animating (drips/fading water); when
-                            // 0 the chunk needs no per-frame work
-    // Coverage per small world cell (see coverageKey). Bounds memory by painted
-    // AREA: once a cell holds its colour's quota, more of the same colour is
-    // dropped; a different colour replaces it instead.
-    std::unordered_map<std::int64_t, CoverageCell> coverage;
+    int animatingCount = 0;
+
+    // --- Ground paint (one texture per chunk's world-XY footprint) ---
+    std::int64_t groundTargetId = 0; // renderer paint-target id (0 = none yet)
+    int groundTexW = 0;
+    int groundTexH = 0;
+    std::unordered_set<int> paintedTiles;     // tile index (ly*kChunkTiles+lx)
+    std::vector<DecalVertex> groundDrawQuads; // one quad per painted tile
+    std::vector<DecalBakeVertex> pendingGroundBake;
+    bool groundDrawDirty = false;
+
+    // --- Wall paint (one texture per painted face) ---
+    std::unordered_map<std::int64_t, WallFace> wallFaces;
   };
 
   static constexpr int kChunkTiles = 16;
-
-  // Spatial saturation: permanent decals (anything that doesn't fade -- ground,
-  // walls, permanent water) are bucketed into small world cells. Once a cell
-  // holds its colour's quota, more of THAT colour is dropped (it's already
-  // painted) -- but a different colour replaces it, so you can paint over. A
-  // face fills to roughly one layer of paint and stays there; memory tracks
-  // painted area, not spray count. Fading decals don't count.
-  // (Tuning lives in member variables below, exposed live on the debug panel.)
-  // Cosine of the colour-direction angle below which two paints count as
-  // different (so an effect's light->dark gradient is one colour, but red vs
-  // blue is a repaint). Hue-based, so brightness doesn't trigger false
-  // repaints.
-  static constexpr float kColorSimilarity = 0.85f;
+  // Paint resolution: texels per world tile. A chunk's ground texture is
+  // kChunkTiles * kTexelsPerTile square; a wall face is one tile wide.
+  static constexpr int kTexelsPerTile = 16;
+  // Cap a very tall wall face's texture so a freak elevation can't allocate an
+  // enormous texture.
+  static constexpr int kMaxFaceElevTexels = 1024;
 
   glm::ivec2 chunkOf(const glm::vec2& worldPos) const;
-  static std::int64_t chunkKey(glm::ivec2 chunk);
 
   const std::string* internTexture(const std::string& id);
 
+  // Static = bakeable now: not fading, and not a wall drip still running down.
   static bool isStatic(const Decal& d);
 
-  // True if two paint colours are the "same paint" (similar hue direction),
-  // ignoring brightness.
-  static bool sameColor(const glm::vec3& a, const glm::vec3& b);
+  // Key a wall decal to its face (tile edge + fixed coordinate + side).
+  static std::int64_t faceKey(const Decal& d);
 
-  // Key a decal to its coverage cell (chunk-local position + elevation band +
-  // surface/side), so ground and wall paint saturate independently.
-  std::int64_t coverageKey(glm::ivec2 chunk, const Decal& d) const;
+  // Bake a permanent decal: mark its tile/face painted (building the draw quad
+  // on first paint) and queue its splat geometry to stamp into the target
+  // texture. A repeat on the same spot just re-stamps (premultiplied paint
+  // saturates); a different colour bakes over -- neither grows memory.
+  void bakePermanent(glm::ivec2 chunkCoord, ChunkData& chunk, const Decal& d);
 
-  // Remove every permanent decal in a cell from the chunk (so a new colour can
-  // replace it), flagging a GPU rebuild.
-  void clearCell(glm::ivec2 chunk, ChunkData& data, std::int64_t key);
+  // Queue every paint target a chunk owns for release (on clear).
+  void queueChunkFree(const ChunkData& chunk);
 
-  // Rebuild a chunk's coverage from its current permanent decals (after a
-  // removal, since coverage is otherwise only updated incrementally).
-  void rebuildCoverage(glm::ivec2 chunk, ChunkData& data) const;
+  // --- Geometry builders -----------------------------------------------------
+  // Ground splat -> chunk-local [0,1] bake quads (clipped to its tile).
+  void buildGroundBake(const Decal& d,
+                       glm::vec2 chunkOrigin,
+                       std::vector<DecalBakeVertex>& out) const;
+  // One ground tile's world-space draw quad sampling its paint sub-rect.
+  void buildGroundTileDraw(int lx,
+                           int ly,
+                           glm::vec2 chunkOrigin,
+                           float elevation,
+                           std::vector<DecalVertex>& out) const;
+  // Wall splat (impact mark or settled drip) -> face-local [0,1] bake quads.
+  void buildWallBake(const Decal& d, std::vector<DecalBakeVertex>& out) const;
+  // A wall face's world-space draw quad sampling its paint texture.
+  void buildWallFaceDraw(const Decal& d, std::vector<DecalVertex>& out) const;
 
-  // Re-key every chunk's coverage from its decals; called when the cell size or
-  // elevation band changes (the debug sliders) so saturation re-accounts.
-  void rebuildAllCoverage();
-
-  // Build a decal's world-space vertices (ground square / wall streak + cap)
-  // into `out`. Uses the cached tile size to size the wall cap to read round on
-  // screen.
+  // Build an animating decal's world-space vertices (fading water square / a
+  // running wall drip streak + cap) into `out`, projected by the decal shader.
   void buildDecalVerts(const Decal& decal, std::vector<DecalVertex>& out) const;
 
   std::unordered_map<glm::ivec2, ChunkData, IVec2Hash> m_chunks;
   std::unordered_set<std::string> m_textureIds; // stable id storage
-  std::vector<std::int64_t> m_pendingFree;      // chunks freed since last frame
+  const std::string* m_spriteId = nullptr; // decal sprite for the bake pass
+  std::vector<std::int64_t> m_pendingFree; // targets freed since last frame
+  std::int64_t m_nextTargetId = 1;         // monotonic paint-target ids
 
   // Cached from the projection each frame (constant in practice) so geometry
   // can be built at add/settle time, not only during computeCommands.
   float m_tileWidth = 32.0f;
   float m_elevationStep = 8.0f;
 
-  // Coverage tuning (live via the debug panel). A cell holds up to its
-  // surface's quota of one paint colour, then drops more of that colour. Walls
-  // get a lower quota because each wall decal is a tall streak covering far
-  // more surface than a ground dot. The elevation band only affects walls
-  // (ground sits at one elevation per tile): a larger band keeps fewer drips
-  // down a face.
-  bool m_visible = true;           // debug toggle: emit draws at all
-  float m_coverageCell = 0.06f;    // world tiles
-  float m_coverageElevCell = 1.0f; // elevation levels per band (walls)
-  int m_maxDecalsPerCell = 16;     // ground / default quota
-  int m_maxWallDecalsPerCell = 5;  // wall-face quota (impact mark + drips)
+  bool m_visible = true; // debug toggle: emit draws at all
 
   std::size_t m_fadingCount = 0;    // fading (water) decals
   std::size_t m_animatingCount = 0; // running wall drips (not yet settled)

@@ -65,29 +65,42 @@ struct ParticleBatchCommand : RenderCommand<ParticleBatch>
   BlendMode blend = BlendMode::Alpha;
 };
 
-// (Re)upload of a decal chunk's persistent, world-space vertex buffer.
-struct DecalChunkUpload
+// This frame's new permanent splats to stamp into one paint target's texture
+// (a chunk's ground footprint or a single wall face). texW/texH size the target
+// on first use; verts are in the target's [0,1] surface space.
+struct DecalBakeBatch
 {
   std::int64_t key = 0;
-  std::vector<DecalVertex> vertices;
+  int texW = 0;
+  int texH = 0;
+  std::vector<DecalBakeVertex> verts;
 };
 
-// Drives the persistent decal pipeline for one frame. Carries only what changed
-// (dirty-chunk uploads), the visible chunk keys to draw from the renderer's
-// persistent buffers, and the small set of animating (running/fading) decal
-// vertices rebuilt this frame. The bulk (settled decals) lives in the renderer.
-// Depth comes from the shader, so assignClipDepth skips this command.
+// A paint target's fixed draw geometry (the world-space quads that sample its
+// paint texture: one per painted ground tile, or the single wall face). Sent
+// only when the target's painted set changes, then kept on the GPU.
+struct DecalDrawUpload
+{
+  std::int64_t key = 0;
+  std::vector<DecalVertex> verts;
+};
+
+// Drives the baked decal pipeline for one frame. Permanent stains are baked
+// into per-target paint textures (so a hammered spot costs the same as one
+// hit); `bakes` stamps this frame's new splats, `drawUploads` refreshes a
+// target's draw quads when its painted set grows, `drawKeys` draws every
+// visible target, and `dynamic` carries the still-animating decals (fading
+// water, running drips) that can't bake. Depth comes from the shader, so
+// assignClipDepth skips this command.
 struct DecalDrawCommand
 {
   RenderOrder order{RenderPass::Decals, 0, 0};
   const std::string* textureId =
-      nullptr; // one texture for all decals (e.g. white_dot)
-  std::vector<DecalChunkUpload>
-      uploads; // chunks to fully (re)upload (after removal)
-  std::vector<DecalChunkUpload>
-      appends; // new static verts to append (the common path)
-  std::vector<std::int64_t> freeKeys; // chunks to drop (cleared/emptied)
-  std::vector<std::int64_t> drawKeys; // visible chunks to draw
+      nullptr; // decal sprite sampled by the bake pass + dynamic decals
+  std::vector<DecalBakeBatch> bakes;
+  std::vector<DecalDrawUpload> drawUploads;
+  std::vector<std::int64_t> freeKeys; // paint targets to drop (cleared/emptied)
+  std::vector<std::int64_t> drawKeys; // visible paint targets to draw
   std::vector<DecalVertex> dynamic;   // animating decals, rebuilt this frame
 };
 

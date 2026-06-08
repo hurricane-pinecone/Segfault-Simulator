@@ -13,6 +13,18 @@ uniform float uAmbient;
 uniform vec3 uAmbientColor;
 uniform float uHeightScale;
 
+// Sun shadow: a stain darkens in the same cast shadows as the surface under it,
+// using the heightmap horizon-march (matching geometry.frag / the lit shader).
+uniform vec3 uLightDirection;
+uniform float uDiffuseStrength;
+uniform int uSunShadowEnabled;
+uniform int uShadowSharp;
+
+uniform sampler2D uHeightmap;
+uniform vec2 uHeightmapOrigin;
+uniform vec2 uHeightmapSize;
+uniform float uHeightmapTexSize;
+
 uniform int uLightCount;
 uniform vec2 uLightPositions[MAX_LIGHTS];
 uniform vec3 uLightColors[MAX_LIGHTS];
@@ -20,6 +32,92 @@ uniform float uLightIntensities[MAX_LIGHTS];
 uniform float uLightRadii[MAX_LIGHTS];
 uniform float uLightHeights[MAX_LIGHTS];
 uniform float uLightGroundLevels[MAX_LIGHTS];
+
+float terrainLevelAt(vec2 world)
+{
+  if (uHeightmapSize.x < 1.0 || uHeightmapSize.y < 1.0)
+    return -1e9;
+  vec2 texel = world - uHeightmapOrigin;
+  if (texel.x < 0.0 || texel.x >= uHeightmapSize.x || texel.y < 0.0 ||
+      texel.y >= uHeightmapSize.y)
+    return -1e9;
+  return texture(uHeightmap, texel / uHeightmapTexSize).r;
+}
+
+// Directional sun occlusion, identical to geometry.frag's march so a stain's
+// shadow lines up exactly with the terrain's. 1 = lit, 0 = shadowed.
+float sunVisibility(float fragGround)
+{
+  if (uHeightmapSize.x < 1.0)
+    return 1.0;
+
+  vec2 dir = uLightDirection.xy;
+  float horiz = length(dir);
+  if (horiz < 1.0e-4)
+    return 1.0;
+
+  dir /= horiz;
+  float sunSlope = uLightDirection.z / horiz;
+  float maxAngle = -1.0e9;
+
+  if (uShadowSharp == 1)
+  {
+    ivec2 tile = ivec2(floor(vWorldPos));
+    ivec2 stepDir = ivec2(sign(dir.x), sign(dir.y));
+    vec2 invDir = 1.0 / max(abs(dir), vec2(1.0e-6));
+    vec2 tMax;
+    tMax.x = (dir.x >= 0.0 ? float(tile.x) + 1.0 - vWorldPos.x
+                           : vWorldPos.x - float(tile.x)) *
+             invDir.x;
+    tMax.y = (dir.y >= 0.0 ? float(tile.y) + 1.0 - vWorldPos.y
+                           : vWorldPos.y - float(tile.y)) *
+             invDir.y;
+
+    const int MAX_STEPS = 28;
+    const float kSunShadowMaxDist = 18.0;
+    for (int i = 0; i < MAX_STEPS; i++)
+    {
+      if (tMax.x < tMax.y)
+      {
+        tile.x += stepDir.x;
+        tMax.x += invDir.x;
+      }
+      else
+      {
+        tile.y += stepDir.y;
+        tMax.y += invDir.y;
+      }
+
+      vec2 center = vec2(tile) + 0.5;
+      float dist = length(center - vWorldPos);
+      if (dist > kSunShadowMaxDist)
+        break;
+
+      float th = terrainLevelAt(center);
+      if (th < -1.0e8)
+        continue;
+
+      maxAngle = max(maxAngle, (th - fragGround) / dist);
+    }
+
+    return 1.0 - smoothstep(0.0, 0.06, maxAngle - sunSlope);
+  }
+
+  const int STEPS = 24;
+  const float kSunShadowMaxDist = 16.0;
+  for (int s = 0; s < STEPS; s++)
+  {
+    float d = kSunShadowMaxDist * (float(s) + 1.0) / float(STEPS);
+    if (d < 0.5)
+      continue;
+    float th = terrainLevelAt(vWorldPos + dir * d);
+    if (th < -1.0e8)
+      continue;
+    maxAngle = max(maxAngle, (th - fragGround) / d);
+  }
+
+  return 1.0 - smoothstep(0.0, 0.30, maxAngle - sunSlope);
+}
 
 // Point-light contribution, matching the lit shader's model (3D distance with
 // the elevation gap, smootherstep falloff, colour-normalised blend) but without
@@ -90,7 +188,16 @@ void main()
   if (pointVisibility > 0.001)
     pointLight = decalPointLight() * (pointVisibility * 2.0);
 
-  vec3 lighting = uAmbientColor * uAmbient + pointLight;
+  // A cast shadow pulls the stain down to its shaded (ambient-only) level, the
+  // same drop the surface beneath it takes, so blood reads as painted on.
+  float ambient = uAmbient;
+  if (uSunShadowEnabled == 1)
+  {
+    float shadedLevel = min(1.0 - uDiffuseStrength, uAmbient);
+    ambient = mix(shadedLevel, uAmbient, sunVisibility(vGround));
+  }
+
+  vec3 lighting = uAmbientColor * ambient + pointLight;
 
   FragColor = vec4(tex.rgb * lighting, tex.a);
 }

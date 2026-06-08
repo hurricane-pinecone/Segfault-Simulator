@@ -45,10 +45,19 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
       const std::uint8_t side = dx > 0 ? 0 : (dx < 0 ? 2 : (dy > 0 ? 1 : 3));
 
       // A wall stain needs a real cliff on a camera-facing face (south/east);
-      // the hidden west/north faces would draw over the block, and the step
-      // must be tall enough. Everything else pools as ground at the base.
+      // the hidden west/north faces would draw over the block. The visible face
+      // is exposed only down to its +x/+y neighbour, so base the wall on THAT
+      // neighbour -- not the (possibly distant) tile the droplet swept in from.
+      // A fast multi-tile crossing otherwise reports a taller face than the one
+      // rendered, sticking blood to thin air below the real wall.
       const bool visibleFace = side == 2 || side == 3;
-      const bool tallEnough = (newTop - oldTop) >= kMinWallStep;
+      const glm::ivec2 frontTile = side == 2
+                                       ? glm::ivec2{newTile.x + 1, newTile.y}
+                                       : glm::ivec2{newTile.x, newTile.y + 1};
+      const int frontTop =
+          visibleFace ? m_terrain->terrainHeightAt(frontTile.x, frontTile.y)
+                      : oldTop;
+      const bool tallEnough = (newTop - frontTop) >= kMinWallStep;
 
       out.hit = true;
       out.tile = newTile;
@@ -56,10 +65,12 @@ ParticleHit TerrainParticleCollision::sweep(const ParticleSweep& m) const
       {
         out.surface = DecalSurface::Wall;
         out.wallSide = side;
-        out.wallBottom = static_cast<float>(oldTop);
+        out.wallBottom = static_cast<float>(frontTop);
         out.wallTop = static_cast<float>(newTop);
         out.pos = m.from;
-        out.elevation = zAbs;
+        // Keep the impact on the exposed strip of the face.
+        out.elevation = glm::clamp(
+            zAbs, static_cast<float>(frontTop), static_cast<float>(newTop));
       }
       else
       {

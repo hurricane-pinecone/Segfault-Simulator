@@ -123,30 +123,36 @@ public:
    */
   virtual void setDecalFrameParams(const DecalFrameParams& params) = 0;
   /**
-   * Replace a decal chunk's persistent GPU buffer.
+   * Stamp this frame's new permanent splats into a paint target's texture,
+   * creating the texture (texW x texH, cleared transparent) on first use. The
+   * splats accumulate with premultiplied-alpha "over" blending, so painting the
+   * same spot repeatedly never grows memory and a new colour paints over.
    *
-   * @param key      chunk key
-   * @param vertices full vertex set for the chunk
-   * @param count    number of vertices
+   * @param key    paint target key (ground chunk or wall face)
+   * @param texW   target texture width in texels
+   * @param texH   target texture height in texels
+   * @param sprite decal sprite texture sampled by each splat
+   * @param verts  bake vertices ([0,1] target space + sprite uv + colour)
+   * @param count  number of vertices
    */
-  virtual void uploadDecalChunk(std::int64_t key,
-                                const DecalVertex* vertices,
-                                std::size_t count) = 0;
+  virtual void bakeDecals(std::int64_t key,
+                          int texW,
+                          int texH,
+                          unsigned int sprite,
+                          const DecalBakeVertex* verts,
+                          std::size_t count) = 0;
   /**
-   * Append vertices to a decal chunk's persistent buffer, growing it as needed,
-   * so adding decals costs O(new) rather than O(chunk total).
-   *
-   * @param key      chunk key
-   * @param vertices vertices to append
-   * @param count    number of vertices
+   * Replace a paint target's persistent draw geometry: the world-space quads
+   * that sample its paint texture (one per painted ground tile, or the wall
+   * face). Sent only when the target's painted set changes.
    */
-  virtual void appendDecalChunk(std::int64_t key,
-                                const DecalVertex* vertices,
-                                std::size_t count) = 0;
-  /** Release a decal chunk's persistent buffer. */
-  virtual void freeDecalChunk(std::int64_t key) = 0;
-  /** Draw a decal chunk's persistent buffer with the given texture. */
-  virtual void drawDecalChunk(std::int64_t key, unsigned int texture) = 0;
+  virtual void uploadPaintDraw(std::int64_t key,
+                               const DecalVertex* verts,
+                               std::size_t count) = 0;
+  /** Release a paint target's texture + draw buffer. */
+  virtual void freePaintTarget(std::int64_t key) = 0;
+  /** Draw a paint target's quads, sampling its baked paint texture. */
+  virtual void drawPaintTarget(std::int64_t key) = 0;
   /**
    * Draw this frame's animating (unsettled) decals from a transient buffer.
    *

@@ -66,7 +66,10 @@ DecalSpawn wall(glm::vec2 pos, glm::vec4 color)
 
 int main()
 {
-  TEST("addDecal should grow the decal count")
+  // decalCount() reports baked targets (painted ground tiles + wall faces) plus
+  // any still-animating decals -- not the spray count, which baking discards.
+
+  TEST("a permanent splat should bake into one ground tile")
   {
     IsometricDecalSink sink;
     CHECK(sink.decalCount() == 0);
@@ -74,33 +77,41 @@ int main()
     CHECK(sink.decalCount() == 1);
   }
 
-  TEST("the same paint should saturate a cell at its quota")
+  TEST("repeated splats on one tile should bake into a single target")
   {
     IsometricDecalSink sink;
-    for (int i = 0; i < 30; ++i) // far past the quota, all the same colour/cell
+    for (int i = 0; i < 30; ++i) // a hammered spot, all the same tile
       sink.addDecal(ground({0.5f, 0.5f}, kRed));
-    // The default ground quota: extra sprays of an already-painted colour drop.
-    CHECK(sink.decalCount() == 16);
+    // Baking stamps them into the same texels: one tile, bounded memory.
+    CHECK(sink.decalCount() == 1);
   }
 
-  TEST("a different colour should repaint a saturated cell")
+  TEST("a different colour over the same tile should not grow the target")
   {
     IsometricDecalSink sink;
     for (int i = 0; i < 30; ++i)
       sink.addDecal(ground({0.5f, 0.5f}, kRed));
-    sink.addDecal(ground({0.5f, 0.5f}, kBlue)); // distinct hue -> repaint
+    sink.addDecal(ground({0.5f, 0.5f}, kBlue)); // bakes over -- still one tile
     CHECK(sink.decalCount() == 1);
   }
 
-  TEST("wall paint should saturate at the lower wall quota")
+  TEST("distinct ground tiles should each bake a target")
+  {
+    IsometricDecalSink sink;
+    sink.addDecal(ground({0.5f, 0.5f}, kRed));  // tile (0, 0)
+    sink.addDecal(ground({3.5f, 3.5f}, kBlue)); // tile (3, 3)
+    CHECK(sink.decalCount() == 2);
+  }
+
+  TEST("repeated wall splats should bake into a single face")
   {
     IsometricDecalSink sink;
     for (int i = 0; i < 30; ++i)
       sink.addDecal(wall({0.5f, 0.5f}, kRed));
-    CHECK(sink.decalCount() == 5); // walls saturate sooner than ground
+    CHECK(sink.decalCount() == 1); // one painted face
   }
 
-  TEST("clearAll should drop every decal")
+  TEST("clearAll should drop every baked target")
   {
     IsometricDecalSink sink;
     sink.addDecal(ground({0.5f, 0.5f}, kRed));
@@ -109,13 +120,14 @@ int main()
     CHECK(sink.decalCount() == 0);
   }
 
-  TEST("clearRegion should drop only decals inside the tile rect")
+  TEST("clearRegion should drop the chunks it overlaps")
   {
     IsometricDecalSink sink;
-    sink.addDecal(ground({0.5f, 0.5f}, kRed));            // tile (0, 0)
-    sink.addDecal(ground({5.5f, 5.5f}, kBlue));           // tile (5, 5)
-    sink.clearRegion(glm::ivec2{0, 0}, glm::ivec2{1, 1}); // max is exclusive
-    CHECK(sink.decalCount() == 1);
+    sink.addDecal(ground({0.5f, 0.5f}, kRed));    // chunk (0, 0)
+    sink.addDecal(ground({20.5f, 20.5f}, kBlue)); // chunk (1, 1)
+    // Baked paint clears at chunk granularity; this rect covers only chunk 0.
+    sink.clearRegion(glm::ivec2{0, 0}, glm::ivec2{16, 16});
+    CHECK(sink.decalCount() == 1); // the chunk-(1,1) stain survives
   }
 
   TEST("a fading decal should age out on update")
@@ -131,7 +143,7 @@ int main()
     CHECK(sink.decalCount() == 0);
   }
 
-  TEST("computeCommands should draw the chunk holding a decal")
+  TEST("computeCommands should bake and draw the chunk holding a decal")
   {
     ContextFixture fix;
     IsometricDecalSink sink;
@@ -140,9 +152,10 @@ int main()
 
     CHECK(sink.commands().size() == 1);
     const DecalDrawCommand& cmd = sink.commands().front();
-    CHECK(cmd.drawKeys.size() == 1); // the chunk is visible
-    CHECK(cmd.appends.size() == 1);  // its new static verts get appended
-    CHECK(cmd.textureId != nullptr); // a texture to draw it with
+    CHECK(cmd.bakes.size() == 1); // the new splat is baked into its texture
+    CHECK(cmd.drawUploads.size() == 1); // the tile's draw quad is uploaded
+    CHECK(cmd.drawKeys.size() == 1);    // the chunk is visible
+    CHECK(cmd.textureId != nullptr);    // a sprite to bake with
     CHECK(cmd.freeKeys.empty());
   }
 
@@ -162,13 +175,13 @@ int main()
     ContextFixture fix;
     IsometricDecalSink sink;
     sink.addDecal(ground({0.5f, 0.5f}, kRed));
-    sink.computeCommands(fix.ctx); // consumes the initial append
+    sink.computeCommands(fix.ctx); // consumes the initial bake
     sink.clearAll();
     sink.computeCommands(fix.ctx);
 
     CHECK(sink.commands().size() == 1);
     const DecalDrawCommand& cmd = sink.commands().front();
-    CHECK(cmd.freeKeys.size() == 1); // the emptied chunk is released
+    CHECK(cmd.freeKeys.size() == 1); // the emptied target is released
     CHECK(cmd.drawKeys.empty());     // nothing left to draw
   }
 

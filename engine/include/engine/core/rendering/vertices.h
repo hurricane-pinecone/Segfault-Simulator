@@ -52,4 +52,16 @@ struct DecalVertex
   float sortKey = 0.0f;             // world painter key (matches terrain tiles)
 };
 
+// A vertex stamped into a decal paint texture by the bake pass. `local` is the
+// target's [0,1] surface coordinate (a chunk's world-XY footprint for ground, a
+// face's along-edge x elevation for walls); the bake vertex shader maps it
+// straight to NDC. `uv` samples the decal sprite; `color` tints it (packed
+// RGBA8). No projection or depth -- baking renders flat into the texture.
+struct DecalBakeVertex
+{
+  glm::vec2 local{0.0f, 0.0f};
+  glm::vec2 uv{0.0f, 0.0f};
+  std::uint32_t color = 0xFFFFFFFF;
+};
+
 } // namespace sfs

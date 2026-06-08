@@ -266,33 +266,36 @@ void IsometricRenderSystem::submitConcreteRenderCommand(
                                 static_cast<int>(concrete.type));
   }
 
-  // Persistent decals: apply any dirty-chunk uploads, then draw the visible
-  // chunks' persistent buffers + this frame's animating decals. The frame's
-  // projection + depth-range uniforms were set in flushBatches.
+  // Baked decals: stamp this frame's new splats into per-target paint textures,
+  // refresh any target whose draw set grew, then draw every visible target plus
+  // this frame's animating (fading/running) decals. The frame's projection +
+  // depth-range uniforms were set in flushBatches.
   else if constexpr (std::is_same_v<T, DecalDrawCommand>)
   {
     for (const auto key : concrete.freeKeys)
-      quadRenderer.freeDecalChunk(key);
-
-    for (const auto& upload : concrete.uploads)
-      quadRenderer.uploadDecalChunk(
-          upload.key, upload.vertices.data(), upload.vertices.size());
-
-    for (const auto& append : concrete.appends)
-      quadRenderer.appendDecalChunk(
-          append.key, append.vertices.data(), append.vertices.size());
+      quadRenderer.freePaintTarget(key);
 
     const unsigned int texture = resolveTexture(concrete.textureId);
 
     if (texture != 0)
-    {
-      for (const auto key : concrete.drawKeys)
-        quadRenderer.drawDecalChunk(key, texture);
+      for (const auto& bake : concrete.bakes)
+        quadRenderer.bakeDecals(bake.key,
+                                bake.texW,
+                                bake.texH,
+                                texture,
+                                bake.verts.data(),
+                                bake.verts.size());
 
-      if (!concrete.dynamic.empty())
-        quadRenderer.drawDecalsDynamic(
-            concrete.dynamic.data(), concrete.dynamic.size(), texture);
-    }
+    for (const auto& upload : concrete.drawUploads)
+      quadRenderer.uploadPaintDraw(
+          upload.key, upload.verts.data(), upload.verts.size());
+
+    for (const auto key : concrete.drawKeys)
+      quadRenderer.drawPaintTarget(key);
+
+    if (texture != 0 && !concrete.dynamic.empty())
+      quadRenderer.drawDecalsDynamic(
+          concrete.dynamic.data(), concrete.dynamic.size(), texture);
   }
 
   // Batched lit terrain tiles.
