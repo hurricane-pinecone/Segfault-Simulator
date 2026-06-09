@@ -7,6 +7,7 @@
 #include "engine/generated/embeddedShaders.h"
 #include "engine/runtime/voxel/tinyVoxelWorld.h"
 #include "engine/runtime/voxel/voxelFireSystem.h"
+#include "engine/runtime/voxel/waterSurfaceSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/matrix_transform.hpp" // rotate
 #include "glm/glm/geometric.hpp"
@@ -288,6 +289,123 @@ buildEmberMesh(const std::vector<VoxelFireSystem::Ember>& embers)
   return out;
 }
 
+// Build ONE 32-col water tile as a voxel-quantized translucent sheet: a top
+// quad at each column's surface Y, plus vertical step faces where a neighbour's
+// water (or bare bed) sits lower. Depth tints shallow->deep + raises opacity.
+// Tiling means only the columns that changed re-mesh -- water never re-meshes
+// terrain.
+std::vector<TinyVoxelVertex> buildWaterTileMesh(const WaterSurfaceSystem& water,
+                                                const TinyVoxelWorld& world,
+                                                int tileX,
+                                                int tileZ)
+{
+  std::vector<TinyVoxelVertex> out;
+  const int x0 = tileX * 32;
+  const int z0 = tileZ * 32;
+  const glm::vec3 shallow{0.42f, 0.70f, 0.86f};
+  const glm::vec3 deep{0.10f, 0.28f, 0.56f};
+
+  const auto surfOf = [&](int x, int z) -> int
+  {
+    return water.hasWater(x, z)
+               ? static_cast<int>(glm::round(water.surfaceAt(x, z)))
+               : world.surfaceTop(x, z); // bare bed
+  };
+
+  for (int lz = 0; lz < 32; ++lz)
+    for (int lx = 0; lx < 32; ++lx)
+    {
+      const int x = x0 + lx;
+      const int z = z0 + lz;
+      if (!water.hasWater(x, z))
+        continue;
+      const int surf = static_cast<int>(glm::round(water.surfaceAt(x, z)));
+      const int bed = world.surfaceTop(x, z);
+      if (surf <= bed)
+        continue;
+      const float d01 =
+          glm::clamp(static_cast<float>(surf - bed) / 96.0f, 0.0f, 1.0f);
+      const glm::vec4 col{glm::mix(shallow, deep, d01),
+                          glm::clamp(0.40f + d01 * 0.42f, 0.40f, 0.85f)};
+      const float fx = static_cast<float>(x);
+      const float fz = static_cast<float>(z);
+      const float fy = static_cast<float>(surf);
+
+      const glm::vec3 up{0.0f, 1.0f, 0.0f};
+      out.push_back({{fx, fy, fz}, up, col});
+      out.push_back({{fx, fy, fz + 1}, up, col});
+      out.push_back({{fx + 1, fy, fz + 1}, up, col});
+      out.push_back({{fx, fy, fz}, up, col});
+      out.push_back({{fx + 1, fy, fz + 1}, up, col});
+      out.push_back({{fx + 1, fy, fz}, up, col});
+
+      // Step faces down to lower neighbours (winding is loose -- cull is off).
+      const auto side = [&](int nx,
+                            int nz,
+                            const glm::vec3& nrm,
+                            const glm::vec3& a,
+                            const glm::vec3& b)
+      {
+        const int lowY = glm::max(surfOf(nx, nz), bed);
+        if (lowY >= surf)
+          return;
+        const float ly = static_cast<float>(lowY);
+        out.push_back({{a.x, ly, a.z}, nrm, col});
+        out.push_back({{b.x, ly, b.z}, nrm, col});
+        out.push_back({{b.x, fy, b.z}, nrm, col});
+        out.push_back({{a.x, ly, a.z}, nrm, col});
+        out.push_back({{b.x, fy, b.z}, nrm, col});
+        out.push_back({{a.x, fy, a.z}, nrm, col});
+      };
+      side(x + 1, z, {1, 0, 0}, {fx + 1, 0, fz}, {fx + 1, 0, fz + 1});
+      side(x - 1, z, {-1, 0, 0}, {fx, 0, fz + 1}, {fx, 0, fz});
+      side(x, z + 1, {0, 0, 1}, {fx + 1, 0, fz + 1}, {fx, 0, fz + 1});
+      side(x, z - 1, {0, 0, -1}, {fx, 0, fz}, {fx + 1, 0, fz});
+    }
+  return out;
+}
+
+// Small translucent cubes for flying water droplets (splash spray +
+// waterfalls).
+std::vector<TinyVoxelVertex>
+buildDropletMesh(const std::vector<Voxel3DRenderSystem::Droplet>& drops)
+{
+  std::vector<TinyVoxelVertex> out;
+  out.reserve(drops.size() * 36);
+  const glm::vec3 nrm{0.0f, 1.0f, 0.0f};
+  const glm::vec4 col{0.55f, 0.78f, 0.95f, 0.75f};
+  const float half = 0.9f;
+  for (const auto& d : drops)
+  {
+    const glm::vec3 lo = d.pos - glm::vec3(half);
+    const glm::vec3 hi = d.pos + glm::vec3(half);
+    const glm::vec3 c[8] = {{lo.x, lo.y, lo.z},
+                            {hi.x, lo.y, lo.z},
+                            {hi.x, hi.y, lo.z},
+                            {lo.x, hi.y, lo.z},
+                            {lo.x, lo.y, hi.z},
+                            {hi.x, lo.y, hi.z},
+                            {hi.x, hi.y, hi.z},
+                            {lo.x, hi.y, hi.z}};
+    const auto quad = [&](int a, int b, int ei, int g)
+    {
+      out.push_back({c[a], nrm, col});
+      out.push_back({c[b], nrm, col});
+      out.push_back({c[ei], nrm, col});
+      out.push_back({c[a], nrm, col});
+      out.push_back({c[ei], nrm, col});
+      out.push_back({c[g], nrm, col});
+    };
+    quad(1, 2, 6, 5);
+    quad(0, 4, 7, 3);
+    quad(3, 7, 6, 2);
+    quad(0, 1, 5, 4);
+    quad(4, 5, 6, 7);
+    quad(0, 3, 2, 1);
+  }
+  return out;
+}
+
 // Build ONE block's mesh in LOCAL space (centred on the block, no rotation, no
 // translation) -- built once at spawn. The block tumbles + moves on the GPU via
 // the per-block uModel = translate(pos) * rotate(angle).
@@ -452,7 +570,18 @@ Voxel3DRenderSystem::~Voxel3DRenderSystem()
       if (m->vao)
         glDeleteVertexArrays(1, &m->vao);
     }
-  for (GpuMesh* m : {&m_playerMesh, &m_debrisMesh, &m_flameMesh, &m_emberMesh})
+  for (auto& [t, mesh] : m_waterTiles)
+  {
+    if (mesh.vbo)
+      glDeleteBuffers(1, &mesh.vbo);
+    if (mesh.vao)
+      glDeleteVertexArrays(1, &mesh.vao);
+  }
+  for (GpuMesh* m : {&m_playerMesh,
+                     &m_debrisMesh,
+                     &m_flameMesh,
+                     &m_emberMesh,
+                     &m_dropletMesh})
   {
     if (m->vbo)
       glDeleteBuffers(1, &m->vbo);
@@ -516,6 +645,30 @@ void Voxel3DRenderSystem::explode(const glm::ivec3& center,
   const glm::vec3 c{static_cast<float>(center.x) + 0.5f,
                     static_cast<float>(center.y) + 0.5f,
                     static_cast<float>(center.z) + 0.5f};
+
+  // Wake the surrounding water so it FLOWS into the cavity the carve opens.
+  if (m_waterSurf)
+    m_waterSurf->wake(center, radius + 4);
+
+  // Splash: a blast at/under water flings spray droplets up + outward.
+  if (m_waterSurf && m_waterSurf->hasWater(center.x, center.z))
+  {
+    const float surf = m_waterSurf->surfaceAt(center.x, center.z);
+    const int n = glm::min(radius * 2, 90);
+    for (int i = 0; i < n; ++i)
+    {
+      std::uint32_t h = static_cast<std::uint32_t>(center.x) * 92837111u ^
+                        static_cast<std::uint32_t>(center.z) * 689287499u ^
+                        static_cast<std::uint32_t>(i) * 283923481u;
+      h = (h ^ (h >> 13)) * 1274126177u;
+      const float a = static_cast<float>(h & 0xFFFFu) / 65535.0f * 6.2832f;
+      const float spd = 18.0f + static_cast<float>((h >> 16) & 0x3Fu);
+      const float up = 55.0f + static_cast<float>((h >> 22) & 0x3Fu);
+      m_droplets.push_back({{c.x, surf + 1.0f, c.z},
+                            {glm::cos(a) * spd, up, glm::sin(a) * spd},
+                            0.0f});
+    }
+  }
 
   // First, grab sizable solid cubes from inside the sphere as rigid blocks
   // (they tumble + roll), carving them out so the spray loop below skips them.
@@ -656,6 +809,28 @@ void Voxel3DRenderSystem::update(double deltaTime)
                       static_cast<int>(glm::floor(p.y)),
                       static_cast<int>(glm::floor(p.z))};
   };
+
+  // Splash droplets (spawned by blasts into water): fly under gravity, expire
+  // when they hit the water surface or ground. Purely visual -- the bulk water
+  // is a pure function of terrain, so droplets carry no volume.
+  if (m_waterSurf && !m_droplets.empty())
+  {
+    std::vector<Droplet> kept;
+    kept.reserve(m_droplets.size());
+    for (Droplet& d : m_droplets)
+    {
+      d.vel.y -= gravity * dt;
+      d.pos += d.vel * dt;
+      const int x = static_cast<int>(glm::floor(d.pos.x));
+      const int z = static_cast<int>(glm::floor(d.pos.z));
+      const float ground = m_waterSurf->hasWater(x, z)
+                               ? m_waterSurf->surfaceAt(x, z)
+                               : static_cast<float>(m_world->surfaceTop(x, z));
+      if (d.pos.y > ground)
+        kept.push_back(d); // still airborne
+    }
+    m_droplets.swap(kept);
+  }
 
   for (Debris& d : m_debris)
   {
@@ -874,8 +1049,8 @@ void Voxel3DRenderSystem::syncMeshes()
   // meshes uploaded. The meshing itself runs on background workers, so neither
   // a big carve nor a streamed ring stalls the frame -- the work just lands
   // over the next few frames.
-  constexpr std::size_t kEnqueueBudget = 32;
-  constexpr std::size_t kUploadBudget = 32;
+  constexpr std::size_t kEnqueueBudget = 64; // higher so flowing water keeps up
+  constexpr std::size_t kUploadBudget = 64;
 
   const auto freeGpu = [this](const glm::ivec3& coord)
   {
@@ -904,7 +1079,11 @@ void Voxel3DRenderSystem::syncMeshes()
   m_world->clearUnloaded();
 
   for (const glm::ivec3& coord : m_world->dirtyChunks())
+  {
     m_remeshPending.insert(coord);
+    if (m_waterSurf) // terrain (re)meshed -> its water tile must rebuild too
+      m_waterSurf->touchTile(coord.x, coord.z);
+  }
   m_world->clearDirty();
 
   // Submit a budget of mesh jobs: snapshot each chunk (cheap, main thread) and
@@ -1079,20 +1258,65 @@ void Voxel3DRenderSystem::render()
     glUniformMatrix4fv(m_uModel, 1, GL_FALSE, glm::value_ptr(identity));
   }
 
-  // Translucent water pass: the chunks' water meshes (real voxels), blended
-  // over the opaque scene with no depth write so the submerged bed shows
-  // through.
+  // Translucent water pass: the heightfield surface meshed in 32-col TILES +
+  // the flying droplets, blended with no depth write so the bed shows through.
+  // Only new or dirtied in-view tiles re-mesh, a budget per frame, so a big
+  // re-level amortizes instead of re-uploading the whole lake every frame.
+  if (m_waterSurf)
   {
     ZoneScopedN("Voxel3D::waterPass");
+    constexpr int kTileBuildBudget = 64; // keep flowing tiles up to date
+    const int cx = static_cast<int>(glm::floor(m_camera.focus.x));
+    const int cz = static_cast<int>(glm::floor(m_camera.focus.z));
+    const int vr = static_cast<int>(m_camera.zoom * 1.7f) + 48;
+    const glm::ivec2 lo = WaterSurfaceSystem::tileOf(cx - vr, cz - vr);
+    const glm::ivec2 hi = WaterSurfaceSystem::tileOf(cx + vr, cz + vr);
+
+    for (auto it = m_waterTiles.begin(); it != m_waterTiles.end();)
+    {
+      if (it->first.x < lo.x || it->first.x > hi.x || it->first.y < lo.y ||
+          it->first.y > hi.y)
+      {
+        if (it->second.vbo)
+          glDeleteBuffers(1, &it->second.vbo);
+        if (it->second.vao)
+          glDeleteVertexArrays(1, &it->second.vao);
+        it = m_waterTiles.erase(it);
+      }
+      else
+        ++it;
+    }
+
+    int budget = kTileBuildBudget;
+    for (int tz = lo.y; tz <= hi.y && budget > 0; ++tz)
+      for (int tx = lo.x; tx <= hi.x && budget > 0; ++tx)
+      {
+        const glm::ivec2 t{tx, tz};
+        if (m_waterTiles.count(t) && !m_waterSurf->tileDirty(tx, tz))
+          continue;
+        uploadMesh(m_waterTiles[t],
+                   buildWaterTileMesh(*m_waterSurf, *m_world, tx, tz));
+        m_waterSurf->clearTile(tx, tz);
+        --budget;
+      }
+
+    if (!m_droplets.empty())
+      uploadMesh(m_dropletMesh, buildDropletMesh(m_droplets));
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
-    for (const auto& [coord, cg] : m_gpu)
+    for (const auto& [t, mesh] : m_waterTiles)
     {
-      if (cg.water.vertexCount == 0)
+      if (mesh.vertexCount == 0)
         continue;
-      glBindVertexArray(cg.water.vao);
-      glDrawArrays(GL_TRIANGLES, 0, cg.water.vertexCount);
+      glBindVertexArray(mesh.vao);
+      glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+    }
+    if (!m_droplets.empty() && m_dropletMesh.vertexCount > 0)
+    {
+      glBindVertexArray(m_dropletMesh.vao);
+      glDrawArrays(GL_TRIANGLES, 0, m_dropletMesh.vertexCount);
     }
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);

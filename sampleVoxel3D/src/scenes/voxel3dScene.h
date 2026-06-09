@@ -11,6 +11,7 @@ namespace sfs
 class Voxel3DRenderSystem;
 class TinyVoxelWorld;
 class VoxelFireSystem;
+class WaterSurfaceSystem;
 } // namespace sfs
 
 // Drives a player box around a STREAMING tiny-voxel world (terrain shape from
@@ -37,6 +38,7 @@ private:
   TinyHeightmapGenerator m_gen; // terrain shape (fed to the world)
   sfs::TinyVoxelWorld* m_world = nullptr;
   sfs::VoxelFireSystem* m_fire = nullptr;
+  sfs::WaterSurfaceSystem* m_water = nullptr;
   sfs::Voxel3DRenderSystem* m_render = nullptr;
 
   glm::vec3 m_playerPos{0.0f, 0.0f, 0.0f};

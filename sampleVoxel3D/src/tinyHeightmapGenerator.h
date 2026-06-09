@@ -139,21 +139,8 @@ private:
         return shade(122, 92, 60, wx, wy, wz, sfs::TinyMaterial::Dirt);
       return shade(108, 110, 124, wx, wy, wz, sfs::TinyMaterial::Stone);
     }
-    if (wy < sea)
-    {
-      // Physical water: real voxels filling the air below sea level, darker
-      // with depth. Meshed translucent (the bed shows through) in the water
-      // pass.
-      const float d =
-          glm::clamp(static_cast<float>(sea - wy) / (6.0f * kVPB), 0.0f, 1.0f);
-      const auto lerp = [&](int a, int b)
-      { return static_cast<std::uint8_t>(a + static_cast<float>(b - a) * d); };
-      return sfs::tinyVoxel(lerp(107, 26),
-                            lerp(178, 71),
-                            lerp(219, 148),
-                            sfs::TinyMaterial::Water);
-    }
-    return 0u; // air
+    return 0u; // air -- water lives in the GPU water grid (WaterSurfaceSystem),
+               // not the terrain chunks, so flowing water never re-meshes them.
   }
 
   // Stamp the parts of any nearby trees that fall inside this chunk.

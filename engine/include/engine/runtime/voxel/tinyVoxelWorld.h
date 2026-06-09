@@ -64,6 +64,10 @@ public:
   bool solidAt(int x, int y, int z) const;
   std::uint32_t voxelAt(int x, int y, int z) const;
   int surfaceTop(int x, int z) const; // top of the highest solid (+1), or floor
+  bool hasColumn(int x, int z) const  // is this column streamed in (has a bed)?
+  {
+    return m_surfaceTop.find({x, z}) != m_surfaceTop.end();
+  }
   int surfaceBelow(int x, int yStart, int z) const; // for debris/block landing
   int seaLevel() const { return m_seaLevel; }
 

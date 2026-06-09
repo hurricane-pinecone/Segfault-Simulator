@@ -7,6 +7,7 @@
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
 
 #include <cstdint>
@@ -21,6 +22,7 @@ namespace sfs
 
 class TinyVoxelWorld;
 class VoxelFireSystem;
+class WaterSurfaceSystem;
 
 // The 3D tiny-voxel renderer (NOT the iso quad/geometry renderer): draws the
 // TinyVoxelWorld with a real MVP pipeline under an orthographic orbit camera.
@@ -44,6 +46,10 @@ public:
   // Fire source: the renderer emits + draws flame particles from its burning
   // voxels (the fire SIM lives in VoxelFireSystem; this is just the visuals).
   void setFire(const VoxelFireSystem* fire) { m_fire = fire; }
+
+  // Water source: the renderer meshes this heightfield's surface (the SIM lives
+  // in WaterSurfaceSystem) + spawns/merges droplet particles for it.
+  void setWaterSurface(WaterSurfaceSystem* water) { m_waterSurf = water; }
 
   OrthoOrbitCamera& camera() { return m_camera; }
   void setViewport(int width, int height);
@@ -125,6 +131,15 @@ public:
     float maxLife = 1.0f;
   };
 
+  // A flying water droplet (splash spray / waterfall stream). It arcs under
+  // gravity, then merges its `volume` back into the heightfield where it lands.
+  struct Droplet
+  {
+    glm::vec3 pos{0.0f};
+    glm::vec3 vel{0.0f};
+    float volume = 0.0f;
+  };
+
   // A rigid block of voxels (a sizable chunk) that tumbles, bounces, rolls down
   // slopes, then bakes back into the world when it settles.
   struct Block
@@ -155,6 +170,15 @@ private:
       const auto z = static_cast<std::uint32_t>(v.z);
       return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u ^
                                       z * 83492791u);
+    }
+  };
+  struct KeyHash2
+  {
+    std::size_t operator()(const glm::ivec2& v) const noexcept
+    {
+      const auto x = static_cast<std::uint32_t>(v.x);
+      const auto y = static_cast<std::uint32_t>(v.y);
+      return static_cast<std::size_t>(x * 73856093u ^ y * 19349663u);
     }
   };
 
@@ -217,6 +241,14 @@ private:
   GpuMesh m_flameMesh;
   GpuMesh m_emberMesh;
   std::uint32_t m_flameFrame = 0;
+
+  // Heightfield water: the surface is meshed in 32-col TILES (like terrain
+  // chunks) so only changed tiles re-mesh, with a per-frame build budget; plus
+  // flying droplet particles (splashes / waterfalls).
+  WaterSurfaceSystem* m_waterSurf = nullptr;
+  std::unordered_map<glm::ivec2, GpuMesh, KeyHash2> m_waterTiles;
+  std::vector<Droplet> m_droplets;
+  GpuMesh m_dropletMesh;
 
   unsigned int m_program = 0;
   int m_uViewProj = -1;

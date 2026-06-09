@@ -9,6 +9,7 @@
 #include "engine/runtime/systems/voxel3DRenderSystem.h"
 #include "engine/runtime/voxel/tinyVoxelWorld.h"
 #include "engine/runtime/voxel/voxelFireSystem.h"
+#include "engine/runtime/voxel/waterSurfaceSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
@@ -73,10 +74,18 @@ void Voxel3DScene::onInit()
   auto& fire = addSystem<sfs::VoxelFireSystem>(&world);
   m_fire = &fire;
 
+  // Volumetric water: the GPU sim is driven from the renderer (which owns the
+  // GL context); this system holds the water grid + the surface the renderer
+  // reads.
+  auto& water = addSystem<sfs::WaterSurfaceSystem>(&world);
+  water.setSeaLevel(m_gen.seaLevel());
+  m_water = &water;
+
   auto& render =
       addSystem<sfs::Voxel3DRenderSystem>(WINDOW_WIDTH, WINDOW_HEIGHT);
   render.setWorld(&world);
   render.setFire(&fire);
+  render.setWaterSurface(&water);
   m_render = &render;
 
   // Spawn on land near the origin (walk +x off any lake so the player isn't
@@ -183,7 +192,11 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
   {
     glm::ivec3 hit;
     if (m_render->raycastVoxel(pickNdc(input.mouse().getPosition()), hit))
+    {
+      // Carving clears terrain; the GPU water sim flows water into the new
+      // cavity over the next ticks.
       m_render->explode(hit, kExplodeRadius, kExplodePower);
+    }
   }
   if (m_render && m_fire && input.mouse().mousePressed(sfs::MouseButton::Right))
   {
