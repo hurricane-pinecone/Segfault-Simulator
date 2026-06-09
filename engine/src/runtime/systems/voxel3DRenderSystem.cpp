@@ -370,6 +370,14 @@ void Voxel3DRenderSystem::ensureInitialized()
   }
   m_uViewProj = glGetUniformLocation(m_program, "uViewProj");
   m_uLightDir = glGetUniformLocation(m_program, "uLightDir");
+  m_uSunColor = glGetUniformLocation(m_program, "uSunColor");
+  m_uAmbient = glGetUniformLocation(m_program, "uAmbient");
+  m_uSunDiffuse = glGetUniformLocation(m_program, "uSunDiffuse");
+  m_uLightCount = glGetUniformLocation(m_program, "uLightCount");
+  m_uLightPos = glGetUniformLocation(m_program, "uLightPos");
+  m_uLightColor = glGetUniformLocation(m_program, "uLightColor");
+  m_uLightRadius = glGetUniformLocation(m_program, "uLightRadius");
+  m_uLightIntensity = glGetUniformLocation(m_program, "uLightIntensity");
 }
 
 void Voxel3DRenderSystem::update(double deltaTime) { m_time += deltaTime; }
@@ -418,6 +426,37 @@ void Voxel3DRenderSystem::render()
   glUniformMatrix4fv(m_uViewProj, 1, GL_FALSE, glm::value_ptr(viewProj));
   const glm::vec3 l = m_lightDir;
   glUniform3f(m_uLightDir, l.x, l.y, l.z);
+  glUniform3f(m_uSunColor, m_sunColor.x, m_sunColor.y, m_sunColor.z);
+  glUniform1f(m_uAmbient, m_ambient);
+  glUniform1f(m_uSunDiffuse, m_sunDiffuse);
+
+  // Point lights, constant for every draw this frame.
+  int nLights = static_cast<int>(m_lights.size());
+  if (nLights > 16)
+    nLights = 16;
+  glUniform1i(m_uLightCount, nLights);
+  if (nLights > 0)
+  {
+    float pos[16 * 3];
+    float col[16 * 3];
+    float rad[16];
+    float inten[16];
+    for (int i = 0; i < nLights; ++i)
+    {
+      pos[i * 3 + 0] = m_lights[i].pos.x;
+      pos[i * 3 + 1] = m_lights[i].pos.y;
+      pos[i * 3 + 2] = m_lights[i].pos.z;
+      col[i * 3 + 0] = m_lights[i].color.x;
+      col[i * 3 + 1] = m_lights[i].color.y;
+      col[i * 3 + 2] = m_lights[i].color.z;
+      rad[i] = m_lights[i].radius;
+      inten[i] = m_lights[i].intensity;
+    }
+    glUniform3fv(m_uLightPos, nLights, pos);
+    glUniform3fv(m_uLightColor, nLights, col);
+    glUniform1fv(m_uLightRadius, nLights, rad);
+    glUniform1fv(m_uLightIntensity, nLights, inten);
+  }
 
   // Opaque pass: terrain + player (their vertex alpha is 1).
   for (const auto& [coord, mesh] : m_gpu)

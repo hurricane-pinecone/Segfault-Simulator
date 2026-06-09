@@ -26,11 +26,14 @@ protected:
   void onInit() override;
   void onUpdate(double deltaTime) override;
   void onProcessInput(const sfs::Input& input) override;
-  void onRender() override; // FPS overlay for gauging perf
+  void onRender() override;  // FPS overlay for gauging perf
+  void onDebugUI() override; // ImGui panel (time of day, player light)
 
 private:
   int terrainHeight(int wx, int wz) const; // top solid voxel (world y)
   std::uint32_t voxelAt(int wx, int wy, int wz) const; // colour or 0 (air)
+  void updatePlayerLight(); // light follows the player
+  void applySun(); // sun dir/colour/ambient from m_timeOfDay -> render system
 
   sfs::Voxel3DRenderSystem* m_render = nullptr;
   sfs::Noise m_noise;  // macro hills (block scale)
@@ -41,4 +44,15 @@ private:
   float m_yawInput = 0.0f;
   float m_zoomInput = 0.0f;
   double m_fps = 0.0;
+
+  // Day/night (0 = midnight, .25 sunrise, .5 noon, .75 sunset).
+  float m_timeOfDay = 0.34f;
+  float m_dayLengthSeconds = 90.0f;
+  float m_timeMultiplier = 1.0f;
+  bool m_sunEnabled = true;
+
+  // Player point light (editable in the debug panel).
+  glm::vec3 m_lightColor{1.0f, 0.82f, 0.55f};
+  float m_lightRadius = 150.0f;
+  float m_lightIntensity = 2.2f;
 };

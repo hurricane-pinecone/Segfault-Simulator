@@ -7,12 +7,18 @@
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/systems/voxel3DRenderSystem.h"
 #include "glm/glm/common.hpp"
+#include "glm/glm/exponential.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/trigonometric.hpp"
 
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifndef ENGINE_WEB
+  #include <imgui.h>
+#endif
 
 namespace
 {
@@ -170,10 +176,61 @@ void Voxel3DScene::onInit()
 
   render.camera().focus = m_playerPos;
   render.camera().zoom = 150.0f; // ~19 blocks of view; player a clear figure
-  render.setLightDir(glm::normalize(glm::vec3{0.4f, 0.9f, 0.35f}));
+  applySun();
   render.setPlayerBox(m_playerPos,
                       glm::vec3{kPlayerHalfXZ, kPlayerHalfY, kPlayerHalfXZ},
                       glm::vec3{0.92f, 0.26f, 0.2f});
+  updatePlayerLight();
+}
+
+void Voxel3DScene::updatePlayerLight()
+{
+  // A point light carried by the player (like the sample's lamp); params are
+  // editable in the debug panel.
+  sfs::Voxel3DRenderSystem::PointLight light;
+  light.pos = m_playerPos;
+  light.color = m_lightColor;
+  light.radius = m_lightRadius;
+  light.intensity = m_lightIntensity;
+  m_render->setLights({light});
+}
+
+void Voxel3DScene::applySun()
+{
+  // Ported from the sample's SunController: arc the sun across the sky and fade
+  // ambient/colour from night to day. t: 0 midnight, .25 sunrise, .5 noon.
+  const float t = m_timeOfDay;
+  const auto sat = [](float x) { return glm::clamp(x, 0.0f, 1.0f); };
+  const auto ramp = [&](float a, float b, float x)
+  { return sat((x - a) / (b - a)); };
+
+  const float dayProgress = ramp(6.0f / 24.0f, 18.0f / 24.0f, t);
+  const float sunX = glm::cos(dayProgress * 3.14159265f);
+  const float noon = sat(1.0f - glm::abs(dayProgress * 2.0f - 1.0f));
+  const float smoothNoon = noon * noon * (3.0f - 2.0f * noon);
+  const float sunZ = 0.08f + smoothNoon * 0.91f;
+
+  const float morning = ramp(5.0f / 24.0f, 7.0f / 24.0f, t);
+  const float evening = 1.0f - ramp(17.0f / 24.0f, 19.0f / 24.0f, t);
+  const float daylight = sat(morning * evening);
+
+  glm::vec2 hdir{sunX, -0.65f};
+  hdir = glm::length(hdir) > 0.001f ? glm::normalize(hdir) : glm::vec2{0, -1};
+  const float hAmount = glm::sqrt(glm::max(0.0f, 1.0f - sunZ * sunZ));
+  const glm::vec3 sunDir =
+      glm::normalize(glm::vec3{hdir.x * hAmount, sunZ, hdir.y * hAmount});
+
+  const glm::vec3 nightColor{0.10f, 0.16f, 0.34f}; // moonlit blue
+  const glm::vec3 dayColor{1.0f, 1.0f, 1.0f};
+  const glm::vec3 duskColor{1.0f, 0.62f, 0.35f};
+  const float dusk = ramp(16.5f / 24.0f, 18.5f / 24.0f, t);
+  const glm::vec3 dayTint = glm::mix(dayColor, duskColor, dusk);
+
+  const glm::vec3 color = glm::mix(nightColor, dayTint, daylight);
+  const float ambient = 0.12f + daylight * 0.88f;
+  const float diffuse = daylight * glm::mix(0.65f, 0.30f, noon);
+
+  m_render->setSun(sunDir, color, ambient, diffuse);
 }
 
 void Voxel3DScene::onProcessInput(const sfs::Input& input)
@@ -204,6 +261,14 @@ void Voxel3DScene::onUpdate(double deltaTime)
   if (!m_render)
     return;
 
+  if (m_sunEnabled && deltaTime > 0.0)
+  {
+    m_timeOfDay +=
+        static_cast<float>(deltaTime) / m_dayLengthSeconds * m_timeMultiplier;
+    m_timeOfDay -= glm::floor(m_timeOfDay);
+  }
+  applySun();
+
   const float dt = static_cast<float>(deltaTime);
   sfs::OrthoOrbitCamera& cam = m_render->camera();
 
@@ -227,10 +292,34 @@ void Voxel3DScene::onUpdate(double deltaTime)
   m_render->setPlayerBox(m_playerPos,
                          glm::vec3{kPlayerHalfXZ, kPlayerHalfY, kPlayerHalfXZ},
                          glm::vec3{0.92f, 0.26f, 0.2f});
+  updatePlayerLight();
 }
 
 void Voxel3DScene::onRender()
 {
   textRenderer().drawText(
       20, 20, "FPS: " + std::to_string(static_cast<int>(m_fps)));
+}
+
+void Voxel3DScene::onDebugUI()
+{
+#ifndef ENGINE_WEB
+  ImGui::SetNextWindowSize(ImVec2(320, 160), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Time of Day");
+  ImGui::Text("FPS: %d", static_cast<int>(m_fps));
+  float hour = m_timeOfDay * 24.0f;
+  if (ImGui::SliderFloat("Hour", &hour, 0.0f, 24.0f))
+    m_timeOfDay = hour / 24.0f;
+  ImGui::Checkbox("Run cycle", &m_sunEnabled);
+  ImGui::SliderFloat("Day speed", &m_timeMultiplier, 0.0f, 20.0f);
+  ImGui::SliderFloat("Day length (s)", &m_dayLengthSeconds, 5.0f, 600.0f);
+  ImGui::End();
+
+  ImGui::SetNextWindowSize(ImVec2(320, 160), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Player Light");
+  ImGui::SliderFloat("Radius", &m_lightRadius, 0.0f, 400.0f);
+  ImGui::SliderFloat("Intensity", &m_lightIntensity, 0.0f, 6.0f);
+  ImGui::ColorEdit3("Color", &m_lightColor.x);
+  ImGui::End();
+#endif
 }

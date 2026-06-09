@@ -37,6 +37,19 @@ public:
   void setViewport(int width, int height);
   void setLightDir(const glm::vec3& dir) { m_lightDir = dir; }
 
+  // Time-of-day sun: direction (toward sun), tint, ambient floor, and the
+  // directional strength. Drives the day/night look.
+  void setSun(const glm::vec3& dir,
+              const glm::vec3& color,
+              float ambient,
+              float diffuse)
+  {
+    m_lightDir = dir;
+    m_sunColor = color;
+    m_ambient = ambient;
+    m_sunDiffuse = diffuse;
+  }
+
   // One column of water: the floor it sits on and the surface (sea) level, both
   // world voxel Y. The surface is re-meshed each frame with animated waves and
   // drawn transparent, so you see the bed through it.
@@ -50,6 +63,20 @@ public:
   {
     m_water = std::move(columns);
     m_seaLevel = seaLevel;
+  }
+
+  // Point lights, in WORLD voxel space. Replaced each frame (cheap); the shader
+  // sums up to 16. radius is the reach in voxels.
+  struct PointLight
+  {
+    glm::vec3 pos{0.0f};
+    glm::vec3 color{1.0f};
+    float radius = 100.0f;
+    float intensity = 1.0f;
+  };
+  void setLights(std::vector<PointLight> lights)
+  {
+    m_lights = std::move(lights);
   }
 
   // Optional player marker: a solid box drawn each frame (centre +
@@ -102,6 +129,9 @@ private:
 
   OrthoOrbitCamera m_camera;
   glm::vec3 m_lightDir{0.4f, 0.9f, 0.3f};
+  glm::vec3 m_sunColor{1.0f, 1.0f, 1.0f};
+  float m_ambient = 1.0f;
+  float m_sunDiffuse = 0.6f;
 
   bool m_hasPlayer = false;
   glm::vec3 m_playerCenter{0.0f};
@@ -114,9 +144,19 @@ private:
   GpuMesh m_waterMesh;
   double m_time = 0.0; // wave clock
 
+  std::vector<PointLight> m_lights;
+
   unsigned int m_program = 0;
   int m_uViewProj = -1;
   int m_uLightDir = -1;
+  int m_uSunColor = -1;
+  int m_uAmbient = -1;
+  int m_uSunDiffuse = -1;
+  int m_uLightCount = -1;
+  int m_uLightPos = -1;
+  int m_uLightColor = -1;
+  int m_uLightRadius = -1;
+  int m_uLightIntensity = -1;
   bool m_initialized = false;
 
   int m_viewportW = 1;

@@ -6,11 +6,13 @@ layout(location = 2) in vec4 aColor;  // per-voxel colour + alpha
 
 uniform mat4 uViewProj;
 
+out vec3 vWorldPos;
 out vec3 vNormal;
 out vec4 vColor;
 
 void main()
 {
+  vWorldPos = aPos;
   vNormal = aNormal;
   vColor = aColor;
   gl_Position = uViewProj * vec4(aPos, 1.0);
