@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
@@ -35,6 +37,21 @@ public:
   void setViewport(int width, int height);
   void setLightDir(const glm::vec3& dir) { m_lightDir = dir; }
 
+  // One column of water: the floor it sits on and the surface (sea) level, both
+  // world voxel Y. The surface is re-meshed each frame with animated waves and
+  // drawn transparent, so you see the bed through it.
+  struct WaterColumn
+  {
+    int x = 0;
+    int z = 0;
+    int floorY = 0;
+  };
+  void setWater(std::vector<WaterColumn> columns, int seaLevel)
+  {
+    m_water = std::move(columns);
+    m_seaLevel = seaLevel;
+  }
+
   // Optional player marker: a solid box drawn each frame (centre +
   // half-extents).
   void setPlayerBox(const glm::vec3& center,
@@ -60,6 +77,7 @@ public:
   };
 
 protected:
+  void update(double deltaTime) override; // advances the wave clock
   void render() override;
 
 private:
@@ -90,6 +108,11 @@ private:
   glm::vec3 m_playerHalf{0.5f};
   glm::vec3 m_playerColor{0.9f, 0.2f, 0.2f};
   GpuMesh m_playerMesh;
+
+  std::vector<WaterColumn> m_water;
+  int m_seaLevel = 0;
+  GpuMesh m_waterMesh;
+  double m_time = 0.0; // wave clock
 
   unsigned int m_program = 0;
   int m_uViewProj = -1;

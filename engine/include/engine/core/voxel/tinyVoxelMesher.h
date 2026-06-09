@@ -2,6 +2,7 @@
 
 #include "engine/core/voxel/tinyVoxelChunk.h"
 #include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/ext/vector_float4.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
 
 #include <functional>
@@ -17,7 +18,8 @@ struct TinyVoxelVertex
 {
   glm::vec3 pos;
   glm::vec3 normal;
-  glm::vec3 color;
+  glm::vec4
+      color; // rgb + alpha (1 = opaque terrain; < 1 for transparent water)
 };
 
 // Mesh one tiny-voxel chunk into world-space triangles: two per EXPOSED face,
@@ -70,9 +72,10 @@ meshTinyChunk(glm::ivec3 chunkOrigin,
         if (v == 0u)
           continue;
 
-        const glm::vec3 color{static_cast<float>((v >> 24) & 0xFFu) / 255.0f,
+        const glm::vec4 color{static_cast<float>((v >> 24) & 0xFFu) / 255.0f,
                               static_cast<float>((v >> 16) & 0xFFu) / 255.0f,
-                              static_cast<float>((v >> 8) & 0xFFu) / 255.0f};
+                              static_cast<float>((v >> 8) & 0xFFu) / 255.0f,
+                              1.0f}; // opaque terrain
 
         const int wx = chunkOrigin.x + lx;
         const int wy = chunkOrigin.y + ly;

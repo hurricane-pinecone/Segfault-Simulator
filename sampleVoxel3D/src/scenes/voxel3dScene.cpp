@@ -3,12 +3,16 @@
 #include "config.h"
 
 #include "engine/core/voxel/tinyVoxelChunk.h"
+#include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/systems/voxel3DRenderSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 
 #include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -26,7 +30,8 @@ constexpr int kBaseBlocks = 2;
 // AND the features wide (see the low macro frequency below) -- bigger all
 // round, not just taller (taller-only spikes them).
 constexpr int kRangeBlocks = 9;
-constexpr int kSeaBlocks = 3;
+constexpr int kSeaBlocks =
+    5; // higher sea floods the broad valleys -> big lakes
 constexpr float kFineAmp = 4.0f; // sub-block surface jitter, in voxels
 
 // Patch size, in chunks (1 chunk = 32 voxels = 2 blocks at kVPB=16). Bigger
@@ -95,9 +100,7 @@ std::uint32_t Voxel3DScene::voxelAt(int wx, int wy, int wz) const
       return shade(122, 92, 60, wx, wy, wz); // dirt
     return shade(108, 110, 124, wx, wy, wz); // stone
   }
-  if (wy < sea && h < sea)
-    return shade(58, 110, 196, wx, wy, wz); // water
-  return 0u;                                // air
+  return 0u; // air -- water is a separate transparent surface pass
 }
 
 void Voxel3DScene::onInit()
@@ -138,8 +141,28 @@ void Voxel3DScene::onInit()
           render.setChunk(glm::ivec3{cx, cy, cz}, chunk);
       }
 
-  const int px = kGrid * sfs::kTinyChunkSize / 2;
-  const int pz = kGrid * sfs::kTinyChunkSize / 2;
+  // Water: every column whose terrain dips below sea level. The render system
+  // animates these as a transparent wave surface (re-meshed each frame), so you
+  // see the bed through them -- and it's the per-frame "moving voxels" workload
+  // for gauging performance.
+  const int sea = kSeaBlocks * kVPB;
+  std::vector<sfs::Voxel3DRenderSystem::WaterColumn> water;
+  const int span = kGrid * sfs::kTinyChunkSize;
+  for (int wz = 0; wz < span; ++wz)
+    for (int wx = 0; wx < span; ++wx)
+    {
+      const int h = terrainHeight(wx, wz);
+      if (h < sea)
+        water.push_back({wx, wz, h});
+    }
+  render.setWater(std::move(water), sea);
+
+  // Spawn on land near the centre (walk +x off any lake so the player isn't
+  // submerged at start).
+  int px = span / 2;
+  const int pz = span / 2;
+  for (int r = 0; r < span / 2 && terrainHeight(px, pz) < sea; r += kVPB)
+    px = span / 2 + r;
   m_playerPos =
       glm::vec3{static_cast<float>(px),
                 static_cast<float>(terrainHeight(px, pz)) + kPlayerHalfY,
@@ -175,6 +198,9 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
 
 void Voxel3DScene::onUpdate(double deltaTime)
 {
+  if (deltaTime > 0.0001)
+    m_fps += (1.0 / deltaTime - m_fps) * 0.1; // eased FPS readout
+
   if (!m_render)
     return;
 
@@ -201,4 +227,10 @@ void Voxel3DScene::onUpdate(double deltaTime)
   m_render->setPlayerBox(m_playerPos,
                          glm::vec3{kPlayerHalfXZ, kPlayerHalfY, kPlayerHalfXZ},
                          glm::vec3{0.92f, 0.26f, 0.2f});
+}
+
+void Voxel3DScene::onRender()
+{
+  textRenderer().drawText(
+      20, 20, "FPS: " + std::to_string(static_cast<int>(m_fps)));
 }

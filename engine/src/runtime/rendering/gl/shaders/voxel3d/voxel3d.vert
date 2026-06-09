@@ -2,12 +2,12 @@
 // CPU; this one does not). #version is prepended at runtime.
 layout(location = 0) in vec3 aPos;    // world space
 layout(location = 1) in vec3 aNormal; // flat face normal
-layout(location = 2) in vec3 aColor;  // per-voxel colour
+layout(location = 2) in vec4 aColor;  // per-voxel colour + alpha
 
 uniform mat4 uViewProj;
 
 out vec3 vNormal;
-out vec3 vColor;
+out vec4 vColor;
 
 void main()
 {

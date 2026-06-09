@@ -26,6 +26,7 @@ protected:
   void onInit() override;
   void onUpdate(double deltaTime) override;
   void onProcessInput(const sfs::Input& input) override;
+  void onRender() override; // FPS overlay for gauging perf
 
 private:
   int terrainHeight(int wx, int wz) const; // top solid voxel (world y)
@@ -39,4 +40,5 @@ private:
   glm::vec2 m_moveInput{0.0f, 0.0f}; // x = strafe, y = forward
   float m_yawInput = 0.0f;
   float m_zoomInput = 0.0f;
+  double m_fps = 0.0;
 };
