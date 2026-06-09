@@ -1,22 +1,23 @@
 #pragma once
 
-#include "engine/core/noise/noise.h"
+#include "tinyHeightmapGenerator.h"
+
 #include "engine/runtime/sceneManager/scene.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 
-#include <cstdint>
-
 namespace sfs
 {
 class Voxel3DRenderSystem;
-}
+class TinyVoxelWorld;
+class VoxelFireSystem;
+} // namespace sfs
 
-// Builds a fixed patch of tiny coloured voxels (noise heightmap:
-// stone/dirt/grass
-// + water) and lets you drive a player box around it while orbiting + zooming
-// the orthographic isometric camera. Proves the 3D render path + base-builder
-// camera.
+// Drives a player box around a STREAMING tiny-voxel world (terrain shape from
+// TinyHeightmapGenerator) while orbiting + zooming the orthographic isometric
+// camera. The world (storage + streaming) and the renderer are separate
+// systems; the scene just spawns them, feeds the streaming focus, and drives
+// input.
 class Voxel3DScene : public sfs::Scene
 {
 public:
@@ -30,14 +31,13 @@ protected:
   void onDebugUI() override; // ImGui panel (time of day, player light)
 
 private:
-  int terrainHeight(int wx, int wz) const; // top solid voxel (world y)
-  std::uint32_t voxelAt(int wx, int wy, int wz) const; // colour or 0 (air)
   void updatePlayerLight(); // light follows the player
   void applySun(); // sun dir/colour/ambient from m_timeOfDay -> render system
 
+  TinyHeightmapGenerator m_gen; // terrain shape (fed to the world)
+  sfs::TinyVoxelWorld* m_world = nullptr;
+  sfs::VoxelFireSystem* m_fire = nullptr;
   sfs::Voxel3DRenderSystem* m_render = nullptr;
-  sfs::Noise m_noise;  // macro hills (block scale)
-  sfs::Noise m_detail; // fine sub-block surface detail
 
   glm::vec3 m_playerPos{0.0f, 0.0f, 0.0f};
   glm::vec2 m_moveInput{0.0f, 0.0f}; // x = strafe, y = forward

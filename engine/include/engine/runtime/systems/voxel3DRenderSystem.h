@@ -1,12 +1,16 @@
 #pragma once
 
 #include "engine/core/ecs/system.h"
-#include "engine/core/voxel/tinyVoxelChunk.h"
+#include "engine/core/util/asyncJobQueue.h"
+#include "engine/core/voxel/tinyVoxelMesher.h"
 #include "engine/runtime/rendering/camera/orthoOrbitCamera.h"
+#include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/ext/vector_float4.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
 
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -15,11 +19,16 @@
 namespace sfs
 {
 
-// A self-contained 3D render path (NOT the iso quad/geometry renderer): draws
-// tiny coloured voxels with a real MVP pipeline under an orthographic orbit
-// camera. Lives as a plain System -- the scene hands it chunks + drives the
-// camera; it owns its GL program, per-chunk buffers, and GL state. Coexists
-// with the iso renderer but is meant to be used alone in a 3D scene.
+class TinyVoxelWorld;
+class VoxelFireSystem;
+
+// The 3D tiny-voxel renderer (NOT the iso quad/geometry renderer): draws the
+// TinyVoxelWorld with a real MVP pipeline under an orthographic orbit camera.
+// It reads the world (storage/streaming live there), caches a GPU mesh per
+// loaded chunk (re-meshing the world's dirty chunks, freeing unloaded ones),
+// and owns the camera, day/night sun, point lights, transparent water, the
+// player marker, and the destruction (debris + tumbling blocks; edits route
+// through the world).
 class Voxel3DRenderSystem : public System
 {
 public:
@@ -29,9 +38,12 @@ public:
   Voxel3DRenderSystem(const Voxel3DRenderSystem&) = delete;
   Voxel3DRenderSystem& operator=(const Voxel3DRenderSystem&) = delete;
 
-  // Insert/replace a chunk's voxels; marks it (and its neighbours) for
-  // remeshing.
-  void setChunk(const glm::ivec3& chunkCoord, const TinyVoxelChunk& chunk);
+  // The data authority this renderer draws (chunks, water, surface, edits).
+  void setWorld(TinyVoxelWorld* world) { m_world = world; }
+
+  // Fire source: the renderer emits + draws flame particles from its burning
+  // voxels (the fire SIM lives in VoxelFireSystem; this is just the visuals).
+  void setFire(const VoxelFireSystem* fire) { m_fire = fire; }
 
   OrthoOrbitCamera& camera() { return m_camera; }
   void setViewport(int width, int height);
@@ -48,21 +60,6 @@ public:
     m_sunColor = color;
     m_ambient = ambient;
     m_sunDiffuse = diffuse;
-  }
-
-  // One column of water: the floor it sits on and the surface (sea) level, both
-  // world voxel Y. The surface is re-meshed each frame with animated waves and
-  // drawn transparent, so you see the bed through it.
-  struct WaterColumn
-  {
-    int x = 0;
-    int z = 0;
-    int floorY = 0;
-  };
-  void setWater(std::vector<WaterColumn> columns, int seaLevel)
-  {
-    m_water = std::move(columns);
-    m_seaLevel = seaLevel;
   }
 
   // Point lights, in WORLD voxel space. Replaced each frame (cheap); the shader
@@ -91,8 +88,13 @@ public:
     m_hasPlayer = true;
   }
 
-  // Sample solidity in WORLD voxel coords across the loaded chunks.
-  bool solidWorld(int wx, int wy, int wz) const;
+  // Mouse pick: unproject NDC (-1..1, y up) to a world ray, march it, and
+  // return the first solid voxel hit (false if the ray misses the terrain).
+  bool raycastVoxel(const glm::vec2& ndc, glm::ivec3& outVoxel) const;
+
+  // Destruction: carve a sphere (radius in voxels) at `center` (via the world),
+  // flinging the removed voxels as a fine spray + rigid tumbling blocks.
+  void explode(const glm::ivec3& center, int radius, float power);
 
   // One chunk's (or the player's) GPU buffers. Public so the upload helper in
   // the .cpp can fill it.
@@ -103,8 +105,44 @@ public:
     int vertexCount = 0;
   };
 
+  // A flying single voxel (the fine spray). Public so the mesh builder reads
+  // it.
+  struct Debris
+  {
+    glm::vec3 pos{0.0f};
+    glm::vec3 vel{0.0f};
+    glm::vec4 color{1.0f};
+    float life = 0.0f;
+  };
+
+  // A rising flame puff emitted by a burning voxel. Public so the mesh builder
+  // reads it.
+  struct Flame
+  {
+    glm::vec3 pos{0.0f};
+    glm::vec3 vel{0.0f};
+    float life = 0.0f;
+    float maxLife = 1.0f;
+  };
+
+  // A rigid block of voxels (a sizable chunk) that tumbles, bounces, rolls down
+  // slopes, then bakes back into the world when it settles.
+  struct Block
+  {
+    glm::vec3 pos{0.0f}; // centre, world voxels
+    glm::vec3 vel{0.0f};
+    glm::vec3 angle{0.0f}; // euler orientation (visual tumble)
+    glm::vec3 angVel{0.0f};
+    int size = 3;                      // cube edge in voxels
+    std::vector<std::uint32_t> voxels; // size^3 colours (0 = empty)
+    float restTimer = 0.0f;            // time spent slow on the ground
+    float groundTime = 0.0f; // time spent in contact (hard settle fallback)
+    bool dead = false;
+    GpuMesh mesh; // local-space mesh built once; tumbled on the GPU via uModel
+  };
+
 protected:
-  void update(double deltaTime) override; // advances the wave clock
+  void update(double deltaTime) override; // wave clock + debris/block physics
   void render() override;
 
 private:
@@ -121,11 +159,39 @@ private:
   };
 
   void ensureInitialized();
-  void remeshDirty();
+  void
+  syncMeshes(); // free unloaded chunk meshes, re-mesh the world's dirty ones
+  void bakeDebris(const glm::ivec3& cell,
+                  const glm::vec4& color); // settle a spray voxel
+  void bakeBlock(const Block& block); // settle a rigid block (axis-aligned)
 
-  std::unordered_map<glm::ivec3, TinyVoxelChunk, KeyHash> m_chunks;
-  std::unordered_set<glm::ivec3, KeyHash> m_dirty;
-  std::unordered_map<glm::ivec3, GpuMesh, KeyHash> m_gpu;
+  // Per chunk: an opaque mesh (terrain) + a water mesh (translucent), so water
+  // draws in a separate blended pass.
+  struct ChunkGpu
+  {
+    GpuMesh opaque;
+    GpuMesh water;
+  };
+
+  TinyVoxelWorld* m_world = nullptr;
+  std::unordered_map<glm::ivec3, ChunkGpu, KeyHash> m_gpu;
+  std::unordered_set<glm::ivec3, KeyHash>
+      m_remeshPending; // dirty, awaiting a job
+
+  // Async meshing: a chunk's mesh is built on background workers from an
+  // immutable snapshot (the chunk + its 6 neighbour border layers) tagged with
+  // the chunk's generation; finished meshes land in m_meshResults and the main
+  // thread uploads a budget per frame, discarding any whose generation is stale
+  // (re-edited since).
+  struct MeshResult
+  {
+    glm::ivec3 coord{0};
+    std::uint64_t gen = 0;
+    TinyChunkMesh mesh; // opaque + water vertex lists
+  };
+  std::unordered_map<glm::ivec3, std::uint64_t, KeyHash> m_chunkGen;
+  std::vector<MeshResult> m_meshResults;
+  std::mutex m_meshResultsMutex;
 
   OrthoOrbitCamera m_camera;
   glm::vec3 m_lightDir{0.4f, 0.9f, 0.3f};
@@ -139,15 +205,23 @@ private:
   glm::vec3 m_playerColor{0.9f, 0.2f, 0.2f};
   GpuMesh m_playerMesh;
 
-  std::vector<WaterColumn> m_water;
-  int m_seaLevel = 0;
-  GpuMesh m_waterMesh;
-  double m_time = 0.0; // wave clock
-
   std::vector<PointLight> m_lights;
+
+  std::vector<Debris> m_debris;
+  GpuMesh m_debrisMesh;
+
+  std::vector<Block> m_blocks;
+
+  const VoxelFireSystem* m_fire = nullptr;
+  std::vector<Flame> m_flames;
+  GpuMesh m_flameMesh;
+  GpuMesh m_emberMesh;
+  std::uint32_t m_flameFrame = 0;
 
   unsigned int m_program = 0;
   int m_uViewProj = -1;
+  int m_uModel = -1;
+  int m_uEmissive = -1;
   int m_uLightDir = -1;
   int m_uSunColor = -1;
   int m_uAmbient = -1;
@@ -161,6 +235,9 @@ private:
 
   int m_viewportW = 1;
   int m_viewportH = 1;
+
+  AsyncJobQueue
+      m_meshQueue; // LAST member: joins (drains jobs) first on teardown
 };
 
 } // namespace sfs

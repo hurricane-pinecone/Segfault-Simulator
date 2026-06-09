@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/voxel/tinyVoxelChunk.h"
+#include "engine/core/voxel/tinyVoxelMaterial.h"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 #include "glm/glm/ext/vector_int3.hpp"
@@ -22,15 +23,26 @@ struct TinyVoxelVertex
       color; // rgb + alpha (1 = opaque terrain; < 1 for transparent water)
 };
 
+// A chunk's meshed faces, split by render pass: opaque (terrain/structures)
+// drawn first with depth write, water drawn after with blending and no depth
+// write.
+struct TinyChunkMesh
+{
+  std::vector<TinyVoxelVertex> opaque;
+  std::vector<TinyVoxelVertex> water;
+};
+
 // Mesh one tiny-voxel chunk into world-space triangles: two per EXPOSED face,
-// all six directions (the camera rotates freely, so no iso 3-face cull). A face
-// is exposed when the neighbour voxel is air. `solidWorld(wx,wy,wz)` answers
-// solidity in WORLD voxel coords, so border faces cull against the neighbouring
-// chunk too. `chunkOrigin` is the world voxel coord of local (0,0,0).
-inline std::vector<TinyVoxelVertex>
+// all six directions (the camera rotates freely, so no iso 3-face cull). Face
+// culling is class-aware (see TinyClass): an opaque face is exposed against air
+// OR water (so a submerged bed shows through the translucent water); a water
+// face is exposed against air only. `chunkOrigin` is the world voxel coord of
+// local (0,0,0). `classOutside(wx,wy,wz)` gives the class of a neighbour cell
+// OUTSIDE this chunk (in-chunk neighbours are read from `chunk` directly).
+inline TinyChunkMesh
 meshTinyChunk(glm::ivec3 chunkOrigin,
               const TinyVoxelChunk& chunk,
-              const std::function<bool(int, int, int)>& solidWorld)
+              const std::function<int(int, int, int)>& classOutside)
 {
   struct Face
   {
@@ -62,7 +74,7 @@ meshTinyChunk(glm::ivec3 chunkOrigin,
        {{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}}},
   };
 
-  std::vector<TinyVoxelVertex> out;
+  TinyChunkMesh out;
 
   for (int lz = 0; lz < kTinyChunkSize; ++lz)
     for (int ly = 0; ly < kTinyChunkSize; ++ly)
@@ -72,10 +84,13 @@ meshTinyChunk(glm::ivec3 chunkOrigin,
         if (v == 0u)
           continue;
 
+        const bool water = tinyIsWater(tinyMaterialOf(v));
+        const float alpha = water ? 0.55f : 1.0f;
         const glm::vec4 color{static_cast<float>((v >> 24) & 0xFFu) / 255.0f,
                               static_cast<float>((v >> 16) & 0xFFu) / 255.0f,
                               static_cast<float>((v >> 8) & 0xFFu) / 255.0f,
-                              1.0f}; // opaque terrain
+                              alpha};
+        std::vector<TinyVoxelVertex>& list = water ? out.water : out.opaque;
 
         const int wx = chunkOrigin.x + lx;
         const int wy = chunkOrigin.y + ly;
@@ -86,20 +101,35 @@ meshTinyChunk(glm::ivec3 chunkOrigin,
 
         for (const Face& f : kFaces)
         {
-          if (solidWorld(wx + f.dir.x, wy + f.dir.y, wz + f.dir.z))
-            continue; // neighbour solid -> face hidden
+          const int nlx = lx + f.dir.x;
+          const int nly = ly + f.dir.y;
+          const int nlz = lz + f.dir.z;
+          int nc;
+          if (nlx >= 0 && nlx < kTinyChunkSize && nly >= 0 &&
+              nly < kTinyChunkSize && nlz >= 0 && nlz < kTinyChunkSize)
+            nc = static_cast<int>(tinyClassOf(chunk.at(nlx, nly, nlz)));
+          else
+            nc = classOutside(wx + f.dir.x, wy + f.dir.y, wz + f.dir.z);
+
+          if (water)
+          {
+            if (nc != static_cast<int>(TinyClass::Air))
+              continue; // water hidden against water/solid
+          }
+          else if (nc == static_cast<int>(TinyClass::Opaque))
+            continue; // opaque hidden only behind opaque
 
           const glm::vec3 p0 = base + f.corner[0];
           const glm::vec3 p1 = base + f.corner[1];
           const glm::vec3 p2 = base + f.corner[2];
           const glm::vec3 p3 = base + f.corner[3];
 
-          out.push_back({p0, f.normal, color});
-          out.push_back({p1, f.normal, color});
-          out.push_back({p2, f.normal, color});
-          out.push_back({p0, f.normal, color});
-          out.push_back({p2, f.normal, color});
-          out.push_back({p3, f.normal, color});
+          list.push_back({p0, f.normal, color});
+          list.push_back({p1, f.normal, color});
+          list.push_back({p2, f.normal, color});
+          list.push_back({p0, f.normal, color});
+          list.push_back({p2, f.normal, color});
+          list.push_back({p3, f.normal, color});
         }
       }
 

@@ -13,6 +13,7 @@ uniform vec3 uLightDir;    // direction TOWARD the sun, world space
 uniform vec3 uSunColor;    // sun/sky tint (day white, dusk orange, night blue)
 uniform float uAmbient;    // ambient floor (high day, low night)
 uniform float uSunDiffuse; // directional strength (~0 at night)
+uniform float uEmissive;   // > 0.5: skip lighting (flames glow at their colour)
 
 uniform int uLightCount;
 uniform vec3 uLightPos[MAX_LIGHTS];
@@ -22,6 +23,12 @@ uniform float uLightIntensity[MAX_LIGHTS];
 
 void main()
 {
+  if (uEmissive > 0.5)
+  {
+    FragColor = vColor; // unlit, full-bright -- additive blend makes it glow
+    return;
+  }
+
   vec3 n = normalize(vNormal);
 
   // Sky/sun light: ambient floor + directional, tinted by the time-of-day sun
