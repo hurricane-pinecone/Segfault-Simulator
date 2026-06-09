@@ -99,7 +99,7 @@ auto& terrain = renderSystem.withModule<sfs::VoxelTerrain>();
 terrain.setWorld(world, blockRegistry);
 ```
 
-See [Voxel world](../../runtime/voxel/index.md) for a full setup walkthrough.
+See [Voxel world](../../voxel/index.md) for a full setup walkthrough.
 
 ### IsometricWater
 
