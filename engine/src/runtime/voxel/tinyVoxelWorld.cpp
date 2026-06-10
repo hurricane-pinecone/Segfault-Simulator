@@ -228,8 +228,8 @@ void TinyVoxelWorld::update(double /*deltaTime*/)
 
   // Merge at most this many finished columns per frame (each writes 1024
   // surface entries + dirties chunks). Generation itself runs on background
-  // threads.
-  constexpr std::size_t kMergePerFrame = 8;
+  // threads. Higher = the world (and its water) fills in faster on first load.
+  constexpr std::size_t kMergePerFrame = 32;
 
   const glm::ivec2 fc{
       floorDiv(static_cast<int>(glm::floor(m_focus.x)), kTinyChunkSize),

@@ -15,14 +15,18 @@ namespace
 constexpr int kCoarse = 16; // voxels per water cell (one block); see header
 constexpr int kChunk = kTinyChunkSize; // 32
 constexpr int kCellsPerChunk =
-    kChunk / kCoarse;            // 2 coarse cells per chunk axis
-constexpr int kCoarseFull = 256; // water units in a full coarse cell
+    kChunk / kCoarse; // 2 coarse cells per chunk axis
+constexpr int kCoarseFull =
+    4096; // water units in a full coarse cell -- fine so
+          // the equalising move never rounds to 0 (which
+          // stalled re-levelling + forced flickery jumps)
 constexpr double kTick = 1.0 / 30.0;
 constexpr int kMaxTicks = 4;
 constexpr int kStepBudget =
-    20000;                      // coarse cells processed per tick (caps cost)
-constexpr int kSeedBudget = 48; // chunks seeded per frame
-constexpr float kSettleEps = 0.02f;
+    20000; // coarse cells processed per tick (caps cost)
+constexpr int kSeedBudget = 1000000; // effectively unbounded: fill lakes the
+                                     // frame their chunks load (no middle dip)
+constexpr float kSettleEps = 0.004f; // settle within ~0.06 voxel
 
 int floorDiv(int a, int b)
 {
@@ -98,6 +102,11 @@ bool WaterSurfaceSystem::coarseLevel(int cx, int cz, float& outVoxelY) const
 
 float WaterSurfaceSystem::fineLevel(int x, int z, bool& found) const
 {
+  // The coarse cell's water surface here, or -- if this cell is dry -- the
+  // highest among the 8 neighbours, so a shore cell adjacent to the lake adopts
+  // the lake's level (a fully dry region, e.g. a drained hole, stays dry). NOT
+  // interpolated: a crisp per-cell level reads as voxels, and the renderer
+  // carves the waterline against the fine terrain bed.
   const int cx = coarseOf(x), cz = coarseOf(z);
   float level = 0.0f;
   if (coarseLevel(cx, cz, level))
@@ -105,9 +114,6 @@ float WaterSurfaceSystem::fineLevel(int x, int z, bool& found) const
     found = true;
     return level;
   }
-  // Dry coarse cell: take the highest water level among the 8 neighbours, so a
-  // shore cell adjacent to the lake adopts the lake's surface (and a fully dry
-  // region -- e.g. a drained hole -- stays dry).
   found = false;
   float best = 0.0f;
   for (int dz = -1; dz <= 1; ++dz)
@@ -129,8 +135,9 @@ bool WaterSurfaceSystem::hasWater(int x, int z) const
 {
   bool found = false;
   const float level = fineLevel(x, z, found);
-  // Fine waterline: water only where the level clears this column's fine bed.
-  return found && level > static_cast<float>(m_world->surfaceTop(x, z));
+  // Integer waterline (round), so sub-voxel sim jitter can't flicker a column
+  // in and out; water only where the level clears this column's fine bed.
+  return found && static_cast<int>(level + 0.5f) > m_world->surfaceTop(x, z);
 }
 
 float WaterSurfaceSystem::surfaceAt(int x, int z) const

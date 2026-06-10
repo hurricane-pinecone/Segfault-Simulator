@@ -74,9 +74,8 @@ void Voxel3DScene::onInit()
   auto& fire = addSystem<sfs::VoxelFireSystem>(&world);
   m_fire = &fire;
 
-  // Volumetric water: the GPU sim is driven from the renderer (which owns the
-  // GL context); this system holds the water grid + the surface the renderer
-  // reads.
+  // Volumetric water (coarse grid): flows + levels before the renderer meshes
+  // its surface, which it reads from this system.
   auto& water = addSystem<sfs::WaterSurfaceSystem>(&world);
   water.setSeaLevel(m_gen.seaLevel());
   m_water = &water;
@@ -193,8 +192,8 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
     glm::ivec3 hit;
     if (m_render->raycastVoxel(pickNdc(input.mouse().getPosition()), hit))
     {
-      // Carving clears terrain; the GPU water sim flows water into the new
-      // cavity over the next ticks.
+      // Carving clears terrain; the water sim flows into the new cavity over
+      // the next ticks.
       m_render->explode(hit, kExplodeRadius, kExplodePower);
     }
   }

@@ -1049,8 +1049,8 @@ void Voxel3DRenderSystem::syncMeshes()
   // meshes uploaded. The meshing itself runs on background workers, so neither
   // a big carve nor a streamed ring stalls the frame -- the work just lands
   // over the next few frames.
-  constexpr std::size_t kEnqueueBudget = 64; // higher so flowing water keeps up
-  constexpr std::size_t kUploadBudget = 64;
+  constexpr std::size_t kEnqueueBudget = 192; // keep up with fast streaming +
+  constexpr std::size_t kUploadBudget = 192;  // flowing water re-meshes
 
   const auto freeGpu = [this](const glm::ivec3& coord)
   {
@@ -1265,7 +1265,6 @@ void Voxel3DRenderSystem::render()
   if (m_waterSurf)
   {
     ZoneScopedN("Voxel3D::waterPass");
-    constexpr int kTileBuildBudget = 64; // keep flowing tiles up to date
     const int cx = static_cast<int>(glm::floor(m_camera.focus.x));
     const int cz = static_cast<int>(glm::floor(m_camera.focus.z));
     const int vr = static_cast<int>(m_camera.zoom * 1.7f) + 48;
@@ -1287,6 +1286,11 @@ void Voxel3DRenderSystem::render()
         ++it;
     }
 
+    // Rebuild only new or changed (dirty) tiles, a budget per frame, so a
+    // settled lake costs nothing and a flowing one amortizes. The
+    // integer-stable surface keeps neighbouring tiles consistent enough to
+    // avoid tears.
+    constexpr int kTileBuildBudget = 48;
     int budget = kTileBuildBudget;
     for (int tz = lo.y; tz <= hi.y && budget > 0; ++tz)
       for (int tx = lo.x; tx <= hi.x && budget > 0; ++tx)
