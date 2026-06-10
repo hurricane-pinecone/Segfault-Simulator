@@ -2,6 +2,7 @@
 
 #include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/console/devConsole.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/rendering/iQuadRenderer.h"
 #include "engine/runtime/sceneManager/sceneManager.h"
 #include <SDL_events.h>
@@ -64,15 +65,24 @@ protected:
   virtual std::unique_ptr<IQuadRenderer> createQuadRenderer(int windowWidth,
                                                             int windowHeight);
 
+  /**
+   * Create the render backend the game runs on. The default returns an OpenGL
+   * backend wrapping createQuadRenderer(); a game on a different graphics API
+   * (e.g. WebGPU) overrides this to return its own backend.
+   */
+  virtual std::unique_ptr<IRenderBackend> makeRenderBackend();
+
+  // The active render backend, for a game that needs its concrete type (e.g. to
+  // hand a WebGPU device to a scene's systems).
+  IRenderBackend* renderBackend() const { return m_backend.get(); }
+
 protected:
   SceneManager sceneManager;
-  std::unique_ptr<AssetStore> assetStore;
   bool isRunning = false;
   int windowWidth;
   int windowHeight;
-  // SDL cleans these up
+  // Owned by the render backend; cached here for input/event routing.
   SDL_Window* window = nullptr;
-  SDL_Renderer* renderer = nullptr;
 
 private:
   void processInput();
@@ -85,12 +95,12 @@ private:
 private:
   Uint64 previousTime;
   Input input;
-  SDL_GLContext m_glContext;
 
   bool m_debugUiVisible = true;
 
-  std::unique_ptr<IQuadRenderer> m_quadRenderer;
-  std::unique_ptr<TextRenderer> m_textRenderer;
+  std::unique_ptr<IRenderBackend> m_backend;
+  // Drawing/asset services the active backend supplies; non-owning.
+  SceneServices* m_services = nullptr;
 
   // Backtick-toggled Lua console, drawn over the frame (native builds only).
   DevConsole m_console;

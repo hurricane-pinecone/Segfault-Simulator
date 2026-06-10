@@ -58,19 +58,9 @@ void SceneManager::load(const std::string& name)
 
 Scene* SceneManager::current() { return m_currentScene; }
 
-void SceneManager::setAssetStore(AssetStore* assetStore)
+void SceneManager::setSceneServices(SceneServices* services)
 {
-  m_assetStore = assetStore;
-}
-
-void SceneManager::setQuadRenderer(IQuadRenderer* quadRenderer)
-{
-  m_quadRenderer = quadRenderer;
-}
-
-void SceneManager::setTextRenderer(TextRenderer* textRenderer)
-{
-  m_textRenderer = textRenderer;
+  m_services = services;
 }
 
 } // namespace sfs

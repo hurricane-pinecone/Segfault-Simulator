@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/rendering/modules/blockGeometry.h"
 #include "engine/runtime/rendering/modules/isometricDecalSink.h"
 #include "engine/runtime/rendering/modules/isometricWater.h"
@@ -9,9 +10,6 @@
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #ifndef ENGINE_WEB
-  #include "imgui/backends/imgui_impl_opengl3.h"
-  #include "imgui/backends/imgui_impl_sdl2.h"
-
   #include "engine/core/util/allocationMetrics.h"
   #include "engine/core/util/format.h"
 
@@ -291,12 +289,11 @@ inline static void renderDebugControls(Scene* scene)
   ImGui::End();
 }
 
-inline static void renderDebugUI(Scene* scene,
+inline static void renderDebugUI(IRenderBackend& backend,
+                                 Scene* scene,
                                  const std::function<void()>& appUI = {})
 {
-  ImGui_ImplOpenGL3_NewFrame();
-  ImGui_ImplSDL2_NewFrame();
-  ImGui::NewFrame();
+  backend.imguiNewFrame();
 
   renderDebugStats();
   renderDebugControls(scene);
@@ -309,8 +306,7 @@ inline static void renderDebugUI(Scene* scene,
   if (appUI)
     appUI();
 
-  ImGui::Render();
-  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+  backend.imguiRenderDrawData();
 }
 
 } // namespace sfs

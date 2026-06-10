@@ -1,40 +1,21 @@
-#include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
-#ifdef __EMSCRIPTEN__
-  #include <GLES3/gl3.h>
-#else
-  #include <GL/glew.h>
-#endif
-#include <SDL_error.h>
-#include <SDL_ttf.h>
-#include <SDL_video.h>
 #include <engine/runtime/game/game.h>
+
+#include "engine/core/scripting/luaScripting.h"
+#include "engine/runtime/rendering/backend/glRenderBackend.h"
+#include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
 
 #include "SDL.h"
-#include "engine/core/scripting/luaScripting.h"
-#include "engine/runtime/TextRenderer/textRenderer.h"
+#include <SDL_error.h>
+#include <SDL_ttf.h>
 
-#include <engine/core/components/rigidBodyComponent.h>
-#include <engine/core/components/spriteComponent.h>
-#include <engine/core/components/transformComponent.h>
 #include <engine/core/logger/logger.h>
-#include <engine/core/mapLoader/mapLoader.h>
 #include <engine/core/util/allocationMetrics.h>
 #include <engine/core/util/profiling.h>
-#include <engine/runtime/assetStore/sprite.h>
-#include <engine/runtime/game/game.h>
-#include <engine/runtime/rendering/debug/ui.h>
-#include <engine/runtime/rendering/gl/gpuProfiling.h>
-#include <engine/runtime/systems/movementSystem.h>
-#include <glm/glm/ext/vector_float2.hpp>
 
-#include <glm/glm/ext/vector_float3.hpp>
 #include <memory>
 #include <string>
 
-#ifndef ENGINE_WEB
-  #include "imgui.h"
-  #include "imgui/backends/imgui_impl_sdlrenderer2.h" // IWYU pragma: keep
-#endif
+#include "engine/runtime/rendering/debug/ui.h"
 
 #ifdef __EMSCRIPTEN__
   #include <emscripten.h>
@@ -68,84 +49,13 @@ bool Game::init(int windowWidth, int windowHeight)
     LOG_ERROR(std::string("Error initializing TTF: ") + TTF_GetError());
   }
 
-  SDL_DisplayMode displayMode;
-  SDL_GetCurrentDisplayMode(0, &displayMode);
-  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-#ifdef __EMSCRIPTEN__
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-#else
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-#endif
-
-  window = SDL_CreateWindow("SegFaultSimulator",
-                            SDL_WINDOWPOS_CENTERED,
-                            SDL_WINDOWPOS_CENTERED,
-                            windowWidth,
-                            windowHeight,
-                            SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-
-  if (!window)
+  m_backend = makeRenderBackend();
+  if (!m_backend->init("SegFaultSimulator", windowWidth, windowHeight))
   {
-    LOG_ERROR("Error creating window");
+    LOG_ERROR("Failed to initialize render backend");
     return false;
   }
-
-  m_glContext = SDL_GL_CreateContext(window);
-
-  if (!m_glContext)
-  {
-    LOG_ERROR("Failed to create OpenGL context");
-    return false;
-  }
-
-  SDL_GL_MakeCurrent(window, m_glContext);
-
-  // The iso pipeline relies on a real depth buffer for occlusion; with too few
-  // depth bits, depth-testing silently no-ops and occlusion breaks.
-  int depthBits = 0;
-  SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &depthBits);
-  if (depthBits < 16)
-  {
-    LOG_ERROR("GL context has no usable depth buffer (" +
-              std::to_string(depthBits) + " bits); occlusion would be broken");
-    return false;
-  }
-
-#ifndef __EMSCRIPTEN__
-  SDL_GL_SetSwapInterval(0);
-
-  glewExperimental = GL_TRUE;
-
-  if (glewInit() != GLEW_OK)
-  {
-    LOG_ERROR("Failed to initialize GLEW");
-    return false;
-  }
-#endif
-
-  m_quadRenderer = createQuadRenderer(windowWidth, windowHeight);
-  if (!m_quadRenderer->initialize())
-  {
-    LOG_ERROR("Failed to initialize quad renderer");
-    return false;
-  }
-  m_quadRenderer->setViewportSize(windowWidth, windowHeight);
-
-  // GL context is current and loaded; set up Tracy's GPU timing context.
-  TracyGpuContext;
-
-#ifndef ENGINE_WEB
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-
-  ImGui_ImplSDL2_InitForOpenGL(window, m_glContext);
-  ImGui_ImplOpenGL3_Init("#version 330");
-#endif
+  window = m_backend->window();
 
   onInit();
 
@@ -160,23 +70,18 @@ std::unique_ptr<IQuadRenderer> Game::createQuadRenderer(int windowWidth,
   return std::make_unique<OpenGLQuadRenderer>(windowWidth, windowHeight);
 }
 
+std::unique_ptr<IRenderBackend> Game::makeRenderBackend()
+{
+  return std::make_unique<GLRenderBackend>(
+      [this](int w, int h) { return createQuadRenderer(w, h); });
+}
+
 void Game::setup()
 {
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Setup};
 
-  assetStore = std::make_unique<AssetStore>();
-  assetStore->addWhitePixelTexture("white_pixel");
-  // Round sibling of white_pixel: a white dot with a radial alpha falloff, so
-  // particles/decals read as soft circles instead of hard squares. Tinted by
-  // colour at draw time, so it needs no art.
-  assetStore->addRadialTexture("white_dot", 32);
-
-  m_textRenderer = std::make_unique<TextRenderer>(*m_quadRenderer, *assetStore);
-  m_textRenderer->init();
-
-  sceneManager.setAssetStore(assetStore.get());
-  sceneManager.setQuadRenderer(m_quadRenderer.get());
-  sceneManager.setTextRenderer(m_textRenderer.get());
+  m_services = m_backend->sceneServices();
+  sceneManager.setSceneServices(m_services);
 
   onSetup();
 }
@@ -254,13 +159,20 @@ void Game::processInput()
     if (devConsoleEnabled() && m_console.handleEvent(sdlEvent))
       continue;
 
-#ifndef ENGINE_WEB
-    ImGui_ImplSDL2_ProcessEvent(&sdlEvent);
-#endif
+    m_backend->imguiProcessEvent(sdlEvent);
 
     if (sdlEvent.type == SDL_QUIT)
     {
       isRunning = false;
+    }
+
+    if (sdlEvent.type == SDL_WINDOWEVENT &&
+        sdlEvent.window.event == SDL_WINDOWEVENT_SIZE_CHANGED &&
+        sdlEvent.window.windowID == SDL_GetWindowID(window))
+    {
+      windowWidth = sdlEvent.window.data1;
+      windowHeight = sdlEvent.window.data2;
+      m_backend->onResize(windowWidth, windowHeight);
     }
 
     if (sdlEvent.type == SDL_MOUSEMOTION)
@@ -326,13 +238,7 @@ void Game::render()
 {
   ZoneScopedN("Game::render");
 
-  // Render background
-  glViewport(0, 0, windowWidth, windowHeight);
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-  // Depth write must be enabled for glClear to reset the depth buffer; the
-  // translucent passes leave it disabled.
-  glDepthMask(GL_TRUE);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  m_backend->beginFrame(windowWidth, windowHeight);
 
   {
     if (!sceneManager)
@@ -347,63 +253,32 @@ void Game::render()
     }
   }
 
-  if (devConsoleEnabled())
-    m_console.render(*m_textRenderer,
-                     *m_quadRenderer,
-                     *assetStore,
+  if (devConsoleEnabled() && m_services)
+    m_console.render(m_services->textRenderer,
+                     m_services->quadRenderer,
+                     m_services->assetStore,
                      windowWidth,
                      windowHeight);
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
-  if (m_debugUiVisible)
-    renderDebugUI(sceneManager.current(), [this] { onDebugUI(); });
+  if (m_debugUiVisible && m_backend->imguiAvailable())
+    renderDebugUI(*m_backend, sceneManager.current(), [this] { onDebugUI(); });
 #endif
 
-  {
-    // CPU blocks here until the GPU has presented the frame; zoning it keeps
-    // that wait out of Game::render's unattributed self-time.
-    ZoneScopedN("SDL_GL_SwapWindow");
-    SDL_GL_SwapWindow(window);
-  }
-
-  // Collect this frame's GPU timing queries.
-  TracyGpuCollect;
+  m_backend->endFrame();
 }
 
 void Game::destroy()
 {
   onDestroy();
 
-  // Tear down GPU-backed resources while the GL context is still valid.
-  m_textRenderer.reset();
-
-  if (m_quadRenderer)
-    m_quadRenderer->shutdown();
-  m_quadRenderer.reset();
-
-#ifndef ENGINE_WEB
-  ImGui_ImplOpenGL3_Shutdown();
-  ImGui_ImplSDL2_Shutdown();
-  ImGui::DestroyContext();
-#endif
-
-  if (m_glContext)
+  // Tear down GPU-backed resources while the context is still valid.
+  if (m_backend)
   {
-    SDL_GL_DeleteContext(m_glContext);
-    m_glContext = nullptr;
+    m_backend->shutdown();
+    m_backend.reset();
   }
-
-  if (renderer)
-  {
-    SDL_DestroyRenderer(renderer);
-    renderer = nullptr;
-  }
-
-  if (window)
-  {
-    SDL_DestroyWindow(window);
-    window = nullptr;
-  }
+  window = nullptr;
 
   SDL_Quit();
 }
