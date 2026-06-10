@@ -25,6 +25,7 @@ public:
   static constexpr int kWorld = 512;
   static constexpr int kBrick = 8;
   static constexpr int kBG = kWorld / kBrick; // 64
+  static constexpr int kBodyDim = 64;         // detached rigid-body grid edge
 
   struct Brick
   {
@@ -66,6 +67,13 @@ public:
   double gpuRenderMs() const { return m_gpuRenderMs; }
   double gpuTotalMs() const { return m_gpuTotalMs; }
 
+  // Extract the current detached set into a rigid body on the next frame (no-op
+  // while a body is already active).
+  void requestFell() { m_fellRequested = true; }
+
+  // Advance the active falling body (gravity + tumble), once per frame.
+  void stepBody(double dt);
+
 private:
   void buildGenerate();
   void buildWater();
@@ -76,6 +84,10 @@ private:
   void buildFaces();
   void buildAnchor();
   void buildRefine();
+  void buildBodyReduce();
+  void buildBodyExtract();
+  void buildBodyCollide();
+  void buildBodyStamp();
 
   WebGpuContext& m_ctx;
   WGPUDevice m_device = nullptr;
@@ -98,6 +110,54 @@ private:
   // Per-brick "a carve touched this brick" flag, marked by the edit pass and
   // consumed by the voxel-refinement pass.
   WGPUBuffer m_dirtyBuf = nullptr;
+  // Detached rigid body: a kBodyDim^3 local voxel grid + a transform uniform
+  // the render composites against the world.
+  uint64_t m_bodyBytes = 0;
+  WGPUBuffer m_bodyBuf = nullptr;
+  WGPUBuffer m_bodyXformBuf = nullptr;
+  WGPUBuffer m_bodyMetaBuf = nullptr;      // detached AABB + count (GPU reduce)
+  WGPUBuffer m_bodyMetaReadback = nullptr; // mapped to read the body centre
+  WGPUComputePipeline m_bodyReducePipe = nullptr;
+  WGPUComputePipeline m_bodyExtractPipe = nullptr;
+  WGPUBindGroup m_bodyReduceBg = nullptr;
+  WGPUBindGroup m_bodyExtractBg = nullptr;
+  // Per-frame body-vs-world collision: a flag the falling body sets on landing.
+  WGPUBuffer m_collideBuf = nullptr;
+  WGPUBuffer m_collideReadback = nullptr;
+  WGPUComputePipeline m_bodyCollidePipe = nullptr;
+  WGPUBindGroup m_bodyCollideBg = nullptr;
+  WGPUComputePipeline m_bodyStampPipe = nullptr;
+  WGPUBindGroup m_bodyStampBg = nullptr;
+
+  // CPU-side body state: drives the transform uniform + the extract trigger.
+  bool m_fellRequested = false;
+  bool m_bodyActive = false;
+  float m_bodyCenter[3] = {0.0f, 0.0f, 0.0f}; // base pivot in the world
+  float m_bodyPivot[3] = {0.0f, 0.0f, 0.0f};  // base pivot in body-local
+  float m_bodyTheta = 0.0f;                   // topple angle about +z
+  float m_bodyOmega = 0.0f;                   // topple rate
+  float m_bodyVelY = 0.0f;                    // straight-down fall velocity
+  bool m_bodyWasActive = false; // edge-detect activation to seed the sim
+  bool m_bodyLanded = false;    // false = falling, true = toppling/resting
+  bool m_bodyCollided = false;  // body overlaps world solid (collide readback)
+  bool m_bodyMapBusy = false;
+  bool m_bodyPendingResolve = false;
+  bool m_collideMapBusy = false;
+  bool m_collidePendingResolve = false;
+  struct CollideRb
+  {
+    WGPUBuffer buffer;
+    bool* collided;
+    bool* busy;
+  } m_collideRb{};
+  struct BodyMetaRb
+  {
+    WGPUBuffer buffer;
+    bool* active;
+    float* center;
+    float* pivot;
+    bool* busy;
+  } m_bodyRb{};
 
   WGPUComputePipeline m_genPipe = nullptr;
   WGPUComputePipeline m_waterPipe = nullptr;

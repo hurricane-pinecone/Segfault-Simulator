@@ -22,6 +22,10 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
   m_yawDir = (kb.keyHeld(sfs::Key::E) ? 1.0f : 0.0f) -
              (kb.keyHeld(sfs::Key::Q) ? 1.0f : 0.0f);
 
+  // F drops the current detached set as a falling rigid body.
+  if (kb.keyPressed(sfs::Key::F) && m_voxel)
+    m_voxel->requestFell();
+
   const sfs::MouseInput& mouse = input.mouse();
   m_editMode = mouse.mouseHeld(sfs::MouseButton::Left)    ? 1
                : mouse.mouseHeld(sfs::MouseButton::Right) ? 2
