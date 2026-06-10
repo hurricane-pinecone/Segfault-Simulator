@@ -26,11 +26,29 @@ public:
   static constexpr int kBrick = 8;
   static constexpr int kBG = kWorld / kBrick; // 64
   static constexpr int kBodyDim = 64;         // detached rigid-body grid edge
+  static constexpr int kMaxBodies =
+      32; // rigid-body pool size (== MAXB in voxelCommon.wgsl)
 
   struct Brick
   {
     uint32_t occupancy;
     uint32_t pointer;
+  };
+
+  // CPU-side per-slot rigid body state (one falling chunk per pool slot).
+  struct RigidBody
+  {
+    bool active = false;
+    bool wasActive = false; // edge-detect activation to seed the sim
+    bool landed = false;    // false = falling straight down, true = toppling
+    bool collided = false;  // overlaps world solid (from the collide readback)
+    bool resting = false;   // reached the flat pose; stamp pending
+    float center[3] = {0.0f, 0.0f, 0.0f}; // footprint pivot (world)
+    float pivot[3] = {0.0f, 0.0f, 0.0f};  // footprint pivot (body-local)
+    float axis[3] = {0.0f, 0.0f, 1.0f};   // horizontal topple axis (toward CoM)
+    float theta = 0.0f;                   // topple angle about the axis
+    float omega = 0.0f;                   // topple rate
+    float velY = 0.0f;                    // straight-down fall velocity
   };
 
   // A click edit: carve (mode 1) or spawn water (mode 2) a sphere where the ray
@@ -67,11 +85,7 @@ public:
   double gpuRenderMs() const { return m_gpuRenderMs; }
   double gpuTotalMs() const { return m_gpuTotalMs; }
 
-  // Extract the current detached set into a rigid body on the next frame (no-op
-  // while a body is already active).
-  void requestFell() { m_fellRequested = true; }
-
-  // Advance the active falling body (gravity + tumble), once per frame.
+  // Advance the active falling bodies (gravity + topple), once per frame.
   void stepBody(double dt);
 
 private:
@@ -84,6 +98,8 @@ private:
   void buildFaces();
   void buildAnchor();
   void buildRefine();
+  void buildLabel();
+  void buildBodyRegister();
   void buildBodyReduce();
   void buildBodyExtract();
   void buildBodyCollide();
@@ -110,18 +126,26 @@ private:
   // Per-brick "a carve touched this brick" flag, marked by the edit pass and
   // consumed by the voxel-refinement pass.
   WGPUBuffer m_dirtyBuf = nullptr;
-  // Detached rigid body: a kBodyDim^3 local voxel grid + a transform uniform
-  // the render composites against the world.
-  uint64_t m_bodyBytes = 0;
-  WGPUBuffer m_bodyBuf = nullptr;
-  WGPUBuffer m_bodyXformBuf = nullptr;
-  WGPUBuffer m_bodyMetaBuf = nullptr;      // detached AABB + count (GPU reduce)
-  WGPUBuffer m_bodyMetaReadback = nullptr; // mapped to read the body centre
+  // Connected-component labels of the detached set (ping-pong; result in [0]).
+  WGPUBuffer m_labelBuf[2] = {nullptr, nullptr};
+  // Detached rigid bodies: a pool of kMaxBodies kBodyDim^3 local voxel grids in
+  // one buffer (slot s at offset s*kBodyDim^3), composited by the render. The
+  // labeled components are compacted into slots, one falling chunk per slot.
+  uint64_t m_bodyBytes = 0;                // one slot's grid
+  WGPUBuffer m_bodyBuf = nullptr;          // kMaxBodies stacked grids
+  WGPUBuffer m_bodyXformBuf = nullptr;     // array<Body, kMaxBodies>
+  WGPUBuffer m_slotMetaBuf = nullptr;      // per-slot AABB/count/CoM/footprint
+  WGPUBuffer m_slotMetaReadback = nullptr; // mapped to place the bodies
+  WGPUBuffer m_rootSlotBuf = nullptr;      // per-brick component-root -> slot
+  WGPUBuffer m_slotCountBuf = nullptr;     // atomic slot allocator
+  WGPUBuffer m_freeSlotBuf = nullptr; // [0]=free count, [1..]=free slot ids
+  WGPUComputePipeline m_bodyRegisterPipe = nullptr;
   WGPUComputePipeline m_bodyReducePipe = nullptr;
   WGPUComputePipeline m_bodyExtractPipe = nullptr;
+  WGPUBindGroup m_bodyRegisterBg = nullptr;
   WGPUBindGroup m_bodyReduceBg = nullptr;
   WGPUBindGroup m_bodyExtractBg = nullptr;
-  // Per-frame body-vs-world collision: a flag the falling body sets on landing.
+  // Per-frame body-vs-world collision: one landing flag per slot.
   WGPUBuffer m_collideBuf = nullptr;
   WGPUBuffer m_collideReadback = nullptr;
   WGPUComputePipeline m_bodyCollidePipe = nullptr;
@@ -129,35 +153,25 @@ private:
   WGPUComputePipeline m_bodyStampPipe = nullptr;
   WGPUBindGroup m_bodyStampBg = nullptr;
 
-  // CPU-side body state: drives the transform uniform + the extract trigger.
-  bool m_fellRequested = false;
-  bool m_bodyActive = false;
-  float m_bodyCenter[3] = {0.0f, 0.0f, 0.0f}; // base pivot in the world
-  float m_bodyPivot[3] = {0.0f, 0.0f, 0.0f};  // base pivot in body-local
-  float m_bodyTheta = 0.0f;                   // topple angle about +z
-  float m_bodyOmega = 0.0f;                   // topple rate
-  float m_bodyVelY = 0.0f;                    // straight-down fall velocity
-  bool m_bodyWasActive = false; // edge-detect activation to seed the sim
-  bool m_bodyLanded = false;    // false = falling, true = toppling/resting
-  bool m_bodyCollided = false;  // body overlaps world solid (collide readback)
+  RigidBody m_bodies[kMaxBodies];
+  bool m_fellRequested =
+      false; // carving this frame -> auto-fell what it severed
   bool m_bodyMapBusy = false;
   bool m_bodyPendingResolve = false;
   bool m_collideMapBusy = false;
   bool m_collidePendingResolve = false;
+  struct SlotMetaRb
+  {
+    WGPUBuffer buffer;
+    RigidBody* bodies;
+    bool* busy;
+  } m_slotRb{};
   struct CollideRb
   {
     WGPUBuffer buffer;
-    bool* collided;
+    RigidBody* bodies;
     bool* busy;
   } m_collideRb{};
-  struct BodyMetaRb
-  {
-    WGPUBuffer buffer;
-    bool* active;
-    float* center;
-    float* pivot;
-    bool* busy;
-  } m_bodyRb{};
 
   WGPUComputePipeline m_genPipe = nullptr;
   WGPUComputePipeline m_waterPipe = nullptr;
@@ -168,6 +182,8 @@ private:
   WGPUComputePipeline m_seedPipe = nullptr;
   WGPUComputePipeline m_floodPipe = nullptr;
   WGPUComputePipeline m_refinePipe = nullptr;
+  WGPUComputePipeline m_labelInitPipe = nullptr;
+  WGPUComputePipeline m_labelFloodPipe = nullptr;
 
   WGPUBindGroup m_genBg = nullptr;
   WGPUBindGroup m_waterBg[2] = {nullptr, nullptr};
@@ -178,6 +194,8 @@ private:
   WGPUBindGroup m_seedBg = nullptr;
   WGPUBindGroup m_floodBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_refineBg = nullptr;
+  WGPUBindGroup m_labelInitBg = nullptr;
+  WGPUBindGroup m_labelFloodBg[2] = {nullptr, nullptr};
 
   int m_srcIdx = 0;
 

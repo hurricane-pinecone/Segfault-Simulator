@@ -32,13 +32,6 @@ public:
     m_mouseY = mouseY;
   }
 
-  // Drop the current detached set as a falling rigid body.
-  void requestFell()
-  {
-    if (m_world)
-      m_world->requestFell();
-  }
-
   bool hasTimestamps() const { return m_world && m_world->hasTimestamps(); }
   double gpuSimMs() const { return m_world ? m_world->gpuSimMs() : 0.0; }
   double gpuRenderMs() const { return m_world ? m_world->gpuRenderMs() : 0.0; }

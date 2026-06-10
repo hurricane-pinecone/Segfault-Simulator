@@ -24,9 +24,20 @@ struct Body {
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
 @group(0) @binding(3) var<storage, read> anchor : array<u32>;
 @group(0) @binding(4) var<storage, read> bodyVox : array<u32>;
-@group(0) @binding(5) var<uniform> body : Body;
+@group(0) @binding(5) var<storage, read> bodies : array<Body, MAXB>;
+@group(0) @binding(6) var<storage, read> labelBuf : array<u32>;
+
+const SLOTVOX : u32 = 262144u; // body grid DIM^3 (per pool slot)
 
 const LIGHT : vec3<f32> = vec3<f32>(0.4, 0.9, 0.3);
+
+// Distinct color per connected-component label (debug viz of the detached set).
+fn hashColor(lbl : u32) -> vec3<f32> {
+  let h = lbl * 2654435761u;
+  return vec3<f32>(f32((h >> 16u) & 255u),
+                   f32((h >> 8u) & 255u),
+                   f32(h & 255u)) / 255.0 * 0.85 + 0.15;
+}
 
 struct Hit {
   hit : bool,
@@ -82,9 +93,10 @@ fn marchWorld(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
         if ((v & 3u) != 0u) {
           h.hit = true;
           h.t = tVox;
-          // Debug: a detached solid voxel glows red until it is extracted.
+          // Debug: a detached solid voxel is tinted by its component label, so
+          // separate falling chunks read as distinct colors.
           if ((v & 3u) == 1u && (anchor[bidx] == 0u || (v & 0x10u) != 0u)) {
-            h.col = vec3<f32>(1.0, 0.0, 0.0);
+            h.col = hashColor(labelBuf[bidx]);
           } else {
             h.col = shade(v, vnorm);
           }
@@ -114,9 +126,10 @@ fn marchWorld(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
   return h;
 }
 
-fn marchBody(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
+fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   var h : Hit;
   h.hit = false;
+  let body = bodies[slot];
   if (body.flags.x == 0u) { return h; }
   let dim = i32(body.flags.y);
 
@@ -146,7 +159,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
   for (var i = 0; i < 220; i = i + 1) {
     if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 ||
         voxel.x >= dim || voxel.y >= dim || voxel.z >= dim) { break; }
-    let v = bodyVox[u32(voxel.x + voxel.y * dim + voxel.z * dim * dim)];
+    let v = bodyVox[slot * SLOTVOX + u32(voxel.x + voxel.y * dim + voxel.z * dim * dim)];
     if ((v & 3u) != 0u) {
       h.hit = true;
       h.t = tVox;
@@ -180,7 +193,15 @@ fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
   let rd = normalize(cam.p1.xyz + ndc.x * cam.p2.xyz + ndc.y * cam.p3.xyz);
 
   let w = marchWorld(ro, rd);
-  let b = marchBody(ro, rd);
+
+  // Nearest hit across the body pool, then depth-merge with the world.
+  var b : Hit;
+  b.hit = false;
+  b.t = 1.0e30;
+  for (var s = 0u; s < MAXB; s = s + 1u) {
+    let bs = marchBody(ro, rd, s);
+    if (bs.hit && bs.t < b.t) { b = bs; }
+  }
 
   if (w.hit && b.hit) {
     if (b.t < w.t) { return vec4<f32>(b.col, 1.0); }
