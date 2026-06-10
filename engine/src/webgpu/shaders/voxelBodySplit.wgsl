@@ -73,8 +73,32 @@ fn footprint(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
 }
 
+// Dispatched over MAXB stacked DIM^3 grids (slot = gid.z / DIM). A child slot
+// writes EVERY local cell -- the moved voxel where this component lives, else 0 --
+// so stale geometry from the slot's previous tenant is wiped (else the freed
+// slot's old body shows through as a phantom). Guarded on count != 0 so unrelated
+// active bodies (count 0 this split) are never touched. The parent keeps its
+// cells here; clearParent removes the moved-out ones in a following pass.
 @compute @workgroup_size(4, 4, 4)
 fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let slot = gid.z / u32(DIM);
+  if (slot >= MAXB) { return; }
+  let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z % u32(DIM));
+  if (lx >= DIM || ly >= DIM) { return; }
+  let base = slot * 16u;
+  if (atomicLoad(&slotMeta[base + 6u]) == 0) { return; } // not a target this split
+  let parent = parentU.x;
+  if (slot == parent) { return; }
+  let li = lIdx(lx, ly, lz);
+  let lab = bodyLabel[li];
+  let mine = lab != SENTINEL && rootSlot[lab] == slot;
+  bodyVox[slot * SLOTVOX + li] = select(0u, bodyVox[parent * SLOTVOX + li], mine);
+}
+
+// Clear the parent's cells that moved into a child (runs after extract has copied
+// them, so the read above is never racing this write).
+@compute @workgroup_size(4, 4, 4)
+fn clearParent(@builtin(global_invocation_id) gid : vec3<u32>) {
   let x = i32(gid.x); let y = i32(gid.y); let z = i32(gid.z);
   if (x >= DIM || y >= DIM || z >= DIM) { return; }
   let li = lIdx(x, y, z);
@@ -82,9 +106,5 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (lab == SENTINEL) { return; }
   let slot = rootSlot[lab];
   let parent = parentU.x;
-  if (slot >= MAXB || slot == parent) { return; } // parent's component stays put
-  // Move this voxel into its new slot's grid (same local coords) and clear it.
-  let src = parent * SLOTVOX + li;
-  bodyVox[slot * SLOTVOX + li] = bodyVox[src];
-  bodyVox[src] = 0u;
+  if (slot < MAXB && slot != parent) { bodyVox[parent * SLOTVOX + li] = 0u; }
 }

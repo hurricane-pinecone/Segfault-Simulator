@@ -24,7 +24,9 @@ fn faces(@builtin(local_invocation_id) lloc : vec3<u32>,
   workgroupBarrier();
   for (var lz = 0; lz < 8; lz = lz + 1) {
     let v = voxels[bi * 512u + u32(lx + ly * 8 + lz * 64)];
-    if ((v & 3u) != 1u) { continue; } // solid only; water/air do not support
+    // Solid only; water/air do not support. A detached voxel (bit 4) is a
+    // severed blob -- exclude it so it stops anchoring the bricks it touches.
+    if ((v & 3u) != 1u || (v & 0x10u) != 0u) { continue; }
     if (lx == 0) { setBit(0, ly + lz * 8); }
     if (lx == 7) { setBit(1, ly + lz * 8); }
     if (ly == 0) { setBit(2, lx + lz * 8); }

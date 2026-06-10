@@ -20,7 +20,7 @@ struct Body {
 @group(0) @binding(4) var<storage, read_write> dirty : array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> bodyVox : array<u32>;
 @group(0) @binding(6) var<storage, read> bodies : array<Body, MAXB>;
-@group(0) @binding(7) var<storage, read_write> carveHit : array<u32>; // [0]=body? [1]=slot
+@group(0) @binding(7) var<storage, read_write> carveHit : array<u32>; // [0]body? [1]slot [2..4]hit
 
 const SLOTVOX : u32 = 262144u; // body grid DIM^3
 
@@ -166,9 +166,13 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
         found = 1u; bestT = b.t; hit = b.voxel; pre = b.prev; hitSlot = s;
       }
     }
-    // Report the carve target so the body-split pass knows which grid to label.
+    // Report the carve target so the body-split pass knows which grid to label,
+    // and the world hit voxel so the window fell can position its box.
     carveHit[0] = select(0u, 1u, hitSlot != 0xFFFFFFFFu);
     carveHit[1] = hitSlot;
+    carveHit[2] = u32(hit.x);
+    carveHit[3] = u32(hit.y);
+    carveHit[4] = u32(hit.z);
   }
   workgroupBarrier();
   if (found == 0u) { return; }

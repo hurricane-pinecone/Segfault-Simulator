@@ -42,7 +42,7 @@ void VoxelGpuSystem::render()
     edit.dir[1] = dir.y;
     edit.dir[2] = dir.z;
     edit.mode = m_editMode;
-    edit.radius = m_editMode == 1 ? 12.0f : 8.0f;
+    edit.radius = m_editMode == 1 ? 3.6f : 8.0f;
     editPtr = &edit;
   }
 

@@ -54,11 +54,13 @@ fn refine(@builtin(local_invocation_id) lloc : vec3<u32>,
     let wy = oy + ly;
     let wz = oz + lz;
     if (!solidAt(wx, wy, wz)) { continue; }
+    // Gravity model: support comes from the floor, below, or sideways -- NOT
+    // from the brick above (+y). Else a cut brick's severed upper blob gets
+    // seeded by the (wrongly) still-anchored brick above and is never detected.
     var seed = wy == 0;
     if (lx == 0 && solidAt(wx - 1, wy, wz) && anchoredBrick(wx - 1, wy, wz)) { seed = true; }
     if (lx == 7 && solidAt(wx + 1, wy, wz) && anchoredBrick(wx + 1, wy, wz)) { seed = true; }
     if (ly == 0 && solidAt(wx, wy - 1, wz) && anchoredBrick(wx, wy - 1, wz)) { seed = true; }
-    if (ly == 7 && solidAt(wx, wy + 1, wz) && anchoredBrick(wx, wy + 1, wz)) { seed = true; }
     if (lz == 0 && solidAt(wx, wy, wz - 1) && anchoredBrick(wx, wy, wz - 1)) { seed = true; }
     if (lz == 7 && solidAt(wx, wy, wz + 1) && anchoredBrick(wx, wy, wz + 1)) { seed = true; }
     if (seed) { bitSet(lx + ly * 8 + lz * 64); }

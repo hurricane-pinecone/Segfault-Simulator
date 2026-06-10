@@ -113,6 +113,8 @@ private:
   void buildBodyStamp();
   void buildBodyLabel();
   void buildBodySplit();
+  void buildWindowAnchor();
+  void buildWindowSplit();
 
   WebGpuContext& m_ctx;
   WGPUDevice m_device = nullptr;
@@ -182,7 +184,29 @@ private:
   WGPUComputePipeline m_bodySplitReducePipe = nullptr;
   WGPUComputePipeline m_bodySplitFootprintPipe = nullptr;
   WGPUComputePipeline m_bodySplitExtractPipe = nullptr;
+  WGPUComputePipeline m_bodySplitClearParentPipe = nullptr;
   WGPUBindGroup m_bodySplitBg = nullptr;
+  // Voxel-exact world fell: a DIM^3 window around the carve, ground-anchored by
+  // a voxel flood seeded off the coarse-anchored bulk beyond the box
+  // (ping-pong).
+  WGPUBuffer m_windowBuf[2] = {nullptr, nullptr};
+  WGPUComputePipeline m_winInitPipe = nullptr;
+  WGPUComputePipeline m_winFloodPipe = nullptr;
+  WGPUComputePipeline m_winMarkPipe = nullptr;
+  WGPUBindGroup m_winBg[2] = {nullptr, nullptr};
+  // Voxel-exact world fell stage 2/3: CC + extract over the window's detached
+  // set (reuses m_windowBuf as the label ping-pong,
+  // m_rootSlot/m_slotMeta/m_bodyBuf).
+  WGPUComputePipeline m_winLabelInitPipe = nullptr;
+  WGPUComputePipeline m_winLabelFloodPipe = nullptr;
+  WGPUComputePipeline m_winRegisterPipe = nullptr;
+  WGPUComputePipeline m_winReducePipe = nullptr;
+  WGPUComputePipeline m_winExtractPipe = nullptr;
+  WGPUBindGroup m_winLabelInitBg = nullptr;
+  WGPUBindGroup m_winLabelFloodBg[2] = {nullptr, nullptr};
+  WGPUBindGroup m_winRegisterBg = nullptr;
+  WGPUBindGroup m_winReduceBg = nullptr;
+  WGPUBindGroup m_winExtractBg = nullptr;
   bool m_pendingIsSplit = false; // the pending slotMeta readback is a split
   float m_splitParentCenter[3] = {0.0f, 0.0f, 0.0f};
   float m_splitParentPivot[3] = {0.0f, 0.0f, 0.0f};
