@@ -46,6 +46,7 @@ void VoxelGpuSystem::render()
     editPtr = &edit;
   }
 
+  m_world->setDebugMouse(m_mouseX, m_mouseY);
   m_world->recordFrame(enc, view, cam16, editPtr, m_frame++);
 }
 

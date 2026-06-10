@@ -106,6 +106,10 @@ void onSlotMetaMapped(WGPUMapAsyncStatus status,
     WGPUBuffer buffer;
     GpuVoxelWorld::RigidBody* bodies;
     bool* busy;
+    bool* isSplit;
+    float* parentCenter;
+    float* parentPivot;
+    float* parentVelY;
   };
   auto* r = static_cast<Rb*>(ud1);
   if (status == WGPUMapAsyncStatus_Success)
@@ -114,24 +118,52 @@ void onSlotMetaMapped(WGPUMapAsyncStatus status,
         r->buffer, 0, 64u * GpuVoxelWorld::kMaxBodies));
     if (m)
     {
+      const bool split = *r->isSplit;
       for (int s = 0; s < GpuVoxelWorld::kMaxBodies; ++s)
       {
         GpuVoxelWorld::RigidBody& b = r->bodies[s];
         if (b.active)
-          continue; // a live body already falling -- leave it running
+          continue; // leave live bodies running (incl the split parent, whose
+                    // surviving component still renders in place unchanged)
         const int base = s * 16;
         if (m[base + 6] <= 0 || m[base + 10] <= 0 || m[base + 13] <= 0)
-          continue; // free slot with no component this fell
+          continue; // no component in this slot
+
         const float footX =
             static_cast<float>(m[base + 11]) / static_cast<float>(m[base + 13]);
         const float footZ =
             static_cast<float>(m[base + 12]) / static_cast<float>(m[base + 13]);
-        b.center[0] = static_cast<float>(m[base + 0]) + footX;
-        b.center[1] = static_cast<float>(m[base + 1]);
-        b.center[2] = static_cast<float>(m[base + 2]) + footZ;
-        b.pivot[0] = footX;
-        b.pivot[1] = 0.0f;
-        b.pivot[2] = footZ;
+        if (split)
+        {
+          // Child renders in place (parent frame, theta==0) and topples about
+          // its own base; inherit the parent's fall so it keeps moving.
+          const float minY = static_cast<float>(m[base + 1]);
+          b.pivot[0] = footX;
+          b.pivot[1] = minY;
+          b.pivot[2] = footZ;
+          b.center[0] = footX - r->parentPivot[0] + r->parentCenter[0];
+          b.center[1] = minY - r->parentPivot[1] + r->parentCenter[1];
+          b.center[2] = footZ - r->parentPivot[2] + r->parentCenter[2];
+          b.velY = *r->parentVelY;
+          b.theta = 0.0f;
+          b.omega = 0.0f;
+          b.landed = false;
+          b.collided = false;
+          b.resting = false;
+          b.active = true;
+          b.wasActive = true; // fully initialized; do not let stepBody re-seed
+        }
+        else
+        {
+          b.center[0] = static_cast<float>(m[base + 0]) + footX;
+          b.center[1] = static_cast<float>(m[base + 1]);
+          b.center[2] = static_cast<float>(m[base + 2]) + footZ;
+          b.pivot[0] = footX;
+          b.pivot[1] = 0.0f;
+          b.pivot[2] = footZ;
+          b.active = true;
+          b.wasActive = false; // stepBody seeds the sim
+        }
 
         const float inv = 1.0f / static_cast<float>(m[base + 10]);
         const float leverX = static_cast<float>(m[base + 7]) * inv - footX;
@@ -147,8 +179,6 @@ void onSlotMetaMapped(WGPUMapAsyncStatus status,
         b.axis[0] = dz;
         b.axis[1] = 0.0f;
         b.axis[2] = -dx;
-        b.active = true;
-        b.wasActive = false; // stepBody seeds the sim on the first active frame
       }
     }
     wgpuBufferUnmap(r->buffer);
@@ -176,6 +206,30 @@ void onCollideMapped(WGPUMapAsyncStatus status,
     if (f)
       for (int s = 0; s < GpuVoxelWorld::kMaxBodies; ++s)
         r->bodies[s].collided = (f[s] != 0u);
+    wgpuBufferUnmap(r->buffer);
+  }
+  *r->busy = false;
+}
+
+// Reads which body slot the last carve hit (-1 if it hit the world / nothing).
+void onCarveHitMapped(WGPUMapAsyncStatus status,
+                      WGPUStringView,
+                      void* ud1,
+                      void*)
+{
+  struct Rb
+  {
+    WGPUBuffer buffer;
+    int* slot;
+    bool* busy;
+  };
+  auto* r = static_cast<Rb*>(ud1);
+  if (status == WGPUMapAsyncStatus_Success)
+  {
+    const auto* h = static_cast<const uint32_t*>(
+        wgpuBufferGetConstMappedRange(r->buffer, 0, 8));
+    if (h)
+      *r->slot = (h[0] == 1u) ? static_cast<int>(h[1]) : -1;
     wgpuBufferUnmap(r->buffer);
   }
   *r->busy = false;
@@ -237,7 +291,13 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   m_freeSlotBuf = makeBuffer(m_device,
                              4 * (kMaxBodies + 1),
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
-  m_slotRb = SlotMetaRb{m_slotMetaReadback, m_bodies, &m_bodyMapBusy};
+  m_slotRb = SlotMetaRb{m_slotMetaReadback,
+                        m_bodies,
+                        &m_bodyMapBusy,
+                        &m_pendingIsSplit,
+                        m_splitParentCenter,
+                        m_splitParentPivot,
+                        &m_splitParentVelY};
   m_collideBuf = makeBuffer(m_device,
                             4 * kMaxBodies,
                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
@@ -247,6 +307,21 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                  4 * kMaxBodies,
                  WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
   m_collideRb = CollideRb{m_collideReadback, m_bodies, &m_collideMapBusy};
+  m_carveHitBuf = makeBuffer(m_device,
+                             8,
+                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
+                                 WGPUBufferUsage_CopySrc);
+  m_carveHitReadback = makeBuffer(
+      m_device, 8, WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
+  m_carveRb = CarveHitRb{m_carveHitReadback, &m_carvedSlot, &m_carveMapBusy};
+  m_bodyLabelBuf[0] =
+      makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
+  m_bodyLabelBuf[1] =
+      makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
+  m_bodyLabelSlotBuf = makeBuffer(
+      m_device, 16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_dbgMouseBuf = makeBuffer(
+      m_device, 16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
 
   buildTimestamps();
   buildGenerate();
@@ -263,17 +338,39 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   buildBodyExtract();
   buildBodyCollide();
   buildBodyStamp();
+  buildBodyLabel();
+  buildBodySplit();
 }
 
 GpuVoxelWorld::~GpuVoxelWorld()
 {
-  for (WGPUBindGroup bg :
-       {m_genBg,           m_waterBg[0],     m_waterBg[1],   m_recBg[0],
-        m_recBg[1],        m_editBg[0],      m_editBg[1],    m_renderBg[0],
-        m_renderBg[1],     m_facesBg,        m_seedBg,       m_floodBg[0],
-        m_floodBg[1],      m_refineBg,       m_labelInitBg,  m_labelFloodBg[0],
-        m_labelFloodBg[1], m_bodyRegisterBg, m_bodyReduceBg, m_bodyExtractBg,
-        m_bodyCollideBg,   m_bodyStampBg})
+  for (WGPUBindGroup bg : {m_genBg,
+                           m_waterBg[0],
+                           m_waterBg[1],
+                           m_recBg[0],
+                           m_recBg[1],
+                           m_editBg[0],
+                           m_editBg[1],
+                           m_renderBg[0],
+                           m_renderBg[1],
+                           m_facesBg,
+                           m_seedBg,
+                           m_floodBg[0],
+                           m_floodBg[1],
+                           m_refineBg,
+                           m_labelInitBg,
+                           m_labelFloodBg[0],
+                           m_labelFloodBg[1],
+                           m_bodyRegisterBg,
+                           m_bodyReduceBg,
+                           m_bodyExtractBg,
+                           m_bodyCollideBg,
+                           m_bodyStampBg,
+                           m_bodyLabelInitBg,
+                           m_bodyLabelFloodBg[0],
+                           m_bodyLabelFloodBg[1],
+                           m_bodyRecolorBg,
+                           m_bodySplitBg})
     if (bg)
       wgpuBindGroupRelease(bg);
 
@@ -309,14 +406,30 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_bodyCollidePipe);
   if (m_bodyStampPipe)
     wgpuComputePipelineRelease(m_bodyStampPipe);
+  if (m_bodyLabelInitPipe)
+    wgpuComputePipelineRelease(m_bodyLabelInitPipe);
+  if (m_bodyLabelFloodPipe)
+    wgpuComputePipelineRelease(m_bodyLabelFloodPipe);
+  if (m_bodyRecolorPipe)
+    wgpuComputePipelineRelease(m_bodyRecolorPipe);
+  for (WGPUComputePipeline p : {m_bodySplitRegisterPipe,
+                                m_bodySplitReducePipe,
+                                m_bodySplitFootprintPipe,
+                                m_bodySplitExtractPipe})
+    if (p)
+      wgpuComputePipelineRelease(p);
 
   for (WGPUBuffer b :
-       {m_voxBuf[0],        m_voxBuf[1],       m_brickBuf,     m_camBuf,
-        m_frameBuf,         m_editBuf,         m_faceBuf,      m_anchorBuf[0],
-        m_anchorBuf[1],     m_floodCtlBuf,     m_dirtyBuf,     m_labelBuf[0],
-        m_labelBuf[1],      m_bodyBuf,         m_bodyXformBuf, m_slotMetaBuf,
-        m_slotMetaReadback, m_rootSlotBuf,     m_slotCountBuf, m_freeSlotBuf,
-        m_collideBuf,       m_collideReadback, m_tsResolve,    m_tsReadback})
+       {m_voxBuf[0],       m_voxBuf[1],        m_brickBuf,
+        m_camBuf,          m_frameBuf,         m_editBuf,
+        m_faceBuf,         m_anchorBuf[0],     m_anchorBuf[1],
+        m_floodCtlBuf,     m_dirtyBuf,         m_labelBuf[0],
+        m_labelBuf[1],     m_bodyBuf,          m_bodyXformBuf,
+        m_slotMetaBuf,     m_slotMetaReadback, m_rootSlotBuf,
+        m_slotCountBuf,    m_freeSlotBuf,      m_collideBuf,
+        m_collideReadback, m_carveHitBuf,      m_carveHitReadback,
+        m_bodyLabelBuf[0], m_bodyLabelBuf[1],  m_bodyLabelSlotBuf,
+        m_dbgMouseBuf,     m_tsResolve,        m_tsReadback})
     if (b)
       wgpuBufferRelease(b);
   if (m_tsQuery)
@@ -421,27 +534,35 @@ void GpuVoxelWorld::buildEdit()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelEditWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[5] = {
+  WGPUBindGroupLayoutEntry e[8] = {
       storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
           2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform),
-      storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 5);
+      storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(5, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          6, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(7, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 8);
   m_editPipe = makeComputePipeline(
       m_device, module, "edit", makePipelineLayout(m_device, bgl));
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[5] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
-                                bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
-                                bufEntry(2, m_brickBuf, m_brickBytes),
-                                bufEntry(3, m_editBuf, 32),
-                                bufEntry(4, m_dirtyBuf, m_anchorBytes)};
+    WGPUBindGroupEntry be[8] = {
+        bufEntry(0, m_voxBuf[i], m_voxBytes),
+        bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
+        bufEntry(2, m_brickBuf, m_brickBytes),
+        bufEntry(3, m_editBuf, 32),
+        bufEntry(4, m_dirtyBuf, m_anchorBytes),
+        bufEntry(5, m_bodyBuf, m_bodyBytes * kMaxBodies),
+        bufEntry(6, m_bodyXformBuf, 96 * kMaxBodies),
+        bufEntry(7, m_carveHitBuf, 8)};
     WGPUBindGroupDescriptor d = {};
     d.layout = bgl;
-    d.entryCount = 5;
+    d.entryCount = 8;
     d.entries = be;
     m_editBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
@@ -451,7 +572,7 @@ void GpuVoxelWorld::buildRender()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelRenderWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[7] = {
+  WGPUBindGroupLayoutEntry e[8] = {
       storageEntry(0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform),
       storageEntry(
           1, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
@@ -464,8 +585,9 @@ void GpuVoxelWorld::buildRender()
       storageEntry(
           5, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(
-          6, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 7);
+          6, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(7, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 8);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
 
   WGPUColorTargetState colorTarget = {};
@@ -490,17 +612,18 @@ void GpuVoxelWorld::buildRender()
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[7] = {
+    WGPUBindGroupEntry be[8] = {
         bufEntry(0, m_camBuf, 64),
         bufEntry(1, m_voxBuf[i], m_voxBytes),
         bufEntry(2, m_brickBuf, m_brickBytes),
         bufEntry(3, m_anchorBuf[0], m_anchorBytes),
         bufEntry(4, m_bodyBuf, m_bodyBytes * kMaxBodies),
         bufEntry(5, m_bodyXformBuf, 96 * kMaxBodies),
-        bufEntry(6, m_labelBuf[0], m_anchorBytes)};
+        bufEntry(6, m_labelBuf[0], m_anchorBytes),
+        bufEntry(7, m_dbgMouseBuf, 16)};
     WGPUBindGroupDescriptor bd = {};
     bd.layout = bgl;
-    bd.entryCount = 7;
+    bd.entryCount = 8;
     bd.entries = be;
     m_renderBg[i] = wgpuDeviceCreateBindGroup(m_device, &bd);
   }
@@ -788,6 +911,99 @@ void GpuVoxelWorld::buildBodyStamp()
   m_bodyStampBg = wgpuDeviceCreateBindGroup(m_device, &d);
 }
 
+void GpuVoxelWorld::buildBodyLabel()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodyLabelWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[4] = {
+      storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 4);
+  WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
+  m_bodyLabelInitPipe =
+      makeComputePipeline(m_device, module, "labelInit", layout);
+  m_bodyLabelFloodPipe =
+      makeComputePipeline(m_device, module, "labelFlood", layout);
+  m_bodyRecolorPipe = makeComputePipeline(m_device, module, "recolor", layout);
+
+  const uint64_t pool = m_bodyBytes * kMaxBodies;
+  // init seeds labelBuf[0]; binding 1 present for layout only.
+  WGPUBindGroupEntry ie[4] = {bufEntry(0, m_bodyBuf, pool),
+                              bufEntry(1, m_bodyLabelBuf[1], m_bodyBytes),
+                              bufEntry(2, m_bodyLabelBuf[0], m_bodyBytes),
+                              bufEntry(3, m_bodyLabelSlotBuf, 16)};
+  WGPUBindGroupDescriptor id = {};
+  id.layout = bgl;
+  id.entryCount = 4;
+  id.entries = ie;
+  m_bodyLabelInitBg = wgpuDeviceCreateBindGroup(m_device, &id);
+
+  for (int i = 0; i < 2; ++i)
+  {
+    WGPUBindGroupEntry fe[4] = {bufEntry(0, m_bodyBuf, pool),
+                                bufEntry(1, m_bodyLabelBuf[i], m_bodyBytes),
+                                bufEntry(2, m_bodyLabelBuf[1 - i], m_bodyBytes),
+                                bufEntry(3, m_bodyLabelSlotBuf, 16)};
+    WGPUBindGroupDescriptor fd = {};
+    fd.layout = bgl;
+    fd.entryCount = 4;
+    fd.entries = fe;
+    m_bodyLabelFloodBg[i] = wgpuDeviceCreateBindGroup(m_device, &fd);
+  }
+
+  WGPUBindGroupEntry re[4] = {bufEntry(0, m_bodyBuf, pool),
+                              bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
+                              bufEntry(2, m_bodyLabelBuf[1], m_bodyBytes),
+                              bufEntry(3, m_bodyLabelSlotBuf, 16)};
+  WGPUBindGroupDescriptor rd = {};
+  rd.layout = bgl;
+  rd.entryCount = 4;
+  rd.entries = re;
+  m_bodyRecolorBg = wgpuDeviceCreateBindGroup(m_device, &rd);
+}
+
+void GpuVoxelWorld::buildBodySplit()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodySplitWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[7] = {
+      storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          4, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(5, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 7);
+  WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
+  m_bodySplitRegisterPipe =
+      makeComputePipeline(m_device, module, "registerRoots", layout);
+  m_bodySplitReducePipe =
+      makeComputePipeline(m_device, module, "reduce", layout);
+  m_bodySplitFootprintPipe =
+      makeComputePipeline(m_device, module, "footprint", layout);
+  m_bodySplitExtractPipe =
+      makeComputePipeline(m_device, module, "extract", layout);
+
+  WGPUBindGroupEntry be[7] = {bufEntry(0, m_bodyBuf, m_bodyBytes * kMaxBodies),
+                              bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
+                              bufEntry(2, m_rootSlotBuf, m_anchorBytes),
+                              bufEntry(3, m_slotMetaBuf, 64 * kMaxBodies),
+                              bufEntry(4, m_freeSlotBuf, 4 * (kMaxBodies + 1)),
+                              bufEntry(5, m_slotCountBuf, 4),
+                              bufEntry(6, m_bodyLabelSlotBuf, 16)};
+  WGPUBindGroupDescriptor d = {};
+  d.layout = bgl;
+  d.entryCount = 7;
+  d.entries = be;
+  m_bodySplitBg = wgpuDeviceCreateBindGroup(m_device, &d);
+}
+
 void GpuVoxelWorld::generate()
 {
   WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(m_device, nullptr);
@@ -863,7 +1079,9 @@ void GpuVoxelWorld::stepBody(double dt)
       }
       else
       {
-        b.velY -= 80.0f * d;
+        // Gentle fall: slow enough to aim at + carve a body mid-air. Tunable;
+        // a punchier game would raise this.
+        b.velY -= 18.0f * d;
         b.center[1] += b.velY * d;
       }
     }
@@ -927,9 +1145,23 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
         m_collideReadback, WGPUMapMode_Read, 0, 4u * kMaxBodies, mci);
   }
 
+  // Read back which body slot the last carve hit (one frame late).
+  if (m_carvePendingResolve && !m_carveMapBusy)
+  {
+    m_carveMapBusy = true;
+    m_carvePendingResolve = false;
+    WGPUBufferMapCallbackInfo mci = {};
+    mci.mode = WGPUCallbackMode_AllowProcessEvents;
+    mci.callback = onCarveHitMapped;
+    mci.userdata1 = &m_carveRb;
+    wgpuBufferMapAsync(m_carveHitReadback, WGPUMapMode_Read, 0, 8, mci);
+  }
+
   wgpuQueueWriteBuffer(m_queue, m_camBuf, 0, cam16, 64);
   const uint32_t fdata[4] = {frame, 0, 0, 0};
   wgpuQueueWriteBuffer(m_queue, m_frameBuf, 0, fdata, sizeof(fdata));
+  const float dbgMouse[4] = {m_dbgMouseX, m_dbgMouseY, 0.0f, 0.0f};
+  wgpuQueueWriteBuffer(m_queue, m_dbgMouseBuf, 0, dbgMouse, 16);
 
   // Body transform array (one Body per pool slot): a world->local rotation
   // (transpose of the Rodrigues topple about the CoM axis) about the footprint
@@ -944,6 +1176,9 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       flags[0] = b.active ? 1u : 0u;
       flags[1] = static_cast<uint32_t>(kBodyDim);
       flags[2] = b.resting ? 1u : 0u;
+      // Carveable in any state (the marcher handles rotated bodies); only
+      // SPLITTING is restricted to upright bodies, gated on the CPU side.
+      flags[3] = b.active ? 1u : 0u;
       const float ax = b.axis[0];
       const float ay = b.axis[1];
       const float az = b.axis[2];
@@ -988,6 +1223,14 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     wgpuComputePassEncoderDispatchWorkgroups(ce, 1, 1, 1);
     wgpuComputePassEncoderEnd(ce);
     wgpuComputePassEncoderRelease(ce);
+
+    // Read back which body the carve hit (one frame late) to drive the split.
+    if (!m_carveMapBusy)
+    {
+      wgpuCommandEncoderCopyBufferToBuffer(
+          enc, m_carveHitBuf, 0, m_carveHitReadback, 0, 8);
+      m_carvePendingResolve = true;
+    }
   }
 
   const bool doTs = m_hasTs && !m_tsMapBusy && !m_tsPendingResolve;
@@ -1106,9 +1349,10 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // each chunk into its slot, clear it from the world, and re-anchor + re-label
   // the clean stumps. New cuts drop into free slots while earlier chunks are
   // still falling (no waiting for the pool to drain).
-  if (m_fellRequested && freeCount > 0 && !m_bodyMapBusy)
+  if (m_fellRequested && freeCount > 0 && !m_bodyMapBusy && m_carvedSlot < 0)
   {
     m_fellRequested = false;
+    m_pendingIsSplit = false;
     wgpuQueueWriteBuffer(m_queue, m_freeSlotBuf, 0, freeList, sizeof(freeList));
     const uint32_t zeroCount = 0u;
     wgpuQueueWriteBuffer(m_queue, m_slotCountBuf, 0, &zeroCount, 4);
@@ -1160,6 +1404,58 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
         m_bodies[s].active = false;
         m_bodies[s].resting = false;
       }
+  }
+
+  // Body split: label the carved body's connected components and extract every
+  // component but one into free slots (the parent keeps one). Mutually
+  // exclusive with the world fell above (a carve hits one target).
+  if (m_carvedSlot >= 0 && m_carvedSlot < kMaxBodies && edit &&
+      edit->mode == 1 && m_bodies[m_carvedSlot].active &&
+      !m_bodies[m_carvedSlot].landed && !m_bodyMapBusy && freeCount > 0)
+  {
+    const uint32_t parent = static_cast<uint32_t>(m_carvedSlot);
+    const uint32_t slotData[4] = {parent, 0, 0, 0};
+    wgpuQueueWriteBuffer(m_queue, m_bodyLabelSlotBuf, 0, slotData, 16);
+    const uint32_t g = kBodyDim / 4;
+    bodyPass(m_bodyLabelInitPipe, m_bodyLabelInitBg, g, g, g);
+    for (int r = 0; r < 128; ++r)
+      bodyPass(m_bodyLabelFloodPipe, m_bodyLabelFloodBg[r & 1], g, g, g);
+
+    // Free-slot list with the parent first (component 0 stays in the parent).
+    uint32_t splitFree[kMaxBodies + 1] = {};
+    uint32_t n = 0;
+    splitFree[1 + n++] = parent;
+    for (int s = 0; s < kMaxBodies; ++s)
+      if (!m_bodies[s].active)
+        splitFree[1 + n++] = static_cast<uint32_t>(s);
+    splitFree[0] = n;
+    wgpuQueueWriteBuffer(
+        m_queue, m_freeSlotBuf, 0, splitFree, sizeof(splitFree));
+    const uint32_t zeroCount = 0u;
+    wgpuQueueWriteBuffer(m_queue, m_slotCountBuf, 0, &zeroCount, 4);
+    int32_t metaInit[16 * kMaxBodies] = {};
+    for (int s = 0; s < kMaxBodies; ++s)
+    {
+      metaInit[s * 16 + 0] = kBodyDim;
+      metaInit[s * 16 + 1] = kBodyDim;
+      metaInit[s * 16 + 2] = kBodyDim;
+    }
+    wgpuQueueWriteBuffer(m_queue, m_slotMetaBuf, 0, metaInit, sizeof(metaInit));
+    bodyPass(m_bodySplitRegisterPipe, m_bodySplitBg, g, g, g);
+    bodyPass(m_bodySplitReducePipe, m_bodySplitBg, g, g, g);
+    bodyPass(m_bodySplitFootprintPipe, m_bodySplitBg, g, g, g);
+    bodyPass(m_bodySplitExtractPipe, m_bodySplitBg, g, g, g);
+    wgpuCommandEncoderCopyBufferToBuffer(
+        enc, m_slotMetaBuf, 0, m_slotMetaReadback, 0, 64u * kMaxBodies);
+    m_bodyPendingResolve = true;
+    m_pendingIsSplit = true;
+    for (int i = 0; i < 3; ++i)
+    {
+      m_splitParentCenter[i] = m_bodies[m_carvedSlot].center[i];
+      m_splitParentPivot[i] = m_bodies[m_carvedSlot].pivot[i];
+    }
+    m_splitParentVelY = m_bodies[m_carvedSlot].velY;
+    m_fellRequested = false; // a body carve makes no world detachment
   }
 
   WGPURenderPassColorAttachment color = {};

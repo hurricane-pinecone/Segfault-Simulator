@@ -26,6 +26,7 @@ struct Body {
 @group(0) @binding(4) var<storage, read> bodyVox : array<u32>;
 @group(0) @binding(5) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(6) var<storage, read> labelBuf : array<u32>;
+@group(0) @binding(7) var<uniform> dbgMouse : vec4<f32>; // xy = cursor pixel
 
 const SLOTVOX : u32 = 262144u; // body grid DIM^3 (per pool slot)
 
@@ -201,6 +202,14 @@ fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
   for (var s = 0u; s < MAXB; s = s + 1u) {
     let bs = marchBody(ro, rd, s);
     if (bs.hit && bs.t < b.t) { b = bs; }
+  }
+
+  // Debug overlay: a box at the cursor shows what its ray hits -- green = a
+  // rigid body, red = world, blue = nothing.
+  if (abs(fragPos.x - dbgMouse.x) < 3.0 && abs(fragPos.y - dbgMouse.y) < 3.0) {
+    if (b.hit && (!w.hit || b.t < w.t)) { return vec4<f32>(0.0, 1.0, 0.0, 1.0); }
+    if (w.hit) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+    return vec4<f32>(0.2, 0.2, 1.0, 1.0);
   }
 
   if (w.hit && b.hit) {

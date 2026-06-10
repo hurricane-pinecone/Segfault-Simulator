@@ -88,6 +88,13 @@ public:
   // Advance the active falling bodies (gravity + topple), once per frame.
   void stepBody(double dt);
 
+  // Debug: the cursor pixel, highlighted by the render to show what it hits.
+  void setDebugMouse(float x, float y)
+  {
+    m_dbgMouseX = x;
+    m_dbgMouseY = y;
+  }
+
 private:
   void buildGenerate();
   void buildWater();
@@ -104,6 +111,8 @@ private:
   void buildBodyExtract();
   void buildBodyCollide();
   void buildBodyStamp();
+  void buildBodyLabel();
+  void buildBodySplit();
 
   WebGpuContext& m_ctx;
   WGPUDevice m_device = nullptr;
@@ -152,6 +161,44 @@ private:
   WGPUBindGroup m_bodyCollideBg = nullptr;
   WGPUComputePipeline m_bodyStampPipe = nullptr;
   WGPUBindGroup m_bodyStampBg = nullptr;
+  // Carving a falling body + splitting it: which slot the carve hit (read
+  // back), a voxel-level component label of that body's grid, and a recolor
+  // debug pass.
+  WGPUBuffer m_carveHitBuf = nullptr; // [0]=body hit? [1]=slot
+  WGPUBuffer m_carveHitReadback = nullptr;
+  WGPUBuffer m_bodyLabelBuf[2] = {nullptr,
+                                  nullptr}; // ping-pong, one slot's grid
+  WGPUBuffer m_bodyLabelSlotBuf = nullptr;  // uniform: slot to label
+  WGPUComputePipeline m_bodyLabelInitPipe = nullptr;
+  WGPUComputePipeline m_bodyLabelFloodPipe = nullptr;
+  WGPUComputePipeline m_bodyRecolorPipe = nullptr;
+  WGPUBindGroup m_bodyLabelInitBg = nullptr;
+  WGPUBindGroup m_bodyLabelFloodBg[2] = {nullptr, nullptr};
+  WGPUBindGroup m_bodyRecolorBg = nullptr;
+  // Split the carved body's components into pool slots (voxel-level analogue of
+  // the world fell). Reuses rootSlot/slotMeta/freeSlot/slotCount + the label
+  // slot uniform (= parent slot).
+  WGPUComputePipeline m_bodySplitRegisterPipe = nullptr;
+  WGPUComputePipeline m_bodySplitReducePipe = nullptr;
+  WGPUComputePipeline m_bodySplitFootprintPipe = nullptr;
+  WGPUComputePipeline m_bodySplitExtractPipe = nullptr;
+  WGPUBindGroup m_bodySplitBg = nullptr;
+  bool m_pendingIsSplit = false; // the pending slotMeta readback is a split
+  float m_splitParentCenter[3] = {0.0f, 0.0f, 0.0f};
+  float m_splitParentPivot[3] = {0.0f, 0.0f, 0.0f};
+  float m_splitParentVelY = 0.0f;
+  WGPUBuffer m_dbgMouseBuf = nullptr;
+  float m_dbgMouseX = -100.0f;
+  float m_dbgMouseY = -100.0f;
+  int m_carvedSlot = -1; // body slot the last carve hit, else -1
+  bool m_carveMapBusy = false;
+  bool m_carvePendingResolve = false;
+  struct CarveHitRb
+  {
+    WGPUBuffer buffer;
+    int* slot;
+    bool* busy;
+  } m_carveRb{};
 
   RigidBody m_bodies[kMaxBodies];
   bool m_fellRequested =
@@ -165,6 +212,11 @@ private:
     WGPUBuffer buffer;
     RigidBody* bodies;
     bool* busy;
+    bool* isSplit; // placement mode: split children vs fresh world bodies
+    float*
+        parentCenter;   // split: the parent's pre-split transform (for in-place
+    float* parentPivot; //        placement of the children)
+    float* parentVelY;
   } m_slotRb{};
   struct CollideRb
   {
