@@ -12,6 +12,7 @@ struct Camera {
 @group(0) @binding(0) var<uniform> cam : Camera;
 @group(0) @binding(1) var<storage, read> voxels : array<u32>;
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
+@group(0) @binding(3) var<storage, read> anchor : array<u32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4<f32> {
@@ -69,6 +70,12 @@ fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
         let l = voxel - bmin;
         let v = voxels[slot * 512u + u32(l.x + l.y * 8 + l.z * 64)];
         if ((v & 3u) != 0u) {
+          // Debug: a detached solid voxel glows red -- either its whole brick is
+          // not ground-anchored (coarse), or the voxel refinement flagged it
+          // (bit 4) at a carve boundary. After generation neither appears.
+          if ((v & 3u) == 1u && (anchor[bidx] == 0u || (v & 0x10u) != 0u)) {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+          }
           let col = vec3<f32>(f32((v >> 24u) & 255u), f32((v >> 16u) & 255u), f32((v >> 8u) & 255u)) / 255.0;
           let diff = max(dot(vnorm, lightDir), 0.0) * 0.7 + 0.3;
           return vec4<f32>(col * diff, 1.0);

@@ -110,12 +110,26 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   m_editBuf = makeBuffer(
       m_device, 32, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
 
+  m_faceBytes = brickCount * 12 * sizeof(uint32_t);
+  m_anchorBytes = brickCount * sizeof(uint32_t);
+  m_faceBuf = makeBuffer(m_device, m_faceBytes, WGPUBufferUsage_Storage);
+  m_anchorBuf[0] = makeBuffer(m_device, m_anchorBytes, WGPUBufferUsage_Storage);
+  m_anchorBuf[1] = makeBuffer(m_device, m_anchorBytes, WGPUBufferUsage_Storage);
+  m_floodCtlBuf = makeBuffer(m_device,
+                             16,
+                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
+                                 WGPUBufferUsage_CopySrc);
+  m_dirtyBuf = makeBuffer(m_device, m_anchorBytes, WGPUBufferUsage_Storage);
+
   buildTimestamps();
   buildGenerate();
   buildWater();
   buildRecount();
   buildEdit();
   buildRender();
+  buildFaces();
+  buildAnchor();
+  buildRefine();
 }
 
 GpuVoxelWorld::~GpuVoxelWorld()
@@ -128,7 +142,12 @@ GpuVoxelWorld::~GpuVoxelWorld()
                            m_editBg[0],
                            m_editBg[1],
                            m_renderBg[0],
-                           m_renderBg[1]})
+                           m_renderBg[1],
+                           m_facesBg,
+                           m_seedBg,
+                           m_floodBg[0],
+                           m_floodBg[1],
+                           m_refineBg})
     if (bg)
       wgpuBindGroupRelease(bg);
 
@@ -142,6 +161,14 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_editPipe);
   if (m_renderPipe)
     wgpuRenderPipelineRelease(m_renderPipe);
+  if (m_facesPipe)
+    wgpuComputePipelineRelease(m_facesPipe);
+  if (m_seedPipe)
+    wgpuComputePipelineRelease(m_seedPipe);
+  if (m_floodPipe)
+    wgpuComputePipelineRelease(m_floodPipe);
+  if (m_refinePipe)
+    wgpuComputePipelineRelease(m_refinePipe);
 
   for (WGPUBuffer b : {m_voxBuf[0],
                        m_voxBuf[1],
@@ -149,6 +176,11 @@ GpuVoxelWorld::~GpuVoxelWorld()
                        m_camBuf,
                        m_frameBuf,
                        m_editBuf,
+                       m_faceBuf,
+                       m_anchorBuf[0],
+                       m_anchorBuf[1],
+                       m_floodCtlBuf,
+                       m_dirtyBuf,
                        m_tsResolve,
                        m_tsReadback})
     if (b)
@@ -255,25 +287,27 @@ void GpuVoxelWorld::buildEdit()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelEditWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[4] = {
+  WGPUBindGroupLayoutEntry e[5] = {
       storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
           2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
-      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 4);
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform),
+      storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 5);
   m_editPipe = makeComputePipeline(
       m_device, module, "edit", makePipelineLayout(m_device, bgl));
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[4] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
+    WGPUBindGroupEntry be[5] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
                                 bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
                                 bufEntry(2, m_brickBuf, m_brickBytes),
-                                bufEntry(3, m_editBuf, 32)};
+                                bufEntry(3, m_editBuf, 32),
+                                bufEntry(4, m_dirtyBuf, m_anchorBytes)};
     WGPUBindGroupDescriptor d = {};
     d.layout = bgl;
-    d.entryCount = 4;
+    d.entryCount = 5;
     d.entries = be;
     m_editBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
@@ -283,13 +317,15 @@ void GpuVoxelWorld::buildRender()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelRenderWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[3] = {
+  WGPUBindGroupLayoutEntry e[4] = {
       storageEntry(0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform),
       storageEntry(
           1, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(
-          2, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 3);
+          2, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(
+          3, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 4);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
 
   WGPUColorTargetState colorTarget = {};
@@ -314,26 +350,144 @@ void GpuVoxelWorld::buildRender()
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[3] = {bufEntry(0, m_camBuf, 64),
+    WGPUBindGroupEntry be[4] = {bufEntry(0, m_camBuf, 64),
                                 bufEntry(1, m_voxBuf[i], m_voxBytes),
-                                bufEntry(2, m_brickBuf, m_brickBytes)};
+                                bufEntry(2, m_brickBuf, m_brickBytes),
+                                bufEntry(3, m_anchorBuf[0], m_anchorBytes)};
     WGPUBindGroupDescriptor bd = {};
     bd.layout = bgl;
-    bd.entryCount = 3;
+    bd.entryCount = 4;
     bd.entries = be;
     m_renderBg[i] = wgpuDeviceCreateBindGroup(m_device, &bd);
   }
 }
 
+void GpuVoxelWorld::buildFaces()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelFacesWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[2] = {
+      storageEntry(
+          0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 2);
+  m_facesPipe = makeComputePipeline(
+      m_device, module, "faces", makePipelineLayout(m_device, bgl));
+
+  WGPUBindGroupEntry be[2] = {bufEntry(0, m_voxBuf[0], m_voxBytes),
+                              bufEntry(1, m_faceBuf, m_faceBytes)};
+  WGPUBindGroupDescriptor d = {};
+  d.layout = bgl;
+  d.entryCount = 2;
+  d.entries = be;
+  m_facesBg = wgpuDeviceCreateBindGroup(m_device, &d);
+}
+
+void GpuVoxelWorld::buildAnchor()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelAnchorWgsl).c_str());
+  // One shared layout for both entry points (seed ignores the bindings it does
+  // not use): faceBuf, bricks, anchorIn (read), anchorOut, floodCtl (write).
+  WGPUBindGroupLayoutEntry e[5] = {
+      storageEntry(
+          0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(
+          1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(
+          2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 5);
+  WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
+  m_seedPipe = makeComputePipeline(m_device, module, "seed", layout);
+  m_floodPipe = makeComputePipeline(m_device, module, "flood", layout);
+
+  // Seed writes the authoritative anchorBuf[0]; the other bindings are present
+  // for layout compatibility but unread by seed.
+  WGPUBindGroupEntry se[5] = {bufEntry(0, m_faceBuf, m_faceBytes),
+                              bufEntry(1, m_brickBuf, m_brickBytes),
+                              bufEntry(2, m_anchorBuf[1], m_anchorBytes),
+                              bufEntry(3, m_anchorBuf[0], m_anchorBytes),
+                              bufEntry(4, m_floodCtlBuf, 16)};
+  WGPUBindGroupDescriptor sd = {};
+  sd.layout = bgl;
+  sd.entryCount = 5;
+  sd.entries = se;
+  m_seedBg = wgpuDeviceCreateBindGroup(m_device, &sd);
+
+  for (int i = 0; i < 2; ++i)
+  {
+    // Round parity i: read anchorBuf[i], write anchorBuf[1-i].
+    WGPUBindGroupEntry fe[5] = {bufEntry(0, m_faceBuf, m_faceBytes),
+                                bufEntry(1, m_brickBuf, m_brickBytes),
+                                bufEntry(2, m_anchorBuf[i], m_anchorBytes),
+                                bufEntry(3, m_anchorBuf[1 - i], m_anchorBytes),
+                                bufEntry(4, m_floodCtlBuf, 16)};
+    WGPUBindGroupDescriptor fd = {};
+    fd.layout = bgl;
+    fd.entryCount = 5;
+    fd.entries = fe;
+    m_floodBg[i] = wgpuDeviceCreateBindGroup(m_device, &fd);
+  }
+}
+
+void GpuVoxelWorld::buildRefine()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelRefineWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[4] = {
+      storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 4);
+  m_refinePipe = makeComputePipeline(
+      m_device, module, "refine", makePipelineLayout(m_device, bgl));
+
+  WGPUBindGroupEntry be[4] = {bufEntry(0, m_voxBuf[0], m_voxBytes),
+                              bufEntry(1, m_voxBuf[1], m_voxBytes),
+                              bufEntry(2, m_anchorBuf[0], m_anchorBytes),
+                              bufEntry(3, m_dirtyBuf, m_anchorBytes)};
+  WGPUBindGroupDescriptor d = {};
+  d.layout = bgl;
+  d.entryCount = 4;
+  d.entries = be;
+  m_refineBg = wgpuDeviceCreateBindGroup(m_device, &d);
+}
+
 void GpuVoxelWorld::generate()
 {
   WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(m_device, nullptr);
-  WGPUComputePassEncoder cp = wgpuCommandEncoderBeginComputePass(enc, nullptr);
-  wgpuComputePassEncoderSetPipeline(cp, m_genPipe);
-  wgpuComputePassEncoderSetBindGroup(cp, 0, m_genBg, 0, nullptr);
-  wgpuComputePassEncoderDispatchWorkgroups(cp, kBG, kBG, kBG);
-  wgpuComputePassEncoderEnd(cp);
-  wgpuComputePassEncoderRelease(cp);
+
+  const auto dispatch = [&](WGPUComputePipeline pipe,
+                            WGPUBindGroup bg,
+                            uint32_t x,
+                            uint32_t y,
+                            uint32_t z)
+  {
+    WGPUComputePassEncoder cp =
+        wgpuCommandEncoderBeginComputePass(enc, nullptr);
+    wgpuComputePassEncoderSetPipeline(cp, pipe);
+    wgpuComputePassEncoderSetBindGroup(cp, 0, bg, 0, nullptr);
+    wgpuComputePassEncoderDispatchWorkgroups(cp, x, y, z);
+    wgpuComputePassEncoderEnd(cp);
+    wgpuComputePassEncoderRelease(cp);
+  };
+
+  dispatch(m_genPipe, m_genBg, kBG, kBG, kBG);
+
+  // Establish the connectivity baseline: face masks, seed the ground bricks,
+  // then flood ground-anchoring to convergence. Terrain is fully
+  // ground-connected by construction, so afterwards every occupied brick is
+  // anchored (the value settles in anchorBuf[0] after an even round count).
+  dispatch(m_facesPipe, m_facesBg, kBG, kBG, kBG);
+  const uint32_t brickGroups = (kBG * kBG * kBG + 63) / 64;
+  dispatch(m_seedPipe, m_seedBg, brickGroups, 1, 1);
+  for (int round = 0; round < 64; ++round)
+    dispatch(m_floodPipe, m_floodBg[round & 1], brickGroups, 1, 1);
+
   WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, nullptr);
   wgpuQueueSubmit(m_queue, 1, &cmd);
   wgpuCommandBufferRelease(cmd);
@@ -408,6 +562,38 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   wgpuComputePassEncoderDispatchWorkgroups(cr, kBG, kBG, kBG);
   wgpuComputePassEncoderEnd(cr);
   wgpuComputePassEncoderRelease(cr);
+
+  // On a carve, static solidity changed -> re-derive ground anchoring. A carve
+  // removes support, which the monotone flood can't undo in place, so reset
+  // (rebuild faces from the post-carve voxels, reseed ground) and reflood to
+  // convergence. A severed piece never re-reaches ground -> its bricks stay
+  // unanchored, which the render tints. Brick-resolution, so a full reflood is
+  // cheap; only runs on carve frames.
+  if (edit && edit->mode == 1)
+  {
+    const auto detectPass = [&](WGPUComputePipeline pipe,
+                                WGPUBindGroup bg,
+                                uint32_t x,
+                                uint32_t y,
+                                uint32_t z)
+    {
+      WGPUComputePassEncoder p =
+          wgpuCommandEncoderBeginComputePass(enc, nullptr);
+      wgpuComputePassEncoderSetPipeline(p, pipe);
+      wgpuComputePassEncoderSetBindGroup(p, 0, bg, 0, nullptr);
+      wgpuComputePassEncoderDispatchWorkgroups(p, x, y, z);
+      wgpuComputePassEncoderEnd(p);
+      wgpuComputePassEncoderRelease(p);
+    };
+    detectPass(m_facesPipe, m_facesBg, kBG, kBG, kBG);
+    const uint32_t brickGroups = (kBG * kBG * kBG + 63) / 64;
+    detectPass(m_seedPipe, m_seedBg, brickGroups, 1, 1);
+    for (int round = 0; round < 64; ++round)
+      detectPass(m_floodPipe, m_floodBg[round & 1], brickGroups, 1, 1);
+    // Voxel-exact refinement at the carve boundary: only the bricks the edit
+    // pass marked dirty do work; the rest early-out.
+    detectPass(m_refinePipe, m_refineBg, kBG, kBG, kBG);
+  }
 
   WGPURenderPassColorAttachment color = {};
   color.view = view;

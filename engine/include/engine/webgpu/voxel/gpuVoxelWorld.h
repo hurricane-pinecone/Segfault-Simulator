@@ -73,6 +73,9 @@ private:
   void buildEdit();
   void buildRender();
   void buildTimestamps();
+  void buildFaces();
+  void buildAnchor();
+  void buildRefine();
 
   WebGpuContext& m_ctx;
   WGPUDevice m_device = nullptr;
@@ -80,23 +83,41 @@ private:
 
   uint64_t m_voxBytes = 0;
   uint64_t m_brickBytes = 0;
+  uint64_t m_faceBytes = 0;
+  uint64_t m_anchorBytes = 0;
   WGPUBuffer m_voxBuf[2] = {nullptr, nullptr};
   WGPUBuffer m_brickBuf = nullptr;
   WGPUBuffer m_camBuf = nullptr;
   WGPUBuffer m_frameBuf = nullptr;
   WGPUBuffer m_editBuf = nullptr;
+  // Connectivity: per-brick face masks, ping-pong ground-anchoring labels, and
+  // a tiny "did the flood change anything" control buffer.
+  WGPUBuffer m_faceBuf = nullptr;
+  WGPUBuffer m_anchorBuf[2] = {nullptr, nullptr};
+  WGPUBuffer m_floodCtlBuf = nullptr;
+  // Per-brick "a carve touched this brick" flag, marked by the edit pass and
+  // consumed by the voxel-refinement pass.
+  WGPUBuffer m_dirtyBuf = nullptr;
 
   WGPUComputePipeline m_genPipe = nullptr;
   WGPUComputePipeline m_waterPipe = nullptr;
   WGPUComputePipeline m_recPipe = nullptr;
   WGPUComputePipeline m_editPipe = nullptr;
   WGPURenderPipeline m_renderPipe = nullptr;
+  WGPUComputePipeline m_facesPipe = nullptr;
+  WGPUComputePipeline m_seedPipe = nullptr;
+  WGPUComputePipeline m_floodPipe = nullptr;
+  WGPUComputePipeline m_refinePipe = nullptr;
 
   WGPUBindGroup m_genBg = nullptr;
   WGPUBindGroup m_waterBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_recBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_editBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_renderBg[2] = {nullptr, nullptr};
+  WGPUBindGroup m_facesBg = nullptr;
+  WGPUBindGroup m_seedBg = nullptr;
+  WGPUBindGroup m_floodBg[2] = {nullptr, nullptr};
+  WGPUBindGroup m_refineBg = nullptr;
 
   int m_srcIdx = 0;
 

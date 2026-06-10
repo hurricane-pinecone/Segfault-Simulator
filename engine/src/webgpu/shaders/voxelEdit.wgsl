@@ -5,6 +5,7 @@ struct Edit { v0 : vec4<f32>, v1 : vec4<f32> }; // origin.xyz,radius ; dir.xyz,m
 @group(0) @binding(1) var<storage, read_write> voxOther : array<u32>;
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
 @group(0) @binding(3) var<uniform> ed : Edit;
+@group(0) @binding(4) var<storage, read_write> dirty : array<atomic<u32>>;
 
 fn vIdx(x : i32, y : i32, z : i32) -> u32 {
   let bi = u32((x / 8) + (y / 8) * BG + (z / 8) * BG * BG);
@@ -64,6 +65,9 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
     let i = vIdx(wx, wy, wz);
     if (mode == 1u) {
       voxCur[i] = 0u; voxOther[i] = 0u; // carve removes static from BOTH buffers
+      // Mark the brick dirty so the voxel-refinement pass re-checks it: a carve
+      // can split a brick's solids into a grounded part + a severed stub.
+      atomicOr(&dirty[u32((wx / 8) + (wy / 8) * BG + (wz / 8) * BG * BG)], 1u);
     } else if ((voxCur[i] & 3u) == 0u) {
       let dir = hash3(u32(wx), u32(wy), u32(wz), u32(idx)) & 3u;
       voxCur[i] = (50u << 24u) | (110u << 16u) | (210u << 8u) | 2u | (dir << 2u); // spawn water (current only)
