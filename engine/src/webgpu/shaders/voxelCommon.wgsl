@@ -26,6 +26,7 @@ struct Material {
 const CAT_AIR : u32 = 0u;
 const CAT_SOLID : u32 = 1u;
 const CAT_LIQUID : u32 = 2u;
+const CAT_GAS : u32 = 3u;
 const MAT_SAND : u32 = 1u;
 const MAT_GRASS : u32 = 2u;
 const MAT_DIRT : u32 = 3u;
@@ -33,6 +34,7 @@ const MAT_STONE : u32 = 4u;
 const MAT_TRUNK : u32 = 5u;
 const MAT_LEAVES : u32 = 6u;
 const MAT_WATER : u32 = 7u;
+const MAT_SMOKE : u32 = 8u;
 fn matId(v : u32) -> u32 { return (v >> 8u) & 0xFFu; }
 fn vox(matId : u32, cat : u32) -> u32 { return cat | (matId << 8u); }
 fn hash3(x : u32, y : u32, z : u32, f : u32) -> u32 {

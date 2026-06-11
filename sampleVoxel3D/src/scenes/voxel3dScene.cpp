@@ -29,6 +29,9 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
   m_editMode = mouse.mouseHeld(sfs::MouseButton::Left)    ? 1
                : mouse.mouseHeld(sfs::MouseButton::Right) ? 2
                                                           : 0;
+  if (kb.keyHeld(
+          sfs::Key::F)) // hold F to emit smoke at the cursor (like water)
+    m_editMode = 3;
   const glm::vec2 p = mouse.getPosition();
   m_mouseX = p.x;
   m_mouseY = p.y;

@@ -201,6 +201,7 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                  // count of the trunk, so density must
                  // be low for the trunk to win the CoM)
   setMat(7, 50, 110, 210, 0.6f, 1.0f, 0.0f); // water (translucent)
+  setMat(8, 70, 72, 80, 0.5f, 0.2f, 0.0f);   // smoke (gas, light -> rises)
   m_materialBuf = makeBuffer(m_device,
                              sizeof(mats),
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);

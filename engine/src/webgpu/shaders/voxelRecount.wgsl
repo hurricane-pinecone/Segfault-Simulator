@@ -20,7 +20,7 @@ fn recount(@builtin(local_invocation_id) lloc : vec3<u32>,
   workgroupBarrier();
   for (var lz = 0; lz < 8; lz = lz + 1) {
     let i = slot * 512u + u32(lx + ly * 8 + lz * 64);
-    if ((clearBuf[i] & 3u) == 2u) { clearBuf[i] = 0u; }     // wipe water from the old buffer
+    if ((clearBuf[i] & 3u) >= CAT_LIQUID) { clearBuf[i] = 0u; } // wipe dynamic (liquid+gas) from old buffer
     if ((countBuf[i] & 3u) != 0u) { atomicAdd(&occ, 1u); }  // occupancy of the new state
   }
   workgroupBarrier();

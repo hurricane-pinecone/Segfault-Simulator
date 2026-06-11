@@ -1,7 +1,9 @@
-// Water cellular automaton: each water voxel falls if it can, else keeps its
-// remembered flow direction, else picks a new random direction. Each move claims
-// a cleared destination cell via compare-exchange (conserved, race-free). Static
-// terrain + air persist in dst (never cleared or copied), so only water acts.
+// Fluid cellular automaton (liquids + gases). Each fluid voxel first tries to
+// move in its preferred vertical direction -- liquids fall, gases rise -- then
+// flows sideways (remembered direction, else a new random one). Each move claims
+// a cleared destination via compare-exchange (conserved, race-free). Static
+// terrain + air persist in dst, so only fluids act. (Rise/fall is one cell/tick;
+// density-scaled rate is a future refinement.)
 @group(0) @binding(0) var<storage, read> src : array<u32>;
 @group(0) @binding(1) var<storage, read_write> dst : array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
@@ -27,11 +29,22 @@ fn water(@builtin(local_invocation_id) lloc : vec3<u32>,
     let z = i32(wid.z) * 8 + lz;
     let v = src[vIndex(x, y, z)];
     let ty = v & 3u;
-    if (ty != 2u) { continue; }
+    let isGas = ty == CAT_GAS;
+    if (ty != CAT_LIQUID && !isGas) { continue; }
+    let dy = select(-1, 1, isGas); // gas rises, liquid falls
 
-    // Fall if it can; each move claims a cleared destination cell.
-    if (srcType(x, y - 1, z) == 0u) {
-      let r = atomicCompareExchangeWeak(&dst[vIndex(x, y - 1, z)], 0u, v);
+    // Gas dissipates: decrement its lifetime (bits 16-23) each tick; at 0 it is
+    // simply not written -> the cell becomes air. Liquids have no lifetime.
+    var vv = v;
+    if (isGas) {
+      let life = (v >> 16u) & 0xFFu;
+      if (life == 0u) { continue; }
+      vv = (v & 0xFF00FFFFu) | ((life - 1u) << 16u);
+    }
+
+    // Move in the preferred vertical direction if it can; claims a cleared cell.
+    if (srcType(x, y + dy, z) == 0u) {
+      let r = atomicCompareExchangeWeak(&dst[vIndex(x, y + dy, z)], 0u, vv);
       if (r.exchanged) { continue; }
     }
     // Else keep flowing in the remembered direction until it's blocked...
@@ -39,7 +52,7 @@ fn water(@builtin(local_invocation_id) lloc : vec3<u32>,
     let sx = nbx(x, dir);
     let sz = nbz(z, dir);
     if (srcType(sx, y, sz) == 0u) {
-      let rs = atomicCompareExchangeWeak(&dst[vIndex(sx, y, sz)], 0u, v);
+      let rs = atomicCompareExchangeWeak(&dst[vIndex(sx, y, sz)], 0u, vv);
       if (rs.exchanged) { continue; }
     }
     // ...blocked: pick a new random direction and remember it.
@@ -50,12 +63,12 @@ fn water(@builtin(local_invocation_id) lloc : vec3<u32>,
       let nx = nbx(x, d);
       let nz = nbz(z, d);
       if (srcType(nx, y, nz) == 0u) {
-        let nv = (v & 0xFFFFFFF3u) | (d << 2u);
+        let nv = (vv & 0xFFFFFFF3u) | (d << 2u);
         let r2 = atomicCompareExchangeWeak(&dst[vIndex(nx, y, nz)], 0u, nv);
         if (r2.exchanged) { moved = true; break; }
       }
     }
     if (moved) { continue; }
-    atomicStore(&dst[vIndex(x, y, z)], v); // couldn't move -> stay
+    atomicStore(&dst[vIndex(x, y, z)], vv); // couldn't move -> stay
   }
 }

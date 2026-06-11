@@ -178,7 +178,7 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
   if (found == 0u) { return; }
   let mode = u32(ed.v1.w);
   let R = i32(ed.v0.w);
-  let center = select(hit, pre, mode == 2u);
+  let center = select(hit, pre, mode != 1u); // spawn modes use the air cell, carve the hit
   let dim = 2 * R + 1;
   let total = dim * dim * dim;
 
@@ -211,8 +211,16 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
       voxCur[i] = 0u; voxOther[i] = 0u;
       atomicOr(&dirty[u32((wx / 8) + (wy / 8) * BG + (wz / 8) * BG * BG)], 1u);
     } else if ((voxCur[i] & 3u) == 0u) {
+      // Spawn a fluid into air: mode 2 = water, mode 3 = smoke (gas).
       let dir = hash3(u32(wx), u32(wy), u32(wz), u32(idx)) & 3u;
-      voxCur[i] = vox(MAT_WATER, CAT_LIQUID) | (dir << 2u);
+      if (mode == 3u) {
+        // Smoke carries a per-voxel lifetime (bits 16-23), staggered so a puff
+        // thins out gradually as it rises rather than vanishing all at once.
+        let life = 120u + (hash3(u32(wx), u32(wy), u32(wz), 7u) % 120u);
+        voxCur[i] = vox(MAT_SMOKE, CAT_GAS) | (dir << 2u) | (life << 16u);
+      } else {
+        voxCur[i] = vox(MAT_WATER, CAT_LIQUID) | (dir << 2u);
+      }
     }
   }
 }
