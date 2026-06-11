@@ -158,7 +158,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   var norm = vec3<f32>(0.0, 1.0, 0.0);
   var tVox = tstart;
 
-  for (var i = 0; i < 220; i = i + 1) {
+  for (var i = 0; i < 320; i = i + 1) {
     if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 ||
         voxel.x >= dim || voxel.y >= dim || voxel.z >= dim) { break; }
     let v = bodyVox[slot * SLOTVOX + u32(voxel.x + voxel.y * dim + voxel.z * dim * dim)];

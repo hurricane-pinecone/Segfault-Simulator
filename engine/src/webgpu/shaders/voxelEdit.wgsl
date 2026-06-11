@@ -131,7 +131,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> March {
                       f32(voxel.y) + select(0.0, 1.0, stp.y > 0),
                       f32(voxel.z) + select(0.0, 1.0, stp.z > 0)) - rol) * inv;
   var tHit = tstart;
-  for (var i = 0; i < 220; i = i + 1) {
+  for (var i = 0; i < 320; i = i + 1) {
     if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 || voxel.x >= dim || voxel.y >= dim || voxel.z >= dim) { break; }
     if (bSolidNear(slot, voxel, dim)) {
       m.found = true; m.voxel = voxel; m.prev = voxel; m.t = tHit; return m;

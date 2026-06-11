@@ -115,17 +115,15 @@ void onBodyStateMapped(WGPUMapAsyncStatus status,
   if (status == WGPUMapAsyncStatus_Success)
   {
     const auto* m = static_cast<const float*>(wgpuBufferGetConstMappedRange(
-        r->buffer, 0, 64u * GpuVoxelWorld::kMaxBodies));
+        r->buffer, 0, 128u * GpuVoxelWorld::kMaxBodies));
     if (m)
       for (int s = 0; s < GpuVoxelWorld::kMaxBodies; ++s)
       {
-        const float* st = m + s * 16;
         uint32_t flags = 0;
-        std::memcpy(&flags, &st[0], 4);
+        std::memcpy(&flags, &m[s * 32], 4); // 32 floats/slot; flags first
         GpuVoxelWorld::RigidBody& b = r->bodies[s];
         b.active = (flags & 1u) != 0u;
-        b.landed = (flags & 4u) != 0u;
-        b.resting = (flags & 8u) != 0u;
+        b.resting = (flags & 2u) != 0u; // bit1 = bake-ready
       }
     wgpuBufferUnmap(r->buffer);
   }
@@ -196,14 +194,15 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                          WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
   m_bodyXformBuf =
       makeBuffer(m_device, 96 * kMaxBodies, WGPUBufferUsage_Storage);
+  // Rigid-body state: 8 vec4 (128 bytes) per slot.
   m_bodyStateBuf =
       makeBuffer(m_device,
-                 64 * kMaxBodies,
+                 128 * kMaxBodies,
                  WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
                      WGPUBufferUsage_CopySrc);
   m_bodyStateReadback =
       makeBuffer(m_device,
-                 64 * kMaxBodies,
+                 128 * kMaxBodies,
                  WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
   m_bodyStepUBuf = makeBuffer(
       m_device, 16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
@@ -214,7 +213,7 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   // The step pass reads every slot each frame, so the state must start cleared
   // (all-inactive) rather than as uninitialized GPU memory.
   {
-    const uint8_t zeros[64 * kMaxBodies] = {};
+    const uint8_t zeros[128 * kMaxBodies] = {};
     wgpuQueueWriteBuffer(m_queue, m_bodyStateBuf, 0, zeros, sizeof(zeros));
   }
   m_slotMetaBuf = makeBuffer(m_device,
@@ -242,8 +241,9 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
     wgpuQueueWriteBuffer(m_queue, m_slotOccupiedBuf, 0, zeros, 4u * kMaxBodies);
   }
   m_slotRb = SlotMetaRb{m_slotMetaReadback, m_bodies, &m_bodyMapBusy};
+  // Per-slot contact record (stride 8 ints): count, sumXYZ, max penetration.
   m_collideBuf = makeBuffer(m_device,
-                            4 * kMaxBodies,
+                            32 * kMaxBodies,
                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
                                 WGPUBufferUsage_CopySrc);
   m_collideReadback =
@@ -846,7 +846,7 @@ void GpuVoxelWorld::buildBodyCollide()
   WGPUBindGroupEntry be[4] = {bufEntry(0, m_bodyBuf, m_bodyBytes * kMaxBodies),
                               bufEntry(1, m_voxBuf[0], m_voxBytes),
                               bufEntry(2, m_bodyXformBuf, 96 * kMaxBodies),
-                              bufEntry(3, m_collideBuf, 4 * kMaxBodies)};
+                              bufEntry(3, m_collideBuf, 32 * kMaxBodies)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
   d.entryCount = 4;
@@ -892,8 +892,8 @@ void GpuVoxelWorld::buildBodyStep()
   WGPUBindGroupLayout bgl = makeBgl(m_device, e, 3);
   m_bodyStepPipe = makeComputePipeline(
       m_device, module, "stepBodies", makePipelineLayout(m_device, bgl));
-  WGPUBindGroupEntry be[3] = {bufEntry(0, m_bodyStateBuf, 64 * kMaxBodies),
-                              bufEntry(1, m_collideBuf, 4 * kMaxBodies),
+  WGPUBindGroupEntry be[3] = {bufEntry(0, m_bodyStateBuf, 128 * kMaxBodies),
+                              bufEntry(1, m_collideBuf, 32 * kMaxBodies),
                               bufEntry(2, m_bodyStepUBuf, 16)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
@@ -913,7 +913,7 @@ void GpuVoxelWorld::buildBodyXform()
   WGPUBindGroupLayout bgl = makeBgl(m_device, e, 2);
   m_bodyXformPipe = makeComputePipeline(
       m_device, module, "buildXform", makePipelineLayout(m_device, bgl));
-  WGPUBindGroupEntry be[2] = {bufEntry(0, m_bodyStateBuf, 64 * kMaxBodies),
+  WGPUBindGroupEntry be[2] = {bufEntry(0, m_bodyStateBuf, 128 * kMaxBodies),
                               bufEntry(1, m_bodyXformBuf, 96 * kMaxBodies)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
@@ -935,7 +935,7 @@ void GpuVoxelWorld::buildBodyPlace()
   m_bodyPlacePipe = makeComputePipeline(
       m_device, module, "placeBodies", makePipelineLayout(m_device, bgl));
   WGPUBindGroupEntry be[3] = {bufEntry(0, m_slotMetaBuf, 64 * kMaxBodies),
-                              bufEntry(1, m_bodyStateBuf, 64 * kMaxBodies),
+                              bufEntry(1, m_bodyStateBuf, 128 * kMaxBodies),
                               bufEntry(2, m_placeUBuf, 16)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
@@ -1250,7 +1250,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     mci.callback = onBodyStateMapped;
     mci.userdata1 = &m_bodyStateRb;
     wgpuBufferMapAsync(
-        m_bodyStateReadback, WGPUMapMode_Read, 0, 64u * kMaxBodies, mci);
+        m_bodyStateReadback, WGPUMapMode_Read, 0, 128u * kMaxBodies, mci);
   }
 
   // Read back which body slot the last carve hit (one frame late).
@@ -1294,7 +1294,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     if (!m_bodyStateMapBusy)
     {
       wgpuCommandEncoderCopyBufferToBuffer(
-          enc, m_bodyStateBuf, 0, m_bodyStateReadback, 0, 64u * kMaxBodies);
+          enc, m_bodyStateBuf, 0, m_bodyStateReadback, 0, 128u * kMaxBodies);
       m_bodyStatePendingResolve = true;
     }
   }
@@ -1474,7 +1474,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // UNCONDITIONAL: a freshly placed body can be active on the GPU a frame or
   // two before the CPU mirror's anyActive catches up, and the step must read 0
   // (not a stale flag) for it, or it lands and topples without ever falling.
-  wgpuCommandEncoderClearBuffer(enc, m_collideBuf, 0, 4u * kMaxBodies);
+  wgpuCommandEncoderClearBuffer(enc, m_collideBuf, 0, 32u * kMaxBodies);
   if (anyActive)
     bodyPass(
         m_bodyCollidePipe, m_bodyCollideBg, kBodyDim / 4, kBodyDim / 4, bodyZ);
@@ -1497,7 +1497,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
         // a later fell can claim it. In-encoder, after the stamp above read
         // this frame's transform -- a queue write would run before the command
         // buffer and clear the body before it stamped.
-        wgpuCommandEncoderClearBuffer(enc, m_bodyStateBuf, s * 64u, 4);
+        wgpuCommandEncoderClearBuffer(enc, m_bodyStateBuf, s * 128u, 4);
         wgpuCommandEncoderClearBuffer(enc, m_slotOccupiedBuf, s * 4u, 4);
       }
   }

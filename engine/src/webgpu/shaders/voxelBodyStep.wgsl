@@ -1,48 +1,123 @@
-// Per-body rigid motion, one thread per pool slot. Replaces the CPU stepBody:
-// a freshly placed body is seeded, then falls straight down under gravity until
-// the body-vs-world collide pass flags an overlap, then topples (inverted
-// pendulum about its footprint) until flat, where it rests (stamp pending). State
-// is 4 vec4 per slot: [0]=(flags,theta,omega,velY), [1]=center, [2]=pivot,
-// [3]=axis. flags bits: 0 active, 1 wasActive (seeded), 2 landed, 3 resting.
+// Rigid-body integration, one thread per pool slot. Full 6-DOF: gravity on the
+// linear velocity, a quaternion orientation advanced by the angular velocity,
+// and a contact response from the collide pass (penetration count + centroid)
+// that pushes the body out of the ground, kills into-surface velocity, applies
+// friction, and torques the body about the contact so off-centre / sloped
+// landings tip and roll. A settle timer ticks only while grounded and nearly
+// still (and resets the instant it moves), so a chunk can roll downhill and only
+// bakes into terrain once it has truly stopped.
+//
+// State = 8 vec4 / slot: [0]=(flags,settleTimer,_,_) [1]=center(world CoM)
+// [2]=linVel [3]=quat(xyzw) [4]=angVel [5]=com(body-local CoM). flags: bit0
+// active, bit1 bakeReady.
 @group(0) @binding(0) var<storage, read_write> state : array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> collide : array<u32>;
+@group(0) @binding(1) var<storage, read> contact : array<i32>; // [0]count [1..3]posSum
 @group(0) @binding(2) var<uniform> stepU : vec4<f32>; // x = dt
 
-const HALF_PI : f32 = 1.5707963;
+const G : f32 = 80.0;          // gravity
+const REST_TIME : f32 = 0.6;   // grounded+still seconds before baking to terrain
+const V_REST : f32 = 0.7;      // horizontal + angular "still" threshold
+const RESTITUTION : f32 = 0.0; // bounciness (0 = inelastic)
+const FRICTION : f32 = 0.5;    // Coulomb friction coefficient
+const PUSH : f32 = 0.5;        // penetration-resolve gain (fraction of depth/frame)
+const MAX_W : f32 = 2.2;       // angular speed cap (keeps thin parts from tunnelling)
+const ROLL_DAMP : f32 = 0.97;  // per-grounded-frame angular damping (light, so it rolls downhill)
+const LIN_DAMP : f32 = 0.98;   // per-grounded-frame horizontal damping (light)
 
 @compute @workgroup_size(64)
 fn stepBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
   let s = gid.x;
   if (s >= MAXB) { return; }
-  var s0 = state[s * 4u + 0u];
+  let base = s * 8u;
+  var s0 = state[base + 0u];
   var flags = bitcast<u32>(s0.x);
-  if ((flags & 1u) == 0u) { return; } // inactive slot
+  if ((flags & 1u) == 0u) { return; }   // inactive slot
+  if ((flags & 2u) != 0u) { return; }   // bake-ready: frozen, waiting for the stamp
   let dt = stepU.x;
-  var theta = s0.y;
-  var omega = s0.z;
-  var velY = s0.w;
-  var c = state[s * 4u + 1u];
-  var landed = (flags & 4u) != 0u;
-  var resting = (flags & 8u) != 0u;
-  if ((flags & 2u) == 0u) {
-    // First tick: seed and stop. Integration waits until next tick, when this
-    // body's collide flag has actually been tested (the buffer is otherwise stale
-    // for a freshly placed slot, which could false-trigger a mid-air landing).
-    flags = (flags | 2u) & ~12u;
-    state[s * 4u + 0u] = vec4<f32>(bitcast<f32>(flags), 0.0, 0.0, 0.0);
-    return;
-  }
-  if (!resting) {
-    if (!landed) {
-      if (collide[s] != 0u) { landed = true; omega = 0.4; } // ground contact
-      else { velY = velY - 80.0 * dt; c.y = c.y + velY * dt; }
-    } else if (theta < HALF_PI) {
-      omega = omega + 2.5 * sin(theta) * dt;
-      theta = theta + omega * dt;
-      if (theta > HALF_PI) { theta = HALF_PI; resting = true; }
+  var timer = s0.y;
+  var center = state[base + 1u].xyz;
+  var linVel = state[base + 2u].xyz;
+  var q = state[base + 3u];
+  var angVel = state[base + 4u].xyz;
+  let inertia = state[base + 5u].w; // per-body moment of inertia (size-scaled)
+
+  linVel.y = linVel.y - G * dt;
+
+  // Contact response: a single aggregated contact at the centroid of penetrating
+  // voxels, ground normal up. Resolve as an IMPULSE on the velocity at the contact
+  // (linear + angular), which dissipates energy and settles -- a continuous torque
+  // pumps energy in and spins forever. Friction is Coulomb-clamped.
+  let cnt = contact[s * 8 + 0];
+  let grounded = cnt > 0;
+  if (grounded) {
+    let inv = 1.0 / f32(cnt);
+    let p = vec3<f32>(f32(contact[s * 8 + 1]),
+                      f32(contact[s * 8 + 2]),
+                      f32(contact[s * 8 + 3])) * inv;
+    // Contact normal from the terrain around the contact (slopes tilt it); fall
+    // back to up if degenerate.
+    let nsum = vec3<f32>(f32(contact[s * 8 + 5]),
+                         f32(contact[s * 8 + 6]),
+                         f32(contact[s * 8 + 7]));
+    var n = vec3<f32>(0.0, 1.0, 0.0);
+    if (dot(nsum, nsum) > 0.0001) { n = normalize(nsum); }
+    let r = p - center;                       // contact relative to the CoM
+    let vp = linVel + cross(angVel, r);       // world velocity at the contact
+    let vn = dot(vp, n);
+    if (vn < 0.0) {                           // moving into the surface
+      let rxn = cross(r, n);
+      let jn = -(1.0 + RESTITUTION) * vn / (1.0 + dot(rxn, rxn) / inertia);
+      linVel = linVel + jn * n;
+      angVel = angVel + cross(r, jn * n) / inertia;
+      // Friction opposes the tangential velocity, clamped to the friction cone.
+      let vt = vp - vn * n;
+      let vtl = length(vt);
+      if (vtl > 0.001) {
+        let t = vt / vtl;
+        let rxt = cross(r, t);
+        let jt = max(-vtl / (1.0 + dot(rxt, rxt) / inertia), -FRICTION * jn);
+        linVel = linVel + jt * t;
+        angVel = angVel + cross(r, jt * t) / inertia;
+      }
     }
+    // Rolling + sliding resistance so a round chunk (a canopy) doesn't roll
+    // forever and pieces stop drifting -- this is most of the "has weight" feel.
+    angVel = angVel * ROLL_DAMP;
+    linVel.x = linVel.x * LIN_DAMP;
+    linVel.z = linVel.z * LIN_DAMP;
+    // Resolve penetration along the contact normal by the measured depth,
+    // leaving ~1 voxel of rest overlap so the push goes to zero at rest.
+    let pen = f32(contact[s * 8 + 4]);
+    center = center + n * max(0.0, pen - 1.0) * PUSH;
   }
-  flags = (flags & ~12u) | select(0u, 4u, landed) | select(0u, 8u, resting);
-  state[s * 4u + 0u] = vec4<f32>(bitcast<f32>(flags), theta, omega, velY);
-  state[s * 4u + 1u] = c;
+
+  let wlen = length(angVel);
+  if (wlen > MAX_W) { angVel = angVel * (MAX_W / wlen); }
+
+  center = center + linVel * dt;
+
+  // Quaternion integration: q += 0.5 * (omega (x) q) * dt, renormalised.
+  let wx = angVel.x; let wy = angVel.y; let wz = angVel.z;
+  let dq = vec4<f32>(wx * q.w + wy * q.z - wz * q.y,
+                     -wx * q.z + wy * q.w + wz * q.x,
+                     wx * q.y - wy * q.x + wz * q.w,
+                     -(wx * q.x + wy * q.y + wz * q.z));
+  q = normalize(q + 0.5 * dt * dq);
+
+  // Settle: only count time while grounded and barely moving (vertical bob from
+  // the contact push is ignored, or it would never settle). Any real motion
+  // resets it, so a body can roll a long way before it bakes.
+  let still = length(linVel.xz) + length(angVel) * 8.0;
+  if (grounded && still < V_REST) {
+    timer = timer + dt;
+  } else {
+    timer = 0.0;
+  }
+  if (timer > REST_TIME) { flags = flags | 2u; }
+
+  state[base + 0u] = vec4<f32>(bitcast<f32>(flags), timer, 0.0, 0.0);
+  state[base + 1u] = vec4<f32>(center, 0.0);
+  state[base + 2u] = vec4<f32>(linVel, 0.0);
+  state[base + 3u] = q;
+  state[base + 4u] = vec4<f32>(angVel, 0.0);
 }
