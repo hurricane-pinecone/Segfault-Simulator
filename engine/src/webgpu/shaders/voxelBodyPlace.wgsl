@@ -50,13 +50,16 @@ fn placeBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
                        f32(slotMeta[base + 2u])) + com;
   }
 
-  // Scalar moment of inertia from the body extent (radius-of-gyration^2, unit
-  // mass): a big chunk resists spinning, a pebble tumbles freely. Stored in the
-  // CoM slot's .w (the step reads it; the xform only reads .xyz).
-  let ext = vec3<f32>(f32(slotMeta[base + 3u] - slotMeta[base + 0u]),
-                      f32(slotMeta[base + 4u] - slotMeta[base + 1u]),
-                      f32(slotMeta[base + 5u] - slotMeta[base + 2u]));
-  let inertia = max(dot(ext, ext) / 12.0, 4.0);
+  // Density-weighted scalar moment of inertia = mass-weighted mean squared
+  // distance from the CoM (radius of gyration^2): variance E[r^2] - E[r]^2 per
+  // axis, summed. Light voxels (leaves) barely add to rotational resistance, just
+  // as they barely shift the CoM. Stored in the CoM slot's .w (the step reads it;
+  // the xform reads only .xyz).
+  let e2 = vec3<f32>(f32(slotMeta[base + 11u]),
+                     f32(slotMeta[base + 12u]),
+                     f32(slotMeta[base + 13u])) * inv * 16.0; // undo the /16 scale
+  let varv = e2 - com * com;
+  let inertia = max(varv.x + varv.y + varv.z, 4.0);
 
   state[s * 8u + 0u] = vec4<f32>(bitcast<f32>(1u), 0.0, 0.0, 0.0); // active, timer 0
   state[s * 8u + 1u] = vec4<f32>(center, 0.0);

@@ -12,6 +12,7 @@
 @group(0) @binding(4) var<storage, read_write> occupied : array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> slotCount : array<atomic<u32>>;
 @group(0) @binding(6) var<uniform> parentU : vec4<u32>; // x = parent slot
+@group(0) @binding(7) var<storage, read> materials : array<Material>;
 
 const DIM : i32 = BODYDIM;
 const SLOTVOX : u32 = BODYVOX;
@@ -67,10 +68,15 @@ fn reduce(@builtin(global_invocation_id) gid : vec3<u32>) {
   atomicMax(&slotMeta[base + 4u], y + 1);
   atomicMax(&slotMeta[base + 5u], z + 1);
   atomicAdd(&slotMeta[base + 6u], 1);
-  atomicAdd(&slotMeta[base + 7u], x);
-  atomicAdd(&slotMeta[base + 8u], y);
-  atomicAdd(&slotMeta[base + 9u], z);
-  atomicAdd(&slotMeta[base + 10u], 1);
+  // Mass-weighted CoM + second moment (weight each voxel by material density).
+  let d = max(1, i32(materials[matId(bodyVox[parentU.x * SLOTVOX + li])].density * 16.0));
+  atomicAdd(&slotMeta[base + 7u], x * d);
+  atomicAdd(&slotMeta[base + 8u], y * d);
+  atomicAdd(&slotMeta[base + 9u], z * d);
+  atomicAdd(&slotMeta[base + 10u], d);
+  atomicAdd(&slotMeta[base + 11u], (x * x / 16) * d);
+  atomicAdd(&slotMeta[base + 12u], (y * y / 16) * d);
+  atomicAdd(&slotMeta[base + 13u], (z * z / 16) * d);
 }
 
 @compute @workgroup_size(4, 4, 4)

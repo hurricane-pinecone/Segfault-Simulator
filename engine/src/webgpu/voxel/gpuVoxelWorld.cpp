@@ -167,6 +167,44 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   m_voxBuf[1] = makeBuffer(
       m_device, m_voxBytes, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
   m_brickBuf = makeBuffer(m_device, m_brickBytes, WGPUBufferUsage_Storage);
+
+  // Material palette (must match the ids in voxelCommon.wgsl). Colour is RGBA;
+  // density / rigidity / emission are foundations for buoyancy, break-off, and
+  // lighting (not all wired up yet). 256 entries, the rest zeroed.
+  struct GpuMaterial
+  {
+    float color[4];
+    float density;
+    float rigidity;
+    float emission;
+    uint32_t flags;
+  };
+  static_assert(sizeof(GpuMaterial) == 32, "Material must match WGSL layout");
+  GpuMaterial mats[256] = {};
+  const auto setMat =
+      [&](int id, float r, float g, float b, float a, float dens, float rigid)
+  {
+    mats[id] = {{r / 255.f, g / 255.f, b / 255.f, a}, dens, rigid, 0.0f, 0u};
+  };
+  setMat(1, 206, 192, 142, 1.0f, 1.5f, 0.2f); // sand
+  setMat(2, 86, 168, 80, 1.0f, 1.0f, 0.5f);   // grass
+  setMat(3, 122, 92, 60, 1.0f, 1.0f, 0.5f);   // dirt
+  setMat(4, 108, 110, 124, 1.0f, 2.5f, 1.0f); // stone
+  setMat(5, 101, 67, 33, 1.0f, 1.0f, 1.0f);   // trunk
+  setMat(6,
+         54,
+         110,
+         48,
+         1.0f,
+         0.08f,
+         0.15f); // leaves (very light: ~8x the voxel
+                 // count of the trunk, so density must
+                 // be low for the trunk to win the CoM)
+  setMat(7, 50, 110, 210, 0.6f, 1.0f, 0.0f); // water (translucent)
+  m_materialBuf = makeBuffer(m_device,
+                             sizeof(mats),
+                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+  wgpuQueueWriteBuffer(m_queue, m_materialBuf, 0, mats, sizeof(mats));
   m_camBuf = makeBuffer(
       m_device, 64, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
   m_frameBuf = makeBuffer(
@@ -386,19 +424,19 @@ GpuVoxelWorld::~GpuVoxelWorld()
       wgpuComputePipelineRelease(p);
 
   for (WGPUBuffer b :
-       {m_voxBuf[0],       m_voxBuf[1],         m_brickBuf,
-        m_camBuf,          m_frameBuf,          m_editBuf,
-        m_faceBuf,         m_anchorBuf[0],      m_anchorBuf[1],
-        m_floodCtlBuf,     m_dirtyBuf,          m_labelBuf[0],
-        m_labelBuf[1],     m_bodyBuf,           m_bodyXformBuf,
-        m_slotMetaBuf,     m_slotMetaReadback,  m_rootSlotBuf,
-        m_slotCountBuf,    m_freeSlotBuf,       m_collideBuf,
-        m_collideReadback, m_carveHitBuf,       m_carveHitReadback,
-        m_bodyLabelBuf[0], m_bodyLabelBuf[1],   m_bodyLabelSlotBuf,
-        m_dbgMouseBuf,     m_windowBuf[0],      m_windowBuf[1],
-        m_bodyStateBuf,    m_bodyStateReadback, m_bodyStepUBuf,
-        m_placeUBuf,       m_slotOccupiedBuf,   m_tsResolve,
-        m_tsReadback})
+       {m_voxBuf[0],        m_voxBuf[1],       m_brickBuf,
+        m_materialBuf,      m_camBuf,          m_frameBuf,
+        m_editBuf,          m_faceBuf,         m_anchorBuf[0],
+        m_anchorBuf[1],     m_floodCtlBuf,     m_dirtyBuf,
+        m_labelBuf[0],      m_labelBuf[1],     m_bodyBuf,
+        m_bodyXformBuf,     m_slotMetaBuf,     m_slotMetaReadback,
+        m_rootSlotBuf,      m_slotCountBuf,    m_freeSlotBuf,
+        m_collideBuf,       m_collideReadback, m_carveHitBuf,
+        m_carveHitReadback, m_bodyLabelBuf[0], m_bodyLabelBuf[1],
+        m_bodyLabelSlotBuf, m_dbgMouseBuf,     m_windowBuf[0],
+        m_windowBuf[1],     m_bodyStateBuf,    m_bodyStateReadback,
+        m_bodyStepUBuf,     m_placeUBuf,       m_slotOccupiedBuf,
+        m_tsResolve,        m_tsReadback})
     if (b)
       wgpuBufferRelease(b);
   if (m_tsQuery)
@@ -541,7 +579,7 @@ void GpuVoxelWorld::buildRender()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelRenderWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[8] = {
+  WGPUBindGroupLayoutEntry e[9] = {
       storageEntry(0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform),
       storageEntry(
           1, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
@@ -555,8 +593,10 @@ void GpuVoxelWorld::buildRender()
           5, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(
           6, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage),
-      storageEntry(7, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 8);
+      storageEntry(7, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform),
+      storageEntry(
+          8, WGPUShaderStage_Fragment, WGPUBufferBindingType_ReadOnlyStorage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 9);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
 
   WGPUColorTargetState colorTarget = {};
@@ -581,7 +621,7 @@ void GpuVoxelWorld::buildRender()
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[8] = {
+    WGPUBindGroupEntry be[9] = {
         bufEntry(0, m_camBuf, 64),
         bufEntry(1, m_voxBuf[i], m_voxBytes),
         bufEntry(2, m_brickBuf, m_brickBytes),
@@ -589,10 +629,11 @@ void GpuVoxelWorld::buildRender()
         bufEntry(4, m_bodyBuf, m_bodyBytes * kMaxBodies),
         bufEntry(5, m_bodyXformBuf, 96 * kMaxBodies),
         bufEntry(6, m_labelBuf[0], m_anchorBytes),
-        bufEntry(7, m_dbgMouseBuf, 16)};
+        bufEntry(7, m_dbgMouseBuf, 16),
+        bufEntry(8, m_materialBuf, 32 * 256)};
     WGPUBindGroupDescriptor bd = {};
     bd.layout = bgl;
-    bd.entryCount = 8;
+    bd.entryCount = 9;
     bd.entries = be;
     m_renderBg[i] = wgpuDeviceCreateBindGroup(m_device, &bd);
   }
@@ -1002,7 +1043,7 @@ void GpuVoxelWorld::buildBodySplit()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelBodySplitWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[7] = {
+  WGPUBindGroupLayoutEntry e[8] = {
       storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
           1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
@@ -1010,8 +1051,10 @@ void GpuVoxelWorld::buildBodySplit()
       storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(5, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
-      storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 7);
+      storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform),
+      storageEntry(
+          7, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 8);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
   m_bodySplitRegisterPipe =
       makeComputePipeline(m_device, module, "registerRoots", layout);
@@ -1024,16 +1067,17 @@ void GpuVoxelWorld::buildBodySplit()
   m_bodySplitClearParentPipe =
       makeComputePipeline(m_device, module, "clearParent", layout);
 
-  WGPUBindGroupEntry be[7] = {bufEntry(0, m_bodyBuf, m_bodyBytes * kMaxBodies),
+  WGPUBindGroupEntry be[8] = {bufEntry(0, m_bodyBuf, m_bodyBytes * kMaxBodies),
                               bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
                               bufEntry(2, m_rootSlotBuf, m_bodyBytes),
                               bufEntry(3, m_slotMetaBuf, 64 * kMaxBodies),
                               bufEntry(4, m_slotOccupiedBuf, 4 * kMaxBodies),
                               bufEntry(5, m_slotCountBuf, 4),
-                              bufEntry(6, m_bodyLabelSlotBuf, 16)};
+                              bufEntry(6, m_bodyLabelSlotBuf, 16),
+                              bufEntry(7, m_materialBuf, 32 * 256)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
-  d.entryCount = 7;
+  d.entryCount = 8;
   d.entries = be;
   m_bodySplitBg = wgpuDeviceCreateBindGroup(m_device, &d);
 }
@@ -1157,6 +1201,7 @@ void GpuVoxelWorld::buildWindowSplit()
                   storageEntry(4, S, RO),
                   storageEntry(6, S, RW),
                   storageEntry(7, S, RW),
+                  storageEntry(9, S, RO),
                   storageEntry(10, S, RW)},
                  "extract");
   m_winExtractPipe = ex.first;
@@ -1168,6 +1213,7 @@ void GpuVoxelWorld::buildWindowSplit()
                        bufEntry(4, m_windowBuf[0], labelBytes),
                        bufEntry(6, m_rootSlotBuf, m_bodyBytes),
                        bufEntry(7, m_slotMetaBuf, metaBytes),
+                       bufEntry(9, m_materialBuf, 32 * 256),
                        bufEntry(10, m_bodyBuf, m_bodyBytes * kMaxBodies)});
 }
 
@@ -1531,7 +1577,6 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     wgpuQueueWriteBuffer(m_queue, m_slotMetaBuf, 0, metaInit, sizeof(metaInit));
     bodyPass(m_bodySplitRegisterPipe, m_bodySplitBg, g, g, g);
     bodyPass(m_bodySplitReducePipe, m_bodySplitBg, g, g, g);
-    bodyPass(m_bodySplitFootprintPipe, m_bodySplitBg, g, g, g);
     bodyPass(m_bodySplitExtractPipe, m_bodySplitBg, g, g, g * kMaxBodies);
     bodyPass(m_bodySplitClearParentPipe, m_bodySplitBg, g, g, g);
     // GPU placement (split mode): the place pass reads the parent's LIVE state

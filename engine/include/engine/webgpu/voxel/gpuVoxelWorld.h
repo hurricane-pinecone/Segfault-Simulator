@@ -131,6 +131,8 @@ private:
   uint64_t m_anchorBytes = 0;
   WGPUBuffer m_voxBuf[2] = {nullptr, nullptr};
   WGPUBuffer m_brickBuf = nullptr;
+  WGPUBuffer m_materialBuf =
+      nullptr; // palette: colour/density/... per material id
   WGPUBuffer m_camBuf = nullptr;
   WGPUBuffer m_frameBuf = nullptr;
   WGPUBuffer m_editBuf = nullptr;

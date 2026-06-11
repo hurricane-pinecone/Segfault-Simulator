@@ -27,12 +27,6 @@ fn terrainHeight(x : i32, z : i32) -> i32 {
   let p = vec2<f32>(f32(x), f32(z)) * 0.013;
   return i32(44.0 + fbm(p) * 130.0 + fbm(p * 4.0) * 8.0); // broad foothills + fine
 }
-fn shade(r : i32, g : i32, b : i32, x : i32, y : i32, z : i32, ty : u32) -> u32 {
-  let k = 0.86 + 0.22 * (f32(hash3(u32(x), u32(y), u32(z), 5u) & 0xFFFFu) / 65535.0);
-  return (u32(clamp(i32(f32(r) * k), 0, 255)) << 24u)
-       | (u32(clamp(i32(f32(g) * k), 0, 255)) << 16u)
-       | (u32(clamp(i32(f32(b) * k), 0, 255)) << 8u) | ty;
-}
 fn ihash2(x : i32, z : i32) -> u32 {
   var h = u32(x) * 73856093u ^ u32(z) * 19349663u;
   h = (h ^ (h >> 15u)) * 2246822519u;
@@ -55,11 +49,11 @@ fn treeAt(x : i32, y : i32, z : i32) -> u32 {
       if (surf <= SEA + 4) { continue; }                       // grass only
       let topY = surf + 30 + i32((hh >> 20u) % 24u);
       if (abs(x - tx) <= 1 && abs(z - tz) <= 1 && y >= surf && y < topY) {
-        return shade(101, 67, 33, x, y, z, 1u);                // trunk
+        return vox(MAT_TRUNK, CAT_SOLID);
       }
       let ddx = x - tx; let ddy = y - topY; let ddz = z - tz;
       if (ddx * ddx + ddy * ddy + ddz * ddz <= canopyR * canopyR) {
-        return shade(54, 110, 48, x, y, z, 1u);                // canopy
+        return vox(MAT_LEAVES, CAT_SOLID);
       }
     }
   }
@@ -70,15 +64,15 @@ fn sampleVoxel(x : i32, y : i32, z : i32) -> u32 {
   if (y < h) {
     let d = h - y;
     if (d <= 4) {
-      if (h <= SEA + 4) { return shade(206, 192, 142, x, y, z, 1u); } // sand
-      return shade(86, 168, 80, x, y, z, 1u);                        // grass
+      if (h <= SEA + 4) { return vox(MAT_SAND, CAT_SOLID); }
+      return vox(MAT_GRASS, CAT_SOLID);
     }
-    if (d <= 20) { return shade(122, 92, 60, x, y, z, 1u); }          // dirt
-    return shade(108, 110, 124, x, y, z, 1u);                        // stone
+    if (d <= 20) { return vox(MAT_DIRT, CAT_SOLID); }
+    return vox(MAT_STONE, CAT_SOLID);
   }
   if (y < SEA) {                                                     // lake water
     let dir = hash3(u32(x), u32(y), u32(z), 9u) & 3u;
-    return shade(50, 110, 210, x, y, z, 2u | (dir << 2u));
+    return vox(MAT_WATER, CAT_LIQUID) | (dir << 2u);
   }
   if (y < h + 72) {                  // trees only live just above the surface
     let tree = treeAt(x, y, z);

@@ -212,7 +212,7 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
       atomicOr(&dirty[u32((wx / 8) + (wy / 8) * BG + (wz / 8) * BG * BG)], 1u);
     } else if ((voxCur[i] & 3u) == 0u) {
       let dir = hash3(u32(wx), u32(wy), u32(wz), u32(idx)) & 3u;
-      voxCur[i] = (50u << 24u) | (110u << 16u) | (210u << 8u) | 2u | (dir << 2u);
+      voxCur[i] = vox(MAT_WATER, CAT_LIQUID) | (dir << 2u);
     }
   }
 }

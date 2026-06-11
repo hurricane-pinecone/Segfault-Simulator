@@ -15,7 +15,14 @@
 @group(0) @binding(6) var<storage, read_write> rootSlot : array<u32>;
 @group(0) @binding(7) var<storage, read_write> slotMeta : array<atomic<i32>>;
 @group(0) @binding(8) var<storage, read_write> occupied : array<atomic<u32>>;
+@group(0) @binding(9) var<storage, read> materials : array<Material>;
 @group(0) @binding(10) var<storage, read_write> bodyVox : array<u32>;
+
+// Material density as a fixed-point weight (>=1) for the mass-weighted CoM and
+// second moment, so light voxels (leaves) barely contribute to either. The scale
+// cancels in CoM = sum/mass and inertia = E[r^2]-E[r]^2; keep it small so the
+// pos^2 * weight accumulation stays in i32 range.
+fn densW(v : u32) -> i32 { return max(1, i32(materials[matId(v)].density * 16.0)); }
 
 // Atomically grab a free body slot (GPU owns allocation). SENTINEL = pool full.
 fn claimSlot() -> u32 {
@@ -144,15 +151,15 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
     let vi = wIdx(wx, wy, wz);
     vox0[vi] = 0u;
     vox1[vi] = 0u;
-    atomicAdd(&slotMeta[base + 7u], lx);
-    atomicAdd(&slotMeta[base + 8u], ly);
-    atomicAdd(&slotMeta[base + 9u], lz);
-    atomicAdd(&slotMeta[base + 10u], 1);
-    if (ly < 8) {
-      atomicAdd(&slotMeta[base + 11u], lx);
-      atomicAdd(&slotMeta[base + 12u], lz);
-      atomicAdd(&slotMeta[base + 13u], 1);
-    }
+    let d = densW(v); // mass weight: CoM, mass, and second moment are all weighted
+    atomicAdd(&slotMeta[base + 7u], lx * d);
+    atomicAdd(&slotMeta[base + 8u], ly * d);
+    atomicAdd(&slotMeta[base + 9u], lz * d);
+    atomicAdd(&slotMeta[base + 10u], d);
+    // sum d*pos^2 (scaled down by 16 to stay in i32 range; restored in place)
+    atomicAdd(&slotMeta[base + 11u], (lx * lx / 16) * d);
+    atomicAdd(&slotMeta[base + 12u], (ly * ly / 16) * d);
+    atomicAdd(&slotMeta[base + 13u], (lz * lz / 16) * d);
   } else {
     bodyVox[bodyIdx] = 0u;
   }

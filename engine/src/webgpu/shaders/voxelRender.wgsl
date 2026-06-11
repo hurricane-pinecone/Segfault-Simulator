@@ -27,6 +27,7 @@ struct Body {
 @group(0) @binding(5) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(6) var<storage, read> labelBuf : array<u32>;
 @group(0) @binding(7) var<uniform> dbgMouse : vec4<f32>; // xy = cursor pixel
+@group(0) @binding(8) var<storage, read> materials : array<Material>;
 
 const SLOTVOX : u32 = BODYVOX; // body grid DIM^3 (per pool slot)
 
@@ -46,8 +47,12 @@ struct Hit {
   col : vec3<f32>,
 };
 
-fn shade(v : u32, norm : vec3<f32>) -> vec3<f32> {
-  let col = vec3<f32>(f32((v >> 24u) & 255u), f32((v >> 16u) & 255u), f32((v >> 8u) & 255u)) / 255.0;
+// Material colour from the palette, with a per-voxel brightness jitter (keyed on
+// the voxel coordinate -- moved here from the generator now that colour is not
+// baked per voxel) for texture, then a simple directional shade.
+fn shade(v : u32, norm : vec3<f32>, vc : vec3<i32>) -> vec3<f32> {
+  let k = 0.86 + 0.22 * (f32(hash3(u32(vc.x), u32(vc.y), u32(vc.z), 5u) & 0xFFFFu) / 65535.0);
+  let col = materials[matId(v)].color.rgb * k;
   let diff = max(dot(norm, normalize(LIGHT)), 0.0) * 0.7 + 0.3;
   return col * diff;
 }
@@ -100,7 +105,7 @@ fn marchWorld(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
           if ((v & 3u) == 1u && (v & 0x10u) == 0u && anchor[bidx] == 0u) {
             h.col = hashColor(labelBuf[bidx]);
           } else {
-            h.col = shade(v, vnorm);
+            h.col = shade(v, vnorm, voxel);
           }
           return h;
         }
@@ -165,7 +170,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
     if ((v & 3u) != 0u) {
       h.hit = true;
       h.t = tVox;
-      h.col = shade(v, norm);
+      h.col = shade(v, norm, voxel);
       return h;
     }
     if (tMax.x < tMax.y && tMax.x < tMax.z) {
