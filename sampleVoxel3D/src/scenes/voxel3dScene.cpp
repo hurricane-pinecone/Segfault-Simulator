@@ -21,8 +21,11 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
   const sfs::KeyboardInput& kb = input.keyboard();
   m_yawDir = (kb.keyHeld(sfs::Key::E) ? 1.0f : 0.0f) -
              (kb.keyHeld(sfs::Key::Q) ? 1.0f : 0.0f);
+  m_carveDir = (kb.keyHeld(sfs::Key::Up) ? 1.0f : 0.0f) -
+               (kb.keyHeld(sfs::Key::Down) ? 1.0f : 0.0f);
 
   const sfs::MouseInput& mouse = input.mouse();
+  m_scrollY = static_cast<float>(mouse.getScrollY());
   m_editMode = mouse.mouseHeld(sfs::MouseButton::Left)    ? 1
                : mouse.mouseHeld(sfs::MouseButton::Right) ? 2
                                                           : 0;
@@ -36,5 +39,9 @@ void Voxel3DScene::onUpdate(double deltaTime)
   if (!m_voxel)
     return;
   m_voxel->rotate(m_yawDir * 1.3f * static_cast<float>(deltaTime));
+  if (m_scrollY != 0.0f)
+    m_voxel->zoom(m_scrollY);
+  m_voxel->adjustCarveRadius(m_carveDir * 12.0f *
+                             static_cast<float>(deltaTime));
   m_voxel->setEdit(m_editMode, m_mouseX, m_mouseY);
 }

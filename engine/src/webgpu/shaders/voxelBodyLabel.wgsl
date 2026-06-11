@@ -8,8 +8,8 @@
 @group(0) @binding(2) var<storage, read_write> labelOut : array<u32>;
 @group(0) @binding(3) var<uniform> slotU : vec4<u32>; // x = slot
 
-const DIM : i32 = 64;
-const SLOTVOX : u32 = 262144u;
+const DIM : i32 = BODYDIM;
+const SLOTVOX : u32 = BODYVOX;
 const SENTINEL : u32 = 0xFFFFFFFFu;
 
 fn lIdx(x : i32, y : i32, z : i32) -> u32 { return u32(x + y * DIM + z * DIM * DIM); }

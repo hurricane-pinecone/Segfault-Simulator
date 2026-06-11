@@ -14,12 +14,22 @@
 @group(0) @binding(5) var<storage, read_write> labelOut : array<u32>;
 @group(0) @binding(6) var<storage, read_write> rootSlot : array<u32>;
 @group(0) @binding(7) var<storage, read_write> slotMeta : array<atomic<i32>>;
-@group(0) @binding(8) var<storage, read> freeSlot : array<u32>;
-@group(0) @binding(9) var<storage, read_write> slotCount : array<atomic<u32>>;
+@group(0) @binding(8) var<storage, read_write> occupied : array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> bodyVox : array<u32>;
 
-const DIM : i32 = 64;
-const SLOTVOX : u32 = 262144u; // DIM^3
+// Atomically grab a free body slot (GPU owns allocation). SENTINEL = pool full.
+fn claimSlot() -> u32 {
+  for (var s = 0u; s < MAXB; s = s + 1u) {
+    if (atomicLoad(&occupied[s]) == 0u) {
+      let r = atomicCompareExchangeWeak(&occupied[s], 0u, 1u);
+      if (r.exchanged) { return s; }
+    }
+  }
+  return 0xFFFFFFFFu;
+}
+
+const DIM : i32 = BODYDIM;
+const SLOTVOX : u32 = BODYVOX; // DIM^3
 const SENTINEL : u32 = 0xFFFFFFFFu;
 
 // Same window placement as voxelWindowAnchor (the cut near the bottom-centre).
@@ -77,8 +87,7 @@ fn registerRoots(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
   let li = lIdx(lx, ly, lz);
   if (labelIn[li] == li) { // a component root (min voxel index of its component)
-    let k = atomicAdd(&slotCount[0], 1u);
-    rootSlot[li] = select(SENTINEL, freeSlot[1u + k], k < freeSlot[0]);
+    rootSlot[li] = claimSlot();
   } else {
     rootSlot[li] = SENTINEL;
   }

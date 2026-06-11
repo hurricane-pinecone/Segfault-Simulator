@@ -9,15 +9,26 @@
 @group(0) @binding(1) var<storage, read> bodyLabel : array<u32>;
 @group(0) @binding(2) var<storage, read_write> rootSlot : array<u32>;
 @group(0) @binding(3) var<storage, read_write> slotMeta : array<atomic<i32>>;
-@group(0) @binding(4) var<storage, read> freeSlot : array<u32>;
+@group(0) @binding(4) var<storage, read_write> occupied : array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> slotCount : array<atomic<u32>>;
 @group(0) @binding(6) var<uniform> parentU : vec4<u32>; // x = parent slot
 
-const DIM : i32 = 64;
-const SLOTVOX : u32 = 262144u;
+const DIM : i32 = BODYDIM;
+const SLOTVOX : u32 = BODYVOX;
 const SENTINEL : u32 = 0xFFFFFFFFu;
 
 fn lIdx(x : i32, y : i32, z : i32) -> u32 { return u32(x + y * DIM + z * DIM * DIM); }
+
+// Atomically grab a free body slot (GPU owns allocation). SENTINEL = pool full.
+fn claimSlot() -> u32 {
+  for (var s = 0u; s < MAXB; s = s + 1u) {
+    if (atomicLoad(&occupied[s]) == 0u) {
+      let r = atomicCompareExchangeWeak(&occupied[s], 0u, 1u);
+      if (r.exchanged) { return s; }
+    }
+  }
+  return SENTINEL;
+}
 
 @compute @workgroup_size(4, 4, 4)
 fn registerRoots(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -26,7 +37,14 @@ fn registerRoots(@builtin(global_invocation_id) gid : vec3<u32>) {
   let li = lIdx(x, y, z);
   if (bodyLabel[li] == li) { // a component root (min voxel index of its component)
     let k = atomicAdd(&slotCount[0], 1u);
-    rootSlot[li] = select(SENTINEL, freeSlot[1u + k], k < freeSlot[0]);
+    // The first-registered component stays in the parent slot; the rest claim
+    // fresh slots from the GPU occupancy bitmap. (Branch, not select() -- select
+    // evaluates both arms and would claim a slot even for the parent.)
+    if (k == 0u) {
+      rootSlot[li] = parentU.x;
+    } else {
+      rootSlot[li] = claimSlot();
+    }
   } else {
     rootSlot[li] = SENTINEL;
   }

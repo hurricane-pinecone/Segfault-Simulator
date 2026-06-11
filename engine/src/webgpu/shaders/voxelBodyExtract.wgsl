@@ -12,8 +12,8 @@
 @group(0) @binding(5) var<storage, read> labelBuf : array<u32>;
 @group(0) @binding(6) var<storage, read> rootSlot : array<u32>;
 
-const DIM : i32 = 64;
-const SLOTVOX : u32 = 262144u; // DIM^3
+const DIM : i32 = BODYDIM;
+const SLOTVOX : u32 = BODYVOX; // DIM^3
 const SENTINEL : u32 = 0xFFFFFFFFu;
 
 fn vIndex(x : i32, y : i32, z : i32) -> u32 {

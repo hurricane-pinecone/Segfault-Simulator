@@ -18,13 +18,24 @@ public:
   float yaw() const { return m_yaw; }
   void addYaw(float delta) { m_yaw += delta; }
 
+  // Scroll wheel zoom: positive scrollY moves the camera closer to the centre.
+  void addZoom(float scrollY)
+  {
+    m_zoom -= scrollY * 0.1f;
+    if (m_zoom < 0.25f)
+      m_zoom = 0.25f;
+    if (m_zoom > 2.5f)
+      m_zoom = 2.5f;
+  }
+
   glm::vec3 position() const
   {
     const glm::vec3 center = centre();
     const float radius = m_worldSize * 0.9f;
-    return {center.x + radius * glm::cos(m_yaw),
-            center.y + m_worldSize * 0.35f,
-            center.z + radius * glm::sin(m_yaw)};
+    const glm::vec3 offset = {radius * glm::cos(m_yaw),
+                              m_worldSize * 0.35f,
+                              radius * glm::sin(m_yaw)};
+    return center + offset * m_zoom;
   }
 
   // Fill the 4x vec4 camera uniform: {pos, worldSize}, {forward, width},
@@ -89,6 +100,7 @@ private:
 
   float m_worldSize;
   float m_yaw = 0.7f;
+  float m_zoom = 1.0f;
 };
 
 } // namespace sfs

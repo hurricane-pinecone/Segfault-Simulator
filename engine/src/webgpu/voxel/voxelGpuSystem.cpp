@@ -42,7 +42,8 @@ void VoxelGpuSystem::render()
     edit.dir[1] = dir.y;
     edit.dir[2] = dir.z;
     edit.mode = m_editMode;
-    edit.radius = m_editMode == 1 ? 3.6f : 8.0f;
+    edit.radius =
+        m_carveRadius; // water spawn uses the same radius as the carve
     editPtr = &edit;
   }
 

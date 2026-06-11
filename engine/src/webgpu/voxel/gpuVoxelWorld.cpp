@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #include <engine/generated/embeddedWgsl.h>
 
@@ -96,139 +97,36 @@ void onTsMapped(WGPUMapAsyncStatus status, WGPUStringView, void* ud1, void*)
   *r->busy = false;
 }
 
-// Reads the per-slot meta (AABB, counts, CoM-sum, footprint-sum) for the whole
-// body pool, placing each extracted chunk: pivot about its contact footprint
-// and a topple axis perpendicular to its CoM lever (so it tips toward its heavy
-// side). One readback per fell event; slots with no component go inactive.
-void onSlotMetaMapped(WGPUMapAsyncStatus status,
-                      WGPUStringView,
-                      void* ud1,
-                      void*)
+// Mirrors the GPU motion state back to the CPU (one frame late) for gating
+// only: active (collide pass + body-split target) and resting (stamp/free). The
+// GPU owns placement and allocation, so this no longer drives the slot race.
+void onBodyStateMapped(WGPUMapAsyncStatus status,
+                       WGPUStringView,
+                       void* ud1,
+                       void*)
 {
   struct Rb
   {
     WGPUBuffer buffer;
     GpuVoxelWorld::RigidBody* bodies;
     bool* busy;
-    bool* isSplit;
-    float* parentCenter;
-    float* parentPivot;
-    float* parentVelY;
   };
   auto* r = static_cast<Rb*>(ud1);
   if (status == WGPUMapAsyncStatus_Success)
   {
-    const auto* m = static_cast<const int32_t*>(wgpuBufferGetConstMappedRange(
+    const auto* m = static_cast<const float*>(wgpuBufferGetConstMappedRange(
         r->buffer, 0, 64u * GpuVoxelWorld::kMaxBodies));
     if (m)
-    {
-      const bool split = *r->isSplit;
-      int placed = 0;
       for (int s = 0; s < GpuVoxelWorld::kMaxBodies; ++s)
       {
+        const float* st = m + s * 16;
+        uint32_t flags = 0;
+        std::memcpy(&flags, &st[0], 4);
         GpuVoxelWorld::RigidBody& b = r->bodies[s];
-        if (b.active)
-          continue; // leave live bodies running (incl the split parent, whose
-                    // surviving component still renders in place unchanged)
-        const int base = s * 16;
-        if (m[base + 6] <= 0 || m[base + 10] <= 0 || m[base + 13] <= 0)
-          continue; // no component in this slot
-
-        const float footX =
-            static_cast<float>(m[base + 11]) / static_cast<float>(m[base + 13]);
-        const float footZ =
-            static_cast<float>(m[base + 12]) / static_cast<float>(m[base + 13]);
-        if (split)
-        {
-          // Child renders in place (parent frame, theta==0) and topples about
-          // its own base; inherit the parent's fall so it keeps moving.
-          const float minY = static_cast<float>(m[base + 1]);
-          b.pivot[0] = footX;
-          b.pivot[1] = minY;
-          b.pivot[2] = footZ;
-          b.center[0] = footX - r->parentPivot[0] + r->parentCenter[0];
-          b.center[1] = minY - r->parentPivot[1] + r->parentCenter[1];
-          b.center[2] = footZ - r->parentPivot[2] + r->parentCenter[2];
-          b.velY = *r->parentVelY;
-          b.theta = 0.0f;
-          b.omega = 0.0f;
-          b.landed = false;
-          b.collided = false;
-          b.resting = false;
-          b.active = true;
-          b.wasActive = true; // fully initialized; do not let stepBody re-seed
-        }
-        else
-        {
-          b.center[0] = static_cast<float>(m[base + 0]) + footX;
-          b.center[1] = static_cast<float>(m[base + 1]);
-          b.center[2] = static_cast<float>(m[base + 2]) + footZ;
-          b.pivot[0] = footX;
-          b.pivot[1] = 0.0f;
-          b.pivot[2] = footZ;
-          b.active = true;
-          b.wasActive = false; // stepBody seeds the sim
-        }
-
-        const float inv = 1.0f / static_cast<float>(m[base + 10]);
-        const float leverX = static_cast<float>(m[base + 7]) * inv - footX;
-        const float leverZ = static_cast<float>(m[base + 9]) * inv - footZ;
-        const float len = std::sqrt(leverX * leverX + leverZ * leverZ);
-        float dx = 1.0f;
-        float dz = 0.0f;
-        if (len > 0.5f) // balanced chunks get a default nudge direction
-        {
-          dx = leverX / len;
-          dz = leverZ / len;
-        }
-        b.axis[0] = dz;
-        b.axis[1] = 0.0f;
-        b.axis[2] = -dx;
-        ++placed;
-        std::fprintf(stderr,
-                     "[place] split=%d slot=%d c=(%.0f,%.0f,%.0f) n=%d\n",
-                     split ? 1 : 0,
-                     s,
-                     b.center[0],
-                     b.center[1],
-                     b.center[2],
-                     m[base + 10]);
+        b.active = (flags & 1u) != 0u;
+        b.landed = (flags & 4u) != 0u;
+        b.resting = (flags & 8u) != 0u;
       }
-      int activeNow = 0;
-      for (int s = 0; s < GpuVoxelWorld::kMaxBodies; ++s)
-        if (r->bodies[s].active)
-          ++activeNow;
-      std::fprintf(stderr,
-                   "[fell] split=%d placed=%d active=%d\n",
-                   split ? 1 : 0,
-                   placed,
-                   activeNow);
-    }
-    wgpuBufferUnmap(r->buffer);
-  }
-  *r->busy = false;
-}
-
-// Reads each slot's body-vs-world collision flag (did that body land).
-void onCollideMapped(WGPUMapAsyncStatus status,
-                     WGPUStringView,
-                     void* ud1,
-                     void*)
-{
-  struct Rb
-  {
-    WGPUBuffer buffer;
-    GpuVoxelWorld::RigidBody* bodies;
-    bool* busy;
-  };
-  auto* r = static_cast<Rb*>(ud1);
-  if (status == WGPUMapAsyncStatus_Success)
-  {
-    const auto* f = static_cast<const uint32_t*>(wgpuBufferGetConstMappedRange(
-        r->buffer, 0, 4u * GpuVoxelWorld::kMaxBodies));
-    if (f)
-      for (int s = 0; s < GpuVoxelWorld::kMaxBodies; ++s)
-        r->bodies[s].collided = (f[s] != 0u);
     wgpuBufferUnmap(r->buffer);
   }
   *r->busy = false;
@@ -297,9 +195,28 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                          m_bodyBytes * kMaxBodies,
                          WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
   m_bodyXformBuf =
+      makeBuffer(m_device, 96 * kMaxBodies, WGPUBufferUsage_Storage);
+  m_bodyStateBuf =
       makeBuffer(m_device,
-                 96 * kMaxBodies,
-                 WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+                 64 * kMaxBodies,
+                 WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
+                     WGPUBufferUsage_CopySrc);
+  m_bodyStateReadback =
+      makeBuffer(m_device,
+                 64 * kMaxBodies,
+                 WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
+  m_bodyStepUBuf = makeBuffer(
+      m_device, 16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_placeUBuf = makeBuffer(
+      m_device, 16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_bodyStateRb =
+      BodyStateRb{m_bodyStateReadback, m_bodies, &m_bodyStateMapBusy};
+  // The step pass reads every slot each frame, so the state must start cleared
+  // (all-inactive) rather than as uninitialized GPU memory.
+  {
+    const uint8_t zeros[64 * kMaxBodies] = {};
+    wgpuQueueWriteBuffer(m_queue, m_bodyStateBuf, 0, zeros, sizeof(zeros));
+  }
   m_slotMetaBuf = makeBuffer(m_device,
                              64 * kMaxBodies,
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
@@ -308,19 +225,23 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
       makeBuffer(m_device,
                  64 * kMaxBodies,
                  WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
-  m_rootSlotBuf = makeBuffer(m_device, m_anchorBytes, WGPUBufferUsage_Storage);
+  // Indexed by body-grid-local index (BODYDIM^3) by the window/body CC, which
+  // exceeds the brick count once BODYDIM > kBG, so size it to a full body grid.
+  m_rootSlotBuf = makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
   m_slotCountBuf = makeBuffer(
       m_device, 4, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
   m_freeSlotBuf = makeBuffer(m_device,
                              4 * (kMaxBodies + 1),
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
-  m_slotRb = SlotMetaRb{m_slotMetaReadback,
-                        m_bodies,
-                        &m_bodyMapBusy,
-                        &m_pendingIsSplit,
-                        m_splitParentCenter,
-                        m_splitParentPivot,
-                        &m_splitParentVelY};
+  m_slotOccupiedBuf =
+      makeBuffer(m_device,
+                 4 * kMaxBodies,
+                 WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+  {
+    const uint32_t zeros[kMaxBodies] = {};
+    wgpuQueueWriteBuffer(m_queue, m_slotOccupiedBuf, 0, zeros, 4u * kMaxBodies);
+  }
+  m_slotRb = SlotMetaRb{m_slotMetaReadback, m_bodies, &m_bodyMapBusy};
   m_collideBuf = makeBuffer(m_device,
                             4 * kMaxBodies,
                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
@@ -363,6 +284,9 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   buildBodyExtract();
   buildBodyCollide();
   buildBodyStamp();
+  buildBodyStep();
+  buildBodyXform();
+  buildBodyPlace();
   buildBodyLabel();
   buildBodySplit();
   buildWindowAnchor();
@@ -433,6 +357,12 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_bodyCollidePipe);
   if (m_bodyStampPipe)
     wgpuComputePipelineRelease(m_bodyStampPipe);
+  if (m_bodyStepPipe)
+    wgpuComputePipelineRelease(m_bodyStepPipe);
+  if (m_bodyXformPipe)
+    wgpuComputePipelineRelease(m_bodyXformPipe);
+  if (m_bodyPlacePipe)
+    wgpuComputePipelineRelease(m_bodyPlacePipe);
   if (m_bodyLabelInitPipe)
     wgpuComputePipelineRelease(m_bodyLabelInitPipe);
   if (m_bodyLabelFloodPipe)
@@ -456,17 +386,19 @@ GpuVoxelWorld::~GpuVoxelWorld()
       wgpuComputePipelineRelease(p);
 
   for (WGPUBuffer b :
-       {m_voxBuf[0],       m_voxBuf[1],        m_brickBuf,
-        m_camBuf,          m_frameBuf,         m_editBuf,
-        m_faceBuf,         m_anchorBuf[0],     m_anchorBuf[1],
-        m_floodCtlBuf,     m_dirtyBuf,         m_labelBuf[0],
-        m_labelBuf[1],     m_bodyBuf,          m_bodyXformBuf,
-        m_slotMetaBuf,     m_slotMetaReadback, m_rootSlotBuf,
-        m_slotCountBuf,    m_freeSlotBuf,      m_collideBuf,
-        m_collideReadback, m_carveHitBuf,      m_carveHitReadback,
-        m_bodyLabelBuf[0], m_bodyLabelBuf[1],  m_bodyLabelSlotBuf,
-        m_dbgMouseBuf,     m_windowBuf[0],     m_windowBuf[1],
-        m_tsResolve,       m_tsReadback})
+       {m_voxBuf[0],       m_voxBuf[1],         m_brickBuf,
+        m_camBuf,          m_frameBuf,          m_editBuf,
+        m_faceBuf,         m_anchorBuf[0],      m_anchorBuf[1],
+        m_floodCtlBuf,     m_dirtyBuf,          m_labelBuf[0],
+        m_labelBuf[1],     m_bodyBuf,           m_bodyXformBuf,
+        m_slotMetaBuf,     m_slotMetaReadback,  m_rootSlotBuf,
+        m_slotCountBuf,    m_freeSlotBuf,       m_collideBuf,
+        m_collideReadback, m_carveHitBuf,       m_carveHitReadback,
+        m_bodyLabelBuf[0], m_bodyLabelBuf[1],   m_bodyLabelSlotBuf,
+        m_dbgMouseBuf,     m_windowBuf[0],      m_windowBuf[1],
+        m_bodyStateBuf,    m_bodyStateReadback, m_bodyStepUBuf,
+        m_placeUBuf,       m_slotOccupiedBuf,   m_tsResolve,
+        m_tsReadback})
     if (b)
       wgpuBufferRelease(b);
   if (m_tsQuery)
@@ -822,7 +754,7 @@ void GpuVoxelWorld::buildBodyRegister()
       m_device, module, "registerRoots", makePipelineLayout(m_device, bgl));
 
   WGPUBindGroupEntry be[4] = {bufEntry(0, m_labelBuf[0], m_anchorBytes),
-                              bufEntry(1, m_rootSlotBuf, m_anchorBytes),
+                              bufEntry(1, m_rootSlotBuf, m_bodyBytes),
                               bufEntry(2, m_slotCountBuf, 4),
                               bufEntry(3, m_freeSlotBuf, 4 * (kMaxBodies + 1))};
   WGPUBindGroupDescriptor d = {};
@@ -853,7 +785,7 @@ void GpuVoxelWorld::buildBodyReduce()
   WGPUBindGroupEntry be[5] = {bufEntry(0, m_anchorBuf[0], m_anchorBytes),
                               bufEntry(1, m_faceBuf, m_faceBytes),
                               bufEntry(2, m_labelBuf[0], m_anchorBytes),
-                              bufEntry(3, m_rootSlotBuf, m_anchorBytes),
+                              bufEntry(3, m_rootSlotBuf, m_bodyBytes),
                               bufEntry(4, m_slotMetaBuf, 64 * kMaxBodies)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
@@ -887,7 +819,7 @@ void GpuVoxelWorld::buildBodyExtract()
                               bufEntry(3, m_slotMetaBuf, 64 * kMaxBodies),
                               bufEntry(4, m_bodyBuf, m_bodyBytes * kMaxBodies),
                               bufEntry(5, m_labelBuf[0], m_anchorBytes),
-                              bufEntry(6, m_rootSlotBuf, m_anchorBytes)};
+                              bufEntry(6, m_rootSlotBuf, m_bodyBytes)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
   d.entryCount = 7;
@@ -946,6 +878,70 @@ void GpuVoxelWorld::buildBodyStamp()
   d.entryCount = 4;
   d.entries = be;
   m_bodyStampBg = wgpuDeviceCreateBindGroup(m_device, &d);
+}
+
+void GpuVoxelWorld::buildBodyStep()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodyStepWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[3] = {
+      storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 3);
+  m_bodyStepPipe = makeComputePipeline(
+      m_device, module, "stepBodies", makePipelineLayout(m_device, bgl));
+  WGPUBindGroupEntry be[3] = {bufEntry(0, m_bodyStateBuf, 64 * kMaxBodies),
+                              bufEntry(1, m_collideBuf, 4 * kMaxBodies),
+                              bufEntry(2, m_bodyStepUBuf, 16)};
+  WGPUBindGroupDescriptor d = {};
+  d.layout = bgl;
+  d.entryCount = 3;
+  d.entries = be;
+  m_bodyStepBg = wgpuDeviceCreateBindGroup(m_device, &d);
+}
+
+void GpuVoxelWorld::buildBodyXform()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodyXformWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[2] = {
+      storageEntry(
+          0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 2);
+  m_bodyXformPipe = makeComputePipeline(
+      m_device, module, "buildXform", makePipelineLayout(m_device, bgl));
+  WGPUBindGroupEntry be[2] = {bufEntry(0, m_bodyStateBuf, 64 * kMaxBodies),
+                              bufEntry(1, m_bodyXformBuf, 96 * kMaxBodies)};
+  WGPUBindGroupDescriptor d = {};
+  d.layout = bgl;
+  d.entryCount = 2;
+  d.entries = be;
+  m_bodyXformBg = wgpuDeviceCreateBindGroup(m_device, &d);
+}
+
+void GpuVoxelWorld::buildBodyPlace()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodyPlaceWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[3] = {
+      storageEntry(
+          0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 3);
+  m_bodyPlacePipe = makeComputePipeline(
+      m_device, module, "placeBodies", makePipelineLayout(m_device, bgl));
+  WGPUBindGroupEntry be[3] = {bufEntry(0, m_slotMetaBuf, 64 * kMaxBodies),
+                              bufEntry(1, m_bodyStateBuf, 64 * kMaxBodies),
+                              bufEntry(2, m_placeUBuf, 16)};
+  WGPUBindGroupDescriptor d = {};
+  d.layout = bgl;
+  d.entryCount = 3;
+  d.entries = be;
+  m_bodyPlaceBg = wgpuDeviceCreateBindGroup(m_device, &d);
 }
 
 void GpuVoxelWorld::buildBodyLabel()
@@ -1012,8 +1008,7 @@ void GpuVoxelWorld::buildBodySplit()
           1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
-      storageEntry(
-          4, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(5, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
   WGPUBindGroupLayout bgl = makeBgl(m_device, e, 7);
@@ -1031,9 +1026,9 @@ void GpuVoxelWorld::buildBodySplit()
 
   WGPUBindGroupEntry be[7] = {bufEntry(0, m_bodyBuf, m_bodyBytes * kMaxBodies),
                               bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
-                              bufEntry(2, m_rootSlotBuf, m_anchorBytes),
+                              bufEntry(2, m_rootSlotBuf, m_bodyBytes),
                               bufEntry(3, m_slotMetaBuf, 64 * kMaxBodies),
-                              bufEntry(4, m_freeSlotBuf, 4 * (kMaxBodies + 1)),
+                              bufEntry(4, m_slotOccupiedBuf, 4 * kMaxBodies),
                               bufEntry(5, m_slotCountBuf, 4),
                               bufEntry(6, m_bodyLabelSlotBuf, 16)};
   WGPUBindGroupDescriptor d = {};
@@ -1134,17 +1129,14 @@ void GpuVoxelWorld::buildWindowSplit()
                               {bufEntry(4, m_windowBuf[i], labelBytes),
                                bufEntry(5, m_windowBuf[1 - i], labelBytes)});
 
-  auto rg = pass({storageEntry(4, S, RO),
-                  storageEntry(6, S, RW),
-                  storageEntry(8, S, RO),
-                  storageEntry(9, S, RW)},
-                 "registerRoots");
+  auto rg = pass(
+      {storageEntry(4, S, RO), storageEntry(6, S, RW), storageEntry(8, S, RW)},
+      "registerRoots");
   m_winRegisterPipe = rg.first;
   m_winRegisterBg = bg(rg.second,
                        {bufEntry(4, m_windowBuf[0], labelBytes),
-                        bufEntry(6, m_rootSlotBuf, m_anchorBytes),
-                        bufEntry(8, m_freeSlotBuf, 4 * (kMaxBodies + 1)),
-                        bufEntry(9, m_slotCountBuf, 4)});
+                        bufEntry(6, m_rootSlotBuf, m_bodyBytes),
+                        bufEntry(8, m_slotOccupiedBuf, 4 * kMaxBodies)});
 
   auto rd = pass({storageEntry(3, S, RO),
                   storageEntry(4, S, RO),
@@ -1155,7 +1147,7 @@ void GpuVoxelWorld::buildWindowSplit()
   m_winReduceBg = bg(rd.second,
                      {bufEntry(3, m_carveHitBuf, 32),
                       bufEntry(4, m_windowBuf[0], labelBytes),
-                      bufEntry(6, m_rootSlotBuf, m_anchorBytes),
+                      bufEntry(6, m_rootSlotBuf, m_bodyBytes),
                       bufEntry(7, m_slotMetaBuf, metaBytes)});
 
   auto ex = pass({storageEntry(0, S, RW),
@@ -1174,7 +1166,7 @@ void GpuVoxelWorld::buildWindowSplit()
                        bufEntry(2, m_brickBuf, m_brickBytes),
                        bufEntry(3, m_carveHitBuf, 32),
                        bufEntry(4, m_windowBuf[0], labelBytes),
-                       bufEntry(6, m_rootSlotBuf, m_anchorBytes),
+                       bufEntry(6, m_rootSlotBuf, m_bodyBytes),
                        bufEntry(7, m_slotMetaBuf, metaBytes),
                        bufEntry(10, m_bodyBuf, m_bodyBytes * kMaxBodies)});
 }
@@ -1221,56 +1213,9 @@ void GpuVoxelWorld::generate()
 
 void GpuVoxelWorld::stepBody(double dt)
 {
-  const float d = static_cast<float>(dt);
-  for (int s = 0; s < kMaxBodies; ++s)
-  {
-    RigidBody& b = m_bodies[s];
-    if (!b.active)
-    {
-      b.wasActive = false;
-      continue;
-    }
-    if (!b.wasActive)
-    {
-      // Freshly extracted: upright and falling, not yet landed.
-      b.wasActive = true;
-      b.theta = 0.0f;
-      b.omega = 0.0f;
-      b.velY = 0.0f;
-      b.landed = false;
-      b.collided = false;
-      b.resting = false;
-    }
-    if (b.resting)
-      continue; // flat on the ground; waiting to be stamped into the world
-
-    if (!b.landed)
-    {
-      // Fall straight down (gravity) until the body overlaps world solid.
-      if (b.collided)
-      {
-        b.landed = true;
-        b.omega = 0.4f; // ground contact -> start the topple
-      }
-      else
-      {
-        b.velY -= 80.0f * d;
-        b.center[1] += b.velY * d;
-      }
-    }
-    else if (b.theta < 1.5708f)
-    {
-      // Topple toward the CoM (inverted pendulum about the footprint) until
-      // flat.
-      b.omega += 2.5f * std::sin(b.theta) * d;
-      b.theta += b.omega * d;
-      if (b.theta > 1.5708f)
-      {
-        b.theta = 1.5708f;
-        b.resting = true;
-      }
-    }
-  }
+  // Integration moved to the GPU (voxelBodyStep); the CPU just forwards dt to
+  // the step pass run in recordFrame.
+  m_stepDt = static_cast<float>(dt);
 }
 
 void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
@@ -1292,30 +1237,20 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     wgpuBufferMapAsync(m_tsReadback, WGPUMapMode_Read, 0, 32, mci);
   }
 
-  // Read back the per-slot body meta (one frame late) to place each chunk.
-  if (m_bodyPendingResolve && !m_bodyMapBusy)
+  // Mirror the GPU motion state back (one frame late) for the CPU's gating
+  // only: active (collide pass + which slots are free) and resting
+  // (stamp/free). The GPU now owns placement and allocation, so this never
+  // feeds the slot race.
+  if (m_bodyStatePendingResolve && !m_bodyStateMapBusy)
   {
-    m_bodyMapBusy = true;
-    m_bodyPendingResolve = false;
+    m_bodyStateMapBusy = true;
+    m_bodyStatePendingResolve = false;
     WGPUBufferMapCallbackInfo mci = {};
     mci.mode = WGPUCallbackMode_AllowProcessEvents;
-    mci.callback = onSlotMetaMapped;
-    mci.userdata1 = &m_slotRb;
+    mci.callback = onBodyStateMapped;
+    mci.userdata1 = &m_bodyStateRb;
     wgpuBufferMapAsync(
-        m_slotMetaReadback, WGPUMapMode_Read, 0, 64u * kMaxBodies, mci);
-  }
-
-  // Read back each slot's body-vs-world collision flag (one frame late).
-  if (m_collidePendingResolve && !m_collideMapBusy)
-  {
-    m_collideMapBusy = true;
-    m_collidePendingResolve = false;
-    WGPUBufferMapCallbackInfo mci = {};
-    mci.mode = WGPUCallbackMode_AllowProcessEvents;
-    mci.callback = onCollideMapped;
-    mci.userdata1 = &m_collideRb;
-    wgpuBufferMapAsync(
-        m_collideReadback, WGPUMapMode_Read, 0, 4u * kMaxBodies, mci);
+        m_bodyStateReadback, WGPUMapMode_Read, 0, 64u * kMaxBodies, mci);
   }
 
   // Read back which body slot the last carve hit (one frame late).
@@ -1336,45 +1271,32 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   const float dbgMouse[4] = {m_dbgMouseX, m_dbgMouseY, 0.0f, 0.0f};
   wgpuQueueWriteBuffer(m_queue, m_dbgMouseBuf, 0, dbgMouse, 16);
 
-  // Body transform array (one Body per pool slot): a world->local rotation
-  // (transpose of the Rodrigues topple about the CoM axis) about the footprint
-  // pivot. flags = (active, dim, resting/stamp-request).
+  // GPU body motion: integrate (gravity/topple/land) then build the per-slot
+  // transform matrices, before any pass that reads them (edit/collide/stamp/
+  // render). The step consumes last frame's collide flags + the dt uniform.
   {
-    float bu[24 * kMaxBodies] = {};
-    for (int sb = 0; sb < kMaxBodies; ++sb)
+    const float stepU[4] = {m_stepDt, 0.0f, 0.0f, 0.0f};
+    wgpuQueueWriteBuffer(m_queue, m_bodyStepUBuf, 0, stepU, 16);
+    const auto motionPass = [&](WGPUComputePipeline pipe, WGPUBindGroup bg)
     {
-      const RigidBody& b = m_bodies[sb];
-      float* p = bu + sb * 24;
-      uint32_t* flags = reinterpret_cast<uint32_t*>(p);
-      flags[0] = b.active ? 1u : 0u;
-      flags[1] = static_cast<uint32_t>(kBodyDim);
-      flags[2] = b.resting ? 1u : 0u;
-      // Carveable in any state (the marcher handles rotated bodies); only
-      // SPLITTING is restricted to upright bodies, gated on the CPU side.
-      flags[3] = b.active ? 1u : 0u;
-      const float ax = b.axis[0];
-      const float ay = b.axis[1];
-      const float az = b.axis[2];
-      const float c = std::cos(b.theta);
-      const float s = std::sin(b.theta);
-      const float t = 1.0f - c;
-      p[4] = t * ax * ax + c;
-      p[5] = t * ax * ay - s * az;
-      p[6] = t * ax * az + s * ay;
-      p[8] = t * ax * ay + s * az;
-      p[9] = t * ay * ay + c;
-      p[10] = t * ay * az - s * ax;
-      p[12] = t * ax * az - s * ay;
-      p[13] = t * ay * az + s * ax;
-      p[14] = t * az * az + c;
-      p[16] = b.center[0];
-      p[17] = b.center[1];
-      p[18] = b.center[2];
-      p[20] = b.pivot[0];
-      p[21] = b.pivot[1];
-      p[22] = b.pivot[2];
+      WGPUComputePassEncoder p =
+          wgpuCommandEncoderBeginComputePass(enc, nullptr);
+      wgpuComputePassEncoderSetPipeline(p, pipe);
+      wgpuComputePassEncoderSetBindGroup(p, 0, bg, 0, nullptr);
+      wgpuComputePassEncoderDispatchWorkgroups(
+          p, 1, 1, 1); // wg 64 >= kMaxBodies
+      wgpuComputePassEncoderEnd(p);
+      wgpuComputePassEncoderRelease(p);
+    };
+    motionPass(m_bodyStepPipe, m_bodyStepBg);
+    motionPass(m_bodyXformPipe, m_bodyXformBg);
+    // Mirror the stepped state back to the CPU one frame late.
+    if (!m_bodyStateMapBusy)
+    {
+      wgpuCommandEncoderCopyBufferToBuffer(
+          enc, m_bodyStateBuf, 0, m_bodyStateReadback, 0, 64u * kMaxBodies);
+      m_bodyStatePendingResolve = true;
     }
-    wgpuQueueWriteBuffer(m_queue, m_bodyXformBuf, 0, bu, 96 * kMaxBodies);
   }
 
   if (edit)
@@ -1500,51 +1422,31 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
 
   bool anyActive = false;
   bool anyResting = false;
-  uint32_t freeList[kMaxBodies + 1] = {};
-  uint32_t freeCount = 0;
   for (int s = 0; s < kMaxBodies; ++s)
-  {
     if (m_bodies[s].active)
     {
       anyActive = true;
       if (m_bodies[s].resting)
         anyResting = true;
     }
-    else
-      freeList[1 + freeCount++] = static_cast<uint32_t>(s);
-  }
-  freeList[0] = freeCount;
 
-  // Auto-felling: compact the labeled components into FREE body slots, extract
-  // each chunk into its slot, clear it from the world, and re-anchor + re-label
-  // the clean stumps. New cuts drop into free slots while earlier chunks are
-  // still falling (no waiting for the pool to drain).
-  // W1: voxel-exact detached set in a DIM^3 window around the cut, marked as
-  // bit 4 (the render highlights it bright green). Runs every world-carve frame
-  // (independent of the readback gate) so the highlight is the sole, stable
-  // authority -- else the brick refine re-marks bit 4 on off-frames and it
-  // flickers. W1 verification only; W2/W3 will extract from this set.
+  // Voxel-exact world fell: mark the detached set (bit 4) in a DIM^3 window
+  // around the cut, label it into connected components, reduce each to a
+  // world-coord AABB, and extract every one into a body slot the register pass
+  // claimed atomically from the GPU occupancy bitmap (no CPU free-list, no
+  // serialization -- a full pool just yields no claim). Marking is COUPLED with
+  // extraction (same frame) so a marked voxel is cleared the frame it is
+  // marked.
   if (m_fellRequested && m_carvedSlot < 0)
   {
+    m_fellRequested = false;
     const uint32_t wg = kBodyDim / 4;
+    // Window anchor: voxel-exact ground flood -> bit 4 on the detached set.
     bodyPass(m_winInitPipe, m_winBg[1], wg, wg, wg);
     for (int r = 0; r < 128; ++r)
       bodyPass(m_winFloodPipe, m_winBg[r & 1], wg, wg, wg);
     bodyPass(m_winMarkPipe, m_winBg[0], wg, wg, wg);
-  }
-  // Voxel-exact world fell: label the window's detached set into connected
-  // components, reduce each to a world-coord AABB, and extract every one into a
-  // free body slot (the brick-level register/reduce/extract this replaces
-  // snapped each piece up to its enclosing brick). winMark above already ran
-  // this frame, so the bit-4 set the CC reads is fresh.
-  if (m_fellRequested && freeCount > 0 && !m_bodyMapBusy &&
-      !m_bodyPendingResolve && m_carvedSlot < 0)
-  {
-    m_fellRequested = false;
-    m_pendingIsSplit = false;
-    wgpuQueueWriteBuffer(m_queue, m_freeSlotBuf, 0, freeList, sizeof(freeList));
-    const uint32_t zeroCount = 0u;
-    wgpuQueueWriteBuffer(m_queue, m_slotCountBuf, 0, &zeroCount, 4);
+
     // Per slot: aabbMin = +world (for atomicMin), everything else 0.
     int32_t metaInit[16 * kMaxBodies] = {};
     for (int s = 0; s < kMaxBodies; ++s)
@@ -1554,32 +1456,28 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       metaInit[s * 16 + 2] = kWorld;
     }
     wgpuQueueWriteBuffer(m_queue, m_slotMetaBuf, 0, metaInit, sizeof(metaInit));
-    const uint32_t wg = kBodyDim / 4;
     bodyPass(m_winLabelInitPipe, m_winLabelInitBg, wg, wg, wg);
     for (int r = 0; r < 128; ++r)
       bodyPass(m_winLabelFloodPipe, m_winLabelFloodBg[r & 1], wg, wg, wg);
     bodyPass(m_winRegisterPipe, m_winRegisterBg, wg, wg, wg);
     bodyPass(m_winReducePipe, m_winReduceBg, wg, wg, wg);
     bodyPass(m_winExtractPipe, m_winExtractBg, wg, wg, bodyZ);
-    wgpuCommandEncoderCopyBufferToBuffer(
-        enc, m_slotMetaBuf, 0, m_slotMetaReadback, 0, 64u * kMaxBodies);
-    m_bodyPendingResolve = true;
-    std::fprintf(
-        stderr, "[wfell] free=%u carved=%d\n", freeCount, m_carvedSlot);
+    // GPU placement: reduced metadata -> motion state, in the same encoder.
+    const uint32_t placeU[4] = {0u, 0u, 0u, 0u}; // isSplit = 0 (world fell)
+    wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
+    bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, 1, 1, 1);
   }
 
-  // While any body is active, test the whole pool against the world each frame
-  // so the CPU sim knows when each falling body lands.
-  if (anyActive && !m_collideMapBusy)
-  {
-    const uint32_t zeros[kMaxBodies] = {};
-    wgpuQueueWriteBuffer(m_queue, m_collideBuf, 0, zeros, 4u * kMaxBodies);
+  // Clear the collide flags every frame (in-encoder, after this frame's step
+  // has already read the prior result -- a queue write would run before the
+  // whole command buffer and wipe what the step still needs). The clear is
+  // UNCONDITIONAL: a freshly placed body can be active on the GPU a frame or
+  // two before the CPU mirror's anyActive catches up, and the step must read 0
+  // (not a stale flag) for it, or it lands and topples without ever falling.
+  wgpuCommandEncoderClearBuffer(enc, m_collideBuf, 0, 4u * kMaxBodies);
+  if (anyActive)
     bodyPass(
         m_bodyCollidePipe, m_bodyCollideBg, kBodyDim / 4, kBodyDim / 4, bodyZ);
-    wgpuCommandEncoderCopyBufferToBuffer(
-        enc, m_collideBuf, 0, m_collideReadback, 0, 4u * kMaxBodies);
-    m_collidePendingResolve = true;
-  }
 
   // Each body that has finished toppling (flags.z set) stamps itself back into
   // the world; recount + re-anchor so the fallen logs read as grounded, then
@@ -1594,6 +1492,13 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       {
         m_bodies[s].active = false;
         m_bodies[s].resting = false;
+        // Clear the GPU state flag (else the xform pass keeps rendering the
+        // already-stamped body) and release the slot in the occupancy bitmap so
+        // a later fell can claim it. In-encoder, after the stamp above read
+        // this frame's transform -- a queue write would run before the command
+        // buffer and clear the body before it stamped.
+        wgpuCommandEncoderClearBuffer(enc, m_bodyStateBuf, s * 64u, 4);
+        wgpuCommandEncoderClearBuffer(enc, m_slotOccupiedBuf, s * 4u, 4);
       }
   }
 
@@ -1602,8 +1507,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // exclusive with the world fell above (a carve hits one target).
   if (m_carvedSlot >= 0 && m_carvedSlot < kMaxBodies && edit &&
       edit->mode == 1 && m_bodies[m_carvedSlot].active &&
-      !m_bodies[m_carvedSlot].landed && !m_bodyMapBusy &&
-      !m_bodyPendingResolve && freeCount > 0)
+      !m_bodies[m_carvedSlot].landed)
   {
     const uint32_t parent = static_cast<uint32_t>(m_carvedSlot);
     const uint32_t slotData[4] = {parent, 0, 0, 0};
@@ -1613,16 +1517,8 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     for (int r = 0; r < 128; ++r)
       bodyPass(m_bodyLabelFloodPipe, m_bodyLabelFloodBg[r & 1], g, g, g);
 
-    // Free-slot list with the parent first (component 0 stays in the parent).
-    uint32_t splitFree[kMaxBodies + 1] = {};
-    uint32_t n = 0;
-    splitFree[1 + n++] = parent;
-    for (int s = 0; s < kMaxBodies; ++s)
-      if (!m_bodies[s].active)
-        splitFree[1 + n++] = static_cast<uint32_t>(s);
-    splitFree[0] = n;
-    wgpuQueueWriteBuffer(
-        m_queue, m_freeSlotBuf, 0, splitFree, sizeof(splitFree));
+    // slotCount is the root-ordering counter (k==0 -> parent, rest claim a
+    // slot).
     const uint32_t zeroCount = 0u;
     wgpuQueueWriteBuffer(m_queue, m_slotCountBuf, 0, &zeroCount, 4);
     int32_t metaInit[16 * kMaxBodies] = {};
@@ -1638,19 +1534,12 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     bodyPass(m_bodySplitFootprintPipe, m_bodySplitBg, g, g, g);
     bodyPass(m_bodySplitExtractPipe, m_bodySplitBg, g, g, g * kMaxBodies);
     bodyPass(m_bodySplitClearParentPipe, m_bodySplitBg, g, g, g);
-    wgpuCommandEncoderCopyBufferToBuffer(
-        enc, m_slotMetaBuf, 0, m_slotMetaReadback, 0, 64u * kMaxBodies);
-    m_bodyPendingResolve = true;
-    m_pendingIsSplit = true;
-    for (int i = 0; i < 3; ++i)
-    {
-      m_splitParentCenter[i] = m_bodies[m_carvedSlot].center[i];
-      m_splitParentPivot[i] = m_bodies[m_carvedSlot].pivot[i];
-    }
-    m_splitParentVelY = m_bodies[m_carvedSlot].velY;
+    // GPU placement (split mode): the place pass reads the parent's LIVE state
+    // for the children's in-place frame, so no CPU capture is needed.
+    const uint32_t placeU[4] = {1u, parent, 0u, 0u};
+    wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
+    bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, 1, 1, 1);
     m_fellRequested = false; // a body carve makes no world detachment
-    std::fprintf(
-        stderr, "[bsplit] parent=%d free=%u\n", m_carvedSlot, freeCount);
   }
 
   WGPURenderPassColorAttachment color = {};

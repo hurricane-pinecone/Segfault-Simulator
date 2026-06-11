@@ -22,7 +22,7 @@ struct Body {
 @group(0) @binding(6) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(7) var<storage, read_write> carveHit : array<u32>; // [0]body? [1]slot [2..4]hit
 
-const SLOTVOX : u32 = 262144u; // body grid DIM^3
+const SLOTVOX : u32 = BODYVOX; // body grid DIM^3
 
 fn vIdx(x : i32, y : i32, z : i32) -> u32 {
   let bi = u32((x / 8) + (y / 8) * BG + (z / 8) * BG * BG);

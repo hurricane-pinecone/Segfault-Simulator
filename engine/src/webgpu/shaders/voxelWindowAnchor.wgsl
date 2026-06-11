@@ -15,7 +15,7 @@
 @group(0) @binding(5) var<storage, read> winIn : array<u32>;
 @group(0) @binding(6) var<storage, read_write> winOut : array<u32>;
 
-const DIM : i32 = 64;
+const DIM : i32 = BODYDIM;
 const AIR : u32 = 0u;
 const SOLID_UNREACHED : u32 = 1u;
 const SOLID_REACHED : u32 = 2u;

@@ -25,7 +25,9 @@ public:
   static constexpr int kWorld = 512;
   static constexpr int kBrick = 8;
   static constexpr int kBG = kWorld / kBrick; // 64
-  static constexpr int kBodyDim = 64;         // detached rigid-body grid edge
+  static constexpr int kBodyDim = 96; // detached rigid-body / fell-window grid
+                                      // edge (== BODYDIM in voxelCommon.wgsl);
+                                      // big enough to hold a whole tree
   static constexpr int kMaxBodies =
       32; // rigid-body pool size (== MAXB in voxelCommon.wgsl)
 
@@ -111,6 +113,9 @@ private:
   void buildBodyExtract();
   void buildBodyCollide();
   void buildBodyStamp();
+  void buildBodyStep();
+  void buildBodyXform();
+  void buildBodyPlace();
   void buildBodyLabel();
   void buildBodySplit();
   void buildWindowAnchor();
@@ -148,8 +153,11 @@ private:
   WGPUBuffer m_slotMetaBuf = nullptr;      // per-slot AABB/count/CoM/footprint
   WGPUBuffer m_slotMetaReadback = nullptr; // mapped to place the bodies
   WGPUBuffer m_rootSlotBuf = nullptr;      // per-brick component-root -> slot
-  WGPUBuffer m_slotCountBuf = nullptr;     // atomic slot allocator
+  WGPUBuffer m_slotCountBuf = nullptr;     // atomic split-root ordering counter
   WGPUBuffer m_freeSlotBuf = nullptr; // [0]=free count, [1..]=free slot ids
+  WGPUBuffer m_slotOccupiedBuf =
+      nullptr; // per-slot atomic occupancy (GPU owns
+               // allocation; register passes claim it)
   WGPUComputePipeline m_bodyRegisterPipe = nullptr;
   WGPUComputePipeline m_bodyReducePipe = nullptr;
   WGPUComputePipeline m_bodyExtractPipe = nullptr;
@@ -163,6 +171,25 @@ private:
   WGPUBindGroup m_bodyCollideBg = nullptr;
   WGPUComputePipeline m_bodyStampPipe = nullptr;
   WGPUBindGroup m_bodyStampBg = nullptr;
+  // GPU-resident body motion: integration + transform matrices run as compute
+  // passes over m_bodyStateBuf (4 vec4/slot), so the CPU no longer integrates
+  // or builds the transforms each frame.
+  WGPUBuffer m_bodyStateBuf = nullptr;
+  WGPUBuffer m_bodyStateReadback =
+      nullptr;                         // status for stamp/free + split capture
+  WGPUBuffer m_bodyStepUBuf = nullptr; // dt uniform
+  WGPUComputePipeline m_bodyStepPipe = nullptr;
+  WGPUComputePipeline m_bodyXformPipe = nullptr;
+  WGPUBindGroup m_bodyStepBg = nullptr;
+  WGPUBindGroup m_bodyXformBg = nullptr;
+  // GPU placement: reduced slot metadata -> initial motion state (replaces the
+  // CPU onSlotMetaMapped math; split children read the parent's live state).
+  WGPUComputePipeline m_bodyPlacePipe = nullptr;
+  WGPUBindGroup m_bodyPlaceBg = nullptr;
+  WGPUBuffer m_placeUBuf = nullptr; // (isSplit, parentSlot)
+  float m_stepDt = 0.016f;
+  bool m_bodyStateMapBusy = false;
+  bool m_bodyStatePendingResolve = false;
   // Carving a falling body + splitting it: which slot the carve hit (read
   // back), a voxel-level component label of that body's grid, and a recolor
   // debug pass.
@@ -236,11 +263,6 @@ private:
     WGPUBuffer buffer;
     RigidBody* bodies;
     bool* busy;
-    bool* isSplit; // placement mode: split children vs fresh world bodies
-    float*
-        parentCenter;   // split: the parent's pre-split transform (for in-place
-    float* parentPivot; //        placement of the children)
-    float* parentVelY;
   } m_slotRb{};
   struct CollideRb
   {
@@ -248,6 +270,15 @@ private:
     RigidBody* bodies;
     bool* busy;
   } m_collideRb{};
+  // Mirrors the GPU motion state back to the CPU (one frame late) only for what
+  // the CPU still owns: resting (stamp/free gating) and the split parent's live
+  // center/velY. Not authoritative for active (placement/free are CPU-driven).
+  struct BodyStateRb
+  {
+    WGPUBuffer buffer;
+    RigidBody* bodies;
+    bool* busy;
+  } m_bodyStateRb{};
 
   WGPUComputePipeline m_genPipe = nullptr;
   WGPUComputePipeline m_waterPipe = nullptr;

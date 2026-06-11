@@ -23,6 +23,19 @@ public:
   // Rotate the orbit camera (Q/E).
   void rotate(float deltaYaw) { m_camera.addYaw(deltaYaw); }
 
+  // Zoom the orbit camera (mouse wheel).
+  void zoom(float scrollY) { m_camera.addZoom(scrollY); }
+
+  // Grow/shrink the carve (and water-spawn) radius (up/down arrows).
+  void adjustCarveRadius(float delta)
+  {
+    m_carveRadius += delta;
+    if (m_carveRadius < 1.0f)
+      m_carveRadius = 1.0f;
+    if (m_carveRadius > 24.0f)
+      m_carveRadius = 24.0f;
+  }
+
   // Queue a continuous edit at a screen pixel for the next frame: mode 1 carve,
   // mode 2 spawn water, 0 none.
   void setEdit(int mode, float mouseX, float mouseY)
@@ -54,6 +67,7 @@ private:
   int m_editMode = 0;
   float m_mouseX = 0.0f;
   float m_mouseY = 0.0f;
+  float m_carveRadius = 3.6f; // carve sphere radius; water spawn matches it
 };
 
 } // namespace sfs

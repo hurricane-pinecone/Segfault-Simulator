@@ -28,7 +28,7 @@ struct Body {
 @group(0) @binding(6) var<storage, read> labelBuf : array<u32>;
 @group(0) @binding(7) var<uniform> dbgMouse : vec4<f32>; // xy = cursor pixel
 
-const SLOTVOX : u32 = 262144u; // body grid DIM^3 (per pool slot)
+const SLOTVOX : u32 = BODYVOX; // body grid DIM^3 (per pool slot)
 
 const LIGHT : vec3<f32> = vec3<f32>(0.4, 0.9, 0.3);
 
@@ -94,11 +94,10 @@ fn marchWorld(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
         if ((v & 3u) != 0u) {
           h.hit = true;
           h.t = tVox;
-          // W1 debug: voxel-exact detached (bit 4) is bright green; the coarse
-          // brick-detached set keeps its per-component hash tint for comparison.
-          if ((v & 3u) == 1u && (v & 0x10u) != 0u) {
-            h.col = vec3<f32>(0.1, 1.0, 0.1);
-          } else if ((v & 3u) == 1u && anchor[bidx] == 0u) {
+          // Debug tint: brick-detached (anchor 0) solid is hash-coloured to flag
+          // floating/ungrounded geometry -- e.g. a toppled body stamped into the
+          // air. Normal grounded voxels shade normally.
+          if ((v & 3u) == 1u && (v & 0x10u) == 0u && anchor[bidx] == 0u) {
             h.col = hashColor(labelBuf[bidx]);
           } else {
             h.col = shade(v, vnorm);
