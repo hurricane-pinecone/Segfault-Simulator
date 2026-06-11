@@ -218,6 +218,9 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
         // thins out gradually as it rises rather than vanishing all at once.
         let life = 120u + (hash3(u32(wx), u32(wy), u32(wz), 7u) % 120u);
         voxCur[i] = vox(MAT_SMOKE, CAT_GAS) | (dir << 2u) | (life << 16u);
+      } else if (mode == 4u) {
+        // Rubble: a dynamic powder (falls + piles via the fluid CA).
+        voxCur[i] = vox(MAT_RUBBLE, CAT_LIQUID) | VOX_POWDER | (dir << 2u);
       } else {
         voxCur[i] = vox(MAT_WATER, CAT_LIQUID) | (dir << 2u);
       }

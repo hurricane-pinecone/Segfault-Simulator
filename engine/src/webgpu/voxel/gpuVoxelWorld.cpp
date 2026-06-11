@@ -190,18 +190,21 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   setMat(2, 86, 168, 80, 1.0f, 1.0f, 0.5f);   // grass
   setMat(3, 122, 92, 60, 1.0f, 1.0f, 0.5f);   // dirt
   setMat(4, 108, 110, 124, 1.0f, 2.5f, 1.0f); // stone
-  setMat(5, 101, 67, 33, 1.0f, 1.0f, 1.0f);   // trunk
-  setMat(6,
-         54,
-         110,
-         48,
-         1.0f,
-         0.08f,
-         0.15f); // leaves (very light: ~8x the voxel
-                 // count of the trunk, so density must
-                 // be low for the trunk to win the CoM)
+  setMat(
+      5, 101, 67, 33, 1.0f, 1.5f, 1.0f); // trunk (rigid -> resists crumbling)
+  setMat(
+      6,
+      54,
+      110,
+      48,
+      1.0f,
+      0.08f,
+      0.8f); // leaves: density very low (~8x the voxel count of the trunk, so
+             // it must be low for the trunk to win the CoM); rigidity HIGH so
+             // few leaves crumble -- a full canopy of leaf-rubble is too big
   setMat(7, 50, 110, 210, 0.6f, 1.0f, 0.0f); // water (translucent)
   setMat(8, 70, 72, 80, 0.5f, 0.2f, 0.0f);   // smoke (gas, light -> rises)
+  setMat(9, 96, 88, 78, 1.0f, 1.5f, 0.0f);   // rubble (powder, falls + piles)
   m_materialBuf = makeBuffer(m_device,
                              sizeof(mats),
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
@@ -323,6 +326,7 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   buildBodyExtract();
   buildBodyCollide();
   buildBodyStamp();
+  buildBodyShed();
   buildBodyStep();
   buildBodyXform();
   buildBodyPlace();
@@ -396,6 +400,8 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_bodyCollidePipe);
   if (m_bodyStampPipe)
     wgpuComputePipelineRelease(m_bodyStampPipe);
+  if (m_bodyShedPipe)
+    wgpuComputePipelineRelease(m_bodyShedPipe);
   if (m_bodyStepPipe)
     wgpuComputePipelineRelease(m_bodyStepPipe);
   if (m_bodyXformPipe)
@@ -922,6 +928,40 @@ void GpuVoxelWorld::buildBodyStamp()
   m_bodyStampBg = wgpuDeviceCreateBindGroup(m_device, &d);
 }
 
+void GpuVoxelWorld::buildBodyShed()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodyShedWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[6] = {
+      storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(
+          3, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(
+          4, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(5, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 6);
+  m_bodyShedPipe = makeComputePipeline(
+      m_device, module, "shed", makePipelineLayout(m_device, bgl));
+  for (int i = 0; i < 2; ++i)
+  {
+    WGPUBindGroupEntry be[6] = {
+        bufEntry(0, m_bodyBuf, m_bodyBytes * kMaxBodies),
+        bufEntry(1, m_voxBuf[i], m_voxBytes),
+        bufEntry(2, m_bodyXformBuf, 96 * kMaxBodies),
+        bufEntry(3, m_bodyStateBuf, 128 * kMaxBodies),
+        bufEntry(4, m_materialBuf, 32 * 256),
+        bufEntry(5, m_frameBuf, 16)};
+    WGPUBindGroupDescriptor d = {};
+    d.layout = bgl;
+    d.entryCount = 6;
+    d.entries = be;
+    m_bodyShedBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
+  }
+}
+
 void GpuVoxelWorld::buildBodyStep()
 {
   WGPUShaderModule module =
@@ -1331,7 +1371,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       wgpuComputePassEncoderSetPipeline(p, pipe);
       wgpuComputePassEncoderSetBindGroup(p, 0, bg, 0, nullptr);
       wgpuComputePassEncoderDispatchWorkgroups(
-          p, 1, 1, 1); // wg 64 >= kMaxBodies
+          p, (kMaxBodies + 63) / 64, 1, 1); // one thread per slot (wg size 64)
       wgpuComputePassEncoderEnd(p);
       wgpuComputePassEncoderRelease(p);
     };
@@ -1440,6 +1480,9 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // readback and starve the body split that the same cut needs.
   if (edit && edit->mode == 1 && m_carvedSlot < 0)
     m_fellRequested = true;
+  if (edit && edit->mode == 1)
+    m_fellHold =
+        4; // a carve may claim new body slots -> process full range briefly
 
   const auto bodyPass = [&](WGPUComputePipeline pipe,
                             WGPUBindGroup bg,
@@ -1469,13 +1512,27 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
 
   bool anyActive = false;
   bool anyResting = false;
+  int highestActive = -1;
   for (int s = 0; s < kMaxBodies; ++s)
     if (m_bodies[s].active)
     {
       anyActive = true;
+      highestActive = s;
       if (m_bodies[s].resting)
         anyResting = true;
     }
+  // Bound per-frame body work (render loop + collide/shed dispatch) to the
+  // active slots so the cap costs nothing when bodies aren't live. Hold the
+  // full range for a few frames after a carve, while just-placed bodies are
+  // active on the GPU before the CPU mirror reports them.
+  const int activeBound = (m_fellHold > 0) ? kMaxBodies : (highestActive + 1);
+  if (m_fellHold > 0)
+    --m_fellHold;
+  const float boundF = static_cast<float>(activeBound);
+  wgpuQueueWriteBuffer(
+      m_queue, m_dbgMouseBuf, 8, &boundF, 4); // dbgMouse.z = render loop bound
+  const uint32_t boundZ =
+      static_cast<uint32_t>(kBodyDim / 4) * static_cast<uint32_t>(activeBound);
 
   // Voxel-exact world fell: mark the detached set (bit 4) in a DIM^3 window
   // around the cut, label it into connected components, reduce each to a
@@ -1512,7 +1569,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     // GPU placement: reduced metadata -> motion state, in the same encoder.
     const uint32_t placeU[4] = {0u, 0u, 0u, 0u}; // isSplit = 0 (world fell)
     wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
-    bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, 1, 1, 1);
+    bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, (kMaxBodies + 63) / 64, 1, 1);
   }
 
   // Clear the collide flags every frame (in-encoder, after this frame's step
@@ -1524,7 +1581,17 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   wgpuCommandEncoderClearBuffer(enc, m_collideBuf, 0, 32u * kMaxBodies);
   if (anyActive)
     bodyPass(
-        m_bodyCollidePipe, m_bodyCollideBg, kBodyDim / 4, kBodyDim / 4, bodyZ);
+        m_bodyCollidePipe, m_bodyCollideBg, kBodyDim / 4, kBodyDim / 4, boundZ);
+
+  // Break-off: shed hard-impact body voxels (recorded by the step in state slot
+  // 6) into the current src buffer as rubble. Runs into voxCur before the fluid
+  // tick so the shed rubble falls + piles this frame.
+  if (anyActive)
+    bodyPass(m_bodyShedPipe,
+             m_bodyShedBg[m_srcIdx],
+             kBodyDim / 4,
+             kBodyDim / 4,
+             boundZ);
 
   // Each body that has finished toppling (flags.z set) stamps itself back into
   // the world; recount + re-anchor so the fallen logs read as grounded, then
@@ -1584,7 +1651,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     // for the children's in-place frame, so no CPU capture is needed.
     const uint32_t placeU[4] = {1u, parent, 0u, 0u};
     wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
-    bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, 1, 1, 1);
+    bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, (kMaxBodies + 63) / 64, 1, 1);
     m_fellRequested = false; // a body carve makes no world detachment
   }
 

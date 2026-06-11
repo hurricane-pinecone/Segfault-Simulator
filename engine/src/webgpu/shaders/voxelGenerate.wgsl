@@ -27,6 +27,23 @@ fn terrainHeight(x : i32, z : i32) -> i32 {
   let p = vec2<f32>(f32(x), f32(z)) * 0.013;
   return i32(44.0 + fbm(p) * 130.0 + fbm(p * 4.0) * 8.0); // broad foothills + fine
 }
+// 3D value noise (smooth, spatially correlated) for the canopy: unlike a per-
+// voxel hash it never leaves isolated single voxels, so leaves form connected
+// clumps instead of speckle that would each become a tiny rigid body.
+fn h3f(ix : i32, iy : i32, iz : i32) -> f32 {
+  return f32(hash3(u32(ix), u32(iy), u32(iz), 11u) & 0xFFFFu) / 65535.0;
+}
+fn vnoise3(p : vec3<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let ix = i32(i.x); let iy = i32(i.y); let iz = i32(i.z);
+  let x00 = mix(h3f(ix, iy, iz), h3f(ix + 1, iy, iz), u.x);
+  let x10 = mix(h3f(ix, iy + 1, iz), h3f(ix + 1, iy + 1, iz), u.x);
+  let x01 = mix(h3f(ix, iy, iz + 1), h3f(ix + 1, iy, iz + 1), u.x);
+  let x11 = mix(h3f(ix, iy + 1, iz + 1), h3f(ix + 1, iy + 1, iz + 1), u.x);
+  return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
+}
 fn ihash2(x : i32, z : i32) -> u32 {
   var h = u32(x) * 73856093u ^ u32(z) * 19349663u;
   h = (h ^ (h >> 15u)) * 2246822519u;
@@ -52,7 +69,14 @@ fn treeAt(x : i32, y : i32, z : i32) -> u32 {
         return vox(MAT_TRUNK, CAT_SOLID);
       }
       let ddx = x - tx; let ddy = y - topY; let ddz = z - tz;
-      if (ddx * ddx + ddy * ddy + ddz * ddz <= canopyR * canopyR) {
+      let d = sqrt(f32(ddx * ddx + ddy * ddy + ddz * ddz));
+      // Canopy radius perturbed by gentle coarse noise: an irregular, non-spherical
+      // outline instead of a plain ball. The noise slope is kept under 1 voxel per
+      // voxel, so the shape stays star-convex from the centre -- every leaf is
+      // radially contiguous to the trunk core, guaranteeing ONE connected piece and
+      // ZERO detached leaf clumps (see-through holes can't guarantee that).
+      let bump = (vnoise3(vec3<f32>(f32(x), f32(y), f32(z)) * 0.12) - 0.5) * 5.0;
+      if (d <= f32(canopyR) + bump) {
         return vox(MAT_LEAVES, CAT_SOLID);
       }
     }

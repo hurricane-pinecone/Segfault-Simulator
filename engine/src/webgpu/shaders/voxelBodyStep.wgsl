@@ -23,6 +23,7 @@ const PUSH : f32 = 0.5;        // penetration-resolve gain (fraction of depth/fr
 const MAX_W : f32 = 2.2;       // angular speed cap (keeps thin parts from tunnelling)
 const ROLL_DAMP : f32 = 0.97;  // per-grounded-frame angular damping (light, so it rolls downhill)
 const LIN_DAMP : f32 = 0.98;   // per-grounded-frame horizontal damping (light)
+const SHED_THRESHOLD : f32 = 8.0; // normal impulse above which voxels break off
 
 @compute @workgroup_size(64)
 fn stepBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -49,6 +50,8 @@ fn stepBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
   // pumps energy in and spins forever. Friction is Coulomb-clamped.
   let cnt = contact[s * 8 + 0];
   let grounded = cnt > 0;
+  var shedImpact = 0.0;             // hard-impact magnitude for the break-off pass
+  var shedC = vec3<f32>(0.0);       // contact point of that impact
   if (grounded) {
     let inv = 1.0 / f32(cnt);
     let p = vec3<f32>(f32(contact[s * 8 + 1]),
@@ -69,6 +72,7 @@ fn stepBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
       let jn = -(1.0 + RESTITUTION) * vn / (1.0 + dot(rxn, rxn) / inertia);
       linVel = linVel + jn * n;
       angVel = angVel + cross(r, jn * n) / inertia;
+      if (jn > SHED_THRESHOLD) { shedImpact = jn; shedC = p; } // hard hit -> break off
       // Friction opposes the tangential velocity, clamped to the friction cone.
       let vt = vp - vn * n;
       let vtl = length(vt);
@@ -120,4 +124,5 @@ fn stepBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
   state[base + 2u] = vec4<f32>(linVel, 0.0);
   state[base + 3u] = q;
   state[base + 4u] = vec4<f32>(angVel, 0.0);
+  state[base + 6u] = vec4<f32>(shedImpact, shedC.x, shedC.y, shedC.z); // break-off request
 }

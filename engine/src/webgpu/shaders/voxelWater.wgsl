@@ -31,6 +31,31 @@ fn water(@builtin(local_invocation_id) lloc : vec3<u32>,
     let ty = v & 3u;
     let isGas = ty == CAT_GAS;
     if (ty != CAT_LIQUID && !isGas) { continue; }
+
+    // Powder (rubble): falls straight, else slides one cell diagonally DOWN to
+    // pile at an angle, else rests. (Liquid category + powder flag.)
+    if (ty == CAT_LIQUID && (v & VOX_POWDER) != 0u) {
+      var movedP = false;
+      if (srcType(x, y - 1, z) == 0u) {
+        let r = atomicCompareExchangeWeak(&dst[vIndex(x, y - 1, z)], 0u, v);
+        if (r.exchanged) { movedP = true; }
+      }
+      if (!movedP) {
+        let pk = hash3(u32(x), u32(y), u32(z), frame.x) % 4u;
+        for (var k = 0u; k < 4u; k = k + 1u) {
+          let d = (pk + k) % 4u;
+          let nx = nbx(x, d);
+          let nz = nbz(z, d);
+          if (srcType(nx, y - 1, nz) == 0u) {
+            let r2 = atomicCompareExchangeWeak(&dst[vIndex(nx, y - 1, nz)], 0u, v);
+            if (r2.exchanged) { movedP = true; break; }
+          }
+        }
+      }
+      if (!movedP) { atomicStore(&dst[vIndex(x, y, z)], v); } // piled -> rest
+      continue;
+    }
+
     let dy = select(-1, 1, isGas); // gas rises, liquid falls
 
     // Gas dissipates: decrement its lifetime (bits 16-23) each tick; at 0 it is

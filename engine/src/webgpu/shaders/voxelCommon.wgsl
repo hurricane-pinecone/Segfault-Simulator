@@ -9,7 +9,7 @@
 const WG : i32 = 512;
 const BG : i32 = 64;
 const SEA : i32 = 96;
-const MAXB : u32 = 32u; // rigid-body pool size (must match kMaxBodies)
+const MAXB : u32 = 256u; // rigid-body pool size (must match kMaxBodies)
 const BODYDIM : i32 = 96;       // rigid-body / fell-window grid edge (== kBodyDim)
 const BODYVOX : u32 = 884736u;  // BODYDIM^3, one slot's grid
 struct Brick { occupancy : u32, pointer : u32 };
@@ -35,6 +35,11 @@ const MAT_TRUNK : u32 = 5u;
 const MAT_LEAVES : u32 = 6u;
 const MAT_WATER : u32 = 7u;
 const MAT_SMOKE : u32 = 8u;
+const MAT_RUBBLE : u32 = 9u;
+// Powder flag (bit 5): a dynamic voxel (liquid category, so it's cleaned/ping-
+// ponged) that the fluid CA moves like a powder -- falls + slides diagonally down
+// to pile -- instead of flowing flat. (A real 3-bit category is a future refactor.)
+const VOX_POWDER : u32 = 0x20u;
 fn matId(v : u32) -> u32 { return (v >> 8u) & 0xFFu; }
 fn vox(matId : u32, cat : u32) -> u32 { return cat | (matId << 8u); }
 fn hash3(x : u32, y : u32, z : u32, f : u32) -> u32 {

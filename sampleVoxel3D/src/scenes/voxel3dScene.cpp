@@ -32,6 +32,8 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
   if (kb.keyHeld(
           sfs::Key::F)) // hold F to emit smoke at the cursor (like water)
     m_editMode = 3;
+  if (kb.keyHeld(sfs::Key::R)) // hold R to drop rubble (powder) at the cursor
+    m_editMode = 4;
   const glm::vec2 p = mouse.getPosition();
   m_mouseX = p.x;
   m_mouseY = p.y;

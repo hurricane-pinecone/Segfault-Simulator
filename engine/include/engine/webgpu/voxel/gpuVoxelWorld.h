@@ -29,7 +29,9 @@ public:
                                       // edge (== BODYDIM in voxelCommon.wgsl);
                                       // big enough to hold a whole tree
   static constexpr int kMaxBodies =
-      32; // rigid-body pool size (== MAXB in voxelCommon.wgsl)
+      256; // rigid-body pool size (== MAXB in voxelCommon.wgsl). Each slot is a
+           // kBodyDim^3 grid (~3.5MB), so this buffer is kMaxBodies * 3.5MB;
+           // the render also loops every slot per pixel. 512 -> 1.8GB.
 
   struct Brick
   {
@@ -113,6 +115,7 @@ private:
   void buildBodyExtract();
   void buildBodyCollide();
   void buildBodyStamp();
+  void buildBodyShed();
   void buildBodyStep();
   void buildBodyXform();
   void buildBodyPlace();
@@ -184,6 +187,9 @@ private:
   WGPUComputePipeline m_bodyXformPipe = nullptr;
   WGPUBindGroup m_bodyStepBg = nullptr;
   WGPUBindGroup m_bodyXformBg = nullptr;
+  // Break-off: hard-impact body voxels shed into the world as rubble (powder).
+  WGPUComputePipeline m_bodyShedPipe = nullptr;
+  WGPUBindGroup m_bodyShedBg[2] = {nullptr, nullptr}; // per src buffer
   // GPU placement: reduced slot metadata -> initial motion state (replaces the
   // CPU onSlotMetaMapped math; split children read the parent's live state).
   WGPUComputePipeline m_bodyPlacePipe = nullptr;
@@ -256,6 +262,9 @@ private:
   RigidBody m_bodies[kMaxBodies];
   bool m_fellRequested =
       false; // carving this frame -> auto-fell what it severed
+  int m_fellHold =
+      0; // frames to process the full slot range after a carve (new
+         // bodies are GPU-active before the CPU mirror catches up)
   bool m_bodyMapBusy = false;
   bool m_bodyPendingResolve = false;
   bool m_collideMapBusy = false;

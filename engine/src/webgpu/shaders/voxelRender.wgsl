@@ -205,7 +205,10 @@ fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
   var b : Hit;
   b.hit = false;
   b.t = 1.0e30;
-  for (var s = 0u; s < MAXB; s = s + 1u) {
+  // Only the live slots (dbgMouse.z = active body count) -- empty slots cost
+  // nothing, so the pool cap doesn't tax every pixel.
+  let bound = u32(dbgMouse.z);
+  for (var s = 0u; s < bound; s = s + 1u) {
     let bs = marchBody(ro, rd, s);
     if (bs.hit && bs.t < b.t) { b = bs; }
   }
