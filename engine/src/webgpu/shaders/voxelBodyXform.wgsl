@@ -5,6 +5,7 @@
 // State stride is 8 vec4: [0]=(flags,timer,_,_) [1]=center [3]=quat [5]=com.
 @group(0) @binding(0) var<storage, read> state : array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read_write> xform : array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> desc : array<u32>; // per-slot (offset, dim)
 
 @compute @workgroup_size(64)
 fn buildXform(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -30,13 +31,15 @@ fn buildXform(@builtin(global_invocation_id) gid : vec3<u32>) {
   let m22 = 1.0 - 2.0 * (x * x + y * y);
 
   let base = s * 6u;
+  let off = desc[s * 2u + 0u];      // body's base offset into the voxel pool
+  let dm = desc[s * 2u + 1u];       // body's grid dim (size class)
   xform[base + 0u] = vec4<f32>(bitcast<f32>(act),
-                               bitcast<f32>(u32(BODYDIM)),
+                               bitcast<f32>(dm),
                                bitcast<f32>(bake),
                                bitcast<f32>(act));
   xform[base + 1u] = vec4<f32>(m00, m01, m02, 0.0);
   xform[base + 2u] = vec4<f32>(m10, m11, m12, 0.0);
   xform[base + 3u] = vec4<f32>(m20, m21, m22, 0.0);
   xform[base + 4u] = vec4<f32>(center, 0.0);
-  xform[base + 5u] = vec4<f32>(com, 0.0);
+  xform[base + 5u] = vec4<f32>(com, bitcast<f32>(off)); // pivot.w = pool offset
 }

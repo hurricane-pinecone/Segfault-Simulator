@@ -34,7 +34,8 @@ struct March { found : bool, voxel : vec3<i32>, prev : vec3<i32>, t : f32 };
 
 fn bSolid(slot : u32, x : i32, y : i32, z : i32, dim : i32) -> bool {
   if (x < 0 || y < 0 || z < 0 || x >= dim || y >= dim || z >= dim) { return false; }
-  return (bodyVox[slot * SLOTVOX + u32(x + y * dim + z * dim * dim)] & 3u) != 0u;
+  let off = bitcast<u32>(bodies[slot].pivot.w);
+  return (bodyVox[off + u32(x + y * dim + z * dim * dim)] & 3u) != 0u;
 }
 
 // A thin body part (a trunk) is a tiny target, so count the ray as hitting it if
@@ -193,7 +194,7 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
       if (dx * dx + dy * dy + dz * dz > R * R) { continue; }
       let lx = center.x + dx; let ly = center.y + dy; let lz = center.z + dz;
       if (lx < 0 || ly < 0 || lz < 0 || lx >= bdim || ly >= bdim || lz >= bdim) { continue; }
-      bodyVox[hitSlot * SLOTVOX + u32(lx + ly * bdim + lz * bdim * bdim)] = 0u;
+      bodyVox[bitcast<u32>(bodies[hitSlot].pivot.w) + u32(lx + ly * bdim + lz * bdim * bdim)] = 0u;
     }
     return;
   }

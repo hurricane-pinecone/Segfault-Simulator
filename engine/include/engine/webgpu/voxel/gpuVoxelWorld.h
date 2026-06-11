@@ -29,9 +29,15 @@ public:
                                       // edge (== BODYDIM in voxelCommon.wgsl);
                                       // big enough to hold a whole tree
   static constexpr int kMaxBodies =
-      256; // rigid-body pool size (== MAXB in voxelCommon.wgsl). Each slot is a
-           // kBodyDim^3 grid (~3.5MB), so this buffer is kMaxBodies * 3.5MB;
-           // the render also loops every slot per pixel. 512 -> 1.8GB.
+      256; // rigid-body pool size (== MAXB in voxelCommon.wgsl). Logical slots;
+           // physical storage is size-classed (below).
+
+  // Body voxel pool. Single 96^3 class for now (size classes need per-class
+  // strides in extract/split/label, which is a follow-up).
+  static constexpr uint64_t kBodyPoolBytes = static_cast<uint64_t>(kMaxBodies) *
+                                             kBodyDim * kBodyDim * kBodyDim *
+                                             sizeof(uint32_t);
+  static constexpr uint64_t kClassFreeU32 = kMaxBodies + 1; // one free-list
 
   struct Brick
   {
@@ -119,6 +125,8 @@ private:
   void buildBodyStep();
   void buildBodyXform();
   void buildBodyPlace();
+  void buildBodyPlaceStorage();
+  void buildBodyFreeStorage();
   void buildBodyLabel();
   void buildBodySplit();
   void buildWindowAnchor();
@@ -152,10 +160,16 @@ private:
   // Detached rigid bodies: a pool of kMaxBodies kBodyDim^3 local voxel grids in
   // one buffer (slot s at offset s*kBodyDim^3), composited by the render. The
   // labeled components are compacted into slots, one falling chunk per slot.
-  uint64_t m_bodyBytes = 0;                // one slot's grid
-  WGPUBuffer m_bodyBuf = nullptr;          // kMaxBodies stacked grids
-  WGPUBuffer m_bodyXformBuf = nullptr;     // array<Body, kMaxBodies>
-  WGPUBuffer m_slotMetaBuf = nullptr;      // per-slot AABB/count/CoM/footprint
+  uint64_t m_bodyBytes = 0;       // one slot's grid
+  WGPUBuffer m_bodyBuf = nullptr; // kMaxBodies stacked grids
+  // Size-class body storage (Stage B/C2): each slot's voxels live in a pool
+  // block sized to its class; a descriptor holds the (offset, dim), blocks come
+  // from a free-list. A small body costs ~its class size instead of a full
+  // 96^3.
+  WGPUBuffer m_bodyDescBuf = nullptr;  // kMaxBodies * (offset, dim)
+  WGPUBuffer m_classFreeBuf = nullptr; // [0]=free count, [1..]=free block ids
+  WGPUBuffer m_bodyXformBuf = nullptr; // array<Body, kMaxBodies>
+  WGPUBuffer m_slotMetaBuf = nullptr;  // per-slot AABB/count/CoM/footprint
   WGPUBuffer m_slotMetaReadback = nullptr; // mapped to place the bodies
   WGPUBuffer m_rootSlotBuf = nullptr;      // per-brick component-root -> slot
   WGPUBuffer m_slotCountBuf = nullptr;     // atomic split-root ordering counter
@@ -194,7 +208,13 @@ private:
   // CPU onSlotMetaMapped math; split children read the parent's live state).
   WGPUComputePipeline m_bodyPlacePipe = nullptr;
   WGPUBindGroup m_bodyPlaceBg = nullptr;
-  WGPUBuffer m_placeUBuf = nullptr; // (isSplit, parentSlot)
+  WGPUComputePipeline m_bodyPlaceStoragePipe =
+      nullptr; // size-class block alloc
+  WGPUBindGroup m_bodyPlaceStorageBg = nullptr;
+  WGPUComputePipeline m_bodyFreeStoragePipe = nullptr; // returns blocks on bake
+  WGPUBindGroup m_bodyFreeStorageBg = nullptr;
+  WGPUBuffer m_freeReqBuf = nullptr; // [0]=count, [1..]=slots freed this frame
+  WGPUBuffer m_placeUBuf = nullptr;  // (isSplit, parentSlot)
   float m_stepDt = 0.016f;
   bool m_bodyStateMapBusy = false;
   bool m_bodyStatePendingResolve = false;

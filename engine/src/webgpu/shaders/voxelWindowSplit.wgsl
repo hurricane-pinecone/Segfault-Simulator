@@ -17,6 +17,7 @@
 @group(0) @binding(8) var<storage, read_write> occupied : array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read> materials : array<Material>;
 @group(0) @binding(10) var<storage, read_write> bodyVox : array<u32>;
+@group(0) @binding(11) var<storage, read> desc : array<u32>; // per-slot (offset, dim)
 
 // Material density as a fixed-point weight (>=1) for the mass-weighted CoM and
 // second moment, so light voxels (leaves) barely contribute to either. The scale
@@ -128,10 +129,11 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let lx = i32(gid.x);
   let ly = i32(gid.y);
   let lz = i32(gid.z % u32(DIM));
-  if (lx >= DIM || ly >= DIM) { return; }
+  let bdim = i32(desc[slot * 2u + 1u]); // body's class dim (block stride)
+  if (lx >= bdim || ly >= bdim || lz >= bdim) { return; }
   let base = slot * 16u;
   if (atomicLoad(&slotMeta[base + 6u]) == 0) { return; } // inactive slot
-  let bodyIdx = slot * SLOTVOX + u32(lx + ly * DIM + lz * DIM * DIM);
+  let bodyIdx = desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim);
 
   let wx = atomicLoad(&slotMeta[base + 0u]) + lx;
   let wy = atomicLoad(&slotMeta[base + 1u]) + ly;

@@ -13,12 +13,19 @@
 @group(0) @binding(5) var<storage, read_write> slotCount : array<atomic<u32>>;
 @group(0) @binding(6) var<uniform> parentU : vec4<u32>; // x = parent slot
 @group(0) @binding(7) var<storage, read> materials : array<Material>;
+@group(0) @binding(8) var<storage, read> desc : array<u32>; // per-slot (offset, dim)
 
 const DIM : i32 = BODYDIM;
 const SLOTVOX : u32 = BODYVOX;
 const SENTINEL : u32 = 0xFFFFFFFFu;
 
 fn lIdx(x : i32, y : i32, z : i32) -> u32 { return u32(x + y * DIM + z * DIM * DIM); }
+// Body-voxel offset for a slot, using the PARENT's class stride (parent + all
+// children share the parent's coordinate frame). Label/rootSlot stay 96^3.
+fn frameOff(slotIdx : u32, x : i32, y : i32, z : i32) -> u32 {
+  let pd = i32(desc[parentU.x * 2u + 1u]);
+  return desc[slotIdx * 2u] + u32(x + y * pd + z * pd * pd);
+}
 
 // Atomically grab a free body slot (GPU owns allocation). SENTINEL = pool full.
 fn claimSlot() -> u32 {
@@ -69,7 +76,7 @@ fn reduce(@builtin(global_invocation_id) gid : vec3<u32>) {
   atomicMax(&slotMeta[base + 5u], z + 1);
   atomicAdd(&slotMeta[base + 6u], 1);
   // Mass-weighted CoM + second moment (weight each voxel by material density).
-  let d = max(1, i32(materials[matId(bodyVox[parentU.x * SLOTVOX + li])].density * 16.0));
+  let d = max(1, i32(materials[matId(bodyVox[frameOff(parentU.x, x, y, z)])].density * 16.0));
   atomicAdd(&slotMeta[base + 7u], x * d);
   atomicAdd(&slotMeta[base + 8u], y * d);
   atomicAdd(&slotMeta[base + 9u], z * d);
@@ -116,7 +123,7 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let li = lIdx(lx, ly, lz);
   let lab = bodyLabel[li];
   let mine = lab != SENTINEL && rootSlot[lab] == slot;
-  bodyVox[slot * SLOTVOX + li] = select(0u, bodyVox[parent * SLOTVOX + li], mine);
+  bodyVox[frameOff(slot, lx, ly, lz)] = select(0u, bodyVox[frameOff(parent, lx, ly, lz)], mine);
 }
 
 // Clear the parent's cells that moved into a child (runs after extract has copied
@@ -130,5 +137,5 @@ fn clearParent(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (lab == SENTINEL) { return; }
   let slot = rootSlot[lab];
   let parent = parentU.x;
-  if (slot < MAXB && slot != parent) { bodyVox[parent * SLOTVOX + li] = 0u; }
+  if (slot < MAXB && slot != parent) { bodyVox[frameOff(parent, x, y, z)] = 0u; }
 }

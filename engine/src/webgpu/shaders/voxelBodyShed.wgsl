@@ -44,7 +44,8 @@ fn shed(@builtin(global_invocation_id) gid : vec3<u32>) {
   let ly = i32(gid.y);
   let lz = i32(gid.z % u32(BODYDIM));
   if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let li = slot * SLOTVOX + u32(lx + ly * dim + lz * dim * dim);
+  let off = bitcast<u32>(body.pivot.w); // base offset into the voxel pool
+  let li = off + u32(lx + ly * dim + lz * dim * dim);
   let v = bodyVox[li];
   if ((v & 3u) != 1u) { return; } // solid body voxel
 

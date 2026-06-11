@@ -15,6 +15,7 @@ struct Body {
 @group(0) @binding(1) var<storage, read> voxels : array<u32>;
 @group(0) @binding(2) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(3) var<storage, read_write> contact : array<atomic<i32>>;
+@group(0) @binding(4) var<storage, read> bricks : array<Brick>; // world brick occupancy
 
 const SLOTVOX : u32 = BODYVOX;
 
@@ -26,10 +27,46 @@ fn wSolid(x : i32, y : i32, z : i32) -> bool {
   if (y >= WG) { return false; }
   return (voxels[vIndex(x, y, z)] & 3u) == 1u;
 }
+fn brickOcc(bx : i32, by : i32, bz : i32) -> u32 {
+  if (bx < 0 || by < 0 || bz < 0 || bx >= BG || by >= BG || bz >= BG) { return 0u; }
+  return bricks[u32(bx + by * BG + bz * BG * BG)].occupancy;
+}
+
+// Broad-phase: 1 if this workgroup's region is near any solid world this frame.
+var<workgroup> wgNear : u32;
 
 @compute @workgroup_size(4, 4, 4)
-fn collide(@builtin(global_invocation_id) gid : vec3<u32>) {
+fn collide(@builtin(global_invocation_id) gid : vec3<u32>,
+           @builtin(local_invocation_index) lidx : u32) {
   let slot = gid.z / u32(BODYDIM);
+  // Thread 0 tests whether this 4^3 region sits near solid world (its world brick
+  // neighbourhood is non-empty). If not, the whole workgroup skips the per-voxel
+  // world tests -- airborne regions cost a handful of cached brick reads instead
+  // of 64 ray transforms + lookups. Done before any early-return so the barrier
+  // stays uniform.
+  if (lidx == 0u) {
+    wgNear = 0u;
+    if (slot < MAXB && bodies[slot].flags.x != 0u) {
+      let body = bodies[slot];
+      let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
+      let Rlw = transpose(R);
+      let Lc = vec3<f32>(f32(gid.x) + 2.0,
+                         f32(gid.y) + 2.0,
+                         f32(gid.z % u32(BODYDIM)) + 2.0);
+      let wc = Rlw * (Lc - body.pivot.xyz) + body.center.xyz;
+      let wb = vec3<i32>(floor(wc)) / 8;
+      for (var dz = -1; dz <= 1; dz = dz + 1) {
+        for (var dy = -1; dy <= 1; dy = dy + 1) {
+          for (var dx = -1; dx <= 1; dx = dx + 1) {
+            if (brickOcc(wb.x + dx, wb.y + dy, wb.z + dz) > 0u) { wgNear = 1u; }
+          }
+        }
+      }
+    }
+  }
+  workgroupBarrier();
+  if (wgNear == 0u) { return; } // uniform: region far from world -> skip
+
   if (slot >= MAXB) { return; }
   let body = bodies[slot];
   if (body.flags.x == 0u) { return; }
@@ -38,7 +75,8 @@ fn collide(@builtin(global_invocation_id) gid : vec3<u32>) {
   let ly = i32(gid.y);
   let lz = i32(gid.z % u32(BODYDIM));
   if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let v = bodyVox[slot * SLOTVOX + u32(lx + ly * dim + lz * dim * dim)];
+  let off = bitcast<u32>(body.pivot.w); // base offset into the voxel pool
+  let v = bodyVox[off + u32(lx + ly * dim + lz * dim * dim)];
   if ((v & 3u) != 1u) { return; }
 
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);

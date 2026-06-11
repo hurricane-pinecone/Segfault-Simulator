@@ -139,6 +139,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   let body = bodies[slot];
   if (body.flags.x == 0u) { return h; }
   let dim = i32(body.flags.y);
+  let off = bitcast<u32>(body.pivot.w); // body's base offset into the voxel pool
 
   // World ray -> body-local: rotate about the pivot (invRot is world->local).
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
@@ -166,7 +167,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   for (var i = 0; i < 320; i = i + 1) {
     if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 ||
         voxel.x >= dim || voxel.y >= dim || voxel.z >= dim) { break; }
-    let v = bodyVox[slot * SLOTVOX + u32(voxel.x + voxel.y * dim + voxel.z * dim * dim)];
+    let v = bodyVox[off + u32(voxel.x + voxel.y * dim + voxel.z * dim * dim)];
     if ((v & 3u) != 0u) {
       h.hit = true;
       h.t = tVox;
