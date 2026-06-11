@@ -22,13 +22,17 @@ fn placeStorage(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (s >= MAXB) { return; }
   if (placeU.x != 0u && s == placeU.y) { return; } // split parent keeps its block
   let count = slotMeta[s * 16u + 6u];
-  if (count <= 0) { return; } // no component placed here this op
+  if (count <= 0) { return; } // no voxels at all here this op
   // Sub-threshold component: no body, no storage. Release the slot the register
   // pass claimed so it is reusable; the world-fell extract turns its voxels into
-  // powder. WORLD FELL ONLY (placeU.x == 0): the body-SPLIT extract has no cull
-  // path, so culling a split child here would leave it allocated-but-unbacked and
-  // corrupt another body's block.
-  if (placeU.x == 0u && count < MIN_BODY_VOXELS) { occupied[s] = 0u; return; }
+  // powder. Cull on the STRUCTURAL count ([14]) so a leaf-only clump (0 structural)
+  // is released here, not leaked. WORLD FELL ONLY (placeU.x == 0): the body-SPLIT
+  // extract has no cull path, so culling a split child here would leave it
+  // allocated-but-unbacked and corrupt another body's block.
+  if (placeU.x == 0u && slotMeta[s * 16u + 14u] < MIN_BODY_VOXELS) {
+    occupied[s] = 0u;
+    return;
+  }
   let blk = popBlock();
   if (blk == 0xFFFFFFFFu) { return; } // pool full -> keep prior descriptor
   desc[s * 2u + 0u] = blk * BODYVOX;

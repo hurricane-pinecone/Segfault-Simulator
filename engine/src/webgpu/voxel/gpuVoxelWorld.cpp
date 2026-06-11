@@ -1393,14 +1393,18 @@ void GpuVoxelWorld::buildWindowSplit()
                         bufEntry(6, m_rootSlotBuf, m_bodyBytes),
                         bufEntry(8, m_slotOccupiedBuf, 4 * kMaxBodies)});
 
-  auto rd = pass({storageEntry(3, S, RO),
+  auto rd = pass({storageEntry(0, S, RW), // vox0 (read material to skip leaves)
+                  storageEntry(2, S, RO), // bricks (for wIdx)
+                  storageEntry(3, S, RO),
                   storageEntry(4, S, RO),
                   storageEntry(6, S, RW),
                   storageEntry(7, S, RW)},
                  "reduce");
   m_winReducePipe = rd.first;
   m_winReduceBg = bg(rd.second,
-                     {bufEntry(3, m_carveHitBuf, 32),
+                     {bufEntry(0, m_voxBuf[0], m_voxBytes),
+                      bufEntry(2, m_brickBuf, m_brickBytes),
+                      bufEntry(3, m_carveHitBuf, 32),
                       bufEntry(4, m_windowBuf[0], labelBytes),
                       bufEntry(6, m_rootSlotBuf, m_bodyBytes),
                       bufEntry(7, m_slotMetaBuf, metaBytes)});

@@ -113,13 +113,22 @@ fn reduce(@builtin(global_invocation_id) gid : vec3<u32>) {
   let o = winOrigin();
   let wx = o.x + lx; let wy = o.y + ly; let wz = o.z + lz;
   let base = slot * 16u;
+  // AABB covers ALL detached voxels (so the extract's body-grid iteration reaches
+  // every voxel, incl. leaves it turns to powder). The size COUNT, which the cull
+  // threshold tests, includes only STRUCTURAL voxels -- leaves are flimsy debris,
+  // not rigid-body material, so a leaf-only clump counts 0 and is culled away
+  // instead of spawning a body.
   atomicMin(&slotMeta[base + 0u], wx);
   atomicMin(&slotMeta[base + 1u], wy);
   atomicMin(&slotMeta[base + 2u], wz);
   atomicMax(&slotMeta[base + 3u], wx + 1);
   atomicMax(&slotMeta[base + 4u], wy + 1);
   atomicMax(&slotMeta[base + 5u], wz + 1);
-  atomicAdd(&slotMeta[base + 6u], 1);
+  atomicAdd(&slotMeta[base + 6u], 1); // [6] total voxel count: is-component + iterate
+  let v = vox0[wIdx(wx, wy, wz)];
+  if (matId(v) != MAT_LEAVES) {
+    atomicAdd(&slotMeta[base + 14u], 1); // [14] structural count: the cull threshold
+  }
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -131,14 +140,13 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let lz = i32(gid.z % u32(DIM));
   let base = slot * 16u;
   let count = atomicLoad(&slotMeta[base + 6u]);
-  if (count == 0) { return; } // inactive slot
-  // Below the minimum body size this component is not worth a rigid body: it is
-  // severed from the ground, so its voxels crumble to falling powder rather than
-  // spawn a swarm of tiny bodies (lag) or vanish. Such a slot owns no storage
-  // block, so iterate the full window stride, touch only the world, never bodyVox.
-  // vox0 is the current src (bind group is src-indexed); powder must land in src,
-  // so write it there and clear dst (vox1) -- writing both would duplicate it.
-  let cull = count < MIN_BODY_VOXELS;
+  if (count == 0) { return; } // inactive slot (no voxels at all)
+  // Cull on STRUCTURAL voxel count ([14]), not total: a leaf-only clump has 0
+  // structural voxels -> culled to powder, never a body. A culled slot owns no
+  // storage block, so iterate the full window stride, touch only the world, never
+  // bodyVox. vox0 is the current src (bind group is src-indexed); powder must land
+  // in src, so write it there and clear dst (vox1) -- writing both would duplicate.
+  let cull = atomicLoad(&slotMeta[base + 14u]) < MIN_BODY_VOXELS;
   let bdim = select(i32(desc[slot * 2u + 1u]), DIM, cull);
   if (lx >= bdim || ly >= bdim || lz >= bdim) { return; }
 
@@ -164,6 +172,17 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
     return;
   }
   let bodyIdx = desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim);
+  // Leaves are debris, not rigid-body material: a mine LEAF crumbles to powder
+  // (like the cull path) and is left OUT of the body, so a felled tree becomes a
+  // structural log body + a cloud of falling leaf debris -- not a swarm of leaf
+  // RBs. Structural voxels (wood) extract into the body as before.
+  if (mine && matId(v) == MAT_LEAVES) {
+    let vi = wIdx(wx, wy, wz);
+    vox0[vi] = vox(matId(v), CAT_LIQUID) | VOX_POWDER; // src: falling debris
+    vox1[vi] = 0u;                                     // dst: cleared
+    bodyVox[bodyIdx] = 0u;                             // not part of the body
+    return;
+  }
   if (mine) {
     bodyVox[bodyIdx] = v & 0xFFFFFFEFu; // strip the detached flag in the body
     let vi = wIdx(wx, wy, wz);
