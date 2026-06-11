@@ -28,6 +28,7 @@ struct Body {
 @group(0) @binding(6) var<storage, read> labelBuf : array<u32>;
 @group(0) @binding(7) var<uniform> dbgMouse : vec4<f32>; // xy = cursor pixel
 @group(0) @binding(8) var<storage, read> materials : array<Material>;
+@group(0) @binding(9) var<storage, read> bodyArgs : array<u32>; // [3] = active body bound
 
 const SLOTVOX : u32 = BODYVOX; // body grid DIM^3 (per pool slot)
 
@@ -206,9 +207,12 @@ fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
   var b : Hit;
   b.hit = false;
   b.t = 1.0e30;
-  // Only the live slots (dbgMouse.z = active body count) -- empty slots cost
-  // nothing, so the pool cap doesn't tax every pixel.
-  let bound = u32(dbgMouse.z);
+  // Only the live slots (bodyArgs[3] = highest active slot + 1, written by the
+  // prep pass) -- empty slots cost nothing, so the pool cap doesn't tax every
+  // pixel. Read from a storage buffer, not the dbgMouse uniform: a compute
+  // storage write feeding a uniform read of the same buffer is unreliable across
+  // backends and silently leaves the bound at 0 (every body invisible).
+  let bound = bodyArgs[3];
   for (var s = 0u; s < bound; s = s + 1u) {
     let bs = marchBody(ro, rd, s);
     if (bs.hit && bs.t < b.t) { b = bs; }

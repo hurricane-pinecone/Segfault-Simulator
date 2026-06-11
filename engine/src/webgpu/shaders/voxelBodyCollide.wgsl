@@ -24,7 +24,12 @@ fn vIndex(x : i32, y : i32, z : i32) -> u32 {
   return u32(bi) * 512u + u32((x % 8) + (y % 8) * 8 + (z % 8) * 64);
 }
 fn wSolid(x : i32, y : i32, z : i32) -> bool {
-  if (y >= WG) { return false; }
+  if (y >= WG) { return false; } // open sky above
+  // Out-of-bounds (horizontal edges + floor) reads as solid -- it must NOT index
+  // the voxel buffer, where garbage flipped the contact normal sideways and flung
+  // edge-bodies off the world (they then fell through). Walling the box also keeps
+  // a body felled at the boundary resting instead of sliding out.
+  if (x < 0 || x >= WG || z < 0 || z >= WG || y < 0) { return true; }
   return (voxels[vIndex(x, y, z)] & 3u) == 1u;
 }
 fn brickOcc(bx : i32, by : i32, bz : i32) -> u32 {

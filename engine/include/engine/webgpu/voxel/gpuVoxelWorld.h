@@ -32,12 +32,12 @@ public:
       256; // rigid-body pool size (== MAXB in voxelCommon.wgsl). Logical slots;
            // physical storage is size-classed (below).
 
-  // Body voxel pool. Single 96^3 class for now (size classes need per-class
-  // strides in extract/split/label, which is a follow-up).
+  // Body voxel pool. Single 96^3 class (size classes reverted -- the
+  // multi-class allocator had a "tree doesn't fall" bug still to debug).
   static constexpr uint64_t kBodyPoolBytes = static_cast<uint64_t>(kMaxBodies) *
                                              kBodyDim * kBodyDim * kBodyDim *
                                              sizeof(uint32_t);
-  static constexpr uint64_t kClassFreeU32 = kMaxBodies + 1; // one free-list
+  static constexpr uint64_t kClassFreeU32 = kMaxBodies + 1;
 
   struct Brick
   {
@@ -127,6 +127,8 @@ private:
   void buildBodyPlace();
   void buildBodyPlaceStorage();
   void buildBodyFreeStorage();
+  void buildBodyReap();
+  void buildBodyPrep();
   void buildBodyLabel();
   void buildBodySplit();
   void buildWindowAnchor();
@@ -214,7 +216,17 @@ private:
   WGPUComputePipeline m_bodyFreeStoragePipe = nullptr; // returns blocks on bake
   WGPUBindGroup m_bodyFreeStorageBg = nullptr;
   WGPUBuffer m_freeReqBuf = nullptr; // [0]=count, [1..]=slots freed this frame
-  WGPUBuffer m_placeUBuf = nullptr;  // (isSplit, parentSlot)
+  // GPU reap: frees baked slots (block + occupancy + flag) each frame,
+  // replacing the CPU resting loop.
+  WGPUComputePipeline m_bodyReapPipe = nullptr;
+  WGPUBindGroup m_bodyReapBg = nullptr;
+  WGPUBuffer m_placeUBuf = nullptr; // (isSplit, parentSlot)
+  // GPU-driven per-frame body dispatch sizing (replaces the CPU mirror's
+  // activeBound). The prep pass scans state flags -> activeHigh, writes the
+  // indirect dispatch args + the render's dbgMouse.z bound.
+  WGPUComputePipeline m_bodyPrepPipe = nullptr;
+  WGPUBindGroup m_bodyPrepBg = nullptr;
+  WGPUBuffer m_bodyArgsBuf = nullptr; // indirect dispatch args (x,y,z)
   float m_stepDt = 0.016f;
   bool m_bodyStateMapBusy = false;
   bool m_bodyStatePendingResolve = false;
@@ -261,7 +273,7 @@ private:
   WGPUBindGroup m_winLabelFloodBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_winRegisterBg = nullptr;
   WGPUBindGroup m_winReduceBg = nullptr;
-  WGPUBindGroup m_winExtractBg = nullptr;
+  WGPUBindGroup m_winExtractBg[2] = {nullptr, nullptr}; // [srcIdx]: vox0 = src
   bool m_pendingIsSplit = false; // the pending slotMeta readback is a split
   float m_splitParentCenter[3] = {0.0f, 0.0f, 0.0f};
   float m_splitParentPivot[3] = {0.0f, 0.0f, 0.0f};

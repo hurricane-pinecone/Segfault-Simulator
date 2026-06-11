@@ -12,6 +12,10 @@ const SEA : i32 = 96;
 const MAXB : u32 = 256u; // rigid-body pool size (must match kMaxBodies)
 const BODYDIM : i32 = 96;       // rigid-body / fell-window grid edge (== kBodyDim)
 const BODYVOX : u32 = 884736u;  // BODYDIM^3, one slot's grid
+// A detached component smaller than this many voxels is NOT spawned as a rigid
+// body -- it stays put as ordinary world solid. Caps the body-count explosion
+// when a shed-holed canopy floods into a swarm of tiny disconnected leaf clumps.
+const MIN_BODY_VOXELS : i32 = 32;
 // Sparse body storage: a body's 96^3 grid is a 12^3 grid of 8^3 bricks; each
 // brick cell holds a pointer into a shared brick-voxel pool (512 voxels/brick) or
 // BRICK_EMPTY. A body's brick cells start at slot*BODYBRICKS in the brick grid.

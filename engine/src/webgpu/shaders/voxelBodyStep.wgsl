@@ -16,6 +16,7 @@
 
 const G : f32 = 80.0;          // gravity
 const REST_TIME : f32 = 0.6;   // grounded+still seconds before baking to terrain
+const MAX_LIFE : f32 = 6.0;    // hard cap: any body bakes after this many seconds
 const V_REST : f32 = 0.7;      // horizontal + angular "still" threshold
 const RESTITUTION : f32 = 0.0; // bounciness (0 = inelastic)
 const FRICTION : f32 = 0.5;    // Coulomb friction coefficient
@@ -119,7 +120,12 @@ fn stepBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
   if (timer > REST_TIME) { flags = flags | 2u; }
 
-  state[base + 0u] = vec4<f32>(bitcast<f32>(flags), timer, 0.0, 0.0);
+  // Hard max lifetime: a body that never settles (e.g. a round canopy rolling
+  // forever) still bakes, so active bodies can't accumulate up to the pool cap.
+  let life = s0.z + dt;
+  if (life > MAX_LIFE) { flags = flags | 2u; }
+
+  state[base + 0u] = vec4<f32>(bitcast<f32>(flags), timer, life, 0.0);
   state[base + 1u] = vec4<f32>(center, 0.0);
   state[base + 2u] = vec4<f32>(linVel, 0.0);
   state[base + 3u] = q;

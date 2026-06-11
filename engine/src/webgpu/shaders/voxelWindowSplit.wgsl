@@ -129,11 +129,18 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let lx = i32(gid.x);
   let ly = i32(gid.y);
   let lz = i32(gid.z % u32(DIM));
-  let bdim = i32(desc[slot * 2u + 1u]); // body's class dim (block stride)
-  if (lx >= bdim || ly >= bdim || lz >= bdim) { return; }
   let base = slot * 16u;
-  if (atomicLoad(&slotMeta[base + 6u]) == 0) { return; } // inactive slot
-  let bodyIdx = desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim);
+  let count = atomicLoad(&slotMeta[base + 6u]);
+  if (count == 0) { return; } // inactive slot
+  // Below the minimum body size this component is not worth a rigid body: it is
+  // severed from the ground, so its voxels crumble to falling powder rather than
+  // spawn a swarm of tiny bodies (lag) or vanish. Such a slot owns no storage
+  // block, so iterate the full window stride, touch only the world, never bodyVox.
+  // vox0 is the current src (bind group is src-indexed); powder must land in src,
+  // so write it there and clear dst (vox1) -- writing both would duplicate it.
+  let cull = count < MIN_BODY_VOXELS;
+  let bdim = select(i32(desc[slot * 2u + 1u]), DIM, cull);
+  if (lx >= bdim || ly >= bdim || lz >= bdim) { return; }
 
   let wx = atomicLoad(&slotMeta[base + 0u]) + lx;
   let wy = atomicLoad(&slotMeta[base + 1u]) + ly;
@@ -141,13 +148,22 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let o = winOrigin();
   let cx = wx - o.x; let cy = wy - o.y; let cz = wz - o.z;
   if (cx < 0 || cy < 0 || cz < 0 || cx >= DIM || cy >= DIM || cz >= DIM) {
-    bodyVox[bodyIdx] = 0u;
+    if (!cull) { bodyVox[desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim)] = 0u; }
     return;
   }
   let v = vox0[wIdx(wx, wy, wz)];
   let lab = labelIn[lIdx(cx, cy, cz)];
   let mine = (v & 3u) == 1u && (v & 0x10u) != 0u && lab != SENTINEL &&
              rootSlot[lab] == slot;
+  if (cull) {
+    if (mine) { // detached scrap below the body threshold: crumble to powder
+      let vi = wIdx(wx, wy, wz);
+      vox0[vi] = vox(matId(v), CAT_LIQUID) | VOX_POWDER; // src: falling rubble
+      vox1[vi] = 0u;                                     // dst: cleared
+    }
+    return;
+  }
+  let bodyIdx = desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim);
   if (mine) {
     bodyVox[bodyIdx] = v & 0xFFFFFFEFu; // strip the detached flag in the body
     let vi = wIdx(wx, wy, wz);
