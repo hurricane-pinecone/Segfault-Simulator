@@ -183,6 +183,30 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
       tVox = tMax.z; voxel.z += stepi.z; tMax.z += tDelta.z; norm = vec3<f32>(0.0, 0.0, -stepf.z);
     }
   }
+
+  // Debug overlay: the body's bounding-box wireframe in magenta. Reached only when
+  // the ray hit NO voxel, so it frames the body in empty space without occluding
+  // it (solid voxels are tested + returned above). A box face point is on an edge
+  // when two local coords sit near the [0,dim] boundary; check entry + exit faces.
+  if (BODY_BOX != 0u) {
+    let fd = f32(dim);
+    let ew = 1.5;
+    let pe = rol + rdl * max(tenter, 0.0);
+    let px = rol + rdl * texit;
+    var ne = 0;
+    if (pe.x < ew || pe.x > fd - ew) { ne = ne + 1; }
+    if (pe.y < ew || pe.y > fd - ew) { ne = ne + 1; }
+    if (pe.z < ew || pe.z > fd - ew) { ne = ne + 1; }
+    var nx = 0;
+    if (px.x < ew || px.x > fd - ew) { nx = nx + 1; }
+    if (px.y < ew || px.y > fd - ew) { nx = nx + 1; }
+    if (px.z < ew || px.z > fd - ew) { nx = nx + 1; }
+    if (ne >= 2 || nx >= 2) {
+      h.hit = true;
+      h.t = max(tenter, 0.0);
+      h.col = vec3<f32>(1.0, 0.0, 1.0);
+    }
+  }
   return h;
 }
 
