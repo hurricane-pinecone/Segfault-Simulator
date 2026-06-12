@@ -102,15 +102,6 @@ fn detachedSolid(x : i32, y : i32, z : i32) -> bool {
   return (v & 3u) == 1u && (v & 0x10u) != 0u;
 }
 
-@compute @workgroup_size(4, 4, 4)
-fn labelInit(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z);
-  if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
-  let o = winOrigin();
-  let li = lIdx(lx, ly, lz);
-  labelOut[li] = select(SENTINEL, li, detachedSolid(o.x + lx, o.y + ly, o.z + lz));
-}
-
 // Within-brick CC of the DETACHED set (one workgroup per window-brick, a z-column
 // per thread, in shared memory). Each detached voxel ends labelled with its
 // component's min LOCAL index (voxLocalLabel). Also seeds each (brick, component)
@@ -210,33 +201,6 @@ fn scatter(@builtin(global_invocation_id) gid : vec3<u32>) {
   let comp = voxLocalLabel[li];
   if (comp == SENTINEL) { labelOut[li] = SENTINEL; return; }
   labelOut[li] = atomicLoad(&nodeLabel[brickCell(lx, ly, lz) * 512u + comp]);
-}
-
-fn nb(x : i32, y : i32, z : i32) -> u32 {
-  if (x < 0 || y < 0 || z < 0 || x >= DIM || y >= DIM || z >= DIM) { return SENTINEL; }
-  return labelIn[lIdx(x, y, z)]; // SENTINEL for air -> ignored by min
-}
-
-@compute @workgroup_size(4, 4, 4)
-fn labelFlood(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z);
-  if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
-  let li = lIdx(lx, ly, lz);
-  var lab = labelIn[li];
-  if (lab == SENTINEL) { labelOut[li] = SENTINEL; return; }
-  lab = min(lab, nb(lx - 1, ly, lz));
-  lab = min(lab, nb(lx + 1, ly, lz));
-  lab = min(lab, nb(lx, ly - 1, lz));
-  lab = min(lab, nb(lx, ly + 1, lz));
-  lab = min(lab, nb(lx, ly, lz - 1));
-  lab = min(lab, nb(lx, ly, lz + 1));
-  // Node: pull the component's running min (instant intra-brick + mixed-brick
-  // conduction), then push this voxel's label back into it.
-  let node = brickCell(lx, ly, lz) * 512u + voxLocalLabel[li];
-  let nl = atomicLoad(&nodeLabel[node]);
-  if (nl != SENTINEL) { lab = min(lab, nl); }
-  labelOut[li] = lab;
-  atomicMin(&nodeLabel[node], lab);
 }
 
 @compute @workgroup_size(4, 4, 4)

@@ -181,9 +181,17 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
     // and the world hit voxel so the window fell can position its box.
     carveHit[0] = select(0u, 1u, hitSlot != 0xFFFFFFFFu);
     carveHit[1] = hitSlot;
-    carveHit[2] = u32(hit.x);
-    carveHit[3] = u32(hit.y);
-    carveHit[4] = u32(hit.z);
+    // Only update the hit position on an actual hit. On a MISS, RETAIN the last
+    // hit: the world fell runs a frame later (gated on the carve-hit readback), and
+    // holding the button through a breakthrough makes the ray miss into the fresh
+    // gap. Clobbering carveHit there (with the uninitialised `hit`) positioned the
+    // delayed fell's window at garbage, so the severed piece was never extracted --
+    // it floated as unanchored, hash-tinted world voxels.
+    if (found == 1u) {
+      carveHit[2] = u32(hit.x);
+      carveHit[3] = u32(hit.y);
+      carveHit[4] = u32(hit.z);
+    }
     // Did this carve actually remove world voxels? (mode 1 carve + a world hit, not
     // a body hit or a ray miss.) The CPU gates the reflood + world fell on this so
     // holding the carve button over empty space reruns nothing.
