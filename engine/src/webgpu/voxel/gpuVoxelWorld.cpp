@@ -1816,7 +1816,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
         static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t));
     bodyPass(m_winInitPipe, m_winBg[1], wg, wg, wg);
     const uint32_t condWg = (kWinBricks + 63) / 64;
-    for (int r = 0; r < 64; ++r)
+    for (int r = 0; r < 32; ++r)
     {
       bodyPass(m_winFloodPipe, m_winBg[r & 1], wg, wg, wg);
       bodyPass(m_winConductPipe, m_winBg[0], condWg, 1, 1);
@@ -1837,7 +1837,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     // voxel diameter.
     bodyPass(m_winDetachedCcPipe, m_winDetachedCcBg, 12, 12, 12);
     bodyPass(m_winLabelInitPipe, m_winLabelInitBg, wg, wg, wg);
-    for (int r = 0; r < 64; ++r)
+    for (int r = 0; r < 32; ++r)
       bodyPass(m_winLabelFloodPipe, m_winLabelFloodBg[r & 1], wg, wg, wg);
     bodyPass(m_winRegisterPipe, m_winRegisterBg, wg, wg, wg);
     bodyPass(m_winReducePipe, m_winReduceBg, wg, wg, wg);
@@ -1922,7 +1922,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     // diameter.
     bodyPass(m_bodyLocalCcPipe, m_bodyLabelFloodBg[0], 12, 12, 12);
     bodyPass(m_bodyLabelInitPipe, m_bodyLabelInitBg, g, g, g);
-    for (int r = 0; r < 64; ++r)
+    for (int r = 0; r < 32; ++r)
       bodyPass(m_bodyLabelFloodPipe, m_bodyLabelFloodBg[r & 1], g, g, g);
 
     // slotCount is the root-ordering counter (k==0 -> parent, rest claim a

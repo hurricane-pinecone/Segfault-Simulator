@@ -73,14 +73,12 @@ fn registerRoots(@builtin(global_invocation_id) gid : vec3<u32>) {
   let x = i32(gid.x); let y = i32(gid.y); let z = i32(gid.z);
   if (x >= DIM || y >= DIM || z >= DIM) { return; }
   let li = lIdx(x, y, z);
-  // Only split the body THIS frame's carve actually hit: carveHit is the GPU's
-  // truth, while the CPU's parentU is a one-frame-stale readback. On a mismatch
-  // (world hit, or a different body) clear the root so reduce/extract/clearParent
-  // all no-op -- this is the gate; the rest of the passes follow rootSlot.
-  if (carveHit[0] != 1u || carveHit[1] != parentU.x) {
-    rootSlot[li] = SENTINEL;
-    return;
-  }
+  // Split the body the CPU says was carved (parentU.x = m_carvedSlot, from the
+  // carve-hit readback). NO this-frame carveHit re-check: the split runs a frame
+  // or two after the carve, by which point a FALLING body has dropped off the
+  // cursor, so carveHit[1] no longer matches -- that gate silently killed the
+  // split. m_carvedSlot is already authoritative; a stale-slot re-label is a
+  // harmless no-op.
   if (bodyLabel[li] == li) { // a component root (min voxel index of its component)
     let k = atomicAdd(&slotCount[0], 1u);
     // The first-registered component stays in the parent slot; the rest claim
