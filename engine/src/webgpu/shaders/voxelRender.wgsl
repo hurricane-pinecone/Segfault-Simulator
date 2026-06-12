@@ -29,14 +29,9 @@ struct Body {
 @group(0) @binding(7) var<uniform> dbgMouse : vec4<f32>; // xy = cursor pixel
 @group(0) @binding(8) var<storage, read> materials : array<Material>;
 @group(0) @binding(9) var<storage, read> bodyArgs : array<u32>; // [3] = active body bound
-// Sparse brickmap body voxels (read-only).
+// Sparse brickmap body voxels (read-only); marchBody DDAs over these directly.
 @group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
 @group(0) @binding(21) var<storage, read> bodyBrickPool : array<u32>;
-fn bodyVoxLoad(slot : u32, lx : i32, ly : i32, lz : i32) -> u32 {
-  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(lx, ly, lz)];
-  if (bp == BRICK_EMPTY) { return 0u; }
-  return bodyBrickPool[bp * 512u + brickLocal(lx, ly, lz)];
-}
 
 const SLOTVOX : u32 = BODYVOX; // body grid DIM^3 (per pool slot)
 
@@ -161,33 +156,61 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   let texit = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
   if (texit < max(tenter, 0.0)) { return h; }
 
+  // Two-level DDA over the body's sparse brickmap: the outer brick DDA skips
+  // EMPTY (unallocated) bricks wholesale -- most of a 96^3 grid -- while an
+  // occupied brick is still marched voxel-by-voxel, so single-voxel hits (and the
+  // carve's single-voxel cuts) stay exact. Mirrors marchWorld at body scale; the
+  // brick pointer is read once per brick, not per voxel.
   let tstart = max(tenter, 0.0) + 0.0001;
   let stepi = vec3<i32>(sign(rdl));
   let stepf = vec3<f32>(sign(rdl));
   let pos0 = max(stepf, vec3<f32>(0.0));
-  let tDelta = abs(inv);
+  let g0 = slot * BODYBRICKS;
 
-  var voxel = clamp(vec3<i32>(floor(rol + rdl * tstart)), vec3<i32>(0), vec3<i32>(dim - 1));
-  var tMax = ((vec3<f32>(voxel) + pos0) - rol) * inv;
-  var norm = vec3<f32>(0.0, 1.0, 0.0);
-  var tVox = tstart;
+  var brick = clamp(vec3<i32>(floor((rol + rdl * tstart) / 8.0)),
+                    vec3<i32>(0), vec3<i32>(BODYBD - 1));
+  var tMaxB = ((vec3<f32>(brick) + pos0) * 8.0 - rol) * inv;
+  let tDeltaB = abs(inv) * 8.0;
+  var tEnter = tstart;
+  var bnorm = vec3<f32>(0.0, 1.0, 0.0);
 
-  for (var i = 0; i < 320; i = i + 1) {
-    if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 ||
-        voxel.x >= dim || voxel.y >= dim || voxel.z >= dim) { break; }
-    let v = bodyVoxLoad(slot, voxel.x, voxel.y, voxel.z);
-    if ((v & 3u) != 0u) {
-      h.hit = true;
-      h.t = tVox;
-      h.col = shade(v, norm, voxel);
-      return h;
+  for (var ob = 0; ob < 40; ob = ob + 1) {
+    if (brick.x < 0 || brick.y < 0 || brick.z < 0 ||
+        brick.x >= BODYBD || brick.y >= BODYBD || brick.z >= BODYBD) { break; }
+    let bp = bodyBrickGrid[g0 + u32(brick.x + brick.y * BODYBD + brick.z * BODYBD * BODYBD)];
+    if (bp != BRICK_EMPTY) {
+      let bmin = brick * 8;
+      var voxel = clamp(vec3<i32>(floor(rol + rdl * (tEnter + 0.0001))), bmin, bmin + vec3<i32>(7));
+      var tMaxV = ((vec3<f32>(voxel) + pos0) - rol) * inv;
+      var vnorm = bnorm;
+      var tVox = tEnter;
+      for (var iv = 0; iv < 26; iv = iv + 1) {
+        let l = voxel - bmin;
+        let v = bodyBrickPool[bp * 512u + u32(l.x + l.y * 8 + l.z * 64)];
+        if ((v & 3u) != 0u) {
+          h.hit = true;
+          h.t = tVox;
+          h.col = shade(v, vnorm, voxel);
+          return h;
+        }
+        if (tMaxV.x < tMaxV.y && tMaxV.x < tMaxV.z) {
+          tVox = tMaxV.x; voxel.x += stepi.x; tMaxV.x += abs(inv.x); vnorm = vec3<f32>(-stepf.x, 0.0, 0.0);
+          if (voxel.x < bmin.x || voxel.x > bmin.x + 7) { break; }
+        } else if (tMaxV.y < tMaxV.z) {
+          tVox = tMaxV.y; voxel.y += stepi.y; tMaxV.y += abs(inv.y); vnorm = vec3<f32>(0.0, -stepf.y, 0.0);
+          if (voxel.y < bmin.y || voxel.y > bmin.y + 7) { break; }
+        } else {
+          tVox = tMaxV.z; voxel.z += stepi.z; tMaxV.z += abs(inv.z); vnorm = vec3<f32>(0.0, 0.0, -stepf.z);
+          if (voxel.z < bmin.z || voxel.z > bmin.z + 7) { break; }
+        }
+      }
     }
-    if (tMax.x < tMax.y && tMax.x < tMax.z) {
-      tVox = tMax.x; voxel.x += stepi.x; tMax.x += tDelta.x; norm = vec3<f32>(-stepf.x, 0.0, 0.0);
-    } else if (tMax.y < tMax.z) {
-      tVox = tMax.y; voxel.y += stepi.y; tMax.y += tDelta.y; norm = vec3<f32>(0.0, -stepf.y, 0.0);
+    if (tMaxB.x < tMaxB.y && tMaxB.x < tMaxB.z) {
+      brick.x += stepi.x; tEnter = tMaxB.x; tMaxB.x += tDeltaB.x; bnorm = vec3<f32>(-stepf.x, 0.0, 0.0);
+    } else if (tMaxB.y < tMaxB.z) {
+      brick.y += stepi.y; tEnter = tMaxB.y; tMaxB.y += tDeltaB.y; bnorm = vec3<f32>(0.0, -stepf.y, 0.0);
     } else {
-      tVox = tMax.z; voxel.z += stepi.z; tMax.z += tDelta.z; norm = vec3<f32>(0.0, 0.0, -stepf.z);
+      brick.z += stepi.z; tEnter = tMaxB.z; tMaxB.z += tDeltaB.z; bnorm = vec3<f32>(0.0, 0.0, -stepf.z);
     }
   }
 

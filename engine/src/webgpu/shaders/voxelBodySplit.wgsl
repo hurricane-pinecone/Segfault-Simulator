@@ -5,6 +5,7 @@
 // parent grid. The parent keeps one component. slotMeta layout (16 i32/slot):
 // [0..2] aabbMin, [3..5] aabbMax, [6] count, [7..9] CoM-sum, [10] count (dup for
 // the placement check), [11..12] footprint x,z, [13] footprint count.
+@group(0) @binding(0) var<storage, read> carveHit : array<u32>; // [0]body? [1]slot
 @group(0) @binding(1) var<storage, read> bodyLabel : array<u32>;
 @group(0) @binding(2) var<storage, read_write> rootSlot : array<u32>;
 @group(0) @binding(3) var<storage, read_write> slotMeta : array<atomic<i32>>;
@@ -69,6 +70,14 @@ fn registerRoots(@builtin(global_invocation_id) gid : vec3<u32>) {
   let x = i32(gid.x); let y = i32(gid.y); let z = i32(gid.z);
   if (x >= DIM || y >= DIM || z >= DIM) { return; }
   let li = lIdx(x, y, z);
+  // Only split the body THIS frame's carve actually hit: carveHit is the GPU's
+  // truth, while the CPU's parentU is a one-frame-stale readback. On a mismatch
+  // (world hit, or a different body) clear the root so reduce/extract/clearParent
+  // all no-op -- this is the gate; the rest of the passes follow rootSlot.
+  if (carveHit[0] != 1u || carveHit[1] != parentU.x) {
+    rootSlot[li] = SENTINEL;
+    return;
+  }
   if (bodyLabel[li] == li) { // a component root (min voxel index of its component)
     let k = atomicAdd(&slotCount[0], 1u);
     // The first-registered component stays in the parent slot; the rest claim

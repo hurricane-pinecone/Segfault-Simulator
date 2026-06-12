@@ -1247,7 +1247,9 @@ void GpuVoxelWorld::buildBodySplit()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelBodySplitWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[10] = {
+  WGPUBindGroupLayoutEntry e[11] = {
+      storageEntry(
+          0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(
           1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
@@ -1260,7 +1262,7 @@ void GpuVoxelWorld::buildBodySplit()
       storageEntry(20, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(21, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(22, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 10);
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 11);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
   m_bodySplitRegisterPipe =
       makeComputePipeline(m_device, module, "registerRoots", layout);
@@ -1279,7 +1281,8 @@ void GpuVoxelWorld::buildBodySplit()
       static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
   const uint64_t brickFreeBytes =
       (static_cast<uint64_t>(kBrickPoolBricks) + 1u) * sizeof(uint32_t);
-  WGPUBindGroupEntry be[10] = {bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
+  WGPUBindGroupEntry be[11] = {bufEntry(0, m_carveHitBuf, 32),
+                               bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
                                bufEntry(2, m_rootSlotBuf, m_bodyBytes),
                                bufEntry(3, m_slotMetaBuf, 64 * kMaxBodies),
                                bufEntry(4, m_slotOccupiedBuf, 4 * kMaxBodies),
@@ -1291,7 +1294,7 @@ void GpuVoxelWorld::buildBodySplit()
                                bufEntry(22, m_brickFreeBuf, brickFreeBytes)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
-  d.entryCount = 10;
+  d.entryCount = 11;
   d.entries = be;
   m_bodySplitBg = wgpuDeviceCreateBindGroup(m_device, &d);
 }
