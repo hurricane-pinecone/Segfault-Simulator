@@ -58,11 +58,38 @@ core renderer via `dynamic_cast`; a flat render system needs only the core.
 
 ### Choosing a backend
 
-`Game::createQuadRenderer(width, height)` is a virtual factory the game overrides
-to pick its backend. It defaults to the flat-2D `OpenGLQuadRenderer`; an
-isometric game overrides it to return an `IsometricGeometryRenderer`. The result
-is owned by `Game` and injected into every `Scene`, reached by systems via
+`Game::makeRenderBackend()` is the top-level factory the game overrides to choose
+its graphics API. The default returns a `GLRenderBackend`. A game that renders
+through WebGPU (for example, a brickmap voxel world driven by `VoxelGpuSystem`)
+overrides it to return a `WebGpuRenderBackend` instead.
+
+Within the OpenGL path, `Game::createQuadRenderer(width, height)` selects the 2D
+renderer. It defaults to the flat-2D `OpenGLQuadRenderer`; an isometric game
+overrides it to return an `IsometricGeometryRenderer`. The result is owned by the
+`GLRenderBackend` and injected into every scene, reached by systems via
 `Scene::quadRenderer()`.
+
+See [Render backends](./backends/index.md) for the full `IRenderBackend` interface
+and how to plug in a custom backend.
+
+## OrthoOrbitCamera
+
+`OrthoOrbitCamera` (`engine/runtime/rendering/camera/orthoOrbitCamera.h`) is a
+math helper for a base-builder style view: orthographic projection locked to the
+true-isometric pitch (~35.26°) with free yaw orbit around a focus point.
+
+```cpp
+sfs::OrthoOrbitCamera cam;
+cam.focus  = {centreX, 0.0f, centreZ};
+cam.yaw   += rotationDelta;           // orbit freely
+cam.zoom   = 40.0f;                   // ortho half-height in world units
+cam.aspect = static_cast<float>(w) / static_cast<float>(h);
+
+glm::mat4 vp = cam.viewProj();        // feed to your render system each frame
+```
+
+`forward()` and `right()` return horizontal world-space vectors aligned to the
+current yaw, so WASD movement stays camera-relative as the player orbits.
 
 ## Projection
 

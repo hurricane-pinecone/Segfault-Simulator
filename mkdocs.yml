@@ -77,7 +77,9 @@ nav:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md
       - Voxel world: runtime/voxel/index.md
+      - GPU voxel world: runtime/voxel-gpu/index.md
       - Rendering:
           - runtime/rendering/index.md
           - Render modules: runtime/rendering/render-modules/index.md
+          - Render backends: runtime/rendering/backends/index.md
       - Particles in your game: runtime/particles/index.md

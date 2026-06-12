@@ -27,7 +27,8 @@ Subclass `Game` and override the hooks you need. The engine runs `init()` →
 | `onRender()` | each frame | app-level draw (HUD, overlays) |
 | `onDebugUI()` | each frame (debug builds) | an ImGui debug panel |
 | `onDestroy()` | at shutdown | teardown (the one required override) |
-| `createQuadRenderer(w, h)` | once | pick the render backend |
+| `makeRenderBackend()` | once | return the backend for the graphics API; defaults to OpenGL |
+| `createQuadRenderer(w, h)` | once (OpenGL path) | pick the 2D renderer within the OpenGL backend (flat or isometric) |
 
 ```cpp
 class MyGame : public sfs::Game
@@ -43,8 +44,15 @@ protected:
 };
 ```
 
-The default `createQuadRenderer` returns the flat-2D backend; a game using the
-isometric heightfield path overrides it to return an isometric backend.
+The default `makeRenderBackend()` returns an OpenGL backend. Within that path,
+`createQuadRenderer()` selects the 2D renderer: flat-2D by default, or an
+isometric renderer for heightfield games. A game using WebGPU overrides
+`makeRenderBackend()` to return a `WebGpuRenderBackend` instead, and
+`createQuadRenderer()` is not called in that path.
+
+`renderBackend()` returns a non-owning pointer to the active backend; cast it to
+the concrete type when a scene needs the device directly (for example, to
+construct a `VoxelGpuSystem`).
 
 ## Scene — a level or screen
 

@@ -24,6 +24,9 @@ Game     your application — window, the main loop, which scenes exist
 - **[Particles in your game](./particles/index.md)** — registering the particle render
   module, spawning, and making decals stick (the simulation itself is
   [engine-core](../core/particles/index.md)).
+- **[GPU voxel world](./voxel-gpu/index.md)** — the `engine-webgpu` brickmap
+  simulation: WebGPU compute shaders, raymarched rendering, rigid body physics,
+  and click editing.
 
 The render systems draw in the frame's `render` phase through the injected
 `IQuadRenderer`; everything else is your gameplay code in `update`. See
