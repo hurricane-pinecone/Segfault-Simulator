@@ -3,7 +3,8 @@
 // with a per-voxel chance scaled by impact / material rigidity -- so loose
 // materials crumble on impact while rigid ones mostly hold. A shed voxel keeps
 // its material colour but becomes a powder (falls + piles via the fluid CA) and
-// is removed from the body. Dispatched over MAXB stacked DIM^3 grids.
+// is removed from the body. Brick-marched: one workgroup per body brick, empty
+// bricks skipped.
 //
 // Writes the dynamic rubble into the CURRENT src buffer only (voxCur); writing
 // both buffers would duplicate it through the ping-pong.
@@ -44,42 +45,47 @@ fn vIndex(x : i32, y : i32, z : i32) -> u32 {
   return u32(bi) * 512u + u32((x % 8) + (y % 8) * 8 + (z % 8) * 64);
 }
 
-@compute @workgroup_size(4, 4, 4)
-fn shed(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let slot = gid.z / u32(BODYDIM);
+@compute @workgroup_size(64)
+fn shed(@builtin(workgroup_id) wid : vec3<u32>,
+        @builtin(local_invocation_index) lidx : u32) {
+  let slot = wid.z / u32(BODYBD);
   if (slot >= MAXB) { return; }
   let imp = state[slot * 8u + 6u]; // (impactMag, contact.xyz)
   if (imp.x <= 0.0) { return; }     // no hard impact this body this frame
   let body = bodies[slot];
   if (body.flags.x == 0u) { return; } // active only
-  let dim = i32(body.flags.y);
-  let lx = i32(gid.x);
-  let ly = i32(gid.y);
-  let lz = i32(gid.z % u32(BODYDIM));
-  if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let v = bodyVoxLoad(slot, lx, ly, lz);
-  if ((v & 3u) != 1u) { return; } // solid body voxel
+  let bz = wid.z % u32(BODYBD);
+  let cell = wid.x + wid.y * u32(BODYBD) + bz * u32(BODYBD) * u32(BODYBD);
+  let bp = bodyBrickGrid[slot * BODYBRICKS + cell];
+  if (bp == BRICK_EMPTY) { return; }
 
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
   let Rlw = transpose(R);
-  let L = vec3<f32>(f32(lx) + 0.5, f32(ly) + 0.5, f32(lz) + 0.5);
-  let w = Rlw * (L - body.pivot.xyz) + body.center.xyz;
+  let cx = i32(lidx % 8u); let cy = i32(lidx / 8u);
+  let bmx = i32(wid.x) * 8; let bmy = i32(wid.y) * 8; let bmz = i32(bz) * 8;
+  for (var cz = 0; cz < 8; cz = cz + 1) {
+    let v = bodyBrickPool[bp * 512u + u32(cx + cy * 8 + cz * 64)];
+    if ((v & 3u) != 1u) { continue; } // solid body voxel
+    let lx = bmx + cx; let ly = bmy + cy; let lz = bmz + cz;
+    let L = vec3<f32>(f32(lx) + 0.5, f32(ly) + 0.5, f32(lz) + 0.5);
+    let w = Rlw * (L - body.pivot.xyz) + body.center.xyz;
 
-  // The whole rigid body feels the impact (it decelerates as one); the contact
-  // patch crumbles most, but the shock carries through the body with a soft
-  // falloff -- so a trunk-first landing still shakes leaves loose up top, and a
-  // bigger impulse reaches further. No hard cutoff.
-  let dist = length(w - imp.yzw);
-  let falloff = SHED_FALLOFF / (SHED_FALLOFF + dist);
-  let rig = max(materials[matId(v)].rigidity, 0.05);
-  let chance = imp.x * SHED_K * falloff / rig;
-  let wi = vec3<i32>(floor(w));
-  let rnd = f32(hash3(u32(wi.x), u32(wi.y), u32(wi.z), frame.x) & 0xFFFFu) / 65535.0;
-  if (rnd >= chance) { return; }
+    // The whole rigid body feels the impact (it decelerates as one); the contact
+    // patch crumbles most, but the shock carries through the body with a soft
+    // falloff -- so a trunk-first landing still shakes leaves loose up top, and a
+    // bigger impulse reaches further. No hard cutoff.
+    let dist = length(w - imp.yzw);
+    let falloff = SHED_FALLOFF / (SHED_FALLOFF + dist);
+    let rig = max(materials[matId(v)].rigidity, 0.05);
+    let chance = imp.x * SHED_K * falloff / rig;
+    let wi = vec3<i32>(floor(w));
+    let rnd = f32(hash3(u32(wi.x), u32(wi.y), u32(wi.z), frame.x) & 0xFFFFu) / 65535.0;
+    if (rnd >= chance) { continue; }
 
-  if (wi.x < 0 || wi.y < 0 || wi.z < 0 || wi.x >= WG || wi.y >= WG || wi.z >= WG) { return; }
-  let vi = vIndex(wi.x, wi.y, wi.z);
-  if ((voxCur[vi] & 3u) != 0u) { return; } // shed only into an air cell
-  voxCur[vi] = vox(matId(v), CAT_LIQUID) | VOX_POWDER; // rubble keeps its colour
-  bodyVoxClear(slot, lx, ly, lz);                      // remove from the body
+    if (wi.x < 0 || wi.y < 0 || wi.z < 0 || wi.x >= WG || wi.y >= WG || wi.z >= WG) { continue; }
+    let vi = vIndex(wi.x, wi.y, wi.z);
+    if ((voxCur[vi] & 3u) != 0u) { continue; } // shed only into an air cell
+    voxCur[vi] = vox(matId(v), CAT_LIQUID) | VOX_POWDER; // rubble keeps its colour
+    bodyVoxClear(slot, lx, ly, lz);                      // remove from the body
+  }
 }

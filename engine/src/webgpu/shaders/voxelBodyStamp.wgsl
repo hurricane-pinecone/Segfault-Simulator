@@ -1,7 +1,7 @@
 // Stamps each resting body (flags.z set by the CPU) back into the world at its
-// final pose, turning the fallen chunk into terrain again. Dispatched over MAXB
-// stacked DIM^3 grids (slot = gid.z / DIM). Stamped at the rest pose, which is a
-// clean axis swap, so it leaves no holes.
+// final pose, turning the fallen chunk into terrain again. Brick-marched: one
+// workgroup per body brick, empty bricks skipped. Stamped at the rest pose, which
+// is a clean axis swap, so it leaves no holes.
 struct Body {
   flags : vec4<u32>,
   invRot0 : vec4<f32>,
@@ -29,27 +29,31 @@ fn vIndex(x : i32, y : i32, z : i32) -> u32 {
   return u32(bi) * 512u + u32((x % 8) + (y % 8) * 8 + (z % 8) * 64);
 }
 
-@compute @workgroup_size(4, 4, 4)
-fn stamp(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let slot = gid.z / u32(BODYDIM);
+@compute @workgroup_size(64)
+fn stamp(@builtin(workgroup_id) wid : vec3<u32>,
+         @builtin(local_invocation_index) lidx : u32) {
+  let slot = wid.z / u32(BODYBD);
   if (slot >= MAXB) { return; }
   let body = bodies[slot];
   if (body.flags.x == 0u || body.flags.z == 0u) { return; } // active + resting only
-  let dim = i32(body.flags.y);
-  let lx = i32(gid.x);
-  let ly = i32(gid.y);
-  let lz = i32(gid.z % u32(BODYDIM));
-  if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let v = bodyVoxLoad(slot, lx, ly, lz);
-  if ((v & 3u) != 1u) { return; }
+  let bz = wid.z % u32(BODYBD);
+  let cell = wid.x + wid.y * u32(BODYBD) + bz * u32(BODYBD) * u32(BODYBD);
+  let bp = bodyBrickGrid[slot * BODYBRICKS + cell];
+  if (bp == BRICK_EMPTY) { return; }
 
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
   let Rlw = transpose(R);
-  let L = vec3<f32>(f32(lx) + 0.5, f32(ly) + 0.5, f32(lz) + 0.5);
-  let w = Rlw * (L - body.pivot.xyz) + body.center.xyz;
-  let wi = vec3<i32>(floor(w));
-  if (wi.x < 0 || wi.y < 0 || wi.z < 0 || wi.x >= WG || wi.y >= WG || wi.z >= WG) { return; }
-  let vi = vIndex(wi.x, wi.y, wi.z);
-  vox0[vi] = v;
-  vox1[vi] = v;
+  let cx = i32(lidx % 8u); let cy = i32(lidx / 8u);
+  let bmx = i32(wid.x) * 8; let bmy = i32(wid.y) * 8; let bmz = i32(bz) * 8;
+  for (var cz = 0; cz < 8; cz = cz + 1) {
+    let v = bodyBrickPool[bp * 512u + u32(cx + cy * 8 + cz * 64)];
+    if ((v & 3u) != 1u) { continue; }
+    let L = vec3<f32>(f32(bmx + cx) + 0.5, f32(bmy + cy) + 0.5, f32(bmz + cz) + 0.5);
+    let w = Rlw * (L - body.pivot.xyz) + body.center.xyz;
+    let wi = vec3<i32>(floor(w));
+    if (wi.x < 0 || wi.y < 0 || wi.z < 0 || wi.x >= WG || wi.y >= WG || wi.z >= WG) { continue; }
+    let vi = vIndex(wi.x, wi.y, wi.z);
+    vox0[vi] = v;
+    vox1[vi] = v;
+  }
 }

@@ -27,6 +27,11 @@ fn prep(@builtin(local_invocation_id) lid : vec3<u32>) {
     args[1] = g;
     args[2] = g * hi;
     args[3] = hi; // render reads its body-loop bound from here (storage, reliable)
+    // Brick dispatch (one workgroup per body brick) for the brick-marched passes.
+    let bd = u32(BODYBD);
+    args[4] = bd;
+    args[5] = bd;
+    args[6] = bd * hi;
     dbg[0].z = f32(hi);
   }
 }

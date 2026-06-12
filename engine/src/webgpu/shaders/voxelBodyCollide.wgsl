@@ -2,7 +2,8 @@
 // transform. For every voxel that penetrates world solid it accumulates a
 // contact count + a sum of the contact world positions into that slot's 4-int
 // record [count, sumX, sumY, sumZ], which the step pass turns into a contact
-// centroid for its collision response. Dispatched over MAXB stacked DIM^3 grids.
+// centroid for its collision response. Brick-marched: one workgroup per body
+// brick, empty bricks skipped.
 struct Body {
   flags : vec4<u32>,
   invRot0 : vec4<f32>,
@@ -44,58 +45,63 @@ fn brickOcc(bx : i32, by : i32, bz : i32) -> u32 {
   return bricks[u32(bx + by * BG + bz * BG * BG)].occupancy;
 }
 
-// Broad-phase: 1 if this workgroup's region is near any solid world this frame.
+// Broad-phase: 1 if this brick's region is near any solid world this frame.
 var<workgroup> wgNear : u32;
+var<workgroup> wgBrick : u32; // brick pointer, broadcast from thread 0
 
-@compute @workgroup_size(4, 4, 4)
-fn collide(@builtin(global_invocation_id) gid : vec3<u32>,
+// Brick-marched: one workgroup per body brick (12^3 grid), a z-column per thread.
+// Empty bricks (most of a sparse body) cost one grid read + a uniform return, and
+// the world-proximity broad-phase still skips bricks not near the ground.
+@compute @workgroup_size(64)
+fn collide(@builtin(workgroup_id) wid : vec3<u32>,
            @builtin(local_invocation_index) lidx : u32) {
-  let slot = gid.z / u32(BODYDIM);
-  // Thread 0 tests whether this 4^3 region sits near solid world (its world brick
-  // neighbourhood is non-empty). If not, the whole workgroup skips the per-voxel
-  // world tests -- airborne regions cost a handful of cached brick reads instead
-  // of 64 ray transforms + lookups. Done before any early-return so the barrier
-  // stays uniform.
+  let slot = wid.z / u32(BODYBD);
   if (lidx == 0u) {
     wgNear = 0u;
+    wgBrick = BRICK_EMPTY;
     if (slot < MAXB && bodies[slot].flags.x != 0u) {
-      let body = bodies[slot];
-      let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
-      let Rlw = transpose(R);
-      let Lc = vec3<f32>(f32(gid.x) + 2.0,
-                         f32(gid.y) + 2.0,
-                         f32(gid.z % u32(BODYDIM)) + 2.0);
-      let wc = Rlw * (Lc - body.pivot.xyz) + body.center.xyz;
-      let wb = vec3<i32>(floor(wc)) / 8;
-      for (var dz = -1; dz <= 1; dz = dz + 1) {
-        for (var dy = -1; dy <= 1; dy = dy + 1) {
-          for (var dx = -1; dx <= 1; dx = dx + 1) {
-            if (brickOcc(wb.x + dx, wb.y + dy, wb.z + dz) > 0u) { wgNear = 1u; }
+      let bz = wid.z % u32(BODYBD);
+      let cell = wid.x + wid.y * u32(BODYBD) + bz * u32(BODYBD) * u32(BODYBD);
+      let bp = bodyBrickGrid[slot * BODYBRICKS + cell];
+      wgBrick = bp;
+      if (bp != BRICK_EMPTY) {
+        let body = bodies[slot];
+        let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
+        let Rlw = transpose(R);
+        let Lc = vec3<f32>(f32(wid.x * 8u) + 4.0,
+                           f32(wid.y * 8u) + 4.0,
+                           f32(bz * 8u) + 4.0);
+        let wc = Rlw * (Lc - body.pivot.xyz) + body.center.xyz;
+        let wb = vec3<i32>(floor(wc)) / 8;
+        for (var dz = -1; dz <= 1; dz = dz + 1) {
+          for (var dy = -1; dy <= 1; dy = dy + 1) {
+            for (var dx = -1; dx <= 1; dx = dx + 1) {
+              if (brickOcc(wb.x + dx, wb.y + dy, wb.z + dz) > 0u) { wgNear = 1u; }
+            }
           }
         }
       }
     }
   }
   workgroupBarrier();
-  if (wgNear == 0u) { return; } // uniform: region far from world -> skip
+  if (wgBrick == BRICK_EMPTY || wgNear == 0u) { return; } // uniform skip
 
-  if (slot >= MAXB) { return; }
+  let bp = wgBrick;
   let body = bodies[slot];
-  if (body.flags.x == 0u) { return; }
-  let dim = i32(body.flags.y);
-  let lx = i32(gid.x);
-  let ly = i32(gid.y);
-  let lz = i32(gid.z % u32(BODYDIM));
-  if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let v = bodyVoxLoad(slot, lx, ly, lz);
-  if ((v & 3u) != 1u) { return; }
-
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
   let Rlw = transpose(R);
+  let cx = i32(lidx % 8u); let cy = i32(lidx / 8u);
+  let bmx = i32(wid.x) * 8; let bmy = i32(wid.y) * 8;
+  let bmz = i32(wid.z % u32(BODYBD)) * 8;
+  for (var cz = 0; cz < 8; cz = cz + 1) {
+  let lx = bmx + cx; let ly = bmy + cy; let lz = bmz + cz;
+  let v = bodyBrickPool[bp * 512u + u32(cx + cy * 8 + cz * 64)];
+  if ((v & 3u) != 1u) { continue; }
+
   let L = vec3<f32>(f32(lx) + 0.5, f32(ly) + 0.5, f32(lz) + 0.5);
   let w = Rlw * (L - body.pivot.xyz) + body.center.xyz;
   let wi = vec3<i32>(floor(w));
-  if (wi.x < 0 || wi.y < 0 || wi.z < 0 || wi.x >= WG || wi.y >= WG || wi.z >= WG) { return; }
+  if (wi.x < 0 || wi.y < 0 || wi.z < 0 || wi.x >= WG || wi.y >= WG || wi.z >= WG) { continue; }
   if (wSolid(wi.x, wi.y, wi.z)) {
     // Penetration depth = solid voxels from here up to the surface (capped).
     var pen = 1;
@@ -121,5 +127,6 @@ fn collide(@builtin(global_invocation_id) gid : vec3<u32>,
     atomicAdd(&contact[b + 5], nrm.x);
     atomicAdd(&contact[b + 6], nrm.y);
     atomicAdd(&contact[b + 7], nrm.z);
+  }
   }
 }

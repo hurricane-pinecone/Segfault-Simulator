@@ -344,9 +344,11 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                              16,
                              WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst |
                                  WGPUBufferUsage_Storage); // .z written by prep
+  // 8 u32: [0..2] voxel dispatch (24,24,24*hi) + [3] hi (render bound), [4..6]
+  // brick dispatch (12,12,12*hi) for the brick-marched body passes.
   m_bodyArgsBuf =
       makeBuffer(m_device,
-                 16,
+                 32,
                  WGPUBufferUsage_Storage | WGPUBufferUsage_Indirect |
                      WGPUBufferUsage_CopyDst);
   m_windowBuf[0] = makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
@@ -721,7 +723,7 @@ void GpuVoxelWorld::buildRender()
                                  bufEntry(6, m_labelBuf[0], m_anchorBytes),
                                  bufEntry(7, m_dbgMouseBuf, 16),
                                  bufEntry(8, m_materialBuf, 32 * 256),
-                                 bufEntry(9, m_bodyArgsBuf, 16),
+                                 bufEntry(9, m_bodyArgsBuf, 32),
                                  bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                                  bufEntry(21, m_brickPool, brickPoolBytes)};
     WGPUBindGroupDescriptor bd = {};
@@ -1151,7 +1153,7 @@ void GpuVoxelWorld::buildBodyPrep()
   m_bodyPrepPipe = makeComputePipeline(
       m_device, module, "prep", makePipelineLayout(m_device, bgl));
   WGPUBindGroupEntry be[3] = {bufEntry(0, m_bodyStateBuf, 128 * kMaxBodies),
-                              bufEntry(1, m_bodyArgsBuf, 16),
+                              bufEntry(1, m_bodyArgsBuf, 32),
                               bufEntry(2, m_dbgMouseBuf, 16)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
@@ -1751,12 +1753,16 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   };
   // Per-frame body passes (collide/shed/stamp) size themselves from the GPU's
   // activeHigh via the prep pass's indirect args -- no CPU count.
-  const auto bodyPassIndirect = [&](WGPUComputePipeline pipe, WGPUBindGroup bg)
+  // argsOffset: 0 = voxel dispatch (24,24,24*hi), 16 = brick dispatch
+  // (12,12,12*hi).
+  const auto bodyPassIndirect =
+      [&](WGPUComputePipeline pipe, WGPUBindGroup bg, uint64_t argsOffset = 0)
   {
     WGPUComputePassEncoder p = wgpuCommandEncoderBeginComputePass(enc, nullptr);
     wgpuComputePassEncoderSetPipeline(p, pipe);
     wgpuComputePassEncoderSetBindGroup(p, 0, bg, 0, nullptr);
-    wgpuComputePassEncoderDispatchWorkgroupsIndirect(p, m_bodyArgsBuf, 0);
+    wgpuComputePassEncoderDispatchWorkgroupsIndirect(
+        p, m_bodyArgsBuf, argsOffset);
     wgpuComputePassEncoderEnd(p);
     wgpuComputePassEncoderRelease(p);
   };
@@ -1879,12 +1885,12 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // has already read the prior result -- a queue write would run before the
   // whole command buffer and wipe what the step still needs).
   wgpuCommandEncoderClearBuffer(enc, m_collideBuf, 0, 32u * kMaxBodies);
-  bodyPassIndirect(m_bodyCollidePipe, m_bodyCollideBg);
+  bodyPassIndirect(m_bodyCollidePipe, m_bodyCollideBg, 16); // brick-marched
 
   // Break-off: shed hard-impact body voxels (recorded by the step in state slot
   // 6) into the current src buffer as rubble. Runs into voxCur before the fluid
   // tick so the shed rubble falls + piles this frame.
-  bodyPassIndirect(m_bodyShedPipe, m_bodyShedBg[m_srcIdx]);
+  bodyPassIndirect(m_bodyShedPipe, m_bodyShedBg[m_srcIdx], 16); // brick-marched
 
   // Stamp every baked body (flags.z) back into the world, then reap it: the GPU
   // reap returns its storage block to the free-list, releases its occupancy
@@ -1892,7 +1898,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // reap over the pool), each a no-op for non-baked slots, so a body is stamped
   // and retired the frame it bakes -- no CPU free loop, no mirror-driven
   // freeing.
-  bodyPassIndirect(m_bodyStampPipe, m_bodyStampBg);
+  bodyPassIndirect(m_bodyStampPipe, m_bodyStampBg, 16); // brick-marched
   bodyPass(m_bodyReapPipe, m_bodyReapBg, (kMaxBodies + 63) / 64, 1, 1);
 
   // Cosmetic catch-up: recount brick occupancy + re-anchor so a freshly stamped
