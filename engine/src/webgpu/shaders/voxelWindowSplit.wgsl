@@ -29,26 +29,34 @@
 // own body) rather than wrongly merging across the cut.
 @group(0) @binding(15) var<storage, read_write> voxLocalLabel : array<u32>;
 @group(0) @binding(16) var<storage, read_write> nodeLabel : array<atomic<u32>>;
+// Free-BITMAP allocator: wBrickFree[0] is a rotating alloc hint; wBrickFree[b+1]
+// is 1 if brick b is free, 0 if used. Claim a free brick by CAS-ing its flag
+// 1->0. This is race-free and leak-free -- unlike the old index-stack, two slots
+// can never end up aliasing the same pool brick (the bug that wiped voxels from
+// another brick on a fell).
 fn popBrick() -> u32 {
-  let c = atomicSub(&wBrickFree[0], 1u);
-  if (c == 0u || c > BRICK_POOL_BRICKS) { atomicAdd(&wBrickFree[0], 1u); return BRICK_EMPTY; }
-  return atomicLoad(&wBrickFree[c]);
+  for (var k = 0u; k < BRICK_POOL_BRICKS; k = k + 1u) {
+    let i = atomicAdd(&wBrickFree[0], 1u) % BRICK_POOL_BRICKS;
+    if (atomicCompareExchangeWeak(&wBrickFree[i + 1u], 1u, 0u).exchanged) { return i; }
+  }
+  return BRICK_EMPTY; // pool full
 }
-fn pushBrick(b : u32) {
-  let oldc = atomicAdd(&wBrickFree[0], 1u);
-  atomicStore(&wBrickFree[oldc + 1u], b);
-}
-fn bodyVoxStore(slot : u32, lx : i32, ly : i32, lz : i32, v : u32) {
+fn pushBrick(b : u32) { atomicStore(&wBrickFree[b + 1u], 1u); }
+fn bodyVoxStore(slot : u32, lx : i32, ly : i32, lz : i32, v : u32) -> u32 {
   let bc = slot * BODYBRICKS + brickCell(lx, ly, lz);
   var bp = atomicLoad(&wBrickGrid[bc]);
   if (bp == BRICK_EMPTY) {
     let nb = popBrick();
-    if (nb == BRICK_EMPTY) { return; } // pool full -> drop voxel (a hole, not a crash)
-    for (var i = 0u; i < 512u; i = i + 1u) { wBrickPool[nb * 512u + i] = 0u; } // clear before publish
+    if (nb == BRICK_EMPTY) { return BRICK_EMPTY; } // pool full -> caller keeps world voxel
+    // No clear here: the reap zeroes bricks at free time (a frame earlier), so a
+    // re-popped brick is already clean. Clearing here would RACE -- this non-atomic
+    // 512-clear can land after another same-brick thread writes its voxel (via the
+    // published pointer) and zero it back out.
     let r = atomicCompareExchangeWeak(&wBrickGrid[bc], BRICK_EMPTY, nb);
     if (r.exchanged) { bp = nb; } else { pushBrick(nb); bp = r.old_value; }
   }
   wBrickPool[bp * 512u + brickLocal(lx, ly, lz)] = v;
+  return bp;
 }
 
 // Material density as a fixed-point weight (>=1) for the mass-weighted CoM and
@@ -242,8 +250,10 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
   if (mine) {
     // A claimed slot's brick grid is clean (reaped or never used), so non-mine
-    // cells need no clear -- only the moved voxel is written.
-    bodyVoxStore(slot, lx, ly, lz, v & 0xFFFFFFEFu); // strip the detached flag
+    // cells need no clear -- only the moved voxel is written. Clear the world ONLY
+    // if the store succeeded; a dropped voxel stays in the world (not vanished).
+    let bp = bodyVoxStore(slot, lx, ly, lz, v & 0xFFFFFFEFu); // strip the detached flag
+    if (bp == BRICK_EMPTY) { return; }
     let vi = wIdx(wx, wy, wz);
     vox0[vi] = 0u;
     vox1[vi] = 0u;

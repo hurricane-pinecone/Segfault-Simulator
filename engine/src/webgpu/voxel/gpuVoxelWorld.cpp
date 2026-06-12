@@ -257,10 +257,10 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
         m_device,
         (static_cast<uint64_t>(kBrickPoolBricks) + 1u) * sizeof(uint32_t),
         WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
-    std::vector<uint32_t> freeInit(kBrickPoolBricks + 1u);
-    freeInit[0] = kBrickPoolBricks; // all bricks free
-    for (uint32_t i = 0; i < kBrickPoolBricks; ++i)
-      freeInit[i + 1] = i;
+    // Free-bitmap: [0] = rotating alloc hint, [b+1] = 1 if brick b is free.
+    std::vector<uint32_t> freeInit(kBrickPoolBricks + 1u, 1u);
+    freeInit[0] = 0u; // hint
+
     wgpuQueueWriteBuffer(m_queue,
                          m_brickFreeBuf,
                          0,
@@ -1111,25 +1111,29 @@ void GpuVoxelWorld::buildBodyReap()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelBodyReapWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[4] = {
+  WGPUBindGroupLayoutEntry e[5] = {
       storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(20, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(21, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(22, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 4);
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 5);
   m_bodyReapPipe = makeComputePipeline(
       m_device, module, "reap", makePipelineLayout(m_device, bgl));
   const uint64_t brickGridBytes =
       static_cast<uint64_t>(kMaxBodies) * 1728u * sizeof(uint32_t);
+  const uint64_t brickPoolBytes =
+      static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
   const uint64_t brickFreeBytes =
       (static_cast<uint64_t>(kBrickPoolBricks) + 1u) * sizeof(uint32_t);
-  WGPUBindGroupEntry be[4] = {bufEntry(0, m_bodyStateBuf, 128 * kMaxBodies),
+  WGPUBindGroupEntry be[5] = {bufEntry(0, m_bodyStateBuf, 128 * kMaxBodies),
                               bufEntry(3, m_slotOccupiedBuf, 4 * kMaxBodies),
                               bufEntry(20, m_bodyBrickGrid, brickGridBytes),
+                              bufEntry(21, m_brickPool, brickPoolBytes),
                               bufEntry(22, m_brickFreeBuf, brickFreeBytes)};
   WGPUBindGroupDescriptor d = {};
   d.layout = bgl;
-  d.entryCount = 4;
+  d.entryCount = 5;
   d.entries = be;
   m_bodyReapBg = wgpuDeviceCreateBindGroup(m_device, &d);
 }

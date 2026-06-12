@@ -10,6 +10,7 @@
 // Sparse brickmap: return the slot's allocated bricks to the free-list and reset
 // its grid cells to BRICK_EMPTY, so a later body claiming this slot starts clean.
 @group(0) @binding(20) var<storage, read_write> bodyBrickGrid : array<u32>;
+@group(0) @binding(21) var<storage, read_write> bodyBrickPool : array<u32>;
 @group(0) @binding(22) var<storage, read_write> bodyBrickFree : array<atomic<u32>>;
 
 @compute @workgroup_size(64)
@@ -23,8 +24,11 @@ fn reap(@builtin(global_invocation_id) gid : vec3<u32>) {
   for (var i = 0u; i < BODYBRICKS; i = i + 1u) {
     let bp = bodyBrickGrid[g0 + i];
     if (bp != BRICK_EMPTY) {
-      let fc = atomicAdd(&bodyBrickFree[0], 1u);
-      atomicStore(&bodyBrickFree[fc + 1u], bp);
+      // Clear the brick HERE (at free time) rather than at allocation: this runs a
+      // whole frame before any extract re-pops it, so the (non-atomic) clear is
+      // globally visible before the next tenant writes -- no clear-vs-write race.
+      for (var j = 0u; j < 512u; j = j + 1u) { bodyBrickPool[bp * 512u + j] = 0u; }
+      atomicStore(&bodyBrickFree[bp + 1u], 1u); // free-bitmap: mark brick bp free
       bodyBrickGrid[g0 + i] = BRICK_EMPTY;
     }
   }

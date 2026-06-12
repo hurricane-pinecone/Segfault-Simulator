@@ -27,22 +27,25 @@ fn bodyVoxClear(slot : u32, x : i32, y : i32, z : i32) {
   if (bp == BRICK_EMPTY) { return; }
   bodyBrickPool[bp * 512u + brickLocal(x, y, z)] = 0u;
 }
+// Free-BITMAP allocator (see voxelWindowSplit): [0] = rotating hint, [b+1] = 1 if
+// brick b free. CAS-claim a free brick -- race-free + leak-free, no aliasing.
 fn popBrick() -> u32 {
-  let c = atomicSub(&bodyBrickFree[0], 1u);
-  if (c == 0u || c > BRICK_POOL_BRICKS) { atomicAdd(&bodyBrickFree[0], 1u); return BRICK_EMPTY; }
-  return atomicLoad(&bodyBrickFree[c]);
+  for (var k = 0u; k < BRICK_POOL_BRICKS; k = k + 1u) {
+    let i = atomicAdd(&bodyBrickFree[0], 1u) % BRICK_POOL_BRICKS;
+    if (atomicCompareExchangeWeak(&bodyBrickFree[i + 1u], 1u, 0u).exchanged) { return i; }
+  }
+  return BRICK_EMPTY;
 }
-fn pushBrick(b : u32) {
-  let oldc = atomicAdd(&bodyBrickFree[0], 1u);
-  atomicStore(&bodyBrickFree[oldc + 1u], b);
-}
+fn pushBrick(b : u32) { atomicStore(&bodyBrickFree[b + 1u], 1u); }
 fn bodyVoxStore(slot : u32, x : i32, y : i32, z : i32, v : u32) {
   let bc = slot * BODYBRICKS + brickCell(x, y, z);
   var bp = atomicLoad(&bodyBrickGrid[bc]);
   if (bp == BRICK_EMPTY) {
     let nb = popBrick();
     if (nb == BRICK_EMPTY) { return; }
-    for (var i = 0u; i < 512u; i = i + 1u) { bodyBrickPool[nb * 512u + i] = 0u; }
+    // No clear here: the reap zeroes bricks at free time (a frame earlier), so a
+    // re-popped brick is already clean -- clearing here races with same-brick
+    // writes (the clear can land after another thread's voxel write).
     let r = atomicCompareExchangeWeak(&bodyBrickGrid[bc], BRICK_EMPTY, nb);
     if (r.exchanged) { bp = nb; } else { pushBrick(nb); bp = r.old_value; }
   }
