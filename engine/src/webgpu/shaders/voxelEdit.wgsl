@@ -184,6 +184,11 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
     carveHit[2] = u32(hit.x);
     carveHit[3] = u32(hit.y);
     carveHit[4] = u32(hit.z);
+    // Did this carve actually remove world voxels? (mode 1 carve + a world hit, not
+    // a body hit or a ray miss.) The CPU gates the reflood + world fell on this so
+    // holding the carve button over empty space reruns nothing.
+    let worldCarve = found == 1u && hitSlot == 0xFFFFFFFFu && u32(ed.v1.w) == 1u;
+    carveHit[5] = select(0u, 1u, worldCarve);
   }
   workgroupBarrier();
   if (found == 0u) { return; }

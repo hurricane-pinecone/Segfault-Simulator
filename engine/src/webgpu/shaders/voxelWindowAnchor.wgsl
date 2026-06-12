@@ -146,10 +146,63 @@ fn winLocalCC(@builtin(workgroup_id) wid : vec3<u32>,
     }
     workgroupBarrier();
   }
+  // Publish the within-brick component label, and seed nodeReached for any
+  // component that touches a ground seed (the world floor, or a boundary voxel
+  // hanging off the coarse-anchored bulk -- the same seeds winInit used). The
+  // node flood then conducts "reached" across the node graph.
   for (var z = 0; z < 8; z = z + 1) {
     let li = u32(cx + cy * 8 + z * 64);
-    voxLocal[lIdx(bx + cx, by + cy, bz + z)] = lbl[li];
+    let comp = lbl[li];
+    let gx = bx + cx; let gy = by + cy; let gz = bz + z; // window-local coords
+    voxLocal[lIdx(gx, gy, gz)] = comp;
+    if (comp != LOCAL_SENTINEL) {
+      let wx = o.x + gx; let wy = o.y + gy; let wz = o.z + gz;
+      var seed = wy == 0;
+      if (gx == 0 && worldSolid(wx - 1, wy, wz) && anchoredBrick(wx - 1, wy, wz)) { seed = true; }
+      if (gx == DIM - 1 && worldSolid(wx + 1, wy, wz) && anchoredBrick(wx + 1, wy, wz)) { seed = true; }
+      if (gy == 0 && worldSolid(wx, wy - 1, wz) && anchoredBrick(wx, wy - 1, wz)) { seed = true; }
+      if (gz == 0 && worldSolid(wx, wy, wz - 1) && anchoredBrick(wx, wy, wz - 1)) { seed = true; }
+      if (gz == DIM - 1 && worldSolid(wx, wy, wz + 1) && anchoredBrick(wx, wy, wz + 1)) { seed = true; }
+      if (seed) {
+        atomicStore(&nodeReached[winBrickCell(gx, gy, gz) * 512u + comp], 1u);
+      }
+    }
   }
+}
+
+// Node-resolution reachability flood: one workgroup per window-brick (12^3),
+// 64 threads scan the brick's 6 faces. If a solid face voxel's outward neighbour
+// (in the adjacent brick) is also solid and EITHER (brick, component) node is
+// reached, both are marked reached. Empty bricks skip. Monotonic OR-flood over the
+// node graph -- replaces the full-grid winFlood + full-brick winConduct.
+fn conductReach(brick : u32, wx : i32, wy : i32, wz : i32, ox : i32, oy : i32, oz : i32) {
+  let comp = voxLocal[lIdx(wx, wy, wz)];
+  if (comp == LOCAL_SENTINEL) { return; } // not solid
+  let nwx = wx + ox; let nwy = wy + oy; let nwz = wz + oz;
+  if (nwx < 0 || nwy < 0 || nwz < 0 || nwx >= DIM || nwy >= DIM || nwz >= DIM) { return; }
+  let nComp = voxLocal[lIdx(nwx, nwy, nwz)];
+  if (nComp == LOCAL_SENTINEL) { return; } // neighbour not solid -> no edge
+  let nBrick = u32((nwx / 8) + (nwy / 8) * i32(WBD) + (nwz / 8) * i32(WBD) * i32(WBD));
+  let myNode = brick * 512u + comp;
+  let nNode = nBrick * 512u + nComp;
+  if (atomicLoad(&nodeReached[myNode]) != 0u || atomicLoad(&nodeReached[nNode]) != 0u) {
+    atomicStore(&nodeReached[myNode], 1u);
+    atomicStore(&nodeReached[nNode], 1u);
+  }
+}
+@compute @workgroup_size(64)
+fn winNodeReachFlood(@builtin(workgroup_id) wid : vec3<u32>,
+                     @builtin(local_invocation_index) lidx : u32) {
+  let brick = wid.x + wid.y * WBD + wid.z * WBD * WBD;
+  if (winBrickOcc[brick] == 0u) { return; } // empty brick
+  let bx = i32(wid.x) * 8; let by = i32(wid.y) * 8; let bz = i32(wid.z) * 8;
+  let a = i32(lidx / 8u); let b = i32(lidx % 8u);
+  conductReach(brick, bx + 0, by + a, bz + b, -1, 0, 0);
+  conductReach(brick, bx + 7, by + a, bz + b, 1, 0, 0);
+  conductReach(brick, bx + a, by + 0, bz + b, 0, -1, 0);
+  conductReach(brick, bx + a, by + 7, bz + b, 0, 1, 0);
+  conductReach(brick, bx + a, by + b, bz + 0, 0, 0, -1);
+  conductReach(brick, bx + a, by + b, bz + 7, 0, 0, 1);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -221,7 +274,9 @@ fn winMark(@builtin(global_invocation_id) gid : vec3<u32>) {
   let wx = o.x + lx; let wy = o.y + ly; let wz = o.z + lz;
   if (!worldSolid(wx, wy, wz)) { return; }
   let vi = wIdx(wx, wy, wz);
-  if (winIn[lIdx(lx, ly, lz)] == SOLID_UNREACHED) {
+  // Detached iff this voxel's (brick, component) node was never reached.
+  let node = winBrickCell(lx, ly, lz) * 512u + voxLocal[lIdx(lx, ly, lz)];
+  if (atomicLoad(&nodeReached[node]) == 0u) {
     vox0[vi] = vox0[vi] | 0x10u;
     vox1[vi] = vox1[vi] | 0x10u;
   } else {

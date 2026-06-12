@@ -234,6 +234,12 @@ private:
   WGPUComputePipeline m_bodyLabelFloodPipe = nullptr;
   WGPUComputePipeline m_bodyRecolorPipe = nullptr;
   WGPUComputePipeline m_bodyLocalCcPipe = nullptr; // within-brick CC of a body
+  WGPUBindGroup m_bodyLocalCcBg = nullptr;
+  // Node-resolution label flood for a body split (mirrors the world-fell one).
+  WGPUComputePipeline m_bodyNodeFloodPipe = nullptr;
+  WGPUBindGroup m_bodyNodeFloodBg = nullptr;
+  WGPUComputePipeline m_bodyScatterPipe = nullptr;
+  WGPUBindGroup m_bodyScatterBg = nullptr;
   WGPUBindGroup m_bodyLabelInitBg = nullptr;
   WGPUBindGroup m_bodyLabelFloodBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_bodyRecolorBg = nullptr;
@@ -265,9 +271,15 @@ private:
   // keeps its two sides separate.
   WGPUBuffer m_winVoxLocal = nullptr;
   WGPUBuffer m_winNodeReached = nullptr;
+  // Node-resolution CC: per-window-brick "has any detached voxel" flag, so the
+  // node flood dispatches one workgroup per brick and skips empty space.
+  WGPUBuffer m_winDetBrick = nullptr;
   WGPUComputePipeline m_winClassifyPipe = nullptr;
   WGPUComputePipeline m_winConductPipe = nullptr;
   WGPUComputePipeline m_winLocalCcPipe = nullptr;
+  // Node-resolution reachability flood (conducts "reached" over the node
+  // graph), replacing the full-grid winFlood + winConduct.
+  WGPUComputePipeline m_winNodeReachFloodPipe = nullptr;
   // Voxel-exact world fell stage 2/3: CC + extract over the window's detached
   // set (reuses m_windowBuf as the label ping-pong, m_rootSlot/m_slotMeta and
   // the sparse brickmap for body voxels).
@@ -276,6 +288,13 @@ private:
   WGPUComputePipeline m_winDetachedCcPipe =
       nullptr; // within-brick CC of detached
   WGPUBindGroup m_winDetachedCcBg = nullptr;
+  // Node-resolution label flood: floods min over the (brick, component) node
+  // graph (adjacency discovered by brick-face scan), then scatters node labels
+  // back to voxels. Replaces the per-voxel labelInit + 32x voxel flood.
+  WGPUComputePipeline m_winNodeFloodPipe = nullptr;
+  WGPUBindGroup m_winNodeFloodBg = nullptr;
+  WGPUComputePipeline m_winScatterPipe = nullptr;
+  WGPUBindGroup m_winScatterBg = nullptr;
   WGPUComputePipeline m_winRegisterPipe = nullptr;
   WGPUComputePipeline m_winReducePipe = nullptr;
   WGPUComputePipeline m_winExtractPipe = nullptr;
@@ -293,12 +312,18 @@ private:
   float m_dbgMouseY = -100.0f;
   bool m_debugWire = true; // wireframe overlays on by default
   int m_carvedSlot = -1;   // body slot the last carve hit, else -1
+  // 1-frame-stale GPU flag: the last carve actually removed world voxels. Gates
+  // the reflood + world fell so holding the carve button over empty space (or
+  // an already-hollowed hole) doesn't rerun the full-world machinery every
+  // frame.
+  bool m_worldCarved = false;
   bool m_carveMapBusy = false;
   bool m_carvePendingResolve = false;
   struct CarveHitRb
   {
     WGPUBuffer buffer;
     int* slot;
+    bool* worldCarved;
     bool* busy;
   } m_carveRb{};
 

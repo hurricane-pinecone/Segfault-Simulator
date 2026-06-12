@@ -131,7 +131,8 @@ void onBodyStateMapped(WGPUMapAsyncStatus status,
   *r->busy = false;
 }
 
-// Reads which body slot the last carve hit (-1 if it hit the world / nothing).
+// Reads which body slot the last carve hit (-1 if it hit the world / nothing)
+// and whether it actually removed world voxels (carveHit[5]).
 void onCarveHitMapped(WGPUMapAsyncStatus status,
                       WGPUStringView,
                       void* ud1,
@@ -141,15 +142,19 @@ void onCarveHitMapped(WGPUMapAsyncStatus status,
   {
     WGPUBuffer buffer;
     int* slot;
+    bool* worldCarved;
     bool* busy;
   };
   auto* r = static_cast<Rb*>(ud1);
   if (status == WGPUMapAsyncStatus_Success)
   {
     const auto* h = static_cast<const uint32_t*>(
-        wgpuBufferGetConstMappedRange(r->buffer, 0, 8));
+        wgpuBufferGetConstMappedRange(r->buffer, 0, 24));
     if (h)
+    {
       *r->slot = (h[0] == 1u) ? static_cast<int>(h[1]) : -1;
+      *r->worldCarved = h[5] == 1u;
+    }
     wgpuBufferUnmap(r->buffer);
   }
   *r->busy = false;
@@ -332,8 +337,9 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
                                  WGPUBufferUsage_CopySrc);
   m_carveHitReadback = makeBuffer(
-      m_device, 8, WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
-  m_carveRb = CarveHitRb{m_carveHitReadback, &m_carvedSlot, &m_carveMapBusy};
+      m_device, 32, WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
+  m_carveRb = CarveHitRb{
+      m_carveHitReadback, &m_carvedSlot, &m_worldCarved, &m_carveMapBusy};
   m_bodyLabelBuf[0] =
       makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
   m_bodyLabelBuf[1] =
@@ -368,6 +374,10 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
       makeBuffer(m_device,
                  static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t),
                  WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+  // Per window-brick "has any detached voxel" flag, for the node flood's
+  // empty-brick skip (written fresh every carve by detachedLocalCC).
+  m_winDetBrick = makeBuffer(
+      m_device, kWinBricks * sizeof(uint32_t), WGPUBufferUsage_Storage);
 
   buildTimestamps();
   buildGenerate();
@@ -1205,8 +1215,6 @@ void GpuVoxelWorld::buildBodyLabel()
   m_bodyLabelFloodPipe =
       makeComputePipeline(m_device, module, "labelFlood", layout);
   m_bodyRecolorPipe = makeComputePipeline(m_device, module, "recolor", layout);
-  m_bodyLocalCcPipe =
-      makeComputePipeline(m_device, module, "bodyLocalCC", layout);
 
   const uint64_t brickGridBytes =
       static_cast<uint64_t>(kMaxBodies) * 1728u * sizeof(uint32_t);
@@ -1214,6 +1222,36 @@ void GpuVoxelWorld::buildBodyLabel()
       static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
   const uint64_t nodeBytes =
       static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t);
+
+  // bodyLocalCC seeds the node graph + the per-brick flag, so it needs binding
+  // 6 (detBrick) -- a dedicated layout {3,4,5,6,20,21}, not the shared one.
+  {
+    const auto S = WGPUShaderStage_Compute;
+    const auto RW = WGPUBufferBindingType_Storage;
+    const auto RO = WGPUBufferBindingType_ReadOnlyStorage;
+    const auto U = WGPUBufferBindingType_Uniform;
+    WGPUBindGroupLayoutEntry ce[6] = {storageEntry(3, S, U),
+                                      storageEntry(4, S, RW),
+                                      storageEntry(5, S, RW),
+                                      storageEntry(6, S, RW),
+                                      storageEntry(20, S, RO),
+                                      storageEntry(21, S, RW)};
+    WGPUBindGroupLayout ccBgl = makeBgl(m_device, ce, 6);
+    m_bodyLocalCcPipe = makeComputePipeline(
+        m_device, module, "bodyLocalCC", makePipelineLayout(m_device, ccBgl));
+    WGPUBindGroupEntry cb[6] = {
+        bufEntry(3, m_bodyLabelSlotBuf, 16),
+        bufEntry(4, m_winVoxLocal, m_bodyBytes),
+        bufEntry(5, m_winNodeReached, nodeBytes),
+        bufEntry(6, m_winDetBrick, kWinBricks * sizeof(uint32_t)),
+        bufEntry(20, m_bodyBrickGrid, brickGridBytes),
+        bufEntry(21, m_brickPool, brickPoolBytes)};
+    WGPUBindGroupDescriptor cd = {};
+    cd.layout = ccBgl;
+    cd.entryCount = 6;
+    cd.entries = cb;
+    m_bodyLocalCcBg = wgpuDeviceCreateBindGroup(m_device, &cd);
+  }
   // init seeds labelBuf[0]; binding 1 present for layout only.
   // voxLocal/nodeLabel reuse the world-fell two-level buffers (mutually
   // exclusive per frame).
@@ -1258,6 +1296,41 @@ void GpuVoxelWorld::buildBodyLabel()
   rd.entryCount = 7;
   rd.entries = re;
   m_bodyRecolorBg = wgpuDeviceCreateBindGroup(m_device, &rd);
+
+  // Node flood: equalize the (brick, component) node graph (4 local labels,
+  // 5 node mins, 6 the per-brick skip flag, reusing m_winDetBrick).
+  const auto S = WGPUShaderStage_Compute;
+  const auto RW = WGPUBufferBindingType_Storage;
+  WGPUBindGroupLayoutEntry nfe[3] = {
+      storageEntry(4, S, RW), storageEntry(5, S, RW), storageEntry(6, S, RW)};
+  WGPUBindGroupLayout nfBgl = makeBgl(m_device, nfe, 3);
+  m_bodyNodeFloodPipe = makeComputePipeline(
+      m_device, module, "nodeFlood", makePipelineLayout(m_device, nfBgl));
+  WGPUBindGroupEntry nfb[3] = {
+      bufEntry(4, m_winVoxLocal, m_bodyBytes),
+      bufEntry(5, m_winNodeReached, nodeBytes),
+      bufEntry(6, m_winDetBrick, kWinBricks * sizeof(uint32_t))};
+  WGPUBindGroupDescriptor nfd = {};
+  nfd.layout = nfBgl;
+  nfd.entryCount = 3;
+  nfd.entries = nfb;
+  m_bodyNodeFloodBg = wgpuDeviceCreateBindGroup(m_device, &nfd);
+
+  // Scatter: write each solid voxel's final node label into m_bodyLabelBuf[0]
+  // (binding 2), the buffer the split register/reduce read.
+  WGPUBindGroupLayoutEntry sce[3] = {
+      storageEntry(2, S, RW), storageEntry(4, S, RW), storageEntry(5, S, RW)};
+  WGPUBindGroupLayout scBgl = makeBgl(m_device, sce, 3);
+  m_bodyScatterPipe = makeComputePipeline(
+      m_device, module, "scatter", makePipelineLayout(m_device, scBgl));
+  WGPUBindGroupEntry scb[3] = {bufEntry(2, m_bodyLabelBuf[0], m_bodyBytes),
+                               bufEntry(4, m_winVoxLocal, m_bodyBytes),
+                               bufEntry(5, m_winNodeReached, nodeBytes)};
+  WGPUBindGroupDescriptor scd = {};
+  scd.layout = scBgl;
+  scd.entryCount = 3;
+  scd.entries = scb;
+  m_bodyScatterBg = wgpuDeviceCreateBindGroup(m_device, &scd);
 }
 
 void GpuVoxelWorld::buildBodySplit()
@@ -1347,6 +1420,8 @@ void GpuVoxelWorld::buildWindowAnchor()
       makeComputePipeline(m_device, module, "winConduct", layout);
   m_winLocalCcPipe =
       makeComputePipeline(m_device, module, "winLocalCC", layout);
+  m_winNodeReachFloodPipe =
+      makeComputePipeline(m_device, module, "winNodeReachFlood", layout);
 
   const uint64_t nodeBytes =
       static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t);
@@ -1419,34 +1494,50 @@ void GpuVoxelWorld::buildWindowSplit()
                          bufEntry(3, m_carveHitBuf, 32),
                          bufEntry(5, m_windowBuf[0], labelBytes)});
 
-  // Two-level CC: within-brick component labels (voxLocalLabel) + per-node min
-  // (nodeLabel), reusing the anchor flood's buffers (it has finished by now).
+  // Two-level CC: within-brick component labels (voxLocalLabel), seed each
+  // node's min global label + the per-brick detached flag, reusing the anchor
+  // flood's buffers (it has finished by now).
   auto dcc = pass({storageEntry(0, S, RW),
                    storageEntry(2, S, RO),
                    storageEntry(3, S, RO),
                    storageEntry(15, S, RW),
-                   storageEntry(16, S, RW)},
+                   storageEntry(16, S, RW),
+                   storageEntry(17, S, RW)},
                   "detachedLocalCC");
   m_winDetachedCcPipe = dcc.first;
-  m_winDetachedCcBg = bg(dcc.second,
-                         {bufEntry(0, m_voxBuf[0], m_voxBytes),
-                          bufEntry(2, m_brickBuf, m_brickBytes),
-                          bufEntry(3, m_carveHitBuf, 32),
-                          bufEntry(15, m_winVoxLocal, m_bodyBytes),
-                          bufEntry(16, m_winNodeReached, nodeBytes)});
+  m_winDetachedCcBg =
+      bg(dcc.second,
+         {bufEntry(0, m_voxBuf[0], m_voxBytes),
+          bufEntry(2, m_brickBuf, m_brickBytes),
+          bufEntry(3, m_carveHitBuf, 32),
+          bufEntry(15, m_winVoxLocal, m_bodyBytes),
+          bufEntry(16, m_winNodeReached, nodeBytes),
+          bufEntry(17, m_winDetBrick, kWinBricks * sizeof(uint32_t))});
 
-  auto fl = pass({storageEntry(4, S, RO),
-                  storageEntry(5, S, RW),
+  // Node flood: equalize the (brick, component) node graph (binding 15 local
+  // labels, 16 node mins, 17 the per-brick skip flag).
+  auto nf = pass({storageEntry(15, S, RW),
+                  storageEntry(16, S, RW),
+                  storageEntry(17, S, RW)},
+                 "nodeFlood");
+  m_winNodeFloodPipe = nf.first;
+  m_winNodeFloodBg =
+      bg(nf.second,
+         {bufEntry(15, m_winVoxLocal, m_bodyBytes),
+          bufEntry(16, m_winNodeReached, nodeBytes),
+          bufEntry(17, m_winDetBrick, kWinBricks * sizeof(uint32_t))});
+
+  // Scatter: write each detached voxel's final node label into m_windowBuf[0]
+  // (binding 5), the buffer register/reduce/extract read.
+  auto sc = pass({storageEntry(5, S, RW),
                   storageEntry(15, S, RW),
                   storageEntry(16, S, RW)},
-                 "labelFlood");
-  m_winLabelFloodPipe = fl.first;
-  for (int i = 0; i < 2; ++i)
-    m_winLabelFloodBg[i] = bg(fl.second,
-                              {bufEntry(4, m_windowBuf[i], labelBytes),
-                               bufEntry(5, m_windowBuf[1 - i], labelBytes),
-                               bufEntry(15, m_winVoxLocal, m_bodyBytes),
-                               bufEntry(16, m_winNodeReached, nodeBytes)});
+                 "scatter");
+  m_winScatterPipe = sc.first;
+  m_winScatterBg = bg(sc.second,
+                      {bufEntry(5, m_windowBuf[0], labelBytes),
+                       bufEntry(15, m_winVoxLocal, m_bodyBytes),
+                       bufEntry(16, m_winNodeReached, nodeBytes)});
 
   auto rg = pass({storageEntry(3, S, RO),
                   storageEntry(4, S, RO),
@@ -1600,7 +1691,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     mci.mode = WGPUCallbackMode_AllowProcessEvents;
     mci.callback = onCarveHitMapped;
     mci.userdata1 = &m_carveRb;
-    wgpuBufferMapAsync(m_carveHitReadback, WGPUMapMode_Read, 0, 8, mci);
+    wgpuBufferMapAsync(m_carveHitReadback, WGPUMapMode_Read, 0, 24, mci);
   }
 
   wgpuQueueWriteBuffer(m_queue, m_camBuf, 0, cam16, 64);
@@ -1664,7 +1755,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     if (!m_carveMapBusy)
     {
       wgpuCommandEncoderCopyBufferToBuffer(
-          enc, m_carveHitBuf, 0, m_carveHitReadback, 0, 8);
+          enc, m_carveHitBuf, 0, m_carveHitReadback, 0, 24);
       m_carvePendingResolve = true;
     }
   }
@@ -1694,13 +1785,14 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   wgpuComputePassEncoderEnd(cr);
   wgpuComputePassEncoderRelease(cr);
 
-  // On a carve, static solidity changed -> re-derive ground anchoring. A carve
-  // removes support, which the monotone flood can't undo in place, so reset
-  // (rebuild faces from the post-carve voxels, reseed ground) and reflood to
-  // convergence. A severed piece never re-reaches ground -> its bricks stay
-  // unanchored, which the render tints. Brick-resolution, so a full reflood is
-  // cheap; only runs on carve frames.
-  if (edit && edit->mode == 1)
+  // On a carve that removed world voxels, static solidity changed -> re-derive
+  // ground anchoring. A carve removes support, which the monotone flood can't
+  // undo in place, so reset (rebuild faces from the post-carve voxels, reseed
+  // ground) and reflood to convergence. A severed piece never re-reaches ground
+  // -> its bricks stay unanchored, which the render tints. Gated on the GPU
+  // world-carve flag (1 frame late) so holding the button over empty space
+  // reruns nothing.
+  if (m_worldCarved)
   {
     const auto detectPass = [&](WGPUComputePipeline pipe,
                                 WGPUBindGroup bg,
@@ -1729,14 +1821,17 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   }
 
   // Auto-fell: drop severed pieces the instant they are cut. Only a carve that
-  // hit the WORLD requests a world fell; a body carve (m_carvedSlot >= 0) must
-  // not, or the spuriously-fired world fell would hog the shared body-meta
-  // readback and starve the body split that the same cut needs.
-  if (edit && edit->mode == 1 && m_carvedSlot < 0)
+  // actually removed WORLD voxels requests a world fell; a body carve
+  // (m_carvedSlot >= 0) must not, or the spuriously-fired world fell would hog
+  // the shared body-meta readback and starve the body split that the same cut
+  // needs.
+  if (m_worldCarved && m_carvedSlot < 0)
     m_fellRequested = true;
   if (edit && edit->mode == 1)
     m_fellHold =
         4; // a carve may claim new body slots -> process full range briefly
+  m_worldCarved =
+      false; // consumed this frame; the next carve's readback re-sets it
 
   const auto bodyPass = [&](WGPUComputePipeline pipe,
                             WGPUBindGroup bg,
@@ -1801,32 +1896,22 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   {
     m_fellRequested = false;
     const uint32_t wg = kBodyDim / 4;
-    // Window anchor: voxel-exact ground flood -> bit 4 on the detached set.
-    // Two-level: classify window bricks (full == 512 solid), then interleave
-    // the voxel flood with a full-brick conduction pass so the dense grounded
-    // terrain (mostly full bricks) carries "reached" in ~1 step/brick -- ~24
-    // iterations replaces the old 128 (the grid diameter). Two-level: classify
-    // full bricks + label within-brick components, then interleave the voxel
-    // flood with full-brick conduction (winConduct) and rely on the
-    // per-component nodeReached flag (set in winFlood) so full-brick chains
-    // (terrain/trunk) AND mixed bricks (canopies) both converge in ~1
-    // step/brick.
+    // Window anchor (node-resolution ground reachability -> bit 4 on the
+    // detached set): classify window-brick occupancy, label within-brick
+    // components and seed each ground-touching component's nodeReached flag
+    // (winLocalCC), flood "reached" across the node graph (one workgroup per
+    // brick, brick-face adjacency, empty bricks skipped), then winMark flags
+    // any voxel whose node was never reached. nodeReached must be cleared
+    // BEFORE winLocalCC seeds it.
     bodyPass(m_winClassifyPipe, m_winBg[0], 12, 12, 12);
-    bodyPass(m_winLocalCcPipe, m_winBg[0], 12, 12, 12);
-    wgpuCommandEncoderClearBuffer(
-        enc, m_winBrickReach, 0, kWinBricks * sizeof(uint32_t));
     wgpuCommandEncoderClearBuffer(
         enc,
         m_winNodeReached,
         0,
         static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t));
-    bodyPass(m_winInitPipe, m_winBg[1], wg, wg, wg);
-    const uint32_t condWg = (kWinBricks + 63) / 64;
+    bodyPass(m_winLocalCcPipe, m_winBg[0], 12, 12, 12);
     for (int r = 0; r < 32; ++r)
-    {
-      bodyPass(m_winFloodPipe, m_winBg[r & 1], wg, wg, wg);
-      bodyPass(m_winConductPipe, m_winBg[0], condWg, 1, 1);
-    }
+      bodyPass(m_winNodeReachFloodPipe, m_winBg[0], 12, 12, 12);
     bodyPass(m_winMarkPipe, m_winBg[0], wg, wg, wg);
 
     // Per slot: aabbMin = +world (for atomicMin), everything else 0.
@@ -1838,13 +1923,15 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       metaInit[s * 16 + 2] = kWorld;
     }
     wgpuQueueWriteBuffer(m_queue, m_slotMetaBuf, 0, metaInit, sizeof(metaInit));
-    // Two-level CC: within-brick component labels + per-node min (inits
-    // nodeLabel to SENTINEL), so the flood converges in ~brick diameter, not
-    // voxel diameter.
+    // Node-resolution CC: within-brick local CC seeds each (brick, component)
+    // node + the per-brick detached flag, then the flood equalizes the node
+    // graph (one workgroup per brick, brick-face adjacency, empty bricks
+    // skipped), and a scatter writes the per-voxel labels. ~one brick-hop per
+    // iteration; far fewer cells/iteration than the old full-grid voxel flood.
     bodyPass(m_winDetachedCcPipe, m_winDetachedCcBg, 12, 12, 12);
-    bodyPass(m_winLabelInitPipe, m_winLabelInitBg, wg, wg, wg);
     for (int r = 0; r < 32; ++r)
-      bodyPass(m_winLabelFloodPipe, m_winLabelFloodBg[r & 1], wg, wg, wg);
+      bodyPass(m_winNodeFloodPipe, m_winNodeFloodBg, 12, 12, 12);
+    bodyPass(m_winScatterPipe, m_winScatterBg, wg, wg, wg);
     bodyPass(m_winRegisterPipe, m_winRegisterBg, wg, wg, wg);
     bodyPass(m_winReducePipe, m_winReduceBg, wg, wg, wg);
     // Allocate a storage block per just-reduced slot, recording its (offset,
@@ -1923,13 +2010,14 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     const uint32_t slotData[4] = {parent, 0, 0, 0};
     wgpuQueueWriteBuffer(m_queue, m_bodyLabelSlotBuf, 0, slotData, 16);
     const uint32_t g = kBodyDim / 4;
-    // Two-level: within-brick component labels + per-node min (inits
-    // nodeLabel), so the body CC converges in ~brick diameter, not voxel
-    // diameter.
-    bodyPass(m_bodyLocalCcPipe, m_bodyLabelFloodBg[0], 12, 12, 12);
-    bodyPass(m_bodyLabelInitPipe, m_bodyLabelInitBg, g, g, g);
+    // Node-resolution CC: within-brick local CC seeds each node + the per-brick
+    // flag, the flood equalizes the node graph (one workgroup per brick, brick-
+    // face adjacency, empty bricks skipped), and a scatter writes per-voxel
+    // labels -- far fewer cells/iteration than the old full-grid voxel flood.
+    bodyPass(m_bodyLocalCcPipe, m_bodyLocalCcBg, 12, 12, 12);
     for (int r = 0; r < 32; ++r)
-      bodyPass(m_bodyLabelFloodPipe, m_bodyLabelFloodBg[r & 1], g, g, g);
+      bodyPass(m_bodyNodeFloodPipe, m_bodyNodeFloodBg, 12, 12, 12);
+    bodyPass(m_bodyScatterPipe, m_bodyScatterBg, g, g, g);
 
     // slotCount is the root-ordering counter (k==0 -> parent, rest claim a
     // slot).

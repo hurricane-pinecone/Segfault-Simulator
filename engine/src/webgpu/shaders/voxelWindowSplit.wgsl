@@ -29,6 +29,9 @@
 // own body) rather than wrongly merging across the cut.
 @group(0) @binding(15) var<storage, read_write> voxLocalLabel : array<u32>;
 @group(0) @binding(16) var<storage, read_write> nodeLabel : array<atomic<u32>>;
+// Per window-brick (12^3) flag: 1 if the brick holds any detached voxel. The node
+// flood dispatches one workgroup per brick and skips the empty ones.
+@group(0) @binding(17) var<storage, read_write> detBrick : array<u32>;
 // Free-BITMAP allocator: wBrickFree[0] is a rotating alloc hint; wBrickFree[b+1]
 // is 1 if brick b is free, 0 if used. Claim a free brick by CAS-ing its flag
 // 1->0. This is race-free and leak-free -- unlike the old index-stack, two slots
@@ -110,16 +113,20 @@ fn labelInit(@builtin(global_invocation_id) gid : vec3<u32>) {
 
 // Within-brick CC of the DETACHED set (one workgroup per window-brick, a z-column
 // per thread, in shared memory). Each detached voxel ends labelled with its
-// component's min local index; also resets this brick's nodeLabel slots so the
-// labelFlood's atomicMin starts from SENTINEL.
+// component's min LOCAL index (voxLocalLabel). Also seeds each (brick, component)
+// node with its component's min GLOBAL (window-local) index for the node flood,
+// and records whether the brick holds any detached voxel.
 var<workgroup> lblD : array<u32, 512>;
+var<workgroup> wgDet : atomic<u32>;
 @compute @workgroup_size(64)
 fn detachedLocalCC(@builtin(workgroup_id) wid : vec3<u32>,
                    @builtin(local_invocation_index) lidx : u32) {
   let o = winOrigin();
   let bx = i32(wid.x) * 8; let by = i32(wid.y) * 8; let bz = i32(wid.z) * 8;
-  let nodeBase = (wid.x + wid.y * 12u + wid.z * 144u) * 512u;
+  let brick = wid.x + wid.y * 12u + wid.z * 144u;
+  let nodeBase = brick * 512u;
   let cx = i32(lidx % 8u); let cy = i32(lidx / 8u);
+  if (lidx == 0u) { atomicStore(&wgDet, 0u); }
   for (var z = 0; z < 8; z = z + 1) {
     let li = u32(cx + cy * 8 + z * 64);
     lblD[li] = select(SENTINEL, li,
@@ -143,10 +150,66 @@ fn detachedLocalCC(@builtin(workgroup_id) wid : vec3<u32>,
     }
     workgroupBarrier();
   }
+  // Publish the local component label, seed the node's min global index, and vote
+  // the brick's detached flag. nodeLabel is reset above (barrier before this), so
+  // the atomicMin seed is safe within the workgroup.
   for (var z = 0; z < 8; z = z + 1) {
     let li = u32(cx + cy * 8 + z * 64);
-    voxLocalLabel[lIdx(bx + cx, by + cy, bz + z)] = lblD[li];
+    let comp = lblD[li];
+    voxLocalLabel[lIdx(bx + cx, by + cy, bz + z)] = comp;
+    if (comp != SENTINEL) {
+      atomicMin(&nodeLabel[nodeBase + comp], lIdx(bx + cx, by + cy, bz + z));
+      atomicStore(&wgDet, 1u);
+    }
   }
+  workgroupBarrier();
+  if (lidx == 0u) { detBrick[brick] = atomicLoad(&wgDet); }
+}
+
+// Node flood: one workgroup per window-brick (12^3), 64 threads scan the brick's
+// 6 faces. For each detached face voxel whose outward neighbour (in the adjacent
+// brick) is also detached, equalize the two (brick, component) nodes' min labels.
+// Empty bricks skip entirely. Re-dispatched ~brick-diameter times; the in-place
+// atomicMin makes it converge regardless of order.
+fn conduct(brick : u32, wx : i32, wy : i32, wz : i32, ox : i32, oy : i32, oz : i32) {
+  let comp = voxLocalLabel[lIdx(wx, wy, wz)];
+  if (comp == SENTINEL) { return; } // this face voxel is not detached
+  let nwx = wx + ox; let nwy = wy + oy; let nwz = wz + oz;
+  if (nwx < 0 || nwy < 0 || nwz < 0 || nwx >= DIM || nwy >= DIM || nwz >= DIM) { return; }
+  let nComp = voxLocalLabel[lIdx(nwx, nwy, nwz)];
+  if (nComp == SENTINEL) { return; } // neighbour not detached -> no edge
+  let nBrick = u32((nwx / 8) + (nwy / 8) * 12 + (nwz / 8) * 144);
+  let myNode = brick * 512u + comp;
+  let nNode = nBrick * 512u + nComp;
+  let m = min(atomicLoad(&nodeLabel[myNode]), atomicLoad(&nodeLabel[nNode]));
+  atomicMin(&nodeLabel[myNode], m);
+  atomicMin(&nodeLabel[nNode], m);
+}
+@compute @workgroup_size(64)
+fn nodeFlood(@builtin(workgroup_id) wid : vec3<u32>,
+             @builtin(local_invocation_index) lidx : u32) {
+  let brick = wid.x + wid.y * 12u + wid.z * 144u;
+  if (detBrick[brick] == 0u) { return; } // no detached voxels here
+  let bx = i32(wid.x) * 8; let by = i32(wid.y) * 8; let bz = i32(wid.z) * 8;
+  let a = i32(lidx / 8u); let b = i32(lidx % 8u);
+  conduct(brick, bx + 0, by + a, bz + b, -1, 0, 0);
+  conduct(brick, bx + 7, by + a, bz + b, 1, 0, 0);
+  conduct(brick, bx + a, by + 0, bz + b, 0, -1, 0);
+  conduct(brick, bx + a, by + 7, bz + b, 0, 1, 0);
+  conduct(brick, bx + a, by + b, bz + 0, 0, 0, -1);
+  conduct(brick, bx + a, by + b, bz + 7, 0, 0, 1);
+}
+
+// Scatter each detached voxel's final node label back to the per-voxel label
+// buffer the register/reduce/extract passes read; air -> SENTINEL.
+@compute @workgroup_size(4, 4, 4)
+fn scatter(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z);
+  if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
+  let li = lIdx(lx, ly, lz);
+  let comp = voxLocalLabel[li];
+  if (comp == SENTINEL) { labelOut[li] = SENTINEL; return; }
+  labelOut[li] = atomicLoad(&nodeLabel[brickCell(lx, ly, lz) * 512u + comp]);
 }
 
 fn nb(x : i32, y : i32, z : i32) -> u32 {
