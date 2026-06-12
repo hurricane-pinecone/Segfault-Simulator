@@ -16,8 +16,32 @@
 @group(0) @binding(7) var<storage, read_write> slotMeta : array<atomic<i32>>;
 @group(0) @binding(8) var<storage, read_write> occupied : array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read> materials : array<Material>;
-@group(0) @binding(10) var<storage, read_write> bodyVox : array<u32>;
-@group(0) @binding(11) var<storage, read> desc : array<u32>; // per-slot (offset, dim)
+// Sparse brickmap write path: lazily allocate an 8^3 brick on first write into a
+// (slot, brick) cell, from a shared free-list.
+@group(0) @binding(12) var<storage, read_write> wBrickGrid : array<atomic<u32>>;
+@group(0) @binding(13) var<storage, read_write> wBrickPool : array<u32>;
+@group(0) @binding(14) var<storage, read_write> wBrickFree : array<atomic<u32>>;
+fn popBrick() -> u32 {
+  let c = atomicSub(&wBrickFree[0], 1u);
+  if (c == 0u || c > BRICK_POOL_BRICKS) { atomicAdd(&wBrickFree[0], 1u); return BRICK_EMPTY; }
+  return atomicLoad(&wBrickFree[c]);
+}
+fn pushBrick(b : u32) {
+  let oldc = atomicAdd(&wBrickFree[0], 1u);
+  atomicStore(&wBrickFree[oldc + 1u], b);
+}
+fn bodyVoxStore(slot : u32, lx : i32, ly : i32, lz : i32, v : u32) {
+  let bc = slot * BODYBRICKS + brickCell(lx, ly, lz);
+  var bp = atomicLoad(&wBrickGrid[bc]);
+  if (bp == BRICK_EMPTY) {
+    let nb = popBrick();
+    if (nb == BRICK_EMPTY) { return; } // pool full -> drop voxel (a hole, not a crash)
+    for (var i = 0u; i < 512u; i = i + 1u) { wBrickPool[nb * 512u + i] = 0u; } // clear before publish
+    let r = atomicCompareExchangeWeak(&wBrickGrid[bc], BRICK_EMPTY, nb);
+    if (r.exchanged) { bp = nb; } else { pushBrick(nb); bp = r.old_value; }
+  }
+  wBrickPool[bp * 512u + brickLocal(lx, ly, lz)] = v;
+}
 
 // Material density as a fixed-point weight (>=1) for the mass-weighted CoM and
 // second moment, so light voxels (leaves) barely contribute to either. The scale
@@ -91,6 +115,7 @@ fn labelFlood(@builtin(global_invocation_id) gid : vec3<u32>) {
 
 @compute @workgroup_size(4, 4, 4)
 fn registerRoots(@builtin(global_invocation_id) gid : vec3<u32>) {
+  if (carveHit[0] != 0u) { return; } // body hit -> split, not a world fell
   let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z);
   if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
   let li = lIdx(lx, ly, lz);
@@ -113,26 +138,18 @@ fn reduce(@builtin(global_invocation_id) gid : vec3<u32>) {
   let o = winOrigin();
   let wx = o.x + lx; let wy = o.y + ly; let wz = o.z + lz;
   let base = slot * 16u;
-  // AABB covers ALL detached voxels (so the extract's body-grid iteration reaches
-  // every voxel, incl. leaves it turns to powder). The size COUNT, which the cull
-  // threshold tests, includes only STRUCTURAL voxels -- leaves are flimsy debris,
-  // not rigid-body material, so a leaf-only clump counts 0 and is culled away
-  // instead of spawning a body.
   atomicMin(&slotMeta[base + 0u], wx);
   atomicMin(&slotMeta[base + 1u], wy);
   atomicMin(&slotMeta[base + 2u], wz);
   atomicMax(&slotMeta[base + 3u], wx + 1);
   atomicMax(&slotMeta[base + 4u], wy + 1);
   atomicMax(&slotMeta[base + 5u], wz + 1);
-  atomicAdd(&slotMeta[base + 6u], 1); // [6] total voxel count: is-component + iterate
-  let v = vox0[wIdx(wx, wy, wz)];
-  if (matId(v) != MAT_LEAVES) {
-    atomicAdd(&slotMeta[base + 14u], 1); // [14] structural count: the cull threshold
-  }
+  atomicAdd(&slotMeta[base + 6u], 1);
 }
 
 @compute @workgroup_size(4, 4, 4)
 fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
+  if (carveHit[0] != 0u) { return; } // body hit -> split, not a world fell
   let slot = gid.z / u32(DIM);
   if (slot >= MAXB) { return; }
   let lx = i32(gid.x);
@@ -141,14 +158,12 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let base = slot * 16u;
   let count = atomicLoad(&slotMeta[base + 6u]);
   if (count == 0) { return; } // inactive slot (no voxels at all)
-  // Cull on STRUCTURAL voxel count ([14]), not total: a leaf-only clump has 0
-  // structural voxels -> culled to powder, never a body. A culled slot owns no
-  // storage block, so iterate the full window stride, touch only the world, never
-  // bodyVox. vox0 is the current src (bind group is src-indexed); powder must land
-  // in src, so write it there and clear dst (vox1) -- writing both would duplicate.
-  let cull = atomicLoad(&slotMeta[base + 14u]) < MIN_BODY_VOXELS;
-  let bdim = select(i32(desc[slot * 2u + 1u]), DIM, cull);
-  if (lx >= bdim || ly >= bdim || lz >= bdim) { return; }
+  // Below the minimum body size this component crumbles to powder rather than
+  // spawning a tiny body. vox0 is the current src (bind group is src-indexed);
+  // powder must land in src, so write it there and clear dst (vox1) -- writing both
+  // would duplicate it.
+  let cull = count < MIN_BODY_VOXELS;
+  if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
 
   let wx = atomicLoad(&slotMeta[base + 0u]) + lx;
   let wy = atomicLoad(&slotMeta[base + 1u]) + ly;
@@ -156,8 +171,7 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let o = winOrigin();
   let cx = wx - o.x; let cy = wy - o.y; let cz = wz - o.z;
   if (cx < 0 || cy < 0 || cz < 0 || cx >= DIM || cy >= DIM || cz >= DIM) {
-    if (!cull) { bodyVox[desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim)] = 0u; }
-    return;
+    return; // outside the carve window: never part of this body
   }
   let v = vox0[wIdx(wx, wy, wz)];
   let lab = labelIn[lIdx(cx, cy, cz)];
@@ -171,20 +185,10 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
     }
     return;
   }
-  let bodyIdx = desc[slot * 2u] + u32(lx + ly * bdim + lz * bdim * bdim);
-  // Leaves are debris, not rigid-body material: a mine LEAF crumbles to powder
-  // (like the cull path) and is left OUT of the body, so a felled tree becomes a
-  // structural log body + a cloud of falling leaf debris -- not a swarm of leaf
-  // RBs. Structural voxels (wood) extract into the body as before.
-  if (mine && matId(v) == MAT_LEAVES) {
-    let vi = wIdx(wx, wy, wz);
-    vox0[vi] = vox(matId(v), CAT_LIQUID) | VOX_POWDER; // src: falling debris
-    vox1[vi] = 0u;                                     // dst: cleared
-    bodyVox[bodyIdx] = 0u;                             // not part of the body
-    return;
-  }
   if (mine) {
-    bodyVox[bodyIdx] = v & 0xFFFFFFEFu; // strip the detached flag in the body
+    // A claimed slot's brick grid is clean (reaped or never used), so non-mine
+    // cells need no clear -- only the moved voxel is written.
+    bodyVoxStore(slot, lx, ly, lz, v & 0xFFFFFFEFu); // strip the detached flag
     let vi = wIdx(wx, wy, wz);
     vox0[vi] = 0u;
     vox1[vi] = 0u;
@@ -197,7 +201,5 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
     atomicAdd(&slotMeta[base + 11u], (lx * lx / 16) * d);
     atomicAdd(&slotMeta[base + 12u], (ly * ly / 16) * d);
     atomicAdd(&slotMeta[base + 13u], (lz * lz / 16) * d);
-  } else {
-    bodyVox[bodyIdx] = 0u;
   }
 }

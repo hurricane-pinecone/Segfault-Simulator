@@ -23,12 +23,20 @@ struct Body {
 @group(0) @binding(1) var<storage, read> voxels : array<u32>;
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
 @group(0) @binding(3) var<storage, read> anchor : array<u32>;
-@group(0) @binding(4) var<storage, read> bodyVox : array<u32>;
+// body voxels now come from the sparse brickmap (bodyVoxLoad, bindings 20/21).
 @group(0) @binding(5) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(6) var<storage, read> labelBuf : array<u32>;
 @group(0) @binding(7) var<uniform> dbgMouse : vec4<f32>; // xy = cursor pixel
 @group(0) @binding(8) var<storage, read> materials : array<Material>;
 @group(0) @binding(9) var<storage, read> bodyArgs : array<u32>; // [3] = active body bound
+// Sparse brickmap body voxels (read-only).
+@group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
+@group(0) @binding(21) var<storage, read> bodyBrickPool : array<u32>;
+fn bodyVoxLoad(slot : u32, lx : i32, ly : i32, lz : i32) -> u32 {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(lx, ly, lz)];
+  if (bp == BRICK_EMPTY) { return 0u; }
+  return bodyBrickPool[bp * 512u + brickLocal(lx, ly, lz)];
+}
 
 const SLOTVOX : u32 = BODYVOX; // body grid DIM^3 (per pool slot)
 
@@ -140,7 +148,6 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   let body = bodies[slot];
   if (body.flags.x == 0u) { return h; }
   let dim = i32(body.flags.y);
-  let off = bitcast<u32>(body.pivot.w); // body's base offset into the voxel pool
 
   // World ray -> body-local: rotate about the pivot (invRot is world->local).
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
@@ -168,7 +175,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   for (var i = 0; i < 320; i = i + 1) {
     if (voxel.x < 0 || voxel.y < 0 || voxel.z < 0 ||
         voxel.x >= dim || voxel.y >= dim || voxel.z >= dim) { break; }
-    let v = bodyVox[off + u32(voxel.x + voxel.y * dim + voxel.z * dim * dim)];
+    let v = bodyVoxLoad(slot, voxel.x, voxel.y, voxel.z);
     if ((v & 3u) != 0u) {
       h.hit = true;
       h.t = tVox;
@@ -184,27 +191,39 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
     }
   }
 
-  // Debug overlay: the body's bounding-box wireframe in magenta. Reached only when
-  // the ray hit NO voxel, so it frames the body in empty space without occluding
-  // it (solid voxels are tested + returned above). A box face point is on an edge
-  // when two local coords sit near the [0,dim] boundary; check entry + exit faces.
+  // Debug overlay: a magenta wireframe of the body's occupied-brick AABB (packed
+  // by the xform pass into invRot0.w / invRot1.w) -- the extent the march actually
+  // covers, not the full BODYDIM^3 grid. Reached only when the ray hit NO voxel,
+  // so it frames the body without occluding it. A box face point is on an edge
+  // when it sits near two of the six AABB faces; check the entry + exit faces.
   if (BODY_BOX != 0u) {
-    let fd = f32(dim);
-    let ew = 1.5;
-    let pe = rol + rdl * max(tenter, 0.0);
-    let px = rol + rdl * texit;
-    var ne = 0;
-    if (pe.x < ew || pe.x > fd - ew) { ne = ne + 1; }
-    if (pe.y < ew || pe.y > fd - ew) { ne = ne + 1; }
-    if (pe.z < ew || pe.z > fd - ew) { ne = ne + 1; }
-    var nx = 0;
-    if (px.x < ew || px.x > fd - ew) { nx = nx + 1; }
-    if (px.y < ew || px.y > fd - ew) { nx = nx + 1; }
-    if (px.z < ew || px.z > fd - ew) { nx = nx + 1; }
-    if (ne >= 2 || nx >= 2) {
-      h.hit = true;
-      h.t = max(tenter, 0.0);
-      h.col = vec3<f32>(1.0, 0.0, 1.0);
+    let pLo = bitcast<u32>(body.invRot0.w);
+    let pHi = bitcast<u32>(body.invRot1.w);
+    let lo = vec3<f32>(f32(pLo & 0xFFu), f32((pLo >> 8u) & 0xFFu), f32((pLo >> 16u) & 0xFFu));
+    let hi = vec3<f32>(f32(pHi & 0xFFu), f32((pHi >> 8u) & 0xFFu), f32((pHi >> 16u) & 0xFFu));
+    if (all(hi > lo)) {
+      let ta = (lo - rol) * inv;
+      let tb = (hi - rol) * inv;
+      let tn = max(max(min(ta.x, tb.x), min(ta.y, tb.y)), min(ta.z, tb.z));
+      let tx = min(min(max(ta.x, tb.x), max(ta.y, tb.y)), max(ta.z, tb.z));
+      if (tx >= max(tn, 0.0)) {
+        let ew = 1.5;
+        let pe = rol + rdl * max(tn, 0.0);
+        let px = rol + rdl * tx;
+        var ne = 0;
+        if (abs(pe.x - lo.x) < ew || abs(pe.x - hi.x) < ew) { ne = ne + 1; }
+        if (abs(pe.y - lo.y) < ew || abs(pe.y - hi.y) < ew) { ne = ne + 1; }
+        if (abs(pe.z - lo.z) < ew || abs(pe.z - hi.z) < ew) { ne = ne + 1; }
+        var nx = 0;
+        if (abs(px.x - lo.x) < ew || abs(px.x - hi.x) < ew) { nx = nx + 1; }
+        if (abs(px.y - lo.y) < ew || abs(px.y - hi.y) < ew) { nx = nx + 1; }
+        if (abs(px.z - lo.z) < ew || abs(px.z - hi.z) < ew) { nx = nx + 1; }
+        if (ne >= 2 || nx >= 2) {
+          h.hit = true;
+          h.t = max(tn, 0.0);
+          h.col = vec3<f32>(1.0, 0.0, 1.0);
+        }
+      }
     }
   }
   return h;

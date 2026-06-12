@@ -5,7 +5,15 @@
 // State stride is 8 vec4: [0]=(flags,timer,_,_) [1]=center [3]=quat [5]=com.
 @group(0) @binding(0) var<storage, read> state : array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read_write> xform : array<vec4<f32>>;
-@group(0) @binding(2) var<storage, read> desc : array<u32>; // per-slot (offset, dim)
+// Sparse brickmap grid (read): scan the slot's occupied bricks for a tight local
+// AABB, packed into the spare invRot .w lanes for the render's debug box.
+@group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
+
+// Pack a 0..BODYDIM local coord triple into one u32 (8 bits/axis; 96 < 256).
+fn packAABB(v : vec3<i32>) -> u32 {
+  let c = clamp(v, vec3<i32>(0), vec3<i32>(BODYDIM));
+  return u32(c.x) | (u32(c.y) << 8u) | (u32(c.z) << 16u);
+}
 
 @compute @workgroup_size(64)
 fn buildXform(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -30,16 +38,36 @@ fn buildXform(@builtin(global_invocation_id) gid : vec3<u32>) {
   let m21 = 2.0 * (y * z + w * x);
   let m22 = 1.0 - 2.0 * (x * x + y * y);
 
+  // Tight local AABB of the occupied bricks (brick-granular, so a multiple of 8),
+  // which is the extent the render actually marches voxels in -- the debug box
+  // frames this rather than the full BODYDIM^3 grid. Degenerate (lo > hi) when the
+  // body has no bricks; the render skips the box then.
+  var lo = vec3<i32>(BODYDIM);
+  var hi = vec3<i32>(0);
+  if (act != 0u) {
+    let g0 = s * BODYBRICKS;
+    for (var i = 0u; i < BODYBRICKS; i = i + 1u) {
+      if (bodyBrickGrid[g0 + i] != BRICK_EMPTY) {
+        let bx = i32(i % u32(BODYBD));
+        let by = i32((i / u32(BODYBD)) % u32(BODYBD));
+        let bz = i32(i / u32(BODYBD * BODYBD));
+        let p = vec3<i32>(bx, by, bz) * 8;
+        lo = min(lo, p);
+        hi = max(hi, p + 8);
+      }
+    }
+  }
+
   let base = s * 6u;
-  let off = desc[s * 2u + 0u];      // body's base offset into the voxel pool
-  let dm = desc[s * 2u + 1u];       // body's grid dim (size class)
+  // Every body grid is BODYDIM^3 (the sparse brickmap is the storage), so the dim
+  // is constant -- no per-slot descriptor.
   xform[base + 0u] = vec4<f32>(bitcast<f32>(act),
-                               bitcast<f32>(dm),
+                               bitcast<f32>(u32(BODYDIM)),
                                bitcast<f32>(bake),
                                bitcast<f32>(act));
-  xform[base + 1u] = vec4<f32>(m00, m01, m02, 0.0);
-  xform[base + 2u] = vec4<f32>(m10, m11, m12, 0.0);
+  xform[base + 1u] = vec4<f32>(m00, m01, m02, bitcast<f32>(packAABB(lo)));
+  xform[base + 2u] = vec4<f32>(m10, m11, m12, bitcast<f32>(packAABB(hi)));
   xform[base + 3u] = vec4<f32>(m20, m21, m22, 0.0);
   xform[base + 4u] = vec4<f32>(center, 0.0);
-  xform[base + 5u] = vec4<f32>(com, bitcast<f32>(off)); // pivot.w = pool offset
+  xform[base + 5u] = vec4<f32>(com, 0.0);
 }

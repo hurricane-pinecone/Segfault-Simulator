@@ -18,11 +18,22 @@ struct Body {
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
 @group(0) @binding(3) var<uniform> ed : Edit;
 @group(0) @binding(4) var<storage, read_write> dirty : array<atomic<u32>>;
-@group(0) @binding(5) var<storage, read_write> bodyVox : array<u32>;
 @group(0) @binding(6) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(7) var<storage, read_write> carveHit : array<u32>; // [0]body? [1]slot [2..4]hit
-
-const SLOTVOX : u32 = BODYVOX; // body grid DIM^3
+// Sparse brickmap body voxels: read (pick) + clear (carve). Carving only removes
+// existing voxels, so no brick allocation is needed.
+@group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
+@group(0) @binding(21) var<storage, read_write> bodyBrickPool : array<u32>;
+fn bodyVoxLoad(slot : u32, x : i32, y : i32, z : i32) -> u32 {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(x, y, z)];
+  if (bp == BRICK_EMPTY) { return 0u; }
+  return bodyBrickPool[bp * 512u + brickLocal(x, y, z)];
+}
+fn bodyVoxClear(slot : u32, x : i32, y : i32, z : i32) {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(x, y, z)];
+  if (bp == BRICK_EMPTY) { return; }
+  bodyBrickPool[bp * 512u + brickLocal(x, y, z)] = 0u;
+}
 
 fn vIdx(x : i32, y : i32, z : i32) -> u32 {
   let bi = u32((x / 8) + (y / 8) * BG + (z / 8) * BG * BG);
@@ -34,8 +45,7 @@ struct March { found : bool, voxel : vec3<i32>, prev : vec3<i32>, t : f32 };
 
 fn bSolid(slot : u32, x : i32, y : i32, z : i32, dim : i32) -> bool {
   if (x < 0 || y < 0 || z < 0 || x >= dim || y >= dim || z >= dim) { return false; }
-  let off = bitcast<u32>(bodies[slot].pivot.w);
-  return (bodyVox[off + u32(x + y * dim + z * dim * dim)] & 3u) != 0u;
+  return (bodyVoxLoad(slot, x, y, z) & 3u) != 0u;
 }
 
 // A thin body part (a trunk) is a tiny target, so count the ray as hitting it if
@@ -194,7 +204,7 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
       if (dx * dx + dy * dy + dz * dz > R * R) { continue; }
       let lx = center.x + dx; let ly = center.y + dy; let lz = center.z + dz;
       if (lx < 0 || ly < 0 || lz < 0 || lx >= bdim || ly >= bdim || lz >= bdim) { continue; }
-      bodyVox[bitcast<u32>(bodies[hitSlot].pivot.w) + u32(lx + ly * bdim + lz * bdim * bdim)] = 0u;
+      bodyVoxClear(hitSlot, lx, ly, lz);
     }
     return;
   }

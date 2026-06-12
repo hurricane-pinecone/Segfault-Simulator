@@ -5,7 +5,6 @@
 // parent grid. The parent keeps one component. slotMeta layout (16 i32/slot):
 // [0..2] aabbMin, [3..5] aabbMax, [6] count, [7..9] CoM-sum, [10] count (dup for
 // the placement check), [11..12] footprint x,z, [13] footprint count.
-@group(0) @binding(0) var<storage, read_write> bodyVox : array<u32>;
 @group(0) @binding(1) var<storage, read> bodyLabel : array<u32>;
 @group(0) @binding(2) var<storage, read_write> rootSlot : array<u32>;
 @group(0) @binding(3) var<storage, read_write> slotMeta : array<atomic<i32>>;
@@ -13,19 +12,46 @@
 @group(0) @binding(5) var<storage, read_write> slotCount : array<atomic<u32>>;
 @group(0) @binding(6) var<uniform> parentU : vec4<u32>; // x = parent slot
 @group(0) @binding(7) var<storage, read> materials : array<Material>;
-@group(0) @binding(8) var<storage, read> desc : array<u32>; // per-slot (offset, dim)
+// Sparse brickmap body voxels: read parent, allocate + write children, clear cells.
+@group(0) @binding(20) var<storage, read_write> bodyBrickGrid : array<atomic<u32>>;
+@group(0) @binding(21) var<storage, read_write> bodyBrickPool : array<u32>;
+@group(0) @binding(22) var<storage, read_write> bodyBrickFree : array<atomic<u32>>;
+fn bodyVoxLoad(slot : u32, x : i32, y : i32, z : i32) -> u32 {
+  let bp = atomicLoad(&bodyBrickGrid[slot * BODYBRICKS + brickCell(x, y, z)]);
+  if (bp == BRICK_EMPTY) { return 0u; }
+  return bodyBrickPool[bp * 512u + brickLocal(x, y, z)];
+}
+fn bodyVoxClear(slot : u32, x : i32, y : i32, z : i32) {
+  let bp = atomicLoad(&bodyBrickGrid[slot * BODYBRICKS + brickCell(x, y, z)]);
+  if (bp == BRICK_EMPTY) { return; }
+  bodyBrickPool[bp * 512u + brickLocal(x, y, z)] = 0u;
+}
+fn popBrick() -> u32 {
+  let c = atomicSub(&bodyBrickFree[0], 1u);
+  if (c == 0u || c > BRICK_POOL_BRICKS) { atomicAdd(&bodyBrickFree[0], 1u); return BRICK_EMPTY; }
+  return atomicLoad(&bodyBrickFree[c]);
+}
+fn pushBrick(b : u32) {
+  let oldc = atomicAdd(&bodyBrickFree[0], 1u);
+  atomicStore(&bodyBrickFree[oldc + 1u], b);
+}
+fn bodyVoxStore(slot : u32, x : i32, y : i32, z : i32, v : u32) {
+  let bc = slot * BODYBRICKS + brickCell(x, y, z);
+  var bp = atomicLoad(&bodyBrickGrid[bc]);
+  if (bp == BRICK_EMPTY) {
+    let nb = popBrick();
+    if (nb == BRICK_EMPTY) { return; }
+    for (var i = 0u; i < 512u; i = i + 1u) { bodyBrickPool[nb * 512u + i] = 0u; }
+    let r = atomicCompareExchangeWeak(&bodyBrickGrid[bc], BRICK_EMPTY, nb);
+    if (r.exchanged) { bp = nb; } else { pushBrick(nb); bp = r.old_value; }
+  }
+  bodyBrickPool[bp * 512u + brickLocal(x, y, z)] = v;
+}
 
 const DIM : i32 = BODYDIM;
-const SLOTVOX : u32 = BODYVOX;
 const SENTINEL : u32 = 0xFFFFFFFFu;
 
 fn lIdx(x : i32, y : i32, z : i32) -> u32 { return u32(x + y * DIM + z * DIM * DIM); }
-// Body-voxel offset for a slot, using the PARENT's class stride (parent + all
-// children share the parent's coordinate frame). Label/rootSlot stay 96^3.
-fn frameOff(slotIdx : u32, x : i32, y : i32, z : i32) -> u32 {
-  let pd = i32(desc[parentU.x * 2u + 1u]);
-  return desc[slotIdx * 2u] + u32(x + y * pd + z * pd * pd);
-}
 
 // Atomically grab a free body slot (GPU owns allocation). SENTINEL = pool full.
 fn claimSlot() -> u32 {
@@ -76,7 +102,7 @@ fn reduce(@builtin(global_invocation_id) gid : vec3<u32>) {
   atomicMax(&slotMeta[base + 5u], z + 1);
   atomicAdd(&slotMeta[base + 6u], 1);
   // Mass-weighted CoM + second moment (weight each voxel by material density).
-  let d = max(1, i32(materials[matId(bodyVox[frameOff(parentU.x, x, y, z)])].density * 16.0));
+  let d = max(1, i32(materials[matId(bodyVoxLoad(parentU.x, x, y, z))].density * 16.0));
   atomicAdd(&slotMeta[base + 7u], x * d);
   atomicAdd(&slotMeta[base + 8u], y * d);
   atomicAdd(&slotMeta[base + 9u], z * d);
@@ -117,13 +143,26 @@ fn extract(@builtin(global_invocation_id) gid : vec3<u32>) {
   let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z % u32(DIM));
   if (lx >= DIM || ly >= DIM) { return; }
   let base = slot * 16u;
-  if (atomicLoad(&slotMeta[base + 6u]) == 0) { return; } // not a target this split
+  let count = atomicLoad(&slotMeta[base + 6u]);
+  if (count == 0) { return; } // not a target this split
   let parent = parentU.x;
   if (slot == parent) { return; }
+  // Sub-threshold fragment: not worth a rigid body (a swarm of 1-voxel leaf bits
+  // when a falling tree is carved). Don't extract it into a slot -- clearParent
+  // drops it from the parent and placeStorage/placeBodies skip it, so it just
+  // disappears rather than spawning a tiny RB.
+  if (count < MIN_BODY_VOXELS) { return; }
   let li = lIdx(lx, ly, lz);
   let lab = bodyLabel[li];
   let mine = lab != SENTINEL && rootSlot[lab] == slot;
-  bodyVox[frameOff(slot, lx, ly, lz)] = select(0u, bodyVox[frameOff(parent, lx, ly, lz)], mine);
+  // Copy the moved voxel into the child; clear every other cell so a recycled
+  // slot's previous tenant can't show through (the brick grid may hold stale
+  // bricks until the reap frees them).
+  if (mine) {
+    bodyVoxStore(slot, lx, ly, lz, bodyVoxLoad(parent, lx, ly, lz));
+  } else {
+    bodyVoxClear(slot, lx, ly, lz);
+  }
 }
 
 // Clear the parent's cells that moved into a child (runs after extract has copied
@@ -137,5 +176,5 @@ fn clearParent(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (lab == SENTINEL) { return; }
   let slot = rootSlot[lab];
   let parent = parentU.x;
-  if (slot < MAXB && slot != parent) { bodyVox[frameOff(parent, x, y, z)] = 0u; }
+  if (slot < MAXB && slot != parent) { bodyVoxClear(parent, x, y, z); }
 }

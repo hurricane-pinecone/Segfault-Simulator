@@ -25,12 +25,18 @@ const BODY_BOX : u32 = 1u;
 const BODYBD : i32 = 12;         // bricks per body axis (BODYDIM/8)
 const BODYBRICKS : u32 = 1728u;  // BODYBD^3, brick cells per slot
 const BRICK_EMPTY : u32 = 0xFFFFFFFFu;
+const BRICK_POOL_BRICKS : u32 = 16384u; // shared brick-pool capacity (== cpp)
 fn brickCell(lx : i32, ly : i32, lz : i32) -> u32 {
   return u32((lx / 8) + (ly / 8) * BODYBD + (lz / 8) * BODYBD * BODYBD);
 }
 fn brickLocal(lx : i32, ly : i32, lz : i32) -> u32 {
   return u32((lx % 8) + (ly % 8) * 8 + (lz % 8) * 64);
 }
+// NOTE: brickmap body-voxel access bindings (grid/pool) are declared PER-SHADER,
+// not here -- a binding declared in voxelCommon lands in every prepended shader's
+// interface and breaks pipelines that don't provide it. brickCell/brickLocal +
+// BODYBRICKS/BRICK_EMPTY above are pure (no bindings) and shared. Each reading
+// pass declares bindings 20/21 + its own bodyVoxLoad; write passes add 22/23/24.
 struct Brick { occupancy : u32, pointer : u32 };
 // Material palette entry (indexed by a voxel's material id). Must match the CPU
 // material registry (gpuVoxelWorld material table).

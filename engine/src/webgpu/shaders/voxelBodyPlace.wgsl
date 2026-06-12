@@ -22,7 +22,9 @@ fn placeBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (s >= MAXB) { return; }
   let base = s * 16u;
   let voxN = slotMeta[base + 10u];
-  if (slotMeta[base + 6u] <= 0 || voxN <= 0) { return; } // no component this slot
+  // Skip empty slots and sub-threshold fragments (culled to powder/dropped by the
+  // extract + placeStorage, so they must not be activated as bodies here).
+  if (slotMeta[base + 6u] < MIN_BODY_VOXELS || voxN <= 0) { return; }
   let flags = bitcast<u32>(state[s * 8u + 0u].x);
   if ((flags & 1u) != 0u) { return; } // live body (the split parent stays put)
 

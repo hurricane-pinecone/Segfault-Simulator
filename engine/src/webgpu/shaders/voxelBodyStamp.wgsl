@@ -10,7 +10,14 @@ struct Body {
   center : vec4<f32>,
   pivot : vec4<f32>,
 };
-@group(0) @binding(0) var<storage, read> bodyVox : array<u32>;
+// Sparse brickmap body voxels (read-only).
+@group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
+@group(0) @binding(21) var<storage, read> bodyBrickPool : array<u32>;
+fn bodyVoxLoad(slot : u32, lx : i32, ly : i32, lz : i32) -> u32 {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(lx, ly, lz)];
+  if (bp == BRICK_EMPTY) { return 0u; }
+  return bodyBrickPool[bp * 512u + brickLocal(lx, ly, lz)];
+}
 @group(0) @binding(1) var<storage, read_write> vox0 : array<u32>;
 @group(0) @binding(2) var<storage, read_write> vox1 : array<u32>;
 @group(0) @binding(3) var<storage, read> bodies : array<Body, MAXB>;
@@ -33,8 +40,7 @@ fn stamp(@builtin(global_invocation_id) gid : vec3<u32>) {
   let ly = i32(gid.y);
   let lz = i32(gid.z % u32(BODYDIM));
   if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let off = bitcast<u32>(body.pivot.w); // base offset into the voxel pool
-  let v = bodyVox[off + u32(lx + ly * dim + lz * dim * dim)];
+  let v = bodyVoxLoad(slot, lx, ly, lz);
   if ((v & 3u) != 1u) { return; }
 
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);

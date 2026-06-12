@@ -15,7 +15,20 @@ struct Body {
   center : vec4<f32>,
   pivot : vec4<f32>,
 };
-@group(0) @binding(0) var<storage, read_write> bodyVox : array<u32>;
+// Sparse brickmap body voxels: read + clear (the shed only removes existing solid
+// voxels, so no allocation is needed).
+@group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
+@group(0) @binding(21) var<storage, read_write> bodyBrickPool : array<u32>;
+fn bodyVoxLoad(slot : u32, lx : i32, ly : i32, lz : i32) -> u32 {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(lx, ly, lz)];
+  if (bp == BRICK_EMPTY) { return 0u; }
+  return bodyBrickPool[bp * 512u + brickLocal(lx, ly, lz)];
+}
+fn bodyVoxClear(slot : u32, lx : i32, ly : i32, lz : i32) {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(lx, ly, lz)];
+  if (bp == BRICK_EMPTY) { return; }
+  bodyBrickPool[bp * 512u + brickLocal(lx, ly, lz)] = 0u;
+}
 @group(0) @binding(1) var<storage, read_write> voxCur : array<u32>;
 @group(0) @binding(2) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(3) var<storage, read> state : array<vec4<f32>>;
@@ -44,9 +57,7 @@ fn shed(@builtin(global_invocation_id) gid : vec3<u32>) {
   let ly = i32(gid.y);
   let lz = i32(gid.z % u32(BODYDIM));
   if (lx >= dim || ly >= dim || lz >= dim) { return; }
-  let off = bitcast<u32>(body.pivot.w); // base offset into the voxel pool
-  let li = off + u32(lx + ly * dim + lz * dim * dim);
-  let v = bodyVox[li];
+  let v = bodyVoxLoad(slot, lx, ly, lz);
   if ((v & 3u) != 1u) { return; } // solid body voxel
 
   let R = mat3x3<f32>(body.invRot0.xyz, body.invRot1.xyz, body.invRot2.xyz);
@@ -70,5 +81,5 @@ fn shed(@builtin(global_invocation_id) gid : vec3<u32>) {
   let vi = vIndex(wi.x, wi.y, wi.z);
   if ((voxCur[vi] & 3u) != 0u) { return; } // shed only into an air cell
   voxCur[vi] = vox(matId(v), CAT_LIQUID) | VOX_POWDER; // rubble keeps its colour
-  bodyVox[li] = 0u;                                    // remove from the body
+  bodyVoxClear(slot, lx, ly, lz);                      // remove from the body
 }

@@ -30,14 +30,7 @@ public:
                                       // big enough to hold a whole tree
   static constexpr int kMaxBodies =
       256; // rigid-body pool size (== MAXB in voxelCommon.wgsl). Logical slots;
-           // physical storage is size-classed (below).
-
-  // Body voxel pool. Single 96^3 class (size classes reverted -- the
-  // multi-class allocator had a "tree doesn't fall" bug still to debug).
-  static constexpr uint64_t kBodyPoolBytes = static_cast<uint64_t>(kMaxBodies) *
-                                             kBodyDim * kBodyDim * kBodyDim *
-                                             sizeof(uint32_t);
-  static constexpr uint64_t kClassFreeU32 = kMaxBodies + 1;
+           // physical storage is the sparse brickmap (below).
 
   struct Brick
   {
@@ -118,7 +111,6 @@ private:
   void buildLabel();
   void buildBodyRegister();
   void buildBodyReduce();
-  void buildBodyExtract();
   void buildBodyCollide();
   void buildBodyStamp();
   void buildBodyShed();
@@ -126,7 +118,6 @@ private:
   void buildBodyXform();
   void buildBodyPlace();
   void buildBodyPlaceStorage();
-  void buildBodyFreeStorage();
   void buildBodyReap();
   void buildBodyPrep();
   void buildBodyLabel();
@@ -162,16 +153,19 @@ private:
   // Detached rigid bodies: a pool of kMaxBodies kBodyDim^3 local voxel grids in
   // one buffer (slot s at offset s*kBodyDim^3), composited by the render. The
   // labeled components are compacted into slots, one falling chunk per slot.
-  uint64_t m_bodyBytes = 0;       // one slot's grid
-  WGPUBuffer m_bodyBuf = nullptr; // kMaxBodies stacked grids
-  // Size-class body storage (Stage B/C2): each slot's voxels live in a pool
-  // block sized to its class; a descriptor holds the (offset, dim), blocks come
-  // from a free-list. A small body costs ~its class size instead of a full
-  // 96^3.
-  WGPUBuffer m_bodyDescBuf = nullptr;  // kMaxBodies * (offset, dim)
-  WGPUBuffer m_classFreeBuf = nullptr; // [0]=free count, [1..]=free block ids
-  WGPUBuffer m_bodyXformBuf = nullptr; // array<Body, kMaxBodies>
-  WGPUBuffer m_slotMetaBuf = nullptr;  // per-slot AABB/count/CoM/footprint
+  uint64_t m_bodyBytes = 0; // one slot's window grid (label/rootSlot sizing)
+  // Sparse brickmap body storage. Each body is a 12^3 grid of brick pointers
+  // (m_bodyBrickGrid, slot s at s*BODYBRICKS); a non-empty pointer indexes an
+  // 8^3 (512-voxel) brick in the shared m_brickPool. Bricks are allocated
+  // lazily (only the filled ones) from m_brickFreeBuf, so a body costs ~its
+  // real voxel count.
+  static constexpr uint32_t kBrickPoolBricks =
+      16384;                               // shared 8^3-brick capacity
+  WGPUBuffer m_bodyBrickGrid = nullptr;    // kMaxBodies * BODYBRICKS pointers
+  WGPUBuffer m_brickPool = nullptr;        // kBrickPoolBricks * 512 voxels
+  WGPUBuffer m_brickFreeBuf = nullptr;     // [0]=count, [1..]=free brick ids
+  WGPUBuffer m_bodyXformBuf = nullptr;     // array<Body, kMaxBodies>
+  WGPUBuffer m_slotMetaBuf = nullptr;      // per-slot AABB/count/CoM/footprint
   WGPUBuffer m_slotMetaReadback = nullptr; // mapped to place the bodies
   WGPUBuffer m_rootSlotBuf = nullptr;      // per-brick component-root -> slot
   WGPUBuffer m_slotCountBuf = nullptr;     // atomic split-root ordering counter
@@ -181,10 +175,8 @@ private:
                // allocation; register passes claim it)
   WGPUComputePipeline m_bodyRegisterPipe = nullptr;
   WGPUComputePipeline m_bodyReducePipe = nullptr;
-  WGPUComputePipeline m_bodyExtractPipe = nullptr;
   WGPUBindGroup m_bodyRegisterBg = nullptr;
   WGPUBindGroup m_bodyReduceBg = nullptr;
-  WGPUBindGroup m_bodyExtractBg = nullptr;
   // Per-frame body-vs-world collision: one landing flag per slot.
   WGPUBuffer m_collideBuf = nullptr;
   WGPUBuffer m_collideReadback = nullptr;
@@ -211,12 +203,9 @@ private:
   WGPUComputePipeline m_bodyPlacePipe = nullptr;
   WGPUBindGroup m_bodyPlaceBg = nullptr;
   WGPUComputePipeline m_bodyPlaceStoragePipe =
-      nullptr; // size-class block alloc
+      nullptr; // culls sub-threshold world-fell slots
   WGPUBindGroup m_bodyPlaceStorageBg = nullptr;
-  WGPUComputePipeline m_bodyFreeStoragePipe = nullptr; // returns blocks on bake
-  WGPUBindGroup m_bodyFreeStorageBg = nullptr;
-  WGPUBuffer m_freeReqBuf = nullptr; // [0]=count, [1..]=slots freed this frame
-  // GPU reap: frees baked slots (block + occupancy + flag) each frame,
+  // GPU reap: frees baked slots (bricks + occupancy + flag) each frame,
   // replacing the CPU resting loop.
   WGPUComputePipeline m_bodyReapPipe = nullptr;
   WGPUBindGroup m_bodyReapBg = nullptr;
@@ -262,8 +251,8 @@ private:
   WGPUComputePipeline m_winMarkPipe = nullptr;
   WGPUBindGroup m_winBg[2] = {nullptr, nullptr};
   // Voxel-exact world fell stage 2/3: CC + extract over the window's detached
-  // set (reuses m_windowBuf as the label ping-pong,
-  // m_rootSlot/m_slotMeta/m_bodyBuf).
+  // set (reuses m_windowBuf as the label ping-pong, m_rootSlot/m_slotMeta and
+  // the sparse brickmap for body voxels).
   WGPUComputePipeline m_winLabelInitPipe = nullptr;
   WGPUComputePipeline m_winLabelFloodPipe = nullptr;
   WGPUComputePipeline m_winRegisterPipe = nullptr;

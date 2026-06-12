@@ -84,6 +84,11 @@ fn winFlood(@builtin(global_invocation_id) gid : vec3<u32>) {
 
 @compute @workgroup_size(4, 4, 4)
 fn winMark(@builtin(global_invocation_id) gid : vec3<u32>) {
+  // carveHit[0] != 0 means the ray hit a rigid body, not the world: that frame
+  // drives a body split, never a world fell. The CPU's fell/split choice uses a
+  // one-frame-stale slot, so gate on this frame's GPU hit to avoid marking (and
+  // later extracting) a phantom body from the body-local carve coords.
+  if (carveHit[0] != 0u) { return; }
   let lx = i32(gid.x); let ly = i32(gid.y); let lz = i32(gid.z);
   if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
   let o = winOrigin();
