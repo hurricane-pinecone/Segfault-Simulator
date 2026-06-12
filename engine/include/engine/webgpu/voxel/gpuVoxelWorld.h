@@ -98,6 +98,9 @@ public:
     m_dbgMouseY = y;
   }
 
+  // Debug: toggle the brick-grid + body-box wireframe overlays (P key).
+  void setDebugWire(bool on) { m_debugWire = on; }
+
 private:
   void buildGenerate();
   void buildWater();
@@ -230,6 +233,7 @@ private:
   WGPUComputePipeline m_bodyLabelInitPipe = nullptr;
   WGPUComputePipeline m_bodyLabelFloodPipe = nullptr;
   WGPUComputePipeline m_bodyRecolorPipe = nullptr;
+  WGPUComputePipeline m_bodyLocalCcPipe = nullptr; // within-brick CC of a body
   WGPUBindGroup m_bodyLabelInitBg = nullptr;
   WGPUBindGroup m_bodyLabelFloodBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_bodyRecolorBg = nullptr;
@@ -250,11 +254,28 @@ private:
   WGPUComputePipeline m_winFloodPipe = nullptr;
   WGPUComputePipeline m_winMarkPipe = nullptr;
   WGPUBindGroup m_winBg[2] = {nullptr, nullptr};
+  // Two-level flood acceleration: per window-brick solid count + monotonic
+  // reached flag, so fully-solid bricks conduct reachability in one step
+  // (full-brick conduction). 12^3 window bricks.
+  static constexpr int kWinBricks = 12 * 12 * 12;
+  WGPUBuffer m_winBrickOcc = nullptr;
+  WGPUBuffer m_winBrickReach = nullptr;
+  // Mixed-brick conduction: per-voxel within-brick component + per-(brick,
+  // component) reached flag, so canopies (mixed bricks) converge fast and a cut
+  // keeps its two sides separate.
+  WGPUBuffer m_winVoxLocal = nullptr;
+  WGPUBuffer m_winNodeReached = nullptr;
+  WGPUComputePipeline m_winClassifyPipe = nullptr;
+  WGPUComputePipeline m_winConductPipe = nullptr;
+  WGPUComputePipeline m_winLocalCcPipe = nullptr;
   // Voxel-exact world fell stage 2/3: CC + extract over the window's detached
   // set (reuses m_windowBuf as the label ping-pong, m_rootSlot/m_slotMeta and
   // the sparse brickmap for body voxels).
   WGPUComputePipeline m_winLabelInitPipe = nullptr;
   WGPUComputePipeline m_winLabelFloodPipe = nullptr;
+  WGPUComputePipeline m_winDetachedCcPipe =
+      nullptr; // within-brick CC of detached
+  WGPUBindGroup m_winDetachedCcBg = nullptr;
   WGPUComputePipeline m_winRegisterPipe = nullptr;
   WGPUComputePipeline m_winReducePipe = nullptr;
   WGPUComputePipeline m_winExtractPipe = nullptr;
@@ -270,7 +291,8 @@ private:
   WGPUBuffer m_dbgMouseBuf = nullptr;
   float m_dbgMouseX = -100.0f;
   float m_dbgMouseY = -100.0f;
-  int m_carvedSlot = -1; // body slot the last carve hit, else -1
+  bool m_debugWire = true; // wireframe overlays on by default
+  int m_carvedSlot = -1;   // body slot the last carve hit, else -1
   bool m_carveMapBusy = false;
   bool m_carvePendingResolve = false;
   struct CarveHitRb

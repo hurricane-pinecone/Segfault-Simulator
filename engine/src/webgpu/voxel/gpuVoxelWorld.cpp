@@ -351,6 +351,21 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                      WGPUBufferUsage_CopyDst);
   m_windowBuf[0] = makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
   m_windowBuf[1] = makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
+  // Two-level world-fell flood: per window-brick (12^3) solid count + a
+  // monotonic reached flag, for full-brick conduction.
+  m_winBrickOcc = makeBuffer(
+      m_device, kWinBricks * sizeof(uint32_t), WGPUBufferUsage_Storage);
+  m_winBrickReach =
+      makeBuffer(m_device,
+                 kWinBricks * sizeof(uint32_t),
+                 WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+  // Mixed-brick conduction: per-voxel within-brick component label, and a
+  // per-(brick, component) reached flag (kWinBricks * 512 nodes).
+  m_winVoxLocal = makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
+  m_winNodeReached =
+      makeBuffer(m_device,
+                 static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t),
+                 WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
 
   buildTimestamps();
   buildGenerate();
@@ -458,6 +473,8 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_bodyLabelFloodPipe);
   if (m_bodyRecolorPipe)
     wgpuComputePipelineRelease(m_bodyRecolorPipe);
+  if (m_bodyLocalCcPipe)
+    wgpuComputePipelineRelease(m_bodyLocalCcPipe);
   for (WGPUComputePipeline p : {m_bodySplitRegisterPipe,
                                 m_bodySplitReducePipe,
                                 m_bodySplitFootprintPipe,
@@ -466,54 +483,34 @@ GpuVoxelWorld::~GpuVoxelWorld()
                                 m_winInitPipe,
                                 m_winFloodPipe,
                                 m_winMarkPipe,
+                                m_winClassifyPipe,
+                                m_winConductPipe,
+                                m_winLocalCcPipe,
                                 m_winLabelInitPipe,
                                 m_winLabelFloodPipe,
+                                m_winDetachedCcPipe,
                                 m_winRegisterPipe,
                                 m_winReducePipe,
                                 m_winExtractPipe})
     if (p)
       wgpuComputePipelineRelease(p);
 
-  for (WGPUBuffer b : {m_voxBuf[0],
-                       m_voxBuf[1],
-                       m_brickBuf,
-                       m_materialBuf,
-                       m_camBuf,
-                       m_frameBuf,
-                       m_editBuf,
-                       m_faceBuf,
-                       m_anchorBuf[0],
-                       m_anchorBuf[1],
-                       m_floodCtlBuf,
-                       m_dirtyBuf,
-                       m_labelBuf[0],
-                       m_labelBuf[1],
-                       m_bodyBrickGrid,
-                       m_brickPool,
-                       m_brickFreeBuf,
-                       m_bodyXformBuf,
-                       m_slotMetaBuf,
-                       m_slotMetaReadback,
-                       m_rootSlotBuf,
-                       m_slotCountBuf,
-                       m_freeSlotBuf,
-                       m_collideBuf,
-                       m_collideReadback,
-                       m_carveHitBuf,
-                       m_carveHitReadback,
-                       m_bodyLabelBuf[0],
-                       m_bodyLabelBuf[1],
-                       m_bodyLabelSlotBuf,
-                       m_dbgMouseBuf,
-                       m_windowBuf[0],
-                       m_windowBuf[1],
-                       m_bodyStateBuf,
-                       m_bodyStateReadback,
-                       m_bodyStepUBuf,
-                       m_placeUBuf,
-                       m_slotOccupiedBuf,
-                       m_tsResolve,
-                       m_tsReadback})
+  for (WGPUBuffer b :
+       {m_voxBuf[0],        m_voxBuf[1],       m_brickBuf,
+        m_materialBuf,      m_camBuf,          m_frameBuf,
+        m_editBuf,          m_faceBuf,         m_anchorBuf[0],
+        m_anchorBuf[1],     m_floodCtlBuf,     m_dirtyBuf,
+        m_labelBuf[0],      m_labelBuf[1],     m_bodyBrickGrid,
+        m_brickPool,        m_brickFreeBuf,    m_winBrickOcc,
+        m_winBrickReach,    m_winVoxLocal,     m_winNodeReached,
+        m_bodyXformBuf,     m_slotMetaBuf,     m_slotMetaReadback,
+        m_rootSlotBuf,      m_slotCountBuf,    m_freeSlotBuf,
+        m_collideBuf,       m_collideReadback, m_carveHitBuf,
+        m_carveHitReadback, m_bodyLabelBuf[0], m_bodyLabelBuf[1],
+        m_bodyLabelSlotBuf, m_dbgMouseBuf,     m_windowBuf[0],
+        m_windowBuf[1],     m_bodyStateBuf,    m_bodyStateReadback,
+        m_bodyStepUBuf,     m_placeUBuf,       m_slotOccupiedBuf,
+        m_tsResolve,        m_tsReadback})
     if (b)
       wgpuBufferRelease(b);
   if (m_tsQuery)
@@ -1185,60 +1182,74 @@ void GpuVoxelWorld::buildBodyLabel()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelBodyLabelWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[5] = {
+  WGPUBindGroupLayoutEntry e[7] = {
       storageEntry(
           1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(2, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform),
+      storageEntry(4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(5, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
           20, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(21, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 5);
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 7);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
   m_bodyLabelInitPipe =
       makeComputePipeline(m_device, module, "labelInit", layout);
   m_bodyLabelFloodPipe =
       makeComputePipeline(m_device, module, "labelFlood", layout);
   m_bodyRecolorPipe = makeComputePipeline(m_device, module, "recolor", layout);
+  m_bodyLocalCcPipe =
+      makeComputePipeline(m_device, module, "bodyLocalCC", layout);
 
   const uint64_t brickGridBytes =
       static_cast<uint64_t>(kMaxBodies) * 1728u * sizeof(uint32_t);
   const uint64_t brickPoolBytes =
       static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
+  const uint64_t nodeBytes =
+      static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t);
   // init seeds labelBuf[0]; binding 1 present for layout only.
-  WGPUBindGroupEntry ie[5] = {bufEntry(1, m_bodyLabelBuf[1], m_bodyBytes),
+  // voxLocal/nodeLabel reuse the world-fell two-level buffers (mutually
+  // exclusive per frame).
+  WGPUBindGroupEntry ie[7] = {bufEntry(1, m_bodyLabelBuf[1], m_bodyBytes),
                               bufEntry(2, m_bodyLabelBuf[0], m_bodyBytes),
                               bufEntry(3, m_bodyLabelSlotBuf, 16),
+                              bufEntry(4, m_winVoxLocal, m_bodyBytes),
+                              bufEntry(5, m_winNodeReached, nodeBytes),
                               bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                               bufEntry(21, m_brickPool, brickPoolBytes)};
   WGPUBindGroupDescriptor id = {};
   id.layout = bgl;
-  id.entryCount = 5;
+  id.entryCount = 7;
   id.entries = ie;
   m_bodyLabelInitBg = wgpuDeviceCreateBindGroup(m_device, &id);
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry fe[5] = {bufEntry(1, m_bodyLabelBuf[i], m_bodyBytes),
+    WGPUBindGroupEntry fe[7] = {bufEntry(1, m_bodyLabelBuf[i], m_bodyBytes),
                                 bufEntry(2, m_bodyLabelBuf[1 - i], m_bodyBytes),
                                 bufEntry(3, m_bodyLabelSlotBuf, 16),
+                                bufEntry(4, m_winVoxLocal, m_bodyBytes),
+                                bufEntry(5, m_winNodeReached, nodeBytes),
                                 bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                                 bufEntry(21, m_brickPool, brickPoolBytes)};
     WGPUBindGroupDescriptor fd = {};
     fd.layout = bgl;
-    fd.entryCount = 5;
+    fd.entryCount = 7;
     fd.entries = fe;
     m_bodyLabelFloodBg[i] = wgpuDeviceCreateBindGroup(m_device, &fd);
   }
 
-  WGPUBindGroupEntry re[5] = {bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
+  WGPUBindGroupEntry re[7] = {bufEntry(1, m_bodyLabelBuf[0], m_bodyBytes),
                               bufEntry(2, m_bodyLabelBuf[1], m_bodyBytes),
                               bufEntry(3, m_bodyLabelSlotBuf, 16),
+                              bufEntry(4, m_winVoxLocal, m_bodyBytes),
+                              bufEntry(5, m_winNodeReached, nodeBytes),
                               bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                               bufEntry(21, m_brickPool, brickPoolBytes)};
   WGPUBindGroupDescriptor rd = {};
   rd.layout = bgl;
-  rd.entryCount = 5;
+  rd.entryCount = 7;
   rd.entries = re;
   m_bodyRecolorBg = wgpuDeviceCreateBindGroup(m_device, &rd);
 }
@@ -1303,7 +1314,7 @@ void GpuVoxelWorld::buildWindowAnchor()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelWindowAnchorWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[7] = {
+  WGPUBindGroupLayoutEntry e[11] = {
       storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
@@ -1314,25 +1325,42 @@ void GpuVoxelWorld::buildWindowAnchor()
           4, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(
           5, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
-      storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 7);
+      storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(7, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(8, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(9, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(10, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 11);
   WGPUPipelineLayout layout = makePipelineLayout(m_device, bgl);
   m_winInitPipe = makeComputePipeline(m_device, module, "winInit", layout);
   m_winFloodPipe = makeComputePipeline(m_device, module, "winFlood", layout);
   m_winMarkPipe = makeComputePipeline(m_device, module, "winMark", layout);
+  m_winClassifyPipe =
+      makeComputePipeline(m_device, module, "winClassify", layout);
+  m_winConductPipe =
+      makeComputePipeline(m_device, module, "winConduct", layout);
+  m_winLocalCcPipe =
+      makeComputePipeline(m_device, module, "winLocalCC", layout);
 
+  const uint64_t nodeBytes =
+      static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t);
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[7] = {bufEntry(0, m_voxBuf[0], m_voxBytes),
-                                bufEntry(1, m_voxBuf[1], m_voxBytes),
-                                bufEntry(2, m_brickBuf, m_brickBytes),
-                                bufEntry(3, m_anchorBuf[0], m_anchorBytes),
-                                bufEntry(4, m_carveHitBuf, 32),
-                                bufEntry(5, m_windowBuf[i], m_bodyBytes),
-                                bufEntry(6, m_windowBuf[1 - i], m_bodyBytes)};
+    WGPUBindGroupEntry be[11] = {
+        bufEntry(0, m_voxBuf[0], m_voxBytes),
+        bufEntry(1, m_voxBuf[1], m_voxBytes),
+        bufEntry(2, m_brickBuf, m_brickBytes),
+        bufEntry(3, m_anchorBuf[0], m_anchorBytes),
+        bufEntry(4, m_carveHitBuf, 32),
+        bufEntry(5, m_windowBuf[i], m_bodyBytes),
+        bufEntry(6, m_windowBuf[1 - i], m_bodyBytes),
+        bufEntry(7, m_winBrickOcc, kWinBricks * sizeof(uint32_t)),
+        bufEntry(8, m_winBrickReach, kWinBricks * sizeof(uint32_t)),
+        bufEntry(9, m_winVoxLocal, m_bodyBytes),
+        bufEntry(10, m_winNodeReached, nodeBytes)};
     WGPUBindGroupDescriptor d = {};
     d.layout = bgl;
-    d.entryCount = 7;
+    d.entryCount = 11;
     d.entries = be;
     m_winBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
@@ -1370,6 +1398,9 @@ void GpuVoxelWorld::buildWindowSplit()
       m_bodyBytes; // DIM^3 u32, reusing the window buffers
   const uint64_t metaBytes = 64u * kMaxBodies;
 
+  const uint64_t nodeBytes =
+      static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t);
+
   auto li = pass({storageEntry(0, S, RW),
                   storageEntry(2, S, RO),
                   storageEntry(3, S, RO),
@@ -1382,13 +1413,34 @@ void GpuVoxelWorld::buildWindowSplit()
                          bufEntry(3, m_carveHitBuf, 32),
                          bufEntry(5, m_windowBuf[0], labelBytes)});
 
-  auto fl =
-      pass({storageEntry(4, S, RO), storageEntry(5, S, RW)}, "labelFlood");
+  // Two-level CC: within-brick component labels (voxLocalLabel) + per-node min
+  // (nodeLabel), reusing the anchor flood's buffers (it has finished by now).
+  auto dcc = pass({storageEntry(0, S, RW),
+                   storageEntry(2, S, RO),
+                   storageEntry(3, S, RO),
+                   storageEntry(15, S, RW),
+                   storageEntry(16, S, RW)},
+                  "detachedLocalCC");
+  m_winDetachedCcPipe = dcc.first;
+  m_winDetachedCcBg = bg(dcc.second,
+                         {bufEntry(0, m_voxBuf[0], m_voxBytes),
+                          bufEntry(2, m_brickBuf, m_brickBytes),
+                          bufEntry(3, m_carveHitBuf, 32),
+                          bufEntry(15, m_winVoxLocal, m_bodyBytes),
+                          bufEntry(16, m_winNodeReached, nodeBytes)});
+
+  auto fl = pass({storageEntry(4, S, RO),
+                  storageEntry(5, S, RW),
+                  storageEntry(15, S, RW),
+                  storageEntry(16, S, RW)},
+                 "labelFlood");
   m_winLabelFloodPipe = fl.first;
   for (int i = 0; i < 2; ++i)
     m_winLabelFloodBg[i] = bg(fl.second,
                               {bufEntry(4, m_windowBuf[i], labelBytes),
-                               bufEntry(5, m_windowBuf[1 - i], labelBytes)});
+                               bufEntry(5, m_windowBuf[1 - i], labelBytes),
+                               bufEntry(15, m_winVoxLocal, m_bodyBytes),
+                               bufEntry(16, m_winNodeReached, nodeBytes)});
 
   auto rg = pass({storageEntry(3, S, RO),
                   storageEntry(4, S, RO),
@@ -1548,7 +1600,10 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   wgpuQueueWriteBuffer(m_queue, m_camBuf, 0, cam16, 64);
   const uint32_t fdata[4] = {frame, 0, 0, 0};
   wgpuQueueWriteBuffer(m_queue, m_frameBuf, 0, fdata, sizeof(fdata));
-  const float dbgMouse[4] = {m_dbgMouseX, m_dbgMouseY, 0.0f, 0.0f};
+  // .z is overwritten by the prep pass (activeHigh); the wire toggle lives in
+  // .w.
+  const float dbgMouse[4] = {
+      m_dbgMouseX, m_dbgMouseY, 0.0f, m_debugWire ? 1.0f : 0.0f};
   wgpuQueueWriteBuffer(m_queue, m_dbgMouseBuf, 0, dbgMouse, 16);
 
   // GPU body motion: integrate (gravity/topple/land) then build the per-slot
@@ -1737,9 +1792,31 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     m_fellRequested = false;
     const uint32_t wg = kBodyDim / 4;
     // Window anchor: voxel-exact ground flood -> bit 4 on the detached set.
+    // Two-level: classify window bricks (full == 512 solid), then interleave
+    // the voxel flood with a full-brick conduction pass so the dense grounded
+    // terrain (mostly full bricks) carries "reached" in ~1 step/brick -- ~24
+    // iterations replaces the old 128 (the grid diameter). Two-level: classify
+    // full bricks + label within-brick components, then interleave the voxel
+    // flood with full-brick conduction (winConduct) and rely on the
+    // per-component nodeReached flag (set in winFlood) so full-brick chains
+    // (terrain/trunk) AND mixed bricks (canopies) both converge in ~1
+    // step/brick.
+    bodyPass(m_winClassifyPipe, m_winBg[0], 12, 12, 12);
+    bodyPass(m_winLocalCcPipe, m_winBg[0], 12, 12, 12);
+    wgpuCommandEncoderClearBuffer(
+        enc, m_winBrickReach, 0, kWinBricks * sizeof(uint32_t));
+    wgpuCommandEncoderClearBuffer(
+        enc,
+        m_winNodeReached,
+        0,
+        static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t));
     bodyPass(m_winInitPipe, m_winBg[1], wg, wg, wg);
-    for (int r = 0; r < 128; ++r)
+    const uint32_t condWg = (kWinBricks + 63) / 64;
+    for (int r = 0; r < 64; ++r)
+    {
       bodyPass(m_winFloodPipe, m_winBg[r & 1], wg, wg, wg);
+      bodyPass(m_winConductPipe, m_winBg[0], condWg, 1, 1);
+    }
     bodyPass(m_winMarkPipe, m_winBg[0], wg, wg, wg);
 
     // Per slot: aabbMin = +world (for atomicMin), everything else 0.
@@ -1751,8 +1828,12 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       metaInit[s * 16 + 2] = kWorld;
     }
     wgpuQueueWriteBuffer(m_queue, m_slotMetaBuf, 0, metaInit, sizeof(metaInit));
+    // Two-level CC: within-brick component labels + per-node min (inits
+    // nodeLabel to SENTINEL), so the flood converges in ~brick diameter, not
+    // voxel diameter.
+    bodyPass(m_winDetachedCcPipe, m_winDetachedCcBg, 12, 12, 12);
     bodyPass(m_winLabelInitPipe, m_winLabelInitBg, wg, wg, wg);
-    for (int r = 0; r < 128; ++r)
+    for (int r = 0; r < 64; ++r)
       bodyPass(m_winLabelFloodPipe, m_winLabelFloodBg[r & 1], wg, wg, wg);
     bodyPass(m_winRegisterPipe, m_winRegisterBg, wg, wg, wg);
     bodyPass(m_winReducePipe, m_winReduceBg, wg, wg, wg);
@@ -1832,8 +1913,12 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     const uint32_t slotData[4] = {parent, 0, 0, 0};
     wgpuQueueWriteBuffer(m_queue, m_bodyLabelSlotBuf, 0, slotData, 16);
     const uint32_t g = kBodyDim / 4;
+    // Two-level: within-brick component labels + per-node min (inits
+    // nodeLabel), so the body CC converges in ~brick diameter, not voxel
+    // diameter.
+    bodyPass(m_bodyLocalCcPipe, m_bodyLabelFloodBg[0], 12, 12, 12);
     bodyPass(m_bodyLabelInitPipe, m_bodyLabelInitBg, g, g, g);
-    for (int r = 0; r < 128; ++r)
+    for (int r = 0; r < 64; ++r)
       bodyPass(m_bodyLabelFloodPipe, m_bodyLabelFloodBg[r & 1], g, g, g);
 
     // slotCount is the root-ordering counter (k==0 -> parent, rest claim a

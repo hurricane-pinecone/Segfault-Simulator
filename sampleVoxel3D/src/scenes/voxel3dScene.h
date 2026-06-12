@@ -34,4 +34,5 @@ private:
   int m_editMode = 0;      // 0 none, 1 carve, 2 spawn water
   float m_mouseX = 0.0f;
   float m_mouseY = 0.0f;
+  bool m_debugWire = true; // P toggles brick-grid + body-box overlays
 };

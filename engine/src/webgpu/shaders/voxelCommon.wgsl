@@ -16,9 +16,8 @@ const BODYVOX : u32 = 884736u;  // BODYDIM^3, one slot's grid
 // body -- it stays put as ordinary world solid. Caps the body-count explosion
 // when a shed-holed canopy floods into a swarm of tiny disconnected leaf clumps.
 const MIN_BODY_VOXELS : i32 = 32;
-// Debug: 1 = draw each rigid body's bounding-box wireframe (magenta) as a
-// non-occluding overlay; 0 = off.
-const BODY_BOX : u32 = 1u;
+// Debug wireframe overlays (body bounding box + 8^3 brick grid) are gated at
+// runtime by the render's dbgMouse.z flag (toggled with the P key).
 // Sparse body storage: a body's 96^3 grid is a 12^3 grid of 8^3 bricks; each
 // brick cell holds a pointer into a shared brick-voxel pool (512 voxels/brick) or
 // BRICK_EMPTY. A body's brick cells start at slot*BODYBRICKS in the brick grid.

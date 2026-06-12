@@ -14,11 +14,34 @@
 @group(0) @binding(4) var<storage, read> carveHit : array<u32>; // [2..4]=hit voxel
 @group(0) @binding(5) var<storage, read> winIn : array<u32>;
 @group(0) @binding(6) var<storage, read_write> winOut : array<u32>;
+// Two-level acceleration (full-brick conduction). The window is DIM^3 = 12^3
+// bricks; winBrickOcc holds each window-brick's world-solid count (FULL == 512),
+// winBrickReach a monotonic per-brick reached flag. A FULL brick is internally
+// fully connected, so reachability conducts across it (and between two adjacent
+// full bricks) in one brick-step instead of 8 voxel-steps -- the dense grounded
+// terrain the flood actually traverses is mostly full bricks, so this collapses
+// the iteration count from the grid diameter (~96) to the brick diameter (~12).
+@group(0) @binding(7) var<storage, read_write> winBrickOcc : array<u32>;
+@group(0) @binding(8) var<storage, read_write> winBrickReach : array<atomic<u32>>;
+// Mixed-brick conduction (the other half of the two-level). winLocalCC labels each
+// solid voxel with its WITHIN-BRICK connected component (the min local index of
+// that component, 0..511) into voxLocal. nodeReached is a per-(brick,component)
+// monotonic reached flag: the moment any voxel of a component is reached, the
+// whole component is (it is internally connected by construction) -- so a mixed
+// brick (a leaf canopy, a cut plane) fills in ~one step instead of 8, and a CUT
+// inside a brick keeps its two sides as SEPARATE components, so a severed tree
+// side never gets reached (full-brick conduction can't do this -- it would treat
+// the cut brick as one conducting node and wrongly re-attach the tree).
+@group(0) @binding(9) var<storage, read_write> voxLocal : array<u32>;
+@group(0) @binding(10) var<storage, read_write> nodeReached : array<atomic<u32>>;
 
 const DIM : i32 = BODYDIM;
 const AIR : u32 = 0u;
 const SOLID_UNREACHED : u32 = 1u;
 const SOLID_REACHED : u32 = 2u;
+const WBD : u32 = 12u;          // window bricks per axis (DIM/8)
+const BRICK_FULL : u32 = 512u;  // a fully-solid 8^3 brick
+const LOCAL_SENTINEL : u32 = 0xFFFFFFFFu;
 
 // The cut near the bottom-centre, so the falling piece (above it) fits the box.
 fn winOrigin() -> vec3<i32> {
@@ -42,6 +65,92 @@ fn anchoredBrick(x : i32, y : i32, z : i32) -> bool {
   return anchor[u32((x / 8) + (y / 8) * BG + (z / 8) * BG * BG)] == 1u;
 }
 fn lIdx(x : i32, y : i32, z : i32) -> u32 { return u32(x + y * DIM + z * DIM * DIM); }
+fn winBrickCell(lx : i32, ly : i32, lz : i32) -> u32 {
+  return u32(lx / 8) + u32(ly / 8) * WBD + u32(lz / 8) * WBD * WBD;
+}
+
+// Per window-brick world-solid count (one workgroup per brick, x/y threads loop
+// z), so winFlood/winConduct know which bricks are FULL (conduct).
+var<workgroup> occ : atomic<u32>;
+@compute @workgroup_size(8, 8, 1)
+fn winClassify(@builtin(workgroup_id) wid : vec3<u32>,
+               @builtin(local_invocation_id) lloc : vec3<u32>,
+               @builtin(local_invocation_index) lidx : u32) {
+  if (lidx == 0u) { atomicStore(&occ, 0u); }
+  workgroupBarrier();
+  let o = winOrigin();
+  let lx = i32(wid.x) * 8 + i32(lloc.x);
+  let ly = i32(wid.y) * 8 + i32(lloc.y);
+  for (var lz = 0; lz < 8; lz = lz + 1) {
+    let wlz = i32(wid.z) * 8 + lz;
+    if (worldSolid(o.x + lx, o.y + ly, o.z + wlz)) { atomicAdd(&occ, 1u); }
+  }
+  workgroupBarrier();
+  if (lidx == 0u) {
+    winBrickOcc[wid.x + wid.y * WBD + wid.z * WBD * WBD] = atomicLoad(&occ);
+  }
+}
+
+// Conduct "reached" between adjacent FULL bricks (always connected). Monotonic
+// (reached only sets), so in-place updates with read races are safe.
+fn fullReached(bx : i32, by : i32, bz : i32) -> bool {
+  if (bx < 0 || by < 0 || bz < 0 || bx >= i32(WBD) || by >= i32(WBD) || bz >= i32(WBD)) { return false; }
+  let nb = u32(bx) + u32(by) * WBD + u32(bz) * WBD * WBD;
+  return winBrickOcc[nb] == BRICK_FULL && atomicLoad(&winBrickReach[nb]) != 0u;
+}
+@compute @workgroup_size(64)
+fn winConduct(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let b = gid.x;
+  if (b >= WBD * WBD * WBD) { return; }
+  if (winBrickOcc[b] != BRICK_FULL) { return; }    // only full bricks conduct
+  if (atomicLoad(&winBrickReach[b]) != 0u) { return; } // already reached
+  let bx = i32(b % WBD); let by = i32((b / WBD) % WBD); let bz = i32(b / (WBD * WBD));
+  if (fullReached(bx - 1, by, bz) || fullReached(bx + 1, by, bz) ||
+      fullReached(bx, by - 1, bz) || fullReached(bx, by + 1, bz) ||
+      fullReached(bx, by, bz - 1) || fullReached(bx, by, bz + 1)) {
+    atomicStore(&winBrickReach[b], 1u);
+  }
+}
+
+// Within-brick connected-component labeling (one workgroup per window-brick, 64
+// threads = one z-column each, in shared memory). Each solid voxel ends labelled
+// with the min local index (0..511) of its in-brick component; voxLocal[windowVox]
+// gets that label, so (brickCell, label) names a node for nodeReached.
+var<workgroup> lbl : array<u32, 512>;
+@compute @workgroup_size(64)
+fn winLocalCC(@builtin(workgroup_id) wid : vec3<u32>,
+              @builtin(local_invocation_index) lidx : u32) {
+  let o = winOrigin();
+  let bx = i32(wid.x) * 8; let by = i32(wid.y) * 8; let bz = i32(wid.z) * 8;
+  let cx = i32(lidx % 8u); let cy = i32(lidx / 8u); // this thread's z-column
+  for (var z = 0; z < 8; z = z + 1) {
+    let li = u32(cx + cy * 8 + z * 64);
+    let solid = worldSolid(o.x + bx + cx, o.y + by + cy, o.z + bz + z);
+    lbl[li] = select(LOCAL_SENTINEL, li, solid);
+  }
+  workgroupBarrier();
+  // Min-flood within the brick. 8^3 component diameter <= 24; 24 rounds converge.
+  for (var it = 0; it < 24; it = it + 1) {
+    for (var z = 0; z < 8; z = z + 1) {
+      let li = u32(cx + cy * 8 + z * 64);
+      var m = lbl[li];
+      if (m != LOCAL_SENTINEL) { // air keeps SENTINEL; large -> ignored by min
+        if (cx > 0) { m = min(m, lbl[li - 1u]); }
+        if (cx < 7) { m = min(m, lbl[li + 1u]); }
+        if (cy > 0) { m = min(m, lbl[li - 8u]); }
+        if (cy < 7) { m = min(m, lbl[li + 8u]); }
+        if (z > 0)  { m = min(m, lbl[li - 64u]); }
+        if (z < 7)  { m = min(m, lbl[li + 64u]); }
+        lbl[li] = m;
+      }
+    }
+    workgroupBarrier();
+  }
+  for (var z = 0; z < 8; z = z + 1) {
+    let li = u32(cx + cy * 8 + z * 64);
+    voxLocal[lIdx(bx + cx, by + cy, bz + z)] = lbl[li];
+  }
+}
 
 @compute @workgroup_size(4, 4, 4)
 fn winInit(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -75,11 +184,28 @@ fn winFlood(@builtin(global_invocation_id) gid : vec3<u32>) {
   if (lx >= DIM || ly >= DIM || lz >= DIM) { return; }
   let li = lIdx(lx, ly, lz);
   let cur = winIn[li];
-  if (cur != SOLID_UNREACHED) { winOut[li] = cur; return; }
-  let r = nbReached(lx - 1, ly, lz) || nbReached(lx + 1, ly, lz) ||
-          nbReached(lx, ly - 1, lz) || nbReached(lx, ly + 1, lz) ||
-          nbReached(lx, ly, lz - 1) || nbReached(lx, ly, lz + 1);
+  if (cur == AIR) { winOut[li] = AIR; return; }
+  let bc = winBrickCell(lx, ly, lz);
+  let full = winBrickOcc[bc] == BRICK_FULL;
+  let node = bc * 512u + voxLocal[li]; // (brick, within-brick component)
+  var r = cur == SOLID_REACHED; // already reached (seed or a prior round)
+  if (!r) {
+    r = nbReached(lx - 1, ly, lz) || nbReached(lx + 1, ly, lz) ||
+        nbReached(lx, ly - 1, lz) || nbReached(lx, ly + 1, lz) ||
+        nbReached(lx, ly, lz - 1) || nbReached(lx, ly, lz + 1);
+    // Brick -> voxel: a reached FULL brick (carried by winConduct), or any reached
+    // voxel of this voxel's component (carried by nodeReached), marks it reached.
+    if (full && atomicLoad(&winBrickReach[bc]) != 0u) { r = true; }
+    if (atomicLoad(&nodeReached[node]) != 0u) { r = true; }
+  }
   winOut[li] = select(SOLID_UNREACHED, SOLID_REACHED, r);
+  // Voxel -> {brick, component}: seed both flags so the conduction carries onward
+  // (monotonic stores, race-safe). The component fill makes a mixed brick (canopy)
+  // converge in ~one step; the cut keeps its two components as separate nodes.
+  if (r) {
+    atomicStore(&nodeReached[node], 1u);
+    if (full) { atomicStore(&winBrickReach[bc], 1u); }
+  }
 }
 
 @compute @workgroup_size(4, 4, 4)

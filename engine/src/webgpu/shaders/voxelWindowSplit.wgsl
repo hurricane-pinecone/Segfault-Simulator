@@ -21,6 +21,14 @@
 @group(0) @binding(12) var<storage, read_write> wBrickGrid : array<atomic<u32>>;
 @group(0) @binding(13) var<storage, read_write> wBrickPool : array<u32>;
 @group(0) @binding(14) var<storage, read_write> wBrickFree : array<atomic<u32>>;
+// Two-level CC (mirrors the anchor flood). detachedLocalCC labels each DETACHED
+// voxel's within-brick component into voxLocalLabel; nodeLabel holds the min label
+// per (brick, component). labelFlood pulls/pushes the node's min, so a component
+// equalizes in ~one step instead of its voxel diameter -- but a cut keeps its two
+// sides as separate components/nodes, so a severed piece gets its own label (its
+// own body) rather than wrongly merging across the cut.
+@group(0) @binding(15) var<storage, read_write> voxLocalLabel : array<u32>;
+@group(0) @binding(16) var<storage, read_write> nodeLabel : array<atomic<u32>>;
 fn popBrick() -> u32 {
   let c = atomicSub(&wBrickFree[0], 1u);
   if (c == 0u || c > BRICK_POOL_BRICKS) { atomicAdd(&wBrickFree[0], 1u); return BRICK_EMPTY; }
@@ -92,6 +100,47 @@ fn labelInit(@builtin(global_invocation_id) gid : vec3<u32>) {
   labelOut[li] = select(SENTINEL, li, detachedSolid(o.x + lx, o.y + ly, o.z + lz));
 }
 
+// Within-brick CC of the DETACHED set (one workgroup per window-brick, a z-column
+// per thread, in shared memory). Each detached voxel ends labelled with its
+// component's min local index; also resets this brick's nodeLabel slots so the
+// labelFlood's atomicMin starts from SENTINEL.
+var<workgroup> lblD : array<u32, 512>;
+@compute @workgroup_size(64)
+fn detachedLocalCC(@builtin(workgroup_id) wid : vec3<u32>,
+                   @builtin(local_invocation_index) lidx : u32) {
+  let o = winOrigin();
+  let bx = i32(wid.x) * 8; let by = i32(wid.y) * 8; let bz = i32(wid.z) * 8;
+  let nodeBase = (wid.x + wid.y * 12u + wid.z * 144u) * 512u;
+  let cx = i32(lidx % 8u); let cy = i32(lidx / 8u);
+  for (var z = 0; z < 8; z = z + 1) {
+    let li = u32(cx + cy * 8 + z * 64);
+    lblD[li] = select(SENTINEL, li,
+                      detachedSolid(o.x + bx + cx, o.y + by + cy, o.z + bz + z));
+    atomicStore(&nodeLabel[nodeBase + li], SENTINEL);
+  }
+  workgroupBarrier();
+  for (var it = 0; it < 24; it = it + 1) {
+    for (var z = 0; z < 8; z = z + 1) {
+      let li = u32(cx + cy * 8 + z * 64);
+      var m = lblD[li];
+      if (m != SENTINEL) {
+        if (cx > 0) { m = min(m, lblD[li - 1u]); }
+        if (cx < 7) { m = min(m, lblD[li + 1u]); }
+        if (cy > 0) { m = min(m, lblD[li - 8u]); }
+        if (cy < 7) { m = min(m, lblD[li + 8u]); }
+        if (z > 0)  { m = min(m, lblD[li - 64u]); }
+        if (z < 7)  { m = min(m, lblD[li + 64u]); }
+        lblD[li] = m;
+      }
+    }
+    workgroupBarrier();
+  }
+  for (var z = 0; z < 8; z = z + 1) {
+    let li = u32(cx + cy * 8 + z * 64);
+    voxLocalLabel[lIdx(bx + cx, by + cy, bz + z)] = lblD[li];
+  }
+}
+
 fn nb(x : i32, y : i32, z : i32) -> u32 {
   if (x < 0 || y < 0 || z < 0 || x >= DIM || y >= DIM || z >= DIM) { return SENTINEL; }
   return labelIn[lIdx(x, y, z)]; // SENTINEL for air -> ignored by min
@@ -110,7 +159,13 @@ fn labelFlood(@builtin(global_invocation_id) gid : vec3<u32>) {
   lab = min(lab, nb(lx, ly + 1, lz));
   lab = min(lab, nb(lx, ly, lz - 1));
   lab = min(lab, nb(lx, ly, lz + 1));
+  // Node: pull the component's running min (instant intra-brick + mixed-brick
+  // conduction), then push this voxel's label back into it.
+  let node = brickCell(lx, ly, lz) * 512u + voxLocalLabel[li];
+  let nl = atomicLoad(&nodeLabel[node]);
+  if (nl != SENTINEL) { lab = min(lab, nl); }
   labelOut[li] = lab;
+  atomicMin(&nodeLabel[node], lab);
 }
 
 @compute @workgroup_size(4, 4, 4)

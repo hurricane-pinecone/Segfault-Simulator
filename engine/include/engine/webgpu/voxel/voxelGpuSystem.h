@@ -30,8 +30,8 @@ public:
   void adjustCarveRadius(float delta)
   {
     m_carveRadius += delta;
-    if (m_carveRadius < 1.0f)
-      m_carveRadius = 1.0f;
+    if (m_carveRadius < 0.0f) // radius 0 -> i32(R)=0 -> a single-voxel carve
+      m_carveRadius = 0.0f;
     if (m_carveRadius > 24.0f)
       m_carveRadius = 24.0f;
   }
@@ -43,6 +43,13 @@ public:
     m_editMode = mode;
     m_mouseX = mouseX;
     m_mouseY = mouseY;
+  }
+
+  // Toggle the debug wireframe overlays (brick grid + body box).
+  void setDebugWire(bool on)
+  {
+    if (m_world)
+      m_world->setDebugWire(on);
   }
 
   bool hasTimestamps() const { return m_world && m_world->hasTimestamps(); }

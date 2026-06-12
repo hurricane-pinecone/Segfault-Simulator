@@ -34,6 +34,8 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
     m_editMode = 3;
   if (kb.keyHeld(sfs::Key::R)) // hold R to drop rubble (powder) at the cursor
     m_editMode = 4;
+  if (kb.keyPressed(sfs::Key::P)) // P toggles the debug wireframe overlays
+    m_debugWire = !m_debugWire;
   const glm::vec2 p = mouse.getPosition();
   m_mouseX = p.x;
   m_mouseY = p.y;
@@ -48,5 +50,6 @@ void Voxel3DScene::onUpdate(double deltaTime)
     m_voxel->zoom(m_scrollY);
   m_voxel->adjustCarveRadius(m_carveDir * 12.0f *
                              static_cast<float>(deltaTime));
+  m_voxel->setDebugWire(m_debugWire);
   m_voxel->setEdit(m_editMode, m_mouseX, m_mouseY);
 }

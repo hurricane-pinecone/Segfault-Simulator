@@ -61,6 +61,18 @@ fn shade(v : u32, norm : vec3<f32>, vc : vec3<i32>) -> vec3<f32> {
   return col * diff;
 }
 
+// Debug overlay: true on a thin line where the hit surface crosses an 8^3 brick
+// boundary plane. Only the two IN-PLANE axes are tested (the normal axis is
+// constant on the face, so a face co-planar with a brick boundary doesn't flood).
+// p is the hit point (in the same space as the brick grid: world or body-local).
+fn brickWire(p : vec3<f32>, n : vec3<f32>) -> bool {
+  let lw = 0.05; // line half-width in voxels
+  let d = abs(p - round(p / 8.0) * 8.0); // distance to nearest brick plane per axis
+  return (abs(n.x) < 0.5 && d.x < lw) ||
+         (abs(n.y) < 0.5 && d.y < lw) ||
+         (abs(n.z) < 0.5 && d.z < lw);
+}
+
 fn marchWorld(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
   var h : Hit;
   h.hit = false;
@@ -110,6 +122,9 @@ fn marchWorld(ro : vec3<f32>, rd : vec3<f32>) -> Hit {
             h.col = hashColor(labelBuf[bidx]);
           } else {
             h.col = shade(v, vnorm, voxel);
+          }
+          if (dbgMouse.w != 0.0 && brickWire(ro + rd * tVox, vnorm)) {
+            h.col = vec3<f32>(0.0, 1.0, 1.0);
           }
           return h;
         }
@@ -191,6 +206,10 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
           h.hit = true;
           h.t = tVox;
           h.col = shade(v, vnorm, voxel);
+          // Body-local brick grid (8^3); wireframe in body-local space.
+          if (dbgMouse.w != 0.0 && brickWire(rol + rdl * tVox, vnorm)) {
+            h.col = vec3<f32>(0.0, 1.0, 1.0);
+          }
           return h;
         }
         if (tMaxV.x < tMaxV.y && tMaxV.x < tMaxV.z) {
@@ -219,7 +238,7 @@ fn marchBody(ro : vec3<f32>, rd : vec3<f32>, slot : u32) -> Hit {
   // covers, not the full BODYDIM^3 grid. Reached only when the ray hit NO voxel,
   // so it frames the body without occluding it. A box face point is on an edge
   // when it sits near two of the six AABB faces; check the entry + exit faces.
-  if (BODY_BOX != 0u) {
+  if (dbgMouse.w != 0.0) {
     let pLo = bitcast<u32>(body.invRot0.w);
     let pHi = bitcast<u32>(body.invRot1.w);
     let lo = vec3<f32>(f32(pLo & 0xFFu), f32((pLo >> 8u) & 0xFFu), f32((pLo >> 16u) & 0xFFu));
