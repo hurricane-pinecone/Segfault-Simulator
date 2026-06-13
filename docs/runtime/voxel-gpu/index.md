@@ -101,6 +101,53 @@ contact terrain. A body that comes to rest stamps its voxels back into the world
 A body that collides at high speed sheds voxels into the world as rubble. The body
 pool holds up to `kMaxBodies` bodies simultaneously.
 
+## Explosions
+
+Call `requestExplosion()` on the system to detonate at the cursor on the next
+frame:
+
+```cpp
+voxels.requestExplosion();
+```
+
+The system ray-marches to the first solid voxel under the cursor, craters a
+sphere (default radius 20 voxels), fells any newly disconnected mass into rigid
+bodies, and flings those bodies outward with an impulse that scales linearly with
+distance and inversely with body mass. Solid shell voxels are simultaneously
+ejected as ballistic debris. If the ray misses all solid voxels, nothing happens
+that frame.
+
+For a custom ray, fill a `GpuVoxelWorld::BlastCmd` and pass it to
+`queueExplosion()` on a `GpuVoxelWorld` directly:
+
+```cpp
+GpuVoxelWorld::BlastCmd blast;
+blast.origin[0] = camPos.x;
+blast.origin[1] = camPos.y;
+blast.origin[2] = camPos.z;
+blast.dir[0]    = rayDir.x;
+blast.dir[1]    = rayDir.y;
+blast.dir[2]    = rayDir.z;
+blast.radius    = 20.0f;  // crater radius in voxels
+blast.force     = 350.0f; // impulse and debris eject strength
+world.queueExplosion(blast);
+```
+
+The crater is processed on the next `recordFrame` call. Calling
+`queueExplosion()` more than once per frame replaces the pending blast; only
+one blast fires per frame.
+
+### Ballistic debris
+
+Shell voxels carved out by an explosion are ejected into a ring-allocated debris
+pool (maximum 16 384 live particles). Each particle carries its source material,
+travels under gravity with drag, and on the first solid cell it hits either
+breaks the struck voxel (when kinetic energy exceeds the surface toughness) and
+keeps flying at reduced speed, or settles as powder. A very hard impact ejects a
+secondary spall fragment. A particle that runs out of energy or outlives its
+3-second lifetime settles as powder at its final position. The pool is managed
+entirely on the GPU and requires no game-side code.
+
 ## Water simulation
 
 Water is simulated as a cellular automaton on the GPU each frame. Spawn water by
