@@ -124,6 +124,7 @@ public:
 private:
   void buildGenerate();
   void buildWater();
+  void buildFire();
   void buildRecount();
   void buildEdit();
   void buildBlast();
@@ -139,6 +140,7 @@ private:
   void buildBodyCollide();
   void buildBodyStamp();
   void buildBodyShed();
+  void buildBodyFire();
   void buildBodyStep();
   void buildBodyXform();
   void buildBodyPlace();
@@ -253,6 +255,10 @@ private:
   // Break-off: hard-impact body voxels shed into the world as rubble (powder).
   WGPUComputePipeline m_bodyShedPipe = nullptr;
   WGPUBindGroup m_bodyShedBg[2] = {nullptr, nullptr}; // per src buffer
+  // Fire CA on rigid bodies (+ RB<->world boundary coupling). Src-indexed for
+  // the world buffers.
+  WGPUComputePipeline m_bodyFirePipe = nullptr;
+  WGPUBindGroup m_bodyFireBg[2] = {nullptr, nullptr};
   // GPU placement: reduced slot metadata -> initial motion state (replaces the
   // CPU onSlotMetaMapped math; split children read the parent's live state).
   WGPUComputePipeline m_bodyPlacePipe = nullptr;
@@ -355,6 +361,11 @@ private:
   // held over empty space (no recent world hit) it clears and the machinery is
   // skipped.
   bool m_worldCarved = false;
+  // Set by the same readback (carveHit[6]): fire removed a static solid ~1
+  // frame ago, so the reflood + world fell run to drop whatever it severed.
+  // This is what decouples felling from the carve tool -- any voxel removal can
+  // trigger it.
+  bool m_fireSevered = false;
   bool m_carveMapBusy = false;
   bool m_carvePendingResolve = false;
   struct CarveHitRb
@@ -362,6 +373,7 @@ private:
     WGPUBuffer buffer;
     int* slot;
     bool* worldCarved;
+    bool* fireSevered;
     bool* busy;
   } m_carveRb{};
 
@@ -399,6 +411,7 @@ private:
 
   WGPUComputePipeline m_genPipe = nullptr;
   WGPUComputePipeline m_waterPipe = nullptr;
+  WGPUComputePipeline m_firePipe = nullptr;
   WGPUComputePipeline m_recPipe = nullptr;
   WGPUComputePipeline m_editPipe = nullptr;
   WGPURenderPipeline m_renderPipe = nullptr;
@@ -411,6 +424,7 @@ private:
 
   WGPUBindGroup m_genBg = nullptr;
   WGPUBindGroup m_waterBg[2] = {nullptr, nullptr};
+  WGPUBindGroup m_fireBg[2] = {nullptr, nullptr}; // [srcIdx]: voxCur = src
   WGPUBindGroup m_recBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_editBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_renderBg[2] = {nullptr, nullptr};
