@@ -52,6 +52,9 @@ public:
       m_world->setDebugWire(on);
   }
 
+  // Detonate an explosion at the cursor on the next frame (X key for now).
+  void requestExplosion() { m_explodeRequested = true; }
+
   bool hasTimestamps() const { return m_world && m_world->hasTimestamps(); }
   double gpuSimMs() const { return m_world ? m_world->gpuSimMs() : 0.0; }
   double gpuRenderMs() const { return m_world ? m_world->gpuRenderMs() : 0.0; }
@@ -75,6 +78,9 @@ private:
   float m_mouseX = 0.0f;
   float m_mouseY = 0.0f;
   float m_carveRadius = 3.6f; // carve sphere radius; water spawn matches it
+  bool m_explodeRequested = false;
+  float m_blastRadius = 20.0f; // explosion crater radius (voxels)
+  float m_blastForce = 350.0f; // explosion impulse + debris eject strength
 };
 
 } // namespace sfs

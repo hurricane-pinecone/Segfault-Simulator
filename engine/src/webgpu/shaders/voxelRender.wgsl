@@ -277,8 +277,21 @@ fn vs_main(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4<f32> {
   return vec4<f32>(p[vid], 0.0, 1.0);
 }
 
+struct FragOut {
+  @location(0) color : vec4<f32>,
+  @builtin(frag_depth) depth : f32,
+};
+
+// Planar view-depth of a world point: its distance along the camera forward axis,
+// normalised to [0,1]. The debris pass projects its cubes with the same metric, so
+// the depth buffer composites debris against the raymarched world/bodies correctly.
+fn viewDepth(worldHit : vec3<f32>) -> f32 {
+  let a = dot(worldHit - cam.p0.xyz, cam.p1.xyz) / dot(cam.p1.xyz, cam.p1.xyz);
+  return clamp(a / (2.0 * f32(WG)), 0.0, 1.0);
+}
+
 @fragment
-fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_main(@builtin(position) fragPos : vec4<f32>) -> FragOut {
   let res = vec2<f32>(cam.p1.w, cam.p2.w);
   let ndc = vec2<f32>(fragPos.x / res.x * 2.0 - 1.0, 1.0 - fragPos.y / res.y * 2.0);
   let bg = mix(vec3<f32>(0.10, 0.12, 0.18), vec3<f32>(0.02, 0.02, 0.04), ndc.y * 0.5 + 0.5);
@@ -303,19 +316,30 @@ fn fs_main(@builtin(position) fragPos : vec4<f32>) -> @location(0) vec4<f32> {
     if (bs.hit && bs.t < b.t) { b = bs; }
   }
 
+  var o : FragOut;
+
   // Debug overlay: a box at the cursor shows what its ray hits -- green = a
-  // rigid body, red = world, blue = nothing.
+  // rigid body, red = world, blue = nothing. Drawn on top (depth 0).
   if (abs(fragPos.x - dbgMouse.x) < 3.0 && abs(fragPos.y - dbgMouse.y) < 3.0) {
-    if (b.hit && (!w.hit || b.t < w.t)) { return vec4<f32>(0.0, 1.0, 0.0, 1.0); }
-    if (w.hit) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
-    return vec4<f32>(0.2, 0.2, 1.0, 1.0);
+    o.depth = 0.0;
+    if (b.hit && (!w.hit || b.t < w.t)) { o.color = vec4<f32>(0.0, 1.0, 0.0, 1.0); return o; }
+    if (w.hit) { o.color = vec4<f32>(1.0, 0.0, 0.0, 1.0); return o; }
+    o.color = vec4<f32>(0.2, 0.2, 1.0, 1.0);
+    return o;
   }
 
+  var hit = false;
+  var t = 0.0;
+  var col = bg;
   if (w.hit && b.hit) {
-    if (b.t < w.t) { return vec4<f32>(b.col, 1.0); }
-    return vec4<f32>(w.col, 1.0);
+    if (b.t < w.t) { hit = true; t = b.t; col = b.col; }
+    else { hit = true; t = w.t; col = w.col; }
+  } else if (w.hit) {
+    hit = true; t = w.t; col = w.col;
+  } else if (b.hit) {
+    hit = true; t = b.t; col = b.col;
   }
-  if (w.hit) { return vec4<f32>(w.col, 1.0); }
-  if (b.hit) { return vec4<f32>(b.col, 1.0); }
-  return vec4<f32>(bg, 1.0);
+  o.color = vec4<f32>(col, 1.0);
+  o.depth = select(1.0, viewDepth(ro + rd * t), hit);
+  return o;
 }

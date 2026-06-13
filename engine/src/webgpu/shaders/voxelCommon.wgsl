@@ -66,6 +66,17 @@ const MAT_RUBBLE : u32 = 9u;
 const VOX_POWDER : u32 = 0x20u;
 fn matId(v : u32) -> u32 { return (v >> 8u) & 0xFFu; }
 fn vox(matId : u32, cat : u32) -> u32 { return cat | (matId << 8u); }
+// Ballistic debris: a flying material voxel (carries its full voxel value `vox`, so
+// every per-material attribute -- density/rigidity/colour, flammability later --
+// travels with it). A sparse pool: the blast ejects shell voxels as debris, the
+// advect pass flies + collides them, and on impact/slow-down they settle back into
+// the grid as powder. Ring-allocated (head % DEBRIS_MAX); life <= 0 = a free slot.
+const DEBRIS_MAX : u32 = 16384u;
+const DEBRIS_G : f32 = 80.0; // gravity, matches the rigid-body step
+struct Debris {
+  a : vec4<f32>, // pos.xyz, life (seconds; <= 0 dead)
+  b : vec4<f32>, // vel.xyz, bitcast<f32>(voxel value)
+};
 // Body size classes (32^3 / 64^3 / 96^3). Counts MUST sum to MAXB and match the
 // CPU pool sizing + free-list init. The pool is laid out small|med|large; the
 // free-list is three [count, ids...] segments.

@@ -35,4 +35,5 @@ private:
   float m_mouseX = 0.0f;
   float m_mouseY = 0.0f;
   bool m_debugWire = true; // P toggles brick-grid + body-box overlays
+  bool m_explode = false;  // X detonates an explosion at the cursor this frame
 };

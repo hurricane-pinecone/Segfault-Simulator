@@ -2,12 +2,24 @@
 // move in its preferred vertical direction -- liquids fall, gases rise -- then
 // flows sideways (remembered direction, else a new random one). Each move claims
 // a cleared destination via compare-exchange (conserved, race-free). Static
-// terrain + air persist in dst, so only fluids act. (Rise/fall is one cell/tick;
-// density-scaled rate is a future refinement.)
+// terrain + air persist in dst, so only fluids act. Liquids fall one cell/tick;
+// gases rise stochastically at a density-driven, per-voxel-jittered rate (slower
+// than a cell/tick, uneven).
 @group(0) @binding(0) var<storage, read> src : array<u32>;
 @group(0) @binding(1) var<storage, read_write> dst : array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
 @group(0) @binding(3) var<uniform> frame : vec4<u32>;
+@group(0) @binding(4) var<storage, read> materials : array<Material>;
+
+// Gas rise is stochastic: each tick a gas voxel rises with a probability set by its
+// material density and a per-voxel jitter, so it rises slower than 1 cell/tick and
+// unevenly (some wisps outrun others). Lower density -> lower probability -> slower.
+const RISE_SCALE : f32 = 1.4;     // density -> base rise probability
+const RISE_JIT_LO : f32 = 0.4;    // per-voxel rate range = base * [LO, LO+SPAN]
+const RISE_JIT_SPAN : f32 = 1.4;
+fn rnd01(x : i32, y : i32, z : i32, salt : u32) -> f32 {
+  return f32(hash3(u32(x), u32(y), u32(z), frame.x + salt) & 0xFFFFu) / 65535.0;
+}
 
 fn vIndex(x : i32, y : i32, z : i32) -> u32 {
   let bi = u32((x / 8) + (y / 8) * BG + (z / 8) * BG * BG);
@@ -56,16 +68,47 @@ fn water(@builtin(local_invocation_id) lloc : vec3<u32>,
       continue;
     }
 
-    let dy = select(-1, 1, isGas); // gas rises, liquid falls
-
-    // Gas dissipates: decrement its lifetime (bits 16-23) each tick; at 0 it is
-    // simply not written -> the cell becomes air. Liquids have no lifetime.
-    var vv = v;
+    // Gas: dissipate (decrement lifetime, bits 16-23; at 0 -> air), then rise
+    // stochastically at a density-driven rate. If it doesn't rise this tick it
+    // rests in place (slow rise); if genuinely blocked above by solid it billows
+    // sideways.
     if (isGas) {
       let life = (v >> 16u) & 0xFFu;
       if (life == 0u) { continue; }
-      vv = (v & 0xFF00FFFFu) | ((life - 1u) << 16u);
+      let vv = (v & 0xFF00FFFFu) | ((life - 1u) << 16u);
+      let above = srcType(x, y + 1, z);
+      let dens = materials[matId(v)].density;
+      let riseP = clamp(dens * RISE_SCALE * (RISE_JIT_LO + RISE_JIT_SPAN * rnd01(x, y, z, 17u)),
+                        0.0, 1.0);
+      if (above == 0u && rnd01(x, y, z, 53u) < riseP) {
+        let r = atomicCompareExchangeWeak(&dst[vIndex(x, y + 1, z)], 0u, vv);
+        if (r.exchanged) { continue; }
+      }
+      // Only billow sideways against a SOLID ceiling. If blocked by other gas, REST
+      // and wait for it to rise -- otherwise the dense cloud all flows sideways and
+      // flattens into a cone instead of rising as a plume.
+      if (above != CAT_SOLID) { atomicStore(&dst[vIndex(x, y, z)], vv); continue; }
+      // Solid ceiling above -> billow sideways (remembered dir, else a new random one).
+      let gdir = (v >> 2u) & 3u;
+      if (srcType(nbx(x, gdir), y, nbz(z, gdir)) == 0u) {
+        let rs = atomicCompareExchangeWeak(&dst[vIndex(nbx(x, gdir), y, nbz(z, gdir))], 0u, vv);
+        if (rs.exchanged) { continue; }
+      }
+      let gp = hash3(u32(x), u32(y), u32(z), frame.x) % 4u;
+      for (var k = 0u; k < 4u; k = k + 1u) {
+        let d = (gp + k) % 4u;
+        if (srcType(nbx(x, d), y, nbz(z, d)) == 0u) {
+          let nv = (vv & 0xFFFFFFF3u) | (d << 2u);
+          let r2 = atomicCompareExchangeWeak(&dst[vIndex(nbx(x, d), y, nbz(z, d))], 0u, nv);
+          if (r2.exchanged) { break; }
+        }
+      }
+      atomicStore(&dst[vIndex(x, y, z)], vv);
+      continue;
     }
+
+    let dy = -1; // liquids fall
+    let vv = v;
 
     // Move in the preferred vertical direction if it can; claims a cleared cell.
     if (srcType(x, y + dy, z) == 0u) {
