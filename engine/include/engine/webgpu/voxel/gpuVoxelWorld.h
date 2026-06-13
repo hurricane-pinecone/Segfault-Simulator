@@ -64,6 +64,18 @@ public:
     float radius;
   };
 
+  // An explosion at the first solid hit along the ray from `origin` along
+  // `dir`: craters a `radius` sphere, fells + flings the surroundings, and
+  // (later) sprays ballistic debris. Queue one with queueExplosion(); processed
+  // next recordFrame.
+  struct BlastCmd
+  {
+    float origin[3];
+    float dir[3];
+    float radius;
+    float force;
+  };
+
   explicit GpuVoxelWorld(WebGpuContext& ctx);
   ~GpuVoxelWorld();
 
@@ -91,6 +103,14 @@ public:
   // Advance the active falling bodies (gravity + topple), once per frame.
   void stepBody(double dt);
 
+  // Queue an explosion for the next recordFrame (game mechanic, not an edit
+  // mode).
+  void queueExplosion(const BlastCmd& blast)
+  {
+    m_blast = blast;
+    m_blastPending = true;
+  }
+
   // Debug: the cursor pixel, highlighted by the render to show what it hits.
   void setDebugMouse(float x, float y)
   {
@@ -106,6 +126,8 @@ private:
   void buildWater();
   void buildRecount();
   void buildEdit();
+  void buildBlast();
+  void buildDebris();
   void buildRender();
   void buildTimestamps();
   void buildFaces();
@@ -143,6 +165,36 @@ private:
   WGPUBuffer m_camBuf = nullptr;
   WGPUBuffer m_frameBuf = nullptr;
   WGPUBuffer m_editBuf = nullptr;
+  // Explosions: the CPU-written input ray/params, and the GPU-published blast
+  // (crater center from the raymarch + radius/force/active) that the impulse
+  // and (later) debris passes read.
+  WGPUBuffer m_blastInBuf = nullptr;
+  WGPUBuffer m_blastBuf = nullptr;
+  WGPUComputePipeline m_blastPipe = nullptr;
+  WGPUBindGroup m_blastBg[2] = {nullptr,
+                                nullptr}; // [srcIdx]: voxCur = current src
+  WGPUComputePipeline m_blastImpulsePipe = nullptr;
+  WGPUBindGroup m_blastImpulseBg = nullptr;
+  BlastCmd m_blast{};
+  bool m_blastPending = false;
+  // Ballistic debris: a ring-allocated particle pool (pos/vel/voxel/life) the
+  // blast ejects into and the advect pass flies + settles back into the grid as
+  // powder.
+  static constexpr uint32_t kDebrisMax =
+      16384;                            // == DEBRIS_MAX in voxelCommon.wgsl
+  WGPUBuffer m_debrisBuf = nullptr;     // kDebrisMax * 32 bytes
+  WGPUBuffer m_debrisHeadBuf = nullptr; // atomic ring head
+  WGPUComputePipeline m_debrisAdvectPipe = nullptr;
+  WGPUBindGroup m_debrisAdvectBg[2] = {nullptr,
+                                       nullptr}; // [srcIdx]: voxCur = src
+  // Debris are drawn as instanced camera-facing quads, depth-tested against the
+  // raymarch via a shared depth buffer (recreated on resize).
+  WGPURenderPipeline m_debrisRenderPipe = nullptr;
+  WGPUBindGroup m_debrisRenderBg = nullptr;
+  WGPUTexture m_depthTex = nullptr;
+  WGPUTextureView m_depthView = nullptr;
+  int m_depthW = 0;
+  int m_depthH = 0;
   // Connectivity: per-brick face masks, ping-pong ground-anchoring labels, and
   // a tiny "did the flood change anything" control buffer.
   WGPUBuffer m_faceBuf = nullptr;

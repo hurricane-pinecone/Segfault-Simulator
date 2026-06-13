@@ -47,6 +47,24 @@ void VoxelGpuSystem::render()
     editPtr = &edit;
   }
 
+  if (m_explodeRequested)
+  {
+    glm::vec3 origin;
+    glm::vec3 dir;
+    m_camera.pickRay(width, height, m_mouseX, m_mouseY, origin, dir);
+    GpuVoxelWorld::BlastCmd blast;
+    blast.origin[0] = origin.x;
+    blast.origin[1] = origin.y;
+    blast.origin[2] = origin.z;
+    blast.dir[0] = dir.x;
+    blast.dir[1] = dir.y;
+    blast.dir[2] = dir.z;
+    blast.radius = m_blastRadius;
+    blast.force = m_blastForce;
+    m_world->queueExplosion(blast);
+    m_explodeRequested = false;
+  }
+
   m_world->setDebugMouse(m_mouseX, m_mouseY);
   m_world->recordFrame(enc, view, cam16, editPtr, m_frame++);
 }

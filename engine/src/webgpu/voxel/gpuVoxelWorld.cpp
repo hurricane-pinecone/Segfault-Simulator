@@ -209,8 +209,14 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
              // it must be low for the trunk to win the CoM); rigidity HIGH so
              // few leaves crumble -- a full canopy of leaf-rubble is too big
   setMat(7, 50, 110, 210, 0.6f, 1.0f, 0.0f); // water (translucent)
-  setMat(8, 70, 72, 80, 0.5f, 0.2f, 0.0f);   // smoke (gas, light -> rises)
-  setMat(9, 96, 88, 78, 1.0f, 1.5f, 0.0f);   // rubble (powder, falls + piles)
+  setMat(8,
+         70,
+         72,
+         80,
+         0.3f,
+         0.2f,
+         0.0f); // smoke (gas; density -> rise rate, low = slow)
+  setMat(9, 96, 88, 78, 1.0f, 1.5f, 0.0f); // rubble (powder, falls + piles)
   m_materialBuf = makeBuffer(m_device,
                              sizeof(mats),
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
@@ -221,6 +227,15 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
       m_device, 16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
   m_editBuf = makeBuffer(
       m_device, 32, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_blastInBuf = makeBuffer(
+      m_device, 32, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_blastBuf = makeBuffer(
+      m_device, 32, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+  m_debrisBuf = makeBuffer(m_device,
+                           kDebrisMax * 32u,
+                           WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+  m_debrisHeadBuf = makeBuffer(
+      m_device, 16, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
 
   m_faceBytes = brickCount * 12 * sizeof(uint32_t);
   m_anchorBytes = brickCount * sizeof(uint32_t);
@@ -378,6 +393,8 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   buildWater();
   buildRecount();
   buildEdit();
+  buildBlast();
+  buildDebris();
   buildRender();
   buildFaces();
   buildAnchor();
@@ -402,13 +419,34 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
 
 GpuVoxelWorld::~GpuVoxelWorld()
 {
-  for (WGPUBindGroup bg :
-       {m_genBg,           m_waterBg[0],     m_waterBg[1],   m_recBg[0],
-        m_recBg[1],        m_editBg[0],      m_editBg[1],    m_renderBg[0],
-        m_renderBg[1],     m_facesBg,        m_seedBg,       m_floodBg[0],
-        m_floodBg[1],      m_refineBg,       m_labelInitBg,  m_labelFloodBg[0],
-        m_labelFloodBg[1], m_bodyRegisterBg, m_bodyReduceBg, m_bodyCollideBg,
-        m_bodyStampBg,     m_bodySplitBg})
+  for (WGPUBindGroup bg : {m_genBg,
+                           m_waterBg[0],
+                           m_waterBg[1],
+                           m_recBg[0],
+                           m_recBg[1],
+                           m_editBg[0],
+                           m_editBg[1],
+                           m_renderBg[0],
+                           m_renderBg[1],
+                           m_facesBg,
+                           m_seedBg,
+                           m_floodBg[0],
+                           m_floodBg[1],
+                           m_refineBg,
+                           m_labelInitBg,
+                           m_labelFloodBg[0],
+                           m_labelFloodBg[1],
+                           m_bodyRegisterBg,
+                           m_bodyReduceBg,
+                           m_bodyCollideBg,
+                           m_bodyStampBg,
+                           m_bodySplitBg,
+                           m_blastBg[0],
+                           m_blastBg[1],
+                           m_blastImpulseBg,
+                           m_debrisAdvectBg[0],
+                           m_debrisAdvectBg[1],
+                           m_debrisRenderBg})
     if (bg)
       wgpuBindGroupRelease(bg);
 
@@ -420,8 +458,20 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_recPipe);
   if (m_editPipe)
     wgpuComputePipelineRelease(m_editPipe);
+  if (m_blastPipe)
+    wgpuComputePipelineRelease(m_blastPipe);
+  if (m_blastImpulsePipe)
+    wgpuComputePipelineRelease(m_blastImpulsePipe);
+  if (m_debrisAdvectPipe)
+    wgpuComputePipelineRelease(m_debrisAdvectPipe);
   if (m_renderPipe)
     wgpuRenderPipelineRelease(m_renderPipe);
+  if (m_debrisRenderPipe)
+    wgpuRenderPipelineRelease(m_debrisRenderPipe);
+  if (m_depthView)
+    wgpuTextureViewRelease(m_depthView);
+  if (m_depthTex)
+    wgpuTextureRelease(m_depthTex);
   if (m_facesPipe)
     wgpuComputePipelineRelease(m_facesPipe);
   if (m_seedPipe)
@@ -471,28 +521,23 @@ GpuVoxelWorld::~GpuVoxelWorld()
     if (p)
       wgpuComputePipelineRelease(p);
 
-  for (WGPUBuffer b : {m_voxBuf[0],        m_voxBuf[1],
-                       m_brickBuf,         m_materialBuf,
-                       m_camBuf,           m_frameBuf,
-                       m_editBuf,          m_faceBuf,
-                       m_anchorBuf[0],     m_anchorBuf[1],
-                       m_floodCtlBuf,      m_dirtyBuf,
-                       m_labelBuf[0],      m_labelBuf[1],
-                       m_bodyBrickGrid,    m_brickPool,
-                       m_brickFreeBuf,     m_winBrickOcc,
-                       m_winDetBrick,      m_winVoxLocal,
-                       m_winNodeReached,   m_bodyXformBuf,
-                       m_slotMetaBuf,      m_slotMetaReadback,
-                       m_rootSlotBuf,      m_slotCountBuf,
-                       m_freeSlotBuf,      m_collideBuf,
-                       m_collideReadback,  m_carveHitBuf,
-                       m_carveHitReadback, m_bodyLabelBuf[0],
-                       m_bodyLabelSlotBuf, m_dbgMouseBuf,
-                       m_windowBuf[0],     m_windowBuf[1],
-                       m_bodyStateBuf,     m_bodyStateReadback,
-                       m_bodyStepUBuf,     m_placeUBuf,
-                       m_slotOccupiedBuf,  m_tsResolve,
-                       m_tsReadback})
+  for (WGPUBuffer b :
+       {m_voxBuf[0],        m_voxBuf[1],        m_brickBuf,
+        m_materialBuf,      m_camBuf,           m_frameBuf,
+        m_editBuf,          m_blastInBuf,       m_blastBuf,
+        m_debrisBuf,        m_debrisHeadBuf,    m_faceBuf,
+        m_anchorBuf[0],     m_anchorBuf[1],     m_floodCtlBuf,
+        m_dirtyBuf,         m_labelBuf[0],      m_labelBuf[1],
+        m_bodyBrickGrid,    m_brickPool,        m_brickFreeBuf,
+        m_winBrickOcc,      m_winDetBrick,      m_winVoxLocal,
+        m_winNodeReached,   m_bodyXformBuf,     m_slotMetaBuf,
+        m_slotMetaReadback, m_rootSlotBuf,      m_slotCountBuf,
+        m_freeSlotBuf,      m_collideBuf,       m_collideReadback,
+        m_carveHitBuf,      m_carveHitReadback, m_bodyLabelBuf[0],
+        m_bodyLabelSlotBuf, m_dbgMouseBuf,      m_windowBuf[0],
+        m_windowBuf[1],     m_bodyStateBuf,     m_bodyStateReadback,
+        m_bodyStepUBuf,     m_placeUBuf,        m_slotOccupiedBuf,
+        m_tsResolve,        m_tsReadback})
     if (b)
       wgpuBufferRelease(b);
   if (m_tsQuery)
@@ -542,26 +587,29 @@ void GpuVoxelWorld::buildWater()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelWaterWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[4] = {
+  WGPUBindGroupLayoutEntry e[5] = {
       storageEntry(
           0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
           2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
-      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 4);
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform),
+      storageEntry(
+          4, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 5);
   m_waterPipe = makeComputePipeline(
       m_device, module, "water", makePipelineLayout(m_device, bgl));
 
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[4] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
+    WGPUBindGroupEntry be[5] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
                                 bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
                                 bufEntry(2, m_brickBuf, m_brickBytes),
-                                bufEntry(3, m_frameBuf, 16)};
+                                bufEntry(3, m_frameBuf, 16),
+                                bufEntry(4, m_materialBuf, 32 * 256)};
     WGPUBindGroupDescriptor d = {};
     d.layout = bgl;
-    d.entryCount = 4;
+    d.entryCount = 5;
     d.entries = be;
     m_waterBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
@@ -637,6 +685,111 @@ void GpuVoxelWorld::buildEdit()
   }
 }
 
+void GpuVoxelWorld::buildBlast()
+{
+  const auto S = WGPUShaderStage_Compute;
+  const auto RW = WGPUBufferBindingType_Storage;
+  const auto RO = WGPUBufferBindingType_ReadOnlyStorage;
+  const auto U = WGPUBufferBindingType_Uniform;
+
+  // Crater pass: raymarch + carve + publish the blast (mirrors the edit pass's
+  // vox/bricks/dirty/carveHit bindings, plus the blast-in uniform + blast out).
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBlastWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[9] = {storageEntry(0, S, RW),
+                                   storageEntry(1, S, RW),
+                                   storageEntry(2, S, RO),
+                                   storageEntry(3, S, U),
+                                   storageEntry(4, S, RW),
+                                   storageEntry(7, S, RW),
+                                   storageEntry(8, S, RW),
+                                   storageEntry(9, S, RW),
+                                   storageEntry(10, S, RW)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 9);
+  m_blastPipe = makeComputePipeline(
+      m_device, module, "detonate", makePipelineLayout(m_device, bgl));
+  for (int i = 0; i < 2; ++i)
+  {
+    WGPUBindGroupEntry be[9] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
+                                bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
+                                bufEntry(2, m_brickBuf, m_brickBytes),
+                                bufEntry(3, m_blastInBuf, 32),
+                                bufEntry(4, m_dirtyBuf, m_anchorBytes),
+                                bufEntry(7, m_carveHitBuf, 32),
+                                bufEntry(8, m_blastBuf, 32),
+                                bufEntry(9, m_debrisBuf, kDebrisMax * 32u),
+                                bufEntry(10, m_debrisHeadBuf, 16)};
+    WGPUBindGroupDescriptor d = {};
+    d.layout = bgl;
+    d.entryCount = 9;
+    d.entries = be;
+    m_blastBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
+  }
+
+  // Impulse pass: push active bodies outward from the published blast.
+  WGPUShaderModule im =
+      makeShader(m_device, withCommon(shaders::voxelBlastImpulseWgsl).c_str());
+  WGPUBindGroupLayoutEntry ie[2] = {
+      storageEntry(0, S, RW), storageEntry(1, S, RO)};
+  WGPUBindGroupLayout iBgl = makeBgl(m_device, ie, 2);
+  m_blastImpulsePipe = makeComputePipeline(
+      m_device, im, "impulse", makePipelineLayout(m_device, iBgl));
+  WGPUBindGroupEntry ib[2] = {bufEntry(0, m_bodyStateBuf, 128 * kMaxBodies),
+                              bufEntry(1, m_blastBuf, 32)};
+  WGPUBindGroupDescriptor id = {};
+  id.layout = iBgl;
+  id.entryCount = 2;
+  id.entries = ib;
+  m_blastImpulseBg = wgpuDeviceCreateBindGroup(m_device, &id);
+}
+
+void GpuVoxelWorld::buildDebris()
+{
+  const auto S = WGPUShaderStage_Compute;
+  const auto RW = WGPUBufferBindingType_Storage;
+  const auto RO = WGPUBufferBindingType_ReadOnlyStorage;
+  const auto U = WGPUBufferBindingType_Uniform;
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelDebrisWgsl).c_str());
+  const uint64_t brickGridBytes =
+      static_cast<uint64_t>(kMaxBodies) * 1728u * sizeof(uint32_t);
+  const uint64_t brickPoolBytes =
+      static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
+  WGPUBindGroupLayoutEntry e[10] = {storageEntry(0, S, RW),
+                                    storageEntry(1, S, RW),
+                                    storageEntry(2, S, RO),
+                                    storageEntry(3, S, U),
+                                    storageEntry(4, S, RO),
+                                    storageEntry(5, S, RW),
+                                    storageEntry(6, S, RW),
+                                    storageEntry(7, S, RO),
+                                    storageEntry(8, S, RO),
+                                    storageEntry(9, S, RW)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 10);
+  m_debrisAdvectPipe = makeComputePipeline(
+      m_device, module, "advect", makePipelineLayout(m_device, bgl));
+  // Src-indexed: settle writes powder into the current src buffer (the one the
+  // water tick reads); breaking a static voxel clears BOTH buffers (binding 6).
+  for (int i = 0; i < 2; ++i)
+  {
+    WGPUBindGroupEntry be[10] = {bufEntry(0, m_debrisBuf, kDebrisMax * 32u),
+                                 bufEntry(1, m_voxBuf[i], m_voxBytes),
+                                 bufEntry(2, m_brickBuf, m_brickBytes),
+                                 bufEntry(3, m_bodyStepUBuf, 16),
+                                 bufEntry(4, m_materialBuf, 32 * 256),
+                                 bufEntry(5, m_debrisHeadBuf, 16),
+                                 bufEntry(6, m_voxBuf[1 - i], m_voxBytes),
+                                 bufEntry(7, m_bodyXformBuf, 96 * kMaxBodies),
+                                 bufEntry(8, m_bodyBrickGrid, brickGridBytes),
+                                 bufEntry(9, m_brickPool, brickPoolBytes)};
+    WGPUBindGroupDescriptor d = {};
+    d.layout = bgl;
+    d.entryCount = 10;
+    d.entries = be;
+    m_debrisAdvectBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
+  }
+}
+
 void GpuVoxelWorld::buildRender()
 {
   WGPUShaderModule module =
@@ -677,6 +830,17 @@ void GpuVoxelWorld::buildRender()
   frag.entryPoint = sv("fs_main");
   frag.targetCount = 1;
   frag.targets = &colorTarget;
+  // Depth buffer: the raymarch writes planar view-depth (LessEqual + write) so
+  // the debris pass composites against it. Depth-only format -> no stencil.
+  WGPUDepthStencilState depth = {};
+  depth.format = WGPUTextureFormat_Depth32Float;
+  depth.depthWriteEnabled = WGPUOptionalBool_True;
+  depth.depthCompare = WGPUCompareFunction_LessEqual;
+  depth.stencilFront.compare = WGPUCompareFunction_Always;
+  depth.stencilFront.failOp = WGPUStencilOperation_Keep;
+  depth.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
+  depth.stencilFront.passOp = WGPUStencilOperation_Keep;
+  depth.stencilBack = depth.stencilFront;
   WGPURenderPipelineDescriptor d = {};
   d.layout = layout;
   d.vertex.module = module;
@@ -686,6 +850,7 @@ void GpuVoxelWorld::buildRender()
   d.primitive.cullMode = WGPUCullMode_None;
   d.multisample.count = 1;
   d.multisample.mask = 0xFFFFFFFFu;
+  d.depthStencil = &depth;
   d.fragment = &frag;
   m_renderPipe = wgpuDeviceCreateRenderPipeline(m_device, &d);
 
@@ -712,6 +877,55 @@ void GpuVoxelWorld::buildRender()
     bd.entries = be;
     m_renderBg[i] = wgpuDeviceCreateBindGroup(m_device, &bd);
   }
+
+  // Debris render: instanced camera-facing quads, depth-tested against the
+  // raymarch. cam/debris/materials are all read in the vertex stage.
+  WGPUShaderModule dm =
+      makeShader(m_device, withCommon(shaders::voxelDebrisRenderWgsl).c_str());
+  WGPUBindGroupLayoutEntry de[3] = {
+      storageEntry(0, WGPUShaderStage_Vertex, WGPUBufferBindingType_Uniform),
+      storageEntry(
+          1, WGPUShaderStage_Vertex, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(
+          2, WGPUShaderStage_Vertex, WGPUBufferBindingType_ReadOnlyStorage)};
+  WGPUBindGroupLayout dbgl = makeBgl(m_device, de, 3);
+  WGPUColorTargetState dColor = {};
+  dColor.format = m_ctx.format();
+  dColor.writeMask = WGPUColorWriteMask_All;
+  WGPUFragmentState dFrag = {};
+  dFrag.module = dm;
+  dFrag.entryPoint = sv("fs_main");
+  dFrag.targetCount = 1;
+  dFrag.targets = &dColor;
+  WGPUDepthStencilState dDepth = {};
+  dDepth.format = WGPUTextureFormat_Depth32Float;
+  dDepth.depthWriteEnabled = WGPUOptionalBool_True;
+  dDepth.depthCompare = WGPUCompareFunction_LessEqual;
+  dDepth.stencilFront.compare = WGPUCompareFunction_Always;
+  dDepth.stencilFront.failOp = WGPUStencilOperation_Keep;
+  dDepth.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
+  dDepth.stencilFront.passOp = WGPUStencilOperation_Keep;
+  dDepth.stencilBack = dDepth.stencilFront;
+  WGPURenderPipelineDescriptor dd = {};
+  dd.layout = makePipelineLayout(m_device, dbgl);
+  dd.vertex.module = dm;
+  dd.vertex.entryPoint = sv("vs_main");
+  dd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+  dd.primitive.frontFace = WGPUFrontFace_CCW;
+  dd.primitive.cullMode = WGPUCullMode_None;
+  dd.multisample.count = 1;
+  dd.multisample.mask = 0xFFFFFFFFu;
+  dd.depthStencil = &dDepth;
+  dd.fragment = &dFrag;
+  m_debrisRenderPipe = wgpuDeviceCreateRenderPipeline(m_device, &dd);
+  WGPUBindGroupEntry dbe[3] = {bufEntry(0, m_camBuf, 64),
+                               bufEntry(1, m_debrisBuf, kDebrisMax * 32u),
+                               bufEntry(2, m_materialBuf, 32 * 256)};
+  WGPUBindGroupDescriptor dbd = {};
+  dbd.layout = dbgl;
+  dbd.entryCount = 3;
+  dbd.entries = dbe;
+  m_debrisRenderBg = wgpuDeviceCreateBindGroup(m_device, &dbd);
 }
 
 void GpuVoxelWorld::buildFaces()
@@ -1642,6 +1856,45 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     }
   }
 
+  // Explosion: raymarch to the cursor's solid hit, carve the crater, and
+  // publish the blast (center/radius/force) + seed carveHit so the fell below
+  // (forced this frame by m_blastPending) centres its window on the crater. The
+  // impulse pass runs after the fell's place to fling the detached chunks +
+  // nearby bodies.
+  if (m_blastPending)
+  {
+    const float bp[8] = {m_blast.origin[0],
+                         m_blast.origin[1],
+                         m_blast.origin[2],
+                         m_blast.radius,
+                         m_blast.dir[0],
+                         m_blast.dir[1],
+                         m_blast.dir[2],
+                         m_blast.force};
+    wgpuQueueWriteBuffer(m_queue, m_blastInBuf, 0, bp, sizeof(bp));
+    WGPUComputePassEncoder cb =
+        wgpuCommandEncoderBeginComputePass(enc, nullptr);
+    wgpuComputePassEncoderSetPipeline(cb, m_blastPipe);
+    wgpuComputePassEncoderSetBindGroup(cb, 0, m_blastBg[m_srcIdx], 0, nullptr);
+    wgpuComputePassEncoderDispatchWorkgroups(cb, 1, 1, 1);
+    wgpuComputePassEncoderEnd(cb);
+    wgpuComputePassEncoderRelease(cb);
+  }
+
+  // Advance ballistic debris (gravity + settle-to-powder) every frame, before
+  // the water tick so just-settled material piles this tick. Dead slots skip
+  // cheaply.
+  {
+    WGPUComputePassEncoder cd =
+        wgpuCommandEncoderBeginComputePass(enc, nullptr);
+    wgpuComputePassEncoderSetPipeline(cd, m_debrisAdvectPipe);
+    wgpuComputePassEncoderSetBindGroup(
+        cd, 0, m_debrisAdvectBg[m_srcIdx], 0, nullptr);
+    wgpuComputePassEncoderDispatchWorkgroups(cd, (kDebrisMax + 63) / 64, 1, 1);
+    wgpuComputePassEncoderEnd(cd);
+    wgpuComputePassEncoderRelease(cd);
+  }
+
   const bool doTs = m_hasTs && !m_tsMapBusy && !m_tsPendingResolve;
 
   // Water tick: move src -> dst, then swap. dst's dynamic cells were wiped by
@@ -1675,7 +1928,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // as the fell (both gated on actively carving world) so the window anchor
   // reads a matching reflood; m_worldCarved (last carve hit world, ~1 frame
   // stale) skips it when the button is held over empty space.
-  if (edit && edit->mode == 1 && m_worldCarved)
+  if ((edit && edit->mode == 1 && m_worldCarved) || m_blastPending)
   {
     const auto detectPass = [&](WGPUComputePipeline pipe,
                                 WGPUBindGroup bg,
@@ -1775,7 +2028,7 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // serialization -- a full pool just yields no claim). Marking is COUPLED with
   // extraction (same frame) so a marked voxel is cleared the frame it is
   // marked.
-  if (m_fellRequested && m_carvedSlot < 0)
+  if ((m_fellRequested && m_carvedSlot < 0) || m_blastPending)
   {
     m_fellRequested = false;
     const uint32_t wg = kBodyDim / 4;
@@ -1834,6 +2087,17 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     const uint32_t placeU[4] = {0u, 0u, 0u, 0u}; // isSplit = 0 (world fell)
     wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
     bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, (kMaxBodies + 63) / 64, 1, 1);
+  }
+
+  // Blast impulse: fling every active body (the just-felled chunks + any
+  // already in range) outward from the crater. Runs after the fell's place so
+  // the fresh bodies exist; the step pass integrates the new velocity next
+  // frame.
+  if (m_blastPending)
+  {
+    bodyPass(
+        m_blastImpulsePipe, m_blastImpulseBg, (kMaxBodies + 63) / 64, 1, 1);
+    m_blastPending = false;
   }
 
   // Re-publish the transform AFTER the fell: the frame-start xform ran before
@@ -1935,22 +2199,55 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     m_fellRequested = false; // a body carve makes no world detachment
   }
 
+  // Depth buffer for debris compositing -- (re)created to match the swapchain.
+  const int rw = static_cast<int>(cam16[7]);
+  const int rh = static_cast<int>(cam16[11]);
+  if (rw > 0 && rh > 0 && (rw != m_depthW || rh != m_depthH))
+  {
+    if (m_depthView)
+      wgpuTextureViewRelease(m_depthView);
+    if (m_depthTex)
+      wgpuTextureRelease(m_depthTex);
+    WGPUTextureDescriptor td = {};
+    td.usage = WGPUTextureUsage_RenderAttachment;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size = {static_cast<uint32_t>(rw), static_cast<uint32_t>(rh), 1};
+    td.format = WGPUTextureFormat_Depth32Float;
+    td.mipLevelCount = 1;
+    td.sampleCount = 1;
+    m_depthTex = wgpuDeviceCreateTexture(m_device, &td);
+    m_depthView = wgpuTextureCreateView(m_depthTex, nullptr);
+    m_depthW = rw;
+    m_depthH = rh;
+  }
+
   WGPURenderPassColorAttachment color = {};
   color.view = view;
   color.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
   color.loadOp = WGPULoadOp_Clear;
   color.storeOp = WGPUStoreOp_Store;
   color.clearValue = WGPUColor{0.02, 0.02, 0.04, 1.0};
+  WGPURenderPassDepthStencilAttachment depthAtt = {};
+  depthAtt.view = m_depthView;
+  depthAtt.depthLoadOp = WGPULoadOp_Clear;
+  depthAtt.depthStoreOp = WGPUStoreOp_Store;
+  depthAtt.depthClearValue = 1.0f;
   WGPURenderPassTimestampWrites renderTsw = {m_tsQuery, 2, 3};
   WGPURenderPassDescriptor pass = {};
   pass.colorAttachmentCount = 1;
   pass.colorAttachments = &color;
+  pass.depthStencilAttachment = &depthAtt;
   if (doTs)
     pass.timestampWrites = &renderTsw;
   WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(enc, &pass);
   wgpuRenderPassEncoderSetPipeline(rp, m_renderPipe);
   wgpuRenderPassEncoderSetBindGroup(rp, 0, m_renderBg[m_srcIdx], 0, nullptr);
   wgpuRenderPassEncoderDraw(rp, 3, 1, 0, 0);
+  // Debris voxel cubes, depth-tested against the raymarched scene (36 verts
+  // each).
+  wgpuRenderPassEncoderSetPipeline(rp, m_debrisRenderPipe);
+  wgpuRenderPassEncoderSetBindGroup(rp, 0, m_debrisRenderBg, 0, nullptr);
+  wgpuRenderPassEncoderDraw(rp, 36, kDebrisMax, 0, 0);
   wgpuRenderPassEncoderEnd(rp);
   wgpuRenderPassEncoderRelease(rp);
 

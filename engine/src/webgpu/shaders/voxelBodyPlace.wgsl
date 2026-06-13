@@ -69,10 +69,11 @@ fn placeBodies(@builtin(global_invocation_id) gid : vec3<u32>) {
   state[s * 8u + 3u] = quat;
   state[s * 8u + 4u] = vec4<f32>(angVel, 0.0);
   state[s * 8u + 5u] = vec4<f32>(com, inertia);
-  // Clear the shed/break-off request (slot 6) and slot 7: this slot is placed
-  // AFTER this frame's step ran, so without resetting it the new body inherits
-  // the previous tenant's leftover impact and the shed pass tears scattered
-  // voxels off it the moment it spawns.
+  // Clear the shed/break-off request (slot 6): placed AFTER this frame's step ran,
+  // so without resetting it the new body inherits the previous tenant's leftover
+  // impact and the shed pass tears voxels off it the moment it spawns.
   state[s * 8u + 6u] = vec4<f32>(0.0);
-  state[s * 8u + 7u] = vec4<f32>(0.0);
+  // Slot 7.x = mass (density-weighted voxel count), for mass-scaled impulses (a
+  // blast displaces a heavy wood-filled chunk less than light shrapnel).
+  state[s * 8u + 7u] = vec4<f32>(f32(voxN), 0.0, 0.0, 0.0);
 }
