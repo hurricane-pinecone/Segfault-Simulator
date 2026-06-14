@@ -10,6 +10,7 @@ const WG : i32 = 512;
 const BG : i32 = 64;
 const SEA : i32 = 96;
 const MAXB : u32 = 256u; // rigid-body pool size (must match kMaxBodies)
+const FELL_MAX : u32 = 64u; // fell-site work-list capacity (must match kFellMax)
 const BODYDIM : i32 = 96;       // rigid-body / fell-window grid edge (== kBodyDim)
 const BODYVOX : u32 = 884736u;  // BODYDIM^3, one slot's grid
 // A detached component smaller than this many voxels is NOT spawned as a rigid

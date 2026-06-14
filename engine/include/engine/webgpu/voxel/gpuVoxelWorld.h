@@ -285,6 +285,17 @@ private:
   // debug pass.
   WGPUBuffer m_carveHitBuf = nullptr; // [0]=body hit? [1]=slot
   WGPUBuffer m_carveHitReadback = nullptr;
+  // Fell-site work-list: any removal source (carve, fire) appends its sever
+  // cell here; the world fell drains it, processing one 96^3 window per entry.
+  // [0] = atomic count, then kFellMax packed vec3<i32> centres. Cleared each
+  // frame.
+  static constexpr uint32_t kFellMax = 64;
+  WGPUBuffer m_fellListBuf = nullptr;
+  WGPUBuffer m_fellCountReadback = nullptr;
+  uint32_t m_lastFellCount =
+      0; // last frame's append count (drives the drain loop)
+  bool m_fellMapBusy = false;
+  bool m_fellPendingResolve = false;
   WGPUBuffer m_bodyLabelBuf[2] = {nullptr,
                                   nullptr}; // [0] = one slot's label grid
   WGPUBuffer m_bodyLabelSlotBuf = nullptr;  // uniform: slot to label
@@ -376,6 +387,12 @@ private:
     bool* fireSevered;
     bool* busy;
   } m_carveRb{};
+  struct FellCountRb
+  {
+    WGPUBuffer buffer;
+    uint32_t* count;
+    bool* busy;
+  } m_fellRb{};
 
   RigidBody m_bodies[kMaxBodies];
   bool m_fellRequested =

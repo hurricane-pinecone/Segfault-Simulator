@@ -21,6 +21,10 @@ struct Body {
 @group(0) @binding(6) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(7) var<storage, read_write> carveHit : array<u32>; // [0]body? [1]slot [2..4]hit
 @group(0) @binding(8) var<storage, read> materials : array<Material>; // for ignite flammability
+// Fell work-list: [0] = atomic count, then FELL_MAX packed (x,y,z) u32 centres. A
+// mode-1 world carve appends its hit cell so the world fell drains it (carveHit still
+// drives the body-split routing).
+@group(0) @binding(9) var<storage, read_write> fellList : array<atomic<u32>>;
 // Sparse brickmap body voxels: read (pick) + clear (carve). Carving only removes
 // existing voxels, so no brick allocation is needed.
 @group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
@@ -203,6 +207,17 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
     // holding the carve button over empty space reruns nothing.
     let worldCarve = found == 1u && hitSlot == 0xFFFFFFFFu && u32(ed.v1.w) == 1u;
     carveHit[5] = select(0u, 1u, worldCarve);
+    // Append the cut cell to the fell work-list (drained one frame late). The body
+    // split still routes off carveHit; this only feeds the WORLD fell.
+    if (worldCarve) {
+      let fi = atomicAdd(&fellList[0], 1u);
+      if (fi < FELL_MAX) {
+        let fb = 1u + fi * 3u;
+        atomicStore(&fellList[fb], u32(hit.x));
+        atomicStore(&fellList[fb + 1u], u32(hit.y));
+        atomicStore(&fellList[fb + 2u], u32(hit.z));
+      }
+    }
   }
   workgroupBarrier();
   if (found == 0u) { return; }

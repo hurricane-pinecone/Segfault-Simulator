@@ -5,15 +5,17 @@
 // only itself -- race-tolerant; fire is chaotic, slight timing races don't matter).
 // Solid-state changes write BOTH voxel buffers (solids live in both); smoke goes to
 // the current src only (it's dynamic, ping-ponged by the water CA). When fire REMOVES
-// a static solid it seeds the world-fell window (carveHit) + raises its flag, so a
+// a static solid it APPENDS the cell to the world-fell work-list (fellList), so a
 // burnt-through trunk drops its canopy as a rigid body -- felling is driven by voxel
-// removal, not by the carve tool.
+// removal, not by the carve tool, and many trees fell independently (no shared center
+// contention with the carve tool).
 @group(0) @binding(0) var<storage, read_write> voxCur : array<u32>; // src
 @group(0) @binding(1) var<storage, read_write> voxOther : array<u32>;
 @group(0) @binding(2) var<storage, read> bricks : array<Brick>;
 @group(0) @binding(3) var<uniform> frame : vec4<u32>;
 @group(0) @binding(4) var<storage, read> materials : array<Material>;
-@group(0) @binding(5) var<storage, read_write> carveHit : array<u32>;
+// Fell work-list: [0] = atomic count, then FELL_MAX packed (x,y,z) u32 centres.
+@group(0) @binding(6) var<storage, read_write> fellList : array<atomic<u32>>;
 
 fn vIdx(x : i32, y : i32, z : i32) -> u32 {
   let bi = u32((x / 8) + (y / 8) * BG + (z / 8) * BG * BG);
@@ -41,31 +43,21 @@ fn solidNbCount(x : i32, y : i32, z : i32) -> u32 {
 fn rnd(x : i32, y : i32, z : i32, salt : u32) -> f32 {
   return f32(hash3(u32(x), u32(y), u32(z), frame.x + salt) & 0xFFFFu) / 65535.0;
 }
-// Seed the world-fell window on a cell where fire just removed a load-bearing solid
-// (trunk/char), and raise carveHit[6] so the CPU dispatches the reflood + fell (read
-// back one frame late). carveHit[0..5] (the carve/body routing) is left untouched;
-// the window pass reads carveHit[2..4] live this same frame, after fire runs. Called
-// only on the rare structural-removal events (not leaf/grass burn), so the few racing
-// writes to the shared cell are negligible.
-//
-// Centre the window on the burnt cell, exactly like a carve centres on the cut: the
-// window's within-brick CC then separates the severed-above part from the still-
-// grounded-below part (the part below the cut seeds from genuine ground; if the whole
-// column is already floating, nothing in the window seeds and it all detaches).
+// Append a sever cell to the world-fell work-list. The CPU drains the list one frame
+// late, running a 96^3 window centred on each entry, so many trees fell independently
+// and fire never contends with the carve tool for a single shared centre. The window's
+// within-brick CC separates the severed-above part from the still-grounded-below part.
+// Probability-gated at the call site (the window is large -- one append near a burning
+// region per frame fells the whole tree -- so flooding the list with every crumble is
+// wasteful).
 fn seedFell(x : i32, y : i32, z : i32) {
-  // Defer to an active carve (frame.z): the fell window is shared, and the edit pass
-  // already wrote the carve's centre this frame, so seeding here would steal it and
-  // leave the carved piece hanging. The fire sever re-seeds next frame.
-  if (frame.z != 0u) { return; }
-  // World hit, no body: when no carve is active the edit pass doesn't run, so these
-  // routing slots are stale from the last carve; stamp them so the fell isn't routed
-  // as a (phantom) body split or suppressed.
-  carveHit[0] = 0u;
-  carveHit[1] = 0xFFFFFFFFu;
-  carveHit[2] = u32(x);
-  carveHit[3] = u32(y);
-  carveHit[4] = u32(z);
-  carveHit[6] = 1u;
+  let i = atomicAdd(&fellList[0], 1u);
+  if (i < FELL_MAX) {
+    let b = 1u + i * 3u;
+    atomicStore(&fellList[b], u32(x));
+    atomicStore(&fellList[b + 1u], u32(y));
+    atomicStore(&fellList[b + 2u], u32(z));
+  }
 }
 @compute @workgroup_size(8, 8, 1)
 fn fire(@builtin(local_invocation_id) lloc : vec3<u32>,
@@ -102,7 +94,7 @@ fn fire(@builtin(local_invocation_id) lloc : vec3<u32>,
           voxCur[i] = vox(MAT_CHAR, CAT_LIQUID) | VOX_POWDER; // falls
           voxOther[i] = 0u;                                   // no longer static
           // Removing load-bearing wood may have severed the canopy -> seed the fell.
-          if (m == MAT_TRUNK) { seedFell(x, y, z); }
+          if (m == MAT_TRUNK && rnd(x, y, z, 41u) < 0.04) { seedFell(x, y, z); }
         } else {
           let burnt = vox(MAT_CHAR, CAT_SOLID);
           voxCur[i] = burnt;
@@ -139,7 +131,9 @@ fn fire(@builtin(local_invocation_id) lloc : vec3<u32>,
         voxCur[i] = vox(m, CAT_LIQUID) | VOX_POWDER;
         voxOther[i] = 0u;
         // Trunk/char crumbling can sever the canopy -> seed the fell.
-        if (m == MAT_TRUNK || m == MAT_CHAR) { seedFell(x, y, z); }
+        if ((m == MAT_TRUNK || m == MAT_CHAR) && rnd(x, y, z, 41u) < 0.04) {
+          seedFell(x, y, z);
+        }
       }
     }
   }
