@@ -154,6 +154,17 @@ Water is simulated as a cellular automaton on the GPU each frame. Spawn water by
 calling `setEdit()` with mode 2; the water spreads and flows automatically without
 any per-frame CPU involvement.
 
+## Fire simulation
+
+Fire spreads through flammable voxels automatically as a GPU cellular automaton. No
+API call is needed to sustain it. When burning voxels remove load-bearing structure,
+the engine detects disconnected masses and promotes them to falling rigid bodies.
+Fire-triggered felling is independent from carve-triggered felling, so both can
+produce falling pieces in the same frame.
+
+See [Fire spread](fire-spread/index.md) for details on propagation rates, tree
+felling, and how fire interacts with the rigid body pool.
+
 ## GPU performance timestamps
 
 If the device supports timestamp queries, the system records GPU timing each frame:

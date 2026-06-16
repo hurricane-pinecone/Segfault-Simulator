@@ -143,18 +143,44 @@ void onCarveHitMapped(WGPUMapAsyncStatus status,
     WGPUBuffer buffer;
     int* slot;
     bool* worldCarved;
+    bool* fireSevered;
     bool* busy;
   };
   auto* r = static_cast<Rb*>(ud1);
   if (status == WGPUMapAsyncStatus_Success)
   {
     const auto* h = static_cast<const uint32_t*>(
-        wgpuBufferGetConstMappedRange(r->buffer, 0, 24));
+        wgpuBufferGetConstMappedRange(r->buffer, 0, 28));
     if (h)
     {
       *r->slot = (h[0] == 1u) ? static_cast<int>(h[1]) : -1;
       *r->worldCarved = h[5] == 1u;
+      *r->fireSevered = h[6] == 1u;
     }
+    wgpuBufferUnmap(r->buffer);
+  }
+  *r->busy = false;
+}
+
+// Reads the fell-site work-list count (one frame late) to size the drain loop.
+struct FellCountRb
+{
+  WGPUBuffer buffer;
+  uint32_t* count;
+  bool* busy;
+};
+void onFellCountMapped(WGPUMapAsyncStatus status,
+                       WGPUStringView,
+                       void* ud1,
+                       void*)
+{
+  auto* r = static_cast<FellCountRb*>(ud1);
+  if (status == WGPUMapAsyncStatus_Success)
+  {
+    const auto* h = static_cast<const uint32_t*>(
+        wgpuBufferGetConstMappedRange(r->buffer, 0, 4));
+    if (h)
+      *r->count = h[0];
     wgpuBufferUnmap(r->buffer);
   }
   *r->busy = false;
@@ -184,13 +210,29 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
     float rigidity;
     float emission;
     uint32_t flags;
+    // Fire attributes: catchRate (per-sec spread/ignite, >0 = flammable),
+    // burnoutRate (per-sec chance to burn out, low = burns long), crumbleChance
+    // (0..1 chance to fall as powder vs char on burnout), spare.
+    float fire[4];
   };
-  static_assert(sizeof(GpuMaterial) == 32, "Material must match WGSL layout");
+  static_assert(sizeof(GpuMaterial) == 48, "Material must match WGSL layout");
   GpuMaterial mats[256] = {};
   const auto setMat =
       [&](int id, float r, float g, float b, float a, float dens, float rigid)
   {
-    mats[id] = {{r / 255.f, g / 255.f, b / 255.f, a}, dens, rigid, 0.0f, 0u};
+    mats[id] = {{r / 255.f, g / 255.f, b / 255.f, a},
+                dens,
+                rigid,
+                0.0f,
+                0u,
+                {0, 0, 0, 0}};
+  };
+  const auto setFire =
+      [&](int id, float catchRate, float burnoutRate, float crumble)
+  {
+    mats[id].fire[0] = catchRate;
+    mats[id].fire[1] = burnoutRate;
+    mats[id].fire[2] = crumble;
   };
   setMat(1, 206, 192, 142, 1.0f, 1.5f, 0.2f); // sand
   setMat(2, 86, 168, 80, 1.0f, 1.0f, 0.5f);   // grass
@@ -216,7 +258,20 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
          0.3f,
          0.2f,
          0.0f); // smoke (gas; density -> rise rate, low = slow)
-  setMat(9, 96, 88, 78, 1.0f, 1.5f, 0.0f); // rubble (powder, falls + piles)
+  setMat(9, 96, 88, 78, 1.0f, 1.5f, 0.0f);  // rubble (powder, falls + piles)
+  setMat(10, 38, 32, 30, 1.0f, 1.0f, 0.0f); // char (burnt-out remains, dark)
+  // Fire attributes (catchRate spread/sec, burnoutRate /sec, crumbleChance). A
+  // material is flammable iff catchRate > 0. Leaves flash over + vanish; trunk
+  // catches moderately, burns LONG (low burnout), and crumbles to falling char
+  // as it burns so a torched tree collapses; grass between.
+  setFire(2, 3.0f, 2.5f, 0.5f); // grass
+  setFire(5,
+          4.0f,
+          0.18f,
+          0.8f); // trunk: burns ~5.5 s, mostly crumbles away (so a
+                 // burnt cross-section clears + the canopy fells;
+                 // the 0.2 char remainder is sparse, isolation-swept)
+  setFire(6, 5.0f, 2.5f, 0.0f); // leaves: fast, brief (burnout -> air)
   m_materialBuf = makeBuffer(m_device,
                              sizeof(mats),
                              WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
@@ -353,8 +408,20 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
                                  WGPUBufferUsage_CopySrc);
   m_carveHitReadback = makeBuffer(
       m_device, 32, WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
-  m_carveRb = CarveHitRb{
-      m_carveHitReadback, &m_carvedSlot, &m_worldCarved, &m_carveMapBusy};
+  m_carveRb = CarveHitRb{m_carveHitReadback,
+                         &m_carvedSlot,
+                         &m_worldCarved,
+                         &m_fireSevered,
+                         &m_carveMapBusy};
+  // Fell-site work-list (count + kFellMax packed vec3<i32> centres) + its
+  // readback.
+  m_fellListBuf = makeBuffer(m_device,
+                             (1u + kFellMax * 3u) * 4u,
+                             WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
+                                 WGPUBufferUsage_CopySrc);
+  m_fellCountReadback = makeBuffer(
+      m_device, 4, WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead);
+  m_fellRb = FellCountRb{m_fellCountReadback, &m_lastFellCount, &m_fellMapBusy};
   m_bodyLabelBuf[0] =
       makeBuffer(m_device, m_bodyBytes, WGPUBufferUsage_Storage);
   m_bodyLabelSlotBuf = makeBuffer(
@@ -391,6 +458,7 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   buildTimestamps();
   buildGenerate();
   buildWater();
+  buildFire();
   buildRecount();
   buildEdit();
   buildBlast();
@@ -405,6 +473,7 @@ GpuVoxelWorld::GpuVoxelWorld(WebGpuContext& ctx)
   buildBodyCollide();
   buildBodyStamp();
   buildBodyShed();
+  buildBodyFire();
   buildBodyStep();
   buildBodyXform();
   buildBodyPlace();
@@ -422,6 +491,8 @@ GpuVoxelWorld::~GpuVoxelWorld()
   for (WGPUBindGroup bg : {m_genBg,
                            m_waterBg[0],
                            m_waterBg[1],
+                           m_fireBg[0],
+                           m_fireBg[1],
                            m_recBg[0],
                            m_recBg[1],
                            m_editBg[0],
@@ -440,6 +511,8 @@ GpuVoxelWorld::~GpuVoxelWorld()
                            m_bodyReduceBg,
                            m_bodyCollideBg,
                            m_bodyStampBg,
+                           m_bodyFireBg[0],
+                           m_bodyFireBg[1],
                            m_bodySplitBg,
                            m_blastBg[0],
                            m_blastBg[1],
@@ -454,6 +527,8 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_genPipe);
   if (m_waterPipe)
     wgpuComputePipelineRelease(m_waterPipe);
+  if (m_firePipe)
+    wgpuComputePipelineRelease(m_firePipe);
   if (m_recPipe)
     wgpuComputePipelineRelease(m_recPipe);
   if (m_editPipe)
@@ -494,6 +569,8 @@ GpuVoxelWorld::~GpuVoxelWorld()
     wgpuComputePipelineRelease(m_bodyStampPipe);
   if (m_bodyShedPipe)
     wgpuComputePipelineRelease(m_bodyShedPipe);
+  if (m_bodyFirePipe)
+    wgpuComputePipelineRelease(m_bodyFirePipe);
   if (m_bodyStepPipe)
     wgpuComputePipelineRelease(m_bodyStepPipe);
   if (m_bodyXformPipe)
@@ -606,12 +683,48 @@ void GpuVoxelWorld::buildWater()
                                 bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
                                 bufEntry(2, m_brickBuf, m_brickBytes),
                                 bufEntry(3, m_frameBuf, 16),
-                                bufEntry(4, m_materialBuf, 32 * 256)};
+                                bufEntry(4, m_materialBuf, 48 * 256)};
     WGPUBindGroupDescriptor d = {};
     d.layout = bgl;
     d.entryCount = 5;
     d.entries = be;
     m_waterBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
+  }
+}
+
+void GpuVoxelWorld::buildFire()
+{
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelFireWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[7] = {
+      storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
+          2, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(3, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform),
+      storageEntry(
+          4, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(6, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 6);
+  m_firePipe = makeComputePipeline(
+      m_device, module, "fire", makePipelineLayout(m_device, bgl));
+  // Src-indexed: reads neighbours from src, writes solid-state changes to BOTH
+  // buffers (solids live in both), smoke to src. fellList lets a fire-removed
+  // solid append a fell site so burnt-through trunks drop their canopy.
+  for (int i = 0; i < 2; ++i)
+  {
+    WGPUBindGroupEntry be[6] = {
+        bufEntry(0, m_voxBuf[i], m_voxBytes),
+        bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
+        bufEntry(2, m_brickBuf, m_brickBytes),
+        bufEntry(3, m_frameBuf, 16),
+        bufEntry(4, m_materialBuf, 48 * 256),
+        bufEntry(6, m_fellListBuf, (1 + kFellMax * 3) * 4)};
+    WGPUBindGroupDescriptor d = {};
+    d.layout = bgl;
+    d.entryCount = 6;
+    d.entries = be;
+    m_fireBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
 }
 
@@ -645,7 +758,7 @@ void GpuVoxelWorld::buildEdit()
 {
   WGPUShaderModule module =
       makeShader(m_device, withCommon(shaders::voxelEditWgsl).c_str());
-  WGPUBindGroupLayoutEntry e[9] = {
+  WGPUBindGroupLayoutEntry e[11] = {
       storageEntry(0, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(1, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
@@ -656,9 +769,12 @@ void GpuVoxelWorld::buildEdit()
           6, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(7, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
       storageEntry(
+          8, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
+      storageEntry(9, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage),
+      storageEntry(
           20, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage),
       storageEntry(21, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage)};
-  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 9);
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 11);
   m_editPipe = makeComputePipeline(
       m_device, module, "edit", makePipelineLayout(m_device, bgl));
 
@@ -668,18 +784,21 @@ void GpuVoxelWorld::buildEdit()
       static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
   for (int i = 0; i < 2; ++i)
   {
-    WGPUBindGroupEntry be[9] = {bufEntry(0, m_voxBuf[i], m_voxBytes),
-                                bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
-                                bufEntry(2, m_brickBuf, m_brickBytes),
-                                bufEntry(3, m_editBuf, 32),
-                                bufEntry(4, m_dirtyBuf, m_anchorBytes),
-                                bufEntry(6, m_bodyXformBuf, 96 * kMaxBodies),
-                                bufEntry(7, m_carveHitBuf, 32),
-                                bufEntry(20, m_bodyBrickGrid, brickGridBytes),
-                                bufEntry(21, m_brickPool, brickPoolBytes)};
+    WGPUBindGroupEntry be[11] = {
+        bufEntry(0, m_voxBuf[i], m_voxBytes),
+        bufEntry(1, m_voxBuf[1 - i], m_voxBytes),
+        bufEntry(2, m_brickBuf, m_brickBytes),
+        bufEntry(3, m_editBuf, 32),
+        bufEntry(4, m_dirtyBuf, m_anchorBytes),
+        bufEntry(6, m_bodyXformBuf, 96 * kMaxBodies),
+        bufEntry(7, m_carveHitBuf, 32),
+        bufEntry(8, m_materialBuf, 48 * 256),
+        bufEntry(9, m_fellListBuf, (1 + kFellMax * 3) * 4),
+        bufEntry(20, m_bodyBrickGrid, brickGridBytes),
+        bufEntry(21, m_brickPool, brickPoolBytes)};
     WGPUBindGroupDescriptor d = {};
     d.layout = bgl;
-    d.entryCount = 9;
+    d.entryCount = 11;
     d.entries = be;
     m_editBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
@@ -776,7 +895,7 @@ void GpuVoxelWorld::buildDebris()
                                  bufEntry(1, m_voxBuf[i], m_voxBytes),
                                  bufEntry(2, m_brickBuf, m_brickBytes),
                                  bufEntry(3, m_bodyStepUBuf, 16),
-                                 bufEntry(4, m_materialBuf, 32 * 256),
+                                 bufEntry(4, m_materialBuf, 48 * 256),
                                  bufEntry(5, m_debrisHeadBuf, 16),
                                  bufEntry(6, m_voxBuf[1 - i], m_voxBytes),
                                  bufEntry(7, m_bodyXformBuf, 96 * kMaxBodies),
@@ -867,7 +986,7 @@ void GpuVoxelWorld::buildRender()
                                  bufEntry(5, m_bodyXformBuf, 96 * kMaxBodies),
                                  bufEntry(6, m_labelBuf[0], m_anchorBytes),
                                  bufEntry(7, m_dbgMouseBuf, 16),
-                                 bufEntry(8, m_materialBuf, 32 * 256),
+                                 bufEntry(8, m_materialBuf, 48 * 256),
                                  bufEntry(9, m_bodyArgsBuf, 32),
                                  bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                                  bufEntry(21, m_brickPool, brickPoolBytes)};
@@ -920,7 +1039,7 @@ void GpuVoxelWorld::buildRender()
   m_debrisRenderPipe = wgpuDeviceCreateRenderPipeline(m_device, &dd);
   WGPUBindGroupEntry dbe[3] = {bufEntry(0, m_camBuf, 64),
                                bufEntry(1, m_debrisBuf, kDebrisMax * 32u),
-                               bufEntry(2, m_materialBuf, 32 * 256)};
+                               bufEntry(2, m_materialBuf, 48 * 256)};
   WGPUBindGroupDescriptor dbd = {};
   dbd.layout = dbgl;
   dbd.entryCount = 3;
@@ -1222,7 +1341,7 @@ void GpuVoxelWorld::buildBodyShed()
     WGPUBindGroupEntry be[7] = {bufEntry(1, m_voxBuf[i], m_voxBytes),
                                 bufEntry(2, m_bodyXformBuf, 96 * kMaxBodies),
                                 bufEntry(3, m_bodyStateBuf, 128 * kMaxBodies),
-                                bufEntry(4, m_materialBuf, 32 * 256),
+                                bufEntry(4, m_materialBuf, 48 * 256),
                                 bufEntry(5, m_frameBuf, 16),
                                 bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                                 bufEntry(21, m_brickPool, brickPoolBytes)};
@@ -1231,6 +1350,47 @@ void GpuVoxelWorld::buildBodyShed()
     d.entryCount = 7;
     d.entries = be;
     m_bodyShedBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
+  }
+}
+
+void GpuVoxelWorld::buildBodyFire()
+{
+  const auto S = WGPUShaderStage_Compute;
+  const auto RW = WGPUBufferBindingType_Storage;
+  const auto RO = WGPUBufferBindingType_ReadOnlyStorage;
+  WGPUShaderModule module =
+      makeShader(m_device, withCommon(shaders::voxelBodyFireWgsl).c_str());
+  WGPUBindGroupLayoutEntry e[8] = {
+      storageEntry(0, S, RO),
+      storageEntry(1, S, RW),
+      storageEntry(2, S, RO),
+      storageEntry(3, S, WGPUBufferBindingType_Uniform),
+      storageEntry(4, S, RO),
+      storageEntry(5, S, RW),
+      storageEntry(6, S, RW),
+      storageEntry(7, S, RO)};
+  WGPUBindGroupLayout bgl = makeBgl(m_device, e, 8);
+  m_bodyFirePipe = makeComputePipeline(
+      m_device, module, "bodyFire", makePipelineLayout(m_device, bgl));
+  const uint64_t brickGridBytes =
+      static_cast<uint64_t>(kMaxBodies) * 1728u * sizeof(uint32_t);
+  const uint64_t brickPoolBytes =
+      static_cast<uint64_t>(kBrickPoolBricks) * 512u * sizeof(uint32_t);
+  for (int i = 0; i < 2; ++i)
+  {
+    WGPUBindGroupEntry be[8] = {bufEntry(0, m_bodyBrickGrid, brickGridBytes),
+                                bufEntry(1, m_brickPool, brickPoolBytes),
+                                bufEntry(2, m_materialBuf, 48 * 256),
+                                bufEntry(3, m_frameBuf, 16),
+                                bufEntry(4, m_bodyXformBuf, 96 * kMaxBodies),
+                                bufEntry(5, m_voxBuf[i], m_voxBytes),
+                                bufEntry(6, m_voxBuf[1 - i], m_voxBytes),
+                                bufEntry(7, m_brickBuf, m_brickBytes)};
+    WGPUBindGroupDescriptor d = {};
+    d.layout = bgl;
+    d.entryCount = 8;
+    d.entries = be;
+    m_bodyFireBg[i] = wgpuDeviceCreateBindGroup(m_device, &d);
   }
 }
 
@@ -1500,7 +1660,7 @@ void GpuVoxelWorld::buildBodySplit()
                                bufEntry(4, m_slotOccupiedBuf, 4 * kMaxBodies),
                                bufEntry(5, m_slotCountBuf, 4),
                                bufEntry(6, m_bodyLabelSlotBuf, 16),
-                               bufEntry(7, m_materialBuf, 32 * 256),
+                               bufEntry(7, m_materialBuf, 48 * 256),
                                bufEntry(20, m_bodyBrickGrid, brickGridBytes),
                                bufEntry(21, m_brickPool, brickPoolBytes),
                                bufEntry(22, m_brickFreeBuf, brickFreeBytes)};
@@ -1690,7 +1850,7 @@ void GpuVoxelWorld::buildWindowSplit()
                             bufEntry(4, m_windowBuf[0], labelBytes),
                             bufEntry(6, m_rootSlotBuf, m_bodyBytes),
                             bufEntry(7, m_slotMetaBuf, metaBytes),
-                            bufEntry(9, m_materialBuf, 32 * 256),
+                            bufEntry(9, m_materialBuf, 48 * 256),
                             bufEntry(12, m_bodyBrickGrid, brickGridBytes),
                             bufEntry(13, m_brickPool, brickPoolBytes),
                             bufEntry(14, m_brickFreeBuf, brickFreeBytes)});
@@ -1787,12 +1947,34 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     mci.mode = WGPUCallbackMode_AllowProcessEvents;
     mci.callback = onCarveHitMapped;
     mci.userdata1 = &m_carveRb;
-    wgpuBufferMapAsync(m_carveHitReadback, WGPUMapMode_Read, 0, 24, mci);
+    wgpuBufferMapAsync(m_carveHitReadback, WGPUMapMode_Read, 0, 28, mci);
+  }
+
+  // Read back the fell-site count (one frame late) -> m_lastFellCount, which
+  // sizes this frame's drain loop.
+  if (m_fellPendingResolve && !m_fellMapBusy)
+  {
+    m_fellMapBusy = true;
+    m_fellPendingResolve = false;
+    WGPUBufferMapCallbackInfo mci = {};
+    mci.mode = WGPUCallbackMode_AllowProcessEvents;
+    mci.callback = onFellCountMapped;
+    mci.userdata1 = &m_fellRb;
+    wgpuBufferMapAsync(m_fellCountReadback, WGPUMapMode_Read, 0, 4, mci);
   }
 
   wgpuQueueWriteBuffer(m_queue, m_camBuf, 0, cam16, 64);
-  const uint32_t fdata[4] = {frame, 0, 0, 0};
+  // .y carries dt (bitcast) so frame-rate-independent CA rates can use
+  // per-second probabilities (rate * dt). .x = frame number (hash salt).
+  uint32_t dtBits;
+  static_assert(sizeof(dtBits) == sizeof(m_stepDt), "");
+  std::memcpy(&dtBits, &m_stepDt, sizeof(dtBits));
+  const uint32_t fdata[4] = {frame, dtBits, 0, 0};
   wgpuQueueWriteBuffer(m_queue, m_frameBuf, 0, fdata, sizeof(fdata));
+  // Reset the fell-site work-list count before the appenders (edit carve, fire)
+  // run; they fill it this frame and the drain loop below processes one 96^3
+  // window per entry (sized from last frame's count readback).
+  wgpuCommandEncoderClearBuffer(enc, m_fellListBuf, 0, 4);
   // .z is overwritten by the prep pass (activeHigh); the wire toggle lives in
   // .w.
   const float dbgMouse[4] = {
@@ -1846,14 +2028,22 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
     wgpuComputePassEncoderDispatchWorkgroups(ce, 1, 1, 1);
     wgpuComputePassEncoderEnd(ce);
     wgpuComputePassEncoderRelease(ce);
+  }
 
-    // Read back which body the carve hit (one frame late) to drive the split.
-    if (!m_carveMapBusy)
-    {
-      wgpuCommandEncoderCopyBufferToBuffer(
-          enc, m_carveHitBuf, 0, m_carveHitReadback, 0, 24);
-      m_carvePendingResolve = true;
-    }
+  // Read back the carve-hit slot (drives the body split) AND the fire-severed
+  // flag (carveHit[6]), EVERY frame -- not just while carving. Fire seeds
+  // carveHit[6] with no edit active (editPtr is null when m_editMode==0), so
+  // gating this on the edit pass left the fire fell with no trigger. The edit
+  // pass, when it ran, just wrote carveHit above; this copy still runs after
+  // it. Clear the flag in-encoder (not a queue write, which would be ordered
+  // before fire and lost) so it is one-shot: fire re-stamps it each frame it
+  // keeps severing, and the fell stops the frame after.
+  if (!m_carveMapBusy)
+  {
+    wgpuCommandEncoderCopyBufferToBuffer(
+        enc, m_carveHitBuf, 0, m_carveHitReadback, 0, 28);
+    wgpuCommandEncoderClearBuffer(enc, m_carveHitBuf, 24, 4);
+    m_carvePendingResolve = true;
   }
 
   // Explosion: raymarch to the cursor's solid hit, carve the crater, and
@@ -1911,6 +2101,19 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   wgpuComputePassEncoderRelease(cp);
   m_srcIdx = 1 - m_srcIdx;
 
+  // Fire CA: flammable fuel burns + spreads + chars on the post-water state.
+  // Runs before the recount so its burnouts (removed voxels) and smoke update
+  // brick occupancy this frame.
+  {
+    WGPUComputePassEncoder cf =
+        wgpuCommandEncoderBeginComputePass(enc, nullptr);
+    wgpuComputePassEncoderSetPipeline(cf, m_firePipe);
+    wgpuComputePassEncoderSetBindGroup(cf, 0, m_fireBg[m_srcIdx], 0, nullptr);
+    wgpuComputePassEncoderDispatchWorkgroups(cf, kBG, kBG, kBG);
+    wgpuComputePassEncoderEnd(cf);
+    wgpuComputePassEncoderRelease(cf);
+  }
+
   // Recompute brick occupancy on the new state so brick-skip stays correct as
   // water moves between bricks.
   WGPUComputePassEncoder cr = wgpuCommandEncoderBeginComputePass(enc, nullptr);
@@ -1920,15 +2123,31 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   wgpuComputePassEncoderEnd(cr);
   wgpuComputePassEncoderRelease(cr);
 
-  // On a carve that removed world voxels, static solidity changed -> re-derive
-  // ground anchoring. A carve removes support, which the monotone flood can't
-  // undo in place, so reset (rebuild faces from the post-carve voxels, reseed
-  // ground) and reflood to convergence. A severed piece never re-reaches ground
-  // -> its bricks stay unanchored, which the render tints. Runs the SAME frame
-  // as the fell (both gated on actively carving world) so the window anchor
-  // reads a matching reflood; m_worldCarved (last carve hit world, ~1 frame
-  // stale) skips it when the button is held over empty space.
-  if ((edit && edit->mode == 1 && m_worldCarved) || m_blastPending)
+  // Snapshot this frame's fell-site count for next frame's drain loop (the
+  // carve
+  // + fire appenders have all run by now).
+  if (!m_fellMapBusy)
+  {
+    wgpuCommandEncoderCopyBufferToBuffer(
+        enc, m_fellListBuf, 0, m_fellCountReadback, 0, 4);
+    m_fellPendingResolve = true;
+  }
+
+  // The world fell runs this frame iff last frame produced sever sites (drained
+  // from the work-list, one 96^3 window per site) and we are not splitting a
+  // carved body, OR a blast was queued (its own same-frame window). Removal is
+  // driven by the work-list -- carve, fire, and any future source (acid,
+  // erosion) just append.
+  const uint32_t fellCount =
+      m_lastFellCount < kFellMax ? m_lastFellCount : kFellMax;
+  const bool runFell = (fellCount > 0 && m_carvedSlot < 0) || m_blastPending;
+
+  // Any voxel removal changed static solidity -> re-derive ground anchoring
+  // (rebuild faces from the post-change voxels, reseed ground, reflood to
+  // convergence). A severed piece never re-reaches ground -> its bricks stay
+  // unanchored, which the render tints. Runs the SAME frame as the fell so each
+  // window anchor reads a matching reflood.
+  if (runFell)
   {
     const auto detectPass = [&](WGPUComputePipeline pipe,
                                 WGPUBindGroup bg,
@@ -1956,18 +2175,9 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       detectPass(m_floodPipe, m_floodBg[round & 1], brickGroups, 1, 1);
   }
 
-  // Auto-fell: drop severed pieces the instant they are cut, the SAME frame as
-  // the carve (so a sever extracts immediately -- no delay that would leave it
-  // floating, unanchored, hash-tinted). Runs while actively carving world; the
-  // sticky m_worldCarved (last carve hit world, ~1 frame stale) skips it when
-  // the button is held over empty space. A body carve (m_carvedSlot >= 0) must
-  // not fell, or the spurious world fell would hog the shared body-meta
-  // readback and starve the body split that the same cut needs.
-  m_fellRequested =
-      edit && edit->mode == 1 && m_carvedSlot < 0 && m_worldCarved;
-  if (edit && edit->mode == 1)
-    m_fellHold =
-        4; // a carve may claim new body slots -> process full range briefly
+  // A fell may claim new body slots -> process the full body range briefly.
+  if (runFell)
+    m_fellHold = 4;
 
   const auto bodyPass = [&](WGPUComputePipeline pipe,
                             WGPUBindGroup bg,
@@ -2028,29 +2238,14 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // serialization -- a full pool just yields no claim). Marking is COUPLED with
   // extraction (same frame) so a marked voxel is cleared the frame it is
   // marked.
-  if ((m_fellRequested && m_carvedSlot < 0) || m_blastPending)
+  if (runFell)
   {
-    m_fellRequested = false;
     const uint32_t wg = kBodyDim / 4;
-    // Window anchor (node-resolution ground reachability -> bit 4 on the
-    // detached set): classify window-brick occupancy, label within-brick
-    // components and seed each ground-touching component's nodeReached flag
-    // (winLocalCC), flood "reached" across the node graph (one workgroup per
-    // brick, brick-face adjacency, empty bricks skipped), then winMark flags
-    // any voxel whose node was never reached. nodeReached must be cleared
-    // BEFORE winLocalCC seeds it.
-    bodyPass(m_winClassifyPipe, m_winBg[0], 12, 12, 12);
-    wgpuCommandEncoderClearBuffer(
-        enc,
-        m_winNodeReached,
-        0,
-        static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t));
-    bodyPass(m_winLocalCcPipe, m_winBg[0], 12, 12, 12);
-    for (int r = 0; r < 32; ++r)
-      bodyPass(m_winNodeReachFloodPipe, m_winBg[0], 12, 12, 12);
-    bodyPass(m_winMarkPipe, m_winBg[0], wg, wg, wg);
-
-    // Per slot: aabbMin = +world (for atomicMin), everything else 0.
+    // Reset every slot's reduce metadata ONCE, before any window claims (a
+    // queue write applies before the whole command buffer): aabbMin = +world
+    // (for atomicMin), the rest 0. Slots claimed by one window are never reused
+    // by a later one this frame (the cull/release runs after the loop), so one
+    // init is safe. placeU = world fell (isSplit 0).
     int32_t metaInit[16 * kMaxBodies] = {};
     for (int s = 0; s < kMaxBodies; ++s)
     {
@@ -2059,33 +2254,62 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
       metaInit[s * 16 + 2] = kWorld;
     }
     wgpuQueueWriteBuffer(m_queue, m_slotMetaBuf, 0, metaInit, sizeof(metaInit));
-    // Node-resolution CC: within-brick local CC seeds each (brick, component)
-    // node + the per-brick detached flag, then the flood equalizes the node
-    // graph (one workgroup per brick, brick-face adjacency, empty bricks
-    // skipped), and a scatter writes the per-voxel labels. ~one brick-hop per
-    // iteration; far fewer cells/iteration than the old full-grid voxel flood.
-    bodyPass(m_winDetachedCcPipe, m_winDetachedCcBg, 12, 12, 12);
-    for (int r = 0; r < 32; ++r)
-      bodyPass(m_winNodeFloodPipe, m_winNodeFloodBg, 12, 12, 12);
-    bodyPass(m_winScatterPipe, m_winScatterBg, wg, wg, wg);
-    bodyPass(m_winRegisterPipe, m_winRegisterBg, wg, wg, wg);
-    bodyPass(m_winReducePipe, m_winReduceBg, wg, wg, wg);
-    // Allocate a storage block per just-reduced slot, recording its (offset,
-    // dim) in the descriptor that the extract writes to and the transform
-    // publishes.
+    const uint32_t placeU[4] = {0u, 0u, 0u, 0u};
+    wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
+
+    // One 96^3 window centred on the current carveHit: node-resolution anchor
+    // (winClassify -> winLocalCC -> reach-flood -> winMark sets bit 4 on the
+    // detached set), then label the detached set into components and extract
+    // each into a body slot the register pass claimed atomically. Run once per
+    // fell site; the slot pool accumulates across sites (atomic claims).
+    const auto fellWindow = [&]()
+    {
+      bodyPass(m_winClassifyPipe, m_winBg[0], 12, 12, 12);
+      wgpuCommandEncoderClearBuffer(
+          enc,
+          m_winNodeReached,
+          0,
+          static_cast<uint64_t>(kWinBricks) * 512u * sizeof(uint32_t));
+      bodyPass(m_winLocalCcPipe, m_winBg[0], 12, 12, 12);
+      for (int r = 0; r < 32; ++r)
+        bodyPass(m_winNodeReachFloodPipe, m_winBg[0], 12, 12, 12);
+      bodyPass(m_winMarkPipe, m_winBg[0], wg, wg, wg);
+      bodyPass(m_winDetachedCcPipe, m_winDetachedCcBg, 12, 12, 12);
+      for (int r = 0; r < 32; ++r)
+        bodyPass(m_winNodeFloodPipe, m_winNodeFloodBg, 12, 12, 12);
+      bodyPass(m_winScatterPipe, m_winScatterBg, wg, wg, wg);
+      bodyPass(m_winRegisterPipe, m_winRegisterBg, wg, wg, wg);
+      bodyPass(m_winReducePipe, m_winReduceBg, wg, wg, wg);
+      // Extract covers the whole pool: just-claimed slots are GPU-side, not yet
+      // in the CPU mirror, so a bounded dispatch could miss a new body.
+      bodyPass(m_winExtractPipe, m_winExtractBg[m_srcIdx], wg, wg, bodyZ);
+    };
+
+    // A blast fells same-frame at the crater the blast shader seeded into
+    // carveHit.
+    if (m_blastPending)
+      fellWindow();
+
+    // Drain the carve + fire work-list: force a world hit (carveHit[0] = 0),
+    // then copy each appended cell into carveHit[2..4] and run a window there.
+    if (fellCount > 0 && m_carvedSlot < 0)
+    {
+      wgpuCommandEncoderClearBuffer(enc, m_carveHitBuf, 0, 4);
+      for (uint32_t i = 0; i < fellCount; ++i)
+      {
+        wgpuCommandEncoderCopyBufferToBuffer(
+            enc, m_fellListBuf, (1u + i * 3u) * 4u, m_carveHitBuf, 8, 12);
+        fellWindow();
+      }
+    }
+
+    // Cull sub-threshold slots + place every survivor, ONCE over the whole
+    // pool.
     bodyPass(m_bodyPlaceStoragePipe,
              m_bodyPlaceStorageBg,
              (kMaxBodies + 63) / 64,
              1,
              1);
-    // Extract must cover the whole pool: the just-claimed slots are GPU-side
-    // and not yet in the CPU mirror, so a bounded dispatch could miss a new
-    // body and clear it from the world without filling its grid (the vanishing
-    // top).
-    bodyPass(m_winExtractPipe, m_winExtractBg[m_srcIdx], wg, wg, bodyZ);
-    // GPU placement: reduced metadata -> motion state, in the same encoder.
-    const uint32_t placeU[4] = {0u, 0u, 0u, 0u}; // isSplit = 0 (world fell)
-    wgpuQueueWriteBuffer(m_queue, m_placeUBuf, 0, placeU, 16);
     bodyPass(m_bodyPlacePipe, m_bodyPlaceBg, (kMaxBodies + 63) / 64, 1, 1);
   }
 
@@ -2114,6 +2338,12 @@ void GpuVoxelWorld::recordFrame(WGPUCommandEncoder enc,
   // freshly placed bodies are counted this frame -- that ordering is what stops
   // the "vanishing top" without any CPU readback.
   bodyPass(m_bodyPrepPipe, m_bodyPrepBg, 1, 1, 1);
+
+  // Fire CA on rigid bodies (+ RB<->world boundary coupling): a felled burning
+  // chunk keeps burning, ignites world fuel it touches, and catches from
+  // burning world. Brick-marched (sized by the prep pass's brick args, offset
+  // 16).
+  bodyPassIndirect(m_bodyFirePipe, m_bodyFireBg[m_srcIdx], 16);
 
   // Clear the collide flags every frame (in-encoder, after this frame's step
   // has already read the prior result -- a queue write would run before the

@@ -34,6 +34,9 @@ void Voxel3DScene::onProcessInput(const sfs::Input& input)
     m_editMode = 3;
   if (kb.keyHeld(sfs::Key::R)) // hold R to drop rubble (powder) at the cursor
     m_editMode = 4;
+  if (kb.keyHeld(
+          sfs::Key::C)) // hold C to ignite flammable voxels at the cursor
+    m_editMode = 5;
   if (kb.keyPressed(sfs::Key::P)) // P toggles the debug wireframe overlays
     m_debugWire = !m_debugWire;
   m_explode = kb.keyPressed(sfs::Key::X); // X detonates at the cursor

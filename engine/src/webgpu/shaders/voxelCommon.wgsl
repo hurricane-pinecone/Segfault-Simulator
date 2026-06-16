@@ -10,6 +10,7 @@ const WG : i32 = 512;
 const BG : i32 = 64;
 const SEA : i32 = 96;
 const MAXB : u32 = 256u; // rigid-body pool size (must match kMaxBodies)
+const FELL_MAX : u32 = 64u; // fell-site work-list capacity (must match kFellMax)
 const BODYDIM : i32 = 96;       // rigid-body / fell-window grid edge (== kBodyDim)
 const BODYVOX : u32 = 884736u;  // BODYDIM^3, one slot's grid
 // A detached component smaller than this many voxels is NOT spawned as a rigid
@@ -45,6 +46,10 @@ struct Material {
   rigidity : f32,     // break-off resistance
   emission : f32,     // emissive strength (point lighting / glow)
   flags : u32,        // behaviour bits (reserved)
+  // Fire: x catchRate (per-sec spread/ignite, >0 = flammable), y burnoutRate
+  // (per-sec chance to burn out, low = burns long), z crumbleChance (fall as
+  // powder vs char on burnout), w spare.
+  fire : vec4<f32>,
 };
 // Categories (voxel bits 0-1) and material ids (must match the CPU registry).
 const CAT_AIR : u32 = 0u;
@@ -60,6 +65,15 @@ const MAT_LEAVES : u32 = 6u;
 const MAT_WATER : u32 = 7u;
 const MAT_SMOKE : u32 = 8u;
 const MAT_RUBBLE : u32 = 9u;
+const MAT_CHAR : u32 = 10u; // charred remains: a burnt-out flammable voxel
+// Fire: a flammable SOLID voxel can be BURNING (bit 6); while burning it counts a
+// burn timer down in bits 16-23 (solids don't otherwise use those), spreads to
+// flammable neighbours, then turns to char. Material flammability is palette flags
+// bit 0. Fire behaviour is now palette-driven (Material.fire), so a burning voxel
+// needs no timer -- it burns out probabilistically (burnoutRate). The catch/burnout
+// rates live on the material; the CAs read them directly.
+const VOX_BURNING : u32 = 0x40u;
+fn isBurning(v : u32) -> bool { return (v & VOX_BURNING) != 0u; }
 // Powder flag (bit 5): a dynamic voxel (liquid category, so it's cleaned/ping-
 // ponged) that the fluid CA moves like a powder -- falls + slides diagonally down
 // to pile -- instead of flowing flat. (A real 3-bit category is a future refactor.)

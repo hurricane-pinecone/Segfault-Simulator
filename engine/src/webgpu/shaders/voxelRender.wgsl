@@ -55,6 +55,13 @@ struct Hit {
 // the voxel coordinate -- moved here from the generator now that colour is not
 // baked per voxel) for texture, then a simple directional shade.
 fn shade(v : u32, norm : vec3<f32>, vc : vec3<i32>) -> vec3<f32> {
+  // Burning fuel is self-lit: a per-voxel flicker between deep orange and bright
+  // yellow, overbright so it reads as flame (ignores the directional shade).
+  if (isBurning(v)) {
+    let t = u32(cam.p3.w * 11.0);
+    let f = f32(hash3(u32(vc.x), u32(vc.y), u32(vc.z), t) & 0xFFu) / 255.0;
+    return mix(vec3<f32>(1.0, 0.32, 0.04), vec3<f32>(1.0, 0.85, 0.3), f) * (1.25 + 0.5 * f);
+  }
   let k = 0.86 + 0.22 * (f32(hash3(u32(vc.x), u32(vc.y), u32(vc.z), 5u) & 0xFFFFu) / 65535.0);
   let col = materials[matId(v)].color.rgb * k;
   let diff = max(dot(norm, normalize(LIGHT)), 0.0) * 0.7 + 0.3;

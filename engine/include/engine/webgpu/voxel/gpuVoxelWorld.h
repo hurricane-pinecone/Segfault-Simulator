@@ -124,6 +124,7 @@ public:
 private:
   void buildGenerate();
   void buildWater();
+  void buildFire();
   void buildRecount();
   void buildEdit();
   void buildBlast();
@@ -139,6 +140,7 @@ private:
   void buildBodyCollide();
   void buildBodyStamp();
   void buildBodyShed();
+  void buildBodyFire();
   void buildBodyStep();
   void buildBodyXform();
   void buildBodyPlace();
@@ -253,6 +255,10 @@ private:
   // Break-off: hard-impact body voxels shed into the world as rubble (powder).
   WGPUComputePipeline m_bodyShedPipe = nullptr;
   WGPUBindGroup m_bodyShedBg[2] = {nullptr, nullptr}; // per src buffer
+  // Fire CA on rigid bodies (+ RB<->world boundary coupling). Src-indexed for
+  // the world buffers.
+  WGPUComputePipeline m_bodyFirePipe = nullptr;
+  WGPUBindGroup m_bodyFireBg[2] = {nullptr, nullptr};
   // GPU placement: reduced slot metadata -> initial motion state (replaces the
   // CPU onSlotMetaMapped math; split children read the parent's live state).
   WGPUComputePipeline m_bodyPlacePipe = nullptr;
@@ -279,6 +285,17 @@ private:
   // debug pass.
   WGPUBuffer m_carveHitBuf = nullptr; // [0]=body hit? [1]=slot
   WGPUBuffer m_carveHitReadback = nullptr;
+  // Fell-site work-list: any removal source (carve, fire) appends its sever
+  // cell here; the world fell drains it, processing one 96^3 window per entry.
+  // [0] = atomic count, then kFellMax packed vec3<i32> centres. Cleared each
+  // frame.
+  static constexpr uint32_t kFellMax = 64;
+  WGPUBuffer m_fellListBuf = nullptr;
+  WGPUBuffer m_fellCountReadback = nullptr;
+  uint32_t m_lastFellCount =
+      0; // last frame's append count (drives the drain loop)
+  bool m_fellMapBusy = false;
+  bool m_fellPendingResolve = false;
   WGPUBuffer m_bodyLabelBuf[2] = {nullptr,
                                   nullptr}; // [0] = one slot's label grid
   WGPUBuffer m_bodyLabelSlotBuf = nullptr;  // uniform: slot to label
@@ -355,6 +372,11 @@ private:
   // held over empty space (no recent world hit) it clears and the machinery is
   // skipped.
   bool m_worldCarved = false;
+  // Set by the same readback (carveHit[6]): fire removed a static solid ~1
+  // frame ago, so the reflood + world fell run to drop whatever it severed.
+  // This is what decouples felling from the carve tool -- any voxel removal can
+  // trigger it.
+  bool m_fireSevered = false;
   bool m_carveMapBusy = false;
   bool m_carvePendingResolve = false;
   struct CarveHitRb
@@ -362,8 +384,15 @@ private:
     WGPUBuffer buffer;
     int* slot;
     bool* worldCarved;
+    bool* fireSevered;
     bool* busy;
   } m_carveRb{};
+  struct FellCountRb
+  {
+    WGPUBuffer buffer;
+    uint32_t* count;
+    bool* busy;
+  } m_fellRb{};
 
   RigidBody m_bodies[kMaxBodies];
   bool m_fellRequested =
@@ -399,6 +428,7 @@ private:
 
   WGPUComputePipeline m_genPipe = nullptr;
   WGPUComputePipeline m_waterPipe = nullptr;
+  WGPUComputePipeline m_firePipe = nullptr;
   WGPUComputePipeline m_recPipe = nullptr;
   WGPUComputePipeline m_editPipe = nullptr;
   WGPURenderPipeline m_renderPipe = nullptr;
@@ -411,6 +441,7 @@ private:
 
   WGPUBindGroup m_genBg = nullptr;
   WGPUBindGroup m_waterBg[2] = {nullptr, nullptr};
+  WGPUBindGroup m_fireBg[2] = {nullptr, nullptr}; // [srcIdx]: voxCur = src
   WGPUBindGroup m_recBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_editBg[2] = {nullptr, nullptr};
   WGPUBindGroup m_renderBg[2] = {nullptr, nullptr};

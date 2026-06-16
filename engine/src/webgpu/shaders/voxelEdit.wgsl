@@ -20,6 +20,11 @@ struct Body {
 @group(0) @binding(4) var<storage, read_write> dirty : array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read> bodies : array<Body, MAXB>;
 @group(0) @binding(7) var<storage, read_write> carveHit : array<u32>; // [0]body? [1]slot [2..4]hit
+@group(0) @binding(8) var<storage, read> materials : array<Material>; // for ignite flammability
+// Fell work-list: [0] = atomic count, then FELL_MAX packed (x,y,z) u32 centres. A
+// mode-1 world carve appends its hit cell so the world fell drains it (carveHit still
+// drives the body-split routing).
+@group(0) @binding(9) var<storage, read_write> fellList : array<atomic<u32>>;
 // Sparse brickmap body voxels: read (pick) + clear (carve). Carving only removes
 // existing voxels, so no brick allocation is needed.
 @group(0) @binding(20) var<storage, read> bodyBrickGrid : array<u32>;
@@ -33,6 +38,11 @@ fn bodyVoxClear(slot : u32, x : i32, y : i32, z : i32) {
   let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(x, y, z)];
   if (bp == BRICK_EMPTY) { return; }
   bodyBrickPool[bp * 512u + brickLocal(x, y, z)] = 0u;
+}
+fn bodyVoxSet(slot : u32, x : i32, y : i32, z : i32, val : u32) {
+  let bp = bodyBrickGrid[slot * BODYBRICKS + brickCell(x, y, z)];
+  if (bp == BRICK_EMPTY) { return; }
+  bodyBrickPool[bp * 512u + brickLocal(x, y, z)] = val;
 }
 
 fn vIdx(x : i32, y : i32, z : i32) -> u32 {
@@ -197,6 +207,17 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
     // holding the carve button over empty space reruns nothing.
     let worldCarve = found == 1u && hitSlot == 0xFFFFFFFFu && u32(ed.v1.w) == 1u;
     carveHit[5] = select(0u, 1u, worldCarve);
+    // Append the cut cell to the fell work-list (drained one frame late). The body
+    // split still routes off carveHit; this only feeds the WORLD fell.
+    if (worldCarve) {
+      let fi = atomicAdd(&fellList[0], 1u);
+      if (fi < FELL_MAX) {
+        let fb = 1u + fi * 3u;
+        atomicStore(&fellList[fb], u32(hit.x));
+        atomicStore(&fellList[fb + 1u], u32(hit.y));
+        atomicStore(&fellList[fb + 2u], u32(hit.z));
+      }
+    }
   }
   workgroupBarrier();
   if (found == 0u) { return; }
@@ -217,7 +238,16 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
       if (dx * dx + dy * dy + dz * dz > R * R) { continue; }
       let lx = center.x + dx; let ly = center.y + dy; let lz = center.z + dz;
       if (lx < 0 || ly < 0 || lz < 0 || lx >= bdim || ly >= bdim || lz >= bdim) { continue; }
-      bodyVoxClear(hitSlot, lx, ly, lz);
+      if (mode == 5u) {
+        // Ignite a flammable body voxel instead of carving it (the body fire CA
+        // takes over). Sets the burning bit; matId/category preserved.
+        let bv = bodyVoxLoad(hitSlot, lx, ly, lz);
+        if ((bv & 3u) == 1u && materials[matId(bv)].fire.x > 0.0) {
+          bodyVoxSet(hitSlot, lx, ly, lz, bv | VOX_BURNING);
+        }
+      } else {
+        bodyVoxClear(hitSlot, lx, ly, lz);
+      }
     }
     return;
   }
@@ -234,6 +264,14 @@ fn edit(@builtin(local_invocation_index) lid : u32) {
     if (mode == 1u) {
       voxCur[i] = 0u; voxOther[i] = 0u;
       atomicOr(&dirty[u32((wx / 8) + (wy / 8) * BG + (wz / 8) * BG * BG)], 1u);
+    } else if (mode == 5u) {
+      // Ignite: set the burning bit on flammable solid voxels (the fire CA takes
+      // over spreading + burnout). Both buffers stay in sync.
+      let vv = voxCur[i];
+      if ((vv & 3u) == 1u && materials[matId(vv)].fire.x > 0.0) {
+        let nv = vv | VOX_BURNING;
+        voxCur[i] = nv; voxOther[i] = nv;
+      }
     } else if ((voxCur[i] & 3u) == 0u) {
       // Spawn a fluid into air: mode 2 = water, mode 3 = smoke (gas).
       let dir = hash3(u32(wx), u32(wy), u32(wz), u32(idx)) & 3u;
