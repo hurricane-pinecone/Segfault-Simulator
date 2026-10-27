@@ -17,17 +17,22 @@ namespace sfs
 using SceneId = uint32_t;
 
 class IQuadRenderer;
+class IRenderer3D;
 class TextRenderer;
 
-// Engine-owned services a scene draws and loads assets through. Bundled into
-// one value so they can be constructor-injected as a unit: every Scene holds
-// them as references, valid for the scene's whole lifetime. The SceneManager
-// builds this (and verifies the services exist) before constructing any scene.
+// Engine-owned services a scene draws and loads assets through, supplied by the
+// active render backend. Bundled into one value so they can be
+// constructor-injected as a unit. The asset store always exists; the renderers
+// are whichever the backend actually has (an OpenGL backend draws 2D quads and
+// text, a WebGPU backend draws 3D), so each is null when absent. The
+// SceneManager builds this before constructing any scene, and everything in it
+// outlives every scene.
 struct SceneServices
 {
   AssetStore& assetStore;
-  IQuadRenderer& quadRenderer;
-  TextRenderer& textRenderer;
+  IQuadRenderer* quadRenderer = nullptr;
+  TextRenderer* textRenderer = nullptr;
+  IRenderer3D* renderer3D = nullptr;
 };
 
 class Scene
@@ -36,7 +41,8 @@ public:
   Scene(SceneId id, const SceneServices& services)
       : m_assetStore(services.assetStore),
         m_quadRenderer(services.quadRenderer),
-        m_textRenderer(services.textRenderer), m_id(id),
+        m_textRenderer(services.textRenderer),
+        m_renderer3D(services.renderer3D), m_id(id),
         m_name("scene_" + std::to_string(id))
   {
   }
@@ -44,7 +50,8 @@ public:
   Scene(SceneId id, const SceneServices& services, const std::string& name)
       : m_assetStore(services.assetStore),
         m_quadRenderer(services.quadRenderer),
-        m_textRenderer(services.textRenderer), m_id(id), m_name(name)
+        m_textRenderer(services.textRenderer),
+        m_renderer3D(services.renderer3D), m_id(id), m_name(name)
   {
   }
 
@@ -72,8 +79,16 @@ public:
   void destroyEntity(const Entity& entity);
 
   AssetStore& assetStore() const { return m_assetStore; }
-  IQuadRenderer& quadRenderer() const { return m_quadRenderer; }
-  TextRenderer& textRenderer() const { return m_textRenderer; }
+  // The backend's renderers. Each accessor assumes the backend provides that
+  // renderer: asking for one it lacks is a setup bug (e.g. a 3D scene on the
+  // OpenGL backend), so it logs and aborts, like getSystem. The try- forms
+  // return null instead, for code that adapts to the backend.
+  IQuadRenderer& quadRenderer() const;
+  TextRenderer& textRenderer() const;
+  IRenderer3D& renderer3D() const;
+  IQuadRenderer* tryQuadRenderer() const { return m_quadRenderer; }
+  TextRenderer* tryTextRenderer() const { return m_textRenderer; }
+  IRenderer3D* tryRenderer3D() const { return m_renderer3D; }
 
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
@@ -94,6 +109,10 @@ public:
 
   template <typename TSystem>
   TSystem& getSystem() const;
+
+  // Null when the system isn't registered (getSystem aborts instead).
+  template <typename TSystem>
+  TSystem* tryGetSystem() const;
 
   // Iterate all systems (debug tooling: enable/disable, inspect).
   template <typename Fn>
@@ -121,9 +140,10 @@ protected:
   AssetStore& m_assetStore;
 
 private:
-  // Constructor-injected by SceneManager; references, so never null.
-  IQuadRenderer& m_quadRenderer;
-  TextRenderer& m_textRenderer;
+  // Constructor-injected by SceneManager; null where the backend has none.
+  IQuadRenderer* m_quadRenderer = nullptr;
+  TextRenderer* m_textRenderer = nullptr;
+  IRenderer3D* m_renderer3D = nullptr;
 
   SceneId m_id = 0;
   std::string m_name = "";
@@ -166,6 +186,12 @@ template <typename TSystem>
 void Scene::removeSystem()
 {
   m_registry.removeSystem<TSystem>();
+}
+
+template <typename TSystem>
+TSystem* Scene::tryGetSystem() const
+{
+  return m_registry.tryGetSystem<TSystem>();
 }
 
 template <typename TSystem>

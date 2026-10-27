@@ -36,3 +36,6 @@ add_runtime_test(blockGeometryTests rendering/modules/blockGeometryTests.cpp)
 add_runtime_test(isometricWaterTests rendering/modules/isometricWaterTests.cpp)
 add_runtime_test(spriteShadowTests rendering/modules/spriteShadowTests.cpp)
 add_runtime_test(isometricDecalSinkTests rendering/modules/isometricDecalSinkTests.cpp)
+
+# rendering3d/
+add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)

@@ -1,6 +1,8 @@
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/logger/logger.h"
 #include "engine/runtime/input/input.h"
+#include <cstdlib>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/util/profiling.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -8,6 +10,36 @@
 
 namespace sfs
 {
+
+namespace
+{
+// A scene asked for a renderer its backend doesn't have: a setup bug, not a
+// runtime condition, so name it and stop (as getSystem does).
+template <typename T>
+T& requireService(T* service, const char* name)
+{
+  if (service)
+    return *service;
+
+  LOG_ERROR(std::string("Scene: the render backend provides no ") + name);
+  std::abort();
+}
+} // namespace
+
+IQuadRenderer& Scene::quadRenderer() const
+{
+  return requireService(m_quadRenderer, "quad renderer");
+}
+
+TextRenderer& Scene::textRenderer() const
+{
+  return requireService(m_textRenderer, "text renderer");
+}
+
+IRenderer3D& Scene::renderer3D() const
+{
+  return requireService(m_renderer3D, "3D renderer");
+}
 
 SceneId Scene::id() const { return m_id; }
 const std::string& Scene::name() const { return m_name; }

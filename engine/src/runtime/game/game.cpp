@@ -253,9 +253,12 @@ void Game::render()
     }
   }
 
-  if (devConsoleEnabled() && m_services)
-    m_console.render(m_services->textRenderer,
-                     m_services->quadRenderer,
+  // The console draws through the 2D quad + text renderers, so it only
+  // appears on a backend that has them.
+  if (devConsoleEnabled() && m_services && m_services->textRenderer &&
+      m_services->quadRenderer)
+    m_console.render(*m_services->textRenderer,
+                     *m_services->quadRenderer,
                      m_services->assetStore,
                      windowWidth,
                      windowHeight);
@@ -271,6 +274,10 @@ void Game::render()
 void Game::destroy()
 {
   onDestroy();
+
+  // Scenes first: their systems may own GPU resources (meshes, textures) that
+  // must be released before the backend tears down the device.
+  sceneManager.destroyAll();
 
   // Tear down GPU-backed resources while the context is still valid.
   if (m_backend)

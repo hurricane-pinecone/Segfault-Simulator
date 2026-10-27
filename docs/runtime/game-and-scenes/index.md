@@ -90,8 +90,12 @@ protected:
 ```
 
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
-`getSystem<T>()` / `hasSystem<T>()`, plus the engine services `assetStore()`,
-`quadRenderer()`, and `textRenderer()`.
+`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, plus the engine
+services: `assetStore()` and whichever renderers the backend provides --
+`quadRenderer()` and `textRenderer()` on the OpenGL backend, `renderer3D()` on
+the WebGPU backend. Asking for one the backend lacks logs and aborts; the
+`try` forms (`tryQuadRenderer()`, ...) return null instead. See
+[3D rendering](../rendering-3d/index.md#scene-services).
 
 Manage scenes through the scene manager: `sceneManager.createScene<T>(name)` builds
 one (and makes it current), `sceneManager.load(name)` switches to an existing one,

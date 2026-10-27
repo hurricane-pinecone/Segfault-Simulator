@@ -84,4 +84,5 @@ nav:
           - runtime/rendering/index.md
           - Render modules: runtime/rendering/render-modules/index.md
           - Render backends: runtime/rendering/backends/index.md
+      - 3D rendering: runtime/rendering-3d/index.md
       - Particles in your game: runtime/particles/index.md

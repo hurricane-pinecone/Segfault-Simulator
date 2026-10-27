@@ -42,8 +42,11 @@ You do not construct it directly. `Game::makeRenderBackend()` builds it, passing
 `WebGpuRenderBackend` (`engine/webgpu/webGpuRenderBackend.h`) opens an SDL window
 without a GL context, initialises a WebGPU device and surface through
 `WebGpuContext`, and opens a command encoder plus backbuffer view at the start of
-each frame. It does not draw anything itself — a `VoxelGpuSystem` records compute
-and raymarch passes into that encoder.
+each frame. It provides a 3D renderer (`WebGpuRenderer3D`) through
+`SceneServices::renderer3D`, which a `RenderSystem3D` draws through (see
+[3D rendering](../../rendering-3d/index.md)). Systems can also record their own
+passes into the frame's encoder, as `VoxelGpuSystem` does. It has no 2D quad or
+text renderer.
 
 To use it, link `sfs::engine-webgpu` and override `makeRenderBackend()`:
 

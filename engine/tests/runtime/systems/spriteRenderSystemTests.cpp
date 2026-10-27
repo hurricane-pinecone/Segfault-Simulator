@@ -62,7 +62,7 @@ struct Harness
   AssetStore store;
   MockRenderer mock;
   TextRenderer text{mock, store};
-  Scene scene{0, SceneServices{store, mock, text}};
+  Scene scene{0, SceneServices{store, &mock, &text}};
   SpriteRenderSystem& sprites =
       scene.addSystem<SpriteRenderSystem>(store, mock);
 

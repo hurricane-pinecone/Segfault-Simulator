@@ -1,7 +1,6 @@
 #include "engine/webgpu/webGpuRenderBackend.h"
 
 #include "engine/core/logger/logger.h"
-#include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/assetStore/assetStore.h"
 
 #include "SDL.h"
@@ -34,11 +33,13 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
     return false;
   m_context.configure(width, height);
 
-  // Placeholder services: the voxel scene never draws through these, but Scene
-  // holds them as references, so they must exist.
+  m_renderer3D = std::make_unique<WebGpuRenderer3D>(m_context);
+  if (!m_renderer3D->initialize())
+    return false;
+
   m_assetStore = std::make_unique<AssetStore>();
-  m_textRenderer = std::make_unique<TextRenderer>(m_nullQuad, *m_assetStore);
-  m_services.emplace(SceneServices{*m_assetStore, m_nullQuad, *m_textRenderer});
+  m_services.emplace(SceneServices{.assetStore = *m_assetStore,
+                                   .renderer3D = m_renderer3D.get()});
 
   return true;
 }
@@ -68,15 +69,21 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
     m_context.configure(width, height);
     m_view = nullptr;
     m_encoder = nullptr;
+    m_renderer3D->setTarget(nullptr, nullptr, {width, height});
     return;
   }
 
   m_view = wgpuTextureCreateView(m_surfTex.texture, nullptr);
   m_encoder = wgpuDeviceCreateCommandEncoder(m_context.device(), nullptr);
+  m_renderer3D->setTarget(m_encoder, m_view, {width, height});
 }
 
 void WebGpuRenderBackend::endFrame()
 {
+  // The 3D renderer recorded into this frame's encoder during the scene's
+  // render; detach it before the encoder is released.
+  m_renderer3D->setTarget(nullptr, nullptr, {m_width, m_height});
+
   if (m_encoder)
   {
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(m_encoder, nullptr);
@@ -104,8 +111,8 @@ void WebGpuRenderBackend::endFrame()
 void WebGpuRenderBackend::shutdown()
 {
   m_services.reset();
-  m_textRenderer.reset();
   m_assetStore.reset();
+  m_renderer3D.reset(); // before the device it was built on
   m_context.release();
   if (m_window)
   {

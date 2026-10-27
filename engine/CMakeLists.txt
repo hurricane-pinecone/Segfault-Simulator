@@ -386,6 +386,6 @@ endif()
 # Engine tests (native only; the web build strips the desktop toolchain). Added
 # after both targets exist: core/ tests link engine-core, runtime/ tests link
 # engine. enable_testing() is called at the root so ctest finds them.
-if(NOT ENGINE_WEB_BUILD)
+if(NOT ENGINE_WEB_BUILD AND ENGINE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

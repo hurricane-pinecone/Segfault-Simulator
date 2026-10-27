@@ -54,6 +54,19 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter, bool* hasTimestamps)
   // buffer is 512MB, past the 128MB default) are allowed.
   WGPULimits limits = {};
   wgpuAdapterGetLimits(adapter, &limits);
+  // An adapter with no buffer-size cap (e.g. Vulkan) reports UINT64_MAX, which
+  // is also WGPU_LIMIT_U64_UNDEFINED: passed back as-is it reads as "unset" and
+  // the device silently gets the 256MB default.
+  if (limits.maxBufferSize == WGPU_LIMIT_U64_UNDEFINED)
+    limits.maxBufferSize = WGPU_LIMIT_U64_UNDEFINED - 1;
+  WGPUAdapterInfo info = {};
+  wgpuAdapterGetInfo(adapter, &info);
+  LOG_INFO("WebGPU adapter: " +
+           std::string(info.device.data ? info.device.data : "",
+                       info.device.data ? info.device.length : 0) +
+           ", maxStorageBufferBindingSize " +
+           std::to_string(limits.maxStorageBufferBindingSize));
+  wgpuAdapterInfoFreeMembers(info);
   WGPUDeviceDescriptor desc = {};
   desc.requiredLimits = &limits;
   // Enable GPU timestamp queries when the adapter supports them (benchmark

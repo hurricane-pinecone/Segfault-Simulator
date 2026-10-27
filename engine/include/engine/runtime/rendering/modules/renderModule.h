@@ -12,6 +12,21 @@ class AssetStore;
 template <typename TContext>
 class RenderModuleHost;
 
+/**
+ * The render-command type a module for TContext emits. Defaults to the 2D/
+ * isometric AnyRenderCommand; a render context with its own command set (e.g.
+ * RenderContext3D) specialises this next to its definition, so the same
+ * module/host machinery serves every render path.
+ */
+template <typename TContext>
+struct RenderCommandTraits
+{
+  using Command = AnyRenderCommand;
+};
+
+template <typename TContext>
+using RenderCommandFor = typename RenderCommandTraits<TContext>::Command;
+
 /** Dependencies injected into a render module at registration. */
 struct ModuleInit
 {
@@ -58,7 +73,7 @@ public:
 
   /** Append this module's render commands for the frame. */
   virtual void emit(const TContext& context,
-                    std::vector<AnyRenderCommand>& out) = 0;
+                    std::vector<RenderCommandFor<TContext>>& out) = 0;
 
   /**
    * UI-agnostic descriptors for this module's settings, for a debug panel or
@@ -80,10 +95,10 @@ public:
   const std::vector<TCommand>& commands() const { return m_commands; }
 
   void emit(const TContext& context,
-            std::vector<AnyRenderCommand>& out) override
+            std::vector<RenderCommandFor<TContext>>& out) override
   {
     computeCommands(context);
-    // TCommand -> AnyRenderCommand.
+    // TCommand -> the context's command variant.
     out.insert(out.end(), m_commands.begin(), m_commands.end());
   }
 

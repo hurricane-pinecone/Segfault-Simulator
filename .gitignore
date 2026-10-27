@@ -1,6 +1,7 @@
 # Build output
 /build/
 /build-web/
+/build-win/
 /build-core/
 /bin/
 # Standalone consumer build of the sample (built against the engine package)

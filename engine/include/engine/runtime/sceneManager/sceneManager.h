@@ -24,6 +24,11 @@ public:
 
   void destroyScene(SceneId id);
   void destroyScene(const std::string& name);
+
+  // Destroy every scene, the current one included. Game calls this before the
+  // render backend shuts down, so scene-owned GPU resources are released while
+  // their device still exists.
+  void destroyAll();
   void load(SceneId id);
   void load(const std::string& name);
 
