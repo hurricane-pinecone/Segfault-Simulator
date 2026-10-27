@@ -66,8 +66,13 @@ viewport.resize({panelWidth, panelHeight}); // non-positive sizes release it
 
 webGpuBackend->setSceneTarget(&viewport);
 // ...
-ImGui::Image(viewport.view(), ImVec2(panelWidth, panelHeight));
+ImGui::Image(viewport.imguiView(), ImVec2(panelWidth, panelHeight));
 ```
+
+Show it through `imguiView()`, not `view()`. On an sRGB surface, ImGui's WebGPU
+backend applies gamma to everything it draws. Reading the texture through
+`imguiView()` skips sRGB decoding, which cancels that out, so the panel matches
+the scene drawn straight to the window.
 
 The target must outlive its use as the scene target, and `resize()` only
 recreates the underlying texture when the size actually changes.

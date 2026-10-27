@@ -43,6 +43,35 @@ void MyScene::onInit()
 }
 ```
 
+## The standard 3D scene
+
+`Scene3D` does the wiring above for you: a `RenderSystem3D` with `MeshModule`,
+the built-in primitive meshes (`builtin:cube`, `builtin:sphere`, `builtin:plane`
+and `builtin:cylinder`, named so scene files can refer to them), and any meshes
+a game module's `MeshSource` scripts build (see
+[Game scripts](../../editor/scripting/index.md#meshes-built-in-code)). It's the
+scene type scene files describe: the editor edits a `Scene3D` and an exported
+game plays one, so a scene looks and behaves the same in both.
+
+```cpp
+class MyScene : public sfs::Scene3D
+{
+protected:
+  void onInit() override
+  {
+    Scene3D::onInit(); // sets up rendering and the built-in meshes first
+
+    sfs::Entity e = createEntity();
+    e.addComponent<sfs::MeshRendererComponent>(
+        sfs::MeshRendererComponent{builtinMesh(BuiltinMesh::Cube)});
+  }
+};
+```
+
+Load content into it with `SceneSerializer`, passing `gameSystems()` so the
+scene's game systems are saved and restored alongside its entities. See
+[Scene files](../serialization/index.md).
+
 ## Scene services
 
 A scene reaches the backend's renderers through `SceneServices`. Each backend
@@ -93,8 +122,14 @@ Upload a mesh through the render system's `MeshLibrary`. It returns a
 render system.
 
 ```cpp
-const sfs::MeshHandle barnMesh = render.meshes().add(barn);
+const sfs::MeshHandle barnMesh = render.meshes().add(barn, "mygame:barn");
 ```
+
+Naming a mesh is optional, but give one to any mesh a saved entity's
+`MeshRendererComponent` refers to: a `MeshHandle` is only valid for one run, so
+scene files save a mesh by its name (see [Scene files](../serialization/index.md)).
+`meshes().find(name)` looks a mesh up by name, and `meshes().named()` lists
+every named mesh sorted by name, which is how the editor fills a mesh picker.
 
 ## Drawing entities
 
@@ -139,6 +174,15 @@ camera.projection = sfs::Camera3D::Projection::Orthographic; // or Perspective
 `groundForward()` and `groundRight()` give camera-relative movement axes on the
 ground. `screenRay(pixel, viewport)` returns a world-space ray for picking.
 `Ray3D::intersectPlaneZ` finds where it hits a ground plane.
+
+To pick an entity instead of a plane, `Ray3D::intersectAabb` reports where a ray
+enters a box, and `sfs::pickEntity(scene, meshes, ray)` runs that over every
+entity in the scene and returns the nearest hit. When a ray starts inside
+several entities at once, the smallest wins, so an object standing on a large
+floor is picked over the floor. `entityBounds(entity, meshes)` gives one
+entity's world-space bounds: its mesh's bounds through its transform, or a
+small marker box centred on its position for an entity with no mesh, such as a
+light.
 
 ## Lighting
 

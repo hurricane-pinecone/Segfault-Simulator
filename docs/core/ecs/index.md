@@ -31,10 +31,12 @@ struct Velocity { glm::vec2 value{0.0f, 0.0f}; };
 ```
 
 The engine also ships components such as `TransformComponent` (position / scale /
-rotation), `SpriteComponent`, `ParticleEmitterComponent`, and `NameComponent` (an
+rotation), `SpriteComponent`, `ParticleEmitterComponent`, `NameComponent` (an
 optional display name, useful for lookups and for showing entities in a tool's
-hierarchy view). Up to 128 distinct component types can be registered across the
-engine and your game (`MAX_COMPONENTS`).
+hierarchy view), and `ScriptComponent` (binds a game object script to the entity
+by name, see [Game scripts](../../editor/scripting/index.md)). Up to 128 distinct
+component types can be registered across the engine and your game
+(`MAX_COMPONENTS`).
 
 ## Entities
 
@@ -142,6 +144,16 @@ Create it through the scene; `onCreate` fires immediately with that scene:
 Player& player = scene.createObject<Player>();
 sfs::Entity& e = player.entity();           // the underlying entity
 Player* p = scene.tryFindObject<Player>();   // find one later (or nullptr)
+```
+
+`createObject` makes a new entity for the object. To bind one to an entity that
+already exists, such as one you spawned elsewhere, use `attachObject` instead;
+`onCreate` runs the same way, but `entity()` is already set to the one you
+passed in:
+
+```cpp
+sfs::Entity e = scene.createEntity();
+Player& player = scene.attachObject<Player>(e);
 ```
 
 Rule of thumb: use **systems** for behaviour over many homogeneous entities
