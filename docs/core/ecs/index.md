@@ -31,8 +31,10 @@ struct Velocity { glm::vec2 value{0.0f, 0.0f}; };
 ```
 
 The engine also ships components such as `TransformComponent` (position / scale /
-rotation), `SpriteComponent`, and `ParticleEmitterComponent`. Up to 128 distinct
-component types can be registered across the engine and your game (`MAX_COMPONENTS`).
+rotation), `SpriteComponent`, `ParticleEmitterComponent`, and `NameComponent` (an
+optional display name, useful for lookups and for showing entities in a tool's
+hierarchy view). Up to 128 distinct component types can be registered across the
+engine and your game (`MAX_COMPONENTS`).
 
 ## Entities
 
@@ -54,6 +56,10 @@ scene.destroyEntity(e);
 
 `addTag<T>()` is `addComponent<T>()` read more naturally for empty marker
 components — e.g. `e.addTag<Player>()`.
+
+`scene.entities()` returns every living entity, in id order (`registry.entities()`
+in headless use). This is handy for a tool that needs to list every entity
+regardless of which components it carries, such as a hierarchy panel.
 
 ## Systems
 
