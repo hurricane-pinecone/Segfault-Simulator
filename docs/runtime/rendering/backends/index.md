@@ -48,6 +48,30 @@ each frame. It provides a 3D renderer (`WebGpuRenderer3D`) through
 passes into the frame's encoder, as `VoxelGpuSystem` does. It has no 2D quad or
 text renderer.
 
+It also hosts Dear ImGui with docking and multi-viewport enabled, so a debug or
+tool panel can dock into the main window or be dragged out into its own OS
+window. `imguiAvailable()` reports true for this backend.
+
+### Rendering the scene off-window
+
+`setSceneTarget(WebGpuRenderTarget*)` redirects the 3D scene into an offscreen
+colour texture instead of the window. The window is then cleared each frame and
+only draws ImGui, which is the shape a tool needs to show the scene inside a
+panel rather than filling the whole window. Pass `nullptr` to go back to drawing
+the scene straight to the window.
+
+```cpp
+sfs::WebGpuRenderTarget viewport(webGpuContext);
+viewport.resize({panelWidth, panelHeight}); // non-positive sizes release it
+
+webGpuBackend->setSceneTarget(&viewport);
+// ...
+ImGui::Image(viewport.view(), ImVec2(panelWidth, panelHeight));
+```
+
+The target must outlive its use as the scene target, and `resize()` only
+recreates the underlying texture when the size actually changes.
+
 To use it, link `sfs::engine-webgpu` and override `makeRenderBackend()`:
 
 ```cpp
