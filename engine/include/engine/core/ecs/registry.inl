@@ -70,6 +70,7 @@ TSystem& Registry::addSystem(TArgs&&... args)
 
   System* base = ptr;
   base->create();
+  addExistingEntities(*base);
 
   return *ptr;
 }

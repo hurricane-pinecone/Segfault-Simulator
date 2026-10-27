@@ -70,7 +70,17 @@ enum class Key : int
 class KeyboardInput
 {
 public:
+  /** Poll the keyboard state (once per frame, after events are processed). */
   void update();
+
+  /** Start a frame: forget last frame's key-down events. */
+  void beginFrame();
+
+  /**
+   * A key-down event this frame. keyPressed() reports it even if the key was
+   * released again before update() polled (a tap shorter than a frame).
+   */
+  void pressKey(SDL_Scancode key);
 
   bool keyHeld(Key key) const;
   bool keyPressed(Key key) const;
@@ -78,6 +88,7 @@ public:
 
 private:
   std::array<bool, SDL_NUM_SCANCODES> currentKeys{};
+  std::array<bool, SDL_NUM_SCANCODES> downThisFrame{};
   std::array<bool, SDL_NUM_SCANCODES> previousKeys{};
 };
 

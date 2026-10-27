@@ -26,6 +26,9 @@ add_runtime_test(spriteRenderSystemTests systems/spriteRenderSystemTests.cpp)
 add_runtime_test(colliderParticleCollisionTests particles/colliderParticleCollisionTests.cpp)
 add_runtime_test(terrainParticleCollisionTests particles/terrainParticleCollisionTests.cpp)
 
+# input/
+add_runtime_test(keyboardInputTests input/keyboardInputTests.cpp)
+
 # rendering/
 add_runtime_test(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)
 add_runtime_test(clipDepthTests rendering/clipDepthTests.cpp)
@@ -39,3 +42,10 @@ add_runtime_test(isometricDecalSinkTests rendering/modules/isometricDecalSinkTes
 
 # rendering3d/
 add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)
+add_runtime_test(pickingTests rendering3d/pickingTests.cpp)
+
+# serialization/
+add_runtime_test(sceneSerializerTests serialization/sceneSerializerTests.cpp)
+
+# scripting/
+add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)

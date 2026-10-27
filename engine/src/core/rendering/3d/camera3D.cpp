@@ -5,7 +5,10 @@
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/matrix.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <utility>
 
 namespace sfs
 {
@@ -25,6 +28,39 @@ bool Ray3D::intersectPlaneZ(float height, float& outDistance) const
     return false;
 
   outDistance = t;
+  return true;
+}
+
+bool Ray3D::intersectAabb(const Aabb& box, float& outDistance) const
+{
+  if (box.empty())
+    return false;
+
+  // Slab method: clip the ray against each axis' pair of planes.
+  float near = 0.0f;
+  float far = std::numeric_limits<float>::max();
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    if (std::abs(direction[axis]) < 1.0e-8f)
+    {
+      // Parallel to this slab: inside it or a miss.
+      if (origin[axis] < box.min[axis] || origin[axis] > box.max[axis])
+        return false;
+      continue;
+    }
+
+    const float inverse = 1.0f / direction[axis];
+    float t0 = (box.min[axis] - origin[axis]) * inverse;
+    float t1 = (box.max[axis] - origin[axis]) * inverse;
+    if (t0 > t1)
+      std::swap(t0, t1);
+    near = std::max(near, t0);
+    far = std::min(far, t1);
+    if (near > far)
+      return false;
+  }
+
+  outDistance = near;
   return true;
 }
 

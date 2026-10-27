@@ -148,6 +148,7 @@ void Game::processInput()
   ZoneScopedN("Game::processInput");
 
   input.mouse().beginFrame();
+  input.keyboard().beginFrame();
 
   SDL_Event sdlEvent;
   while (SDL_PollEvent(&sdlEvent))
@@ -222,6 +223,10 @@ void Game::processInput()
     {
       input.mouse().addScroll(sdlEvent.wheel.x, sdlEvent.wheel.y);
     }
+
+    // Seen as events too, so a tap shorter than a frame still registers.
+    if (sdlEvent.type == SDL_KEYDOWN && !sdlEvent.key.repeat)
+      input.keyboard().pressKey(sdlEvent.key.keysym.scancode);
   }
 
   // input.update contains SDL stuff which we don't want to track
@@ -233,7 +238,8 @@ void Game::processInput()
     // act on the keys being typed (input is polled, not event-driven).
     if (!(devConsoleEnabled() && m_console.isOpen()))
     {
-      sceneManager.current()->processInput(input);
+      if (sceneReceivesInput())
+        sceneManager.current()->processInput(input);
       onProcessInput(input);
     }
   }

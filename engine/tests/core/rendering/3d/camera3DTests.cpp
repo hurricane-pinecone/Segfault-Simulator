@@ -122,5 +122,34 @@ int main()
     CHECK(testing::approx(distance, 4.0f));
   }
 
+  TEST("a ray should hit a box in front and report the entry distance")
+  {
+    Aabb box;
+    box.expand(glm::vec3(-1.0f, -1.0f, -1.0f));
+    box.expand(glm::vec3(1.0f, 1.0f, 1.0f));
+    float distance = 0.0f;
+
+    Ray3D hit{{-5.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}};
+    CHECK(hit.intersectAabb(box, distance));
+    CHECK(testing::approx(distance, 4.0f));
+
+    Ray3D inside{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    CHECK(inside.intersectAabb(box, distance));
+    CHECK(testing::approx(distance, 0.0f));
+  }
+
+  TEST("a ray should miss boxes beside or behind it")
+  {
+    Aabb box;
+    box.expand(glm::vec3(-1.0f));
+    box.expand(glm::vec3(1.0f));
+    float distance = 0.0f;
+
+    CHECK(!Ray3D({{-5.0f, 3.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
+    CHECK(!Ray3D({{5.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
+    CHECK(!Ray3D({{0.0f, 5.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
+    CHECK(!Ray3D({{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(Aabb{}, distance));
+  }
+
   return testing::report("camera3DTests");
 }

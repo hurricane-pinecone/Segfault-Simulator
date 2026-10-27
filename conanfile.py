@@ -81,6 +81,9 @@ class SfsEngineConan(ConanFile):
             self.requires("sdl_mixer/2.8.0")
             self.requires("imgui/1.92.7-docking")
             self.requires("glew/2.2.0")
+            # sfs-codegen parses game/engine headers to generate reflection.
+            self.requires("tree-sitter/0.24.3")
+            self.requires("tree-sitter-cpp/0.23.4")
 
     def layout(self):
         cmake_layout(self)

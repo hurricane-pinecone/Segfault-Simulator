@@ -58,6 +58,18 @@ function(sfs_deploy_runtime target)
     endif()
 endfunction()
 
+# sfs-codegen for sfs_add_game_module / sfs_generate_reflection: the copy
+# installed with the engine, unless SFS_CODEGEN_EXECUTABLE names another (a
+# cross-built package can't run its own, so the host's is passed in).
+set(SFS_CODEGEN_EXECUTABLE "" CACHE FILEPATH "Host sfs-codegen (overrides the installed one)")
+if(SFS_CODEGEN_EXECUTABLE)
+    set(SFS_CODEGEN_COMMAND "${SFS_CODEGEN_EXECUTABLE}")
+elseif(EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/sfs-codegen")
+    set(SFS_CODEGEN_COMMAND "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/sfs-codegen")
+endif()
+set(SFS_CODEGEN_DEPENDS "${SFS_CODEGEN_COMMAND}")
+include("${CMAKE_CURRENT_LIST_DIR}/sfsCodegen.cmake")
+
 # Location of the engine's installed runtime assets (default font, etc.), for
 # consumers that stage them next to their executable.
 set_and_check(ENGINE_ASSET_DIR "@PACKAGE_ENGINE_INSTALL_ASSETDIR@")

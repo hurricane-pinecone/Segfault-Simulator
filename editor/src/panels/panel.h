@@ -30,6 +30,9 @@ protected:
   /** The panel's contents, between ImGui::Begin and End. */
   virtual void drawContents(EditorContext& context) = 0;
 
+  /** Called just before the panel's window begins (e.g. SetNextWindow*). */
+  virtual void beforeBegin() {}
+
   /** Window flags for this panel (default: none). */
   virtual int windowFlags() const { return 0; }
 

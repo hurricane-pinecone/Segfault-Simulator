@@ -81,6 +81,10 @@ public:
   // Every living entity, in id order (e.g. for an editor's hierarchy).
   std::vector<Entity> entities() { return m_registry.entities(); }
 
+  // Apply pending entity creation/destruction now instead of at the start of
+  // the next update (e.g. after an editor replaces the scene's contents).
+  void flushEntities() { m_registry.flushEntities(); }
+
   AssetStore& assetStore() const { return m_assetStore; }
   // The backend's renderers. Each accessor assumes the backend provides that
   // renderer: asking for one it lacks is a setup bug (e.g. a 3D scene on the
@@ -95,6 +99,15 @@ public:
 
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
+
+  // Create a GameObject bound to an existing entity (e.g. one placed in the
+  // editor): the object's entity() is already set when its onCreate runs.
+  template <typename TObject>
+  TObject& attachObject(const Entity& entity);
+
+  // attachObject for an object made elsewhere (e.g. by a script factory, with
+  // its fields already set): binds it to `entity`, then runs its onCreate.
+  GameObject& adoptObject(std::unique_ptr<GameObject> object, const Entity& entity);
 
   template <typename TObject>
   TObject* tryFindObject() const;
@@ -162,7 +175,24 @@ TObject& Scene::createObject(TArgs&&... args)
   TObject& ref = *object;
 
   m_gameObjects.push_back(std::move(object));
-  ref.onCreate(*this);
+  // Through the base, where Scene is a friend: scripts override onCreate as
+  // protected, which would otherwise be inaccessible here.
+  static_cast<GameObject&>(ref).onCreate(*this);
+
+  return ref;
+}
+
+template <typename TObject>
+TObject& Scene::attachObject(const Entity& entity)
+{
+  auto object = std::make_unique<TObject>();
+  TObject& ref = *object;
+  static_cast<GameObject&>(ref).m_entity = entity;
+
+  m_gameObjects.push_back(std::move(object));
+  // Through the base, where Scene is a friend: scripts override onCreate as
+  // protected, which would otherwise be inaccessible here.
+  static_cast<GameObject&>(ref).onCreate(*this);
 
   return ref;
 }

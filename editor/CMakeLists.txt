@@ -24,14 +24,19 @@ file(GLOB_RECURSE EDITOR_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
 
-add_executable(SfsEditor ${EDITOR_SRC})
+# ImGuizmo: the viewport's move/rotate/scale gizmos (vendored; see VENDORED.md).
+set(EDITOR_THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/lib/imguizmo/ImGuizmo.cpp")
+
+add_executable(SfsEditor ${EDITOR_SRC} ${EDITOR_THIRD_PARTY})
 
 target_include_directories(SfsEditor PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib"
 )
 
 target_link_libraries(SfsEditor PRIVATE
     sfs::engine-webgpu
+    "$<$<PLATFORM_ID:Windows>:ole32;shell32;uuid>" # the folder picker
 )
 
 target_compile_options(SfsEditor PRIVATE
@@ -43,3 +48,60 @@ set_target_properties(SfsEditor PROPERTIES
 )
 
 sfs_deploy_runtime(SfsEditor)
+
+# Export ships the player built alongside the editor.
+if(TARGET SfsPlayer)
+    add_dependencies(SfsEditor SfsPlayer)
+endif()
+
+# The Code panel's default Neovim config ships next to the executable.
+add_custom_command(TARGET SfsEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/nvim" "$<TARGET_FILE_DIR:SfsEditor>/nvim"
+    VERBATIM)
+
+# --- Building game modules ----------------------------------------------------
+# The editor compiles a project's scripts into a module with the same toolchain
+# and engine it was built with: bake those into editorBuildConfig.h.
+
+# An installed copy of this engine (headers, import libraries, CMake package)
+# for projects to build against. Refreshed whenever the engine changes.
+set(SFS_EDITOR_ENGINE_PREFIX "${CMAKE_BINARY_DIR}/sdk")
+if(TARGET engine-core) # in-tree: install the engine we just built
+    add_custom_target(engine-sdk
+        COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${SFS_EDITOR_ENGINE_PREFIX}"
+        COMMENT "Installing the engine SDK for game modules"
+        VERBATIM)
+    add_dependencies(engine-sdk engine-core engine engine-webgpu)
+    add_dependencies(SfsEditor engine-sdk)
+else() # against an installed engine: build modules against that same install
+    get_filename_component(SFS_EDITOR_ENGINE_PREFIX "${engine_DIR}/../../.." ABSOLUTE)
+endif()
+
+# A Windows editor cross-built from Linux (WSL) runs its builds back in WSL.
+if(CMAKE_CROSSCOMPILING AND WIN32 AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    set(SFS_EDITOR_BUILD_RUNNER "wsl")
+    set(SFS_EDITOR_WSL_DISTRO "$ENV{WSL_DISTRO_NAME}")
+    if(NOT SFS_EDITOR_WSL_DISTRO)
+        set(SFS_EDITOR_WSL_DISTRO "Ubuntu")
+    endif()
+else()
+    set(SFS_EDITOR_BUILD_RUNNER "native")
+    set(SFS_EDITOR_WSL_DISTRO "")
+endif()
+
+if(SFS_CODEGEN_EXECUTABLE)
+    set(SFS_EDITOR_CODEGEN "${SFS_CODEGEN_EXECUTABLE}")
+else()
+    set(SFS_EDITOR_CODEGEN "${CMAKE_BINARY_DIR}/bin/sfs-codegen")
+endif()
+set(SFS_EDITOR_TOOLCHAIN_FILE "${CMAKE_TOOLCHAIN_FILE}")
+set(SFS_EDITOR_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/build/editorBuildConfig.h.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/editorBuildConfig.h")
+target_include_directories(SfsEditor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+if(ENGINE_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(tests)
+endif()

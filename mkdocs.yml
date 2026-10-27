@@ -61,6 +61,7 @@ nav:
   - Engine core:
       - core/index.md
       - Entities, components & systems: core/ecs/index.md
+      - Reflection & codegen: core/reflection/index.md
       - Voxel terrain: core/voxel/index.md
       - Particles:
           - core/particles/index.md
@@ -70,9 +71,13 @@ nav:
           - Modding API: core/scripting/modding-api/index.md
           - Live config: core/scripting/live-config/index.md
           - Running & safety: core/scripting/running/index.md
+  - Editor:
+      - editor/index.md
+      - Game scripts: editor/scripting/index.md
   - Runtime:
       - runtime/index.md
       - Game & scenes: runtime/game-and-scenes/index.md
+      - Scene files: runtime/serialization/index.md
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md

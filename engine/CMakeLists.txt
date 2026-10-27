@@ -19,6 +19,31 @@ else()
 endif()
 message(STATUS "ENGINE_LIBRARY_TYPE=${ENGINE_LIBRARY_TYPE}")
 
+# sfs-codegen generates reflection from headers. It must run on the build
+# machine, so a native build builds it, while a cross-build (e.g. Windows from
+# WSL) uses a host copy given in SFS_CODEGEN_EXECUTABLE. Core-only and web
+# builds have no codegen (no tree-sitter), and register no engine types.
+set(SFS_CODEGEN_EXECUTABLE "" CACHE FILEPATH
+    "Host sfs-codegen to use when cross-compiling (e.g. from a native build's bin/)")
+if(ENGINE_CORE_ONLY OR ENGINE_WEB_BUILD)
+    set(SFS_CODEGEN_AVAILABLE FALSE)
+elseif(CMAKE_CROSSCOMPILING)
+    if(NOT SFS_CODEGEN_EXECUTABLE)
+        message(FATAL_ERROR
+            "Cross-compiling needs a host sfs-codegen: build the engine natively "
+            "once, then pass -DSFS_CODEGEN_EXECUTABLE=<native-build>/bin/sfs-codegen")
+    endif()
+    set(SFS_CODEGEN_COMMAND "${SFS_CODEGEN_EXECUTABLE}")
+    set(SFS_CODEGEN_DEPENDS "${SFS_CODEGEN_EXECUTABLE}")
+    set(SFS_CODEGEN_AVAILABLE TRUE)
+else()
+    add_subdirectory(tools/codegen)
+    set(SFS_CODEGEN_COMMAND sfs-codegen)
+    set(SFS_CODEGEN_DEPENDS sfs-codegen)
+    set(SFS_CODEGEN_AVAILABLE TRUE)
+endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsCodegen.cmake")
+
 # Engine DLLs go next to the executables (Windows finds DLLs beside the exe,
 # not via an rpath).
 function(sfs_engine_library_output target)
@@ -58,6 +83,32 @@ list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
 
 add_library(engine-core ${ENGINE_LIBRARY_TYPE} ${ENGINE_CORE_SRC} ${LUA_SRC})
 sfs_engine_library_output(engine-core)
+
+# [[sfs::...]] attributes are editor annotations read by sfs-codegen; compilers
+# should ignore them, for engine and game code alike (hence PUBLIC).
+target_compile_options(engine-core PUBLIC
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-attributes=sfs::>
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-attributes>
+)
+
+# Reflection for the engine's own components, generated the same way a game's
+# is. Without codegen (core-only / web) a stub registers nothing.
+if(SFS_CODEGEN_AVAILABLE)
+    set(ENGINE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/components")
+    sfs_generate_reflection(engine-core
+        MODULE engine
+        FUNCTION sfs::reflect::registerEngineTypes
+        INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        HEADERS
+            "${ENGINE_COMPONENT_DIR}/nameComponent.h"
+            "${ENGINE_COMPONENT_DIR}/transform3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
+            "${ENGINE_COMPONENT_DIR}/pointLight3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/scriptComponent.h")
+else()
+    target_sources(engine-core PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineReflection.cpp")
+endif()
 
 # Allocation tracking replaces the global operator new, which is only sound when
 # the engine and the executable are one binary (see allocationMetrics.cpp).
@@ -460,6 +511,12 @@ if(NOT ENGINE_WEB_BUILD)
 
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/engineAssets.cmake"
         DESTINATION ${CMAKE_INSTALL_DATADIR}/sfs-engine/cmake
+    )
+
+    # sfs_generate_reflection / sfs_add_game_module, for projects built against
+    # the package (included by engineConfig.cmake).
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsCodegen.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/engine
     )
 
     # The generated CMake package config (engineConfig.cmake) backs a plain

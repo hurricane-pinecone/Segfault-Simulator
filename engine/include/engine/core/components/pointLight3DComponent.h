@@ -17,9 +17,9 @@ namespace sfs
  */
 struct PointLight3DComponent
 {
-  glm::vec3 color{1.0f, 0.85f, 0.6f};
-  float intensity = 1.0f;
-  float radius = 8.0f;
+  [[sfs::color]] glm::vec3 color{1.0f, 0.85f, 0.6f};
+  [[sfs::range(0, 10)]] float intensity = 1.0f;
+  [[sfs::range(0, 100)]] float radius = 8.0f;
   glm::vec3 offset{0.0f};
 
   PointLight3DComponent() = default;

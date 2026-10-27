@@ -81,6 +81,15 @@ void Scene::update(double deltaTime)
   onUpdate(deltaTime);
 }
 
+GameObject& Scene::adoptObject(std::unique_ptr<GameObject> object, const Entity& entity)
+{
+  GameObject& ref = *object;
+  ref.m_entity = entity;
+  m_gameObjects.push_back(std::move(object));
+  ref.onCreate(*this);
+  return ref;
+}
+
 void Scene::processInput(const Input& input)
 {
   ZoneScopedN("Scene::processInput");

@@ -18,7 +18,7 @@ namespace sfs
 struct MeshRendererComponent
 {
   MeshHandle mesh;
-  glm::vec4 tint{1.0f};
+  [[sfs::color]] glm::vec4 tint{1.0f};
   bool castsShadow = true;
 
   MeshRendererComponent() = default;

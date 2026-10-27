@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/rendering/3d/aabb.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -21,6 +22,13 @@ struct Ray3D
    * @return false if the ray is parallel to the plane or points away from it.
    */
   bool intersectPlaneZ(float height, float& outDistance) const;
+
+  /**
+   * Distance along the ray to where it enters `box` (0 if it starts inside).
+   *
+   * @return false if the ray misses the box or the box is behind it.
+   */
+  bool intersectAabb(const Aabb& box, float& outDistance) const;
 };
 
 /**

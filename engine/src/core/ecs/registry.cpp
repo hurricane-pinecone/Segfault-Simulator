@@ -11,8 +11,8 @@ Entity Registry::createEntity()
 
   if (!freeEntityIds.empty())
   {
-    id = freeEntityIds.back();
-    freeEntityIds.pop_back();
+    id = *freeEntityIds.begin();
+    freeEntityIds.erase(freeEntityIds.begin());
   }
   else
   {
@@ -47,6 +47,23 @@ Entity Registry::getEntity(Entity::EntityId id)
   entity.setRegistry(this);
 
   return entity;
+}
+
+void Registry::addExistingEntities(System& system)
+{
+  const Signature& systemSignature = system.getComponentSignature();
+  for (Entity::EntityId id = 0; id < entityCount; ++id)
+  {
+    if (!entityAlive[id])
+      continue;
+
+    const Entity entity = getEntity(id);
+    if (entitiesToBeAdded.count(entity) > 0)
+      continue;
+
+    if ((entityComponentSignatures[id] & systemSignature) == systemSignature)
+      system.addEntity(entity);
+  }
 }
 
 void Registry::addEntityToSystems(const Entity& entity)
@@ -98,7 +115,7 @@ void Registry::flushEntities()
     entityAlive[id] = false;
     generations[id]++;
 
-    freeEntityIds.push_back(id);
+    freeEntityIds.insert(id);
   }
 
   entitiesToBeRemoved.clear();

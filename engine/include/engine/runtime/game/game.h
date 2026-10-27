@@ -72,6 +72,13 @@ protected:
    */
   virtual std::unique_ptr<IRenderBackend> makeRenderBackend();
 
+  /**
+   * Whether the current scene gets this frame's input. Always, by default; a
+   * host that embeds the game (the editor) passes it on only while the game's
+   * view has focus.
+   */
+  virtual bool sceneReceivesInput() const { return true; }
+
   // The active render backend, for a game that needs its concrete type (e.g. to
   // hand a WebGPU device to a scene's systems).
   IRenderBackend* renderBackend() const { return m_backend.get(); }

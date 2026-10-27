@@ -27,3 +27,7 @@ add_core_test(waterSimTests voxel/waterSimTests.cpp)
 add_core_test(meshPrimitivesTests rendering/3d/meshPrimitivesTests.cpp)
 add_core_test(camera3DTests rendering/3d/camera3DTests.cpp)
 add_core_test(cullingTests rendering/3d/cullingTests.cpp)
+# Needs the engine's generated reflection, which core-only builds lack.
+if(SFS_CODEGEN_AVAILABLE)
+    add_core_test(reflectionTests reflection/reflectionTests.cpp)
+endif()

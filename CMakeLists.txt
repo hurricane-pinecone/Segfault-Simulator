@@ -33,6 +33,7 @@ enable_testing()
 add_subdirectory(engine)
 
 if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_EDITOR)
+    add_subdirectory(player) # what the editor exports games as
     add_subdirectory(editor)
 endif()
 

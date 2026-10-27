@@ -12,6 +12,7 @@ public:
   void update();
 
   const KeyboardInput& keyboard() const;
+  KeyboardInput& keyboard();
   MouseInput& mouse();
   const MouseInput& mouse() const;
   // const GamepadInput& gamepad() const;

@@ -78,13 +78,20 @@ public:
 
 private:
   void addEntityToSystems(const Entity& entity);
+
+  // Give a newly added system the living entities that already match it
+  // (entities still pending a flush join it at that flush instead).
+  void addExistingEntities(System& system);
   void removeEntityFromSystems(const Entity& entity);
 
 private:
   uint32_t entityCount = 0;
   uint64_t nextDebugId = 1;
 
-  std::vector<uint32_t> freeEntityIds;
+  // Recycled lowest-first, so recreating a cleared set of entities (a scene
+  // reload, an undo) reproduces their ids and order exactly, whatever order
+  // they were freed in.
+  std::set<uint32_t> freeEntityIds;
   std::vector<uint64_t> entityDebugIds;
   std::vector<uint32_t> generations;
   std::vector<bool> entityAlive;
