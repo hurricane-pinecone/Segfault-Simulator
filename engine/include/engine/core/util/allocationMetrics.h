@@ -27,6 +27,13 @@ struct MemoryMetrics
 
 MemoryMetrics& getMemoryMetrics();
 
+/**
+ * Whether allocations are actually being measured. Tracking replaces the global
+ * allocator, which is only possible in a static engine build; with shared
+ * engine libraries the metrics stay at zero.
+ */
+bool memoryTrackingAvailable();
+
 MemoryTrackingPhase getMemoryTrackingPhase();
 
 class ScopedMemoryTracking

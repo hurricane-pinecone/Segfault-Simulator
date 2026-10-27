@@ -1,7 +1,20 @@
 import os
 
 from conan import ConanFile
+from conan.tools.files import copy
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
+
+
+def deploy_runtime_libraries(conanfile):
+    """Copy the shared dependencies' DLLs next to the executables
+    (<build>/bin), where Windows looks for them. Linux finds .so files through
+    the rpath CMake sets, so there is nothing to copy there."""
+    if conanfile.settings.os != "Windows":
+        return
+    destination = os.path.join(conanfile.build_folder, "bin")
+    for dependency in conanfile.dependencies.host.values():
+        for bindir in dependency.cpp_info.bindirs:
+            copy(conanfile, "*.dll", bindir, destination)
 
 
 class SfsEngineConan(ConanFile):
@@ -33,6 +46,16 @@ class SfsEngineConan(ConanFile):
         "imgui/*:with_sdl2": True,
         "imgui/*:with_opengl3": True,
         "imgui/*:with_sdlrenderer2": False,
+        # Shared, so each exists exactly once at runtime: the engine is itself
+        # a set of shared libraries (and a game module loads beside them), and
+        # a static copy linked into each would give every module its own SDL
+        # state and ImGui context.
+        "sdl/*:shared": True,
+        "sdl_image/*:shared": True,
+        "sdl_ttf/*:shared": True,
+        "sdl_mixer/*:shared": True,
+        "imgui/*:shared": True,
+        "glew/*:shared": True,
     }
 
     # Everything the package build needs; the sample game and its assets are not
@@ -56,7 +79,7 @@ class SfsEngineConan(ConanFile):
             self.requires("sdl_image/2.8.2")
             self.requires("sdl_ttf/2.22.0")
             self.requires("sdl_mixer/2.8.0")
-            self.requires("imgui/1.92.7")
+            self.requires("imgui/1.92.7-docking")
             self.requires("glew/2.2.0")
 
     def layout(self):
@@ -68,6 +91,7 @@ class SfsEngineConan(ConanFile):
         # workspace toolchain. The packaging-only flags are passed in build().
         CMakeDeps(self).generate()
         CMakeToolchain(self).generate()
+        deploy_runtime_libraries(self)
 
     def build(self):
         cmake = CMake(self)

@@ -15,6 +15,11 @@ class WebGpuContext
 public:
   bool init(SDL_Window* window);
   void configure(int width, int height);
+
+  // Configure another window's surface (e.g. an ImGui panel dragged out into
+  // its own OS window) exactly like the main one: same device, format and
+  // present mode.
+  void configureSurface(WGPUSurface surface, int width, int height) const;
   void release();
 
   WGPUInstance instance() const { return m_instance; }

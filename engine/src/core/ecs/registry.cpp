@@ -123,6 +123,15 @@ void Registry::destroyEntity(const Entity& entity)
   entitiesToBeRemoved.insert(entity);
 }
 
+std::vector<Entity> Registry::entities()
+{
+  std::vector<Entity> result;
+  for (Entity::EntityId id = 0; id < entityCount; ++id)
+    if (entityAlive[id])
+      result.push_back(getEntity(id));
+  return result;
+}
+
 bool Registry::isAlive(const Entity& entity) const
 {
   const auto id = entity.getId();

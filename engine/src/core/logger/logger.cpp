@@ -4,13 +4,58 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace sfs
 {
 
 Logger::Level Logger::logLevel = Logger::Level::DEBUG;
 Logger::Verbosity Logger::verbosity = Logger::Verbosity::MINIMAL;
+
+namespace
+{
+struct SinkRegistry
+{
+  std::mutex mutex;
+  std::vector<std::pair<Logger::SinkId, Logger::Sink>> sinks;
+  Logger::SinkId nextId = 1;
+};
+
+// Function-local so it exists before any static-initialisation-time log.
+SinkRegistry& sinkRegistry()
+{
+  static SinkRegistry registry;
+  return registry;
+}
+} // namespace
+
+Logger::SinkId Logger::addSink(Sink sink)
+{
+  SinkRegistry& registry = sinkRegistry();
+  const std::lock_guard lock(registry.mutex);
+  const SinkId id = registry.nextId++;
+  registry.sinks.emplace_back(id, std::move(sink));
+  return id;
+}
+
+void Logger::removeSink(SinkId id)
+{
+  SinkRegistry& registry = sinkRegistry();
+  const std::lock_guard lock(registry.mutex);
+  std::erase_if(registry.sinks,
+                [id](const auto& entry) { return entry.first == id; });
+}
+
+void Logger::notifySinks(Level level, const std::string& message)
+{
+  SinkRegistry& registry = sinkRegistry();
+  const std::lock_guard lock(registry.mutex);
+  for (const auto& [id, sink] : registry.sinks)
+    sink(level, message);
+}
 
 void Logger::info(const std::string& message,
                   const char* file,
@@ -20,8 +65,10 @@ void Logger::info(const std::string& message,
   if (Logger::logLevel > Logger::Level::INFO)
     return;
 
-  std::cout << formatMessage(Logger::Level::INFO, message, file, line, func)
-            << std::endl;
+  const std::string formatted =
+      formatMessage(Logger::Level::INFO, message, file, line, func);
+  std::cout << formatted << std::endl;
+  notifySinks(Logger::Level::INFO, formatted);
 }
 
 void Logger::error(const std::string& message,
@@ -32,9 +79,10 @@ void Logger::error(const std::string& message,
   if (Logger::logLevel > Logger::Level::ERROR)
     return;
 
-  std::cerr << RED
-            << formatMessage(Logger::Level::ERROR, message, file, line, func)
-            << RESET << std::endl;
+  const std::string formatted =
+      formatMessage(Logger::Level::ERROR, message, file, line, func);
+  std::cerr << RED << formatted << RESET << std::endl;
+  notifySinks(Logger::Level::ERROR, formatted);
 }
 
 void Logger::debug(const std::string& message,
@@ -45,9 +93,10 @@ void Logger::debug(const std::string& message,
   if (Logger::logLevel > Logger::Level::DEBUG)
     return;
 
-  std::cout << BLUE
-            << formatMessage(Logger::Level::DEBUG, message, file, line, func)
-            << RESET << std::endl;
+  const std::string formatted =
+      formatMessage(Logger::Level::DEBUG, message, file, line, func);
+  std::cout << BLUE << formatted << RESET << std::endl;
+  notifySinks(Logger::Level::DEBUG, formatted);
 }
 
 void Logger::debug(const char* message, std::size_t value, const char* file)

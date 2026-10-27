@@ -22,11 +22,19 @@ option(ENGINE_BUILD_SAMPLE "Build the bundled sample games" ${PROJECT_IS_TOP_LEV
 # with add_subdirectory, so the game's build doesn't compile engine tests.
 option(ENGINE_BUILD_TESTS "Build the engine test suite" ${PROJECT_IS_TOP_LEVEL})
 
+# Build the editor application (SfsEditor). Off by default when a game pulls the
+# engine in with add_subdirectory.
+option(ENGINE_BUILD_EDITOR "Build the SfsEditor application" ${PROJECT_IS_TOP_LEVEL})
+
 # Enable testing at the top level so `ctest --test-dir <build>` finds tests
 # registered in subdirectories. The engine owns its own tests (engine/tests).
 enable_testing()
 
 add_subdirectory(engine)
+
+if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_EDITOR)
+    add_subdirectory(editor)
+endif()
 
 if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_SAMPLE)
     add_subdirectory(sampleGame)

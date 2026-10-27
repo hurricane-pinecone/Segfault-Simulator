@@ -38,6 +38,9 @@ public:
   void destroyEntity(const Entity& entity);
   bool isAlive(const Entity& entity) const;
 
+  /** Every living entity, in id order (e.g. for an editor's hierarchy). */
+  std::vector<Entity> entities();
+
   void flushEntities();
 
   template <typename TComponent, typename... TArgs>

@@ -78,6 +78,9 @@ public:
   Entity getEntity(Entity::EntityId id);
   void destroyEntity(const Entity& entity);
 
+  // Every living entity, in id order (e.g. for an editor's hierarchy).
+  std::vector<Entity> entities() { return m_registry.entities(); }
+
   AssetStore& assetStore() const { return m_assetStore; }
   // The backend's renderers. Each accessor assumes the backend provides that
   // renderer: asking for one it lacks is a setup bug (e.g. a 3D scene on the

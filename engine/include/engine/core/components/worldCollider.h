@@ -30,7 +30,8 @@ struct WorldCollider
 {
   // Pixels per world tile, converting pixel offset/size to world units. Set
   // once at startup from the projection's tile width (defaults to 32px tiles).
-  inline static float pixelsPerUnit = 32.0f;
+  // Defined in engine-core, so every module sees the one value.
+  static float pixelsPerUnit;
 
   glm::vec2 offset; // pixels, from the feet
   glm::vec2 size;   // pixels

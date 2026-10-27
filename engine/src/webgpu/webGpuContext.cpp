@@ -159,6 +159,13 @@ bool WebGpuContext::init(SDL_Window* window)
 
 void WebGpuContext::configure(int width, int height)
 {
+  configureSurface(m_surface, width, height);
+}
+
+void WebGpuContext::configureSurface(WGPUSurface surface,
+                                     int width,
+                                     int height) const
+{
   WGPUSurfaceConfiguration cfg = {};
   cfg.device = m_device;
   cfg.format = m_format;
@@ -167,7 +174,7 @@ void WebGpuContext::configure(int width, int height)
   cfg.height = static_cast<uint32_t>(height);
   cfg.presentMode = m_present;
   cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
-  wgpuSurfaceConfigure(m_surface, &cfg);
+  wgpuSurfaceConfigure(surface, &cfg);
 }
 
 void WebGpuContext::release()

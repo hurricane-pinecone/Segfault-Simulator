@@ -1,8 +1,8 @@
 @PACKAGE_INIT@
 
 # Config file backing `find_package(engine)` against an installed tree. Targets
-# are exported under the sfs:: namespace (sfs::engine-core, and sfs::engine when
-# the render lib was installed).
+# are exported under the sfs:: namespace: sfs::engine-core, plus sfs::engine and
+# sfs::engine-webgpu when those libraries were installed.
 
 include(CMakeFindDependencyMacro)
 
@@ -22,7 +22,41 @@ if(@ENGINE_HAS_RENDER_LIB@)
     find_dependency(GLEW)
 endif()
 
+# engine-webgpu links the prebuilt wgpu-native library, installed alongside the
+# engine. Re-create the `webgpu` imported target its link interface names.
+if(@ENGINE_HAS_WEBGPU_LIB@ AND NOT TARGET webgpu)
+    if(WIN32)
+        add_library(webgpu SHARED IMPORTED)
+        set_target_properties(webgpu PROPERTIES
+            IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/@ENGINE_WGPU_RUNTIME_NAME@"
+            IMPORTED_IMPLIB "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@ENGINE_WGPU_IMPLIB_NAME@")
+    else()
+        add_library(webgpu SHARED IMPORTED)
+        set_target_properties(webgpu PROPERTIES
+            IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@ENGINE_WGPU_RUNTIME_NAME@"
+            IMPORTED_NO_SONAME TRUE)
+    endif()
+    set_target_properties(webgpu PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES
+            "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@/wgpu-native;${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@/wgpu-native/webgpu"
+        INTERFACE_COMPILE_DEFINITIONS WEBGPU_BACKEND_WGPU)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/engineTargets.cmake")
+
+# Stage the engine's runtime libraries next to an executable. On Windows that
+# is every DLL the engine installed (its own libraries and wgpu-native); on
+# Linux the rpath CMake records already finds them. Same name as the in-tree
+# function, so a consumer's CMake reads the same either way.
+function(sfs_deploy_runtime target)
+    if(WIN32)
+        file(GLOB engineRuntimeDlls "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/*.dll")
+        foreach(dll IN LISTS engineRuntimeDlls)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:${target}>")
+        endforeach()
+    endif()
+endfunction()
 
 # Location of the engine's installed runtime assets (default font, etc.), for
 # consumers that stage them next to their executable.

@@ -10,7 +10,9 @@ namespace
 thread_local sfs::MemoryTrackingPhase currentPhase =
     sfs::MemoryTrackingPhase::None;
 
+#if SFS_TRACK_ALLOCATIONS
 thread_local bool insideTracker = false;
+#endif
 } // namespace
 
 namespace sfs
@@ -28,6 +30,10 @@ static void setMemoryTrackingPhase(MemoryTrackingPhase phase)
 {
   currentPhase = phase;
 }
+
+bool memoryTrackingAvailable() { return SFS_TRACK_ALLOCATIONS != 0; }
+
+#if SFS_TRACK_ALLOCATIONS
 
 struct alignas(std::max_align_t) AllocationHeader
 {
@@ -59,6 +65,8 @@ static void recordFree(std::size_t size)
   metrics.current -= size;
 }
 
+#endif // SFS_TRACK_ALLOCATIONS
+
 ScopedMemoryTracking::ScopedMemoryTracking(MemoryTrackingPhase phase)
     : previousPhase(getMemoryTrackingPhase())
 {
@@ -71,6 +79,13 @@ ScopedMemoryTracking::~ScopedMemoryTracking()
 }
 
 } // namespace sfs
+
+// The global allocator replacement behind the metrics. It prefixes every block
+// with a header, so it is only sound when it is the process's sole allocator:
+// a static (single-binary) engine build. In a shared build a replacement only
+// applies inside engine-core's DLL, and memory crossing the boundary would be
+// freed by the wrong allocator, so CMake leaves SFS_TRACK_ALLOCATIONS off.
+#if SFS_TRACK_ALLOCATIONS
 
 void* operator new(std::size_t size)
 {
@@ -164,3 +179,5 @@ void operator delete[](void* memory, const std::nothrow_t&) noexcept
 {
   operator delete[](memory);
 }
+
+#endif // SFS_TRACK_ALLOCATIONS

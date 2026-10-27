@@ -166,6 +166,16 @@ void Game::processInput()
       isRunning = false;
     }
 
+    // With ImGui panels dragged out into their own OS windows, SDL only sends
+    // SDL_QUIT once the last window closes, so closing the main window must
+    // quit explicitly.
+    if (sdlEvent.type == SDL_WINDOWEVENT &&
+        sdlEvent.window.event == SDL_WINDOWEVENT_CLOSE &&
+        sdlEvent.window.windowID == SDL_GetWindowID(window))
+    {
+      isRunning = false;
+    }
+
     if (sdlEvent.type == SDL_WINDOWEVENT &&
         sdlEvent.window.event == SDL_WINDOWEVENT_SIZE_CHANGED &&
         sdlEvent.window.windowID == SDL_GetWindowID(window))
@@ -187,6 +197,12 @@ void Game::processInput()
       input.mouse().setPosition(sdlEvent.motion.x, sdlEvent.motion.y);
       // input.mouse().processDrag();
     }
+
+    // Clicks in other windows (detached ImGui panels) aren't game input.
+    if ((sdlEvent.type == SDL_MOUSEBUTTONDOWN ||
+         sdlEvent.type == SDL_MOUSEBUTTONUP) &&
+        sdlEvent.button.windowID != SDL_GetWindowID(window))
+      continue;
 
     if (sdlEvent.type == SDL_MOUSEBUTTONDOWN)
     {

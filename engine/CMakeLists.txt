@@ -7,6 +7,25 @@ endif()
 message(STATUS "ENGINE_WEB_BUILD=${ENGINE_WEB_BUILD}")
 message(STATUS "ENGINE_CORE_ONLY=${ENGINE_CORE_ONLY}")
 
+# Shared engine libraries, so an editor and a game module it loads at runtime
+# share one copy of the engine's state (component ids, logger, the active Lua
+# VM, and the SDL / ImGui instances linked into it). The web build links one
+# wasm module and stays static.
+option(ENGINE_SHARED "Build the engine libraries as shared libraries" ON)
+if(ENGINE_SHARED AND NOT ENGINE_WEB_BUILD)
+    set(ENGINE_LIBRARY_TYPE SHARED)
+else()
+    set(ENGINE_LIBRARY_TYPE STATIC)
+endif()
+message(STATUS "ENGINE_LIBRARY_TYPE=${ENGINE_LIBRARY_TYPE}")
+
+# Engine DLLs go next to the executables (Windows finds DLLs beside the exe,
+# not via an rpath).
+function(sfs_engine_library_output target)
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endfunction()
+
 # AddressSanitizer + UndefinedBehaviorSanitizer build, used by the sanitize CI
 # job. The flags apply to the engine libraries and the tests, which are the only
 # targets defined under this directory; Conan dependencies are prebuilt and stay
@@ -37,7 +56,36 @@ file(GLOB LUA_SRC "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua/*.c")
 list(FILTER LUA_SRC EXCLUDE REGEX ".*/lua\\.c$")
 list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
 
-add_library(engine-core STATIC ${ENGINE_CORE_SRC} ${LUA_SRC})
+add_library(engine-core ${ENGINE_LIBRARY_TYPE} ${ENGINE_CORE_SRC} ${LUA_SRC})
+sfs_engine_library_output(engine-core)
+
+# Allocation tracking replaces the global operator new, which is only sound when
+# the engine and the executable are one binary (see allocationMetrics.cpp).
+if(ENGINE_LIBRARY_TYPE STREQUAL "STATIC")
+    target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=1)
+else()
+    target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=0)
+endif()
+
+# Lua's POSIX build uses mkstemp for temp files instead of the unsafe tmpnam.
+if(UNIX AND NOT ENGINE_WEB_BUILD)
+    set_source_files_properties(${LUA_SRC} PROPERTIES COMPILE_DEFINITIONS LUA_USE_POSIX)
+endif()
+
+# MinGW builds link the C++ runtime statically into each binary (see the
+# windows-mingw Conan profile), but the posix-threads runtime still needs the
+# shared winpthread DLL. Ship it next to the executables.
+if(MINGW)
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libwinpthread-1.dll
+        OUTPUT_VARIABLE winpthreadDll
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(EXISTS "${winpthreadDll}")
+        file(COPY "${winpthreadDll}" DESTINATION "${CMAKE_BINARY_DIR}/bin")
+    else()
+        message(WARNING "libwinpthread-1.dll not found; executables may not start")
+    endif()
+endif()
 
 if(ENGINE_SANITIZE)
     # FastNoiseLite's hash multiply relies on signed integer overflow wrapping,
@@ -103,12 +151,13 @@ file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
 )
 
-add_library(engine STATIC
+add_library(engine ${ENGINE_LIBRARY_TYPE}
     ${ENGINE_RENDER_SRC}
     ${ENGINE_HEADERS}
 )
 
 add_library(sfs::engine ALIAS engine)
+sfs_engine_library_output(engine)
 
 target_link_libraries(engine PUBLIC engine-core)
 
@@ -211,6 +260,11 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
     )
 
+    # The backends compile into the engine, not into the (shared) imgui
+    # library, so they must not inherit its dllimport linkage (IMGUI_IMPL_API
+    # defaults to IMGUI_API). Public, because engine-webgpu calls them too.
+    target_compile_definitions(engine PUBLIC "IMGUI_IMPL_API=")
+
     target_link_libraries(engine
         PUBLIC
             SDL2::SDL2
@@ -249,10 +303,30 @@ if(NOT ENGINE_WEB_BUILD)
     file(GLOB_RECURSE ENGINE_WEBGPU_SRC CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/*.cpp")
 
-    add_library(engine-webgpu STATIC ${ENGINE_WEBGPU_SRC})
+    # Dear ImGui's WebGPU renderer backend (the SDL2 platform backend is already
+    # in `engine`). Multi-viewport rendering, which it lacks, lives in
+    # src/webgpu/imgui.
+    list(APPEND ENGINE_WEBGPU_SRC
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_wgpu.cpp")
+
+    add_library(engine-webgpu ${ENGINE_LIBRARY_TYPE} ${ENGINE_WEBGPU_SRC})
+    sfs_engine_library_output(engine-webgpu)
+
+    # Select the wgpu-native flavour of the backend's WebGPU API.
+    target_compile_definitions(engine-webgpu PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
     add_library(sfs::engine-webgpu ALIAS engine-webgpu)
 
-    target_link_libraries(engine-webgpu PUBLIC engine webgpu sdl2webgpu)
+    # sdl2webgpu is only used inside the library (surface creation), so it
+    # stays private; wgpu-native is public, as the headers expose its API.
+    target_link_libraries(engine-webgpu PUBLIC engine webgpu PRIVATE sdl2webgpu)
+
+    # Stage the engine's runtime libraries next to an executable: wgpu-native
+    # (engine DLLs already build into the shared bin/). The installed package
+    # defines the same function (engineConfig.cmake), so a consumer calls it
+    # identically in-tree and against an install.
+    function(sfs_deploy_runtime target)
+        target_copy_webgpu_binaries(${target})
+    endfunction()
 
     target_include_directories(engine-webgpu PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -306,6 +380,44 @@ if(NOT ENGINE_WEB_BUILD)
         set(ENGINE_HAS_RENDER_LIB TRUE)
     else()
         set(ENGINE_HAS_RENDER_LIB FALSE)
+    endif()
+
+    # engine-webgpu, plus the prebuilt wgpu-native library + headers, which
+    # the installed config re-creates as the `webgpu` imported target. Only
+    # the shared build installs it: sdl2webgpu is linked privately, which a
+    # shared library hides, but a static one would have to export (and its
+    # include directory points into the build tree).
+    if(TARGET engine-webgpu AND ENGINE_LIBRARY_TYPE STREQUAL "STATIC")
+        message(STATUS "engine-webgpu is not installed in a static engine build")
+    endif()
+    if(TARGET engine-webgpu AND ENGINE_LIBRARY_TYPE STREQUAL "SHARED")
+        list(APPEND ENGINE_INSTALL_TARGETS engine-webgpu)
+        set(ENGINE_HAS_WEBGPU_LIB TRUE)
+
+        get_target_property(wgpuRuntimeLib webgpu IMPORTED_LOCATION)
+        get_filename_component(wgpuRuntimeName "${wgpuRuntimeLib}" NAME)
+        get_filename_component(wgpuLibDir "${wgpuRuntimeLib}" DIRECTORY)
+        get_filename_component(wgpuRoot "${wgpuLibDir}" DIRECTORY)
+        set(ENGINE_WGPU_RUNTIME_NAME "${wgpuRuntimeName}")
+
+        if(WIN32)
+            install(FILES "${wgpuRuntimeLib}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+            get_target_property(wgpuImportLib webgpu IMPORTED_IMPLIB)
+            get_filename_component(ENGINE_WGPU_IMPLIB_NAME "${wgpuImportLib}" NAME)
+            install(FILES "${wgpuImportLib}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        else()
+            install(FILES "${wgpuRuntimeLib}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        endif()
+
+        install(DIRECTORY "${wgpuRoot}/include/"
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wgpu-native)
+        # WebGPU-distribution's webgpu.hpp wrapper and its include root.
+        get_target_property(wgpuIncludeDirs webgpu INTERFACE_INCLUDE_DIRECTORIES)
+        list(GET wgpuIncludeDirs 0 wgpuDistributionInclude)
+        install(DIRECTORY "${wgpuDistributionInclude}/"
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wgpu-native)
+    else()
+        set(ENGINE_HAS_WEBGPU_LIB FALSE)
     endif()
 
     install(TARGETS ${ENGINE_INSTALL_TARGETS}
