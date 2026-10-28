@@ -63,6 +63,7 @@ nav:
       - Entities, components & systems: core/ecs/index.md
       - Reflection & codegen: core/reflection/index.md
       - Parents & children: core/hierarchy/index.md
+      - Asset database: core/assets/index.md
       - Voxel terrain: core/voxel/index.md
       - Particles:
           - core/particles/index.md

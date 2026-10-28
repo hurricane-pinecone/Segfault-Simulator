@@ -2,6 +2,7 @@
 
 #include "project/project.h"
 
+#include "engine/core/assets/assetDatabase.h"
 #include "engine/core/ecs/entity.h"
 #include "glm/glm/ext/vector_int4.hpp"
 
@@ -49,6 +50,13 @@ struct EditorContext
 
   // The selected entity; invalid (default) when nothing is selected.
   sfs::Entity selection;
+
+  // The project's asset catalogue (its assets/ folder); null without a project.
+  sfs::AssetDatabase* assets = nullptr;
+
+  // The asset selected in the Assets panel (invalid when none). The Inspector
+  // shows it while no entity is selected; selecting an entity clears it.
+  sfs::AssetId selectedAsset;
 
   bool hasSelection() const { return selection.isValid() && selection.isAlive(); }
 };

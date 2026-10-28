@@ -165,7 +165,21 @@ bool Game::playScene(const std::filesystem::path& scene)
               ": scene files need a 3D renderer, and this game has none");
     return false;
   }
+  AssetStore& store = m_services->assetStore;
+  if (!store.database())
+  {
+    std::error_code error;
+    const std::filesystem::path assets = gameFolder() / "assets";
+    if (std::filesystem::is_directory(assets, error))
+      store.setDatabase(&m_assetDatabase.emplace(assets, AssetDatabase::Mode::ReadOnly));
+  }
   return replaceScene().play(gameFolder() / scene);
+}
+
+void Game::setAssetDatabase(const AssetDatabase* database)
+{
+  if (m_services)
+    m_services->assetStore.setDatabase(database);
 }
 
 Scene3D& Game::replaceScene()
@@ -243,6 +257,7 @@ void Game::processInput()
       continue;
 
     m_backend->imguiProcessEvent(sdlEvent);
+    onEvent(sdlEvent);
 
     if (sdlEvent.type == SDL_QUIT)
     {

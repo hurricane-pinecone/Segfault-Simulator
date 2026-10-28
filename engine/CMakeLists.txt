@@ -310,11 +310,13 @@ else()
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
     find_package(Jolt REQUIRED)
+    find_package(cgltf REQUIRED)
 
-    # Static and private: Jolt's types stay out of the engine's headers, so
-    # games and the SDK never see it. Scene3D adds physics only where it's built.
-    target_link_libraries(engine PRIVATE Jolt::Jolt)
-    target_compile_definitions(engine PRIVATE SFS_HAS_PHYSICS=1)
+    # Static and private: Jolt (physics) and cgltf (model import) stay out of
+    # the engine's headers, so games and the SDK never see them. The web build
+    # has neither, and leaves those features out.
+    target_link_libraries(engine PRIVATE Jolt::Jolt cgltf::cgltf)
+    target_compile_definitions(engine PRIVATE SFS_HAS_PHYSICS=1 SFS_HAS_MODEL_IMPORT=1)
     # Jolt's package is built for AVX2 (its defines say so) but doesn't pass on
     # the matching compiler flags; the code including its headers needs them.
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")

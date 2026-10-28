@@ -10,11 +10,15 @@
 @group(0) @binding(1) var shadowMap: texture_depth_2d;
 @group(0) @binding(2) var shadowSampler: sampler_comparison;
 
+const PI: f32 = 3.14159265;
+
 struct VertexOut {
   @builtin(position) clip: vec4f,
   @location(0) worldPosition: vec3f,
   @location(1) normal: vec3f,
   @location(2) albedo: vec3f,
+  @location(3) uv: vec2f,
+  @location(4) tintAlpha: f32,
 }
 
 @vertex
@@ -32,6 +36,8 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> VertexOut {
   out.worldPosition = world.xyz;
   out.normal = normalMatrix * vertex.normal;
   out.albedo = vertex.color * instance.tint.rgb;
+  out.uv = vertex.uv;
+  out.tintAlpha = instance.tint.a;
   return out;
 }
 
@@ -115,8 +121,61 @@ fn pointLighting(worldPosition: vec3f, normal: vec3f) -> vec3f {
   return (weightedColor / totalWeight) * capped;
 }
 
+// Sunlight glinting off the surface (GGX): sharp on smooth surfaces, broad
+// and faint on rough ones.
+fn sunSpecular(normal: vec3f, toView: vec3f, toSun: vec3f, f0: vec3f, roughness: f32) -> vec3f {
+  let ndotl = max(dot(normal, toSun), 0.0);
+  if (ndotl <= 0.0) {
+    return vec3f(0.0);
+  }
+  let halfway = normalize(toSun + toView);
+  let ndoth = max(dot(normal, halfway), 0.0);
+  let ndotv = max(dot(normal, toView), 1e-3);
+  let a = roughness * roughness;
+  let a2 = a * a;
+  let d = ndoth * ndoth * (a2 - 1.0) + 1.0;
+  let distribution = a2 / (PI * d * d);
+  let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+  let geometry = (ndotl / (ndotl * (1.0 - k) + k)) * (ndotv / (ndotv * (1.0 - k) + k));
+  let fresnel = f0 + (1.0 - f0) * pow(1.0 - max(dot(toView, halfway), 0.0), 5.0);
+  let specular = distribution * geometry * fresnel / (4.0 * ndotl * ndotv + 1e-4);
+  return min(specular * ndotl, vec3f(8.0));
+}
+
+// What a shiny surface reflects: the sky above (paling to a bright horizon)
+// and darker ground below. Rougher surfaces reflect along a direction pulled
+// toward their normal, with a softer horizon: blurred, but still bright above
+// and dark below, which is what makes rough metal read as metal.
+fn environment(normal: vec3f, toView: vec3f, roughness: f32) -> vec3f {
+  let sky = frame.sky.rgb;
+  let horizon = mix(sky, vec3f(1.0), 0.55);
+  let ground = sky * 0.3 + vec3f(0.06);
+  let reflected = reflect(-toView, normal);
+  let up = normalize(mix(reflected, normal, roughness * roughness)).z;
+  let softness = mix(0.05, 0.55, roughness);
+  let above = mix(horizon, sky, smoothstep(0.0, 0.7, up));
+  return mix(ground, above, smoothstep(-softness, softness * 0.5, up));
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
+  // Every texture read up front, where control flow is still uniform.
+  let uv = materialUv(in.uv);
+  let base = textureSample(baseTexture, materialSampler, uv);
+  let metallicRoughness = textureSample(metallicRoughnessTexture, materialSampler, uv);
+
+  var alpha = surfaceAlpha(base.a, in.tintAlpha);
+  if (material.mode.x == ALPHA_MASK) {
+    if (alpha < alphaCutoff()) {
+      discard;
+    }
+    alpha = in.tintAlpha; // what's left is solid
+  }
+
+  let albedo = in.albedo * material.baseColor.rgb * base.rgb;
+  let metallic = clamp(material.params.y * metallicRoughness.b, 0.0, 1.0);
+  let roughness = clamp(material.params.z * metallicRoughness.g, 0.04, 1.0);
+
   let normal = normalize(in.normal);
   let toSun = frame.sunDirection.xyz;
   let diffuseStrength = frame.sunDirection.w;
@@ -138,7 +197,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   var lit = mix(litLevel, shadedLevel, shade);
 
   // Cast shadows keep ambient but lose the direct sun.
-  lit = mix(shadedLevel, lit, sunVisibility(in.worldPosition, normal));
+  let visibility = sunVisibility(in.worldPosition, normal);
+  lit = mix(shadedLevel, lit, visibility);
 
   let sunlight = max(vec3f(lit) * frame.sunColor.rgb, vec3f(0.03));
 
@@ -157,5 +217,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   let shadowRoom = mix(1.0, 1.0 - smoothstep(0.65, 1.0, sunlightAmount), daylight);
 
   let total = clamp(sunlight + point * shadowRoom, vec3f(0.0), vec3f(1.0));
-  return vec4f(in.albedo * total, 1.0);
+
+  // Metal has no diffuse colour of its own: it shows what it reflects, tinted
+  // by its albedo. Paint and plastic reflect a little, more when smooth (rough
+  // ones not at all, so matte things keep the flat look above).
+  let toView = normalize(frame.cameraPosition.xyz - in.worldPosition);
+  let f0 = mix(vec3f(0.04), albedo, metallic);
+  let ndotv = max(dot(normal, toView), 1e-3);
+  let fresnel = f0 + (max(vec3f(1.0 - roughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
+  let reflectivity = mix(1.0 - roughness, 1.0, metallic);
+  // As bright as the scene's light: ambient plus some of the sun (dim at night).
+  let reflection = environment(normal, toView, roughness) * fresnel * reflectivity *
+                   mix(0.6, 1.0, visibility) * (ambient + 0.5 * diffuseStrength);
+  let glint = sunSpecular(normal, toView, toSun, f0, roughness) * frame.sunColor.rgb *
+              (diffuseStrength * visibility * reflectivity);
+
+  let color = albedo * (1.0 - metallic) * total + reflection + glint;
+  return vec4f(min(color, vec3f(1.0)), alpha);
 }

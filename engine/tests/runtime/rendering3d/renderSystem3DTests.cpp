@@ -9,6 +9,7 @@
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/iRenderer3D.h>
+#include <engine/runtime/rendering3d/meshLibrary.h>
 #include <engine/runtime/rendering3d/modules/meshModule.h>
 #include <engine/runtime/rendering3d/renderSystem3D.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -324,6 +325,93 @@ int main()
     Harness h;
     CHECK(!h.system.meshes().add(MeshData{}).valid());
     CHECK(h.system.meshes().size() == 0u);
+  }
+
+  TEST("objects with their own materials should batch apart, uploading each once")
+  {
+    Harness h;
+    MeshLibrary::Provider provider;
+    int loads = 0;
+    provider.loadMaterial = [&loads](std::string_view name) -> std::shared_ptr<const MeshMaterial>
+    {
+      ++loads;
+      return name == "wood" ? std::make_shared<MeshMaterial>() : nullptr;
+    };
+    h.system.meshes().setProvider(provider);
+
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    h.spawn(box, {0.0f, -2.0f, 0.0f});
+    for (const float y : {0.0f, 2.0f})
+      h.spawn(box, {0.0f, y, 0.0f}).getComponent<MeshRendererComponent>().materials = {"wood"};
+    // A missing material, or an empty slot, is the mesh's own: batches with the first.
+    h.spawn(box, {0.0f, 4.0f, 0.0f}).getComponent<MeshRendererComponent>().materials = {"missing"};
+    h.spawn(box, {0.0f, 6.0f, 0.0f}).getComponent<MeshRendererComponent>().materials = {""};
+
+    h.frame();
+    h.frame();
+
+    CHECK(h.renderer.batches.size() == 2u);
+    const auto wood = std::find_if(h.renderer.batches.begin(),
+                                   h.renderer.batches.end(),
+                                   [](const auto& batch) { return !batch.materials.empty(); });
+    CHECK(wood != h.renderer.batches.end());
+    if (wood != h.renderer.batches.end())
+    {
+      CHECK(wood->instances == 2u);
+      CHECK(wood->materials.size() == 1u);
+    }
+    CHECK(h.renderer.liveMaterials.size() == 1u);
+    CHECK(loads == 2); // wood and missing, each asked for once
+  }
+
+  TEST("reloading a material should update it in place")
+  {
+    Harness h;
+    MeshLibrary::Provider provider;
+    provider.loadMaterial = [](std::string_view) { return std::make_shared<const MeshMaterial>(); };
+    h.system.meshes().setProvider(provider);
+    const MaterialHandle wood = h.system.meshes().material("wood");
+    h.system.meshes().reloadMaterial("wood");
+    CHECK(h.system.meshes().material("wood") == wood);
+    CHECK(h.renderer.materialUpdates == 1);
+    h.system.meshes().reloadMaterial("never loaded"); // ignored
+    CHECK(h.renderer.materialUpdates == 1);
+  }
+
+  TEST("a mesh's sections should be its material slots")
+  {
+    Harness h;
+    MeshData model = meshes::box({1, 1, 1});
+    MeshMaterial red;
+    red.baseColor = {1, 0, 0, 1};
+    model.sections = {{0, 18, MeshMaterial{}, "Wood"}, {18, 18, red, "Roof"}};
+    const MeshHandle barn = h.system.meshes().add(model);
+    const std::vector<MeshSection> slots = h.system.meshes().sections(barn);
+    CHECK(slots.size() == 2u);
+    if (slots.size() == 2u)
+    {
+      CHECK(slots[0].name == "Wood");
+      CHECK(slots[1].material.baseColor.r == 1.0f);
+    }
+    // No sections: one slot, the default material.
+    CHECK(h.system.meshes().sections(h.system.meshes().add(meshes::box({1, 1, 1}))).size() == 1u);
+    CHECK(h.system.meshes().sections(MeshHandle{999}).empty());
+  }
+
+  TEST("materials should be freed with the render system")
+  {
+    MockRenderer3D renderer;
+    {
+      AssetStore store;
+      Scene scene{0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
+      RenderSystem3D& system = scene.addSystem<RenderSystem3D>(renderer);
+      MeshLibrary::Provider provider;
+      provider.loadMaterial = [](std::string_view) { return std::make_shared<const MeshMaterial>(); };
+      system.meshes().setProvider(provider);
+      CHECK(system.meshes().material("wood").valid());
+      CHECK(renderer.liveMaterials.size() == 1u);
+    }
+    CHECK(renderer.liveMaterials.empty());
   }
 
   return testing::report("renderSystem3DTests");

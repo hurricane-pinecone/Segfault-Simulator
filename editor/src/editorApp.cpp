@@ -81,7 +81,7 @@ void EditorApp::onSetup()
   auto codePanel = std::make_unique<CodePanel>(m_environment);
   m_codePanel = codePanel.get();
   m_panels.push_back(std::move(codePanel));
-  m_panels.push_back(std::make_unique<AssetBrowserPanel>(AssetBrowserPanel::Actions{
+  auto assetPanel = std::make_unique<AssetBrowserPanel>(AssetBrowserPanel::Actions{
       .openScene = [this](const std::filesystem::path& path) { openScene(path); },
       .openText = [this](const std::filesystem::path& path) { m_codePanel->openFile(path); },
       .newScript =
@@ -90,7 +90,9 @@ void EditorApp::onSetup()
         m_dialogScriptKind = kind;
         m_dialogScriptName.clear();
         m_requestedDialog = Dialog::NewScript;
-      }}));
+      }});
+  m_assetPanel = assetPanel.get();
+  m_panels.push_back(std::move(assetPanel));
 
   createScene();
 
@@ -565,6 +567,16 @@ void EditorApp::projectOpened()
     stop();
   m_context.project->ensureBuildFiles();
 
+  // The project's asset catalogue; scanning gives new files their .meta.
+  std::error_code error;
+  std::filesystem::create_directories(m_context.project->assetsFolder(), error);
+  m_context.assets = nullptr;
+  m_context.selectedAsset = {};
+  setAssetDatabase(nullptr);
+  m_assets.emplace(m_context.project->assetsFolder());
+  m_context.assets = &*m_assets;
+  setAssetDatabase(&*m_assets);
+
   // Load the last built module first, so scenes using its components load.
   loadExistingModule();
 
@@ -699,6 +711,23 @@ void EditorApp::play()
   m_history.setEnabled(false); // play-mode changes are discarded on Stop
   LOG_INFO("Playing");
   updateWindowTitle();
+}
+
+void EditorApp::onEvent(const SDL_Event& event)
+{
+  if (event.type != SDL_DROPFILE)
+    return;
+  // SDL hands over the path string; it must be freed.
+  const std::unique_ptr<char, decltype(&SDL_free)> file(event.drop.file, SDL_free);
+  if (!m_assets || !file)
+    return;
+  const std::filesystem::path folder = m_assetPanel ? m_assetPanel->importFolder() : std::filesystem::path();
+  if (const std::optional<sfs::AssetId> id = m_assets->import(file.get(), folder))
+  {
+    LOG_INFO("Imported " + m_assets->find(*id)->path.generic_string());
+    m_context.selectedAsset = *id;
+    m_context.selection = {};
+  }
 }
 
 sfs::Game::SceneView EditorApp::sceneView() const

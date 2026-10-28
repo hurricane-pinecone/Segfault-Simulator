@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/rendering/3d/mesh.h"
+#include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/sceneManager/scene.h"
 
 #include <filesystem>
@@ -18,6 +19,10 @@ class RenderSystem3D;
  * meshes, the built-in primitive meshes (saved by name as "builtin:cube" etc.)
  * plus those the loaded game module's MeshSources build, and the game systems
  * the scene runs when it plays.
+ *
+ * Meshes come from the built-ins, MeshSource scripts and model assets (loaded
+ * on first use through the scene's AssetStore, once it has the project's
+ * AssetDatabase).
  *
  * The editor edits one of these and an exported game plays one, so a scene
  * looks and behaves the same in both. play() loads a scene file and starts
@@ -71,6 +76,10 @@ protected:
   void onUpdate(double deltaTime) override;
 
 private:
+  // Model, material and texture assets (asset:<id> names) for the scene's mesh
+  // library.
+  MeshLibrary::Provider modelMeshes();
+
   RenderSystem3D* m_render = nullptr;
   std::vector<std::string> m_gameSystems;
 

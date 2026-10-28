@@ -1,7 +1,10 @@
 #include "engine/runtime/assetStore/assetStore.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/3d/material.h"
 #include "engine/core/util/string.h"
+#include "engine/runtime/assetStore/modelImporter.h"
+#include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "glm/glm/exponential.hpp"
 
@@ -24,9 +27,117 @@ void AssetStore::clearAssets()
   m_sprites.clear();
   m_spriteNameToId.clear();
   m_fonts.clear();
+  m_models.clear();
+  m_textures.clear();
+  m_materials.clear();
 
   LOG_DEBUG("Asset store cleared.");
 }
+
+void AssetStore::setDatabase(const AssetDatabase* database)
+{
+  if (database != m_database)
+  {
+    m_models.clear();
+    m_textures.clear();
+    m_materials.clear();
+  }
+  m_database = database;
+}
+
+const ModelData* AssetStore::model(const AssetId& id)
+{
+  if (const auto it = m_models.find(id); it != m_models.end())
+    return it->second ? &*it->second : nullptr;
+
+  const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
+  std::optional<ModelData> loaded;
+  if (!record)
+    LOG_ERROR("No model asset with id " + id.toString());
+  else if (record->kind != AssetKind::Model)
+    LOG_ERROR(record->path.generic_string() + " isn't a model");
+  else
+    loaded = importModel(m_database->absolutePath(*record), ModelImportSettings::fromJson(record->settings));
+
+  const auto [it, inserted] = m_models.emplace(id, std::move(loaded));
+  return it->second ? &*it->second : nullptr;
+}
+
+const ModelData* AssetStore::loadedModel(const AssetId& id) const
+{
+  const auto it = m_models.find(id);
+  return it != m_models.end() && it->second ? &*it->second : nullptr;
+}
+
+void AssetStore::forgetModel(const AssetId& id) { m_models.erase(id); }
+
+std::shared_ptr<const TextureData> AssetStore::texture(const AssetId& id)
+{
+  if (const auto it = m_textures.find(id); it != m_textures.end())
+    return it->second;
+
+  const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
+  std::shared_ptr<const TextureData> loaded;
+  if (!record)
+    LOG_ERROR("No texture asset with id " + id.toString());
+  else if (record->kind != AssetKind::Texture)
+    LOG_ERROR(record->path.generic_string() + " isn't a texture");
+  else
+    loaded = importTexture(m_database->absolutePath(*record), TextureImportSettings::fromJson(record->settings));
+  return m_textures.emplace(id, std::move(loaded)).first->second;
+}
+
+std::shared_ptr<const MeshMaterial> AssetStore::material(const AssetId& id)
+{
+  if (const auto it = m_materials.find(id); it != m_materials.end())
+    return it->second;
+
+  const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
+  std::shared_ptr<MeshMaterial> loaded;
+  if (!record)
+    LOG_ERROR("No material asset with id " + id.toString());
+  else if (record->kind != AssetKind::Material)
+    LOG_ERROR(record->path.generic_string() + " isn't a material");
+  else
+  {
+    std::ifstream in(m_database->absolutePath(*record));
+    const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+    if (const std::optional<MaterialAsset> asset = MaterialAsset::fromJson(json))
+    {
+      // Textures by asset name: "asset:<id>".
+      const auto texture = [this](const std::string& name) -> std::shared_ptr<const TextureData>
+      {
+        constexpr std::string_view prefix = "asset:";
+        if (!name.starts_with(prefix))
+          return nullptr;
+        const std::optional<AssetId> textureId = AssetId::parse(std::string_view(name).substr(prefix.size()));
+        return textureId ? this->texture(*textureId) : nullptr;
+      };
+      loaded = std::make_shared<MeshMaterial>();
+      loaded->baseColor = asset->baseColor;
+      loaded->baseTexture = texture(asset->baseTexture);
+      loaded->metallicRoughnessTexture = texture(asset->metallicRoughnessTexture);
+      if (loaded->metallicRoughnessTexture && !loaded->metallicRoughnessTexture->linear)
+      {
+        // Read as data, not colour.
+        auto linear = std::make_shared<TextureData>(*loaded->metallicRoughnessTexture);
+        linear->linear = true;
+        loaded->metallicRoughnessTexture = std::move(linear);
+      }
+      loaded->tiling = asset->tiling;
+      loaded->offset = asset->offset;
+      loaded->metallic = asset->metallic;
+      loaded->roughness = asset->roughness;
+      loaded->alphaMode = asset->alphaMode;
+      loaded->alphaCutoff = asset->alphaCutoff;
+    }
+    else
+      LOG_ERROR("Can't read the material " + record->path.generic_string());
+  }
+  return m_materials.emplace(id, std::move(loaded)).first->second;
+}
+
+void AssetStore::forgetMaterial(const AssetId& id) { m_materials.erase(id); }
 
 void AssetStore::addTexture(const std::string& assetId,
                             const std::string& filePath)

@@ -34,12 +34,30 @@ void MeshModule::computeCommands(const RenderContext3D& context)
     if (!visible && !castsShadow)
       continue;
 
-    const auto [it, inserted] =
-        m_commandIndex.try_emplace(renderer.mesh.id, m_commands.size());
-    if (inserted)
-      m_commands.push_back(MeshDrawCommand{.mesh = renderer.mesh});
+    // One command per mesh and set of materials: those draw as one instanced
+    // batch.
+    m_materials.clear();
+    for (const std::string& name : renderer.materials)
+      m_materials.push_back(context.meshes->material(name));
+    while (!m_materials.empty() && !m_materials.back().valid())
+      m_materials.pop_back(); // trailing "own material" slots change nothing
+    std::size_t key = std::hash<uint32_t>()(renderer.mesh.id);
+    for (const MaterialHandle material : m_materials)
+      key = key * 1000003u ^ material.id;
+    const auto matches = [&](const MeshDrawCommand& command)
+    { return command.mesh == renderer.mesh && command.materials == m_materials; };
 
-    MeshDrawCommand& command = m_commands[it->second];
+    auto [first, last] = m_commandIndex.equal_range(key);
+    while (first != last && !matches(m_commands[first->second]))
+      ++first;
+    const std::size_t index = first != last ? first->second : m_commands.size();
+    if (first == last)
+    {
+      m_commandIndex.emplace(key, index);
+      m_commands.push_back(MeshDrawCommand{.mesh = renderer.mesh, .materials = m_materials});
+    }
+
+    MeshDrawCommand& command = m_commands[index];
     const MeshInstance instance{model, renderer.tint};
     if (visible)
       command.instances.push_back(instance);

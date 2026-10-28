@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace sfs
 {
@@ -29,9 +30,10 @@ public:
 private:
   Registry* m_registry = nullptr;
 
-  // Mesh id -> index into m_commands, rebuilt each frame (kept to reuse its
-  // buckets).
-  std::unordered_map<uint32_t, std::size_t> m_commandIndex;
+  // Hash of (mesh, materials) -> index into m_commands, rebuilt each frame
+  // (kept to reuse its buckets).
+  std::unordered_multimap<std::size_t, std::size_t> m_commandIndex;
+  std::vector<MaterialHandle> m_materials; // scratch: one entity's
 };
 
 } // namespace sfs

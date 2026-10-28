@@ -46,6 +46,12 @@ Colliders turn and scale with the entity. A sphere scales by the entity's
 largest scale axis, so it stays round. An entity may have one of each kind; they
 combine into one shape.
 
+In the editor, a collider added to an entity with a mesh starts out fitted to
+the bounds of its mesh and its children's (so one on a group covers the group),
+and **Fit to Mesh** on the collider refits it (after the meshes or their sizes
+change). A flat mesh, such as the built-in plane, gets a 0.1 m thick slab under
+its surface.
+
 `RigidBody3DComponent` fields: `mass` (kg), `kinematic`, `friction`,
 `bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats) and
 `lockRotation` (never tips over, e.g. a character).

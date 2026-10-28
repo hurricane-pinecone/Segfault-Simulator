@@ -2,6 +2,8 @@
 
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/3d/meshPrimitives.h"
+#include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 #include "engine/runtime/rendering3d/modules/meshModule.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
@@ -72,6 +74,80 @@ void Scene3D::onInit()
   for (const ScriptType& script : scripts().types())
     if (script.kind == ScriptType::Kind::MeshSource && script.buildMeshes)
       script.buildMeshes(library);
+
+  library.setProvider(modelMeshes());
+}
+
+MeshLibrary::Provider Scene3D::modelMeshes()
+{
+  // Model assets, through the asset store (which imports each file once, for
+  // every scene); each scene uploads its own copy of the meshes it uses.
+  AssetStore& store = assetStore();
+  MeshLibrary::Provider provider;
+
+  provider.load = [&store](MeshLibrary& library, std::string_view name) -> MeshHandle
+  {
+    const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+    const ModelData* model = asset ? store.model(asset->model) : nullptr;
+    if (!model)
+      return {};
+    if (asset->part.empty())
+      return library.add(model->whole, std::string(name));
+    for (const ModelPart& part : model->parts)
+      if (part.name == asset->part)
+        return library.add(part.mesh, std::string(name));
+    return {};
+  };
+
+  provider.label = [&store](std::string_view name) -> std::string
+  {
+    const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+    const AssetRecord* record =
+        asset && store.database() ? store.database()->find(asset->model) : nullptr;
+    if (!record)
+      return {};
+    return record->path.generic_string() + (asset->part.empty() ? "" : " : " + asset->part);
+  };
+
+  provider.loadMaterial = [&store](std::string_view name) -> std::shared_ptr<const MeshMaterial>
+  {
+    const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+    return asset && asset->part.empty() ? store.material(asset->model) : nullptr;
+  };
+
+  // Every asset of a kind, by name and path.
+  const auto assetsOf = [&store](AssetKind kind)
+  {
+    std::vector<std::pair<std::string, std::string>> out;
+    if (store.database())
+      for (const AssetRecord& record : store.database()->records())
+        if (record.kind == kind && record.id.valid())
+          out.emplace_back(assetMeshName(record.id), record.path.generic_string());
+    return out;
+  };
+  provider.materials = [assetsOf] { return assetsOf(AssetKind::Material); };
+  provider.textures = [assetsOf] { return assetsOf(AssetKind::Texture); };
+
+  provider.available = [&store]
+  {
+    // Every model file, and the parts of those already loaded (listing parts
+    // means reading the file, which only choosing it should cost).
+    std::vector<std::pair<std::string, std::string>> out;
+    if (!store.database())
+      return out;
+    for (const AssetRecord& record : store.database()->records())
+    {
+      if (record.kind != AssetKind::Model || !record.id.valid())
+        continue;
+      const std::string path = record.path.generic_string();
+      out.emplace_back(assetMeshName(record.id), path);
+      if (const ModelData* model = store.loadedModel(record.id))
+        for (const ModelPart& part : model->parts)
+          out.emplace_back(assetMeshName(record.id, part.name), path + " : " + part.name);
+    }
+    return out;
+  };
+  return provider;
 }
 
 MeshHandle Scene3D::builtinMesh(BuiltinMesh mesh) const

@@ -27,6 +27,7 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
       {"Quat", "glm::quat"},
       {"Mesh", "sfs::MeshHandle"},
       {"Json", "nlohmann::json"},
+      {"StringList", "std::vector<std::string>"},
   };
   return types;
 }
@@ -129,6 +130,10 @@ void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel&
     out << "      field.attributes.color = true;\n";
   if (field.script)
     out << "      field.attributes.script = true;\n";
+  if (field.texture)
+    out << "      field.attributes.texture = true;\n";
+  if (field.materials)
+    out << "      field.attributes.materials = true;\n";
   if (field.range)
     out << "      field.attributes.hasRange = true;\n"
         << "      field.attributes.min = static_cast<float>(" << field.range->first
@@ -277,7 +282,7 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
   for (const TypeModel& type : types)
     out << "#include \"" << includePath(type.header, options.includeRoot) << "\"\n";
   out << "\n#include <cstdint>\n#include <memory>\n#include <string>\n#include <type_traits>\n"
-      << "#include <utility>\n\n";
+      << "#include <utility>\n#include <vector>\n\n";
 
   emitAccessTags(out, types);
 

@@ -24,6 +24,7 @@
 //
 // Play builds the project's scripts into its game module, reloads it, and runs
 // the scene's scripts; Stop restores the scene as it was before Play.
+class AssetBrowserPanel;
 class CodePanel;
 
 class EditorApp : public sfs::Game
@@ -46,6 +47,8 @@ protected:
   std::filesystem::path gameFolder() const override;
   sfs::Scene3D& replaceScene() override;
   bool ownsWindow() const override { return false; }
+  // Files dropped onto the window are imported into the Assets panel's folder.
+  void onEvent(const SDL_Event& event) override;
 
 private:
   void drawMenuBar();
@@ -102,6 +105,8 @@ private:
 
   EditorContext m_context;
   std::optional<SceneDocument> m_document;
+  std::optional<sfs::AssetDatabase> m_assets; // the open project's assets/
+  AssetBrowserPanel* m_assetPanel = nullptr;  // owned by m_panels
   EditorHistory m_history{m_context};
   BuildEnvironment m_environment = BuildEnvironment::current();
   ModuleBuilder m_builder{m_environment};

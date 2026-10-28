@@ -85,6 +85,9 @@ protected:
   virtual void onInit(){};
   virtual void onSetup(){};
   virtual void onProcessInput(const Input& input){};
+  // Every SDL event, as it's polled (before the game's own input handling),
+  // e.g. for files dropped onto the window.
+  virtual void onEvent(const SDL_Event& event){};
   virtual void onUpdate(double deltaTime){};
   virtual void onRender(){};
   // App-level debug UI, drawn inside the engine's ImGui frame (native debug
@@ -146,6 +149,13 @@ protected:
   virtual std::filesystem::path gameFolder() const { return std::filesystem::current_path(); }
 
   /**
+   * The asset catalogue scenes load assets by id from (null for none). Without
+   * one, playScene() opens gameFolder()/assets read-only, as a shipped game
+   * needs; a host with its own (the editor's read-write one) sets it here.
+   */
+  void setAssetDatabase(const AssetDatabase* database);
+
+  /**
    * Destroy the current scene and create the new, current one a scene file is
    * played into. A plain Scene3D by default; a host with its own kind of scene
    * (the editor) makes that instead.
@@ -194,6 +204,8 @@ private:
   std::unique_ptr<IRenderBackend> m_backend;
   // Drawing/asset services the active backend supplies; non-owning.
   SceneServices* m_services = nullptr;
+  // The shipped game's own assets/ catalogue, opened by playScene().
+  std::optional<AssetDatabase> m_assetDatabase;
 
   // Backtick-toggled Lua console, drawn over the frame (native builds only).
   DevConsole m_console;

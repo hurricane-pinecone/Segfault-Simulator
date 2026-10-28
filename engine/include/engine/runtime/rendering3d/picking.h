@@ -4,6 +4,7 @@
 #include "engine/core/rendering/3d/aabb.h"
 #include "engine/core/rendering/3d/camera3D.h"
 
+#include <cstddef>
 #include <optional>
 
 namespace sfs
@@ -36,5 +37,19 @@ struct PickHit
  * standing on a large floor is picked over the floor.
  */
 std::optional<PickHit> pickEntity(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray);
+
+struct SurfaceHit
+{
+  Entity entity;
+  std::size_t section = 0; // the mesh section (material slot) hit
+  float distance = 0.0f;
+};
+
+/**
+ * The mesh surface under a ray: the nearest triangle of any entity's mesh,
+ * exact where pickEntity uses bounds. For dropping things onto objects, e.g. a
+ * material onto the part of a model under the cursor.
+ */
+std::optional<SurfaceHit> pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray);
 
 } // namespace sfs

@@ -27,8 +27,12 @@ void addQuad(MeshData& mesh,
   const glm::vec3 normal = glm::normalize(glm::cross(b - a, c - a));
   const auto base = static_cast<uint32_t>(mesh.vertices.size());
 
-  for (const glm::vec3& p : {a, b, c, d})
-    mesh.vertices.push_back({p, normal, color});
+  // a..d go counter-clockwise from the bottom left, so the image sits upright
+  // on each face.
+  const glm::vec2 uvs[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+  const glm::vec3 corners[4] = {a, b, c, d};
+  for (int i = 0; i < 4; ++i)
+    mesh.vertices.push_back({corners[i], normal, color, uvs[i]});
 
   mesh.indices.insert(mesh.indices.end(),
                       {base, base + 1, base + 2, base, base + 2, base + 3});

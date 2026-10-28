@@ -168,7 +168,7 @@ void RenderSystem3D::submit(const MeshDrawCommand& command)
     return;
 
   m_renderer.drawMesh(
-      MeshBatch3D{command.mesh, command.instances, command.shadowInstances});
+      MeshBatch3D{command.mesh, command.materials, command.instances, command.shadowInstances});
 
   m_stats.drawCalls += 1;
   m_stats.instances += command.instances.size();

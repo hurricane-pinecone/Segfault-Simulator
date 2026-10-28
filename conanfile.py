@@ -84,6 +84,8 @@ class SfsEngineConan(ConanFile):
             # 3D physics (rigid bodies, colliders, raycasts) behind PhysicsSystem3D.
             # Static and private to the engine library: no game module sees it.
             self.requires("joltphysics/5.2.0")
+            # glTF model import (AssetStore::model). Private to the engine library.
+            self.requires("cgltf/1.15")
             # sfs-codegen parses game/engine headers to generate reflection.
             self.requires("tree-sitter/0.24.3")
             self.requires("tree-sitter-cpp/0.23.4")
@@ -153,6 +155,7 @@ class SfsEngineConan(ConanFile):
                 "imgui::imgui",
                 "glew::glew",
                 "joltphysics::joltphysics",
+                "cgltf::cgltf",
             ]
             if self.settings.os == "Macos":
                 rt.frameworks = ["OpenGL"]

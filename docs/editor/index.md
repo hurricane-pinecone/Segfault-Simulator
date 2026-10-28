@@ -52,7 +52,7 @@ Scene files are plain JSON and diff cleanly. See
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name and components, with **Add Component**. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
-| Assets | The project's `scenes/`, `scripts/` and `assets/` folders. Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
+| Assets | The project's `scenes/`, `scripts/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
 
@@ -75,6 +75,48 @@ without a mesh can be seen and clicked. These overlays are editor-only: exported
 games never draw them, and during Play the viewport hides them so it looks like
 the game. Tick **Gizmos** during Play to see them (and move things) anyway; the
 editing and Play settings are remembered separately.
+
+## Assets
+
+Everything under `assets/` is managed by the project's
+[asset database](../core/assets/index.md): each file has a stable id in a
+`.meta` file beside it, and the Assets panel keeps the two together.
+
+| Action | Result |
+| --- | --- |
+| Click an asset | The Inspector shows its kind, path, size and id |
+| Drag an asset or folder onto a folder (in the tree, the contents or the breadcrumbs) | Moves it |
+| Right-click → Rename, or F2 | Renames it in place; leaving the extension off keeps the old one |
+| Right-click → Delete... | Deletes it (and a folder's contents) after asking |
+| Right-click a folder, or empty space → New Folder | Type a name and press Enter |
+| Drop files from Explorer onto the editor window | Imports copies into the open folder (or `assets/` itself) |
+| Right-click a folder, or empty space → New Material | A material asset to edit in the Inspector |
+
+Models (`.glb`, `.gltf`) appear in a Mesh Renderer's **Mesh** list, under
+*Assets*; picking one loads it. The scene refers to it by id, so it stays
+attached when the file is moved or renamed.
+
+Selecting a material asset (`.mat`) edits it in the Inspector: base colour,
+texture, tiling and offset (how often the texture repeats, and where it
+starts), metal, roughness and transparency. Every change is saved and shows in
+the scene straight away.
+
+A Mesh Renderer lists its mesh's **Materials**, one slot per section (a model
+has one per material it was made with). Each slot shows the mesh's own
+material until you pick a material asset for it.
+
+To texture something, drag a texture from the Assets panel onto it in the
+viewport (onto the part you want, for a model with several materials), or
+onto a slot in the Inspector. That makes a material for the texture in
+`materials/` (or reuses the one it made before) and puts it in the slot.
+Dragging a material works the same way.
+
+A model's own materials live inside its file. To change one (make the barn's
+roof red, say), right-click its slot → **Extract to Edit**: that saves it,
+with its textures, as a material asset in `materials/` and uses it there.
+
+Commit the `.meta` files along with the assets. A file moved outside the
+editor without its `.meta` gets a new id.
 
 ## Parents and children
 

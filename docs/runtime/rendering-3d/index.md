@@ -121,8 +121,13 @@ onto visible ground.
 | Field | Meaning |
 | --- | --- |
 | `mesh` | The uploaded mesh |
-| `tint` | Multiplies the mesh's vertex colours |
+| `materials` | A material for each of the mesh's sections (material slots), in order, in place of its own (`"asset:<id>"` of a material asset); empty entries, and slots past the end, keep the mesh's own |
+| `tint` | Multiplies the mesh's colours. Alpha below 1 makes the object see-through. |
 | `castsShadow` | Whether it blocks the sun. Turn it off for ground planes. |
+
+Objects sharing a mesh and materials draw as one instanced batch. See-through
+things (glass materials, and objects with a faded tint) draw after everything
+solid, back to front, one at a time, so keep their numbers modest.
 
 ## Camera
 

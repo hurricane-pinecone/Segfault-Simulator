@@ -45,6 +45,9 @@ add_runtime_test(isometricWaterTests rendering/modules/isometricWaterTests.cpp)
 add_runtime_test(spriteShadowTests rendering/modules/spriteShadowTests.cpp)
 add_runtime_test(isometricDecalSinkTests rendering/modules/isometricDecalSinkTests.cpp)
 
+# assetStore/
+add_runtime_test(modelImporterTests assetStore/modelImporterTests.cpp)
+
 # rendering3d/
 add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)
 add_runtime_test(pickingTests rendering3d/pickingTests.cpp)

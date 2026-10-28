@@ -48,11 +48,15 @@ struct FrameParams3D
  * One mesh's draws for a frame. `instances` are the copies the camera can see
  * (drawn lit); `shadowInstances` are the copies that cast into the sun's
  * shadow map. They differ because an object just off screen can still throw a
- * shadow onto visible ground.
+ * shadow onto visible ground. An instance whose tint alpha is below 1 is drawn
+ * see-through.
  */
 struct MeshBatch3D
 {
   MeshHandle mesh;
+  // A material for each of the mesh's sections, in order, in place of its own;
+  // an invalid handle (or none, past the end) keeps the section's own.
+  std::span<const MaterialHandle> materials;
   std::span<const MeshInstance> instances;
   std::span<const MeshInstance> shadowInstances;
 };

@@ -56,6 +56,8 @@ warning for that namespace.
 | `[[sfs::hide]]` | Don't reflect this public field |
 | `[[sfs::show]]` | Reflect this private or protected field |
 | `[[sfs::script]]` | Edit a `std::string` as a picker of game object scripts |
+| `[[sfs::texture]]` | Edit a `std::string` as a picker of the project's texture assets (saved as `asset:<id>`) |
+| `[[sfs::materials]]` | Edit a `std::vector<std::string>` as a material picker for each section of the component's mesh field |
 
 `[[sfs::show]]` works on private fields without making your class `friend` the
 engine. The generated code reaches the member through an explicit template
@@ -73,6 +75,7 @@ instantiation, which the C++ standard exempts from access checks.
 | `glm::vec2` / `vec3` / `vec4` | Vector drags (or a colour picker) |
 | `glm::quat` | Euler angles in degrees |
 | `sfs::MeshHandle` | Mesh picker; saved by mesh name |
+| `std::vector<std::string>` | Not shown unless an attribute says how; saved as a JSON array |
 | `nlohmann::json` | Not shown; saved as-is (free-form data, such as a script component's per-entity field values) |
 
 A field of any other type, including pointers, references and containers, is

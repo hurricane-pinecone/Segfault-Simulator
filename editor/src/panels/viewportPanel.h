@@ -3,6 +3,7 @@
 #include "camera/viewportCamera.h"
 #include "panels/panel.h"
 
+#include "engine/runtime/rendering3d/picking.h"
 #include "engine/webgpu/webGpuRenderTarget.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 
@@ -65,8 +66,19 @@ private:
   // True while the gizmo is hovered or dragging (so clicks don't pick).
   bool drawGizmo(EditorContext& context, const View& view);
   void pick(EditorContext& context, const View& view);
+  // A texture or material dragged from the Assets panel onto an object: into
+  // the material slot of the part under the cursor.
+  void dropAsset(EditorContext& context, const View& view);
   void navigate(EditorContext& context, float viewportHeight);
   void drawSelectionOutline(const EditorContext& context, const View& view) const;
+  // An entity's bounds as a box outline.
+  void drawOutline(const EditorContext& context,
+                   const View& view,
+                   const sfs::Entity& entity,
+                   ImU32 color,
+                   float thickness) const;
+  // What a drag would land on: its object outlined, and named by the cursor.
+  void drawDropTarget(const EditorContext& context, const View& view, const sfs::SurfaceHit& hit) const;
   void drawLightIcons(const EditorContext& context, const View& view) const;
   void drawCameraIcons(const EditorContext& context, const View& view) const;
   void drawColliders(const EditorContext& context, const View& view) const;

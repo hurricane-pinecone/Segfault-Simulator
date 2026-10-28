@@ -24,6 +24,7 @@ enum class FieldKind : uint8_t
   Quat,   // glm::quat
   Mesh,   // MeshHandle (saved by mesh name)
   Json,   // nlohmann::json: free-form data, saved as-is; not edited directly
+  StringList, // std::vector<std::string>
 };
 
 /** Editor hints for a field, from its [[sfs::...]] attributes. */
@@ -31,6 +32,8 @@ struct FieldAttributes
 {
   bool color = false;    // [[sfs::color]]: edit a vec3/vec4 as a colour
   bool script = false;   // [[sfs::script]]: a string naming a game object script
+  bool texture = false;  // [[sfs::texture]]: a string naming a texture ("asset:<id>")
+  bool materials = false; // [[sfs::materials]]: a string list of a mesh's material slots
   bool hasRange = false; // [[sfs::range(min, max)]]
   float min = 0.0f;
   float max = 0.0f;

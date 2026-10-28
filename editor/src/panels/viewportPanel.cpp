@@ -1,11 +1,14 @@
 #include "panels/viewportPanel.h"
 
+#include "assets/assetDrop.h"
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
 
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/nameComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/pointLight3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
@@ -13,6 +16,7 @@
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/picking.h"
+#include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
 #include "glm/glm/gtc/type_ptr.hpp"
@@ -30,6 +34,8 @@ constexpr float kRotateSnap = 15.0f; // degrees
 constexpr float kScaleSnap = 0.1f;
 
 constexpr ImU32 kSelectionColor = IM_COL32(255, 170, 40, 255);
+// What a texture or material dragged over the viewport would land on.
+constexpr ImU32 kDropColor = IM_COL32(90, 210, 255, 255);
 constexpr ImU32 kLightColor = IM_COL32(255, 220, 120, 255);
 constexpr ImU32 kCameraColor = IM_COL32(230, 230, 230, 255);
 constexpr ImU32 kInactiveCameraColor = IM_COL32(140, 140, 140, 200);
@@ -106,6 +112,8 @@ void ViewportPanel::drawContents(EditorContext& context)
                available);
   const bool imageHovered = ImGui::IsItemHovered();
   const View view = currentView(context, origin, available);
+  if (!context.playing)
+    dropAsset(context, view); // targets the image, so straight after it
 
   // ImGui positions are on the desktop; the game wants them in the window.
   const ImGuiViewport* host = ImGui::GetWindowViewport();
@@ -275,6 +283,68 @@ void ViewportPanel::pick(EditorContext& context, const View& view)
   context.selection = hit ? hit->entity : sfs::Entity();
 }
 
+void ViewportPanel::dropAsset(EditorContext& context, const View& view)
+{
+  if (!context.assets || !ImGui::BeginDragDropTarget())
+    return;
+  const sfs::AssetRecord* dragged = assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *context.assets);
+  if (dragged && assetDrop::fitsMaterialSlot(*dragged))
+  {
+    // The surface under the cursor: its object, and which of its material
+    // slots that part of the mesh is.
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const sfs::Ray3D ray = context.render->camera().screenRay(
+        {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
+    const std::optional<sfs::SurfaceHit> hit =
+        sfs::pickSurface(*context.scene, context.render->meshes(), ray);
+    // Accepted every frame it hovers (not only on release), so the object it
+    // would land on is shown; the drop itself is the delivery.
+    const ImGuiPayload* payload =
+        hit ? ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload,
+                                           ImGuiDragDropFlags_AcceptBeforeDelivery |
+                                               ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
+            : nullptr;
+    if (payload)
+      drawDropTarget(context, view, *hit);
+    if (payload && payload->IsDelivery())
+      if (const std::string material = assetDrop::materialFor(*context.assets, *dragged); !material.empty())
+      {
+        assetDrop::setSlot(hit->entity, hit->section, material, context.history);
+        context.selection = hit->entity;
+        context.selectedAsset = {};
+      }
+  }
+  ImGui::EndDragDropTarget();
+}
+
+void ViewportPanel::drawDropTarget(const EditorContext& context, const View& view, const sfs::SurfaceHit& hit) const
+{
+  drawOutline(context, view, hit.entity, kDropColor, 2.5f);
+
+  // Above the cursor (the drag's own tooltip is below it): the object, and for
+  // a model with several materials, the one (slot) it would replace.
+  std::string text = hit.entity.hasComponent<sfs::NameComponent>()
+                         ? hit.entity.getComponent<sfs::NameComponent>().name
+                         : std::string("(unnamed)");
+  if (hit.entity.hasComponent<sfs::MeshRendererComponent>())
+  {
+    const std::vector<sfs::MeshSection> slots =
+        context.render->meshes().sections(hit.entity.getComponent<sfs::MeshRendererComponent>().mesh);
+    if (slots.size() > 1 && hit.section < slots.size())
+      text += " : " + (slots[hit.section].name.empty() ? "Material " + std::to_string(hit.section + 1)
+                                                       : slots[hit.section].name);
+  }
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+  const ImVec2 at(mouse.x + 12.0f, mouse.y - size.y - 14.0f);
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  drawList->AddRectFilled(ImVec2(at.x - 4.0f, at.y - 2.0f),
+                          ImVec2(at.x + size.x + 4.0f, at.y + size.y + 2.0f),
+                          IM_COL32(20, 20, 20, 200),
+                          3.0f);
+  drawList->AddText(at, kDropColor, text.c_str());
+}
+
 void ViewportPanel::navigate(EditorContext& context, float viewportHeight)
 {
   const ImGuiIO& io = ImGui::GetIO();
@@ -289,10 +359,17 @@ void ViewportPanel::navigate(EditorContext& context, float viewportHeight)
 
 void ViewportPanel::drawSelectionOutline(const EditorContext& context, const View& view) const
 {
-  if (!context.hasSelection())
-    return;
-  const std::optional<sfs::Aabb> bounds =
-      sfs::entityBounds(context.selection, context.render->meshes());
+  if (context.hasSelection())
+    drawOutline(context, view, context.selection, kSelectionColor, 1.5f);
+}
+
+void ViewportPanel::drawOutline(const EditorContext& context,
+                                const View& view,
+                                const sfs::Entity& entity,
+                                ImU32 color,
+                                float thickness) const
+{
+  const std::optional<sfs::Aabb> bounds = sfs::entityBounds(entity, context.render->meshes());
   if (!bounds)
     return;
 
@@ -311,7 +388,7 @@ void ViewportPanel::drawSelectionOutline(const EditorContext& context, const Vie
     {
       const int b = a | bit;
       if (b != a && corners[a] && corners[b])
-        drawList->AddLine(*corners[a], *corners[b], kSelectionColor, 1.5f);
+        drawList->AddLine(*corners[a], *corners[b], color, thickness);
     }
 }
 

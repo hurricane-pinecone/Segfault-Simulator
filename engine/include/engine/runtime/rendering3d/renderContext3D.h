@@ -36,8 +36,9 @@ struct RenderContext3D
   const SceneLighting3D* lighting = nullptr;
   const std::vector<PointLight3D>* pointLights = nullptr;
 
-  // Local bounds of the scene's meshes, for culling.
-  const MeshLibrary* meshes = nullptr;
+  // Local bounds of the scene's meshes, for culling, and the textures objects
+  // use in place of their meshes' (uploaded when first asked for).
+  MeshLibrary* meshes = nullptr;
 };
 
 /** 3D render modules emit AnyRenderCommand3D. */

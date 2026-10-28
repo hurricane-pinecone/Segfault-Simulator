@@ -34,6 +34,20 @@ public:
   /** Free a mesh. Unknown or invalid handles are ignored. */
   virtual void destroyMesh(MeshHandle mesh) = 0;
 
+  /**
+   * Upload a material (and its textures) for objects to use in place of a
+   * mesh section's own (see MeshBatch3D::materials).
+   *
+   * @return a handle, or an invalid handle if the upload failed.
+   */
+  virtual MaterialHandle createMaterial(const MeshMaterial& material) = 0;
+
+  /** Change a material in place: everything drawn with it changes. */
+  virtual void updateMaterial(MaterialHandle handle, const MeshMaterial& material) = 0;
+
+  /** Free a material. Unknown or invalid handles are ignored. */
+  virtual void destroyMaterial(MaterialHandle material) = 0;
+
   /** Size of the render target in pixels; zero while minimised. */
   virtual glm::ivec2 viewportSize() const = 0;
 

@@ -23,6 +23,7 @@ if(@ENGINE_HAS_RENDER_LIB@)
     # Linked privately; only a static engine passes it on to its consumers.
     if("@ENGINE_LIBRARY_TYPE@" STREQUAL "STATIC")
         find_dependency(Jolt)
+        find_dependency(cgltf)
     endif()
 endif()
 

@@ -26,6 +26,8 @@ struct FieldModel
   bool isPublic = true; // false: private/protected, exposed by [[sfs::show]]
   bool color = false;   // [[sfs::color]]
   bool script = false;  // [[sfs::script]]
+  bool texture = false; // [[sfs::texture]]
+  bool materials = false; // [[sfs::materials]]
   std::optional<std::pair<std::string, std::string>> range; // [[sfs::range]]
 };
 

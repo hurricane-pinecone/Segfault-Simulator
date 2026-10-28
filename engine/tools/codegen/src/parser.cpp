@@ -38,6 +38,7 @@ const std::map<std::string, std::string, std::less<>>& fieldKinds()
       {"MeshHandle", "Mesh"},
       {"sfs::MeshHandle", "Mesh"},
       {"nlohmann::json", "Json"},
+      {"std::vector<std::string>", "StringList"},
   };
   return kinds;
 }
@@ -311,6 +312,10 @@ private:
         fieldModel.color = true;
       else if (name == "script")
         fieldModel.script = true;
+      else if (name == "texture")
+        fieldModel.texture = true;
+      else if (name == "materials")
+        fieldModel.materials = true;
       else if (name == "range")
         parseRange(attribute, fieldModel);
       else

@@ -124,6 +124,8 @@ json fieldToJson(const reflect::FieldInfo& field, void* object, const MeshLibrar
   }
   case Kind::Json:
     return field.in<json>(object);
+  case Kind::StringList:
+    return field.in<std::vector<std::string>>(object);
   case Kind::Mesh:
   {
     const MeshHandle mesh = field.in<MeshHandle>(object);
@@ -188,6 +190,20 @@ bool fieldFromJson(const reflect::FieldInfo& field,
   case Kind::Json:
     field.in<json>(object) = value;
     return true;
+  case Kind::StringList:
+  {
+    if (!value.is_array())
+      return false;
+    std::vector<std::string> strings;
+    for (const json& item : value)
+    {
+      if (!item.is_string())
+        return false;
+      strings.push_back(item.get<std::string>());
+    }
+    field.in<std::vector<std::string>>(object) = std::move(strings);
+    return true;
+  }
   case Kind::Mesh:
   {
     if (!value.is_string())
@@ -196,7 +212,7 @@ bool fieldFromJson(const reflect::FieldInfo& field,
     MeshHandle mesh;
     if (!name.empty())
     {
-      mesh = meshes ? meshes->find(name) : MeshHandle{};
+      mesh = meshes ? meshes->resolve(name) : MeshHandle{};
       if (!mesh.valid() && meshes)
       {
         // Keep the name (a stand-in) so saving doesn't lose it; the mesh is
