@@ -76,7 +76,8 @@ public:
   bool play(const std::filesystem::path& file);
 
 protected:
-  /** Sets up rendering and the built-in meshes; overrides must call it first. */
+  /** Sets up rendering and the built-in meshes; overrides must call it first.
+   */
   void onInit() override;
 
   /**

@@ -16,15 +16,18 @@ namespace
 constexpr std::string_view kPrefix = "asset:";
 
 // The catalogue record an "asset:<id>" names.
-const AssetRecord* recordOf(const AssetDatabase* catalogue, std::string_view asset)
+const AssetRecord* recordOf(const AssetDatabase* catalogue,
+                            std::string_view asset)
 {
   if (!catalogue || !asset.starts_with(kPrefix))
     return nullptr;
-  const std::optional<AssetId> id = AssetId::parse(asset.substr(kPrefix.size()));
+  const std::optional<AssetId> id =
+      AssetId::parse(asset.substr(kPrefix.size()));
   return id ? catalogue->find(*id) : nullptr;
 }
 
-std::optional<nlohmann::json> readFile(const AssetDatabase& catalogue, const AssetRecord& record)
+std::optional<nlohmann::json> readFile(const AssetDatabase& catalogue,
+                                       const AssetRecord& record)
 {
   std::ifstream in(catalogue.absolutePath(record));
   if (!in)
@@ -68,21 +71,28 @@ const ScriptableObject* ScriptableObjects::get(std::string_view asset)
       LOG_ERROR("No scriptable object " + std::string(asset));
     return nullptr;
   }
-  const std::optional<nlohmann::json> contents = readFile(*m_catalogue, *record);
-  const std::string type = contents ? contents->value("type", std::string()) : std::string();
+  const std::optional<nlohmann::json> contents =
+      readFile(*m_catalogue, *record);
+  const std::string type =
+      contents ? contents->value("type", std::string()) : std::string();
   const reflect::TypeInfo* info = reflect::types().find(type);
-  if (!info || info->kind != reflect::TypeKind::ScriptableObject || !info->scriptable.create)
+  if (!info || info->kind != reflect::TypeKind::ScriptableObject ||
+      !info->scriptable.create)
   {
     LOG_ERROR("Can't load " + record->path.generic_string() +
-              (type.empty() ? ": it isn't a scriptable object" : ": no scriptable object type '" + type + "' (are the scripts built?)"));
+              (type.empty() ? ": it isn't a scriptable object"
+                            : ": no scriptable object type '" + type +
+                                  "' (are the scripts built?)"));
     return nullptr;
   }
 
   loaded.type = type;
   loaded.object = static_cast<ScriptableObject*>(info->scriptable.create());
   loaded.destroy = info->scriptable.destroy;
-  if (const auto fields = contents->find("fields"); fields != contents->end() && fields->is_object())
-    SceneSerializer(reflect::types(), m_meshes).loadObject(*info, loaded.object, *fields);
+  if (const auto fields = contents->find("fields");
+      fields != contents->end() && fields->is_object())
+    SceneSerializer(reflect::types(), m_meshes)
+        .loadObject(*info, loaded.object, *fields);
   return loaded.object;
 }
 
@@ -92,12 +102,14 @@ const std::string& ScriptableObjects::typeOf(const std::string& asset)
     return it->second;
   std::string type;
   if (const AssetRecord* record = recordOf(m_catalogue, asset))
-    if (const std::optional<nlohmann::json> contents = readFile(*m_catalogue, *record))
+    if (const std::optional<nlohmann::json> contents =
+            readFile(*m_catalogue, *record))
       type = contents->value("type", std::string());
   return m_types[asset] = type;
 }
 
-std::vector<ScriptableObjects::Entry> ScriptableObjects::list(std::string_view type)
+std::vector<ScriptableObjects::Entry>
+ScriptableObjects::list(std::string_view type)
 {
   std::vector<Entry> entries;
   if (!m_catalogue)
@@ -111,7 +123,9 @@ std::vector<ScriptableObjects::Entry> ScriptableObjects::list(std::string_view t
     if (type.empty() || recordType == type)
       entries.push_back({asset, record.path.stem().string(), recordType});
   }
-  std::sort(entries.begin(), entries.end(), [&](const Entry& a, const Entry& b) { return a.name < b.name; });
+  std::sort(entries.begin(),
+            entries.end(),
+            [&](const Entry& a, const Entry& b) { return a.name < b.name; });
   return entries;
 }
 
@@ -136,7 +150,8 @@ void ScriptableObjects::clear()
   m_types.clear();
 }
 
-nlohmann::json ScriptableObjects::fileContents(const std::string& type, const nlohmann::json& fields)
+nlohmann::json ScriptableObjects::fileContents(const std::string& type,
+                                               const nlohmann::json& fields)
 {
   return {{"formatVersion", 1}, {"type", type}, {"fields", fields}};
 }

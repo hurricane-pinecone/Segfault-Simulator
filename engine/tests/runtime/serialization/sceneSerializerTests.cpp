@@ -6,9 +6,9 @@
 #include <engine/core/components/parentComponent.h>
 #include <engine/core/components/pointLight3DComponent.h>
 #include <engine/core/components/transform3DComponent.h>
-#include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
+#include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/renderSystem3D.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -37,7 +37,10 @@ struct World
   RenderSystem3D& render = scene.addSystem<RenderSystem3D>(renderer);
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
 
-  SceneSerializer serializer() { return SceneSerializer(reflect::types(), &render.meshes()); }
+  SceneSerializer serializer()
+  {
+    return SceneSerializer(reflect::types(), &render.meshes());
+  }
 
   Entity named(const std::string& name, glm::vec3 position = glm::vec3(0.0f))
   {
@@ -79,8 +82,8 @@ int main()
 
     Entity lamp = source.scene.createEntity();
     lamp.addComponent<NameComponent>("Lamp");
-    lamp.addComponent<PointLight3DComponent>(
-        PointLight3DComponent{{1.0f, 0.8f, 0.6f}, 2.5f, 12.0f, {0.0f, 0.0f, 1.8f}});
+    lamp.addComponent<PointLight3DComponent>(PointLight3DComponent{
+        {1.0f, 0.8f, 0.6f}, 2.5f, 12.0f, {0.0f, 0.0f, 1.8f}});
 
     const nlohmann::json saved = source.serializer().save(source.scene);
 
@@ -100,7 +103,8 @@ int main()
     CHECK(testing::approx(r.tint.g, 0.5f));
     CHECK(!r.castsShadow);
 
-    const auto& light = target.findByName("Lamp").getComponent<PointLight3DComponent>();
+    const auto& light =
+        target.findByName("Lamp").getComponent<PointLight3DComponent>();
     CHECK(testing::approx(light.intensity, 2.5f));
     CHECK(testing::approx(light.offset.z, 1.8f));
     CHECK(!target.findByName("Lamp").hasComponent<Transform3DComponent>());
@@ -118,14 +122,16 @@ int main()
     source.render.camera().projection = Camera3D::Projection::Orthographic;
 
     World target;
-    target.serializer().load(source.serializer().save(source.scene), target.scene);
+    target.serializer().load(
+        source.serializer().save(source.scene), target.scene);
 
     CHECK(testing::approx(target.render.lighting().ambient, 0.2f));
     CHECK(testing::approx(target.render.lighting().skyColor.b, 0.3f));
     CHECK(!target.render.shadowSettings().enabled);
     CHECK(testing::approx(target.render.shadowSettings().distance, 77.0f));
     CHECK(testing::approx(target.render.camera().yaw, 1.25f));
-    CHECK(target.render.camera().projection == Camera3D::Projection::Orthographic);
+    CHECK(target.render.camera().projection ==
+          Camera3D::Projection::Orthographic);
   }
 
   TEST("unknown components and missing fields should not stop a load")
@@ -183,24 +189,30 @@ int main()
   {
     const nlohmann::json data = {
         {"formatVersion", 1},
-        {"entities", {{{"MeshRendererComponent", {{"mesh", "mygame:tower"}}}}}}};
+        {"entities",
+         {{{"MeshRendererComponent", {{"mesh", "mygame:tower"}}}}}}};
 
     World world;
     world.serializer().load(data, world.scene);
-    const MeshHandle mesh = world.scene.entities()[0].getComponent<MeshRendererComponent>().mesh;
+    const MeshHandle mesh =
+        world.scene.entities()[0].getComponent<MeshRendererComponent>().mesh;
     CHECK(world.render.meshes().isMissing(mesh));
-    CHECK(world.render.meshes().bounds(mesh) == nullptr); // skipped when drawing
-    CHECK(world.render.meshes().missing("mygame:tower") == mesh); // one stand-in per name
+    CHECK(world.render.meshes().bounds(mesh) ==
+          nullptr); // skipped when drawing
+    CHECK(world.render.meshes().missing("mygame:tower") ==
+          mesh); // one stand-in per name
 
     const nlohmann::json saved = world.serializer().save(world.scene);
-    CHECK(saved["entities"][0]["MeshRendererComponent"]["mesh"] == "mygame:tower");
+    CHECK(saved["entities"][0]["MeshRendererComponent"]["mesh"] ==
+          "mygame:tower");
   }
 
   TEST("files from a newer format or without entities should be rejected")
   {
     World world;
-    CHECK(!world.serializer().load({{"formatVersion", 99}, {"entities", nlohmann::json::array()}},
-                                   world.scene));
+    CHECK(!world.serializer().load(
+        {{"formatVersion", 99}, {"entities", nlohmann::json::array()}},
+        world.scene));
     CHECK(!world.serializer().load({{"formatVersion", 1}}, world.scene));
     CHECK(world.scene.entities().empty());
   }
@@ -223,7 +235,8 @@ int main()
     {
       Entity entity = source.scene.createEntity();
       entity.addComponent<NameComponent>(name);
-      entity.addComponent<Transform3DComponent>(Transform3DComponent{{0.45f, 0.1f, -2.3f}});
+      entity.addComponent<Transform3DComponent>(
+          Transform3DComponent{{0.45f, 0.1f, -2.3f}});
     }
     CHECK(source.serializer().saveFile(source.scene, dir / "a.scene"));
 
@@ -237,8 +250,8 @@ int main()
 
     const std::string a = readAll(dir / "a.scene");
     CHECK(a == readAll(dir / "b.scene"));
-    CHECK(a.find("0.45") != std::string::npos);           // clean decimals
-    CHECK(a.find("0.449999") == std::string::npos);       // no widened noise
+    CHECK(a.find("0.45") != std::string::npos);              // clean decimals
+    CHECK(a.find("0.449999") == std::string::npos);          // no widened noise
     CHECK(a.find("[0.45, 0.1, -2.3]") != std::string::npos); // vectors inline
     CHECK(a.find("First") < a.find("Second"));
     CHECK(a.find("Second") < a.find("Third"));
@@ -260,8 +273,10 @@ int main()
     const nlohmann::json saved = source.serializer().save(source.scene);
     CHECK(saved["formatVersion"] == 2);
     CHECK(saved["entities"].size() == 2u); // roots: Farm, Loose
-    CHECK(saved["entities"][0]["children"][0]["NameComponent"]["name"] == "Barn");
-    CHECK(saved["entities"][0]["children"][0]["children"][0]["NameComponent"]["name"] == "Door");
+    CHECK(saved["entities"][0]["children"][0]["NameComponent"]["name"] ==
+          "Barn");
+    CHECK(saved["entities"][0]["children"][0]["children"][0]["NameComponent"]
+               ["name"] == "Door");
     CHECK(!saved["entities"][1].contains("children"));
     CHECK(!saved.dump().contains("ParentComponent"));
 
@@ -269,16 +284,20 @@ int main()
     CHECK(target.serializer().load(saved, target.scene));
     target.scene.flushEntities();
     CHECK(target.scene.entities().size() == 4u);
-    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Door"))) == "Barn");
-    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Barn"))) == "Farm");
+    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Door"))) ==
+          "Barn");
+    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Barn"))) ==
+          "Farm");
     CHECK(!hierarchy::parentOf(target.findByName("Loose")).isValid());
-    const glm::vec3 doorAt = hierarchy::worldPosition(target.findByName("Door"));
+    const glm::vec3 doorAt =
+        hierarchy::worldPosition(target.findByName("Door"));
     CHECK(testing::approx(doorAt.x, 11.0f));
     CHECK(testing::approx(doorAt.z, 2.0f));
     (void)loose;
   }
 
-  TEST("loading should create entities parents first, so a reload keeps that order")
+  TEST("loading should create entities parents first, so a reload keeps that "
+       "order")
   {
     World world;
     Entity a = world.named("A");
@@ -302,7 +321,8 @@ int main()
     CHECK(world.serializer().save(world.scene) == saved);
   }
 
-  TEST("saveEntity and loadEntity should copy a whole branch under a given parent")
+  TEST("saveEntity and loadEntity should copy a whole branch under a given "
+       "parent")
   {
     World world;
     Entity root = world.named("Root");

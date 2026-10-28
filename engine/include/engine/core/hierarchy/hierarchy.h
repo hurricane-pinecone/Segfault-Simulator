@@ -75,7 +75,8 @@ public:
   const std::vector<Entity>& roots() const { return m_roots; }
   const std::vector<Entity>& children(const Entity& entity) const;
 
-  /** Every entity, each parent before its children (the order scenes save in). */
+  /** Every entity, each parent before its children (the order scenes save in).
+   */
   std::vector<Entity> preOrder() const;
 
   /** `root` and everything below it, parents first. */

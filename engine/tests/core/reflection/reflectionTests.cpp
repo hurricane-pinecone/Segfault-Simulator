@@ -12,11 +12,13 @@ using namespace sfs;
 
 namespace
 {
-const reflect::FieldInfo* findField(const reflect::TypeInfo& type, std::string_view name)
+const reflect::FieldInfo* findField(const reflect::TypeInfo& type,
+                                    std::string_view name)
 {
-  const auto it = std::find_if(type.fields.begin(),
-                               type.fields.end(),
-                               [&](const reflect::FieldInfo& f) { return f.name == name; });
+  const auto it =
+      std::find_if(type.fields.begin(),
+                   type.fields.end(),
+                   [&](const reflect::FieldInfo& f) { return f.name == name; });
   return it != type.fields.end() ? &*it : nullptr;
 }
 } // namespace
@@ -25,7 +27,8 @@ int main()
 {
   TEST("the engine's components should be registered with their fields")
   {
-    const reflect::TypeInfo* transform = reflect::types().find("Transform3DComponent");
+    const reflect::TypeInfo* transform =
+        reflect::types().find("Transform3DComponent");
     CHECK(transform != nullptr);
     CHECK(transform->kind == reflect::TypeKind::Component);
     CHECK(transform->displayName == std::string("Transform 3D"));
@@ -39,11 +42,13 @@ int main()
 
   TEST("attributes should carry through from the headers")
   {
-    const reflect::TypeInfo* renderer = reflect::types().find("MeshRendererComponent");
+    const reflect::TypeInfo* renderer =
+        reflect::types().find("MeshRendererComponent");
     CHECK(findField(*renderer, "tint")->attributes.color);
     CHECK(findField(*renderer, "mesh")->kind == reflect::FieldKind::Mesh);
 
-    const reflect::TypeInfo* light = reflect::types().find("PointLight3DComponent");
+    const reflect::TypeInfo* light =
+        reflect::types().find("PointLight3DComponent");
     const reflect::FieldInfo* intensity = findField(*light, "intensity");
     CHECK(intensity->attributes.hasRange);
     CHECK(testing::approx(intensity->attributes.max, 10.0f));
@@ -53,7 +58,8 @@ int main()
   {
     Registry registry;
     Entity entity = registry.createEntity();
-    const reflect::TypeInfo* transform = reflect::types().find("Transform3DComponent");
+    const reflect::TypeInfo* transform =
+        reflect::types().find("Transform3DComponent");
 
     CHECK(!transform->component.has(entity));
     CHECK(transform->component.get(entity) == nullptr);
@@ -62,8 +68,10 @@ int main()
     CHECK(transform->component.has(entity));
 
     void* object = transform->component.get(entity);
-    findField(*transform, "position")->in<glm::vec3>(object) = {1.0f, 2.0f, 3.0f};
-    CHECK(testing::approx(entity.getComponent<Transform3DComponent>().position.y, 2.0f));
+    findField(*transform, "position")->in<glm::vec3>(object) = {
+        1.0f, 2.0f, 3.0f};
+    CHECK(testing::approx(
+        entity.getComponent<Transform3DComponent>().position.y, 2.0f));
 
     transform->component.remove(entity);
     CHECK(!entity.hasComponent<Transform3DComponent>());

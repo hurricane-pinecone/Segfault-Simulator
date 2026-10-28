@@ -44,7 +44,8 @@ public:
   static int getId()
   {
     // Cached per module; the registry behind it is shared.
-    static const int id = detail::componentTypeId(detail::componentTypeKey<T>());
+    static const int id =
+        detail::componentTypeId(detail::componentTypeKey<T>());
     return id;
   }
 };

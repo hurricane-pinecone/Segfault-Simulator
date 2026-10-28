@@ -44,8 +44,9 @@ void MeshModule::computeCommands(const RenderContext3D& context)
     std::size_t key = std::hash<uint32_t>()(renderer.mesh.id);
     for (const MaterialHandle material : m_materials)
       key = key * 1000003u ^ material.id;
-    const auto matches = [&](const MeshDrawCommand& command)
-    { return command.mesh == renderer.mesh && command.materials == m_materials; };
+    const auto matches = [&](const MeshDrawCommand& command) {
+      return command.mesh == renderer.mesh && command.materials == m_materials;
+    };
 
     auto [first, last] = m_commandIndex.equal_range(key);
     while (first != last && !matches(m_commands[first->second]))
@@ -54,7 +55,8 @@ void MeshModule::computeCommands(const RenderContext3D& context)
     if (first == last)
     {
       m_commandIndex.emplace(key, index);
-      m_commands.push_back(MeshDrawCommand{.mesh = renderer.mesh, .materials = m_materials});
+      m_commands.push_back(
+          MeshDrawCommand{.mesh = renderer.mesh, .materials = m_materials});
     }
 
     MeshDrawCommand& command = m_commands[index];

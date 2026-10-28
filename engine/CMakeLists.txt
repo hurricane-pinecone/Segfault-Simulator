@@ -150,6 +150,12 @@ if(ENGINE_SANITIZE)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/src/core/noise/noise.cpp"
         PROPERTIES COMPILE_OPTIONS -fno-sanitize=signed-integer-overflow)
+    # Jolt is built without RTTI, so its classes have no typeinfo for UBSan's
+    # vptr check to look up (undefined references at link time).
+    # physicsSystem3D.cpp is the only unit that includes Jolt: drop that one
+    # check for just this file. (Appended: it has other options of its own.)
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"
+        APPEND PROPERTY COMPILE_OPTIONS -fno-sanitize=vptr)
 endif()
 
 # Namespaced alias so in-tree consumers (sample game, web build) link the exact
@@ -320,8 +326,9 @@ else()
     # Jolt's package is built for AVX2 (its defines say so) but doesn't pass on
     # the matching compiler flags; the code including its headers needs them.
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"
-            PROPERTIES COMPILE_OPTIONS "-mavx2;-mbmi;-mpopcnt;-mlzcnt;-mf16c;-mfma")
+        # (Appended, not set: the sanitizer build adds an option of its own.)
+        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"
+            APPEND PROPERTY COMPILE_OPTIONS -mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfma)
     endif()
 
     target_include_directories(engine PUBLIC
@@ -373,6 +380,10 @@ if(NOT ENGINE_WEB_BUILD)
         GIT_TAG eda8bedcb78a755f42c5efa00b732c62e89c23cb # main @ 2024, v24-compatible
     )
     FetchContent_MakeAvailable(sdl2webgpu)
+    # A static library linked into the shared engine-webgpu, so it must be
+    # position-independent (a sanitizer build's instrumentation can't link
+    # otherwise).
+    set_target_properties(sdl2webgpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     file(GLOB_RECURSE ENGINE_WEBGPU_SRC CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/*.cpp")

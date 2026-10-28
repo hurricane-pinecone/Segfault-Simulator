@@ -1,10 +1,10 @@
 #include <engine/runtime/game/game.h>
 
 #include "engine/core/scripting/luaScripting.h"
-#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/rendering/backend/glRenderBackend.h"
 #include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
 #include "engine/runtime/rendering3d/scene3D.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 
 #include "SDL.h"
 #include <SDL_error.h>
@@ -149,7 +149,8 @@ bool Game::devConsoleEnabled() const
 
 Game::SceneView Game::sceneView() const
 {
-  return SceneView{window ? SDL_GetWindowID(window) : 0, SDL_Rect{0, 0, windowWidth, windowHeight}};
+  return SceneView{window ? SDL_GetWindowID(window) : 0,
+                   SDL_Rect{0, 0, windowWidth, windowHeight}};
 }
 
 void Game::onLoadScene(const std::filesystem::path& scene)
@@ -174,8 +175,10 @@ bool Game::playScene(const std::filesystem::path& scene)
     for (const std::filesystem::path& folder : AssetDatabase::projectFolders())
       any |= std::filesystem::is_directory(gameFolder() / folder, error);
     if (any)
-      store.setDatabase(&m_assetDatabase.emplace(gameFolder(), AssetDatabase::Mode::ReadOnly,
-                                                 AssetDatabase::projectFolders()));
+      store.setDatabase(
+          &m_assetDatabase.emplace(gameFolder(),
+                                   AssetDatabase::Mode::ReadOnly,
+                                   AssetDatabase::projectFolders()));
   }
   // Scriptable objects come from the same catalogue.
   scriptableObjects().setCatalogue(store.database());
@@ -198,7 +201,8 @@ void Game::applyRequests()
 {
   if (m_requestedScene)
   {
-    const std::filesystem::path scene = *std::exchange(m_requestedScene, std::nullopt);
+    const std::filesystem::path scene =
+        *std::exchange(m_requestedScene, std::nullopt);
     onLoadScene(scene);
   }
   if (std::exchange(m_quitRequested, false))
@@ -210,7 +214,8 @@ bool Game::canChangeWindow()
   if (ownsWindow() && window)
     return true;
   if (!m_windowChangeLogged)
-    LOG_INFO("The game changed its window (title, size or fullscreen); that's ignored in the "
+    LOG_INFO("The game changed its window (title, size or fullscreen); that's "
+             "ignored in the "
              "editor and applies in the exported game");
   m_windowChangeLogged = true;
   return false;
@@ -225,12 +230,14 @@ void Game::setWindowTitle(const std::string& title)
 void Game::setFullscreen(bool fullscreen)
 {
   if (canChangeWindow())
-    SDL_SetWindowFullscreen(window, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    SDL_SetWindowFullscreen(
+        window, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
 }
 
 bool Game::isFullscreen() const
 {
-  return window && ownsWindow() && (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+  return window && ownsWindow() &&
+         (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
 }
 
 void Game::setWindowSize(int width, int height)
@@ -238,7 +245,8 @@ void Game::setWindowSize(int width, int height)
   if (width <= 0 || height <= 0)
     return;
   if (canChangeWindow())
-    SDL_SetWindowSize(window, width, height); // the resize event updates the backend
+    SDL_SetWindowSize(
+        window, width, height); // the resize event updates the backend
 }
 
 void Game::processInput()
@@ -297,7 +305,8 @@ void Game::processInput()
       if (sdlEvent.motion.windowID != view.windowId)
         continue;
 
-      input.mouse().setPosition(sdlEvent.motion.x - view.rect.x, sdlEvent.motion.y - view.rect.y);
+      input.mouse().setPosition(
+          sdlEvent.motion.x - view.rect.x, sdlEvent.motion.y - view.rect.y);
     }
 
     if ((sdlEvent.type == SDL_MOUSEBUTTONDOWN ||
@@ -307,14 +316,16 @@ void Game::processInput()
 
     if (sdlEvent.type == SDL_MOUSEBUTTONDOWN && mouse)
     {
-      input.mouse().setPosition(sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
+      input.mouse().setPosition(
+          sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
       input.mouse().pressButton(
           static_cast<sfs::MouseButton>(sdlEvent.button.button));
     }
 
     if (sdlEvent.type == SDL_MOUSEBUTTONUP)
     {
-      input.mouse().setPosition(sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
+      input.mouse().setPosition(
+          sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
       input.mouse().releaseButton(
           static_cast<sfs::MouseButton>(sdlEvent.button.button));
     }

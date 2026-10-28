@@ -100,7 +100,9 @@ bool MeshLibrary::isPending(MeshHandle mesh) const
 std::size_t MeshLibrary::pendingCount() const
 {
   return static_cast<std::size_t>(
-      std::count_if(m_meshes.begin(), m_meshes.end(), [](const auto& entry) { return entry.second.pending; }));
+      std::count_if(m_meshes.begin(),
+                    m_meshes.end(),
+                    [](const auto& entry) { return entry.second.pending; }));
 }
 
 void MeshLibrary::fulfilPending()
@@ -159,13 +161,15 @@ bool MeshLibrary::isMissing(MeshHandle mesh) const
 const Aabb* MeshLibrary::bounds(MeshHandle mesh) const
 {
   const auto it = m_meshes.find(mesh.id);
-  return it != m_meshes.end() && !it->second.missing ? &it->second.bounds : nullptr;
+  return it != m_meshes.end() && !it->second.missing ? &it->second.bounds
+                                                     : nullptr;
 }
 
 std::string_view MeshLibrary::nameOf(MeshHandle mesh) const
 {
   const auto it = m_meshes.find(mesh.id);
-  return it != m_meshes.end() ? std::string_view(it->second.name) : std::string_view();
+  return it != m_meshes.end() ? std::string_view(it->second.name)
+                              : std::string_view();
 }
 
 MeshHandle MeshLibrary::find(std::string_view name) const
@@ -200,7 +204,9 @@ std::vector<std::pair<std::string, std::string>> MeshLibrary::available() const
     if (!have.valid() || isMissing(have))
       out.push_back(std::move(entry));
   }
-  std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+  std::sort(out.begin(),
+            out.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
   return out;
 }
 
@@ -223,8 +229,8 @@ std::vector<MeshSection> MeshLibrary::sections(MeshHandle mesh) const
 }
 
 std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
-                                                       const glm::mat4& world,
-                                                       const Ray3D& ray) const
+                                                        const glm::mat4& world,
+                                                        const Ray3D& ray) const
 {
   const auto it = m_meshes.find(mesh.id);
   if (it == m_meshes.end())
@@ -241,7 +247,8 @@ std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
   std::size_t bestIndex = 0;
   for (std::size_t i = 0; i + 2 < entry.indices.size(); i += 3)
   {
-    if (entry.indices[i + 2] >= entry.positions.size() || entry.indices[i] >= entry.positions.size() ||
+    if (entry.indices[i + 2] >= entry.positions.size() ||
+        entry.indices[i] >= entry.positions.size() ||
         entry.indices[i + 1] >= entry.positions.size())
       continue;
     // Moller-Trumbore.
@@ -271,7 +278,8 @@ std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
   if (best)
     for (std::size_t s = 0; s < entry.sections.size(); ++s)
       if (bestIndex >= entry.sections[s].firstIndex &&
-          bestIndex < std::size_t(entry.sections[s].firstIndex) + entry.sections[s].indexCount)
+          bestIndex < std::size_t(entry.sections[s].firstIndex) +
+                          entry.sections[s].indexCount)
         best->section = s;
   return best;
 }
@@ -285,15 +293,18 @@ MaterialHandle MeshLibrary::material(std::string_view name)
     return it->second;
   const std::shared_ptr<const MeshMaterial> data =
       m_provider.loadMaterial ? m_provider.loadMaterial(name) : nullptr;
-  const MaterialHandle handle = data ? m_renderer.createMaterial(*data) : MaterialHandle{};
+  const MaterialHandle handle =
+      data ? m_renderer.createMaterial(*data) : MaterialHandle{};
   m_materials.emplace(key, handle);
   return handle;
 }
 
-MaterialHandle MeshLibrary::setMaterial(std::string_view name, const MeshMaterial& material)
+MaterialHandle MeshLibrary::setMaterial(std::string_view name,
+                                        const MeshMaterial& material)
 {
   const std::string key(name);
-  if (const auto it = m_materials.find(key); it != m_materials.end() && it->second.valid())
+  if (const auto it = m_materials.find(key);
+      it != m_materials.end() && it->second.valid())
   {
     m_renderer.updateMaterial(it->second, material);
     return it->second;
@@ -320,21 +331,27 @@ void MeshLibrary::reloadMaterial(std::string_view name)
   }
 }
 
-std::vector<std::pair<std::string, std::string>> MeshLibrary::availableMaterials() const
+std::vector<std::pair<std::string, std::string>>
+MeshLibrary::availableMaterials() const
 {
   std::vector<std::pair<std::string, std::string>> out;
   if (m_provider.materials)
     out = m_provider.materials();
-  std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+  std::sort(out.begin(),
+            out.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
   return out;
 }
 
-std::vector<std::pair<std::string, std::string>> MeshLibrary::availableTextures() const
+std::vector<std::pair<std::string, std::string>>
+MeshLibrary::availableTextures() const
 {
   std::vector<std::pair<std::string, std::string>> out;
   if (m_provider.textures)
     out = m_provider.textures();
-  std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+  std::sort(out.begin(),
+            out.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
   return out;
 }
 
@@ -344,7 +361,8 @@ std::vector<std::pair<MeshHandle, std::string>> MeshLibrary::named() const
   for (const auto& [id, entry] : m_meshes)
     if (!entry.name.empty() && !entry.missing)
       out.emplace_back(MeshHandle{id}, entry.name);
-  std::sort(out.begin(), out.end(),
+  std::sort(out.begin(),
+            out.end(),
             [](const auto& a, const auto& b) { return a.second < b.second; });
   return out;
 }

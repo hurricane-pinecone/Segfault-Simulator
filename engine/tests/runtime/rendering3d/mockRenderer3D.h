@@ -32,12 +32,16 @@ public:
     return MaterialHandle{nextMaterialId};
   }
 
-  void updateMaterial(MaterialHandle, const MeshMaterial&) override { ++materialUpdates; }
+  void updateMaterial(MaterialHandle, const MeshMaterial&) override
+  {
+    ++materialUpdates;
+  }
 
   void destroyMaterial(MaterialHandle material) override
   {
-    liveMaterials.erase(std::remove(liveMaterials.begin(), liveMaterials.end(), material.id),
-                        liveMaterials.end());
+    liveMaterials.erase(
+        std::remove(liveMaterials.begin(), liveMaterials.end(), material.id),
+        liveMaterials.end());
   }
 
   glm::ivec2 viewportSize() const override { return viewport; }

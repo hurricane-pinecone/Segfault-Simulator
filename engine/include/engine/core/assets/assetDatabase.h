@@ -39,20 +39,24 @@ struct AssetId
 
 struct AssetIdHash
 {
-  std::size_t operator()(const AssetId& id) const { return std::hash<uint64_t>()(id.high ^ (id.low * 31)); }
+  std::size_t operator()(const AssetId& id) const
+  {
+    return std::hash<uint64_t>()(id.high ^ (id.low * 31));
+  }
 };
 
 /** What an asset is, from its file extension. */
 enum class AssetKind
 {
-  Texture, // .png .jpg .jpeg .bmp .tga
-  Model,   // .glb .gltf .obj
-  Material, // .mat (see MaterialAsset)
-  Prefab,   // .prefab (see SceneSerializer)
-  ScriptableObject, // .asset: a scriptable object type's values (see ScriptableObject, ScriptableObjects)
-  Font,    // .ttf .otf
-  Audio,   // .wav .ogg .mp3 .flac
-  Data,    // .json (e.g. an Aseprite atlas), .txt, .csv
+  Texture,          // .png .jpg .jpeg .bmp .tga
+  Model,            // .glb .gltf .obj
+  Material,         // .mat (see MaterialAsset)
+  Prefab,           // .prefab (see SceneSerializer)
+  ScriptableObject, // .asset: a scriptable object type's values (see
+                    // ScriptableObject, ScriptableObjects)
+  Font,             // .ttf .otf
+  Audio,            // .wav .ogg .mp3 .flac
+  Data,             // .json (e.g. an Aseprite atlas), .txt, .csv
   Other,
 };
 
@@ -63,17 +67,20 @@ const char* assetKindName(AssetKind kind);
 struct AssetRecord
 {
   AssetId id;
-  std::filesystem::path path; // relative to the database's root, e.g. "assets/models/barn.glb"
+  std::filesystem::path
+      path; // relative to the database's root, e.g. "assets/models/barn.glb"
   AssetKind kind = AssetKind::Other;
-  nlohmann::json settings = nlohmann::json::object(); // import settings, from the .meta
+  nlohmann::json settings =
+      nlohmann::json::object(); // import settings, from the .meta
 };
 
 /**
  * The catalogue of a project's asset files: every file in some folders of a
  * root (a project's assets/ and prefabs/), or under the whole root, each with
- * a stable AssetId kept in a sidecar "<file>.meta" next to it. Shared by every kind of game (2D, isometric, 3D)
- * and by the editor; it knows files, not their contents. Loading what's in
- * them is the AssetStore's job (and the renderers', for GPU copies).
+ * a stable AssetId kept in a sidecar "<file>.meta" next to it. Shared by every
+ * kind of game (2D, isometric, 3D) and by the editor; it knows files, not their
+ * contents. Loading what's in them is the AssetStore's job (and the renderers',
+ * for GPU copies).
  *
  * The editor opens it read-write: refresh() gives new files a .meta, and the
  * editing calls move, rename and delete a file together with its .meta, so
@@ -87,8 +94,12 @@ class AssetDatabase
 public:
   static constexpr const char* kMetaExtension = ".meta";
 
-  /** A game project's catalogued folders: assets/ (models, textures...) and prefabs/. */
-  static std::vector<std::filesystem::path> projectFolders() { return {"assets", "prefabs"}; }
+  /** A game project's catalogued folders: assets/ (models, textures...) and
+   * prefabs/. */
+  static std::vector<std::filesystem::path> projectFolders()
+  {
+    return {"assets", "prefabs"};
+  }
 
   enum class Mode
   {
@@ -126,13 +137,18 @@ public:
     std::vector<AssetRecord> records;
     std::vector<std::filesystem::path> folders;
   };
-  static Scan scan(const std::filesystem::path& root, Mode mode, const std::vector<std::filesystem::path>& folders);
+  static Scan scan(const std::filesystem::path& root,
+                   Mode mode,
+                   const std::vector<std::filesystem::path>& folders);
   Scan scan() const { return scan(m_root, m_mode, m_scanned); }
   /** @return true if the catalogue changed */
   bool apply(Scan scan);
 
   /** The folders catalogued (empty: the whole root). */
-  const std::vector<std::filesystem::path>& scannedFolders() const { return m_scanned; }
+  const std::vector<std::filesystem::path>& scannedFolders() const
+  {
+    return m_scanned;
+  }
 
   /** Every asset, sorted by path. */
   const std::vector<AssetRecord>& records() const { return m_records; }
@@ -147,12 +163,17 @@ public:
    * Folders under the root (relative, e.g. "assets/models"), sorted; the
    * catalogued folders themselves included, when given.
    */
-  const std::vector<std::filesystem::path>& folders() const { return m_folders; }
+  const std::vector<std::filesystem::path>& folders() const
+  {
+    return m_folders;
+  }
 
-  /** Bumped whenever the catalogue changes, so a UI can tell it should redraw. */
+  /** Bumped whenever the catalogue changes, so a UI can tell it should redraw.
+   */
   uint64_t version() const { return m_version; }
 
-  // --- editing (read-write only; each returns false, logged, on failure) ------
+  // --- editing (read-write only; each returns false, logged, on failure)
+  // ------
 
   /**
    * Move or rename an asset (file and .meta) to `relative`, creating folders.
@@ -161,7 +182,8 @@ public:
   bool move(const AssetId& id, const std::filesystem::path& relative);
 
   /** Move or rename a folder, with everything in it. */
-  bool moveFolder(const std::filesystem::path& from, const std::filesystem::path& to);
+  bool moveFolder(const std::filesystem::path& from,
+                  const std::filesystem::path& to);
 
   /** Delete an asset's file and .meta. */
   bool remove(const AssetId& id);
@@ -177,7 +199,8 @@ public:
    *
    * @return the new asset's id
    */
-  std::optional<AssetId> import(const std::filesystem::path& file, const std::filesystem::path& folder);
+  std::optional<AssetId> import(const std::filesystem::path& file,
+                                const std::filesystem::path& folder);
 
   /** Replace an asset's import settings, and save them to its .meta. */
   bool setSettings(const AssetId& id, nlohmann::json settings);
@@ -201,7 +224,8 @@ private:
 
   std::filesystem::path m_root;
   Mode m_mode;
-  std::vector<std::filesystem::path> m_scanned; // the folders catalogued; empty: the root
+  std::vector<std::filesystem::path>
+      m_scanned; // the folders catalogued; empty: the root
   std::vector<AssetRecord> m_records;
   std::vector<std::filesystem::path> m_folders;
   std::unordered_map<AssetId, std::size_t, AssetIdHash> m_byId;

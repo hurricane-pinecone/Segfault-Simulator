@@ -4,12 +4,12 @@
 #include "engine/core/rendering/3d/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
-#include "engine/runtime/scriptableObjects/scriptableObjects.h"
-#include "engine/runtime/systems/physicsSystem3D.h"
 #include "engine/runtime/rendering3d/modules/meshModule.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/systems/physicsSystem3D.h"
 
 namespace sfs
 {
@@ -59,11 +59,13 @@ SceneSerializer Scene3D::serializer()
 {
   SceneSerializer out(reflect::types(), &m_render->meshes());
   AssetStore& store = assetStore();
-  out.setPrefabSource([&store](std::string_view name) -> std::optional<nlohmann::json>
-                      {
-                        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
-                        return asset && asset->part.empty() ? store.prefab(asset->model) : std::nullopt;
-                      });
+  out.setPrefabSource(
+      [&store](std::string_view name) -> std::optional<nlohmann::json>
+      {
+        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+        return asset && asset->part.empty() ? store.prefab(asset->model)
+                                            : std::nullopt;
+      });
   return out;
 }
 
@@ -76,7 +78,8 @@ bool Scene3D::play(const std::filesystem::path& file)
   if (!serializer().loadFile(file, *this, &m_gameSystems))
     return false;
   flushEntities();
-  // Scriptable objects load into this scene's meshes (afresh, if another's were used).
+  // Scriptable objects load into this scene's meshes (afresh, if another's were
+  // used).
   scriptableObjects().setMeshes(&m_render->meshes());
   startScripts(*this, m_gameSystems, &m_render->meshes());
   return true;
@@ -89,10 +92,14 @@ void Scene3D::onInit()
 
   MeshLibrary& library = m_render->meshes();
   // Named, so scenes that use them save and load.
-  m_cube = library.add(meshes::box({1.0f, 1.0f, 1.0f}, kPrimitiveColor), "builtin:cube");
-  m_sphere = library.add(meshes::sphere(0.5f, 24, 16, kPrimitiveColor), "builtin:sphere");
-  m_plane = library.add(meshes::plane({10.0f, 10.0f}, kPrimitiveColor), "builtin:plane");
-  m_cylinder = library.add(meshes::cylinder(0.5f, 1.0f, 24, kPrimitiveColor), "builtin:cylinder");
+  m_cube = library.add(
+      meshes::box({1.0f, 1.0f, 1.0f}, kPrimitiveColor), "builtin:cube");
+  m_sphere = library.add(
+      meshes::sphere(0.5f, 24, 16, kPrimitiveColor), "builtin:sphere");
+  m_plane = library.add(
+      meshes::plane({10.0f, 10.0f}, kPrimitiveColor), "builtin:plane");
+  m_cylinder = library.add(
+      meshes::cylinder(0.5f, 1.0f, 24, kPrimitiveColor), "builtin:cylinder");
 
   // Meshes the game builds in code, so scenes can name them like the above.
   for (const ScriptType& script : scripts().types())
@@ -110,7 +117,8 @@ MeshLibrary::Provider Scene3D::modelMeshes()
   MeshLibrary::Provider provider;
 
   // A model's mesh by name: the whole model, or one of its parts.
-  const auto meshIn = [](const ModelData& model, std::string_view part) -> const MeshData*
+  const auto meshIn = [](const ModelData& model,
+                         std::string_view part) -> const MeshData*
   {
     if (part.empty())
       return &model.whole;
@@ -122,7 +130,8 @@ MeshLibrary::Provider Scene3D::modelMeshes()
 
   // With background loading on (an editor), a model not yet loaded gives a
   // stand-in now, and its mesh once it has loaded (fulfilPending).
-  provider.load = [&store, meshIn](MeshLibrary& library, std::string_view name) -> MeshHandle
+  provider.load = [&store, meshIn](
+                      MeshLibrary& library, std::string_view name) -> MeshHandle
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
     if (!asset)
@@ -141,13 +150,15 @@ MeshLibrary::Provider Scene3D::modelMeshes()
     return mesh ? library.add(*mesh, std::string(name)) : MeshHandle{};
   };
 
-  provider.loaded = [&store, meshIn](std::string_view name, bool& waiting) -> const MeshData*
+  provider.loaded = [&store, meshIn](
+                        std::string_view name, bool& waiting) -> const MeshData*
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
     if (!asset)
       return nullptr;
     const ModelData* model = nullptr;
-    const AssetStore::LoadState state = store.requestModel(asset->model, &model);
+    const AssetStore::LoadState state =
+        store.requestModel(asset->model, &model);
     waiting = state == AssetStore::LoadState::Loading;
     return model ? meshIn(*model, asset->part) : nullptr;
   };
@@ -155,17 +166,21 @@ MeshLibrary::Provider Scene3D::modelMeshes()
   provider.label = [&store](std::string_view name) -> std::string
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
-    const AssetRecord* record =
-        asset && store.database() ? store.database()->find(asset->model) : nullptr;
+    const AssetRecord* record = asset && store.database()
+                                    ? store.database()->find(asset->model)
+                                    : nullptr;
     if (!record)
       return {};
-    return record->path.generic_string() + (asset->part.empty() ? "" : " : " + asset->part);
+    return record->path.generic_string() +
+           (asset->part.empty() ? "" : " : " + asset->part);
   };
 
-  provider.loadMaterial = [&store](std::string_view name) -> std::shared_ptr<const MeshMaterial>
+  provider.loadMaterial =
+      [&store](std::string_view name) -> std::shared_ptr<const MeshMaterial>
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
-    return asset && asset->part.empty() ? store.material(asset->model) : nullptr;
+    return asset && asset->part.empty() ? store.material(asset->model)
+                                        : nullptr;
   };
 
   // Every asset of a kind, by name and path.
@@ -175,7 +190,8 @@ MeshLibrary::Provider Scene3D::modelMeshes()
     if (store.database())
       for (const AssetRecord& record : store.database()->records())
         if (record.kind == kind && record.id.valid())
-          out.emplace_back(assetMeshName(record.id), record.path.generic_string());
+          out.emplace_back(
+              assetMeshName(record.id), record.path.generic_string());
     return out;
   };
   provider.materials = [assetsOf] { return assetsOf(AssetKind::Material); };
@@ -196,7 +212,8 @@ MeshLibrary::Provider Scene3D::modelMeshes()
       out.emplace_back(assetMeshName(record.id), path);
       if (const ModelData* model = store.loadedModel(record.id))
         for (const ModelPart& part : model->parts)
-          out.emplace_back(assetMeshName(record.id, part.name), path + " : " + part.name);
+          out.emplace_back(
+              assetMeshName(record.id, part.name), path + " : " + part.name);
     }
     return out;
   };

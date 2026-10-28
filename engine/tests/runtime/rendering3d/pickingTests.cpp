@@ -35,7 +35,10 @@ struct World
 };
 
 // Looking straight down at (x, y).
-Ray3D downAt(float x, float y) { return Ray3D{{x, y, 50.0f}, {0.0f, 0.0f, -1.0f}}; }
+Ray3D downAt(float x, float y)
+{
+  return Ray3D{{x, y, 50.0f}, {0.0f, 0.0f, -1.0f}};
+}
 } // namespace
 
 int main()
@@ -56,7 +59,8 @@ int main()
   {
     World world;
     world.spawn(world.cube, {0, 0, 0});
-    CHECK(!pickEntity(world.scene, world.meshes, downAt(30.0f, 30.0f)).has_value());
+    CHECK(!pickEntity(world.scene, world.meshes, downAt(30.0f, 30.0f))
+               .has_value());
   }
 
   TEST("inside several boxes, the smallest should win")
@@ -78,7 +82,8 @@ int main()
 
     const auto hit = pickEntity(world.scene, world.meshes, downAt(5.1f, 5.0f));
     CHECK(hit->entity.getId() == light.getId());
-    CHECK(!pickEntity(world.scene, world.meshes, downAt(6.0f, 5.0f)).has_value());
+    CHECK(
+        !pickEntity(world.scene, world.meshes, downAt(6.0f, 5.0f)).has_value());
   }
 
   TEST("bounds should follow the transform")
@@ -102,15 +107,18 @@ int main()
     const auto hit = pickEntity(world.scene, world.meshes, downAt(10.0f, 3.0f));
     CHECK(hit.has_value());
     CHECK(hit->entity.getId() == child.getId());
-    CHECK(!pickEntity(world.scene, world.meshes, downAt(0.0f, 3.0f)).has_value());
+    CHECK(
+        !pickEntity(world.scene, world.meshes, downAt(0.0f, 3.0f)).has_value());
   }
 
   TEST("a surface pick should find the part of the mesh under the ray")
   {
     World world;
-    // The box's top face (its first 6 indices) as one section, the rest another.
+    // The box's top face (its first 6 indices) as one section, the rest
+    // another.
     MeshData twoPart = meshes::box({1, 1, 1});
-    twoPart.sections = {{0, 6, MeshMaterial{}, "Top"}, {6, 30, MeshMaterial{}, "Sides"}};
+    twoPart.sections = {
+        {0, 6, MeshMaterial{}, "Top"}, {6, 30, MeshMaterial{}, "Sides"}};
     const MeshHandle part = world.meshes.add(twoPart);
     Entity box = world.spawn(part, {0, 0, 0});
 
@@ -123,28 +131,35 @@ int main()
       CHECK(testing::approx(top->distance, 49.0f)); // the top is at z = 1
     }
 
-    const auto side = pickSurface(world.scene, world.meshes, Ray3D{{10, 0, 0.5f}, {-1, 0, 0}});
+    const auto side = pickSurface(
+        world.scene, world.meshes, Ray3D{{10, 0, 0.5f}, {-1, 0, 0}});
     CHECK(side.has_value());
     if (side)
       CHECK(side->section == 1u);
-    CHECK(!pickSurface(world.scene, world.meshes, downAt(3.0f, 3.0f)).has_value());
+    CHECK(!pickSurface(world.scene, world.meshes, downAt(3.0f, 3.0f))
+               .has_value());
   }
 
-  TEST("a surface pick should follow the object's transform, and skip bounds-only hits")
+  TEST("a surface pick should follow the object's transform, and skip "
+       "bounds-only hits")
   {
     World world;
     Entity moved = world.spawn(world.cube, {5, 0, 0});
     moved.getComponent<Transform3DComponent>().scale = {2, 2, 2};
-    CHECK(pickSurface(world.scene, world.meshes, downAt(5.9f, 0.0f)).has_value()); // scaled to +-1
-    CHECK(!pickSurface(world.scene, world.meshes, downAt(0.0f, 0.0f)).has_value());
+    CHECK(pickSurface(world.scene, world.meshes, downAt(5.9f, 0.0f))
+              .has_value()); // scaled to +-1
+    CHECK(!pickSurface(world.scene, world.meshes, downAt(0.0f, 0.0f))
+               .has_value());
 
     // A tilted plane's bounds cover a corner its triangles don't reach.
     MeshData plane;
     plane.vertices = {{{0, 0, 0}}, {{1, 0, 0}}, {{0, 1, 1}}};
     plane.indices = {0, 1, 2};
     world.spawn(world.meshes.add(plane), {10, 10, 0});
-    CHECK(pickEntity(world.scene, world.meshes, downAt(10.9f, 10.9f)).has_value());
-    CHECK(!pickSurface(world.scene, world.meshes, downAt(10.9f, 10.9f)).has_value());
+    CHECK(pickEntity(world.scene, world.meshes, downAt(10.9f, 10.9f))
+              .has_value());
+    CHECK(!pickSurface(world.scene, world.meshes, downAt(10.9f, 10.9f))
+               .has_value());
   }
 
   return testing::report("pickingTests");

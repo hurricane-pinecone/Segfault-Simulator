@@ -129,7 +129,8 @@ public:
 
   // attachObject for an object made elsewhere (e.g. by a script factory, with
   // its fields already set): binds it to `entity`, then runs its onCreate.
-  GameObject& adoptObject(std::unique_ptr<GameObject> object, const Entity& entity);
+  GameObject& adoptObject(std::unique_ptr<GameObject> object,
+                          const Entity& entity);
 
   template <typename TObject>
   TObject* tryFindObject() const;

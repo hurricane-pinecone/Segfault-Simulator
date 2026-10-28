@@ -17,10 +17,7 @@ struct Aabb
   glm::vec3 min{std::numeric_limits<float>::max()};
   glm::vec3 max{std::numeric_limits<float>::lowest()};
 
-  bool empty() const
-  {
-    return min.x > max.x || min.y > max.y || min.z > max.z;
-  }
+  bool empty() const { return min.x > max.x || min.y > max.y || min.z > max.z; }
 
   glm::vec3 center() const { return (min + max) * 0.5f; }
 

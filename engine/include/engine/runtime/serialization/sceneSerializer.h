@@ -7,9 +7,9 @@
 #include <functional>
 #include <optional>
 #include <set>
-#include <unordered_map>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace sfs
@@ -27,7 +27,7 @@ namespace reflect
 {
 class TypeRegistry;
 struct TypeInfo;
-}
+} // namespace reflect
 
 /**
  * Saves and loads a scene as JSON, driven by reflection: every reflected
@@ -86,7 +86,8 @@ public:
   SceneSerializer(const reflect::TypeRegistry& types, MeshLibrary* meshes);
 
   /** A prefab's name ("asset:<id>") -> its file's contents; nothing if none. */
-  using PrefabSource = std::function<std::optional<nlohmann::json>(std::string_view name)>;
+  using PrefabSource =
+      std::function<std::optional<nlohmann::json>(std::string_view name)>;
 
   /**
    * Where prefabs come from. Without one, instances can't be expanded: they
@@ -99,7 +100,9 @@ public:
    *
    * @return its root, or a placeholder (logged) if the prefab can't be read
    */
-  Entity instantiate(std::string_view prefab, Scene& scene, const Entity& parent = {}) const;
+  Entity instantiate(std::string_view prefab,
+                     Scene& scene,
+                     const Entity& parent = {}) const;
 
   /**
    * A prefab file's contents ({ "formatVersion", "root" }) made from an entity
@@ -110,7 +113,9 @@ public:
    * the instance's; otherwise the root is moved to the origin, unless
    * `keepRootPlacement` (saving a prefab edited on its own).
    */
-  nlohmann::json savePrefab(Scene& scene, const Entity& root, bool keepRootPlacement = false) const;
+  nlohmann::json savePrefab(Scene& scene,
+                            const Entity& root,
+                            bool keepRootPlacement = false) const;
 
   /**
    * How an instance differs from its prefab: its scene entry ($prefab,
@@ -123,7 +128,8 @@ public:
    * root itself; nothing if it isn't one of the instance's prefab entities
    * (e.g. added to it).
    */
-  static std::optional<std::string> pathInInstance(const Entity& entity, const Entity& root);
+  static std::optional<std::string> pathInInstance(const Entity& entity,
+                                                   const Entity& root);
 
   /** The nearest instance root at or above an entity; invalid if none. */
   static Entity instanceRootOf(const Entity& entity);
@@ -131,9 +137,11 @@ public:
   /** One entity of an expanded prefab (see expandPrefab()). */
   struct ExpandedEntity
   {
-    std::string key;           // its path in the prefab ("" the root, "3/7" in a nested one)
-    std::string parent;        // its parent's key (ignored for the root)
-    nlohmann::json components; // { "TypeName": { fields... } }, as in scene files
+    std::string
+        key; // its path in the prefab ("" the root, "3/7" in a nested one)
+    std::string parent; // its parent's key (ignored for the root)
+    nlohmann::json
+        components; // { "TypeName": { fields... } }, as in scene files
   };
 
   /**
@@ -171,7 +179,9 @@ public:
    * Apply saveObject() output to an object. Fields missing from `fields` keep
    * their current values; values of the wrong type are logged and skipped.
    */
-  void loadObject(const reflect::TypeInfo& type, void* object, const nlohmann::json& fields) const;
+  void loadObject(const reflect::TypeInfo& type,
+                  void* object,
+                  const nlohmann::json& fields) const;
 
   /**
    * One entity and everything below it, in the same form as a scene file's
@@ -186,7 +196,9 @@ public:
    *
    * @return the top entity created
    */
-  Entity loadEntity(const nlohmann::json& entry, Scene& scene, const Entity& parent = {}) const;
+  Entity loadEntity(const nlohmann::json& entry,
+                    Scene& scene,
+                    const Entity& parent = {}) const;
 
   /** Save to a file (pretty-printed). @return false (logged) on failure. */
   bool saveFile(Scene& scene,
@@ -202,14 +214,18 @@ public:
    * Write JSON the way scene files are written: indented, with short arrays
    * on one line, so files stay compact and diff cleanly.
    */
-  static bool writeJsonFile(const nlohmann::json& json, const std::filesystem::path& path);
+  static bool writeJsonFile(const nlohmann::json& json,
+                            const std::filesystem::path& path);
 
   /** Read a JSON file. @return nothing (logged) if missing or invalid. */
-  static std::optional<nlohmann::json> readJsonFile(const std::filesystem::path& path);
+  static std::optional<nlohmann::json>
+  readJsonFile(const std::filesystem::path& path);
 
 private:
   // `ids`: write each entity's prefab "$id" (inside a prefab file).
-  nlohmann::json saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree, bool ids = false) const;
+  nlohmann::json saveSubtree(const Entity& entity,
+                             const hierarchy::EntityTree& tree,
+                             bool ids = false) const;
   // An entity's components (reflected and unresolved), without children.
   nlohmann::json saveComponents(const Entity& entity) const;
   void loadComponents(const nlohmann::json& components,
@@ -223,7 +239,8 @@ private:
   // What a prefab alone gives: path -> (parent path, components), with every
   // known component's fields filled in, for comparing an instance against.
   std::vector<PrefabNode> expandBase(std::string_view prefab) const;
-  nlohmann::json instanceEntry(const Entity& root, const hierarchy::EntityTree& tree) const;
+  nlohmann::json instanceEntry(const Entity& root,
+                               const hierarchy::EntityTree& tree) const;
 
   Entity loadEntity(const nlohmann::json& entry,
                     Scene& scene,

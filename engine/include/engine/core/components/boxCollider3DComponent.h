@@ -10,7 +10,8 @@ namespace sfs
  * the entity a physics shape: static on its own, moving with a
  * RigidBody3DComponent. Colliders of different kinds on one entity combine.
  *
- * @param glm::vec3 size - full size along the entity's axes, default a unit cube
+ * @param glm::vec3 size - full size along the entity's axes, default a unit
+ * cube
  * @param glm::vec3 offset - centre relative to the entity's origin
  * @param bool trigger - detects bodies passing through (onTriggerEnter/Exit)
  *                       instead of blocking them

@@ -148,7 +148,8 @@ void Scene::update(double deltaTime)
   onUpdate(deltaTime);
 }
 
-GameObject& Scene::adoptObject(std::unique_ptr<GameObject> object, const Entity& entity)
+GameObject& Scene::adoptObject(std::unique_ptr<GameObject> object,
+                               const Entity& entity)
 {
   GameObject& ref = *object;
   ref.m_entity = entity;
@@ -192,15 +193,19 @@ void Scene::notifyContact(const Contact3D& contact, bool begun)
     const Collision3D collision{other};
     // By index: a handler may create objects (which would invalidate an
     // iterator); ones it adds aren't told about this contact.
-    for (std::size_t i = 0, count = m_gameObjects.size(); i < count && i < m_gameObjects.size(); ++i)
+    for (std::size_t i = 0, count = m_gameObjects.size();
+         i < count && i < m_gameObjects.size();
+         ++i)
     {
       GameObject& object = *m_gameObjects[i];
       if (object.m_entity != self)
         continue;
       if (contact.trigger)
-        begun ? object.onTriggerEnter(collision) : object.onTriggerExit(collision);
+        begun ? object.onTriggerEnter(collision)
+              : object.onTriggerExit(collision);
       else
-        begun ? object.onCollisionEnter(collision) : object.onCollisionExit(collision);
+        begun ? object.onCollisionEnter(collision)
+              : object.onCollisionExit(collision);
     }
   };
   tell(contact.a, contact.b);

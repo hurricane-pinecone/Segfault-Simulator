@@ -266,7 +266,8 @@ int main()
     CHECK(movement.getEntities().size() == 1u);
   }
 
-  TEST("freed ids should be reused lowest-first, whatever order they were freed")
+  TEST(
+      "freed ids should be reused lowest-first, whatever order they were freed")
   {
     Registry reg;
     Entity a = reg.createEntity();

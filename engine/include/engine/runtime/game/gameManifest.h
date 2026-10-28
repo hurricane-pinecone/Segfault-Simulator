@@ -17,9 +17,9 @@ struct GameManifest
   static constexpr const char* kFileName = "game.json";
   static constexpr int kFormatVersion = 1;
 
-  std::string name;               // window title
-  std::string moduleName;         // the module's registration name
-  std::filesystem::path module;   // the game module library
+  std::string name;             // window title
+  std::string moduleName;       // the module's registration name
+  std::filesystem::path module; // the game module library
   std::filesystem::path startScene;
   int windowWidth = 1600;
   int windowHeight = 900;

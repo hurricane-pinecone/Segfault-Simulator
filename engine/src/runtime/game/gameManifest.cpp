@@ -6,10 +6,12 @@
 namespace sfs
 {
 
-std::optional<GameManifest> GameManifest::read(const std::filesystem::path& folder)
+std::optional<GameManifest>
+GameManifest::read(const std::filesystem::path& folder)
 {
   const std::filesystem::path file = folder / kFileName;
-  const std::optional<nlohmann::json> json = SceneSerializer::readJsonFile(file);
+  const std::optional<nlohmann::json> json =
+      SceneSerializer::readJsonFile(file);
   if (!json || !json->is_object())
   {
     LOG_ERROR("No game description at " + file.string());

@@ -23,7 +23,8 @@ WebGpuContext* g_context = nullptr;
 struct ViewportSurface
 {
   WGPUSurface surface = nullptr;
-  WGPUSurfaceTexture frame = {}; // acquired in RenderWindow, presented in SwapBuffers
+  WGPUSurfaceTexture frame =
+      {}; // acquired in RenderWindow, presented in SwapBuffers
   int width = 0;
   int height = 0;
 };
@@ -44,8 +45,8 @@ void configure(ViewportSurface& target, const ImVec2& size)
 void createWindow(ImGuiViewport* viewport)
 {
   // The SDL2 platform backend stores the window's ID, not the window.
-  SDL_Window* window = SDL_GetWindowFromID(
-      static_cast<Uint32>(reinterpret_cast<intptr_t>(viewport->PlatformHandle)));
+  SDL_Window* window = SDL_GetWindowFromID(static_cast<Uint32>(
+      reinterpret_cast<intptr_t>(viewport->PlatformHandle)));
   if (!window)
   {
     LOG_ERROR("ImGui viewport: no SDL window for the new platform window");
@@ -84,8 +85,10 @@ void renderWindow(ImGuiViewport* viewport, void*)
     return;
 
   wgpuSurfaceGetCurrentTexture(target->surface, &target->frame);
-  if (target->frame.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
-      target->frame.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
+  if (target->frame.status !=
+          WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
+      target->frame.status !=
+          WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
   {
     // Lost or outdated (e.g. mid-resize): reconfigure and try next frame.
     if (target->frame.texture)
@@ -112,7 +115,8 @@ void renderWindow(ImGuiViewport* viewport, void*)
   passDesc.colorAttachmentCount = 1;
   passDesc.colorAttachments = &color;
 
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
   ImGui_ImplWGPU_RenderDrawData(viewport->DrawData, pass);
   wgpuRenderPassEncoderEnd(pass);
   wgpuRenderPassEncoderRelease(pass);

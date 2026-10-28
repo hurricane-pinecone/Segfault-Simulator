@@ -60,7 +60,10 @@ public:
    * editor, the export folder in a shipped game). The current scene and its
    * scripts are destroyed, then the new one's scripts start.
    */
-  void loadScene(const std::filesystem::path& scene) { m_requestedScene = scene; }
+  void loadScene(const std::filesystem::path& scene)
+  {
+    m_requestedScene = scene;
+  }
 
   // The game's window. Inside the editor the window is the editor's, so these
   // are ignored there (logged once).
@@ -155,7 +158,10 @@ protected:
   bool playScene(const std::filesystem::path& scene);
 
   /** The folder scene file paths are relative to (the game's folder). */
-  virtual std::filesystem::path gameFolder() const { return std::filesystem::current_path(); }
+  virtual std::filesystem::path gameFolder() const
+  {
+    return std::filesystem::current_path();
+  }
 
   /**
    * The asset catalogue scenes load assets by id from (null for none). Without
@@ -171,7 +177,8 @@ protected:
    */
   virtual Scene3D& replaceScene();
 
-  /** Whether the window belongs to the game (not when it runs in the editor). */
+  /** Whether the window belongs to the game (not when it runs in the editor).
+   */
   virtual bool ownsWindow() const { return true; }
 
   // The active render backend, for a game that needs its concrete type (e.g. to

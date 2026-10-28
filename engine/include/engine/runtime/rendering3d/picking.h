@@ -13,7 +13,8 @@ namespace sfs
 class MeshLibrary;
 class Scene;
 
-/** Half-size of the box that stands in for an entity with no mesh (a light, an empty). */
+/** Half-size of the box that stands in for an entity with no mesh (a light, an
+ * empty). */
 inline constexpr float kPickMarkerRadius = 0.3f;
 
 /**
@@ -22,7 +23,8 @@ inline constexpr float kPickMarkerRadius = 0.3f;
  *
  * @return nothing if the entity has no Transform3DComponent.
  */
-std::optional<Aabb> entityBounds(const Entity& entity, const MeshLibrary& meshes);
+std::optional<Aabb> entityBounds(const Entity& entity,
+                                 const MeshLibrary& meshes);
 
 struct PickHit
 {
@@ -36,7 +38,8 @@ struct PickHit
  * distance (the ray starts inside them), the smallest wins, so an object
  * standing on a large floor is picked over the floor.
  */
-std::optional<PickHit> pickEntity(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray);
+std::optional<PickHit>
+pickEntity(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray);
 
 struct SurfaceHit
 {
@@ -50,6 +53,7 @@ struct SurfaceHit
  * exact where pickEntity uses bounds. For dropping things onto objects, e.g. a
  * material onto the part of a model under the cursor.
  */
-std::optional<SurfaceHit> pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray);
+std::optional<SurfaceHit>
+pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray);
 
 } // namespace sfs

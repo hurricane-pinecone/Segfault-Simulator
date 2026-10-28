@@ -37,7 +37,8 @@ const char* alphaModeName(AlphaMode mode)
 
 std::optional<AlphaMode> alphaModeFromName(std::string_view name)
 {
-  for (const AlphaMode mode : {AlphaMode::Opaque, AlphaMode::Mask, AlphaMode::Blend})
+  for (const AlphaMode mode :
+       {AlphaMode::Opaque, AlphaMode::Mask, AlphaMode::Blend})
     if (name == alphaModeName(mode))
       return mode;
   return std::nullopt;
@@ -65,13 +66,15 @@ std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
     return std::nullopt;
 
   MaterialAsset material;
-  if (const auto it = json.find("baseColor"); it != json.end() && it->is_array() && it->size() == 4)
+  if (const auto it = json.find("baseColor");
+      it != json.end() && it->is_array() && it->size() == 4)
     for (int i = 0; i < 4; ++i)
       if ((*it)[i].is_number())
         material.baseColor[i] = (*it)[i].get<float>();
   const auto readVec2 = [&json](const char* key, glm::vec2& out)
   {
-    if (const auto it = json.find(key); it != json.end() && it->is_array() && it->size() == 2)
+    if (const auto it = json.find(key);
+        it != json.end() && it->is_array() && it->size() == 2)
       for (int i = 0; i < 2; ++i)
         if ((*it)[i].is_number())
           out[i] = (*it)[i].get<float>();
@@ -83,8 +86,10 @@ std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
   read(json, "metallic", material.metallic);
   read(json, "roughness", material.roughness);
   read(json, "alphaCutoff", material.alphaCutoff);
-  if (const auto it = json.find("alphaMode"); it != json.end() && it->is_string())
-    material.alphaMode = alphaModeFromName(it->get<std::string>()).value_or(AlphaMode::Opaque);
+  if (const auto it = json.find("alphaMode");
+      it != json.end() && it->is_string())
+    material.alphaMode =
+        alphaModeFromName(it->get<std::string>()).value_or(AlphaMode::Opaque);
   return material;
 }
 

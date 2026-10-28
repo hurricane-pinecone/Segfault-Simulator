@@ -63,14 +63,16 @@ void registerTestScripts()
   tick.name = "TickSystem";
   tick.module = "test";
   tick.kind = ScriptType::Kind::System;
-  tick.addSystem = [](Scene& scene) -> System& { return scene.addSystem<TickSystem>(); };
+  tick.addSystem = [](Scene& scene) -> System&
+  { return scene.addSystem<TickSystem>(); };
   scripts().add(tick);
 
   ScriptType mover;
   mover.name = "Mover";
   mover.module = "test";
   mover.kind = ScriptType::Kind::GameObject;
-  mover.createObject = []() -> std::unique_ptr<GameObject> { return std::make_unique<Mover>(); };
+  mover.createObject = []() -> std::unique_ptr<GameObject>
+  { return std::make_unique<Mover>(); };
   scripts().add(mover);
 
   reflect::TypeInfo moverType;
@@ -80,7 +82,8 @@ void registerTestScripts()
   reflect::FieldInfo speed;
   speed.name = "speed";
   speed.kind = reflect::FieldKind::Float;
-  speed.address = [](void* object) -> void* { return &static_cast<Mover*>(object)->speed; };
+  speed.address = [](void* object) -> void*
+  { return &static_cast<Mover*>(object)->speed; };
   moverType.fields.push_back(speed);
   reflect::types().add(moverType);
 }
@@ -116,8 +119,10 @@ int main()
     CHECK(mover->entity().getId() == box.getId());
 
     world.scene.update(0.5);
-    CHECK(testing::approx(box.getComponent<Transform3DComponent>().position.x, 0.5f));
-    CHECK(testing::approx(plain.getComponent<Transform3DComponent>().position.x, 0.0f));
+    CHECK(testing::approx(
+        box.getComponent<Transform3DComponent>().position.x, 0.5f));
+    CHECK(testing::approx(
+        plain.getComponent<Transform3DComponent>().position.x, 0.0f));
   }
 
   TEST("an entity's saved script fields should be set before onCreate")
@@ -130,7 +135,8 @@ int main()
     fast.addComponent<ScriptComponent>(script);
     Entity standard = world.scene.createEntity();
     standard.addComponent<Transform3DComponent>();
-    standard.addComponent<ScriptComponent>("Mover"); // no saved values: defaults
+    standard.addComponent<ScriptComponent>(
+        "Mover"); // no saved values: defaults
     world.scene.flushEntities();
 
     Mover::speedsAtCreate.clear();
@@ -139,8 +145,10 @@ int main()
     CHECK(testing::approx(Mover::speedsAtCreate[0], 4.0f)); // onCreate saw it
 
     world.scene.update(0.5);
-    CHECK(testing::approx(fast.getComponent<Transform3DComponent>().position.x, 2.0f));
-    CHECK(testing::approx(standard.getComponent<Transform3DComponent>().position.x, 0.5f));
+    CHECK(testing::approx(
+        fast.getComponent<Transform3DComponent>().position.x, 2.0f));
+    CHECK(testing::approx(
+        standard.getComponent<Transform3DComponent>().position.x, 0.5f));
   }
 
   TEST("startScripts should add game systems that see existing entities")

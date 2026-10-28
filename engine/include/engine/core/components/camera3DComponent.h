@@ -43,8 +43,8 @@ struct Camera3DComponent
   void applyTo(Camera3D& camera, const glm::mat4& world) const
   {
     camera.setPose(glm::vec3(world[3]), glm::vec3(world[0]), focusDistance);
-    camera.projection =
-        orthographic ? Camera3D::Projection::Orthographic : Camera3D::Projection::Perspective;
+    camera.projection = orthographic ? Camera3D::Projection::Orthographic
+                                     : Camera3D::Projection::Perspective;
     camera.fieldOfView = glm::radians(fieldOfView);
     camera.orthoHeight = orthoHeight;
     camera.nearPlane = nearPlane;

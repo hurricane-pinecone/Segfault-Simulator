@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/assets/scriptableObject.h"
+#include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/reflection/reflection.h"
 
 #include <string>
@@ -27,7 +27,8 @@ ComponentOps componentOps()
 
 /** A TypeInfo for component T, ready for fields to be appended. */
 template <typename T>
-TypeInfo componentType(std::string name, std::string displayName, std::string module)
+TypeInfo
+componentType(std::string name, std::string displayName, std::string module)
 {
   TypeInfo type;
   type.name = std::move(name);
@@ -38,17 +39,22 @@ TypeInfo componentType(std::string name, std::string displayName, std::string mo
   return type;
 }
 
-/** A TypeInfo for scriptable object type T (an sfs::ScriptableObject), ready for fields to be appended. */
+/** A TypeInfo for scriptable object type T (an sfs::ScriptableObject), ready
+ * for fields to be appended. */
 template <typename T>
-TypeInfo scriptableObjectType(std::string name, std::string displayName, std::string module)
+TypeInfo scriptableObjectType(std::string name,
+                              std::string displayName,
+                              std::string module)
 {
   TypeInfo type;
   type.name = std::move(name);
   type.displayName = std::move(displayName);
   type.module = std::move(module);
   type.kind = TypeKind::ScriptableObject;
-  type.scriptable.create = []() -> void* { return static_cast<sfs::ScriptableObject*>(new T()); };
-  type.scriptable.destroy = [](void* object) { delete static_cast<sfs::ScriptableObject*>(object); };
+  type.scriptable.create = []() -> void*
+  { return static_cast<sfs::ScriptableObject*>(new T()); };
+  type.scriptable.destroy = [](void* object)
+  { delete static_cast<sfs::ScriptableObject*>(object); };
   return type;
 }
 

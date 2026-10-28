@@ -23,7 +23,8 @@ Entity RenderSystem3D::sceneCamera() const
 {
   if (!registry)
     return {};
-  for (const Entity& entity : registry->view<Transform3DComponent, Camera3DComponent>())
+  for (const Entity& entity :
+       registry->view<Transform3DComponent, Camera3DComponent>())
     if (entity.getComponent<Camera3DComponent>().active)
       return entity;
   return {};
@@ -36,7 +37,8 @@ Ray3D RenderSystem3D::screenRay(const glm::vec2& pixel) const
   glm::ivec2 size = m_context.viewportSize;
   if (size.x <= 0 || size.y <= 0)
     size = m_renderer.viewportSize();
-  return m_camera.screenRay(pixel, glm::vec2(std::max(size.x, 1), std::max(size.y, 1)));
+  return m_camera.screenRay(
+      pixel, glm::vec2(std::max(size.x, 1), std::max(size.y, 1)));
 }
 
 void RenderSystem3D::render()
@@ -46,8 +48,8 @@ void RenderSystem3D::render()
   // Late as possible, so this frame's moves of the camera entity are seen.
   if (m_followSceneCamera)
     if (const Entity camera = sceneCamera(); camera.isValid())
-      camera.getComponent<Camera3DComponent>().applyTo(m_camera,
-                                                       hierarchy::worldMatrix(camera));
+      camera.getComponent<Camera3DComponent>().applyTo(
+          m_camera, hierarchy::worldMatrix(camera));
 
   if (!buildContext(m_renderer.viewportSize()))
     return;
@@ -71,9 +73,9 @@ void RenderSystem3D::render()
 
   FrameParams3D frame;
   frame.view = m_camera.viewMatrix();
-  frame.projection = m_camera.projectionMatrix(
-      static_cast<float>(m_context.viewportSize.x) /
-      static_cast<float>(m_context.viewportSize.y));
+  frame.projection =
+      m_camera.projectionMatrix(static_cast<float>(m_context.viewportSize.x) /
+                                static_cast<float>(m_context.viewportSize.y));
   frame.viewProjection = m_context.viewProjection;
   frame.cameraPosition = m_camera.position();
   frame.lighting = m_lighting;
@@ -112,7 +114,8 @@ bool RenderSystem3D::buildContext(const glm::ivec2& viewport)
                                          m_camera.target,
                                          m_shadows.distance,
                                          m_renderer.shadowMapResolution());
-    m_context.shadowFrustum = Frustum::fromViewProjection(m_lightViewProjection);
+    m_context.shadowFrustum =
+        Frustum::fromViewProjection(m_lightViewProjection);
   }
 
   gatherPointLights();
@@ -169,8 +172,10 @@ void RenderSystem3D::submit(const MeshDrawCommand& command)
 
   // Commands name meshes by library handle; a stand-in that has loaded since
   // is a different renderer mesh.
-  m_renderer.drawMesh(MeshBatch3D{
-      m_meshes.gpuHandle(command.mesh), command.materials, command.instances, command.shadowInstances});
+  m_renderer.drawMesh(MeshBatch3D{m_meshes.gpuHandle(command.mesh),
+                                  command.materials,
+                                  command.instances,
+                                  command.shadowInstances});
 
   m_stats.drawCalls += 1;
   m_stats.instances += command.instances.size();

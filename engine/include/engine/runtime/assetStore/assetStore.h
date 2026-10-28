@@ -95,7 +95,8 @@ public:
   /** Bumped whenever background loads are taken in (see collectLoads()). */
   uint64_t loadGeneration() const { return m_loadGeneration; }
 
-  /** Background loads since nothing was loading: how many have finished, of how many. */
+  /** Background loads since nothing was loading: how many have finished, of how
+   * many. */
   struct LoadProgress
   {
     int done = 0;
@@ -194,7 +195,9 @@ private:
   std::unordered_map<std::string, FontPtr> m_fonts;
 
   // A model's node tree as prefab content (see prefab()).
-  static nlohmann::json modelPrefab(const std::vector<ModelNode>& nodes, const AssetId& id, const std::string& name);
+  static nlohmann::json modelPrefab(const std::vector<ModelNode>& nodes,
+                                    const AssetId& id,
+                                    const std::string& name);
 
   const AssetDatabase* m_database = nullptr;
 
@@ -218,9 +221,12 @@ private:
   // nullopt: tried and failed (so it isn't retried, or logged, every time).
   std::unordered_map<AssetId, std::optional<ModelData>, AssetIdHash> m_models;
   // Null: tried and failed.
-  std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash> m_textures;
-  std::unordered_map<AssetId, std::shared_ptr<const MeshMaterial>, AssetIdHash> m_materials;
-  std::unordered_map<AssetId, std::optional<nlohmann::json>, AssetIdHash> m_prefabs; // nullopt: failed
+  std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
+      m_textures;
+  std::unordered_map<AssetId, std::shared_ptr<const MeshMaterial>, AssetIdHash>
+      m_materials;
+  std::unordered_map<AssetId, std::optional<nlohmann::json>, AssetIdHash>
+      m_prefabs; // nullopt: failed
 
   SpriteId m_nextSpriteId = 0;
 

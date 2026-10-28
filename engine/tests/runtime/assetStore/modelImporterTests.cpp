@@ -4,8 +4,8 @@
 
 #include <SDL.h>
 
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -18,11 +18,13 @@ namespace
 
 std::string base64(const std::vector<uint8_t>& bytes)
 {
-  static const char* digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  static const char* digits =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string out;
   for (std::size_t i = 0; i < bytes.size(); i += 3)
   {
-    const uint32_t n = (bytes[i] << 16) | (i + 1 < bytes.size() ? bytes[i + 1] << 8 : 0) |
+    const uint32_t n = (bytes[i] << 16) |
+                       (i + 1 < bytes.size() ? bytes[i + 1] << 8 : 0) |
                        (i + 2 < bytes.size() ? bytes[i + 2] : 0);
     out += digits[(n >> 18) & 63];
     out += digits[(n >> 12) & 63];
@@ -42,26 +44,34 @@ void append(std::vector<uint8_t>& out, const std::vector<T>& values)
 // A 2x2 image: red, green / blue, white (top row first), saved as a BMP.
 void writeImage(const std::filesystem::path& file)
 {
-  SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 2, 2, 32, SDL_PIXELFORMAT_RGBA32);
-  const uint8_t pixels[2][2][4] = {{{255, 0, 0, 255}, {0, 255, 0, 255}}, {{0, 0, 255, 255}, {255, 255, 255, 255}}};
+  SDL_Surface* surface =
+      SDL_CreateRGBSurfaceWithFormat(0, 2, 2, 32, SDL_PIXELFORMAT_RGBA32);
+  const uint8_t pixels[2][2][4] = {{{255, 0, 0, 255}, {0, 255, 0, 255}},
+                                   {{0, 0, 255, 255}, {255, 255, 255, 255}}};
   for (int y = 0; y < 2; ++y)
-    std::memcpy(static_cast<uint8_t*>(surface->pixels) + y * surface->pitch, pixels[y], 8);
+    std::memcpy(static_cast<uint8_t*>(surface->pixels) + y * surface->pitch,
+                pixels[y],
+                8);
   SDL_SaveBMP(surface, file.string().c_str());
   SDL_FreeSurface(surface);
 }
 
 // A .gltf with two meshes, each a one-triangle primitive: "Textured" uses the
 // texture (an image file, nearest filtering), "Plain" a green base colour.
-std::filesystem::path writeModel(const std::string& name, const std::string& image)
+std::filesystem::path writeModel(const std::string& name,
+                                 const std::string& image)
 {
-  const std::filesystem::path folder = std::filesystem::temp_directory_path() / "sfsModelImporterTests";
+  const std::filesystem::path folder =
+      std::filesystem::temp_directory_path() / "sfsModelImporterTests";
   std::filesystem::create_directories(folder);
   writeImage(folder / "checker.bmp");
 
   std::vector<uint8_t> buffer;
-  append(buffer, std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}); // positions: 36 bytes
-  append(buffer, std::vector<float>{0, 0, 1, 0, 0.25f, 0.75f});   // uvs: 24 bytes
-  append(buffer, std::vector<uint16_t>{0, 1, 2, 0});              // indices (+ padding): 8 bytes
+  append(buffer,
+         std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}); // positions: 36 bytes
+  append(buffer, std::vector<float>{0, 0, 1, 0, 0.25f, 0.75f}); // uvs: 24 bytes
+  append(buffer,
+         std::vector<uint16_t>{0, 1, 2, 0}); // indices (+ padding): 8 bytes
 
   const std::string gltf = R"({
     "asset": {"version": "2.0"},
@@ -83,7 +93,8 @@ std::filesystem::path writeModel(const std::string& name, const std::string& ima
     ],
     "textures": [{"source": 0, "sampler": 0}],
     "samplers": [{"magFilter": 9728}],
-    "images": [{"uri": ")" + image + R"("}],
+    "images": [{"uri": ")" +
+                           image + R"("}],
     "accessors": [
       {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
       {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC2"},
@@ -193,16 +204,19 @@ int main()
     }
   }
 
-  TEST("the node tree alone should match the full import's, without the file's data")
+  TEST("the node tree alone should match the full import's, without the file's "
+       "data")
   {
-    const std::filesystem::path file = writeModel("treeonly.gltf", "checker.bmp");
+    const std::filesystem::path file =
+        writeModel("treeonly.gltf", "checker.bmp");
     const auto model = importModel(file);
     const auto nodes = importModelNodes(file);
     CHECK(model.has_value() && nodes.has_value());
     if (model && nodes)
     {
       CHECK(nodes->size() == model->nodes.size());
-      for (std::size_t i = 0; i < std::min(nodes->size(), model->nodes.size()); ++i)
+      for (std::size_t i = 0; i < std::min(nodes->size(), model->nodes.size());
+           ++i)
       {
         CHECK((*nodes)[i].name == model->nodes[i].name);
         CHECK((*nodes)[i].part == model->nodes[i].part);
@@ -243,15 +257,18 @@ int main()
       CHECK(model->parts.size() == 2u);
       CHECK(model->parts[0].name == "Textured");
       CHECK(model->parts[0].mesh.sections.size() == 1u);
-      CHECK(model->parts[0].mesh.sections[0].material.baseTexture == model->whole.sections[0].material.baseTexture);
+      CHECK(model->parts[0].mesh.sections[0].material.baseTexture ==
+            model->whole.sections[0].material.baseTexture);
     }
   }
 
   TEST("an image in a data URI loads like a file")
   {
-    const std::filesystem::path folder = std::filesystem::temp_directory_path() / "sfsModelImporterTests";
+    const std::filesystem::path folder =
+        std::filesystem::temp_directory_path() / "sfsModelImporterTests";
     writeImage(folder / "checker.bmp");
-    const std::string uri = "data:image/bmp;base64," + base64(readFile(folder / "checker.bmp"));
+    const std::string uri =
+        "data:image/bmp;base64," + base64(readFile(folder / "checker.bmp"));
     const auto model = importModel(writeModel("embedded.gltf", uri));
     CHECK(model.has_value());
     if (model)
@@ -271,10 +288,12 @@ int main()
     {
       CHECK(model->whole.sections.size() == 2u);
       CHECK(model->whole.sections[0].material.baseTexture == nullptr);
-      CHECK(model->whole.sections[0].material.metallicRoughnessTexture == nullptr);
+      CHECK(model->whole.sections[0].material.metallicRoughnessTexture ==
+            nullptr);
     }
   }
 
-  std::filesystem::remove_all(std::filesystem::temp_directory_path() / "sfsModelImporterTests");
+  std::filesystem::remove_all(std::filesystem::temp_directory_path() /
+                              "sfsModelImporterTests");
   return testing::report("modelImporterTests");
 }

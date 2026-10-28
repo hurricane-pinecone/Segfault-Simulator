@@ -45,8 +45,8 @@ void Logger::removeSink(SinkId id)
 {
   SinkRegistry& registry = sinkRegistry();
   const std::lock_guard lock(registry.mutex);
-  std::erase_if(registry.sinks,
-                [id](const auto& entry) { return entry.first == id; });
+  std::erase_if(
+      registry.sinks, [id](const auto& entry) { return entry.first == id; });
 }
 
 void Logger::notifySinks(Level level, const std::string& message)

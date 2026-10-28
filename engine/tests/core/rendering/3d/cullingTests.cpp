@@ -44,10 +44,8 @@ int main()
   TEST("transforming a box should enclose its rotated corners")
   {
     const Aabb unit = boxAt({0.0f, 0.0f, 0.0f}, 1.0f);
-    const glm::mat4 rotate =
-        glm::rotate(glm::mat4(1.0f),
-                    glm::pi<float>() / 4.0f,
-                    glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::mat4 rotate = glm::rotate(
+        glm::mat4(1.0f), glm::pi<float>() / 4.0f, glm::vec3(0.0f, 0.0f, 1.0f));
     const Aabb rotated = unit.transformed(rotate);
     // A unit square turned 45 degrees reaches sqrt(2) along X and Y.
     CHECK(testing::approx(rotated.max.x, 1.41421f, 1e-3f));
@@ -74,7 +72,8 @@ int main()
         Frustum::fromViewProjection(camera.viewProjection(1.0f));
 
     CHECK(frustum.intersects(boxAt(camera.target, 1.0f)));
-    CHECK(!frustum.intersects(boxAt(camera.position() - glm::vec3(30, 0, 0), 1.0f)));
+    CHECK(!frustum.intersects(
+        boxAt(camera.position() - glm::vec3(30, 0, 0), 1.0f)));
     CHECK(!frustum.intersects(boxAt({0.0f, 400.0f, 0.0f}, 1.0f)));
     CHECK(!frustum.intersects(Aabb{}));
   }
@@ -89,7 +88,8 @@ int main()
     // Ortho half-width is 5 along the camera's right axis.
     const glm::vec3 edge = camera.target + camera.groundRight() * 5.0f;
     CHECK(frustum.intersects(boxAt(edge, 0.5f)));
-    CHECK(!frustum.intersects(boxAt(camera.target + camera.groundRight() * 7.0f, 0.5f)));
+    CHECK(!frustum.intersects(
+        boxAt(camera.target + camera.groundRight() * 7.0f, 0.5f)));
   }
 
   TEST("the sun shadow volume should contain the covered region")
@@ -118,8 +118,10 @@ int main()
     // fixed world point by a whole number of texels (or not at all).
     const glm::vec3 sun{-0.4f, -0.3f, 0.85f};
     const uint32_t resolution = 1024;
-    const glm::mat4 a = fitSunShadow(sun, {0.0f, 0.0f, 0.0f}, 20.0f, resolution);
-    const glm::mat4 b = fitSunShadow(sun, {0.013f, 0.0f, 0.0f}, 20.0f, resolution);
+    const glm::mat4 a =
+        fitSunShadow(sun, {0.0f, 0.0f, 0.0f}, 20.0f, resolution);
+    const glm::mat4 b =
+        fitSunShadow(sun, {0.013f, 0.0f, 0.0f}, 20.0f, resolution);
 
     const glm::vec3 point{3.0f, 2.0f, 1.0f};
     const float texels = (project(a, point).x - project(b, point).x) *
@@ -129,7 +131,8 @@ int main()
 
   TEST("an overhead sun should still give a valid shadow volume")
   {
-    const glm::mat4 light = fitSunShadow({0.0f, 0.0f, 1.0f}, {0, 0, 0}, 10.0f, 512);
+    const glm::mat4 light =
+        fitSunShadow({0.0f, 0.0f, 1.0f}, {0, 0, 0}, 10.0f, 512);
     const glm::vec3 ndc = project(light, {0.0f, 0.0f, 0.0f});
     CHECK(testing::approx(ndc.x, 0.0f, 1e-2f));
     CHECK(ndc.z > 0.0f && ndc.z < 1.0f);
