@@ -20,11 +20,19 @@ endfunction()
 add_runtime_test(movementSystemTests systems/movementSystemTests.cpp)
 add_runtime_test(collisionSystemTests systems/collisionSystemTests.cpp)
 add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
+add_runtime_test(physicsSystem3DTests systems/physicsSystem3DTests.cpp)
 add_runtime_test(spriteRenderSystemTests systems/spriteRenderSystemTests.cpp)
 
 # particles/
 add_runtime_test(colliderParticleCollisionTests particles/colliderParticleCollisionTests.cpp)
 add_runtime_test(terrainParticleCollisionTests particles/terrainParticleCollisionTests.cpp)
+
+# input/
+add_runtime_test(keyboardInputTests input/keyboardInputTests.cpp)
+add_runtime_test(mouseInputTests input/mouseInputTests.cpp)
+
+# sceneManager/
+add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
 
 # rendering/
 add_runtime_test(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)
@@ -36,3 +44,20 @@ add_runtime_test(blockGeometryTests rendering/modules/blockGeometryTests.cpp)
 add_runtime_test(isometricWaterTests rendering/modules/isometricWaterTests.cpp)
 add_runtime_test(spriteShadowTests rendering/modules/spriteShadowTests.cpp)
 add_runtime_test(isometricDecalSinkTests rendering/modules/isometricDecalSinkTests.cpp)
+
+# assetStore/
+add_runtime_test(modelImporterTests assetStore/modelImporterTests.cpp)
+
+# rendering3d/
+add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)
+add_runtime_test(pickingTests rendering3d/pickingTests.cpp)
+
+# serialization/
+add_runtime_test(sceneSerializerTests serialization/sceneSerializerTests.cpp)
+add_runtime_test(prefabTests serialization/prefabTests.cpp)
+
+# scripting/
+add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)
+
+# scriptableObjects/
+add_runtime_test(scriptableObjectsTests scriptableObjects/scriptableObjectsTests.cpp)

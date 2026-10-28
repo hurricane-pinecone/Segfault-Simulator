@@ -32,6 +32,16 @@ void SceneManager::destroyScene(const std::string& name)
   m_nameToId.erase(name);
 }
 
+void SceneManager::destroyAll()
+{
+  if (m_currentScene)
+    m_currentScene->onExit();
+
+  m_currentScene = nullptr;
+  m_scenes.clear();
+  m_nameToId.clear();
+}
+
 void SceneManager::load(SceneId id)
 {
   auto it = m_scenes.find(id);

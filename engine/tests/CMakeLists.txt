@@ -6,3 +6,7 @@ add_subdirectory(core)
 if(NOT ENGINE_CORE_ONLY)
     add_subdirectory(runtime)
 endif()
+
+if(TARGET sfs-codegen-lib)
+    add_subdirectory(tools)
+endif()

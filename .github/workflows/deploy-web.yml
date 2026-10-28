@@ -216,7 +216,10 @@ jobs:
   # the full headless test suite. Independent of the web deploy: a failure here
   # reports a red check without blocking the Pages publish.
   build-windows:
-    runs-on: windows-latest
+    # Pinned: `windows-latest` moved to a newer Visual Studio, whose compiler
+    # version ConanCenter has no prebuilt binaries for, so every dependency was
+    # built from source and their CMake configures failed. VS 2022 has binaries.
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
@@ -231,7 +234,9 @@ jobs:
         run: pip install "conan==2.*"
 
       - name: Detect Conan profile
-        run: conan profile detect --force
+        run: |
+          conan profile detect --force
+          conan profile show  # in the log: the compiler (and version) packages are built for
 
       # Same dependency-binary cache as the Linux runtime jobs, but keyed by OS
       # so the MSVC binaries never mix with the GCC ones.

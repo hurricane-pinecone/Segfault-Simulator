@@ -24,10 +24,18 @@ bool KeyboardInput::keyHeld(Key key) const
   return currentKeys[static_cast<int>(key)];
 }
 
+void KeyboardInput::beginFrame() { downThisFrame.fill(false); }
+
+void KeyboardInput::pressKey(SDL_Scancode key)
+{
+  if (key >= 0 && key < SDL_NUM_SCANCODES)
+    downThisFrame[key] = true;
+}
+
 bool KeyboardInput::keyPressed(Key key) const
 {
   int k = static_cast<int>(key);
-  return currentKeys[k] && !previousKeys[k];
+  return (currentKeys[k] && !previousKeys[k]) || downThisFrame[k];
 }
 
 bool KeyboardInput::keyReleased(Key key) const

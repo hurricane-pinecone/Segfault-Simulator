@@ -60,13 +60,20 @@ inline static void renderDebugStats()
   ImGui::SetNextWindowSize(ImVec2(450, 180), ImGuiCond_FirstUseEver);
   ImGui::Begin("Debug Memory");
 
-  ImGui::Text("Current: %s", formatBytes(metrics.current.load()));
-  ImGui::Text("Peak: %s", formatBytes(metrics.peak.load()));
+  if (memoryTrackingAvailable())
+  {
+    ImGui::Text("Current: %s", formatBytes(metrics.current.load()));
+    ImGui::Text("Peak: %s", formatBytes(metrics.peak.load()));
 
-  ImGui::Separator();
+    ImGui::Separator();
 
-  ImGui::Text("Live allocs: %zu",
-              metrics.allocationCount.load() - metrics.freeCount.load());
+    ImGui::Text("Live allocs: %zu",
+                metrics.allocationCount.load() - metrics.freeCount.load());
+  }
+  else
+  {
+    ImGui::TextDisabled("Memory tracking needs a static engine build");
+  }
 
   ImGui::Separator();
 

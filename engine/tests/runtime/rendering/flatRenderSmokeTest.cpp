@@ -68,7 +68,7 @@ int main()
   MockRenderer mock;
   sfs::TextRenderer text(mock, store); // ctor is GL-free; init() not called
 
-  sfs::Scene scene(0, sfs::SceneServices{store, mock, text});
+  sfs::Scene scene(0, sfs::SceneServices{store, &mock, &text});
 
   auto& render = scene.addSystem<sfs::FlatRenderSystem>(store, mock);
   auto& particles = render.withModule<sfs::Particles<sfs::FlatRenderContext>>();

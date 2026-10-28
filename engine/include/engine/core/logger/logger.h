@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstring>
+#include <functional>
 #include <string>
 
 namespace sfs
@@ -25,6 +26,19 @@ public:
 
   static void setLogLevel(Level level);
   static void setVerbosity(Verbosity v);
+
+  /** Receives every message that passes the log level, already formatted. */
+  using Sink = std::function<void(Level level, const std::string& message)>;
+  using SinkId = int;
+
+  /**
+   * Also send messages to `sink` (e.g. an editor's console panel), alongside
+   * stdout/stderr. Thread-safe.
+   *
+   * @return an id for removeSink.
+   */
+  static SinkId addSink(Sink sink);
+  static void removeSink(SinkId id);
 
   static void info(const std::string& message,
                    const char* file,
@@ -56,6 +70,9 @@ private:
                                    int line,
                                    const char* func);
   static std::string currentTime();
+
+  // Forward a formatted message to every registered sink.
+  static void notifySinks(Level level, const std::string& message);
 
   static const char* toString(Level level);
 };

@@ -238,5 +238,53 @@ int main()
     CHECK(!sys.enabled());
   }
 
+  TEST("a system added after entities exist should pick up the matching ones")
+  {
+    Registry reg;
+    Entity mover = reg.createEntity();
+    mover.addComponent<Position>();
+    mover.addComponent<Velocity>();
+    Entity statue = reg.createEntity();
+    statue.addComponent<Position>();
+    reg.flushEntities();
+
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    CHECK(movement.getEntities().size() == 1u);
+    CHECK(movement.getEntities().front().getId() == mover.getId());
+  }
+
+  TEST("an entity still pending a flush should join a new system only once")
+  {
+    Registry reg;
+    Entity pending = reg.createEntity();
+    pending.addComponent<Position>();
+    pending.addComponent<Velocity>();
+
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    CHECK(movement.getEntities().empty());
+    reg.flushEntities();
+    CHECK(movement.getEntities().size() == 1u);
+  }
+
+  TEST(
+      "freed ids should be reused lowest-first, whatever order they were freed")
+  {
+    Registry reg;
+    Entity a = reg.createEntity();
+    Entity b = reg.createEntity();
+    Entity c = reg.createEntity();
+    reg.flushEntities();
+
+    reg.destroyEntity(b); // freed first...
+    reg.flushEntities();
+    reg.destroyEntity(c);
+    reg.destroyEntity(a); // ...then the rest
+    reg.flushEntities();
+
+    CHECK(reg.createEntity().getId() == a.getId());
+    CHECK(reg.createEntity().getId() == b.getId());
+    CHECK(reg.createEntity().getId() == c.getId());
+  }
+
   return testing::report("ecsTests");
 }

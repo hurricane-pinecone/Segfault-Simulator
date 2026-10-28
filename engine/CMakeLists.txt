@@ -7,6 +7,60 @@ endif()
 message(STATUS "ENGINE_WEB_BUILD=${ENGINE_WEB_BUILD}")
 message(STATUS "ENGINE_CORE_ONLY=${ENGINE_CORE_ONLY}")
 
+# Shared engine libraries, so an editor and a game module it loads at runtime
+# share one copy of the engine's state (component ids, logger, the active Lua
+# VM, and the SDL / ImGui instances linked into it). The web build links one
+# wasm module and stays static.
+#
+# Not with MSVC by default: a DLL there exports only what's marked
+# __declspec(dllexport), and the engine marks nothing (GCC/Clang and MinGW
+# export everything), so an MSVC DLL build has no import libraries to link.
+# MSVC builds are static; the editor's Windows build uses MinGW.
+if(MSVC)
+    set(ENGINE_SHARED_DEFAULT OFF)
+else()
+    set(ENGINE_SHARED_DEFAULT ON)
+endif()
+option(ENGINE_SHARED "Build the engine libraries as shared libraries" ${ENGINE_SHARED_DEFAULT})
+if(ENGINE_SHARED AND NOT ENGINE_WEB_BUILD)
+    set(ENGINE_LIBRARY_TYPE SHARED)
+else()
+    set(ENGINE_LIBRARY_TYPE STATIC)
+endif()
+message(STATUS "ENGINE_LIBRARY_TYPE=${ENGINE_LIBRARY_TYPE}")
+
+# sfs-codegen generates reflection from headers. It must run on the build
+# machine, so a native build builds it, while a cross-build (e.g. Windows from
+# WSL) uses a host copy given in SFS_CODEGEN_EXECUTABLE. Core-only and web
+# builds have no codegen (no tree-sitter), and register no engine types.
+set(SFS_CODEGEN_EXECUTABLE "" CACHE FILEPATH
+    "Host sfs-codegen to use when cross-compiling (e.g. from a native build's bin/)")
+if(ENGINE_CORE_ONLY OR ENGINE_WEB_BUILD)
+    set(SFS_CODEGEN_AVAILABLE FALSE)
+elseif(CMAKE_CROSSCOMPILING)
+    if(NOT SFS_CODEGEN_EXECUTABLE)
+        message(FATAL_ERROR
+            "Cross-compiling needs a host sfs-codegen: build the engine natively "
+            "once, then pass -DSFS_CODEGEN_EXECUTABLE=<native-build>/bin/sfs-codegen")
+    endif()
+    set(SFS_CODEGEN_COMMAND "${SFS_CODEGEN_EXECUTABLE}")
+    set(SFS_CODEGEN_DEPENDS "${SFS_CODEGEN_EXECUTABLE}")
+    set(SFS_CODEGEN_AVAILABLE TRUE)
+else()
+    add_subdirectory(tools/codegen)
+    set(SFS_CODEGEN_COMMAND sfs-codegen)
+    set(SFS_CODEGEN_DEPENDS sfs-codegen)
+    set(SFS_CODEGEN_AVAILABLE TRUE)
+endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsCodegen.cmake")
+
+# Engine DLLs go next to the executables (Windows finds DLLs beside the exe,
+# not via an rpath).
+function(sfs_engine_library_output target)
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endfunction()
+
 # AddressSanitizer + UndefinedBehaviorSanitizer build, used by the sanitize CI
 # job. The flags apply to the engine libraries and the tests, which are the only
 # targets defined under this directory; Conan dependencies are prebuilt and stay
@@ -37,7 +91,67 @@ file(GLOB LUA_SRC "${CMAKE_CURRENT_SOURCE_DIR}/lib/lua/*.c")
 list(FILTER LUA_SRC EXCLUDE REGEX ".*/lua\\.c$")
 list(FILTER LUA_SRC EXCLUDE REGEX ".*/luac\\.c$")
 
-add_library(engine-core STATIC ${ENGINE_CORE_SRC} ${LUA_SRC})
+add_library(engine-core ${ENGINE_LIBRARY_TYPE} ${ENGINE_CORE_SRC} ${LUA_SRC})
+sfs_engine_library_output(engine-core)
+
+# [[sfs::...]] attributes are editor annotations read by sfs-codegen; compilers
+# should ignore them, for engine and game code alike (hence PUBLIC).
+target_compile_options(engine-core PUBLIC
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-attributes=sfs::>
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-attributes>
+)
+
+# Reflection for the engine's own components, generated the same way a game's
+# is. Without codegen (core-only / web) a stub registers nothing.
+if(SFS_CODEGEN_AVAILABLE)
+    set(ENGINE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/components")
+    sfs_generate_reflection(engine-core
+        MODULE engine
+        FUNCTION sfs::reflect::registerEngineTypes
+        INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        HEADERS
+            "${ENGINE_COMPONENT_DIR}/nameComponent.h"
+            "${ENGINE_COMPONENT_DIR}/transform3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
+            "${ENGINE_COMPONENT_DIR}/pointLight3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/camera3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/rigidBody3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/capsuleCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/scriptComponent.h")
+else()
+    target_sources(engine-core PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineReflection.cpp")
+endif()
+
+# Allocation tracking replaces the global operator new, which is only sound when
+# the engine and the executable are one binary (see allocationMetrics.cpp).
+if(ENGINE_LIBRARY_TYPE STREQUAL "STATIC")
+    target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=1)
+else()
+    target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=0)
+endif()
+
+# Lua's POSIX build uses mkstemp for temp files instead of the unsafe tmpnam.
+if(UNIX AND NOT ENGINE_WEB_BUILD)
+    set_source_files_properties(${LUA_SRC} PROPERTIES COMPILE_DEFINITIONS LUA_USE_POSIX)
+endif()
+
+# MinGW builds link the C++ runtime statically into each binary (see the
+# windows-mingw Conan profile), but the posix-threads runtime still needs the
+# shared winpthread DLL. Ship it next to the executables.
+if(MINGW)
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libwinpthread-1.dll
+        OUTPUT_VARIABLE winpthreadDll
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(EXISTS "${winpthreadDll}")
+        file(COPY "${winpthreadDll}" DESTINATION "${CMAKE_BINARY_DIR}/bin")
+    else()
+        message(WARNING "libwinpthread-1.dll not found; executables may not start")
+    endif()
+endif()
 
 if(ENGINE_SANITIZE)
     # FastNoiseLite's hash multiply relies on signed integer overflow wrapping,
@@ -46,6 +160,12 @@ if(ENGINE_SANITIZE)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/src/core/noise/noise.cpp"
         PROPERTIES COMPILE_OPTIONS -fno-sanitize=signed-integer-overflow)
+    # Jolt is built without RTTI, so its classes have no typeinfo for UBSan's
+    # vptr check to look up (undefined references at link time).
+    # physicsSystem3D.cpp is the only unit that includes Jolt: drop that one
+    # check for just this file. (Appended: it has other options of its own.)
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"
+        APPEND PROPERTY COMPILE_OPTIONS -fno-sanitize=vptr)
 endif()
 
 # Namespaced alias so in-tree consumers (sample game, web build) link the exact
@@ -97,18 +217,23 @@ if(NOT ENGINE_CORE_ONLY)
 file(GLOB_RECURSE ENGINE_RENDER_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/*.cpp"
 )
+# 3D physics is built on Jolt, which the web build doesn't provide.
+if(ENGINE_WEB_BUILD)
+    list(FILTER ENGINE_RENDER_SRC EXCLUDE REGEX "/src/runtime/systems/physicsSystem3D\\.cpp$")
+endif()
 
 file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
 )
 
-add_library(engine STATIC
+add_library(engine ${ENGINE_LIBRARY_TYPE}
     ${ENGINE_RENDER_SRC}
     ${ENGINE_HEADERS}
 )
 
 add_library(sfs::engine ALIAS engine)
+sfs_engine_library_output(engine)
 
 target_link_libraries(engine PUBLIC engine-core)
 
@@ -200,6 +325,21 @@ else()
     find_package(imgui REQUIRED)
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
+    find_package(Jolt REQUIRED)
+    find_package(cgltf REQUIRED)
+
+    # Static and private: Jolt (physics) and cgltf (model import) stay out of
+    # the engine's headers, so games and the SDK never see them. The web build
+    # has neither, and leaves those features out.
+    target_link_libraries(engine PRIVATE Jolt::Jolt cgltf::cgltf)
+    target_compile_definitions(engine PRIVATE SFS_HAS_PHYSICS=1 SFS_HAS_MODEL_IMPORT=1)
+    # Jolt's package is built for AVX2 (its defines say so) but doesn't pass on
+    # the matching compiler flags; the code including its headers needs them.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        # (Appended, not set: the sanitizer build adds an option of its own.)
+        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"
+            APPEND PROPERTY COMPILE_OPTIONS -mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfma)
+    endif()
 
     target_include_directories(engine PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui>"
@@ -210,6 +350,11 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
     )
+
+    # The backends compile into the engine, not into the (shared) imgui
+    # library, so they must not inherit its dllimport linkage (IMGUI_IMPL_API
+    # defaults to IMGUI_API). Public, because engine-webgpu calls them too.
+    target_compile_definitions(engine PUBLIC "IMGUI_IMPL_API=")
 
     target_link_libraries(engine
         PUBLIC
@@ -245,14 +390,38 @@ if(NOT ENGINE_WEB_BUILD)
         GIT_TAG eda8bedcb78a755f42c5efa00b732c62e89c23cb # main @ 2024, v24-compatible
     )
     FetchContent_MakeAvailable(sdl2webgpu)
+    # A static library linked into the shared engine-webgpu, so it must be
+    # position-independent (a sanitizer build's instrumentation can't link
+    # otherwise).
+    set_target_properties(sdl2webgpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     file(GLOB_RECURSE ENGINE_WEBGPU_SRC CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/*.cpp")
 
-    add_library(engine-webgpu STATIC ${ENGINE_WEBGPU_SRC})
+    # Dear ImGui's WebGPU renderer backend (the SDL2 platform backend is already
+    # in `engine`). Multi-viewport rendering, which it lacks, lives in
+    # src/webgpu/imgui.
+    list(APPEND ENGINE_WEBGPU_SRC
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_wgpu.cpp")
+
+    add_library(engine-webgpu ${ENGINE_LIBRARY_TYPE} ${ENGINE_WEBGPU_SRC})
+    sfs_engine_library_output(engine-webgpu)
+
+    # Select the wgpu-native flavour of the backend's WebGPU API.
+    target_compile_definitions(engine-webgpu PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
     add_library(sfs::engine-webgpu ALIAS engine-webgpu)
 
-    target_link_libraries(engine-webgpu PUBLIC engine webgpu sdl2webgpu)
+    # sdl2webgpu is only used inside the library (surface creation), so it
+    # stays private; wgpu-native is public, as the headers expose its API.
+    target_link_libraries(engine-webgpu PUBLIC engine webgpu PRIVATE sdl2webgpu)
+
+    # Stage the engine's runtime libraries next to an executable: wgpu-native
+    # (engine DLLs already build into the shared bin/). The installed package
+    # defines the same function (engineConfig.cmake), so a consumer calls it
+    # identically in-tree and against an install.
+    function(sfs_deploy_runtime target)
+        target_copy_webgpu_binaries(${target})
+    endfunction()
 
     target_include_directories(engine-webgpu PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -308,6 +477,44 @@ if(NOT ENGINE_WEB_BUILD)
         set(ENGINE_HAS_RENDER_LIB FALSE)
     endif()
 
+    # engine-webgpu, plus the prebuilt wgpu-native library + headers, which
+    # the installed config re-creates as the `webgpu` imported target. Only
+    # the shared build installs it: sdl2webgpu is linked privately, which a
+    # shared library hides, but a static one would have to export (and its
+    # include directory points into the build tree).
+    if(TARGET engine-webgpu AND ENGINE_LIBRARY_TYPE STREQUAL "STATIC")
+        message(STATUS "engine-webgpu is not installed in a static engine build")
+    endif()
+    if(TARGET engine-webgpu AND ENGINE_LIBRARY_TYPE STREQUAL "SHARED")
+        list(APPEND ENGINE_INSTALL_TARGETS engine-webgpu)
+        set(ENGINE_HAS_WEBGPU_LIB TRUE)
+
+        get_target_property(wgpuRuntimeLib webgpu IMPORTED_LOCATION)
+        get_filename_component(wgpuRuntimeName "${wgpuRuntimeLib}" NAME)
+        get_filename_component(wgpuLibDir "${wgpuRuntimeLib}" DIRECTORY)
+        get_filename_component(wgpuRoot "${wgpuLibDir}" DIRECTORY)
+        set(ENGINE_WGPU_RUNTIME_NAME "${wgpuRuntimeName}")
+
+        if(WIN32)
+            install(FILES "${wgpuRuntimeLib}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+            get_target_property(wgpuImportLib webgpu IMPORTED_IMPLIB)
+            get_filename_component(ENGINE_WGPU_IMPLIB_NAME "${wgpuImportLib}" NAME)
+            install(FILES "${wgpuImportLib}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        else()
+            install(FILES "${wgpuRuntimeLib}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        endif()
+
+        install(DIRECTORY "${wgpuRoot}/include/"
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wgpu-native)
+        # WebGPU-distribution's webgpu.hpp wrapper and its include root.
+        get_target_property(wgpuIncludeDirs webgpu INTERFACE_INCLUDE_DIRECTORIES)
+        list(GET wgpuIncludeDirs 0 wgpuDistributionInclude)
+        install(DIRECTORY "${wgpuDistributionInclude}/"
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wgpu-native)
+    else()
+        set(ENGINE_HAS_WEBGPU_LIB FALSE)
+    endif()
+
     install(TARGETS ${ENGINE_INSTALL_TARGETS}
         EXPORT engineTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -350,6 +557,12 @@ if(NOT ENGINE_WEB_BUILD)
         DESTINATION ${CMAKE_INSTALL_DATADIR}/sfs-engine/cmake
     )
 
+    # sfs_generate_reflection / sfs_add_game_module, for projects built against
+    # the package (included by engineConfig.cmake).
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsCodegen.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/engine
+    )
+
     # The generated CMake package config (engineConfig.cmake) backs a plain
     # `find_package(engine)` against a raw `cmake --install` tree. A Conan
     # package generates its own config from the recipe's package_info, so the
@@ -386,6 +599,6 @@ endif()
 # Engine tests (native only; the web build strips the desktop toolchain). Added
 # after both targets exist: core/ tests link engine-core, runtime/ tests link
 # engine. enable_testing() is called at the root so ctest finds them.
-if(NOT ENGINE_WEB_BUILD)
+if(NOT ENGINE_WEB_BUILD AND ENGINE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

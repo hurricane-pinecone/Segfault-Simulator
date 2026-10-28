@@ -16,7 +16,7 @@ void Registry::addComponent(const Entity& entity, TArgs&&... args)
   const auto componentId = Component<TComponent>::getId();
   const auto entityId = entity.getId();
 
-  if (componentId >= componentPools.size())
+  if (static_cast<std::size_t>(componentId) >= componentPools.size())
   {
     componentPools.resize(componentId + 1);
   }
@@ -70,6 +70,7 @@ TSystem& Registry::addSystem(TArgs&&... args)
 
   System* base = ptr;
   base->create();
+  addExistingEntities(*base);
 
   return *ptr;
 }

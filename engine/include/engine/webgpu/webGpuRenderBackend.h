@@ -2,8 +2,9 @@
 
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/sceneManager/scene.h"
-#include "engine/webgpu/nullQuadRenderer.h"
+#include "engine/webgpu/render3d/webGpuRenderer3D.h"
 #include "engine/webgpu/webGpuContext.h"
+#include "engine/webgpu/webGpuRenderTarget.h"
 
 #include <webgpu/webgpu.h>
 
@@ -14,14 +15,15 @@ namespace sfs
 {
 
 class AssetStore;
-class TextRenderer;
 
 // WebGPU render backend: an SDL window (no GL context) plus a WebGPU device and
-// surface. Draws nothing itself -- it opens the per-frame command encoder and
-// backbuffer view that a voxel render system records its compute + raymarch
-// passes into. The SceneServices it offers are unused placeholders (the voxel
-// scene draws only through WebGPU), so ImGui and the GL content stack are
-// absent.
+// surface. Each frame it opens a command encoder and backbuffer view; scenes
+// draw into them through the 3D renderer it provides (SceneServices::
+// renderer3D), or record their own passes via currentEncoder() (the GPU voxel
+// prototype). It has no 2D quad or text renderer, so those services are absent.
+//
+// It also hosts Dear ImGui with docking and multi-viewport enabled: panels dock
+// into the main window or drag out into their own OS windows.
 class WebGpuRenderBackend : public IRenderBackend
 {
 public:
@@ -36,10 +38,23 @@ public:
   void beginFrame(int width, int height) override;
   void endFrame() override;
 
+  void imguiProcessEvent(const SDL_Event& event) override;
+  void imguiNewFrame() override;
+  void imguiRenderDrawData() override;
+  bool imguiAvailable() const override { return m_imguiReady; }
+
+  /**
+   * Render the 3D scene into `target` instead of the window (e.g. an editor's
+   * viewport panel), or back to the window when null. The window is then
+   * cleared each frame and only ImGui draws on it. The target must outlive
+   * its use here.
+   */
+  void setSceneTarget(WebGpuRenderTarget* target) { m_sceneTarget = target; }
+
   void shutdown() override;
 
-  // Reached by the voxel render system (via the scene) to build pipelines and
-  // record passes.
+  // Reached by systems that record their own WebGPU passes (the GPU voxel
+  // world).
   WebGpuContext& context() { return m_context; }
   WGPUCommandEncoder currentEncoder() const { return m_encoder; }
   WGPUTextureView currentView() const { return m_view; }
@@ -47,6 +62,10 @@ public:
   int height() const { return m_height; }
 
 private:
+  bool initImGui();
+  void shutdownImGui();
+  void clearWindow();
+
   SDL_Window* m_window = nullptr;
   WebGpuContext m_context;
   int m_width = 0;
@@ -56,11 +75,16 @@ private:
   WGPUTextureView m_view = nullptr;
   WGPUCommandEncoder m_encoder = nullptr;
 
-  // Unused placeholder services satisfying Scene's SceneServices contract.
   std::unique_ptr<AssetStore> m_assetStore;
-  NullQuadRenderer m_nullQuad;
-  std::unique_ptr<TextRenderer> m_textRenderer;
+  std::unique_ptr<WebGpuRenderer3D> m_renderer3D;
   std::optional<SceneServices> m_services;
+
+  WebGpuRenderTarget* m_sceneTarget = nullptr;
+
+  bool m_imguiReady = false;
+  // Set when this frame drew ImGui, so endFrame renders the detached panels.
+  bool m_imguiRendered = false;
+  bool m_shown = false; // the window, after the first frame
 };
 
 } // namespace sfs

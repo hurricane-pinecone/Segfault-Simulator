@@ -70,6 +70,20 @@ add_custom_command(TARGET myGame POST_BUILD
         "${ENGINE_ASSET_DIR}" "$<TARGET_FILE_DIR:myGame>/assets")
 ```
 
+**Runtime libraries.** The engine libraries build as shared libraries by
+default, so on Windows its DLLs (and the WebGPU backend's, if you link
+`sfs::engine-webgpu`) need to sit next to your executable too. Building with
+MSVC is the exception: an MSVC DLL only exports symbols marked for export,
+and the engine marks none, so MSVC builds the engine statically by default
+instead. After `find_package(engine)`, call the `sfs_deploy_runtime` function
+it defines:
+
+```cmake
+sfs_deploy_runtime(myGame)
+```
+
+On Linux this is a no-op; the rpath CMake records already finds them.
+
 From here your game is a `Game` subclass that creates a `Scene`, which holds your
 entities, systems, and game objects.
 

@@ -1,14 +1,21 @@
 name: Docs
 
-# Two flows in one workflow so they share a single Actions entry:
+# Three flows in one workflow so they share a single Actions entry:
 #  - sync:    a master push (or manual run) that touches source drafts doc
 #             updates with Claude Code and opens a PR (the review gate -- nothing
 #             lands on master unreviewed). Docs-only pushes don't match the source
 #             paths below, so there is no loop.
-#  - iterate: a "@claude ..." comment on a docs PR has Claude apply the request
-#             and push it back, so the PR updates in place.
-# Each job is gated by event type, so a push runs only `sync` and a comment runs
-# only `iterate`.
+#  - iterate: feedback on a docs PR -- a "@claude ..." comment, or a submitted
+#             review that requests changes (or mentions @claude) -- has Claude
+#             bring the branch up to date with master (resolving conflicts),
+#             apply the request and push it back, so the PR updates in place.
+#  - revise:  weekly (and on manual runs), every open docs PR is brought up to
+#             date with master and checked against the current source:
+#             conflicts resolved and anything now wrong fixed, or a comment
+#             recommending it be closed if it no longer applies.
+# Nothing here merges or closes a PR: the owner reviews, approves and merges.
+# ("Merging master in" below means updating a PR's own branch, not landing it.)
+# Each job is gated by event type, so a review runs only `iterate`, and so on.
 on:
   push:
     branches: [master]
@@ -27,15 +34,19 @@ on:
           older ref to backfill docs for already-merged work.
         required: false
         default: ""
+  schedule:
+    - cron: "0 3 * * 1" # Mondays: revise open docs PRs
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
+  pull_request_review:
+    types: [submitted]
 
 permissions:
   contents: write
   pull-requests: write
-  statuses: write # the sync job self-reports the required checks on docs PRs
+  statuses: write # the jobs self-report the required checks on docs PRs
 
 jobs:
   # On a master push that touches source, draft documentation updates with Claude
@@ -43,7 +54,7 @@ jobs:
   sync:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     concurrency:
       group: docs-sync
       cancel-in-progress: true
@@ -112,7 +123,7 @@ jobs:
 
           Finally, if (and only if) you edited any docs, write a single-line pull request title to the file docs-pr-title.txt at the repository root. Start it with 'docs: ' and concisely name what you actually changed -- the page(s) or feature(s) touched, not 'recent source changes' (e.g. 'docs: document the block geometry system' or 'docs: update the particle API reference and add a decals page'). Keep it under ~70 characters and write nothing else to that file. If you made no doc edits, do not create the file."
           printf '%s' "$PROMPT" | claude -p \
-            --permission-mode acceptEdits --max-turns 30 \
+            --permission-mode acceptEdits --max-turns 60 \
             --allowedTools "Read,Edit,Write,Grep,Glob"
 
       - name: Did Claude change any docs?
@@ -170,57 +181,168 @@ jobs:
             Claude Code from the files changed in the triggering push.
 
             **Review before merging.** If the docs didn't actually need changing, just
-            close this PR — no harm done.
+            close this PR — no harm done. To have Claude change it, comment
+            `@claude <what to change>`, or submit a review requesting changes (its text
+            is the request; "fix conflicts" brings it up to date with master).
 
-      # A docs-only PR can't break the code, and a bot-token PR never triggers
-      # the `pull_request` workflows anyway, so the master ruleset's required
-      # checks would otherwise sit forever "waiting for status to be reported".
-      # Report them as passing on this PR's head commit so it's mergeable. Safe:
-      # create-pull-request restricts this PR to docs/ + mkdocs.yml (add-paths).
-      # KEEP THIS LIST IN SYNC with the ruleset's required status checks.
+      # Safe: create-pull-request restricts this PR to docs/ + mkdocs.yml (add-paths).
       - name: Mark required checks satisfied (docs-only PR)
         if: steps.edited.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ steps.cpr.outputs.pull-request-head-sha }}
-        run: |
-          for ctx in test-core sanitize-core test-runtime sanitize-runtime format build build-windows; do
-            gh api "repos/${{ github.repository }}/statuses/$SHA" \
-              -f state=success \
-              -f context="$ctx" \
-              -f description="Skipped for docs-only PR" >/dev/null
-          done
+        run: bash .github/scripts/mark-docs-checks.sh "${{ steps.cpr.outputs.pull-request-head-sha }}"
 
-  # Reply to a "@claude ..." comment on a docs PR: Claude reads the request, edits
-  # the PR branch, and pushes the changes back so the PR updates in place.
+  # Feedback on a docs PR: Claude brings the branch up to date with master
+  # (resolving any conflicts), does what the feedback asks, and pushes the
+  # result back so the PR updates in place.
   iterate:
-    # Only act on a PR comment that mentions @claude, from someone with write
-    # access (this runs with repo secrets, so never an arbitrary commenter), and
-    # never on our own bot comments (which would loop).
+    # A "@claude" comment, or a submitted review that requests changes or
+    # mentions @claude -- from someone with write access (this runs with repo
+    # secrets, so never an arbitrary commenter), and never from a bot (which
+    # would loop).
     if: >-
-      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment')
-      && github.event.comment.user.type != 'Bot'
-      && contains(github.event.comment.body, '@claude')
-      && (github.event.issue.pull_request || github.event.pull_request)
-      && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      (
+        (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment')
+        && (github.event.issue.pull_request || github.event.pull_request)
+        && github.event.comment.user.type != 'Bot'
+        && contains(github.event.comment.body, '@claude')
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      ) || (
+        github.event_name == 'pull_request_review'
+        && github.event.review.user.type != 'Bot'
+        && (github.event.review.state == 'changes_requested' || contains(github.event.review.body, '@claude'))
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     concurrency:
-      # One run per PR, queued (not cancelled) so two comments can't push over
-      # each other mid-commit.
-      group: docs-iterate-${{ github.event.issue.number || github.event.pull_request.number }}
+      # One run per PR, queued (not cancelled) so two requests can't push over
+      # each other mid-commit. Shared with `revise`, which also pushes to PRs.
+      group: docs-pr-${{ github.event.issue.number || github.event.pull_request.number }}
       cancel-in-progress: false
     env:
       PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Check out the PR branch
+      - name: Check out the PR branch (docs PRs only)
+        id: pr
+        run: |
+          branch="$(gh pr view "$PR" --json headRefName --jq .headRefName)"
+          if [[ "$branch" != docs/* ]]; then
+            echo "PR #$PR ($branch) isn't a docs PR; nothing to do."
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "docs=true" >> "$GITHUB_OUTPUT"
+          gh pr checkout "$PR"
+
+      - name: Bring the branch up to date with master
+        id: merge
+        if: steps.pr.outputs.docs == 'true'
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin master
+          # A docs PR only touches docs/ and mkdocs.yml, so that's where any
+          # conflicts are; Claude resolves them along with the request.
+          if git merge --no-edit origin/master; then
+            echo "conflicts=" >> "$GITHUB_OUTPUT"
+          else
+            { echo "conflicts<<EOF"; git diff --name-only --diff-filter=U; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: steps.pr.outputs.docs == 'true'
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        if: steps.pr.outputs.docs == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Apply the requested change
+        if: steps.pr.outputs.docs == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh pr checkout "$PR"
+          # Same subscription token the sync job uses.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          REQUEST: ${{ github.event.comment.body || github.event.review.body }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          # Strip whitespace so a stray newline in the secret can't make the auth
+          # header invalid (see the sync job for the full note).
+          export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
+          if [ -z "$REQUEST" ]; then
+            REQUEST="(A review requested changes without saying what: bring the PR up to date with master and make sure it's still accurate.)"
+          fi
+          CONFLICT_NOTE=""
+          if [ -n "$CONFLICTS" ]; then
+            CONFLICT_NOTE="This branch has just been merged with the latest master, and these files have merge conflicts:
+          $CONFLICTS
+
+          Resolve every conflict first (the <<<<<<< / ======= / >>>>>>> blocks; leave none behind): take master's current text as the base, and re-apply this pull request's documentation changes on top where they still match the current source. Drop a change master has already made, or one that no longer applies.
+
+          "
+          fi
+          PROMPT="${CONFLICT_NOTE}A reviewer left this feedback on a documentation pull request:
+
+          $REQUEST
+
+          Do what it asks. The whole repository is checked out on the PR branch, so Read/Grep/Glob any source or doc file you need. Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) first, and follow both.
+
+          Make the smallest change that satisfies the request and do not touch anything it didn't ask about. If the request is unclear, or is not a documentation change you should make here, make no edits (beyond resolving any conflicts)."
+          printf '%s' "$PROMPT" | claude -p \
+            --permission-mode acceptEdits --max-turns 60 \
+            --allowedTools "Read,Edit,Write,Grep,Glob"
+
+      - name: Push the changes back to the PR
+        if: steps.pr.outputs.docs == 'true'
+        env:
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs mkdocs.yml; then
+            gh pr comment "$PR" --body "I couldn't resolve the conflicts with master (markers are left in the files above), so I haven't pushed anything. Resolve them by hand, or ask again with more to go on."
+            exit 1
+          fi
+          git add -A -- docs mkdocs.yml
+          if [ -f .git/MERGE_HEAD ]; then
+            git commit --no-edit # the merge with master, conflicts resolved
+          elif ! git diff --cached --quiet; then
+            git commit -m "docs: address review feedback"
+          fi
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse '@{u}')" ]; then
+            gh pr comment "$PR" --body "I didn't change anything. The request looked already satisfied, or it was outside the docs I should edit here."
+            exit 0
+          fi
+          git push
+          # The push makes a new head commit with no statuses: report them again.
+          bash .github/scripts/mark-docs-checks.sh "$(git rev-parse HEAD)"
+          if [ -n "$CONFLICTS" ]; then
+            gh pr comment "$PR" --body "Merged master in (resolving the conflicts) and pushed an update addressing your feedback."
+          else
+            gh pr comment "$PR" --body "Pushed an update addressing your feedback."
+          fi
+
+  # Keep open docs PRs current: bring each up to date with master, and have
+  # Claude check it against the source as it is now -- updated, or flagged for
+  # the owner to close if master already covers it or it no longer applies.
+  revise:
+    # Weekly, and on manual runs (Actions -> Docs -> Run workflow).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: docs-revise
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -229,47 +351,98 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Apply the requested change
+      - name: Revise each open docs PR
         env:
-          # Same subscription token the sync job uses.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          COMMENT: ${{ github.event.comment.body }}
         run: |
-          # Strip whitespace so a stray newline in the secret can't make the auth
-          # header invalid (see the sync job for the full note).
           export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
-          PROMPT="A reviewer left this comment on a documentation pull request:
-
-          $COMMENT
-
-          Do what it asks. The whole repository is checked out on the PR branch, so Read/Grep/Glob any source or doc file you need. Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) first, and follow both.
-
-          Make the smallest change that satisfies the request and do not touch anything it didn't ask about. If the request is unclear, or is not a documentation change you should make here, make no edits."
-          printf '%s' "$PROMPT" | claude -p \
-            --permission-mode acceptEdits --max-turns 30 \
-            --allowedTools "Read,Edit,Write,Grep,Glob"
-
-      - name: Push the changes back to the PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
           git config user.name  'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet && git diff --cached --quiet; then
-            gh pr comment "$PR" --body "I didn't change anything. The request looked already satisfied, or it was outside the docs I should edit here."
+          git fetch origin master
+          # The checks script, from master: it isn't on older PR branches.
+          cp .github/scripts/mark-docs-checks.sh "$RUNNER_TEMP/mark-docs-checks.sh"
+
+          gh pr list --state open --label documentation --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("docs/")) | "\(.number) \(.headRefName)"' > "$RUNNER_TEMP/prs.txt"
+          if [ ! -s "$RUNNER_TEMP/prs.txt" ]; then
+            echo "No open docs PRs."
             exit 0
           fi
-          git add -A
-          git commit -m "docs: address review comment"
-          git push
-          # The push creates a new head commit with no statuses, so re-report the
-          # required checks on it (same as the sync job). Keep this list in sync
-          # with the master ruleset's required status checks.
-          sha="$(git rev-parse HEAD)"
-          for ctx in test-core sanitize-core test-runtime sanitize-runtime format build build-windows; do
-            gh api "repos/${{ github.repository }}/statuses/$sha" \
-              -f state=success \
-              -f context="$ctx" \
-              -f description="Skipped for docs-only PR" >/dev/null
-          done
-          gh pr comment "$PR" --body "Pushed an update addressing your comment."
+
+          while read -r pr branch; do
+            echo "::group::PR #$pr ($branch)"
+            # Already flagged as no longer needed (and unchanged since): it's
+            # waiting on the owner, so don't say it again every week.
+            flagged="$(gh pr view "$pr" --json commits,comments --jq '
+                 (.commits[-1].committedDate) as $last
+                 | [.comments[] | select(.body | startswith("This looks like it'"'"'s no longer needed"))
+                                | select(.createdAt > $last)] | length > 0')"
+            if [ "$flagged" = "true" ]; then
+              echo "#$pr is already flagged for closing; skipped."
+              echo "::endgroup::"
+              continue
+            fi
+            git reset --hard -q && git clean -fdq
+            git fetch origin "$branch"
+            git checkout -q -B "$branch" "origin/$branch"
+            # What this PR changes, against where it branched off.
+            git diff "$(git merge-base origin/master HEAD)" HEAD -- docs mkdocs.yml > pr.diff
+            conflicts=""
+            if ! git merge --no-edit origin/master >/dev/null; then
+              conflicts="$(git diff --name-only --diff-filter=U)"
+            fi
+            rm -f docs-pr-verdict.txt
+
+            CONFLICT_NOTE=""
+            if [ -n "$conflicts" ]; then
+              CONFLICT_NOTE="The branch has just been merged with the latest master, and these files have merge conflicts:
+          $conflicts
+          Resolve every conflict (leave no <<<<<<< / ======= / >>>>>>> blocks): take master's current text as the base and re-apply this pull request's changes on top where they still hold.
+          "
+            fi
+            PROMPT="You are revising an open documentation pull request (#$pr) that may be out of date: master has moved on since it was drafted. Its own changes are in pr.diff at the repo root -- READ IT FIRST. The repository is checked out on the PR branch with the latest master merged in, so the source and the other docs are as they are now.
+          ${CONFLICT_NOTE}
+          Check the pull request against the current source:
+          - Is what it documents still there and still as it describes (APIs, behaviour, file layout, examples)? Fix anything that's now inaccurate, following .github/docs-style.md and .github/docs-structure.md (read both first).
+          - Has master already documented the same things (another docs PR merged since)? Then this one may be redundant.
+
+          Then write your verdict to docs-pr-verdict.txt at the repo root: first line exactly 'keep' or 'close', then a short paragraph for the PR thread -- for 'keep', what you changed (or that it's still accurate as is); for 'close', why it's no longer needed. Choose 'close' only if nothing in it is still worth merging; if part of it is, keep it and remove the rest."
+            if ! printf '%s' "$PROMPT" | claude -p --permission-mode acceptEdits --max-turns 60 \
+                 --allowedTools "Read,Edit,Write,Grep,Glob"; then
+              echo "::warning::Claude couldn't finish revising #$pr; left as it was."
+              git merge --abort 2>/dev/null || true
+              echo "::endgroup::"
+              continue
+            fi
+
+            verdict="$(head -n1 docs-pr-verdict.txt 2>/dev/null | tr -d '[:space:]')"
+            note="$(tail -n +2 docs-pr-verdict.txt 2>/dev/null)"
+            if [ "$verdict" = "close" ]; then
+              # The owner decides: say so, change nothing.
+              git merge --abort 2>/dev/null || true
+              gh pr comment "$pr" --body "This looks like it's no longer needed, so I'd close it (I haven't changed anything):
+
+          $note"
+            elif git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs mkdocs.yml >/dev/null; then
+              git merge --abort 2>/dev/null || true
+              gh pr comment "$pr" --body "I tried to bring this up to date with master but couldn't resolve its conflicts, so I've left it as it was. Resolve them by hand, or submit a review with more to go on."
+            elif [ -z "$conflicts" ] && [ -z "$(git status --porcelain -- docs mkdocs.yml)" ]; then
+              # Merges cleanly and still accurate: nothing worth a commit.
+              echo "#$pr is still accurate; left as it is."
+            else
+              git add -A -- docs mkdocs.yml
+              if [ -f .git/MERGE_HEAD ]; then
+                git commit -q --no-edit
+              elif ! git diff --cached --quiet; then
+                git commit -q -m "docs: revise against the current source"
+              fi
+              if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$branch")" ]; then
+                git push -q origin "$branch"
+                bash "$RUNNER_TEMP/mark-docs-checks.sh" "$(git rev-parse HEAD)"
+                gh pr comment "$pr" --body "Brought this up to date with master${conflicts:+ (resolving conflicts)} and checked it against the current source.
+
+          ${note:-Still accurate.}"
+              fi
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/prs.txt"

@@ -9,6 +9,10 @@ feedback once instead of repeating it on each PR.
 
 - Write like clear product documentation aimed at a game developer using the
   engine. Plain, direct, present tense.
+- Under `docs/editor/`, the reader is someone making a game in the editor, not
+  programming the engine: describe what they do and see, in their words, and
+  link to the engine docs rather than explaining internals (see "Editor docs" in
+  `.github/docs-structure.md`).
 - Read every sentence back as normal speech. If it doesn't sound like something
   you'd say out loud, rewrite it.
 

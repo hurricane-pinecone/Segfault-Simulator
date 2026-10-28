@@ -54,6 +54,19 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter, bool* hasTimestamps)
   // buffer is 512MB, past the 128MB default) are allowed.
   WGPULimits limits = {};
   wgpuAdapterGetLimits(adapter, &limits);
+  // An adapter with no buffer-size cap (e.g. Vulkan) reports UINT64_MAX, which
+  // is also WGPU_LIMIT_U64_UNDEFINED: passed back as-is it reads as "unset" and
+  // the device silently gets the 256MB default.
+  if (limits.maxBufferSize == WGPU_LIMIT_U64_UNDEFINED)
+    limits.maxBufferSize = WGPU_LIMIT_U64_UNDEFINED - 1;
+  WGPUAdapterInfo info = {};
+  wgpuAdapterGetInfo(adapter, &info);
+  LOG_INFO("WebGPU adapter: " +
+           std::string(info.device.data ? info.device.data : "",
+                       info.device.data ? info.device.length : 0) +
+           ", maxStorageBufferBindingSize " +
+           std::to_string(limits.maxStorageBufferBindingSize));
+  wgpuAdapterInfoFreeMembers(info);
   WGPUDeviceDescriptor desc = {};
   desc.requiredLimits = &limits;
   // Enable GPU timestamp queries when the adapter supports them (benchmark
@@ -127,24 +140,33 @@ bool WebGpuContext::init(SDL_Window* window)
   m_format =
       caps.formatCount > 0 ? caps.formats[0] : WGPUTextureFormat_BGRA8Unorm;
 
-  // Prefer an unsynced present mode so frame timing reflects real GPU
-  // throughput (Mailbox = no tearing; else Immediate); fall back to vsync.
-  m_present = WGPUPresentMode_Fifo;
+  // Unless vsync is asked for, prefer an unsynced present mode so frame
+  // timing reflects real GPU throughput (Mailbox = no tearing; else
+  // Immediate); fall back to vsync (Fifo, always available).
+  m_unsynced = WGPUPresentMode_Fifo;
   for (size_t i = 0; i < caps.presentModeCount; ++i)
   {
     if (caps.presentModes[i] == WGPUPresentMode_Mailbox)
     {
-      m_present = WGPUPresentMode_Mailbox;
+      m_unsynced = WGPUPresentMode_Mailbox;
       break;
     }
     if (caps.presentModes[i] == WGPUPresentMode_Immediate)
-      m_present = WGPUPresentMode_Immediate;
+      m_unsynced = WGPUPresentMode_Immediate;
   }
+  m_present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
 
   return true;
 }
 
 void WebGpuContext::configure(int width, int height)
+{
+  configureSurface(m_surface, width, height);
+}
+
+void WebGpuContext::configureSurface(WGPUSurface surface,
+                                     int width,
+                                     int height) const
 {
   WGPUSurfaceConfiguration cfg = {};
   cfg.device = m_device;
@@ -152,9 +174,9 @@ void WebGpuContext::configure(int width, int height)
   cfg.usage = WGPUTextureUsage_RenderAttachment;
   cfg.width = static_cast<uint32_t>(width);
   cfg.height = static_cast<uint32_t>(height);
-  cfg.presentMode = m_present;
+  cfg.presentMode = surface == m_surface ? m_present : m_unsynced;
   cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
-  wgpuSurfaceConfigure(m_surface, &cfg);
+  wgpuSurfaceConfigure(surface, &cfg);
 }
 
 void WebGpuContext::release()

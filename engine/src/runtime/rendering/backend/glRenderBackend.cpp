@@ -116,8 +116,9 @@ bool GLRenderBackend::init(const char* title, int width, int height)
       std::make_unique<TextRenderer>(*m_quadRenderer, *m_assetStore);
   m_textRenderer->init();
 
-  m_services.emplace(
-      SceneServices{*m_assetStore, *m_quadRenderer, *m_textRenderer});
+  m_services.emplace(SceneServices{.assetStore = *m_assetStore,
+                                   .quadRenderer = m_quadRenderer.get(),
+                                   .textRenderer = m_textRenderer.get()});
 
 #ifndef ENGINE_WEB
   IMGUI_CHECKVERSION();
