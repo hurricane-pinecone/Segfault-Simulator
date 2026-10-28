@@ -43,6 +43,7 @@ void LineSplitter::flush()
 struct ChildProcess::Platform
 {
   HANDLE process = nullptr;
+  HANDLE job = nullptr; // it and its children
   HANDLE stdinWrite = nullptr;
   std::vector<HANDLE> outputs; // read ends: stdout, then stderr if separate
 };
@@ -124,9 +125,29 @@ bool ChildProcess::start(const std::vector<std::string>& args,
   startup.hStdError = separateStderr ? errWrite : outWrite;
   startup.hStdInput = options.pipeStdin ? inRead : GetStdHandle(STD_INPUT_HANDLE);
 
+  // In a job of its own (started suspended, so it's in before it can start
+  // anything), so terminate() takes its children too, and closing the job
+  // when the editor exits does.
+  HANDLE job = CreateJobObjectA(nullptr, nullptr);
+  if (job)
+  {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+  }
+
   PROCESS_INFORMATION info = {};
   const BOOL created = CreateProcessA(nullptr, commandLine.data(), nullptr, nullptr, TRUE,
-                                      CREATE_NO_WINDOW, nullptr, nullptr, &startup, &info);
+                                      CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &info);
+  if (created)
+  {
+    if (job && !AssignProcessToJobObject(job, info.hProcess))
+    {
+      CloseHandle(job);
+      job = nullptr;
+    }
+    ResumeThread(info.hThread);
+  }
 
   // The child holds its own copies of its ends.
   CloseHandle(outWrite);
@@ -142,6 +163,8 @@ bool ChildProcess::start(const std::vector<std::string>& args,
       CloseHandle(errRead);
     if (inWrite)
       CloseHandle(inWrite);
+    if (job)
+      CloseHandle(job);
     LOG_ERROR("Can't start " + args.front());
     return false;
   }
@@ -149,6 +172,7 @@ bool ChildProcess::start(const std::vector<std::string>& args,
 
   m_platform = std::make_unique<Platform>();
   m_platform->process = info.hProcess;
+  m_platform->job = job;
   m_platform->stdinWrite = inWrite;
   m_platform->outputs.push_back(outRead);
   m_readers.emplace_back(readUntilClosed, outRead, std::move(onStdout));
@@ -206,17 +230,25 @@ void ChildProcess::finish()
       reader.join(); // pipes reach EOF once the child exits
   m_readers.clear();
   CloseHandle(m_platform->process);
+  if (m_platform->job)
+    CloseHandle(m_platform->job);
   for (HANDLE output : m_platform->outputs)
     CloseHandle(output);
   m_started = false;
 }
 
-ChildProcess::~ChildProcess()
+void ChildProcess::terminate()
 {
-  if (m_started && WaitForSingleObject(m_platform->process, 0) == WAIT_TIMEOUT)
+  if (!m_started)
+    return;
+  if (m_platform->job)
+    TerminateJobObject(m_platform->job, 1);
+  else if (WaitForSingleObject(m_platform->process, 0) == WAIT_TIMEOUT)
     TerminateProcess(m_platform->process, 1);
   finish();
 }
+
+ChildProcess::~ChildProcess() { terminate(); }
 
 #else // POSIX
 
@@ -261,6 +293,7 @@ bool ChildProcess::start(const std::vector<std::string>& args,
   const pid_t pid = fork();
   if (pid == 0)
   {
+    setpgid(0, 0); // a group of its own, for terminate()
     dup2(out[1], STDOUT_FILENO);
     dup2(separateStderr ? err[1] : out[1], STDERR_FILENO);
     if (options.pipeStdin)
@@ -286,6 +319,7 @@ bool ChildProcess::start(const std::vector<std::string>& args,
     return false;
   }
 
+  setpgid(pid, pid); // as the child does: whichever runs first
   m_platform = std::make_unique<Platform>();
   m_platform->pid = pid;
   m_platform->stdinWrite = in[1];
@@ -353,11 +387,18 @@ void ChildProcess::finish()
   m_started = false;
 }
 
+void ChildProcess::terminate()
+{
+  if (!m_started)
+    return;
+  if (m_platform->pid > 0)
+    kill(-m_platform->pid, SIGTERM); // its whole group
+  finish();
+}
+
 ChildProcess::~ChildProcess()
 {
-  if (m_started && m_platform->pid > 0)
-    kill(m_platform->pid, SIGTERM);
-  finish();
+  terminate();
 }
 
 #endif

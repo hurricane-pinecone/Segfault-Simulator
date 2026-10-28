@@ -194,7 +194,7 @@ private:
   std::unordered_map<std::string, FontPtr> m_fonts;
 
   // A model's node tree as prefab content (see prefab()).
-  static nlohmann::json modelPrefab(const ModelData& model, const AssetId& id, const std::string& name);
+  static nlohmann::json modelPrefab(const std::vector<ModelNode>& nodes, const AssetId& id, const std::string& name);
 
   const AssetDatabase* m_database = nullptr;
 

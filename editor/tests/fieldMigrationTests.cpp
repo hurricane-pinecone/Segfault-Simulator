@@ -128,6 +128,79 @@ int main()
     CHECK(scene["entities"][0]["ScriptComponent"]["fields"]["rate"] == 2);
   }
 
+  TEST("a renamed script should be followed, by the scenes and prefabs using it")
+  {
+    const Changes changes = diff({script("Spin", {{"axis", FieldKind::Vec3}, {"speed", FieldKind::Float}})},
+                                 {script("Spinner", {{"axis", FieldKind::Vec3}, {"speed", FieldKind::Float}})});
+    CHECK(changes.renamedScripts.at("Spin") == "Spinner");
+    json scene = spinScene({{"speed", 40}});
+    CHECK(apply(changes, scene));
+    CHECK(scene["entities"][0]["ScriptComponent"]["script"] == "Spinner");
+    CHECK(scene["entities"][0]["ScriptComponent"]["fields"]["speed"] == 40);
+  }
+
+  TEST("a script renamed along with a field should follow both")
+  {
+    // Different fields now, but the only script gone and the only one new.
+    const Changes changes = diff({script("Spin", {{"degreesPerSecond", FieldKind::Float}}), script("Other", {})},
+                                 {script("Spinner", {{"speed", FieldKind::Float}}), script("Other", {})});
+    CHECK(changes.renamedScripts.at("Spin") == "Spinner");
+    json scene = spinScene({{"degreesPerSecond", 40}});
+    CHECK(apply(changes, scene));
+    CHECK(scene["entities"][0]["ScriptComponent"]["script"] == "Spinner");
+    CHECK(scene["entities"][0]["ScriptComponent"]["fields"]["speed"] == 40);
+  }
+
+  TEST("a renamed component should move its saved data, in overrides too")
+  {
+    const Changes changes = diff({component("HealthComponent", {{"hp", FieldKind::Int}})},
+                                 {component("Health", {{"hp", FieldKind::Int}})});
+    CHECK(changes.renamedComponents.at("HealthComponent") == "Health");
+    json scene = {{"entities",
+                   json::array({{{"HealthComponent", {{"hp", 3}}}},
+                                {{"$prefab", "asset:x"}, {"$overrides", {{"1", {{"HealthComponent", {{"hp", 5}}}}}}}}})}};
+    CHECK(apply(changes, scene));
+    CHECK(scene["entities"][0]["Health"]["hp"] == 3);
+    CHECK(!scene["entities"][0].contains("HealthComponent"));
+    CHECK(scene["entities"][1]["$overrides"]["1"]["Health"]["hp"] == 5);
+  }
+
+  TEST("a renamed system should be renamed in a scene's systems")
+  {
+    const Changes changes = diff({{"GrowthSystem", TypeKind::System, {}}, {"Weather", TypeKind::System, {}}},
+                                 {{"CropGrowth", TypeKind::System, {}}, {"Weather", TypeKind::System, {}}});
+    CHECK(changes.renamedSystems.at("GrowthSystem") == "CropGrowth");
+    json scene = {{"systems", {"GrowthSystem", "Weather"}}, {"entities", json::array()}};
+    CHECK(apply(changes, scene));
+    CHECK(scene["systems"] == json({"CropGrowth", "Weather"}));
+  }
+
+  TEST("types that can't be told apart should not be guessed at")
+  {
+    // Two scripts gone and two new, all alike: which is which is unknown.
+    const Changes changes = diff({script("A", {{"x", FieldKind::Float}}), script("B", {{"x", FieldKind::Float}})},
+                                 {script("C", {{"x", FieldKind::Float}}), script("D", {{"x", FieldKind::Float}})});
+    CHECK(changes.renamedScripts.empty());
+    // A script gone with no new one: removed, its data kept (as unresolved).
+    CHECK(diff({script("Old", {})}, {}).empty());
+  }
+
+  TEST("a scriptable object type's renames should carry into its asset files")
+  {
+    // ItemDef renamed Item, its "cost" renamed "price" and "weight" dropped.
+    const Changes changes = diff({{"ItemDef", TypeKind::ScriptableObject,
+                                   {{"name", FieldKind::String}, {"cost", FieldKind::Int}, {"weight", FieldKind::Float}}}},
+                                 {{"Item", TypeKind::ScriptableObject, {{"name", FieldKind::String}, {"price", FieldKind::Int}}}});
+    CHECK(changes.renamedScriptableObjects.at("ItemDef") == "Item");
+    json sword = {{"formatVersion", 1}, {"type", "ItemDef"}, {"fields", {{"name", "Sword"}, {"cost", 25}, {"weight", 3.0}}}};
+    CHECK(applyToScriptableObject(changes, sword));
+    CHECK(sword["type"] == "Item");
+    CHECK(sword["fields"] == json({{"name", "Sword"}, {"price", 25}}));
+    // Another type's asset: untouched.
+    json other = {{"type", "Spell"}, {"fields", {{"cost", 4}}}};
+    CHECK(!applyToScriptableObject(changes, other));
+  }
+
   TEST("other scripts' fields should be untouched")
   {
     const Changes changes = diff({script("Spin", {{"speed", FieldKind::Float}})},
@@ -135,4 +208,6 @@ int main()
     json scene = {{"entities", json::array({{{"ScriptComponent", {{"script", "Other"}, {"fields", {{"speed", 2}}}}}}})}};
     CHECK(!apply(changes, scene));
   }
+
+  return testing::report("fieldMigrationTests");
 }

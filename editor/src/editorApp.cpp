@@ -8,6 +8,7 @@
 #include "panels/sceneSettingsPanel.h"
 #include "panels/viewportPanel.h"
 #include "platform/fileDialog.h"
+#include "platform/paths.h"
 #include "platform/shell.h"
 #include "scene/editorScene.h"
 #include "scene/gridModule.h"
@@ -20,6 +21,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/sceneManager/scene.h"
@@ -118,12 +120,14 @@ void EditorApp::onSetup()
             m_context.openPrefab = record->id;
       },
       .newScript =
-          [this](scriptTemplates::Kind kind)
+          [this](scriptTemplates::Kind kind, const std::filesystem::path& folder)
       {
         m_dialogScriptKind = kind;
+        m_dialogScriptFolder = folder;
         m_dialogScriptName.clear();
         m_requestedDialog = Dialog::NewScript;
-      }},
+      },
+      .moved = [this](const std::filesystem::path& from, const std::filesystem::path& to) { pathMoved(from, to); }},
       backend.context());
   m_assetPanel = assetPanel.get();
   m_panels.push_back(std::move(assetPanel));
@@ -204,6 +208,8 @@ void EditorApp::onUpdate(double)
   // dialog asking whether to apply first).
   if (m_context.openPrefab.valid())
     openPrefab(std::exchange(m_context.openPrefab, {}));
+  if (!m_context.openText.empty() && m_codePanel)
+    m_codePanel->openFile(std::exchange(m_context.openText, {}));
   if (Workspace* closing = std::exchange(m_closeNow, nullptr))
     closePrefab(*closing);
   std::vector<Workspace*> closed;
@@ -371,8 +377,13 @@ void EditorApp::drawStatusBar()
 {
   const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav;
-  const float height = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y;
-  if (!ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down, height, flags))
+  // One row of frame height, with the same small margin above and below.
+  const float margin = 4.0f;
+  const float height = ImGui::GetFrameHeight() + 2.0f * margin;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetStyle().WindowPadding.x, margin));
+  const bool open = ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down, height, flags);
+  ImGui::PopStyleVar();
+  if (!open)
   {
     ImGui::End();
     return;
@@ -383,6 +394,7 @@ void EditorApp::drawStatusBar()
   {
     std::string label;
     float fraction;
+    std::function<void()> stop = {}; // offered as a button, if it can be stopped
   };
   std::vector<Task> tasks;
   if (m_openingProject)
@@ -396,7 +408,7 @@ void EditorApp::drawStatusBar()
   if (m_builder.busy())
   {
     const int percent = m_builder.percent();
-    tasks.push_back({"Building scripts", percent < 0 ? -1.0f : percent / 100.0f});
+    tasks.push_back({"Building scripts", percent < 0 ? -1.0f : percent / 100.0f, [this] { m_builder.cancel(); }});
   }
   if (m_context.scene)
   {
@@ -415,20 +427,53 @@ void EditorApp::drawStatusBar()
                        static_cast<float>(previews.done) / static_cast<float>(previews.total)});
   }
 
-  ImGui::AlignTextToFramePadding();
+  // Every item centred in the row, whatever its height.
+  const float rowTop = ImGui::GetCursorPosY();
+  const auto centre = [&](float itemHeight)
+  { ImGui::SetCursorPosY(rowTop + (ImGui::GetFrameHeight() - itemHeight) * 0.5f); };
+  const float lineHeight = ImGui::GetTextLineHeight();
+
   if (tasks.empty())
+  {
+    centre(lineHeight);
     ImGui::TextDisabled("Ready");
+  }
   for (std::size_t i = 0; i < tasks.size(); ++i)
   {
     if (i > 0)
       ImGui::SameLine(0.0f, 24.0f);
+    centre(lineHeight);
     ImGui::TextUnformatted(tasks[i].label.c_str());
     ImGui::SameLine();
     // A negative fraction animates (ImGui's "busy" bar) while the amount is unknown.
     const float fraction = tasks[i].fraction < 0.0f ? -static_cast<float>(ImGui::GetTime()) : tasks[i].fraction;
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::ColorConvertU32ToFloat4(theme::kAccent));
-    ImGui::ProgressBar(fraction, ImVec2(140.0f, ImGui::GetTextLineHeight()), "");
+    centre(lineHeight);
+    ImGui::ProgressBar(fraction, ImVec2(140.0f, lineHeight), "");
     ImGui::PopStyleColor();
+    if (tasks[i].stop)
+    {
+      // An x in the bar's right end stops it.
+      const ImVec2 barMin = ImGui::GetItemRectMin(), barMax = ImGui::GetItemRectMax();
+      const float side = barMax.y - barMin.y;
+      const ImVec2 at(barMax.x - side, barMin.y);
+      ImGui::SetCursorScreenPos(at);
+      ImGui::PushID(static_cast<int>(i));
+      if (ImGui::InvisibleButton("stop", ImVec2(side, side)))
+        tasks[i].stop();
+      const bool hovered = ImGui::IsItemHovered();
+      ImGui::SetItemTooltip("Stop");
+      ImGui::PopID();
+
+      ImDrawList* draw = ImGui::GetWindowDrawList();
+      const ImVec2 middle(at.x + side * 0.5f, at.y + side * 0.5f);
+      if (hovered)
+        draw->AddCircleFilled(middle, side * 0.5f, ImGui::GetColorU32(ImGuiCol_ButtonHovered));
+      const float arm = side * 0.2f;
+      const ImU32 colour = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+      draw->AddLine(ImVec2(middle.x - arm, middle.y - arm), ImVec2(middle.x + arm, middle.y + arm), colour, 1.5f);
+      draw->AddLine(ImVec2(middle.x - arm, middle.y + arm), ImVec2(middle.x + arm, middle.y - arm), colour, 1.5f);
+    }
   }
 
   // The open project's folder, on the right.
@@ -437,6 +482,7 @@ void EditorApp::drawStatusBar()
     const std::string folder = m_context.project->root().string();
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(folder.c_str()).x -
                     ImGui::GetStyle().WindowPadding.x);
+    centre(lineHeight);
     ImGui::TextDisabled("%s", folder.c_str());
   }
   ImGui::End();
@@ -510,15 +556,33 @@ void EditorApp::drawEditMenu()
 {
   if (!ImGui::BeginMenu("Edit"))
     return;
-  if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_context.history->canUndo()))
-    m_context.history->undo();
-  if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_context.history->canRedo()))
-    m_context.history->redo();
-  ImGui::Separator();
-  if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, m_context.hasSelection()))
-    duplicateSelection();
-  if (ImGui::MenuItem("Delete", "Del", false, m_context.hasSelection()))
-    deleteSelection();
+  // The Assets panel's file operations while it was the last panel used;
+  // otherwise the scene's.
+  if (m_assetPanel && m_assetPanel->ownsEdit())
+  {
+    const std::string undo = "Undo " + m_assetPanel->undoLabel(), redo = "Redo " + m_assetPanel->redoLabel();
+    if (ImGui::MenuItem(m_assetPanel->canUndo() ? undo.c_str() : "Undo", "Ctrl+Z", false, m_assetPanel->canUndo()))
+      m_assetPanel->undo(m_context);
+    if (ImGui::MenuItem(m_assetPanel->canRedo() ? redo.c_str() : "Redo", "Ctrl+Y", false, m_assetPanel->canRedo()))
+      m_assetPanel->redo(m_context);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+      m_assetPanel->duplicateSelected(m_context);
+    if (ImGui::MenuItem("Delete", "Del"))
+      m_assetPanel->deleteSelected(m_context);
+  }
+  else
+  {
+    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_context.history->canUndo()))
+      m_context.history->undo();
+    if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_context.history->canRedo()))
+      m_context.history->redo();
+    ImGui::Separator();
+    if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, m_context.hasSelection()))
+      duplicateSelection();
+    if (ImGui::MenuItem("Delete", "Del", false, m_context.hasSelection()))
+      deleteSelection();
+  }
   ImGui::Separator();
   const bool canAlign = m_mode == Mode::Edit && m_context.hasSelection() &&
                         m_context.selection.hasComponent<sfs::Transform3DComponent>();
@@ -608,12 +672,13 @@ void EditorApp::drawScriptsMenu()
   if (!ImGui::BeginMenu("Scripts", m_context.project.has_value()))
     return;
 
-  for (const Kind kind : {Kind::GameObject, Kind::System, Kind::Component})
+  for (const Kind kind : {Kind::GameObject, Kind::System, Kind::Component, Kind::ScriptableObject})
   {
     const std::string label = std::string("New ") + scriptTemplates::label(kind) + "...";
     if (ImGui::MenuItem(label.c_str()))
     {
       m_dialogScriptKind = kind;
+      m_dialogScriptFolder.clear(); // the scripts folder itself
       m_dialogScriptName.clear();
       m_requestedDialog = Dialog::NewScript;
     }
@@ -680,15 +745,22 @@ void EditorApp::drawProjectDialogs()
   {
     ImGui::Text("New %s (class name, also the file name):",
                 scriptTemplates::label(m_dialogScriptKind));
+    if (m_context.project && !m_dialogScriptFolder.empty())
+    {
+      const std::filesystem::path root = m_context.project->root();
+      ImGui::TextDisabled("In %s", paths::relative(m_dialogScriptFolder, root).value_or("").c_str());
+    }
     ImGui::SetNextItemWidth(320.0f);
     widgets::inputText("##scriptName", m_dialogScriptName);
     const bool valid = scriptTemplates::isValidName(m_dialogScriptName);
     ImGui::BeginDisabled(!valid);
     if (ImGui::Button("Create") && m_context.project)
     {
+      const std::filesystem::path scripts = m_context.project->scriptsFolder();
       if (const auto created = scriptTemplates::create(m_dialogScriptKind,
                                                        m_dialogScriptName,
-                                                       m_context.project->scriptsFolder()))
+                                                       scripts,
+                                                       m_dialogScriptFolder.empty() ? scripts : m_dialogScriptFolder))
       {
         m_codePanel->openFile(*created);
         m_assetPanel->requestRefresh();
@@ -807,9 +879,11 @@ void EditorApp::finishOpeningProject()
   m_context.assets = nullptr;
   m_context.selectedAsset = {};
   setAssetDatabase(nullptr);
+  sfs::scriptableObjects().setCatalogue(nullptr);
   m_assets.emplace(opening.assets.get());
   m_context.assets = &*m_assets;
   setAssetDatabase(&*m_assets);
+  sfs::scriptableObjects().setCatalogue(&*m_assets);
 
   m_scriptsStamp.clear();
   checkScripts(true);
@@ -881,8 +955,14 @@ void EditorApp::updateWindowTitle()
 
 void EditorApp::requestBuild(bool thenPlay)
 {
-  if (!m_context.project || m_builder.busy())
+  if (!m_context.project)
     return;
+  if (m_builder.busy())
+  {
+    // Already building (e.g. after a script was saved): Play once it's done.
+    m_playAfterBuild |= thenPlay;
+    return;
+  }
   if (m_mode == Mode::Playing)
     stop(); // rebuilding replaces the module the play session runs
   if (m_builder.start(*m_context.project))
@@ -1260,6 +1340,7 @@ bool EditorApp::swapModule()
   // The scenes can't outlive the code behind their components: tear them
   // down, swap the module, then rebuild them from the snapshots.
   destroyScenes();
+  sfs::scriptableObjects().clear(); // objects of the module's types go before its code does
   m_module.unload();
   const bool loaded = m_module.load(module, moduleName, sfs::ModuleHost::Load::FromCopy);
 
@@ -1269,7 +1350,7 @@ bool EditorApp::swapModule()
       fieldMigration::diff(before, fieldMigration::layoutsOf(sfs::reflect::types(), moduleName));
   if (!changes.empty())
   {
-    LOG_INFO("Fields changed (" + changes.describe() + "): updating scenes and prefabs");
+    LOG_INFO("Code changed (" + changes.describe() + "): updating scenes and prefabs");
     for (nlohmann::json& snapshot : snapshots)
       fieldMigration::apply(changes, snapshot);
     for (const auto& workspace : m_workspaces)
@@ -1281,6 +1362,27 @@ bool EditorApp::swapModule()
   for (std::size_t i = 0; i < m_workspaces.size(); ++i)
     m_workspaces[i]->document->restore(snapshots[i]);
   return loaded;
+}
+
+void EditorApp::pathMoved(const std::filesystem::path& from, const std::filesystem::path& to)
+{
+  // What moved, as it now is: the path itself, or something inside it.
+  const auto follow = [&](const std::filesystem::path& path) -> std::optional<std::filesystem::path>
+  {
+    if (!paths::within(path, from))
+      return std::nullopt;
+    return paths::moved(path, from, to);
+  };
+  // Open scenes save to where their files are now.
+  for (const auto& workspace : m_workspaces)
+    if (workspace->document && workspace->document->hasPath())
+      if (const auto now = follow(workspace->document->path()))
+        workspace->document->setPath(*now);
+  // The start scene, by its new path.
+  if (m_context.project && !m_context.project->startScene().empty())
+    if (const auto now = follow(m_context.project->root() / m_context.project->startScene()))
+      m_context.project->setStartScene(*now);
+  updateWindowTitle();
 }
 
 void EditorApp::migrateProjectFiles(const fieldMigration::Changes& changes)
@@ -1295,10 +1397,13 @@ void EditorApp::migrateProjectFiles(const fieldMigration::Changes& changes)
     {
       const std::filesystem::path& file = it->path();
       const std::filesystem::path extension = file.extension();
-      if (extension != SceneDocument::kExtension && extension != ".prefab")
+      const bool scriptableObject = extension == sfs::ScriptableObjects::kExtension;
+      if (extension != SceneDocument::kExtension && extension != ".prefab" && !scriptableObject)
         continue;
       std::optional<nlohmann::json> data = sfs::SceneSerializer::readJsonFile(file);
-      if (!data || !fieldMigration::apply(changes, *data) || !sfs::SceneSerializer::writeJsonFile(*data, file))
+      if (!data ||
+          !(scriptableObject ? fieldMigration::applyToScriptableObject(changes, *data) : fieldMigration::apply(changes, *data)) ||
+          !sfs::SceneSerializer::writeJsonFile(*data, file))
         continue;
       ++updated;
       // A prefab read before the change: read it again. (Through the
@@ -1309,7 +1414,7 @@ void EditorApp::migrateProjectFiles(const fieldMigration::Changes& changes)
     }
   }
   if (updated > 0)
-    LOG_INFO("Updated " + std::to_string(updated) + " scene and prefab file" + (updated == 1 ? "" : "s"));
+    LOG_INFO("Updated " + std::to_string(updated) + " scene, prefab and scriptable object file" + (updated == 1 ? "" : "s"));
 }
 
 void EditorApp::checkScripts(bool baseline)
@@ -1406,7 +1511,8 @@ void EditorApp::loadExistingModule()
   if (!std::filesystem::exists(module))
   {
     destroyScenes();
-    m_module.unload();
+    sfs::scriptableObjects().clear(); // objects of the module's types go before its code does
+  m_module.unload();
     createScenes();
     LOG_INFO("No game module built yet: press Play or Build (Ctrl+B)");
     return;
@@ -1423,7 +1529,8 @@ void EditorApp::loadExistingModule()
   if (engine != "unknown" && builtFor != engine)
   {
     destroyScenes();
-    m_module.unload();
+    sfs::scriptableObjects().clear(); // objects of the module's types go before its code does
+  m_module.unload();
     createScenes();
     LOG_INFO("The game module was built for an older engine: rebuilding it");
     requestBuild(false);
@@ -1443,6 +1550,8 @@ void EditorApp::play()
   // The game sees through its camera entity, if it has one (Stop restores the
   // editor's view with the snapshot).
   m_context.render->setFollowSceneCamera(true);
+  // Scriptable objects load into the playing scene's meshes, fresh each Play.
+  sfs::scriptableObjects().setMeshes(&m_context.scene->renderSystem().meshes());
   sfs::startScripts(*m_context.scene, m_context.scene->gameSystems(),
                     &m_context.scene->renderSystem().meshes());
   m_mode = Mode::Playing;
@@ -1517,6 +1626,7 @@ void EditorApp::stop()
 
   // Everything that happened in Play is discarded, as in other engines.
   replaceMainScene();
+  sfs::scriptableObjects().setMeshes(nullptr); // what Play loaded, gone with its scene
   m_document->restore(m_editSnapshot);
   m_mode = Mode::Edit;
   m_context.playing = false;

@@ -2,6 +2,7 @@
 
 #include <engine/core/assets/assetDatabase.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -94,6 +95,40 @@ int main()
     AssetDatabase shipped(root.path, AssetDatabase::Mode::ReadOnly, AssetDatabase::projectFolders());
     CHECK(shipped.records().size() == 1u);
     CHECK(shipped.folders() == (std::vector<fs::path>{"assets", "assets/models"}));
+  }
+
+  TEST("edits should leave the catalogue just as a fresh scan finds it")
+  {
+    TempFolder root("sfs_assets_inplace");
+    TempFolder outside("sfs_assets_inplace_outside");
+    touch(outside.path / "rock.png");
+    touch(root.path / "assets/props/crate.png");
+    touch(root.path / "assets/props/barrel.png");
+    touch(root.path / "assets/old/junk.png");
+    touch(root.path / "prefabs/Fence.prefab");
+    AssetDatabase database(root.path, AssetDatabase::Mode::ReadWrite, AssetDatabase::projectFolders());
+    const uint64_t version = database.version();
+
+    CHECK(database.move(database.findByPath("assets/props/crate.png")->id, "assets/world/deep/box.png"));
+    CHECK(database.moveFolder("assets/props", "assets/world/props"));
+    CHECK(database.remove(database.findByPath("prefabs/Fence.prefab")->id));
+    CHECK(database.removeFolder("assets/old"));
+    CHECK(database.createFolder("assets/sounds/ui"));
+    const std::optional<AssetId> rock = database.import(outside.path / "rock.png", "assets/world");
+    CHECK(rock.has_value());
+    CHECK(database.version() > version);
+
+    AssetDatabase fresh(root.path, AssetDatabase::Mode::ReadOnly, AssetDatabase::projectFolders());
+    CHECK(database.folders() == fresh.folders());
+    CHECK(database.records().size() == fresh.records().size());
+    for (std::size_t i = 0; i < std::min(database.records().size(), fresh.records().size()); ++i)
+    {
+      CHECK(database.records()[i].path == fresh.records()[i].path);
+      CHECK(database.records()[i].id == fresh.records()[i].id);
+      CHECK(database.records()[i].kind == fresh.records()[i].kind);
+    }
+    CHECK(rock && fresh.find(*rock) != nullptr);
+    CHECK(!database.refresh()); // nothing for a rescan to find
   }
 
   TEST("moving, renaming and moving folders should keep ids")

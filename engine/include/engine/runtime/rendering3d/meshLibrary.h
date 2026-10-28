@@ -127,6 +127,13 @@ public:
   MaterialHandle material(std::string_view name);
 
   /**
+   * Make (or change) a named material from game code, e.g. one whose texture
+   * the game paints as it runs. Entities choose it by name in a material slot;
+   * changing it shows on everything using it.
+   */
+  MaterialHandle setMaterial(std::string_view name, const MeshMaterial& material);
+
+  /**
    * Ask the provider for a material again (e.g. its file was edited) and
    * update it in place, if it's loaded.
    */

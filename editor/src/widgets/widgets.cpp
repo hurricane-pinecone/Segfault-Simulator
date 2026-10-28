@@ -1,5 +1,7 @@
 #include "widgets/widgets.h"
 
+#include "widgets/theme.h"
+
 #include <algorithm>
 
 #include "imgui.h"
@@ -46,6 +48,53 @@ bool inputText(const char* label, std::string& value, int flags)
                           resizeCallback,
                           &value);
 }
+
+namespace
+{
+// A square icon button a frame high, drawn like the hierarchy's: the icon in
+// faint ink, accent on hover over a soft circle.
+template <typename Draw>
+bool iconButton(const char* id, Draw&& drawIcon)
+{
+  const float side = ImGui::GetFrameHeight();
+  const bool clicked = ImGui::InvisibleButton(id, ImVec2(side, side));
+  const bool hovered = ImGui::IsItemHovered();
+  const ImVec2 min = ImGui::GetItemRectMin();
+  const ImVec2 centre(min.x + side * 0.5f, min.y + side * 0.5f);
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  if (hovered)
+    draw->AddCircleFilled(centre, side * 0.4f, theme::kAccentSoft);
+  drawIcon(draw, centre, side * 0.8f, hovered ? theme::kAccent : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+  return clicked;
+}
+} // namespace
+
+void drawTarget(ImDrawList* draw, ImVec2 centre, float size, ImU32 color)
+{
+  draw->AddCircle(centre, size * 0.28f, color, 0, 1.5f);
+  for (const ImVec2 direction : {ImVec2(1, 0), ImVec2(-1, 0), ImVec2(0, 1), ImVec2(0, -1)})
+    draw->AddLine(ImVec2(centre.x + direction.x * size * 0.18f, centre.y + direction.y * size * 0.18f),
+                  ImVec2(centre.x + direction.x * size * 0.45f, centre.y + direction.y * size * 0.45f),
+                  color,
+                  1.5f);
+}
+
+void drawPencil(ImDrawList* draw, ImVec2 centre, float size, ImU32 color)
+{
+  // Lying from its tip at bottom-left to its end at top-right.
+  const float reach = size * 0.32f, half = size * 0.08f;
+  const auto along = [&](float t, float across)
+  {
+    const float d = -reach + 2.0f * reach * t; // tip (t = 0) to end (t = 1)
+    return ImVec2(centre.x + d - across, centre.y - d - across);
+  };
+  draw->AddQuadFilled(along(0.32f, half), along(1.0f, half), along(1.0f, -half), along(0.32f, -half), color);
+  draw->AddTriangleFilled(along(0.32f, half), along(0.32f, -half), along(0.0f, 0.0f), color);
+}
+
+bool editButton(const char* id) { return iconButton(id, drawPencil); }
+
+bool targetButton(const char* id) { return iconButton(id, drawTarget); }
 
 bool searchInput(const char* id, std::string& value, const char* hint, float width)
 {

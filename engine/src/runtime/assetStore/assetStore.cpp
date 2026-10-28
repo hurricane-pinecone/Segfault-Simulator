@@ -230,8 +230,16 @@ std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
     LOG_ERROR("No prefab asset with id " + id.toString());
   else if (record->kind == AssetKind::Model)
   {
-    if (const ModelData* data = model(id))
-      loaded = modelPrefab(*data, id, record->path.stem().string());
+    // Only its node tree: read from the file's structure, unless the model
+    // is loaded already. Its meshes load separately (in the background, in an
+    // editor), so placing a model doesn't wait for its geometry.
+    std::optional<std::vector<ModelNode>> nodes;
+    if (const ModelData* data = loadedModel(id))
+      nodes = data->nodes;
+    else
+      nodes = importModelNodes(m_database->absolutePath(*record), ModelImportSettings::fromJson(record->settings));
+    if (nodes)
+      loaded = modelPrefab(*nodes, id, record->path.stem().string());
   }
   else if (record->kind != AssetKind::Prefab)
     LOG_ERROR(record->path.generic_string() + " isn't a prefab");
@@ -260,10 +268,10 @@ nlohmann::json transformJson(const glm::mat4& matrix)
 }
 } // namespace
 
-nlohmann::json AssetStore::modelPrefab(const ModelData& model, const AssetId& id, const std::string& name)
+nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes, const AssetId& id, const std::string& name)
 {
   nlohmann::json root = {{"NameComponent", {{"name", name}}}, {"Transform3DComponent", transformJson(glm::mat4(1.0f))}};
-  if (model.nodes.empty())
+  if (nodes.empty())
   {
     root["MeshRendererComponent"] = {{"mesh", assetMeshName(id)}};
     return {{"formatVersion", 1}, {"root", std::move(root)}};
@@ -271,12 +279,12 @@ nlohmann::json AssetStore::modelPrefab(const ModelData& model, const AssetId& id
 
   // Each node an entity with its part, its $id the node's place in the file's
   // order (stable while the file's node order is).
-  std::vector<nlohmann::json> entries(model.nodes.size());
-  std::vector<std::vector<std::size_t>> children(model.nodes.size());
+  std::vector<nlohmann::json> entries(nodes.size());
+  std::vector<std::vector<std::size_t>> children(nodes.size());
   std::vector<std::size_t> tops;
-  for (std::size_t i = 0; i < model.nodes.size(); ++i)
+  for (std::size_t i = 0; i < nodes.size(); ++i)
   {
-    const ModelNode& node = model.nodes[i];
+    const ModelNode& node = nodes[i];
     entries[i] = {{"$id", i + 1},
                   {"NameComponent", {{"name", node.name}}},
                   {"Transform3DComponent", transformJson(node.local)}};

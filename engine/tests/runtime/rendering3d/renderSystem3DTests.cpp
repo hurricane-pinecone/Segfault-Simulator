@@ -440,6 +440,21 @@ int main()
     CHECK(loads == 2); // wood and missing, each asked for once
   }
 
+  TEST("a material set from game code should be made once, then updated in place")
+  {
+    Harness h;
+    MeshMaterial painted;
+    painted.baseColor = glm::vec4(0.5f);
+    const MaterialHandle first = h.system.meshes().setMaterial("game:painted", painted);
+    CHECK(first.valid());
+    CHECK(h.system.meshes().material("game:painted") == first);
+    painted.baseColor = glm::vec4(1.0f);
+    const int updates = h.renderer.materialUpdates;
+    CHECK(h.system.meshes().setMaterial("game:painted", painted) == first);
+    CHECK(h.renderer.materialUpdates == updates + 1);
+    CHECK(h.renderer.liveMaterials.size() == 1u);
+  }
+
   TEST("reloading a material should update it in place")
   {
     Harness h;

@@ -136,6 +136,10 @@ and transparency. Meshes are only shape; materials are separate.
   one per material for a model), each with the mesh's own material.
 - A Mesh Renderer's **Materials** list gives each slot a material asset in
   place of the mesh's own; an empty entry keeps the mesh's own.
+- A **scriptable object** (`.asset`, JSON: `{ "formatVersion", "type", "fields" }`)
+  holds the field values of a scriptable object type declared in scripts
+  (`sfs::ScriptableObject`); `sfs::ScriptableObjects` loads them. See
+  [Scripting](../../editor/scripting/index.md#scriptable-objects).
 - A **material asset** (`.mat`, JSON; see `MaterialAsset`) names its textures
   by asset id:
 

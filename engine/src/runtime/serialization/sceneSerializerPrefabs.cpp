@@ -28,6 +28,8 @@ constexpr int kMaxNesting = 16; // deeper than this is a prefab containing itsel
 
 std::string join(const std::string& path, const std::string& part)
 {
+  if (part.empty())
+    return path; // "": the instance's own root
   return path.empty() ? part : path + "/" + part;
 }
 

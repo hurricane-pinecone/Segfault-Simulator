@@ -30,4 +30,12 @@ struct ModelImportSettings
 std::optional<ModelData> importModel(const std::filesystem::path& file,
                                      const ModelImportSettings& settings = {});
 
+/**
+ * Just a model's node tree (as ModelData::nodes), read from the file's
+ * structure without loading its geometry or textures: quick, for placing a
+ * model as a tree of entities whose meshes load separately.
+ */
+std::optional<std::vector<ModelNode>> importModelNodes(const std::filesystem::path& file,
+                                                       const ModelImportSettings& settings = {});
+
 } // namespace sfs

@@ -7,6 +7,7 @@
 #include "glm/glm/ext/vector_int4.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 
@@ -65,6 +66,10 @@ struct EditorContext
   // A prefab to edit in its own tab; the app does it next frame.
   sfs::AssetId openPrefab;
 
+  // A text file (a script) to open in the code panel; the app does it next
+  // frame.
+  std::filesystem::path openText;
+
   // An entity for the viewport to frame (any panel may ask; the viewport does
   // it next frame and clears this).
   sfs::Entity focusRequest;
@@ -79,6 +84,8 @@ struct EditorContext
   // An asset for the Assets panel to show: it opens its folder and scrolls
   // to it (e.g. the Inspector's Select Asset). Cleared once done.
   sfs::AssetId revealAsset;
+  // The same for a file outside the catalogue (a script), by its path.
+  std::filesystem::path revealFile;
 
   // The asset selected in the Assets panel (invalid when none). The Inspector
   // shows it while no entity is selected; selecting an entity clears it.

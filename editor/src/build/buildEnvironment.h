@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // How game modules are built: which toolchain, against which engine package,
@@ -45,6 +46,17 @@ public:
 
   /** `args` wrapped to run on the build machine. */
   std::vector<std::string> command(std::vector<std::string> args) const;
+
+  /**
+   * `args` wrapped to run on the build machine so it can be stopped, with
+   * everything it starts. Run through WSL, it runs in a Linux process group
+   * of its own and first prints "<kGroupMarker> <group id>" for
+   * stopCommand(); stopping the local process alone would leave it running.
+   */
+  std::vector<std::string> stoppableCommand(std::vector<std::string> args) const;
+  static constexpr std::string_view kGroupMarker = "@sfs-group";
+  /** What stops a stoppableCommand() that printed `group` (nothing to run: stop the process itself). */
+  std::vector<std::string> stopCommand(int group) const;
 
 private:
   Runner m_runner = Runner::Native;

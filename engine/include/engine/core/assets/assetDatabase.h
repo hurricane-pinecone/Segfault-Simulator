@@ -49,6 +49,7 @@ enum class AssetKind
   Model,   // .glb .gltf .obj
   Material, // .mat (see MaterialAsset)
   Prefab,   // .prefab (see SceneSerializer)
+  ScriptableObject, // .asset: a scriptable object type's values (see ScriptableObject, ScriptableObjects)
   Font,    // .ttf .otf
   Audio,   // .wav .ogg .mp3 .flac
   Data,    // .json (e.g. an Aseprite atlas), .txt, .csv
@@ -193,6 +194,10 @@ private:
   static std::optional<Meta> readMeta(const std::filesystem::path& file);
   static bool writeMeta(const std::filesystem::path& file, const Meta& meta);
   void rebuildIndex();
+  // After an edit made here: re-sort and re-index, and bump the version.
+  void catalogueChanged();
+  // Add a folder and the folders above it to the list (if missing).
+  void addFolders(const std::filesystem::path& relative);
 
   std::filesystem::path m_root;
   Mode m_mode;

@@ -52,6 +52,22 @@ std::string lowercase(std::string_view text)
 }
 
 // Collapse runs of whitespace to one space and drop spaces around "::".
+// T, for a (normalised) "sfs::AssetRef<T>" or "AssetRef<T>".
+std::optional<std::string> assetRefType(std::string_view type)
+{
+  if (type.starts_with("sfs::"))
+    type.remove_prefix(5);
+  constexpr std::string_view open = "AssetRef<";
+  if (!type.starts_with(open) || !type.ends_with('>'))
+    return std::nullopt;
+  std::string inner(type.substr(open.size(), type.size() - open.size() - 1));
+  while (!inner.empty() && inner.front() == ' ')
+    inner.erase(inner.begin());
+  while (!inner.empty() && inner.back() == ' ')
+    inner.pop_back();
+  return inner.empty() ? std::nullopt : std::optional(inner);
+}
+
 std::string normaliseType(std::string_view text)
 {
   std::string out;
@@ -96,7 +112,7 @@ public:
 
     visit(ts_tree_root_node(tree.get()));
 
-    if (!m_result.type)
+    if (!m_result.type && !m_helper)
       warn(ts_tree_root_node(tree.get()),
            "no class or struct named after the file ('" +
                m_path.stem().string() + "')");
@@ -196,6 +212,14 @@ private:
         parseField(member, isPublic, model);
     }
 
+    // A class with no engine base and nothing to edit (e.g. FieldMap, a
+    // helper a script uses) isn't a component: it's left alone. Components
+    // are structs, or classes with public fields.
+    if (!isStruct && model.kind == TypeKind::Component && model.fields.empty())
+    {
+      m_helper = true;
+      return;
+    }
     m_result.type = std::move(model);
   }
 
@@ -222,10 +246,12 @@ private:
           kind = TypeKind::System;
         else if (name == "MeshSource" || name == "sfs::MeshSource")
           kind = TypeKind::MeshSource;
+        else if (name == "ScriptableObject" || name == "sfs::ScriptableObject")
+          kind = TypeKind::ScriptableObject;
         else
           error(base,
                 "'" + name + "' isn't a supported base; derive from sfs::GameObject, "
-                "sfs::System or sfs::MeshSource, or nothing for a component");
+                "sfs::System, sfs::MeshSource or sfs::ScriptableObject, or nothing for a component");
       }
     }
     return kind;
@@ -252,10 +278,19 @@ private:
         parseAttributes(child, base, hide, show);
     }
 
-    // Methods declared without a body are field_declarations too.
-    const TSNode firstDeclarator = field(node, "declarator");
-    if (ts_node_is_null(firstDeclarator) ||
-        type(firstDeclarator) == "function_declarator")
+    // Methods declared without a body are field_declarations too, the
+    // function declarator inside any pointer or reference to what they
+    // return (`Thing* find();`).
+    TSNode declarator = field(node, "declarator");
+    while (!ts_node_is_null(declarator) &&
+           (type(declarator) == "pointer_declarator" || type(declarator) == "reference_declarator"))
+    {
+      const TSNode inner = field(declarator, "declarator");
+      declarator = ts_node_is_null(inner) && ts_node_named_child_count(declarator) > 0
+                       ? ts_node_named_child(declarator, ts_node_named_child_count(declarator) - 1)
+                       : inner;
+    }
+    if (ts_node_is_null(declarator) || type(declarator) == "function_declarator")
       return;
 
     if (hide || (!isPublic && !show))
@@ -263,7 +298,15 @@ private:
 
     const TSNode typeNode = field(node, "type");
     base.type = normaliseType(text(typeNode));
-    const auto kind = fieldKinds().find(base.type);
+    // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed type.
+    std::optional<std::string> kind;
+    if (const std::optional<std::string> data = assetRefType(base.type))
+    {
+      kind = "AssetRef";
+      base.assetType = *data;
+    }
+    else if (const auto known = fieldKinds().find(base.type); known != fieldKinds().end())
+      kind = known->second;
 
     // Every declarator: `float a, b;` declares two fields.
     for (uint32_t i = 0; i < count; ++i)
@@ -279,7 +322,7 @@ private:
                     "fields can't be edited; skipped");
         continue;
       }
-      if (kind == fieldKinds().end())
+      if (!kind)
       {
         warn(child, "'" + text(child) + "' has type '" + base.type +
                         "', which the editor can't edit yet; skipped");
@@ -288,7 +331,7 @@ private:
 
       FieldModel fieldModel = base;
       fieldModel.name = text(child);
-      fieldModel.kind = kind->second;
+      fieldModel.kind = *kind;
       model.fields.push_back(std::move(fieldModel));
     }
   }
@@ -345,6 +388,7 @@ private:
   std::string m_target;
   std::vector<std::string> m_namespaces;
   ParseResult m_result;
+  bool m_helper = false; // the file's class is a helper (no type, no warning)
 };
 
 } // namespace

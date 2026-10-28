@@ -27,6 +27,17 @@ bool colorEdit4(const char* label, float* rgba);
 bool searchInput(const char* id, std::string& value, const char* hint, float width = -1.0f);
 
 /**
+ * Square icon buttons a frame high: a pencil (edit), and a crosshair
+ * (target: find or frame something). @return true when clicked
+ */
+bool editButton(const char* id);
+bool targetButton(const char* id);
+
+/** The icons themselves, `size` across, for drawing into other widgets. */
+void drawPencil(ImDrawList* draw, ImVec2 centre, float size, ImU32 color);
+void drawTarget(ImDrawList* draw, ImVec2 centre, float size, ImU32 color);
+
+/**
  * Run an editing widget on a copy of `value`, recording the edit for undo.
  * The scene is snapshotted when the interaction starts and before the copy is
  * written back, so even a widget that changes the value on its first frame

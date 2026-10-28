@@ -32,6 +32,14 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
   return types;
 }
 
+// A field's C++ type, as its static_assert and member pointer spell it.
+std::string cppTypeOf(const FieldModel& field)
+{
+  if (field.kind == "AssetRef")
+    return "sfs::AssetRef<" + field.assetType + ">";
+  return canonicalTypes().at(field.kind);
+}
+
 // A C++ string literal for `text`.
 std::string literal(std::string_view text)
 {
@@ -98,7 +106,7 @@ void emitAccessTags(std::ostringstream& out, const std::vector<TypeModel>& types
 
       const std::string tag = accessTag(type, field);
       out << "struct " << tag << "\n{\n  using type = "
-          << canonicalTypes().at(field.kind) << " " << type.qualifiedName
+          << cppTypeOf(field) << " " << type.qualifiedName
           << "::*;\n  friend type memberOf(" << tag << ");\n};\n"
           << "template struct MemberAccess<" << tag << ", &"
           << type.qualifiedName << "::" << field.name << ">;\n\n";
@@ -110,7 +118,7 @@ void emitAccessTags(std::ostringstream& out, const std::vector<TypeModel>& types
 
 void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel& field)
 {
-  const std::string& cppType = canonicalTypes().at(field.kind);
+  const std::string cppType = cppTypeOf(field);
 
   out << "    {\n";
   if (field.isPublic)
@@ -134,6 +142,8 @@ void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel&
     out << "      field.attributes.texture = true;\n";
   if (field.materials)
     out << "      field.attributes.materials = true;\n";
+  if (field.kind == "AssetRef")
+    out << "      field.attributes.assetType = " << literal(field.assetType) << ";\n";
   if (field.range)
     out << "      field.attributes.hasRange = true;\n"
         << "      field.attributes.min = static_cast<float>(" << field.range->first
@@ -166,6 +176,13 @@ void emitType(std::ostringstream& out, const TypeModel& type, const GeneratorOpt
     out << "    TypeInfo type = componentType<" << type.qualifiedName << ">("
         << name << ", " << literal(displayName(type.name, true)) << ", " << module
         << ");\n";
+    break;
+  case TypeKind::ScriptableObject:
+    out << "    static_assert(std::is_base_of_v<sfs::ScriptableObject, " << type.qualifiedName
+        << ">,\n                  "
+        << literal(type.name + " must derive from sfs::ScriptableObject") << ");\n"
+        << "    TypeInfo type = scriptableObjectType<" << type.qualifiedName << ">(" << name << ", "
+        << literal(displayName(type.name, false)) << ", " << module << ");\n";
     break;
   case TypeKind::MeshSource:
     out << "    static_assert(std::is_base_of_v<sfs::MeshSource, " << type.qualifiedName

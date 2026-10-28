@@ -16,6 +16,7 @@
 #include "engine/core/ecs/ecs.h" // IWYU pragma: export
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/game/game.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"

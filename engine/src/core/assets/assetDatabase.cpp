@@ -99,6 +99,8 @@ AssetKind assetKindOf(const fs::path& file)
     return AssetKind::Material;
   if (any({".prefab"}))
     return AssetKind::Prefab;
+  if (any({".asset"}))
+    return AssetKind::ScriptableObject;
   if (any({".ttf", ".otf"}))
     return AssetKind::Font;
   if (any({".wav", ".ogg", ".mp3", ".flac"}))
@@ -120,6 +122,8 @@ const char* assetKindName(AssetKind kind)
     return "Material";
   case AssetKind::Prefab:
     return "Prefab";
+  case AssetKind::ScriptableObject:
+    return "Scriptable Object";
   case AssetKind::Font:
     return "Font";
   case AssetKind::Audio:
@@ -328,8 +332,28 @@ bool AssetDatabase::move(const AssetId& id, const fs::path& relative)
     fs::rename(metaPathFor(from), metaPathFor(to), error);
   if (error)
     LOG_ERROR("Assets: moved " + key(relative) + " but not its .meta: " + error.message());
-  refresh();
+  // The catalogue is updated in place: rescanning every folder (slow on a
+  // network share) for one file isn't needed.
+  m_records[m_byId.at(id)].path = fs::path(key(relative));
+  addFolders(relative.parent_path());
+  catalogueChanged();
   return true;
+}
+
+void AssetDatabase::addFolders(const fs::path& relative)
+{
+  for (fs::path folder = fs::path(key(relative)); !folder.empty() && folder != "."; folder = folder.parent_path())
+    if (std::find(m_folders.begin(), m_folders.end(), folder) == m_folders.end())
+      m_folders.push_back(folder);
+}
+
+void AssetDatabase::catalogueChanged()
+{
+  std::sort(m_records.begin(), m_records.end(),
+            [](const AssetRecord& a, const AssetRecord& b) { return key(a.path) < key(b.path); });
+  std::sort(m_folders.begin(), m_folders.end(), [](const fs::path& a, const fs::path& b) { return key(a) < key(b); });
+  rebuildIndex();
+  ++m_version;
 }
 
 bool AssetDatabase::moveFolder(const fs::path& from, const fs::path& to)
@@ -356,7 +380,24 @@ bool AssetDatabase::moveFolder(const fs::path& from, const fs::path& to)
     LOG_ERROR("Assets: can't move folder " + fromKey + ": " + error.message());
     return false;
   }
-  refresh();
+  // Everything in it moves with it.
+  const auto moved = [&](const fs::path& path) -> std::optional<fs::path>
+  {
+    const std::string pathKey = key(path);
+    if (pathKey == fromKey)
+      return fs::path(toKey);
+    if (pathKey.starts_with(fromKey + "/"))
+      return fs::path(toKey + pathKey.substr(fromKey.size()));
+    return std::nullopt;
+  };
+  for (AssetRecord& record : m_records)
+    if (const auto path = moved(record.path))
+      record.path = *path;
+  for (fs::path& folder : m_folders)
+    if (const auto path = moved(folder))
+      folder = *path;
+  addFolders(to);
+  catalogueChanged();
   return true;
 }
 
@@ -376,7 +417,8 @@ bool AssetDatabase::remove(const AssetId& id)
     return false;
   }
   fs::remove(metaPathFor(file), error);
-  refresh();
+  m_records.erase(m_records.begin() + static_cast<std::ptrdiff_t>(m_byId.at(id)));
+  catalogueChanged();
   return true;
 }
 
@@ -393,7 +435,15 @@ bool AssetDatabase::removeFolder(const fs::path& relative)
     LOG_ERROR("Assets: can't delete folder " + key(relative) + ": " + error.message());
     return false;
   }
-  refresh();
+  const std::string folderKey = key(relative);
+  const auto inside = [&](const fs::path& path)
+  {
+    const std::string pathKey = key(path);
+    return pathKey == folderKey || pathKey.starts_with(folderKey + "/");
+  };
+  std::erase_if(m_records, [&](const AssetRecord& record) { return inside(record.path); });
+  std::erase_if(m_folders, inside);
+  catalogueChanged();
   return true;
 }
 
@@ -408,7 +458,8 @@ bool AssetDatabase::createFolder(const fs::path& relative)
     LOG_ERROR("Assets: can't create folder " + key(relative) + ": " + error.message());
     return false;
   }
-  refresh();
+  addFolders(relative);
+  catalogueChanged();
   return true;
 }
 
@@ -431,9 +482,16 @@ std::optional<AssetId> AssetDatabase::import(const fs::path& file, const fs::pat
     LOG_ERROR("Assets: can't import " + file.string() + ": " + error.message());
     return std::nullopt;
   }
-  refresh();
-  const AssetRecord* record = findByPath(target.lexically_relative(m_root));
-  return record ? std::optional<AssetId>(record->id) : std::nullopt;
+  // A new asset, with a new id.
+  AssetRecord record;
+  record.id = AssetId::generate();
+  record.path = fs::path(key(target.lexically_relative(m_root)));
+  record.kind = assetKindOf(record.path);
+  writeMeta(target, Meta{record.id, record.settings});
+  m_records.push_back(record);
+  addFolders(record.path.parent_path());
+  catalogueChanged();
+  return record.id;
 }
 
 bool AssetDatabase::setSettings(const AssetId& id, json settings)

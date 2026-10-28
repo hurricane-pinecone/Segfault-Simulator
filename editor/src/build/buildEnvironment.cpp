@@ -80,19 +80,46 @@ std::filesystem::path BuildEnvironment::toEditorPath(const std::string& buildPat
   return windows;
 }
 
-std::vector<std::string> BuildEnvironment::command(std::vector<std::string> args) const
+namespace
 {
-  if (m_runner != Runner::Wsl)
-    return args;
-
-  // A login shell, so the user's PATH (cmake, conan, compilers) applies.
-  std::string script;
+// Arguments as one shell command line.
+std::string shellLine(const std::vector<std::string>& args)
+{
+  std::string line;
   for (const std::string& arg : args)
   {
     std::string quoted = "'";
     for (const char c : arg)
       quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
-    script += (script.empty() ? "" : " ") + quoted + "'";
+    line += (line.empty() ? "" : " ") + quoted + "'";
   }
+  return line;
+}
+} // namespace
+
+std::vector<std::string> BuildEnvironment::command(std::vector<std::string> args) const
+{
+  if (m_runner != Runner::Wsl)
+    return args;
+  // A login shell, so the user's PATH (cmake, conan, compilers) applies.
+  return {"wsl.exe", "-d", m_wslDistro, "--", "bash", "-lc", shellLine(args)};
+}
+
+std::vector<std::string> BuildEnvironment::stoppableCommand(std::vector<std::string> args) const
+{
+  if (m_runner != Runner::Wsl)
+    return args; // ChildProcess::terminate() stops it and its children
+  // With job control on, a background job gets a process group of its own
+  // (its id is the job's pid); say which, then wait for it and pass on how
+  // it went.
+  const std::string script = "set -m; " + shellLine(args) + " & echo " + std::string(kGroupMarker) +
+                             " $!; wait $!";
   return {"wsl.exe", "-d", m_wslDistro, "--", "bash", "-lc", script};
+}
+
+std::vector<std::string> BuildEnvironment::stopCommand(int group) const
+{
+  if (m_runner != Runner::Wsl || group <= 0)
+    return {};
+  return {"wsl.exe", "-d", m_wslDistro, "--", "kill", "-TERM", "--", "-" + std::to_string(group)};
 }

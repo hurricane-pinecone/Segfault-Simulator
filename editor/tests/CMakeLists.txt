@@ -32,3 +32,18 @@ target_link_libraries(gameExporterTests PRIVATE sfs::engine)
 
 add_editor_test(fieldMigrationTests fieldMigrationTests.cpp "${EDITOR_SRC_DIR}/scripting/fieldMigration.cpp")
 target_link_libraries(fieldMigrationTests PRIVATE sfs::engine-core)
+
+add_editor_test(gltfFilesTests gltfFilesTests.cpp "${EDITOR_SRC_DIR}/assets/gltfFiles.cpp")
+target_link_libraries(gltfFilesTests PRIVATE sfs::engine-core)
+
+if(NOT WIN32)
+    add_editor_test(childProcessTests childProcessTests.cpp
+        "${EDITOR_SRC_DIR}/build/childProcess.cpp"
+        "${EDITOR_SRC_DIR}/build/buildEnvironment.cpp")
+    target_include_directories(childProcessTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../generated")
+    target_link_libraries(childProcessTests PRIVATE sfs::engine-core)
+endif()
+
+add_editor_test(scriptFilesTests scriptFilesTests.cpp "${EDITOR_SRC_DIR}/scripting/scriptFiles.cpp"
+    "${EDITOR_SRC_DIR}/platform/paths.cpp")
+target_link_libraries(scriptFilesTests PRIVATE sfs::engine-core)

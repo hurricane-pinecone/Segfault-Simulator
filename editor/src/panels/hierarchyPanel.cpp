@@ -257,12 +257,7 @@ void HierarchyPanel::drawFocusButton(EditorContext& context, const sfs::Entity& 
   const ImU32 color = hovered ? theme::kAccent : ImGui::GetColorU32(ImGuiCol_TextDisabled);
   if (hovered)
     draw->AddCircleFilled(centre, size * 0.5f, theme::kAccentSoft);
-  draw->AddCircle(centre, size * 0.28f, color, 0, 1.5f);
-  for (const ImVec2 direction : {ImVec2(1, 0), ImVec2(-1, 0), ImVec2(0, 1), ImVec2(0, -1)})
-    draw->AddLine(ImVec2(centre.x + direction.x * size * 0.18f, centre.y + direction.y * size * 0.18f),
-                  ImVec2(centre.x + direction.x * size * 0.45f, centre.y + direction.y * size * 0.45f),
-                  color,
-                  1.5f);
+  widgets::drawTarget(draw, centre, size, color);
 }
 
 void HierarchyPanel::drawDropBelow(EditorContext& context)

@@ -58,3 +58,6 @@ add_runtime_test(prefabTests serialization/prefabTests.cpp)
 
 # scripting/
 add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)
+
+# scriptableObjects/
+add_runtime_test(scriptableObjectsTests scriptableObjects/scriptableObjectsTests.cpp)

@@ -124,6 +124,9 @@ private:
   void checkScripts(bool baseline);
   /** Rewrite the project's scene and prefab files for changed fields. */
   void migrateProjectFiles(const fieldMigration::Changes& changes);
+  // A file or folder was moved in the Assets panel: open scenes (and the start
+  // scene) follow it.
+  void pathMoved(const std::filesystem::path& from, const std::filesystem::path& to);
 
   // What's open for editing: the scene, and each prefab being edited in its
   // own viewport tab (its own scene, holding the prefab's content alone). One
@@ -221,6 +224,7 @@ private:
   std::string m_dialogSceneName;
   std::string m_dialogScriptName;
   scriptTemplates::Kind m_dialogScriptKind = scriptTemplates::Kind::GameObject;
+  std::filesystem::path m_dialogScriptFolder; // where it goes (empty: the scripts folder)
 
   // Export: the dialog's choices, applied once the module has built.
   std::string m_exportFolder;     // the game goes in a subfolder of this

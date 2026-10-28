@@ -23,6 +23,11 @@ public:
   {
   }
 
+  ~ModuleBuilder() { cancel(); }
+
+  ModuleBuilder(const ModuleBuilder&) = delete;
+  ModuleBuilder& operator=(const ModuleBuilder&) = delete;
+
   bool busy() const { return m_process != nullptr; }
 
   /** How far the running build is, 0-100, as the build tool reports it; -1 if it hasn't said. */
@@ -36,8 +41,14 @@ public:
   bool start(const Project& project);
 
   /**
+   * Stop the running build, compilers and all. The next poll() reports it
+   * failed.
+   */
+  void cancel();
+
+  /**
    * Advance the build. Returns nothing while it runs (or when idle), then once
-   * true (built) or false (failed) when it finishes.
+   * true (built) or false (failed, or cancelled) when it finishes.
    */
   std::optional<bool> poll();
 
@@ -54,4 +65,6 @@ private:
   std::vector<std::vector<std::string>> m_steps; // commands still to run
   std::unique_ptr<ChildProcess> m_process;
   std::atomic<int> m_percent = -1; // written by the output reader thread
+  std::atomic<int> m_group = -1;   // the build's process group on the build machine (see stoppableCommand)
+  bool m_cancelled = false;        // for poll() to report
 };

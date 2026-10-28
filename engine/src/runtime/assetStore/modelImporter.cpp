@@ -320,6 +320,103 @@ void appendNode(const cgltf_node& node, const glm::mat4& placement, Textures& te
 }
 } // namespace
 
+namespace
+{
+// Whether a mesh has triangles to draw (read from the file's description of
+// its data, so without loading the data).
+bool hasTriangles(const cgltf_mesh& mesh)
+{
+  for (cgltf_size i = 0; i < mesh.primitives_count; ++i)
+  {
+    const cgltf_primitive& primitive = mesh.primitives[i];
+    if (primitive.type != cgltf_primitive_type_triangles)
+      continue;
+    for (cgltf_size a = 0; a < primitive.attributes_count; ++a)
+      if (primitive.attributes[a].type == cgltf_attribute_type_position && primitive.attributes[a].data &&
+          primitive.attributes[a].data->count >= 3)
+        return true;
+  }
+  return false;
+}
+
+// Each mesh's part name, when the model has more than one to pick from:
+// unique (files may repeat names), only for meshes with triangles.
+std::unordered_map<const cgltf_mesh*, std::string> partNames(const cgltf_data& data)
+{
+  std::unordered_map<const cgltf_mesh*, std::string> partOf;
+  if (data.meshes_count <= 1)
+    return partOf;
+  std::set<std::string> taken;
+  for (cgltf_size i = 0; i < data.meshes_count; ++i)
+  {
+    const std::string base =
+        data.meshes[i].name && *data.meshes[i].name ? data.meshes[i].name : "Mesh " + std::to_string(i + 1);
+    std::string name = base;
+    for (int n = 2; taken.contains(name); ++n)
+      name = base + " " + std::to_string(n);
+    taken.insert(name);
+    if (hasTriangles(data.meshes[i]))
+      partOf[&data.meshes[i]] = name;
+  }
+  return partOf;
+}
+
+// The node tree, for placing the parts as entities. Each node's transform is
+// moved into the engine's space: with M the placement (axes and scale),
+// M * L * M^-1, so their product down the tree is M * (file's) * M^-1 and a
+// part (whose vertices are already M * v) lands where the file put it.
+std::vector<ModelNode> readNodes(const cgltf_data& data,
+                                 const glm::mat4& placement,
+                                 const std::unordered_map<const cgltf_mesh*, std::string>& partOf)
+{
+  std::vector<ModelNode> nodes;
+  const glm::mat4 toFile = glm::inverse(placement);
+  const std::function<void(const cgltf_node&, int)> addNode = [&](const cgltf_node& node, int parent)
+  {
+    float local[16];
+    cgltf_node_transform_local(&node, local);
+    ModelNode out;
+    out.name = node.name && *node.name ? node.name : "Node " + std::to_string(nodes.size() + 1);
+    out.parent = parent;
+    out.local = placement * glm::make_mat4(local) * toFile;
+    if (node.mesh)
+      if (const auto it = partOf.find(node.mesh); it != partOf.end())
+        out.part = it->second;
+    const int index = static_cast<int>(nodes.size());
+    nodes.push_back(std::move(out));
+    for (cgltf_size i = 0; i < node.children_count; ++i)
+      addNode(*node.children[i], index);
+  };
+  const cgltf_scene* scene = data.scene ? data.scene : (data.scenes_count ? &data.scenes[0] : nullptr);
+  if (scene)
+    for (cgltf_size i = 0; i < scene->nodes_count; ++i)
+      addNode(*scene->nodes[i], -1);
+  else
+    for (cgltf_size i = 0; i < data.nodes_count; ++i)
+      if (!data.nodes[i].parent)
+        addNode(data.nodes[i], -1);
+  return nodes;
+}
+} // namespace
+
+std::optional<std::vector<ModelNode>> importModelNodes(const std::filesystem::path& file,
+                                                       const ModelImportSettings& settings)
+{
+  const std::string path = file.string();
+  cgltf_options options{};
+  cgltf_data* raw = nullptr;
+  if (cgltf_parse_file(&options, path.c_str(), &raw) != cgltf_result_success)
+  {
+    LOG_ERROR("Model import: can't read " + path + " (only glTF: .glb and .gltf)");
+    return std::nullopt;
+  }
+  DataPtr data(raw, cgltf_free);
+  const glm::mat4 placement = glm::scale(glm::mat4(1.0f), glm::vec3(settings.scale)) * kYUpToZUp;
+  const auto partOf = partNames(*data);
+  // As importModel gives them: a tree only with parts to place.
+  return partOf.empty() ? std::vector<ModelNode>() : readNodes(*data, placement, partOf);
+}
+
 std::optional<ModelData> importModel(const std::filesystem::path& file, const ModelImportSettings& settings)
 {
   const std::string path = file.string();
@@ -353,58 +450,19 @@ std::optional<ModelData> importModel(const std::filesystem::path& file, const Mo
         appendNode(data->nodes[i], placement, textures, model.whole);
 
   // Each mesh on its own, when there's more than one to pick from.
-  std::set<std::string> taken;
-  std::unordered_map<const cgltf_mesh*, std::string> partOf;
-  if (data->meshes_count > 1)
-    for (cgltf_size i = 0; i < data->meshes_count; ++i)
+  const std::unordered_map<const cgltf_mesh*, std::string> partOf = partNames(*data);
+  for (cgltf_size i = 0; i < data->meshes_count; ++i)
+    if (const auto name = partOf.find(&data->meshes[i]); name != partOf.end())
     {
       ModelPart part;
-      const std::string base = data->meshes[i].name && *data->meshes[i].name
-                                   ? data->meshes[i].name
-                                   : "Mesh " + std::to_string(i + 1);
-      part.name = base; // unique: files may repeat names
-      for (int n = 2; taken.contains(part.name); ++n)
-        part.name = base + " " + std::to_string(n);
-      taken.insert(part.name);
+      part.name = name->second;
       appendMesh(data->meshes[i], placement, textures, part.mesh);
-      if (!part.mesh.empty())
-      {
-        partOf[&data->meshes[i]] = part.name;
-        model.parts.push_back(std::move(part));
-      }
+      model.parts.push_back(std::move(part));
     }
 
-  // The node tree, for placing the parts as entities. Each node's transform
-  // is moved into the engine's space: with M the placement (axes and scale),
-  // M * L * M^-1, so their product down the tree is M * (file's) * M^-1 and a
-  // part (whose vertices are already M * v) lands where the file put it.
+  // The node tree, for placing the parts as entities.
   if (!model.parts.empty())
-  {
-    const glm::mat4 toFile = glm::inverse(placement);
-    const std::function<void(const cgltf_node&, int)> addNode = [&](const cgltf_node& node, int parent)
-    {
-      float local[16];
-      cgltf_node_transform_local(&node, local);
-      ModelNode out;
-      out.name = node.name && *node.name ? node.name : "Node " + std::to_string(model.nodes.size() + 1);
-      out.parent = parent;
-      out.local = placement * glm::make_mat4(local) * toFile;
-      if (node.mesh)
-        if (const auto it = partOf.find(node.mesh); it != partOf.end())
-          out.part = it->second;
-      const int index = static_cast<int>(model.nodes.size());
-      model.nodes.push_back(std::move(out));
-      for (cgltf_size i = 0; i < node.children_count; ++i)
-        addNode(*node.children[i], index);
-    };
-    if (scene)
-      for (cgltf_size i = 0; i < scene->nodes_count; ++i)
-        addNode(*scene->nodes[i], -1);
-    else
-      for (cgltf_size i = 0; i < data->nodes_count; ++i)
-        if (!data->nodes[i].parent)
-          addNode(data->nodes[i], -1);
-  }
+    model.nodes = readNodes(*data, placement, partOf);
 
   if (model.whole.empty())
   {
@@ -417,6 +475,12 @@ std::optional<ModelData> importModel(const std::filesystem::path& file, const Mo
 #else
 
 std::optional<ModelData> importModel(const std::filesystem::path& file, const ModelImportSettings&)
+{
+  LOG_ERROR("Model import isn't part of this build: " + file.string());
+  return std::nullopt;
+}
+
+std::optional<std::vector<ModelNode>> importModelNodes(const std::filesystem::path& file, const ModelImportSettings&)
 {
   LOG_ERROR("Model import isn't part of this build: " + file.string());
   return std::nullopt;

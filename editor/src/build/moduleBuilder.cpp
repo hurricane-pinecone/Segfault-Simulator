@@ -5,10 +5,16 @@
 #include "engine/core/logger/logger.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <memory>
+#include <thread>
 
 namespace
 {
+constexpr int kJobs = 3; // compiles at once
+
+
 // Compiler and CMake errors, worth highlighting among the build output.
 bool looksLikeError(const std::string& line)
 {
@@ -57,7 +63,9 @@ bool ModuleBuilder::start(const Project& project)
                        "-DCMAKE_TOOLCHAIN_FILE=" + m_environment.toolchainFile(),
                        "-DCMAKE_PREFIX_PATH=" + m_environment.enginePrefix(),
                        "-DSFS_CODEGEN_EXECUTABLE=" + m_environment.codegen()});
-  m_steps.push_back({"cmake", "--build", build, "--parallel"});
+  // A few compiles at a time: more can swamp the machine (WSL, especially)
+  // for a module this size, and keep the editor from being usable meanwhile.
+  m_steps.push_back({"cmake", "--build", build, "--parallel", std::to_string(kJobs)});
 
   m_percent = -1;
   LOG_INFO("Building " + project.moduleName() + "...");
@@ -70,6 +78,12 @@ bool ModuleBuilder::startNextStep()
   auto lines = std::make_shared<LineSplitter>(
       [this](const std::string& line)
       {
+        // Where the build runs, so cancel() can stop it.
+        if (line.starts_with(BuildEnvironment::kGroupMarker))
+        {
+          m_group = std::atoi(line.c_str() + BuildEnvironment::kGroupMarker.size());
+          return;
+        }
         // CMake's generators start lines with "[ 42%]" as they go.
         if (const std::size_t open = line.find('['), close = line.find("%]");
             open != std::string::npos && close != std::string::npos && open < close)
@@ -96,8 +110,9 @@ bool ModuleBuilder::startNextStep()
           LOG_INFO(line);
       });
 
+  m_group = -1;
   auto process = std::make_unique<ChildProcess>();
-  const bool started = process->start(m_environment.command(m_steps.front()),
+  const bool started = process->start(m_environment.stoppableCommand(m_steps.front()),
                                       [lines](std::string_view chunk) { lines->feed(chunk); });
   m_steps.erase(m_steps.begin());
 
@@ -111,8 +126,33 @@ bool ModuleBuilder::startNextStep()
   return true;
 }
 
+void ModuleBuilder::cancel()
+{
+  if (!m_process)
+    return;
+  m_steps.clear();
+  // On the build machine first (it runs on without its local process), then
+  // the local process.
+  if (const std::vector<std::string> stop = m_environment.stopCommand(m_group); !stop.empty())
+  {
+    ChildProcess stopper;
+    if (stopper.start(stop, [](std::string_view) {}))
+      for (int i = 0; i < 300 && stopper.running(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  m_process->terminate();
+  m_process.reset();
+  m_cancelled = true;
+  LOG_INFO("Build stopped");
+}
+
 std::optional<bool> ModuleBuilder::poll()
 {
+  if (m_cancelled)
+  {
+    m_cancelled = false;
+    return false;
+  }
   if (!m_process || m_process->running())
     return std::nullopt;
 

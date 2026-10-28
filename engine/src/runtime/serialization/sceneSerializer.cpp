@@ -1,5 +1,6 @@
 #include "engine/runtime/serialization/sceneSerializer.h"
 
+#include "engine/core/assets/scriptableObject.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
@@ -127,6 +128,8 @@ json fieldToJson(const reflect::FieldInfo& field, void* object, const MeshLibrar
     return field.in<json>(object);
   case Kind::StringList:
     return field.in<std::vector<std::string>>(object);
+  case Kind::AssetRef:
+    return field.in<AssetRefBase>(object).asset;
   case Kind::Mesh:
   {
     const MeshHandle mesh = field.in<MeshHandle>(object);
@@ -190,6 +193,11 @@ bool fieldFromJson(const reflect::FieldInfo& field,
   }
   case Kind::Json:
     field.in<json>(object) = value;
+    return true;
+  case Kind::AssetRef:
+    if (!value.is_string())
+      return false;
+    field.in<AssetRefBase>(object).asset = value.get<std::string>();
     return true;
   case Kind::StringList:
   {

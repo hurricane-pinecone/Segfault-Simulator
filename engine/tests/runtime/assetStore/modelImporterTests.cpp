@@ -5,6 +5,7 @@
 #include <SDL.h>
 
 #include <cstring>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -189,6 +190,33 @@ int main()
         CHECK(model->nodes[0].parent == -1);
         CHECK(model->nodes[0].local[3][0] == 0.0f); // the nodes aren't moved
       }
+    }
+  }
+
+  TEST("the node tree alone should match the full import's, without the file's data")
+  {
+    const std::filesystem::path file = writeModel("treeonly.gltf", "checker.bmp");
+    const auto model = importModel(file);
+    const auto nodes = importModelNodes(file);
+    CHECK(model.has_value() && nodes.has_value());
+    if (model && nodes)
+    {
+      CHECK(nodes->size() == model->nodes.size());
+      for (std::size_t i = 0; i < std::min(nodes->size(), model->nodes.size()); ++i)
+      {
+        CHECK((*nodes)[i].name == model->nodes[i].name);
+        CHECK((*nodes)[i].part == model->nodes[i].part);
+        CHECK((*nodes)[i].parent == model->nodes[i].parent);
+        CHECK((*nodes)[i].local == model->nodes[i].local);
+      }
+    }
+    // The geometry isn't read: the tree comes even with the data file gone.
+    std::filesystem::path data = file;
+    data.replace_extension(".bin");
+    if (std::filesystem::exists(data))
+    {
+      std::filesystem::remove(data);
+      CHECK(importModelNodes(file).has_value());
     }
   }
 

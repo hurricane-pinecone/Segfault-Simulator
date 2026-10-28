@@ -1,5 +1,7 @@
 #include "scripting/scriptTemplates.h"
 
+#include "scripting/scriptFiles.h"
+
 #include "engine/core/logger/logger.h"
 
 #include <cctype>
@@ -55,6 +57,15 @@ std::string source(Kind kind, const std::string& name)
            "struct " + name + "\n"
            "{\n"
            "};\n";
+  case Kind::ScriptableObject:
+    return "#pragma once\n"
+           "#include <sfs/sfs.h>\n"
+           "\n"
+           "// Shared data, kept in .asset files: make one in the Assets panel\n"
+           "// (New Scriptable Object), and refer to it with an sfs::AssetRef<" + name + "> field.\n"
+           "struct " + name + " : sfs::ScriptableObject\n"
+           "{\n"
+           "};\n";
   }
   return {};
 }
@@ -70,6 +81,8 @@ const char* label(Kind kind)
     return "System";
   case Kind::Component:
     return "Component";
+  case Kind::ScriptableObject:
+    return "Scriptable Object Template";
   }
   return "";
 }
@@ -86,7 +99,8 @@ bool isValidName(const std::string& name)
 
 std::optional<std::filesystem::path> create(Kind kind,
                                             const std::string& name,
-                                            const std::filesystem::path& scriptsFolder)
+                                            const std::filesystem::path& scriptsFolder,
+                                            const std::filesystem::path& folder)
 {
   if (!isValidName(name))
   {
@@ -94,14 +108,15 @@ std::optional<std::filesystem::path> create(Kind kind,
     return std::nullopt;
   }
 
-  const std::filesystem::path path = scriptsFolder / (name + ".h");
-  if (std::filesystem::exists(path))
+  if (const auto existing = scriptFiles::find(scriptsFolder, name, scriptFiles::Prefer::Header))
   {
-    LOG_ERROR(path.filename().string() + " already exists");
+    LOG_ERROR("There's already a script called " + name + " (" +
+              existing->lexically_relative(scriptsFolder).generic_string() + ")");
     return std::nullopt;
   }
 
-  std::filesystem::create_directories(scriptsFolder);
+  const std::filesystem::path path = folder / (name + ".h");
+  std::filesystem::create_directories(folder);
   std::ofstream out(path, std::ios::binary);
   out << source(kind, name);
   if (!out)

@@ -290,6 +290,19 @@ MaterialHandle MeshLibrary::material(std::string_view name)
   return handle;
 }
 
+MaterialHandle MeshLibrary::setMaterial(std::string_view name, const MeshMaterial& material)
+{
+  const std::string key(name);
+  if (const auto it = m_materials.find(key); it != m_materials.end() && it->second.valid())
+  {
+    m_renderer.updateMaterial(it->second, material);
+    return it->second;
+  }
+  const MaterialHandle handle = m_renderer.createMaterial(material);
+  m_materials[key] = handle;
+  return handle;
+}
+
 void MeshLibrary::reloadMaterial(std::string_view name)
 {
   const auto it = m_materials.find(std::string(name));

@@ -2,10 +2,12 @@
 
 #include "editorContext.h"
 #include "assets/assetDrop.h"
+#include "assets/scriptableObjectFiles.h"
 #include "assets/materialFiles.h"
 #include "platform/shell.h"
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
+#include "scripting/scriptFiles.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
@@ -17,8 +19,10 @@
 #include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/3d/aabb.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/game/gameObject.h"
@@ -33,6 +37,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <optional>
 #include <memory>
 #include <set>
 #include <functional>
@@ -62,8 +68,6 @@ void meshField(const FieldInfo& field,
   const char* preview = mesh.valid() ? (current.empty() ? "(unnamed)" : current.c_str())
                                      : "None";
 
-  if (!ImGui::BeginCombo(field.displayName.c_str(), preview))
-    return;
   const auto choose = [&](sfs::MeshHandle chosen)
   {
     if (history)
@@ -71,27 +75,41 @@ void meshField(const FieldInfo& field,
     else
       mesh = chosen;
   };
-  if (ImGui::Selectable("None", !mesh.valid()))
-    choose({});
-  if (meshes)
+  if (ImGui::BeginCombo(field.displayName.c_str(), preview))
   {
-    for (const auto& [handle, name] : meshes->named())
-      if (ImGui::Selectable(meshes->label(name).c_str(), handle == mesh))
-        choose(handle);
-    // Meshes that load when picked (model assets).
-    const auto available = meshes->available();
-    if (!available.empty())
-      ImGui::SeparatorText("Assets");
-    for (const auto& [name, label] : available)
+    if (ImGui::Selectable("None", !mesh.valid()))
+      choose({});
+    if (meshes)
     {
-      ImGui::PushID(name.c_str());
-      if (ImGui::Selectable(label.c_str()))
-        if (const sfs::MeshHandle loaded = meshes->resolve(name); loaded.valid())
-          choose(loaded);
-      ImGui::PopID();
+      for (const auto& [handle, name] : meshes->named())
+        if (ImGui::Selectable(meshes->label(name).c_str(), handle == mesh))
+          choose(handle);
+      // Meshes that load when picked (model assets).
+      const auto available = meshes->available();
+      if (!available.empty())
+        ImGui::SeparatorText("Assets");
+      for (const auto& [name, label] : available)
+      {
+        ImGui::PushID(name.c_str());
+        if (ImGui::Selectable(label.c_str()))
+          if (const sfs::MeshHandle loaded = meshes->resolve(name); loaded.valid())
+            choose(loaded);
+        ImGui::PopID();
+      }
     }
+    ImGui::EndCombo();
   }
-  ImGui::EndCombo();
+
+  // Or a model dropped from the Assets panel: the whole model.
+  const sfs::AssetDatabase* assets = sfs::scriptableObjects().catalogue(); // the project's
+  if (meshes && assets && ImGui::BeginDragDropTarget())
+  {
+    const sfs::AssetRecord* dragged = assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *assets);
+    if (dragged && dragged->kind == sfs::AssetKind::Model && ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
+      if (const sfs::MeshHandle loaded = meshes->resolve("asset:" + dragged->id.toString()); loaded.valid())
+        choose(loaded);
+    ImGui::EndDragDropTarget();
+  }
 }
 
 // A [[sfs::texture]] string: pick one of the project's textures (or none:
@@ -124,13 +142,48 @@ void textureField(const FieldInfo& field, void* object, sfs::MeshLibrary* meshes
 }
 
 // A [[sfs::script]] string: pick one of the game object scripts.
-void scriptField(const FieldInfo& field, void* object, EditorHistory* history)
+// What can be done with a script from its field: open it in the code panel,
+// or show it in the Assets panel.
+struct ScriptActions
+{
+  std::function<void(const std::string& script)> edit;
+  std::function<void(const std::string& script)> reveal;
+};
+
+void scriptField(const FieldInfo& field, void* object, EditorHistory* history, const ScriptActions* actions)
 {
   std::string& script = field.in<std::string>(object);
   const char* preview = script.empty() ? "None" : script.c_str();
 
-  if (!ImGui::BeginCombo(field.displayName.c_str(), preview))
+  // The picker, then (with a script picked) icons to edit it and find it,
+  // then the label: laid out by hand to fit the icons in before the label.
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const bool icons = actions && !script.empty();
+  const float iconsWidth = icons ? 2.0f * (ImGui::GetFrameHeight() + style.ItemInnerSpacing.x) : 0.0f;
+  ImGui::SetNextItemWidth(std::max(ImGui::CalcItemWidth() - iconsWidth, ImGui::GetFrameHeight()));
+  const bool picking = ImGui::BeginCombo("##script", preview);
+  const std::string picked = script; // what the icons act on, before any pick below
+  const auto labelAndIcons = [&]
+  {
+    if (icons)
+    {
+      ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+      if (widgets::editButton("edit"))
+        actions->edit(picked);
+      ImGui::SetItemTooltip("Edit %s", picked.c_str());
+      ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+      if (widgets::targetButton("reveal"))
+        actions->reveal(picked);
+      ImGui::SetItemTooltip("Show %s in the Assets panel", picked.c_str());
+    }
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    ImGui::TextUnformatted(field.displayName.c_str());
+  };
+  if (!picking)
+  {
+    labelAndIcons();
     return;
+  }
   const auto choose = [&](const std::string& chosen)
   {
     if (history)
@@ -145,6 +198,61 @@ void scriptField(const FieldInfo& field, void* object, EditorHistory* history)
         ImGui::Selectable(type.name.c_str(), type.name == script))
       choose(type.name);
   ImGui::EndCombo();
+  labelAndIcons();
+}
+
+// A pick of the project's scriptable objects of `type` (or none). True when one's picked.
+bool assetRefCombo(const char* label, const std::string& type, std::string& asset)
+{
+  const std::vector<sfs::ScriptableObjects::Entry> entries = sfs::scriptableObjects().list(type);
+  std::string preview = "None";
+  if (!asset.empty())
+  {
+    preview = "Missing";
+    for (const sfs::ScriptableObjects::Entry& entry : entries)
+      if (entry.asset == asset)
+        preview = entry.name;
+  }
+  bool picked = false;
+  if (ImGui::BeginCombo(label, preview.c_str()))
+  {
+    if (ImGui::Selectable("None", asset.empty()))
+    {
+      asset.clear();
+      picked = true;
+    }
+    for (const sfs::ScriptableObjects::Entry& entry : entries)
+    {
+      ImGui::PushID(entry.asset.c_str());
+      if (ImGui::Selectable(entry.name.c_str(), entry.asset == asset))
+      {
+        asset = entry.asset;
+        picked = true;
+      }
+      ImGui::PopID();
+    }
+    if (entries.empty())
+      ImGui::TextDisabled("No %s assets yet (Assets: New Scriptable Object)", type.c_str());
+    ImGui::EndCombo();
+  }
+
+  // Or dropped from the Assets panel: one of this type.
+  const sfs::AssetDatabase* catalogue = sfs::scriptableObjects().catalogue();
+  if (catalogue && ImGui::BeginDragDropTarget())
+  {
+    if (const sfs::AssetRecord* dragged = assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *catalogue))
+    {
+      const std::string ref = "asset:" + dragged->id.toString();
+      const bool fits = std::any_of(entries.begin(), entries.end(), [&](const auto& e) { return e.asset == ref; });
+      if (fits && ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
+      {
+        asset = ref;
+        picked = true;
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
+  return picked;
 }
 
 // One field, with the widget its kind and attributes call for. Every edit is
@@ -152,7 +260,8 @@ void scriptField(const FieldInfo& field, void* object, EditorHistory* history)
 void fieldWidget(const FieldInfo& field,
                  void* object,
                  sfs::MeshLibrary* meshes,
-                 EditorHistory* history)
+                 EditorHistory* history,
+                 const ScriptActions* scriptActions = nullptr)
 {
   const char* label = field.displayName.c_str();
   const auto& attributes = field.attributes;
@@ -185,7 +294,7 @@ void fieldWidget(const FieldInfo& field,
     break;
   case FieldKind::String:
     if (attributes.script)
-      scriptField(field, object, history);
+      scriptField(field, object, history, scriptActions);
     else if (attributes.texture)
       textureField(field, object, meshes, history);
     else
@@ -225,6 +334,10 @@ void fieldWidget(const FieldInfo& field,
     break; // free-form data, edited by whatever owns it (e.g. scriptFields)
   case FieldKind::StringList:
     ImGui::TextDisabled("%s: %zu entries", label, field.in<std::vector<std::string>>(object).size());
+    break;
+  case FieldKind::AssetRef:
+    undoable(history, field.in<sfs::AssetRefBase>(object).asset,
+             [&](std::string& asset) { return assetRefCombo(label, attributes.assetType, asset); });
     break;
   }
 }
@@ -470,7 +583,8 @@ void componentSection(const TypeInfo& type,
                       const MeshScene& scene,
                       EditorHistory* history,
                       const std::set<std::string>* overridden = nullptr,
-                      const std::function<void(const std::string& field)>& revert = {})
+                      const std::function<void(const std::string& field)>& revert = {},
+                      const ScriptActions* scriptActions = nullptr)
 {
   ImGui::PushID(type.name.c_str());
   const bool expanded =
@@ -505,7 +619,7 @@ void componentSection(const TypeInfo& type,
       if (field.attributes.materials && field.kind == FieldKind::StringList)
         materialsField(type, field, object, meshes, scene.assets, history);
       else
-        fieldWidget(field, object, meshes, history);
+        fieldWidget(field, object, meshes, history, scriptActions);
       ImGui::EndGroup();
       if (overridden && overridden->contains(field.name))
       {
@@ -637,11 +751,15 @@ void assetDetails(const sfs::AssetDatabase& assets, const sfs::AssetRecord& reco
     ImGui::SetClipboardText(record.id.toString().c_str());
   ImGui::SetItemTooltip("Its id stays the same when it's renamed or moved in the Assets panel");
   ImGui::SameLine();
-  if (ImGui::Button("Open"))
-    shell::openExternally(file);
-  ImGui::SameLine();
+  // Opened in another app; materials and scriptable objects are edited right here.
+  if (record.kind != sfs::AssetKind::Material && record.kind != sfs::AssetKind::ScriptableObject)
+  {
+    if (ImGui::Button("Open"))
+      shell::openExternally(file);
+    ImGui::SameLine();
+  }
   if (ImGui::Button("Show in Folder"))
-    shell::openExternally(file.parent_path());
+    shell::showInFolder(file);
 
   ImGui::SeparatorText("Import Settings");
   if (record.settings.empty())
@@ -677,6 +795,53 @@ static bool textureCombo(const char* label, std::string& name, const sfs::MeshLi
     ImGui::EndCombo();
   }
   return picked;
+}
+
+void InspectorPanel::drawScriptableObject(EditorContext& context, const sfs::AssetRecord& record)
+{
+  // Read once per selection; every edit saves the file, and a playing scene
+  // reads it again.
+  if (m_scriptableId != record.id)
+  {
+    m_scriptableId = record.id;
+    m_data = scriptableObjectFiles::read(*context.assets, record);
+  }
+  if (!m_data)
+    return;
+  const std::string typeName = m_data->value("type", std::string());
+  const TypeInfo* type = sfs::reflect::types().find(typeName);
+  if (!type || type->kind != sfs::reflect::TypeKind::ScriptableObject)
+  {
+    ImGui::SeparatorText(typeName.c_str());
+    ImGui::TextDisabled("Build the scripts (Ctrl+B) to edit a %s", typeName.c_str());
+    return;
+  }
+
+  // Edited through a scratch object of the type, so its widgets are the
+  // components' ones.
+  sfs::MeshLibrary* meshes = context.render ? &context.render->meshes() : nullptr;
+  const std::unique_ptr<void, void (*)(void*)> object(type->scriptable.create(), type->scriptable.destroy);
+  const sfs::SceneSerializer serializer(sfs::reflect::types(), meshes);
+  const nlohmann::json fields = m_data->value("fields", nlohmann::json::object());
+  serializer.loadObject(*type, object.get(), fields);
+  const nlohmann::json before = serializer.saveObject(*type, object.get());
+
+  ImGui::SeparatorText(type->displayName.c_str());
+  for (const FieldInfo& field : type->fields)
+  {
+    ImGui::PushID(field.name.c_str());
+    fieldWidget(field, object.get(), meshes, nullptr);
+    ImGui::PopID();
+  }
+  if (type->fields.empty())
+    ImGui::TextDisabled("No editable fields");
+
+  const nlohmann::json after = serializer.saveObject(*type, object.get());
+  if (after != before && scriptableObjectFiles::write(*context.assets, record, typeName, after))
+  {
+    (*m_data)["fields"] = after;
+    sfs::scriptableObjects().forget("asset:" + record.id.toString());
+  }
 }
 
 void InspectorPanel::drawMaterial(EditorContext& context, const sfs::AssetRecord& record)
@@ -746,6 +911,8 @@ void InspectorPanel::drawContents(EditorContext& context)
       assetDetails(*context.assets, *asset);
       if (asset->kind == sfs::AssetKind::Material)
         drawMaterial(context, *asset);
+      if (asset->kind == sfs::AssetKind::ScriptableObject)
+        drawScriptableObject(context, *asset);
       if (asset->kind == sfs::AssetKind::Prefab && ImGui::Button("Edit Prefab"))
         context.openPrefab = asset->id;
     }
@@ -770,6 +937,20 @@ void InspectorPanel::drawContents(EditorContext& context)
 
   drawPrefabHeader(context, entity);
 
+  // A script's icons: edit it in the code panel, or find it in Assets.
+  const auto withScriptFile = [&](const std::string& script, std::filesystem::path EditorContext::*request)
+  {
+    if (!context.project)
+      return;
+    if (const auto file = scriptFiles::find(context.project->scriptsFolder(), script, scriptFiles::Prefer::Source))
+      context.*request = *file;
+    else
+      LOG_ERROR("Can't find " + script + ".cpp or " + script + ".h in the scripts folder");
+  };
+  const ScriptActions scriptActions{
+      .edit = [&](const std::string& script) { withScriptFile(script, &EditorContext::openText); },
+      .reveal = [&](const std::string& script) { withScriptFile(script, &EditorContext::revealFile); }};
+
   const auto overrides = prefabs::overridesOf(context, entity);
   for (const TypeInfo& type : sfs::reflect::types().types())
     if (type.kind == sfs::reflect::TypeKind::Component && type.name != kNameType &&
@@ -777,7 +958,7 @@ void InspectorPanel::drawContents(EditorContext& context)
     {
       const auto it = overrides.find(type.name);
       componentSection(type, entity, meshes, scene, history, it != overrides.end() ? &it->second : nullptr,
-                       [&](const std::string& field) { m_pendingRevert = {type.name, field}; });
+                       [&](const std::string& field) { m_pendingRevert = {type.name, field}; }, &scriptActions);
     }
 
   ImGui::Spacing();

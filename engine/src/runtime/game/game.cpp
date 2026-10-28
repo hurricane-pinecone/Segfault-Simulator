@@ -1,6 +1,7 @@
 #include <engine/runtime/game/game.h>
 
 #include "engine/core/scripting/luaScripting.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/rendering/backend/glRenderBackend.h"
 #include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
 #include "engine/runtime/rendering3d/scene3D.h"
@@ -176,6 +177,8 @@ bool Game::playScene(const std::filesystem::path& scene)
       store.setDatabase(&m_assetDatabase.emplace(gameFolder(), AssetDatabase::Mode::ReadOnly,
                                                  AssetDatabase::projectFolders()));
   }
+  // Scriptable objects come from the same catalogue.
+  scriptableObjects().setCatalogue(store.database());
   return replaceScene().play(gameFolder() / scene);
 }
 
@@ -396,6 +399,9 @@ void Game::render()
 void Game::destroy()
 {
   onDestroy();
+
+  // Loaded scriptable objects first: they may be of the game module's types.
+  scriptableObjects().setCatalogue(nullptr);
 
   // Scenes first: their systems may own GPU resources (meshes, textures) that
   // must be released before the backend tears down the device.

@@ -11,6 +11,10 @@
 // A process the editor runs without blocking. Its output arrives on reader
 // threads in raw chunks (binary-safe, for protocols such as Neovim's msgpack
 // RPC); its stdin can optionally be written. The UI keeps polling running().
+//
+// It runs with everything it starts as one group (a process group; a job
+// object on Windows), so stopping it stops them too, and on Windows they all
+// go when the editor does.
 class ChildProcess
 {
 public:
@@ -44,6 +48,9 @@ public:
 
   /** Whether it is still running (non-blocking). */
   bool running();
+
+  /** Stop it and everything it started, and wait for it to go. */
+  void terminate();
 
   /** Exit code once finished; -1 if it couldn't start or was killed. */
   int exitCode() const { return m_exitCode; }

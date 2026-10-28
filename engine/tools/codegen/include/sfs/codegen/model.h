@@ -16,6 +16,7 @@ enum class TypeKind
   System,
   GameObject,
   MeshSource,
+  ScriptableObject, // derives from sfs::ScriptableObject
 };
 
 struct FieldModel
@@ -28,6 +29,7 @@ struct FieldModel
   bool script = false;  // [[sfs::script]]
   bool texture = false; // [[sfs::texture]]
   bool materials = false; // [[sfs::materials]]
+  std::string assetType;   // AssetRef: the scriptable object type, e.g. "ItemDef"
   std::optional<std::pair<std::string, std::string>> range; // [[sfs::range]]
 };
 

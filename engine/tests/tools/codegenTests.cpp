@@ -122,6 +122,43 @@ int main()
     CHECK(findField(*result.type, "speed") != nullptr);
   }
 
+  TEST("a plain class with nothing to edit should be a helper, not a component")
+  {
+    const ParseResult helper = parseHeader(R"(
+      class FieldMap
+      {
+      public:
+        int width() const { return m_width; }
+      private:
+        int m_width = 0;
+      };
+    )", "FieldMap.h");
+    CHECK(!helper.type.has_value());
+    CHECK(helper.diagnostics.empty()); // and no "no class named after the file"
+
+    // A struct is a component even with nothing in it (a tag)...
+    const ParseResult tag = parseHeader("struct Harvestable {};", "Harvestable.h");
+    CHECK(tag.type.has_value() && tag.type->kind == TypeKind::Component);
+    // ...and so is a class with public fields.
+    const ParseResult withFields = parseHeader("class Health { public: int hp = 3; };", "Health.h");
+    CHECK(withFields.type.has_value() && withFields.type->kind == TypeKind::Component);
+  }
+
+  TEST("methods returning pointers or references should be skipped quietly")
+  {
+    const ParseResult result = parseHeader(R"(
+      class Fields : public sfs::System
+      {
+      public:
+        Thing* find(int id);
+        const Thing& first() const;
+        Thing** all();
+      };
+    )", "Fields.h");
+    CHECK(result.type.has_value() && result.type->fields.empty());
+    CHECK(result.diagnostics.empty());
+  }
+
   TEST("unsupported field types should warn and be skipped")
   {
     const ParseResult result = parseHeader(kPlayer, "Player.h");
@@ -205,6 +242,37 @@ int main()
     CHECK(code.find("sfs::scripts().add(std::move(script));") != std::string::npos);
     CHECK(code.find("static_assert(std::is_base_of_v<sfs::GameObject, Player>") !=
           std::string::npos);
+  }
+
+  TEST("scriptable object types and references to them should be recognised and registered")
+  {
+    const ParseResult item = parseHeader(R"(
+      struct ItemDef : public sfs::ScriptableObject
+      {
+        std::string displayName;
+        int value = 10;
+        sfs::AssetRef<ItemDef> upgradesTo;
+      };
+    )", "/project/scripts/ItemDef.h");
+    CHECK(item.type.has_value() && item.type->kind == TypeKind::ScriptableObject);
+    CHECK(item.diagnostics.empty());
+    const FieldModel* upgrade = findField(*item.type, "upgradesTo");
+    CHECK(upgrade && upgrade->kind == "AssetRef" && upgrade->assetType == "ItemDef");
+
+    // Spelled without sfs:: too, as a component's field.
+    const ParseResult chest = parseHeader("struct Chest { AssetRef< ItemDef > loot; };", "Chest.h");
+    const FieldModel* loot = findField(*chest.type, "loot");
+    CHECK(loot && loot->kind == "AssetRef" && loot->assetType == "ItemDef");
+
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "sfsRegisterModule";
+    options.includeRoot = "/project/scripts";
+    const std::string code = generateRegistration({*item.type}, options);
+    CHECK(code.find("scriptableObjectType<ItemDef>(\"ItemDef\", \"Item Def\", \"game\")") != std::string::npos);
+    CHECK(code.find("static_assert(std::is_base_of_v<sfs::ScriptableObject, ItemDef>") != std::string::npos);
+    CHECK(code.find("sfs::AssetRef<ItemDef>>") != std::string::npos);
+    CHECK(code.find("field.attributes.assetType = \"ItemDef\";") != std::string::npos);
   }
 
   TEST("mesh sources should be recognised and register their build function")

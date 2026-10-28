@@ -7,9 +7,12 @@ calls and no scripting language.
 
 ## Creating a script
 
-Choose **Scripts → New GameObject Script / New System / New Component**, and
-name it. The editor writes `scripts/<Name>.h` from a template and opens it in
-the [Code panel](../index.md#code-panel):
+Choose **Scripts → New GameObject Script / New System / New Component / New
+Scriptable Object Template**, and name it. The editor writes `scripts/<Name>.h`
+from a template and opens it in the [Code panel](../index.md#code-panel). To
+put it in a folder inside `scripts/` (say `scripts/components/`), right-click
+that folder in the Assets panel and choose it there. Class names must be unique
+across all of `scripts/`:
 
 ```cpp
 #pragma once
@@ -39,12 +42,19 @@ files to `scripts/`; they're compiled into the module.
 | System | `sfs::System` | Every frame, over each entity that has its registered components |
 | Component | none | Nothing; plain data on an entity, edited in the inspector |
 | Mesh source | `sfs::MeshSource` | When a scene is created: adds meshes built in code, by name (see below) |
+| Scriptable object | `sfs::ScriptableObject` | Nothing; shared data in `.asset` files (see below) |
+
+A `class` with no base and no public fields (say a grid or a path planner your
+scripts use) is just a helper: it's compiled in but isn't a component. A
+component is a `struct`, or a class with public fields.
 
 ## Using scripts in a scene
 
 - **Game object scripts:** select an entity, choose **Add Component → Script**,
   and pick the class from the dropdown. When the scene plays, an instance of
   that class is created bound to the entity, so its `entity()` is that entity.
+  Beside the dropdown, the pencil opens the script's source in the Code panel,
+  and the target shows it in the Assets panel.
 - **Systems:** in **Scene Settings → Systems**, choose **Add System**. The
   list also offers the engine's optional systems, such as physics. The scene
   saves the list, and the systems are added when it plays.
@@ -99,6 +109,49 @@ exists, and saving meanwhile doesn't lose it.
 A scene that uses a component that isn't built yet keeps that component's data
 and loads it once the module exists. See
 [Scene files](../../runtime/serialization/index.md).
+
+### Scriptable objects
+
+A scriptable object holds data many things share, kept in an asset file rather
+than on an entity, like Unity's ScriptableObjects: item definitions, enemy
+stats, crop types. Declare its type like a component, deriving from
+`sfs::ScriptableObject` (or **Scripts → New Scriptable Object Template**):
+
+```cpp
+struct ItemDef : sfs::ScriptableObject
+{
+  std::string displayName;
+  [[sfs::range(0, 1000)]] int value = 10;
+  sfs::MeshHandle model;
+  sfs::AssetRef<ItemDef> upgradesTo; // another item
+};
+```
+
+Once it's built, right-click a folder in the Assets panel and choose **New
+Scriptable Object → Item Def** to make `New Item Def.asset`. Selecting it edits its fields
+in the Inspector, and each edit is saved to the file. Double-clicking it opens
+its type's declaration in the Code panel. Rename and copy them like any file.
+
+Refer to one from a component, script or another scriptable object with an
+`sfs::AssetRef<T>` field. In the Inspector, pick it from the field's list of
+the project's assets of that type, or drag one from the Assets panel onto the
+field. In code, `get()` (or `->`) gives the asset. It's loaded the first
+time anything asks for it, and every reference shares that one object:
+
+```cpp
+struct Chest
+{
+  sfs::AssetRef<ItemDef> loot;
+};
+...
+if (const ItemDef* item = chest.loot.get())
+  LOG_INFO("A " + item->displayName);
+```
+
+Every asset of a type is listed by `sfs::scriptableObjects().all<ItemDef>()`, which is
+handy for "every crop in the game". Edits made while playing are picked up the
+next time the asset is asked for. Renaming a scriptable object type or its fields
+updates its `.asset` files, as for components.
 
 ## Talking to the game
 
@@ -156,6 +209,9 @@ callbacks.
 
 Build output streams into the console, and errors are highlighted. A failed
 build leaves the editor in edit mode with the previous module still loaded.
+A build compiles three files at a time, so the editor (and WSL, building for
+Windows) stays responsive. The **x** at the end of the build's progress bar,
+in the status bar, stops it, compilers and all; it counts as a failed build.
 
 Saving is disabled while playing, so a play session can't overwrite the
 scene.

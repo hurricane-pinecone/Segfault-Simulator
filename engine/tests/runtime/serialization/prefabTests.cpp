@@ -215,6 +215,25 @@ int main()
     CHECK(w.tint("Rail B").r == 0.5f);
   }
 
+  TEST("a nested instance's own root should take overrides and added children")
+  {
+    World w;
+    w.prefabs["asset:fence"] = fencePrefab();
+    // A yard whose fence (entity 5) is moved and given a sign, by "" (its root).
+    json yard = named("Yard");
+    yard["children"] = json::array(
+        {{{"$id", 5},
+          {"$prefab", "asset:fence"},
+          {"$overrides", {{"", {{"Transform3DComponent", {{"position", {3, 0, 0}}}}}}}},
+          {"$added", json::array({named("Sign", {{"$parent", ""}})})}}});
+    w.prefabs["asset:yard"] = {{"formatVersion", 1}, {"root", yard}};
+
+    w.serializer().instantiate("asset:yard", w.scene);
+    const Entity fence = w.find("Post");
+    CHECK(fence.getComponent<Transform3DComponent>().position.x == 3.0f);
+    CHECK(hierarchy::parentOf(w.find("Sign")) == fence);
+  }
+
   TEST("an instance of a missing prefab should be kept as saved")
   {
     World w;

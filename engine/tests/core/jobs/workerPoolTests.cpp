@@ -59,4 +59,6 @@ int main()
     }
     CHECK(ran == 1); // the running one finished; the rest never started
   }
+
+  return testing::report("workerPoolTests");
 }

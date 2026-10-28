@@ -25,6 +25,7 @@ enum class FieldKind : uint8_t
   Mesh,   // MeshHandle (saved by mesh name)
   Json,   // nlohmann::json: free-form data, saved as-is; not edited directly
   StringList, // std::vector<std::string>
+  AssetRef,    // sfs::AssetRef<T>: a scriptable object of type T (saved as "asset:<id>"; see scriptableObject.h)
 };
 
 /** Editor hints for a field, from its [[sfs::...]] attributes. */
@@ -35,6 +36,7 @@ struct FieldAttributes
   bool texture = false;  // [[sfs::texture]]: a string naming a texture ("asset:<id>")
   bool materials = false; // [[sfs::materials]]: a string list of a mesh's material slots
   bool hasRange = false; // [[sfs::range(min, max)]]
+  std::string assetType;  // AssetRef: the scriptable object type it refers to, e.g. "ItemDef"
   float min = 0.0f;
   float max = 0.0f;
 };
@@ -64,6 +66,7 @@ enum class TypeKind : uint8_t
   System,
   GameObject,
   MeshSource, // provides procedural meshes (sfs::MeshSource)
+  ScriptableObject, // shared data in an .asset file (sfs::ScriptableObject)
 };
 
 /** Type-erased access to component T on an entity. */
@@ -75,6 +78,13 @@ struct ComponentOps
   void (*remove)(const Entity& entity) = nullptr;
 };
 
+/** Making and freeing objects of a scriptable object type (sfs::ScriptableObject). */
+struct ScriptableOps
+{
+  void* (*create)() = nullptr; // a new, default object, as an sfs::ScriptableObject*
+  void (*destroy)(void* object) = nullptr;
+};
+
 /** A reflected type: its names, kind, fields and (for components) ops. */
 struct TypeInfo
 {
@@ -84,6 +94,7 @@ struct TypeInfo
   TypeKind kind = TypeKind::Component;
   std::vector<FieldInfo> fields;
   ComponentOps component; // valid when kind == Component
+  ScriptableOps scriptable;           // valid when kind == Data
 };
 
 /**

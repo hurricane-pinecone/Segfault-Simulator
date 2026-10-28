@@ -4,6 +4,7 @@
 #include "engine/core/rendering/3d/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 #include "engine/runtime/rendering3d/modules/meshModule.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
@@ -75,6 +76,8 @@ bool Scene3D::play(const std::filesystem::path& file)
   if (!serializer().loadFile(file, *this, &m_gameSystems))
     return false;
   flushEntities();
+  // Scriptable objects load into this scene's meshes (afresh, if another's were used).
+  scriptableObjects().setMeshes(&m_render->meshes());
   startScripts(*this, m_gameSystems, &m_render->meshes());
   return true;
 }

@@ -85,12 +85,33 @@ Everything under `assets/` and `prefabs/` is managed by the project's
 | Action | Result |
 | --- | --- |
 | Click an asset | The Inspector shows its kind, path, size and id |
-| Drag an asset or folder onto a folder (in the tree, the contents or the breadcrumbs) | Moves it |
+| Move, rename or delete a `.gltf` model | Its `.bin` (the geometry it keeps beside it, not shown in the panel) goes with it, and the paths inside it to its data and textures are updated |
+| Drag a file or folder onto a folder (in the tree, the contents or the breadcrumbs) | Moves it, within its project folder (assets and prefabs together) |
 | Right-click → Rename, or F2 | Renames it in place; leaving the extension off keeps the old one |
-| Right-click → Delete... | Deletes it (and a folder's contents) after asking |
-| Right-click a folder, or empty space → New Folder | Type a name and press Enter |
+| Right-click → Delete..., or Del | Deletes it (and a folder's contents) after asking; Undo brings it back |
+| Right-click → Copy (Ctrl+C), then a folder → Paste (Ctrl+V) | Copies it there (as "Name Copy" where the name's taken) |
+| Right-click → Duplicate, or Ctrl+D | A copy beside it |
+| Right-click a folder, or empty space → New Folder | Makes "New Folder" with its name ready to type |
+| Ctrl+Z / Ctrl+Y (with the Assets panel focused) | Undoes and redoes the panel's file operations |
 | Drop files from Explorer onto the editor window | Imports copies into the open folder (or `assets/` itself) |
 | Right-click a folder, or empty space → New Material | A material asset to edit in the Inspector |
+
+This works the same in every folder, scripts and scenes too. The project's own
+folders (`scenes/`, `scripts/`, `prefabs/`, `assets/`) can't be renamed, moved
+or deleted. What a change takes care of depends on the folder:
+
+- **Assets and prefabs** keep their ids: references to them keep working when
+  they're moved or renamed, and a deleted one comes back as itself when undone.
+  A copy is a new asset with the same import settings.
+- **Scripts** keep building: `#include`s of a moved or renamed script are
+  rewritten to find it. Renaming a script renames its class (its `.h` and `.cpp`
+  together, in code, not in comments or strings); scenes follow when the
+  scripts are built. A copied script becomes a class of its own (`NameCopy`).
+- **Scenes**: the open scene, and the project's start scene, follow a move or
+  rename.
+
+Deleted files wait in the project's `.sfs/trash` until it's next opened, so a
+delete can be undone while it's open.
 
 Tiles show previews of textures, materials, models and prefabs. Previews are
 drawn in the background and appear as they're ready.
@@ -214,7 +235,9 @@ restores the selection.
 | Edit → Delete | Del |
 | Edit → Align With View | Ctrl+Shift+F |
 
-History is cleared when another scene is opened. Edits made while playing aren't
+While the Assets panel was the last panel used, the Edit menu and these keys
+work on its file operations instead (see [Assets](#assets)). History is cleared
+when another scene is opened. Edits made while playing aren't
 recorded, because Stop discards them anyway.
 
 The inspector is generated from [reflection](../core/reflection/index.md). Every
@@ -297,9 +320,13 @@ are handled for you:
 - **Added**: everything gets the field's default from the code.
 - **Removed**: its saved values are dropped from the scenes and files.
 
+- **A script, component or system renamed** (its class and file, say `Spin`
+  to `Spinner`): scenes and prefabs follow it too, when the new one has the
+  same fields as the old, or it's the only one of its kind gone and the only
+  one new.
+
 Changing a field's kind (say `float` to `glm::vec3`) along with its name counts
-as removing one field and adding another. Renaming the script or component
-itself isn't followed.
+as removing one field and adding another.
 
 If the engine has changed since the project's game module was built, opening
 the project rebuilds the module before loading it (an old module may not match
