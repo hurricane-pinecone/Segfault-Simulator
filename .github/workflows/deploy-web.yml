@@ -19,7 +19,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether anything but documentation changed. Docs-only changes (docs/,
+  # mkdocs.yml, Markdown) can't break the code, so the code jobs below skip
+  # (a skipped job counts as passed for required checks) and only the docs are
+  # built: in full on master, which redeploys the site.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Did anything but docs change?
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE"; head="$PR_HEAD" ;;
+            push) base="$PUSH_BEFORE"; head="$GITHUB_SHA" ;;
+            *) base="" ;; # a manual run builds everything
+          esac
+          # Unknown or missing base (a new branch, a force-push): build everything.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base" "$head")"
+          echo "Changed:"; echo "$changed" | sed 's/^/  /'
+          # Collected, not piped into `grep -q`: that stops reading early, and
+          # with pipefail (Actions' default) the writer's broken pipe would
+          # make a code change look docs-only.
+          code_files="$(grep -vE '^(docs/.*|mkdocs\.yml|.*\.md)$' <<< "$changed" || true)"
+          if [ -n "$code_files" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs only: skipping the build and tests."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test-core:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     # engine-core has no third-party dependencies (vendored Lua + glm), so the
@@ -51,6 +99,8 @@ jobs:
   # standalone engine-core release gates on sanitized core tests too, without
   # pulling in the runtime stack (no Conan, SDL, or apt packages).
   sanitize-core:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     env:
@@ -84,6 +134,8 @@ jobs:
   # job so a standalone engine-core release can gate on the core jobs alone; the
   # web deploy ships the runtime (both sample games), so it needs all of them.
   test-runtime:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -150,6 +202,8 @@ jobs:
   # the flags to the engine libraries and tests only, so the prebuilt Conan
   # dependencies stay uninstrumented.
   sanitize-runtime:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     env:
@@ -216,6 +270,8 @@ jobs:
   # the full headless test suite. Independent of the web deploy: a failure here
   # reports a red check without blocking the Pages publish.
   build-windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # Pinned: `windows-latest` moved to a newer Visual Studio, whose compiler
     # version ConanCenter has no prebuilt binaries for, so every dependency was
     # built from source and their CMake configures failed. VS 2022 has binaries.
@@ -273,6 +329,8 @@ jobs:
   # clang-format version the pre-commit hook uses, so local formatting and CI
   # never disagree (the vendored lib/ tree is excluded -- it has its own style).
   format:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -296,7 +354,13 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [test-core, sanitize-core, test-runtime, sanitize-runtime]
+    needs: [changes, test-core, sanitize-core, test-runtime, sanitize-runtime]
+    # After the tests pass, or -- docs only -- on master, where the site (the
+    # web build and the docs together) is redeployed. A docs-only pull request
+    # just checks the docs build (the `docs` job).
+    if: >-
+      !cancelled() && !contains(needs.*.result, 'failure')
+      && (needs.changes.outputs.code == 'true' || github.ref == 'refs/heads/master')
 
     steps:
       - name: Checkout
@@ -342,8 +406,28 @@ jobs:
         with:
           path: build-web/bin
 
+  # A docs-only pull request: no code to build, so just check the docs site
+  # builds (strict: broken links and nav entries fail it).
+  docs:
+    needs: changes
+    if: needs.changes.outputs.code == 'false' && github.ref != 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.x"
+
+      - name: Build docs
+        run: |
+          pip install "mkdocs-material==9.*"
+          mkdocs build --strict --site-dir site
+
   deploy:
-    if: github.ref == 'refs/heads/master'
+    if: "!cancelled() && needs.build.result == 'success' && github.ref == 'refs/heads/master'"
 
     # Serialize Pages deployments. Queue rather than cancel, since interrupting a
     # deploy mid-flight can leave the site half-published.
