@@ -169,9 +169,12 @@ bool Game::playScene(const std::filesystem::path& scene)
   if (!store.database())
   {
     std::error_code error;
-    const std::filesystem::path assets = gameFolder() / "assets";
-    if (std::filesystem::is_directory(assets, error))
-      store.setDatabase(&m_assetDatabase.emplace(assets, AssetDatabase::Mode::ReadOnly));
+    bool any = false;
+    for (const std::filesystem::path& folder : AssetDatabase::projectFolders())
+      any |= std::filesystem::is_directory(gameFolder() / folder, error);
+    if (any)
+      store.setDatabase(&m_assetDatabase.emplace(gameFolder(), AssetDatabase::Mode::ReadOnly,
+                                                 AssetDatabase::projectFolders()));
   }
   return replaceScene().play(gameFolder() / scene);
 }
@@ -244,6 +247,7 @@ void Game::processInput()
 
   // Mouse positions are relative to where the scene is drawn.
   const SceneView view = sceneView();
+  const bool mouse = sceneReceivesMouse();
   input.mouse().setViewSize(view.rect.w, view.rect.h);
 
   SDL_Event sdlEvent;
@@ -298,7 +302,7 @@ void Game::processInput()
         sdlEvent.button.windowID != view.windowId)
       continue;
 
-    if (sdlEvent.type == SDL_MOUSEBUTTONDOWN)
+    if (sdlEvent.type == SDL_MOUSEBUTTONDOWN && mouse)
     {
       input.mouse().setPosition(sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
       input.mouse().pressButton(
@@ -312,7 +316,7 @@ void Game::processInput()
           static_cast<sfs::MouseButton>(sdlEvent.button.button));
     }
 
-    if (sdlEvent.type == SDL_MOUSEWHEEL)
+    if (sdlEvent.type == SDL_MOUSEWHEEL && mouse)
     {
       input.mouse().addScroll(sdlEvent.wheel.x, sdlEvent.wheel.y);
     }

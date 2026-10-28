@@ -320,6 +320,82 @@ int main()
     CHECK(renderer.live.empty());
   }
 
+  TEST("a mesh loading in the background should draw once it has loaded, under the same handle")
+  {
+    Harness h;
+    MeshLibrary& meshes = h.system.meshes();
+    const MeshData box = meshes::box({1, 1, 1});
+    bool ready = false;
+    MeshLibrary::Provider provider;
+    provider.load = [](MeshLibrary& library, std::string_view name) { return library.pending(name); };
+    provider.loaded = [&](std::string_view, bool& waiting) -> const MeshData*
+    {
+      waiting = !ready;
+      return ready ? &box : nullptr;
+    };
+    meshes.setProvider(provider);
+
+    const MeshHandle handle = meshes.resolve("asset:crate");
+    CHECK(handle.valid());
+    CHECK(meshes.isPending(handle));
+    CHECK(meshes.resolve("asset:crate") == handle); // one stand-in per name
+    h.spawn(handle, {0.0f, 0.0f, 0.0f});
+    h.frame();
+    CHECK(h.renderer.batches.empty()); // nothing to draw yet
+    CHECK(h.renderer.live.empty());
+
+    meshes.fulfilPending(); // still loading: unchanged
+    CHECK(meshes.isPending(handle));
+
+    ready = true;
+    meshes.fulfilPending();
+    CHECK(!meshes.isPending(handle));
+    CHECK(!meshes.isMissing(handle));
+    CHECK(meshes.pendingCount() == 0u);
+    CHECK(meshes.bounds(handle) != nullptr);
+    CHECK(meshes.nameOf(handle) == "asset:crate"); // saved scenes keep naming it
+    h.frame();
+    CHECK(h.renderer.batches.size() == 1u);
+    CHECK(h.renderer.batches[0].mesh == meshes.gpuHandle(handle)); // the renderer's own handle
+    CHECK(h.renderer.live.size() == 1u);
+
+    meshes.remove(handle);
+    CHECK(h.renderer.live.empty());
+  }
+
+  TEST("a mesh that fails to load in the background should stay a stand-in")
+  {
+    Harness h;
+    MeshLibrary& meshes = h.system.meshes();
+    MeshLibrary::Provider provider;
+    provider.load = [](MeshLibrary& library, std::string_view name) { return library.pending(name); };
+    provider.loaded = [](std::string_view, bool& waiting) -> const MeshData*
+    {
+      waiting = false;
+      return nullptr;
+    };
+    meshes.setProvider(provider);
+    const MeshHandle handle = meshes.resolve("asset:broken");
+    meshes.fulfilPending();
+    CHECK(!meshes.isPending(handle));
+    CHECK(meshes.isMissing(handle));
+    CHECK(meshes.bounds(handle) == nullptr);
+  }
+
+  TEST("kept vertices should give a mesh's data back")
+  {
+    Harness h;
+    MeshLibrary::setKeepVertices(true);
+    const MeshData box = meshes::box({1, 2, 3}, glm::vec3(0.5f));
+    const MeshHandle kept = h.system.meshes().add(box);
+    MeshLibrary::setKeepVertices(false);
+    const MeshHandle notKept = h.system.meshes().add(box);
+    const std::optional<MeshData> data = h.system.meshes().meshData(kept);
+    CHECK(data && data->vertices.size() == box.vertices.size() && data->indices == box.indices);
+    CHECK(data && data->vertices[0].color == box.vertices[0].color);
+    CHECK(!h.system.meshes().meshData(notKept));
+  }
+
   TEST("an empty mesh should not upload")
   {
     Harness h;

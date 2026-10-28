@@ -5,6 +5,8 @@
 #include "assets/materialFiles.h"
 #include "platform/shell.h"
 #include "scene/editorScene.h"
+#include "scene/prefabs.h"
+#include "widgets/theme.h"
 #include "widgets/widgets.h"
 
 #include "engine/core/components/boxCollider3DComponent.h"
@@ -21,6 +23,7 @@
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
+#include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/matrix.hpp"
@@ -31,6 +34,8 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <set>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -193,13 +198,13 @@ void fieldWidget(const FieldInfo& field,
     break;
   case FieldKind::Vec3:
     undoable(history, field.in<glm::vec3>(object), [&](glm::vec3& v) {
-      return attributes.color ? ImGui::ColorEdit3(label, &v.x)
+      return attributes.color ? widgets::colorEdit3(label, &v.x)
                               : ImGui::DragFloat3(label, &v.x, 0.05f);
     });
     break;
   case FieldKind::Vec4:
     undoable(history, field.in<glm::vec4>(object), [&](glm::vec4& v) {
-      return attributes.color ? ImGui::ColorEdit4(label, &v.x)
+      return attributes.color ? widgets::colorEdit4(label, &v.x)
                               : ImGui::DragFloat4(label, &v.x, 0.05f);
     });
     break;
@@ -457,11 +462,15 @@ void fitCollider(const TypeInfo& type, const sfs::Entity& entity, const MeshScen
 }
 
 // A collapsible section for one component, with Remove in its context menu.
+// `overridden`: the fields a prefab instance overrides here (marked, with
+// Revert to Prefab on right-click, which calls `revert`); null if none.
 void componentSection(const TypeInfo& type,
                       const sfs::Entity& entity,
                       sfs::MeshLibrary* meshes,
                       const MeshScene& scene,
-                      EditorHistory* history)
+                      EditorHistory* history,
+                      const std::set<std::string>* overridden = nullptr,
+                      const std::function<void(const std::string& field)>& revert = {})
 {
   ImGui::PushID(type.name.c_str());
   const bool expanded =
@@ -492,10 +501,28 @@ void componentSection(const TypeInfo& type,
       // Each field in its own ID scope: a label may repeat the header's (the
       // Script component's "Script" field) and must not share its ID.
       ImGui::PushID(field.name.c_str());
+      ImGui::BeginGroup();
       if (field.attributes.materials && field.kind == FieldKind::StringList)
         materialsField(type, field, object, meshes, scene.assets, history);
       else
         fieldWidget(field, object, meshes, history);
+      ImGui::EndGroup();
+      if (overridden && overridden->contains(field.name))
+      {
+        // A sage bar at the window's edge: this copy differs from its prefab.
+        const float x = ImGui::GetWindowPos().x + 3.0f;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, ImGui::GetItemRectMin().y),
+                                                  ImVec2(x + 3.0f, ImGui::GetItemRectMax().y),
+                                                  theme::kAccent,
+                                                  1.5f);
+        if (ImGui::BeginPopupContextItem("override"))
+        {
+          if (ImGui::MenuItem("Revert to Prefab") && revert)
+            revert(field.name);
+          ImGui::EndPopup();
+        }
+        ImGui::SetItemTooltip("Changed on this copy of the prefab (right-click to revert)");
+      }
       ImGui::PopID();
     }
     if (type.fields.empty())
@@ -534,8 +561,7 @@ void addComponentButton(const sfs::Entity& entity,
 
   if (ImGui::IsWindowAppearing())
     ImGui::SetKeyboardFocusHere();
-  ImGui::SetNextItemWidth(220.0f);
-  widgets::inputText("##search", filter);
+  widgets::searchInput("search", filter, "Search", 220.0f);
   const std::string search = lowercase(filter);
 
   std::vector<const TypeInfo*> candidates;
@@ -599,7 +625,7 @@ void assetDetails(const sfs::AssetDatabase& assets, const sfs::AssetRecord& reco
       ImGui::TextWrapped("%s", value.c_str());
     };
     row("Kind", sfs::assetKindName(record.kind));
-    row("Path", "assets/" + record.path.generic_string());
+    row("Path", record.path.generic_string());
     std::error_code error;
     const auto bytes = std::filesystem::file_size(file, error);
     row("Size", error ? std::string("?") : std::to_string((bytes + 1023) / 1024) + " KB");
@@ -671,7 +697,7 @@ void InspectorPanel::drawMaterial(EditorContext& context, const sfs::AssetRecord
   sfs::MaterialAsset& material = *m_material;
   sfs::MeshLibrary& meshes = context.render->meshes();
   bool changed = false;
-  changed |= ImGui::ColorEdit4("Base Colour", &material.baseColor.x);
+  changed |= widgets::colorEdit4("Base Colour", &material.baseColor.x);
   changed |= textureCombo("Texture", material.baseTexture, meshes);
   changed |= ImGui::DragFloat2("Tiling", &material.tiling.x, 0.05f);
   ImGui::SetItemTooltip("How many times the textures repeat across the surface");
@@ -698,6 +724,7 @@ void InspectorPanel::drawMaterial(EditorContext& context, const sfs::AssetRecord
 
   if (changed && materialFiles::write(*context.assets, record, material))
   {
+    context.assetFilesChanged = true; // its preview
     const std::string name = "asset:" + record.id.toString();
     context.scene->assetStore().forgetMaterial(record.id);
     meshes.reloadMaterial(name);
@@ -719,13 +746,16 @@ void InspectorPanel::drawContents(EditorContext& context)
       assetDetails(*context.assets, *asset);
       if (asset->kind == sfs::AssetKind::Material)
         drawMaterial(context, *asset);
+      if (asset->kind == sfs::AssetKind::Prefab && ImGui::Button("Edit Prefab"))
+        context.openPrefab = asset->id;
     }
     else
       ImGui::TextDisabled("Nothing selected");
     return;
   }
 
-  const sfs::Entity& entity = context.selection;
+  // A copy: buttons below may change the selection (Select Asset clears it).
+  const sfs::Entity entity = context.selection;
   sfs::MeshLibrary* meshes = context.render ? &context.render->meshes() : nullptr;
   const sfs::hierarchy::EntityTree tree(context.scene->entities());
   const MeshScene scene{meshes, &tree, context.assets};
@@ -738,11 +768,86 @@ void InspectorPanel::drawContents(EditorContext& context)
                     [](std::string& name) { return widgets::inputText("Name", name); });
   ImGui::Separator();
 
+  drawPrefabHeader(context, entity);
+
+  const auto overrides = prefabs::overridesOf(context, entity);
   for (const TypeInfo& type : sfs::reflect::types().types())
     if (type.kind == sfs::reflect::TypeKind::Component && type.name != kNameType &&
         type.component.has(entity))
-      componentSection(type, entity, meshes, scene, history);
+    {
+      const auto it = overrides.find(type.name);
+      componentSection(type, entity, meshes, scene, history, it != overrides.end() ? &it->second : nullptr,
+                       [&](const std::string& field) { m_pendingRevert = {type.name, field}; });
+    }
 
   ImGui::Spacing();
   addComponentButton(entity, scene, history, m_componentFilter);
+
+  // Prefab actions rebuild entities: after drawing, not mid-way.
+  if (m_pendingRevert)
+    prefabs::revertField(context, entity, m_pendingRevert->first, m_pendingRevert->second);
+  m_pendingRevert.reset();
+  if (m_pendingInstanceAction)
+  {
+    const sfs::Entity root = sfs::SceneSerializer::instanceRootOf(entity);
+    if (*m_pendingInstanceAction == InstanceAction::Apply)
+      prefabs::apply(context, root);
+    else
+      prefabs::revert(context, root);
+  }
+  m_pendingInstanceAction.reset();
+}
+
+void InspectorPanel::drawPrefabHeader(EditorContext& context, const sfs::Entity& entity)
+{
+  if (entity.hasComponent<sfs::MissingPrefabComponent>())
+  {
+    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "Missing prefab");
+    ImGui::TextWrapped("%s", entity.getComponent<sfs::MissingPrefabComponent>().entry.value("$prefab", "").c_str());
+    ImGui::TextDisabled("Kept as saved until its prefab is back");
+    ImGui::Separator();
+    return;
+  }
+  const sfs::Entity root = sfs::SceneSerializer::instanceRootOf(entity);
+  if (!root.isValid())
+    return;
+  const std::string name = root.getComponent<sfs::PrefabInstanceComponent>().prefab;
+  const sfs::AssetRecord* record = prefabs::recordOf(context, name);
+
+  ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::kAccent), entity == root ? "Prefab" : "Part of prefab");
+  ImGui::SameLine();
+  ImGui::TextUnformatted(prefabs::label(context, name).c_str());
+  if (entity != root)
+  {
+    if (ImGui::SmallButton("Select Instance"))
+      context.selection = root;
+    ImGui::Separator();
+    return;
+  }
+  const bool canApply = record && record->kind == sfs::AssetKind::Prefab;
+  ImGui::BeginDisabled(!canApply);
+  if (ImGui::SmallButton("Edit"))
+    context.openPrefab = record->id;
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip("Edit the prefab in its own tab");
+  ImGui::SameLine();
+  if (record && ImGui::SmallButton("Select Asset"))
+  {
+    context.selectedAsset = record->id;
+    context.revealAsset = record->id;
+    context.selection = {};
+  }
+  ImGui::SetItemTooltip("Show the prefab in the Assets panel");
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!canApply);
+  if (ImGui::SmallButton("Apply"))
+    m_pendingInstanceAction = InstanceAction::Apply;
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip(canApply ? "Write this copy's changes into the prefab: every copy updates"
+                                 : "A model's own content can't be changed; make a prefab of it first");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Revert"))
+    m_pendingInstanceAction = InstanceAction::Revert;
+  ImGui::SetItemTooltip("Drop this copy's changes (it stays where it is)");
+  ImGui::Separator();
 }

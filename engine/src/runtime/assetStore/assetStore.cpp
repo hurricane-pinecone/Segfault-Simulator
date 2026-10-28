@@ -1,5 +1,7 @@
 #include "engine/runtime/assetStore/assetStore.h"
 
+#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/3d/material.h"
 #include "engine/core/util/string.h"
@@ -11,6 +13,7 @@
 #include <SDL_image.h>
 
 #include <fstream>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <utility>
 
@@ -19,7 +22,13 @@ namespace sfs
 
 using json = nlohmann::json;
 
-AssetStore::~AssetStore() { clearAssets(); }
+AssetStore::AssetStore() = default;
+
+AssetStore::~AssetStore()
+{
+  m_workers.reset(); // running loads finish before what they write to goes
+  clearAssets();
+}
 
 void AssetStore::clearAssets()
 {
@@ -30,6 +39,8 @@ void AssetStore::clearAssets()
   m_models.clear();
   m_textures.clear();
   m_materials.clear();
+  m_prefabs.clear();
+  m_loading.clear(); // loads under way are dropped when they finish
 
   LOG_DEBUG("Asset store cleared.");
 }
@@ -41,6 +52,8 @@ void AssetStore::setDatabase(const AssetDatabase* database)
     m_models.clear();
     m_textures.clear();
     m_materials.clear();
+    m_prefabs.clear();
+    m_loading.clear();
   }
   m_database = database;
 }
@@ -69,7 +82,74 @@ const ModelData* AssetStore::loadedModel(const AssetId& id) const
   return it != m_models.end() && it->second ? &*it->second : nullptr;
 }
 
-void AssetStore::forgetModel(const AssetId& id) { m_models.erase(id); }
+void AssetStore::forgetModel(const AssetId& id)
+{
+  m_models.erase(id);
+  m_loading.erase(id);
+}
+
+void AssetStore::setBackgroundLoading(bool background)
+{
+  m_background = background;
+  if (background && !m_workers)
+    m_workers = std::make_unique<WorkerPool>(2);
+}
+
+AssetStore::LoadState AssetStore::requestModel(const AssetId& id, const ModelData** model)
+{
+  *model = nullptr;
+  if (const auto it = m_models.find(id); it != m_models.end())
+  {
+    *model = it->second ? &*it->second : nullptr;
+    return *model ? LoadState::Loaded : LoadState::Failed;
+  }
+  if (m_loading.contains(id))
+    return LoadState::Loading;
+  const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
+  if (!m_background || !m_workers || !record || record->kind != AssetKind::Model)
+  {
+    *model = this->model(id); // loads now (or logs why it can't, and remembers)
+    return *model ? LoadState::Loaded : LoadState::Failed;
+  }
+
+  // The worker gets everything it needs now: it mustn't read the database,
+  // which the main thread may be changing.
+  const uint64_t ticket = m_nextTicket++;
+  m_loading[id] = ticket;
+  if (m_progress.done == m_progress.total)
+    m_progress = {};
+  ++m_progress.total;
+  m_workers->submit(
+      [this, id, ticket, file = m_database->absolutePath(*record),
+       settings = ModelImportSettings::fromJson(record->settings)]
+      {
+        std::optional<ModelData> loaded = importModel(file, settings);
+        const std::lock_guard lock(m_finishedMutex);
+        m_finished.push_back({id, ticket, std::move(loaded)});
+      });
+  return LoadState::Loading;
+}
+
+void AssetStore::collectLoads()
+{
+  std::vector<FinishedLoad> finished;
+  {
+    const std::lock_guard lock(m_finishedMutex);
+    finished.swap(m_finished);
+  }
+  if (finished.empty())
+    return;
+  for (FinishedLoad& load : finished)
+  {
+    m_progress.done = std::min(m_progress.done + 1, m_progress.total);
+    const auto it = m_loading.find(load.id);
+    if (it == m_loading.end() || it->second != load.ticket)
+      continue; // forgotten meanwhile
+    m_loading.erase(it);
+    m_models.emplace(load.id, std::move(load.model)); // unless loaded at once meanwhile
+  }
+  ++m_loadGeneration;
+}
 
 std::shared_ptr<const TextureData> AssetStore::texture(const AssetId& id)
 {
@@ -138,6 +218,83 @@ std::shared_ptr<const MeshMaterial> AssetStore::material(const AssetId& id)
 }
 
 void AssetStore::forgetMaterial(const AssetId& id) { m_materials.erase(id); }
+
+std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
+{
+  if (const auto it = m_prefabs.find(id); it != m_prefabs.end())
+    return it->second;
+
+  const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
+  std::optional<nlohmann::json> loaded;
+  if (!record)
+    LOG_ERROR("No prefab asset with id " + id.toString());
+  else if (record->kind == AssetKind::Model)
+  {
+    if (const ModelData* data = model(id))
+      loaded = modelPrefab(*data, id, record->path.stem().string());
+  }
+  else if (record->kind != AssetKind::Prefab)
+    LOG_ERROR(record->path.generic_string() + " isn't a prefab");
+  else
+  {
+    std::ifstream in(m_database->absolutePath(*record));
+    nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+    if (json.is_object() && json.contains("root"))
+      loaded = std::move(json);
+    else
+      LOG_ERROR("Can't read the prefab " + record->path.generic_string());
+  }
+  return m_prefabs.emplace(id, std::move(loaded)).first->second;
+}
+
+void AssetStore::forgetPrefab(const AssetId& id) { m_prefabs.erase(id); }
+
+namespace
+{
+nlohmann::json transformJson(const glm::mat4& matrix)
+{
+  const Transform3DComponent t = Transform3DComponent::fromMatrix(matrix);
+  return {{"position", {t.position.x, t.position.y, t.position.z}},
+          {"rotation", {t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z}},
+          {"scale", {t.scale.x, t.scale.y, t.scale.z}}};
+}
+} // namespace
+
+nlohmann::json AssetStore::modelPrefab(const ModelData& model, const AssetId& id, const std::string& name)
+{
+  nlohmann::json root = {{"NameComponent", {{"name", name}}}, {"Transform3DComponent", transformJson(glm::mat4(1.0f))}};
+  if (model.nodes.empty())
+  {
+    root["MeshRendererComponent"] = {{"mesh", assetMeshName(id)}};
+    return {{"formatVersion", 1}, {"root", std::move(root)}};
+  }
+
+  // Each node an entity with its part, its $id the node's place in the file's
+  // order (stable while the file's node order is).
+  std::vector<nlohmann::json> entries(model.nodes.size());
+  std::vector<std::vector<std::size_t>> children(model.nodes.size());
+  std::vector<std::size_t> tops;
+  for (std::size_t i = 0; i < model.nodes.size(); ++i)
+  {
+    const ModelNode& node = model.nodes[i];
+    entries[i] = {{"$id", i + 1},
+                  {"NameComponent", {{"name", node.name}}},
+                  {"Transform3DComponent", transformJson(node.local)}};
+    if (!node.part.empty())
+      entries[i]["MeshRendererComponent"] = {{"mesh", assetMeshName(id, node.part)}};
+    (node.parent < 0 ? tops : children[node.parent]).push_back(i);
+  }
+  const std::function<nlohmann::json(std::size_t)> build = [&](std::size_t i)
+  {
+    nlohmann::json entry = entries[i];
+    for (const std::size_t child : children[i])
+      entry["children"].push_back(build(child));
+    return entry;
+  };
+  for (const std::size_t top : tops)
+    root["children"].push_back(build(top));
+  return {{"formatVersion", 1}, {"root", std::move(root)}};
+}
 
 void AssetStore::addTexture(const std::string& assetId,
                             const std::string& filePath)

@@ -109,9 +109,9 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   lightingChanged |= widgets::undoable(&history, lighting.sun.direction, [](glm::vec3& v)
                                        { return ImGui::DragFloat3("Sun Direction", &v.x, 0.01f); });
   lightingChanged |= widgets::undoable(&history, lighting.sun.color, [](glm::vec3& v)
-                                       { return ImGui::ColorEdit3("Sun Color", &v.x); });
+                                       { return widgets::colorEdit3("Sun Color", &v.x); });
   lightingChanged |= widgets::undoable(&history, lighting.skyColor, [](glm::vec3& v)
-                                       { return ImGui::ColorEdit3("Sky Color", &v.x); });
+                                       { return widgets::colorEdit3("Sky Color", &v.x); });
   if (lightingChanged)
     render.setLighting(lighting);
 

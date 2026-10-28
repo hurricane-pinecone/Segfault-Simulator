@@ -154,7 +154,7 @@ fs::path GameExporter::run(const Project& project, const Options& options) const
   // The engine's own assets (fonts) first, so the project's can override them.
   if (fs::exists(m_editorFolder / "assets"))
     ok = ok && copyInto(m_editorFolder / "assets", options.output / "assets");
-  for (const fs::path& folder : {project.scenesFolder(), project.assetsFolder()})
+  for (const fs::path& folder : {project.scenesFolder(), project.assetsFolder(), project.prefabsFolder()})
     if (fs::exists(folder))
       ok = ok && copyInto(folder, options.output / folder.filename());
   if (!ok)

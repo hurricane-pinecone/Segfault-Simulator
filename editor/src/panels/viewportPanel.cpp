@@ -4,6 +4,7 @@
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
+#include "scene/prefabs.h"
 
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/camera3DComponent.h"
@@ -22,6 +23,7 @@
 #include "glm/glm/gtc/type_ptr.hpp"
 
 #include "imguizmo/ImGuizmo.h"
+#include "imgui_internal.h" // FindWindowByName, a window's dock node
 
 #include <algorithm>
 #include <array>
@@ -47,27 +49,48 @@ constexpr ImU32 kTriggerColor = IM_COL32(255, 150, 60, 255);
 constexpr float kCameraIconScale = 0.08f;
 } // namespace
 
-ViewportPanel::ViewportPanel(sfs::WebGpuRenderBackend& backend)
-    : Panel("Viewport"), m_backend(backend), m_target(backend.context())
+ViewportPanel::ViewportPanel(sfs::WebGpuRenderBackend& backend, std::string title)
+    : Panel(std::move(title)), m_backend(backend), m_target(backend.context())
 {
-  m_backend.setSceneTarget(&m_target);
 }
 
-ViewportPanel::~ViewportPanel() { m_backend.setSceneTarget(nullptr); }
+ViewportPanel::~ViewportPanel()
+{
+  if (m_active)
+    m_backend.setSceneTarget(nullptr);
+}
+
+void ViewportPanel::setActive(bool active)
+{
+  m_active = active;
+  if (active)
+    m_backend.setSceneTarget(&m_target);
+}
+
+void ViewportPanel::beforeBegin()
+{
+  if (m_dockWith.empty())
+    return;
+  if (const ImGuiWindow* other = ImGui::FindWindowByName(m_dockWith.c_str()); other && other->DockId)
+    ImGui::SetNextWindowDockID(other->DockId, ImGuiCond_Always);
+  m_dockWith.clear();
+}
 
 int ViewportPanel::windowFlags() const
 {
   // The image fills the panel; scrolling would only fight camera zoom. Keys
   // are for the viewport (shortcuts) and the game, not ImGui navigation.
   return ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-         ImGuiWindowFlags_NoNavInputs;
+         ImGuiWindowFlags_NoNavInputs | (m_unsaved ? ImGuiWindowFlags_UnsavedDocument : 0);
 }
 
 void ViewportPanel::update(EditorContext&)
 {
   // Resize before the scene renders: the frame's ImGui draw (later this frame)
   // samples the target, so it must not be replaced after the panel is drawn.
-  m_target.resize(open() ? m_desiredSize : glm::ivec2(0, 0));
+  // An inactive viewport keeps its last frame (stretched if resized).
+  if (m_active)
+    m_target.resize(open() ? m_desiredSize : glm::ivec2(0, 0));
 }
 
 ViewportPanel::View ViewportPanel::currentView(const EditorContext& context,
@@ -99,6 +122,22 @@ void ViewportPanel::drawContents(EditorContext& context)
   const ImVec2 available = ImGui::GetContentRegionAvail();
   m_desiredSize = {static_cast<int>(available.x), static_cast<int>(available.y)};
 
+  if (!m_active)
+  {
+    if (m_target.valid())
+      ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(m_target.imguiView())), available);
+    else
+      ImGui::Dummy(available);
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+      m_activationRequested = true;
+    if (context.playing)
+    {
+      ImGui::SetCursorScreenPos(ImVec2(ImGui::GetItemRectMin().x + 12.0f, ImGui::GetItemRectMin().y + 12.0f));
+      ImGui::TextUnformatted("Stop playing to edit here");
+    }
+    return;
+  }
+
   if (!m_target.valid() || m_target.size() != m_desiredSize || !context.render)
   {
     // First frame, or mid-resize: the correctly sized target arrives next
@@ -111,6 +150,16 @@ void ViewportPanel::drawContents(EditorContext& context)
   ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(m_target.imguiView())),
                available);
   const bool imageHovered = ImGui::IsItemHovered();
+
+  // Frame what a panel (or F) asked for. While playing the game's camera is
+  // the one shown, so it waits.
+  if (context.focusRequest.isValid() && !context.playing)
+  {
+    if (context.focusRequest.isAlive())
+      if (const auto bounds = branchBounds(context, context.focusRequest))
+        m_navigation.focus(context.render->camera(), *bounds);
+    context.focusRequest = {};
+  }
   const View view = currentView(context, origin, available);
   if (!context.playing)
     dropAsset(context, view); // targets the image, so straight after it
@@ -128,11 +177,15 @@ void ViewportPanel::drawContents(EditorContext& context)
   bool gizmoActive = false;
   if (gizmosVisible(context))
   {
+    // Kept inside the image: an icon near its edge mustn't spill onto the
+    // panel's frame.
+    ImGui::PushClipRect(origin, ImVec2(origin.x + available.x, origin.y + available.y), true);
     drawLightIcons(context, view);
     drawCameraIcons(context, view);
     drawSelectionOutline(context, view);
     drawColliders(context, view);
     gizmoActive = drawGizmo(context, view);
+    ImGui::PopClipRect();
   }
 
   if (context.playing)
@@ -141,6 +194,7 @@ void ViewportPanel::drawContents(EditorContext& context)
     // (like a game view); click into it to play.
     const bool focused = ImGui::IsWindowFocused();
     context.gameHasInput = focused;
+    context.gameHasMouse = imageHovered;
     if (imageHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
       ImGui::SetWindowFocus();
     const ImU32 border = focused ? IM_COL32(90, 200, 120, 255) : IM_COL32(200, 160, 60, 255);
@@ -160,8 +214,28 @@ void ViewportPanel::drawContents(EditorContext& context)
     navigate(context, available.y);
   }
 
-  ImGui::SetCursorScreenPos(ImVec2(origin.x + 8.0f, origin.y + 8.0f));
+  // The toolbar floats over the scene on a soft dark backdrop, so it reads
+  // over a bright sky as well as a dark night. The backdrop is drawn after
+  // (once its size is known) but on a lower channel, so behind.
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  drawList->ChannelsSplit(2);
+  drawList->ChannelsSetCurrent(1);
+  ImGui::SetCursorScreenPos(ImVec2(origin.x + 12.0f, origin.y + 12.0f));
+  ImGui::BeginGroup();
   drawToolbar(context);
+  if (m_toolbarExtras)
+  {
+    ImGui::SameLine(0.0f, 18.0f);
+    m_toolbarExtras(context);
+  }
+  ImGui::EndGroup();
+  drawList->ChannelsSetCurrent(0);
+  const ImVec2 barMin = ImGui::GetItemRectMin(), barMax = ImGui::GetItemRectMax();
+  drawList->AddRectFilled(ImVec2(barMin.x - 6.0f, barMin.y - 5.0f),
+                          ImVec2(barMax.x + 8.0f, barMax.y + 5.0f),
+                          IM_COL32(38, 40, 39, 205),
+                          8.0f);
+  drawList->ChannelsMerge();
 }
 
 bool ViewportPanel::gizmosVisible(const EditorContext& context) const
@@ -217,9 +291,8 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
   if (ImGui::IsKeyPressed(ImGuiKey_R, false))
     m_tool = Tool::Scale;
 
-  if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection() &&
-      context.selection.hasComponent<sfs::Transform3DComponent>())
-    m_navigation.focus(context.render->camera(), sfs::hierarchy::worldPosition(context.selection));
+  if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
+    context.focusRequest = context.selection;
 }
 
 bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
@@ -288,7 +361,36 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
   if (!context.assets || !ImGui::BeginDragDropTarget())
     return;
   const sfs::AssetRecord* dragged = assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *context.assets);
-  if (dragged && assetDrop::fitsMaterialSlot(*dragged))
+  if (dragged && assetDrop::placeable(*dragged))
+  {
+    // A prefab: placed where the pointer meets a surface, or the ground.
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const sfs::Ray3D ray = context.render->camera().screenRay(
+        {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
+    std::optional<glm::vec3> point;
+    float distance = 0.0f;
+    if (const auto hit = sfs::pickSurface(*context.scene, context.render->meshes(), ray))
+      point = ray.at(hit->distance);
+    else if (ray.intersectPlaneZ(0.0f, distance))
+      point = ray.at(distance);
+    const ImGuiPayload* payload =
+        point ? ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload,
+                                             ImGuiDragDropFlags_AcceptBeforeDelivery |
+                                                 ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
+              : nullptr;
+    if (payload)
+    {
+      if (const std::optional<ImVec2> at = toScreen(view, *point))
+      {
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddCircle(*at, 9.0f, kDropColor, 0, 2.0f);
+        draw->AddCircleFilled(*at, 3.0f, kDropColor);
+      }
+      if (payload->IsDelivery())
+        prefabs::place(context, prefabs::nameOf(dragged->id), {}, point);
+    }
+  }
+  else if (dragged && assetDrop::fitsMaterialSlot(*dragged))
   {
     // The surface under the cursor: its object, and which of its material
     // slots that part of the mesh is.
@@ -305,7 +407,11 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
                                                ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
             : nullptr;
     if (payload)
+    {
+      ImGui::PushClipRect(view.origin, ImVec2(view.origin.x + view.size.x, view.origin.y + view.size.y), true);
       drawDropTarget(context, view, *hit);
+      ImGui::PopClipRect();
+    }
     if (payload && payload->IsDelivery())
       if (const std::string material = assetDrop::materialFor(*context.assets, *dragged); !material.empty())
       {
@@ -345,6 +451,21 @@ void ViewportPanel::drawDropTarget(const EditorContext& context, const View& vie
   drawList->AddText(at, kDropColor, text.c_str());
 }
 
+std::optional<sfs::Aabb> ViewportPanel::branchBounds(const EditorContext& context, const sfs::Entity& entity) const
+{
+  // Its own bounds, or (with meshes below it, e.g. a prefab's empty root)
+  // those of the meshes in its branch.
+  const sfs::MeshLibrary& meshes = context.render->meshes();
+  sfs::Aabb meshBounds;
+  for (const sfs::Entity& part : sfs::hierarchy::EntityTree(context.scene->entities()).subtree(entity))
+    if (part.hasComponent<sfs::MeshRendererComponent>())
+      if (const auto bounds = sfs::entityBounds(part, meshes))
+        meshBounds.expand(*bounds);
+  if (!meshBounds.empty())
+    return meshBounds;
+  return sfs::entityBounds(entity, meshes);
+}
+
 void ViewportPanel::navigate(EditorContext& context, float viewportHeight)
 {
   const ImGuiIO& io = ImGui::GetIO();
@@ -369,7 +490,7 @@ void ViewportPanel::drawOutline(const EditorContext& context,
                                 ImU32 color,
                                 float thickness) const
 {
-  const std::optional<sfs::Aabb> bounds = sfs::entityBounds(entity, context.render->meshes());
+  const std::optional<sfs::Aabb> bounds = branchBounds(context, entity);
   if (!bounds)
     return;
 

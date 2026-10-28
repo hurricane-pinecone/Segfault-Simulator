@@ -26,7 +26,9 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
                               SDL_WINDOWPOS_CENTERED,
                               width,
                               height,
-                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                              // Hidden until the first frame is drawn, so it
+                              // doesn't sit black while the GPU sets up.
+                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
   if (!m_window)
   {
     LOG_ERROR("Error creating window");
@@ -222,6 +224,13 @@ void WebGpuRenderBackend::endFrame()
   {
     wgpuTextureViewRelease(m_view);
     m_view = nullptr;
+  }
+  // Shown once the first frame is in (or, if a hidden window had nothing to
+  // draw into, now anyway).
+  if (!m_shown)
+  {
+    SDL_ShowWindow(m_window);
+    m_shown = true;
   }
   if (m_surfTex.texture)
   {

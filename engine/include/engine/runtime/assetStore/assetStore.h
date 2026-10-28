@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -17,6 +18,8 @@
 
 namespace sfs
 {
+
+class WorkerPool;
 
 using SurfacePtr = std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)>;
 using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
@@ -34,7 +37,7 @@ using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
 class AssetStore
 {
 public:
-  AssetStore() = default;
+  AssetStore();
   ~AssetStore();
 
   void clearAssets();
@@ -59,6 +62,47 @@ public:
   /** Forget a loaded model, so the next model() reads its file again. */
   void forgetModel(const AssetId& id);
 
+  // --- loading in the background ---------------------------------------------
+
+  /**
+   * Import models on worker threads when they're asked for with
+   * requestModel(), rather than there and then, so a scene opens at once and
+   * its models appear as they load (an editor). Off by default: a game's
+   * scene is complete when it starts.
+   */
+  void setBackgroundLoading(bool background);
+  bool backgroundLoading() const { return m_background; }
+
+  enum class LoadState
+  {
+    Loaded,  // *model is set
+    Loading, // in the background; ask again later
+    Failed,  // not a model, or its file can't be imported (logged)
+  };
+
+  /**
+   * A model, if it's loaded; otherwise start loading it, in the background
+   * when that's on (else now, as model() does).
+   */
+  LoadState requestModel(const AssetId& id, const ModelData** model);
+
+  /**
+   * Take in the models finished in the background since the last call. Call
+   * once a frame (each Scene3D does, as it updates).
+   */
+  void collectLoads();
+
+  /** Bumped whenever background loads are taken in (see collectLoads()). */
+  uint64_t loadGeneration() const { return m_loadGeneration; }
+
+  /** Background loads since nothing was loading: how many have finished, of how many. */
+  struct LoadProgress
+  {
+    int done = 0;
+    int total = 0;
+  };
+  LoadProgress loadProgress() const { return m_progress; }
+
   /**
    * A texture asset's texels (for 3D), read (with its .meta import settings)
    * on first use and kept. Null (logged once) if the id isn't a texture in the
@@ -75,6 +119,17 @@ public:
 
   /** Forget a loaded material, so the next material() reads its file again. */
   void forgetMaterial(const AssetId& id);
+
+  /**
+   * A prefab asset's contents (a .prefab file; see SceneSerializer), read on
+   * first use and kept. A model is a prefab too: its node tree, each node an
+   * entity drawing its part (or, with one mesh, a single entity). Nothing
+   * (logged once) if the id isn't either in the database or can't be read.
+   */
+  std::optional<nlohmann::json> prefab(const AssetId& id);
+
+  /** Forget a loaded prefab, so the next prefab() reads its file again. */
+  void forgetPrefab(const AssetId& id);
 
   void addTexture(const std::string& assetId, const std::string& filePath);
   void removeTexture(const std::string& assetId);
@@ -138,12 +193,34 @@ private:
   std::unordered_map<std::string, SurfacePtr> m_surfaces;
   std::unordered_map<std::string, FontPtr> m_fonts;
 
+  // A model's node tree as prefab content (see prefab()).
+  static nlohmann::json modelPrefab(const ModelData& model, const AssetId& id, const std::string& name);
+
   const AssetDatabase* m_database = nullptr;
+
+  // Background loading. A load's ticket must still be its model's when it
+  // finishes, or it's dropped (the model was forgotten, or loaded at once,
+  // meanwhile).
+  struct FinishedLoad
+  {
+    AssetId id;
+    uint64_t ticket = 0;
+    std::optional<ModelData> model;
+  };
+  bool m_background = false;
+  std::unique_ptr<WorkerPool> m_workers;
+  std::unordered_map<AssetId, uint64_t, AssetIdHash> m_loading; // id -> ticket
+  uint64_t m_nextTicket = 1;
+  std::mutex m_finishedMutex;
+  std::vector<FinishedLoad> m_finished; // filled by the workers
+  uint64_t m_loadGeneration = 0;
+  LoadProgress m_progress;
   // nullopt: tried and failed (so it isn't retried, or logged, every time).
   std::unordered_map<AssetId, std::optional<ModelData>, AssetIdHash> m_models;
   // Null: tried and failed.
   std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash> m_textures;
   std::unordered_map<AssetId, std::shared_ptr<const MeshMaterial>, AssetIdHash> m_materials;
+  std::unordered_map<AssetId, std::optional<nlohmann::json>, AssetIdHash> m_prefabs; // nullopt: failed
 
   SpriteId m_nextSpriteId = 0;
 

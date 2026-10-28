@@ -21,6 +21,11 @@ const sfs::AssetRecord* draggedAsset(const ImGuiPayload* payload, const sfs::Ass
   return assets.findByPath(file.lexically_relative(assets.root()));
 }
 
+bool placeable(const sfs::AssetRecord& record)
+{
+  return record.kind == sfs::AssetKind::Prefab || record.kind == sfs::AssetKind::Model;
+}
+
 bool fitsMaterialSlot(const sfs::AssetRecord& record)
 {
   return record.kind == sfs::AssetKind::Material || record.kind == sfs::AssetKind::Texture;

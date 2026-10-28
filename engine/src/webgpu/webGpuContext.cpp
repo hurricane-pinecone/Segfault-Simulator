@@ -140,19 +140,21 @@ bool WebGpuContext::init(SDL_Window* window)
   m_format =
       caps.formatCount > 0 ? caps.formats[0] : WGPUTextureFormat_BGRA8Unorm;
 
-  // Prefer an unsynced present mode so frame timing reflects real GPU
-  // throughput (Mailbox = no tearing; else Immediate); fall back to vsync.
-  m_present = WGPUPresentMode_Fifo;
+  // Unless vsync is asked for, prefer an unsynced present mode so frame
+  // timing reflects real GPU throughput (Mailbox = no tearing; else
+  // Immediate); fall back to vsync (Fifo, always available).
+  m_unsynced = WGPUPresentMode_Fifo;
   for (size_t i = 0; i < caps.presentModeCount; ++i)
   {
     if (caps.presentModes[i] == WGPUPresentMode_Mailbox)
     {
-      m_present = WGPUPresentMode_Mailbox;
+      m_unsynced = WGPUPresentMode_Mailbox;
       break;
     }
     if (caps.presentModes[i] == WGPUPresentMode_Immediate)
-      m_present = WGPUPresentMode_Immediate;
+      m_unsynced = WGPUPresentMode_Immediate;
   }
+  m_present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
 
   return true;
 }
@@ -172,7 +174,7 @@ void WebGpuContext::configureSurface(WGPUSurface surface,
   cfg.usage = WGPUTextureUsage_RenderAttachment;
   cfg.width = static_cast<uint32_t>(width);
   cfg.height = static_cast<uint32_t>(height);
-  cfg.presentMode = m_present;
+  cfg.presentMode = surface == m_surface ? m_present : m_unsynced;
   cfg.alphaMode = WGPUCompositeAlphaMode_Auto;
   wgpuSurfaceConfigure(surface, &cfg);
 }

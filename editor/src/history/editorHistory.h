@@ -3,7 +3,9 @@
 #include "nlohmann/json.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <optional>
 
 struct EditorContext;
@@ -37,6 +39,9 @@ public:
     endChange();
   }
 
+  /** Counts edits, undos and redos: unchanged means the scene is as it was. */
+  uint64_t revision() const { return m_revision; }
+
   bool canUndo() const { return !m_undo.empty(); }
   bool canRedo() const { return !m_redo.empty(); }
   void undo();
@@ -44,6 +49,12 @@ public:
 
   /** Forget everything (a different scene was opened). */
   void clear();
+
+  /**
+   * Change every recorded scene the same way (e.g. a field renamed in the
+   * game's code), so undoing past the change still restores what was there.
+   */
+  void rewrite(const std::function<void(nlohmann::json&)>& edit);
 
   /**
    * Stop recording (Play mode: changes there are thrown away on Stop), or
@@ -78,5 +89,6 @@ private:
   std::deque<Step> m_redo;
   std::optional<nlohmann::json> m_pendingBefore;
   Selection m_pendingSelection;
+  uint64_t m_revision = 0;
   bool m_enabled = true;
 };

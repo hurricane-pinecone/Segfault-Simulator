@@ -172,6 +172,7 @@ std::optional<Project> Project::create(const fs::path& folder,
   std::error_code error;
   for (const fs::path& sub : {project.scenesFolder(),
                               project.assetsFolder(),
+                              project.prefabsFolder(),
                               project.scriptsFolder()})
   {
     fs::create_directories(sub, error);

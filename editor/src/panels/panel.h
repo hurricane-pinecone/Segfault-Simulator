@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <utility>
+
 struct EditorContext;
 
 // A dockable editor window. Each panel draws itself inside its own ImGui window
@@ -11,7 +14,7 @@ public:
   virtual ~Panel() = default;
 
   /** Window title; also the ImGui window id, so it must be unique. */
-  const char* title() const { return m_title; }
+  const char* title() const { return m_title.c_str(); }
 
   bool& open() { return m_open; }
 
@@ -25,7 +28,7 @@ public:
   void draw(EditorContext& context);
 
 protected:
-  explicit Panel(const char* title) : m_title(title) {}
+  explicit Panel(std::string title) : m_title(std::move(title)) {}
 
   /** The panel's contents, between ImGui::Begin and End. */
   virtual void drawContents(EditorContext& context) = 0;
@@ -37,6 +40,6 @@ protected:
   virtual int windowFlags() const { return 0; }
 
 private:
-  const char* m_title;
+  std::string m_title;
   bool m_open = true;
 };

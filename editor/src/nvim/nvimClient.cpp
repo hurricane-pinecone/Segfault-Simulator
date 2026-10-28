@@ -171,6 +171,8 @@ void NvimClient::handle(const Value& message)
   case kNotification:
     if (parts[1].asString() == "redraw")
       m_screen.applyRedraw(parts[2].asArray());
+    else if (parts[1].asString() == "sfs_script_saved")
+      m_scriptSaved = true;
     break;
   case kResponse: // [1, id, error, result]
     if (parts.size() >= 3 && !parts[2].isNil())

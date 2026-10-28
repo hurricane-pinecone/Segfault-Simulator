@@ -4,9 +4,12 @@
 #include "nlohmann/json.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <set>
+#include <unordered_map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sfs
@@ -54,6 +57,22 @@ struct TypeInfo;
  *                     "children": [ { ... }, ... ] }, ... ] }
  *
  * Format 1 (before hierarchies) is the same without "children".
+ *
+ * Prefabs: a .prefab file is { "formatVersion": 1, "root": <entry> }, entries
+ * as in scenes plus a "$id" on each (unique in the file; the root's isn't
+ * used). An instance of a prefab, in a scene or a prefab, is saved as the
+ * prefab and how it differs from it:
+ *
+ *   { "$prefab": "asset:<id>",
+ *     "$overrides": { "<path>": { "Component": { "field": value } }, ... },
+ *     "$removed": [ "<path>", ... ],
+ *     "$added": [ { "$parent": "<path>", <entry> }, ... ] }
+ *
+ * A path names an entity of the instance by its prefab "$id" ("" is the
+ * instance's root), through nested instances ("3/7": entity 7 of the instance
+ * that is entity 3). Overrides are JSON merge patches of the entity's
+ * components (null removes one). They're found on save by comparing each
+ * entity with what the prefab alone gives, so any change is kept.
  */
 class SceneSerializer
 {
@@ -65,6 +84,67 @@ public:
    *               component holds a mesh
    */
   SceneSerializer(const reflect::TypeRegistry& types, MeshLibrary* meshes);
+
+  /** A prefab's name ("asset:<id>") -> its file's contents; nothing if none. */
+  using PrefabSource = std::function<std::optional<nlohmann::json>(std::string_view name)>;
+
+  /**
+   * Where prefabs come from. Without one, instances can't be expanded: they
+   * load as placeholders that save back unchanged.
+   */
+  void setPrefabSource(PrefabSource source) { m_prefabs = std::move(source); }
+
+  /**
+   * Create an instance of a prefab in `scene`, under `parent` (none: a root).
+   *
+   * @return its root, or a placeholder (logged) if the prefab can't be read
+   */
+  Entity instantiate(std::string_view prefab, Scene& scene, const Entity& parent = {}) const;
+
+  /**
+   * A prefab file's contents ({ "formatVersion", "root" }) made from an entity
+   * and everything below it: entities that came from a prefab keep their ids,
+   * the rest are given new ones (recorded on them, so they belong to the
+   * prefab from now on). Instances below the root are saved as instances. For
+   * an instance root (Apply), its prefab's root transform is kept rather than
+   * the instance's; otherwise the root is moved to the origin, unless
+   * `keepRootPlacement` (saving a prefab edited on its own).
+   */
+  nlohmann::json savePrefab(Scene& scene, const Entity& root, bool keepRootPlacement = false) const;
+
+  /**
+   * How an instance differs from its prefab: its scene entry ($prefab,
+   * $overrides, $removed, $added). `root` must have a PrefabInstanceComponent.
+   */
+  nlohmann::json instanceEntry(Scene& scene, const Entity& root) const;
+
+  /**
+   * An entity's path in the instance under `root` (see above): "" for the
+   * root itself; nothing if it isn't one of the instance's prefab entities
+   * (e.g. added to it).
+   */
+  static std::optional<std::string> pathInInstance(const Entity& entity, const Entity& root);
+
+  /** The nearest instance root at or above an entity; invalid if none. */
+  static Entity instanceRootOf(const Entity& entity);
+
+  /** One entity of an expanded prefab (see expandPrefab()). */
+  struct ExpandedEntity
+  {
+    std::string key;           // its path in the prefab ("" the root, "3/7" in a nested one)
+    std::string parent;        // its parent's key (ignored for the root)
+    nlohmann::json components; // { "TypeName": { fields... } }, as in scene files
+  };
+
+  /**
+   * A prefab's entities as they'd be instantiated (nested prefabs expanded,
+   * their overrides applied), parents first, without making them: e.g. to
+   * draw a preview. Empty if the prefab can't be read.
+   */
+  std::vector<ExpandedEntity> expandPrefab(std::string_view prefab) const;
+
+  // One entity of an expanded instance (internal to the serializer).
+  struct PrefabNode;
 
   nlohmann::json save(Scene& scene,
                       const std::vector<std::string>& gameSystems = {}) const;
@@ -128,7 +208,22 @@ public:
   static std::optional<nlohmann::json> readJsonFile(const std::filesystem::path& path);
 
 private:
-  nlohmann::json saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree) const;
+  // `ids`: write each entity's prefab "$id" (inside a prefab file).
+  nlohmann::json saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree, bool ids = false) const;
+  // An entity's components (reflected and unresolved), without children.
+  nlohmann::json saveComponents(const Entity& entity) const;
+  void loadComponents(const nlohmann::json& components,
+                      Entity& entity,
+                      std::set<std::string>* unresolvedTypes) const;
+  // Expand an instance entry and create its entities.
+  Entity loadInstance(const nlohmann::json& entry,
+                      Scene& scene,
+                      const Entity& parent,
+                      std::set<std::string>* unresolvedTypes) const;
+  // What a prefab alone gives: path -> (parent path, components), with every
+  // known component's fields filled in, for comparing an instance against.
+  std::vector<PrefabNode> expandBase(std::string_view prefab) const;
+  nlohmann::json instanceEntry(const Entity& root, const hierarchy::EntityTree& tree) const;
 
   Entity loadEntity(const nlohmann::json& entry,
                     Scene& scene,
@@ -137,6 +232,9 @@ private:
 
   const reflect::TypeRegistry& m_types;
   MeshLibrary* m_meshes;
+  PrefabSource m_prefabs;
+  // Default field values by component type, for normalising prefab data.
+  mutable std::unordered_map<std::string, nlohmann::json> m_defaults;
 };
 
 } // namespace sfs

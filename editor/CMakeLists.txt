@@ -54,11 +54,18 @@ if(TARGET SfsPlayer)
     add_dependencies(SfsEditor SfsPlayer)
 endif()
 
-# The Code panel's default Neovim config ships next to the executable.
-add_custom_command(TARGET SfsEditor POST_BUILD
+# The Code panel's default Neovim config ships next to the executable, copied
+# whenever it changes (not only when the editor relinks).
+file(GLOB_RECURSE SFS_EDITOR_NVIM_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/nvim/*")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nvim.stamp"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/nvim" "$<TARGET_FILE_DIR:SfsEditor>/nvim"
+    COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/nvim.stamp"
+    DEPENDS ${SFS_EDITOR_NVIM_FILES}
     VERBATIM)
+add_custom_target(SfsEditorNvimConfig DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/nvim.stamp")
+add_dependencies(SfsEditor SfsEditorNvimConfig)
 
 # --- Building game modules ----------------------------------------------------
 # The editor compiles a project's scripts into a module with the same toolchain

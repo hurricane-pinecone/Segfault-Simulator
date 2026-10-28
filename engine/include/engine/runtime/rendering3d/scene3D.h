@@ -3,6 +3,7 @@
 #include "engine/core/rendering/3d/mesh.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
 
 #include <filesystem>
 #include <string>
@@ -45,6 +46,12 @@ public:
   RenderSystem3D& renderSystem() { return *m_render; }
 
   /**
+   * A serializer for this scene: meshes by the scene's library, prefabs
+   * ("asset:<id>") from its asset store.
+   */
+  SceneSerializer serializer();
+
+  /**
    * The scene's physics, or null when it has none. Physics is optional: a
    * scene that wants it lists "PhysicsSystem3D" among its game systems, so it
    * exists only while the scene plays.
@@ -72,7 +79,10 @@ protected:
   /** Sets up rendering and the built-in meshes; overrides must call it first. */
   void onInit() override;
 
-  /** Delivers the frame's physics contacts to game objects; overrides must call it. */
+  /**
+   * Swaps in models loaded in the background, and delivers the frame's
+   * physics contacts to game objects; overrides must call it.
+   */
   void onUpdate(double deltaTime) override;
 
 private:
@@ -82,6 +92,7 @@ private:
 
   RenderSystem3D* m_render = nullptr;
   std::vector<std::string> m_gameSystems;
+  uint64_t m_seenLoads = 0; // the asset store's loadGeneration() last seen
 
   MeshHandle m_cube;
   MeshHandle m_sphere;

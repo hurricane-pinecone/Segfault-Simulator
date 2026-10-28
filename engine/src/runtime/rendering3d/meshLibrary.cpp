@@ -17,10 +17,25 @@ MeshLibrary::MeshLibrary(IRenderer3D& renderer) : m_renderer(renderer) {}
 MeshLibrary::~MeshLibrary()
 {
   for (const auto& [id, entry] : m_meshes)
-    if (!entry.missing)
-      m_renderer.destroyMesh(MeshHandle{id});
+    if (entry.gpu.valid())
+      m_renderer.destroyMesh(entry.gpu);
   for (const auto& [name, material] : m_materials)
     m_renderer.destroyMaterial(material);
+}
+
+namespace
+{
+bool g_keepVertices = false;
+} // namespace
+
+void MeshLibrary::setKeepVertices(bool keep) { g_keepVertices = keep; }
+
+std::optional<MeshData> MeshLibrary::meshData(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  if (it == m_meshes.end() || it->second.vertices.empty())
+    return std::nullopt;
+  return MeshData{it->second.vertices, it->second.indices, it->second.sections};
 }
 
 MeshHandle MeshLibrary::add(const MeshData& mesh, std::string name)
@@ -36,19 +51,80 @@ MeshHandle MeshLibrary::add(const MeshData& mesh, std::string name)
     return {};
   }
 
-  const MeshHandle handle = m_renderer.createMesh(mesh);
-  if (!handle.valid())
+  Entry entry;
+  entry.name = std::move(name);
+  if (!fill(entry, mesh))
+    return {};
+  const MeshHandle handle = entry.gpu;
+  m_meshes.emplace(handle.id, std::move(entry));
+  return handle;
+}
+
+bool MeshLibrary::fill(Entry& entry, const MeshData& mesh)
+{
+  const MeshHandle gpu = m_renderer.createMesh(mesh);
+  if (!gpu.valid())
   {
     LOG_ERROR("MeshLibrary::add: renderer failed to upload mesh");
-    return {};
+    return false;
   }
-
-  Entry entry{mesh.bounds(), std::move(name), false, mesh.sections, {}, mesh.indices};
+  entry.gpu = gpu;
+  entry.missing = false;
+  entry.pending = false;
+  entry.bounds = mesh.bounds();
+  entry.sections = mesh.sections;
+  entry.indices = mesh.indices;
+  entry.positions.clear();
   entry.positions.reserve(mesh.vertices.size());
   for (const MeshVertex& vertex : mesh.vertices)
     entry.positions.push_back(vertex.position);
-  m_meshes.emplace(handle.id, std::move(entry));
+  if (g_keepVertices)
+    entry.vertices = mesh.vertices;
+  return true;
+}
+
+MeshHandle MeshLibrary::pending(std::string_view name)
+{
+  const MeshHandle handle = missing(name);
+  if (Entry& entry = m_meshes.at(handle.id); entry.missing)
+    entry.pending = true;
   return handle;
+}
+
+bool MeshLibrary::isPending(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end() && it->second.pending;
+}
+
+std::size_t MeshLibrary::pendingCount() const
+{
+  return static_cast<std::size_t>(
+      std::count_if(m_meshes.begin(), m_meshes.end(), [](const auto& entry) { return entry.second.pending; }));
+}
+
+void MeshLibrary::fulfilPending()
+{
+  if (!m_provider.loaded)
+    return;
+  for (auto& [id, entry] : m_meshes)
+  {
+    if (!entry.pending)
+      continue;
+    bool waiting = false;
+    const MeshData* mesh = m_provider.loaded(entry.name, waiting);
+    if (waiting)
+      continue;
+    entry.pending = false;
+    if (!mesh || mesh->empty() || !fill(entry, *mesh))
+      LOG_ERROR("No mesh named '" + entry.name + "' (its model didn't load)");
+  }
+}
+
+MeshHandle MeshLibrary::gpuHandle(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end() && it->second.gpu.valid() ? it->second.gpu : mesh;
 }
 
 void MeshLibrary::remove(MeshHandle mesh)
@@ -56,10 +132,10 @@ void MeshLibrary::remove(MeshHandle mesh)
   const auto it = m_meshes.find(mesh.id);
   if (it == m_meshes.end())
     return;
-  const bool missing = it->second.missing;
+  const MeshHandle gpu = it->second.gpu;
   m_meshes.erase(it);
-  if (!missing)
-    m_renderer.destroyMesh(mesh);
+  if (gpu.valid())
+    m_renderer.destroyMesh(gpu);
 }
 
 MeshHandle MeshLibrary::missing(std::string_view name)
@@ -67,7 +143,10 @@ MeshHandle MeshLibrary::missing(std::string_view name)
   if (const MeshHandle existing = find(name); existing.valid())
     return existing;
   const MeshHandle handle{m_nextMissingId++};
-  m_meshes.emplace(handle.id, Entry{Aabb{}, std::string(name), true});
+  Entry entry;
+  entry.name = std::string(name);
+  entry.missing = true;
+  m_meshes.emplace(handle.id, std::move(entry));
   return handle;
 }
 

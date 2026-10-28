@@ -36,6 +36,7 @@ public:
   std::filesystem::path scenesFolder() const { return m_root / "scenes"; }
   std::filesystem::path assetsFolder() const { return m_root / "assets"; }
   std::filesystem::path scriptsFolder() const { return m_root / "scripts"; }
+  std::filesystem::path prefabsFolder() const { return m_root / "prefabs"; }
 
   /**
    * The scene an exported game starts in (relative to the project folder), or

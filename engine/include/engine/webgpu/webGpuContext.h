@@ -16,9 +16,15 @@ public:
   bool init(SDL_Window* window);
   void configure(int width, int height);
 
+  // Wait for the display when presenting (vsync), capping the frame rate at
+  // its refresh rate (e.g. an editor, which needn't redraw faster). Off by
+  // default, so frame timings show what the GPU can do. Set before init().
+  void setVsync(bool vsync) { m_vsync = vsync; }
+
   // Configure another window's surface (e.g. an ImGui panel dragged out into
-  // its own OS window) exactly like the main one: same device, format and
-  // present mode.
+  // its own OS window) like the main one: same device and format. With vsync
+  // it doesn't wait for the display too: the main window already paces the
+  // frame, and waiting once per window would slow it down.
   void configureSurface(WGPUSurface surface, int width, int height) const;
   void release();
 
@@ -39,7 +45,9 @@ private:
   WGPUDevice m_device = nullptr;
   WGPUQueue m_queue = nullptr;
   WGPUTextureFormat m_format = WGPUTextureFormat_BGRA8Unorm;
-  WGPUPresentMode m_present = WGPUPresentMode_Fifo;
+  WGPUPresentMode m_present = WGPUPresentMode_Fifo;      // the main window's
+  WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo;     // the fastest available
+  bool m_vsync = false;
   bool m_hasTimestamps = false;
 };
 

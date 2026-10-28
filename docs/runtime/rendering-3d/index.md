@@ -96,6 +96,30 @@ render system.
 const sfs::MeshHandle barnMesh = render.meshes().add(barn);
 ```
 
+### Loading models in the background
+
+Scenes find model meshes by name (`asset:<id>:<part>`) through the asset
+store. With `assetStore.setBackgroundLoading(true)` (the editor turns it on),
+a model that isn't loaded yet is imported on a worker thread instead of
+there and then:
+
+- The library hands out a stand-in for the name at once (`pending()`; it
+  draws nothing), so the scene opens straight away.
+- Each frame, `Scene3D` takes in the models that have finished
+  (`AssetStore::collectLoads()`) and turns their stand-ins into the meshes
+  (`MeshLibrary::fulfilPending()`). Entities keep the same handle throughout.
+- `AssetStore::loadProgress()` says how many have finished, for a progress
+  bar.
+
+It's off by default, so a game's scene is complete when it starts. Background
+work runs on a `WorkerPool` (`engine/core/jobs/workerPool.h`), a few threads
+that run jobs in order; a job must not touch the scene or the GPU, only hand
+its result back.
+
+`MeshLibrary::setKeepVertices(true)` keeps every mesh's vertices on the CPU
+too, so `meshData(handle)` can give a mesh back (the editor draws prefab
+previews from them). It's off by default, to save the memory.
+
 ## Drawing entities
 
 Give an entity a `Transform3DComponent` and a `MeshRendererComponent`:

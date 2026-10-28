@@ -54,6 +54,7 @@ add_runtime_test(pickingTests rendering3d/pickingTests.cpp)
 
 # serialization/
 add_runtime_test(sceneSerializerTests serialization/sceneSerializerTests.cpp)
+add_runtime_test(prefabTests serialization/prefabTests.cpp)
 
 # scripting/
 add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)

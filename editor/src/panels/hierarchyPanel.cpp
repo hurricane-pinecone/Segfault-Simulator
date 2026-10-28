@@ -1,26 +1,32 @@
 #include "panels/hierarchyPanel.h"
 
+#include "assets/assetDrop.h"
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
+#include "scene/prefabs.h"
+#include "widgets/theme.h"
 #include "widgets/widgets.h"
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/serialization/prefabComponents.h"
 
 #include "imgui.h"
+#include "imgui_internal.h" // TreeNodeSetOpen
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <string>
 #include <utility>
 
 namespace
 {
 // Drag and drop payload: the dragged entity's id.
-constexpr const char* kEntityPayload = "SFS_ENTITY";
+using assetDrop::kEntityPayload;
 
 std::string displayName(const sfs::Entity& entity)
 {
@@ -38,6 +44,14 @@ std::string lowercase(std::string text)
   for (char& c : text)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return text;
+}
+
+// A prefab dragged from the Assets panel, if that's the drag; else empty.
+std::string draggedPrefab(const EditorContext& context)
+{
+  const sfs::AssetRecord* record =
+      context.assets ? assetDrop::draggedAsset(ImGui::GetDragDropPayload(), *context.assets) : nullptr;
+  return record && assetDrop::placeable(*record) ? prefabs::nameOf(record->id) : std::string();
 }
 
 // The entity being dragged, if the drag is one of ours.
@@ -63,17 +77,20 @@ void HierarchyPanel::drawContents(EditorContext& context)
     ImGui::EndPopup();
   }
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(-1.0f);
-  widgets::inputText("##filter", m_filter);
-  if (m_filter.empty() && !ImGui::IsItemActive())
-  {
-    // Placeholder text over the empty box.
-    const ImVec2 min = ImGui::GetItemRectMin();
-    ImGui::GetWindowDrawList()->AddText(
-        ImVec2(min.x + ImGui::GetStyle().FramePadding.x, min.y + ImGui::GetStyle().FramePadding.y),
-        ImGui::GetColorU32(ImGuiCol_TextDisabled), "Filter");
-  }
+  widgets::searchInput("filter", m_filter, "Filter");
   ImGui::Separator();
+
+  // Each open scene (the scene, prefabs in their tabs) keeps its own scroll
+  // position, open rows and the selection last shown: a child window per scene.
+  if (context.scene != m_shownScene)
+  {
+    m_shownSelections[m_shownScene] = m_shownSelection;
+    const auto shown = m_shownSelections.find(context.scene);
+    m_shownSelection = shown != m_shownSelections.end() ? shown->second : UINT32_MAX;
+    m_shownScene = context.scene;
+  }
+  ImGui::PushID(context.scene);
+  ImGui::BeginChild("entities");
 
   // Reveal a selection made elsewhere (the viewport), once: open its parents
   // and scroll to it.
@@ -103,6 +120,8 @@ void HierarchyPanel::drawContents(EditorContext& context)
   }
 
   drawDropBelow(context);
+  ImGui::EndChild();
+  ImGui::PopID();
   applyPendingEdit(context);
 }
 
@@ -126,8 +145,11 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
   const std::string label = name + "##" + std::to_string(entity.getId());
   const bool selected = context.hasSelection() && context.selection == entity;
 
-  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                             ImGuiTreeNodeFlags_SpanFullWidth;
+  // A click selects, the arrow opens, and a double-click frames the entity
+  // and opens or closes it (handled below); AllowOverlap lets the focus
+  // button on the row take clicks.
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth |
+                             ImGuiTreeNodeFlags_AllowOverlap;
   if (!hasChildren)
     flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
   if (selected)
@@ -135,11 +157,31 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
   if (m_reveal.contains(entity.getId()))
     ImGui::SetNextItemOpen(true);
 
+  // Prefab instances in sage (their parts a little softer), missing ones red.
+  std::optional<ImVec4> color;
+  if (entity.hasComponent<sfs::MissingPrefabComponent>())
+    color = ImVec4(1.0f, 0.55f, 0.45f, 1.0f);
+  else if (entity.hasComponent<sfs::PrefabInstanceComponent>())
+    color = ImGui::ColorConvertU32ToFloat4(theme::kAccent);
+  else if (entity.hasComponent<sfs::PrefabLinkComponent>())
+    color = ImVec4(0.67f, 0.84f, 0.63f, 0.75f);
+  if (color)
+    ImGui::PushStyleColor(ImGuiCol_Text, *color);
   const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  if (color)
+    ImGui::PopStyleColor();
+  const bool rowHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
   if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
   {
     context.selection = entity;
     m_shownSelection = entity.getId(); // picked here: already in view
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+    {
+      // Frames it, and opens (or closes) it to show what's inside.
+      context.focusRequest = entity;
+      if (hasChildren)
+        ImGui::TreeNodeSetOpen(ImGui::GetItemID(), !open);
+    }
   }
   else if (selected && m_scrollToSelection)
     ImGui::SetScrollHereY(0.5f);
@@ -159,12 +201,19 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
         sfs::hierarchy::parentOf(dragged) != entity &&
         ImGui::AcceptDragDropPayload(kEntityPayload))
       m_pending = {PendingEdit::Kind::Reparent, dragged, entity};
+    // A prefab from the Assets panel: placed as a child.
+    if (const std::string prefab = draggedPrefab(context);
+        !prefab.empty() && ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
+      m_pending = {PendingEdit::Kind::Place, {}, entity, prefab};
     ImGui::EndDragDropTarget();
   }
 
   if (ImGui::BeginPopupContextItem())
   {
     context.selection = entity;
+    if (ImGui::MenuItem("Focus", "F"))
+      context.focusRequest = entity;
+    ImGui::Separator();
     if (ImGui::BeginMenu("Create Child"))
     {
       drawCreateMenu(context, entity);
@@ -172,13 +221,48 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
     }
     if (ImGui::MenuItem("Unparent", nullptr, false, sfs::hierarchy::parentOf(entity).isValid()))
       m_pending = {PendingEdit::Kind::Reparent, entity, {}};
+    if (ImGui::MenuItem("Create Prefab", nullptr, false, context.assets != nullptr))
+      m_pending = {PendingEdit::Kind::MakePrefab, entity, {}};
+    ImGui::SetItemTooltip("Save it (and everything under it) as a prefab in prefabs/; "
+                          "or drag it into the Assets panel");
     ImGui::Separator();
     if (ImGui::MenuItem("Delete"))
       m_pending = {PendingEdit::Kind::Delete, entity, {}};
     ImGui::EndPopup();
   }
 
+  if (rowHovered || selected)
+    drawFocusButton(context, entity);
+
   return open && hasChildren;
+}
+
+void HierarchyPanel::drawFocusButton(EditorContext& context, const sfs::Entity& entity)
+{
+  // A small crosshair at the row's right end.
+  const float size = ImGui::GetFrameHeight() * 0.8f;
+  const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+  const ImVec2 at(rowMax.x - size - ImGui::GetStyle().FramePadding.x,
+                  rowMin.y + (rowMax.y - rowMin.y - size) * 0.5f);
+  const ImVec2 cursor = ImGui::GetCursorScreenPos();
+  ImGui::SetCursorScreenPos(at);
+  if (ImGui::InvisibleButton("focus", ImVec2(size, size)))
+    context.focusRequest = entity;
+  const bool hovered = ImGui::IsItemHovered();
+  ImGui::SetItemTooltip("Focus: frame it in the viewport (F, or double-click)");
+  ImGui::SetCursorScreenPos(cursor);
+
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  const ImVec2 centre(at.x + size * 0.5f, at.y + size * 0.5f);
+  const ImU32 color = hovered ? theme::kAccent : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+  if (hovered)
+    draw->AddCircleFilled(centre, size * 0.5f, theme::kAccentSoft);
+  draw->AddCircle(centre, size * 0.28f, color, 0, 1.5f);
+  for (const ImVec2 direction : {ImVec2(1, 0), ImVec2(-1, 0), ImVec2(0, 1), ImVec2(0, -1)})
+    draw->AddLine(ImVec2(centre.x + direction.x * size * 0.18f, centre.y + direction.y * size * 0.18f),
+                  ImVec2(centre.x + direction.x * size * 0.45f, centre.y + direction.y * size * 0.45f),
+                  color,
+                  1.5f);
 }
 
 void HierarchyPanel::drawDropBelow(EditorContext& context)
@@ -196,6 +280,9 @@ void HierarchyPanel::drawDropBelow(EditorContext& context)
     if (dragged.isValid() && sfs::hierarchy::parentOf(dragged).isValid() &&
         ImGui::AcceptDragDropPayload(kEntityPayload))
       m_pending = {PendingEdit::Kind::Reparent, dragged, {}};
+    if (const std::string prefab = draggedPrefab(context);
+        !prefab.empty() && ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload))
+      m_pending = {PendingEdit::Kind::Place, {}, {}, prefab};
     ImGui::EndDragDropTarget();
   }
 
@@ -209,6 +296,12 @@ void HierarchyPanel::drawDropBelow(EditorContext& context)
 void HierarchyPanel::applyPendingEdit(EditorContext& context)
 {
   const PendingEdit edit = std::exchange(m_pending, {});
+  if (edit.kind == PendingEdit::Kind::Place)
+  {
+    prefabs::place(context, edit.prefab, edit.parent.isValid() && edit.parent.isAlive() ? edit.parent : sfs::Entity());
+    m_shownSelection = UINT32_MAX; // reveal it
+    return;
+  }
   if (!edit.entity.isValid() || !edit.entity.isAlive())
     return;
 
@@ -235,6 +328,11 @@ void HierarchyPanel::applyPendingEdit(EditorContext& context)
           context.scene->destroyBranch(edit.entity);
         });
     break;
+  case PendingEdit::Kind::MakePrefab:
+    prefabs::create(context, edit.entity, "prefabs");
+    break;
+  case PendingEdit::Kind::Place:
+    break; // handled above
   }
 }
 

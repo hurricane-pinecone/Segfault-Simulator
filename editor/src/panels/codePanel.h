@@ -31,6 +31,9 @@ public:
   /** Open a file in Neovim, showing and focusing the panel. */
   void openFile(const std::filesystem::path& file);
 
+  /** True once after a script was saved in the panel (so the game can be rebuilt). */
+  bool takeScriptSaved() { return m_nvim.takeScriptSaved(); }
+
   void update(EditorContext& context) override;
 
 protected:

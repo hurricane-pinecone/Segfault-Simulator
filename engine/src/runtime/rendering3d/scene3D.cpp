@@ -30,6 +30,16 @@ PhysicsSystem3D* Scene3D::physicsSystem()
 
 void Scene3D::onUpdate(double)
 {
+  // Models loaded in the background since: their stand-ins become them.
+  AssetStore& store = assetStore();
+  store.collectLoads();
+  if (store.loadGeneration() != m_seenLoads)
+  {
+    m_seenLoads = store.loadGeneration();
+    if (m_render)
+      m_render->meshes().fulfilPending();
+  }
+
 #ifdef SFS_HAS_PHYSICS
   PhysicsSystem3D* physics = physicsSystem();
   if (!physics || !physics->enabled())
@@ -44,14 +54,25 @@ void Scene3D::onUpdate(double)
 #endif
 }
 
+SceneSerializer Scene3D::serializer()
+{
+  SceneSerializer out(reflect::types(), &m_render->meshes());
+  AssetStore& store = assetStore();
+  out.setPrefabSource([&store](std::string_view name) -> std::optional<nlohmann::json>
+                      {
+                        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+                        return asset && asset->part.empty() ? store.prefab(asset->model) : std::nullopt;
+                      });
+  return out;
+}
+
 bool Scene3D::play(const std::filesystem::path& file)
 {
   for (const Entity& entity : entities())
     destroyEntity(entity);
   flushEntities();
 
-  const SceneSerializer serializer(reflect::types(), &m_render->meshes());
-  if (!serializer.loadFile(file, *this, &m_gameSystems))
+  if (!serializer().loadFile(file, *this, &m_gameSystems))
     return false;
   flushEntities();
   startScripts(*this, m_gameSystems, &m_render->meshes());
@@ -85,18 +106,47 @@ MeshLibrary::Provider Scene3D::modelMeshes()
   AssetStore& store = assetStore();
   MeshLibrary::Provider provider;
 
-  provider.load = [&store](MeshLibrary& library, std::string_view name) -> MeshHandle
+  // A model's mesh by name: the whole model, or one of its parts.
+  const auto meshIn = [](const ModelData& model, std::string_view part) -> const MeshData*
+  {
+    if (part.empty())
+      return &model.whole;
+    for (const ModelPart& candidate : model.parts)
+      if (candidate.name == part)
+        return &candidate.mesh;
+    return nullptr;
+  };
+
+  // With background loading on (an editor), a model not yet loaded gives a
+  // stand-in now, and its mesh once it has loaded (fulfilPending).
+  provider.load = [&store, meshIn](MeshLibrary& library, std::string_view name) -> MeshHandle
   {
     const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
-    const ModelData* model = asset ? store.model(asset->model) : nullptr;
-    if (!model)
+    if (!asset)
       return {};
-    if (asset->part.empty())
-      return library.add(model->whole, std::string(name));
-    for (const ModelPart& part : model->parts)
-      if (part.name == asset->part)
-        return library.add(part.mesh, std::string(name));
-    return {};
+    const ModelData* model = nullptr;
+    switch (store.requestModel(asset->model, &model))
+    {
+    case AssetStore::LoadState::Loading:
+      return library.pending(name);
+    case AssetStore::LoadState::Failed:
+      return {};
+    case AssetStore::LoadState::Loaded:
+      break;
+    }
+    const MeshData* mesh = meshIn(*model, asset->part);
+    return mesh ? library.add(*mesh, std::string(name)) : MeshHandle{};
+  };
+
+  provider.loaded = [&store, meshIn](std::string_view name, bool& waiting) -> const MeshData*
+  {
+    const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+    if (!asset)
+      return nullptr;
+    const ModelData* model = nullptr;
+    const AssetStore::LoadState state = store.requestModel(asset->model, &model);
+    waiting = state == AssetStore::LoadState::Loading;
+    return model ? meshIn(*model, asset->part) : nullptr;
   };
 
   provider.label = [&store](std::string_view name) -> std::string

@@ -6,6 +6,7 @@
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/unresolvedComponents.h"
 #include "glm/glm/ext/quaternion_float.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -385,7 +386,7 @@ json SceneSerializer::saveEntity(Scene& scene, const Entity& entity) const
   return saveSubtree(entity, hierarchy::EntityTree(scene.entities()));
 }
 
-json SceneSerializer::saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree) const
+json SceneSerializer::saveComponents(const Entity& entity) const
 {
   json components = json::object();
   for (const reflect::TypeInfo& type : m_types.types())
@@ -405,14 +406,30 @@ json SceneSerializer::saveSubtree(const Entity& entity, const hierarchy::EntityT
          entity.getComponent<UnresolvedComponents>().components.items())
       if (!components.contains(name))
         components[name] = fields;
-
-  json children = json::array();
-  for (const Entity& child : tree.children(entity))
-    children.push_back(saveSubtree(child, tree));
-  if (!children.empty())
-    components[kChildrenKey] = std::move(children);
-
   return components;
+}
+
+json SceneSerializer::saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree, bool ids) const
+{
+  // An instance whose prefab didn't load goes back out as it was read.
+  if (entity.hasComponent<MissingPrefabComponent>())
+    return entity.getComponent<MissingPrefabComponent>().entry;
+
+  json entry;
+  if (entity.hasComponent<PrefabInstanceComponent>())
+    entry = instanceEntry(entity, tree); // the prefab, and how this one differs
+  else
+  {
+    entry = saveComponents(entity);
+    json children = json::array();
+    for (const Entity& child : tree.children(entity))
+      children.push_back(saveSubtree(child, tree, ids));
+    if (!children.empty())
+      entry[kChildrenKey] = std::move(children);
+  }
+  if (ids && entity.hasComponent<PrefabLinkComponent>())
+    entry["$id"] = entity.getComponent<PrefabLinkComponent>().id;
+  return entry;
 }
 
 Entity SceneSerializer::loadEntity(const json& entry, Scene& scene, const Entity& parent) const
@@ -425,16 +442,34 @@ Entity SceneSerializer::loadEntity(const json& entry,
                                    const Entity& parent,
                                    std::set<std::string>* unresolvedTypes) const
 {
+  if (entry.is_object() && entry.contains("$prefab"))
+    return loadInstance(entry, scene, parent, unresolvedTypes);
+
   Entity entity = scene.createEntity();
   if (parent.isValid())
     hierarchy::setParent(entity, parent);
   if (!entry.is_object())
     return entity;
+  loadComponents(entry, entity, unresolvedTypes);
 
+  // After the parent's components, so children are created (and get ids)
+  // after it, in saved order.
+  if (const auto children = entry.find(kChildrenKey);
+      children != entry.end() && children->is_array())
+    for (const json& child : *children)
+      if (child.is_object())
+        loadEntity(child, scene, entity, unresolvedTypes);
+  return entity;
+}
+
+void SceneSerializer::loadComponents(const json& entry,
+                                     Entity& entity,
+                                     std::set<std::string>* unresolvedTypes) const
+{
   json unresolved = json::object();
   for (const auto& [typeName, fields] : entry.items())
   {
-    if (typeName == kChildrenKey)
+    if (typeName == kChildrenKey || typeName.starts_with('$'))
       continue;
     const reflect::TypeInfo* type = m_types.find(typeName);
     if (!type || type->kind != reflect::TypeKind::Component)
@@ -455,15 +490,6 @@ Entity SceneSerializer::loadEntity(const json& entry,
         unresolvedTypes->insert(typeName);
     entity.addComponent<UnresolvedComponents>(UnresolvedComponents{std::move(unresolved)});
   }
-
-  // After the parent's components, so children are created (and get ids)
-  // after it, in saved order.
-  if (const auto children = entry.find(kChildrenKey);
-      children != entry.end() && children->is_array())
-    for (const json& child : *children)
-      if (child.is_object())
-        loadEntity(child, scene, entity, unresolvedTypes);
-  return entity;
 }
 
 json SceneSerializer::save(Scene& scene, const std::vector<std::string>& gameSystems) const

@@ -4,6 +4,7 @@
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -58,7 +59,15 @@ void ViewportCamera::apply(sfs::Camera3D& camera,
   }
 }
 
-void ViewportCamera::focus(sfs::Camera3D& camera, const glm::vec3& point) const
+void ViewportCamera::focus(sfs::Camera3D& camera, const sfs::Aabb& bounds) const
 {
-  camera.target = point;
+  if (bounds.empty())
+    return;
+  // Fit a sphere round the box into the view, with some room around it.
+  constexpr float kMargin = 1.3f;
+  const float radius = std::max(glm::length(bounds.extents()), 0.25f);
+  camera.target = bounds.center();
+  camera.distance =
+      glm::clamp(radius * kMargin / std::sin(camera.fieldOfView * 0.5f), kMinDistance, kMaxDistance);
+  camera.orthoHeight = glm::clamp(radius * 2.0f * kMargin, kMinDistance, kMaxDistance);
 }

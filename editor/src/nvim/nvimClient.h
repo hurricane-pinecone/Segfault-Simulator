@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 class BuildEnvironment;
@@ -67,6 +68,9 @@ public:
   /** Open a file (an editor path) in the current window. */
   void open(const std::filesystem::path& file);
 
+  /** True once after a file in the project's scripts/ was saved (the config reports it). */
+  bool takeScriptSaved() { return std::exchange(m_scriptSaved, false); }
+
 private:
   // Fire-and-forget: Neovim's replies are only checked for errors.
   void request(const std::string& method, const msgpack::Array& params);
@@ -76,6 +80,7 @@ private:
   const BuildEnvironment& m_environment;
   std::unique_ptr<ChildProcess> m_process;
   NvimScreen m_screen;
+  bool m_scriptSaved = false;
   int m_columns = 0;
   int m_rows = 0;
   uint32_t m_nextRequestId = 1;

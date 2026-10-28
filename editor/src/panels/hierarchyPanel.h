@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace sfs::hierarchy
@@ -36,12 +37,15 @@ private:
     enum class Kind
     {
       None,
-      Reparent, // `entity` under `parent` (invalid: a root)
-      Delete,   // `entity` and its children
+      Reparent,   // `entity` under `parent` (invalid: a root)
+      Delete,     // `entity` and its children
+      MakePrefab, // `entity`'s branch into a new prefab
+      Place,      // an instance of `prefab` under `parent` (invalid: a root)
     };
     Kind kind = Kind::None;
     sfs::Entity entity;
     sfs::Entity parent;
+    std::string prefab;
   };
 
   void drawTree(EditorContext& context,
@@ -50,6 +54,8 @@ private:
 
   // One row: the entity's tree node, plus its drag and drop and context menu.
   // @return true if it's open with children to draw (the caller pops it).
+  // The row's focus button (frames the entity in the viewport).
+  void drawFocusButton(EditorContext& context, const sfs::Entity& entity);
   bool drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren);
 
   void drawDropBelow(EditorContext& context);
@@ -58,6 +64,8 @@ private:
 
   std::string m_filter;
   uint32_t m_shownSelection = UINT32_MAX; // the selection the list last scrolled to
+  const void* m_shownScene = nullptr;     // the scene it's for
+  std::unordered_map<const void*, uint32_t> m_shownSelections; // other scenes
   bool m_scrollToSelection = false;
   std::unordered_set<uint32_t> m_reveal; // ids to open this frame (the selection's parents)
   PendingEdit m_pending;

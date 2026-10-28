@@ -97,6 +97,8 @@ AssetKind assetKindOf(const fs::path& file)
     return AssetKind::Model;
   if (any({".mat"}))
     return AssetKind::Material;
+  if (any({".prefab"}))
+    return AssetKind::Prefab;
   if (any({".ttf", ".otf"}))
     return AssetKind::Font;
   if (any({".wav", ".ogg", ".mp3", ".flac"}))
@@ -116,6 +118,8 @@ const char* assetKindName(AssetKind kind)
     return "Model";
   case AssetKind::Material:
     return "Material";
+  case AssetKind::Prefab:
+    return "Prefab";
   case AssetKind::Font:
     return "Font";
   case AssetKind::Audio:
@@ -130,7 +134,8 @@ const char* assetKindName(AssetKind kind)
 
 // --- AssetDatabase ------------------------------------------------------------------------
 
-AssetDatabase::AssetDatabase(fs::path root, Mode mode) : m_root(std::move(root)), m_mode(mode)
+AssetDatabase::AssetDatabase(fs::path root, Mode mode, std::vector<fs::path> folders)
+    : m_root(std::move(root)), m_mode(mode), m_scanned(std::move(folders))
 {
   refresh();
 }
@@ -143,14 +148,14 @@ bool AssetDatabase::writable(const char* action) const
   return false;
 }
 
-fs::path AssetDatabase::metaPathFor(const fs::path& file) const
+fs::path AssetDatabase::metaPathFor(const fs::path& file)
 {
   fs::path meta = file;
   meta += kMetaExtension;
   return meta;
 }
 
-std::optional<AssetDatabase::Meta> AssetDatabase::readMeta(const fs::path& file) const
+std::optional<AssetDatabase::Meta> AssetDatabase::readMeta(const fs::path& file)
 {
   std::ifstream in(metaPathFor(file), std::ios::binary);
   if (!in)
@@ -167,7 +172,7 @@ std::optional<AssetDatabase::Meta> AssetDatabase::readMeta(const fs::path& file)
   return meta;
 }
 
-bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta) const
+bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta)
 {
   const json data = {{"formatVersion", kMetaFormatVersion},
                      {"id", meta.id.toString()},
@@ -182,14 +187,24 @@ bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta) const
   return true;
 }
 
-bool AssetDatabase::refresh()
+AssetDatabase::Scan AssetDatabase::scan(const fs::path& root, Mode mode, const std::vector<fs::path>& catalogued)
 {
   std::vector<fs::path> files;
   std::vector<fs::path> folders;
   std::error_code error;
-  if (fs::is_directory(m_root, error))
+  std::vector<fs::path> tops; // where to look
+  if (catalogued.empty())
+    tops.push_back(root);
+  for (const fs::path& folder : catalogued)
+    if (fs::is_directory(root / folder, error))
+    {
+      tops.push_back(root / folder);
+      folders.push_back(folder);
+    }
+  for (const fs::path& top : tops)
   {
-    for (auto it = fs::recursive_directory_iterator(m_root, error);
+    error.clear();
+    for (auto it = fs::recursive_directory_iterator(top, error);
          !error && it != fs::recursive_directory_iterator();
          it.increment(error))
     {
@@ -200,7 +215,7 @@ bool AssetDatabase::refresh()
           it.disable_recursion_pending();
         continue;
       }
-      const fs::path relative = path.lexically_relative(m_root);
+      const fs::path relative = path.lexically_relative(root);
       if (it->is_directory(error))
         folders.push_back(relative);
       else if (!isMeta(path))
@@ -215,11 +230,11 @@ bool AssetDatabase::refresh()
   std::unordered_set<AssetId, AssetIdHash> seen;
   for (const fs::path& relative : files)
   {
-    const fs::path file = m_root / relative;
+    const fs::path file = root / relative;
     std::optional<Meta> meta = readMeta(file);
 
     const bool duplicate = meta && seen.contains(meta->id);
-    if (m_mode == Mode::ReadWrite && (!meta || duplicate))
+    if (mode == Mode::ReadWrite && (!meta || duplicate))
     {
       if (duplicate)
         LOG_INFO("Assets: " + key(relative) + " has another asset's id (a copy?); giving it its own");
@@ -230,7 +245,7 @@ bool AssetDatabase::refresh()
     AssetRecord record;
     record.path = fs::path(key(relative));
     record.kind = assetKindOf(relative);
-    if (meta && !(duplicate && m_mode == Mode::ReadOnly))
+    if (meta && !(duplicate && mode == Mode::ReadOnly))
     {
       record.id = meta->id;
       record.settings = std::move(meta->settings);
@@ -239,18 +254,26 @@ bool AssetDatabase::refresh()
     records.push_back(std::move(record));
   }
 
-  const bool changed =
-      records.size() != m_records.size() ||
-      !std::equal(records.begin(), records.end(), m_records.begin(), sameRecord) || folders != m_folders;
+  return {std::move(records), std::move(folders)};
+}
+
+bool AssetDatabase::apply(Scan scan)
+{
+  const bool changed = scan.records.size() != m_records.size() ||
+                       !std::equal(scan.records.begin(), scan.records.end(), m_records.begin(), sameRecord) ||
+                       scan.folders != m_folders;
   if (changed)
   {
-    m_records = std::move(records);
-    m_folders = std::move(folders);
+    m_records = std::move(scan.records);
+    m_folders = std::move(scan.folders);
     rebuildIndex();
     ++m_version;
   }
   return changed;
 }
+
+bool AssetDatabase::refresh() { return apply(scan()); }
+
 
 void AssetDatabase::rebuildIndex()
 {

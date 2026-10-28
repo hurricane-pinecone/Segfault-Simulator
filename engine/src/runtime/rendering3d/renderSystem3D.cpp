@@ -167,8 +167,10 @@ void RenderSystem3D::submit(const MeshDrawCommand& command)
   if (command.instances.empty() && command.shadowInstances.empty())
     return;
 
-  m_renderer.drawMesh(
-      MeshBatch3D{command.mesh, command.materials, command.instances, command.shadowInstances});
+  // Commands name meshes by library handle; a stand-in that has loaded since
+  // is a different renderer mesh.
+  m_renderer.drawMesh(MeshBatch3D{
+      m_meshes.gpuHandle(command.mesh), command.materials, command.instances, command.shadowInstances});
 
   m_stats.drawCalls += 1;
   m_stats.instances += command.instances.size();

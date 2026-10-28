@@ -44,6 +44,16 @@ public:
    */
   MeshHandle add(const MeshData& mesh, std::string name = {});
 
+  /**
+   * Keep every mesh's vertices on the CPU too (all libraries, from meshes
+   * added after the call), for meshData(). Off by default (it costs memory);
+   * an editor turns it on to draw previews.
+   */
+  static void setKeepVertices(bool keep);
+
+  /** A mesh's data as added (vertices kept only with setKeepVertices), or nothing. */
+  std::optional<MeshData> meshData(MeshHandle mesh) const;
+
   /** @return the mesh's name, or empty if it has none or isn't ours. */
   std::string_view nameOf(MeshHandle mesh) const;
 
@@ -68,6 +78,10 @@ public:
     // Material and texture names it has, each with a label, e.g. for a picker.
     std::function<std::vector<std::pair<std::string, std::string>>()> materials;
     std::function<std::vector<std::pair<std::string, std::string>>()> textures;
+    // For meshes loaded in the background: load() gives a stand-in from
+    // pending() while one loads, and this gives its data once it has
+    // (null while `waiting`, or if it failed).
+    std::function<const MeshData*(std::string_view name, bool& waiting)> loaded;
   };
 
   /** Set (or with {} clear) where meshes this library lacks come from. */
@@ -130,8 +144,26 @@ public:
    */
   MeshHandle missing(std::string_view name);
 
-  /** Whether `mesh` is a stand-in from missing(). */
+  /** Whether `mesh` is a stand-in from missing() (or pending(), still loading). */
   bool isMissing(MeshHandle mesh) const;
+
+  /**
+   * A stand-in for a named mesh being loaded in the background (see
+   * Provider::loaded): like missing(), but fulfilPending() turns it into the
+   * mesh, under the same handle, once it's loaded.
+   */
+  MeshHandle pending(std::string_view name);
+  bool isPending(MeshHandle mesh) const;
+  std::size_t pendingCount() const;
+
+  /** Turn stand-ins whose meshes have loaded into them (Scene3D calls this). */
+  void fulfilPending();
+
+  /**
+   * The renderer's handle for a mesh: the same, except for a stand-in that
+   * has since loaded. Draw commands carry this one.
+   */
+  MeshHandle gpuHandle(MeshHandle mesh) const;
 
   /** Every named mesh (not stand-ins), sorted by name (e.g. for a mesh picker). */
   std::vector<std::pair<MeshHandle, std::string>> named() const;
@@ -154,7 +186,13 @@ private:
     // The triangles, kept for raycasts (e.g. picking where something drops).
     std::vector<glm::vec3> positions;
     std::vector<uint32_t> indices;
+    std::vector<MeshVertex> vertices; // only with setKeepVertices
+    MeshHandle gpu;                   // the renderer's mesh (none while missing)
+    bool pending = false;             // a stand-in loading in the background
   };
+
+  // Fill an entry from mesh data, uploading it.
+  bool fill(Entry& entry, const MeshData& mesh);
 
   // Stand-in ids, from the top of the range so they never meet the renderer's.
   static constexpr uint32_t kMissingIdBase = 0x80000000u;

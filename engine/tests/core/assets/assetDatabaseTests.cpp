@@ -73,6 +73,29 @@ int main()
     CHECK(!reopened.refresh()); // nothing changed
   }
 
+  TEST("a project catalogue should cover only its assets/ and prefabs/ folders")
+  {
+    TempFolder root("sfs_assets_project");
+    touch(root.path / "assets/models/barn.glb");
+    touch(root.path / "prefabs/Fence.prefab");
+    touch(root.path / "scripts/Spin.cpp");
+    touch(root.path / "scenes/farm.scene");
+
+    AssetDatabase database(root.path, AssetDatabase::Mode::ReadWrite, AssetDatabase::projectFolders());
+    CHECK(database.records().size() == 2u);
+    CHECK(database.findByPath("assets/models/barn.glb") != nullptr);
+    const AssetRecord* fence = database.findByPath("prefabs/Fence.prefab");
+    CHECK(fence && fence->kind == AssetKind::Prefab);
+    CHECK(!fs::exists(root.path / "scripts/Spin.cpp.meta")); // not catalogued
+    CHECK(database.folders() == (std::vector<fs::path>{"assets", "assets/models", "prefabs"}));
+
+    // A missing folder is skipped; a shipped game reads it the same way.
+    fs::remove_all(root.path / "prefabs");
+    AssetDatabase shipped(root.path, AssetDatabase::Mode::ReadOnly, AssetDatabase::projectFolders());
+    CHECK(shipped.records().size() == 1u);
+    CHECK(shipped.folders() == (std::vector<fs::path>{"assets", "assets/models"}));
+  }
+
   TEST("moving, renaming and moving folders should keep ids")
   {
     TempFolder root("sfs_assets_move");

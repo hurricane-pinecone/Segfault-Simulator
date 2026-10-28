@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/rendering/3d/aabb.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 
@@ -10,7 +11,7 @@ struct Camera3D;
 
 // Editor viewport navigation for a Camera3D, in the style of DCC tools:
 // right-drag orbits, middle-drag (or shift+right-drag) pans, the wheel zooms
-// toward the target, and focus() frames a point. Driven by the viewport panel
+// toward the target, and focus() frames an object. Driven by the viewport panel
 // only while the mouse is over it.
 class ViewportCamera
 {
@@ -26,6 +27,9 @@ public:
   /** Apply one frame of input. `viewportHeight` scales panning to pixels. */
   void apply(sfs::Camera3D& camera, const Input& input, float viewportHeight) const;
 
-  /** Re-target the camera on `point`, keeping its angle. */
-  void focus(sfs::Camera3D& camera, const glm::vec3& point) const;
+  /**
+   * Frame a box: the camera turns its target to the box's centre and moves in
+   * or out until the whole box fits, keeping its angle.
+   */
+  void focus(sfs::Camera3D& camera, const sfs::Aabb& bounds) const;
 };

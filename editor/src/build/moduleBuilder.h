@@ -3,6 +3,7 @@
 #include "build/buildEnvironment.h"
 #include "build/childProcess.h"
 
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -23,6 +24,9 @@ public:
   }
 
   bool busy() const { return m_process != nullptr; }
+
+  /** How far the running build is, 0-100, as the build tool reports it; -1 if it hasn't said. */
+  int percent() const { return m_percent; }
 
   /**
    * Start building `project`'s module.
@@ -49,4 +53,5 @@ private:
   BuildEnvironment m_environment;
   std::vector<std::vector<std::string>> m_steps; // commands still to run
   std::unique_ptr<ChildProcess> m_process;
+  std::atomic<int> m_percent = -1; // written by the output reader thread
 };

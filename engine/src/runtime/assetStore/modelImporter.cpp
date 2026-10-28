@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <set>
@@ -353,6 +354,7 @@ std::optional<ModelData> importModel(const std::filesystem::path& file, const Mo
 
   // Each mesh on its own, when there's more than one to pick from.
   std::set<std::string> taken;
+  std::unordered_map<const cgltf_mesh*, std::string> partOf;
   if (data->meshes_count > 1)
     for (cgltf_size i = 0; i < data->meshes_count; ++i)
     {
@@ -366,8 +368,43 @@ std::optional<ModelData> importModel(const std::filesystem::path& file, const Mo
       taken.insert(part.name);
       appendMesh(data->meshes[i], placement, textures, part.mesh);
       if (!part.mesh.empty())
+      {
+        partOf[&data->meshes[i]] = part.name;
         model.parts.push_back(std::move(part));
+      }
     }
+
+  // The node tree, for placing the parts as entities. Each node's transform
+  // is moved into the engine's space: with M the placement (axes and scale),
+  // M * L * M^-1, so their product down the tree is M * (file's) * M^-1 and a
+  // part (whose vertices are already M * v) lands where the file put it.
+  if (!model.parts.empty())
+  {
+    const glm::mat4 toFile = glm::inverse(placement);
+    const std::function<void(const cgltf_node&, int)> addNode = [&](const cgltf_node& node, int parent)
+    {
+      float local[16];
+      cgltf_node_transform_local(&node, local);
+      ModelNode out;
+      out.name = node.name && *node.name ? node.name : "Node " + std::to_string(model.nodes.size() + 1);
+      out.parent = parent;
+      out.local = placement * glm::make_mat4(local) * toFile;
+      if (node.mesh)
+        if (const auto it = partOf.find(node.mesh); it != partOf.end())
+          out.part = it->second;
+      const int index = static_cast<int>(model.nodes.size());
+      model.nodes.push_back(std::move(out));
+      for (cgltf_size i = 0; i < node.children_count; ++i)
+        addNode(*node.children[i], index);
+    };
+    if (scene)
+      for (cgltf_size i = 0; i < scene->nodes_count; ++i)
+        addNode(*scene->nodes[i], -1);
+    else
+      for (cgltf_size i = 0; i < data->nodes_count; ++i)
+        if (!data->nodes[i].parent)
+          addNode(data->nodes[i], -1);
+  }
 
   if (model.whole.empty())
   {

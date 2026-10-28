@@ -59,6 +59,7 @@ bool ModuleBuilder::start(const Project& project)
                        "-DSFS_CODEGEN_EXECUTABLE=" + m_environment.codegen()});
   m_steps.push_back({"cmake", "--build", build, "--parallel"});
 
+  m_percent = -1;
   LOG_INFO("Building " + project.moduleName() + "...");
   return startNextStep();
 }
@@ -67,8 +68,28 @@ bool ModuleBuilder::startNextStep()
 {
   // Build output is text: log it line by line, errors highlighted.
   auto lines = std::make_shared<LineSplitter>(
-      [](const std::string& line)
+      [this](const std::string& line)
       {
+        // CMake's generators start lines with "[ 42%]" as they go.
+        if (const std::size_t open = line.find('['), close = line.find("%]");
+            open != std::string::npos && close != std::string::npos && open < close)
+        {
+          int value = 0;
+          bool digits = false;
+          for (std::size_t i = open + 1; i < close; ++i)
+            if (line[i] >= '0' && line[i] <= '9')
+            {
+              value = value * 10 + (line[i] - '0');
+              digits = true;
+            }
+            else if (line[i] != ' ')
+            {
+              digits = false;
+              break;
+            }
+          if (digits && value <= 100)
+            m_percent = value;
+        }
         if (looksLikeError(line))
           LOG_ERROR(line);
         else if (!line.empty())

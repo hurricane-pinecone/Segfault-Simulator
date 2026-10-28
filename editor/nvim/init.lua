@@ -8,6 +8,80 @@
 --   g:sfs_nvim_mode             "auto" | "engine"
 --   g:sfs_project_root          the project folder
 
+-- Finding files and searching text look in the project's scripts/ folder (the
+-- code you write), not the whole project (assets, builds). For the pickers a
+-- config of your own brings (Telescope, or LazyVim's), on its usual keys,
+-- set once it has finished setting up. Turn it off with
+-- `vim.g.sfs_scripts_pickers = false` in your config.
+local function scope_pickers_to_scripts()
+  local function scripts()
+    local root = vim.g.sfs_project_root
+    if not root or root == "" then
+      return nil
+    end
+    local folder = root .. "/scripts"
+    return vim.uv.fs_stat(folder) and folder or root
+  end
+  local function find_files()
+    local ok, telescope = pcall(require, "telescope.builtin")
+    if ok then
+      telescope.find_files({ cwd = scripts(), prompt_title = "Find in scripts" })
+    elseif _G.Snacks and Snacks.picker then
+      Snacks.picker.files({ cwd = scripts() })
+    end
+  end
+  local function grep()
+    -- LazyVim's own picker first (what its grep key used), then Snacks, then
+    -- Telescope.
+    if _G.LazyVim and LazyVim.pick then
+      LazyVim.pick("live_grep", { cwd = scripts() })()
+    elseif _G.Snacks and Snacks.picker then
+      Snacks.picker.grep({ cwd = scripts() })
+    else
+      local ok, telescope = pcall(require, "telescope.builtin")
+      if ok then
+        telescope.live_grep({ cwd = scripts(), prompt_title = "Grep in scripts" })
+      end
+    end
+  end
+  local function apply()
+    if vim.g.sfs_scripts_pickers == false then
+      return
+    end
+    local map = vim.keymap.set
+    map("n", "<leader>ff", find_files, { desc = "Find files (scripts)" })
+    map("n", "<leader><space>", find_files, { desc = "Find files (scripts)" })
+    map("n", "<leader>sg", grep, { desc = "Grep (scripts)" })
+    map("n", "<leader>/", grep, { desc = "Grep (scripts)" })
+  end
+  -- LazyVim (lazy.nvim) sets its keys on VeryLazy: after those, so these win.
+  if package.loaded["lazy"] then
+    vim.api.nvim_create_autocmd("User", { pattern = "VeryLazy", once = true, callback = apply })
+  else
+    vim.api.nvim_create_autocmd("VimEnter", { once = true, callback = apply })
+  end
+end
+
+-- Saving a file in the project's scripts/ tells the editor, which rebuilds the
+-- game (and carries saved values over to renamed fields).
+local function report_script_saves()
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = vim.api.nvim_create_augroup("sfs_script_saves", { clear = true }),
+    callback = function(args)
+      local root = vim.g.sfs_project_root
+      if not root or root == "" then
+        return
+      end
+      local file = vim.fs.normalize(vim.fn.fnamemodify(args.file, ":p"))
+      local scripts = vim.fs.normalize(root .. "/scripts") .. "/"
+      if file:sub(1, #scripts) == scripts then
+        vim.rpcnotify(0, "sfs_script_saved", file)
+      end
+    end,
+  })
+end
+report_script_saves()
+
 -- "Auto": defer to the user's own config when there is one. Their config can
 -- check vim.g.sfs_editor to slim itself down inside the editor.
 if vim.g.sfs_nvim_mode == "auto" then
@@ -16,10 +90,12 @@ if vim.g.sfs_nvim_mode == "auto" then
   if vim.uv.fs_stat(user_init) then
     vim.env.MYVIMRC = user_init
     dofile(user_init)
+    scope_pickers_to_scripts()
     return
   elseif vim.uv.fs_stat(user_vimrc) then
     vim.env.MYVIMRC = user_vimrc
     vim.cmd.source(vim.fn.fnameescape(user_vimrc))
+    scope_pickers_to_scripts()
     return
   end
 end

@@ -30,6 +30,7 @@ void EditorHistory::endChange()
     if (m_undo.size() > kMaxSteps)
       m_undo.pop_front();
     m_redo.clear();
+    ++m_revision;
   }
   m_pendingBefore.reset();
 }
@@ -42,6 +43,7 @@ void EditorHistory::undo()
   m_undo.pop_back();
   apply(step.before, step.selectionBefore);
   m_redo.push_back(std::move(step));
+  ++m_revision;
 }
 
 void EditorHistory::redo()
@@ -52,6 +54,17 @@ void EditorHistory::redo()
   m_redo.pop_back();
   apply(step.after, step.selectionAfter);
   m_undo.push_back(std::move(step));
+  ++m_revision;
+}
+
+void EditorHistory::rewrite(const std::function<void(nlohmann::json&)>& edit)
+{
+  for (std::deque<Step>* steps : {&m_undo, &m_redo})
+    for (Step& step : *steps)
+    {
+      edit(step.before);
+      edit(step.after);
+    }
 }
 
 void EditorHistory::clear()

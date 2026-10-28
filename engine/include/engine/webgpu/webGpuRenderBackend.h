@@ -84,6 +84,7 @@ private:
   bool m_imguiReady = false;
   // Set when this frame drew ImGui, so endFrame renders the detached panels.
   bool m_imguiRendered = false;
+  bool m_shown = false; // the window, after the first frame
 };
 
 } // namespace sfs

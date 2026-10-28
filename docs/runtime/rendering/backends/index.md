@@ -52,6 +52,28 @@ It also hosts Dear ImGui with docking and multi-viewport enabled, so a debug or
 tool panel can dock into the main window or be dragged out into its own OS
 window. `imguiAvailable()` reports true for this backend.
 
+The window opens hidden and shows once the first frame is drawn, so it never
+sits black while the GPU is set up.
+
+### Frame rate
+
+By default it presents without waiting for the display (Mailbox, else
+Immediate), so frame timings show what the GPU can do. To cap the frame rate at
+the display's refresh rate (vsync), as the editor does, ask before the backend
+initialises, in your game's `makeRenderBackend()`:
+
+```cpp
+std::unique_ptr<sfs::IRenderBackend> MyGame::makeRenderBackend()
+{
+  auto backend = std::make_unique<sfs::WebGpuRenderBackend>();
+  backend->context().setVsync(true);
+  return backend;
+}
+```
+
+Panels dragged out into their own windows present without waiting: the main
+window already paces the frame.
+
 ### Rendering the scene off-window
 
 `setSceneTarget(WebGpuRenderTarget*)` redirects the 3D scene into an offscreen

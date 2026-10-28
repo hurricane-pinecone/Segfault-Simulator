@@ -8,7 +8,7 @@ void Panel::draw(EditorContext& context)
     return;
 
   beforeBegin();
-  if (ImGui::Begin(m_title, &m_open, windowFlags()))
+  if (ImGui::Begin(m_title.c_str(), &m_open, windowFlags()))
     drawContents(context);
   ImGui::End();
 }

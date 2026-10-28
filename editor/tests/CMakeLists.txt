@@ -29,3 +29,6 @@ add_editor_test(gameExporterTests gameExporterTests.cpp
     "${EDITOR_SRC_DIR}/build/gameExporter.cpp"
     "${EDITOR_SRC_DIR}/project/project.cpp")
 target_link_libraries(gameExporterTests PRIVATE sfs::engine)
+
+add_editor_test(fieldMigrationTests fieldMigrationTests.cpp "${EDITOR_SRC_DIR}/scripting/fieldMigration.cpp")
+target_link_libraries(fieldMigrationTests PRIVATE sfs::engine-core)

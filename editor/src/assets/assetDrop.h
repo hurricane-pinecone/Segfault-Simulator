@@ -17,6 +17,12 @@ namespace assetDrop
 // An Assets-panel drag: the dragged file's absolute path, NUL-terminated.
 inline constexpr const char* kAssetPayload = "SFS_ASSET_PATH";
 
+// A Hierarchy drag: the dragged entity's id (sfs::Entity::EntityId).
+inline constexpr const char* kEntityPayload = "SFS_ENTITY";
+
+/** Whether the asset can be placed in the scene: a prefab (or a model). */
+bool placeable(const sfs::AssetRecord& record);
+
 /** The asset a drag carries, or null (not an asset drag, or not in `assets`). */
 const sfs::AssetRecord* draggedAsset(const ImGuiPayload* payload, const sfs::AssetDatabase& assets);
 

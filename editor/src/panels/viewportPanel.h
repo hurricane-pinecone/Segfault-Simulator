@@ -9,7 +9,9 @@
 
 #include "imgui.h"
 
+#include <functional>
 #include <optional>
+#include <string>
 
 namespace sfs
 {
@@ -27,17 +29,36 @@ class WebGpuRenderBackend;
 //     default),
 //   - camera navigation (right-drag orbit, middle-drag pan, wheel zoom, F to
 //     frame the selection).
+//
+// The editor can show several scenes (the scene, prefabs being edited), each
+// in its own viewport; one is active at a time: the context is its scene, and
+// it renders. The others show their last frame, and ask to become active when
+// focused (a click, or their tab).
 class ViewportPanel : public Panel
 {
 public:
-  explicit ViewportPanel(sfs::WebGpuRenderBackend& backend);
+  explicit ViewportPanel(sfs::WebGpuRenderBackend& backend, std::string title = "Viewport");
   ~ViewportPanel() override;
 
   void update(EditorContext& context) override;
 
+  /** Render the active scene into this viewport (the app switches the context). */
+  void setActive(bool active);
+  bool active() const { return m_active; }
+  /** True once after the inactive viewport was focused. */
+  bool takeActivationRequest() { return std::exchange(m_activationRequested, false); }
+
+  /** Extra controls on the toolbar, after its own (e.g. a prefab's Apply). */
+  void setToolbarExtras(std::function<void(EditorContext&)> extras) { m_toolbarExtras = std::move(extras); }
+  /** Mark the tab as having unsaved changes. */
+  void setUnsaved(bool unsaved) { m_unsaved = unsaved; }
+  /** On its first appearance, tab into the dock node of the window called `window`. */
+  void dockWith(std::string window) { m_dockWith = std::move(window); }
+
 protected:
   void drawContents(EditorContext& context) override;
   int windowFlags() const override;
+  void beforeBegin() override;
 
 private:
   enum class Tool
@@ -71,6 +92,9 @@ private:
   void dropAsset(EditorContext& context, const View& view);
   void navigate(EditorContext& context, float viewportHeight);
   void drawSelectionOutline(const EditorContext& context, const View& view) const;
+  // An entity's world bounds with everything below it (a marker box if
+  // there's no mesh in its branch).
+  std::optional<sfs::Aabb> branchBounds(const EditorContext& context, const sfs::Entity& entity) const;
   // An entity's bounds as a box outline.
   void drawOutline(const EditorContext& context,
                    const View& view,
@@ -92,6 +116,12 @@ private:
   bool m_snap = false;
   bool m_gizmosInEdit = true;
   bool m_gizmosInPlay = false;
+
+  bool m_active = false;
+  bool m_activationRequested = false;
+  bool m_unsaved = false;
+  std::function<void(EditorContext&)> m_toolbarExtras;
+  std::string m_dockWith;
 
   // The panel's image size from the last draw; the target takes it on the next
   // update, before the scene renders into it.

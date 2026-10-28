@@ -122,6 +122,15 @@ protected:
   virtual bool sceneReceivesInput() const { return true; }
 
   /**
+   * Whether the scene gets mouse presses and the wheel (on top of
+   * sceneReceivesInput()). Always, by default; the editor passes them on only
+   * while the pointer is over the game's view, so scrolling another panel
+   * doesn't zoom the game's camera. Releases always get through, so a drag
+   * that ends outside doesn't leave a button held.
+   */
+  virtual bool sceneReceivesMouse() const { return true; }
+
+  /**
    * Where the current scene is drawn. The whole window, by default; a host that
    * draws it into part of its UI (the editor's viewport) says where.
    */

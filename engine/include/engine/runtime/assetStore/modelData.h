@@ -2,6 +2,7 @@
 
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/rendering/3d/mesh.h"
+#include "glm/glm/ext/matrix_float4x4.hpp"
 
 #include <optional>
 #include <string>
@@ -19,14 +20,30 @@ struct ModelPart
 };
 
 /**
+ * One node of a model's tree, as the file arranges it: placed relative to its
+ * parent (already in the engine's axes and import scale), drawing one of the
+ * model's parts or nothing.
+ */
+struct ModelNode
+{
+  std::string name;
+  int parent = -1;             // index into ModelData::nodes; -1: a top node
+  glm::mat4 local{1.0f};       // relative to its parent
+  std::string part;            // the ModelPart it draws; empty: none
+};
+
+/**
  * A model asset's geometry, converted to the engine's conventions (Z up,
  * counter-clockwise, linear colours): the whole model as its file places it,
- * plus each of its meshes on its own when it has more than one.
+ * plus each of its meshes on its own when it has more than one, and then its
+ * node tree (parents before children), so it can be placed as a tree of
+ * entities (e.g. to turn one part, like a windmill's sails).
  */
 struct ModelData
 {
   MeshData whole;
   std::vector<ModelPart> parts;
+  std::vector<ModelNode> nodes; // only with parts
 };
 
 /**

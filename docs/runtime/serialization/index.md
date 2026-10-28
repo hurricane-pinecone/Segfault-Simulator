@@ -87,6 +87,46 @@ sfs::Entity copy = serializer.loadEntity(serializer.saveEntity(scene, lamp),
                                          sfs::hierarchy::parentOf(lamp));
 ```
 
+## Prefabs
+
+A prefab is a saved branch of entities that scenes place copies of. A
+`.prefab` file holds one entry, in the scene-file form, with a `"$id"` on each
+entity below the root (unique in the file):
+
+```json
+{ "formatVersion": 1,
+  "root": { "NameComponent": { "name": "Fence" }, "Transform3DComponent": { ... },
+            "children": [ { "$id": 1, "MeshRendererComponent": { ... }, ... } ] } }
+```
+
+A copy (an *instance*) is saved as the prefab and how it differs from it:
+
+```json
+{ "$prefab": "asset:99f82e199edf433a8766a309dc98d973",
+  "$overrides": { "": { "Transform3DComponent": { "position": [3, 1, 0] } },
+                  "1": { "MeshRendererComponent": { "tint": [1, 0, 0, 1] } } },
+  "$removed": [ "2" ],
+  "$added": [ { "$parent": "", "NameComponent": { "name": "Lamp" }, ... } ] }
+```
+
+- **Paths** name an instance's entities by their `$id`: `""` is its root, and
+  `"3/7"` is entity 7 of the prefab placed as entity 3 (prefabs nest).
+- **Overrides** are JSON merge patches of an entity's components: only the
+  fields that differ (`null` removes a component). They're worked out when
+  saving, by comparing each entity with what the prefab alone gives, so any
+  change is kept; editing the prefab changes every copy except where a copy
+  overrides it.
+- **A model is a prefab too**: `$prefab` naming a model asset places its node
+  tree, each node an entity with its part.
+- An instance whose prefab can't be read loads as a placeholder and is saved
+  back unchanged; a prefab containing itself is left out (logged).
+
+`SceneSerializer::instantiate`, `savePrefab` and `instanceEntry` do this from
+code; `setPrefabSource` says where prefabs come from (`Scene3D::serializer()`
+reads them through the asset store). At runtime an instance's root has a
+`PrefabInstanceComponent`, and each entity from a prefab a
+`PrefabLinkComponent` with its `$id`.
+
 ## Version control
 
 Scene files are designed to be committed:

@@ -1,7 +1,7 @@
 # Asset database
 
-`AssetDatabase` is the catalogue of a project's asset files: everything under
-its `assets/` folder. Each file gets a stable **asset id**, kept in a small
+`AssetDatabase` is the catalogue of a project's asset files: everything in
+its `assets/` and `prefabs/` folders. Each file gets a stable **asset id**, kept in a small
 `.meta` file beside it, so the asset keeps its identity when it's renamed or
 moved. It's in engine-core and knows nothing about rendering, so 2D,
 isometric and 3D games, the editor and tools all share it.
@@ -12,8 +12,10 @@ It catalogues files; it doesn't load them. Loading is the
 ```cpp
 #include "engine/core/assets/assetDatabase.h"
 
-sfs::AssetDatabase assets("MyGame/assets");             // the editor: read-write
-const sfs::AssetRecord* barn = assets.findByPath("models/barn.glb");
+// The editor, read-write; paths are relative to the project.
+sfs::AssetDatabase assets("MyGame", sfs::AssetDatabase::Mode::ReadWrite,
+                          sfs::AssetDatabase::projectFolders()); // assets/, prefabs/
+const sfs::AssetRecord* barn = assets.findByPath("assets/models/barn.glb");
 sfs::AssetId id = barn->id;                             // keep this, not the path
 assets.absolutePath(*assets.find(id));                  // wherever it is now
 ```
@@ -54,7 +56,7 @@ lists every asset sorted by path, and `folders()` lists the folders.
 | Lookup | Returns |
 | --- | --- |
 | `find(id)` | The asset with that id, or null |
-| `findByPath("models/barn.glb")` | The asset at that path (relative to the root), or null |
+| `findByPath("assets/models/barn.glb")` | The asset at that path (relative to the root), or null |
 | `absolutePath(record)` | Where its file is on disk |
 
 Each `AssetRecord` has its `id`, `path`, `kind` and `settings`. The kind comes
@@ -69,16 +71,19 @@ rescan. Each returns false, and logs the reason, on failure.
 
 | Call | Does |
 | --- | --- |
-| `move(id, "props/box.png")` | Moves or renames an asset (creating folders); refuses to overwrite |
-| `moveFolder("props", "world/props")` | Moves or renames a folder with everything in it |
+| `move(id, "assets/props/box.png")` | Moves or renames an asset (creating folders); refuses to overwrite |
+| `moveFolder("assets/props", "assets/world/props")` | Moves or renames a folder with everything in it |
 | `remove(id)` | Deletes an asset |
-| `removeFolder("old")` | Deletes a folder and everything in it |
-| `createFolder("sounds")` | Creates a folder |
-| `import(file, "textures")` | Copies an outside file in as a new asset (taken names get a number: `tree 2.png`) and returns its id |
+| `removeFolder("assets/old")` | Deletes a folder and everything in it |
+| `createFolder("assets/sounds")` | Creates a folder |
+| `import(file, "assets/textures")` | Copies an outside file in as a new asset (taken names get a number: `tree 2.png`) and returns its id |
 | `setSettings(id, json)` | Saves new import settings to its `.meta` |
 
 A shipped game opens the database with `Mode::ReadOnly`. It never writes, and
 the editing calls refuse.
+
+Without a folder list (`AssetDatabase("some/folder")`) it catalogues everything
+under its root, with paths relative to that.
 
 ## How it fits with the AssetStore
 

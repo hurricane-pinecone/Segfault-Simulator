@@ -48,6 +48,7 @@ enum class AssetKind
   Texture, // .png .jpg .jpeg .bmp .tga
   Model,   // .glb .gltf .obj
   Material, // .mat (see MaterialAsset)
+  Prefab,   // .prefab (see SceneSerializer)
   Font,    // .ttf .otf
   Audio,   // .wav .ogg .mp3 .flac
   Data,    // .json (e.g. an Aseprite atlas), .txt, .csv
@@ -61,15 +62,15 @@ const char* assetKindName(AssetKind kind);
 struct AssetRecord
 {
   AssetId id;
-  std::filesystem::path path; // relative to the database's root, e.g. "models/barn.glb"
+  std::filesystem::path path; // relative to the database's root, e.g. "assets/models/barn.glb"
   AssetKind kind = AssetKind::Other;
   nlohmann::json settings = nlohmann::json::object(); // import settings, from the .meta
 };
 
 /**
- * The catalogue of a project's asset files: every file under a root folder
- * (a project's assets/), each with a stable AssetId kept in a sidecar
- * "<file>.meta" next to it. Shared by every kind of game (2D, isometric, 3D)
+ * The catalogue of a project's asset files: every file in some folders of a
+ * root (a project's assets/ and prefabs/), or under the whole root, each with
+ * a stable AssetId kept in a sidecar "<file>.meta" next to it. Shared by every kind of game (2D, isometric, 3D)
  * and by the editor; it knows files, not their contents. Loading what's in
  * them is the AssetStore's job (and the renderers', for GPU copies).
  *
@@ -85,13 +86,22 @@ class AssetDatabase
 public:
   static constexpr const char* kMetaExtension = ".meta";
 
+  /** A game project's catalogued folders: assets/ (models, textures...) and prefabs/. */
+  static std::vector<std::filesystem::path> projectFolders() { return {"assets", "prefabs"}; }
+
   enum class Mode
   {
     ReadWrite, // the editor
     ReadOnly,  // a shipped game
   };
 
-  explicit AssetDatabase(std::filesystem::path root, Mode mode = Mode::ReadWrite);
+  /**
+   * @param folders the root's folders to catalogue (e.g. {"assets",
+   *                "prefabs"} in a project); empty: everything under the root
+   */
+  explicit AssetDatabase(std::filesystem::path root,
+                         Mode mode = Mode::ReadWrite,
+                         std::vector<std::filesystem::path> folders = {});
 
   const std::filesystem::path& root() const { return m_root; }
   Mode mode() const { return m_mode; }
@@ -105,6 +115,24 @@ public:
    */
   bool refresh();
 
+  /**
+   * A refresh in two halves, so the slow one can run on another thread:
+   * scan() reads the folders (and, read-write, writes .meta files for new
+   * ones) touching nothing of a database; apply() takes the result in.
+   */
+  struct Scan
+  {
+    std::vector<AssetRecord> records;
+    std::vector<std::filesystem::path> folders;
+  };
+  static Scan scan(const std::filesystem::path& root, Mode mode, const std::vector<std::filesystem::path>& folders);
+  Scan scan() const { return scan(m_root, m_mode, m_scanned); }
+  /** @return true if the catalogue changed */
+  bool apply(Scan scan);
+
+  /** The folders catalogued (empty: the whole root). */
+  const std::vector<std::filesystem::path>& scannedFolders() const { return m_scanned; }
+
   /** Every asset, sorted by path. */
   const std::vector<AssetRecord>& records() const { return m_records; }
 
@@ -114,7 +142,10 @@ public:
   /** Where the asset's file is on disk. */
   std::filesystem::path absolutePath(const AssetRecord& record) const;
 
-  /** Folders under the root (relative, e.g. "models/props"), sorted. */
+  /**
+   * Folders under the root (relative, e.g. "assets/models"), sorted; the
+   * catalogued folders themselves included, when given.
+   */
   const std::vector<std::filesystem::path>& folders() const { return m_folders; }
 
   /** Bumped whenever the catalogue changes, so a UI can tell it should redraw. */
@@ -158,13 +189,14 @@ private:
   };
 
   bool writable(const char* action) const;
-  std::filesystem::path metaPathFor(const std::filesystem::path& file) const;
-  std::optional<Meta> readMeta(const std::filesystem::path& file) const;
-  bool writeMeta(const std::filesystem::path& file, const Meta& meta) const;
+  static std::filesystem::path metaPathFor(const std::filesystem::path& file);
+  static std::optional<Meta> readMeta(const std::filesystem::path& file);
+  static bool writeMeta(const std::filesystem::path& file, const Meta& meta);
   void rebuildIndex();
 
   std::filesystem::path m_root;
   Mode m_mode;
+  std::vector<std::filesystem::path> m_scanned; // the folders catalogued; empty: the root
   std::vector<AssetRecord> m_records;
   std::vector<std::filesystem::path> m_folders;
   std::unordered_map<AssetId, std::size_t, AssetIdHash> m_byId;

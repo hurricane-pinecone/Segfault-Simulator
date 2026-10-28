@@ -13,6 +13,19 @@ namespace widgets
 /** ImGui::InputText over a std::string, growing it as the user types. */
 bool inputText(const char* label, std::string& value, int flags = 0);
 
+// ImGui's colour pickers, kept to 0..1 (ImGui only limits dragging, so a typed
+// 1000 in a 0..255 field would otherwise stick).
+bool colorEdit3(const char* label, float* rgb);
+bool colorEdit4(const char* label, float* rgba);
+
+/**
+ * A search box `width` wide (-1: the rest of the line): `hint` shows faintly
+ * while it's empty, and an x at its end clears it (as Esc does while typing).
+ *
+ * @return true when the text changed
+ */
+bool searchInput(const char* id, std::string& value, const char* hint, float width = -1.0f);
+
 /**
  * Run an editing widget on a copy of `value`, recording the edit for undo.
  * The scene is snapshotted when the interaction starts and before the copy is

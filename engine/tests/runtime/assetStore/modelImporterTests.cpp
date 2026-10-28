@@ -175,6 +175,23 @@ int main()
     }
   }
 
+  TEST("a model with several meshes should keep its node tree")
+  {
+    const auto model = importModel(writeModel("tree.gltf", "checker.bmp"));
+    CHECK(model.has_value());
+    if (model)
+    {
+      CHECK(model->nodes.size() == 2u);
+      if (model->nodes.size() == 2u)
+      {
+        CHECK(model->nodes[0].part == "Textured");
+        CHECK(model->nodes[1].part == "Plain");
+        CHECK(model->nodes[0].parent == -1);
+        CHECK(model->nodes[0].local[3][0] == 0.0f); // the nodes aren't moved
+      }
+    }
+  }
+
   TEST("an untextured primitive gets an untextured section")
   {
     const auto model = importModel(writeModel("plain.gltf", "checker.bmp"));

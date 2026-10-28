@@ -49,10 +49,10 @@ Scene files are plain JSON and diff cleanly. See
 | Panel | Purpose |
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
-| Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
+| Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name and components, with **Add Component**. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
-| Assets | The project's `scenes/`, `scripts/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
+| Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
 
@@ -78,7 +78,7 @@ editing and Play settings are remembered separately.
 
 ## Assets
 
-Everything under `assets/` is managed by the project's
+Everything under `assets/` and `prefabs/` is managed by the project's
 [asset database](../core/assets/index.md): each file has a stable id in a
 `.meta` file beside it, and the Assets panel keeps the two together.
 
@@ -91,6 +91,18 @@ Everything under `assets/` is managed by the project's
 | Right-click a folder, or empty space → New Folder | Type a name and press Enter |
 | Drop files from Explorer onto the editor window | Imports copies into the open folder (or `assets/` itself) |
 | Right-click a folder, or empty space → New Material | A material asset to edit in the Inspector |
+
+Tiles show previews of textures, materials, models and prefabs. Previews are
+drawn in the background and appear as they're ready.
+
+The **status bar** along the bottom of the editor shows what's happening in
+the background, each with a progress bar: loading a project (its files are
+scanned in the background), checking for changed files (when you come back to
+the editor from another app, or press Refresh), loading a scene (its objects come in over a few
+frames), loading models (they appear as they load), building scripts and making
+previews. It reads *Ready* when nothing is. The editor's panels appear straight
+away and stay responsive while all of this happens; saving, Play or an edit
+during a scene's loading waits for the rest of it first.
 
 Models (`.glb`, `.gltf`) appear in a Mesh Renderer's **Mesh** list, under
 *Assets*; picking one loads it. The scene refers to it by id, so it stays
@@ -117,6 +129,38 @@ with its textures, as a material asset in `materials/` and uses it there.
 
 Commit the `.meta` files along with the assets. A file moved outside the
 editor without its `.meta` gets a new id.
+
+## Prefabs
+
+A prefab is a reusable object (or branch of objects) saved as an asset; the
+scene places copies of it, and editing the prefab updates every copy.
+
+| Action | Result |
+| --- | --- |
+| Drag an object from the Hierarchy into the Assets panel, or right-click it → Create Prefab | Saves it, and everything under it, as a `.prefab`; the object becomes a copy of it |
+| Drag a prefab (or a model) into the viewport | Places a copy where the pointer meets a surface or the ground |
+| Drag a prefab onto a Hierarchy row, or below the list | Places a copy under that object, or at the top |
+| Double-click a prefab, or Edit in the Inspector | Opens the prefab in its own viewport tab, named after it |
+| **Apply** on a prefab's tab (or Ctrl+S there) | Writes the prefab; every copy updates, except where a copy changed something itself |
+
+A prefab's tab shows it alone, on a floor grid (metre lines, every tenth
+stronger, the X axis red and Y green). The tab you last clicked is the one being
+edited: the Hierarchy, Inspector and undo follow it, and each tab keeps its own
+selection, undo history and Hierarchy scroll. Unapplied changes put a dot on the
+tab; closing it then asks whether to apply them. Play always plays the scene.
+
+Copies show in sage in the Hierarchy (their parts a little softer). Changing a
+copy (moving it, a tint, a material, a script value, adding or deleting
+objects in it) is kept as that copy's own: changed fields get a sage bar in the
+Inspector, and right-click → Revert to Prefab drops one. On a copy's root,
+**Apply** writes its changes into the prefab (every copy takes them, except
+where another copy changed the same thing), and **Revert** drops them all
+(except where it's placed).
+
+Prefabs can contain other prefabs. A model placed in the scene is a prefab of
+its own node tree (so a part can be animated or given a script), but can't be
+changed itself: make a prefab containing it (as with `Windmill.prefab` in the
+sample farm) to keep changes.
 
 ## Parents and children
 
@@ -213,6 +257,12 @@ if vim.g.sfs_editor then
 end
 ```
 
+With your own config in Auto mode, finding files and searching text look only
+in the project's `scripts/` folder (not assets or builds): `Space f f` and
+`Space Space` find files (with Telescope if you have it), `Space s g` and
+`Space /` search (with LazyVim's picker, else Snacks or Telescope). Set
+`vim.g.sfs_scripts_pickers = false` in your config to keep your own.
+
 Projects carry a `.clangd` that points clangd at the game module's compile
 database (each build links it at `.sfs/compile_commands.json`), so clangd finds
 the engine headers with any config, in any editor.
@@ -228,6 +278,32 @@ choice are saved with the editor layout.
 **Scripts → New ...** creates GameObject scripts, systems and components from
 templates. **Play** (Ctrl+P) builds them into the project's game module and runs
 the scene, and **Stop** restores it. See [Game scripts](scripting/index.md).
+
+While playing, the Viewport takes focus as the game starts, so the game has the
+keyboard straight away; click another panel to type there instead. The game
+gets mouse clicks and the wheel only while the pointer is over its view, so
+scrolling the Hierarchy or Inspector never zooms the game's camera.
+
+Saving a script in the Code panel rebuilds the game module in the background
+(so does coming back to the editor after changing scripts elsewhere); the
+status bar shows the build. When it loads, fields you renamed, added or removed
+are handled for you:
+
+- **Renamed**: saved values follow the new name, in the open scenes and their
+  undo history and in every scene and prefab file. A rename is a field that's
+  gone while a new one of the same kind appeared in its place (the same
+  position, or the only such pair), e.g. `float degreesPerSecond` becoming
+  `float speed`.
+- **Added**: everything gets the field's default from the code.
+- **Removed**: its saved values are dropped from the scenes and files.
+
+Changing a field's kind (say `float` to `glm::vec3`) along with its name counts
+as removing one field and adding another. Renaming the script or component
+itself isn't followed.
+
+If the engine has changed since the project's game module was built, opening
+the project rebuilds the module before loading it (an old module may not match
+the engine and could crash it).
 
 ## Exporting a game
 

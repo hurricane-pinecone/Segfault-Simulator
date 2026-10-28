@@ -15,7 +15,7 @@ namespace materialFiles
 {
 
 /**
- * Write a new material asset into `folder` (relative to assets/), named
+ * Write a new material asset into `folder` (relative to the project, e.g. "assets/materials"), named
  * `name`.mat (with a number added if that's taken).
  *
  * @return its id, or nothing (logged) if it can't be written
