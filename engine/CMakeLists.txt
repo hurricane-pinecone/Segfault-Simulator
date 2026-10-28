@@ -11,7 +11,17 @@ message(STATUS "ENGINE_CORE_ONLY=${ENGINE_CORE_ONLY}")
 # share one copy of the engine's state (component ids, logger, the active Lua
 # VM, and the SDL / ImGui instances linked into it). The web build links one
 # wasm module and stays static.
-option(ENGINE_SHARED "Build the engine libraries as shared libraries" ON)
+#
+# Not with MSVC by default: a DLL there exports only what's marked
+# __declspec(dllexport), and the engine marks nothing (GCC/Clang and MinGW
+# export everything), so an MSVC DLL build has no import libraries to link.
+# MSVC builds are static; the editor's Windows build uses MinGW.
+if(MSVC)
+    set(ENGINE_SHARED_DEFAULT OFF)
+else()
+    set(ENGINE_SHARED_DEFAULT ON)
+endif()
+option(ENGINE_SHARED "Build the engine libraries as shared libraries" ${ENGINE_SHARED_DEFAULT})
 if(ENGINE_SHARED AND NOT ENGINE_WEB_BUILD)
     set(ENGINE_LIBRARY_TYPE SHARED)
 else()

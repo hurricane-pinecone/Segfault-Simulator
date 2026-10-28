@@ -98,7 +98,8 @@ struct Textures
     std::size_t
     operator()(const std::pair<const cgltf_texture*, bool>& key) const
     {
-      return std::hash<const void*>()(key.first) ^ key.second;
+      return std::hash<const void*>()(key.first) ^
+             static_cast<std::size_t>(key.second);
     }
   };
   std::unordered_map<std::pair<const cgltf_texture*, bool>,
