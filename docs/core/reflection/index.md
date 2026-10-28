@@ -38,8 +38,13 @@ These rules decide what is reflected:
 - **The type:** the class or struct named after the file. The match ignores
   case, so `transform3DComponent.h` declares `Transform3DComponent`.
 - **What kind of type it is:** a type deriving from `sfs::GameObject` is a game
-  object, one deriving from `sfs::System` is a system, and one deriving from
-  `sfs::MeshSource` is a mesh source. A type with no base is a component.
+  object, one deriving from `sfs::System` is a system, one deriving from
+  `sfs::MeshSource` is a mesh source, and one deriving from
+  `sfs::ScriptableObject` is a [scriptable object
+  type](../../editor/scripting/index.md#scriptable-objects). A type with no
+  base is a component: always for a `struct`, and for a `class` once it has a
+  public field. A `class` with no base and no public field (a plain helper
+  your scripts use) is left alone, not reflected.
 - **Fields:** public data members are reflected, in the same way Unity
   serializes public fields. Static, `const` and function members are ignored.
 
@@ -75,6 +80,7 @@ instantiation, which the C++ standard exempts from access checks.
 | `glm::vec2` / `vec3` / `vec4` | Vector drags (or a colour picker) |
 | `glm::quat` | Euler angles in degrees |
 | `sfs::MeshHandle` | Mesh picker; saved by mesh name |
+| `sfs::AssetRef<T>` | Picker of the project's [scriptable objects](../../editor/scripting/index.md#scriptable-objects) of type `T`; saved as `asset:<id>` |
 | `std::vector<std::string>` | Not shown unless an attribute says how; saved as a JSON array |
 | `nlohmann::json` | Not shown; saved as-is (free-form data, such as a script component's per-entity field values) |
 
@@ -87,7 +93,7 @@ skipped. The build prints a warning that names the field and its type.
 and IDEs can jump to them:
 
 ```
-scripts/Boss.h:3: error: 'Monster' isn't a supported base; derive from sfs::GameObject, sfs::System or sfs::MeshSource, or nothing for a component
+scripts/Boss.h:3: error: 'Monster' isn't a supported base; derive from sfs::GameObject, sfs::System, sfs::MeshSource or sfs::ScriptableObject, or nothing for a component
 scripts/Crop.h:9: warning: 'items' has type 'std::vector<int>', which the editor can't edit yet; skipped
 ```
 

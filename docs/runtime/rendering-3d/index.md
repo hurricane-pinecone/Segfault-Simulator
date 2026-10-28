@@ -153,6 +153,13 @@ Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
 solid, back to front, one at a time, so keep their numbers modest.
 
+### Materials from code
+
+`MeshLibrary::setMaterial(name, material)` makes (or, called again, updates in
+place) a named material from game code, for example one whose texture the
+game paints as it runs. Entities choose it by name in a `materials` slot like
+any other; updating it shows on everything using it at once.
+
 ## Camera
 
 `RenderSystem3D::camera()` returns the scene's `Camera3D`. It is an orbit camera
