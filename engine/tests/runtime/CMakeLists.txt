@@ -20,6 +20,7 @@ endfunction()
 add_runtime_test(movementSystemTests systems/movementSystemTests.cpp)
 add_runtime_test(collisionSystemTests systems/collisionSystemTests.cpp)
 add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
+add_runtime_test(physicsSystem3DTests systems/physicsSystem3DTests.cpp)
 add_runtime_test(spriteRenderSystemTests systems/spriteRenderSystemTests.cpp)
 
 # particles/
@@ -28,6 +29,10 @@ add_runtime_test(terrainParticleCollisionTests particles/terrainParticleCollisio
 
 # input/
 add_runtime_test(keyboardInputTests input/keyboardInputTests.cpp)
+add_runtime_test(mouseInputTests input/mouseInputTests.cpp)
+
+# sceneManager/
+add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
 
 # rendering/
 add_runtime_test(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)

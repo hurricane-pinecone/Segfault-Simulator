@@ -45,8 +45,9 @@ files to `scripts/`; they're compiled into the module.
 - **Game object scripts:** select an entity, choose **Add Component → Script**,
   and pick the class from the dropdown. When the scene plays, an instance of
   that class is created bound to the entity, so its `entity()` is that entity.
-- **Systems:** in **Scene Settings → Game Systems**, choose **Add System**.
-  The scene saves the list, and the systems are added when it plays.
+- **Systems:** in **Scene Settings → Systems**, choose **Add System**. The
+  list also offers the engine's optional systems, such as physics. The scene
+  saves the list, and the systems are added when it plays.
 - **Components:** select an entity and choose **Add Component**. Your
   components are listed with the engine's.
 
@@ -99,6 +100,52 @@ A scene that uses a component that isn't built yet keeps that component's data
 and loads it once the module exists. See
 [Scene files](../../runtime/serialization/index.md).
 
+## Talking to the game
+
+A script reaches its scene with `scene()`, and the game with `scene().game()`:
+
+```cpp
+void Menu::onProcessInput(const sfs::Input& input)
+{
+  if (input.keyboard().keyPressed(sfs::Key::Escape))
+    scene().game().quit();
+  if (input.keyboard().keyPressed(sfs::Key::Enter))
+    scene().game().loadScene("scenes/farm.scene");
+}
+```
+
+| Call | Does |
+| --- | --- |
+| `game().quit()` | Ends the game once the frame is done. In the editor, it stops Play. |
+| `game().loadScene(path)` | Once the frame is done, replaces the scene with another scene file, relative to the project (and to the export folder in a shipped game), and starts its scripts. In the editor, Stop still returns to the scene you were editing. |
+| `game().setWindowTitle(text)`, `setFullscreen(on)`, `setWindowSize(w, h)` | Change the game's window. The editor's window isn't the game's, so it ignores these and logs that it did; they apply in the exported game. |
+| `scene().findEntity("Barn")` | The first entity with that name, parents before children; invalid if none |
+| `scene().findEntity("Farm/Barn/Door")` | Follows names down from a root entity |
+| `scene().findEntities("Lantern")` | Every entity with that name |
+| `scene().destroyBranch(entity)` | Destroys an entity and everything below it. `destroyEntity` destroys only the entity; its children become roots. |
+
+### The mouse
+
+Mouse positions are in pixels from the top-left of the game's view: the
+window in an exported game, the viewport image in the editor. They mean the same
+thing in both. `inView()` says whether the cursor is over the view. To find what
+the mouse is over, cast a ray through it:
+
+```cpp
+#include "engine/runtime/rendering3d/picking.h"
+
+auto& render = scene().getSystem<sfs::RenderSystem3D>();
+const sfs::Ray3D ray = render.screenRay(input.mouse().getPosition());
+if (const auto hit = sfs::pickEntity(scene(), render.meshes(), ray))
+  select(hit->entity);
+```
+
+`screenRay` uses the size the scene was last drawn at, so it matches the view
+the player is looking at. To hit what the player sees by physics shape instead of
+bounding box, use `PhysicsSystem3D::raycast` with the same ray; see
+[3D physics](../../runtime/physics-3d/index.md), which also covers collision
+callbacks.
+
 ## Play, Stop and Build
 
 | Command | Effect |
@@ -113,8 +160,9 @@ build leaves the editor in edit mode with the previous module still loaded.
 Saving is disabled while playing, so a play session can't overwrite the
 scene.
 
-While playing, the game owns the camera and the keyboard **when the viewport
-has focus**: click the viewport to control the game (its border turns green).
+While playing, the viewport shows the game through its
+[game camera](../index.md#the-game-camera), and the game owns the keyboard and
+mouse **when the viewport has focus**: click the viewport to control the game (its border turns green).
 Clicking elsewhere, such as the Code panel, hands the keyboard back to the
 editor, so typing never moves the game. The viewport's own camera controls and
 shortcuts are off during Play.

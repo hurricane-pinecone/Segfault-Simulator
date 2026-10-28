@@ -34,11 +34,21 @@ public:
   bool dragReleased(MouseButton button) const;
   void processDrag();
 
+  // Positions are in pixels from the top-left of where the scene is drawn
+  // (the window, or the editor's viewport), so they can go negative or past
+  // the view's size when the cursor is outside it.
   glm::vec2 getPosition() const;
   glm::vec2 getDelta() const;
   glm::vec2 getDragDelta() const;
 
   void setPosition(int x, int y);
+
+  /** The size of the view positions are measured in (set by the game loop). */
+  void setViewSize(int width, int height);
+  glm::vec2 getViewSize() const { return viewSize; }
+
+  /** Whether the cursor is over the scene's view. */
+  bool inView() const;
   int getScrollX() const;
   int getScrollY() const;
   void addScroll(int x, int y);
@@ -48,6 +58,7 @@ private:
   std::array<bool, 8> previousButtons{};
 
   glm::vec2 position{};
+  glm::vec2 viewSize{};
   glm::vec2 previousPosition{};
   glm::vec2 dragStartPosition{};
 

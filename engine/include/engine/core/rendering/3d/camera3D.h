@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/3d/aabb.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
+#include "glm/glm/ext/quaternion_float.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 
@@ -71,6 +72,19 @@ struct Camera3D
 
   /** Unit right along the ground, perpendicular to groundForward(). */
   glm::vec3 groundRight() const;
+
+  /**
+   * Look from `eye` along `forward` (any length): sets yaw and pitch from the
+   * direction, and puts the target `focusDistance` ahead. There's no roll, so
+   * the view stays level.
+   */
+  void setPose(const glm::vec3& eye, const glm::vec3& forward, float focusDistance);
+
+  /**
+   * The eye's orientation: +X along the view direction, +Z leaning up (the
+   * convention camera entities use). With position(), the inverse of setPose.
+   */
+  glm::quat orientation() const;
 
   glm::mat4 viewMatrix() const;
   glm::mat4 projectionMatrix(float aspect) const;

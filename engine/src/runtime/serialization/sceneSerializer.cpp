@@ -1,5 +1,6 @@
 #include "engine/runtime/serialization/sceneSerializer.h"
 
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
@@ -26,8 +27,12 @@ namespace sfs
 namespace
 {
 
-// Bumped when the file layout changes incompatibly.
-constexpr int kFormatVersion = 1;
+// Bumped when the file layout changes incompatibly. 2: hierarchies (nested
+// "children"); format 1 files still load.
+constexpr int kFormatVersion = 2;
+
+// The key an entity's children are nested under, beside its components.
+constexpr const char* kChildrenKey = "children";
 
 // A float as the double with the same shortest decimal spelling, so 0.45f is
 // saved as 0.45 rather than its widened value 0.44999998807907104.
@@ -359,7 +364,12 @@ void SceneSerializer::loadObject(const reflect::TypeInfo& type,
   }
 }
 
-json SceneSerializer::saveEntity(const Entity& entity) const
+json SceneSerializer::saveEntity(Scene& scene, const Entity& entity) const
+{
+  return saveSubtree(entity, hierarchy::EntityTree(scene.entities()));
+}
+
+json SceneSerializer::saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree) const
 {
   json components = json::object();
   for (const reflect::TypeInfo& type : m_types.types())
@@ -380,25 +390,36 @@ json SceneSerializer::saveEntity(const Entity& entity) const
       if (!components.contains(name))
         components[name] = fields;
 
+  json children = json::array();
+  for (const Entity& child : tree.children(entity))
+    children.push_back(saveSubtree(child, tree));
+  if (!children.empty())
+    components[kChildrenKey] = std::move(children);
+
   return components;
 }
 
-Entity SceneSerializer::loadEntity(const json& components, Scene& scene) const
+Entity SceneSerializer::loadEntity(const json& entry, Scene& scene, const Entity& parent) const
 {
-  return loadEntity(components, scene, nullptr);
+  return loadEntity(entry, scene, parent, nullptr);
 }
 
-Entity SceneSerializer::loadEntity(const json& components,
+Entity SceneSerializer::loadEntity(const json& entry,
                                    Scene& scene,
+                                   const Entity& parent,
                                    std::set<std::string>* unresolvedTypes) const
 {
   Entity entity = scene.createEntity();
-  if (!components.is_object())
+  if (parent.isValid())
+    hierarchy::setParent(entity, parent);
+  if (!entry.is_object())
     return entity;
 
   json unresolved = json::object();
-  for (const auto& [typeName, fields] : components.items())
+  for (const auto& [typeName, fields] : entry.items())
   {
+    if (typeName == kChildrenKey)
+      continue;
     const reflect::TypeInfo* type = m_types.find(typeName);
     if (!type || type->kind != reflect::TypeKind::Component)
     {
@@ -418,14 +439,23 @@ Entity SceneSerializer::loadEntity(const json& components,
         unresolvedTypes->insert(typeName);
     entity.addComponent<UnresolvedComponents>(UnresolvedComponents{std::move(unresolved)});
   }
+
+  // After the parent's components, so children are created (and get ids)
+  // after it, in saved order.
+  if (const auto children = entry.find(kChildrenKey);
+      children != entry.end() && children->is_array())
+    for (const json& child : *children)
+      if (child.is_object())
+        loadEntity(child, scene, entity, unresolvedTypes);
   return entity;
 }
 
 json SceneSerializer::save(Scene& scene, const std::vector<std::string>& gameSystems) const
 {
+  const hierarchy::EntityTree tree(scene.entities());
   json entities = json::array();
-  for (const Entity& entity : scene.entities())
-    entities.push_back(saveEntity(entity));
+  for (const Entity& root : tree.roots())
+    entities.push_back(saveSubtree(root, tree));
 
   json out = {{"formatVersion", kFormatVersion},
               {"systems", gameSystems},
@@ -452,9 +482,9 @@ bool SceneSerializer::load(const json& in,
   }
 
   std::set<std::string> unresolvedTypes;
-  for (const json& components : in["entities"])
-    if (components.is_object())
-      loadEntity(components, scene, &unresolvedTypes);
+  for (const json& entry : in["entities"])
+    if (entry.is_object())
+      loadEntity(entry, scene, {}, &unresolvedTypes);
 
   if (!unresolvedTypes.empty())
   {

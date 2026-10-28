@@ -44,8 +44,10 @@ struct ScriptType
 };
 
 /**
- * Every script type from every loaded game module. One instance per process
- * (it lives in the engine library), like reflect::types().
+ * Every script type from every loaded game module, plus the engine's optional
+ * systems (module "engine", e.g. PhysicsSystem3D), which scenes list by name
+ * the same way. One instance per process (it lives in the engine library),
+ * like reflect::types().
  */
 class ScriptRegistry
 {

@@ -10,6 +10,7 @@ endfunction()
 
 add_core_test(luaTests scripting/luaTests.cpp)
 add_core_test(ecsTests ecs/ecsTests.cpp)
+add_core_test(hierarchyTests hierarchy/hierarchyTests.cpp)
 add_core_test(noiseTests noise/noiseTests.cpp)
 add_core_test(flatProjectionTests rendering/flatProjectionTests.cpp)
 add_core_test(isometricProjectionTests rendering/isometricProjectionTests.cpp)

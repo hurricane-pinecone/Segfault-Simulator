@@ -2,6 +2,7 @@
 
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/transform3DComponent.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/sceneManager/scene.h"
 
@@ -21,15 +22,16 @@ std::optional<Aabb> entityBounds(const Entity& entity, const MeshLibrary& meshes
 {
   if (!entity.hasComponent<Transform3DComponent>())
     return std::nullopt;
-  const auto& transform = entity.getComponent<Transform3DComponent>();
+  const glm::mat4 world = hierarchy::worldMatrix(entity);
 
   if (entity.hasComponent<MeshRendererComponent>())
     if (const Aabb* local = meshes.bounds(entity.getComponent<MeshRendererComponent>().mesh))
-      return local->transformed(transform.matrix());
+      return local->transformed(world);
 
+  const glm::vec3 position(world[3]);
   Aabb marker;
-  marker.expand(transform.position - glm::vec3(kPickMarkerRadius));
-  marker.expand(transform.position + glm::vec3(kPickMarkerRadius));
+  marker.expand(position - glm::vec3(kPickMarkerRadius));
+  marker.expand(position + glm::vec3(kPickMarkerRadius));
   return marker;
 }
 

@@ -47,6 +47,17 @@ void MouseInput::setPosition(int x, int y)
   position = {static_cast<float>(x), static_cast<float>(y)};
 }
 
+void MouseInput::setViewSize(int width, int height)
+{
+  viewSize = {static_cast<float>(width), static_cast<float>(height)};
+}
+
+bool MouseInput::inView() const
+{
+  return position.x >= 0.0f && position.y >= 0.0f && position.x < viewSize.x &&
+         position.y < viewSize.y;
+}
+
 void MouseInput::processDrag()
 {
   if (!mouseHeld(MouseButton::Left))

@@ -4,7 +4,10 @@
 #include "scene/editorScene.h"
 #include "scene/sceneDocument.h"
 
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
+
+#include <algorithm>
 
 void EditorHistory::beginChange()
 {
@@ -67,9 +70,14 @@ void EditorHistory::setEnabled(bool enabled)
 
 EditorHistory::Selection EditorHistory::currentSelection() const
 {
-  if (!m_context.hasSelection())
+  if (!m_context.hasSelection() || !m_context.scene)
     return std::nullopt;
-  return m_context.selection.getId();
+  const std::vector<sfs::Entity> order =
+      sfs::hierarchy::EntityTree(m_context.scene->entities()).preOrder();
+  const auto it = std::find(order.begin(), order.end(), m_context.selection);
+  if (it == order.end())
+    return std::nullopt;
+  return static_cast<std::size_t>(it - order.begin());
 }
 
 void EditorHistory::apply(const nlohmann::json& snapshot, Selection selection)
@@ -82,5 +90,12 @@ void EditorHistory::apply(const nlohmann::json& snapshot, Selection selection)
   m_context.document->restore(snapshot);
   m_context.render->camera() = camera;
 
-  m_context.selection = selection ? m_context.scene->getEntity(*selection) : sfs::Entity();
+  m_context.selection = {};
+  if (selection)
+  {
+    const std::vector<sfs::Entity> order =
+        sfs::hierarchy::EntityTree(m_context.scene->entities()).preOrder();
+    if (*selection < order.size())
+      m_context.selection = order[*selection];
+  }
 }

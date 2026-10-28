@@ -20,7 +20,10 @@ class WebGpuRenderBackend;
 //   - click to select (ray picking against entity bounds),
 //   - a move / rotate / scale gizmo on the selection (W / E / R, world or
 //     local, hold Ctrl to snap),
-//   - the selection's bounds outline and icons for lights,
+//   - the selection's bounds outline and colliders, icons for lights and
+//     outlines of what each camera entity sees
+//     (these overlays and the gizmo toggle with "Gizmos", off during Play by
+//     default),
 //   - camera navigation (right-drag orbit, middle-drag pan, wheel zoom, F to
 //     frame the selection).
 class ViewportPanel : public Panel
@@ -56,7 +59,8 @@ private:
   View currentView(const EditorContext& context, ImVec2 origin, ImVec2 size) const;
   std::optional<ImVec2> toScreen(const View& view, const glm::vec3& world) const;
 
-  void drawToolbar();
+  bool gizmosVisible(const EditorContext& context) const;
+  void drawToolbar(const EditorContext& context);
   void handleShortcuts(EditorContext& context);
   // True while the gizmo is hovered or dragging (so clicks don't pick).
   bool drawGizmo(EditorContext& context, const View& view);
@@ -64,6 +68,8 @@ private:
   void navigate(EditorContext& context, float viewportHeight);
   void drawSelectionOutline(const EditorContext& context, const View& view) const;
   void drawLightIcons(const EditorContext& context, const View& view) const;
+  void drawCameraIcons(const EditorContext& context, const View& view) const;
+  void drawColliders(const EditorContext& context, const View& view) const;
 
   sfs::WebGpuRenderBackend& m_backend;
   sfs::WebGpuRenderTarget m_target;
@@ -72,6 +78,8 @@ private:
   Tool m_tool = Tool::Move;
   bool m_localSpace = false;
   bool m_snap = false;
+  bool m_gizmosInEdit = true;
+  bool m_gizmosInPlay = false;
 
   // The panel's image size from the last draw; the target takes it on the next
   // update, before the scene renders into it.

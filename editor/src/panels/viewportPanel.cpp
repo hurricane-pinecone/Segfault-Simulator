@@ -4,13 +4,17 @@
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
 
+#include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/pointLight3DComponent.h"
+#include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transform3DComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/picking.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
-#include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/gtc/type_ptr.hpp"
 
 #include "imguizmo/ImGuizmo.h"
@@ -27,20 +31,14 @@ constexpr float kScaleSnap = 0.1f;
 
 constexpr ImU32 kSelectionColor = IM_COL32(255, 170, 40, 255);
 constexpr ImU32 kLightColor = IM_COL32(255, 220, 120, 255);
+constexpr ImU32 kCameraColor = IM_COL32(230, 230, 230, 255);
+constexpr ImU32 kInactiveCameraColor = IM_COL32(140, 140, 140, 200);
+constexpr ImU32 kColliderColor = IM_COL32(90, 230, 120, 255);
+constexpr ImU32 kTriggerColor = IM_COL32(255, 150, 60, 255);
 
-// Translation, rotation and scale from a TRS matrix (no shear).
-void decompose(const glm::mat4& matrix, sfs::Transform3DComponent& transform)
-{
-  transform.position = glm::vec3(matrix[3]);
-  const glm::vec3 scale{glm::length(glm::vec3(matrix[0])),
-                        glm::length(glm::vec3(matrix[1])),
-                        glm::length(glm::vec3(matrix[2]))};
-  const glm::mat3 rotation{glm::vec3(matrix[0]) / scale.x,
-                           glm::vec3(matrix[1]) / scale.y,
-                           glm::vec3(matrix[2]) / scale.z};
-  transform.rotation = glm::normalize(glm::quat_cast(rotation));
-  transform.scale = scale;
-}
+// How far ahead a camera's outline reaches, as a fraction of its distance from
+// the viewer, so it stays about the same size on screen.
+constexpr float kCameraIconScale = 0.08f;
 } // namespace
 
 ViewportPanel::ViewportPanel(sfs::WebGpuRenderBackend& backend)
@@ -109,9 +107,25 @@ void ViewportPanel::drawContents(EditorContext& context)
   const bool imageHovered = ImGui::IsItemHovered();
   const View view = currentView(context, origin, available);
 
-  drawLightIcons(context, view);
-  drawSelectionOutline(context, view);
-  const bool gizmoActive = drawGizmo(context, view);
+  // ImGui positions are on the desktop; the game wants them in the window.
+  const ImGuiViewport* host = ImGui::GetWindowViewport();
+  context.viewportWindowId = static_cast<uint32_t>(reinterpret_cast<intptr_t>(host->PlatformHandle));
+  context.viewportRect = {static_cast<int>(origin.x - host->Pos.x),
+                          static_cast<int>(origin.y - host->Pos.y),
+                          static_cast<int>(available.x),
+                          static_cast<int>(available.y)};
+
+  // Editor overlays are hidden during Play unless asked for, so the viewport
+  // looks like the game.
+  bool gizmoActive = false;
+  if (gizmosVisible(context))
+  {
+    drawLightIcons(context, view);
+    drawCameraIcons(context, view);
+    drawSelectionOutline(context, view);
+    drawColliders(context, view);
+    gizmoActive = drawGizmo(context, view);
+  }
 
   if (context.playing)
   {
@@ -139,11 +153,25 @@ void ViewportPanel::drawContents(EditorContext& context)
   }
 
   ImGui::SetCursorScreenPos(ImVec2(origin.x + 8.0f, origin.y + 8.0f));
-  drawToolbar();
+  drawToolbar(context);
 }
 
-void ViewportPanel::drawToolbar()
+bool ViewportPanel::gizmosVisible(const EditorContext& context) const
 {
+  return context.playing ? m_gizmosInPlay : m_gizmosInEdit;
+}
+
+void ViewportPanel::drawToolbar(const EditorContext& context)
+{
+  // Separate settings for editing and Play: overlays usually help while
+  // editing and get in the way of the game.
+  ImGui::Checkbox("Gizmos", context.playing ? &m_gizmosInPlay : &m_gizmosInEdit);
+  ImGui::SetItemTooltip("Show light icons, the selection outline and the gizmo\n(remembered "
+                        "separately for editing and Play)");
+  if (!gizmosVisible(context))
+    return;
+  ImGui::SameLine();
+
   const auto toolButton = [&](const char* label, Tool tool, const char* tip)
   {
     const bool active = m_tool == tool;
@@ -183,16 +211,13 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
 
   if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection() &&
       context.selection.hasComponent<sfs::Transform3DComponent>())
-    m_navigation.focus(context.render->camera(),
-                       context.selection.getComponent<sfs::Transform3DComponent>().position);
+    m_navigation.focus(context.render->camera(), sfs::hierarchy::worldPosition(context.selection));
 }
 
 bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
 {
   if (!context.hasSelection() || !context.selection.hasComponent<sfs::Transform3DComponent>())
     return false;
-
-  auto& transform = context.selection.getComponent<sfs::Transform3DComponent>();
 
   ImGuizmo::SetDrawlist();
   ImGuizmo::SetRect(view.origin.x, view.origin.y, view.size.x, view.size.y);
@@ -216,8 +241,9 @@ bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
 
   // Manipulate a copy, so an edit can be bracketed for undo before it lands:
   // the snapshot is taken the frame the drag starts, while the scene is still
-  // unchanged.
-  glm::mat4 model = transform.matrix();
+  // unchanged. The gizmo works in world space; the result goes back into the
+  // transform relative to the parent.
+  glm::mat4 model = sfs::hierarchy::worldMatrix(context.selection);
   const bool wasUsing = ImGuizmo::IsUsing();
   const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
                                             glm::value_ptr(view.projection),
@@ -231,7 +257,7 @@ bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
   if (!wasUsing && usingNow)
     context.history->beginChange();
   if (changed)
-    decompose(model, transform);
+    sfs::hierarchy::setWorldMatrix(context.selection, model);
   if (wasUsing && !usingNow)
     context.history->endChange();
 
@@ -298,9 +324,10 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
         !entity.hasComponent<sfs::Transform3DComponent>())
       continue;
 
-    const auto& transform = entity.getComponent<sfs::Transform3DComponent>();
+    // Where the renderer puts it: the offset turns and scales with the entity.
     const auto& light = entity.getComponent<sfs::PointLight3DComponent>();
-    const std::optional<ImVec2> at = toScreen(view, transform.position + light.offset);
+    const std::optional<ImVec2> at = toScreen(
+        view, glm::vec3(sfs::hierarchy::worldMatrix(entity) * glm::vec4(light.offset, 1.0f)));
     if (!at)
       continue;
 
@@ -315,5 +342,154 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
                         kLightColor,
                         1.5f);
     }
+  }
+}
+
+void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& view) const
+{
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  const float aspect = view.size.x / std::max(view.size.y, 1.0f);
+  const sfs::Entity gameCamera = context.render->sceneCamera();
+  const glm::vec3 viewer = context.render->camera().position();
+
+  for (const sfs::Entity& entity : context.scene->entities())
+  {
+    if (!entity.hasComponent<sfs::Camera3DComponent>() ||
+        !entity.hasComponent<sfs::Transform3DComponent>())
+      continue;
+
+    // The camera's view, as the game would set it up.
+    sfs::Camera3D camera;
+    entity.getComponent<sfs::Camera3DComponent>().applyTo(camera,
+                                                          sfs::hierarchy::worldMatrix(entity));
+    const glm::vec3 eye = camera.position();
+    const glm::vec3 forward = camera.viewDirection();
+    const glm::vec3 right = camera.orientation() * glm::vec3(0.0f, -1.0f, 0.0f);
+    const glm::vec3 up = glm::cross(right, forward);
+    const float depth = std::max(glm::distance(eye, viewer) * kCameraIconScale, 0.3f);
+
+    // A pyramid from the eye to a rectangle the shape of the view (a box for
+    // orthographic), plus a notch marking up.
+    const bool orthographic = camera.projection == sfs::Camera3D::Projection::Orthographic;
+    const float halfHeight =
+        orthographic ? std::min(camera.orthoHeight * 0.5f, depth)
+                     : std::tan(camera.fieldOfView * 0.5f) * depth;
+    const float halfWidth = halfHeight * aspect;
+    const glm::vec3 centre = eye + forward * depth;
+    const std::array<glm::vec3, 4> far{centre + right * halfWidth + up * halfHeight,
+                                       centre - right * halfWidth + up * halfHeight,
+                                       centre - right * halfWidth - up * halfHeight,
+                                       centre + right * halfWidth - up * halfHeight};
+    const std::array<glm::vec3, 4> near =
+        orthographic ? std::array<glm::vec3, 4>{far[0] - forward * depth,
+                                                far[1] - forward * depth,
+                                                far[2] - forward * depth,
+                                                far[3] - forward * depth}
+                     : std::array<glm::vec3, 4>{eye, eye, eye, eye};
+
+    const ImU32 color = entity == gameCamera ? kCameraColor : kInactiveCameraColor;
+    const auto line = [&](const glm::vec3& a, const glm::vec3& b)
+    {
+      const std::optional<ImVec2> from = toScreen(view, a);
+      const std::optional<ImVec2> to = toScreen(view, b);
+      if (from && to)
+        drawList->AddLine(*from, *to, color, 1.5f);
+    };
+    for (int i = 0; i < 4; ++i)
+    {
+      line(near[i], far[i]);
+      line(far[i], far[(i + 1) % 4]);
+      if (orthographic)
+        line(near[i], near[(i + 1) % 4]);
+    }
+    const glm::vec3 notch = centre + up * (halfHeight * 1.4f);
+    line(far[0], notch);
+    line(far[1], notch);
+  }
+}
+
+void ViewportPanel::drawColliders(const EditorContext& context, const View& view) const
+{
+  if (!context.hasSelection() || !context.selection.hasComponent<sfs::Transform3DComponent>())
+    return;
+
+  const sfs::Entity& entity = context.selection;
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+  const glm::vec3 scale{glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])),
+                        glm::length(glm::vec3(world[2]))};
+  // Turned with the entity but unscaled: scale goes into the sizes, the way
+  // the physics bakes it (a sphere stays round).
+  glm::mat4 turned = world;
+  for (int axis = 0; axis < 3; ++axis)
+    turned[axis] = scale[axis] > 0.0f ? world[axis] / scale[axis] : world[axis];
+
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  ImU32 color = kColliderColor;
+  const auto line = [&](const glm::vec3& a, const glm::vec3& b)
+  {
+    const std::optional<ImVec2> from = toScreen(view, glm::vec3(turned * glm::vec4(a, 1.0f)));
+    const std::optional<ImVec2> to = toScreen(view, glm::vec3(turned * glm::vec4(b, 1.0f)));
+    if (from && to)
+      drawList->AddLine(*from, *to, color, 1.5f);
+  };
+  // A circle (or the arc from `start` to `end` turns) in the plane of axes u, v.
+  const auto circle = [&](const glm::vec3& centre, const glm::vec3& u, const glm::vec3& v,
+                          float radius, float start = 0.0f, float end = 1.0f)
+  {
+    constexpr int kSegments = 32;
+    const int segments = std::max(4, static_cast<int>(kSegments * (end - start)));
+    for (int i = 0; i < segments; ++i)
+    {
+      const float a0 = 6.2831853f * (start + (end - start) * i / segments);
+      const float a1 = 6.2831853f * (start + (end - start) * (i + 1) / segments);
+      line(centre + radius * (std::cos(a0) * u + std::sin(a0) * v),
+           centre + radius * (std::cos(a1) * u + std::sin(a1) * v));
+    }
+  };
+  const glm::vec3 x{1, 0, 0}, y{0, 1, 0}, z{0, 0, 1};
+
+  if (entity.hasComponent<sfs::BoxCollider3DComponent>())
+  {
+    const auto& box = entity.getComponent<sfs::BoxCollider3DComponent>();
+    color = box.trigger ? kTriggerColor : kColliderColor;
+    const glm::vec3 half = box.size * scale * 0.5f;
+    const glm::vec3 centre = box.offset * scale;
+    const auto corner = [&](int i)
+    { return centre + glm::vec3((i & 1) ? half.x : -half.x, (i & 2) ? half.y : -half.y, (i & 4) ? half.z : -half.z); };
+    for (int a = 0; a < 8; ++a)
+      for (const int bit : {1, 2, 4})
+        if (!(a & bit))
+          line(corner(a), corner(a | bit));
+  }
+
+  if (entity.hasComponent<sfs::SphereCollider3DComponent>())
+  {
+    const auto& sphere = entity.getComponent<sfs::SphereCollider3DComponent>();
+    color = sphere.trigger ? kTriggerColor : kColliderColor;
+    const float radius = sphere.radius * std::max({scale.x, scale.y, scale.z});
+    const glm::vec3 centre = sphere.offset * scale;
+    circle(centre, x, y, radius);
+    circle(centre, x, z, radius);
+    circle(centre, y, z, radius);
+  }
+
+  if (entity.hasComponent<sfs::CapsuleCollider3DComponent>())
+  {
+    const auto& capsule = entity.getComponent<sfs::CapsuleCollider3DComponent>();
+    color = capsule.trigger ? kTriggerColor : kColliderColor;
+    const float radius = capsule.radius * std::max(scale.x, scale.y);
+    const float half = std::max(capsule.height * scale.z * 0.5f - radius, 0.0f);
+    const glm::vec3 centre = capsule.offset * scale;
+    const glm::vec3 top = centre + z * half;
+    const glm::vec3 bottom = centre - z * half;
+    circle(top, x, y, radius);
+    circle(bottom, x, y, radius);
+    for (const glm::vec3& side : {x, -x, y, -y})
+      line(top + side * radius, bottom + side * radius);
+    // The rounded ends: half circles over the top and under the bottom.
+    circle(top, x, z, radius, 0.0f, 0.5f);
+    circle(top, y, z, radius, 0.0f, 0.5f);
+    circle(bottom, x, z, radius, 0.5f, 1.0f);
+    circle(bottom, y, z, radius, 0.5f, 1.0f);
   }
 }

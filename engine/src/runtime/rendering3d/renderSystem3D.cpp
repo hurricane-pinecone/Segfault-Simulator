@@ -1,7 +1,9 @@
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 
+#include "engine/core/components/camera3DComponent.h"
 #include "engine/core/components/pointLight3DComponent.h"
 #include "engine/core/components/transform3DComponent.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/3d/sunShadow.h"
 #include "engine/runtime/rendering3d/iRenderer3D.h"
 #include "glm/glm/geometric.hpp"
@@ -17,9 +19,35 @@ RenderSystem3D::RenderSystem3D(IRenderer3D& renderer)
 {
 }
 
+Entity RenderSystem3D::sceneCamera() const
+{
+  if (!registry)
+    return {};
+  for (const Entity& entity : registry->view<Transform3DComponent, Camera3DComponent>())
+    if (entity.getComponent<Camera3DComponent>().active)
+      return entity;
+  return {};
+}
+
+Ray3D RenderSystem3D::screenRay(const glm::vec2& pixel) const
+{
+  // The size the scene was last drawn at: between frames a backend may report
+  // another (the window, while the scene draws into an editor viewport).
+  glm::ivec2 size = m_context.viewportSize;
+  if (size.x <= 0 || size.y <= 0)
+    size = m_renderer.viewportSize();
+  return m_camera.screenRay(pixel, glm::vec2(std::max(size.x, 1), std::max(size.y, 1)));
+}
+
 void RenderSystem3D::render()
 {
   m_stats = {};
+
+  // Late as possible, so this frame's moves of the camera entity are seen.
+  if (m_followSceneCamera)
+    if (const Entity camera = sceneCamera(); camera.isValid())
+      camera.getComponent<Camera3DComponent>().applyTo(m_camera,
+                                                       hierarchy::worldMatrix(camera));
 
   if (!buildContext(m_renderer.viewportSize()))
     return;
@@ -107,7 +135,7 @@ void RenderSystem3D::gatherPointLights()
     if (light.intensity <= 0.0f || light.radius <= 0.0f)
       continue;
 
-    const glm::mat4 model = entity.getComponent<Transform3DComponent>().matrix();
+    const glm::mat4 model = hierarchy::worldMatrix(entity);
     m_pointLights.push_back(PointLight3D{
         glm::vec3(model * glm::vec4(light.offset, 1.0f)),
         light.color,

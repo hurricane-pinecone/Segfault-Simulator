@@ -6,6 +6,7 @@
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/systems/physicsSystem3D.h"
 
 #include <algorithm>
 
@@ -39,9 +40,30 @@ const ScriptType* ScriptRegistry::find(std::string_view name) const
   return it != m_types.end() ? &*it : nullptr;
 }
 
+namespace
+{
+// The engine's own optional systems, offered beside a game's: a scene that
+// wants one lists it by name, like a game system.
+void registerEngineSystems(ScriptRegistry& registry)
+{
+#ifdef SFS_HAS_PHYSICS
+  registry.add(ScriptType{.name = "PhysicsSystem3D",
+                          .module = "engine",
+                          .kind = ScriptType::Kind::System,
+                          .addSystem = [](Scene& scene) -> System&
+                          { return scene.addSystem<PhysicsSystem3D>(); }});
+#endif
+}
+} // namespace
+
 ScriptRegistry& scripts()
 {
-  static ScriptRegistry registry;
+  static ScriptRegistry registry = []
+  {
+    ScriptRegistry engine;
+    registerEngineSystems(engine);
+    return engine;
+  }();
   return registry;
 }
 

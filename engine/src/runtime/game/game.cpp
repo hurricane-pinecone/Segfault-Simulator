@@ -3,6 +3,7 @@
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/rendering/backend/glRenderBackend.h"
 #include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
+#include "engine/runtime/rendering3d/scene3D.h"
 
 #include "SDL.h"
 #include <SDL_error.h>
@@ -14,6 +15,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "engine/runtime/rendering/debug/ui.h"
 
@@ -82,6 +84,7 @@ void Game::setup()
 
   m_services = m_backend->sceneServices();
   sceneManager.setSceneServices(m_services);
+  sceneManager.setGame(this);
 
   onSetup();
 }
@@ -143,12 +146,91 @@ bool Game::devConsoleEnabled() const
   return lua && lua->consoleEnabled();
 }
 
+Game::SceneView Game::sceneView() const
+{
+  return SceneView{window ? SDL_GetWindowID(window) : 0, SDL_Rect{0, 0, windowWidth, windowHeight}};
+}
+
+void Game::onLoadScene(const std::filesystem::path& scene)
+{
+  if (!playScene(scene))
+    LOG_ERROR("loadScene: couldn't play " + scene.generic_string());
+}
+
+bool Game::playScene(const std::filesystem::path& scene)
+{
+  if (!m_services || !m_services->renderer3D)
+  {
+    LOG_ERROR("Playing " + scene.generic_string() +
+              ": scene files need a 3D renderer, and this game has none");
+    return false;
+  }
+  return replaceScene().play(gameFolder() / scene);
+}
+
+Scene3D& Game::replaceScene()
+{
+  sceneManager.destroyAll();
+  return *sceneManager.createScene<Scene3D>();
+}
+
+void Game::applyRequests()
+{
+  if (m_requestedScene)
+  {
+    const std::filesystem::path scene = *std::exchange(m_requestedScene, std::nullopt);
+    onLoadScene(scene);
+  }
+  if (std::exchange(m_quitRequested, false))
+    onQuit();
+}
+
+bool Game::canChangeWindow()
+{
+  if (ownsWindow() && window)
+    return true;
+  if (!m_windowChangeLogged)
+    LOG_INFO("The game changed its window (title, size or fullscreen); that's ignored in the "
+             "editor and applies in the exported game");
+  m_windowChangeLogged = true;
+  return false;
+}
+
+void Game::setWindowTitle(const std::string& title)
+{
+  if (canChangeWindow())
+    SDL_SetWindowTitle(window, title.c_str());
+}
+
+void Game::setFullscreen(bool fullscreen)
+{
+  if (canChangeWindow())
+    SDL_SetWindowFullscreen(window, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+}
+
+bool Game::isFullscreen() const
+{
+  return window && ownsWindow() && (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+void Game::setWindowSize(int width, int height)
+{
+  if (width <= 0 || height <= 0)
+    return;
+  if (canChangeWindow())
+    SDL_SetWindowSize(window, width, height); // the resize event updates the backend
+}
+
 void Game::processInput()
 {
   ZoneScopedN("Game::processInput");
 
   input.mouse().beginFrame();
   input.keyboard().beginFrame();
+
+  // Mouse positions are relative to where the scene is drawn.
+  const SceneView view = sceneView();
+  input.mouse().setViewSize(view.rect.w, view.rect.h);
 
   SDL_Event sdlEvent;
   while (SDL_PollEvent(&sdlEvent))
@@ -186,35 +268,31 @@ void Game::processInput()
       m_backend->onResize(windowWidth, windowHeight);
     }
 
+    // Only the window the scene is drawn in (not, say, a detached editor
+    // panel) gives the game mouse input.
     if (sdlEvent.type == SDL_MOUSEMOTION)
     {
-      if (sdlEvent.motion.windowID != SDL_GetWindowID(window))
+      if (sdlEvent.motion.windowID != view.windowId)
         continue;
 
-      if (sdlEvent.motion.x < 0 || sdlEvent.motion.y < 0 ||
-          sdlEvent.motion.x >= windowWidth || sdlEvent.motion.y >= windowHeight)
-        continue;
-
-      input.mouse().setPosition(sdlEvent.motion.x, sdlEvent.motion.y);
-      // input.mouse().processDrag();
+      input.mouse().setPosition(sdlEvent.motion.x - view.rect.x, sdlEvent.motion.y - view.rect.y);
     }
 
-    // Clicks in other windows (detached ImGui panels) aren't game input.
     if ((sdlEvent.type == SDL_MOUSEBUTTONDOWN ||
          sdlEvent.type == SDL_MOUSEBUTTONUP) &&
-        sdlEvent.button.windowID != SDL_GetWindowID(window))
+        sdlEvent.button.windowID != view.windowId)
       continue;
 
     if (sdlEvent.type == SDL_MOUSEBUTTONDOWN)
     {
-      input.mouse().setPosition(sdlEvent.button.x, sdlEvent.button.y);
+      input.mouse().setPosition(sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
       input.mouse().pressButton(
           static_cast<sfs::MouseButton>(sdlEvent.button.button));
     }
 
     if (sdlEvent.type == SDL_MOUSEBUTTONUP)
     {
-      input.mouse().setPosition(sdlEvent.button.x, sdlEvent.button.y);
+      input.mouse().setPosition(sdlEvent.button.x - view.rect.x, sdlEvent.button.y - view.rect.y);
       input.mouse().releaseButton(
           static_cast<sfs::MouseButton>(sdlEvent.button.button));
     }
@@ -250,10 +328,13 @@ void Game::update(double deltaTime)
   ZoneScopedN("Game::update");
 
   sfs::ScopedMemoryTracking tracking{sfs::MemoryTrackingPhase::Update};
-  if (!sceneManager)
-    return;
-  sceneManager.current()->update(deltaTime);
-  onUpdate(deltaTime);
+  if (sceneManager)
+  {
+    sceneManager.current()->update(deltaTime);
+    onUpdate(deltaTime);
+  }
+  // After every script has run, so none is destroyed mid-update.
+  applyRequests();
 }
 
 void Game::render()

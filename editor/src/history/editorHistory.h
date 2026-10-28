@@ -52,9 +52,11 @@ public:
   void setEnabled(bool enabled);
 
 private:
-  // A selected entity by id, or none. Ids survive a restore (the registry
-  // reuses the lowest free id), so an id names the same entity afterwards.
-  using Selection = std::optional<unsigned>;
+  // A selected entity by its position in save order (parents first), or none.
+  // A restore recreates entities in that order, so the position names the
+  // same entity afterwards; its id may differ (ids follow creation order,
+  // which reparenting doesn't change until the scene is reloaded).
+  using Selection = std::optional<std::size_t>;
 
   struct Step
   {

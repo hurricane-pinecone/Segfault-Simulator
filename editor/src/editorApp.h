@@ -39,6 +39,13 @@ protected:
   void onRender() override;
   void onDestroy() override;
   bool sceneReceivesInput() const override { return m_context.playing && m_context.gameHasInput; }
+  SceneView sceneView() const override;
+  // Game code's quit() stops Play; loadScene() switches scenes within it.
+  void onQuit() override;
+  void onLoadScene(const std::filesystem::path& scene) override;
+  std::filesystem::path gameFolder() const override;
+  sfs::Scene3D& replaceScene() override;
+  bool ownsWindow() const override { return false; }
 
 private:
   void drawMenuBar();
@@ -50,6 +57,10 @@ private:
   void handleShortcuts();
   void duplicateSelection();
   void deleteSelection();
+  // Move the selection to the viewport's view (e.g. to aim a camera), or the
+  // view to the selection (e.g. to see what a camera sees).
+  void alignSelectionWithView();
+  void alignViewWithSelection();
   void drawScriptsMenu();
   void drawPlayControls();
   void drawExportDialog();

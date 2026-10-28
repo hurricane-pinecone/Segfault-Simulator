@@ -4,6 +4,7 @@
 
 #include <glm/glm/ext/scalar_constants.hpp>
 #include <glm/glm/geometric.hpp>
+#include <glm/glm/gtc/quaternion.hpp>
 
 using namespace sfs;
 
@@ -149,6 +150,36 @@ int main()
     CHECK(!Ray3D({{5.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
     CHECK(!Ray3D({{0.0f, 5.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
     CHECK(!Ray3D({{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(Aabb{}, distance));
+  }
+
+  TEST("setPose should look from the eye along the direction")
+  {
+    Camera3D camera;
+    const glm::vec3 eye{3.0f, -4.0f, 6.0f};
+    const glm::vec3 forward = glm::normalize(glm::vec3{-1.0f, 2.0f, -1.5f});
+    camera.setPose(eye, forward * 7.0f, 12.0f);
+
+    CHECK(nearVec(camera.position(), eye));
+    CHECK(nearVec(camera.viewDirection(), forward));
+    CHECK(testing::approx(camera.distance, 12.0f));
+    CHECK(nearVec(camera.target, eye + forward * 12.0f));
+  }
+
+  TEST("orientation should turn +X onto the view direction and keep +Z up")
+  {
+    Camera3D camera;
+    camera.yaw = 2.1f;
+    camera.pitch = 0.7f;
+    const glm::quat orientation = camera.orientation();
+    CHECK(nearVec(orientation * glm::vec3(1.0f, 0.0f, 0.0f), camera.viewDirection()));
+    CHECK((orientation * glm::vec3(0.0f, 0.0f, 1.0f)).z > 0.0f);
+    // Level: the side axis stays horizontal.
+    CHECK(testing::approx((orientation * glm::vec3(0.0f, 1.0f, 0.0f)).z, 0.0f));
+
+    Camera3D copy;
+    copy.setPose(camera.position(), orientation * glm::vec3(1.0f, 0.0f, 0.0f), camera.distance);
+    CHECK(testing::approx(copy.yaw, 2.1f));
+    CHECK(testing::approx(copy.pitch, 0.7f));
   }
 
   return testing::report("camera3DTests");

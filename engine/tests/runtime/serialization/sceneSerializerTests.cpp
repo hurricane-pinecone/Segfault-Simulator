@@ -3,9 +3,11 @@
 
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
+#include <engine/core/components/parentComponent.h>
 #include <engine/core/components/pointLight3DComponent.h>
 #include <engine/core/components/transform3DComponent.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
+#include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/renderSystem3D.h>
@@ -19,6 +21,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer3D;
@@ -35,6 +38,19 @@ struct World
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
 
   SceneSerializer serializer() { return SceneSerializer(reflect::types(), &render.meshes()); }
+
+  Entity named(const std::string& name, glm::vec3 position = glm::vec3(0.0f))
+  {
+    Entity entity = scene.createEntity();
+    entity.addComponent<NameComponent>(name);
+    entity.addComponent<Transform3DComponent>(Transform3DComponent{position});
+    return entity;
+  }
+
+  std::string nameOf(const Entity& entity)
+  {
+    return entity.isValid() ? entity.getComponent<NameComponent>().name : "";
+  }
 
   Entity findByName(const std::string& name)
   {
@@ -228,6 +244,97 @@ int main()
     CHECK(a.find("Second") < a.find("Third"));
 
     std::filesystem::remove_all(dir);
+  }
+
+  TEST("a hierarchy should save nested and load back with the same parents")
+  {
+    World source;
+    Entity farm = source.named("Farm", {10.0f, 0.0f, 0.0f});
+    Entity loose = source.named("Loose");
+    Entity barn = source.named("Barn", {1.0f, 0.0f, 0.0f});
+    Entity door = source.named("Door", {0.0f, 0.0f, 2.0f});
+    hierarchy::setParent(barn, farm);
+    hierarchy::setParent(door, barn);
+    source.scene.flushEntities();
+
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["formatVersion"] == 2);
+    CHECK(saved["entities"].size() == 2u); // roots: Farm, Loose
+    CHECK(saved["entities"][0]["children"][0]["NameComponent"]["name"] == "Barn");
+    CHECK(saved["entities"][0]["children"][0]["children"][0]["NameComponent"]["name"] == "Door");
+    CHECK(!saved["entities"][1].contains("children"));
+    CHECK(!saved.dump().contains("ParentComponent"));
+
+    World target;
+    CHECK(target.serializer().load(saved, target.scene));
+    target.scene.flushEntities();
+    CHECK(target.scene.entities().size() == 4u);
+    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Door"))) == "Barn");
+    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Barn"))) == "Farm");
+    CHECK(!hierarchy::parentOf(target.findByName("Loose")).isValid());
+    const glm::vec3 doorAt = hierarchy::worldPosition(target.findByName("Door"));
+    CHECK(testing::approx(doorAt.x, 11.0f));
+    CHECK(testing::approx(doorAt.z, 2.0f));
+    (void)loose;
+  }
+
+  TEST("loading should create entities parents first, so a reload keeps that order")
+  {
+    World world;
+    Entity a = world.named("A");
+    Entity b = world.named("B");
+    Entity c = world.named("C");
+    hierarchy::setParent(a, c); // saved order: B, C, A
+    world.scene.flushEntities();
+    const nlohmann::json saved = world.serializer().save(world.scene);
+    (void)b;
+
+    for (Entity entity : world.scene.entities())
+      world.scene.destroyEntity(entity);
+    world.scene.flushEntities();
+    CHECK(world.serializer().load(saved, world.scene));
+    world.scene.flushEntities();
+
+    std::vector<std::string> names;
+    for (const Entity& entity : world.scene.entities())
+      names.push_back(world.nameOf(entity));
+    CHECK((names == std::vector<std::string>{"B", "C", "A"}));
+    CHECK(world.serializer().save(world.scene) == saved);
+  }
+
+  TEST("saveEntity and loadEntity should copy a whole branch under a given parent")
+  {
+    World world;
+    Entity root = world.named("Root");
+    Entity lamp = world.named("Lamp", {0.0f, 0.0f, 3.0f});
+    Entity bulb = world.named("Bulb");
+    hierarchy::setParent(lamp, root);
+    hierarchy::setParent(bulb, lamp);
+    world.scene.flushEntities();
+
+    const Entity copy = world.serializer().loadEntity(
+        world.serializer().saveEntity(world.scene, lamp), world.scene, root);
+    world.scene.flushEntities();
+
+    CHECK(world.scene.entities().size() == 5u);
+    CHECK(hierarchy::parentOf(copy) == root);
+    const hierarchy::EntityTree tree(world.scene.entities());
+    CHECK(tree.children(root).size() == 2u);
+    CHECK(tree.children(copy).size() == 1u);
+    CHECK(world.nameOf(tree.children(copy)[0]) == "Bulb");
+  }
+
+  TEST("a format 1 file (no hierarchy) should still load")
+  {
+    World world;
+    const nlohmann::json v1 = {
+        {"formatVersion", 1},
+        {"entities", {{{"NameComponent", {{"name", "Old"}}}}}},
+    };
+    CHECK(world.serializer().load(v1, world.scene));
+    world.scene.flushEntities();
+    CHECK(world.findByName("Old").isValid());
+    CHECK(!world.findByName("Old").hasComponent<ParentComponent>());
   }
 
   return testing::report("sceneSerializerTests");

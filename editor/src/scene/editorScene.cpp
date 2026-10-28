@@ -1,5 +1,6 @@
 #include "scene/editorScene.h"
 
+#include "engine/core/components/camera3DComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/pointLight3DComponent.h"
@@ -40,6 +41,23 @@ sfs::Entity EditorScene::createPointLight(const std::string& name)
   sfs::Entity entity = createEmpty(name);
   entity.addComponent<sfs::PointLight3DComponent>();
   return entity;
+}
+
+sfs::Entity EditorScene::createCamera(const std::string& name, const sfs::Camera3D& view)
+{
+  sfs::Entity entity = createEmpty(name);
+  entity.getComponent<sfs::Transform3DComponent>() =
+      sfs::Transform3DComponent(view.position(), view.orientation());
+  sfs::Camera3DComponent camera;
+  camera.focusDistance = view.distance;
+  entity.addComponent<sfs::Camera3DComponent>(camera);
+  return entity;
+}
+
+void EditorScene::destroyBranch(const sfs::Entity& entity)
+{
+  sfs::Scene::destroyBranch(entity);
+  flushEntities();
 }
 
 void EditorScene::clear()

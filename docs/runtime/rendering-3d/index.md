@@ -109,6 +109,9 @@ barn.addComponent<sfs::Transform3DComponent>(transform);
 barn.addComponent<sfs::MeshRendererComponent>(sfs::MeshRendererComponent{barnMesh});
 ```
 
+A child entity draws relative to its parent; see
+[Parents & children](../../core/hierarchy/index.md).
+
 `MeshModule` batches every entity that shares a mesh into one instanced draw. A
 field of 200 crops of one kind costs one draw call. Each instance is culled
 twice: against the camera, for the lit pass, and against the sun's shadow
@@ -139,6 +142,50 @@ camera.projection = sfs::Camera3D::Projection::Orthographic; // or Perspective
 `groundForward()` and `groundRight()` give camera-relative movement axes on the
 ground. `screenRay(pixel, viewport)` returns a world-space ray for picking.
 `Ray3D::intersectPlaneZ` finds where it hits a ground plane.
+
+### Camera entities
+
+A scene made in the editor usually sees through a camera entity instead: an
+entity with a `Camera3DComponent` and a `Transform3DComponent`. The camera sits
+at the entity's position and looks along its +X axis, with +Z up (the way
+`setYaw` turns things). Each frame, `RenderSystem3D` points `camera()` the way
+the first active camera entity looks, so you move the view by moving the
+entity. It can be a child, e.g. of a vehicle it rides on.
+
+```cpp
+sfs::Entity eye = scene.createEntity();
+sfs::Transform3DComponent transform{{0.0f, -10.0f, 4.0f}};
+transform.setYaw(1.5708f); // look along +Y
+eye.addComponent<sfs::Transform3DComponent>(transform);
+eye.addComponent<sfs::Camera3DComponent>();
+```
+
+| Field | Meaning |
+| --- | --- |
+| `active` | Whether it can be the scene's view. Turn one camera off and another on to cut between them. |
+| `orthographic` | Parallel projection instead of perspective |
+| `fieldOfView` | Vertical, in degrees (perspective) |
+| `orthoHeight` | Visible world height (orthographic) |
+| `nearPlane`, `farPlane` | The visible depth range |
+| `focusDistance` | How far ahead the camera's attention is. The sun's shadows are sharpest there, and when there are too many point lights, the ones nearest it are kept. |
+
+Roll is ignored, so the view stays level.
+
+To steer it like an orbit camera, keep a `Camera3D` as the orbit's state and
+write it back to the entity each frame:
+
+```cpp
+// m_view: a Camera3D member, set up once from the entity in onCreate:
+//   m_view.setPose(eyePosition, eyeForward, camera.focusDistance);
+m_view.yaw += turnInput * dt;
+sfs::hierarchy::setWorldMatrix(
+    entity(), sfs::Transform3DComponent(m_view.position(), m_view.orientation()).matrix());
+```
+
+`setFollowSceneCamera(false)` stops the render system from following camera
+entities, leaving `camera()` to whoever drives it. The editor does this while
+editing, so its viewport can look around freely. A scene with no camera entity
+renders through `camera()` as set, as before.
 
 ## Lighting
 

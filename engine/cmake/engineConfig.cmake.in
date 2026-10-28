@@ -20,6 +20,10 @@ if(@ENGINE_HAS_RENDER_LIB@)
     find_dependency(imgui)
     find_dependency(OpenGL)
     find_dependency(GLEW)
+    # Linked privately; only a static engine passes it on to its consumers.
+    if("@ENGINE_LIBRARY_TYPE@" STREQUAL "STATIC")
+        find_dependency(Jolt)
+    endif()
 endif()
 
 # engine-webgpu links the prebuilt wgpu-native library, installed alongside the

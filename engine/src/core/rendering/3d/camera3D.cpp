@@ -3,6 +3,7 @@
 #include "glm/glm/ext/matrix_clip_space.hpp"
 #include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/geometric.hpp"
+#include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/matrix.hpp"
 
 #include <algorithm>
@@ -85,6 +86,25 @@ glm::vec3 Camera3D::groundForward() const
 glm::vec3 Camera3D::groundRight() const
 {
   return glm::vec3(std::sin(yaw), -std::cos(yaw), 0.0f);
+}
+
+void Camera3D::setPose(const glm::vec3& eye, const glm::vec3& forward, float focusDistance)
+{
+  const float length = glm::length(forward);
+  if (length < 1.0e-6f)
+    return;
+  const glm::vec3 direction = forward / length;
+  yaw = std::atan2(direction.y, direction.x);
+  pitch = std::asin(std::clamp(-direction.z, -1.0f, 1.0f));
+  distance = std::max(focusDistance, 1.0e-3f);
+  target = eye + direction * distance;
+}
+
+glm::quat Camera3D::orientation() const
+{
+  // Turn to face yaw around Z, then tip the nose down by pitch (a positive
+  // turn about the turned Y axis takes +X toward -Z).
+  return glm::angleAxis(yaw, kUp) * glm::angleAxis(pitch, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
 glm::mat4 Camera3D::viewMatrix() const

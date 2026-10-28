@@ -22,10 +22,16 @@ replace a scene's contents, destroy its entities and call
 
 - **Every reflected component on every entity**, field by field. Components
   that aren't reflected, such as most of the 2D/isometric ones, are left out.
+- **The [hierarchy](../../core/hierarchy/index.md)**, as nesting: an entity's
+  children are listed under its `"children"` key, beside its components. A
+  component can't be called `children`.
 - **The scene's render settings**, when it has a `RenderSystem3D`: lighting,
-  shadows and the camera.
-- **The scene's game systems** (the `System` scripts it runs when it plays),
-  by name, under `"systems"`. Pass the list to `save` and get it back from
+  shadows and the camera. In an editor scene, that camera is the viewport's
+  view. The game sees through a camera entity, which is saved like any other
+  entity.
+- **The scene's systems** (the `System` scripts it runs when it plays, and
+  the engine's optional systems such as `PhysicsSystem3D`), by name, under
+  `"systems"`. Pass the list to `save` and get it back from
   `load`; nothing instantiates them until the scene plays.
 - **Meshes by name.** A `MeshHandle` is only valid for one run, so a mesh field
   is saved as the name the mesh was given in `MeshLibrary::add(mesh, name)`.
@@ -48,22 +54,46 @@ replace a scene's contents, destroy its entities and call
         "position": [-2.0, 1.0, 0.0],
         "rotation": [1.0, 0.0, 0.0, 0.0],
         "scale": [1.0, 1.0, 2.0]
-      }
+      },
+      "children": [
+        {
+          "NameComponent": { "name": "Lid" },
+          "Transform3DComponent": { "position": [0.0, 0.0, 1.0], ... }
+        }
+      ]
     }
   ],
-  "formatVersion": 1,
+  "formatVersion": 2,
   "render": { "camera": {}, "lighting": {}, "shadows": {} }
 }
 ```
 
-Quaternions are stored as `[w, x, y, z]`.
+Quaternions are stored as `[w, x, y, z]`. A child's transform is relative to
+its parent.
+
+Format 1 files, from before hierarchies, are the same without `"children"`, and
+still load.
+
+## Saving part of a scene
+
+`saveEntity(scene, entity)` saves one entity and everything below it, in the
+same form as an entry in `"entities"`. `loadEntity(entry, scene, parent)`
+creates it again, under `parent` or as a root. The editor duplicates a branch
+this way:
+
+```cpp
+sfs::Entity copy = serializer.loadEntity(serializer.saveEntity(scene, lamp),
+                                         scene,
+                                         sfs::hierarchy::parentOf(lamp));
+```
 
 ## Version control
 
 Scene files are designed to be committed:
 
 - Saving, loading and saving again produces a byte-identical file.
-- Entities keep their order.
+- Entities keep their order. They're saved parents first, siblings in id order,
+  and loading creates them in that order.
 - Floats are written as their shortest exact decimal (`0.45`, not
   `0.44999998807907104`).
 - Vectors and colours stay on one line.

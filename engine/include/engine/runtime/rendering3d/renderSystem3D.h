@@ -46,9 +46,33 @@ public:
   RenderSystem3D(const RenderSystem3D&) = delete;
   RenderSystem3D& operator=(const RenderSystem3D&) = delete;
 
-  /** The camera the scene renders through; game code drives it. */
+  /**
+   * The camera the scene renders through. While following the scene camera
+   * (below) and the scene has a camera entity, each frame overwrites it from
+   * that entity, so move the entity instead; otherwise game code drives it.
+   */
   Camera3D& camera() { return m_camera; }
   const Camera3D& camera() const { return m_camera; }
+
+  /**
+   * Render through the scene's camera entity (sceneCamera()) when it has one.
+   * On by default; an editor turns it off to look around freely while editing.
+   */
+  void setFollowSceneCamera(bool follow) { m_followSceneCamera = follow; }
+  bool followsSceneCamera() const { return m_followSceneCamera; }
+
+  /**
+   * The first entity with an active Camera3DComponent and a
+   * Transform3DComponent, in id order; invalid if there is none.
+   */
+  Entity sceneCamera() const;
+
+  /**
+   * The world-space ray through a pixel of the scene's view (e.g. the mouse
+   * position, which is measured in the same pixels), from the camera as last
+   * rendered.
+   */
+  Ray3D screenRay(const glm::vec2& pixel) const;
 
   /** The scene's uploaded meshes. Freed with this system. */
   MeshLibrary& meshes() { return m_meshes; }
@@ -96,6 +120,7 @@ private:
   MeshLibrary m_meshes;
 
   Camera3D m_camera;
+  bool m_followSceneCamera = true;
   SceneLighting3D m_lighting;
   ShadowSettings3D m_shadows;
 

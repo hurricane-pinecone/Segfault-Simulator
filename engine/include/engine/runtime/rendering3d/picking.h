@@ -16,8 +16,8 @@ class Scene;
 inline constexpr float kPickMarkerRadius = 0.3f;
 
 /**
- * An entity's world-space bounds: its mesh's bounds through its transform, or a
- * small marker box at its position if it has no mesh.
+ * An entity's world-space bounds: its mesh's bounds through its world matrix
+ * (parents included), or a small marker box at its position if it has no mesh.
  *
  * @return nothing if the entity has no Transform3DComponent.
  */

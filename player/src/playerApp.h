@@ -27,6 +27,8 @@ protected:
   std::unique_ptr<sfs::IRenderBackend> makeRenderBackend() override;
   void onSetup() override;
   void onDestroy() override;
+  void onLoadScene(const std::filesystem::path& scene) override;
+  std::filesystem::path gameFolder() const override { return m_folder; }
 
 private:
   /** Tell the player why the game can't run (there's no console to read). */

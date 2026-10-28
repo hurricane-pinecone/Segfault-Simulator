@@ -3,6 +3,7 @@
 
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/transform3DComponent.h>
+#include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/meshLibrary.h>
@@ -89,6 +90,19 @@ int main()
     const auto bounds = entityBounds(box, world.meshes);
     CHECK(testing::approx(bounds->min.x, 0.0f));
     CHECK(testing::approx(bounds->max.z, 5.0f));
+  }
+
+  TEST("a child should be picked where its parent puts it")
+  {
+    World world;
+    Entity parent = world.spawn(MeshHandle{}, {10, 0, 0});
+    Entity child = world.spawn(world.cube, {0, 3, 0});
+    hierarchy::setParent(child, parent);
+
+    const auto hit = pickEntity(world.scene, world.meshes, downAt(10.0f, 3.0f));
+    CHECK(hit.has_value());
+    CHECK(hit->entity.getId() == child.getId());
+    CHECK(!pickEntity(world.scene, world.meshes, downAt(0.0f, 3.0f)).has_value());
   }
 
   return testing::report("pickingTests");

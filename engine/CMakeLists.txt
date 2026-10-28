@@ -104,6 +104,11 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/transform3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
             "${ENGINE_COMPONENT_DIR}/pointLight3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/camera3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/rigidBody3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/capsuleCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/scriptComponent.h")
 else()
     target_sources(engine-core PRIVATE
@@ -196,6 +201,10 @@ if(NOT ENGINE_CORE_ONLY)
 file(GLOB_RECURSE ENGINE_RENDER_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/*.cpp"
 )
+# 3D physics is built on Jolt, which the web build doesn't provide.
+if(ENGINE_WEB_BUILD)
+    list(FILTER ENGINE_RENDER_SRC EXCLUDE REGEX "/src/runtime/systems/physicsSystem3D\\.cpp$")
+endif()
 
 file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
@@ -300,6 +309,18 @@ else()
     find_package(imgui REQUIRED)
     find_package(OpenGL REQUIRED)
     find_package(GLEW REQUIRED)
+    find_package(Jolt REQUIRED)
+
+    # Static and private: Jolt's types stay out of the engine's headers, so
+    # games and the SDK never see it. Scene3D adds physics only where it's built.
+    target_link_libraries(engine PRIVATE Jolt::Jolt)
+    target_compile_definitions(engine PRIVATE SFS_HAS_PHYSICS=1)
+    # Jolt's package is built for AVX2 (its defines say so) but doesn't pass on
+    # the matching compiler flags; the code including its headers needs them.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"
+            PROPERTIES COMPILE_OPTIONS "-mavx2;-mbmi;-mpopcnt;-mlzcnt;-mf16c;-mfma")
+    endif()
 
     target_include_directories(engine PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui>"

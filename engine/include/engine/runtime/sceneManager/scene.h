@@ -8,6 +8,7 @@
 #include <SDL_render.h>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -16,6 +17,7 @@ namespace sfs
 
 using SceneId = uint32_t;
 
+class Game;
 class IQuadRenderer;
 class IRenderer3D;
 class TextRenderer;
@@ -76,7 +78,21 @@ public:
 
   Entity createEntity();
   Entity getEntity(Entity::EntityId id);
+
+  // Destroy an entity (at the next flush). Its children become roots; use
+  // destroyBranch to take them with it.
   void destroyEntity(const Entity& entity);
+
+  // Destroy an entity and everything below it (at the next flush).
+  void destroyBranch(const Entity& entity);
+
+  // The first entity with this name (NameComponent), parents before children;
+  // invalid if none. A path such as "Farm/Barn/Door" starts from a root
+  // entity's name and follows children's names down.
+  Entity findEntity(std::string_view nameOrPath);
+
+  // Every entity with this name, parents before children.
+  std::vector<Entity> findEntities(std::string_view name);
 
   // Every living entity, in id order (e.g. for an editor's hierarchy).
   std::vector<Entity> entities() { return m_registry.entities(); }
@@ -93,6 +109,12 @@ public:
   IQuadRenderer& quadRenderer() const;
   TextRenderer& textRenderer() const;
   IRenderer3D& renderer3D() const;
+  // The game this scene runs in: quit, switch scenes, change the window. Like
+  // the renderers, game() assumes there is one (there always is when a game or
+  // the editor runs the scene); tryGame() is null in tools and tests.
+  Game& game() const;
+  Game* tryGame() const { return m_game; }
+
   IQuadRenderer* tryQuadRenderer() const { return m_quadRenderer; }
   TextRenderer* tryTextRenderer() const { return m_textRenderer; }
   IRenderer3D* tryRenderer3D() const { return m_renderer3D; }
@@ -113,6 +135,11 @@ public:
   TObject* tryFindObject() const;
 
   void destroyObject(GameObject* object);
+
+  // Tell the game objects on both entities that a physics contact began or
+  // ended (their onCollision/onTrigger Enter/Exit). Called by the scene's
+  // physics, not by game code.
+  void notifyContact(const Contact3D& contact, bool begun);
 
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
@@ -160,6 +187,7 @@ private:
   IQuadRenderer* m_quadRenderer = nullptr;
   TextRenderer* m_textRenderer = nullptr;
   IRenderer3D* m_renderer3D = nullptr;
+  Game* m_game = nullptr; // set by SceneManager
 
   SceneId m_id = 0;
   std::string m_name = "";
@@ -174,6 +202,7 @@ TObject& Scene::createObject(TArgs&&... args)
   auto object = std::make_unique<TObject>(std::forward<TArgs>(args)...);
   TObject& ref = *object;
 
+  static_cast<GameObject&>(ref).m_scene = this;
   m_gameObjects.push_back(std::move(object));
   // Through the base, where Scene is a friend: scripts override onCreate as
   // protected, which would otherwise be inaccessible here.
@@ -188,6 +217,7 @@ TObject& Scene::attachObject(const Entity& entity)
   auto object = std::make_unique<TObject>();
   TObject& ref = *object;
   static_cast<GameObject&>(ref).m_entity = entity;
+  static_cast<GameObject&>(ref).m_scene = this;
 
   m_gameObjects.push_back(std::move(object));
   // Through the base, where Scene is a friend: scripts override onCreate as

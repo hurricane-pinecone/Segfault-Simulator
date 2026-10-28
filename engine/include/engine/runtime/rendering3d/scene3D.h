@@ -3,12 +3,14 @@
 #include "engine/core/rendering/3d/mesh.h"
 #include "engine/runtime/sceneManager/scene.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace sfs
 {
 
+class PhysicsSystem3D;
 class RenderSystem3D;
 
 /**
@@ -18,8 +20,9 @@ class RenderSystem3D;
  * the scene runs when it plays.
  *
  * The editor edits one of these and an exported game plays one, so a scene
- * looks and behaves the same in both. Load content into it with
- * SceneSerializer (passing gameSystems()), then call startScripts().
+ * looks and behaves the same in both. play() loads a scene file and starts
+ * it; to start content that's already loaded (the editor's Play), call
+ * startScripts().
  */
 class Scene3D : public Scene
 {
@@ -36,6 +39,13 @@ public:
 
   RenderSystem3D& renderSystem() { return *m_render; }
 
+  /**
+   * The scene's physics, or null when it has none. Physics is optional: a
+   * scene that wants it lists "PhysicsSystem3D" among its game systems, so it
+   * exists only while the scene plays.
+   */
+  PhysicsSystem3D* physicsSystem();
+
   /** A built-in primitive mesh (registered when the scene initialises). */
   MeshHandle builtinMesh(BuiltinMesh mesh) const;
 
@@ -45,9 +55,20 @@ public:
    */
   std::vector<std::string>& gameSystems() { return m_gameSystems; }
 
+  /**
+   * Replace the scene's contents with a scene file and start its scripts and
+   * game systems: what playing a scene file means, in a game or the editor.
+   *
+   * @return false (logged) if the file can't be loaded
+   */
+  bool play(const std::filesystem::path& file);
+
 protected:
   /** Sets up rendering and the built-in meshes; overrides must call it first. */
   void onInit() override;
+
+  /** Delivers the frame's physics contacts to game objects; overrides must call it. */
+  void onUpdate(double deltaTime) override;
 
 private:
   RenderSystem3D* m_render = nullptr;

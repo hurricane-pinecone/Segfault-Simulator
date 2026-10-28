@@ -15,6 +15,11 @@ namespace sfs
 class MeshLibrary;
 class Scene;
 
+namespace hierarchy
+{
+class EntityTree;
+}
+
 namespace reflect
 {
 class TypeRegistry;
@@ -36,11 +41,19 @@ struct TypeInfo;
  * saved by name; the caller keeps that list, since edit-mode scenes don't
  * instantiate them.
  *
+ * The parent/child hierarchy (ParentComponent) is saved as nesting: an
+ * entity's children are listed under its "children" key, so "children" is
+ * never a component name. Entities are saved parents first, siblings in id
+ * order, so loading into an empty scene recreates them in that order.
+ *
  * Layout:
- *   { "formatVersion": 1,
+ *   { "formatVersion": 2,
  *     "systems": [ "GrowthSystem", ... ],
  *     "render": { "lighting": {...}, "shadows": {...}, "camera": {...} },
- *     "entities": [ { "TypeName": { "field": value, ... }, ... }, ... ] }
+ *     "entities": [ { "TypeName": { "field": value, ... }, ...,
+ *                     "children": [ { ... }, ... ] }, ... ] }
+ *
+ * Format 1 (before hierarchies) is the same without "children".
  */
 class SceneSerializer
 {
@@ -80,14 +93,20 @@ public:
    */
   void loadObject(const reflect::TypeInfo& type, void* object, const nlohmann::json& fields) const;
 
-  /** One entity's components, in the same form as a scene file's entries. */
-  nlohmann::json saveEntity(const Entity& entity) const;
+  /**
+   * One entity and everything below it, in the same form as a scene file's
+   * entries (its children nested under "children").
+   */
+  nlohmann::json saveEntity(Scene& scene, const Entity& entity) const;
 
   /**
-   * Create an entity in `scene` from saveEntity() output (e.g. to duplicate
-   * one). Unknown component types are kept, as in load().
+   * Create an entity, and the children nested in it, in `scene` from
+   * saveEntity() output (e.g. to duplicate a branch), under `parent` (none: a
+   * root). Unknown component types are kept, as in load().
+   *
+   * @return the top entity created
    */
-  Entity loadEntity(const nlohmann::json& components, Scene& scene) const;
+  Entity loadEntity(const nlohmann::json& entry, Scene& scene, const Entity& parent = {}) const;
 
   /** Save to a file (pretty-printed). @return false (logged) on failure. */
   bool saveFile(Scene& scene,
@@ -109,8 +128,11 @@ public:
   static std::optional<nlohmann::json> readJsonFile(const std::filesystem::path& path);
 
 private:
-  Entity loadEntity(const nlohmann::json& components,
+  nlohmann::json saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree) const;
+
+  Entity loadEntity(const nlohmann::json& entry,
                     Scene& scene,
+                    const Entity& parent,
                     std::set<std::string>* unresolvedTypes) const;
 
   const reflect::TypeRegistry& m_types;

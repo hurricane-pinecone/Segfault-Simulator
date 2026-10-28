@@ -62,6 +62,7 @@ nav:
       - core/index.md
       - Entities, components & systems: core/ecs/index.md
       - Reflection & codegen: core/reflection/index.md
+      - Parents & children: core/hierarchy/index.md
       - Voxel terrain: core/voxel/index.md
       - Particles:
           - core/particles/index.md
@@ -78,6 +79,7 @@ nav:
       - runtime/index.md
       - Game & scenes: runtime/game-and-scenes/index.md
       - Scene files: runtime/serialization/index.md
+      - 3D physics: runtime/physics-3d/index.md
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md

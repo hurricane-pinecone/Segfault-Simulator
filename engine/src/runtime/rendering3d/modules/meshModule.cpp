@@ -3,6 +3,7 @@
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/transform3DComponent.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 
 namespace sfs
@@ -24,7 +25,7 @@ void MeshModule::computeCommands(const RenderContext3D& context)
     if (!localBounds)
       continue; // invalid handle, or a mesh from another library
 
-    const glm::mat4 model = entity.getComponent<Transform3DComponent>().matrix();
+    const glm::mat4 model = hierarchy::worldMatrix(entity);
     const Aabb worldBounds = localBounds->transformed(model);
 
     const bool visible = context.frustum.intersects(worldBounds);

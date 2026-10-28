@@ -3,7 +3,9 @@
 #include "project/project.h"
 
 #include "engine/core/ecs/entity.h"
+#include "glm/glm/ext/vector_int4.hpp"
 
+#include <cstdint>
 #include <optional>
 
 namespace sfs
@@ -37,6 +39,13 @@ struct EditorContext
 
   // While playing: the game gets input (the viewport has focus).
   bool gameHasInput = false;
+
+  // Where the viewport shows the scene, so the game's mouse positions can be
+  // made relative to it: the OS window it's in (SDL window id; the panel may
+  // be dragged out into its own) and the image's rectangle in that window, in
+  // window pixels (x, y, width, height).
+  uint32_t viewportWindowId = 0;
+  glm::ivec4 viewportRect{0};
 
   // The selected entity; invalid (default) when nothing is selected.
   sfs::Entity selection;

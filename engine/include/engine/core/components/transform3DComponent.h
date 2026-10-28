@@ -4,6 +4,7 @@
 #include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/ext/quaternion_float.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/geometric.hpp"
 #include "glm/glm/gtc/quaternion.hpp"
 
 namespace sfs
@@ -48,6 +49,21 @@ struct Transform3DComponent
     m[2] *= scale.z;
     m[3] = glm::vec4(position, 1.0f);
     return m;
+  }
+
+  /**
+   * The transform a translate * rotate * scale matrix was built from (the
+   * inverse of matrix()). Shear, which no transform can hold, is dropped.
+   */
+  static Transform3DComponent fromMatrix(const glm::mat4& m)
+  {
+    const glm::vec3 scale{glm::length(glm::vec3(m[0])),
+                          glm::length(glm::vec3(m[1])),
+                          glm::length(glm::vec3(m[2]))};
+    const glm::mat3 rotation{glm::vec3(m[0]) / scale.x,
+                             glm::vec3(m[1]) / scale.y,
+                             glm::vec3(m[2]) / scale.z};
+    return Transform3DComponent(glm::vec3(m[3]), glm::normalize(glm::quat_cast(rotation)), scale);
   }
 };
 

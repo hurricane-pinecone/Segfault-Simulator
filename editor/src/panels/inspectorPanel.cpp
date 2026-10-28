@@ -6,6 +6,7 @@
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
@@ -17,8 +18,11 @@
 
 #include "imgui.h"
 
+#include <algorithm>
+#include <cctype>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -229,6 +233,14 @@ void componentSection(const TypeInfo& type,
   else if (expanded)
   {
     void* object = type.component.get(entity);
+    if (type.name == "Transform3DComponent")
+      if (const sfs::Entity parent = sfs::hierarchy::parentOf(entity); parent.isValid())
+      {
+        const bool named = parent.hasComponent<sfs::NameComponent>();
+        ImGui::TextDisabled("Relative to parent \"%s\"",
+                            named ? parent.getComponent<sfs::NameComponent>().name.c_str()
+                                  : "(unnamed)");
+      }
     for (const FieldInfo& field : type.fields)
     {
       // Each field in its own ID scope: a label may repeat the header's (the
@@ -245,26 +257,64 @@ void componentSection(const TypeInfo& type,
   ImGui::PopID();
 }
 
-void addComponentButton(const sfs::Entity& entity, EditorHistory* history)
+std::string lowercase(std::string text)
+{
+  for (char& c : text)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return text;
+}
+
+// The components that can be added, grouped by the module that registered
+// them (the engine's first, then the game's), narrowed by a search box.
+void addComponentButton(const sfs::Entity& entity, EditorHistory* history, std::string& filter)
 {
   if (ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f)))
+  {
+    filter.clear();
     ImGui::OpenPopup("AddComponent");
+  }
 
   if (!ImGui::BeginPopup("AddComponent"))
     return;
 
-  bool any = false;
+  if (ImGui::IsWindowAppearing())
+    ImGui::SetKeyboardFocusHere();
+  ImGui::SetNextItemWidth(220.0f);
+  widgets::inputText("##search", filter);
+  const std::string search = lowercase(filter);
+
+  std::vector<const TypeInfo*> candidates;
   for (const TypeInfo& type : sfs::reflect::types().types())
+    if (type.kind == sfs::reflect::TypeKind::Component && type.name != kNameType &&
+        !type.component.has(entity) &&
+        lowercase(type.displayName).find(search) != std::string::npos)
+      candidates.push_back(&type);
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [](const TypeInfo* a, const TypeInfo* b)
+                   {
+                     const bool aEngine = a->module == "engine";
+                     const bool bEngine = b->module == "engine";
+                     if (aEngine != bEngine)
+                       return aEngine;
+                     if (a->module != b->module)
+                       return a->module < b->module;
+                     return a->displayName < b->displayName;
+                   });
+
+  const std::string* section = nullptr;
+  for (const TypeInfo* type : candidates)
   {
-    if (type.kind != sfs::reflect::TypeKind::Component || type.name == kNameType ||
-        type.component.has(entity))
-      continue;
-    any = true;
-    if (ImGui::MenuItem(type.displayName.c_str()))
-      history->change([&] { type.component.add(entity); });
+    if (!section || *section != type->module)
+    {
+      section = &type->module;
+      ImGui::SeparatorText(*section == "engine" ? "Engine" : section->c_str());
+    }
+    if (ImGui::MenuItem(type->displayName.c_str()))
+      history->change([&] { type->component.add(entity); });
   }
-  if (!any)
-    ImGui::TextDisabled("Every component is already added");
+  if (candidates.empty())
+    ImGui::TextDisabled(search.empty() ? "Every component is already added"
+                                       : "No component matches");
   ImGui::EndPopup();
 }
 
@@ -295,5 +345,5 @@ void InspectorPanel::drawContents(EditorContext& context)
       componentSection(type, entity, meshes, history);
 
   ImGui::Spacing();
-  addComponentButton(entity, history);
+  addComponentButton(entity, history, m_componentFilter);
 }

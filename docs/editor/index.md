@@ -49,9 +49,9 @@ Scene files are plain JSON and diff cleanly. See
 | Panel | Purpose |
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
-| Hierarchy | The scene's entities. Click to select; use the **+** button or right-click to create entities, and right-click an entity to delete it. The filter box narrows the list by name, and picking in the viewport scrolls the list to the selection. |
+| Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name and components, with **Add Component**. |
-| Scene Settings | Game systems, sun, sky, ambient light, shadows, camera projection and render stats. |
+| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/` and `assets/` folders. Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
@@ -61,6 +61,7 @@ Scene files are plain JSON and diff cleanly. See
 | Input | Action |
 | --- | --- |
 | Left-click | Select the entity under the cursor (nothing, if empty space) |
+| Gizmos (toolbar) | Show or hide the overlays below and the gizmo; on while editing, off during Play by default |
 | W / E / R | Move / rotate / scale gizmo (also in the viewport toolbar) |
 | World / Local (toolbar) | Gizmo axes aligned to the world or to the object |
 | Snap (toolbar), or hold Ctrl while dragging | Snap to 0.5 units, 15° or 0.1 scale |
@@ -70,13 +71,54 @@ Scene files are plain JSON and diff cleanly. See
 | F | Frame the selection |
 
 The selection is outlined, and lights are drawn as small sun icons, so entities
-without a mesh can be seen and clicked.
+without a mesh can be seen and clicked. These overlays are editor-only: exported
+games never draw them, and during Play the viewport hides them so it looks like
+the game. Tick **Gizmos** during Play to see them (and move things) anyway; the
+editing and Play settings are remembered separately.
+
+## Parents and children
+
+Any entity can be the child of another, and moves, turns and scales with it
+(see [Parents & children](../core/hierarchy/index.md)). In the Hierarchy:
+
+| Action | Result |
+| --- | --- |
+| Drag an entity onto another | It becomes that entity's child, staying where it is in the world |
+| Drag an entity onto the empty space below the list | It becomes a root, staying where it is |
+| Right-click → Create Child | A new entity under this one, at its origin |
+| Right-click → Unparent | It becomes a root, staying where it is |
+| Right-click → Delete, or Del | Deletes it and everything below it |
+| Ctrl+D | Duplicates it and everything below it, beside the original |
+
+The Inspector shows a child's transform relative to its parent, and says which
+parent. The viewport gizmo works in world space. An empty entity makes a good
+folder: its children keep their places when it sits at the origin.
+
+## The game camera
+
+The viewport is the editor's own view: looking around while editing never moves
+the game's camera. The game sees through a **camera entity** instead, an entity
+with a Camera3D component (see
+[Camera entities](../runtime/rendering-3d/index.md#camera-entities)):
+
+- **+ → Camera** adds one, looking the way the viewport is looking.
+- **Edit → Align With View** (Ctrl+Shift+F) moves the selection to the
+  viewport's view, to re-aim a camera.
+- **Edit → Align View With Selected** looks through the selection, to see what
+  a camera sees.
+- Cameras are drawn in the viewport as outlines of what they see. The game
+  camera is drawn brighter.
+- Scene Settings names the game camera: the first active one.
+
+Play and exported games see through the game camera, and scripts move it by
+moving its entity. A scene without one starts from the viewport's view as last
+saved, as before.
 
 ## Undo and editing
 
 Every scene edit can be undone: inspector fields, gizmo moves, creating,
 duplicating and deleting entities, adding and removing components, and game
-systems. A whole drag is one step. Undo leaves the camera where it is and
+systems. A whole drag is one step. Undo leaves the viewport's view where it is and
 restores the selection.
 
 | Command | Shortcut |
@@ -84,6 +126,7 @@ restores the selection.
 | Edit → Undo / Redo | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) |
 | Edit → Duplicate | Ctrl+D |
 | Edit → Delete | Del |
+| Edit → Align With View | Ctrl+Shift+F |
 
 History is cleared when another scene is opened. Edits made while playing aren't
 recorded, because Stop discards them anyway.
@@ -162,8 +205,8 @@ builds/windows/
 ```
 
 The exported game plays the start scene exactly as **Play** does: same scene
-setup, same scripts and game systems, with no editor UI. It starts from the
-camera the scene was saved with. If it can't start (a missing file, a module
+setup, same scripts and game systems, with no editor UI. It sees through the
+scene's [game camera](#the-game-camera). If it can't start (a missing file, a module
 that fails to load), it says so in a message box, with details in `log.txt`.
 
 Export replaces the folder's contents, so it only writes into an empty folder

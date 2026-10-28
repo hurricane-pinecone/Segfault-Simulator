@@ -12,8 +12,11 @@
 #include "scene/editorScene.h"
 #include "widgets/widgets.h"
 
+#include "engine/core/components/camera3DComponent.h"
 #include "engine/core/components/nameComponent.h"
+#include "engine/core/components/transform3DComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
@@ -287,6 +290,8 @@ void EditorApp::handleShortcuts()
     duplicateSelection();
   if (ImGui::Shortcut(ImGuiKey_Delete, kGlobal))
     deleteSelection();
+  if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_F, kGlobal))
+    alignSelectionWithView();
 }
 
 void EditorApp::drawEditMenu()
@@ -302,6 +307,15 @@ void EditorApp::drawEditMenu()
     duplicateSelection();
   if (ImGui::MenuItem("Delete", "Del", false, m_context.hasSelection()))
     deleteSelection();
+  ImGui::Separator();
+  const bool canAlign = m_mode == Mode::Edit && m_context.hasSelection() &&
+                        m_context.selection.hasComponent<sfs::Transform3DComponent>();
+  if (ImGui::MenuItem("Align With View", "Ctrl+Shift+F", false, canAlign))
+    alignSelectionWithView();
+  ImGui::SetItemTooltip("Move the selection to where the viewport is looking from");
+  if (ImGui::MenuItem("Align View With Selected", nullptr, false, canAlign))
+    alignViewWithSelection();
+  ImGui::SetItemTooltip("Look through the selection (a camera's view, while editing)");
   ImGui::EndMenu();
 }
 
@@ -315,8 +329,11 @@ void EditorApp::duplicateSelection()
       {
         const sfs::SceneSerializer serializer(sfs::reflect::types(),
                                               &m_context.render->meshes());
-        sfs::Entity copy =
-            serializer.loadEntity(serializer.saveEntity(m_context.selection), *m_context.scene);
+        // The whole branch, beside the original (same parent).
+        sfs::Entity copy = serializer.loadEntity(
+            serializer.saveEntity(*m_context.scene, m_context.selection),
+            *m_context.scene,
+            sfs::hierarchy::parentOf(m_context.selection));
         if (copy.hasComponent<sfs::NameComponent>())
           copy.getComponent<sfs::NameComponent>().name += " (copy)";
         m_context.scene->flushEntities();
@@ -335,9 +352,43 @@ void EditorApp::deleteSelection()
       {
         const sfs::Entity doomed = m_context.selection;
         m_context.selection = {};
-        m_context.scene->destroyEntity(doomed);
-        m_context.scene->flushEntities();
+        m_context.scene->destroyBranch(doomed);
       });
+}
+
+void EditorApp::alignSelectionWithView()
+{
+  if (m_mode != Mode::Edit || !m_context.hasSelection() ||
+      !m_context.selection.hasComponent<sfs::Transform3DComponent>())
+    return;
+
+  m_history.change(
+      [&]
+      {
+        const sfs::Camera3D& view = m_context.render->camera();
+        sfs::Entity entity = m_context.selection;
+        const glm::vec3 scale = entity.getComponent<sfs::Transform3DComponent>().scale;
+        sfs::hierarchy::setWorldMatrix(
+            entity, sfs::Transform3DComponent(view.position(), view.orientation()).matrix());
+        entity.getComponent<sfs::Transform3DComponent>().scale = scale;
+        if (entity.hasComponent<sfs::Camera3DComponent>())
+          entity.getComponent<sfs::Camera3DComponent>().focusDistance = view.distance;
+      });
+}
+
+void EditorApp::alignViewWithSelection()
+{
+  if (!m_context.hasSelection() || !m_context.selection.hasComponent<sfs::Transform3DComponent>())
+    return;
+
+  // Not an edit: the editor's view isn't part of the scene's undo history.
+  const sfs::Entity entity = m_context.selection;
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+  sfs::Camera3D& view = m_context.render->camera();
+  if (entity.hasComponent<sfs::Camera3DComponent>())
+    entity.getComponent<sfs::Camera3DComponent>().applyTo(view, world);
+  else
+    view.setPose(glm::vec3(world[3]), glm::vec3(world[0]), view.distance);
 }
 
 void EditorApp::drawScriptsMenu()
@@ -592,6 +643,8 @@ void EditorApp::createScene()
 {
   m_context.scene = sceneManager.createScene<EditorScene>();
   m_context.render = &m_context.scene->renderSystem();
+  // While editing, the viewport is the editor's own free view.
+  m_context.render->setFollowSceneCamera(false);
   if (m_document)
     m_document->rebind(*m_context.scene);
   else
@@ -636,6 +689,9 @@ void EditorApp::loadExistingModule()
 void EditorApp::play()
 {
   m_editSnapshot = m_document->snapshot();
+  // The game sees through its camera entity, if it has one (Stop restores the
+  // editor's view with the snapshot).
+  m_context.render->setFollowSceneCamera(true);
   sfs::startScripts(*m_context.scene, m_context.scene->gameSystems(),
                     &m_context.scene->renderSystem().meshes());
   m_mode = Mode::Playing;
@@ -643,6 +699,47 @@ void EditorApp::play()
   m_history.setEnabled(false); // play-mode changes are discarded on Stop
   LOG_INFO("Playing");
   updateWindowTitle();
+}
+
+sfs::Game::SceneView EditorApp::sceneView() const
+{
+  const glm::ivec4& rect = m_context.viewportRect;
+  return SceneView{m_context.viewportWindowId, SDL_Rect{rect.x, rect.y, rect.z, rect.w}};
+}
+
+void EditorApp::onQuit()
+{
+  if (m_mode == Mode::Playing)
+  {
+    LOG_INFO("The game quit");
+    stop();
+  }
+}
+
+void EditorApp::onLoadScene(const std::filesystem::path& file)
+{
+  if (m_mode != Mode::Playing || !m_context.project)
+    return;
+
+  // As in an exported game. The scene being edited is untouched: it isn't
+  // the document's file that's replaced, and Stop restores it.
+  if (playScene(file))
+    LOG_INFO("Playing " + file.generic_string());
+  else
+    stop();
+}
+
+std::filesystem::path EditorApp::gameFolder() const
+{
+  return m_context.project ? m_context.project->root() : std::filesystem::current_path();
+}
+
+sfs::Scene3D& EditorApp::replaceScene()
+{
+  destroyScene();
+  createScene();
+  m_context.render->setFollowSceneCamera(true); // only played into, never edited
+  return *m_context.scene;
 }
 
 void EditorApp::stop()

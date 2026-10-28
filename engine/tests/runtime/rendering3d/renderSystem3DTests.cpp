@@ -1,9 +1,11 @@
 #include "../../testHarness.h"
 #include "mockRenderer3D.h"
 
+#include <engine/core/components/camera3DComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/pointLight3DComponent.h>
 #include <engine/core/components/transform3DComponent.h>
+#include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/iRenderer3D.h>
@@ -181,6 +183,96 @@ int main()
     CHECK(h.renderer.lights.size() == 1u);
     CHECK(testing::approx(h.renderer.lights[0].position.z, 2.0f));
     CHECK(testing::approx(h.renderer.lights[0].radius, 6.0f));
+  }
+
+  TEST("children should draw and light where their parents put them")
+  {
+    Harness h;
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    Entity cart = h.scene.createEntity();
+    cart.addComponent<Transform3DComponent>(Transform3DComponent{{2.0f, 0.0f, 0.0f}});
+    Entity crate = h.spawn(box, {0.0f, 1.0f, 0.0f});
+    hierarchy::setParent(crate, cart);
+    Entity lantern = h.scene.createEntity();
+    lantern.addComponent<Transform3DComponent>(Transform3DComponent{{0.0f, 0.0f, 1.0f}});
+    lantern.addComponent<PointLight3DComponent>();
+    hierarchy::setParent(lantern, crate);
+
+    h.frame();
+
+    CHECK(h.renderer.drawn.size() == 1u);
+    CHECK(testing::approx(h.renderer.drawn.front().model[3].x, 2.0f));
+    CHECK(testing::approx(h.renderer.drawn.front().model[3].y, 1.0f));
+    CHECK(h.renderer.lights.size() == 1u);
+    CHECK(testing::approx(h.renderer.lights[0].position.x, 2.0f));
+    CHECK(testing::approx(h.renderer.lights[0].position.z, 1.0f));
+  }
+
+  TEST("the scene should render through its active camera entity")
+  {
+    Harness h;
+    Entity off = h.scene.createEntity();
+    off.addComponent<Transform3DComponent>(Transform3DComponent{{0.0f, 0.0f, 50.0f}});
+    off.addComponent<Camera3DComponent>().getComponent<Camera3DComponent>().active = false;
+
+    Entity rig = h.scene.createEntity();
+    rig.addComponent<Transform3DComponent>(Transform3DComponent{{-5.0f, 2.0f, 3.0f}});
+    Entity eye = h.scene.createEntity();
+    Transform3DComponent eyeTransform{{0.0f, 0.0f, 1.0f}};
+    eyeTransform.setYaw(1.5707964f); // facing +Y
+    eye.addComponent<Transform3DComponent>(eyeTransform);
+    Camera3DComponent lens;
+    lens.orthographic = true;
+    lens.orthoHeight = 9.0f;
+    lens.focusDistance = 4.0f;
+    eye.addComponent<Camera3DComponent>(lens);
+    hierarchy::setParent(eye, rig);
+
+    h.frame();
+
+    CHECK(h.system.sceneCamera() == eye);
+    const Camera3D& camera = h.system.camera();
+    CHECK(testing::approx(camera.position().x, -5.0f));
+    CHECK(testing::approx(camera.position().y, 2.0f));
+    CHECK(testing::approx(camera.position().z, 4.0f));
+    CHECK(testing::approx(camera.target.y, 6.0f)); // 4 ahead along +Y
+    CHECK(camera.projection == Camera3D::Projection::Orthographic);
+    CHECK(testing::approx(camera.orthoHeight, 9.0f));
+  }
+
+  TEST("not following the scene camera should leave camera() to its driver")
+  {
+    Harness h;
+    Entity eye = h.scene.createEntity();
+    eye.addComponent<Transform3DComponent>(Transform3DComponent{{40.0f, 0.0f, 0.0f}});
+    eye.addComponent<Camera3DComponent>();
+    h.system.setFollowSceneCamera(false);
+
+    h.frame();
+
+    CHECK(testing::approx(h.system.camera().target.x, 0.0f));
+    CHECK(testing::approx(h.system.camera().distance, 20.0f));
+  }
+
+  TEST("screenRay should go through the view's centre pixel to the target")
+  {
+    Harness h;
+    h.frame();
+    const glm::ivec2 size = h.renderer.viewportSize();
+    const Ray3D ray = h.system.screenRay(glm::vec2(size) * 0.5f);
+    const glm::vec3 toTarget = glm::normalize(h.system.camera().target - ray.origin);
+    CHECK(testing::approx(glm::dot(ray.direction, toTarget), 1.0f, 1e-3f));
+  }
+
+  TEST("screenRay should use the size the scene was drawn at, not a later one")
+  {
+    Harness h;
+    h.frame();
+    const glm::vec2 drawn = glm::vec2(h.renderer.viewportSize());
+    const Ray3D before = h.system.screenRay(drawn * 0.5f);
+    h.renderer.viewport = h.renderer.viewport * 3; // e.g. the window, between frames
+    const Ray3D after = h.system.screenRay(drawn * 0.5f);
+    CHECK(testing::approx(glm::dot(before.direction, after.direction), 1.0f, 1e-5f));
   }
 
   TEST("too many point lights should keep the ones nearest the target")

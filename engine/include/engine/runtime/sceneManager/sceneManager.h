@@ -10,6 +10,7 @@
 namespace sfs
 {
 
+class Game;
 class IQuadRenderer;
 class TextRenderer;
 
@@ -39,6 +40,9 @@ public:
   // is created.
   void setSceneServices(SceneServices* services);
 
+  // The game the scenes run in, handed to each scene (Scene::game()).
+  void setGame(Game* game) { m_game = game; }
+
   operator bool() { return m_currentScene != nullptr; }
 
 private:
@@ -47,6 +51,7 @@ private:
   std::unordered_map<std::string, SceneId> m_nameToId;
 
   SceneServices* m_services = nullptr;
+  Game* m_game = nullptr;
 
   SceneId nextSceneId = 0;
 };
@@ -69,6 +74,7 @@ TScene* SceneManager::createScene(TArgs&&... args)
       std::make_unique<TScene>(id, *m_services, std::forward<TArgs>(args)...);
 
   TScene* ptr = scene.get();
+  static_cast<Scene*>(ptr)->m_game = m_game;
 
   if (m_scenes.empty())
   {

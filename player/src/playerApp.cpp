@@ -1,11 +1,6 @@
 #include "playerApp.h"
 
 #include "engine/core/logger/logger.h"
-#include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
-#include "engine/runtime/rendering3d/scene3D.h"
-#include "engine/runtime/scripting/scriptRegistry.h"
-#include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
 
 #include <SDL_filesystem.h>
@@ -57,16 +52,18 @@ void PlayerApp::onSetup()
     return;
   }
 
-  auto* scene = sceneManager.createScene<sfs::Scene3D>();
-  const sfs::SceneSerializer serializer(sfs::reflect::types(), &scene->renderSystem().meshes());
-  if (!serializer.loadFile(m_folder / m_manifest.startScene, *scene, &scene->gameSystems()))
+  if (!playScene(m_manifest.startScene))
   {
     fail("The start scene (" + m_manifest.startScene.string() + ") couldn't be loaded.");
     return;
   }
-  scene->flushEntities();
-  sfs::startScripts(*scene, scene->gameSystems(), &scene->renderSystem().meshes());
   LOG_INFO("Playing " + m_manifest.name);
+}
+
+void PlayerApp::onLoadScene(const std::filesystem::path& scene)
+{
+  if (!playScene(scene))
+    fail("The scene " + scene.generic_string() + " couldn't be loaded.");
 }
 
 void PlayerApp::onDestroy()

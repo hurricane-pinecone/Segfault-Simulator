@@ -2,6 +2,8 @@
 
 #include "panels/panel.h"
 
+#include <string>
+
 // Edits the selected entity's components, drawn from reflection: any component
 // the registry knows (the engine's, or a game module's) gets an editor built
 // from its field descriptors and [[sfs::...]] attributes, with no hand-written
@@ -13,4 +15,7 @@ public:
 
 protected:
   void drawContents(EditorContext& context) override;
+
+private:
+  std::string m_componentFilter; // the Add Component search box
 };
