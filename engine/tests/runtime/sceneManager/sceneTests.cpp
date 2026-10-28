@@ -71,7 +71,8 @@ int main()
 
     CHECK(world.scene.findEntity("Fences/North/Gate") == gate);
     CHECK(world.scene.findEntity("Fences/North") == north);
-    CHECK(!world.scene.findEntity("North/Gate").isValid()); // North isn't a root
+    CHECK(
+        !world.scene.findEntity("North/Gate").isValid()); // North isn't a root
     CHECK(!world.scene.findEntity("Fences/South/Gate").isValid());
     (void)strayGate;
   }

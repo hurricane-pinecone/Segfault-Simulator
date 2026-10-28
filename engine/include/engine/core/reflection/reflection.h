@@ -14,8 +14,8 @@ namespace sfs::reflect
 enum class FieldKind : uint8_t
 {
   Bool,
-  Int,    // int / int32_t
-  UInt,   // unsigned / uint32_t
+  Int,  // int / int32_t
+  UInt, // unsigned / uint32_t
   Float,
   String, // std::string
   Vec2,   // glm::vec2
@@ -25,18 +25,22 @@ enum class FieldKind : uint8_t
   Mesh,   // MeshHandle (saved by mesh name)
   Json,   // nlohmann::json: free-form data, saved as-is; not edited directly
   StringList, // std::vector<std::string>
-  AssetRef,    // sfs::AssetRef<T>: a scriptable object of type T (saved as "asset:<id>"; see scriptableObject.h)
+  AssetRef,   // sfs::AssetRef<T>: a scriptable object of type T (saved as
+              // "asset:<id>"; see scriptableObject.h)
 };
 
 /** Editor hints for a field, from its [[sfs::...]] attributes. */
 struct FieldAttributes
 {
-  bool color = false;    // [[sfs::color]]: edit a vec3/vec4 as a colour
-  bool script = false;   // [[sfs::script]]: a string naming a game object script
-  bool texture = false;  // [[sfs::texture]]: a string naming a texture ("asset:<id>")
-  bool materials = false; // [[sfs::materials]]: a string list of a mesh's material slots
+  bool color = false;  // [[sfs::color]]: edit a vec3/vec4 as a colour
+  bool script = false; // [[sfs::script]]: a string naming a game object script
+  bool texture =
+      false; // [[sfs::texture]]: a string naming a texture ("asset:<id>")
+  bool materials =
+      false; // [[sfs::materials]]: a string list of a mesh's material slots
   bool hasRange = false; // [[sfs::range(min, max)]]
-  std::string assetType;  // AssetRef: the scriptable object type it refers to, e.g. "ItemDef"
+  std::string assetType; // AssetRef: the scriptable object type it refers to,
+                         // e.g. "ItemDef"
   float min = 0.0f;
   float max = 0.0f;
 };
@@ -65,7 +69,7 @@ enum class TypeKind : uint8_t
   Component,
   System,
   GameObject,
-  MeshSource, // provides procedural meshes (sfs::MeshSource)
+  MeshSource,       // provides procedural meshes (sfs::MeshSource)
   ScriptableObject, // shared data in an .asset file (sfs::ScriptableObject)
 };
 
@@ -78,10 +82,12 @@ struct ComponentOps
   void (*remove)(const Entity& entity) = nullptr;
 };
 
-/** Making and freeing objects of a scriptable object type (sfs::ScriptableObject). */
+/** Making and freeing objects of a scriptable object type
+ * (sfs::ScriptableObject). */
 struct ScriptableOps
 {
-  void* (*create)() = nullptr; // a new, default object, as an sfs::ScriptableObject*
+  void* (*create)() =
+      nullptr; // a new, default object, as an sfs::ScriptableObject*
   void (*destroy)(void* object) = nullptr;
 };
 
@@ -93,14 +99,14 @@ struct TypeInfo
   std::string module;      // which module registered it (e.g. "engine")
   TypeKind kind = TypeKind::Component;
   std::vector<FieldInfo> fields;
-  ComponentOps component; // valid when kind == Component
-  ScriptableOps scriptable;           // valid when kind == Data
+  ComponentOps component;   // valid when kind == Component
+  ScriptableOps scriptable; // valid when kind == Data
 };
 
 /**
  * Every reflected type, from the engine and from any game module. One instance
- * per process (it lives in engine-core), so a module loaded at runtime registers
- * into the same registry the editor reads.
+ * per process (it lives in engine-core), so a module loaded at runtime
+ * registers into the same registry the editor reads.
  */
 class TypeRegistry
 {

@@ -56,7 +56,7 @@ struct Camera3D
   float distance = 20.0f;
 
   Projection projection = Projection::Perspective;
-  float fieldOfView = 0.8f; // vertical, radians (perspective)
+  float fieldOfView = 0.8f;  // vertical, radians (perspective)
   float orthoHeight = 20.0f; // visible world height (orthographic)
   float nearPlane = 0.1f;
   float farPlane = 500.0f;
@@ -78,7 +78,8 @@ struct Camera3D
    * direction, and puts the target `focusDistance` ahead. There's no roll, so
    * the view stays level.
    */
-  void setPose(const glm::vec3& eye, const glm::vec3& forward, float focusDistance);
+  void
+  setPose(const glm::vec3& eye, const glm::vec3& forward, float focusDistance);
 
   /**
    * The eye's orientation: +X along the view direction, +Z leaning up (the

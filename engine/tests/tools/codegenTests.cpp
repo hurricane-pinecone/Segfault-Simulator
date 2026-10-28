@@ -12,9 +12,10 @@ namespace
 {
 const FieldModel* findField(const TypeModel& type, std::string_view name)
 {
-  const auto it = std::find_if(type.fields.begin(),
-                               type.fields.end(),
-                               [&](const FieldModel& f) { return f.name == name; });
+  const auto it =
+      std::find_if(type.fields.begin(),
+                   type.fields.end(),
+                   [&](const FieldModel& f) { return f.name == name; });
   return it != type.fields.end() ? &*it : nullptr;
 }
 
@@ -132,16 +133,20 @@ int main()
       private:
         int m_width = 0;
       };
-    )", "FieldMap.h");
+    )",
+                                           "FieldMap.h");
     CHECK(!helper.type.has_value());
     CHECK(helper.diagnostics.empty()); // and no "no class named after the file"
 
     // A struct is a component even with nothing in it (a tag)...
-    const ParseResult tag = parseHeader("struct Harvestable {};", "Harvestable.h");
+    const ParseResult tag =
+        parseHeader("struct Harvestable {};", "Harvestable.h");
     CHECK(tag.type.has_value() && tag.type->kind == TypeKind::Component);
     // ...and so is a class with public fields.
-    const ParseResult withFields = parseHeader("class Health { public: int hp = 3; };", "Health.h");
-    CHECK(withFields.type.has_value() && withFields.type->kind == TypeKind::Component);
+    const ParseResult withFields =
+        parseHeader("class Health { public: int hp = 3; };", "Health.h");
+    CHECK(withFields.type.has_value() &&
+          withFields.type->kind == TypeKind::Component);
   }
 
   TEST("methods returning pointers or references should be skipped quietly")
@@ -154,7 +159,8 @@ int main()
         const Thing& first() const;
         Thing** all();
       };
-    )", "Fields.h");
+    )",
+                                           "Fields.h");
     CHECK(result.type.has_value() && result.type->fields.empty());
     CHECK(result.diagnostics.empty());
   }
@@ -165,7 +171,8 @@ int main()
     CHECK(findField(*result.type, "target") == nullptr);
     CHECK(findField(*result.type, "items") == nullptr);
     CHECK(hasDiagnostic(result, Diagnostic::Severity::Warning, "pointer"));
-    CHECK(hasDiagnostic(result, Diagnostic::Severity::Warning, "std::vector<int>"));
+    CHECK(hasDiagnostic(
+        result, Diagnostic::Severity::Warning, "std::vector<int>"));
   }
 
   TEST("file names should match case-insensitively")
@@ -183,8 +190,8 @@ int main()
 
   TEST("an unsupported base should be an error")
   {
-    const ParseResult result =
-        parseHeader("class Boss : public Monster { public: int hp; };", "Boss.h");
+    const ParseResult result = parseHeader(
+        "class Boss : public Monster { public: int hp; };", "Boss.h");
     CHECK(hasDiagnostic(result, Diagnostic::Severity::Error, "Monster"));
   }
 
@@ -199,13 +206,16 @@ int main()
   TEST("display names should split words, acronyms and numbers")
   {
     CHECK(displayName("castsShadow", false) == std::string("Casts Shadow"));
-    CHECK(displayName("MeshRendererComponent", true) == std::string("Mesh Renderer"));
-    CHECK(displayName("PointLight3DComponent", true) == std::string("Point Light 3D"));
+    CHECK(displayName("MeshRendererComponent", true) ==
+          std::string("Mesh Renderer"));
+    CHECK(displayName("PointLight3DComponent", true) ==
+          std::string("Point Light 3D"));
     CHECK(displayName("HTTPServer", false) == std::string("HTTP Server"));
     CHECK(displayName("Component", true) == std::string("Component"));
   }
 
-  TEST("generated code should register fields and use access tags for private ones")
+  TEST("generated code should register fields and use access tags for private "
+       "ones")
   {
     TypeModel type = *parseHeader(kCrop, "/project/scripts/crop.h").type;
     GeneratorOptions options;
@@ -217,8 +227,9 @@ int main()
     const std::string code = generateRegistration({type}, options);
     CHECK(code.find("#include \"scripts/crop.h\"") != std::string::npos);
     CHECK(code.find("void game::registerTypes(") != std::string::npos);
-    CHECK(code.find("componentType<game::Crop>(\"Crop\", \"Crop\", \"game\")") !=
-          std::string::npos);
+    CHECK(
+        code.find("componentType<game::Crop>(\"Crop\", \"Crop\", \"game\")") !=
+        std::string::npos);
     CHECK(code.find("field.attributes.hasRange = true;") != std::string::npos);
     CHECK(code.find("template struct MemberAccess<Access_game_Crop_secret, "
                     "&game::Crop::secret>;") != std::string::npos);
@@ -227,8 +238,9 @@ int main()
   TEST("systems and game objects should register how to instantiate them")
   {
     TypeModel player = *parseHeader(kPlayer, "/project/scripts/Player.h").type;
-    TypeModel growth = *parseHeader(
-        "class Growth : public sfs::System {};", "/project/scripts/Growth.h").type;
+    TypeModel growth = *parseHeader("class Growth : public sfs::System {};",
+                                    "/project/scripts/Growth.h")
+                            .type;
     GeneratorOptions options;
     options.module = "game";
     options.function = "sfsRegisterModule";
@@ -239,12 +251,15 @@ int main()
           std::string::npos);
     CHECK(code.find("std::make_unique<Player>()") != std::string::npos);
     CHECK(code.find("scene.addSystem<Growth>()") != std::string::npos);
-    CHECK(code.find("sfs::scripts().add(std::move(script));") != std::string::npos);
-    CHECK(code.find("static_assert(std::is_base_of_v<sfs::GameObject, Player>") !=
+    CHECK(code.find("sfs::scripts().add(std::move(script));") !=
           std::string::npos);
+    CHECK(
+        code.find("static_assert(std::is_base_of_v<sfs::GameObject, Player>") !=
+        std::string::npos);
   }
 
-  TEST("scriptable object types and references to them should be recognised and registered")
+  TEST("scriptable object types and references to them should be recognised "
+       "and registered")
   {
     const ParseResult item = parseHeader(R"(
       struct ItemDef : public sfs::ScriptableObject
@@ -253,14 +268,18 @@ int main()
         int value = 10;
         sfs::AssetRef<ItemDef> upgradesTo;
       };
-    )", "/project/scripts/ItemDef.h");
-    CHECK(item.type.has_value() && item.type->kind == TypeKind::ScriptableObject);
+    )",
+                                         "/project/scripts/ItemDef.h");
+    CHECK(item.type.has_value() &&
+          item.type->kind == TypeKind::ScriptableObject);
     CHECK(item.diagnostics.empty());
     const FieldModel* upgrade = findField(*item.type, "upgradesTo");
-    CHECK(upgrade && upgrade->kind == "AssetRef" && upgrade->assetType == "ItemDef");
+    CHECK(upgrade && upgrade->kind == "AssetRef" &&
+          upgrade->assetType == "ItemDef");
 
     // Spelled without sfs:: too, as a component's field.
-    const ParseResult chest = parseHeader("struct Chest { AssetRef< ItemDef > loot; };", "Chest.h");
+    const ParseResult chest =
+        parseHeader("struct Chest { AssetRef< ItemDef > loot; };", "Chest.h");
     const FieldModel* loot = findField(*chest.type, "loot");
     CHECK(loot && loot->kind == "AssetRef" && loot->assetType == "ItemDef");
 
@@ -269,17 +288,21 @@ int main()
     options.function = "sfsRegisterModule";
     options.includeRoot = "/project/scripts";
     const std::string code = generateRegistration({*item.type}, options);
-    CHECK(code.find("scriptableObjectType<ItemDef>(\"ItemDef\", \"Item Def\", \"game\")") != std::string::npos);
-    CHECK(code.find("static_assert(std::is_base_of_v<sfs::ScriptableObject, ItemDef>") != std::string::npos);
+    CHECK(code.find("scriptableObjectType<ItemDef>(\"ItemDef\", \"Item Def\", "
+                    "\"game\")") != std::string::npos);
+    CHECK(code.find("static_assert(std::is_base_of_v<sfs::ScriptableObject, "
+                    "ItemDef>") != std::string::npos);
     CHECK(code.find("sfs::AssetRef<ItemDef>>") != std::string::npos);
-    CHECK(code.find("field.attributes.assetType = \"ItemDef\";") != std::string::npos);
+    CHECK(code.find("field.attributes.assetType = \"ItemDef\";") !=
+          std::string::npos);
   }
 
   TEST("mesh sources should be recognised and register their build function")
   {
-    const ParseResult result = parseHeader(
-        "class GameModels : public sfs::MeshSource { public: void build(sfs::MeshLibrary& l) override; };",
-        "/project/scripts/GameModels.h");
+    const ParseResult result =
+        parseHeader("class GameModels : public sfs::MeshSource { public: void "
+                    "build(sfs::MeshLibrary& l) override; };",
+                    "/project/scripts/GameModels.h");
     CHECK(result.type->kind == TypeKind::MeshSource);
 
     GeneratorOptions options;
@@ -287,8 +310,10 @@ int main()
     options.function = "sfsRegisterModule";
     options.includeRoot = "/project/scripts";
     const std::string code = generateRegistration({*result.type}, options);
-    CHECK(code.find("#include \"engine/runtime/rendering3d/meshSource.h\"") != std::string::npos);
-    CHECK(code.find("script.kind = sfs::ScriptType::Kind::MeshSource;") != std::string::npos);
+    CHECK(code.find("#include \"engine/runtime/rendering3d/meshSource.h\"") !=
+          std::string::npos);
+    CHECK(code.find("script.kind = sfs::ScriptType::Kind::MeshSource;") !=
+          std::string::npos);
     CHECK(code.find("GameModels source;") != std::string::npos);
     CHECK(code.find("source.build(library);") != std::string::npos);
   }

@@ -33,9 +33,8 @@ int main()
     camera.distance = 12.0f;
     camera.yaw = 1.1f;
     camera.pitch = 0.7f;
-    CHECK(testing::approx(glm::length(camera.position() - camera.target),
-                          12.0f,
-                          1e-3f));
+    CHECK(testing::approx(
+        glm::length(camera.position() - camera.target), 12.0f, 1e-3f));
   }
 
   TEST("a positive pitch should raise the eye above the target")
@@ -72,8 +71,8 @@ int main()
     Camera3D camera;
     camera.target = {3.0f, 4.0f, 0.0f};
     camera.yaw = 0.4f;
-    const glm::vec3 ndc = project(camera.viewProjection(16.0f / 9.0f),
-                                  camera.target);
+    const glm::vec3 ndc =
+        project(camera.viewProjection(16.0f / 9.0f), camera.target);
     CHECK(testing::approx(ndc.x, 0.0f, 1e-4f));
     CHECK(testing::approx(ndc.y, 0.0f, 1e-4f));
     CHECK(ndc.z > 0.0f);
@@ -146,10 +145,14 @@ int main()
     box.expand(glm::vec3(1.0f));
     float distance = 0.0f;
 
-    CHECK(!Ray3D({{-5.0f, 3.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
-    CHECK(!Ray3D({{5.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
-    CHECK(!Ray3D({{0.0f, 5.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(box, distance));
-    CHECK(!Ray3D({{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}).intersectAabb(Aabb{}, distance));
+    CHECK(!Ray3D({{-5.0f, 3.0f, 0.0f}, {1.0f, 0.0f, 0.0f}})
+               .intersectAabb(box, distance));
+    CHECK(!Ray3D({{5.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}})
+               .intersectAabb(box, distance));
+    CHECK(!Ray3D({{0.0f, 5.0f, 0.0f}, {1.0f, 0.0f, 0.0f}})
+               .intersectAabb(box, distance));
+    CHECK(!Ray3D({{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}})
+               .intersectAabb(Aabb{}, distance));
   }
 
   TEST("setPose should look from the eye along the direction")
@@ -171,13 +174,16 @@ int main()
     camera.yaw = 2.1f;
     camera.pitch = 0.7f;
     const glm::quat orientation = camera.orientation();
-    CHECK(nearVec(orientation * glm::vec3(1.0f, 0.0f, 0.0f), camera.viewDirection()));
+    CHECK(nearVec(
+        orientation * glm::vec3(1.0f, 0.0f, 0.0f), camera.viewDirection()));
     CHECK((orientation * glm::vec3(0.0f, 0.0f, 1.0f)).z > 0.0f);
     // Level: the side axis stays horizontal.
     CHECK(testing::approx((orientation * glm::vec3(0.0f, 1.0f, 0.0f)).z, 0.0f));
 
     Camera3D copy;
-    copy.setPose(camera.position(), orientation * glm::vec3(1.0f, 0.0f, 0.0f), camera.distance);
+    copy.setPose(camera.position(),
+                 orientation * glm::vec3(1.0f, 0.0f, 0.0f),
+                 camera.distance);
     CHECK(testing::approx(copy.yaw, 2.1f));
     CHECK(testing::approx(copy.pitch, 0.7f));
   }

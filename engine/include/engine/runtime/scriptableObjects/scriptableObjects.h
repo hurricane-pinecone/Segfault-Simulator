@@ -16,9 +16,10 @@ class AssetDatabase;
 class MeshLibrary;
 
 /**
- * A field referring to a scriptable object of type T (an sfs::ScriptableObject). The editor
- * picks it from the project's assets of that type; get() gives the asset, loaded
- * the first time anything asks for it and shared by everything that does.
+ * A field referring to a scriptable object of type T (an
+ * sfs::ScriptableObject). The editor picks it from the project's assets of that
+ * type; get() gives the asset, loaded the first time anything asks for it and
+ * shared by everything that does.
  *
  *   sfs::AssetRef<ItemDef> weapon;
  *   ...
@@ -35,10 +36,10 @@ struct AssetRef : AssetRefBase
 };
 
 /**
- * The project's (or game's) scriptable objects: .asset files, each holding the field
- * values of a scriptable object type ({ "formatVersion", "type", "fields" }). Loaded
- * from the catalogue on first use and kept until forgotten; one per process,
- * like the type registry, so game modules and the editor share it.
+ * The project's (or game's) scriptable objects: .asset files, each holding the
+ * field values of a scriptable object type ({ "formatVersion", "type", "fields"
+ * }). Loaded from the catalogue on first use and kept until forgotten; one per
+ * process, like the type registry, so game modules and the editor share it.
  *
  * Mesh fields name meshes in a scene's mesh library: whoever runs a scene sets
  * it (setMeshes), which starts the cache afresh. Objects of a game module's
@@ -74,10 +75,12 @@ public:
   /** Where assets are found (null: nowhere). Forgets everything loaded. */
   void setCatalogue(const AssetDatabase* catalogue);
   const AssetDatabase* catalogue() const { return m_catalogue; }
-  /** The meshes Mesh fields are found in (null: none). Forgets everything loaded, if it changes. */
+  /** The meshes Mesh fields are found in (null: none). Forgets everything
+   * loaded, if it changes. */
   void setMeshes(MeshLibrary* meshes);
 
-  /** An asset by reference ("asset:<id>"); null if none, missing or unreadable. */
+  /** An asset by reference ("asset:<id>"); null if none, missing or unreadable.
+   */
   const ScriptableObject* get(std::string_view asset);
   template <typename T>
   const T* get(std::string_view asset)
@@ -85,7 +88,8 @@ public:
     return dynamic_cast<const T*>(get(asset));
   }
 
-  /** The project's scriptable objects of a type (by its name; empty: every type), in path order. */
+  /** The project's scriptable objects of a type (by its name; empty: every
+   * type), in path order. */
   std::vector<Entry> list(std::string_view type = {});
   /** Every asset of type T, loaded, in path order. */
   template <typename T>
@@ -104,7 +108,8 @@ public:
   void clear();
 
   /** An .asset file's contents for `fields` of `type`. */
-  static nlohmann::json fileContents(const std::string& type, const nlohmann::json& fields);
+  static nlohmann::json fileContents(const std::string& type,
+                                     const nlohmann::json& fields);
 
 private:
   struct Loaded
@@ -119,8 +124,10 @@ private:
 
   const AssetDatabase* m_catalogue = nullptr;
   MeshLibrary* m_meshes = nullptr;
-  std::map<std::string, Loaded, std::less<>> m_loaded;         // by reference; object null: unreadable
-  std::map<std::string, std::string, std::less<>> m_types;     // each file's type, by reference
+  std::map<std::string, Loaded, std::less<>>
+      m_loaded; // by reference; object null: unreadable
+  std::map<std::string, std::string, std::less<>>
+      m_types; // each file's type, by reference
 };
 
 /** The process-wide scriptable objects. */

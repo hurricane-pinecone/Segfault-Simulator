@@ -7,7 +7,8 @@ using namespace sfs;
 // Key-down events, without polling (update() needs SDL running).
 int main()
 {
-  TEST("a key-down event should count as pressed even if released before polling")
+  TEST("a key-down event should count as pressed even if released before "
+       "polling")
   {
     KeyboardInput keyboard;
     keyboard.beginFrame();

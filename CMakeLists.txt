@@ -32,7 +32,10 @@ enable_testing()
 
 add_subdirectory(engine)
 
-if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_EDITOR)
+# Desktop only: the editor and the player (what it exports games as) need the
+# native WebGPU engine, which a web build doesn't have. (The engine sets
+# ENGINE_WEB_BUILD in its own scope, so test the toolchain's flag here.)
+if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_EDITOR AND NOT EMSCRIPTEN)
     add_subdirectory(player) # what the editor exports games as
     add_subdirectory(editor)
 endif()

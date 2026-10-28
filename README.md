@@ -29,6 +29,7 @@ optionally drive it with a live Lua scripting API.
   - [Raw CMake Install (no Conan)](#raw-cmake-install-no-conan)
   - [Runtime Assets](#runtime-assets)
 - [The Sample Game](#the-sample-game)
+- [Working on the Engine](#working-on-the-engine)
 
 ## Overview
 
@@ -158,3 +159,18 @@ these steps into one command.
 
 For building the engine itself, the bundled workspace build, and tooling, see
 [engine development](./engine/README.md).
+
+## Working on the Engine
+
+CI checks that the engine's C++ is formatted with clang-format 17.0.6 (the
+repo's `.clang-format`). A pre-commit hook formats what you commit, so you don't
+have to think about it. Turn it on once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It formats only the files you're committing, in the folders CI checks, and only
+what's staged. The first time, it installs clang-format 17.0.6 into `.git/` if
+that version isn't on your PATH (other versions format slightly differently).
+Skip it for one commit with `git commit --no-verify`.

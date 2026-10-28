@@ -137,7 +137,8 @@ int main()
     SceneLighting3D lighting;
     lighting.sun.direction = {0.3f, 0.2f, -0.5f}; // below the horizon
     night.system.setLighting(lighting);
-    const MeshHandle nightBox = night.system.meshes().add(meshes::box({1, 1, 1}));
+    const MeshHandle nightBox =
+        night.system.meshes().add(meshes::box({1, 1, 1}));
     night.spawn(nightBox, {0, 0, 0});
     night.frame();
     CHECK(!night.renderer.frame.shadows.enabled);
@@ -191,11 +192,13 @@ int main()
     Harness h;
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
     Entity cart = h.scene.createEntity();
-    cart.addComponent<Transform3DComponent>(Transform3DComponent{{2.0f, 0.0f, 0.0f}});
+    cart.addComponent<Transform3DComponent>(
+        Transform3DComponent{{2.0f, 0.0f, 0.0f}});
     Entity crate = h.spawn(box, {0.0f, 1.0f, 0.0f});
     hierarchy::setParent(crate, cart);
     Entity lantern = h.scene.createEntity();
-    lantern.addComponent<Transform3DComponent>(Transform3DComponent{{0.0f, 0.0f, 1.0f}});
+    lantern.addComponent<Transform3DComponent>(
+        Transform3DComponent{{0.0f, 0.0f, 1.0f}});
     lantern.addComponent<PointLight3DComponent>();
     hierarchy::setParent(lantern, crate);
 
@@ -213,11 +216,15 @@ int main()
   {
     Harness h;
     Entity off = h.scene.createEntity();
-    off.addComponent<Transform3DComponent>(Transform3DComponent{{0.0f, 0.0f, 50.0f}});
-    off.addComponent<Camera3DComponent>().getComponent<Camera3DComponent>().active = false;
+    off.addComponent<Transform3DComponent>(
+        Transform3DComponent{{0.0f, 0.0f, 50.0f}});
+    off.addComponent<Camera3DComponent>()
+        .getComponent<Camera3DComponent>()
+        .active = false;
 
     Entity rig = h.scene.createEntity();
-    rig.addComponent<Transform3DComponent>(Transform3DComponent{{-5.0f, 2.0f, 3.0f}});
+    rig.addComponent<Transform3DComponent>(
+        Transform3DComponent{{-5.0f, 2.0f, 3.0f}});
     Entity eye = h.scene.createEntity();
     Transform3DComponent eyeTransform{{0.0f, 0.0f, 1.0f}};
     eyeTransform.setYaw(1.5707964f); // facing +Y
@@ -245,7 +252,8 @@ int main()
   {
     Harness h;
     Entity eye = h.scene.createEntity();
-    eye.addComponent<Transform3DComponent>(Transform3DComponent{{40.0f, 0.0f, 0.0f}});
+    eye.addComponent<Transform3DComponent>(
+        Transform3DComponent{{40.0f, 0.0f, 0.0f}});
     eye.addComponent<Camera3DComponent>();
     h.system.setFollowSceneCamera(false);
 
@@ -261,7 +269,8 @@ int main()
     h.frame();
     const glm::ivec2 size = h.renderer.viewportSize();
     const Ray3D ray = h.system.screenRay(glm::vec2(size) * 0.5f);
-    const glm::vec3 toTarget = glm::normalize(h.system.camera().target - ray.origin);
+    const glm::vec3 toTarget =
+        glm::normalize(h.system.camera().target - ray.origin);
     CHECK(testing::approx(glm::dot(ray.direction, toTarget), 1.0f, 1e-3f));
   }
 
@@ -271,9 +280,11 @@ int main()
     h.frame();
     const glm::vec2 drawn = glm::vec2(h.renderer.viewportSize());
     const Ray3D before = h.system.screenRay(drawn * 0.5f);
-    h.renderer.viewport = h.renderer.viewport * 3; // e.g. the window, between frames
+    h.renderer.viewport =
+        h.renderer.viewport * 3; // e.g. the window, between frames
     const Ray3D after = h.system.screenRay(drawn * 0.5f);
-    CHECK(testing::approx(glm::dot(before.direction, after.direction), 1.0f, 1e-5f));
+    CHECK(testing::approx(
+        glm::dot(before.direction, after.direction), 1.0f, 1e-5f));
   }
 
   TEST("too many point lights should keep the ones nearest the target")
@@ -310,8 +321,8 @@ int main()
     MockRenderer3D renderer;
     {
       AssetStore store;
-      Scene scene{0,
-                  SceneServices{.assetStore = store, .renderer3D = &renderer}};
+      Scene scene{
+          0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
       auto& system = scene.addSystem<RenderSystem3D>(renderer);
       system.meshes().add(meshes::box({1, 1, 1}));
       system.meshes().add(meshes::plane({1, 1}));
@@ -320,14 +331,16 @@ int main()
     CHECK(renderer.live.empty());
   }
 
-  TEST("a mesh loading in the background should draw once it has loaded, under the same handle")
+  TEST("a mesh loading in the background should draw once it has loaded, under "
+       "the same handle")
   {
     Harness h;
     MeshLibrary& meshes = h.system.meshes();
     const MeshData box = meshes::box({1, 1, 1});
     bool ready = false;
     MeshLibrary::Provider provider;
-    provider.load = [](MeshLibrary& library, std::string_view name) { return library.pending(name); };
+    provider.load = [](MeshLibrary& library, std::string_view name)
+    { return library.pending(name); };
     provider.loaded = [&](std::string_view, bool& waiting) -> const MeshData*
     {
       waiting = !ready;
@@ -353,10 +366,12 @@ int main()
     CHECK(!meshes.isMissing(handle));
     CHECK(meshes.pendingCount() == 0u);
     CHECK(meshes.bounds(handle) != nullptr);
-    CHECK(meshes.nameOf(handle) == "asset:crate"); // saved scenes keep naming it
+    CHECK(meshes.nameOf(handle) ==
+          "asset:crate"); // saved scenes keep naming it
     h.frame();
     CHECK(h.renderer.batches.size() == 1u);
-    CHECK(h.renderer.batches[0].mesh == meshes.gpuHandle(handle)); // the renderer's own handle
+    CHECK(h.renderer.batches[0].mesh ==
+          meshes.gpuHandle(handle)); // the renderer's own handle
     CHECK(h.renderer.live.size() == 1u);
 
     meshes.remove(handle);
@@ -368,7 +383,8 @@ int main()
     Harness h;
     MeshLibrary& meshes = h.system.meshes();
     MeshLibrary::Provider provider;
-    provider.load = [](MeshLibrary& library, std::string_view name) { return library.pending(name); };
+    provider.load = [](MeshLibrary& library, std::string_view name)
+    { return library.pending(name); };
     provider.loaded = [](std::string_view, bool& waiting) -> const MeshData*
     {
       waiting = false;
@@ -391,7 +407,8 @@ int main()
     MeshLibrary::setKeepVertices(false);
     const MeshHandle notKept = h.system.meshes().add(box);
     const std::optional<MeshData> data = h.system.meshes().meshData(kept);
-    CHECK(data && data->vertices.size() == box.vertices.size() && data->indices == box.indices);
+    CHECK(data && data->vertices.size() == box.vertices.size() &&
+          data->indices == box.indices);
     CHECK(data && data->vertices[0].color == box.vertices[0].color);
     CHECK(!h.system.meshes().meshData(notKept));
   }
@@ -403,12 +420,14 @@ int main()
     CHECK(h.system.meshes().size() == 0u);
   }
 
-  TEST("objects with their own materials should batch apart, uploading each once")
+  TEST("objects with their own materials should batch apart, uploading each "
+       "once")
   {
     Harness h;
     MeshLibrary::Provider provider;
     int loads = 0;
-    provider.loadMaterial = [&loads](std::string_view name) -> std::shared_ptr<const MeshMaterial>
+    provider.loadMaterial =
+        [&loads](std::string_view name) -> std::shared_ptr<const MeshMaterial>
     {
       ++loads;
       return name == "wood" ? std::make_shared<MeshMaterial>() : nullptr;
@@ -418,10 +437,17 @@ int main()
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
     h.spawn(box, {0.0f, -2.0f, 0.0f});
     for (const float y : {0.0f, 2.0f})
-      h.spawn(box, {0.0f, y, 0.0f}).getComponent<MeshRendererComponent>().materials = {"wood"};
-    // A missing material, or an empty slot, is the mesh's own: batches with the first.
-    h.spawn(box, {0.0f, 4.0f, 0.0f}).getComponent<MeshRendererComponent>().materials = {"missing"};
-    h.spawn(box, {0.0f, 6.0f, 0.0f}).getComponent<MeshRendererComponent>().materials = {""};
+      h.spawn(box, {0.0f, y, 0.0f})
+          .getComponent<MeshRendererComponent>()
+          .materials = {"wood"};
+    // A missing material, or an empty slot, is the mesh's own: batches with the
+    // first.
+    h.spawn(box, {0.0f, 4.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"missing"};
+    h.spawn(box, {0.0f, 6.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {""};
 
     h.frame();
     h.frame();
@@ -429,7 +455,8 @@ int main()
     CHECK(h.renderer.batches.size() == 2u);
     const auto wood = std::find_if(h.renderer.batches.begin(),
                                    h.renderer.batches.end(),
-                                   [](const auto& batch) { return !batch.materials.empty(); });
+                                   [](const auto& batch)
+                                   { return !batch.materials.empty(); });
     CHECK(wood != h.renderer.batches.end());
     if (wood != h.renderer.batches.end())
     {
@@ -440,12 +467,14 @@ int main()
     CHECK(loads == 2); // wood and missing, each asked for once
   }
 
-  TEST("a material set from game code should be made once, then updated in place")
+  TEST("a material set from game code should be made once, then updated in "
+       "place")
   {
     Harness h;
     MeshMaterial painted;
     painted.baseColor = glm::vec4(0.5f);
-    const MaterialHandle first = h.system.meshes().setMaterial("game:painted", painted);
+    const MaterialHandle first =
+        h.system.meshes().setMaterial("game:painted", painted);
     CHECK(first.valid());
     CHECK(h.system.meshes().material("game:painted") == first);
     painted.baseColor = glm::vec4(1.0f);
@@ -459,7 +488,8 @@ int main()
   {
     Harness h;
     MeshLibrary::Provider provider;
-    provider.loadMaterial = [](std::string_view) { return std::make_shared<const MeshMaterial>(); };
+    provider.loadMaterial = [](std::string_view)
+    { return std::make_shared<const MeshMaterial>(); };
     h.system.meshes().setProvider(provider);
     const MaterialHandle wood = h.system.meshes().material("wood");
     h.system.meshes().reloadMaterial("wood");
@@ -485,7 +515,9 @@ int main()
       CHECK(slots[1].material.baseColor.r == 1.0f);
     }
     // No sections: one slot, the default material.
-    CHECK(h.system.meshes().sections(h.system.meshes().add(meshes::box({1, 1, 1}))).size() == 1u);
+    CHECK(h.system.meshes()
+              .sections(h.system.meshes().add(meshes::box({1, 1, 1})))
+              .size() == 1u);
     CHECK(h.system.meshes().sections(MeshHandle{999}).empty());
   }
 
@@ -494,10 +526,12 @@ int main()
     MockRenderer3D renderer;
     {
       AssetStore store;
-      Scene scene{0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
+      Scene scene{
+          0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
       RenderSystem3D& system = scene.addSystem<RenderSystem3D>(renderer);
       MeshLibrary::Provider provider;
-      provider.loadMaterial = [](std::string_view) { return std::make_shared<const MeshMaterial>(); };
+      provider.loadMaterial = [](std::string_view)
+      { return std::make_shared<const MeshMaterial>(); };
       system.meshes().setProvider(provider);
       CHECK(system.meshes().material("wood").valid());
       CHECK(renderer.liveMaterials.size() == 1u);

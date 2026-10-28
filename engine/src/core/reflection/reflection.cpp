@@ -20,8 +20,8 @@ void TypeRegistry::add(TypeInfo type)
 
 void TypeRegistry::removeModule(std::string_view module)
 {
-  std::erase_if(m_types,
-                [&](const TypeInfo& type) { return type.module == module; });
+  std::erase_if(
+      m_types, [&](const TypeInfo& type) { return type.module == module; });
 }
 
 const TypeInfo* TypeRegistry::find(std::string_view name) const

@@ -13,7 +13,8 @@
   #define SFS_MODULE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SFS_MODULE_EXPORT void sfsRegisterModule(sfs::reflect::TypeRegistry& registry);
+extern "C" SFS_MODULE_EXPORT void
+sfsRegisterModule(sfs::reflect::TypeRegistry& registry);
 
 namespace sfs
 {

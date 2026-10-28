@@ -21,14 +21,15 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
   m_width = width;
   m_height = height;
 
-  m_window = SDL_CreateWindow(title,
-                              SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED,
-                              width,
-                              height,
-                              // Hidden until the first frame is drawn, so it
-                              // doesn't sit black while the GPU sets up.
-                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
+  m_window = SDL_CreateWindow(
+      title,
+      SDL_WINDOWPOS_CENTERED,
+      SDL_WINDOWPOS_CENTERED,
+      width,
+      height,
+      // Hidden until the first frame is drawn, so it
+      // doesn't sit black while the GPU sets up.
+      SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
   if (!m_window)
   {
     LOG_ERROR("Error creating window");
@@ -44,8 +45,8 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
     return false;
 
   m_assetStore = std::make_unique<AssetStore>();
-  m_services.emplace(SceneServices{.assetStore = *m_assetStore,
-                                   .renderer3D = m_renderer3D.get()});
+  m_services.emplace(SceneServices{
+      .assetStore = *m_assetStore, .renderer3D = m_renderer3D.get()});
 
   return initImGui();
 }
@@ -63,7 +64,8 @@ void WebGpuRenderBackend::clearWindow()
   desc.colorAttachmentCount = 1;
   desc.colorAttachments = &color;
 
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
   wgpuRenderPassEncoderEnd(pass);
   wgpuRenderPassEncoderRelease(pass);
 }
@@ -155,7 +157,8 @@ void WebGpuRenderBackend::imguiRenderDrawData()
   desc.colorAttachmentCount = 1;
   desc.colorAttachments = &color;
 
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
   ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
   wgpuRenderPassEncoderEnd(pass);
   wgpuRenderPassEncoderRelease(pass);
@@ -196,7 +199,8 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
   if (m_sceneTarget && m_sceneTarget->valid())
   {
     // The scene draws offscreen; the window only shows ImGui, so clear it.
-    m_renderer3D->setTarget(m_encoder, m_sceneTarget->view(), m_sceneTarget->size());
+    m_renderer3D->setTarget(
+        m_encoder, m_sceneTarget->view(), m_sceneTarget->size());
     clearWindow();
   }
   else

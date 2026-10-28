@@ -45,8 +45,8 @@ private:
   WGPUDevice m_device = nullptr;
   WGPUQueue m_queue = nullptr;
   WGPUTextureFormat m_format = WGPUTextureFormat_BGRA8Unorm;
-  WGPUPresentMode m_present = WGPUPresentMode_Fifo;      // the main window's
-  WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo;     // the fastest available
+  WGPUPresentMode m_present = WGPUPresentMode_Fifo;  // the main window's
+  WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo; // the fastest available
   bool m_vsync = false;
   bool m_hasTimestamps = false;
 };

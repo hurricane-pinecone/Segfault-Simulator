@@ -25,7 +25,8 @@ int componentTypeId(std::string_view typeKey)
   if (inserted && it->second >= static_cast<int>(MAX_COMPONENTS))
     LOG_ERROR("Component type id " + std::to_string(it->second) + " for " +
               std::string(typeKey) + " exceeds MAX_COMPONENTS (" +
-              std::to_string(MAX_COMPONENTS) + "); raise MAX_COMPONENTS in entity.h");
+              std::to_string(MAX_COMPONENTS) +
+              "); raise MAX_COMPONENTS in entity.h");
 
   return it->second;
 }

@@ -27,8 +27,8 @@ void ScriptRegistry::add(ScriptType type)
 
 void ScriptRegistry::removeModule(std::string_view module)
 {
-  std::erase_if(m_types,
-                [&](const ScriptType& type) { return type.module == module; });
+  std::erase_if(
+      m_types, [&](const ScriptType& type) { return type.module == module; });
 }
 
 const ScriptType* ScriptRegistry::find(std::string_view name) const
@@ -67,7 +67,9 @@ ScriptRegistry& scripts()
   return registry;
 }
 
-void startScripts(Scene& scene, const std::vector<std::string>& systems, MeshLibrary* meshes)
+void startScripts(Scene& scene,
+                  const std::vector<std::string>& systems,
+                  MeshLibrary* meshes)
 {
   const SceneSerializer serializer(reflect::types(), meshes);
 
@@ -91,7 +93,8 @@ void startScripts(Scene& scene, const std::vector<std::string>& systems, MeshLib
   {
     const ScriptComponent& component = entity.getComponent<ScriptComponent>();
     const ScriptType* type = scripts().find(component.script);
-    if (!type || type->kind != ScriptType::Kind::GameObject || !type->createObject)
+    if (!type || type->kind != ScriptType::Kind::GameObject ||
+        !type->createObject)
     {
       LOG_ERROR("Play: no game object script named '" + component.script + "'");
       continue;

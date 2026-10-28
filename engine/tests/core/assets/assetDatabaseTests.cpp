@@ -82,19 +82,25 @@ int main()
     touch(root.path / "scripts/Spin.cpp");
     touch(root.path / "scenes/farm.scene");
 
-    AssetDatabase database(root.path, AssetDatabase::Mode::ReadWrite, AssetDatabase::projectFolders());
+    AssetDatabase database(root.path,
+                           AssetDatabase::Mode::ReadWrite,
+                           AssetDatabase::projectFolders());
     CHECK(database.records().size() == 2u);
     CHECK(database.findByPath("assets/models/barn.glb") != nullptr);
     const AssetRecord* fence = database.findByPath("prefabs/Fence.prefab");
     CHECK(fence && fence->kind == AssetKind::Prefab);
     CHECK(!fs::exists(root.path / "scripts/Spin.cpp.meta")); // not catalogued
-    CHECK(database.folders() == (std::vector<fs::path>{"assets", "assets/models", "prefabs"}));
+    CHECK(database.folders() ==
+          (std::vector<fs::path>{"assets", "assets/models", "prefabs"}));
 
     // A missing folder is skipped; a shipped game reads it the same way.
     fs::remove_all(root.path / "prefabs");
-    AssetDatabase shipped(root.path, AssetDatabase::Mode::ReadOnly, AssetDatabase::projectFolders());
+    AssetDatabase shipped(root.path,
+                          AssetDatabase::Mode::ReadOnly,
+                          AssetDatabase::projectFolders());
     CHECK(shipped.records().size() == 1u);
-    CHECK(shipped.folders() == (std::vector<fs::path>{"assets", "assets/models"}));
+    CHECK(shipped.folders() ==
+          (std::vector<fs::path>{"assets", "assets/models"}));
   }
 
   TEST("edits should leave the catalogue just as a fresh scan finds it")
@@ -106,22 +112,30 @@ int main()
     touch(root.path / "assets/props/barrel.png");
     touch(root.path / "assets/old/junk.png");
     touch(root.path / "prefabs/Fence.prefab");
-    AssetDatabase database(root.path, AssetDatabase::Mode::ReadWrite, AssetDatabase::projectFolders());
+    AssetDatabase database(root.path,
+                           AssetDatabase::Mode::ReadWrite,
+                           AssetDatabase::projectFolders());
     const uint64_t version = database.version();
 
-    CHECK(database.move(database.findByPath("assets/props/crate.png")->id, "assets/world/deep/box.png"));
+    CHECK(database.move(database.findByPath("assets/props/crate.png")->id,
+                        "assets/world/deep/box.png"));
     CHECK(database.moveFolder("assets/props", "assets/world/props"));
     CHECK(database.remove(database.findByPath("prefabs/Fence.prefab")->id));
     CHECK(database.removeFolder("assets/old"));
     CHECK(database.createFolder("assets/sounds/ui"));
-    const std::optional<AssetId> rock = database.import(outside.path / "rock.png", "assets/world");
+    const std::optional<AssetId> rock =
+        database.import(outside.path / "rock.png", "assets/world");
     CHECK(rock.has_value());
     CHECK(database.version() > version);
 
-    AssetDatabase fresh(root.path, AssetDatabase::Mode::ReadOnly, AssetDatabase::projectFolders());
+    AssetDatabase fresh(root.path,
+                        AssetDatabase::Mode::ReadOnly,
+                        AssetDatabase::projectFolders());
     CHECK(database.folders() == fresh.folders());
     CHECK(database.records().size() == fresh.records().size());
-    for (std::size_t i = 0; i < std::min(database.records().size(), fresh.records().size()); ++i)
+    for (std::size_t i = 0;
+         i < std::min(database.records().size(), fresh.records().size());
+         ++i)
     {
       CHECK(database.records()[i].path == fresh.records()[i].path);
       CHECK(database.records()[i].id == fresh.records()[i].id);
@@ -149,7 +163,7 @@ int main()
     CHECK(database.moveFolder("props", "world/props"));
     CHECK(database.find(crate)->path == fs::path("world/props/box.png"));
     CHECK(database.find(barrel)->path == fs::path("world/props/barrel.png"));
-    CHECK(!database.moveFolder("world", "world/inner")); // into itself
+    CHECK(!database.moveFolder("world", "world/inner"));     // into itself
     CHECK(AssetDatabase(root.path).find(barrel) != nullptr); // on disk too
   }
 
@@ -176,9 +190,11 @@ int main()
     touch(root.path / "tree.png");
     AssetDatabase database(root.path);
 
-    const std::optional<AssetId> copy = database.import(outside.path / "tree.png", "");
+    const std::optional<AssetId> copy =
+        database.import(outside.path / "tree.png", "");
     CHECK(copy.has_value());
-    CHECK(database.find(*copy)->path == fs::path("tree 2.png")); // name was taken
+    CHECK(database.find(*copy)->path ==
+          fs::path("tree 2.png")); // name was taken
     CHECK(database.createFolder("sounds"));
     CHECK(database.folders() == std::vector<fs::path>{"sounds"});
 
@@ -206,7 +222,8 @@ int main()
     AssetDatabase database(root.path, AssetDatabase::Mode::ReadOnly);
     CHECK(!fs::exists(root.path / "tree.png.meta"));
     CHECK(database.records().size() == 1u);
-    CHECK(!database.records()[0].id.valid()); // listed, but has no id without a .meta
+    CHECK(!database.records()[0]
+               .id.valid()); // listed, but has no id without a .meta
     CHECK(!database.createFolder("x"));
     CHECK(!fs::exists(root.path / "x"));
   }

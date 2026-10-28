@@ -65,7 +65,8 @@ public:
   MeshHandle createMesh(const MeshData& mesh) override;
   void destroyMesh(MeshHandle mesh) override;
   MaterialHandle createMaterial(const MeshMaterial& material) override;
-  void updateMaterial(MaterialHandle handle, const MeshMaterial& material) override;
+  void updateMaterial(MaterialHandle handle,
+                      const MeshMaterial& material) override;
   void destroyMaterial(MaterialHandle material) override;
   glm::ivec2 viewportSize() const override { return m_viewport; }
   uint32_t shadowMapResolution() const override { return m_shadowResolution; }
@@ -125,7 +126,8 @@ private:
     uint32_t instanceCount = 0;
     uint32_t firstMaterial = 0;
     uint32_t materialCount = 0;
-    bool allSections = false; // see-through draws: every section, not just Blend ones
+    bool allSections =
+        false; // see-through draws: every section, not just Blend ones
   };
 
   // A see-through draw, sorted back to front before drawing.
@@ -137,10 +139,12 @@ private:
 
   bool createPipelines();
   bool createTextureResources();
-  std::shared_ptr<GpuTexture> uploadTexture(const std::shared_ptr<const TextureData>& texture);
+  std::shared_ptr<GpuTexture>
+  uploadTexture(const std::shared_ptr<const TextureData>& texture);
   std::optional<GpuMaterial> makeMaterial(const MeshMaterial& material);
   // The material a draw uses for its mesh's section `index`.
-  const GpuMaterial& materialFor(const GpuMesh& mesh, std::size_t index, const Draw& draw) const;
+  const GpuMaterial&
+  materialFor(const GpuMesh& mesh, std::size_t index, const Draw& draw) const;
   void createShadowMap();
   void ensureDepthTarget();
   void ensureInstanceCapacity(std::size_t instanceCount);
@@ -149,7 +153,12 @@ private:
   void encodeLitPass();
   // Which of a draw's sections to draw: All (the shadow pass), Opaque (all but
   // Blend ones) or SeeThrough (Blend ones, or all for an allSections draw).
-  enum class Sections { All, Opaque, SeeThrough };
+  enum class Sections
+  {
+    All,
+    Opaque,
+    SeeThrough
+  };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
 
   const GpuMesh* findMesh(MeshHandle mesh) const;

@@ -72,8 +72,11 @@ add_custom_command(TARGET myGame POST_BUILD
 
 **Runtime libraries.** The engine libraries build as shared libraries by
 default, so on Windows its DLLs (and the WebGPU backend's, if you link
-`sfs::engine-webgpu`) need to sit next to your executable too. After
-`find_package(engine)`, call the `sfs_deploy_runtime` function it defines:
+`sfs::engine-webgpu`) need to sit next to your executable too. Building with
+MSVC is the exception: an MSVC DLL only exports symbols marked for export,
+and the engine marks none, so MSVC builds the engine statically by default
+instead. After `find_package(engine)`, call the `sfs_deploy_runtime` function
+it defines:
 
 ```cmake
 sfs_deploy_runtime(myGame)

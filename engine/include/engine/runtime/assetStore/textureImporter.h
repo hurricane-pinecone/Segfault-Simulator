@@ -11,10 +11,12 @@
 namespace sfs
 {
 
-/** How an image file is brought in as a texture; kept in its asset's .meta "settings". */
+/** How an image file is brought in as a texture; kept in its asset's .meta
+ * "settings". */
 struct TextureImportSettings
 {
-  bool nearest = false; // "filter": "nearest" draws texels with hard edges (pixel art)
+  bool nearest =
+      false; // "filter": "nearest" draws texels with hard edges (pixel art)
 
   static TextureImportSettings fromJson(const nlohmann::json& settings);
 };
@@ -25,13 +27,16 @@ struct TextureImportSettings
  * @param what names the image in the log if it can't be decoded
  * @return null (logged) if it can't
  */
-std::shared_ptr<TextureData> decodeTexture(const void* bytes, std::size_t size, const std::string& what);
+std::shared_ptr<TextureData>
+decodeTexture(const void* bytes, std::size_t size, const std::string& what);
 
 /** Save a texture's texels as a PNG file. False (logged) if it can't. */
-bool saveTexturePng(const TextureData& texture, const std::filesystem::path& file);
+bool saveTexturePng(const TextureData& texture,
+                    const std::filesystem::path& file);
 
 /** Read an image file as a texture. Null (logged) if it can't be read. */
-std::shared_ptr<const TextureData> importTexture(const std::filesystem::path& file,
-                                                 const TextureImportSettings& settings = {});
+std::shared_ptr<const TextureData>
+importTexture(const std::filesystem::path& file,
+              const TextureImportSettings& settings = {});
 
 } // namespace sfs

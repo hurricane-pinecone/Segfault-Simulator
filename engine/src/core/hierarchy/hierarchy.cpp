@@ -98,12 +98,16 @@ glm::mat4 parentWorldMatrix(const Entity& entity)
   return parent.isValid() ? worldMatrix(parent) : glm::mat4(1.0f);
 }
 
-glm::vec3 worldPosition(const Entity& entity) { return glm::vec3(worldMatrix(entity)[3]); }
+glm::vec3 worldPosition(const Entity& entity)
+{
+  return glm::vec3(worldMatrix(entity)[3]);
+}
 
 void setWorldMatrix(Entity entity, const glm::mat4& world)
 {
   entity.getComponent<Transform3DComponent>() =
-      Transform3DComponent::fromMatrix(glm::inverse(parentWorldMatrix(entity)) * world);
+      Transform3DComponent::fromMatrix(glm::inverse(parentWorldMatrix(entity)) *
+                                       world);
 }
 
 EntityTree::EntityTree(const std::vector<Entity>& entities)
@@ -117,7 +121,8 @@ EntityTree::EntityTree(const std::vector<Entity>& entities)
     const Entity parent = parentOf(entity);
     // A parent outside the list, or a loop, makes it a root so it's still
     // reached from the top.
-    if (parent.isValid() && listed.contains(parent.getId()) && !isAncestor(entity, entity))
+    if (parent.isValid() && listed.contains(parent.getId()) &&
+        !isAncestor(entity, entity))
       m_children[parent.getId()].push_back(entity);
     else
       m_roots.push_back(entity);
@@ -146,7 +151,8 @@ std::vector<Entity> EntityTree::subtree(const Entity& root) const
   return out;
 }
 
-void EntityTree::appendSubtree(const Entity& root, std::vector<Entity>& out) const
+void EntityTree::appendSubtree(const Entity& root,
+                               std::vector<Entity>& out) const
 {
   out.push_back(root);
   for (const Entity& child : children(root))

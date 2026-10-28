@@ -53,13 +53,15 @@ public:
    * as of the last update. Pair with RenderSystem3D::screenRay to find what
    * the mouse is over.
    */
-  std::optional<RaycastHit3D> raycast(const Ray3D& ray, float maxDistance = 1000.0f) const;
+  std::optional<RaycastHit3D> raycast(const Ray3D& ray,
+                                      float maxDistance = 1000.0f) const;
 
   // A dynamic body's motion; no effect on an entity that isn't one.
   glm::vec3 velocity(const Entity& entity) const;
   void setVelocity(const Entity& entity, const glm::vec3& velocity);
   glm::vec3 angularVelocity(const Entity& entity) const;
-  void setAngularVelocity(const Entity& entity, const glm::vec3& radiansPerSecond);
+  void setAngularVelocity(const Entity& entity,
+                          const glm::vec3& radiansPerSecond);
   /** A sudden push (mass * velocity change), e.g. a jump or a hit. */
   void addImpulse(const Entity& entity, const glm::vec3& impulse);
   /** A steady push, for the next step (call it every frame to keep pushing). */

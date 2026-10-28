@@ -1,37 +1,63 @@
 #!/usr/bin/env bash
-# Auto-format staged C/C++ sources with clang-format before each commit, then
-# re-stage them, so nothing unformatted reaches a commit (or CI). Vendored code
-# under engine/lib keeps its own style and is left alone.
+# Format the C++ being committed with clang-format, so the CI `format` check
+# passes. Only staged files in the folders CI checks, and only what's staged: a
+# partly staged file has its staged version formatted, leaving unstaged changes
+# out of the commit.
 #
-# Enable once per clone: git config core.hooksPath .githooks
-# Needs clang-format on PATH. For parity with CI, pin the same version:
-#   python3 -m venv ~/.local/share/sfs-clang-format \
-#     && ~/.local/share/sfs-clang-format/bin/pip install clang-format==17.0.6 \
-#     && ln -sf ~/.local/share/sfs-clang-format/bin/clang-format ~/.local/bin/clang-format
+# Turned on by `git config core.hooksPath .githooks`. Skip once with
+# `git commit --no-verify`.
 set -euo pipefail
 
-cf="$(command -v clang-format || true)"
-if [ -z "$cf" ]; then
-  echo "pre-commit: clang-format not found on PATH; skipping format." >&2
-  echo "            install clang-format 17.0.6 (see .githooks/pre-commit)." >&2
-  exit 0
-fi
+# The version CI pins (.github/workflows/deploy-web.yml): others format a little
+# differently, and CI would still fail.
+VERSION="17.0.6"
+# The folders CI checks (and engine/lib, which it doesn't: vendored code).
+INCLUDE='^(engine/src|engine/include|engine/tests|sampleGame/src|samplePlatformer/src)/.*\.(cpp|h|hpp|inl)$'
+EXCLUDE='^engine/lib/'
 
-# CI pins 17.0.6; a different version can format differently and fail CI.
-case "$("$cf" --version)" in
-*17.0.6*) ;;
-*) echo "pre-commit: warning: $("$cf" --version) is not 17.0.6 (CI's version);" \
-        "formatting may differ from CI." >&2 ;;
-esac
-
-# Staged, still-present C/C++ files, excluding the vendored lib tree.
-files="$(git diff --cached --name-only --diff-filter=ACM \
-         | grep -E '\.(cpp|h|hpp|inl)$' \
-         | grep -vE '(^|/)engine/lib/' || true)"
+files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E "$INCLUDE" | grep -vE "$EXCLUDE" || true)"
 [ -z "$files" ] && exit 0
 
-printf '%s\n' "$files" | while IFS= read -r f; do
-  [ -f "$f" ] || continue
-  "$cf" -i -- "$f"
-  git add -- "$f"
+# clang-format $VERSION: on the PATH, or installed once into .git/.
+formatter=""
+for candidate in clang-format clang-format-17; do
+  if command -v "$candidate" >/dev/null && "$candidate" --version | grep -q "version $VERSION"; then
+    formatter="$candidate"
+    break
+  fi
 done
+if [ -z "$formatter" ]; then
+  venv="$(git rev-parse --git-dir)/clang-format-$VERSION"
+  if [ ! -x "$venv/bin/clang-format" ]; then
+    echo "pre-commit: installing clang-format $VERSION (once) into $venv"
+    python3 -m venv "$venv" >/dev/null && "$venv/bin/pip" install -q "clang-format==$VERSION" || {
+      echo "pre-commit: couldn't install clang-format $VERSION; commit with --no-verify to skip formatting." >&2
+      exit 1
+    }
+  fi
+  formatter="$venv/bin/clang-format"
+fi
+
+formatted=()
+while IFS= read -r file; do
+  # The staged version, formatted (the repo's .clang-format applies by path).
+  staged="$(git rev-parse ":$file")"
+  mode="$(git ls-files --stage -- "$file" | cut -d' ' -f1)"
+  new="$(git cat-file blob "$staged" | "$formatter" --assume-filename="$file" | git hash-object -w --stdin)"
+  [ "$new" = "$staged" ] && continue
+  # Fully staged (the working copy is what's staged): it gets the same formatting.
+  fully=false
+  git diff --quiet -- "$file" && fully=true
+  git update-index --cacheinfo "$mode,$new,$file"
+  if $fully; then
+    git cat-file blob "$new" > "$file"
+  else
+    echo "pre-commit: formatted the staged part of $file (its unstaged changes aren't formatted yet)"
+  fi
+  formatted+=("$file")
+done <<< "$files"
+
+if [ ${#formatted[@]} -gt 0 ]; then
+  echo "pre-commit: formatted ${#formatted[@]} file(s):"
+  printf '  %s\n' "${formatted[@]}"
+fi

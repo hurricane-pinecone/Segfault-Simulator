@@ -95,9 +95,12 @@ T valueOr(const json& object, const char* key, T fallback)
   return fallback;
 }
 
-// --- reflected fields ----------------------------------------------------------
+// --- reflected fields
+// ----------------------------------------------------------
 
-json fieldToJson(const reflect::FieldInfo& field, void* object, const MeshLibrary* meshes)
+json fieldToJson(const reflect::FieldInfo& field,
+                 void* object,
+                 const MeshLibrary* meshes)
 {
   using Kind = reflect::FieldKind;
   switch (field.kind)
@@ -122,7 +125,8 @@ json fieldToJson(const reflect::FieldInfo& field, void* object, const MeshLibrar
   {
     // [w, x, y, z]: the order glm's quat constructor takes.
     const glm::quat& q = field.in<glm::quat>(object);
-    return json::array({cleanFloat(q.w), cleanFloat(q.x), cleanFloat(q.y), cleanFloat(q.z)});
+    return json::array(
+        {cleanFloat(q.w), cleanFloat(q.x), cleanFloat(q.y), cleanFloat(q.z)});
   }
   case Kind::Json:
     return field.in<json>(object);
@@ -133,7 +137,8 @@ json fieldToJson(const reflect::FieldInfo& field, void* object, const MeshLibrar
   case Kind::Mesh:
   {
     const MeshHandle mesh = field.in<MeshHandle>(object);
-    const std::string_view name = meshes ? meshes->nameOf(mesh) : std::string_view();
+    const std::string_view name =
+        meshes ? meshes->nameOf(mesh) : std::string_view();
     if (mesh.valid() && name.empty())
       LOG_ERROR("Saving field '" + field.name +
                 "': the mesh has no name, so it can't be saved");
@@ -226,7 +231,8 @@ bool fieldFromJson(const reflect::FieldInfo& field,
       {
         // Keep the name (a stand-in) so saving doesn't lose it; the mesh is
         // usually one a game module provides, before the module is built.
-        LOG_ERROR("Loading field '" + field.name + "': no mesh named '" + name + "'");
+        LOG_ERROR("Loading field '" + field.name + "': no mesh named '" + name +
+                  "'");
         mesh = meshes->missing(name);
       }
     }
@@ -237,7 +243,8 @@ bool fieldFromJson(const reflect::FieldInfo& field,
   return false;
 }
 
-// --- render settings -----------------------------------------------------------
+// --- render settings
+// -----------------------------------------------------------
 
 json renderToJson(const RenderSystem3D& render)
 {
@@ -262,7 +269,8 @@ json renderToJson(const RenderSystem3D& render)
         {"yaw", cleanFloat(camera.yaw)},
         {"pitch", cleanFloat(camera.pitch)},
         {"distance", cleanFloat(camera.distance)},
-        {"orthographic", camera.projection == Camera3D::Projection::Orthographic},
+        {"orthographic",
+         camera.projection == Camera3D::Projection::Orthographic},
         {"fieldOfView", cleanFloat(camera.fieldOfView)},
         {"orthoHeight", cleanFloat(camera.orthoHeight)}}},
   };
@@ -276,7 +284,8 @@ void renderFromJson(const json& value, RenderSystem3D& render)
     SceneLighting3D lighting = render.lighting();
     lighting.sun.direction = vec3Or(in, "sunDirection", lighting.sun.direction);
     lighting.sun.color = vec3Or(in, "sunColor", lighting.sun.color);
-    lighting.sun.diffuseStrength = valueOr(in, "sunStrength", lighting.sun.diffuseStrength);
+    lighting.sun.diffuseStrength =
+        valueOr(in, "sunStrength", lighting.sun.diffuseStrength);
     lighting.ambient = valueOr(in, "ambient", lighting.ambient);
     lighting.skyColor = vec3Or(in, "skyColor", lighting.skyColor);
     render.setLighting(lighting);
@@ -311,7 +320,8 @@ void renderFromJson(const json& value, RenderSystem3D& render)
 // so scene files stay compact and diff cleanly under version control.
 void writePretty(std::string& out, const json& value, int depth)
 {
-  const auto indent = [&](int level) { out.append(static_cast<std::size_t>(level) * 2, ' '); };
+  const auto indent = [&](int level)
+  { out.append(static_cast<std::size_t>(level) * 2, ' '); };
 
   if (value.is_object() && !value.empty())
   {
@@ -331,8 +341,10 @@ void writePretty(std::string& out, const json& value, int depth)
 
   if (value.is_array() && !value.empty())
   {
-    const bool scalars = std::all_of(value.begin(), value.end(),
-                                     [](const json& v) { return v.is_primitive(); });
+    const bool scalars =
+        std::all_of(value.begin(),
+                    value.end(),
+                    [](const json& v) { return v.is_primitive(); });
     if (scalars)
     {
       out += '[';
@@ -365,7 +377,8 @@ SceneSerializer::SceneSerializer(const reflect::TypeRegistry& types,
 {
 }
 
-json SceneSerializer::saveObject(const reflect::TypeInfo& type, void* object) const
+json SceneSerializer::saveObject(const reflect::TypeInfo& type,
+                                 void* object) const
 {
   json fields = json::object();
   for (const reflect::FieldInfo& field : type.fields)
@@ -417,7 +430,9 @@ json SceneSerializer::saveComponents(const Entity& entity) const
   return components;
 }
 
-json SceneSerializer::saveSubtree(const Entity& entity, const hierarchy::EntityTree& tree, bool ids) const
+json SceneSerializer::saveSubtree(const Entity& entity,
+                                  const hierarchy::EntityTree& tree,
+                                  bool ids) const
 {
   // An instance whose prefab didn't load goes back out as it was read.
   if (entity.hasComponent<MissingPrefabComponent>())
@@ -440,7 +455,9 @@ json SceneSerializer::saveSubtree(const Entity& entity, const hierarchy::EntityT
   return entry;
 }
 
-Entity SceneSerializer::loadEntity(const json& entry, Scene& scene, const Entity& parent) const
+Entity SceneSerializer::loadEntity(const json& entry,
+                                   Scene& scene,
+                                   const Entity& parent) const
 {
   return loadEntity(entry, scene, parent, nullptr);
 }
@@ -470,9 +487,10 @@ Entity SceneSerializer::loadEntity(const json& entry,
   return entity;
 }
 
-void SceneSerializer::loadComponents(const json& entry,
-                                     Entity& entity,
-                                     std::set<std::string>* unresolvedTypes) const
+void SceneSerializer::loadComponents(
+    const json& entry,
+    Entity& entity,
+    std::set<std::string>* unresolvedTypes) const
 {
   json unresolved = json::object();
   for (const auto& [typeName, fields] : entry.items())
@@ -496,11 +514,13 @@ void SceneSerializer::loadComponents(const json& entry,
     if (unresolvedTypes)
       for (const auto& [typeName, fields] : unresolved.items())
         unresolvedTypes->insert(typeName);
-    entity.addComponent<UnresolvedComponents>(UnresolvedComponents{std::move(unresolved)});
+    entity.addComponent<UnresolvedComponents>(
+        UnresolvedComponents{std::move(unresolved)});
   }
 }
 
-json SceneSerializer::save(Scene& scene, const std::vector<std::string>& gameSystems) const
+json SceneSerializer::save(Scene& scene,
+                           const std::vector<std::string>& gameSystems) const
 {
   const hierarchy::EntityTree tree(scene.entities());
   json entities = json::array();
@@ -559,9 +579,10 @@ bool SceneSerializer::load(const json& in,
   return true;
 }
 
-bool SceneSerializer::saveFile(Scene& scene,
-                               const std::filesystem::path& path,
-                               const std::vector<std::string>& gameSystems) const
+bool SceneSerializer::saveFile(
+    Scene& scene,
+    const std::filesystem::path& path,
+    const std::vector<std::string>& gameSystems) const
 {
   return writeJsonFile(save(scene, gameSystems), path);
 }
@@ -574,7 +595,8 @@ bool SceneSerializer::loadFile(const std::filesystem::path& path,
   return data && load(*data, scene, gameSystems);
 }
 
-bool SceneSerializer::writeJsonFile(const json& data, const std::filesystem::path& path)
+bool SceneSerializer::writeJsonFile(const json& data,
+                                    const std::filesystem::path& path)
 {
   std::string text;
   writePretty(text, data, 0);
@@ -588,7 +610,8 @@ bool SceneSerializer::writeJsonFile(const json& data, const std::filesystem::pat
   return true;
 }
 
-std::optional<json> SceneSerializer::readJsonFile(const std::filesystem::path& path)
+std::optional<json>
+SceneSerializer::readJsonFile(const std::filesystem::path& path)
 {
   std::ifstream in(path, std::ios::binary);
   if (!in)

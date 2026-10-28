@@ -45,7 +45,8 @@ static_assert(kMaxPointLights3D == 32,
               "MAX_POINT_LIGHTS in mesh3DCommon.wgsl must match");
 static_assert(sizeof(FrameUniforms) == 64 * 2 + 16 * 6 + 32 * 32,
               "FrameUniforms must match the WGSL Frame layout");
-static_assert(sizeof(MeshVertex) == 44, "vertex layout below assumes 11 floats");
+static_assert(sizeof(MeshVertex) == 44,
+              "vertex layout below assumes 11 floats");
 static_assert(sizeof(MeshInstance) == 80,
               "instance layout below assumes mat4 + vec4");
 
@@ -53,9 +54,9 @@ static_assert(sizeof(MeshInstance) == 80,
 struct MaterialUniforms
 {
   glm::vec4 baseColor;
-  glm::vec4 params; // unused, metallic, roughness, alpha cutoff
+  glm::vec4 params;      // unused, metallic, roughness, alpha cutoff
   glm::vec4 uvTransform; // tiling xy, offset zw
-  glm::uvec4 mode;  // x: AlphaMode
+  glm::uvec4 mode;       // x: AlphaMode
 };
 
 std::string withCommon(std::string_view shader)
@@ -110,7 +111,8 @@ WGPUDepthStencilState depthState(bool write, WGPUCompareFunction compare)
 {
   WGPUDepthStencilState depth = {};
   depth.format = kDepthFormat;
-  depth.depthWriteEnabled = write ? WGPUOptionalBool_True : WGPUOptionalBool_False;
+  depth.depthWriteEnabled =
+      write ? WGPUOptionalBool_True : WGPUOptionalBool_False;
   depth.depthCompare = compare;
   depth.stencilFront.compare = WGPUCompareFunction_Always;
   depth.stencilFront.failOp = WGPUStencilOperation_Keep;
@@ -165,11 +167,14 @@ std::vector<uint8_t> halve(const std::vector<uint8_t>& rgba,
     for (uint32_t x = 0; x < outWidth; ++x)
       for (uint32_t c = 0; c < 4; ++c)
       {
-        const uint32_t x0 = std::min(x * 2, width - 1), x1 = std::min(x * 2 + 1, width - 1);
-        const uint32_t y0 = std::min(y * 2, height - 1), y1 = std::min(y * 2 + 1, height - 1);
-        const auto at = [&](uint32_t px, uint32_t py) { return rgba[(std::size_t(py) * width + px) * 4 + c]; };
-        out[(std::size_t(y) * outWidth + x) * 4 + c] =
-            static_cast<uint8_t>((at(x0, y0) + at(x1, y0) + at(x0, y1) + at(x1, y1) + 2) / 4);
+        const uint32_t x0 = std::min(x * 2, width - 1),
+                       x1 = std::min(x * 2 + 1, width - 1);
+        const uint32_t y0 = std::min(y * 2, height - 1),
+                       y1 = std::min(y * 2 + 1, height - 1);
+        const auto at = [&](uint32_t px, uint32_t py)
+        { return rgba[(std::size_t(py) * width + px) * 4 + c]; };
+        out[(std::size_t(y) * outWidth + x) * 4 + c] = static_cast<uint8_t>(
+            (at(x0, y0) + at(x1, y0) + at(x0, y1) + at(x1, y1) + 2) / 4);
       }
   return out;
 }
@@ -189,11 +194,11 @@ void writeLevel(WGPUQueue queue,
   layout.bytesPerRow = width * 4;
   layout.rowsPerImage = height;
   const WGPUExtent3D size = {width, height, 1};
-  wgpuQueueWriteTexture(queue, &destination, rgba.data(), rgba.size(), &layout, &size);
+  wgpuQueueWriteTexture(
+      queue, &destination, rgba.data(), rgba.size(), &layout, &size);
 }
 
 } // namespace
-
 
 WebGpuRenderer3D::WebGpuRenderer3D(WebGpuContext& context,
                                    uint32_t shadowMapResolution)
@@ -205,9 +210,10 @@ WebGpuRenderer3D::~WebGpuRenderer3D() = default;
 
 bool WebGpuRenderer3D::initialize()
 {
-  m_frameUniforms = makeBuffer(m_context.device(),
-                               sizeof(FrameUniforms),
-                               WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_frameUniforms =
+      makeBuffer(m_context.device(),
+                 sizeof(FrameUniforms),
+                 WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
   createShadowMap();
 
   if (!createTextureResources() || !createPipelines())
@@ -237,12 +243,10 @@ MeshHandle WebGpuRenderer3D::createMesh(const MeshData& mesh)
   const uint64_t indexBytes = mesh.indices.size() * sizeof(uint32_t);
 
   GpuMesh gpu;
-  gpu.vertices = makeBuffer(device,
-                            vertexBytes,
-                            WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
-  gpu.indices = makeBuffer(device,
-                           indexBytes,
-                           WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst);
+  gpu.vertices = makeBuffer(
+      device, vertexBytes, WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
+  gpu.indices = makeBuffer(
+      device, indexBytes, WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst);
   if (!gpu.vertices || !gpu.indices)
     return {};
 
@@ -255,7 +259,9 @@ MeshHandle WebGpuRenderer3D::createMesh(const MeshData& mesh)
       m_context.queue(), gpu.indices.get(), 0, mesh.indices.data(), indexBytes);
   gpu.indexCount = static_cast<uint32_t>(mesh.indices.size());
 
-  const auto addSection = [&](uint32_t firstIndex, uint32_t indexCount, const MeshMaterial& material)
+  const auto addSection = [&](uint32_t firstIndex,
+                              uint32_t indexCount,
+                              const MeshMaterial& material)
   {
     // Clamp to the indices there are, so a bad section can't read past them.
     const uint32_t first = std::min(firstIndex, gpu.indexCount);
@@ -319,9 +325,11 @@ MaterialHandle WebGpuRenderer3D::createMaterial(const MeshMaterial& material)
   return MaterialHandle{slot + 1};
 }
 
-void WebGpuRenderer3D::updateMaterial(MaterialHandle handle, const MeshMaterial& material)
+void WebGpuRenderer3D::updateMaterial(MaterialHandle handle,
+                                      const MeshMaterial& material)
 {
-  if (!handle.valid() || handle.id > m_materials.size() || !m_materials[handle.id - 1])
+  if (!handle.valid() || handle.id > m_materials.size() ||
+      !m_materials[handle.id - 1])
     return;
   if (std::optional<GpuMaterial> gpu = makeMaterial(material))
     m_materials[handle.id - 1] = std::move(gpu);
@@ -329,7 +337,8 @@ void WebGpuRenderer3D::updateMaterial(MaterialHandle handle, const MeshMaterial&
 
 void WebGpuRenderer3D::destroyMaterial(MaterialHandle material)
 {
-  if (!material.valid() || material.id > m_materials.size() || !m_materials[material.id - 1])
+  if (!material.valid() || material.id > m_materials.size() ||
+      !m_materials[material.id - 1])
     return;
   m_materials[material.id - 1].reset();
   m_freeMaterialSlots.push_back(material.id - 1);
@@ -357,15 +366,18 @@ void WebGpuRenderer3D::drawMesh(const MeshBatch3D& batch)
 
   // The batch's materials, shared by its draws.
   const auto firstMaterial = static_cast<uint32_t>(m_drawMaterials.size());
-  const std::size_t materialCount = std::min(batch.materials.size(), mesh->sections.size());
+  const std::size_t materialCount =
+      std::min(batch.materials.size(), mesh->sections.size());
   for (std::size_t i = 0; i < materialCount; ++i)
     m_drawMaterials.push_back(batch.materials[i].id);
 
   const uint32_t slot = batch.mesh.id - 1;
-  const Draw base{slot, 0, 0, firstMaterial, static_cast<uint32_t>(materialCount), false};
+  const Draw base{
+      slot, 0, 0, firstMaterial, static_cast<uint32_t>(materialCount), false};
   bool hasBlend = false;
   for (std::size_t i = 0; i < mesh->sections.size(); ++i)
-    hasBlend = hasBlend || materialFor(*mesh, i, base).alphaMode == AlphaMode::Blend;
+    hasBlend =
+        hasBlend || materialFor(*mesh, i, base).alphaMode == AlphaMode::Blend;
 
   const auto append = [&](const MeshInstance& instance)
   {
@@ -379,7 +391,8 @@ void WebGpuRenderer3D::drawMesh(const MeshBatch3D& batch)
     draw.instanceCount = 1;
     draw.allSections = allSections;
     const glm::vec3 position(m_instances[index].model[3]);
-    m_blendDraws.push_back({draw, glm::distance(position, m_frame.cameraPosition)});
+    m_blendDraws.push_back(
+        {draw, glm::distance(position, m_frame.cameraPosition)});
   };
 
   // Faded instances (tint alpha below 1) draw see-through, after everything
@@ -412,7 +425,9 @@ void WebGpuRenderer3D::drawMesh(const MeshBatch3D& batch)
     shadow.firstInstance = static_cast<uint32_t>(m_instances.size());
     shadow.instanceCount = static_cast<uint32_t>(batch.shadowInstances.size());
     m_shadowDraws.push_back(shadow);
-    m_instances.insert(m_instances.end(), batch.shadowInstances.begin(), batch.shadowInstances.end());
+    m_instances.insert(m_instances.end(),
+                       batch.shadowInstances.begin(),
+                       batch.shadowInstances.end());
   }
 }
 
@@ -428,7 +443,8 @@ void WebGpuRenderer3D::endFrame()
   // Farthest first, so nearer see-through things blend over farther ones.
   std::stable_sort(m_blendDraws.begin(),
                    m_blendDraws.end(),
-                   [](const BlendDraw& a, const BlendDraw& b) { return a.distance > b.distance; });
+                   [](const BlendDraw& a, const BlendDraw& b)
+                   { return a.distance > b.distance; });
 
   ensureDepthTarget();
   uploadFrame();
@@ -442,11 +458,11 @@ void WebGpuRenderer3D::createShadowMap()
 {
   const glm::ivec2 size{static_cast<int>(m_shadowResolution),
                         static_cast<int>(m_shadowResolution)};
-  m_shadowView = makeDepthTexture(m_context.device(),
-                                  size,
-                                  WGPUTextureUsage_RenderAttachment |
-                                      WGPUTextureUsage_TextureBinding,
-                                  m_shadowMap);
+  m_shadowView = makeDepthTexture(
+      m_context.device(),
+      size,
+      WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
+      m_shadowMap);
 
   // Comparison sampling with linear filtering: each tap is a hardware 2x2
   // percentage-closer filter.
@@ -481,7 +497,8 @@ bool WebGpuRenderer3D::createTextureResources()
   entries[2].visibility = WGPUShaderStage_Fragment;
   entries[2].texture.sampleType = WGPUTextureSampleType_Float;
   entries[2].texture.viewDimension = WGPUTextureViewDimension_2D;
-  entries[3] = wgpu::storageEntry(3, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+  entries[3] = wgpu::storageEntry(
+      3, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
   WGPUBindGroupLayoutDescriptor layout = {};
   layout.entryCount = entries.size();
   layout.entries = entries.data();
@@ -538,7 +555,8 @@ std::shared_ptr<WebGpuRenderer3D::GpuTexture> WebGpuRenderer3D::uploadTexture(
   desc.dimension = WGPUTextureDimension_2D;
   desc.size = {texture->width, texture->height, 1};
   // Colour images are sRGB, so sampling gives linear colour; data stays as is.
-  desc.format = texture->linear ? WGPUTextureFormat_RGBA8Unorm : WGPUTextureFormat_RGBA8UnormSrgb;
+  desc.format = texture->linear ? WGPUTextureFormat_RGBA8Unorm
+                                : WGPUTextureFormat_RGBA8UnormSrgb;
   desc.mipLevelCount = levels;
   desc.sampleCount = 1;
 
@@ -549,7 +567,8 @@ std::shared_ptr<WebGpuRenderer3D::GpuTexture> WebGpuRenderer3D::uploadTexture(
     return nullptr;
 
   uint32_t width = texture->width, height = texture->height;
-  writeLevel(m_context.queue(), gpu->texture.get(), 0, texture->rgba, width, height);
+  writeLevel(
+      m_context.queue(), gpu->texture.get(), 0, texture->rgba, width, height);
   std::vector<uint8_t> level;
   const std::vector<uint8_t>* previous = &texture->rgba;
   for (uint32_t i = 1; i < levels; ++i)
@@ -567,12 +586,14 @@ std::shared_ptr<WebGpuRenderer3D::GpuTexture> WebGpuRenderer3D::uploadTexture(
     return nullptr;
 
   // Forget entries whose meshes are all gone, so the map doesn't grow forever.
-  std::erase_if(m_textures, [](const auto& entry) { return entry.second.gpu.expired(); });
+  std::erase_if(
+      m_textures, [](const auto& entry) { return entry.second.gpu.expired(); });
   m_textures[texture.get()] = {texture, gpu};
   return gpu;
 }
 
-std::optional<WebGpuRenderer3D::GpuMaterial> WebGpuRenderer3D::makeMaterial(const MeshMaterial& material)
+std::optional<WebGpuRenderer3D::GpuMaterial>
+WebGpuRenderer3D::makeMaterial(const MeshMaterial& material)
 {
   const WGPUDevice device = m_context.device();
   GpuMaterial gpu;
@@ -582,21 +603,27 @@ std::optional<WebGpuRenderer3D::GpuMaterial> WebGpuRenderer3D::makeMaterial(cons
 
   const MaterialUniforms uniforms{
       material.baseColor,
-      glm::vec4(0.0f, material.metallic, material.roughness, material.alphaCutoff),
+      glm::vec4(
+          0.0f, material.metallic, material.roughness, material.alphaCutoff),
       glm::vec4(material.tiling, material.offset),
       glm::uvec4(static_cast<uint32_t>(material.alphaMode), 0, 0, 0)};
-  gpu.uniforms = makeBuffer(device, sizeof(uniforms), WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  gpu.uniforms = makeBuffer(device,
+                            sizeof(uniforms),
+                            WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
   if (!gpu.uniforms)
     return std::nullopt;
-  wgpuQueueWriteBuffer(m_context.queue(), gpu.uniforms.get(), 0, &uniforms, sizeof(uniforms));
+  wgpuQueueWriteBuffer(
+      m_context.queue(), gpu.uniforms.get(), 0, &uniforms, sizeof(uniforms));
 
   const GpuTexture& base = gpu.baseTexture ? *gpu.baseTexture : *m_white;
-  const GpuTexture& metallicRoughness = gpu.metallicRoughness ? *gpu.metallicRoughness : *m_white;
+  const GpuTexture& metallicRoughness =
+      gpu.metallicRoughness ? *gpu.metallicRoughness : *m_white;
   std::array<WGPUBindGroupEntry, 4> entries{};
   entries[0].binding = 0;
   entries[0].textureView = base.view.get();
   entries[1].binding = 1;
-  entries[1].sampler = base.nearest ? m_nearestSampler.get() : m_linearSampler.get();
+  entries[1].sampler =
+      base.nearest ? m_nearestSampler.get() : m_linearSampler.get();
   entries[2].binding = 2;
   entries[2].textureView = metallicRoughness.view.get();
   entries[3].binding = 3;
@@ -613,9 +640,10 @@ std::optional<WebGpuRenderer3D::GpuMaterial> WebGpuRenderer3D::makeMaterial(cons
   return gpu;
 }
 
-const WebGpuRenderer3D::GpuMaterial& WebGpuRenderer3D::materialFor(const GpuMesh& mesh,
-                                                                   std::size_t index,
-                                                                   const Draw& draw) const
+const WebGpuRenderer3D::GpuMaterial&
+WebGpuRenderer3D::materialFor(const GpuMesh& mesh,
+                              std::size_t index,
+                              const Draw& draw) const
 {
   if (index < draw.materialCount)
   {
@@ -632,10 +660,10 @@ bool WebGpuRenderer3D::createPipelines()
 
   // Bind group layouts: the shadow pass reads only the frame uniforms; the
   // lit pass also samples the shadow map.
-  const WGPUBindGroupLayoutEntry uniformEntry = wgpu::storageEntry(
-      0,
-      WGPUShaderStage_Vertex | WGPUShaderStage_Fragment,
-      WGPUBufferBindingType_Uniform);
+  const WGPUBindGroupLayoutEntry uniformEntry =
+      wgpu::storageEntry(0,
+                         WGPUShaderStage_Vertex | WGPUShaderStage_Fragment,
+                         WGPUBufferBindingType_Uniform);
 
   {
     WGPUBindGroupLayoutDescriptor desc = {};
@@ -692,10 +720,12 @@ bool WebGpuRenderer3D::createPipelines()
   }
 
   const MeshVertexLayouts layouts;
-  // Group 0: the frame (and, lit, the shadow map); group 1: the section's material.
+  // Group 0: the frame (and, lit, the shadow map); group 1: the section's
+  // material.
   const auto pipelineLayout = [&](WGPUBindGroupLayout frame)
   {
-    const std::array<WGPUBindGroupLayout, 2> groups = {frame, m_materialLayout.get()};
+    const std::array<WGPUBindGroupLayout, 2> groups = {
+        frame, m_materialLayout.get()};
     WGPUPipelineLayoutDescriptor desc = {};
     desc.bindGroupLayoutCount = groups.size();
     desc.bindGroupLayouts = groups.data();
@@ -745,13 +775,17 @@ bool WebGpuRenderer3D::createPipelines()
 
     const auto build = [&](bool blend)
     {
-      const WGPUDepthStencilState depth = depthState(!blend, WGPUCompareFunction_Less);
+      const WGPUDepthStencilState depth =
+          depthState(!blend, WGPUCompareFunction_Less);
 
       // Colour blends by alpha; the target's alpha stays 1 (the editor shows
       // the viewport as an image, which a lower alpha would let show through).
       WGPUBlendState blending = {};
-      blending.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
-      blending.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+      blending.color = {WGPUBlendOperation_Add,
+                        WGPUBlendFactor_SrcAlpha,
+                        WGPUBlendFactor_OneMinusSrcAlpha};
+      blending.alpha = {
+          WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
 
       WGPUColorTargetState color = {};
       color.format = m_context.format();
@@ -777,7 +811,8 @@ bool WebGpuRenderer3D::createPipelines()
       desc.multisample.count = 1;
       desc.multisample.mask = 0xFFFFFFFFu;
       desc.fragment = &fragment;
-      return wgpu::RenderPipeline(wgpuDeviceCreateRenderPipeline(device, &desc));
+      return wgpu::RenderPipeline(
+          wgpuDeviceCreateRenderPipeline(device, &desc));
     };
     m_litPipeline = build(false);
     m_blendPipeline = build(true);
@@ -808,9 +843,10 @@ void WebGpuRenderer3D::ensureInstanceCapacity(std::size_t instanceCount)
   // rarely.
   m_instanceCapacity =
       std::max({instanceCount, m_instanceCapacity * 2, std::size_t{256}});
-  m_instanceBuffer = makeBuffer(m_context.device(),
-                                m_instanceCapacity * sizeof(MeshInstance),
-                                WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
+  m_instanceBuffer =
+      makeBuffer(m_context.device(),
+                 m_instanceCapacity * sizeof(MeshInstance),
+                 WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
 }
 
 void WebGpuRenderer3D::uploadFrame()
@@ -820,8 +856,9 @@ void WebGpuRenderer3D::uploadFrame()
   const float resolution = static_cast<float>(m_shadowResolution);
 
   const float sunLength = glm::length(lighting.sun.direction);
-  const glm::vec3 toSun = sunLength > 1.0e-4f ? lighting.sun.direction / sunLength
-                                              : glm::vec3(0.0f, 0.0f, 1.0f);
+  const glm::vec3 toSun = sunLength > 1.0e-4f
+                              ? lighting.sun.direction / sunLength
+                              : glm::vec3(0.0f, 0.0f, 1.0f);
 
   FrameUniforms uniforms = {};
   uniforms.viewProjection = m_frame.viewProjection;
@@ -845,11 +882,8 @@ void WebGpuRenderer3D::uploadFrame()
                           glm::vec4(light.color, light.intensity)};
   }
 
-  wgpuQueueWriteBuffer(m_context.queue(),
-                       m_frameUniforms.get(),
-                       0,
-                       &uniforms,
-                       sizeof(uniforms));
+  wgpuQueueWriteBuffer(
+      m_context.queue(), m_frameUniforms.get(), 0, &uniforms, sizeof(uniforms));
 
   if (m_instances.empty())
     return;
@@ -873,11 +907,14 @@ void WebGpuRenderer3D::encodeShadowPass()
   WGPURenderPassDescriptor desc = {};
   desc.depthStencilAttachment = &depth;
 
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
   wgpuRenderPassEncoderSetPipeline(pass, m_shadowPipeline.get());
-  wgpuRenderPassEncoderSetBindGroup(pass, 0, m_shadowBindings.get(), 0, nullptr);
+  wgpuRenderPassEncoderSetBindGroup(
+      pass, 0, m_shadowBindings.get(), 0, nullptr);
   if (!m_shadowDraws.empty())
-    wgpuRenderPassEncoderSetVertexBuffer(pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderSetVertexBuffer(
+        pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
   for (const Draw& draw : m_shadowDraws)
     encodeDraw(pass, draw, Sections::All);
   endPass(pass);
@@ -905,9 +942,11 @@ void WebGpuRenderer3D::encodeLitPass()
   desc.colorAttachments = &color;
   desc.depthStencilAttachment = &depth;
 
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
   if (!m_instances.empty())
-    wgpuRenderPassEncoderSetVertexBuffer(pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderSetVertexBuffer(
+        pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
 
   wgpuRenderPassEncoderSetPipeline(pass, m_litPipeline.get());
   wgpuRenderPassEncoderSetBindGroup(pass, 0, m_litBindings.get(), 0, nullptr);
@@ -924,14 +963,17 @@ void WebGpuRenderer3D::encodeLitPass()
   endPass(pass);
 }
 
-void WebGpuRenderer3D::encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which)
+void WebGpuRenderer3D::encodeDraw(WGPURenderPassEncoder pass,
+                                  const Draw& draw,
+                                  Sections which)
 {
   // The mesh may have been destroyed between drawMesh() and endFrame().
   const std::optional<GpuMesh>& mesh = m_meshes[draw.meshSlot];
   if (!mesh)
     return;
 
-  wgpuRenderPassEncoderSetVertexBuffer(pass, 0, mesh->vertices.get(), 0, WGPU_WHOLE_SIZE);
+  wgpuRenderPassEncoderSetVertexBuffer(
+      pass, 0, mesh->vertices.get(), 0, WGPU_WHOLE_SIZE);
   wgpuRenderPassEncoderSetIndexBuffer(
       pass, mesh->indices.get(), WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
 
@@ -943,7 +985,8 @@ void WebGpuRenderer3D::encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, 
     if (section.indexCount == 0 || (which == Sections::Opaque && blend) ||
         (which == Sections::SeeThrough && !blend && !draw.allSections))
       continue;
-    wgpuRenderPassEncoderSetBindGroup(pass, 1, material.bindings.get(), 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(
+        pass, 1, material.bindings.get(), 0, nullptr);
     wgpuRenderPassEncoderDrawIndexed(pass,
                                      section.indexCount,
                                      draw.instanceCount,
@@ -953,7 +996,8 @@ void WebGpuRenderer3D::encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, 
   }
 }
 
-const WebGpuRenderer3D::GpuMesh* WebGpuRenderer3D::findMesh(MeshHandle mesh) const
+const WebGpuRenderer3D::GpuMesh*
+WebGpuRenderer3D::findMesh(MeshHandle mesh) const
 {
   if (!mesh.valid() || mesh.id > m_meshes.size())
     return nullptr;

@@ -24,7 +24,8 @@ Entity placed(Registry& registry, glm::vec3 position)
 
 bool approxVec(const glm::vec3& a, const glm::vec3& b)
 {
-  return testing::approx(a.x, b.x) && testing::approx(a.y, b.y) && testing::approx(a.z, b.z);
+  return testing::approx(a.x, b.x) && testing::approx(a.y, b.y) &&
+         testing::approx(a.z, b.z);
 }
 } // namespace
 
@@ -91,11 +92,14 @@ int main()
     CHECK(hierarchy::setParentKeepWorld(child, parent));
     CHECK(approxVec(hierarchy::worldPosition(child), {6.0f, 5.0f, 1.0f}));
     // Local now: 1 unit along the parent's turned axis (world +X is its -Y).
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().position, {0.0f, -1.0f, 1.0f}));
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().scale, glm::vec3(3.0f)));
+    CHECK(approxVec(child.getComponent<Transform3DComponent>().position,
+                    {0.0f, -1.0f, 1.0f}));
+    CHECK(approxVec(
+        child.getComponent<Transform3DComponent>().scale, glm::vec3(3.0f)));
 
     CHECK(hierarchy::setParentKeepWorld(child, {}));
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().position, {6.0f, 5.0f, 1.0f}));
+    CHECK(approxVec(child.getComponent<Transform3DComponent>().position,
+                    {6.0f, 5.0f, 1.0f}));
   }
 
   TEST("setWorldMatrix should place a child at a world position")
@@ -104,8 +108,10 @@ int main()
     Entity parent = placed(registry, {0.0f, 0.0f, 4.0f});
     Entity child = placed(registry, {});
     hierarchy::setParent(child, parent);
-    hierarchy::setWorldMatrix(child, Transform3DComponent({1.0f, 1.0f, 1.0f}).matrix());
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().position, {1.0f, 1.0f, -3.0f}));
+    hierarchy::setWorldMatrix(
+        child, Transform3DComponent({1.0f, 1.0f, 1.0f}).matrix());
+    CHECK(approxVec(child.getComponent<Transform3DComponent>().position,
+                    {1.0f, 1.0f, -3.0f}));
   }
 
   TEST("a destroyed parent should leave its children as roots")

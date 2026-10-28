@@ -32,7 +32,8 @@ glm::mat4 fitSunShadow(const glm::vec3& sunDirection,
   // Snap: move the projection so the world origin lands on a texel corner.
   // The covered region then only ever shifts by whole texels.
   const glm::mat4 viewProjection = projection * view;
-  const float texelsPerUnit = static_cast<float>(std::max(resolution, 1u)) * 0.5f;
+  const float texelsPerUnit =
+      static_cast<float>(std::max(resolution, 1u)) * 0.5f;
   const glm::vec4 origin = viewProjection * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
   const glm::vec2 originTexels = glm::vec2(origin) * texelsPerUnit;
   const glm::vec2 offset =

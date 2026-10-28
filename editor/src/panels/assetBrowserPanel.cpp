@@ -496,7 +496,7 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const 
   // Within one of the project's folders, as for moves.
   const bool catalogue = inCatalogue(item);
   if (isTopFolder(item) || (catalogue ? !inCatalogue(folder) : topFolderOf(folder) != topFolderOf(item)) ||
-      isWithin(folder, item) && paths::normal(folder) != paths::normal(item.parent_path()))
+      (isWithin(folder, item) && paths::normal(folder) != paths::normal(item.parent_path())))
   {
     LOG_ERROR("Can't paste " + item.filename().string() + " there" +
               (isTopFolder(item) ? "" : ": it belongs in " + topFolderOf(item).filename().string()));

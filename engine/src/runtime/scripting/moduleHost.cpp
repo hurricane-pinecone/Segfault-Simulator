@@ -21,7 +21,9 @@ std::filesystem::path copyFolder()
 }
 } // namespace
 
-bool ModuleHost::load(const std::filesystem::path& module, const std::string& moduleName, Load mode)
+bool ModuleHost::load(const std::filesystem::path& module,
+                      const std::string& moduleName,
+                      Load mode)
 {
   unload();
 
@@ -32,10 +34,11 @@ bool ModuleHost::load(const std::filesystem::path& module, const std::string& mo
     std::filesystem::create_directories(copyFolder(), error);
     // A unique name per load: the previous copy may still be mapped briefly,
     // and the OS caches libraries by path.
-    copy = copyFolder() / (moduleName + "-" + std::to_string(SDL_GetPerformanceCounter()) +
-                           module.extension().string());
-    std::filesystem::copy_file(module, copy, std::filesystem::copy_options::overwrite_existing,
-                               error);
+    copy = copyFolder() /
+           (moduleName + "-" + std::to_string(SDL_GetPerformanceCounter()) +
+            module.extension().string());
+    std::filesystem::copy_file(
+        module, copy, std::filesystem::copy_options::overwrite_existing, error);
     if (error)
     {
       LOG_ERROR("Can't copy " + module.string() + ": " + error.message());
@@ -53,11 +56,12 @@ bool ModuleHost::load(const std::filesystem::path& module, const std::string& mo
     return false;
   }
 
-  const auto entry =
-      reinterpret_cast<sfs::ModuleEntryPoint>(SDL_LoadFunction(handle, sfs::kModuleEntryPoint));
+  const auto entry = reinterpret_cast<sfs::ModuleEntryPoint>(
+      SDL_LoadFunction(handle, sfs::kModuleEntryPoint));
   if (!entry)
   {
-    LOG_ERROR("The game module has no entry point (" + std::string(sfs::kModuleEntryPoint) + ")");
+    LOG_ERROR("The game module has no entry point (" +
+              std::string(sfs::kModuleEntryPoint) + ")");
     SDL_UnloadObject(handle);
     if (!copy.empty())
       std::filesystem::remove(copy, error);
@@ -86,7 +90,8 @@ void ModuleHost::unload()
   if (!m_copy.empty())
   {
     std::error_code error;
-    std::filesystem::remove(m_copy, error); // best effort; temp is cleaned anyway
+    std::filesystem::remove(
+        m_copy, error); // best effort; temp is cleaned anyway
     m_copy.clear();
   }
 }

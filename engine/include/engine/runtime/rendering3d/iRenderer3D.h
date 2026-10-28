@@ -43,7 +43,8 @@ public:
   virtual MaterialHandle createMaterial(const MeshMaterial& material) = 0;
 
   /** Change a material in place: everything drawn with it changes. */
-  virtual void updateMaterial(MaterialHandle handle, const MeshMaterial& material) = 0;
+  virtual void updateMaterial(MaterialHandle handle,
+                              const MeshMaterial& material) = 0;
 
   /** Free a material. Unknown or invalid handles are ignored. */
   virtual void destroyMaterial(MaterialHandle material) = 0;

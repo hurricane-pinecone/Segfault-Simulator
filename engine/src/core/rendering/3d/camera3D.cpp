@@ -88,7 +88,9 @@ glm::vec3 Camera3D::groundRight() const
   return glm::vec3(std::sin(yaw), -std::cos(yaw), 0.0f);
 }
 
-void Camera3D::setPose(const glm::vec3& eye, const glm::vec3& forward, float focusDistance)
+void Camera3D::setPose(const glm::vec3& eye,
+                       const glm::vec3& forward,
+                       float focusDistance)
 {
   const float length = glm::length(forward);
   if (length < 1.0e-6f)
@@ -104,7 +106,8 @@ glm::quat Camera3D::orientation() const
 {
   // Turn to face yaw around Z, then tip the nose down by pitch (a positive
   // turn about the turned Y axis takes +X toward -Z).
-  return glm::angleAxis(yaw, kUp) * glm::angleAxis(pitch, glm::vec3(0.0f, 1.0f, 0.0f));
+  return glm::angleAxis(yaw, kUp) *
+         glm::angleAxis(pitch, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
 glm::mat4 Camera3D::viewMatrix() const
@@ -118,12 +121,8 @@ glm::mat4 Camera3D::projectionMatrix(float aspect) const
   {
     const float halfHeight = orthoHeight * 0.5f;
     const float halfWidth = halfHeight * aspect;
-    return glm::orthoRH_ZO(-halfWidth,
-                           halfWidth,
-                           -halfHeight,
-                           halfHeight,
-                           nearPlane,
-                           farPlane);
+    return glm::orthoRH_ZO(
+        -halfWidth, halfWidth, -halfHeight, halfHeight, nearPlane, farPlane);
   }
 
   return glm::perspectiveRH_ZO(fieldOfView, aspect, nearPlane, farPlane);

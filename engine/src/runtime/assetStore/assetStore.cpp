@@ -6,8 +6,8 @@
 #include "engine/core/rendering/3d/material.h"
 #include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/modelImporter.h"
-#include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/assetStore/sprite.h"
+#include "engine/runtime/assetStore/textureImporter.h"
 #include "glm/glm/exponential.hpp"
 
 #include <SDL_image.h>
@@ -70,7 +70,8 @@ const ModelData* AssetStore::model(const AssetId& id)
   else if (record->kind != AssetKind::Model)
     LOG_ERROR(record->path.generic_string() + " isn't a model");
   else
-    loaded = importModel(m_database->absolutePath(*record), ModelImportSettings::fromJson(record->settings));
+    loaded = importModel(m_database->absolutePath(*record),
+                         ModelImportSettings::fromJson(record->settings));
 
   const auto [it, inserted] = m_models.emplace(id, std::move(loaded));
   return it->second ? &*it->second : nullptr;
@@ -95,7 +96,8 @@ void AssetStore::setBackgroundLoading(bool background)
     m_workers = std::make_unique<WorkerPool>(2);
 }
 
-AssetStore::LoadState AssetStore::requestModel(const AssetId& id, const ModelData** model)
+AssetStore::LoadState AssetStore::requestModel(const AssetId& id,
+                                               const ModelData** model)
 {
   *model = nullptr;
   if (const auto it = m_models.find(id); it != m_models.end())
@@ -106,7 +108,8 @@ AssetStore::LoadState AssetStore::requestModel(const AssetId& id, const ModelDat
   if (m_loading.contains(id))
     return LoadState::Loading;
   const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
-  if (!m_background || !m_workers || !record || record->kind != AssetKind::Model)
+  if (!m_background || !m_workers || !record ||
+      record->kind != AssetKind::Model)
   {
     *model = this->model(id); // loads now (or logs why it can't, and remembers)
     return *model ? LoadState::Loaded : LoadState::Failed;
@@ -120,7 +123,10 @@ AssetStore::LoadState AssetStore::requestModel(const AssetId& id, const ModelDat
     m_progress = {};
   ++m_progress.total;
   m_workers->submit(
-      [this, id, ticket, file = m_database->absolutePath(*record),
+      [this,
+       id,
+       ticket,
+       file = m_database->absolutePath(*record),
        settings = ModelImportSettings::fromJson(record->settings)]
       {
         std::optional<ModelData> loaded = importModel(file, settings);
@@ -146,7 +152,8 @@ void AssetStore::collectLoads()
     if (it == m_loading.end() || it->second != load.ticket)
       continue; // forgotten meanwhile
     m_loading.erase(it);
-    m_models.emplace(load.id, std::move(load.model)); // unless loaded at once meanwhile
+    m_models.emplace(
+        load.id, std::move(load.model)); // unless loaded at once meanwhile
   }
   ++m_loadGeneration;
 }
@@ -163,7 +170,8 @@ std::shared_ptr<const TextureData> AssetStore::texture(const AssetId& id)
   else if (record->kind != AssetKind::Texture)
     LOG_ERROR(record->path.generic_string() + " isn't a texture");
   else
-    loaded = importTexture(m_database->absolutePath(*record), TextureImportSettings::fromJson(record->settings));
+    loaded = importTexture(m_database->absolutePath(*record),
+                           TextureImportSettings::fromJson(record->settings));
   return m_textures.emplace(id, std::move(loaded)).first->second;
 }
 
@@ -182,25 +190,31 @@ std::shared_ptr<const MeshMaterial> AssetStore::material(const AssetId& id)
   {
     std::ifstream in(m_database->absolutePath(*record));
     const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
-    if (const std::optional<MaterialAsset> asset = MaterialAsset::fromJson(json))
+    if (const std::optional<MaterialAsset> asset =
+            MaterialAsset::fromJson(json))
     {
       // Textures by asset name: "asset:<id>".
-      const auto texture = [this](const std::string& name) -> std::shared_ptr<const TextureData>
+      const auto texture =
+          [this](const std::string& name) -> std::shared_ptr<const TextureData>
       {
         constexpr std::string_view prefix = "asset:";
         if (!name.starts_with(prefix))
           return nullptr;
-        const std::optional<AssetId> textureId = AssetId::parse(std::string_view(name).substr(prefix.size()));
+        const std::optional<AssetId> textureId =
+            AssetId::parse(std::string_view(name).substr(prefix.size()));
         return textureId ? this->texture(*textureId) : nullptr;
       };
       loaded = std::make_shared<MeshMaterial>();
       loaded->baseColor = asset->baseColor;
       loaded->baseTexture = texture(asset->baseTexture);
-      loaded->metallicRoughnessTexture = texture(asset->metallicRoughnessTexture);
-      if (loaded->metallicRoughnessTexture && !loaded->metallicRoughnessTexture->linear)
+      loaded->metallicRoughnessTexture =
+          texture(asset->metallicRoughnessTexture);
+      if (loaded->metallicRoughnessTexture &&
+          !loaded->metallicRoughnessTexture->linear)
       {
         // Read as data, not colour.
-        auto linear = std::make_shared<TextureData>(*loaded->metallicRoughnessTexture);
+        auto linear =
+            std::make_shared<TextureData>(*loaded->metallicRoughnessTexture);
         linear->linear = true;
         loaded->metallicRoughnessTexture = std::move(linear);
       }
@@ -237,7 +251,8 @@ std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
     if (const ModelData* data = loadedModel(id))
       nodes = data->nodes;
     else
-      nodes = importModelNodes(m_database->absolutePath(*record), ModelImportSettings::fromJson(record->settings));
+      nodes = importModelNodes(m_database->absolutePath(*record),
+                               ModelImportSettings::fromJson(record->settings));
     if (nodes)
       loaded = modelPrefab(*nodes, id, record->path.stem().string());
   }
@@ -262,15 +277,20 @@ namespace
 nlohmann::json transformJson(const glm::mat4& matrix)
 {
   const Transform3DComponent t = Transform3DComponent::fromMatrix(matrix);
-  return {{"position", {t.position.x, t.position.y, t.position.z}},
-          {"rotation", {t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z}},
-          {"scale", {t.scale.x, t.scale.y, t.scale.z}}};
+  return {
+      {"position", {t.position.x, t.position.y, t.position.z}},
+      {"rotation", {t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z}},
+      {"scale", {t.scale.x, t.scale.y, t.scale.z}}};
 }
 } // namespace
 
-nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes, const AssetId& id, const std::string& name)
+nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes,
+                                       const AssetId& id,
+                                       const std::string& name)
 {
-  nlohmann::json root = {{"NameComponent", {{"name", name}}}, {"Transform3DComponent", transformJson(glm::mat4(1.0f))}};
+  nlohmann::json root = {
+      {"NameComponent", {{"name", name}}},
+      {"Transform3DComponent", transformJson(glm::mat4(1.0f))}};
   if (nodes.empty())
   {
     root["MeshRendererComponent"] = {{"mesh", assetMeshName(id)}};
@@ -289,7 +309,8 @@ nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes, cons
                   {"NameComponent", {{"name", node.name}}},
                   {"Transform3DComponent", transformJson(node.local)}};
     if (!node.part.empty())
-      entries[i]["MeshRendererComponent"] = {{"mesh", assetMeshName(id, node.part)}};
+      entries[i]["MeshRendererComponent"] = {
+          {"mesh", assetMeshName(id, node.part)}};
     (node.parent < 0 ? tops : children[node.parent]).push_back(i);
   }
   const std::function<nlohmann::json(std::size_t)> build = [&](std::size_t i)

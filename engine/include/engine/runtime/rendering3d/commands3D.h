@@ -21,12 +21,14 @@ enum class RenderPass3D : uint8_t
   Transparent,
 };
 
-/** Every instance of one mesh this frame, split into seen and shadow-casting. */
+/** Every instance of one mesh this frame, split into seen and shadow-casting.
+ */
 struct MeshDrawCommand
 {
   RenderPass3D pass = RenderPass3D::Opaque;
   MeshHandle mesh;
-  std::vector<MaterialHandle> materials; // per section, in place of its own (see MeshBatch3D)
+  std::vector<MaterialHandle>
+      materials; // per section, in place of its own (see MeshBatch3D)
   std::vector<MeshInstance> instances;
   std::vector<MeshInstance> shadowInstances;
 };

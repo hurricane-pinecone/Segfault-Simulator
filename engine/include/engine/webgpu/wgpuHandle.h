@@ -24,7 +24,8 @@ public:
   Handle(const Handle&) = delete;
   Handle& operator=(const Handle&) = delete;
 
-  Handle(Handle&& other) noexcept : m_handle(std::exchange(other.m_handle, nullptr))
+  Handle(Handle&& other) noexcept
+      : m_handle(std::exchange(other.m_handle, nullptr))
   {
   }
 
@@ -62,7 +63,9 @@ SFS_WGPU_HANDLE(Texture, WGPUTexture, wgpuTextureRelease)
 SFS_WGPU_HANDLE(TextureView, WGPUTextureView, wgpuTextureViewRelease)
 SFS_WGPU_HANDLE(Sampler, WGPUSampler, wgpuSamplerRelease)
 SFS_WGPU_HANDLE(ShaderModule, WGPUShaderModule, wgpuShaderModuleRelease)
-SFS_WGPU_HANDLE(BindGroupLayout, WGPUBindGroupLayout, wgpuBindGroupLayoutRelease)
+SFS_WGPU_HANDLE(BindGroupLayout,
+                WGPUBindGroupLayout,
+                wgpuBindGroupLayoutRelease)
 SFS_WGPU_HANDLE(BindGroup, WGPUBindGroup, wgpuBindGroupRelease)
 SFS_WGPU_HANDLE(PipelineLayout, WGPUPipelineLayout, wgpuPipelineLayoutRelease)
 SFS_WGPU_HANDLE(RenderPipeline, WGPURenderPipeline, wgpuRenderPipelineRelease)

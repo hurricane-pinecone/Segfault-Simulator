@@ -5,7 +5,8 @@
 namespace sfs
 {
 
-/** What a game object is told when its entity touches another (see GameObject). */
+/** What a game object is told when its entity touches another (see GameObject).
+ */
 struct Collision3D
 {
   Entity other; // the entity it touched

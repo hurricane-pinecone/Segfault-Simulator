@@ -36,7 +36,10 @@ public:
    * sRGB decoding cancels that, so the image matches the scene drawn straight
    * to the window (as in an exported game).
    */
-  WGPUTextureView imguiView() const { return m_imguiView ? m_imguiView.get() : m_view.get(); }
+  WGPUTextureView imguiView() const
+  {
+    return m_imguiView ? m_imguiView.get() : m_view.get();
+  }
   bool valid() const { return static_cast<bool>(m_view); }
 
 private:

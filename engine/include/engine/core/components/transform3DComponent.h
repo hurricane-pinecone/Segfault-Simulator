@@ -63,7 +63,8 @@ struct Transform3DComponent
     const glm::mat3 rotation{glm::vec3(m[0]) / scale.x,
                              glm::vec3(m[1]) / scale.y,
                              glm::vec3(m[2]) / scale.z};
-    return Transform3DComponent(glm::vec3(m[3]), glm::normalize(glm::quat_cast(rotation)), scale);
+    return Transform3DComponent(
+        glm::vec3(m[3]), glm::normalize(glm::quat_cast(rotation)), scale);
   }
 };
 

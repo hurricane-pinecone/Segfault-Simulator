@@ -27,9 +27,9 @@ struct ModelPart
 struct ModelNode
 {
   std::string name;
-  int parent = -1;             // index into ModelData::nodes; -1: a top node
-  glm::mat4 local{1.0f};       // relative to its parent
-  std::string part;            // the ModelPart it draws; empty: none
+  int parent = -1;       // index into ModelData::nodes; -1: a top node
+  glm::mat4 local{1.0f}; // relative to its parent
+  std::string part;      // the ModelPart it draws; empty: none
 };
 
 /**

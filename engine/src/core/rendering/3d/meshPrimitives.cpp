@@ -34,8 +34,8 @@ void addQuad(MeshData& mesh,
   for (int i = 0; i < 4; ++i)
     mesh.vertices.push_back({corners[i], normal, color, uvs[i]});
 
-  mesh.indices.insert(mesh.indices.end(),
-                      {base, base + 1, base + 2, base, base + 2, base + 3});
+  mesh.indices.insert(
+      mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
 }
 
 // Append a flat triangle (counter-clockwise seen from the front).
@@ -123,7 +123,8 @@ MeshData plane(const glm::vec2& size, const glm::vec3& color)
   return mesh;
 }
 
-MeshData cylinder(float radius, float height, int segments, const glm::vec3& color)
+MeshData
+cylinder(float radius, float height, int segments, const glm::vec3& color)
 {
   segments = std::max(segments, 3);
 
@@ -173,10 +174,8 @@ MeshData cone(float radius, float height, int segments, const glm::vec3& color)
     const float a1 = kTwoPi * static_cast<float>(i + 1) / segments;
     const float mid = (a0 + a1) * 0.5f;
 
-    const auto sideNormal = [slope](float angle)
-    {
-      return glm::normalize(
-          glm::vec3(std::cos(angle), std::sin(angle), slope));
+    const auto sideNormal = [slope](float angle) {
+      return glm::normalize(glm::vec3(std::cos(angle), std::sin(angle), slope));
     };
 
     const auto base = static_cast<uint32_t>(mesh.vertices.size());
@@ -229,8 +228,7 @@ MeshData sphere(float radius, int segments, int rings, const glm::vec3& color)
       const uint32_t b = a + columns;
 
       // Row `ring` is nearer +Z; wind so the outside faces front.
-      mesh.indices.insert(mesh.indices.end(),
-                          {a, b, b + 1, a, b + 1, a + 1});
+      mesh.indices.insert(mesh.indices.end(), {a, b, b + 1, a, b + 1, a + 1});
     }
   }
 
@@ -257,9 +255,12 @@ MeshData prism(const glm::vec3& size, const glm::vec3& color)
   return mesh;
 }
 
-void append(MeshData& target, const MeshData& source, const glm::mat4& transform)
+void append(MeshData& target,
+            const MeshData& source,
+            const glm::mat4& transform)
 {
-  const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(transform)));
+  const glm::mat3 normalMatrix =
+      glm::transpose(glm::inverse(glm::mat3(transform)));
   const auto base = static_cast<uint32_t>(target.vertices.size());
 
   target.vertices.reserve(target.vertices.size() + source.vertices.size());

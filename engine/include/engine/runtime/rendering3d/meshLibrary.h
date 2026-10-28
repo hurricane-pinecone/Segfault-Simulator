@@ -51,7 +51,8 @@ public:
    */
   static void setKeepVertices(bool keep);
 
-  /** A mesh's data as added (vertices kept only with setKeepVertices), or nothing. */
+  /** A mesh's data as added (vertices kept only with setKeepVertices), or
+   * nothing. */
   std::optional<MeshData> meshData(MeshHandle mesh) const;
 
   /** @return the mesh's name, or empty if it has none or isn't ours. */
@@ -74,7 +75,8 @@ public:
     // A label for one of its names ("models/barn.glb"); empty if it isn't one.
     std::function<std::string(std::string_view name)> label;
     // A named material (e.g. a material asset), or null.
-    std::function<std::shared_ptr<const MeshMaterial>(std::string_view name)> loadMaterial;
+    std::function<std::shared_ptr<const MeshMaterial>(std::string_view name)>
+        loadMaterial;
     // Material and texture names it has, each with a label, e.g. for a picker.
     std::function<std::vector<std::pair<std::string, std::string>>()> materials;
     std::function<std::vector<std::pair<std::string, std::string>>()> textures;
@@ -93,10 +95,12 @@ public:
    */
   MeshHandle resolve(std::string_view name);
 
-  /** The provider's meshes that aren't loaded yet, as (name, label), sorted by label. */
+  /** The provider's meshes that aren't loaded yet, as (name, label), sorted by
+   * label. */
   std::vector<std::pair<std::string, std::string>> available() const;
 
-  /** How to show a mesh name to people: the provider's label, else the name itself. */
+  /** How to show a mesh name to people: the provider's label, else the name
+   * itself. */
   std::string label(std::string_view name) const;
 
   /**
@@ -116,7 +120,8 @@ public:
    * The nearest of a mesh's triangles (either side) a ray hits, with the mesh
    * placed by `world`. Nothing if it misses, or the mesh isn't ours.
    */
-  std::optional<RayHit> raycast(MeshHandle mesh, const glm::mat4& world, const Ray3D& ray) const;
+  std::optional<RayHit>
+  raycast(MeshHandle mesh, const glm::mat4& world, const Ray3D& ray) const;
 
   /**
    * A material by name (an entry of MeshRendererComponent::materials),
@@ -131,7 +136,8 @@ public:
    * the game paints as it runs. Entities choose it by name in a material slot;
    * changing it shows on everything using it.
    */
-  MaterialHandle setMaterial(std::string_view name, const MeshMaterial& material);
+  MaterialHandle setMaterial(std::string_view name,
+                             const MeshMaterial& material);
 
   /**
    * Ask the provider for a material again (e.g. its file was edited) and
@@ -139,7 +145,8 @@ public:
    */
   void reloadMaterial(std::string_view name);
 
-  /** The provider's materials and textures, as (name, label), sorted by label. */
+  /** The provider's materials and textures, as (name, label), sorted by label.
+   */
   std::vector<std::pair<std::string, std::string>> availableMaterials() const;
   std::vector<std::pair<std::string, std::string>> availableTextures() const;
 
@@ -151,7 +158,8 @@ public:
    */
   MeshHandle missing(std::string_view name);
 
-  /** Whether `mesh` is a stand-in from missing() (or pending(), still loading). */
+  /** Whether `mesh` is a stand-in from missing() (or pending(), still loading).
+   */
   bool isMissing(MeshHandle mesh) const;
 
   /**
@@ -172,13 +180,15 @@ public:
    */
   MeshHandle gpuHandle(MeshHandle mesh) const;
 
-  /** Every named mesh (not stand-ins), sorted by name (e.g. for a mesh picker). */
+  /** Every named mesh (not stand-ins), sorted by name (e.g. for a mesh picker).
+   */
   std::vector<std::pair<MeshHandle, std::string>> named() const;
 
   /** Free a mesh this library added. Other handles are ignored. */
   void remove(MeshHandle mesh);
 
-  /** @return the mesh's local-space bounds, or nullptr if it isn't ours (or is missing). */
+  /** @return the mesh's local-space bounds, or nullptr if it isn't ours (or is
+   * missing). */
   const Aabb* bounds(MeshHandle mesh) const;
 
   std::size_t size() const { return m_meshes.size(); }
@@ -188,14 +198,14 @@ private:
   {
     Aabb bounds;
     std::string name;
-    bool missing = false; // a stand-in: no renderer mesh behind it
+    bool missing = false;              // a stand-in: no renderer mesh behind it
     std::vector<MeshSection> sections; // the material slots
     // The triangles, kept for raycasts (e.g. picking where something drops).
     std::vector<glm::vec3> positions;
     std::vector<uint32_t> indices;
     std::vector<MeshVertex> vertices; // only with setKeepVertices
-    MeshHandle gpu;                   // the renderer's mesh (none while missing)
-    bool pending = false;             // a stand-in loading in the background
+    MeshHandle gpu;       // the renderer's mesh (none while missing)
+    bool pending = false; // a stand-in loading in the background
   };
 
   // Fill an entry from mesh data, uploading it.
@@ -208,7 +218,8 @@ private:
   Provider m_provider;
   std::unordered_map<uint32_t, Entry> m_meshes;
   uint32_t m_nextMissingId = kMissingIdBase;
-  std::unordered_map<std::string, MaterialHandle> m_materials; // invalid: not found
+  std::unordered_map<std::string, MaterialHandle>
+      m_materials; // invalid: not found
 };
 
 } // namespace sfs

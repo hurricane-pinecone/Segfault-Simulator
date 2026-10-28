@@ -96,9 +96,9 @@ public:
    * Visit each registered module with its type and the last frame's context,
    * for debug/editor UIs that read module settings().
    */
-  void forEachModule(
-      const std::function<void(std::type_index, Module&, const RenderContext3D&)>&
-          fn);
+  void
+  forEachModule(const std::function<
+                void(std::type_index, Module&, const RenderContext3D&)>& fn);
 
 protected:
   void update(double deltaTime) override { updateModules(deltaTime); }
