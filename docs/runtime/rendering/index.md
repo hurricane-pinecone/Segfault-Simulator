@@ -60,8 +60,7 @@ core renderer via `dynamic_cast`; a flat render system needs only the core.
 
 `Game::makeRenderBackend()` is the top-level factory the game overrides to choose
 its graphics API. The default returns a `GLRenderBackend`. A game that renders
-through WebGPU (for example, a brickmap voxel world driven by `VoxelGpuSystem`)
-overrides it to return a `WebGpuRenderBackend` instead.
+through WebGPU (for example, a 3D game drawn with `RenderSystem3D`) overrides it to return a `WebGpuRenderBackend` instead.
 
 Within the OpenGL path, `Game::createQuadRenderer(width, height)` selects the 2D
 renderer. It defaults to the flat-2D `OpenGLQuadRenderer`; an isometric game

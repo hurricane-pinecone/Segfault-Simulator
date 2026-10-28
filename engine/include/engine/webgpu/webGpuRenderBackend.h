@@ -19,8 +19,8 @@ class AssetStore;
 // WebGPU render backend: an SDL window (no GL context) plus a WebGPU device and
 // surface. Each frame it opens a command encoder and backbuffer view; scenes
 // draw into them through the 3D renderer it provides (SceneServices::
-// renderer3D), or record their own passes via currentEncoder() (the GPU voxel
-// prototype). It has no 2D quad or text renderer, so those services are absent.
+// renderer3D), or record their own passes via currentEncoder(). It has no 2D
+// quad or text renderer, so those services are absent.
 //
 // It also hosts Dear ImGui with docking and multi-viewport enabled: panels dock
 // into the main window or drag out into their own OS windows.
@@ -53,8 +53,7 @@ public:
 
   void shutdown() override;
 
-  // Reached by systems that record their own WebGPU passes (the GPU voxel
-  // world).
+  // Reached by systems that record their own WebGPU passes.
   WebGpuContext& context() { return m_context; }
   WGPUCommandEncoder currentEncoder() const { return m_encoder; }
   WGPUTextureView currentView() const { return m_view; }

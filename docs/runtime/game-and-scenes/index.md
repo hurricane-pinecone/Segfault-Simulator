@@ -52,7 +52,7 @@ isometric renderer for heightfield games. A game using WebGPU overrides
 
 `renderBackend()` returns a non-owning pointer to the active backend; cast it to
 the concrete type when a scene needs the device directly (for example, to
-construct a `VoxelGpuSystem`).
+create its own GPU buffers or record its own passes).
 
 ### Controlling the game from game code
 
