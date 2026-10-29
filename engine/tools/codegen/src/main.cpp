@@ -38,8 +38,9 @@ std::string readFile(const std::filesystem::path& path)
 void print(const sfs::codegen::Diagnostic& diagnostic)
 {
   const char* severity =
-      diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error ? "error"
-                                                                       : "warning";
+      diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error
+          ? "error"
+          : "warning";
   // file:line: severity: message, the format editors and IDEs parse.
   std::cerr << diagnostic.file.string() << ':' << diagnostic.line << ": "
             << severity << ": " << diagnostic.message << '\n';
@@ -100,7 +101,8 @@ int main(int argc, char* argv[])
     for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
     {
       print(diagnostic);
-      failed |= diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error;
+      failed |=
+          diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error;
     }
     if (result.type)
       types.push_back(std::move(*result.type));
@@ -108,7 +110,8 @@ int main(int argc, char* argv[])
   if (failed)
     return 1;
 
-  const std::string generated = sfs::codegen::generateRegistration(types, options);
+  const std::string generated =
+      sfs::codegen::generateRegistration(types, options);
   if (std::filesystem::exists(output) && readFile(output) == generated)
     return 0;
 

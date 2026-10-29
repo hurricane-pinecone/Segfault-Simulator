@@ -61,10 +61,15 @@ struct EditorContext
 
   // Rewrites a prefab's file (`write`, false on failure), then reloads the
   // open scenes so their instances show it. Set by the app.
-  std::function<bool(const sfs::AssetId& prefab, const std::function<bool()>& write)> rewritePrefab;
+  std::function<bool(const sfs::AssetId& prefab,
+                     const std::function<bool()>& write)>
+      rewritePrefab;
 
   // A prefab to edit in its own tab; the app does it next frame.
   sfs::AssetId openPrefab;
+
+  // A node-graph material to edit in its own tab; the app does it next frame.
+  sfs::AssetId openMaterial;
 
   // A text file (a script) to open in the code panel; the app does it next
   // frame.
@@ -91,5 +96,8 @@ struct EditorContext
   // shows it while no entity is selected; selecting an entity clears it.
   sfs::AssetId selectedAsset;
 
-  bool hasSelection() const { return selection.isValid() && selection.isAlive(); }
+  bool hasSelection() const
+  {
+    return selection.isValid() && selection.isAlive();
+  }
 };

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <functional>
 #include <typeindex>
+#include <unordered_map>
 #include <vector>
 
 namespace sfs
@@ -24,7 +25,10 @@ struct RenderStats3D
   std::size_t drawCalls = 0;
   std::size_t instances = 0;
   std::size_t shadowInstances = 0;
-  std::size_t pointLights = 0;
+  std::size_t pointLights = 0; // all of them, emission's included
+  std::size_t emissionLights = 0;
+  std::size_t shadowedLights = 0;       // point lights casting shadows
+  std::size_t lightShadowInstances = 0; // casters for them
 };
 
 /**
@@ -87,6 +91,15 @@ public:
   }
   const ShadowSettings3D& shadowSettings() const { return m_shadows; }
 
+  /**
+   * Bloom (see BloomSettings3D) is the scene camera's (sceneCamera(), its
+   * Camera3DComponent's settings), even while not following it, so the
+   * editor shows what the game camera sees. These are for a scene without a
+   * camera entity.
+   */
+  void setBloomSettings(const BloomSettings3D& settings) { m_bloom = settings; }
+  const BloomSettings3D& bloomSettings() const { return m_bloom; }
+
   const RenderStats3D& stats() const { return m_stats; }
 
   /** Lighting, shadow and camera knobs for the debug UI. */
@@ -101,7 +114,11 @@ public:
                 void(std::type_index, Module&, const RenderContext3D&)>& fn);
 
 protected:
-  void update(double deltaTime) override { updateModules(deltaTime); }
+  void update(double deltaTime) override
+  {
+    m_time += deltaTime;
+    updateModules(deltaTime);
+  }
   void render() override;
 
   ModuleInit moduleInit() override { return {registry, nullptr}; }
@@ -110,9 +127,18 @@ private:
   // Fill m_context for a viewport; false if there is nothing to draw into.
   bool buildContext(const glm::ivec2& viewport);
 
-  // Rebuild m_pointLights from PointLight3DComponent entities, keeping the
-  // kMaxPointLights3D nearest the camera target.
+  // Rebuild m_pointLights from PointLight3DComponent entities and glowing
+  // meshes (gatherEmissionLights), keeping the kMaxPointLights3D nearest the
+  // camera target.
   void gatherPointLights();
+
+  // Append the lights standing in for MeshRendererComponent entities' glow
+  // (see emissionLights.h).
+  void gatherEmissionLights();
+
+  // Pick the frame's shadowed point lights (ShadowSettings3D::pointLights of
+  // them) into m_shadowedLights, clearing castsShadow on the rest.
+  void chooseShadowedLights();
 
   void submit(const MeshDrawCommand& command);
 
@@ -123,11 +149,36 @@ private:
   bool m_followSceneCamera = true;
   SceneLighting3D m_lighting;
   ShadowSettings3D m_shadows;
+  BloomSettings3D m_bloom;
+
+  // Emission per surface sample, for one frame: per (samples, material) for
+  // materials whose emission doesn't depend on where the object is (shared
+  // by every object using the pair), so each is worked out once a frame.
+  struct SampleKey
+  {
+    const SurfaceSample* samples;
+    const MeshMaterial* material;
+    bool operator==(const SampleKey&) const = default;
+  };
+  struct SampleKeyHash
+  {
+    std::size_t operator()(const SampleKey& key) const
+    {
+      return std::hash<const void*>()(key.samples) * 31u ^
+             std::hash<const void*>()(key.material);
+    }
+  };
+  std::unordered_map<SampleKey, std::vector<glm::vec3>, SampleKeyHash>
+      m_sharedEmission;
+  std::vector<GlowPoint> m_glow;
 
   RenderContext3D m_context;
   glm::mat4 m_lightViewProjection{1.0f};
   std::vector<PointLight3D> m_pointLights;
+  std::vector<PointLight3D> m_shadowedLights; // those casting shadows
+  std::vector<std::size_t> m_shadowCandidates;
   std::vector<AnyRenderCommand3D> m_commands;
+  double m_time = 0.0; // seconds of update()
   RenderStats3D m_stats;
 };
 

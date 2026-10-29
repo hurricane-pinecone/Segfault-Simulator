@@ -88,6 +88,11 @@ an entity placed at a ground point stands on it.
 | `sphere(radius, segments, rings, color)` | UV sphere resting on Z = 0 |
 | `prism(size, color)` | Gable roof, ridge along X |
 
+Every shape has texture coordinates, so textures and material graphs show on
+it. Each flat face holds the whole image upright; a sphere, cylinder or cone
+wraps it once around (from the top down, on a sphere); caps lay it flat.
+`append()` keeps them.
+
 Upload a mesh through the render system's `MeshLibrary`. It returns a
 `MeshHandle`, and keeps the mesh's bounds for culling. Meshes are freed with the
 render system.
@@ -147,11 +152,35 @@ onto visible ground.
 | `mesh` | The uploaded mesh |
 | `materials` | A material for each of the mesh's sections (material slots), in order, in place of its own (`"asset:<id>"` of a material asset); empty entries, and slots past the end, keep the mesh's own |
 | `tint` | Multiplies the mesh's colours. Alpha below 1 makes the object see-through. |
-| `castsShadow` | Whether it blocks the sun. Turn it off for ground planes. |
+| `castsShadow` | Whether it blocks light: the sun's, and shadowed point lights'. Turn it off for ground planes. |
+| `emitsLight` | Whether its materials' emission lights what's around it (see [Emission lights](#emission-lights)) |
+| `lightStrength` | How brightly its emission lights things (1: as bright as it glows) |
+| `lightRange` | How far its emission lights things (1: as far as that much glow reaches) |
+| `lightCastsShadows` | Whether things block its emission's light |
 
 Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
 solid, back to front, one at a time, so keep their numbers modest.
+
+## Materials
+
+A `MeshMaterial` is either the standard surface (glTF's metallic-roughness
+model: colour, textures, tiling, metal, roughness and a normal map; models
+bring theirs, normal maps included) or a compiled
+[material graph](../../core/rendering-3d/material-graphs/index.md), when its
+`shader` is set. `MeshLibrary::material()` loads a material asset by name, and
+`MeshLibrary::setMaterial()` makes or changes one from game code.
+
+The renderer builds pipelines per surface: one set for the standard surface,
+and one for each graph shader and alpha mode, shared by every material that
+uses it. Materials that differ only in their values share pipelines, and
+changing a value doesn't rebuild anything. A graph shader that fails to build is
+logged once, and its materials draw magenta.
+
+Each frame's `FrameParams3D::time` is the seconds `RenderSystem3D` has been
+updated, for animated materials (a graph's Time node). The scene updates every
+frame, in a game and in the editor alike, so animated materials move while
+editing too.
 
 ### Materials from code
 
@@ -204,6 +233,7 @@ eye.addComponent<sfs::Camera3DComponent>();
 | `orthoHeight` | Visible world height (orthographic) |
 | `nearPlane`, `farPlane` | The visible depth range |
 | `focusDistance` | How far ahead the camera's attention is. The sun's shadows are sharpest there, and when there are too many point lights, the ones nearest it are kept. |
+| `bloom` and `bloomIntensity`, `bloomThreshold`, `bloomSoftness`, `bloomRadius` | The camera's [bloom](#bloom) |
 
 Roll is ignored, so the view stays level.
 
@@ -234,14 +264,16 @@ so a day/night controller drives either path the same way:
 | `sun.direction` | Points toward the sun. Z <= 0 means the sun has set, and shadows switch off. |
 | `sun.color` | Sunlight tint |
 | `sun.diffuseStrength` | How much sun-facing surfaces brighten over ambient |
-| `ambient` | Base brightness. Point lights fade in as it drops. |
+| `ambient` | Base brightness. |
 | `skyColor` | Background clear colour |
 
 The shading itself is the isometric renderer's model, carried into 3D:
 - Ambient favours surfaces that face up.
 - Sides turned away from the sun fall to a "shaded" level.
 - Cast shadows pull a surface down to that shaded level.
-- Point lights blend with a brightness cap, so overlapping lamps don't blow out.
+- Point lights brighten what the sun doesn't reach: the shade by day,
+  everything at night. They blend with a brightness cap, so overlapping lamps
+  don't blow out.
 
 The only difference is the shadow source: a sun shadow map instead of a
 heightmap march.
@@ -256,12 +288,109 @@ lantern.addComponent<sfs::PointLight3DComponent>(
 //                             colour              intensity radius offset
 ```
 
-A frame uses up to `kMaxPointLights3D` (32) lights. When a scene has more, the
-render system keeps the ones nearest the camera target.
+| Field | Meaning |
+| --- | --- |
+| `color`, `intensity` | Its colour and brightness |
+| `radius` | How far it reaches; nothing beyond |
+| `offset` | Where it is relative to the entity, such as a lantern's flame above its base |
+| `castsShadow` | Whether things block it (default on; see [Point-light shadows](#point-light-shadows)) |
+| `sourceRadius` | How big the lamp is (its bulb, its flame). Shiny things reflect a highlight that big. |
+
+Point lights light surfaces two ways. Their diffuse light brightens what the
+sun doesn't reach (the shade by day, everything at night), softly capped so
+overlapping lamps don't blow out. Their highlights reflect off shiny
+surfaces: metal and glass, which have little colour of their own to light,
+show the lights by reflecting them. A light with a size (`sourceRadius`)
+reflects as a sphere that big, not a pinpoint, following Karis's sphere-light
+approximation, as Unreal does.
+
+A frame uses up to `kMaxPointLights3D` (4096) lights. When a scene has more,
+the render system keeps the ones nearest the camera target.
+
+Lights are clustered, so many of them stay cheap. Each frame the view is cut
+into clusters, screen tiles by depth slices (see `lightClusters.h`). Every light
+is listed in the clusters its radius can reach, and a pixel only checks its own
+cluster's list. What a light costs depends on how much of the screen it covers,
+not on how many lights the scene has. A cluster lists at most 256 lights; past
+that, the ones nearest the camera target win.
+
+### Emission lights
+
+A material's emission lights the things around it, not just itself: a lava
+pool lights the rocks at its edge, a glowing orb the floor beneath it. Each
+frame, the render system turns every glowing object's glow into point lights.
+They go to the renderer with the scene's own lights and are counted
+separately in its stats (`RenderStats3D::emissionLights`).
+
+- **How bright:** the glow's brightness, its brightest channel averaged over
+  the glowing surface. A light glowing at 3 x white lights three times as
+  strongly as one at white.
+- **How far:** how much glow there is, brightness x glowing area. A bigger
+  glowing object reaches farther; twice the size, twice as far.
+- **Where and what colour:** the light sits where the glow is (a lamp model
+  whose bulb glows is lit from the bulb), in the glow's colour.
+- **Big things:** a small object gets one light. A big one is split into
+  cells, each with its own light, so its light comes from all of it.
+- **Moving glow:** it follows the glow as it changes. A pulsing glow pulses
+  its light, and a glow that depends on where the object is (a Position node)
+  is worked out where it is.
+- **Cut-outs and see-through:** cut-out parts give off nothing, and
+  see-through ones (or a tint alpha below 1) give off light by their alpha, as
+  they're drawn.
+
+How much a surface glows is worked out on the CPU, at points spread evenly
+over each mesh section (taken when the mesh is added; see
+`sampleSurface()` in `emissionLights.h`), with the material graph's own CPU
+evaluation. A glow that's the same wherever its object is (it reads only UVs,
+vertex colours and time) is worked out once a frame per mesh and material,
+however many objects share them. A glow that depends on where it's seen from
+(a Fresnel rim) is averaged over the directions light leaves the surface in.
+
+Only material graphs give off light; the standard surface has no emission.
+Each glowing object decides its own light, on its `MeshRendererComponent`:
+`emitsLight` turns it off, `lightStrength` and `lightRange` scale how brightly
+and how far, and `lightCastsShadows` says whether things block it. The
+Inspector shows these only while one of the object's materials can glow
+(`canGlow()`: a node graph whose Emission isn't simply black).
+
+These lights are point lights like any other. They cast shadows (when they're
+among the frame's [shadowed lights](#point-light-shadows)), except from the
+glowing object itself, and they're as big as the glow (`sourceRadius`), so a
+mirror beside a lava pool reflects the lava's glow, not specks of light.
+
+### Bloom
+
+Lit surfaces never go brighter than white, but emission can. A material whose
+emission goes above 1 glows past its edges onto what's around it, as bright
+lights do through a real lens. Ordinary surfaces don't bloom at all.
+
+Bloom belongs to the camera: the scene camera's `Camera3DComponent` sets it,
+and the editor viewport shows the game camera's even while you look around
+freely. A scene without a camera entity uses `setBloomSettings(BloomSettings3D)`.
+
+| Field | Meaning |
+| --- | --- |
+| `bloom` | Whether bright light blooms |
+| `bloomIntensity` | How strong the glow is (0.6) |
+| `bloomThreshold` | How bright light must be to bloom (1, white) |
+| `bloomSoftness` | How gently it eases in above the threshold (0.5) |
+| `bloomRadius` | How far the glow spreads (1) |
+
+How much each object blooms is up to the object: how bright its emission is,
+times its material's **Bloom** (the Material Output's input, 1 by default). At
+0 a material never blooms, however bright; above 1 it blooms more than its
+brightness alone would.
+
+The scene draws into an HDR texture, and beside it the light that blooms (its
+colour x each material's Bloom). Bloom then takes the part of that above the
+threshold and halves it down a chain of textures, up to six. It adds each one
+back onto the next size up, which spreads the glow wide and soft. Finally the
+scene and the glow are added together, clamped, and written to the target.
 
 ### Shadows
 
-`setShadowSettings(ShadowSettings3D)` configures the sun's shadow map:
+`setShadowSettings(ShadowSettings3D)` configures the sun's shadow map and the
+point lights':
 
 | Field | Meaning |
 | --- | --- |
@@ -269,16 +398,39 @@ render system keeps the ones nearest the camera target.
 | `distance` | Radius around the camera target that receives shadows. Larger covers more ground at lower detail. |
 | `depthBias` | Removes self-shadowing "acne" |
 | `softness` | Filter radius in shadow-map texels (0 = hard edges) |
+| `pointLights` | How many point lights cast shadows at once (16; 0 for none, at most 32) |
+| `pointResolution` | Each point light's shadow map's face size, in texels (256) |
 
 The shadow region follows the camera target in whole-texel steps, so shadow
 edges stay still while the camera pans.
+
+### Point-light shadows
+
+Point lights cast shadows too, and so do glowing objects' lights. Shadow maps
+cost a draw of everything near the light six times over, so only some lights
+get them each frame. Of the lights with `castsShadow` whose reach is in view,
+up to `pointLights` of them get shadows, the ones nearest what the camera
+looks at (counting how far they reach). The rest light without shadows that
+frame.
+
+Each shadowed light gets a cube shadow map: six faces, each holding how far
+the nearest surface is in each direction. Only objects within the light's reach
+are drawn into it, and cut-out materials (leaves, fences) cast only where
+they're solid. A surface is shadowed where something nearer the light lies in
+its direction, softened over a few texels.
+
+A glowing object's light sits inside the object, so the object would block
+all of its own light. Instead, anything within a box around the light holding
+the glowing surface (`PointLight3D::shadowNear`) doesn't block it. So
+something touching a glowing object can't shadow it either.
 
 ## Debug settings
 
 `RenderSystem3D::settings()` exposes ambient, sun strength, shadow and
 projection controls as `ModuleSetting`s, so the debug panel shows them like any
 other system's settings. `stats()` reports the last frame's draw calls,
-instances, shadow instances and point lights.
+instances, shadow instances, point lights, and how many of those came from
+emission and cast shadows.
 
 ## Writing a 3D render module
 

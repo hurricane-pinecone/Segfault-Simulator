@@ -46,7 +46,10 @@ const std::map<std::string, std::string, std::less<>>& fieldKinds()
 std::string lowercase(std::string_view text)
 {
   std::string out(text);
-  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c)
+  std::transform(out.begin(),
+                 out.end(),
+                 out.begin(),
+                 [](unsigned char c)
                  { return static_cast<char>(std::tolower(c)); });
   return out;
 }
@@ -131,13 +134,16 @@ private:
 
   static TSNode field(TSNode node, const char* name)
   {
-    return ts_node_child_by_field_name(node, name, static_cast<uint32_t>(std::strlen(name)));
+    return ts_node_child_by_field_name(
+        node, name, static_cast<uint32_t>(std::strlen(name)));
   }
 
   void report(TSNode node, Diagnostic::Severity severity, std::string message)
   {
-    m_result.diagnostics.push_back(
-        {severity, m_path, ts_node_start_point(node).row + 1, std::move(message)});
+    m_result.diagnostics.push_back({severity,
+                                    m_path,
+                                    ts_node_start_point(node).row + 1,
+                                    std::move(message)});
   }
   void warn(TSNode node, std::string message)
   {
@@ -250,8 +256,10 @@ private:
           kind = TypeKind::ScriptableObject;
         else
           error(base,
-                "'" + name + "' isn't a supported base; derive from sfs::GameObject, "
-                "sfs::System, sfs::MeshSource or sfs::ScriptableObject, or nothing for a component");
+                "'" + name +
+                    "' isn't a supported base; derive from sfs::GameObject, "
+                    "sfs::System, sfs::MeshSource or sfs::ScriptableObject, or "
+                    "nothing for a component");
       }
     }
     return kind;
@@ -283,14 +291,18 @@ private:
     // return (`Thing* find();`).
     TSNode declarator = field(node, "declarator");
     while (!ts_node_is_null(declarator) &&
-           (type(declarator) == "pointer_declarator" || type(declarator) == "reference_declarator"))
+           (type(declarator) == "pointer_declarator" ||
+            type(declarator) == "reference_declarator"))
     {
       const TSNode inner = field(declarator, "declarator");
-      declarator = ts_node_is_null(inner) && ts_node_named_child_count(declarator) > 0
-                       ? ts_node_named_child(declarator, ts_node_named_child_count(declarator) - 1)
-                       : inner;
+      declarator =
+          ts_node_is_null(inner) && ts_node_named_child_count(declarator) > 0
+              ? ts_node_named_child(
+                    declarator, ts_node_named_child_count(declarator) - 1)
+              : inner;
     }
-    if (ts_node_is_null(declarator) || type(declarator) == "function_declarator")
+    if (ts_node_is_null(declarator) ||
+        type(declarator) == "function_declarator")
       return;
 
     if (hide || (!isPublic && !show))
@@ -298,14 +310,16 @@ private:
 
     const TSNode typeNode = field(node, "type");
     base.type = normaliseType(text(typeNode));
-    // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed type.
+    // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed
+    // type.
     std::optional<std::string> kind;
     if (const std::optional<std::string> data = assetRefType(base.type))
     {
       kind = "AssetRef";
       base.assetType = *data;
     }
-    else if (const auto known = fieldKinds().find(base.type); known != fieldKinds().end())
+    else if (const auto known = fieldKinds().find(base.type);
+             known != fieldKinds().end())
       kind = known->second;
 
     // Every declarator: `float a, b;` declares two fields.
@@ -318,14 +332,17 @@ private:
 
       if (type(child) != "field_identifier")
       {
-        warn(child, "'" + text(child) + "': pointer, reference and array "
-                    "fields can't be edited; skipped");
+        warn(child,
+             "'" + text(child) +
+                 "': pointer, reference and array "
+                 "fields can't be edited; skipped");
         continue;
       }
       if (!kind)
       {
-        warn(child, "'" + text(child) + "' has type '" + base.type +
-                        "', which the editor can't edit yet; skipped");
+        warn(child,
+             "'" + text(child) + "' has type '" + base.type +
+                 "', which the editor can't edit yet; skipped");
         continue;
       }
 
@@ -336,7 +353,10 @@ private:
     }
   }
 
-  void parseAttributes(TSNode declaration, FieldModel& fieldModel, bool& hide, bool& show)
+  void parseAttributes(TSNode declaration,
+                       FieldModel& fieldModel,
+                       bool& hide,
+                       bool& show)
   {
     const uint32_t count = ts_node_named_child_count(declaration);
     for (uint32_t i = 0; i < count; ++i)
@@ -359,6 +379,8 @@ private:
         fieldModel.texture = true;
       else if (name == "materials")
         fieldModel.materials = true;
+      else if (name == "emissionLight")
+        fieldModel.emissionLight = true;
       else if (name == "range")
         parseRange(attribute, fieldModel);
       else
@@ -393,7 +415,8 @@ private:
 
 } // namespace
 
-ParseResult parseHeader(std::string_view source, const std::filesystem::path& path)
+ParseResult parseHeader(std::string_view source,
+                        const std::filesystem::path& path)
 {
   return HeaderParser(source, path).run();
 }

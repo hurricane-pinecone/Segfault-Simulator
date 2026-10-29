@@ -1,0 +1,13 @@
+# WebGPU tests link engine-webgpu and run on a real device, made headless (no
+# window). A machine with no usable adapter (no GPU driver, e.g. a bare CI
+# runner) skips them: they exit with 77, which CTest reports as skipped.
+function(add_webgpu_test name source)
+    add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE engine-webgpu)
+    target_compile_definitions(${name} PRIVATE SDL_MAIN_HANDLED)
+    sfs_deploy_runtime(${name})
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES LABELS webgpu SKIP_RETURN_CODE 77)
+endfunction()
+
+add_webgpu_test(webGpuRenderer3DTests webGpuRenderer3DTests.cpp)

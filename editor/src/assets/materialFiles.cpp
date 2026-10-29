@@ -16,7 +16,10 @@ namespace
 {
 // `stem` + `extension` in `folder` (relative), with " 2", " 3"... added until
 // no file has that name.
-fs::path freeName(const sfs::AssetDatabase& assets, const fs::path& folder, const std::string& stem, const char* extension)
+fs::path freeName(const sfs::AssetDatabase& assets,
+                  const fs::path& folder,
+                  const std::string& stem,
+                  const char* extension)
 {
   fs::path relative = folder / (stem + extension);
   std::error_code error;
@@ -29,7 +32,8 @@ fs::path freeName(const sfs::AssetDatabase& assets, const fs::path& folder, cons
 std::string safeName(std::string name)
 {
   for (char& c : name)
-    if (!std::isalnum(static_cast<unsigned char>(c)) && c != ' ' && c != '-' && c != '_')
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != ' ' && c != '-' &&
+        c != '_')
       c = '_';
   return name.empty() ? "Material" : name;
 }
@@ -78,17 +82,21 @@ std::optional<sfs::AssetId> create(sfs::AssetDatabase& assets,
   return std::nullopt;
 }
 
-std::optional<sfs::MaterialAsset> read(const sfs::AssetDatabase& assets, const sfs::AssetRecord& record)
+std::optional<sfs::MaterialAsset> read(const sfs::AssetDatabase& assets,
+                                       const sfs::AssetRecord& record)
 {
   std::ifstream in(assets.absolutePath(record));
   const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
-  std::optional<sfs::MaterialAsset> material = sfs::MaterialAsset::fromJson(json);
+  std::optional<sfs::MaterialAsset> material =
+      sfs::MaterialAsset::fromJson(json);
   if (!material)
     LOG_ERROR("Can't read the material " + record.path.generic_string());
   return material;
 }
 
-bool write(const sfs::AssetDatabase& assets, const sfs::AssetRecord& record, const sfs::MaterialAsset& material)
+bool write(const sfs::AssetDatabase& assets,
+           const sfs::AssetRecord& record,
+           const sfs::MaterialAsset& material)
 {
   std::ofstream out(assets.absolutePath(record));
   out << material.toJson().dump(2) << "\n";
@@ -97,7 +105,9 @@ bool write(const sfs::AssetDatabase& assets, const sfs::AssetRecord& record, con
   return static_cast<bool>(out);
 }
 
-std::optional<sfs::AssetId> extract(sfs::AssetDatabase& assets, const sfs::MeshMaterial& material, const std::string& name)
+std::optional<sfs::AssetId> extract(sfs::AssetDatabase& assets,
+                                    const sfs::MeshMaterial& material,
+                                    const std::string& name)
 {
   const fs::path folder = "materials";
   std::error_code error;
@@ -112,9 +122,13 @@ std::optional<sfs::AssetId> extract(sfs::AssetDatabase& assets, const sfs::MeshM
   asset.alphaMode = material.alphaMode;
   asset.alphaCutoff = material.alphaCutoff;
   const std::string stem = safeName(name);
-  asset.baseTexture = saveTexture(assets, folder, material.baseTexture, stem + "_base");
-  asset.metallicRoughnessTexture =
-      saveTexture(assets, folder, material.metallicRoughnessTexture, stem + "_metalRough");
+  asset.baseTexture =
+      saveTexture(assets, folder, material.baseTexture, stem + "_base");
+  asset.metallicRoughnessTexture = saveTexture(
+      assets, folder, material.metallicRoughnessTexture, stem + "_metalRough");
+  asset.normalTexture =
+      saveTexture(assets, folder, material.normalTexture, stem + "_normal");
+  asset.normalScale = material.normalScale;
   return create(assets, folder, stem, asset);
 }
 

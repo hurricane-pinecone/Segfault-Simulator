@@ -3,11 +3,11 @@
 #include "build/gameExporter.h"
 #include "build/moduleBuilder.h"
 #include "editorContext.h"
+#include "engine/runtime/scripting/moduleHost.h"
 #include "history/editorHistory.h"
 #include "panels/panel.h"
 #include "scene/sceneDocument.h"
 #include "scripting/fieldMigration.h"
-#include "engine/runtime/scripting/moduleHost.h"
 #include "scripting/scriptTemplates.h"
 
 #include "engine/runtime/game/game.h"
@@ -30,6 +30,7 @@
 // the scene's scripts; Stop restores the scene as it was before Play.
 class AssetBrowserPanel;
 class CodePanel;
+class MaterialEditorPanel;
 
 class ViewportPanel;
 
@@ -45,7 +46,10 @@ protected:
   void onUpdate(double deltaTime) override;
   void onRender() override;
   void onDestroy() override;
-  bool sceneReceivesInput() const override { return m_context.playing && m_context.gameHasInput; }
+  bool sceneReceivesInput() const override
+  {
+    return m_context.playing && m_context.gameHasInput;
+  }
   bool sceneReceivesMouse() const override { return m_context.gameHasMouse; }
   SceneView sceneView() const override;
   // Game code's quit() stops Play; loadScene() switches scenes within it.
@@ -86,7 +90,8 @@ private:
   // share takes a while) runs in the background while the editor carries on;
   // finishOpeningProject() takes over once it's done (a frame's work).
   void openProject(const std::filesystem::path& folder);
-  void createProject(const std::filesystem::path& folder, const std::string& name);
+  void createProject(const std::filesystem::path& folder,
+                     const std::string& name);
   void finishOpeningProject();
   struct OpeningProject
   {
@@ -117,16 +122,19 @@ private:
   // editor regains focus): the game is rebuilt, and saved values follow
   // renamed fields (see swapModule()).
   bool m_scriptsChanged = false;
-  std::future<std::string> m_scriptsCheck; // a hash of scripts/, in the background
-  std::string m_scriptsStamp;              // the last one seen
-  bool m_scriptsCheckIsBaseline = false;   // its result is the new normal, not a change
-  bool m_scriptsRecheck = false;           // check again once it's done
+  std::future<std::string>
+      m_scriptsCheck;         // a hash of scripts/, in the background
+  std::string m_scriptsStamp; // the last one seen
+  bool m_scriptsCheckIsBaseline =
+      false;                     // its result is the new normal, not a change
+  bool m_scriptsRecheck = false; // check again once it's done
   void checkScripts(bool baseline);
   /** Rewrite the project's scene and prefab files for changed fields. */
   void migrateProjectFiles(const fieldMigration::Changes& changes);
   // A file or folder was moved in the Assets panel: open scenes (and the start
   // scene) follow it.
-  void pathMoved(const std::filesystem::path& from, const std::filesystem::path& to);
+  void pathMoved(const std::filesystem::path& from,
+                 const std::filesystem::path& to);
 
   // What's open for editing: the scene, and each prefab being edited in its
   // own viewport tab (its own scene, holding the prefab's content alone). One
@@ -149,7 +157,8 @@ private:
   void activate(Workspace& workspace);
   /** Point the context at the active workspace's scene. */
   void bindContext();
-  /** A scene in the scene manager, set up for editing (a prefab's on a grid). */
+  /** A scene in the scene manager, set up for editing (a prefab's on a grid).
+   */
   EditorScene* makeScene(bool forPrefab);
 
   /** Edit a prefab in its own tab (or bring its tab forward). */
@@ -165,14 +174,22 @@ private:
    * instances of it show the change. `source` (the tab it came from) isn't
    * reloaded; another tab editing the prefab is, unless it has changes.
    */
-  bool rewritePrefab(const sfs::AssetId& prefab, const std::function<bool()>& write, const Workspace* source);
+  bool rewritePrefab(const sfs::AssetId& prefab,
+                     const std::function<bool()>& write,
+                     const Workspace* source);
   void drawClosePrefabDialog();
+
+  /** Edit a node-graph material in its own tab (or bring its tab forward). */
+  void openMaterial(const sfs::AssetId& material);
+  /** The material tab whose the Edit menu is (last focused), if any. */
+  MaterialEditorPanel* materialPanelWithEdit() const;
+  std::vector<MaterialEditorPanel*> m_materialPanels; // in m_panels
 
   std::vector<std::unique_ptr<Workspace>> m_workspaces; // the scene's first
   Workspace* m_active = nullptr;
   Workspace* m_closing = nullptr;  // a tab asking whether to apply first
   Workspace* m_closeNow = nullptr; // a tab to close next frame (answered)
-  std::string m_focusWindow;      // brought forward next frame (a reopened tab)
+  std::string m_focusWindow; // brought forward next frame (a reopened tab)
   // Record that the module was just built for this engine (see
   // loadExistingModule()).
   void stampModule();
@@ -185,15 +202,18 @@ private:
    * (component storage, objects, systems) while its code is still loaded.
    */
   void destroyScenes();
-  /** Create fresh scenes (after destroyScenes) and point the documents at them. */
+  /** Create fresh scenes (after destroyScenes) and point the documents at them.
+   */
   void createScenes();
-  /** Replace the scene (not prefabs') with a fresh one (Stop, a game's loadScene). */
+  /** Replace the scene (not prefabs') with a fresh one (Stop, a game's
+   * loadScene). */
   void replaceMainScene();
 
   EditorContext m_context;
   std::optional<SceneDocument> m_document;
-  std::optional<sfs::AssetDatabase> m_assets; // the open project's assets/ and prefabs/
-  AssetBrowserPanel* m_assetPanel = nullptr;  // owned by m_panels
+  std::optional<sfs::AssetDatabase>
+      m_assets; // the open project's assets/ and prefabs/
+  AssetBrowserPanel* m_assetPanel = nullptr; // owned by m_panels
   EditorHistory m_history{m_context};
   BuildEnvironment m_environment = BuildEnvironment::current();
   ModuleBuilder m_builder{m_environment};
@@ -224,7 +244,8 @@ private:
   std::string m_dialogSceneName;
   std::string m_dialogScriptName;
   scriptTemplates::Kind m_dialogScriptKind = scriptTemplates::Kind::GameObject;
-  std::filesystem::path m_dialogScriptFolder; // where it goes (empty: the scripts folder)
+  std::filesystem::path
+      m_dialogScriptFolder; // where it goes (empty: the scripts folder)
 
   // Export: the dialog's choices, applied once the module has built.
   std::string m_exportFolder;     // the game goes in a subfolder of this

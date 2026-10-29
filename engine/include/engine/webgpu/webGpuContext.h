@@ -14,6 +14,14 @@ class WebGpuContext
 {
 public:
   bool init(SDL_Window* window);
+
+  /**
+   * A device with no window or surface, drawing into `format` textures the
+   * caller makes (offscreen rendering, tests). False (logged) if there's no
+   * usable adapter, e.g. a machine with no GPU driver.
+   */
+  bool initHeadless(WGPUTextureFormat format = WGPUTextureFormat_RGBA8Unorm);
+
   void configure(int width, int height);
 
   // Wait for the display when presenting (vsync), capping the frame rate at

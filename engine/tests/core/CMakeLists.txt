@@ -31,6 +31,16 @@ add_core_test(meshPrimitivesTests rendering/3d/meshPrimitivesTests.cpp)
 add_core_test(camera3DTests rendering/3d/camera3DTests.cpp)
 add_core_test(cullingTests rendering/3d/cullingTests.cpp)
 add_core_test(materialTests rendering/3d/materialTests.cpp)
+add_core_test(materialGraphTests rendering/3d/materialGraphTests.cpp)
+add_core_test(lightClustersTests rendering/3d/lightClustersTests.cpp)
+add_core_test(emissionLightsTests rendering/3d/emissionLightsTests.cpp)
+# Checks the material recipes in the editor docs build what they say (where
+# the docs are: an engine package's sources don't include them).
+set(SFS_RECIPES_PAGE "${CMAKE_CURRENT_SOURCE_DIR}/../../../docs/editor/material-graphs/recipes/index.md")
+if(EXISTS "${SFS_RECIPES_PAGE}")
+    add_core_test(materialRecipeTests rendering/3d/materialRecipeTests.cpp)
+    target_compile_definitions(materialRecipeTests PRIVATE SFS_RECIPES_PAGE="${SFS_RECIPES_PAGE}")
+endif()
 # Needs the engine's generated reflection, which core-only builds lack.
 if(SFS_CODEGEN_AVAILABLE)
     add_core_test(reflectionTests reflection/reflectionTests.cpp)

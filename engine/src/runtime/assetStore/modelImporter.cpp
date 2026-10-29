@@ -214,6 +214,12 @@ readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
           loadTexture(pbr.metallic_roughness_texture.texture, true, textures);
     }
   }
+  if (hasUvs && source->normal_texture.texture)
+  {
+    material.normalTexture =
+        loadTexture(source->normal_texture.texture, true, textures);
+    material.normalScale = source->normal_texture.scale;
+  }
   if (source->alpha_mode == cgltf_alpha_mode_mask)
     material.alphaMode = AlphaMode::Mask;
   else if (source->alpha_mode == cgltf_alpha_mode_blend)

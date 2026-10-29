@@ -4,6 +4,7 @@
 #include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/3d/material.h"
+#include "engine/core/rendering/3d/materialGraphCompiler.h"
 #include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/assetStore/sprite.h"
@@ -38,6 +39,7 @@ void AssetStore::clearAssets()
   m_fonts.clear();
   m_models.clear();
   m_textures.clear();
+  m_dataTextures.clear();
   m_materials.clear();
   m_prefabs.clear();
   m_loading.clear(); // loads under way are dropped when they finish
@@ -51,6 +53,7 @@ void AssetStore::setDatabase(const AssetDatabase* database)
   {
     m_models.clear();
     m_textures.clear();
+    m_dataTextures.clear();
     m_materials.clear();
     m_prefabs.clear();
     m_loading.clear();
@@ -175,6 +178,20 @@ std::shared_ptr<const TextureData> AssetStore::texture(const AssetId& id)
   return m_textures.emplace(id, std::move(loaded)).first->second;
 }
 
+std::shared_ptr<const TextureData> AssetStore::dataTexture(const AssetId& id)
+{
+  if (const auto it = m_dataTextures.find(id); it != m_dataTextures.end())
+    return it->second;
+  std::shared_ptr<const TextureData> data = texture(id);
+  if (data && !data->linear)
+  {
+    auto linear = std::make_shared<TextureData>(*data);
+    linear->linear = true;
+    data = std::move(linear);
+  }
+  return m_dataTextures.emplace(id, std::move(data)).first->second;
+}
+
 std::shared_ptr<const MeshMaterial> AssetStore::material(const AssetId& id)
 {
   if (const auto it = m_materials.find(id); it != m_materials.end())
@@ -192,43 +209,66 @@ std::shared_ptr<const MeshMaterial> AssetStore::material(const AssetId& id)
     const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
     if (const std::optional<MaterialAsset> asset =
             MaterialAsset::fromJson(json))
-    {
-      // Textures by asset name: "asset:<id>".
-      const auto texture =
-          [this](const std::string& name) -> std::shared_ptr<const TextureData>
-      {
-        constexpr std::string_view prefix = "asset:";
-        if (!name.starts_with(prefix))
-          return nullptr;
-        const std::optional<AssetId> textureId =
-            AssetId::parse(std::string_view(name).substr(prefix.size()));
-        return textureId ? this->texture(*textureId) : nullptr;
-      };
-      loaded = std::make_shared<MeshMaterial>();
-      loaded->baseColor = asset->baseColor;
-      loaded->baseTexture = texture(asset->baseTexture);
-      loaded->metallicRoughnessTexture =
-          texture(asset->metallicRoughnessTexture);
-      if (loaded->metallicRoughnessTexture &&
-          !loaded->metallicRoughnessTexture->linear)
-      {
-        // Read as data, not colour.
-        auto linear =
-            std::make_shared<TextureData>(*loaded->metallicRoughnessTexture);
-        linear->linear = true;
-        loaded->metallicRoughnessTexture = std::move(linear);
-      }
-      loaded->tiling = asset->tiling;
-      loaded->offset = asset->offset;
-      loaded->metallic = asset->metallic;
-      loaded->roughness = asset->roughness;
-      loaded->alphaMode = asset->alphaMode;
-      loaded->alphaCutoff = asset->alphaCutoff;
-    }
+      loaded = makeMaterial(*asset, record->path.generic_string());
     else
       LOG_ERROR("Can't read the material " + record->path.generic_string());
   }
   return m_materials.emplace(id, std::move(loaded)).first->second;
+}
+
+std::shared_ptr<MeshMaterial>
+AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
+{
+  // Textures by asset name ("asset:<id>"), read as colour or as data
+  // (metalness, roughness, masks).
+  const auto texture = [this](const std::string& name,
+                              bool data =
+                                  false) -> std::shared_ptr<const TextureData>
+  {
+    constexpr std::string_view prefix = "asset:";
+    if (!name.starts_with(prefix))
+      return nullptr;
+    const std::optional<AssetId> textureId =
+        AssetId::parse(std::string_view(name).substr(prefix.size()));
+    if (!textureId)
+      return nullptr;
+    return data ? dataTexture(*textureId) : this->texture(*textureId);
+  };
+
+  auto material = std::make_shared<MeshMaterial>();
+  material->alphaMode = asset.alphaMode;
+  if (asset.graph)
+  {
+    const materialGraph::CompiledGraph compiled =
+        materialGraph::compile(*asset.graph);
+    if (compiled.shader)
+    {
+      material->shader = compiled.shader;
+      material->shaderParameters = compiled.parameters;
+      for (const materialGraph::TextureSlot& slot : compiled.textures)
+        material->shaderTextures.push_back(texture(slot.texture, slot.data));
+    }
+    else
+    {
+      // Magenta, so it's noticed.
+      for (const materialGraph::CompileError& error : compiled.errors)
+        LOG_ERROR(source + ": " + error.message);
+      material->baseColor = {1.0f, 0.0f, 1.0f, 1.0f};
+    }
+    return material;
+  }
+  material->baseColor = asset.baseColor;
+  material->baseTexture = texture(asset.baseTexture);
+  material->metallicRoughnessTexture =
+      texture(asset.metallicRoughnessTexture, true);
+  material->normalTexture = texture(asset.normalTexture, true);
+  material->normalScale = asset.normalScale;
+  material->tiling = asset.tiling;
+  material->offset = asset.offset;
+  material->metallic = asset.metallic;
+  material->roughness = asset.roughness;
+  material->alphaCutoff = asset.alphaCutoff;
+  return material;
 }
 
 void AssetStore::forgetMaterial(const AssetId& id) { m_materials.erase(id); }

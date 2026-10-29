@@ -14,6 +14,12 @@ namespace sfs
  * @param float radius - reach in world units, default 8
  * @param glm::vec3 offset - emitter position relative to the transform, e.g.
  *                           a lantern's flame above its base, default origin
+ * @param bool castsShadow - whether things block its light, default true (the
+ *                           lights nearest the view, up to
+ *                           ShadowSettings3D::pointLights, cast them)
+ * @param float sourceRadius - how big the lamp is (its bulb, its flame):
+ *                             shiny things reflect a highlight that big,
+ *                             default 0.05
  */
 struct PointLight3DComponent
 {
@@ -21,6 +27,8 @@ struct PointLight3DComponent
   [[sfs::range(0, 10)]] float intensity = 1.0f;
   [[sfs::range(0, 100)]] float radius = 8.0f;
   glm::vec3 offset{0.0f};
+  bool castsShadow = true;
+  [[sfs::range(0, 5)]] float sourceRadius = 0.05f;
 
   PointLight3DComponent() = default;
 

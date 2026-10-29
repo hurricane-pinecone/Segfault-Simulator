@@ -1,6 +1,7 @@
 #include "engine/core/rendering/3d/aabb.h"
 
 #include "glm/glm/common.hpp"
+#include "glm/glm/geometric.hpp"
 
 namespace sfs
 {
@@ -18,6 +19,16 @@ void Aabb::expand(const Aabb& other)
 
   min = glm::min(min, other.min);
   max = glm::max(max, other.max);
+}
+
+bool Aabb::intersectsSphere(const glm::vec3& center, float radius) const
+{
+  if (empty())
+    return false;
+  // The box's nearest point to the centre.
+  const glm::vec3 nearest = glm::clamp(center, min, max);
+  const glm::vec3 offset = nearest - center;
+  return glm::dot(offset, offset) <= radius * radius;
 }
 
 Aabb Aabb::transformed(const glm::mat4& transform) const

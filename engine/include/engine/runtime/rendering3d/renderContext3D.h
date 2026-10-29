@@ -35,6 +35,9 @@ struct RenderContext3D
 
   const SceneLighting3D* lighting = nullptr;
   const std::vector<PointLight3D>* pointLights = nullptr;
+  // The point lights casting shadows this frame; a module includes a caster
+  // for them if it's within one's reach.
+  const std::vector<PointLight3D>* shadowedLights = nullptr;
 
   // Local bounds of the scene's meshes, for culling, and the textures objects
   // use in place of their meshes' (uploaded when first asked for).

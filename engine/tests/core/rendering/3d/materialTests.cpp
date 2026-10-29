@@ -13,6 +13,8 @@ int main()
     material.baseTexture = "asset:3f55f38a39f69719fbe27c30a302af61";
     material.metallicRoughnessTexture =
         "asset:d743b1c5fad80d5a4ce07cea1079f7f4";
+    material.normalTexture = "asset:0e5b2c37a1d94f6b8f3c2a1d9e8f7a6b";
+    material.normalScale = 1.5f;
     material.tiling = {4.0f, 2.0f};
     material.offset = {0.5f, -0.25f};
     material.metallic = 1.0f;
@@ -38,6 +40,8 @@ int main()
       CHECK(loaded->baseColor.a == 1.0f);
       CHECK(loaded->alphaMode == AlphaMode::Opaque);
       CHECK(loaded->baseTexture.empty());
+      CHECK(loaded->normalTexture.empty());
+      CHECK(loaded->normalScale == 1.0f);
       CHECK(loaded->tiling.x == 1.0f);
       CHECK(loaded->offset.y == 0.0f);
     }

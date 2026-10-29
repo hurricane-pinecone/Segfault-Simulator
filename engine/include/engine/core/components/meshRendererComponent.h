@@ -21,6 +21,15 @@ namespace sfs
  * @param glm::vec4 tint - multiplies the mesh's colours, default white; alpha
  *                         below 1 makes it see-through
  * @param bool castsShadow - whether it occludes the sun, default true
+ * @param bool emitsLight - whether its materials' emission lights what's
+ *                          around it (see emissionLights.h), default true
+ * @param float lightStrength - how brightly its emission lights things
+ *                              (1 = as bright as it glows)
+ * @param float lightRange - how far its emission lights things (1 = as far
+ *                           as that much glow would reach)
+ * @param bool lightCastsShadows - whether things block its emission's light
+ *                                 (as a point light's; see
+ *                                 PointLight3DComponent), default true
  */
 struct MeshRendererComponent
 {
@@ -28,6 +37,10 @@ struct MeshRendererComponent
   [[sfs::materials]] std::vector<std::string> materials;
   [[sfs::color]] glm::vec4 tint{1.0f};
   bool castsShadow = true;
+  [[sfs::emissionLight]] bool emitsLight = true;
+  [[sfs::emissionLight, sfs::range(0, 4)]] float lightStrength = 1.0f;
+  [[sfs::emissionLight, sfs::range(0, 4)]] float lightRange = 1.0f;
+  [[sfs::emissionLight]] bool lightCastsShadows = true;
 
   MeshRendererComponent() = default;
 

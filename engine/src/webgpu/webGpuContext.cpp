@@ -159,6 +159,32 @@ bool WebGpuContext::init(SDL_Window* window)
   return true;
 }
 
+bool WebGpuContext::initHeadless(WGPUTextureFormat format)
+{
+  WGPUInstanceDescriptor instDesc = {};
+  m_instance = wgpuCreateInstance(&instDesc);
+  if (!m_instance)
+  {
+    LOG_ERROR("Failed to create WebGPU instance");
+    return false;
+  }
+  m_adapter = requestAdapterSync(m_instance, nullptr);
+  if (!m_adapter)
+  {
+    LOG_ERROR("Failed to acquire WebGPU adapter");
+    return false;
+  }
+  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps);
+  if (!m_device)
+  {
+    LOG_ERROR("Failed to acquire WebGPU device");
+    return false;
+  }
+  m_queue = wgpuDeviceGetQueue(m_device);
+  m_format = format;
+  return true;
+}
+
 void WebGpuContext::configure(int width, int height)
 {
   configureSurface(m_surface, width, height);

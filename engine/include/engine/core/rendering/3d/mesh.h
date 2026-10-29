@@ -13,6 +13,11 @@
 namespace sfs
 {
 
+namespace materialGraph
+{
+class MaterialShader;
+}
+
 /**
  * One vertex of a 3D mesh. Colour is per-vertex albedo (linear RGB), so
  * untextured low-poly models carry their palette in the mesh itself; a
@@ -56,6 +61,10 @@ enum class AlphaMode : uint8_t
  * How a surface looks, glTF's metallic-roughness model: the albedo is the
  * vertex colour x baseColor x baseTexture, with alpha from baseColor's x the
  * texture's. A null texture counts as white.
+ *
+ * Or, with a `shader` (a compiled material graph), whatever the graph works
+ * out from its parameters and textures; then only alphaMode is read from the
+ * rest.
  */
 struct MeshMaterial
 {
@@ -64,6 +73,10 @@ struct MeshMaterial
   // Metalness in blue and roughness in green (glTF's layout), multiplying the
   // factors below.
   std::shared_ptr<const TextureData> metallicRoughnessTexture;
+  // A normal map (tangent space, OpenGL style: green up), read as data, and
+  // how deep its bumps are (glTF's normalTexture.scale). Null: flat.
+  std::shared_ptr<const TextureData> normalTexture;
+  float normalScale = 1.0f;
   // Texture coordinates are uv x tiling + offset: tiling 4 repeats the
   // textures 4 times across what they covered once.
   glm::vec2 tiling{1.0f};
@@ -72,6 +85,13 @@ struct MeshMaterial
   float roughness = 1.0f; // 0: mirror-smooth; 1: matte
   AlphaMode alphaMode = AlphaMode::Opaque;
   float alphaCutoff = 0.5f; // for AlphaMode::Mask
+
+  // A material graph's shader (see materialGraphCompiler.h), and the values
+  // and textures it reads, in its order (a null texture reads white). Null:
+  // the standard surface above.
+  std::shared_ptr<const materialGraph::MaterialShader> shader;
+  std::vector<glm::vec4> shaderParameters;
+  std::vector<std::shared_ptr<const TextureData>> shaderTextures;
 
   bool operator==(const MeshMaterial&) const = default;
 };
