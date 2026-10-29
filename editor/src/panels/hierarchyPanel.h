@@ -3,11 +3,13 @@
 #include "panels/panel.h"
 
 #include "engine/core/ecs/entity.h"
+#include "imgui.h"
 
 #include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace sfs::hierarchy
 {
@@ -55,6 +57,9 @@ private:
   // One row: the entity's tree node, plus its drag and drop and context menu.
   // @return true if it's open with children to draw (the caller pops it).
   // The row's focus button (frames the entity in the viewport).
+  void startRename(const sfs::Entity& entity);
+  void finishRename(EditorContext& context, const sfs::Entity& entity);
+  void drawRenameBox(EditorContext& context, const sfs::Entity& entity, ImVec2 rowMin, ImVec2 rowMax);
   void drawFocusButton(EditorContext& context, const sfs::Entity& entity);
   bool drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren);
 
@@ -69,4 +74,17 @@ private:
   bool m_scrollToSelection = false;
   std::unordered_set<uint32_t> m_reveal; // ids to open this frame (the selection's parents)
   PendingEdit m_pending;
+  // Renaming a row in place (F2, or Rename): its entity's id, the name as
+  // typed, and whether the box still needs the keyboard.
+  uint32_t m_renaming = UINT32_MAX;
+  std::string m_renameText;
+  bool m_renameFocus = false;
+  // A click on the selected row's name (renames it unless a double-click
+  // follows): the row's entity id and when.
+  uint32_t m_slowClick = UINT32_MAX;
+  // The rows in the order drawn: this frame's, and last frame's (what a
+  // Shift-click selects a range of).
+  std::vector<sfs::Entity> m_rows;
+  std::vector<sfs::Entity> m_lastRows;
+  double m_slowClickAt = 0.0;
 };

@@ -102,7 +102,9 @@ std::vector<std::string> BuildEnvironment::command(std::vector<std::string> args
   if (m_runner != Runner::Wsl)
     return args;
   // A login shell, so the user's PATH (cmake, conan, compilers) applies.
-  return {"wsl.exe", "-d", m_wslDistro, "--", "bash", "-lc", shellLine(args)};
+  // Run with -e, as it is: after "--", wsl.exe hands the command line to the
+  // default shell, which would parse the script once more ($! and quotes).
+  return {"wsl.exe", "-d", m_wslDistro, "-e", "bash", "-lc", shellLine(args)};
 }
 
 std::vector<std::string> BuildEnvironment::stoppableCommand(std::vector<std::string> args) const
@@ -114,12 +116,12 @@ std::vector<std::string> BuildEnvironment::stoppableCommand(std::vector<std::str
   // it went.
   const std::string script = "set -m; " + shellLine(args) + " & echo " + std::string(kGroupMarker) +
                              " $!; wait $!";
-  return {"wsl.exe", "-d", m_wslDistro, "--", "bash", "-lc", script};
+  return {"wsl.exe", "-d", m_wslDistro, "-e", "bash", "-lc", script};
 }
 
 std::vector<std::string> BuildEnvironment::stopCommand(int group) const
 {
   if (m_runner != Runner::Wsl || group <= 0)
     return {};
-  return {"wsl.exe", "-d", m_wslDistro, "--", "kill", "-TERM", "--", "-" + std::to_string(group)};
+  return {"wsl.exe", "-d", m_wslDistro, "-e", "kill", "-TERM", "--", "-" + std::to_string(group)};
 }

@@ -119,6 +119,8 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/capsuleCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/grassComponent.h"
+            "${ENGINE_COMPONENT_DIR}/grassBenderComponent.h"
             "${ENGINE_COMPONENT_DIR}/scriptComponent.h")
 else()
     target_sources(engine-core PRIVATE

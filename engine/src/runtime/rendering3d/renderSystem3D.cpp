@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
+#include <tuple>
 #include <variant>
 
 namespace sfs
@@ -65,16 +67,21 @@ void RenderSystem3D::render()
 
   // Opaque before transparent; within a pass, group by mesh so a backend can
   // keep its bindings between neighbouring draws.
+  // Grass is opaque, after the meshes.
+  const auto order = [](const AnyRenderCommand3D& command)
+  {
+    if (const auto* mesh = std::get_if<MeshDrawCommand>(&command))
+      return std::tuple(static_cast<int>(mesh->pass), 0, mesh->mesh.id);
+    if (const auto* grass = std::get_if<GrassDrawCommand>(&command))
+      return std::tuple(
+          static_cast<int>(RenderPass3D::Opaque), 1, grass->grass.id);
+    // UI last (it's drawn over the finished frame anyway).
+    return std::tuple(std::numeric_limits<int>::max(), 0, 0u);
+  };
   std::stable_sort(m_commands.begin(),
                    m_commands.end(),
-                   [](const AnyRenderCommand3D& a, const AnyRenderCommand3D& b)
-                   {
-                     const auto& ca = std::get<MeshDrawCommand>(a);
-                     const auto& cb = std::get<MeshDrawCommand>(b);
-                     if (ca.pass != cb.pass)
-                       return ca.pass < cb.pass;
-                     return ca.mesh.id < cb.mesh.id;
-                   });
+                   [&](const AnyRenderCommand3D& a, const AnyRenderCommand3D& b)
+                   { return order(a) < order(b); });
 
   FrameParams3D frame;
   frame.view = m_camera.viewMatrix();
@@ -91,6 +98,14 @@ void RenderSystem3D::render()
                     ? camera.getComponent<Camera3DComponent>().bloomSettings()
                     : m_bloom;
   frame.lighting = m_lighting;
+  frame.wind = m_wind;
+  frame.haze = m_haze;
+  // Depth of field, like bloom, is the scene camera's; focused where the view
+  // is (the editor's orbit target, while it looks around freely).
+  if (camera.isValid())
+    frame.depthOfField =
+        camera.getComponent<Camera3DComponent>().depthOfFieldSettings();
+  frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = m_shadows;
   frame.shadows.enabled = m_context.shadowsEnabled;
@@ -450,6 +465,24 @@ void RenderSystem3D::chooseShadowedLights()
   m_stats.shadowedLights = m_shadowedLights.size();
 }
 
+void RenderSystem3D::submit(const UiDrawCommand& command)
+{
+  if (command.list && !command.list->quads.empty())
+    m_renderer.drawUi(*command.list);
+}
+
+void RenderSystem3D::submit(const GrassDrawCommand& command)
+{
+  m_renderer.drawGrass(GrassBatch3D{command.grass,
+                                    command.material,
+                                    command.mesh,
+                                    command.model,
+                                    command.shape,
+                                    command.stiffness,
+                                    command.drawDistance});
+  m_stats.grassFields += 1;
+}
+
 void RenderSystem3D::submit(const MeshDrawCommand& command)
 {
   if (command.instances.empty() && command.shadowInstances.empty() &&
@@ -521,6 +554,36 @@ std::vector<ModuleSetting> RenderSystem3D::settings()
           },
           [this](int v)
           { m_shadows.pointResolution = kPointShadowResolutions[v]; }),
+      settings::floatRange(
+          "Wind direction",
+          0.0f,
+          360.0f,
+          [this] { return m_wind.direction; },
+          [this](float v) { m_wind.direction = v; }),
+      settings::floatRange(
+          "Wind strength",
+          0.0f,
+          1.0f,
+          [this] { return m_wind.strength; },
+          [this](float v) { m_wind.strength = v; }),
+      settings::floatRange(
+          "Wind gustiness",
+          0.0f,
+          1.0f,
+          [this] { return m_wind.gustiness; },
+          [this](float v) { m_wind.gustiness = v; }),
+      settings::floatRange(
+          "Haze",
+          0.0f,
+          1.0f,
+          [this] { return m_haze.strength; },
+          [this](float v) { m_haze.strength = v; }),
+      settings::floatRange(
+          "Haze distance",
+          5.0f,
+          1000.0f,
+          [this] { return m_haze.distance; },
+          [this](float v) { m_haze.distance = v; }),
       settings::enumChoice(
           "Projection",
           {"Perspective", "Orthographic"},

@@ -28,17 +28,28 @@ public:
   ModuleBuilder(const ModuleBuilder&) = delete;
   ModuleBuilder& operator=(const ModuleBuilder&) = delete;
 
+  // What's built: the game module, or the UI Preview's module (the UI files
+  // and their views' previews; see sfs_add_game_module).
+  enum class Target
+  {
+    Module,
+    UiPreview,
+  };
+
   bool busy() const { return m_process != nullptr; }
+  /** What the running (or last) build is of. */
+  Target target() const { return m_target; }
 
   /** How far the running build is, 0-100, as the build tool reports it; -1 if it hasn't said. */
   int percent() const { return m_percent; }
 
   /**
-   * Start building `project`'s module.
+   * Start building `project`'s module (or its UI Preview module). A UI
+   * Preview build only logs its output if it fails: it runs on every save.
    *
    * @return false (logged) if a build is already running or can't start.
    */
-  bool start(const Project& project);
+  bool start(const Project& project, Target target = Target::Module);
 
   /**
    * Stop the running build, compilers and all. The next poll() reports it
@@ -54,6 +65,8 @@ public:
 
   /** Where `project`'s built module lands, as the editor sees it. */
   std::filesystem::path modulePath(const Project& project) const;
+  /** Where its UI Preview module lands. */
+  std::filesystem::path uiPreviewPath(const Project& project) const;
 
   const BuildEnvironment& environment() const { return m_environment; }
 
@@ -67,4 +80,8 @@ private:
   std::atomic<int> m_percent = -1; // written by the output reader thread
   std::atomic<int> m_group = -1;   // the build's process group on the build machine (see stoppableCommand)
   bool m_cancelled = false;        // for poll() to report
+  Target m_target = Target::Module;
+  // A UI Preview build's output, logged only if it fails. Written by the
+  // output reader thread.
+  std::shared_ptr<std::vector<std::string>> m_heldOutput;
 };

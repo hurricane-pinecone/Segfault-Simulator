@@ -12,7 +12,10 @@
 //
 //   sfs-codegen --module <name> --function <qualified-name> --output <file.cpp>
 //               [--function-header <header>] [--include-root <dir>]
-//               <header>...
+//               [--ui-previews] <header>...
+//
+// With --ui-previews, the headers are UI headers (*.ui.h) and the output is
+// the editor's UI preview module: their views, filled with placeholders.
 //
 // Exits non-zero (and writes nothing) if any header has an error. The output
 // file is only rewritten when its contents change, so an unchanged scan
@@ -24,7 +27,7 @@ void usage()
 {
   std::cerr << "usage: sfs-codegen --module <name> --function <qualified-name> "
                "--output <file.cpp> [--function-header <header>] "
-               "[--include-root <dir>] <header>...\n";
+               "[--include-root <dir>] [--ui-previews] <header>...\n";
 }
 
 std::string readFile(const std::filesystem::path& path)
@@ -46,6 +49,32 @@ void print(const sfs::codegen::Diagnostic& diagnostic)
             << severity << ": " << diagnostic.message << '\n';
 }
 
+// The script registration for `headers`; false if one has an error.
+bool generateScripts(const std::vector<std::filesystem::path>& headers,
+                     const sfs::codegen::GeneratorOptions& options,
+                     std::string& generated)
+{
+  std::vector<sfs::codegen::TypeModel> types;
+  bool failed = false;
+  for (const std::filesystem::path& header : headers)
+  {
+    sfs::codegen::ParseResult result =
+        sfs::codegen::parseHeader(readFile(header), header);
+    for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
+    {
+      print(diagnostic);
+      failed |=
+          diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error;
+    }
+    if (result.type)
+      types.push_back(std::move(*result.type));
+  }
+  if (failed)
+    return false;
+  generated = sfs::codegen::generateRegistration(types, options);
+  return true;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -53,6 +82,7 @@ int main(int argc, char* argv[])
   sfs::codegen::GeneratorOptions options;
   std::filesystem::path output;
   std::vector<std::filesystem::path> headers;
+  bool uiPreviews = false;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -77,6 +107,8 @@ int main(int argc, char* argv[])
       options.includeRoot = value();
     else if (arg == "--output")
       output = value();
+    else if (arg == "--ui-previews")
+      uiPreviews = true;
     else if (arg.starts_with("--"))
     {
       usage();
@@ -92,26 +124,24 @@ int main(int argc, char* argv[])
     return 2;
   }
 
-  std::vector<sfs::codegen::TypeModel> types;
-  bool failed = false;
-  for (const std::filesystem::path& header : headers)
+  std::string generated;
+  if (uiPreviews)
   {
-    sfs::codegen::ParseResult result =
-        sfs::codegen::parseHeader(readFile(header), header);
-    for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
+    std::vector<sfs::codegen::UiTypeModel> types;
+    for (const std::filesystem::path& header : headers)
     {
-      print(diagnostic);
-      failed |=
-          diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error;
+      sfs::codegen::UiParseResult result =
+          sfs::codegen::parseUiHeader(readFile(header), header);
+      for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
+        print(diagnostic);
+      for (sfs::codegen::UiTypeModel& type : result.types)
+        types.push_back(std::move(type));
     }
-    if (result.type)
-      types.push_back(std::move(*result.type));
+    generated = sfs::codegen::generateUiPreviews(types, options);
   }
-  if (failed)
+  else if (!generateScripts(headers, options, generated))
     return 1;
 
-  const std::string generated =
-      sfs::codegen::generateRegistration(types, options);
   if (std::filesystem::exists(output) && readFile(output) == generated)
     return 0;
 

@@ -135,6 +135,10 @@ public:
   template <typename TObject>
   TObject* tryFindObject() const;
 
+  // Every object of a type (or derived from it), in the order made.
+  template <typename TObject>
+  std::vector<TObject*> findObjects() const;
+
   void destroyObject(GameObject* object);
 
   // Tell the game objects on both entities that a physics contact began or
@@ -176,6 +180,9 @@ protected:
   virtual void onUpdate(double deltaTime){};
   virtual void onRender(){};
   virtual void onProcessInput(const Input& input){};
+  // First, before any object sees the frame's input: a chance to take some
+  // of it (a scene's UI, clicks on it).
+  virtual void filterInput(Input& input){};
   virtual void onDebugUI(){};
 
   friend class SceneManager;
@@ -226,6 +233,16 @@ TObject& Scene::attachObject(const Entity& entity)
   static_cast<GameObject&>(ref).onCreate(*this);
 
   return ref;
+}
+
+template <typename TObject>
+std::vector<TObject*> Scene::findObjects() const
+{
+  std::vector<TObject*> found;
+  for (auto& object : m_gameObjects)
+    if (auto casted = dynamic_cast<TObject*>(object.get()))
+      found.push_back(casted);
+  return found;
 }
 
 template <typename TObject>

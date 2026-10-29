@@ -34,6 +34,9 @@ public:
   /** True once after a script was saved in the panel (so the game can be rebuilt). */
   bool takeScriptSaved() { return m_nvim.takeScriptSaved(); }
 
+  /** The project script being edited last (empty: none yet). */
+  const std::filesystem::path& focusedScript() const { return m_nvim.focusedScript(); }
+
   void update(EditorContext& context) override;
 
 protected:

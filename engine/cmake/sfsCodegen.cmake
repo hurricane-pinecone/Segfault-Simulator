@@ -66,6 +66,37 @@ function(sfs_add_game_module name)
         INCLUDE_ROOT "${ARG_SCRIPTS_DIR}"
         HEADERS ${headers})
 
+    # The editor's UI Preview module: the UI files (*.ui.cpp) and a preview
+    # of each view in the UI headers (*.ui.h), filled with placeholders. Only
+    # built when asked for (the editor does, as UI files are saved): it's
+    # unoptimised, with the engine's headers precompiled, to build in seconds,
+    # and loads apart from the game module, which stays as it is.
+    file(GLOB_RECURSE ui_headers CONFIGURE_DEPENDS "${ARG_SCRIPTS_DIR}/*.ui.h")
+    file(GLOB_RECURSE ui_sources CONFIGURE_DEPENDS "${ARG_SCRIPTS_DIR}/*.ui.cpp")
+    set(preview ${name}UiPreview)
+    set(preview_source "${CMAKE_CURRENT_BINARY_DIR}/generated/${preview}.gen.cpp")
+    add_custom_command(
+        OUTPUT "${preview_source}"
+        COMMAND ${SFS_CODEGEN_COMMAND} --ui-previews
+                --module ${preview} --function sfsRegisterModule
+                --include-root "${ARG_SCRIPTS_DIR}"
+                --output "${preview_source}" ${ui_headers}
+        DEPENDS ${SFS_CODEGEN_DEPENDS} ${ui_headers}
+        COMMENT "Generating UI previews for ${name}"
+        VERBATIM)
+    add_library(${preview} SHARED EXCLUDE_FROM_ALL ${ui_sources} "${preview_source}")
+    target_link_libraries(${preview} PRIVATE sfs::engine)
+    target_include_directories(${preview} PRIVATE "${ARG_SCRIPTS_DIR}")
+    # After the build type's flags, so it wins.
+    target_compile_options(${preview} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/Od,-O0>)
+    target_precompile_headers(${preview} PRIVATE <sfs/sfs.h> <functional> <string> <vector>)
+    set_target_properties(${preview} PROPERTIES
+        PREFIX ""
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ui-preview"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ui-preview")
+
     # clangd (and most editors) look for the compile database in the project:
     # link it at <project>/.sfs/compile_commands.json, which the project's
     # .clangd points to. CMake writes the database itself at generate time.

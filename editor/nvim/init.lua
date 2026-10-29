@@ -62,25 +62,9 @@ local function scope_pickers_to_scripts()
   end
 end
 
--- Saving a file in the project's scripts/ tells the editor, which rebuilds the
--- game (and carries saved values over to renamed fields).
-local function report_script_saves()
-  vim.api.nvim_create_autocmd("BufWritePost", {
-    group = vim.api.nvim_create_augroup("sfs_script_saves", { clear = true }),
-    callback = function(args)
-      local root = vim.g.sfs_project_root
-      if not root or root == "" then
-        return
-      end
-      local file = vim.fs.normalize(vim.fn.fnamemodify(args.file, ":p"))
-      local scripts = vim.fs.normalize(root .. "/scripts") .. "/"
-      if file:sub(1, #scripts) == scripts then
-        vim.rpcnotify(0, "sfs_script_saved", file)
-      end
-    end,
-  })
-end
-report_script_saves()
+-- Saving a script tells the editor, and which one is being edited (see
+-- sfs_hooks.lua, which "Your config" gets too).
+dofile(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)) .. "/sfs_hooks.lua")
 
 -- "Auto": defer to the user's own config when there is one. Their config can
 -- check vim.g.sfs_editor to slim itself down inside the editor.
@@ -150,7 +134,7 @@ map("n", "<leader>h", "<Cmd>LspClangdSwitchSourceHeader<CR>", { desc = "Switch h
 if vim.fn.executable("clangd") == 1 then
   -- The project's .clangd points clangd at the game module's compile database.
   vim.lsp.config("clangd", {
-    cmd = { "clangd", "--header-insertion=never" },
+    cmd = { "clangd", "--header-insertion=never", "-j=2" },
     filetypes = { "c", "cpp" },
     root_markers = { "project.sfsproj", ".clangd", ".git" },
   })

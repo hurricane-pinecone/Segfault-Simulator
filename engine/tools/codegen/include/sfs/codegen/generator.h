@@ -31,6 +31,15 @@ struct GeneratorOptions
 std::string generateRegistration(const std::vector<TypeModel>& types,
                                  const GeneratorOptions& options);
 
+/**
+ * C++ source for a UI preview module (the editor's UI Preview loads it):
+ * each view in `types` as a preview (sfs::ui::Preview, named after it),
+ * filled with placeholders (sfs::ui::Placeholder, specialised for every type
+ * so lists of them are filled too). Defines an empty module entry point.
+ */
+std::string generateUiPreviews(const std::vector<UiTypeModel>& types,
+                               const GeneratorOptions& options);
+
 /** "castsShadow" -> "Casts Shadow", "MeshRendererComponent" -> "Mesh Renderer". */
 std::string displayName(std::string_view identifier, bool stripComponentSuffix);
 

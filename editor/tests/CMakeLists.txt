@@ -36,6 +36,9 @@ target_link_libraries(fieldMigrationTests PRIVATE sfs::engine-core)
 add_editor_test(gltfFilesTests gltfFilesTests.cpp "${EDITOR_SRC_DIR}/assets/gltfFiles.cpp")
 target_link_libraries(gltfFilesTests PRIVATE sfs::engine-core)
 
+add_editor_test(selectionTests selectionTests.cpp)
+target_link_libraries(selectionTests PRIVATE sfs::engine)
+
 if(NOT WIN32)
     add_editor_test(childProcessTests childProcessTests.cpp
         "${EDITOR_SRC_DIR}/build/childProcess.cpp"

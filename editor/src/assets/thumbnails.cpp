@@ -1,6 +1,6 @@
 #include "assets/thumbnails.h"
 
-#include "assets/previewRenderer.h"
+#include "engine/core/rendering/3d/meshPreview.h"
 #include "scene/editorScene.h"
 
 #include "engine/core/components/transform3DComponent.h"
@@ -220,19 +220,19 @@ std::optional<Thumbnails::Job> Thumbnails::makeJob(const sfs::AssetRecord& recor
     return [file, settings = sfs::TextureImportSettings::fromJson(record.settings)]
     {
       const auto texture = sfs::importTexture(file, settings);
-      return texture ? previewRenderer::fitTexture(*texture, kSize) : std::vector<uint8_t>();
+      return texture ? sfs::meshPreview::fitTexture(*texture, kSize) : std::vector<uint8_t>();
     };
   case sfs::AssetKind::Model:
     return [file, settings = sfs::ModelImportSettings::fromJson(record.settings)]
     {
       const std::optional<sfs::ModelData> model = sfs::importModel(file, settings);
-      return model ? previewRenderer::render(model->whole, kSize) : std::vector<uint8_t>();
+      return model ? sfs::meshPreview::render(model->whole, kSize) : std::vector<uint8_t>();
     };
   case sfs::AssetKind::Material:
   {
     store.forgetMaterial(record.id); // its file changed: read it again
     return [material = store.material(record.id)]
-    { return material ? previewRenderer::renderMaterial(*material, kSize) : std::vector<uint8_t>(); };
+    { return material ? sfs::meshPreview::renderMaterial(*material, kSize) : std::vector<uint8_t>(); };
   }
   case sfs::AssetKind::Prefab:
   {
@@ -243,7 +243,7 @@ std::optional<Thumbnails::Job> Thumbnails::makeJob(const sfs::AssetRecord& recor
     if (!mesh)
       return std::nullopt;
     return [mesh = std::move(*mesh)]
-    { return mesh.empty() ? std::vector<uint8_t>() : previewRenderer::render(mesh, kSize); };
+    { return mesh.empty() ? std::vector<uint8_t>() : sfs::meshPreview::render(mesh, kSize); };
   }
   default:
     return std::nullopt;

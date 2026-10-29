@@ -2,8 +2,10 @@
 
 #include "engine/core/rendering/3d/mesh.h"
 #include "engine/runtime/rendering3d/frame3D.h"
+#include "engine/runtime/rendering3d/uiDraw.h"
 
 #include <cstdint>
+#include <memory>
 #include <variant>
 #include <vector>
 
@@ -34,7 +36,26 @@ struct MeshDrawCommand
   std::vector<MeshInstance> lightShadowInstances; // see MeshBatch3D
 };
 
+/** A grass field to draw (see GrassBatch3D), drawn with the opaque things. */
+struct GrassDrawCommand
+{
+  GrassHandle grass;
+  MaterialHandle material;
+  MeshHandle mesh;
+  glm::mat4 model{1.0f};
+  GrassShape shape;
+  float stiffness = 0.4f;
+  float drawDistance = 40.0f;
+};
+
+/** A frame's UI (see UiModule), drawn over everything else. */
+struct UiDrawCommand
+{
+  std::shared_ptr<const UiDrawList> list;
+};
+
 /** The command set 3D render modules emit (see RenderCommandTraits). */
-using AnyRenderCommand3D = std::variant<MeshDrawCommand>;
+using AnyRenderCommand3D =
+    std::variant<MeshDrawCommand, GrassDrawCommand, UiDrawCommand>;
 
 } // namespace sfs

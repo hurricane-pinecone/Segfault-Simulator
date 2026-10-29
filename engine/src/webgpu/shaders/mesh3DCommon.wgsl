@@ -15,6 +15,8 @@ struct Frame {
   cameraForward: vec4f, // xyz unit view direction
   clusterSize: vec4u,   // the light clusters: x tiles across, y down, z depth slices, w lights
   clusterDepth: vec4f,  // x near, y far, z slices per log(depth / near), w tile size (pixels)
+  wind: vec4f,          // xy which way it blows (unit), z strength, w gustiness
+  haze: vec4f,          // x strength, y 1 / the distance it's half that
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;

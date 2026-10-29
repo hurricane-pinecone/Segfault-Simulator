@@ -1,4 +1,3 @@
-#include "engine/runtime/assetStore/assetStore.h"
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/sceneManager/sceneManager.h>
 #include <memory>

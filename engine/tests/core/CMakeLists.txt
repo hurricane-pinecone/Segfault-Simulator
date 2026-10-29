@@ -34,6 +34,7 @@ add_core_test(materialTests rendering/3d/materialTests.cpp)
 add_core_test(materialGraphTests rendering/3d/materialGraphTests.cpp)
 add_core_test(lightClustersTests rendering/3d/lightClustersTests.cpp)
 add_core_test(emissionLightsTests rendering/3d/emissionLightsTests.cpp)
+add_core_test(grassTests rendering/3d/grassTests.cpp)
 # Checks the material recipes in the editor docs build what they say (where
 # the docs are: an engine package's sources don't include them).
 set(SFS_RECIPES_PAGE "${CMAKE_CURRENT_SOURCE_DIR}/../../../docs/editor/material-graphs/recipes/index.md")

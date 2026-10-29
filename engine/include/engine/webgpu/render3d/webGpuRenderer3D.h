@@ -6,6 +6,7 @@
 
 #include <webgpu/webgpu.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -102,6 +103,14 @@ public:
   uint32_t shadowMapResolution() const override { return m_shadowResolution; }
   void beginFrame(const FrameParams3D& frame) override;
   void drawMesh(const MeshBatch3D& batch) override;
+
+  GrassHandle createGrass(const GrassGround& ground) override;
+  void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override;
+  void updateGrassTrample(GrassHandle grass,
+                          const GrassTrampleImage& image) override;
+  void destroyGrass(GrassHandle grass) override;
+  void drawGrass(const GrassBatch3D& batch) override;
+  void drawUi(const UiDrawList& list) override;
   void endFrame() override;
 
 private:
@@ -121,6 +130,47 @@ private:
     wgpu::RenderPipeline lit;
     wgpu::RenderPipeline blend;       // see-through
     wgpu::RenderPipeline pointShadow; // a point light's shadow map's face
+    // Grass with this surface's look: built the first time grass uses it
+    // (most surfaces never are), from its WGSL.
+    std::string wgsl;
+    mutable wgpu::RenderPipeline grass;
+    mutable bool grassBroken = false;
+    mutable wgpu::RenderPipeline grassGround; // the ground under grass
+    mutable bool grassGroundBroken = false;
+  };
+
+  // A texture and its view.
+  struct GpuImage
+  {
+    wgpu::Texture texture;
+    wgpu::TextureView view;
+    glm::ivec2 size{0, 0};
+  };
+
+  // A grass field on the GPU: its ground and maps, where it's flattened, the
+  // blades grown each frame (three lists, by detail) with their indirect
+  // draws, the grow pass's bindings and group 2 of the grass pipelines (one a
+  // list).
+  struct GpuGrass
+  {
+    GrassGrid groundGrid;
+    float groundArea = 0.0f; // with ground, in its own XY's units
+    GpuImage ground;
+    GrassGrid mapsGrid; // empty: unpainted
+    GpuImage shape;
+    GpuImage data;
+    GpuImage trample;
+    glm::vec4 trampleBounds{0.0f, 0.0f, 1.0f, 1.0f}; // min xy, 1 / size
+
+    std::array<uint32_t, 3> capacity{0, 0, 0}; // blades a list
+    wgpu::Buffer blades;
+    wgpu::Buffer draws;
+    wgpu::Buffer growUniforms;
+    wgpu::Buffer drawUniforms;
+    wgpu::BindGroup growBindings;
+    std::array<wgpu::BindGroup, 3> drawBindings;
+    bool grown = false;  // this frame: its blades
+    bool placed = false; // this frame: its draw's uniforms (for its ground)
   };
 
   // A material on the GPU: its surface, its parameters, and the bind group
@@ -221,7 +271,35 @@ private:
                       WGPUBindGroup bindings,
                       bool blend);
   void encodeBloom();
+  // Depth of field, if the frame has it: whether it ran.
+  bool encodeDepthOfField();
+  // Grass: its bindings (after a texture or the blades change), the
+  // pipeline a surface draws it with (null if it doesn't build), growing the
+  // frame's blades (a compute pass, before the lit pass), and drawing them.
+  void rebuildGrassBindings(GpuGrass& grass);
+  // An RGBA texture to sample (and fill from the CPU); pixels into a
+  // rectangle of one, from `origin`, `size` of them.
+  static GpuImage
+  makeImage(WGPUDevice device, glm::ivec2 size, WGPUTextureFormat format);
+  static void writeImage(WGPUQueue queue,
+                         const GpuImage& image,
+                         glm::ivec2 origin,
+                         glm::ivec2 size,
+                         const void* pixels,
+                         uint32_t bytesPerPixel);
+  static void writeTexture(WGPUQueue queue,
+                           WGPUTexture texture,
+                           glm::ivec2 origin,
+                           glm::ivec2 size,
+                           const void* pixels,
+                           uint32_t bytesPerPixel);
+  WGPURenderPipeline grassPipeline(const Surface& surface, bool ground);
+  void growGrass();
+  void encodeGrass(WGPURenderPassEncoder pass);
   void encodeComposite();
+  // UI (drawUi), over the target after the composite.
+  bool createUiPipeline();
+  void encodeUi();
 
   // Point-light shadows: the cube maps (room for `lights`, faces
   // `resolution` texels; rebuilding the lit bindings when remade), which
@@ -258,6 +336,12 @@ private:
   // Objects' own materials (createMaterial), in slots like meshes.
   std::vector<std::optional<GpuMaterial>> m_materials;
   std::vector<uint32_t> m_freeMaterialSlots;
+  std::vector<std::optional<GpuGrass>> m_grass;
+  std::vector<uint32_t> m_freeGrassSlots;
+  wgpu::BindGroupLayout m_grassLayout;
+  wgpu::BindGroupLayout m_grassGrowLayout;
+  wgpu::ComputePipeline m_grassGrowPipeline;
+  std::vector<GrassBatch3D> m_grassDraws; // this frame's
 
   wgpu::Buffer m_frameUniforms;
   wgpu::Buffer m_instanceBuffer;
@@ -276,6 +360,11 @@ private:
   // The light of it that blooms: the scene x each material's Bloom.
   wgpu::Texture m_glowSource;
   wgpu::TextureView m_glowSourceView;
+  // The lit pass's multisampled targets, resolved into the two above.
+  wgpu::Texture m_sceneSamples;
+  wgpu::TextureView m_sceneSamplesView;
+  wgpu::Texture m_glowSamples;
+  wgpu::TextureView m_glowSamplesView;
 
   // Bloom: level 0 half the viewport, each next half again. A level's `down`
   // bindings read the one above (level 0's, the light that blooms); its `up`
@@ -299,6 +388,50 @@ private:
   wgpu::RenderPipeline m_downsamplePipeline;
   wgpu::RenderPipeline m_upsamplePipeline;
   wgpu::RenderPipeline m_compositePipeline;
+
+  // UI: this frame's quads, and the textures they draw from, by UiTexture id
+  // (uploaded again when their revision changes; dropped once unused).
+  struct GpuUiTexture
+  {
+    wgpu::Texture texture;
+    wgpu::TextureView view;
+    glm::ivec2 size{0, 0};
+    uint32_t revision = 0;
+    wgpu::BindGroup bindings;
+    bool used = false; // this frame
+  };
+  std::vector<UiQuad> m_uiQuads;
+  std::unordered_map<uint32_t, GpuUiTexture> m_uiTextures;
+  GpuUiTexture m_uiWhite; // what untextured boxes bind
+  wgpu::RenderPipeline m_uiPipeline;
+  wgpu::BindGroupLayout m_uiFrameLayout;
+  wgpu::BindGroupLayout m_uiTextureLayout;
+  wgpu::BindGroup m_uiFrameBindings;
+  wgpu::Buffer m_uiUniforms;
+  wgpu::Buffer m_uiInstances;
+  std::size_t m_uiCapacity = 0;
+
+  // Depth of field (post3DFocus.wgsl): the scene halved with each pixel's
+  // blur, that blurred, and the scene with it mixed in (what the composite
+  // reads then, by m_compositeFocusBindings).
+  struct FocusTarget
+  {
+    wgpu::Texture texture;
+    wgpu::TextureView view;
+  };
+  FocusTarget m_focusHalf;
+  FocusTarget m_focusBlur;
+  FocusTarget m_focusOut;
+  wgpu::Buffer m_focusParams;
+  wgpu::BindGroup m_focusPrepareBindings;
+  wgpu::BindGroup m_focusBlurBindings;
+  wgpu::BindGroup m_focusCombineBindings;
+  wgpu::BindGroup m_compositeFocusBindings;
+  wgpu::BindGroupLayout m_focusLayout;
+  wgpu::RenderPipeline m_focusPreparePipeline;
+  wgpu::RenderPipeline m_focusBlurPipeline;
+  wgpu::RenderPipeline m_focusCombinePipeline;
+  bool m_focused = false; // this frame went through depth of field
 
   // Point lights and their clusters, on the GPU (capacities in elements).
   wgpu::Buffer m_lightBuffer;

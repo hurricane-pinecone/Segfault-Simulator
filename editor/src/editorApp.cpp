@@ -2,6 +2,7 @@
 
 #include "panels/assetBrowserPanel.h"
 #include "panels/codePanel.h"
+#include "panels/uiPreviewPanel.h"
 #include "panels/consolePanel.h"
 #include "panels/hierarchyPanel.h"
 #include "panels/inspectorPanel.h"
@@ -72,6 +73,18 @@ std::vector<std::filesystem::path> sceneFiles(const Project& project)
 
 // Which build of the engine this editor runs (defined below).
 std::string engineBuildStamp();
+
+// Beside a module: the engineBuildStamp() it was built for.
+std::filesystem::path stampPath(const std::filesystem::path& module)
+{
+  return module.string() + ".engine";
+}
+
+// Beside a module: the hash of the scripts it was built from.
+std::filesystem::path scriptsStampPath(const std::filesystem::path& module)
+{
+  return module.string() + ".scripts";
+}
 } // namespace
 
 EditorApp::EditorApp(std::filesystem::path projectFolder)
@@ -113,6 +126,9 @@ void EditorApp::onSetup()
   auto codePanel = std::make_unique<CodePanel>(m_environment);
   m_codePanel = codePanel.get();
   m_panels.push_back(std::move(codePanel));
+  auto uiPreview = std::make_unique<UiPreviewPanel>(
+      backend.context(), *backend.sceneServices(), *m_codePanel);
+  m_uiPreview = uiPreview.get();
   auto assetPanel = std::make_unique<AssetBrowserPanel>(
       AssetBrowserPanel::Actions{
           .openScene = [this](const std::filesystem::path& path)
@@ -142,6 +158,8 @@ void EditorApp::onSetup()
       backend.context());
   m_assetPanel = assetPanel.get();
   m_panels.push_back(std::move(assetPanel));
+  // After the Console and Assets, to join their dock node.
+  m_panels.push_back(std::move(uiPreview));
 
   // The Assets panel draws prefab previews from the scene's meshes, so keep
   // their vertices (before any scene makes meshes).
@@ -202,13 +220,40 @@ void EditorApp::onUpdate(double)
   if (m_scriptsCheck.valid() && m_scriptsCheck.wait_for(std::chrono::seconds(
                                     0)) == std::future_status::ready)
   {
-    const std::string stamp = m_scriptsCheck.get();
+    const ScriptsStamp stamp = m_scriptsCheck.get();
     if (!m_scriptsCheckIsBaseline && !m_scriptsStamp.empty() &&
-        stamp != m_scriptsStamp)
+        stamp.scripts != m_scriptsStamp)
       m_scriptsChanged = true;
-    m_scriptsStamp = stamp;
+    if (m_scriptsCheckIsBaseline)
+      m_buildScriptsStamp = stamp.scripts;
+    if (std::exchange(m_moduleFirstCheck, false) && m_context.project)
+    {
+      const std::filesystem::path module =
+          m_builder.modulePath(*m_context.project);
+      std::string builtFrom;
+      std::ifstream(scriptsStampPath(module)) >> builtFrom;
+      if (std::filesystem::exists(module) && builtFrom != stamp.scripts)
+      {
+        LOG_INFO("Scripts changed since the game was built: rebuilding");
+        m_scriptsChanged = true;
+      }
+    }
+    // Even against a baseline: a game module build doesn't rebuild the UI
+    // Preview's.
+    if (std::exchange(m_uiFirstCheck, false) ? !stamp.ui.empty()
+                                             : stamp.ui != m_uiStamp)
+      m_uiChanged = true;
+    m_scriptsStamp = stamp.scripts;
+    m_uiStamp = stamp.ui;
     if (std::exchange(m_scriptsRecheck, false))
       checkScripts(false);
+  }
+  // UI first: it's quick, and what's being looked at.
+  if (m_uiChanged && m_context.project && !m_builder.busy() &&
+      !m_openingProject)
+  {
+    m_uiChanged = false;
+    m_builder.start(*m_context.project, ModuleBuilder::Target::UiPreview);
   }
   if (m_scriptsChanged && m_mode == Mode::Edit && m_context.project &&
       !m_builder.busy() && !m_openingProject)
@@ -273,7 +318,18 @@ void EditorApp::onUpdate(double)
 
   // Build results are acted on here, at the start of a frame, never while the
   // UI is mid-draw: a module swap replaces the scene.
-  if (const std::optional<bool> built = m_builder.poll())
+  if (const std::optional<bool> built = m_builder.poll();
+      built && m_builder.target() == ModuleBuilder::Target::UiPreview)
+  {
+    if (m_uiPreview)
+      m_uiPreview->setBuildFailed(!*built);
+    if (*built && m_uiPreview && m_context.project)
+      m_uiPreview->loadPreviewModule(
+          m_builder.uiPreviewPath(*m_context.project));
+    if (std::exchange(m_moduleBuildQueued, false))
+      requestBuild(m_playAfterBuild);
+  }
+  else if (built)
   {
     const bool startPlaying = *built && m_playAfterBuild;
     const bool startExport = *built && m_exportAfterBuild;
@@ -387,7 +443,7 @@ void EditorApp::drawMenuBar()
     if (ImGui::MenuItem("Export Game...",
                         nullptr,
                         false,
-                        m_context.project && !m_builder.busy()))
+                        m_context.project && !moduleBuilding()))
       m_requestedDialog = Dialog::Export;
     ImGui::Separator();
     if (ImGui::MenuItem("Exit"))
@@ -450,7 +506,9 @@ void EditorApp::drawStatusBar()
   if (m_builder.busy())
   {
     const int percent = m_builder.percent();
-    tasks.push_back({"Building scripts",
+    tasks.push_back({m_builder.target() == ModuleBuilder::Target::UiPreview
+                         ? "Building UI previews"
+                         : "Building scripts",
                      percent < 0 ? -1.0f : percent / 100.0f,
                      [this] { m_builder.cancel(); }});
   }
@@ -692,19 +750,36 @@ void EditorApp::duplicateSelection()
   if (!m_context.hasSelection())
     return;
 
+  // Each selected branch once (not again inside another selected one).
+  const std::vector<sfs::Entity> selected = m_context.selected();
+  std::vector<sfs::Entity> branches;
+  for (const sfs::Entity& entity : selected)
+    if (std::none_of(selected.begin(),
+                     selected.end(),
+                     [&](const sfs::Entity& other)
+                     { return other != entity && sfs::hierarchy::isAncestor(other, entity); }))
+      branches.push_back(entity);
+
   m_context.history->change(
       [&]
       {
         const sfs::SceneSerializer serializer = m_context.scene->serializer();
-        // The whole branch, beside the original (same parent).
-        sfs::Entity copy = serializer.loadEntity(
-            serializer.saveEntity(*m_context.scene, m_context.selection),
-            *m_context.scene,
-            sfs::hierarchy::parentOf(m_context.selection));
-        if (copy.hasComponent<sfs::NameComponent>())
-          copy.getComponent<sfs::NameComponent>().name += " (copy)";
+        // Each whole branch, beside its original (same parent); the copies
+        // selected.
+        std::vector<sfs::Entity> copies;
+        for (const sfs::Entity& original : branches)
+        {
+          sfs::Entity copy = serializer.loadEntity(
+              serializer.saveEntity(*m_context.scene, original),
+              *m_context.scene,
+              sfs::hierarchy::parentOf(original));
+          if (copy.hasComponent<sfs::NameComponent>())
+            copy.getComponent<sfs::NameComponent>().name += " (copy)";
+          copies.push_back(copy);
+        }
         m_context.scene->flushEntities();
-        m_context.selection = copy;
+        m_context.selection = copies.front();
+        m_context.selectionGroup = copies;
       });
 }
 
@@ -717,9 +792,12 @@ void EditorApp::deleteSelection()
   m_context.history->change(
       [&]
       {
-        const sfs::Entity doomed = m_context.selection;
+        const std::vector<sfs::Entity> doomed = m_context.selected();
         m_context.selection = {};
-        m_context.scene->destroyBranch(doomed);
+        m_context.selectionGroup.clear();
+        for (const sfs::Entity& entity : doomed)
+          if (entity.isAlive())
+            m_context.scene->destroyBranch(entity);
       });
 }
 
@@ -785,7 +863,7 @@ void EditorApp::drawScriptsMenu()
     }
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("Build", "Ctrl+B", false, !m_builder.busy()))
+  if (ImGui::MenuItem("Build", "Ctrl+B", false, !moduleBuilding()))
     requestBuild(false);
   ImGui::EndMenu();
 }
@@ -793,13 +871,13 @@ void EditorApp::drawScriptsMenu()
 void EditorApp::drawPlayControls()
 {
   // Centred in the menu bar, like most engines.
-  const char* label = m_builder.busy()          ? "Building..."
+  const char* label = moduleBuilding()          ? "Building..."
                       : m_mode == Mode::Playing ? "Stop"
                                                 : "Play";
   const float width = ImGui::CalcTextSize("Building...").x + 24.0f;
   ImGui::SameLine((ImGui::GetWindowWidth() - width) * 0.5f);
 
-  ImGui::BeginDisabled(m_builder.busy() || !m_context.project);
+  ImGui::BeginDisabled(moduleBuilding() || !m_context.project);
   // Captured once: pressing Stop changes the mode before the colour is popped.
   const bool playing = m_mode == Mode::Playing;
   if (playing)
@@ -1011,6 +1089,11 @@ void EditorApp::finishOpeningProject()
   sfs::scriptableObjects().setCatalogue(&*m_assets);
 
   m_scriptsStamp.clear();
+  m_uiStamp.clear();
+  m_uiFirstCheck = true; // its UI Preview module is built, if it has UI
+  m_moduleFirstCheck = true;
+  if (m_uiPreview)
+    m_uiPreview->dropPreviewModule(); // the last project's
   checkScripts(true);
 
   // Load the last built module first, so scenes using its components load.
@@ -1087,7 +1170,10 @@ void EditorApp::requestBuild(bool thenPlay)
   if (m_builder.busy())
   {
     // Already building (e.g. after a script was saved): Play once it's done.
+    // A UI Preview build is quick: build the module after it.
     m_playAfterBuild |= thenPlay;
+    if (m_builder.target() == ModuleBuilder::Target::UiPreview)
+      m_moduleBuildQueued = true;
     return;
   }
   if (m_mode == Mode::Playing)
@@ -1160,6 +1246,7 @@ EditorScene* EditorApp::makeScene(bool forPrefab)
   sfs::RenderSystem3D& render = scene->renderSystem();
   // While editing, the viewport is the editor's own free view.
   render.setFollowSceneCamera(false);
+  render.meshes().setMissingExpected(m_awaitingModule);
   if (forPrefab)
   {
     // On a grid against a plain grey, like a modelling tool.
@@ -1483,6 +1570,9 @@ void EditorApp::drawClosePrefabDialog()
 
 void EditorApp::destroyScenes()
 {
+  // The preview's copy of a layer is the game module's too.
+  if (m_uiPreview)
+    m_uiPreview->dropObjects();
   m_context.selection = {};
   for (const auto& workspace : m_workspaces)
   {
@@ -1546,6 +1636,7 @@ bool EditorApp::swapModule()
   m_module.unload();
   const bool loaded =
       m_module.load(module, moduleName, sfs::ModuleHost::Load::FromCopy);
+  m_awaitingModule = !loaded;
 
   // Fields renamed or removed: the scenes (their history too) and the
   // project's files follow, so values move to the new names.
@@ -1654,8 +1745,11 @@ void EditorApp::checkScripts(bool baseline)
       std::launch::async,
       [folder = m_context.project->scriptsFolder()]
       {
-        uint64_t hash = 14695981039346656037ull; // FNV-1a
-        const auto mix = [&](std::string_view bytes)
+        // FNV-1a: the UI files' apart (they build the UI Preview's module).
+        uint64_t scripts = 14695981039346656037ull;
+        uint64_t ui = scripts;
+        bool anyUi = false;
+        const auto mix = [](uint64_t& hash, std::string_view bytes)
         {
           for (const char c : bytes)
             hash = (hash ^ static_cast<unsigned char>(c)) * 1099511628211ull;
@@ -1671,11 +1765,17 @@ void EditorApp::checkScripts(bool baseline)
         std::sort(files.begin(), files.end());
         for (const std::filesystem::path& file : files)
         {
-          mix(file.generic_string());
+          const std::string name = file.filename().string();
+          const bool isUi =
+              name.ends_with(".ui.h") || name.ends_with(".ui.cpp");
+          anyUi |= isUi;
+          uint64_t& hash = isUi ? ui : scripts;
+          mix(hash, file.generic_string());
           std::ifstream in(file, std::ios::binary);
-          mix(std::string(std::istreambuf_iterator<char>(in), {}));
+          mix(hash, std::string(std::istreambuf_iterator<char>(in), {}));
         }
-        return std::to_string(hash);
+        return ScriptsStamp{std::to_string(scripts),
+                            anyUi ? std::to_string(ui) : std::string()};
       });
 }
 
@@ -1720,17 +1820,13 @@ std::string engineBuildStamp()
   return std::to_string(hash);
 }
 
-// Beside a module: the engineBuildStamp() it was built for.
-std::filesystem::path stampPath(const std::filesystem::path& module)
-{
-  return module.string() + ".engine";
-}
 } // namespace
 
 void EditorApp::stampModule()
 {
-  std::ofstream(stampPath(m_builder.modulePath(*m_context.project)))
-      << m_engineStamp.get();
+  const std::filesystem::path module = m_builder.modulePath(*m_context.project);
+  std::ofstream(stampPath(module)) << m_engineStamp.get();
+  std::ofstream(scriptsStampPath(module)) << m_buildScriptsStamp;
 }
 
 void EditorApp::loadExistingModule()
@@ -1742,6 +1838,7 @@ void EditorApp::loadExistingModule()
     sfs::scriptableObjects()
         .clear(); // objects of the module's types go before its code does
     m_module.unload();
+    m_awaitingModule = true;
     createScenes();
     LOG_INFO("No game module built yet: press Play or Build (Ctrl+B)");
     return;
@@ -1761,15 +1858,17 @@ void EditorApp::loadExistingModule()
     sfs::scriptableObjects()
         .clear(); // objects of the module's types go before its code does
     m_module.unload();
+    m_awaitingModule = true;
     createScenes();
-    LOG_INFO("The game module was built for an older engine: rebuilding it");
+    LOG_INFO("The game module was built for an older engine: rebuilding it "
+             "(its meshes show once it's built)");
     requestBuild(false);
     return;
   }
 
   // Drop anything that used the previous project's module.
   destroyScenes();
-  m_module.load(
+  m_awaitingModule = !m_module.load(
       module, m_context.project->moduleName(), sfs::ModuleHost::Load::FromCopy);
   createScenes();
 }
@@ -1925,10 +2024,21 @@ void EditorApp::drawExportDialog()
   ImGui::BeginDisabled(m_exportStartScene.empty() || m_exportFolder.empty());
   if (ImGui::Button("Export"))
   {
+    // Everything as it's being edited goes into the game: open prefabs'
+    // changes applied, then the scene saved.
+    if (m_mode == Mode::Edit)
+    {
+      for (const auto& workspace : m_workspaces)
+        if (workspace->prefab.valid() &&
+            workspace->history->revision() != workspace->appliedRevision)
+          applyPrefab(*workspace);
+      if (m_document->hasPath())
+        m_document->save();
+    }
     m_context.project->setStartScene(m_exportStartScene);
     m_lastExportFolder = m_exportFolder;
     requestBuild(false);
-    m_exportAfterBuild = m_builder.busy();
+    m_exportAfterBuild = moduleBuilding();
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndDisabled();

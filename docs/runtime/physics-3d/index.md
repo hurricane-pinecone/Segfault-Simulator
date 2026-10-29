@@ -53,8 +53,10 @@ change). A flat mesh, such as the built-in plane, gets a 0.1 m thick slab under
 its surface.
 
 `RigidBody3DComponent` fields: `mass` (kg), `kinematic`, `friction`,
-`bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats) and
-`lockRotation` (never tips over, e.g. a character).
+`bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats),
+`lockRotation` (never tips over, e.g. a character) and `bendsGrass` (flattens
+[grass](../../editor/index.md#grass) it moves through, sized by its colliders;
+on by default).
 
 The world is Z-up, in metres. Gravity defaults to (0, 0, −9.81);
 `physics.setGravity` changes it.

@@ -336,6 +336,15 @@ int main()
     CHECK(result.type->fields[0].script);
   }
 
+  TEST("[[sfs::material]] should mark a field as a material reference")
+  {
+    const ParseResult result = parseHeader(
+        "struct Lawn { [[sfs::material]] std::string look; };", "Lawn.h");
+    CHECK(result.type->fields.size() == 1u);
+    CHECK(result.type->fields[0].material);
+    CHECK(!result.type->fields[0].materials);
+  }
+
   TEST(
       "[[sfs::emissionLight]] should mark a field as an emission light setting")
   {
@@ -351,6 +360,116 @@ int main()
     options.function = "registerTypes";
     const std::string code = generateRegistration({*result.type}, options);
     CHECK(code.find("field.attributes.emissionLight = true;") !=
+          std::string::npos);
+  }
+
+  TEST("[[sfs::showIf(field)]] should name the bool field a field shows with")
+  {
+    const ParseResult result =
+        parseHeader("struct Lens { bool blur = false; [[sfs::showIf(blur)]] "
+                    "float amount = 1.0f; [[sfs::showIf]] float broken; "
+                    "[[sfs::showIf(!blur)]] float sharpness = 1.0f; };",
+                    "Lens.h");
+    CHECK(result.type->fields.size() == 4u);
+    CHECK(result.type->fields[1].showIf == "blur");
+    CHECK(result.type->fields[2].showIf.empty());
+    CHECK(result.type->fields[3].showIf == "!blur"); // while it's off
+    CHECK(!result.diagnostics.empty()); // [[sfs::showIf]] names none
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "registerTypes";
+    const std::string code = generateRegistration({*result.type}, options);
+    CHECK(code.find("field.attributes.showIf = \"blur\";") !=
+          std::string::npos);
+  }
+
+  TEST("a UI layer should be a game object script")
+  {
+    const ParseResult result = parseHeader(
+        "class Hud : public sfs::ui::Layer { public: int coins = 0; };",
+        "Hud.h");
+    CHECK(result.type && result.type->kind == TypeKind::GameObject &&
+          result.type->uiLayer);
+    CHECK(result.diagnostics.empty());
+    const ParseResult plain =
+        parseHeader("class Player : public sfs::GameObject {};", "Player.h");
+    CHECK(plain.type && !plain.type->uiLayer);
+  }
+
+  TEST("a UI header (*.ui.h) should be skipped; a plain header's struct with "
+       "a body() is still a component")
+  {
+    const ParseResult view =
+        parseHeader("struct Badge { std::string text; std::function<void()> "
+                    "tap; sfs::ui::View body() const; };",
+                    "Badge.ui.h");
+    CHECK(!view.type && view.diagnostics.empty());
+    const ParseResult plain = parseHeader(
+        "struct Badge { float mass = 1.0f; int body() const; };", "Badge.h");
+    CHECK(plain.type && plain.type->kind == TypeKind::Component &&
+          plain.type->fields.size() == 1u);
+  }
+
+  TEST("a UI header's structs should be found, views by their body(), with "
+       "their public data members")
+  {
+    const UiParseResult result = parseUiHeader(R"(
+#pragma once
+namespace farm {
+struct JobRow { std::string id, what; std::string who; };
+struct JobBoard
+{
+  std::vector<JobRow> jobs;
+  static constexpr int kMost = 5;
+  const int fixed = 1;
+  JobRow* first = nullptr;
+  sfs::ui::View body() const;
+  struct Inner { int notMe; };
+private:
+  int secret = 0;
+};
+class Clock { public: std::string time; sfs::ui::View body() const { return {}; } };
+template <typename T> struct Box { T value; sfs::ui::View body() const; };
+}
+sfs::ui::View look(sfs::ui::View view);
+)",
+                                               "ui/Farm.ui.h");
+    CHECK(result.diagnostics.empty());
+    CHECK(result.types.size() == 3u);
+    if (result.types.size() == 3u)
+    {
+      const UiTypeModel& row = result.types[0];
+      CHECK(row.qualifiedName == "farm::JobRow" && !row.view &&
+            row.fields == std::vector<std::string>{"id", "what", "who"});
+      const UiTypeModel& board = result.types[1];
+      CHECK(board.name == "JobBoard" && board.view &&
+            board.fields == std::vector<std::string>{"jobs"});
+      const UiTypeModel& clock = result.types[2];
+      CHECK(clock.view && clock.fields == std::vector<std::string>{"time"});
+    }
+  }
+
+  TEST("UI previews should fill every type's fields and preview its views")
+  {
+    UiTypeModel row{
+        "JobRow", "farm::JobRow", false, {"what"}, "/p/scripts/ui/Farm.ui.h"};
+    UiTypeModel board{"JobBoard",
+                      "farm::JobBoard",
+                      true,
+                      {"jobs", "canSow"},
+                      "/p/scripts/ui/Farm.ui.h"};
+    GeneratorOptions options;
+    options.module = "GameUiPreview";
+    options.function = "sfsRegisterModule";
+    options.includeRoot = "/p/scripts";
+    const std::string code = generateUiPreviews({row, board}, options);
+    CHECK(code.find("#include \"ui/Farm.ui.h\"") != std::string::npos);
+    CHECK(code.find("struct Placeholder<farm::JobRow>") != std::string::npos);
+    CHECK(code.find("placeholder(value.canSow, \"Can Sow\", item);") !=
+          std::string::npos);
+    CHECK(code.find("placeholderView<farm::JobBoard>") != std::string::npos);
+    CHECK(code.find("placeholderView<farm::JobRow>") == std::string::npos);
+    CHECK(code.find("void sfsRegisterModule(sfs::reflect::TypeRegistry&) {}") !=
           std::string::npos);
   }
 

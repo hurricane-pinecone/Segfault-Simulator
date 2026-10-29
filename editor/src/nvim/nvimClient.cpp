@@ -86,6 +86,12 @@ bool NvimClient::start(const LaunchOptions& options, int columns, int rows)
   args.insert(args.end(), {"nvim", "--embed", "--cmd", globals});
   if (options.mode != ConfigMode::User)
     args.insert(args.end(), {"-u", m_environment.toBuildPath(options.engineConfig / "init.lua")});
+  else
+    // Your own config still tells the editor about saves (the build, the UI
+    // Preview); the engine's init.lua does the same.
+    args.insert(args.end(),
+                {"--cmd",
+                 "lua dofile([[" + m_environment.toBuildPath(options.engineConfig / "sfs_hooks.lua") + "]])"});
 
   m_process = std::make_unique<ChildProcess>();
   ChildProcess::Options processOptions;
@@ -173,6 +179,9 @@ void NvimClient::handle(const Value& message)
       m_screen.applyRedraw(parts[2].asArray());
     else if (parts[1].asString() == "sfs_script_saved")
       m_scriptSaved = true;
+    else if (parts[1].asString() == "sfs_script_focused" && parts.size() >= 3 &&
+             !parts[2].asArray().empty())
+      m_focusedScript = m_environment.toEditorPath(parts[2].asArray()[0].asString());
     break;
   case kResponse: // [1, id, error, result]
     if (parts.size() >= 3 && !parts[2].isNil())

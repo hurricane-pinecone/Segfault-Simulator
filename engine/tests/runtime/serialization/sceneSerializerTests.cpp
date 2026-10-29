@@ -1,6 +1,8 @@
 #include "../../testHarness.h"
 #include "../rendering3d/mockRenderer3D.h"
 
+#include <engine/core/components/grassBenderComponent.h>
+#include <engine/core/components/grassComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/parentComponent.h>
@@ -8,6 +10,7 @@
 #include <engine/core/components/transform3DComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
+#include <engine/core/rendering/3d/grass.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/renderSystem3D.h>
@@ -121,6 +124,9 @@ int main()
                                      .distance = 77.0f,
                                      .pointLights = 4,
                                      .pointResolution = 512});
+    source.render.setWindSettings(
+        {.direction = 200.0f, .strength = 0.8f, .gustiness = 0.1f});
+    source.render.setHazeSettings({.strength = 0.4f, .distance = 300.0f});
     source.render.camera().yaw = 1.25f;
     source.render.camera().projection = Camera3D::Projection::Orthographic;
 
@@ -134,9 +140,53 @@ int main()
     CHECK(testing::approx(target.render.shadowSettings().distance, 77.0f));
     CHECK(target.render.shadowSettings().pointLights == 4u);
     CHECK(target.render.shadowSettings().pointResolution == 512u);
+    CHECK(testing::approx(target.render.windSettings().direction, 200.0f));
+    CHECK(testing::approx(target.render.windSettings().strength, 0.8f));
+    CHECK(testing::approx(target.render.windSettings().gustiness, 0.1f));
+    CHECK(testing::approx(target.render.hazeSettings().strength, 0.4f));
+    CHECK(testing::approx(target.render.hazeSettings().distance, 300.0f));
     CHECK(testing::approx(target.render.camera().yaw, 1.25f));
     CHECK(target.render.camera().projection ==
           Camera3D::Projection::Orthographic);
+  }
+
+  TEST("grass, with what's been painted, should load back as it was saved")
+  {
+    World source;
+    Entity lawn = source.named("Lawn");
+    lawn.addComponent<MeshRendererComponent>(
+        MeshRendererComponent{source.cube});
+    GrassComponent grass;
+    grass.material = "asset:0123456789abcdef0123456789abcdef";
+    grass.density = 120.0f;
+    grass.stiffness = 0.8f;
+    GrassMaps paint(GrassGrid::over({-0.5f, -0.5f}, {0.5f, 0.5f}, 0.1f));
+    paint.fill(GrassMaps::Coverage, 0.0f);
+    paint.stamp(GrassMaps::Coverage, {0.1f, 0.2f}, 0.3f, 1.0f);
+    paint.stamp(GrassMaps::Data0, {-0.2f, 0.0f}, 0.2f, 0.6f);
+    grass.paint = paint.toJson();
+    lawn.addComponent<GrassComponent>(grass);
+    Entity walker = source.named("Walker");
+    walker.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.radius = 1.25f});
+
+    World target;
+    target.serializer().load(
+        source.serializer().save(source.scene), target.scene);
+    const Entity loaded = target.findByName("Lawn");
+    CHECK(loaded.isValid() && loaded.hasComponent<GrassComponent>());
+    if (loaded.isValid() && loaded.hasComponent<GrassComponent>())
+    {
+      const GrassComponent& back = loaded.getComponent<GrassComponent>();
+      CHECK(back.material == grass.material);
+      CHECK(testing::approx(back.density, 120.0f));
+      CHECK(testing::approx(back.stiffness, 0.8f));
+      CHECK(GrassMaps::fromJson(back.paint) == paint);
+    }
+    const Entity bender = target.findByName("Walker");
+    CHECK(bender.isValid() && bender.hasComponent<GrassBenderComponent>() &&
+          testing::approx(
+              bender.getComponent<GrassBenderComponent>().radius, 1.25f));
   }
 
   TEST("unknown components and missing fields should not stop a load")
@@ -210,6 +260,16 @@ int main()
     const nlohmann::json saved = world.serializer().save(world.scene);
     CHECK(saved["entities"][0]["MeshRendererComponent"]["mesh"] ==
           "mygame:tower");
+
+    // Expected missing (its game module isn't built yet): the same, quietly.
+    World waiting;
+    waiting.render.meshes().setMissingExpected(true);
+    waiting.serializer().load(data, waiting.scene);
+    CHECK(waiting.render.meshes().isMissing(
+        waiting.scene.entities()[0]
+            .getComponent<MeshRendererComponent>()
+            .mesh));
+    CHECK(waiting.serializer().save(waiting.scene) == saved);
   }
 
   TEST("files from a newer format or without entities should be rejected")

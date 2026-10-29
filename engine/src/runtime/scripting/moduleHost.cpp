@@ -73,7 +73,8 @@ bool ModuleHost::load(const std::filesystem::path& module,
   m_handle = handle;
   m_moduleName = moduleName;
   m_copy = copy;
-  LOG_INFO("Loaded game module " + moduleName);
+  if (!m_quiet)
+    LOG_INFO("Loaded game module " + moduleName);
   return true;
 }
 

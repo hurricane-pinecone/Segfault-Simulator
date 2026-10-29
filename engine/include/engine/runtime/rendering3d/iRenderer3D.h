@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/3d/mesh.h"
 #include "engine/runtime/rendering3d/frame3D.h"
+#include "engine/runtime/rendering3d/uiDraw.h"
 #include "glm/glm/ext/vector_int2.hpp"
 
 #include <cstdint>
@@ -49,6 +50,28 @@ public:
   /** Free a material. Unknown or invalid handles are ignored. */
   virtual void destroyMaterial(MaterialHandle material) = 0;
 
+  /**
+   * Upload the ground a grass field grows on (see grass.h), to draw with
+   * drawGrass(). Its maps start unpainted, and nothing's flattened.
+   * @return a handle, or an invalid one if the ground is empty or the upload
+   * failed.
+   */
+  virtual GrassHandle createGrass(const GrassGround& ground) = 0;
+
+  /**
+   * Part of the field's maps changed (or all of them, over a new grid: then
+   * `image` covers all of it).
+   */
+  virtual void updateGrassMaps(GrassHandle grass,
+                               const GrassMapsImage& image) = 0;
+
+  /** Where the field's grass is flattened now (until the next update). */
+  virtual void updateGrassTrample(GrassHandle grass,
+                                  const GrassTrampleImage& image) = 0;
+
+  /** Free a grass field. Unknown or invalid handles are ignored. */
+  virtual void destroyGrass(GrassHandle grass) = 0;
+
   /** Size of the render target in pixels; zero while minimised. */
   virtual glm::ivec2 viewportSize() const = 0;
 
@@ -61,6 +84,15 @@ public:
   /** Queue one mesh's instances. The spans need only live until the call
    * returns. */
   virtual void drawMesh(const MeshBatch3D& batch) = 0;
+
+  /** Queue a grass field (its blades in view, thinning with distance). */
+  virtual void drawGrass(const GrassBatch3D& batch) = 0;
+
+  /**
+   * Queue UI to draw over the finished frame (after bloom and depth of
+   * field), back to front. Its textures must live until endFrame().
+   */
+  virtual void drawUi(const UiDrawList& list) = 0;
 
   /** Render everything queued since beginFrame(). */
   virtual void endFrame() = 0;

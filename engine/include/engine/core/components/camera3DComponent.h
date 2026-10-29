@@ -37,6 +37,11 @@ namespace sfs
  * @param float bloomThreshold - how bright light must be to bloom (1: white)
  * @param float bloomSoftness - how gently it eases in above the threshold
  * @param float bloomRadius - how far the glow spreads (1 = normal)
+ * @param bool depthOfField - what's nearer or farther than focusDistance
+ *                            blurs, as through a real lens (see
+ *                            DepthOfFieldSettings3D)
+ * @param float focusRange - how deep the sharp part around the focus is
+ * @param float focusBlur - how blurred the farthest things get (1 = normal)
  */
 struct Camera3DComponent
 {
@@ -48,15 +53,24 @@ struct Camera3DComponent
   [[sfs::range(10, 5000)]] float farPlane = 500.0f;
   [[sfs::range(1, 200)]] float focusDistance = 20.0f;
   bool bloom = true;
-  [[sfs::range(0, 3)]] float bloomIntensity = 0.6f;
-  [[sfs::range(0, 4)]] float bloomThreshold = 1.0f;
-  [[sfs::range(0, 2)]] float bloomSoftness = 0.5f;
-  [[sfs::range(0.25, 3)]] float bloomRadius = 1.0f;
+  [[sfs::range(0, 3)]] [[sfs::showIf(bloom)]] float bloomIntensity = 0.6f;
+  [[sfs::range(0, 4)]] [[sfs::showIf(bloom)]] float bloomThreshold = 1.0f;
+  [[sfs::range(0, 2)]] [[sfs::showIf(bloom)]] float bloomSoftness = 0.5f;
+  [[sfs::range(0.25, 3)]] [[sfs::showIf(bloom)]] float bloomRadius = 1.0f;
+  bool depthOfField = false;
+  [[sfs::range(0, 200)]] [[sfs::showIf(depthOfField)]] float focusRange = 10.0f;
+  [[sfs::range(0, 3)]] [[sfs::showIf(depthOfField)]] float focusBlur = 1.0f;
 
   /** The bloom seen through this camera. */
   BloomSettings3D bloomSettings() const
   {
     return {bloom, bloomIntensity, bloomThreshold, bloomSoftness, bloomRadius};
+  }
+
+  /** The depth of field seen through this camera. */
+  DepthOfFieldSettings3D depthOfFieldSettings() const
+  {
+    return {depthOfField, focusRange, focusBlur};
   }
 
   /** Point `camera` the way this camera, with world matrix `world`, looks. */

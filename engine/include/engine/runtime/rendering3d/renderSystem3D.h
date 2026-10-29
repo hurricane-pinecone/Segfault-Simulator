@@ -29,6 +29,7 @@ struct RenderStats3D
   std::size_t emissionLights = 0;
   std::size_t shadowedLights = 0;       // point lights casting shadows
   std::size_t lightShadowInstances = 0; // casters for them
+  std::size_t grassFields = 0;
 };
 
 /**
@@ -91,6 +92,14 @@ public:
   }
   const ShadowSettings3D& shadowSettings() const { return m_shadows; }
 
+  /** The scene's wind (what grass sways in). */
+  void setWindSettings(const WindSettings3D& settings) { m_wind = settings; }
+  const WindSettings3D& windSettings() const { return m_wind; }
+
+  /** The scene's haze (see HazeSettings3D). */
+  void setHazeSettings(const HazeSettings3D& settings) { m_haze = settings; }
+  const HazeSettings3D& hazeSettings() const { return m_haze; }
+
   /**
    * Bloom (see BloomSettings3D) is the scene camera's (sceneCamera(), its
    * Camera3DComponent's settings), even while not following it, so the
@@ -113,10 +122,19 @@ public:
   forEachModule(const std::function<
                 void(std::type_index, Module&, const RenderContext3D&)>& fn);
 
+  /**
+   * Whether its clock runs: what animated materials and grass's wind move by
+   * (FrameParams3D::time). Off, they hold still (the editor's Animate toggle,
+   * while editing).
+   */
+  void setAnimating(bool animating) { m_animating = animating; }
+  bool animating() const { return m_animating; }
+
 protected:
   void update(double deltaTime) override
   {
-    m_time += deltaTime;
+    if (m_animating)
+      m_time += deltaTime;
     updateModules(deltaTime);
   }
   void render() override;
@@ -141,6 +159,8 @@ private:
   void chooseShadowedLights();
 
   void submit(const MeshDrawCommand& command);
+  void submit(const GrassDrawCommand& command);
+  void submit(const UiDrawCommand& command);
 
   IRenderer3D& m_renderer;
   MeshLibrary m_meshes;
@@ -150,6 +170,8 @@ private:
   SceneLighting3D m_lighting;
   ShadowSettings3D m_shadows;
   BloomSettings3D m_bloom;
+  WindSettings3D m_wind;
+  HazeSettings3D m_haze;
 
   // Emission per surface sample, for one frame: per (samples, material) for
   // materials whose emission doesn't depend on where the object is (shared
@@ -178,7 +200,8 @@ private:
   std::vector<PointLight3D> m_shadowedLights; // those casting shadows
   std::vector<std::size_t> m_shadowCandidates;
   std::vector<AnyRenderCommand3D> m_commands;
-  double m_time = 0.0; // seconds of update()
+  double m_time = 0.0; // seconds of update() (while animating)
+  bool m_animating = true;
   RenderStats3D m_stats;
 };
 

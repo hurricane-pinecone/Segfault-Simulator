@@ -69,6 +69,9 @@ SFS_WGPU_HANDLE(BindGroupLayout,
 SFS_WGPU_HANDLE(BindGroup, WGPUBindGroup, wgpuBindGroupRelease)
 SFS_WGPU_HANDLE(PipelineLayout, WGPUPipelineLayout, wgpuPipelineLayoutRelease)
 SFS_WGPU_HANDLE(RenderPipeline, WGPURenderPipeline, wgpuRenderPipelineRelease)
+SFS_WGPU_HANDLE(ComputePipeline,
+                WGPUComputePipeline,
+                wgpuComputePipelineRelease)
 
 #undef SFS_WGPU_HANDLE
 

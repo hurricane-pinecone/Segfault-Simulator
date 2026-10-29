@@ -49,6 +49,14 @@ public:
 
   /** Whether the cursor is over the scene's view. */
   bool inView() const;
+
+  /**
+   * The UI has the mouse (it's over a UI layer, or pressed on one): buttons,
+   * drags and scrolling read as untouched to the game from here on this
+   * frame. blocked() says so, e.g. to hide a cursor marker under UI.
+   */
+  void block();
+  bool blocked() const { return isBlocked; }
   int getScrollX() const;
   int getScrollY() const;
   void addScroll(int x, int y);
@@ -70,6 +78,7 @@ private:
 
   int scrollX = 0;
   int scrollY = 0;
+  bool isBlocked = false;
 };
 
 } // namespace sfs

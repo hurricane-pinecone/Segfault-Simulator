@@ -30,6 +30,7 @@
 // the scene's scripts; Stop restores the scene as it was before Play.
 class AssetBrowserPanel;
 class CodePanel;
+class UiPreviewPanel;
 class MaterialEditorPanel;
 
 class ViewportPanel;
@@ -113,18 +114,43 @@ private:
     Playing,
   };
 
-  /** Build the module; on success reload it, then play if `thenPlay`. */
+  /**
+   * Build the module; on success reload it, then play if `thenPlay`. Waits
+   * for a UI Preview build, if one's running.
+   */
   void requestBuild(bool thenPlay);
+  /** The game module is being built (or will be, after a UI Preview build). */
+  bool moduleBuilding() const
+  {
+    return m_moduleBuildQueued ||
+           (m_builder.busy() &&
+            m_builder.target() == ModuleBuilder::Target::Module);
+  }
   /** Swap in the freshly built module, keeping the scene's contents. */
   bool swapModule();
 
   // Scripts changed (saved in the Code panel, or found changed when the
   // editor regains focus): the game is rebuilt, and saved values follow
   // renamed fields (see swapModule()).
+  // UI files (*.ui.h, *.ui.cpp) changed, or the project was opened: the UI
+  // Preview's module is rebuilt (in seconds), not the game's. The game's is
+  // rebuilt before Play, as always.
   bool m_scriptsChanged = false;
-  std::future<std::string>
-      m_scriptsCheck;         // a hash of scripts/, in the background
-  std::string m_scriptsStamp; // the last one seen
+  bool m_uiChanged = false;
+  bool m_uiFirstCheck = false; // the next check decides if there's UI to build
+  // The next check compares the scripts with the ones the game module was
+  // built from (changed while the editor was closed: it's rebuilt).
+  bool m_moduleFirstCheck = false;
+  std::string m_buildScriptsStamp; // the scripts the running build is of
+  bool m_moduleBuildQueued = false; // asked for during a UI Preview build
+  struct ScriptsStamp
+  {
+    std::string scripts; // a hash of scripts/ but the UI files
+    std::string ui;      // of the UI files; empty if there are none
+  };
+  std::future<ScriptsStamp> m_scriptsCheck; // in the background
+  std::string m_scriptsStamp;               // the last ones seen
+  std::string m_uiStamp;
   bool m_scriptsCheckIsBaseline =
       false;                     // its result is the new normal, not a change
   bool m_scriptsRecheck = false; // check again once it's done
@@ -218,11 +244,15 @@ private:
   BuildEnvironment m_environment = BuildEnvironment::current();
   ModuleBuilder m_builder{m_environment};
   sfs::ModuleHost m_module;
+  // The project's game module isn't loaded yet (it's never been built, or is
+  // being rebuilt): scenes made meanwhile expect its meshes to be missing.
+  bool m_awaitingModule = false;
   Mode m_mode = Mode::Edit;
   bool m_playAfterBuild = false;
   nlohmann::json m_editSnapshot; // the scene as it was before Play
   std::vector<std::unique_ptr<Panel>> m_panels;
   CodePanel* m_codePanel = nullptr; // in m_panels
+  UiPreviewPanel* m_uiPreview = nullptr;
   std::filesystem::path m_startupProject;
   bool m_layoutChecked = false;
   bool m_appFocused = false; // one of the editor's windows has the keyboard

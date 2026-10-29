@@ -91,6 +91,11 @@ struct SurfacePoint
   glm::vec3 toView{0.0f, 0.0f, 1.0f};
   glm::vec3 vertexColor{1.0f};
   float time = 0.0f; // seconds
+  // Grass's blade here (see the Grass node): its length (of the grass's full
+  // height), how far up it this is (0 root, 1 tip) and a random number; and
+  // its maps' four Data channels. Anything else: full length, at the root.
+  glm::vec4 grass{1.0f, 0.0f, 0.0f, 0.0f};
+  glm::vec4 grassData{0.0f};
 };
 
 /**
@@ -110,6 +115,7 @@ enum class PointInputs : uint8_t
   ToView = 1 << 4,
   VertexColor = 1 << 5,
   Time = 1 << 6,
+  Grass = 1 << 7, // grass and grassData
 };
 
 constexpr PointInputs operator|(PointInputs a, PointInputs b)

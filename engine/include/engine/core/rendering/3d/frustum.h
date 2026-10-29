@@ -28,6 +28,12 @@ public:
    */
   bool intersects(const Aabb& box) const;
 
+  /**
+   * Its planes (left, right, bottom, top, near, far): xyz a unit normal into
+   * it, w its offset, so a point's inside where dot(xyz, p) + w >= 0 for all.
+   */
+  const std::array<glm::vec4, 6>& planes() const { return m_planes; }
+
 private:
   std::array<glm::vec4, 6> m_planes{};
 };

@@ -1,5 +1,7 @@
-// Lit forward pass for 3D meshes. (mesh3DCommon, mesh3DSurface and the
-// material's surface are prefixed.)
+// Lit forward pass for 3D meshes: its lighting and fragment stage. (mesh3DCommon,
+// mesh3DSurface and the material's surface are prefixed; a vertex stage
+// writing VertexOut follows: mesh3DLitVertex.wgsl for meshes,
+// mesh3DGrass.wgsl for grass.)
 //
 // The lighting model is the isometric renderer's (geometry.frag) carried into
 // real 3D, so both paths share a look: ambient that favours up-facing
@@ -27,21 +29,8 @@ struct VertexOut {
   @location(2) vertexColor: vec3f,
   @location(3) uv: vec2f,
   @location(4) tint: vec4f,
-}
-
-@vertex
-fn vs_main(vertex: VertexIn, instance: InstanceIn) -> VertexOut {
-  let model = instanceModel(instance);
-  let world = model * vec4f(vertex.position, 1.0);
-
-  var out: VertexOut;
-  out.clip = frame.viewProjection * world;
-  out.worldPosition = world.xyz;
-  out.normal = normalMatrix(model) * vertex.normal;
-  out.vertexColor = vertex.color;
-  out.uv = vertex.uv;
-  out.tint = instance.tint;
-  return out;
+  @location(5) grass: vec4f,     // see SurfaceIn (others: 1, 0, 0, 0)
+  @location(6) grassData: vec4f, // see SurfaceIn
 }
 
 // Sun visibility: 1 = lit, 0 = fully in shadow. A grid of hardware-filtered
@@ -266,12 +255,26 @@ struct LitOut {
   @location(1) glow: vec4f,
 }
 
+// How hazed a point is (see HazeSettings3D), 0 to its strength.
+fn hazeAt(worldPosition: vec3f) -> f32 {
+  let away = distance(worldPosition, frame.cameraPosition.xyz) * frame.haze.y;
+  return frame.haze.x * (1.0 - exp2(-away * away));
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> LitOut {
+  return shade(in);
+}
+
+// A surface lit, as the lit pass's fragment stage (others build on it, as
+// grass's ground does).
+fn shade(in: VertexOut) -> LitOut {
   // The surface first, where control flow is still uniform (it may sample
   // textures).
   let geometryNormal = normalize(in.normal);
-  let here = surfaceInput(in.uv, in.worldPosition, geometryNormal, in.vertexColor);
+  var here = surfaceInput(in.uv, in.worldPosition, geometryNormal, in.vertexColor);
+  here.grass = in.grass;
+  here.grassData = in.grassData;
   let s = surface(here);
   // The surface's (tangent-space) normal, along the point's tangent frame.
   let normal = normalize(here.tangent * s.normal.x + here.bitangent * s.normal.y + geometryNormal * s.normal.z);
@@ -346,6 +349,9 @@ fn fs_main(in: VertexOut) -> LitOut {
               pointLit.specular * shadowRoom;
 
   // Emission is light of its own: unaffected by the scene's.
-  let color = albedo * (1.0 - metallic) * total + reflection + glint + max(s.emission, vec3f(0.0));
-  return LitOut(vec4f(color, alpha), vec4f(color * max(s.bloom, 0.0), alpha));
+  let lightColor = albedo * (1.0 - metallic) * total + reflection + glint + max(s.emission, vec3f(0.0));
+  // Into the haze, toward the sky (glowing less, the more it's hidden).
+  let haze = hazeAt(in.worldPosition);
+  let color = mix(lightColor, frame.sky.rgb, haze);
+  return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * (1.0 - haze), alpha));
 }

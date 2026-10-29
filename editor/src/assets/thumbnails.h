@@ -25,7 +25,7 @@ class EditorScene;
 
 // Preview images of assets, for the Assets panel: textures scaled down,
 // materials on a sphere, models and prefabs drawn from a three-quarter view
-// (see previewRenderer). Each is drawn on the CPU on a worker thread,
+// (see sfs::meshPreview). Each is drawn on the CPU on a worker thread,
 // uploaded as a small texture and kept, and drawn again when its file
 // changes.
 class Thumbnails

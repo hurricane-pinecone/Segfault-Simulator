@@ -12,6 +12,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace sfs
 {
@@ -28,7 +29,9 @@ class WebGpuRenderBackend;
 //     (these overlays and the gizmo toggle with "Gizmos", off during Play by
 //     default),
 //   - camera navigation (right-drag orbit, middle-drag pan, wheel zoom, F to
-//     frame the selection).
+//     frame the selection),
+//   - a grass brush (B, with grass selected): drag over its mesh to paint
+//     where grass grows, Shift to erase.
 //
 // The editor can show several scenes (the scene, prefabs being edited), each
 // in its own viewport; one is active at a time: the context is its scene, and
@@ -52,7 +55,8 @@ public:
   void setToolbarExtras(std::function<void(EditorContext&)> extras) { m_toolbarExtras = std::move(extras); }
   /** Mark the tab as having unsaved changes. */
   void setUnsaved(bool unsaved) { m_unsaved = unsaved; }
-  /** On its first appearance, tab into the dock node of the window called `window`. */
+  /** On its first appearance, tab into the dock node of the window called
+   * `window`. */
   void dockWith(std::string window) { m_dockWith = std::move(window); }
 
 protected:
@@ -66,6 +70,7 @@ private:
     Move,
     Rotate,
     Scale,
+    GrassBrush, // paints the selection's GrassComponent
   };
 
   // The frame's camera matrices and where the image sits on screen.
@@ -86,7 +91,23 @@ private:
   void handleShortcuts(EditorContext& context);
   // True while the gizmo is hovered or dragging (so clicks don't pick).
   bool drawGizmo(EditorContext& context, const View& view);
+  // Several selected: the gizmo in their middle, each moving, turning and
+  // scaling as much as it does (about its own origin). `operation` is an
+  // ImGuizmo::OPERATION.
+  bool drawGroupGizmo(EditorContext& context,
+                      const View& view,
+                      const std::vector<sfs::Entity>& group,
+                      int operation,
+                      const float* snap);
+  // The selected entities the gizmo moves: those with a place, not inside
+  // another selected one.
+  static std::vector<sfs::Entity> movableSelection(const EditorContext& context);
   void pick(EditorContext& context, const View& view);
+  // The grass brush: its ring on the selection's mesh under the cursor, and a
+  // stroke while the left button's down. True while over the image (so
+  // clicks paint rather than pick).
+  bool paintGrass(EditorContext& context, const View& view, bool hovered);
+  void endGrassStroke(EditorContext& context);
   // A texture or material dragged from the Assets panel onto an object: into
   // the material slot of the part under the cursor.
   void dropAsset(EditorContext& context, const View& view);
@@ -113,14 +134,28 @@ private:
 
   Tool m_tool = Tool::Move;
   bool m_localSpace = false;
+  glm::mat4 m_groupHandles{1.0f}; // the gizmo's, with several selected
   bool m_snap = false;
   bool m_gizmosInEdit = true;
   bool m_gizmosInPlay = false;
+  bool m_animate = true; // while editing (see RenderSystem3D::setAnimating)
+
+  // The grass brush: world units across, how fast it paints, erasing.
+  float m_brushSize = 1.5f;
+  float m_brushStrength = 0.6f;
+  bool m_brushErase = false;
+  int m_brushChannel = 0;     // which of the grass's maps (GrassMaps::Channel)
+  bool m_brushStroke = false; // painting (an undo step open)
 
   bool m_active = false;
   bool m_activationRequested = false;
   bool m_unsaved = false;
   std::function<void(EditorContext&)> m_toolbarExtras;
+  // Where the toolbar was drawn last frame (with its backdrop): the image
+  // under it doesn't take clicks, so using the toolbar doesn't also pick or
+  // paint.
+  ImVec2 m_toolbarMin{0.0f, 0.0f};
+  ImVec2 m_toolbarMax{0.0f, 0.0f};
   std::string m_dockWith;
 
   // The panel's image size from the last draw; the target takes it on the next
