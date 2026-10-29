@@ -45,7 +45,7 @@ without a GL context, initialises a WebGPU device and surface through
 each frame. It provides a 3D renderer (`WebGpuRenderer3D`) through
 `SceneServices::renderer3D`, which a `RenderSystem3D` draws through (see
 [3D rendering](../../rendering-3d/index.md)). Systems can also record their own
-passes into the frame's encoder, as `VoxelGpuSystem` does. It has no 2D quad or
+passes into the frame's encoder (`currentEncoder()`). It has no 2D quad or
 text renderer.
 
 It also hosts Dear ImGui with docking and multi-viewport enabled, so a debug or
@@ -110,8 +110,6 @@ Retrieve the typed backend when constructing systems that need the device:
 ```cpp
 auto* wgpu = static_cast<sfs::WebGpuRenderBackend*>(renderBackend());
 ```
-
-Read more: [GPU voxel world](../../voxel-gpu/index.md).
 
 ## Implementing a custom backend
 

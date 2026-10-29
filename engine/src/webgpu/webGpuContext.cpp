@@ -50,8 +50,8 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter, bool* hasTimestamps)
   {
     WGPUDevice device = nullptr;
   } out;
-  // Request the adapter's full limits so big storage buffers (a 512^3 voxel
-  // buffer is 512MB, past the 128MB default) are allowed.
+  // Request the adapter's full limits so big buffers (past the 128MB storage
+  // binding default) are allowed.
   WGPULimits limits = {};
   wgpuAdapterGetLimits(adapter, &limits);
   // An adapter with no buffer-size cap (e.g. Vulkan) reports UINT64_MAX, which

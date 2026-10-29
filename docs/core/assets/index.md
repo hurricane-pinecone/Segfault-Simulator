@@ -53,6 +53,12 @@ Hidden files and folders (names starting with `.`) are skipped. `records()`
 lists every asset sorted by path, and `folders()` lists the folders.
 `version()` goes up whenever anything changes, so a UI can tell when to redraw.
 
+`refresh()` is `apply(scan())`. For a UI that mustn't block (the editor's
+Assets panel on a large project), run `scan()` on another thread and pass its
+result to `apply()` back on the database's own thread: `scan()` only reads the
+folders (and, read-write, writes `.meta` files for new assets); it touches
+nothing of the database itself.
+
 | Lookup | Returns |
 | --- | --- |
 | `find(id)` | The asset with that id, or null |
@@ -61,8 +67,8 @@ lists every asset sorted by path, and `folders()` lists the folders.
 
 Each `AssetRecord` has its `id`, `path`, `kind` and `settings`. The kind comes
 from the file extension: `Texture` (png, jpg, bmp, tga), `Model` (glb, gltf,
-obj), `Font` (ttf, otf), `Audio` (wav, ogg, mp3, flac), `Data` (json, txt, csv)
-or `Other`.
+obj), `Material` (mat), `Prefab` (prefab), `Scriptable Object` (asset), `Font`
+(ttf, otf), `Audio` (wav, ogg, mp3, flac), `Data` (json, txt, csv) or `Other`.
 
 ## Editing
 
