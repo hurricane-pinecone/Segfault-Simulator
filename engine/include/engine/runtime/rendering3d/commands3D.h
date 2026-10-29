@@ -31,6 +31,7 @@ struct MeshDrawCommand
       materials; // per section, in place of its own (see MeshBatch3D)
   std::vector<MeshInstance> instances;
   std::vector<MeshInstance> shadowInstances;
+  std::vector<MeshInstance> lightShadowInstances; // see MeshBatch3D
 };
 
 /** The command set 3D render modules emit (see RenderCommandTraits). */

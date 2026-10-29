@@ -88,6 +88,7 @@ std::filesystem::path writeModel(const std::string& name,
                                     {"scale": [2, 3], "offset": [0.5, 0.25]}}},
                                 "metallicRoughnessTexture": {"index": 0},
                                 "metallicFactor": 0.75, "roughnessFactor": 0.25},
+       "normalTexture": {"index": 0, "scale": 0.5},
        "alphaMode": "MASK", "alphaCutoff": 0.3},
       {"pbrMetallicRoughness": {"baseColorFactor": [0, 1, 0, 0.5]}, "alphaMode": "BLEND"}
     ],
@@ -179,6 +180,12 @@ int main()
         CHECK(masked.metallicRoughnessTexture->linear); // data, not colour
         CHECK(!masked.baseTexture->linear);
       }
+      // The normal map, read as data, with its scale.
+      CHECK(masked.normalTexture != nullptr);
+      if (masked.normalTexture)
+        CHECK(masked.normalTexture->linear);
+      CHECK(masked.normalScale == 0.5f);
+      CHECK(model->whole.sections[1].material.normalTexture == nullptr);
 
       const MeshMaterial& glass = model->whole.sections[1].material;
       CHECK(glass.alphaMode == AlphaMode::Blend);

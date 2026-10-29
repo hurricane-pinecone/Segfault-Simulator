@@ -10,6 +10,22 @@
 namespace widgets
 {
 
+/**
+ * A labelled row, as the Inspector lays its fields out: the label on the
+ * left, in a column about 40% of the row (clipped, the whole of it in a
+ * tooltip, when too long), and its widget on the right. Call it, then draw
+ * the widget with a hidden label ("##value"): the next item fills from the
+ * label column to the row's right edge or, with `width` > 0 (a checkbox's,
+ * say), is that wide flush against the right edge.
+ *
+ *   widgets::propertyLabel("Casts Shadow", ImGui::GetFrameHeight());
+ *   ImGui::Checkbox("##value", &castsShadow);
+ */
+void propertyLabel(const char* label, float width = 0.0f);
+
+/** propertyLabel() then a checkbox flush right. @return true when toggled */
+bool propertyCheckbox(const char* label, bool* value);
+
 /** ImGui::InputText over a std::string, growing it as the user types. */
 bool inputText(const char* label, std::string& value, int flags = 0);
 
@@ -24,7 +40,10 @@ bool colorEdit4(const char* label, float* rgba);
  *
  * @return true when the text changed
  */
-bool searchInput(const char* id, std::string& value, const char* hint, float width = -1.0f);
+bool searchInput(const char* id,
+                 std::string& value,
+                 const char* hint,
+                 float width = -1.0f);
 
 /**
  * Square icon buttons a frame high: a pencil (edit), and a crosshair
@@ -45,7 +64,8 @@ void drawTarget(ImDrawList* draw, ImVec2 centre, float size, ImU32 color);
  * frames is one undo step.
  *
  *   widgets::undoable(history, transform.position,
- *                     [](glm::vec3& v) { return ImGui::DragFloat3("Position", &v.x); });
+ *                     [](glm::vec3& v) { return ImGui::DragFloat3("Position",
+ * &v.x); });
  */
 template <typename T, typename Widget>
 bool undoable(EditorHistory* history, T& value, Widget&& widget)
@@ -57,7 +77,8 @@ bool undoable(EditorHistory* history, T& value, Widget&& widget)
     history->beginChange();
   if (changed)
     value = copy;
-  if (history && (ImGui::IsItemDeactivated() || (changed && !ImGui::IsItemActive())))
+  if (history &&
+      (ImGui::IsItemDeactivated() || (changed && !ImGui::IsItemActive())))
     history->endChange();
 
   return changed;

@@ -48,8 +48,10 @@ void addTriangle(MeshData& mesh,
   const glm::vec3 normal = glm::normalize(glm::cross(b - a, c - a));
   const auto base = static_cast<uint32_t>(mesh.vertices.size());
 
-  for (const glm::vec3& p : {a, b, c})
-    mesh.vertices.push_back({p, normal, color});
+  // The image's bottom edge along a-b, its top middle at c.
+  mesh.vertices.push_back({a, normal, color, {0.0f, 1.0f}});
+  mesh.vertices.push_back({b, normal, color, {1.0f, 1.0f}});
+  mesh.vertices.push_back({c, normal, color, {0.5f, 0.0f}});
 
   mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2});
 }
@@ -64,15 +66,20 @@ void addCap(MeshData& mesh,
 {
   const glm::vec3 normal{0.0f, 0.0f, facingUp ? 1.0f : -1.0f};
   const auto center = static_cast<uint32_t>(mesh.vertices.size());
-  mesh.vertices.push_back({{0.0f, 0.0f, z}, normal, color});
+  mesh.vertices.push_back({{0.0f, 0.0f, z}, normal, color, {0.5f, 0.5f}});
 
+  // The image laid flat across the disc, upright seen from its side (+Y up
+  // the image from above; mirrored in Y from below, so it isn't mirrored
+  // there).
+  const float up = facingUp ? -0.5f : 0.5f;
   for (int i = 0; i < segments; ++i)
   {
     const float angle = kTwoPi * static_cast<float>(i) / segments;
-    mesh.vertices.push_back(
-        {{radius * std::cos(angle), radius * std::sin(angle), z},
-         normal,
-         color});
+    const float c = std::cos(angle), s = std::sin(angle);
+    mesh.vertices.push_back({{radius * c, radius * s, z},
+                             normal,
+                             color,
+                             {0.5f + 0.5f * c, 0.5f + up * s}});
   }
 
   for (int i = 0; i < segments; ++i)
@@ -130,24 +137,27 @@ cylinder(float radius, float height, int segments, const glm::vec3& color)
 
   MeshData mesh;
 
-  // Side wall: one ring at the base and one at the top, smooth normals.
+  // Side wall: one ring at the base and one at the top, smooth normals. The
+  // image wraps once around (the seam's column is duplicated, so it can run
+  // from u 0 to 1).
   const auto base = static_cast<uint32_t>(mesh.vertices.size());
-  for (int i = 0; i < segments; ++i)
+  for (int i = 0; i <= segments; ++i)
   {
-    const float angle = kTwoPi * static_cast<float>(i) / segments;
+    const float u = static_cast<float>(i) / segments;
+    const float angle = kTwoPi * u;
     const glm::vec3 normal{std::cos(angle), std::sin(angle), 0.0f};
     const glm::vec3 rim = normal * radius;
 
-    mesh.vertices.push_back({rim, normal, color});
-    mesh.vertices.push_back({rim + glm::vec3(0, 0, height), normal, color});
+    mesh.vertices.push_back({rim, normal, color, {u, 1.0f}});
+    mesh.vertices.push_back(
+        {rim + glm::vec3(0, 0, height), normal, color, {u, 0.0f}});
   }
 
   for (int i = 0; i < segments; ++i)
   {
     const uint32_t bottom = base + static_cast<uint32_t>(i) * 2;
     const uint32_t top = bottom + 1;
-    const uint32_t nextBottom =
-        base + static_cast<uint32_t>((i + 1) % segments) * 2;
+    const uint32_t nextBottom = bottom + 2;
     const uint32_t nextTop = nextBottom + 1;
 
     mesh.indices.insert(mesh.indices.end(),
@@ -178,16 +188,24 @@ MeshData cone(float radius, float height, int segments, const glm::vec3& color)
       return glm::normalize(glm::vec3(std::cos(angle), std::sin(angle), slope));
     };
 
+    // The image wraps once around, its top at the tip.
+    const float u0 = static_cast<float>(i) / segments;
+    const float u1 = static_cast<float>(i + 1) / segments;
     const auto base = static_cast<uint32_t>(mesh.vertices.size());
     mesh.vertices.push_back(
         {{radius * std::cos(a0), radius * std::sin(a0), 0.0f},
          sideNormal(a0),
-         color});
+         color,
+         {u0, 1.0f}});
     mesh.vertices.push_back(
         {{radius * std::cos(a1), radius * std::sin(a1), 0.0f},
          sideNormal(a1),
-         color});
-    mesh.vertices.push_back({{0.0f, 0.0f, height}, sideNormal(mid), color});
+         color,
+         {u1, 1.0f}});
+    mesh.vertices.push_back({{0.0f, 0.0f, height},
+                             sideNormal(mid),
+                             color,
+                             {(u0 + u1) * 0.5f, 0.0f}});
     mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2});
   }
 
@@ -204,17 +222,21 @@ MeshData sphere(float radius, int segments, int rings, const glm::vec3& color)
   const glm::vec3 center{0.0f, 0.0f, radius};
 
   // (rings + 1) latitude rows x (segments + 1) columns; the seam column is
-  // duplicated so every quad indexes a full row.
+  // duplicated so every quad indexes a full row. The image wraps once around
+  // (u with the azimuth) from the top pole (v 0) to the bottom (v 1).
   for (int ring = 0; ring <= rings; ++ring)
   {
-    const float polar = glm::pi<float>() * static_cast<float>(ring) / rings;
+    const float v = static_cast<float>(ring) / rings;
+    const float polar = glm::pi<float>() * v;
     for (int segment = 0; segment <= segments; ++segment)
     {
-      const float azimuth = kTwoPi * static_cast<float>(segment) / segments;
+      const float u = static_cast<float>(segment) / segments;
+      const float azimuth = kTwoPi * u;
       const glm::vec3 normal{std::sin(polar) * std::cos(azimuth),
                              std::sin(polar) * std::sin(azimuth),
                              std::cos(polar)};
-      mesh.vertices.push_back({center + normal * radius, normal, color});
+      mesh.vertices.push_back(
+          {center + normal * radius, normal, color, {u, v}});
     }
   }
 
@@ -269,7 +291,8 @@ void append(MeshData& target,
     target.vertices.push_back(
         {glm::vec3(transform * glm::vec4(vertex.position, 1.0f)),
          glm::normalize(normalMatrix * vertex.normal),
-         vertex.color});
+         vertex.color,
+         vertex.uv});
   }
 
   target.indices.reserve(target.indices.size() + source.indices.size());

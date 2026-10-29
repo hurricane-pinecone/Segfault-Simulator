@@ -64,6 +64,9 @@ nav:
       - Reflection & codegen: core/reflection/index.md
       - Parents & children: core/hierarchy/index.md
       - Asset database: core/assets/index.md
+      - 3D rendering data:
+          - core/rendering-3d/index.md
+          - Material graphs: core/rendering-3d/material-graphs/index.md
       - Voxel terrain: core/voxel/index.md
       - Particles:
           - core/particles/index.md
@@ -76,6 +79,9 @@ nav:
   - Editor:
       - editor/index.md
       - Game scripts: editor/scripting/index.md
+      - Material graphs:
+          - editor/material-graphs/index.md
+          - Recipes: editor/material-graphs/recipes/index.md
   - Runtime:
       - runtime/index.md
       - Game & scenes: runtime/game-and-scenes/index.md

@@ -50,7 +50,7 @@ Scene files are plain JSON and diff cleanly. See
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
-| Inspector | The selected entity's name and components, with **Add Component**. |
+| Inspector | The selected entity's name and components, with **Add Component**. Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
@@ -95,6 +95,7 @@ Everything under `assets/` and `prefabs/` is managed by the project's
 | Ctrl+Z / Ctrl+Y (with the Assets panel focused) | Undoes and redoes the panel's file operations |
 | Drop files from Explorer onto the editor window | Imports copies into the open folder (or `assets/` itself) |
 | Right-click a folder, or empty space → New Material | A material asset to edit in the Inspector |
+| Right-click a folder, or empty space → New Material Graph | A material built from nodes; double-click it to edit them |
 
 This works the same in every folder, scripts and scenes too. The project's own
 folders (`scenes/`, `scripts/`, `prefabs/`, `assets/`) can't be renamed, moved
@@ -131,12 +132,26 @@ attached when the file is moved or renamed.
 
 Selecting a material asset (`.mat`) edits it in the Inspector: base colour,
 texture, tiling and offset (how often the texture repeats, and where it
-starts), metal, roughness and transparency. Every change is saved and shows in
+starts), metal, roughness, a normal map (bumps the light catches; the bluish
+image that comes with many textures) with its strength, and transparency. Every change is saved and shows in
 the scene straight away.
+
+For a look those settings can't make (patterns, masks, glows, textures blended
+together), build the material from nodes instead: see
+[Material graphs](./material-graphs/index.md).
 
 A Mesh Renderer lists its mesh's **Materials**, one slot per section (a model
 has one per material it was made with). Each slot shows the mesh's own
 material until you pick a material asset for it.
+
+A slot with a material asset in it has two icons beside it, as a script field
+does:
+
+- **Edit** (the pencil) opens a node-graph material in the node editor. A
+  standard material is shown in the Inspector instead, where its fields are,
+  along with **Convert to Node Graph**.
+- **Find** (the target) shows the material highlighted in the Assets panel,
+  leaving the Inspector on the object.
 
 To texture something, drag a texture from the Assets panel onto it in the
 viewport (onto the part you want, for a model with several materials), or
@@ -216,6 +231,8 @@ with a Camera3D component (see
 - Cameras are drawn in the viewport as outlines of what they see. The game
   camera is drawn brighter.
 - Scene Settings names the game camera: the first active one.
+- Bloom is the camera's: its Bloom settings in the Inspector. The viewport
+  shows the game camera's bloom while you look around.
 
 Play and exported games see through the game camera, and scripts move it by
 moving its entity. A scene without one starts from the viewport's view as last

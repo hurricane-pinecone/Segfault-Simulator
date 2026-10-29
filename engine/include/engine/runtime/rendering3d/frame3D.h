@@ -14,9 +14,11 @@ namespace sfs
 
 /**
  * Most point lights a frame hands the renderer. The render system keeps the
- * ones nearest the camera target when a scene has more.
+ * ones nearest the camera target when a scene has more. Each pixel only
+ * lights from the ones near it (clustered lighting; see lightClusters.h), so
+ * many lights cost little where they don't overlap.
  */
-inline constexpr std::size_t kMaxPointLights3D = 32;
+inline constexpr std::size_t kMaxPointLights3D = 4096;
 
 /** One drawn copy of a mesh: where it is and how it's tinted. */
 struct MeshInstance
@@ -36,19 +38,28 @@ struct FrameParams3D
   glm::mat4 projection{1.0f};
   glm::mat4 viewProjection{1.0f};
   glm::vec3 cameraPosition{0.0f};
+  glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit view direction
+  float nearPlane = 0.1f;                     // the camera's depth range
+  float farPlane = 500.0f;
 
   SceneLighting3D lighting;
   std::span<const PointLight3D> pointLights;
 
   ShadowSettings3D shadows;
   glm::mat4 lightViewProjection{1.0f};
+
+  float time = 0.0f; // seconds the scene has run (animated materials)
+
+  BloomSettings3D bloom;
 };
 
 /**
  * One mesh's draws for a frame. `instances` are the copies the camera can see
  * (drawn lit); `shadowInstances` are the copies that cast into the sun's
  * shadow map. They differ because an object just off screen can still throw a
- * shadow onto visible ground. An instance whose tint alpha is below 1 is drawn
+ * shadow onto visible ground. `lightShadowInstances` are the copies within
+ * reach of a shadowed point light (PointLight3D::castsShadow), which cast into
+ * their shadow maps. An instance whose tint alpha is below 1 is drawn
  * see-through.
  */
 struct MeshBatch3D
@@ -59,6 +70,7 @@ struct MeshBatch3D
   std::span<const MaterialHandle> materials;
   std::span<const MeshInstance> instances;
   std::span<const MeshInstance> shadowInstances;
+  std::span<const MeshInstance> lightShadowInstances;
 };
 
 } // namespace sfs

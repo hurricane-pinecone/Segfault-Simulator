@@ -117,6 +117,39 @@ int main()
     CHECK(testing::approx(bounds.max.z, 3.0f));
   }
 
+  TEST("every shape should have texture coordinates across the whole image")
+  {
+    for (const MeshData& mesh : {meshes::box({1.0f, 1.0f, 1.0f}),
+                                 meshes::plane({1.0f, 1.0f}),
+                                 meshes::cylinder(1.0f, 2.0f, 12),
+                                 meshes::cone(1.0f, 2.0f, 12),
+                                 meshes::sphere(1.0f, 12, 8),
+                                 meshes::prism({1.0f, 1.0f, 1.0f})})
+    {
+      glm::vec2 low(1.0f), high(0.0f);
+      for (const MeshVertex& vertex : mesh.vertices)
+      {
+        low = glm::min(low, vertex.uv);
+        high = glm::max(high, vertex.uv);
+      }
+      CHECK(low.x <= 0.0f);
+      CHECK(low.y <= 0.0f);
+      CHECK(high.x >= 1.0f);
+      CHECK(high.y >= 1.0f);
+    }
+  }
+
+  TEST("append should keep texture coordinates")
+  {
+    MeshData combined;
+    const MeshData sphere = meshes::sphere(1.0f, 8, 4);
+    meshes::append(combined, sphere, glm::mat4(1.0f));
+    bool same = combined.vertices.size() == sphere.vertices.size();
+    for (std::size_t i = 0; same && i < sphere.vertices.size(); ++i)
+      same = combined.vertices[i].uv == sphere.vertices[i].uv;
+    CHECK(same);
+  }
+
   TEST("too few segments should clamp to a valid shape")
   {
     const MeshData cylinder = meshes::cylinder(1.0f, 1.0f, 1);

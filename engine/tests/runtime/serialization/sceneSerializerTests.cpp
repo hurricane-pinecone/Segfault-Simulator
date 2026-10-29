@@ -117,7 +117,10 @@ int main()
     lighting.ambient = 0.2f;
     lighting.skyColor = {0.1f, 0.2f, 0.3f};
     source.render.setLighting(lighting);
-    source.render.setShadowSettings({.enabled = false, .distance = 77.0f});
+    source.render.setShadowSettings({.enabled = false,
+                                     .distance = 77.0f,
+                                     .pointLights = 4,
+                                     .pointResolution = 512});
     source.render.camera().yaw = 1.25f;
     source.render.camera().projection = Camera3D::Projection::Orthographic;
 
@@ -129,6 +132,8 @@ int main()
     CHECK(testing::approx(target.render.lighting().skyColor.b, 0.3f));
     CHECK(!target.render.shadowSettings().enabled);
     CHECK(testing::approx(target.render.shadowSettings().distance, 77.0f));
+    CHECK(target.render.shadowSettings().pointLights == 4u);
+    CHECK(target.render.shadowSettings().pointResolution == 512u);
     CHECK(testing::approx(target.render.camera().yaw, 1.25f));
     CHECK(target.render.camera().projection ==
           Camera3D::Projection::Orthographic);

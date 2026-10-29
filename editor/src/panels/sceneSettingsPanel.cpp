@@ -32,7 +32,9 @@ void gameSystems(EditorScene& scene, EditorHistory& history)
     const bool known = sfs::scripts().find(systems[i]) != nullptr;
     if (ImGui::SmallButton("x"))
     {
-      history.change([&] { systems.erase(systems.begin() + static_cast<std::ptrdiff_t>(i)); });
+      history.change(
+          [&]
+          { systems.erase(systems.begin() + static_cast<std::ptrdiff_t>(i)); });
       ImGui::PopID();
       break;
     }
@@ -54,9 +56,11 @@ void gameSystems(EditorScene& scene, EditorHistory& history)
       if (type.kind == sfs::ScriptType::Kind::System &&
           std::find(systems.begin(), systems.end(), type.name) == systems.end())
         candidates.push_back(&type);
-    std::stable_sort(candidates.begin(), candidates.end(),
-                     [](const sfs::ScriptType* a, const sfs::ScriptType* b)
-                     { return (a->module == "engine") > (b->module == "engine"); });
+    std::stable_sort(candidates.begin(),
+                     candidates.end(),
+                     [](const sfs::ScriptType* a, const sfs::ScriptType* b) {
+                       return (a->module == "engine") > (b->module == "engine");
+                     });
 
     const std::string* section = nullptr;
     for (const sfs::ScriptType* type : candidates)
@@ -64,13 +68,15 @@ void gameSystems(EditorScene& scene, EditorHistory& history)
       if (!section || *section != type->module)
       {
         section = &type->module;
-        ImGui::SeparatorText(*section == "engine" ? "Engine" : section->c_str());
+        ImGui::SeparatorText(*section == "engine" ? "Engine"
+                                                  : section->c_str());
       }
       if (ImGui::Selectable(type->name.c_str()))
         history.change([&] { systems.push_back(type->name); });
     }
     if (candidates.empty())
-      ImGui::TextDisabled("No other systems (create one under Scripts, then Build)");
+      ImGui::TextDisabled(
+          "No other systems (create one under Scripts, then Build)");
     ImGui::EndCombo();
   }
 }
@@ -92,13 +98,15 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   {
     const bool named = camera.hasComponent<sfs::NameComponent>();
     ImGui::Text("Game camera: %s",
-                named ? camera.getComponent<sfs::NameComponent>().name.c_str() : "(unnamed)");
+                named ? camera.getComponent<sfs::NameComponent>().name.c_str()
+                      : "(unnamed)");
   }
   else
   {
     ImGui::TextDisabled("Game camera: none");
-    ImGui::SetItemTooltip("Without a camera entity, the game starts from the viewport's\n"
-                          "view as last saved. Add one with + > Camera.");
+    ImGui::SetItemTooltip(
+        "Without a camera entity, the game starts from the viewport's\n"
+        "view as last saved. Add one with + > Camera.");
   }
   ImGui::Separator();
 
@@ -106,12 +114,19 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   // get their own widgets; the rest comes from the descriptors.
   sfs::SceneLighting3D lighting = render.lighting();
   bool lightingChanged = false;
-  lightingChanged |= widgets::undoable(&history, lighting.sun.direction, [](glm::vec3& v)
-                                       { return ImGui::DragFloat3("Sun Direction", &v.x, 0.01f); });
-  lightingChanged |= widgets::undoable(&history, lighting.sun.color, [](glm::vec3& v)
-                                       { return widgets::colorEdit3("Sun Color", &v.x); });
-  lightingChanged |= widgets::undoable(&history, lighting.skyColor, [](glm::vec3& v)
-                                       { return widgets::colorEdit3("Sky Color", &v.x); });
+  lightingChanged |= widgets::undoable(
+      &history,
+      lighting.sun.direction,
+      [](glm::vec3& v)
+      { return ImGui::DragFloat3("Sun Direction", &v.x, 0.01f); });
+  lightingChanged |= widgets::undoable(
+      &history,
+      lighting.sun.color,
+      [](glm::vec3& v) { return widgets::colorEdit3("Sun Color", &v.x); });
+  lightingChanged |= widgets::undoable(
+      &history,
+      lighting.skyColor,
+      [](glm::vec3& v) { return widgets::colorEdit3("Sky Color", &v.x); });
   if (lightingChanged)
     render.setLighting(lighting);
 
@@ -122,7 +137,8 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   bool clickTaken = !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
   for (const sfs::ModuleSetting& setting : render.settings())
   {
-    const bool speculate = !clickTaken && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    const bool speculate =
+        !clickTaken && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     if (speculate)
       history.beginChange();
 
@@ -137,6 +153,11 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   ImGui::Separator();
   const sfs::RenderStats3D& stats = render.stats();
   ImGui::Text("Draw calls: %zu", stats.drawCalls);
-  ImGui::Text("Objects: %zu (%zu casting shadows)", stats.instances, stats.shadowInstances);
-  ImGui::Text("Point lights: %zu", stats.pointLights);
+  ImGui::Text("Objects: %zu (%zu casting shadows)",
+              stats.instances,
+              stats.shadowInstances);
+  ImGui::Text("Point lights: %zu (%zu from emission, %zu casting shadows)",
+              stats.pointLights,
+              stats.emissionLights,
+              stats.shadowedLights);
 }

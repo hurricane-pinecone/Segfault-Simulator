@@ -31,7 +31,15 @@ void MeshModule::computeCommands(const RenderContext3D& context)
     const bool visible = context.frustum.intersects(worldBounds);
     const bool castsShadow = renderer.castsShadow && context.shadowsEnabled &&
                              context.shadowFrustum.intersects(worldBounds);
-    if (!visible && !castsShadow)
+    bool castsLightShadow = false;
+    if (renderer.castsShadow && context.shadowedLights)
+      for (const PointLight3D& light : *context.shadowedLights)
+        if (worldBounds.intersectsSphere(light.position, light.radius))
+        {
+          castsLightShadow = true;
+          break;
+        }
+    if (!visible && !castsShadow && !castsLightShadow)
       continue;
 
     // One command per mesh and set of materials: those draw as one instanced
@@ -65,6 +73,8 @@ void MeshModule::computeCommands(const RenderContext3D& context)
       command.instances.push_back(instance);
     if (castsShadow)
       command.shadowInstances.push_back(instance);
+    if (castsLightShadow)
+      command.lightShadowInstances.push_back(instance);
   }
 }
 

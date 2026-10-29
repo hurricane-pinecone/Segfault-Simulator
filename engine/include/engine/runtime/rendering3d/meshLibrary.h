@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/3d/aabb.h"
 #include "engine/core/rendering/3d/camera3D.h"
+#include "engine/core/rendering/3d/emissionLights.h"
 #include "engine/core/rendering/3d/mesh.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 
@@ -9,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -110,6 +112,21 @@ public:
    */
   std::vector<MeshSection> sections(MeshHandle mesh) const;
 
+  /** How many sections sections() gives, without copying them. */
+  std::size_t sectionCount(MeshHandle mesh) const;
+
+  /** Section `section`'s own material (as sections() has it), or null. */
+  const MeshMaterial* sectionMaterial(MeshHandle mesh,
+                                      std::size_t section) const;
+
+  /**
+   * Points spread evenly over a section's surface (see sampleSurface()),
+   * taken when the mesh is added: where emission lighting reads how much a
+   * glowing material gives off. Empty if the mesh or section isn't ours.
+   */
+  std::span<const SurfaceSample> surfaceSamples(MeshHandle mesh,
+                                                std::size_t section) const;
+
   struct RayHit
   {
     float distance = 0.0f;   // along the ray, in its direction's units
@@ -144,6 +161,12 @@ public:
    * update it in place, if it's loaded.
    */
   void reloadMaterial(std::string_view name);
+
+  /**
+   * What a material made by material() or setMaterial() is, e.g. to work out
+   * its emission on the CPU. Null for any other handle.
+   */
+  const MeshMaterial* materialData(MaterialHandle material) const;
 
   /** The provider's materials and textures, as (name, label), sorted by label.
    */
@@ -204,6 +227,7 @@ private:
     std::vector<glm::vec3> positions;
     std::vector<uint32_t> indices;
     std::vector<MeshVertex> vertices; // only with setKeepVertices
+    std::vector<std::vector<SurfaceSample>> samples; // per section
     MeshHandle gpu;       // the renderer's mesh (none while missing)
     bool pending = false; // a stand-in loading in the background
   };
@@ -220,6 +244,9 @@ private:
   uint32_t m_nextMissingId = kMissingIdBase;
   std::unordered_map<std::string, MaterialHandle>
       m_materials; // invalid: not found
+  // What each of m_materials is, by handle id.
+  std::unordered_map<uint32_t, std::shared_ptr<const MeshMaterial>>
+      m_materialData;
 };
 
 } // namespace sfs

@@ -88,7 +88,8 @@ std::string accessTag(const TypeModel& type, const FieldModel& field)
   return "Access_" + identifier(type.qualifiedName) + "_" + field.name;
 }
 
-void emitAccessTags(std::ostringstream& out, const std::vector<TypeModel>& types)
+void emitAccessTags(std::ostringstream& out,
+                    const std::vector<TypeModel>& types)
 {
   bool any = false;
   for (const TypeModel& type : types)
@@ -105,9 +106,9 @@ void emitAccessTags(std::ostringstream& out, const std::vector<TypeModel>& types
       any = true;
 
       const std::string tag = accessTag(type, field);
-      out << "struct " << tag << "\n{\n  using type = "
-          << cppTypeOf(field) << " " << type.qualifiedName
-          << "::*;\n  friend type memberOf(" << tag << ");\n};\n"
+      out << "struct " << tag << "\n{\n  using type = " << cppTypeOf(field)
+          << " " << type.qualifiedName << "::*;\n  friend type memberOf(" << tag
+          << ");\n};\n"
           << "template struct MemberAccess<" << tag << ", &"
           << type.qualifiedName << "::" << field.name << ">;\n\n";
     }
@@ -116,7 +117,9 @@ void emitAccessTags(std::ostringstream& out, const std::vector<TypeModel>& types
     out << "} // namespace sfs::reflect\n\n";
 }
 
-void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel& field)
+void emitField(std::ostringstream& out,
+               const TypeModel& type,
+               const FieldModel& field)
 {
   const std::string cppType = cppTypeOf(field);
 
@@ -125,8 +128,8 @@ void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel&
     out << "      static_assert(std::is_same_v<std::remove_cvref_t<decltype("
            "std::declval<"
         << type.qualifiedName << "&>()." << field.name << ")>, " << cppType
-        << ">,\n                    " << literal(type.name + "::" + field.name +
-                                                " must be " + cppType)
+        << ">,\n                    "
+        << literal(type.name + "::" + field.name + " must be " + cppType)
         << ");\n";
 
   out << "      FieldInfo field;\n"
@@ -142,19 +145,22 @@ void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel&
     out << "      field.attributes.texture = true;\n";
   if (field.materials)
     out << "      field.attributes.materials = true;\n";
+  if (field.emissionLight)
+    out << "      field.attributes.emissionLight = true;\n";
   if (field.kind == "AssetRef")
-    out << "      field.attributes.assetType = " << literal(field.assetType) << ";\n";
+    out << "      field.attributes.assetType = " << literal(field.assetType)
+        << ";\n";
   if (field.range)
     out << "      field.attributes.hasRange = true;\n"
-        << "      field.attributes.min = static_cast<float>(" << field.range->first
-        << ");\n"
-        << "      field.attributes.max = static_cast<float>(" << field.range->second
-        << ");\n";
+        << "      field.attributes.min = static_cast<float>("
+        << field.range->first << ");\n"
+        << "      field.attributes.max = static_cast<float>("
+        << field.range->second << ");\n";
 
   out << "      field.address = [](void* object) -> void* {\n";
   if (field.isPublic)
-    out << "        return &static_cast<" << type.qualifiedName << "*>(object)->"
-        << field.name << ";\n";
+    out << "        return &static_cast<" << type.qualifiedName
+        << "*>(object)->" << field.name << ";\n";
   else
     out << "        return &(static_cast<" << type.qualifiedName
         << "*>(object)->*memberOf(" << accessTag(type, field) << "{}));\n";
@@ -163,30 +169,34 @@ void emitField(std::ostringstream& out, const TypeModel& type, const FieldModel&
       << "    }\n";
 }
 
-void emitType(std::ostringstream& out, const TypeModel& type, const GeneratorOptions& options)
+void emitType(std::ostringstream& out,
+              const TypeModel& type,
+              const GeneratorOptions& options)
 {
   const std::string name = literal(type.name);
   const std::string module = literal(options.module);
 
-  out << "  { // " << type.qualifiedName << " (" << type.header.filename().string()
-      << ")\n";
+  out << "  { // " << type.qualifiedName << " ("
+      << type.header.filename().string() << ")\n";
   switch (type.kind)
   {
   case TypeKind::Component:
     out << "    TypeInfo type = componentType<" << type.qualifiedName << ">("
-        << name << ", " << literal(displayName(type.name, true)) << ", " << module
-        << ");\n";
+        << name << ", " << literal(displayName(type.name, true)) << ", "
+        << module << ");\n";
     break;
   case TypeKind::ScriptableObject:
-    out << "    static_assert(std::is_base_of_v<sfs::ScriptableObject, " << type.qualifiedName
-        << ">,\n                  "
-        << literal(type.name + " must derive from sfs::ScriptableObject") << ");\n"
-        << "    TypeInfo type = scriptableObjectType<" << type.qualifiedName << ">(" << name << ", "
-        << literal(displayName(type.name, false)) << ", " << module << ");\n";
+    out << "    static_assert(std::is_base_of_v<sfs::ScriptableObject, "
+        << type.qualifiedName << ">,\n                  "
+        << literal(type.name + " must derive from sfs::ScriptableObject")
+        << ");\n"
+        << "    TypeInfo type = scriptableObjectType<" << type.qualifiedName
+        << ">(" << name << ", " << literal(displayName(type.name, false))
+        << ", " << module << ");\n";
     break;
   case TypeKind::MeshSource:
-    out << "    static_assert(std::is_base_of_v<sfs::MeshSource, " << type.qualifiedName
-        << ">,\n                  "
+    out << "    static_assert(std::is_base_of_v<sfs::MeshSource, "
+        << type.qualifiedName << ">,\n                  "
         << literal(type.name + " must derive from sfs::MeshSource") << ");\n";
     // Scene3D asks every mesh source for its meshes when it is created.
     out << "    {\n      sfs::ScriptType script;\n"
@@ -200,7 +210,8 @@ void emitType(std::ostringstream& out, const TypeModel& type, const GeneratorOpt
         << "      sfs::scripts().add(std::move(script));\n    }\n"
         << "    TypeInfo type;\n"
         << "    type.name = " << name << ";\n"
-        << "    type.displayName = " << literal(displayName(type.name, false)) << ";\n"
+        << "    type.displayName = " << literal(displayName(type.name, false))
+        << ";\n"
         << "    type.module = " << module << ";\n"
         << "    type.kind = TypeKind::MeshSource;\n";
     break;
@@ -219,13 +230,16 @@ void emitType(std::ostringstream& out, const TypeModel& type, const GeneratorOpt
         << "      script.module = " << module << ";\n";
     if (isSystem)
       out << "      script.kind = sfs::ScriptType::Kind::System;\n"
-          << "      script.addSystem = [](sfs::Scene& scene) -> sfs::System& {\n"
+          << "      script.addSystem = [](sfs::Scene& scene) -> sfs::System& "
+             "{\n"
           << "        return scene.addSystem<" << type.qualifiedName << ">();\n"
           << "      };\n";
     else
       out << "      script.kind = sfs::ScriptType::Kind::GameObject;\n"
-          << "      script.createObject = []() -> std::unique_ptr<sfs::GameObject> {\n"
-          << "        return std::make_unique<" << type.qualifiedName << ">();\n"
+          << "      script.createObject = []() -> "
+             "std::unique_ptr<sfs::GameObject> {\n"
+          << "        return std::make_unique<" << type.qualifiedName
+          << ">();\n"
           << "      };\n";
     out << "      sfs::scripts().add(std::move(script));\n    }\n";
 
@@ -253,7 +267,8 @@ std::string displayName(std::string_view identifier, bool stripComponentSuffix)
 {
   std::string_view base = identifier;
   constexpr std::string_view suffix = "Component";
-  if (stripComponentSuffix && base.size() > suffix.size() && base.ends_with(suffix))
+  if (stripComponentSuffix && base.size() > suffix.size() &&
+      base.ends_with(suffix))
     base.remove_suffix(suffix.size());
 
   std::string out;
@@ -264,13 +279,14 @@ std::string displayName(std::string_view identifier, bool stripComponentSuffix)
     {
       const auto previous = static_cast<unsigned char>(base[i - 1]);
       const bool nextLower =
-          i + 1 < base.size() && std::islower(static_cast<unsigned char>(base[i + 1]));
+          i + 1 < base.size() &&
+          std::islower(static_cast<unsigned char>(base[i + 1]));
       // A word starts at lower->Upper ("meshRenderer"), at the last capital of
       // an acronym ("HTTPServer" -> "HTTP Server") and at the first digit of a
       // number ("pointLight3D" -> "Point Light 3D").
       const bool wordStart =
-          (std::isupper(c) && (std::islower(previous) ||
-                               (std::isupper(previous) && nextLower))) ||
+          (std::isupper(c) &&
+           (std::islower(previous) || (std::isupper(previous) && nextLower))) ||
           (std::isdigit(c) && std::isalpha(previous));
       if (wordStart)
         out += ' ';
@@ -288,22 +304,26 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
       << "#include \"" << options.functionHeader << "\"\n"
       << "#include \"engine/core/reflection/registration.h\"\n\n";
   // Systems and game objects also register how to instantiate them.
-  const bool hasScripts =
-      std::any_of(types.begin(), types.end(), [](const TypeModel& type)
-                  { return type.kind != TypeKind::Component; });
+  const bool hasScripts = std::any_of(
+      types.begin(),
+      types.end(),
+      [](const TypeModel& type) { return type.kind != TypeKind::Component; });
   if (hasScripts)
     out << "#include \"engine/runtime/rendering3d/meshSource.h\"\n"
         << "#include \"engine/runtime/sceneManager/scene.h\"\n"
         << "#include \"engine/runtime/scripting/scriptRegistry.h\"\n";
   out << "\n";
   for (const TypeModel& type : types)
-    out << "#include \"" << includePath(type.header, options.includeRoot) << "\"\n";
-  out << "\n#include <cstdint>\n#include <memory>\n#include <string>\n#include <type_traits>\n"
+    out << "#include \"" << includePath(type.header, options.includeRoot)
+        << "\"\n";
+  out << "\n#include <cstdint>\n#include <memory>\n#include <string>\n#include "
+         "<type_traits>\n"
       << "#include <utility>\n#include <vector>\n\n";
 
   emitAccessTags(out, types);
 
-  out << "void " << options.function << "(sfs::reflect::TypeRegistry& registry)\n{\n"
+  out << "void " << options.function
+      << "(sfs::reflect::TypeRegistry& registry)\n{\n"
       << "  using namespace sfs::reflect;\n\n";
   for (const TypeModel& type : types)
     emitType(out, type, options);

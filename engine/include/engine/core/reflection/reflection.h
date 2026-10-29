@@ -38,6 +38,9 @@ struct FieldAttributes
       false; // [[sfs::texture]]: a string naming a texture ("asset:<id>")
   bool materials =
       false; // [[sfs::materials]]: a string list of a mesh's material slots
+  // [[sfs::emissionLight]]: a setting of the light the component's glowing
+  // materials give off; the editor shows it only while one of them can glow
+  bool emissionLight = false;
   bool hasRange = false; // [[sfs::range(min, max)]]
   std::string assetType; // AssetRef: the scriptable object type it refers to,
                          // e.g. "ItemDef"

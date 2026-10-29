@@ -2,15 +2,15 @@
 
 #include "assets/assetDrop.h"
 #include "assets/gltfFiles.h"
-#include "assets/scriptableObjectFiles.h"
 #include "assets/materialFiles.h"
-#include "scripting/scriptFiles.h"
+#include "assets/scriptableObjectFiles.h"
 #include "editorContext.h"
 #include "platform/paths.h"
 #include "platform/shell.h"
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
 #include "scene/sceneDocument.h"
+#include "scripting/scriptFiles.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
@@ -48,7 +48,8 @@ using assetDrop::kAssetPayload;
 // the second cut short with "..." if it's still too long.
 std::array<std::string, 2> twoLines(const std::string& text, float width)
 {
-  const auto fits = [width](const std::string& part) { return ImGui::CalcTextSize(part.c_str()).x <= width; };
+  const auto fits = [width](const std::string& part)
+  { return ImGui::CalcTextSize(part.c_str()).x <= width; };
   if (fits(text))
     return {text, ""};
 
@@ -59,7 +60,8 @@ std::array<std::string, 2> twoLines(const std::string& text, float width)
     ++cut;
   const std::size_t space = text.find_last_of(" _-.", cut - 1);
   if (space != std::string::npos && space > 0 && space + 1 < text.size())
-    cut = text[space] == '.' ? space : space + 1; // a '.' starts the second line
+    cut =
+        text[space] == '.' ? space : space + 1; // a '.' starts the second line
 
   std::string second = text.substr(cut);
   if (!fits(second))
@@ -73,19 +75,27 @@ std::array<std::string, 2> twoLines(const std::string& text, float width)
 
 // A drawn picture for something without a preview: a folder, a scene, a
 // script, or a page marked with the file's type.
-void drawIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, bool directory, const fs::path& path)
+void drawIcon(ImDrawList* draw,
+              ImVec2 min,
+              ImVec2 max,
+              bool directory,
+              const fs::path& path)
 {
   const float w = max.x - min.x, h = max.y - min.y;
-  const auto at = [&](float x, float y) { return ImVec2(min.x + w * x, min.y + h * y); };
+  const auto at = [&](float x, float y)
+  { return ImVec2(min.x + w * x, min.y + h * y); };
   const ImU32 ink = theme::kIconInk;
   const ImU32 fill = theme::kTile;
 
   if (directory)
   {
     // A folder: a tab, and the body in front of it.
-    draw->AddRectFilled(at(0.14f, 0.24f), at(0.48f, 0.36f), IM_COL32(140, 182, 132, 255), 3.0f);
-    draw->AddRectFilled(at(0.14f, 0.30f), at(0.86f, 0.78f), IM_COL32(170, 214, 160, 255), 5.0f);
-    draw->AddRectFilled(at(0.14f, 0.38f), at(0.86f, 0.78f), IM_COL32(188, 226, 178, 255), 5.0f);
+    draw->AddRectFilled(
+        at(0.14f, 0.24f), at(0.48f, 0.36f), IM_COL32(140, 182, 132, 255), 3.0f);
+    draw->AddRectFilled(
+        at(0.14f, 0.30f), at(0.86f, 0.78f), IM_COL32(170, 214, 160, 255), 5.0f);
+    draw->AddRectFilled(
+        at(0.14f, 0.38f), at(0.86f, 0.78f), IM_COL32(188, 226, 178, 255), 5.0f);
     return;
   }
 
@@ -93,21 +103,32 @@ void drawIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, bool directory, const fs
   if (extension == ".prefab")
   {
     // A prefab: a sage box, drawn in three faces.
-    const ImVec2 top(at(0.5f, 0.18f).x, at(0.5f, 0.18f).y), left = at(0.18f, 0.34f), right = at(0.82f, 0.34f);
-    const ImVec2 middle = at(0.5f, 0.5f), bottomLeft = at(0.18f, 0.66f), bottomRight = at(0.82f, 0.66f),
-                 bottom = at(0.5f, 0.82f);
+    const ImVec2 top(at(0.5f, 0.18f).x, at(0.5f, 0.18f).y),
+        left = at(0.18f, 0.34f), right = at(0.82f, 0.34f);
+    const ImVec2 middle = at(0.5f, 0.5f), bottomLeft = at(0.18f, 0.66f),
+                 bottomRight = at(0.82f, 0.66f), bottom = at(0.5f, 0.82f);
     draw->AddQuadFilled(top, right, middle, left, IM_COL32(188, 226, 178, 255));
-    draw->AddQuadFilled(left, middle, bottom, bottomLeft, IM_COL32(150, 194, 140, 255));
-    draw->AddQuadFilled(middle, right, bottomRight, bottom, IM_COL32(120, 160, 112, 255));
+    draw->AddQuadFilled(
+        left, middle, bottom, bottomLeft, IM_COL32(150, 194, 140, 255));
+    draw->AddQuadFilled(
+        middle, right, bottomRight, bottom, IM_COL32(120, 160, 112, 255));
     return;
   }
   if (extension == SceneDocument::kExtension)
   {
     // A scene: a little landscape in a frame.
-    draw->AddRectFilled(at(0.16f, 0.22f), at(0.84f, 0.78f), IM_COL32(120, 150, 175, 255), 5.0f);
-    draw->AddCircleFilled(at(0.66f, 0.38f), w * 0.07f, IM_COL32(240, 215, 140, 255));
-    draw->AddTriangleFilled(at(0.18f, 0.76f), at(0.42f, 0.44f), at(0.62f, 0.76f), IM_COL32(128, 168, 116, 255));
-    draw->AddTriangleFilled(at(0.44f, 0.76f), at(0.62f, 0.54f), at(0.82f, 0.76f), IM_COL32(170, 214, 160, 255));
+    draw->AddRectFilled(
+        at(0.16f, 0.22f), at(0.84f, 0.78f), IM_COL32(120, 150, 175, 255), 5.0f);
+    draw->AddCircleFilled(
+        at(0.66f, 0.38f), w * 0.07f, IM_COL32(240, 215, 140, 255));
+    draw->AddTriangleFilled(at(0.18f, 0.76f),
+                            at(0.42f, 0.44f),
+                            at(0.62f, 0.76f),
+                            IM_COL32(128, 168, 116, 255));
+    draw->AddTriangleFilled(at(0.44f, 0.76f),
+                            at(0.62f, 0.54f),
+                            at(0.82f, 0.76f),
+                            IM_COL32(170, 214, 160, 255));
     draw->AddRect(at(0.16f, 0.22f), at(0.84f, 0.78f), ink, 5.0f, 0, 2.0f);
     return;
   }
@@ -116,28 +137,48 @@ void drawIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, bool directory, const fs
   const ImVec2 corner = at(0.74f, 0.14f);
   draw->AddRectFilled(at(0.24f, 0.12f), at(0.76f, 0.88f), fill, 4.0f);
   draw->AddRect(at(0.24f, 0.12f), at(0.76f, 0.88f), ink, 4.0f, 0, 1.5f);
-  draw->AddTriangleFilled(corner, at(0.76f, 0.30f), at(0.60f, 0.12f), IM_COL32(90, 96, 92, 255));
+  draw->AddTriangleFilled(
+      corner, at(0.76f, 0.30f), at(0.60f, 0.12f), IM_COL32(90, 96, 92, 255));
   std::string tag = extension.size() > 1 ? extension.substr(1) : "file";
   for (char& c : tag)
     c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
   if (tag.size() > 4)
     tag.resize(4);
-  const bool code = tag == "H" || tag == "HPP" || tag == "CPP" || tag == "C" || tag == "LUA" || tag == "WGSL";
+  const bool code = tag == "H" || tag == "HPP" || tag == "CPP" || tag == "C" ||
+                    tag == "LUA" || tag == "WGSL";
   const ImU32 tagColor = code ? IM_COL32(222, 200, 140, 255) : theme::kAccent;
   ImFont* font = ImGui::GetFont();
   const float fontSize = std::min(ImGui::GetFontSize() * 1.1f, h * 0.2f);
-  const ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, tag.c_str());
-  draw->AddText(font, fontSize, ImVec2(min.x + (w - textSize.x) * 0.5f, at(0, 0.58f).y), tagColor, tag.c_str());
+  const ImVec2 textSize =
+      font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, tag.c_str());
+  draw->AddText(font,
+                fontSize,
+                ImVec2(min.x + (w - textSize.x) * 0.5f, at(0, 0.58f).y),
+                tagColor,
+                tag.c_str());
 }
 
 // Files the Code panel edits: sources, build scripts, plain text.
 bool isTextFile(const fs::path& path)
 {
-  static const std::vector<std::string> kExtensions = {
-      ".h", ".hpp", ".hh", ".inl", ".cpp", ".cc", ".cxx", ".c",
-      ".cmake", ".txt", ".md", ".lua", ".json", ".glsl", ".wgsl"};
+  static const std::vector<std::string> kExtensions = {".h",
+                                                       ".hpp",
+                                                       ".hh",
+                                                       ".inl",
+                                                       ".cpp",
+                                                       ".cc",
+                                                       ".cxx",
+                                                       ".c",
+                                                       ".cmake",
+                                                       ".txt",
+                                                       ".md",
+                                                       ".lua",
+                                                       ".json",
+                                                       ".glsl",
+                                                       ".wgsl"};
   const std::string extension = path.extension().string();
-  return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
+  return std::find(kExtensions.begin(), kExtensions.end(), extension) !=
+         kExtensions.end();
 }
 
 bool isWithin(const fs::path& path, const fs::path& folder)
@@ -156,17 +197,21 @@ void registerSettings(AssetBrowserPanel* panel)
   ImGuiSettingsHandler handler;
   handler.TypeName = "SfsAssets";
   handler.TypeHash = ImHashStr("SfsAssets");
-  handler.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char* name) -> void*
+  handler.ReadOpenFn =
+      [](ImGuiContext*, ImGuiSettingsHandler*, const char* name) -> void*
   { return std::strcmp(name, "Panel") == 0 ? g_panel : nullptr; };
-  handler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler*, void* entry, const char* line)
+  handler.ReadLineFn =
+      [](ImGuiContext*, ImGuiSettingsHandler*, void* entry, const char* line)
   {
     if (auto* panel = static_cast<AssetBrowserPanel*>(entry))
       panel->readSetting(line);
   };
-  handler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* out)
+  handler.WriteAllFn =
+      [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* out)
   {
     if (g_panel)
-      out->appendf("[%s][Panel]\n%s\n", h->TypeName, g_panel->writeSettings().c_str());
+      out->appendf(
+          "[%s][Panel]\n%s\n", h->TypeName, g_panel->writeSettings().c_str());
   };
   ImGui::AddSettingsHandler(&handler);
 }
@@ -196,7 +241,8 @@ void AssetBrowserPanel::readSetting(const char* line)
 
 std::string AssetBrowserPanel::writeSettings() const
 {
-  return "TileSize=" + std::to_string(static_cast<int>(m_tileSize)) + "\nGrid=" + (m_gridView ? "1" : "0") + "\n";
+  return "TileSize=" + std::to_string(static_cast<int>(m_tileSize)) +
+         "\nGrid=" + (m_gridView ? "1" : "0") + "\n";
 }
 
 std::string AssetBrowserPanel::folderLabel(const fs::path& folder) const
@@ -204,11 +250,13 @@ std::string AssetBrowserPanel::folderLabel(const fs::path& folder) const
   // The project's own folders (scenes, scripts, prefabs, assets) in title case.
   std::string name = label(folder);
   if (folder.parent_path() == m_root && !name.empty())
-    name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+    name[0] =
+        static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
   return name;
 }
 
-// --- helpers ------------------------------------------------------------------------
+// --- helpers
+// ------------------------------------------------------------------------
 
 bool AssetBrowserPanel::inCatalogue(const fs::path& path) const
 {
@@ -228,7 +276,8 @@ fs::path AssetBrowserPanel::assetRelative(const fs::path& path) const
 
 fs::path AssetBrowserPanel::topFolderOf(const fs::path& path) const
 {
-  const std::optional<std::string> inside = m_root.empty() ? std::nullopt : paths::relative(path, m_root);
+  const std::optional<std::string> inside =
+      m_root.empty() ? std::nullopt : paths::relative(path, m_root);
   if (!inside || inside->empty())
     return {};
   return m_root / inside->substr(0, inside->find('/'));
@@ -236,20 +285,24 @@ fs::path AssetBrowserPanel::topFolderOf(const fs::path& path) const
 
 bool AssetBrowserPanel::isTopFolder(const fs::path& path) const
 {
-  return !m_root.empty() && paths::normal(path) == paths::normal(topFolderOf(path));
+  return !m_root.empty() &&
+         paths::normal(path) == paths::normal(topFolderOf(path));
 }
 
-std::optional<fs::path> AssetBrowserPanel::selectedPath(const EditorContext& context) const
+std::optional<fs::path>
+AssetBrowserPanel::selectedPath(const EditorContext& context) const
 {
   if (context.assets && context.selectedAsset.valid())
-    if (const sfs::AssetRecord* record = context.assets->find(context.selectedAsset))
+    if (const sfs::AssetRecord* record =
+            context.assets->find(context.selectedAsset))
       return m_root / record->path;
   if (!m_highlighted.empty())
     return m_highlighted;
   return std::nullopt;
 }
 
-void AssetBrowserPanel::newFolder(EditorContext& context, const fs::path& parent)
+void AssetBrowserPanel::newFolder(EditorContext& context,
+                                  const fs::path& parent)
 {
   // "New Folder" (numbered if taken), with its name ready to type.
   fs::path folder = parent / "New Folder";
@@ -266,7 +319,8 @@ void AssetBrowserPanel::newFolder(EditorContext& context, const fs::path& parent
     fs::create_directories(folder, error);
     if (error)
     {
-      LOG_ERROR("Can't make a folder in " + parent.string() + ": " + error.message());
+      LOG_ERROR("Can't make a folder in " + parent.string() + ": " +
+                error.message());
       return;
     }
     requestRefresh();
@@ -276,7 +330,9 @@ void AssetBrowserPanel::newFolder(EditorContext& context, const fs::path& parent
   recordMade("New Folder", {folder});
 }
 
-bool AssetBrowserPanel::movePaths(EditorContext& context, const std::vector<std::pair<fs::path, fs::path>>& moves)
+bool AssetBrowserPanel::movePaths(
+    EditorContext& context,
+    const std::vector<std::pair<fs::path, fs::path>>& moves)
 {
   if (moves.empty())
     return false;
@@ -285,10 +341,14 @@ bool AssetBrowserPanel::movePaths(EditorContext& context, const std::vector<std:
   const bool catalogue = inCatalogue(moves.front().first);
   const fs::path area = topFolderOf(moves.front().first);
   for (const auto& [from, to] : moves)
-    if (isTopFolder(from) || (catalogue ? !inCatalogue(to) : topFolderOf(to) != area) || isWithin(to, from))
+    if (isTopFolder(from) ||
+        (catalogue ? !inCatalogue(to) : topFolderOf(to) != area) ||
+        isWithin(to, from))
     {
       LOG_ERROR("Can't move " + from.filename().string() + " there" +
-                (isTopFolder(from) ? ": the project needs it where it is" : ": it belongs in " + area.filename().string()));
+                (isTopFolder(from)
+                     ? ": the project needs it where it is"
+                     : ": it belongs in " + area.filename().string()));
       return false;
     }
 
@@ -297,9 +357,12 @@ bool AssetBrowserPanel::movePaths(EditorContext& context, const std::vector<std:
     for (const auto& [from, to] : moves)
     {
       if (fs::is_directory(from))
-        moved &= context.assets->moveFolder(assetRelative(from), assetRelative(to));
-      else if (const sfs::AssetRecord* record = context.assets->findByPath(assetRelative(from)))
-        moved &= gltfFiles::move(*context.assets, record->id, assetRelative(to));
+        moved &=
+            context.assets->moveFolder(assetRelative(from), assetRelative(to));
+      else if (const sfs::AssetRecord* record =
+                   context.assets->findByPath(assetRelative(from)))
+        moved &=
+            gltfFiles::move(*context.assets, record->id, assetRelative(to));
     }
   else if (context.project && area == context.project->scriptsFolder())
     moved = scriptFiles::move(context.project->scriptsFolder(), moves);
@@ -309,13 +372,15 @@ bool AssetBrowserPanel::movePaths(EditorContext& context, const std::vector<std:
       std::error_code error;
       if (fs::exists(to, error))
       {
-        LOG_ERROR("Can't move " + from.filename().string() + ": there's already a " + to.filename().string());
+        LOG_ERROR("Can't move " + from.filename().string() +
+                  ": there's already a " + to.filename().string());
         return false;
       }
       fs::rename(from, to, error);
       if (error)
       {
-        LOG_ERROR("Can't move " + from.filename().string() + ": " + error.message());
+        LOG_ERROR("Can't move " + from.filename().string() + ": " +
+                  error.message());
         return false;
       }
       if (m_actions.moved)
@@ -334,7 +399,9 @@ bool AssetBrowserPanel::movePaths(EditorContext& context, const std::vector<std:
   return moved;
 }
 
-std::optional<fs::path> AssetBrowserPanel::renameItem(EditorContext& context, const fs::path& path, std::string name)
+std::optional<fs::path> AssetBrowserPanel::renameItem(EditorContext& context,
+                                                      const fs::path& path,
+                                                      std::string name)
 {
   if (name.empty() || name.find_first_of("/\\") != std::string::npos)
     return std::nullopt;
@@ -348,7 +415,8 @@ std::optional<fs::path> AssetBrowserPanel::renameItem(EditorContext& context, co
 
   // A script named after its class: renaming it renames the class (in every
   // script), and its .h/.cpp pair goes with it.
-  const bool scripts = context.project && topFolderOf(path) == context.project->scriptsFolder();
+  const bool scripts =
+      context.project && topFolderOf(path) == context.project->scriptsFolder();
   const std::string from = path.stem().string(), to = target.stem().string();
   const auto isScriptSource = [](const fs::path& file)
   { return file.extension() == ".h" || file.extension() == ".cpp"; };
@@ -356,10 +424,13 @@ std::optional<fs::path> AssetBrowserPanel::renameItem(EditorContext& context, co
   {
     if (!scriptTemplates::isValidName(to))
     {
-      LOG_ERROR("'" + to + "' isn't a valid class name (a script is named after its class)");
+      LOG_ERROR(
+          "'" + to +
+          "' isn't a valid class name (a script is named after its class)");
       return std::nullopt;
     }
-    if (scriptFiles::find(context.project->scriptsFolder(), to, scriptFiles::Prefer::Header))
+    if (scriptFiles::find(
+            context.project->scriptsFolder(), to, scriptFiles::Prefer::Header))
     {
       LOG_ERROR("There's already a script called " + to);
       return std::nullopt;
@@ -374,9 +445,11 @@ std::optional<fs::path> AssetBrowserPanel::renameItem(EditorContext& context, co
     }
     if (!movePaths(context, moves))
       return std::nullopt;
-    const int files = scriptFiles::renameIdentifier(context.project->scriptsFolder(), from, to);
-    LOG_INFO("Renamed the class " + from + " to " + to + " (" + std::to_string(files) + " script" +
-             (files == 1 ? "" : "s") + "); scenes using it follow when the scripts are built");
+    const int files = scriptFiles::renameIdentifier(
+        context.project->scriptsFolder(), from, to);
+    LOG_INFO("Renamed the class " + from + " to " + to + " (" +
+             std::to_string(files) + " script" + (files == 1 ? "" : "s") +
+             "); scenes using it follow when the scripts are built");
     return target;
   }
   if (!movePaths(context, {{path, target}}))
@@ -384,20 +457,25 @@ std::optional<fs::path> AssetBrowserPanel::renameItem(EditorContext& context, co
   return target;
 }
 
-bool AssetBrowserPanel::moveItem(EditorContext& context, const fs::path& path, const fs::path& folder)
+bool AssetBrowserPanel::moveItem(EditorContext& context,
+                                 const fs::path& path,
+                                 const fs::path& folder)
 {
   // Not onto itself, its own folder, or (a folder) into itself.
-  if (paths::normal(path.parent_path()) == paths::normal(folder) || isWithin(folder, path))
+  if (paths::normal(path.parent_path()) == paths::normal(folder) ||
+      isWithin(folder, path))
     return false;
   const bool moved = movePaths(context, {{path, folder / path.filename()}});
   // Said in the Console, so a move made by a slip of the mouse is noticed.
   if (moved)
-    LOG_INFO("Moved " + paths::relative(path, m_root).value_or(path.string()) + " to " +
+    LOG_INFO("Moved " + paths::relative(path, m_root).value_or(path.string()) +
+             " to " +
              paths::relative(folder, m_root).value_or(folder.string()));
   return moved;
 }
 
-std::vector<fs::path> AssetBrowserPanel::withCompanions(const fs::path& path) const
+std::vector<fs::path>
+AssetBrowserPanel::withCompanions(const fs::path& path) const
 {
   std::vector<fs::path> out{path};
   std::error_code error;
@@ -418,30 +496,35 @@ std::vector<fs::path> AssetBrowserPanel::withCompanions(const fs::path& path) co
   return out;
 }
 
-std::optional<AssetBrowserPanel::Trashed> AssetBrowserPanel::toTrash(EditorContext& context, const fs::path& path)
+std::optional<AssetBrowserPanel::Trashed>
+AssetBrowserPanel::toTrash(EditorContext& context, const fs::path& path)
 {
   if (isTopFolder(path))
     return std::nullopt;
   // Into a trash folder of its own, at its place in the project (with its
   // .meta: undone, it comes back as the same asset, references and all).
-  const fs::path bin = m_root / ".sfs" / "trash" / std::to_string(++m_trashCount);
+  const fs::path bin =
+      m_root / ".sfs" / "trash" / std::to_string(++m_trashCount);
   Trashed trashed;
   std::error_code error;
   for (const fs::path& from : withCompanions(path))
   {
-    const fs::path to = bin / paths::relative(from, m_root).value_or(from.filename().string());
+    const fs::path to =
+        bin / paths::relative(from, m_root).value_or(from.filename().string());
     fs::create_directories(to.parent_path(), error);
     fs::rename(from, to, error);
     if (error)
     {
-      LOG_ERROR("Can't delete " + from.filename().string() + ": " + error.message());
+      LOG_ERROR("Can't delete " + from.filename().string() + ": " +
+                error.message());
       restore(context, trashed, true);
       return std::nullopt;
     }
     trashed.moves.push_back({from, to});
   }
   if (context.assets && context.selectedAsset.valid())
-    if (const sfs::AssetRecord* record = context.assets->find(context.selectedAsset);
+    if (const sfs::AssetRecord* record =
+            context.assets->find(context.selectedAsset);
         record && isWithin(m_root / record->path, path))
       context.selectedAsset = {};
   if (isWithin(m_open, path))
@@ -454,7 +537,9 @@ std::optional<AssetBrowserPanel::Trashed> AssetBrowserPanel::toTrash(EditorConte
   return trashed;
 }
 
-bool AssetBrowserPanel::restore(EditorContext& context, const Trashed& trashed, bool back)
+bool AssetBrowserPanel::restore(EditorContext& context,
+                                const Trashed& trashed,
+                                bool back)
 {
   // Back where it was (undoing a delete), or into the trash again.
   std::error_code error;
@@ -465,14 +550,16 @@ bool AssetBrowserPanel::restore(EditorContext& context, const Trashed& trashed, 
     const fs::path& to = back ? original : inTrash;
     if (fs::exists(to, error))
     {
-      LOG_ERROR("Can't put back " + to.filename().string() + ": there's one there now");
+      LOG_ERROR("Can't put back " + to.filename().string() +
+                ": there's one there now");
       return false;
     }
     fs::create_directories(to.parent_path(), error);
     fs::rename(from, to, error);
     if (error)
     {
-      LOG_ERROR("Can't put back " + to.filename().string() + ": " + error.message());
+      LOG_ERROR("Can't put back " + to.filename().string() + ": " +
+                error.message());
       return false;
     }
     catalogue |= inCatalogue(original);
@@ -491,15 +578,22 @@ bool AssetBrowserPanel::restore(EditorContext& context, const Trashed& trashed, 
   return true;
 }
 
-std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const fs::path& item, const fs::path& folder)
+std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context,
+                                                  const fs::path& item,
+                                                  const fs::path& folder)
 {
   // Within one of the project's folders, as for moves.
   const bool catalogue = inCatalogue(item);
-  if (isTopFolder(item) || (catalogue ? !inCatalogue(folder) : topFolderOf(folder) != topFolderOf(item)) ||
-      (isWithin(folder, item) && paths::normal(folder) != paths::normal(item.parent_path())))
+  if (isTopFolder(item) ||
+      (catalogue ? !inCatalogue(folder)
+                 : topFolderOf(folder) != topFolderOf(item)) ||
+      (isWithin(folder, item) &&
+       paths::normal(folder) != paths::normal(item.parent_path())))
   {
     LOG_ERROR("Can't paste " + item.filename().string() + " there" +
-              (isTopFolder(item) ? "" : ": it belongs in " + topFolderOf(item).filename().string()));
+              (isTopFolder(item) ? ""
+                                 : ": it belongs in " +
+                                       topFolderOf(item).filename().string()));
     return {};
   }
   std::error_code error;
@@ -512,18 +606,22 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const 
   // Scripts: new classes.
   if (context.project && topFolderOf(item) == context.project->scriptsFolder())
   {
-    std::vector<fs::path> made = scriptFiles::copy(context.project->scriptsFolder(), item, folder);
+    std::vector<fs::path> made =
+        scriptFiles::copy(context.project->scriptsFolder(), item, folder);
     requestRefresh();
     return made;
   }
 
   // "<name> Copy" where its name's taken.
   const bool directory = fs::is_directory(item, error);
-  const std::string stem = directory ? item.filename().string() : item.stem().string();
-  const std::string extension = directory ? std::string() : item.extension().string();
+  const std::string stem =
+      directory ? item.filename().string() : item.stem().string();
+  const std::string extension =
+      directory ? std::string() : item.extension().string();
   fs::path target = folder / item.filename();
   for (int n = 1; fs::exists(target, error); ++n)
-    target = folder / (stem + " Copy" + (n > 1 ? " " + std::to_string(n) : "") + extension);
+    target = folder / (stem + " Copy" + (n > 1 ? " " + std::to_string(n) : "") +
+                       extension);
 
   // A new asset id for each copy (its import settings kept).
   const auto newId = [&](const fs::path& meta)
@@ -540,7 +638,8 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const 
     fs::copy(item, target, fs::copy_options::recursive, error);
     if (catalogue && !error)
       for (auto it = fs::recursive_directory_iterator(target, error);
-           !error && it != fs::recursive_directory_iterator(); it.increment(error))
+           !error && it != fs::recursive_directory_iterator();
+           it.increment(error))
         if (it->path().extension() == ".meta")
           newId(it->path());
   }
@@ -552,7 +651,8 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const 
       const auto copyMeta = [&](const fs::path& from, const fs::path& to)
       {
         std::error_code ignored;
-        if (fs::copy_file(from.string() + ".meta", to.string() + ".meta", ignored))
+        if (fs::copy_file(
+                from.string() + ".meta", to.string() + ".meta", ignored))
           newId(to.string() + ".meta");
       };
       copyMeta(item, target);
@@ -560,7 +660,8 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const 
       const fs::path bin = item.parent_path() / (item.stem().string() + ".bin");
       if (item.extension() == ".gltf" && fs::exists(bin, error))
       {
-        const fs::path newBin = target.parent_path() / (target.stem().string() + ".bin");
+        const fs::path newBin =
+            target.parent_path() / (target.stem().string() + ".bin");
         fs::copy_file(bin, newBin, error);
         copyMeta(bin, newBin);
         std::ifstream in(target);
@@ -578,7 +679,8 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context, const 
   }
   if (error)
   {
-    LOG_ERROR("Can't copy " + item.filename().string() + ": " + error.message());
+    LOG_ERROR("Can't copy " + item.filename().string() + ": " +
+              error.message());
     return {};
   }
   if (catalogue && context.assets)
@@ -603,14 +705,16 @@ void AssetBrowserPanel::paste(EditorContext& context, const fs::path& folder)
 
 void AssetBrowserPanel::duplicate(EditorContext& context, const fs::path& item)
 {
-  const std::vector<fs::path> made = copyInto(context, item, item.parent_path());
+  const std::vector<fs::path> made =
+      copyInto(context, item, item.parent_path());
   if (made.empty())
     return;
   m_highlighted = made.front();
   recordMade("Duplicate " + item.filename().string(), made);
 }
 
-void AssetBrowserPanel::recordMade(const std::string& label, const std::vector<fs::path>& made)
+void AssetBrowserPanel::recordMade(const std::string& label,
+                                   const std::vector<fs::path>& made)
 {
   // Undone, what was made goes to the trash; redone, it comes back.
   auto trashed = std::make_shared<std::vector<Trashed>>();
@@ -644,8 +748,10 @@ bool AssetBrowserPanel::deleteItem(EditorContext& context, const fs::path& path)
   if (!trashed)
     return false;
   record({"Delete " + path.filename().string(),
-          [this, gone = *trashed](EditorContext& c) { return restore(c, gone, true); },
-          [this, gone = *trashed](EditorContext& c) { return restore(c, gone, false); }});
+          [this, gone = *trashed](EditorContext& c)
+          { return restore(c, gone, true); },
+          [this, gone = *trashed](EditorContext& c)
+          { return restore(c, gone, false); }});
   return true;
 }
 
@@ -689,13 +795,15 @@ void AssetBrowserPanel::redo(EditorContext& context)
 
 void AssetBrowserPanel::duplicateSelected(EditorContext& context)
 {
-  if (const std::optional<fs::path> selected = selectedPath(context); selected && !isTopFolder(*selected))
+  if (const std::optional<fs::path> selected = selectedPath(context);
+      selected && !isTopFolder(*selected))
     duplicate(context, *selected);
 }
 
 void AssetBrowserPanel::deleteSelected(EditorContext& context)
 {
-  if (const std::optional<fs::path> selected = selectedPath(context); selected && !isTopFolder(*selected))
+  if (const std::optional<fs::path> selected = selectedPath(context);
+      selected && !isTopFolder(*selected))
     m_pendingDelete = *selected;
 }
 
@@ -740,12 +848,16 @@ void AssetBrowserPanel::refresh(EditorContext& context)
   // done (see drawContents).
   m_scanRoot = context.assets->root();
   m_scan = std::async(std::launch::async,
-                      [root = m_scanRoot, mode = context.assets->mode(), folders = context.assets->scannedFolders()]
-                      { return sfs::AssetDatabase::scan(root, mode, folders); });
+                      [root = m_scanRoot,
+                       mode = context.assets->mode(),
+                       folders = context.assets->scannedFolders()] {
+                        return sfs::AssetDatabase::scan(root, mode, folders);
+                      });
 }
 
-const std::vector<AssetBrowserPanel::Entry>& AssetBrowserPanel::listFolder(const EditorContext& context,
-                                                                    const fs::path& folder)
+const std::vector<AssetBrowserPanel::Entry>&
+AssetBrowserPanel::listFolder(const EditorContext& context,
+                              const fs::path& folder)
 {
   // Listings are kept until the next refresh, or (assets/) until the
   // catalogue changes.
@@ -757,7 +869,8 @@ const std::vector<AssetBrowserPanel::Entry>& AssetBrowserPanel::listFolder(const
   const auto cached = m_listings.find(folder);
   if (cached != m_listings.end())
     return cached->second;
-  const auto finish = [&](std::vector<Entry> entries) -> const std::vector<Entry>&
+  const auto finish =
+      [&](std::vector<Entry> entries) -> const std::vector<Entry>&
   {
     for (Entry& entry : entries)
     {
@@ -776,7 +889,8 @@ const std::vector<AssetBrowserPanel::Entry>& AssetBrowserPanel::listFolder(const
       if (sub.parent_path() == relative)
         entries.push_back({m_root / sub, true});
     for (const sfs::AssetRecord& record : context.assets->records())
-      if (record.path.parent_path() == relative && !gltfFiles::isCompanion(*context.assets, record))
+      if (record.path.parent_path() == relative &&
+          !gltfFiles::isCompanion(*context.assets, record))
         entries.push_back({m_root / record.path, false, record.id});
     return finish(std::move(entries));
   }
@@ -787,17 +901,28 @@ const std::vector<AssetBrowserPanel::Entry>& AssetBrowserPanel::listFolder(const
   for (const auto& item : fs::directory_iterator(folder, error))
     if (!label(item.path()).starts_with("."))
       entries.push_back({item.path(), item.is_directory(error)});
-  std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
-            { return a.directory != b.directory ? a.directory : a.path.filename() < b.path.filename(); });
+  std::sort(entries.begin(),
+            entries.end(),
+            [](const Entry& a, const Entry& b)
+            {
+              return a.directory != b.directory
+                         ? a.directory
+                         : a.path.filename() < b.path.filename();
+            });
   return finish(std::move(entries));
 }
 
-const sfs::AssetRecord* AssetBrowserPanel::recordOf(const EditorContext& context, const Entry& entry) const
+const sfs::AssetRecord*
+AssetBrowserPanel::recordOf(const EditorContext& context,
+                            const Entry& entry) const
 {
-  return entry.asset.valid() && context.assets ? context.assets->find(entry.asset) : nullptr;
+  return entry.asset.valid() && context.assets
+             ? context.assets->find(entry.asset)
+             : nullptr;
 }
 
-// --- drawing ------------------------------------------------------------------------
+// --- drawing
+// ------------------------------------------------------------------------
 
 void AssetBrowserPanel::drawContents(EditorContext& context)
 {
@@ -811,7 +936,8 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
     showProject(context);
   if (m_refreshRequested)
     refresh(context);
-  if (m_scan.valid() && m_scan.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+  if (m_scan.valid() &&
+      m_scan.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
   {
     sfs::AssetDatabase::Scan scan = m_scan.get();
     if (context.assets && context.assets->root() == m_scanRoot)
@@ -823,7 +949,8 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
   // to the front and scroll to it.
   if (context.revealAsset.valid() && context.assets)
   {
-    if (const sfs::AssetRecord* record = context.assets->find(context.revealAsset))
+    if (const sfs::AssetRecord* record =
+            context.assets->find(context.revealAsset))
     {
       m_open = m_root / record->path.parent_path();
       m_scrollTo = record->id;
@@ -852,16 +979,19 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
   // Whose the Edit menu is: this panel's while it, or one of its parts, was
   // the last panel focused (menus and popups don't count).
   if (const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow)
-    if (!(focused->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_MenuBar |
-                            ImGuiWindowFlags_Tooltip)))
-      m_ownsEdit = focused->RootWindowDockTree == ImGui::GetCurrentWindow()->RootWindowDockTree;
+    if (!(focused->Flags &
+          (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
+           ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_Tooltip)))
+      m_ownsEdit = focused->RootWindowDockTree ==
+                   ImGui::GetCurrentWindow()->RootWindowDockTree;
 
   // Keys, while this panel has focus (elsewhere they're the scene's).
   if (!m_renaming && !ImGui::GetIO().WantTextInput)
   {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z))
       undo(context);
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y) || ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y) ||
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
       redo(context);
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V))
       paste(context, m_open);
@@ -881,8 +1011,10 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
   ImGui::Separator();
 
   // Folder tree | contents, side by side.
-  const float treeWidth = std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.25f);
-  ImGui::BeginChild("Folders", ImVec2(treeWidth, 0.0f), ImGuiChildFlags_ResizeX);
+  const float treeWidth =
+      std::max(160.0f, ImGui::GetContentRegionAvail().x * 0.25f);
+  ImGui::BeginChild(
+      "Folders", ImVec2(treeWidth, 0.0f), ImGuiChildFlags_ResizeX);
   for (const fs::path& folder : m_topFolders)
     drawFolderTree(context, folder);
   m_revealTree = false;
@@ -908,13 +1040,15 @@ void AssetBrowserPanel::drawToolbar(EditorContext& context)
     m_gridView = !m_gridView;
     ImGui::MarkIniSettingsDirty();
   }
-  ImGui::SetItemTooltip(m_gridView ? "Show the folder as a list" : "Show the folder as tiles with previews");
+  ImGui::SetItemTooltip(m_gridView ? "Show the folder as a list"
+                                   : "Show the folder as tiles with previews");
   if (m_gridView)
   {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(90.0f);
     // As tall as the small buttons beside it.
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
     if (ImGui::SliderFloat("##size", &m_tileSize, kMinTile, kMaxTile, ""))
       ImGui::MarkIniSettingsDirty(); // remembered with the layout
     ImGui::PopStyleVar();
@@ -949,23 +1083,29 @@ void AssetBrowserPanel::drawToolbar(EditorContext& context)
   }
 }
 
-void AssetBrowserPanel::drawFolderTree(EditorContext& context, const fs::path& folder)
+void AssetBrowserPanel::drawFolderTree(EditorContext& context,
+                                       const fs::path& folder)
 {
   std::vector<Entry> subfolders;
   for (const Entry& entry : listFolder(context, folder))
     if (entry.directory)
       subfolders.push_back(entry);
 
-  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                             ImGuiTreeNodeFlags_OpenOnDoubleClick |
                              ImGuiTreeNodeFlags_SpanAvailWidth;
   if (subfolders.empty())
     flags |= ImGuiTreeNodeFlags_Leaf;
   if (folder == m_open)
     flags |= ImGuiTreeNodeFlags_Selected;
   if (isWithin(m_open, folder) && folder != m_open)
-    ImGui::SetNextItemOpen(true, m_revealTree ? ImGuiCond_Always : ImGuiCond_Once);
+    ImGui::SetNextItemOpen(
+        true, m_revealTree ? ImGuiCond_Always : ImGuiCond_Once);
 
-  const bool open = ImGui::TreeNodeEx(folder.generic_string().c_str(), flags, "%s", folderLabel(folder).c_str());
+  const bool open = ImGui::TreeNodeEx(folder.generic_string().c_str(),
+                                      flags,
+                                      "%s",
+                                      folderLabel(folder).c_str());
   if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
     m_open = folder;
   dragSource(context, {folder, true}); // not the project's own folders
@@ -990,7 +1130,10 @@ void AssetBrowserPanel::drawContentsPane(EditorContext& context)
 
   if (m_gridView)
     drawGrid(context, entries);
-  else if (ImGui::BeginTable("Entries", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+  else if (ImGui::BeginTable(
+               "Entries",
+               2,
+               ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
   {
     ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 4.0f);
     ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -1002,8 +1145,9 @@ void AssetBrowserPanel::drawContentsPane(EditorContext& context)
     ImGui::TextDisabled("(empty)");
 
   // Right-click on the space below the list: this folder's menu.
-  if (ImGui::BeginPopupContextWindow("FolderBackground",
-                                     ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+  if (ImGui::BeginPopupContextWindow(
+          "FolderBackground",
+          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
   {
     drawFolderMenu(context, m_open);
     ImGui::EndPopup();
@@ -1012,9 +1156,10 @@ void AssetBrowserPanel::drawContentsPane(EditorContext& context)
   // Dropping an entity anywhere in the open folder makes a prefab of it.
   if (inCatalogue(m_open))
   {
-    const ImRect area(ImGui::GetWindowPos(),
-                      ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
-                             ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
+    const ImRect area(
+        ImGui::GetWindowPos(),
+        ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
+               ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
     if (ImGui::BeginDragDropTargetCustom(area, ImGui::GetID("FolderDrop")))
     {
       acceptEntity(context, m_open);
@@ -1038,17 +1183,30 @@ void AssetBrowserPanel::drawEntry(EditorContext& context, const Entry& entry)
     return;
   }
 
-  const bool selected = record ? record->id == context.selectedAsset : entry.path == m_highlighted;
+  // An asset is highlighted when selected, or (with none selected, as
+  // selectedPath() prefers one) when something asked to see its file (an
+  // Inspector field's find icon), as a plain file is.
+  const bool selected =
+      (record && record->id == context.selectedAsset) ||
+      (!context.selectedAsset.valid() && entry.path == m_highlighted);
   const std::string name = (entry.directory ? "[+] " : "") + entry.name;
-  const bool clicked = ImGui::Selectable(
-      name.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
-  if ((entry.asset.valid() && entry.asset == m_scrollTo) || (!m_scrollToFile.empty() && entry.path == m_scrollToFile))
+  const bool clicked =
+      ImGui::Selectable(name.c_str(),
+                        selected,
+                        ImGuiSelectableFlags_SpanAllColumns |
+                            ImGuiSelectableFlags_AllowDoubleClick);
+  if ((entry.asset.valid() && entry.asset == m_scrollTo) ||
+      (!m_scrollToFile.empty() && entry.path == m_scrollToFile))
   {
     ImGui::SetScrollHereY(0.5f);
     m_scrollTo = {};
     m_scrollToFile.clear();
   }
-  entryBehaviour(context, entry, record, clicked, clicked && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left));
+  entryBehaviour(context,
+                 entry,
+                 record,
+                 clicked,
+                 clicked && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left));
 
   ImGui::TableNextColumn();
   if (entry.directory)
@@ -1072,7 +1230,9 @@ void AssetBrowserPanel::entryBehaviour(EditorContext& context,
     context.selection = {}; // the Inspector shows the asset
   }
   if (clicked)
-    m_highlighted = record ? fs::path() : entry.path; // files outside the catalogue select too
+    m_highlighted = record
+                        ? fs::path()
+                        : entry.path; // files outside the catalogue select too
   if (doubleClicked)
     entry.directory ? void(m_open = entry.path) : activate(context, entry.path);
   dragSource(context, entry);
@@ -1096,7 +1256,8 @@ void AssetBrowserPanel::entryBehaviour(EditorContext& context,
         m_clipboard = {entry.path};
       if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
         duplicate(context, entry.path);
-      if (entry.directory && ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboard.empty()))
+      if (entry.directory &&
+          ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboard.empty()))
         paste(context, entry.path);
       ImGui::Separator();
       if (ImGui::MenuItem("Rename", "F2"))
@@ -1105,17 +1266,21 @@ void AssetBrowserPanel::entryBehaviour(EditorContext& context,
         m_pendingDelete = entry.path;
     }
     if (ImGui::MenuItem("Show in Folder"))
-      entry.directory ? shell::openExternally(entry.path) : shell::showInFolder(entry.path);
+      entry.directory ? shell::openExternally(entry.path)
+                      : shell::showInFolder(entry.path);
     ImGui::EndPopup();
   }
 }
 
-void AssetBrowserPanel::drawGrid(EditorContext& context, const std::vector<Entry>& entries)
+void AssetBrowserPanel::drawGrid(EditorContext& context,
+                                 const std::vector<Entry>& entries)
 {
   const ImGuiStyle& style = ImGui::GetStyle();
   const float spacing = style.ItemSpacing.x;
-  const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) /
-                                                   (m_tileSize + spacing)));
+  const int columns =
+      std::max(1,
+               static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) /
+                                (m_tileSize + spacing)));
   for (std::size_t i = 0; i < entries.size(); ++i)
   {
     if (i % columns != 0)
@@ -1140,20 +1305,29 @@ void AssetBrowserPanel::drawTile(EditorContext& context, const Entry& entry)
   // Inspector, which mustn't switch to showing it), or on a double-click's
   // second release (after it has opened something).
   ImGui::InvisibleButton("tile", size);
-  const bool clicked = ImGui::IsItemDeactivated() && !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left) &&
-                       ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] < 2;
-  if ((entry.asset.valid() && entry.asset == m_scrollTo) || (!m_scrollToFile.empty() && entry.path == m_scrollToFile))
+  const bool clicked =
+      ImGui::IsItemDeactivated() &&
+      !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left) &&
+      ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] < 2;
+  if ((entry.asset.valid() && entry.asset == m_scrollTo) ||
+      (!m_scrollToFile.empty() && entry.path == m_scrollToFile))
   {
     ImGui::SetScrollHereY(0.5f);
     m_scrollTo = {};
     m_scrollToFile.clear();
   }
   const bool hovered = ImGui::IsItemHovered();
-  const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+  const bool doubleClicked =
+      hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
   entryBehaviour(context, entry, record, clicked, doubleClicked);
 
   ImDrawList* draw = ImGui::GetWindowDrawList();
-  const bool selected = record ? record->id == context.selectedAsset : entry.path == m_highlighted;
+  // An asset is highlighted when selected, or (with none selected, as
+  // selectedPath() prefers one) when something asked to see its file (an
+  // Inspector field's find icon), as a plain file is.
+  const bool selected =
+      (record && record->id == context.selectedAsset) ||
+      (!context.selectedAsset.valid() && entry.path == m_highlighted);
   const ImVec2 end(at.x + size.x, at.y + size.y);
   if (selected)
   {
@@ -1164,14 +1338,24 @@ void AssetBrowserPanel::drawTile(EditorContext& context, const Entry& entry)
     draw->AddRectFilled(at, end, theme::kTileHovered, 7.0f);
 
   const ImVec2 pictureMin(at.x + padding, at.y + padding);
-  const ImVec2 pictureMax(at.x + m_tileSize - padding, at.y + m_tileSize - padding);
+  const ImVec2 pictureMax(
+      at.x + m_tileSize - padding, at.y + m_tileSize - padding);
   const ImTextureID preview =
-      record && context.scene ? m_thumbnails.get(*record, *context.assets, context.scene->assetStore(), context.scene)
+      record && context.scene ? m_thumbnails.get(*record,
+                                                 *context.assets,
+                                                 context.scene->assetStore(),
+                                                 context.scene)
                               : ImTextureID{};
   if (preview)
   {
     draw->AddRectFilled(pictureMin, pictureMax, theme::kTile, 5.0f);
-    draw->AddImageRounded(preview, pictureMin, pictureMax, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 5.0f);
+    draw->AddImageRounded(preview,
+                          pictureMin,
+                          pictureMax,
+                          ImVec2(0, 0),
+                          ImVec2(1, 1),
+                          IM_COL32_WHITE,
+                          5.0f);
   }
   else
     drawIcon(draw, pictureMin, pictureMax, entry.directory, entry.path);
@@ -1192,7 +1376,8 @@ void AssetBrowserPanel::drawTile(EditorContext& context, const Entry& entry)
     for (int line = 0; line < 2; ++line)
     {
       const float width = ImGui::CalcTextSize(lines[line].c_str()).x;
-      draw->AddText(ImVec2(textAt.x + (textWidth - width) * 0.5f, textAt.y + lineHeight * line),
+      draw->AddText(ImVec2(textAt.x + (textWidth - width) * 0.5f,
+                           textAt.y + lineHeight * line),
                     ImGui::GetColorU32(ImGuiCol_Text, line == 0 ? 1.0f : 0.85f),
                     lines[line].c_str());
     }
@@ -1210,9 +1395,12 @@ bool AssetBrowserPanel::drawRename(EditorContext& context, const Entry& entry)
     ImGui::SetKeyboardFocusHere();
   if (!m_gridView)
     ImGui::SetNextItemWidth(-1.0f); // the list's column; a tile sets its own
-  const bool done = widgets::inputText("##rename", m_renameText, ImGuiInputTextFlags_EnterReturnsTrue |
-                                                                     ImGuiInputTextFlags_AutoSelectAll);
-  if (ImGui::IsKeyPressed(ImGuiKey_Escape) || (!done && ImGui::IsItemDeactivated()))
+  const bool done = widgets::inputText(
+      "##rename",
+      m_renameText,
+      ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+      (!done && ImGui::IsItemDeactivated()))
   {
     m_renaming.reset();
     return false;
@@ -1222,15 +1410,22 @@ bool AssetBrowserPanel::drawRename(EditorContext& context, const Entry& entry)
 
   m_renaming.reset();
   const fs::path before = entry.path;
-  const std::optional<fs::path> after = renameItem(context, before, m_renameText);
+  const std::optional<fs::path> after =
+      renameItem(context, before, m_renameText);
   if (after)
-    record({"Rename " + before.filename().string(),
-            [this, before, after = *after](EditorContext& c) { return renameItem(c, after, before.filename().string()).has_value(); },
-            [this, before, after = *after](EditorContext& c) { return renameItem(c, before, after.filename().string()).has_value(); }});
+    record(
+        {"Rename " + before.filename().string(),
+         [this, before, after = *after](EditorContext& c) {
+           return renameItem(c, after, before.filename().string()).has_value();
+         },
+         [this, before, after = *after](EditorContext& c) {
+           return renameItem(c, before, after.filename().string()).has_value();
+         }});
   return after.has_value();
 }
 
-void AssetBrowserPanel::drawFolderMenu(EditorContext& context, const fs::path& folder)
+void AssetBrowserPanel::drawFolderMenu(EditorContext& context,
+                                       const fs::path& folder)
 {
   if (ImGui::MenuItem("New Folder"))
     newFolder(context, folder);
@@ -1241,9 +1436,13 @@ void AssetBrowserPanel::drawFolderMenu(EditorContext& context, const fs::path& f
   if (context.project && isWithin(folder, context.project->scriptsFolder()))
   {
     using scriptTemplates::Kind;
-    for (const Kind kind : {Kind::GameObject, Kind::System, Kind::Component, Kind::ScriptableObject})
+    for (const Kind kind : {Kind::GameObject,
+                            Kind::System,
+                            Kind::Component,
+                            Kind::ScriptableObject})
     {
-      const std::string itemLabel = std::string("New ") + scriptTemplates::label(kind) + "...";
+      const std::string itemLabel =
+          std::string("New ") + scriptTemplates::label(kind) + "...";
       if (ImGui::MenuItem(itemLabel.c_str()) && m_actions.newScript)
         m_actions.newScript(kind, folder);
     }
@@ -1253,7 +1452,8 @@ void AssetBrowserPanel::drawFolderMenu(EditorContext& context, const fs::path& f
     // Something new here: selected, with its name ready to type.
     const auto made = [&](const std::optional<sfs::AssetId>& id)
     {
-      if (const sfs::AssetRecord* record = id ? context.assets->find(*id) : nullptr)
+      if (const sfs::AssetRecord* record =
+              id ? context.assets->find(*id) : nullptr)
       {
         context.selectedAsset = *id;
         context.selection = {};
@@ -1261,7 +1461,17 @@ void AssetBrowserPanel::drawFolderMenu(EditorContext& context, const fs::path& f
       }
     };
     if (ImGui::MenuItem("New Material"))
-      made(materialFiles::create(*context.assets, assetRelative(folder), "New Material"));
+      made(materialFiles::create(
+          *context.assets, assetRelative(folder), "New Material"));
+    if (ImGui::MenuItem("New Material Graph"))
+    {
+      sfs::MaterialAsset material;
+      material.graph = sfs::materialGraph::Graph::makeDefault();
+      made(materialFiles::create(
+          *context.assets, assetRelative(folder), "New Material", material));
+    }
+    ImGui::SetItemTooltip("A material whose look you build from nodes "
+                          "(double-click it to edit them)");
     // One of the scripts' scriptable object types (sfs::ScriptableObject).
     if (ImGui::BeginMenu("New Scriptable Object"))
     {
@@ -1271,11 +1481,16 @@ void AssetBrowserPanel::drawFolderMenu(EditorContext& context, const fs::path& f
         {
           any = true;
           if (ImGui::MenuItem(type.displayName.c_str()))
-            made(scriptableObjectFiles::create(*context.assets, assetRelative(folder), type, "New " + type.displayName,
-                                               context.render ? &context.render->meshes() : nullptr));
+            made(scriptableObjectFiles::create(
+                *context.assets,
+                assetRelative(folder),
+                type,
+                "New " + type.displayName,
+                context.render ? &context.render->meshes() : nullptr));
         }
       if (!any)
-        ImGui::TextDisabled("No scriptable object types yet: derive one from sfs::ScriptableObject in scripts");
+        ImGui::TextDisabled("No scriptable object types yet: derive one from "
+                            "sfs::ScriptableObject in scripts");
       ImGui::EndMenu();
     }
   }
@@ -1301,15 +1516,20 @@ void AssetBrowserPanel::drawDeleteConfirmation(EditorContext& context)
   constexpr const char* kPopup = "Delete?";
   if (m_pendingDelete && !ImGui::IsPopupOpen(kPopup))
     ImGui::OpenPopup(kPopup);
-  if (!ImGui::BeginPopupModal(kPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+  if (!ImGui::BeginPopupModal(
+          kPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     return;
 
   const fs::path path = m_pendingDelete.value_or(fs::path());
   const bool folder = fs::is_directory(path);
-  ImGui::Text("Delete %s%s?", label(path).c_str(), folder ? " and everything in it" : "");
-  const bool scripts = context.project && topFolderOf(path) == context.project->scriptsFolder();
-  ImGui::TextDisabled(scripts ? "Scripts that include it won't build until they're changed."
-                              : "Anything using it loses it.");
+  ImGui::Text("Delete %s%s?",
+              label(path).c_str(),
+              folder ? " and everything in it" : "");
+  const bool scripts =
+      context.project && topFolderOf(path) == context.project->scriptsFolder();
+  ImGui::TextDisabled(
+      scripts ? "Scripts that include it won't build until they're changed."
+              : "Anything using it loses it.");
   ImGui::TextDisabled("Undo (Ctrl+Z here) brings it back.");
   ImGui::Spacing();
   if (ImGui::Button("Delete"))
@@ -1327,11 +1547,13 @@ void AssetBrowserPanel::drawDeleteConfirmation(EditorContext& context)
   ImGui::EndPopup();
 }
 
-// --- drag and drop ---------------------------------------------------------------------
+// --- drag and drop
+// ---------------------------------------------------------------------
 
 void AssetBrowserPanel::dragSource(const EditorContext&, const Entry& entry)
 {
-  if (isTopFolder(entry.path) || m_renaming == entry.path || !ImGui::BeginDragDropSource())
+  if (isTopFolder(entry.path) || m_renaming == entry.path ||
+      !ImGui::BeginDragDropSource())
     return;
   // As the system writes it: generic_string() can fold a network share's
   // leading "//" (\\wsl.localhost\...) into "/".
@@ -1341,20 +1563,23 @@ void AssetBrowserPanel::dragSource(const EditorContext&, const Entry& entry)
   ImGui::EndDragDropSource();
 }
 
-void AssetBrowserPanel::acceptEntity(EditorContext& context, const fs::path& folder)
+void AssetBrowserPanel::acceptEntity(EditorContext& context,
+                                     const fs::path& folder)
 {
   // An entity dragged from the Hierarchy: made into a prefab here.
   const ImGuiPayload* peek = ImGui::GetDragDropPayload();
   if (!peek || !peek->IsDataType(assetDrop::kEntityPayload) || !context.scene ||
       !ImGui::AcceptDragDropPayload(assetDrop::kEntityPayload))
     return;
-  const sfs::Entity entity = context.scene->getEntity(*static_cast<const sfs::Entity::EntityId*>(peek->Data));
+  const sfs::Entity entity = context.scene->getEntity(
+      *static_cast<const sfs::Entity::EntityId*>(peek->Data));
   if (entity.isValid() && entity.isAlive())
     if (const auto id = prefabs::create(context, entity, assetRelative(folder)))
       context.selectedAsset = {};
 }
 
-void AssetBrowserPanel::dropTarget(EditorContext& context, const fs::path& folder)
+void AssetBrowserPanel::dropTarget(EditorContext& context,
+                                   const fs::path& folder)
 {
   if (!ImGui::BeginDragDropTarget())
     return;
@@ -1366,21 +1591,29 @@ void AssetBrowserPanel::dropTarget(EditorContext& context, const fs::path& folde
     const fs::path dragged(static_cast<const char*>(peek->Data));
     // Somewhere it can go: not its own folder or inside itself, and in the
     // same project folder (assets/ and prefabs/ together).
-    const bool sameArea = inCatalogue(dragged) ? inCatalogue(folder) : topFolderOf(dragged) == topFolderOf(folder);
-    const bool allowed = sameArea && paths::normal(dragged.parent_path()) != paths::normal(folder) &&
-                         !isWithin(folder, dragged);
-    if (allowed && ImGui::AcceptDragDropPayload(kAssetPayload) && moveItem(context, dragged, folder))
+    const bool sameArea = inCatalogue(dragged)
+                              ? inCatalogue(folder)
+                              : topFolderOf(dragged) == topFolderOf(folder);
+    const bool allowed =
+        sameArea &&
+        paths::normal(dragged.parent_path()) != paths::normal(folder) &&
+        !isWithin(folder, dragged);
+    if (allowed && ImGui::AcceptDragDropPayload(kAssetPayload) &&
+        moveItem(context, dragged, folder))
     {
       const fs::path moved = folder / dragged.filename();
       record({"Move " + dragged.filename().string(),
-              [this, dragged, moved](EditorContext& c) { return moveItem(c, moved, dragged.parent_path()); },
-              [this, dragged, folder](EditorContext& c) { return moveItem(c, dragged, folder); }});
+              [this, dragged, moved](EditorContext& c)
+              { return moveItem(c, moved, dragged.parent_path()); },
+              [this, dragged, folder](EditorContext& c)
+              { return moveItem(c, dragged, folder); }});
     }
   }
   ImGui::EndDragDropTarget();
 }
 
-// --- actions ---------------------------------------------------------------------------
+// --- actions
+// ---------------------------------------------------------------------------
 
 void AssetBrowserPanel::beginRename(const fs::path& path)
 {
@@ -1394,20 +1627,38 @@ void AssetBrowserPanel::activate(EditorContext& context, const fs::path& file)
 {
   const sfs::AssetKind kind = sfs::assetKindOf(file);
   if (kind == sfs::AssetKind::Material)
-    return; // edited in the Inspector, which selecting it shows
+  {
+    // A node-graph material opens in its own tab; a standard one is edited
+    // in the Inspector, which selecting it shows.
+    const sfs::AssetRecord* record =
+        context.assets ? context.assets->findByPath(assetRelative(file))
+                       : nullptr;
+    const std::optional<sfs::MaterialAsset> material =
+        record ? materialFiles::read(*context.assets, *record) : std::nullopt;
+    if (material && material->graph)
+      context.openMaterial = record->id;
+    return;
+  }
   if (kind == sfs::AssetKind::ScriptableObject)
   {
     // Its values are edited in the Inspector; opening it shows its type's
     // declaration, to change what it holds.
-    const std::optional<nlohmann::json> contents = sfs::SceneSerializer::readJsonFile(file);
-    const std::string type = contents && contents->is_object() ? contents->value("type", std::string()) : "";
-    const auto header = context.project && !type.empty()
-                            ? scriptFiles::find(context.project->scriptsFolder(), type, scriptFiles::Prefer::Header)
-                            : std::nullopt;
+    const std::optional<nlohmann::json> contents =
+        sfs::SceneSerializer::readJsonFile(file);
+    const std::string type = contents && contents->is_object()
+                                 ? contents->value("type", std::string())
+                                 : "";
+    const auto header =
+        context.project && !type.empty()
+            ? scriptFiles::find(context.project->scriptsFolder(),
+                                type,
+                                scriptFiles::Prefer::Header)
+            : std::nullopt;
     if (header && m_actions.openText)
       m_actions.openText(*header);
     else
-      LOG_ERROR("Can't find the declaration of " + (type.empty() ? file.filename().string() + "'s type" : type) +
+      LOG_ERROR("Can't find the declaration of " +
+                (type.empty() ? file.filename().string() + "'s type" : type) +
                 " in the scripts folder");
     return;
   }

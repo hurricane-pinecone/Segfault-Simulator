@@ -263,7 +263,9 @@ json renderToJson(const RenderSystem3D& render)
        {{"enabled", shadows.enabled},
         {"distance", cleanFloat(shadows.distance)},
         {"depthBias", cleanFloat(shadows.depthBias)},
-        {"softness", cleanFloat(shadows.softness)}}},
+        {"softness", cleanFloat(shadows.softness)},
+        {"pointLights", shadows.pointLights},
+        {"pointResolution", shadows.pointResolution}}},
       {"camera",
        {{"target", toJson(camera.target)},
         {"yaw", cleanFloat(camera.yaw)},
@@ -298,6 +300,9 @@ void renderFromJson(const json& value, RenderSystem3D& render)
     shadows.distance = valueOr(in, "distance", shadows.distance);
     shadows.depthBias = valueOr(in, "depthBias", shadows.depthBias);
     shadows.softness = valueOr(in, "softness", shadows.softness);
+    shadows.pointLights = valueOr(in, "pointLights", shadows.pointLights);
+    shadows.pointResolution =
+        valueOr(in, "pointResolution", shadows.pointResolution);
     render.setShadowSettings(shadows);
   }
 

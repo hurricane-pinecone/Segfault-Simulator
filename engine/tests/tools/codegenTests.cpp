@@ -336,5 +336,23 @@ int main()
     CHECK(result.type->fields[0].script);
   }
 
+  TEST(
+      "[[sfs::emissionLight]] should mark a field as an emission light setting")
+  {
+    const ParseResult result =
+        parseHeader("struct Lamp { [[sfs::emissionLight]] float lightRange = "
+                    "1.0f; float other; };",
+                    "Lamp.h");
+    CHECK(result.type->fields.size() == 2u);
+    CHECK(result.type->fields[0].emissionLight);
+    CHECK(!result.type->fields[1].emissionLight);
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "registerTypes";
+    const std::string code = generateRegistration({*result.type}, options);
+    CHECK(code.find("field.attributes.emissionLight = true;") !=
+          std::string::npos);
+  }
+
   return testing::report("codegenTests");
 }

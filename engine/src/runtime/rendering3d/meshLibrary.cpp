@@ -80,6 +80,28 @@ bool MeshLibrary::fill(Entry& entry, const MeshData& mesh)
     entry.positions.push_back(vertex.position);
   if (g_keepVertices)
     entry.vertices = mesh.vertices;
+
+  // Each section's surface samples (all the indices for a mesh without
+  // sections, which draws as one).
+  entry.samples.clear();
+  const auto sample = [&](std::span<const uint32_t> indices)
+  {
+    float area = 0.0f;
+    for (std::size_t i = 0; i + 2 < indices.size(); i += 3)
+    {
+      const glm::vec3& a = mesh.vertices[indices[i]].position;
+      area += 0.5f * glm::length(glm::cross(
+                         mesh.vertices[indices[i + 1]].position - a,
+                         mesh.vertices[indices[i + 2]].position - a));
+    }
+    entry.samples.push_back(
+        sampleSurface(mesh.vertices, indices, surfaceSampleCount(area)));
+  };
+  if (mesh.sections.empty())
+    sample(mesh.indices);
+  for (const MeshSection& section : mesh.sections)
+    sample(std::span<const uint32_t>(mesh.indices)
+               .subspan(section.firstIndex, section.indexCount));
   return true;
 }
 
@@ -228,6 +250,43 @@ std::vector<MeshSection> MeshLibrary::sections(MeshHandle mesh) const
   return it->second.sections;
 }
 
+std::size_t MeshLibrary::sectionCount(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  if (it == m_meshes.end())
+    return 0;
+  return std::max<std::size_t>(it->second.sections.size(), 1);
+}
+
+const MeshMaterial* MeshLibrary::sectionMaterial(MeshHandle mesh,
+                                                 std::size_t section) const
+{
+  static const MeshMaterial kDefault;
+  const auto it = m_meshes.find(mesh.id);
+  if (it == m_meshes.end())
+    return nullptr;
+  const std::vector<MeshSection>& sections = it->second.sections;
+  if (sections.empty())
+    return section == 0 ? &kDefault : nullptr;
+  return section < sections.size() ? &sections[section].material : nullptr;
+}
+
+std::span<const SurfaceSample>
+MeshLibrary::surfaceSamples(MeshHandle mesh, std::size_t section) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  if (it == m_meshes.end() || section >= it->second.samples.size())
+    return {};
+  return it->second.samples[section];
+}
+
+const MeshMaterial* MeshLibrary::materialData(MaterialHandle material) const
+{
+  const auto it = m_materialData.find(material.id);
+  return it != m_materialData.end() && material.valid() ? it->second.get()
+                                                        : nullptr;
+}
+
 std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
                                                         const glm::mat4& world,
                                                         const Ray3D& ray) const
@@ -296,6 +355,8 @@ MaterialHandle MeshLibrary::material(std::string_view name)
   const MaterialHandle handle =
       data ? m_renderer.createMaterial(*data) : MaterialHandle{};
   m_materials.emplace(key, handle);
+  if (handle.valid())
+    m_materialData[handle.id] = data;
   return handle;
 }
 
@@ -307,10 +368,14 @@ MaterialHandle MeshLibrary::setMaterial(std::string_view name,
       it != m_materials.end() && it->second.valid())
   {
     m_renderer.updateMaterial(it->second, material);
+    m_materialData[it->second.id] =
+        std::make_shared<const MeshMaterial>(material);
     return it->second;
   }
   const MaterialHandle handle = m_renderer.createMaterial(material);
   m_materials[key] = handle;
+  if (handle.valid())
+    m_materialData[handle.id] = std::make_shared<const MeshMaterial>(material);
   return handle;
 }
 
@@ -322,10 +387,14 @@ void MeshLibrary::reloadMaterial(std::string_view name)
   const std::shared_ptr<const MeshMaterial> data =
       m_provider.loadMaterial ? m_provider.loadMaterial(name) : nullptr;
   if (it->second.valid() && data)
+  {
     m_renderer.updateMaterial(it->second, *data);
+    m_materialData[it->second.id] = data;
+  }
   else
   {
     // Gone, or only now readable: ask afresh next time.
+    m_materialData.erase(it->second.id);
     m_renderer.destroyMaterial(it->second);
     m_materials.erase(it);
   }

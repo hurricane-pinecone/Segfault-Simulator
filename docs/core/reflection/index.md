@@ -58,6 +58,7 @@ warning for that namespace.
 | `[[sfs::script]]` | Edit a `std::string` as a picker of game object scripts |
 | `[[sfs::texture]]` | Edit a `std::string` as a picker of the project's texture assets (saved as `asset:<id>`) |
 | `[[sfs::materials]]` | Edit a `std::vector<std::string>` as a material picker for each section of the component's mesh field |
+| `[[sfs::emissionLight]]` | A setting of the light the component's glowing materials give off: the Inspector shows it only while one of its materials can glow |
 
 `[[sfs::show]]` works on private fields without making your class `friend` the
 engine. The generated code reaches the member through an explicit template

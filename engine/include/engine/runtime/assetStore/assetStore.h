@@ -20,6 +20,7 @@ namespace sfs
 {
 
 class WorkerPool;
+struct MaterialAsset;
 
 using SurfacePtr = std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)>;
 using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
@@ -112,11 +113,27 @@ public:
   std::shared_ptr<const TextureData> texture(const AssetId& id);
 
   /**
+   * The same texels read as data (metalness, roughness, masks), not colour:
+   * texture(), marked linear. Kept too, so every material reading it as data
+   * shares one copy (and one upload).
+   */
+  std::shared_ptr<const TextureData> dataTexture(const AssetId& id);
+
+  /**
    * A material asset (.mat), with its textures loaded, read on first use and
    * kept. Null (logged once) if the id isn't a material in the database or
    * its file can't be read.
    */
   std::shared_ptr<const MeshMaterial> material(const AssetId& id);
+
+  /**
+   * A material as a .mat file holds it (e.g. one being edited, not saved
+   * yet), with its textures loaded and, for a node-graph material, its graph
+   * compiled. A graph that doesn't compile draws magenta; its errors are
+   * logged, naming `source`.
+   */
+  std::shared_ptr<MeshMaterial> makeMaterial(const MaterialAsset& asset,
+                                             const std::string& source);
 
   /** Forget a loaded material, so the next material() reads its file again. */
   void forgetMaterial(const AssetId& id);
@@ -223,6 +240,9 @@ private:
   // Null: tried and failed.
   std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
       m_textures;
+  // Textures read as data (dataTexture()).
+  std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
+      m_dataTextures;
   std::unordered_map<AssetId, std::shared_ptr<const MeshMaterial>, AssetIdHash>
       m_materials;
   std::unordered_map<AssetId, std::optional<nlohmann::json>, AssetIdHash>

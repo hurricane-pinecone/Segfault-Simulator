@@ -22,14 +22,15 @@ enum class TypeKind
 struct FieldModel
 {
   std::string name;
-  std::string type;     // as written, whitespace-normalised, e.g. "glm::vec3"
-  std::string kind;     // reflect::FieldKind enumerator, e.g. "Vec3"
-  bool isPublic = true; // false: private/protected, exposed by [[sfs::show]]
-  bool color = false;   // [[sfs::color]]
-  bool script = false;  // [[sfs::script]]
-  bool texture = false; // [[sfs::texture]]
+  std::string type;       // as written, whitespace-normalised, e.g. "glm::vec3"
+  std::string kind;       // reflect::FieldKind enumerator, e.g. "Vec3"
+  bool isPublic = true;   // false: private/protected, exposed by [[sfs::show]]
+  bool color = false;     // [[sfs::color]]
+  bool script = false;    // [[sfs::script]]
+  bool texture = false;   // [[sfs::texture]]
   bool materials = false; // [[sfs::materials]]
-  std::string assetType;   // AssetRef: the scriptable object type, e.g. "ItemDef"
+  bool emissionLight = false; // [[sfs::emissionLight]]
+  std::string assetType; // AssetRef: the scriptable object type, e.g. "ItemDef"
   std::optional<std::pair<std::string, std::string>> range; // [[sfs::range]]
 };
 

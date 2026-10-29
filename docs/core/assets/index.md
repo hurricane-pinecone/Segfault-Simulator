@@ -141,7 +141,9 @@ and transparency. Meshes are only shape; materials are separate.
   (`sfs::ScriptableObject`); `sfs::ScriptableObjects` loads them. See
   [Scripting](../../editor/scripting/index.md#scriptable-objects).
 - A **material asset** (`.mat`, JSON; see `MaterialAsset`) names its textures
-  by asset id:
+  by asset id. A node-graph material (format version 2) holds its graph instead;
+  see [Material graphs](../rendering-3d/material-graphs/index.md#in-a-material-file).
+  A standard one looks like this:
 
 ```json
 {
@@ -149,6 +151,8 @@ and transparency. Meshes are only shape; materials are separate.
   "baseColor": [1, 1, 1, 1],
   "baseTexture": "asset:7b957a18b3f06184fe71ec1a0c92e581",
   "metallicRoughnessTexture": "",
+  "normalTexture": "",
+  "normalScale": 1,
   "tiling": [1, 1],
   "offset": [0, 0],
   "metallic": 0,

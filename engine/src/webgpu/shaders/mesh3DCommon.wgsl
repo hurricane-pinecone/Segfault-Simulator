@@ -1,12 +1,7 @@
-// Shared by the 3D mesh shaders (prefixed to mesh3DShadow / mesh3DLit). Must
-// match WebGpuRenderer3D's FrameUniforms and vertex layouts.
-
-const MAX_POINT_LIGHTS: u32 = 32u;
-
-struct PointLight {
-  positionRadius: vec4f,  // xyz world position, w reach
-  colorIntensity: vec4f,  // rgb tint, w intensity
-}
+// Shared by the 3D mesh shaders: first in each, then mesh3DSurface.wgsl, a
+// material's surface (mesh3DStandardSurface.wgsl or a compiled material graph)
+// and the pass's shader (mesh3DShadow / mesh3DLit). Must match
+// WebGpuRenderer3D's FrameUniforms and vertex layouts.
 
 struct Frame {
   viewProjection: mat4x4f,
@@ -16,8 +11,10 @@ struct Frame {
   sunColor: vec4f,      // rgb sunlight tint, w ambient level
   shadow: vec4f,        // x enabled (0/1), y depth bias, z filter spread (uv), w world size of a texel
   sky: vec4f,           // rgb sky colour (what shiny surfaces reflect)
-  lightCount: vec4u,    // x active point lights
-  lights: array<PointLight, MAX_POINT_LIGHTS>,
+  time: vec4f,          // x seconds the scene has run
+  cameraForward: vec4f, // xyz unit view direction
+  clusterSize: vec4u,   // the light clusters: x tiles across, y down, z depth slices, w lights
+  clusterDepth: vec4f,  // x near, y far, z slices per log(depth / near), w tile size (pixels)
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -39,44 +36,18 @@ struct InstanceIn {
   @location(7) tint: vec4f,
 }
 
-// The mesh section's material (group 1); must match WebGpuRenderer3D's
-// MaterialUniforms and AlphaMode.
-const ALPHA_OPAQUE: u32 = 0u;
-const ALPHA_MASK: u32 = 1u;
-const ALPHA_BLEND: u32 = 2u;
-
-struct Material {
-  baseColor: vec4f, // linear rgb, and alpha
-  params: vec4f,    // y metallic, z roughness, w alpha cutoff
-  uvTransform: vec4f, // xy tiling, zw offset
-  mode: vec4u,      // x alpha mode
-}
-
-// Where a vertex's texture coordinates land in the material's textures.
-fn materialUv(uv: vec2f) -> vec2f {
-  return uv * material.uvTransform.xy + material.uvTransform.zw;
-}
-
-@group(1) @binding(0) var baseTexture: texture_2d<f32>;      // sRGB: samples come back linear
-@group(1) @binding(1) var materialSampler: sampler;
-@group(1) @binding(2) var metallicRoughnessTexture: texture_2d<f32>; // b metal, g roughness
-@group(1) @binding(3) var<uniform> material: Material;
-
-// A fragment's opacity: the texture's and material's alpha (unless the
-// material is opaque) times the instance tint's.
-fn surfaceAlpha(textureAlpha: f32, tintAlpha: f32) -> f32 {
-  if (material.mode.x == ALPHA_OPAQUE) {
-    return tintAlpha;
-  }
-  return textureAlpha * material.baseColor.a * tintAlpha;
-}
-
-// Below this a fragment is cut out: the mask cutoff, or half for see-through
-// surfaces (so only their solid parts cast shadows).
-fn alphaCutoff() -> f32 {
-  return select(0.5, material.params.w, material.mode.x == ALPHA_MASK);
-}
-
 fn instanceModel(instance: InstanceIn) -> mat4x4f {
   return mat4x4f(instance.model0, instance.model1, instance.model2, instance.model3);
+}
+
+// Turns a mesh's normals into world space: the inverse-transpose of the model
+// matrix's upper 3x3, so non-uniform scales keep normals perpendicular to
+// their surfaces.
+fn normalMatrix(model: mat4x4f) -> mat3x3f {
+  let m = mat3x3f(model[0].xyz, model[1].xyz, model[2].xyz);
+  let c0 = cross(m[1], m[2]);
+  let c1 = cross(m[2], m[0]);
+  let c2 = cross(m[0], m[1]);
+  let det = dot(m[0], c0);
+  return mat3x3f(c0, c1, c2) * (1.0 / det);
 }

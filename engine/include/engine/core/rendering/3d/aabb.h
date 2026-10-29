@@ -33,6 +33,9 @@ struct Aabb
    * while any part of it is visible.
    */
   Aabb transformed(const glm::mat4& transform) const;
+
+  /** Whether any of the box is within `radius` of `center`. */
+  bool intersectsSphere(const glm::vec3& center, float radius) const;
 };
 
 } // namespace sfs

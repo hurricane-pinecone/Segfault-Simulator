@@ -6,6 +6,7 @@
 #include <engine/core/components/pointLight3DComponent.h>
 #include <engine/core/components/transform3DComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/rendering/3d/materialGraphCompiler.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering3d/iRenderer3D.h>
@@ -22,6 +23,27 @@ using sfs::testing3d::MockRenderer3D;
 
 namespace
 {
+// A material from a graph, as the asset store makes one.
+MeshMaterial graphMaterial(const materialGraph::Graph& graph)
+{
+  const materialGraph::CompiledGraph compiled = materialGraph::compile(graph);
+  MeshMaterial material;
+  material.shader = compiled.shader;
+  material.shaderParameters = compiled.parameters;
+  material.shaderTextures.resize(compiled.textures.size());
+  return material;
+}
+
+// A graph material glowing `emission` all over (black otherwise).
+MeshMaterial glowMaterial(glm::vec3 emission)
+{
+  materialGraph::Graph graph;
+  const auto out = graph.add(std::string(materialGraph::kOutputType), {});
+  graph.find(out)->inputs[materialGraph::kBaseColor] = glm::vec4(0.0f);
+  graph.find(out)->inputs[materialGraph::kEmission] = glm::vec4(emission, 1.0f);
+  return graphMaterial(graph);
+}
+
 // A scene wired to the mock 3D renderer, with a render system drawing meshes.
 // The camera looks along +X at the origin from 20 units away.
 struct Harness
@@ -306,6 +328,263 @@ int main()
     for (const PointLight3D& light : h.renderer.lights)
       furthest = std::max(furthest, light.position.x);
     CHECK(furthest < static_cast<float>(kMaxPointLights3D));
+  }
+
+  TEST("a glowing material should light what's around it, through a light "
+       "where it glows")
+  {
+    Harness h;
+    const MeshHandle sphere =
+        h.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
+    h.system.meshes().setMaterial(
+        "glow", glowMaterial(glm::vec3(4.0f, 2.0f, 0.0f)));
+    Entity lamp = h.spawn(sphere, {2.0f, 3.0f, 0.0f});
+    lamp.getComponent<MeshRendererComponent>().materials = {"glow"};
+
+    h.frame();
+
+    CHECK(h.renderer.lights.size() == 1u);
+    CHECK(h.system.stats().emissionLights == 1u);
+    if (h.renderer.lights.size() == 1u)
+    {
+      const PointLight3D& light = h.renderer.lights[0];
+      CHECK(glm::length(light.position - glm::vec3(2.0f, 3.0f, 0.5f)) < 0.05f);
+      CHECK(testing::approx(light.color.g, 0.5f, 1e-3f));
+      CHECK(testing::approx(light.intensity, 4.0f, 1e-3f));
+    }
+
+    // Twice the size: four times the glowing area, so it reaches twice as far.
+    const float radius =
+        h.renderer.lights.empty() ? 0.0f : h.renderer.lights[0].radius;
+    lamp.getComponent<Transform3DComponent>().scale = glm::vec3(2.0f);
+    h.frame();
+    CHECK(h.renderer.lights.size() == 1u &&
+          testing::approx(h.renderer.lights[0].radius, radius * 2.0f, 1e-2f));
+
+    // Half see-through: half the light.
+    lamp.getComponent<MeshRendererComponent>().tint.a = 0.5f;
+    h.frame();
+    CHECK(h.renderer.lights.size() == 1u &&
+          testing::approx(h.renderer.lights[0].intensity, 2.0f, 1e-3f));
+  }
+
+  TEST(
+      "only glowing, light-giving objects should, while emission lights are on")
+  {
+    Harness h;
+    const MeshHandle sphere =
+        h.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
+    h.system.meshes().setMaterial("glow", glowMaterial(glm::vec3(1.0f)));
+    h.system.meshes().setMaterial("dark", glowMaterial(glm::vec3(0.0f)));
+    MeshMaterial standard;
+    standard.baseColor = glm::vec4(5.0f);
+    h.system.meshes().setMaterial("standard", standard);
+
+    h.spawn(sphere, {0.0f, 0.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"dark"};
+    h.spawn(sphere, {0.0f, 2.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"standard"};
+    Entity off = h.spawn(sphere, {0.0f, 4.0f, 0.0f});
+    off.getComponent<MeshRendererComponent>().materials = {"glow"};
+    off.getComponent<MeshRendererComponent>().emitsLight = false;
+    h.spawn(sphere, {0.0f, 6.0f, 0.0f}); // its own (standard) material
+    h.frame();
+    CHECK(h.renderer.lights.empty());
+
+    Entity glowing = h.spawn(sphere, {0.0f, 8.0f, 0.0f});
+    glowing.getComponent<MeshRendererComponent>().materials = {"glow"};
+    h.frame();
+    CHECK(h.renderer.lights.size() == 1u);
+
+    // Its own strength and range: twice as bright, half as far.
+    const PointLight3D normal =
+        h.renderer.lights.empty() ? PointLight3D{} : h.renderer.lights[0];
+    auto& renderer = glowing.getComponent<MeshRendererComponent>();
+    renderer.lightStrength = 2.0f;
+    renderer.lightRange = 0.5f;
+    h.frame();
+    CHECK(h.renderer.lights.size() == 1u &&
+          testing::approx(
+              h.renderer.lights[0].intensity, normal.intensity * 2.0f) &&
+          testing::approx(h.renderer.lights[0].radius, normal.radius * 0.5f));
+    renderer.lightStrength = 0.0f;
+    h.frame();
+    CHECK(h.renderer.lights.empty());
+  }
+
+  TEST("bloom should be the scene camera's, or the system's without one")
+  {
+    Harness h;
+    h.system.setBloomSettings({.enabled = false});
+    h.frame();
+    CHECK(!h.renderer.frame.bloom.enabled);
+
+    Entity camera = h.scene.createEntity();
+    camera.addComponent<Transform3DComponent>();
+    Camera3DComponent lens;
+    lens.bloomIntensity = 1.7f;
+    lens.bloomThreshold = 2.5f;
+    camera.addComponent<Camera3DComponent>(lens);
+    h.system.setFollowSceneCamera(false); // as the editor, looking around
+    h.frame();
+    CHECK(h.renderer.frame.bloom.enabled);
+    CHECK(testing::approx(h.renderer.frame.bloom.intensity, 1.7f));
+    CHECK(testing::approx(h.renderer.frame.bloom.threshold, 2.5f));
+  }
+
+  TEST("many objects sharing a glowing material should each light their own "
+       "place")
+  {
+    Harness h;
+    const MeshHandle sphere =
+        h.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
+    h.system.meshes().setMaterial("glow", glowMaterial(glm::vec3(2.0f)));
+    for (int i = 0; i < 300; ++i)
+      h.spawn(sphere,
+              {static_cast<float>(i % 20) * 3.0f,
+               static_cast<float>(i / 20) * 3.0f,
+               0.0f})
+          .getComponent<MeshRendererComponent>()
+          .materials = {"glow"};
+    h.frame();
+    CHECK(h.renderer.lights.size() == 300u);
+    bool eachAtOne = true;
+    for (const PointLight3D& light : h.renderer.lights)
+    {
+      const glm::vec2 grid = glm::vec2(light.position) / 3.0f;
+      eachAtOne = eachAtOne && glm::length(grid - glm::round(grid)) < 0.02f;
+    }
+    CHECK(eachAtOne);
+  }
+
+  TEST("glow that depends on where or when should be worked out there and then")
+  {
+    Harness h;
+    const MeshHandle sphere =
+        h.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
+
+    // Emission = the world position (clamped at 0 on the GPU and here): only
+    // the object out on the positive side glows.
+    {
+      materialGraph::Graph g;
+      const auto out = g.add(std::string(materialGraph::kOutputType), {});
+      const auto position = g.add("position", {});
+      g.connect(position, 0, out, materialGraph::kEmission);
+      h.system.meshes().setMaterial("where", graphMaterial(g));
+    }
+    h.spawn(sphere, {-5.0f, -5.0f, -5.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"where"};
+    h.spawn(sphere, {5.0f, 5.0f, 5.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"where"};
+    h.frame();
+    CHECK(h.renderer.lights.size() == 1u &&
+          h.renderer.lights[0].position.x > 4.0f);
+  }
+
+  TEST("a pulsing glow should pulse its light, and a glowing rim should light "
+       "too")
+  {
+    Harness h;
+    const MeshHandle sphere =
+        h.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
+    {
+      // Emission = Sine Time + 1.
+      materialGraph::Graph g;
+      const auto out = g.add(std::string(materialGraph::kOutputType), {});
+      const auto time = g.add("time", {});
+      const auto add = g.add("add", {});
+      g.find(add)->inputs[1] = glm::vec4(1.0f);
+      g.connect(time, 1, add, 0);
+      g.connect(add, 0, out, materialGraph::kEmission);
+      h.system.meshes().setMaterial("pulse", graphMaterial(g));
+    }
+    h.spawn(sphere, {}).getComponent<MeshRendererComponent>().materials = {
+        "pulse"};
+    h.frame(); // time 0: sin 0 + 1 = 1
+    CHECK(h.renderer.lights.size() == 1u &&
+          testing::approx(h.renderer.lights[0].intensity, 1.0f, 1e-3f));
+    h.scene.update(1.5707963); // a quarter turn: sin + 1 = 2
+    h.frame();
+    CHECK(h.renderer.lights.size() == 1u &&
+          testing::approx(h.renderer.lights[0].intensity, 2.0f, 1e-3f));
+
+    // A Fresnel rim glows only seen edge-on: it gives off light all the same.
+    Harness rim;
+    const MeshHandle ball =
+        rim.system.meshes().add(meshes::sphere(0.5f, 24, 16, glm::vec3(1.0f)));
+    {
+      materialGraph::Graph g;
+      const auto out = g.add(std::string(materialGraph::kOutputType), {});
+      const auto fresnel = g.add("fresnel", {});
+      g.connect(fresnel, 0, out, materialGraph::kEmission);
+      rim.system.meshes().setMaterial("rim", graphMaterial(g));
+    }
+    rim.spawn(ball, {}).getComponent<MeshRendererComponent>().materials = {
+        "rim"};
+    rim.frame();
+    CHECK(rim.renderer.lights.size() == 1u);
+  }
+
+  TEST(
+      "the point lights nearest the view should cast shadows, up to the budget")
+  {
+    Harness h;
+    ShadowSettings3D shadows;
+    shadows.pointLights = 2;
+    h.system.setShadowSettings(shadows);
+    // Five lights along y through the target, one off behind the camera, and
+    // one that doesn't cast.
+    for (int i = 0; i < 5; ++i)
+    {
+      Entity lamp = h.scene.createEntity();
+      lamp.addComponent<Transform3DComponent>(
+          Transform3DComponent{{0.0f, static_cast<float>(i) * 3.0f, 0.0f}});
+      lamp.addComponent<PointLight3DComponent>(
+          PointLight3DComponent{glm::vec3(1.0f), 1.0f, 2.0f});
+    }
+    Entity behind = h.scene.createEntity();
+    behind.addComponent<Transform3DComponent>(
+        Transform3DComponent{{-60.0f, 0.0f, 0.0f}});
+    behind.addComponent<PointLight3DComponent>(
+        PointLight3DComponent{glm::vec3(1.0f), 1.0f, 2.0f});
+    Entity plain = h.scene.createEntity();
+    plain.addComponent<Transform3DComponent>(
+        Transform3DComponent{{0.0f, -1.0f, 0.0f}});
+    PointLight3DComponent noShadow{glm::vec3(1.0f), 1.0f, 2.0f};
+    noShadow.castsShadow = false;
+    plain.addComponent<PointLight3DComponent>(noShadow);
+
+    // A box by the first light, and one well away from every light.
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    h.spawn(box, {0.0f, 1.0f, 0.0f});
+    h.spawn(box, {0.0f, 30.0f, 0.0f});
+
+    h.frame();
+
+    std::vector<float> shadowed;
+    for (const PointLight3D& light : h.renderer.lights)
+      if (light.castsShadow)
+        shadowed.push_back(light.position.y);
+    std::sort(shadowed.begin(), shadowed.end());
+    CHECK(shadowed == std::vector<float>({0.0f, 3.0f}));
+    CHECK(h.system.stats().shadowedLights == 2u);
+    // Only the box near a shadowed light casts into its shadow map.
+    std::size_t casters = 0;
+    for (const MockRenderer3D::Batch& batch : h.renderer.batches)
+      casters += batch.lightShadowInstances;
+    CHECK(casters == 1u);
+
+    shadows.pointLights = 0;
+    h.system.setShadowSettings(shadows);
+    h.frame();
+    CHECK(std::none_of(h.renderer.lights.begin(),
+                       h.renderer.lights.end(),
+                       [](const PointLight3D& light)
+                       { return light.castsShadow; }));
   }
 
   TEST("a zero-size viewport should skip the frame")
