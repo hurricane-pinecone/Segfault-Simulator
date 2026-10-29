@@ -83,7 +83,12 @@ only the pieces that differ:
 A host that draws the scene into part of its window overrides `sceneView()` to
 say where: the window (by SDL window id) and a rectangle in it. Mouse positions
 reach the scene relative to that rectangle, and only from that window. By
-default the view is the whole window.
+default the view is the whole window. Such a host also overrides
+`sceneReceivesMouse()` to say whether mouse presses and the wheel should reach
+the scene right now (always, by default): the editor passes them on only while
+the pointer is over the game's view, so scrolling another panel doesn't zoom
+the game's camera. Mouse releases always get through, so a drag that ends
+outside the view doesn't leave a button stuck down.
 
 ## Scene — a level or screen
 
