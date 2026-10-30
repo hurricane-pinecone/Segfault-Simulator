@@ -4,9 +4,9 @@ namespace sfs
 {
 
 /**
- * Tags a tile with a material the renderer styles specially: animated liquids
- * (water, lava) and terrain looks (grass, sand, snow). None draws the sprite
- * unchanged.
+ * A surface material for a tile or voxel block type (BlockType::effect):
+ * liquids (water, lava; the voxel world's water columns) and terrain looks
+ * (grass, sand, snow). None: a plain surface.
  *
  * @param SurfaceEffect::Type type - the material to apply
  */

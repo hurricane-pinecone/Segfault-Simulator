@@ -39,7 +39,7 @@ sfs::ParticleEffectDesc makeSparkEffect()
   // Per-particle starting state (each sampled uniformly in [min,max]).
   d.lifetime = {0.3f, 0.8f};
   d.speed = {2.0f, 6.0f};             // planar launch speed
-  d.launchHeightSpeed = {1.0f, 3.0f}; // upward launch speed (iso height axis)
+  d.launchHeightSpeed = {1.0f, 3.0f}; // upward launch speed (the height axis)
   d.startHeight = {0.1f, 0.4f};
   d.size = {0.05f, 0.12f};
   d.directionSpread = 1.4f;           // launch angle spread (radians); default = full circle

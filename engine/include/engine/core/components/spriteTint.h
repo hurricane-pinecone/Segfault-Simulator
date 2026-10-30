@@ -6,7 +6,7 @@ namespace sfs
 {
 
 /**
- * Optional multiply tint for a sprite on the flat render path. An absent
+ * Optional multiply tint for a sprite. An absent
  * component means untinted (white). Lets a 2D game recolour sprites without
  * per-colour art.
  *

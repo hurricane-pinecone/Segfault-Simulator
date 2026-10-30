@@ -3,28 +3,41 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/ui/layer.h"
+#include "engine/runtime/ui/ui.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
 #include <random>
+#include <string>
 #include <vector>
 
 class Player;
 
-// The platformer scene: builds the level (player, platforms, a lit torch that
-// emits sparks), runs the local physics system, and renders through the
-// engine's flat 2D path (sfs::FlatRenderSystem). No isometric/heightfield types
-// anywhere.
+// The platformer scene: builds the level (player, platforms, lit torches that
+// emit sparks), runs the local physics system, and draws as a 2D game through
+// the engine's renderer (a RenderSystem with a flat Space2D).
+// The HUD: controls, kills, frame rate and spells, top left.
+class PlatformerHud : public sfs::ui::Layer
+{
+public:
+  sfs::ui::View body() override;
+};
+
 class PlatformerScene : public sfs::Scene
 {
 public:
   using sfs::Scene::Scene; // inherit (SceneId, SceneServices[, name]) ctors
 
+  int kills() const { return m_kills; }
+  double fps() const { return m_fps; }
+  // The spell loadout, as the HUD shows it.
+  std::string spellLine() const;
+
 protected:
   void onInit() override;
   void onUpdate(double deltaTime) override;
-  void onRender() override;
 
 private:
   void createEntities();

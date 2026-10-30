@@ -17,7 +17,7 @@
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
 #include "imgui.h"
@@ -217,8 +217,8 @@ void registerSettings(AssetBrowserPanel* panel)
 }
 } // namespace
 
-AssetBrowserPanel::AssetBrowserPanel(Actions actions, sfs::WebGpuContext& gpu)
-    : Panel("Assets"), m_actions(std::move(actions)), m_thumbnails(gpu)
+AssetBrowserPanel::AssetBrowserPanel(Actions actions, sfs::IRenderBackend& backend)
+    : Panel("Assets"), m_actions(std::move(actions)), m_thumbnails(backend)
 {
   registerSettings(this);
 }

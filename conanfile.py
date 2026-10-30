@@ -23,7 +23,7 @@ class SfsEngineConan(ConanFile):
     Serves two roles:
       * `conan create .`  -> builds and packages the engine so another project
         can `requires = "sfs-engine/<version>"` and link sfs::engine /
-        sfs::engine-core, with the SDL/imgui/GLEW closure resolved for them.
+        sfs::engine-core, with the SDL/imgui closure resolved for them.
       * `conan install .` -> installs the same dependency closure for an in-tree
         workspace build (the existing dev flow; replaces the old conanfile.txt).
     """
@@ -31,8 +31,8 @@ class SfsEngineConan(ConanFile):
     name = "sfs-engine"
     version = "0.1.0"
     description = (
-        "SegFaultSimulator: a 2.5D isometric heightfield game engine "
-        "(dependency-free ECS/scripting core + SDL/OpenGL render runtime)."
+        "SegFaultSimulator: a game engine for flat 2D, isometric and 3D games "
+        "(dependency-free ECS/scripting core + SDL/WebGPU render runtime)."
     )
     license = "MIT"
     settings = "os", "compiler", "build_type", "arch"
@@ -42,9 +42,10 @@ class SfsEngineConan(ConanFile):
     options = {"core_only": [True, False]}
     default_options = {
         "core_only": False,
-        # imgui must be built with the SDL2 + OpenGL3 backends the runtime uses.
+        # imgui with the SDL2 platform backend the runtime uses (its WebGPU
+        # renderer backend compiles into engine-webgpu).
         "imgui/*:with_sdl2": True,
-        "imgui/*:with_opengl3": True,
+        "imgui/*:with_opengl3": False,
         "imgui/*:with_sdlrenderer2": False,
         # Shared, so each exists exactly once at runtime: the engine is itself
         # a set of shared libraries (and a game module loads beside them), and
@@ -55,7 +56,6 @@ class SfsEngineConan(ConanFile):
         "sdl_ttf/*:shared": True,
         "sdl_mixer/*:shared": True,
         "imgui/*:shared": True,
-        "glew/*:shared": True,
     }
 
     # Everything the package build needs; the sample game and its assets are not
@@ -80,7 +80,6 @@ class SfsEngineConan(ConanFile):
             self.requires("sdl_ttf/2.22.0")
             self.requires("sdl_mixer/2.8.0")
             self.requires("imgui/1.92.7-docking")
-            self.requires("glew/2.2.0")
             # 3D physics (rigid bodies, colliders, raycasts) behind PhysicsSystem3D.
             # Static and private to the engine library: no game module sees it.
             self.requires("joltphysics/5.2.0")
@@ -153,11 +152,17 @@ class SfsEngineConan(ConanFile):
                 "sdl_ttf::sdl_ttf",
                 "sdl_mixer::sdl_mixer",
                 "imgui::imgui",
-                "glew::glew",
                 "joltphysics::joltphysics",
                 "cgltf::cgltf",
             ]
+
+            # The renderer: engine-webgpu on the prebuilt wgpu-native library
+            # it installs beside it.
+            gpu = self.cpp_info.components["engine-webgpu"]
+            gpu.set_property("cmake_target_name", "sfs::engine-webgpu")
+            gpu.libs = ["engine-webgpu", "wgpu_native"]
+            gpu.includedirs = ["include", "include/wgpu-native",
+                               "include/wgpu-native/webgpu"]
+            gpu.requires = ["engine"]
             if self.settings.os == "Macos":
-                rt.frameworks = ["OpenGL"]
-            elif self.settings.os in ("Linux", "FreeBSD"):
-                rt.system_libs.append("GL")
+                gpu.frameworks = ["CoreVideo", "IOKit", "QuartzCore", "Cocoa"]

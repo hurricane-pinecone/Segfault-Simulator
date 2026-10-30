@@ -1,5 +1,5 @@
 site_name: SegFaultSimulator
-site_description: A 2D game engine with an ECS core and two render paths.
+site_description: A game engine with an ECS core and one renderer for flat 2D, isometric 2D and 3D games.
 site_url: https://hurricane-pinecone.github.io/Segfault-Simulator/docs/
 repo_url: https://github.com/hurricane-pinecone/Segfault-Simulator
 repo_name: hurricane-pinecone/Segfault-Simulator
@@ -64,9 +64,9 @@ nav:
       - Reflection & codegen: core/reflection/index.md
       - Parents & children: core/hierarchy/index.md
       - Asset database: core/assets/index.md
-      - 3D rendering data:
-          - core/rendering-3d/index.md
-          - Material graphs: core/rendering-3d/material-graphs/index.md
+      - Rendering data:
+          - core/rendering/index.md
+          - Material graphs: core/rendering/material-graphs/index.md
       - Voxel terrain: core/voxel/index.md
       - Particles:
           - core/particles/index.md
@@ -86,15 +86,17 @@ nav:
       - runtime/index.md
       - Game & scenes: runtime/game-and-scenes/index.md
       - Scene files: runtime/serialization/index.md
-      - 3D physics: runtime/physics-3d/index.md
-      - Game UI: runtime/ui/index.md
+      - Rendering:
+          - runtime/rendering/index.md
+          - Styles: runtime/rendering/styles/index.md
+          - Sprites & sprite sheets: runtime/rendering/sprites/index.md
+          - Render modules: runtime/rendering/render-modules/index.md
+          - Meshes, materials & lighting: runtime/rendering/meshes-and-lighting/index.md
+          - Render backends: runtime/rendering/backends/index.md
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md
-      - Voxel world: runtime/voxel/index.md
-      - Rendering:
-          - runtime/rendering/index.md
-          - Render modules: runtime/rendering/render-modules/index.md
-          - Render backends: runtime/rendering/backends/index.md
-      - 3D rendering: runtime/rendering-3d/index.md
+      - 3D physics: runtime/physics-3d/index.md
+      - Game UI: runtime/ui/index.md
       - Particles in your game: runtime/particles/index.md
+      - Voxel world: runtime/voxel/index.md

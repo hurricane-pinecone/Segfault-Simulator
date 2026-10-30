@@ -4,6 +4,9 @@
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/assetStore/sprite.h"
 
+#include "glm/glm/ext/vector_float2.hpp"
+#include "glm/glm/ext/vector_float4.hpp"
+
 #include <SDL_rect.h>
 #include <SDL_surface.h>
 #include <SDL_ttf.h>
@@ -32,7 +35,7 @@ using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
  *
  * Images, sprites and fonts are added from file paths under names the game
  * picks. Given the project's AssetDatabase, the store also loads assets by
- * their AssetId (models, materials, and textures for 3D), keeping each until
+ * their AssetId (models, materials and textures), keeping each until
  * cleared.
  */
 class AssetStore
@@ -89,7 +92,7 @@ public:
 
   /**
    * Take in the models finished in the background since the last call. Call
-   * once a frame (each Scene3D does, as it updates).
+   * once a frame (each StandardScene does, as it updates).
    */
   void collectLoads();
 
@@ -106,7 +109,7 @@ public:
   LoadProgress loadProgress() const { return m_progress; }
 
   /**
-   * A texture asset's texels (for 3D), read (with its .meta import settings)
+   * A texture asset's texels, read (with its .meta import settings)
    * on first use and kept. Null (logged once) if the id isn't a texture in the
    * database or its file can't be read.
    */
@@ -118,6 +121,9 @@ public:
    * shares one copy (and one upload).
    */
   std::shared_ptr<const TextureData> dataTexture(const AssetId& id);
+
+  /** Read a texture asset again next time (its file or settings changed). */
+  void forgetTexture(const AssetId& id);
 
   /**
    * A material asset (.mat), with its textures loaded, read on first use and
@@ -152,6 +158,30 @@ public:
   void addTexture(const std::string& assetId, const std::string& filePath);
   void removeTexture(const std::string& assetId);
   SDL_Surface* getSurface(const std::string& assetId) const;
+
+  /**
+   * An image as texels the renderer draws from: one added by name (a sprite
+   * sheet, sampled without smoothing: pixel art), converted on first use and
+   * kept, or a texture asset ("asset:<id>", see texture()). Null if there's no
+   * such image.
+   */
+  std::shared_ptr<const TextureData> imageTexture(const std::string& assetId);
+
+  /** One frame of a sprite sheet: its image, and where the frame is on it. */
+  struct SpriteFrame
+  {
+    std::shared_ptr<const TextureData> sheet;
+    glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f}; // x, y, width, height in 0..1
+    glm::vec2 pixels{0.0f};                   // the frame's size
+  };
+
+  /**
+   * Frame `frame` of an image (as imageTexture() names it): of a texture
+   * asset's sprite grid (its import settings' spriteCell; counted across then
+   * down, wrapping past the last), or the whole image if it has none. Empty if
+   * there's no such image.
+   */
+  std::optional<SpriteFrame> spriteFrame(const std::string& image, int frame);
 
   SpriteId addSprite(const std::string& textureId,
                      const std::string& spriteName,
@@ -240,6 +270,9 @@ private:
   // Null: tried and failed.
   std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
       m_textures;
+  // Images added by name, as texels (imageTexture()).
+  std::unordered_map<std::string, std::shared_ptr<const TextureData>>
+      m_imageTextures;
   // Textures read as data (dataTexture()).
   std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
       m_dataTextures;

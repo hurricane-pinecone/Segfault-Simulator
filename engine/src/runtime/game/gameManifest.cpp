@@ -30,6 +30,7 @@ GameManifest::read(const std::filesystem::path& folder)
   manifest.startScene = json->value("startScene", std::string());
   manifest.windowWidth = json->value("windowWidth", manifest.windowWidth);
   manifest.windowHeight = json->value("windowHeight", manifest.windowHeight);
+  manifest.backend = json->value("backend", std::string());
 
   if (manifest.startScene.empty())
   {
@@ -42,13 +43,15 @@ GameManifest::read(const std::filesystem::path& folder)
 bool GameManifest::write(const std::filesystem::path& folder) const
 {
   // Forward slashes, so a manifest reads the same on every platform.
-  const nlohmann::json json = {{"formatVersion", kFormatVersion},
-                               {"name", name},
-                               {"moduleName", moduleName},
-                               {"module", module.generic_string()},
-                               {"startScene", startScene.generic_string()},
-                               {"windowWidth", windowWidth},
-                               {"windowHeight", windowHeight}};
+  nlohmann::json json = {{"formatVersion", kFormatVersion},
+                         {"name", name},
+                         {"moduleName", moduleName},
+                         {"module", module.generic_string()},
+                         {"startScene", startScene.generic_string()},
+                         {"windowWidth", windowWidth},
+                         {"windowHeight", windowHeight}};
+  if (!backend.empty())
+    json["backend"] = backend;
   return SceneSerializer::writeJsonFile(json, folder / kFileName);
 }
 

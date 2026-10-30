@@ -1,13 +1,14 @@
 # Segfault Simulator
 
-A lightweight 2D game engine with an ECS core and a Unity-style OOP layer for
-game code. It renders either flat 2D scenes or isometric heightfield scenes
-through a shared core. Build your game in C++ against the engine library, and
-optionally drive it with a live Lua scripting API.
+A game engine with an ECS core, a Unity-style OOP layer for game code, and an
+editor. It's one engine for flat 2D, isometric 2D and 3D games, drawn by one
+renderer on every desktop platform and on the web. Build your game in C++
+against the engine library (or in the editor), and optionally drive it with a
+live Lua scripting API.
 
 <p align="center">
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
-    <strong>▶ Play the dogshit sample game</strong>
+    <strong>▶ Play the dogshit isometric sample</strong>
   </a>
   &nbsp;·&nbsp;
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/samplePlatformer" target="_blank" rel="noopener noreferrer">
@@ -28,33 +29,48 @@ optionally drive it with a live Lua scripting API.
   - [Require and Link It](#require-and-link-it)
   - [Raw CMake Install (no Conan)](#raw-cmake-install-no-conan)
   - [Runtime Assets](#runtime-assets)
-- [The Sample Game](#the-sample-game)
+- [The Samples](#the-samples)
 - [Working on the Engine](#working-on-the-engine)
 
 ## Overview
 
-SegFaultSimulator (SFS) is a 2D game engine with two render paths over one core:
+SegFaultSimulator (SFS) is one engine where flat 2D, isometric 2D and 3D are
+styles of the same world:
 
-- An **ECS core** of entities, components, and systems.
-- An **SDL2 + OpenGL render runtime** with per-pixel point lighting, normal maps,
-  and particles, drawn through one of two render systems:
-  - **Flat 2D** (`FlatRenderSystem`) draws screen-space sprites for side-on or
-    top-down games, ordered by layer then Y.
-  - **Isometric heightfield** (`IsometricRenderSystem`) draws a grid of elevated
-    columns with per-elevation lighting, terrain and sprite shadows, block geometry,
-    and world-projected decals.
-- A **live Lua scripting / modding API**.
-- **Native** (macOS / Linux / Windows) and **web** (Emscripten / WebGL2) targets.
+- An **ECS core** of entities, components and systems, with one component set
+  for every style (transforms, cameras, lights, sprites, particle emitters,
+  2D and 3D physics, meshes, grass), reflected so they are editable and
+  saveable.
+- **Three styles**, set per scene:
+  - **Flat 2D**: sprites on a plane, seen straight on, for side-on or
+    top-down games.
+  - **Isometric 2D**: a tile grid with heights, drawn as a true orthographic
+    isometric picture with real depth: sprites, voxel terrain, decals and
+    particles placed on the grid.
+  - **3D**: a free-camera world with models, material graphs, grass and Jolt
+    physics.
+- **One renderer** (`IRenderer`) and one render system for all three, with
+  render modules for sprites, meshes, particles, decals, voxels, grass and UI,
+  and the same lighting everywhere: sun and point-light shadows, clustered
+  point lights, bloom, depth of field and haze.
+- **WebGPU everywhere**: wgpu-native on Windows, Linux and macOS (Vulkan,
+  Direct3D 12 or Metal, with an OpenGL fallback), and the browser's WebGPU on
+  the web. Shaders are WGSL. Render backends are pluggable.
+- **SfsEditor**, a docking editor for scenes of every style, with prefabs,
+  material graphs, native C++ game scripts built on Play, and game export.
+- A **live Lua scripting / modding API** and an in-game dev console.
 
-It ships as two libraries:
+It ships as three libraries:
 
-| Target             | Contents                                             | Dependencies |
-| ------------------ | ---------------------------------------------------- | ------------ |
-| `sfs::engine`      | The full render runtime.                             | SDL2, OpenGL |
-| `sfs::engine-core` | The ECS, scripting, and particle core, no rendering. | none         |
+| Target                 | Contents                                                     | Dependencies |
+| ---------------------- | ------------------------------------------------------------ | ------------ |
+| `sfs::engine`          | The runtime: game loop, scenes, rendering, input, assets, UI. | SDL2, Dear ImGui |
+| `sfs::engine-webgpu`   | The WebGPU render backend and renderer.                      | wgpu-native |
+| `sfs::engine-core`     | The ECS, scripting, particle and rendering-data core, no rendering. | none |
 
-Link `sfs::engine` to build a game; `sfs::engine-core` is for headless tools or
-projects that bring their own rendering.
+Link `sfs::engine-webgpu` (it brings `sfs::engine`) to build a game;
+`sfs::engine-core` is for headless tools or projects that bring their own
+rendering.
 
 ## Documentation
 
@@ -80,10 +96,10 @@ into your local Conan cache once:
 ```bash
 git clone https://github.com/hurricane-pinecone/Segfault-Simulator.git
 cd Segfault-Simulator
-conan create .                          # sfs::engine (full runtime)
+conan create .                          # the full runtime
 ```
 
-To package only the dependency-free core (no SDL/OpenGL):
+To package only the dependency-free core (no SDL or GPU):
 
 ```bash
 conan create . -o "&:core_only=True"    # sfs::engine-core
@@ -106,11 +122,11 @@ Then link it in your `CMakeLists.txt`:
 
 ```cmake
 find_package(engine REQUIRED)
-target_link_libraries(myGame PRIVATE sfs::engine)   # or sfs::engine-core
+target_link_libraries(myGame PRIVATE sfs::engine-webgpu)   # or sfs::engine-core
 ```
 
-The SDL / imgui / GLEW closure comes in transitively, so you do not list those
-yourself.
+The SDL / imgui / wgpu-native closure comes in transitively, so you do not
+list those yourself.
 
 ### Raw CMake Install (no Conan)
 
@@ -125,7 +141,7 @@ Point your build at it and consume the same targets:
 ```cmake
 # cmake -D CMAKE_PREFIX_PATH=/path/to/engine ...
 find_package(engine REQUIRED)
-target_link_libraries(myGame PRIVATE sfs::engine)
+target_link_libraries(myGame PRIVATE sfs::engine-webgpu)
 ```
 
 ### Runtime Assets
@@ -140,11 +156,19 @@ add_custom_command(TARGET myGame POST_BUILD
         "${ENGINE_ASSET_DIR}" "$<TARGET_FILE_DIR:myGame>/assets")
 ```
 
-## The Sample Game
+## The Samples
 
-`sampleGame/` is a complete game built on SFS and the worked example of
-everything above. It consumes the engine through `find_package(engine)` and
-`sfs::engine`, exactly as your game does. Build and run it against the package:
+Two complete games built on SFS, one per 2D style, both playable in the
+browser (links above):
+
+- `sampleGame/` is the isometric sample: voxel terrain with water, lamps,
+  day and night, blood and embers.
+- `samplePlatformer/` is the flat 2D sample: a dark platformer lit by torches
+  and gunfire.
+
+`sampleGame/` is also the worked example of everything above: it consumes the
+engine through `find_package(engine)` and `sfs::engine-webgpu`, exactly as
+your game does. Build and run it against the package:
 
 ```bash
 conan create .

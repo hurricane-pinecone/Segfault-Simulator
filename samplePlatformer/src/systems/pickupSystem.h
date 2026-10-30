@@ -2,7 +2,7 @@
 
 #include "components/platformerComponents.h"
 #include "config.h"
-#include "engine/core/components/lightEmitterComponent.h"
+#include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
@@ -48,7 +48,7 @@ protected:
     for (const auto& p :
          registry->view<PlayerTag, sfs::TransformComponent, Loadout>())
     {
-      playerPos = p.getComponent<sfs::TransformComponent>().position;
+      playerPos = p.getComponent<sfs::TransformComponent>().position2D();
       playerEntity = p;
       havePlayer = true;
       break;
@@ -58,13 +58,13 @@ protected:
     for (const auto& entity : getEntities())
     {
       const glm::vec2 pos =
-          entity.getComponent<sfs::TransformComponent>().position;
+          entity.getComponent<sfs::TransformComponent>().position2D();
       auto& pickup = entity.getComponent<SpellPickup>();
 
       // Pulse the orb's glow.
       pickup.bob += dt;
-      if (entity.hasComponent<sfs::LightEmitterComponent>())
-        entity.getComponent<sfs::LightEmitterComponent>().intensity =
+      if (entity.hasComponent<sfs::PointLightComponent>())
+        entity.getComponent<sfs::PointLightComponent>().intensity =
             1.7f + 0.7f * glm::sin(pickup.bob * 6.0f);
 
       if (!havePlayer)
@@ -92,7 +92,7 @@ private:
   {
     registry->createEntity()
         .addComponent<sfs::TransformComponent>(pos)
-        .addComponent<sfs::LightEmitterComponent>(radius, 3.2f, 0.0f, color)
+        .addComponent<sfs::PointLightComponent>(color, 3.2f, radius)
         .addComponent<Lifetime>(time);
   }
 

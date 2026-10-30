@@ -111,17 +111,25 @@ if(SFS_CODEGEN_AVAILABLE)
         INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
         HEADERS
             "${ENGINE_COMPONENT_DIR}/nameComponent.h"
-            "${ENGINE_COMPONENT_DIR}/transform3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/transformComponent.h"
             "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
-            "${ENGINE_COMPONENT_DIR}/pointLight3DComponent.h"
-            "${ENGINE_COMPONENT_DIR}/camera3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/pointLightComponent.h"
+            "${ENGINE_COMPONENT_DIR}/cameraComponent.h"
             "${ENGINE_COMPONENT_DIR}/rigidBody3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/capsuleCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassBenderComponent.h"
-            "${ENGINE_COMPONENT_DIR}/scriptComponent.h")
+            "${ENGINE_COMPONENT_DIR}/scriptComponent.h"
+            "${ENGINE_COMPONENT_DIR}/cameraFollowComponent.h"
+            "${ENGINE_COMPONENT_DIR}/rigidBody2DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/boxCollider2D.h"
+            "${ENGINE_COMPONENT_DIR}/particleEmitterComponent.h"
+            "${ENGINE_COMPONENT_DIR}/renderLayerComponent.h"
+            "${ENGINE_COMPONENT_DIR}/spriteComponent.h"
+            "${ENGINE_COMPONENT_DIR}/spriteTint.h"
+            "${ENGINE_COMPONENT_DIR}/shadowCasterComponent.h")
 else()
     target_sources(engine-core PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineReflection.cpp")
@@ -210,7 +218,7 @@ else()
 endif()
 
 # ----------------------------------------------------------------------------
-# engine: the render/platform layer (SDL, OpenGL, imgui). Depends on engine-core.
+# engine: the render/platform layer (SDL, imgui). Depends on engine-core.
 # Skipped entirely by a core-only configure (e.g. the CI test job): no render
 # lib, no SDL, nothing that needs Conan.
 # ----------------------------------------------------------------------------
@@ -248,37 +256,10 @@ target_compile_options(engine PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall>
     # Clang-only (silences unknown -Wno-* flags); GCC doesn't recognise it.
     $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
-    # MSVC caps a single object at 64k sections; the big GL render units
-    # (openGLQuadRenderer, isometricGeometryRenderer) exceed it without /bigobj.
+    # MSVC caps a single object at 64k sections; big units exceed it without
+    # /bigobj.
     $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
 )
-
-# Embed the GLSL shaders. The renderers' shaders live in real .vert/.frag files
-# under src/.../gl/shaders; embedShaders.cmake bakes them into a generated header
-# (byte arrays -> no runtime file loading, and no string-literal-size limit). The
-# renderers include <engine/generated/embeddedShaders.h>. Regenerated whenever a
-# shader file changes (custom-command DEPENDS); CONFIGURE_DEPENDS picks up
-# adding/removing one.
-set(ENGINE_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/rendering/gl/shaders")
-file(GLOB_RECURSE ENGINE_SHADER_FILES CONFIGURE_DEPENDS
-    "${ENGINE_SHADER_DIR}/*.vert" "${ENGINE_SHADER_DIR}/*.frag")
-set(ENGINE_SHADERS_HEADER
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/engine/generated/embeddedShaders.h")
-add_custom_command(
-    OUTPUT "${ENGINE_SHADERS_HEADER}"
-    COMMAND ${CMAKE_COMMAND}
-        "-DSHADER_DIR=${ENGINE_SHADER_DIR}"
-        "-DOUT=${ENGINE_SHADERS_HEADER}"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
-    DEPENDS ${ENGINE_SHADER_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
-    COMMENT "Embedding GLSL shaders"
-    VERBATIM)
-# custom_target + add_dependencies guarantees the header is generated before the
-# engine compiles on every generator (including the multi-config VS build).
-add_custom_target(engineShaders DEPENDS "${ENGINE_SHADERS_HEADER}")
-add_dependencies(engine engineShaders)
-target_sources(engine PRIVATE "${ENGINE_SHADERS_HEADER}")
-target_include_directories(engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/include/assets
      DESTINATION ${CMAKE_BINARY_DIR}/bin)
@@ -313,9 +294,6 @@ if(ENGINE_WEB_BUILD)
         -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
         -sUSE_SDL_MIXER=2
-        -sMIN_WEBGL_VERSION=2
-        -sMAX_WEBGL_VERSION=2
-        -sFULL_ES3=1
         -sUSE_PTHREADS=1
         -sPTHREAD_POOL_SIZE=4
     )
@@ -325,8 +303,6 @@ else()
     find_package(SDL2_ttf REQUIRED)
     find_package(SDL2_mixer REQUIRED)
     find_package(imgui REQUIRED)
-    find_package(OpenGL REQUIRED)
-    find_package(GLEW REQUIRED)
     find_package(Jolt REQUIRED)
     find_package(cgltf REQUIRED)
 
@@ -350,7 +326,6 @@ else()
 
     target_sources(engine PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_sdl2.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_opengl3.cpp"
     )
 
     # The backends compile into the engine, not into the (shared) imgui
@@ -365,16 +340,14 @@ else()
             imgui::imgui
             sdl_ttf::sdl_ttf
             SDL2_mixer::SDL2_mixer
-            OpenGL::GL
-            GLEW::GLEW
     )
 endif()
 
 # ----------------------------------------------------------------------------
-# engine-webgpu: the WebGPU render backend and its 3D renderer. A separate lib
-# so only what wants it (the editor, the player, 3D games) links wgpu-native;
-# the OpenGL iso and 2D games link plain `engine`
-# and never pull in WebGPU. Native only (wgpu-native has no web target here).
+# engine-webgpu: the WebGPU render backend and the renderer every game, flat,
+# isometric or 3D, draws through. Natively on wgpu (Vulkan, Direct3D 12, Metal,
+# or OpenGL where there's none of those); on the web, on the browser's WebGPU
+# (emscripten's emdawnwebgpu port: the same webgpu.h).
 # ----------------------------------------------------------------------------
 if(NOT ENGINE_WEB_BUILD)
     include(FetchContent)
@@ -386,76 +359,103 @@ if(NOT ENGINE_WEB_BUILD)
     )
     FetchContent_MakeAvailable(webgpu)
 
-    # The SDL2 -> WGPUSurface helper.
+    # The SDL2 -> WGPUSurface helper: one source file, compiled into
+    # engine-webgpu itself (its own library isn't built), so a static engine
+    # has nothing extra to export.
     FetchContent_Declare(sdl2webgpu
         GIT_REPOSITORY https://github.com/eliemichel/sdl2webgpu.git
         GIT_TAG eda8bedcb78a755f42c5efa00b732c62e89c23cb # main @ 2024, v24-compatible
+        SOURCE_SUBDIR do-not-build
     )
     FetchContent_MakeAvailable(sdl2webgpu)
-    # A static library linked into the shared engine-webgpu, so it must be
-    # position-independent (a sanitizer build's instrumentation can't link
-    # otherwise).
-    set_target_properties(sdl2webgpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
-    file(GLOB_RECURSE ENGINE_WEBGPU_SRC CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/*.cpp")
+# Embed the WGSL shaders, the engine's one shader language: real .wgsl
+# files -> a generated byte-array header, included as
+# <engine/generated/embeddedWgsl.h> (meshLit.wgsl ->
+# sfs::shaders::meshLitWgsl).
+set(ENGINE_WGSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders")
+file(GLOB_RECURSE ENGINE_WGSL_FILES CONFIGURE_DEPENDS "${ENGINE_WGSL_DIR}/*.wgsl")
+set(ENGINE_WGSL_HEADER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/engine/generated/embeddedWgsl.h")
+add_custom_command(
+    OUTPUT "${ENGINE_WGSL_HEADER}"
+    COMMAND ${CMAKE_COMMAND}
+        "-DSHADER_DIR=${ENGINE_WGSL_DIR}"
+        "-DOUT=${ENGINE_WGSL_HEADER}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
+    DEPENDS ${ENGINE_WGSL_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
+    COMMENT "Embedding WGSL shaders"
+    VERBATIM)
+add_custom_target(engineWgslShaders DEPENDS "${ENGINE_WGSL_HEADER}")
+add_library(engine-wgsl INTERFACE)
+target_include_directories(engine-wgsl INTERFACE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-    # Dear ImGui's WebGPU renderer backend (the SDL2 platform backend is already
-    # in `engine`). Multi-viewport rendering, which it lacks, lives in
-    # src/webgpu/imgui.
+file(GLOB_RECURSE ENGINE_WEBGPU_SRC CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/*.cpp")
+
+# Dear ImGui's WebGPU renderer backend (the SDL2 platform backend is already
+# in `engine`). Multi-viewport rendering, which it lacks, lives in
+# src/webgpu/imgui. The web build has no ImGui.
+if(ENGINE_WEB_BUILD)
+    list(FILTER ENGINE_WEBGPU_SRC EXCLUDE REGEX "/src/webgpu/imgui/")
+else()
     list(APPEND ENGINE_WEBGPU_SRC
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/imgui/backends/imgui_impl_wgpu.cpp")
+endif()
 
-    add_library(engine-webgpu ${ENGINE_LIBRARY_TYPE} ${ENGINE_WEBGPU_SRC})
-    sfs_engine_library_output(engine-webgpu)
+add_library(engine-webgpu ${ENGINE_LIBRARY_TYPE} ${ENGINE_WEBGPU_SRC})
+sfs_engine_library_output(engine-webgpu)
 
-    # Select the wgpu-native flavour of the backend's WebGPU API.
-    target_compile_definitions(engine-webgpu PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
-    add_library(sfs::engine-webgpu ALIAS engine-webgpu)
+# Select the wgpu-native flavour of the backend's WebGPU API.
+target_compile_definitions(engine-webgpu PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
+add_library(sfs::engine-webgpu ALIAS engine-webgpu)
 
-    # sdl2webgpu is only used inside the library (surface creation), so it
-    # stays private; wgpu-native is public, as the headers expose its API.
-    target_link_libraries(engine-webgpu PUBLIC engine webgpu PRIVATE sdl2webgpu)
+if(ENGINE_WEB_BUILD)
+    # The browser's WebGPU, as webgpu.h (public: the headers expose it).
+    target_compile_options(engine-webgpu PUBLIC --use-port=emdawnwebgpu)
+    target_link_options(engine-webgpu PUBLIC --use-port=emdawnwebgpu)
+    target_link_libraries(engine-webgpu PUBLIC engine)
 
-    # Stage the engine's runtime libraries next to an executable: wgpu-native
-    # (engine DLLs already build into the shared bin/). The installed package
-    # defines the same function (engineConfig.cmake), so a consumer calls it
-    # identically in-tree and against an install.
+    # Nothing to stage beside a web page: it's all in the .wasm.
+    function(sfs_deploy_runtime target)
+    endfunction()
+else()
+    # wgpu-native is public, as the headers expose its API. The SDL2 ->
+    # surface helper is private (Objective-C on Apple, for its Metal layer).
+    target_link_libraries(engine-webgpu PUBLIC engine webgpu)
+    set(SDL2WEBGPU_SOURCE "${sdl2webgpu_SOURCE_DIR}/sdl2webgpu.c")
+    target_sources(engine-webgpu PRIVATE "${SDL2WEBGPU_SOURCE}")
+    target_include_directories(engine-webgpu PRIVATE "${sdl2webgpu_SOURCE_DIR}")
+    if(APPLE)
+        set_source_files_properties("${SDL2WEBGPU_SOURCE}"
+            PROPERTIES COMPILE_OPTIONS "-x;objective-c")
+        target_link_libraries(engine-webgpu PRIVATE
+            "-framework CoreVideo" "-framework IOKit" "-framework QuartzCore"
+            "-framework Cocoa")
+    endif()
+
+    # Stage the engine's runtime libraries next to an executable:
+    # wgpu-native (engine DLLs already build into the shared bin/). The
+    # installed package defines the same function (engineConfig.cmake), so
+    # a consumer calls it identically in-tree and against an install.
     function(sfs_deploy_runtime target)
         target_copy_webgpu_binaries(${target})
     endfunction()
-
-    target_include_directories(engine-webgpu PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src")
-
-    target_compile_options(engine-webgpu PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall>
-        $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
-        $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
-    )
-
-    # Embed the WGSL shaders. Same mechanism as the GLSL embed above: real .wgsl
-    # files -> a generated byte-array header, included as
-    # <engine/generated/embeddedWgsl.h> (mesh3DLit.wgsl -> sfs::shaders::mesh3DLitWgsl).
-    set(ENGINE_WGSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/shaders")
-    file(GLOB_RECURSE ENGINE_WGSL_FILES CONFIGURE_DEPENDS "${ENGINE_WGSL_DIR}/*.wgsl")
-    set(ENGINE_WGSL_HEADER
-        "${CMAKE_CURRENT_BINARY_DIR}/generated/engine/generated/embeddedWgsl.h")
-    add_custom_command(
-        OUTPUT "${ENGINE_WGSL_HEADER}"
-        COMMAND ${CMAKE_COMMAND}
-            "-DSHADER_DIR=${ENGINE_WGSL_DIR}"
-            "-DOUT=${ENGINE_WGSL_HEADER}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
-        DEPENDS ${ENGINE_WGSL_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embedShaders.cmake"
-        COMMENT "Embedding WGSL shaders"
-        VERBATIM)
-    add_custom_target(engineWgslShaders DEPENDS "${ENGINE_WGSL_HEADER}")
-    add_dependencies(engine-webgpu engineWgslShaders)
-    target_sources(engine-webgpu PRIVATE "${ENGINE_WGSL_HEADER}")
-    target_include_directories(engine-webgpu PRIVATE
-        "${CMAKE_CURRENT_BINARY_DIR}/generated")
 endif()
+
+target_include_directories(engine-webgpu PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+target_compile_options(engine-webgpu PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall>
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-warning-option>
+    $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
+)
+
+add_dependencies(engine-webgpu engineWgslShaders)
+target_link_libraries(engine-webgpu PRIVATE engine-wgsl)
 
 endif() # NOT ENGINE_CORE_ONLY
 
@@ -479,15 +479,10 @@ if(NOT ENGINE_WEB_BUILD)
         set(ENGINE_HAS_RENDER_LIB FALSE)
     endif()
 
-    # engine-webgpu, plus the prebuilt wgpu-native library + headers, which
-    # the installed config re-creates as the `webgpu` imported target. Only
-    # the shared build installs it: sdl2webgpu is linked privately, which a
-    # shared library hides, but a static one would have to export (and its
-    # include directory points into the build tree).
-    if(TARGET engine-webgpu AND ENGINE_LIBRARY_TYPE STREQUAL "STATIC")
-        message(STATUS "engine-webgpu is not installed in a static engine build")
-    endif()
-    if(TARGET engine-webgpu AND ENGINE_LIBRARY_TYPE STREQUAL "SHARED")
+    # engine-webgpu (the renderer), plus the prebuilt wgpu-native library +
+    # headers, which the installed config re-creates as the `webgpu` imported
+    # target.
+    if(TARGET engine-webgpu)
         list(APPEND ENGINE_INSTALL_TARGETS engine-webgpu)
         set(ENGINE_HAS_WEBGPU_LIB TRUE)
 

@@ -57,7 +57,7 @@ protected:
   void onQuit() override;
   void onLoadScene(const std::filesystem::path& scene) override;
   std::filesystem::path gameFolder() const override;
-  sfs::Scene3D& replaceScene() override;
+  sfs::StandardScene& replaceScene() override;
   bool ownsWindow() const override { return false; }
   // Files dropped onto the window are imported into the Assets panel's folder.
   void onEvent(const SDL_Event& event) override;

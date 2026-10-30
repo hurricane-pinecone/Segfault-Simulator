@@ -11,8 +11,6 @@ namespace sfs
 {
 
 class Game;
-class IQuadRenderer;
-class TextRenderer;
 
 class SceneManager
 {

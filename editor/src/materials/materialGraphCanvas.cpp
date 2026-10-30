@@ -4,7 +4,7 @@
 #include "widgets/theme.h"
 
 #include "engine/core/assets/assetDatabase.h"
-#include "engine/core/rendering/3d/materialNodes.h"
+#include "engine/core/rendering/materialNodes.h"
 
 #include "glm/glm/common.hpp"
 #include "imgui_internal.h" // ImRect, ImLengthSqr

@@ -1,7 +1,7 @@
 #include "../../testHarness.h"
 
 #include <engine/core/components/parentComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/hierarchy/hierarchy.h>
 
@@ -18,7 +18,7 @@ constexpr float kHalfTurn = 1.5707964f; // 90 degrees
 Entity placed(Registry& registry, glm::vec3 position)
 {
   Entity entity = registry.createEntity();
-  entity.addComponent<Transform3DComponent>(position);
+  entity.addComponent<TransformComponent>(position);
   return entity;
 }
 
@@ -35,8 +35,8 @@ int main()
   {
     Registry registry;
     Entity parent = placed(registry, {10.0f, 0.0f, 0.0f});
-    parent.getComponent<Transform3DComponent>().setYaw(kHalfTurn);
-    parent.getComponent<Transform3DComponent>().scale = glm::vec3(2.0f);
+    parent.getComponent<TransformComponent>().setYaw(kHalfTurn);
+    parent.getComponent<TransformComponent>().scale = glm::vec3(2.0f);
     Entity child = placed(registry, {1.0f, 0.0f, 0.0f});
     CHECK(hierarchy::setParent(child, parent));
 
@@ -85,21 +85,21 @@ int main()
   {
     Registry registry;
     Entity parent = placed(registry, {5.0f, 5.0f, 0.0f});
-    parent.getComponent<Transform3DComponent>().setYaw(kHalfTurn);
+    parent.getComponent<TransformComponent>().setYaw(kHalfTurn);
     Entity child = placed(registry, {6.0f, 5.0f, 1.0f});
-    child.getComponent<Transform3DComponent>().scale = glm::vec3(3.0f);
+    child.getComponent<TransformComponent>().scale = glm::vec3(3.0f);
 
     CHECK(hierarchy::setParentKeepWorld(child, parent));
     CHECK(approxVec(hierarchy::worldPosition(child), {6.0f, 5.0f, 1.0f}));
     // Local now: 1 unit along the parent's turned axis (world +X is its -Y).
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().position,
+    CHECK(approxVec(child.getComponent<TransformComponent>().position,
                     {0.0f, -1.0f, 1.0f}));
     CHECK(approxVec(
-        child.getComponent<Transform3DComponent>().scale, glm::vec3(3.0f)));
+        child.getComponent<TransformComponent>().scale, glm::vec3(3.0f)));
 
     CHECK(hierarchy::setParentKeepWorld(child, {}));
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().position,
-                    {6.0f, 5.0f, 1.0f}));
+    CHECK(approxVec(
+        child.getComponent<TransformComponent>().position, {6.0f, 5.0f, 1.0f}));
   }
 
   TEST("setWorldMatrix should place a child at a world position")
@@ -109,8 +109,8 @@ int main()
     Entity child = placed(registry, {});
     hierarchy::setParent(child, parent);
     hierarchy::setWorldMatrix(
-        child, Transform3DComponent({1.0f, 1.0f, 1.0f}).matrix());
-    CHECK(approxVec(child.getComponent<Transform3DComponent>().position,
+        child, TransformComponent({1.0f, 1.0f, 1.0f}).matrix());
+    CHECK(approxVec(child.getComponent<TransformComponent>().position,
                     {1.0f, 1.0f, -3.0f}));
   }
 

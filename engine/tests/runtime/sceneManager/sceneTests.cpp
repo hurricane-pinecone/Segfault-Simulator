@@ -1,11 +1,11 @@
 #include "../../testHarness.h"
-#include "../rendering3d/mockRenderer3D.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/rendering3d/scene3D.h>
+#include <engine/runtime/rendering/standardScene.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/sceneManager/sceneManager.h>
 
@@ -104,14 +104,14 @@ int main()
     CHECK(world.scene.tryGame() == nullptr); // no game outside one
   }
 
-  TEST("Scene3D::play should replace the contents with a scene file")
+  TEST("StandardScene::play should replace the contents with a scene file")
   {
     AssetStore store;
-    testing3d::MockRenderer3D renderer;
-    SceneServices services{.assetStore = store, .renderer3D = &renderer};
+    testing3d::MockRenderer renderer;
+    SceneServices services{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
     manager.setSceneServices(&services);
-    Scene3D& scene = *manager.createScene<Scene3D>();
+    StandardScene& scene = *manager.createScene<StandardScene>();
     scene.createEntity().addComponent<NameComponent>("Old");
     scene.flushEntities();
 

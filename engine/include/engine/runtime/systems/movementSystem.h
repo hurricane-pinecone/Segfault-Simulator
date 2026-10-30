@@ -1,9 +1,8 @@
 #pragma once
 
-#include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/worldCollider.h"
 #include "engine/core/rendering/iTerrainHeightSource.h"
-#include <engine/core/components/rigidBodyComponent.h>
+#include <engine/core/components/rigidBody2DComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/system.h>
 #include <glm/glm/common.hpp>
@@ -18,7 +17,7 @@ public:
   MovementSystem()
   {
     registerComponent<TransformComponent>();
-    registerComponent<RigidBodyComponent>();
+    registerComponent<RigidBody2DComponent>();
   }
 
   ~MovementSystem() = default;
@@ -34,13 +33,14 @@ public:
   {
     for (const auto& entity : getEntities())
     {
-      auto& rb = entity.getComponent<RigidBodyComponent>();
+      auto& rb = entity.getComponent<RigidBody2DComponent>();
       auto& transform = entity.getComponent<TransformComponent>();
 
-      transform.previousPosition = transform.position;
+      const glm::vec2 current = transform.position2D();
+      rb.previousPosition = current;
 
       const glm::vec2 desired =
-          transform.position + rb.velocity * static_cast<float>(deltaTime);
+          current + rb.velocity * static_cast<float>(deltaTime);
 
       if (m_terrainHeightSource)
       {
@@ -56,24 +56,24 @@ public:
           size = collider.worldSize();
         }
 
-        transform.position =
-            resolveTerrainStep(transform.position, desired, offset, size, rb);
+        transform.setPosition2D(
+            resolveTerrainStep(current, desired, offset, size, rb));
       }
       else
       {
-        transform.position = desired;
+        transform.setPosition2D(desired);
       }
 
-      if (m_terrainHeightSource && entity.hasComponent<ElevationComponent>())
-      {
-        auto& elevation = entity.getComponent<ElevationComponent>();
-        elevation.level = terrainHeightAt(transform.position);
-      }
+      // Standing on the terrain: its height (in its levels) is the
+      // transform's z.
+      if (m_terrainHeightSource)
+        transform.position.z =
+            static_cast<float>(terrainHeightAt(transform.position2D()));
 
       if (entity.hasComponent<WorldCollider>())
       {
         auto& collider = entity.getComponent<WorldCollider>();
-        collider.updateBounds(transform.position);
+        collider.updateBounds(transform.position2D());
       }
     }
   }
@@ -103,7 +103,7 @@ private:
                                const glm::vec2& desired,
                                const glm::vec2& colliderOffset,
                                const glm::vec2& colliderSize,
-                               RigidBodyComponent& rb) const
+                               RigidBody2DComponent& rb) const
   {
     const int currentLevel = terrainHeightAt(current);
 

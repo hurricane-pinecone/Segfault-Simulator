@@ -2,7 +2,7 @@
 
 #include "components/platformerComponents.h"
 #include "config.h"
-#include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
@@ -24,7 +24,7 @@ protected:
   void create() override
   {
     registerComponent<sfs::TransformComponent>();
-    registerComponent<sfs::RigidBodyComponent>();
+    registerComponent<sfs::RigidBody2DComponent>();
     registerComponent<Enemy>();
   }
 
@@ -38,7 +38,7 @@ protected:
     for (const auto& player :
          registry->view<PlayerTag, sfs::TransformComponent>())
     {
-      playerPos = player.getComponent<sfs::TransformComponent>().position;
+      playerPos = player.getComponent<sfs::TransformComponent>().position2D();
       havePlayer = true;
       break;
     }
@@ -48,7 +48,7 @@ protected:
     for (const auto& entity : getEntities())
     {
       const auto& transform = entity.getComponent<sfs::TransformComponent>();
-      auto& body = entity.getComponent<sfs::RigidBodyComponent>();
+      auto& body = entity.getComponent<sfs::RigidBody2DComponent>();
 
       const float dx = playerPos.x - transform.position.x;
       const float dir = dx > 4.0f ? 1.0f : (dx < -4.0f ? -1.0f : 0.0f);

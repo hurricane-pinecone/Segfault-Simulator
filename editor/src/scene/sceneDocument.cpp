@@ -4,7 +4,7 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
 namespace

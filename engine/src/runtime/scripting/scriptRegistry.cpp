@@ -6,6 +6,9 @@
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/systems/cameraSystem.h"
+#include "engine/runtime/systems/collisionSystem.h"
+#include "engine/runtime/systems/movementSystem.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 
 #include <algorithm>
@@ -46,6 +49,21 @@ namespace
 // wants one lists it by name, like a game system.
 void registerEngineSystems(ScriptRegistry& registry)
 {
+  registry.add(ScriptType{.name = "CameraSystem",
+                          .module = "engine",
+                          .kind = ScriptType::Kind::System,
+                          .addSystem = [](Scene& scene) -> System&
+                          { return scene.addSystem<CameraSystem>(); }});
+  registry.add(ScriptType{.name = "MovementSystem",
+                          .module = "engine",
+                          .kind = ScriptType::Kind::System,
+                          .addSystem = [](Scene& scene) -> System&
+                          { return scene.addSystem<MovementSystem>(); }});
+  registry.add(ScriptType{.name = "CollisionSystem",
+                          .module = "engine",
+                          .kind = ScriptType::Kind::System,
+                          .addSystem = [](Scene& scene) -> System&
+                          { return scene.addSystem<CollisionSystem>(); }});
 #ifdef SFS_HAS_PHYSICS
   registry.add(ScriptType{.name = "PhysicsSystem3D",
                           .module = "engine",

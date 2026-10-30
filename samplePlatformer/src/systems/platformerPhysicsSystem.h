@@ -3,7 +3,7 @@
 #include "components/platformerComponents.h"
 #include "config.h"
 #include "engine/core/components/boxCollider2D.h"
-#include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
@@ -29,7 +29,7 @@ protected:
   void create() override
   {
     registerComponent<sfs::TransformComponent>();
-    registerComponent<sfs::RigidBodyComponent>();
+    registerComponent<sfs::RigidBody2DComponent>();
     registerComponent<sfs::BoxCollider2D>();
     registerComponent<PlatformerBody>();
   }
@@ -52,14 +52,15 @@ protected:
                                              sfs::TransformComponent,
                                              sfs::BoxCollider2D>())
     {
-      solids.push_back({entity.getComponent<sfs::TransformComponent>().position,
-                        entity.getComponent<sfs::BoxCollider2D>().half});
+      solids.push_back(
+          {entity.getComponent<sfs::TransformComponent>().position2D(),
+           entity.getComponent<sfs::BoxCollider2D>().half});
     }
 
     for (const auto& entity : getEntities())
     {
       auto& transform = entity.getComponent<sfs::TransformComponent>();
-      auto& body = entity.getComponent<sfs::RigidBodyComponent>();
+      auto& body = entity.getComponent<sfs::RigidBody2DComponent>();
       auto& state = entity.getComponent<PlatformerBody>();
       const glm::vec2 half = entity.getComponent<sfs::BoxCollider2D>().half;
 
@@ -67,9 +68,10 @@ protected:
       state.onGround = false;
 
       // Move and resolve on X, then Y, so a body slides along walls/floors.
-      transform.position.x += body.velocity.x * dt;
+      glm::vec2 position = transform.position2D();
+      position.x += body.velocity.x * dt;
       for (const auto& solid : solids)
-        resolve(transform.position,
+        resolve(position,
                 half,
                 body.velocity,
                 solid.center,
@@ -77,15 +79,16 @@ protected:
                 true,
                 state);
 
-      transform.position.y += body.velocity.y * dt;
+      position.y += body.velocity.y * dt;
       for (const auto& solid : solids)
-        resolve(transform.position,
+        resolve(position,
                 half,
                 body.velocity,
                 solid.center,
                 solid.half,
                 false,
                 state);
+      transform.setPosition2D(position);
     }
   }
 

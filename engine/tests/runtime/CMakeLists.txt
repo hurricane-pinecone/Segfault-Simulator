@@ -1,6 +1,6 @@
-# Runtime tests link the full engine (SDL/OpenGL/imgui). They drive systems and
-# render modules through their seams (a mock IQuadRenderer, stub services), so
-# they run headless with no window or GL context. add_runtime_test(name source)
+# Runtime tests link the full engine (SDL/imgui). They drive systems and render
+# modules through their seams (a mock IRenderer, stub services), so they run
+# headless with no window or GPU. add_runtime_test(name source)
 # declares one in a line.
 function(add_runtime_test name source)
     add_executable(${name} ${source})
@@ -17,11 +17,11 @@ function(add_runtime_test name source)
 endfunction()
 
 # systems/
+add_runtime_test(spriteFrameTests assetStore/spriteFrameTests.cpp)
 add_runtime_test(movementSystemTests systems/movementSystemTests.cpp)
 add_runtime_test(collisionSystemTests systems/collisionSystemTests.cpp)
 add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
 add_runtime_test(physicsSystem3DTests systems/physicsSystem3DTests.cpp)
-add_runtime_test(spriteRenderSystemTests systems/spriteRenderSystemTests.cpp)
 
 # particles/
 add_runtime_test(colliderParticleCollisionTests particles/colliderParticleCollisionTests.cpp)
@@ -35,23 +35,17 @@ add_runtime_test(mouseInputTests input/mouseInputTests.cpp)
 add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
 
 # rendering/
-add_runtime_test(flatRenderSmokeTest rendering/flatRenderSmokeTest.cpp)
-add_runtime_test(clipDepthTests rendering/clipDepthTests.cpp)
-add_runtime_test(lightingUtilsTests rendering/lightingUtilsTests.cpp)
 
 # rendering/modules/
-add_runtime_test(blockGeometryTests rendering/modules/blockGeometryTests.cpp)
-add_runtime_test(isometricWaterTests rendering/modules/isometricWaterTests.cpp)
-add_runtime_test(spriteShadowTests rendering/modules/spriteShadowTests.cpp)
-add_runtime_test(isometricDecalSinkTests rendering/modules/isometricDecalSinkTests.cpp)
 
 # assetStore/
 add_runtime_test(modelImporterTests assetStore/modelImporterTests.cpp)
 
-# rendering3d/
-add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)
+# rendering/
+add_runtime_test(renderSystemTests rendering/renderSystemTests.cpp)
+add_runtime_test(scene2DTests rendering/scene2DTests.cpp)
 add_runtime_test(uiLayoutTests ui/uiLayoutTests.cpp)
-add_runtime_test(pickingTests rendering3d/pickingTests.cpp)
+add_runtime_test(pickingTests rendering/pickingTests.cpp)
 
 # serialization/
 add_runtime_test(sceneSerializerTests serialization/sceneSerializerTests.cpp)
@@ -62,3 +56,4 @@ add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)
 
 # scriptableObjects/
 add_runtime_test(scriptableObjectsTests scriptableObjects/scriptableObjectsTests.cpp)
+add_runtime_test(renderBackendsTests rendering/renderBackendsTests.cpp)

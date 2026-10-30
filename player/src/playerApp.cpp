@@ -1,6 +1,7 @@
 #include "playerApp.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/runtime/rendering/backend/renderBackends.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
 
 #include <SDL_filesystem.h>
@@ -35,7 +36,15 @@ bool PlayerApp::load()
 
 std::unique_ptr<sfs::IRenderBackend> PlayerApp::makeRenderBackend()
 {
-  return std::make_unique<sfs::WebGpuRenderBackend>();
+  // Every backend the player has, the game's choice first (another is tried
+  // if it can't start here).
+  sfs::registerWebGpuBackend();
+  const std::vector<std::string> names = sfs::RenderBackends::names();
+  const std::string& choice = m_manifest.backend.empty() ? names.front() : m_manifest.backend;
+  std::unique_ptr<sfs::IRenderBackend> backend = sfs::RenderBackends::make(choice);
+  if (!backend)
+    LOG_ERROR("This player has no '" + choice + "' renderer");
+  return backend;
 }
 
 void PlayerApp::onSetup()

@@ -10,8 +10,6 @@
 namespace sfs
 {
 
-class IDecalSink;
-
 /**
  * Mixin that lets a render system compose render modules. Registration is the
  * enable: a feature is on iff its module type is registered. The host
@@ -19,10 +17,9 @@ class IDecalSink;
  * exposes them for the render system to drive (update/emit) and for tooling to
  * inspect (settings).
  *
- * Templated on the render context the modules consume, so the same machinery
- * serves any render system -- the isometric heightfield path today, a flat-2D
- * path later -- while keeping host and module types matched at compile time: a
- * host for one context cannot hold a module written against another.
+ * Templated on the render context the modules consume, keeping host and
+ * module types matched at compile time: a host for one context cannot hold a
+ * module written against another.
  */
 template <typename TContext>
 class RenderModuleHost
@@ -66,19 +63,6 @@ public:
     (withModule<Ts>(), ...);
   }
 
-  /**
-   * @return whether any registered module renders the terrain surface itself
-   * (block geometry, voxels), so the host suppresses billboard tiles. Keeps the
-   * render system from hard-coding which concrete module owns terrain geometry.
-   */
-  bool terrainGeometryActive() const
-  {
-    for (const auto& [type, module] : m_modules)
-      if (module->providesTerrainGeometry())
-        return true;
-    return false;
-  }
-
   /** @return whether a module of type T is registered. */
   template <class T>
   bool hasModule() const
@@ -104,6 +88,11 @@ public:
 
     return nullptr;
   }
+  template <class T>
+  const T* module() const
+  {
+    return const_cast<RenderModuleHost*>(this)->module<T>();
+  }
 
   /** Unregister (and destroy) the module of type T, disabling its feature. */
   template <class T>
@@ -120,13 +109,6 @@ public:
       }
     }
   }
-
-  /**
-   * The host's decal sink, if it has one -- where particles stamp persistent
-   * marks. A module (e.g. Particles) pulls this in its enableStains() so a game
-   * never wires the sink by hand. Null on a host with no decal surface.
-   */
-  virtual IDecalSink* decalSink() { return nullptr; }
 
 protected:
   /** Dependencies passed to each module's init(); supplied by the host. */

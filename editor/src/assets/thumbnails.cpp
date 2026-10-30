@@ -1,17 +1,16 @@
 #include "assets/thumbnails.h"
 
-#include "engine/core/rendering/3d/meshPreview.h"
+#include "engine/core/rendering/meshPreview.h"
 #include "scene/editorScene.h"
 
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/jobs/workerPool.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/assetStore/textureImporter.h"
-#include "engine/runtime/rendering3d/meshLibrary.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
-#include "engine/webgpu/webGpuContext.h"
 
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/matrix.hpp"
@@ -36,13 +35,13 @@ glm::vec3 vec3Of(const nlohmann::json& json, const char* key, glm::vec3 fallback
 // An entity's local transform, from its scene-file components.
 glm::mat4 localMatrix(const nlohmann::json& components)
 {
-  const auto it = components.find("Transform3DComponent");
+  const auto it = components.find("TransformComponent");
   if (it == components.end())
     return glm::mat4(1.0f);
   glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
   if (const auto r = it->find("rotation"); r != it->end() && r->is_array() && r->size() == 4)
     rotation = glm::quat((*r)[0].get<float>(), (*r)[1].get<float>(), (*r)[2].get<float>(), (*r)[3].get<float>());
-  return sfs::Transform3DComponent(vec3Of(*it, "position", glm::vec3(0.0f)), rotation, vec3Of(*it, "scale", glm::vec3(1.0f)))
+  return sfs::TransformComponent(vec3Of(*it, "position", glm::vec3(0.0f)), rotation, vec3Of(*it, "scale", glm::vec3(1.0f)))
       .matrix();
 }
 
@@ -125,8 +124,8 @@ std::optional<sfs::MeshData> prefabMesh(const sfs::AssetId& prefab, EditorScene&
 }
 } // namespace
 
-Thumbnails::Thumbnails(sfs::WebGpuContext& context)
-    : m_context(context), m_workers(std::make_unique<sfs::WorkerPool>(2))
+Thumbnails::Thumbnails(sfs::IRenderBackend& backend)
+    : m_backend(backend), m_workers(std::make_unique<sfs::WorkerPool>(2))
 {
 }
 
@@ -149,8 +148,7 @@ void Thumbnails::beginFrame()
       continue; // forgotten, or superseded by a newer one
     Entry& entry = it->second;
     entry.ticket = 0;
-    entry.view.reset();
-    entry.texture.reset();
+    entry.image.reset();
     if (!done.rgba.empty())
       upload(entry, done.rgba);
   }
@@ -166,7 +164,7 @@ ImTextureID Thumbnails::get(const sfs::AssetRecord& record,
     return ImTextureID{};
 
   const auto shown = [](const Entry& entry)
-  { return entry.view ? static_cast<ImTextureID>(reinterpret_cast<intptr_t>(entry.view.get())) : ImTextureID{}; };
+  { return entry.image ? static_cast<ImTextureID>(entry.image->imguiTexture()) : ImTextureID{}; };
 
   auto it = m_entries.find(record.id);
   if (it != m_entries.end() && it->second.checked == m_generation)
@@ -252,28 +250,7 @@ std::optional<Thumbnails::Job> Thumbnails::makeJob(const sfs::AssetRecord& recor
 
 bool Thumbnails::upload(Entry& entry, const std::vector<uint8_t>& rgba)
 {
-  // The texels as stored (sRGB) in a plain UNORM texture: ImGui shows it
-  // as-is, like the viewport's image.
-  WGPUTextureDescriptor desc = {};
-  desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
-  desc.dimension = WGPUTextureDimension_2D;
-  desc.size = {kSize, kSize, 1};
-  desc.format = WGPUTextureFormat_RGBA8Unorm;
-  desc.mipLevelCount = 1;
-  desc.sampleCount = 1;
-  entry.texture.reset(wgpuDeviceCreateTexture(m_context.device(), &desc));
-  if (!entry.texture)
-    return false;
-
-  WGPUTexelCopyTextureInfo destination = {};
-  destination.texture = entry.texture.get();
-  destination.aspect = WGPUTextureAspect_All;
-  WGPUTexelCopyBufferLayout layout = {};
-  layout.bytesPerRow = kSize * 4;
-  layout.rowsPerImage = kSize;
-  const WGPUExtent3D size = {kSize, kSize, 1};
-  wgpuQueueWriteTexture(m_context.queue(), &destination, rgba.data(), rgba.size(), &layout, &size);
-
-  entry.view.reset(wgpuTextureCreateView(entry.texture.get(), nullptr));
-  return static_cast<bool>(entry.view);
+  // The texels as stored (sRGB), shown as-is, like the viewport's image.
+  entry.image = m_backend.createImage({kSize, kSize}, rgba);
+  return static_cast<bool>(entry.image);
 }

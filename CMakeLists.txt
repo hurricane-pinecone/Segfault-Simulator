@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Build only engine-core (+ tests): skips the render library, the sample game,
-# and everything that needs SDL/OpenGL/Conan. Lets the test pipeline configure
+# and everything that needs SDL/WebGPU/Conan. Lets the test pipeline configure
 # and build with no third-party dependencies.
 option(ENGINE_CORE_ONLY "Build only engine-core and its tests" OFF)
 

@@ -16,15 +16,15 @@
 #include "scene/gridModule.h"
 #include "widgets/widgets.h"
 
-#include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/assetStore/assetStore.h"
-#include "engine/runtime/rendering3d/meshLibrary.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
@@ -94,10 +94,13 @@ EditorApp::EditorApp(std::filesystem::path projectFolder)
 
 std::unique_ptr<sfs::IRenderBackend> EditorApp::makeRenderBackend()
 {
+  // The engine's backend, like a game's (the player's), through the registry.
+  sfs::registerWebGpuBackend();
+  std::unique_ptr<sfs::IRenderBackend> backend = Game::makeRenderBackend();
   // An editor needn't redraw faster than the display: vsync keeps it from
   // running the GPU flat out.
-  auto backend = std::make_unique<sfs::WebGpuRenderBackend>();
-  backend->context().setVsync(true);
+  if (backend)
+    backend->setVsync(true);
   return backend;
 }
 
@@ -107,7 +110,7 @@ void EditorApp::onSetup()
   setDebugUiVisible(false);
   m_context.history = &m_history;
 
-  auto& backend = static_cast<sfs::WebGpuRenderBackend&>(*renderBackend());
+  sfs::IRenderBackend& backend = *renderBackend();
 
   m_panels.push_back(
       std::make_unique<ConsolePanel>()); // first, to catch setup logs
@@ -127,7 +130,7 @@ void EditorApp::onSetup()
   m_codePanel = codePanel.get();
   m_panels.push_back(std::move(codePanel));
   auto uiPreview = std::make_unique<UiPreviewPanel>(
-      backend.context(), *backend.sceneServices(), *m_codePanel);
+      backend, *backend.sceneServices(), *m_codePanel);
   m_uiPreview = uiPreview.get();
   auto assetPanel = std::make_unique<AssetBrowserPanel>(
       AssetBrowserPanel::Actions{
@@ -155,7 +158,7 @@ void EditorApp::onSetup()
           .moved = [this](const std::filesystem::path& from,
                           const std::filesystem::path& to)
           { pathMoved(from, to); }},
-      backend.context());
+      backend);
   m_assetPanel = assetPanel.get();
   m_panels.push_back(std::move(assetPanel));
   // After the Console and Assets, to join their dock node.
@@ -733,7 +736,7 @@ void EditorApp::drawEditMenu()
   ImGui::Separator();
   const bool canAlign =
       m_mode == Mode::Edit && m_context.hasSelection() &&
-      m_context.selection.hasComponent<sfs::Transform3DComponent>();
+      m_context.selection.hasComponent<sfs::TransformComponent>();
   if (ImGui::MenuItem("Align With View", "Ctrl+Shift+F", false, canAlign))
     alignSelectionWithView();
   ImGui::SetItemTooltip(
@@ -804,23 +807,23 @@ void EditorApp::deleteSelection()
 void EditorApp::alignSelectionWithView()
 {
   if (m_mode != Mode::Edit || !m_context.hasSelection() ||
-      !m_context.selection.hasComponent<sfs::Transform3DComponent>())
+      !m_context.selection.hasComponent<sfs::TransformComponent>())
     return;
 
   m_context.history->change(
       [&]
       {
-        const sfs::Camera3D& view = m_context.render->camera();
+        const sfs::Camera& view = m_context.render->camera();
         sfs::Entity entity = m_context.selection;
         const glm::vec3 scale =
-            entity.getComponent<sfs::Transform3DComponent>().scale;
+            entity.getComponent<sfs::TransformComponent>().scale;
         sfs::hierarchy::setWorldMatrix(
             entity,
-            sfs::Transform3DComponent(view.position(), view.orientation())
+            sfs::TransformComponent(view.position(), view.orientation())
                 .matrix());
-        entity.getComponent<sfs::Transform3DComponent>().scale = scale;
-        if (entity.hasComponent<sfs::Camera3DComponent>())
-          entity.getComponent<sfs::Camera3DComponent>().focusDistance =
+        entity.getComponent<sfs::TransformComponent>().scale = scale;
+        if (entity.hasComponent<sfs::CameraComponent>())
+          entity.getComponent<sfs::CameraComponent>().focusDistance =
               view.distance;
       });
 }
@@ -828,15 +831,15 @@ void EditorApp::alignSelectionWithView()
 void EditorApp::alignViewWithSelection()
 {
   if (!m_context.hasSelection() ||
-      !m_context.selection.hasComponent<sfs::Transform3DComponent>())
+      !m_context.selection.hasComponent<sfs::TransformComponent>())
     return;
 
   // Not an edit: the editor's view isn't part of the scene's undo history.
   const sfs::Entity entity = m_context.selection;
   const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
-  sfs::Camera3D& view = m_context.render->camera();
-  if (entity.hasComponent<sfs::Camera3DComponent>())
-    entity.getComponent<sfs::Camera3DComponent>().applyTo(view, world);
+  sfs::Camera& view = m_context.render->camera();
+  if (entity.hasComponent<sfs::CameraComponent>())
+    entity.getComponent<sfs::CameraComponent>().applyTo(view, world);
   else
     view.setPose(glm::vec3(world[3]), glm::vec3(world[0]), view.distance);
 }
@@ -1243,7 +1246,7 @@ sfs::Entity loadPrefabContent(EditorScene& scene,
 EditorScene* EditorApp::makeScene(bool forPrefab)
 {
   EditorScene* scene = sceneManager.createScene<EditorScene>();
-  sfs::RenderSystem3D& render = scene->renderSystem();
+  sfs::RenderSystem& render = scene->renderSystem();
   // While editing, the viewport is the editor's own free view.
   render.setFollowSceneCamera(false);
   render.meshes().setMissingExpected(m_awaitingModule);
@@ -1251,7 +1254,7 @@ EditorScene* EditorApp::makeScene(bool forPrefab)
   {
     // On a grid against a plain grey, like a modelling tool.
     render.withModule<GridModule>(render.meshes());
-    sfs::SceneLighting3D lighting = render.lighting();
+    sfs::SceneLighting lighting = render.lighting();
     lighting.skyColor = glm::vec3(0.075f, 0.08f, 0.078f);
     render.setLighting(lighting);
   }
@@ -1312,9 +1315,8 @@ void EditorApp::openPrefab(const sfs::AssetId& prefab)
   workspace.history = workspace.ownHistory.get();
 
   // A tab named after the prefab, beside the scene's.
-  auto& backend = static_cast<sfs::WebGpuRenderBackend&>(*renderBackend());
   auto viewport = std::make_unique<ViewportPanel>(
-      backend, record->path.stem().string() + "###prefab-" + prefab.toString());
+      *renderBackend(), record->path.stem().string() + "###prefab-" + prefab.toString());
   viewport->dockWith(sceneWorkspace().viewport->title());
   viewport->setToolbarExtras(
       [this, &workspace](EditorContext&)
@@ -1465,7 +1467,7 @@ bool EditorApp::rewritePrefab(const sfs::AssetId& prefab,
   {
     Workspace& workspace = *reload.workspace;
     // Reloading is about the scene's contents, not where it's seen from.
-    const sfs::Camera3D camera = workspace.scene->renderSystem().camera();
+    const sfs::Camera camera = workspace.scene->renderSystem().camera();
     if (reload.snapshot)
       workspace.document->restore(*reload.snapshot);
     else
@@ -1498,9 +1500,7 @@ void EditorApp::openMaterial(const sfs::AssetId& material)
       return;
     }
 
-  auto& backend = static_cast<sfs::WebGpuRenderBackend&>(*renderBackend());
-  auto panel =
-      std::make_unique<MaterialEditorPanel>(backend.context(), *record);
+  auto panel = std::make_unique<MaterialEditorPanel>(*renderBackend(), *record);
   if (!panel->load(m_context))
     return;
   // Beside the other open materials; the first below the scene's viewport,
@@ -1948,7 +1948,7 @@ std::filesystem::path EditorApp::gameFolder() const
                            : std::filesystem::current_path();
 }
 
-sfs::Scene3D& EditorApp::replaceScene()
+sfs::StandardScene& EditorApp::replaceScene()
 {
   replaceMainScene();
   m_context.render->setFollowSceneCamera(

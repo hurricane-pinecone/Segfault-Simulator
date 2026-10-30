@@ -1,8 +1,8 @@
 #pragma once
 
 #include "engine/core/assets/assetDatabase.h"
-#include "engine/core/rendering/3d/material.h"
-#include "engine/core/rendering/3d/mesh.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/mesh.h"
 
 #include <filesystem>
 #include <optional>

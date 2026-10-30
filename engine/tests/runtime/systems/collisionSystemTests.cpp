@@ -1,7 +1,6 @@
 #include "../../testHarness.h"
 
-#include <engine/core/components/elevationComponent.h>
-#include <engine/core/components/rigidBodyComponent.h>
+#include <engine/core/components/rigidBody2DComponent.h>
 #include <engine/core/components/tags/solidObject.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/components/worldCollider.h>
@@ -23,10 +22,10 @@ WorldCollider tileCollider()
 Entity addBody(Registry& reg, glm::vec2 prev, glm::vec2 pos, glm::vec2 vel)
 {
   Entity e = reg.createEntity();
-  TransformComponent t{prev}; // previousPosition := prev
-  t.position = pos;           // ... then diverge from it
-  e.addComponent<TransformComponent>(t);
-  e.addComponent<RigidBodyComponent>(RigidBodyComponent{vel});
+  e.addComponent<TransformComponent>(TransformComponent{pos});
+  RigidBody2DComponent body{vel};
+  body.previousPosition = prev;
+  e.addComponent<RigidBody2DComponent>(body);
   e.addComponent<WorldCollider>(tileCollider());
   return e;
 }
@@ -54,7 +53,7 @@ int main()
     sys.update(0.016);
 
     const auto& t = mover.getComponent<TransformComponent>();
-    const auto& rb = mover.getComponent<RigidBodyComponent>();
+    const auto& rb = mover.getComponent<RigidBody2DComponent>();
     CHECK(testing::approx(t.position.x, 0.0f)); // pushed back flush to the edge
     CHECK(testing::approx(rb.velocity.x, 0.0f));
   }
@@ -72,7 +71,7 @@ int main()
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 2.0f));
     CHECK(testing::approx(
-        mover.getComponent<RigidBodyComponent>().velocity.x, 0.0f));
+        mover.getComponent<RigidBody2DComponent>().velocity.x, 0.0f));
   }
 
   TEST("a downward body should stop at a solid's top edge")
@@ -88,16 +87,16 @@ int main()
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.y, 0.0f));
     CHECK(testing::approx(
-        mover.getComponent<RigidBodyComponent>().velocity.y, 0.0f));
+        mover.getComponent<RigidBody2DComponent>().velocity.y, 0.0f));
   }
 
-  TEST("solids on a different elevation should not block")
+  TEST("solids at a different height should not block")
   {
     Registry reg;
     CollisionSystem& sys = reg.addSystem<CollisionSystem>();
     Entity mover = addBody(reg, {0.0f, 0.0f}, {0.5f, 0.0f}, {5.0f, 0.0f});
     Entity solid = addSolid(reg, {1.0f, 0.0f});
-    solid.addComponent<ElevationComponent>(ElevationComponent{5}); // mover at 0
+    solid.getComponent<TransformComponent>().position.z = 5.0f; // mover at 0
     reg.flushEntities();
 
     sys.update(0.016);
@@ -105,7 +104,7 @@ int main()
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 0.5f)); // passes through, unresolved
     CHECK(testing::approx(
-        mover.getComponent<RigidBodyComponent>().velocity.x, 5.0f));
+        mover.getComponent<RigidBody2DComponent>().velocity.x, 5.0f));
   }
 
   TEST("a stationary body should be skipped by the solver")
@@ -138,7 +137,7 @@ int main()
     const auto& t = mover.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 0.5f));
     CHECK(testing::approx(
-        mover.getComponent<RigidBodyComponent>().velocity.x, 5.0f));
+        mover.getComponent<RigidBody2DComponent>().velocity.x, 5.0f));
   }
 
   return testing::report("collisionSystemTests");

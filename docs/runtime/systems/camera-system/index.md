@@ -1,39 +1,45 @@
 # Camera system
 
-`CameraSystem` moves a camera entity toward a target entity each frame using
-exponential smoothing. Add it to your scene once and configure individual
-cameras through `CameraComponent`.
+`CameraSystem` moves camera entities toward the entity they follow each frame,
+with exponential smoothing, and runs their screen shake. It works the same in
+every [style](../../rendering/styles/index.md): a flat or isometric camera
+centres on the followed point, and a 3D one moves with it, keeping its own
+orientation.
+
+A camera entity is an entity with a `CameraComponent` (the lens: projection,
+zoom, bloom...) and a `TransformComponent` (see
+[Styles: the camera](../../rendering/styles/index.md#the-camera)). Following is
+a separate component, `CameraFollowComponent`.
 
 ## Setup
 
 ```cpp
-CameraSystem& cameras = scene.addSystem<CameraSystem>();
+addSystem<sfs::CameraSystem>();
+
+sfs::CameraComponent lens;
+lens.orthographic = true;
+lens.orthoHeight = 720.0f;
+
+sfs::Entity camera = createEntity()
+    .addComponent<sfs::TransformComponent>(startPosition)
+    .addComponent<sfs::CameraComponent>(lens)
+    .addComponent<sfs::CameraFollowComponent>(
+        static_cast<int>(player.getId()),
+        glm::vec3{0.0f, 2.0f, 0.0f}, // look slightly ahead of the target
+        8.0f);                       // smoothing: typical range 4 to 16
 ```
 
-## CameraComponent
+Add the system after whatever moves the target, so the camera sees this
+frame's position.
 
-Attach a `CameraComponent` to any entity that also has a `TransformComponent`.
-The system moves that entity toward the configured target each update.
+## CameraFollowComponent
 
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `target` | `int` | `-1` | ID of the entity to follow. Resolves to that entity's `TransformComponent`. |
-| `smoothing` | `float` | `8` | Lag coefficient. Higher values catch up faster; `0` means the camera does not move. |
-| `offset` | `glm::vec2` | `(0, 0)` | World-space offset added to the target's position before smoothing is applied. |
-| `zoom` | `float` | `1` | View scale factor. Values greater than `1` zoom in. |
-| `shakeMaxOffset` | `float` | `0.5` | Peak displacement in world units at full shake strength. Tune per project. |
-
-```cpp
-Entity camera = scene.createEntity();
-camera.addComponent<TransformComponent>(startPos, glm::vec2{1.0f, 1.0f}, 0.0f);
-camera.addComponent<CameraComponent>(
-    static_cast<int>(player.getId()),
-    glm::vec2{0.0f, 2.0f}, // look slightly ahead of the target
-    8.0f                    // smoothing: typical range 4 to 16
-);
-```
-
-If `target` does not resolve to a live entity, the camera stays put.
+| `target` | `int` | `-1` | Id of the entity to follow. `-1`, or an entity without a `TransformComponent`, leaves the camera where it is. |
+| `offset` | `glm::vec3` | `(0, 0, 0)` | Added to the target's position |
+| `smoothing` | `float` | `8` | How fast it catches up. Higher is snappier; `0` doesn't move. |
+| `shakeMaxOffset` | `float` | `0.5` | Peak shake displacement at full strength, in world units. Tune per game. |
 
 ## Smoothing
 
@@ -49,46 +55,39 @@ position = position + (desired - position) * t
 
 ## Screen shake
 
-Call `shake()` on a `CameraComponent` to start a transient displacement that
+Call `shake()` on a `CameraFollowComponent` to start a displacement that
 fades out over the given duration. Calling it again while a shake is running
-restarts it from the beginning.
+restarts it.
 
 ```cpp
-// Trigger a short shake on impact.
-cam.shake(
+camera.getComponent<sfs::CameraFollowComponent>().shake(
     0.8f,  // strength: 0..1 (clamped), scales shakeMaxOffset
     0.3f,  // duration in seconds (default 0.5)
-    1.5f   // decay exponent (default 1)
-);
+    1.5f); // decay exponent (default 1)
 ```
 
 | Parameter | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `strength` | `float` | (required) | Peak amplitude as a fraction of `shakeMaxOffset`, clamped to 0..1. |
-| `duration` | `float` | `0.5` | Length of the shake in seconds. |
-| `decay` | `float` | `1` | Exponent for the fade envelope. `1` fades linearly; values above `1` drop quickly then tail off. |
+| `strength` | `float` | (required) | Peak amplitude as a fraction of `shakeMaxOffset`, clamped to 0..1 |
+| `duration` | `float` | `0.5` | Length of the shake in seconds |
+| `decay` | `float` | `1` | Exponent for the fade. `1` fades linearly; above `1` drops quickly then tails off. |
 
-The displacement is added to the camera's effective position and is visible in
-`getCameraPosition()`. It does not modify the camera entity's
-`TransformComponent`; the followed base position is unchanged.
-
-`CameraSystem` advances the shake each frame automatically. You do not call
-`updateShake()` yourself.
+The shake moves the view across the screen; it doesn't change the camera
+entity's `TransformComponent`. `CameraSystem` advances it each frame, so you
+never call `updateShake()` yourself.
 
 ## Querying the active camera
 
-`CameraSystem::activeCamera()` returns an `ActiveCamera` with pointers to the
-first registered camera's `CameraComponent` and `TransformComponent`. Both
-pointers are null before any camera entity is registered.
+`CameraSystem::activeCamera()` (or `findActiveCamera(registry)`) returns an
+`ActiveCamera`: pointers to the scene's first active camera's
+`CameraComponent`, `TransformComponent` and, if it has one,
+`CameraFollowComponent`. They're null when the scene has no camera.
 
-`ActiveCamera::getCameraPosition()` returns the world-space point the render
-path should centre on: the smoothed followed position, plus the static offset,
-plus the current shake displacement.
+`ActiveCamera::getCameraPosition()` is the point on the ground plane the
+camera centres on: its position, plus the follow's offset and the current
+shake. `zoom()` is its magnification.
 
 ```cpp
-const ActiveCamera active = cameras.activeCamera();
+const sfs::ActiveCamera active = getSystem<sfs::CameraSystem>().activeCamera();
 const glm::vec2 viewCentre = active.getCameraPosition();
 ```
-
-Use `viewCentre` to feed the projection matrix each frame, or pass it to
-`SpriteRenderSystem::setCameraOffset`.

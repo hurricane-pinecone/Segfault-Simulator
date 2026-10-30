@@ -5,8 +5,8 @@
 #include "panels/panel.h"
 
 #include "engine/core/assets/assetDatabase.h"
-#include "engine/core/rendering/3d/material.h"
-#include "engine/core/rendering/3d/materialGraphCompiler.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
 
 #include <chrono>
 #include <cstdint>
@@ -15,7 +15,7 @@
 
 namespace sfs
 {
-class WebGpuContext;
+class IRenderBackend;
 }
 
 // A node-graph material open for editing, in its own tab: the graph's canvas,
@@ -29,7 +29,8 @@ class WebGpuContext;
 class MaterialEditorPanel : public Panel
 {
 public:
-  MaterialEditorPanel(sfs::WebGpuContext& gpu, const sfs::AssetRecord& record);
+  MaterialEditorPanel(sfs::IRenderBackend& backend,
+                      const sfs::AssetRecord& record);
 
   const sfs::AssetId& material() const { return m_material; }
 

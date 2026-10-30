@@ -1,5 +1,5 @@
 # Tests mirror the library split: core/ tests link engine-core (no third-party
-# deps); runtime/ tests link the full engine (SDL/OpenGL) and only build when the
+# deps); runtime/ tests link the full engine (SDL/imgui) and only build when the
 # render library is present; webgpu/ tests link engine-webgpu and need a GPU
 # device (they skip without one).
 add_subdirectory(core)

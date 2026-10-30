@@ -19,6 +19,13 @@ TextureImportSettings::fromJson(const nlohmann::json& settings)
   if (settings.is_object() && settings.contains("filter") &&
       settings["filter"].is_string())
     result.nearest = settings["filter"].get<std::string>() == "nearest";
+  if (settings.is_object() && settings.contains("spriteCell"))
+  {
+    const nlohmann::json& cell = settings["spriteCell"];
+    if (cell.is_array() && cell.size() == 2 && cell[0].is_number_integer() &&
+        cell[1].is_number_integer())
+      result.spriteCell = {cell[0].get<int>(), cell[1].get<int>()};
+  }
   return result;
 }
 
@@ -37,6 +44,17 @@ decodeTexture(const void* bytes, std::size_t size, const std::string& what)
     return nullptr;
   }
 
+  std::shared_ptr<TextureData> texture = textureFromSurface(*rgba);
+  SDL_FreeSurface(rgba);
+  return texture;
+}
+
+std::shared_ptr<TextureData> textureFromSurface(const SDL_Surface& surface)
+{
+  SDL_Surface* rgba = SDL_ConvertSurfaceFormat(
+      const_cast<SDL_Surface*>(&surface), SDL_PIXELFORMAT_RGBA32, 0);
+  if (!rgba)
+    return nullptr;
   auto texture = std::make_shared<TextureData>();
   texture->width = static_cast<uint32_t>(rgba->w);
   texture->height = static_cast<uint32_t>(rgba->h);

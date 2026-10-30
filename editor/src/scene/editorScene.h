@@ -1,18 +1,20 @@
 #pragma once
 
-#include "engine/core/rendering/3d/camera3D.h"
-#include "engine/runtime/rendering3d/scene3D.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/runtime/rendering/standardScene.h"
+#include "engine/runtime/rendering/space2D.h"
 
 #include <string>
 
-// The scene the editor edits: the engine's standard 3D scene (exactly what an
-// exported game plays) plus helpers for building it from the hierarchy.
-class EditorScene : public sfs::Scene3D
+// The scene the editor edits: the engine's standard scene, in any style
+// (exactly what an exported game plays), plus helpers for building it from the
+// hierarchy.
+class EditorScene : public sfs::StandardScene
 {
 public:
-  using Primitive = sfs::Scene3D::BuiltinMesh;
+  using Primitive = sfs::StandardScene::BuiltinMesh;
 
-  using sfs::Scene3D::Scene3D;
+  using sfs::StandardScene::StandardScene;
 
   /** A named entity with only a transform. */
   sfs::Entity createEmpty(const std::string& name);
@@ -22,9 +24,18 @@ public:
 
   /** A named entity carrying a point light. */
   sfs::Entity createPointLight(const std::string& name);
+  /** An entity with a sprite, its image still to pick. */
+  sfs::Entity createSprite(const std::string& name);
 
   /** A named camera entity looking the way `view` does (e.g. the editor's view). */
-  sfs::Entity createCamera(const std::string& name, const sfs::Camera3D& view);
+  /**
+   * A game camera seeing what `view` does: posed like it, or in a 2D game
+   * (given its Space2D) over the same point of the plane, orthographic, as
+   * zoomed in.
+   */
+  sfs::Entity createCamera(const std::string& name,
+                           const sfs::Camera& view,
+                           const sfs::Space2D* space = nullptr);
 
   /** Destroy an entity and everything below it (applied immediately). */
   void destroyBranch(const sfs::Entity& entity);

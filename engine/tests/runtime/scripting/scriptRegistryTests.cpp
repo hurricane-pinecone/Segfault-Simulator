@@ -1,7 +1,7 @@
 #include "../../testHarness.h"
 
 #include <engine/core/components/scriptComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/reflection/reflection.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
@@ -42,12 +42,12 @@ protected:
   void onCreate(Scene&) override
   {
     ++created;
-    boundToExisting = entity().hasComponent<Transform3DComponent>();
+    boundToExisting = entity().hasComponent<TransformComponent>();
     speedsAtCreate.push_back(speed);
   }
   void onUpdate(double deltaTime) override
   {
-    entity().getComponent<Transform3DComponent>().position.x +=
+    entity().getComponent<TransformComponent>().position.x +=
         speed * static_cast<float>(deltaTime);
   }
 
@@ -103,10 +103,10 @@ int main()
   {
     World world;
     Entity box = world.scene.createEntity();
-    box.addComponent<Transform3DComponent>();
+    box.addComponent<TransformComponent>();
     box.addComponent<ScriptComponent>("Mover");
     Entity plain = world.scene.createEntity();
-    plain.addComponent<Transform3DComponent>();
+    plain.addComponent<TransformComponent>();
     world.scene.flushEntities();
 
     Mover::created = 0;
@@ -120,21 +120,21 @@ int main()
 
     world.scene.update(0.5);
     CHECK(testing::approx(
-        box.getComponent<Transform3DComponent>().position.x, 0.5f));
+        box.getComponent<TransformComponent>().position.x, 0.5f));
     CHECK(testing::approx(
-        plain.getComponent<Transform3DComponent>().position.x, 0.0f));
+        plain.getComponent<TransformComponent>().position.x, 0.0f));
   }
 
   TEST("an entity's saved script fields should be set before onCreate")
   {
     World world;
     Entity fast = world.scene.createEntity();
-    fast.addComponent<Transform3DComponent>();
+    fast.addComponent<TransformComponent>();
     ScriptComponent script("Mover");
     script.fields = {{"speed", 4.0}, {"removedField", 1}};
     fast.addComponent<ScriptComponent>(script);
     Entity standard = world.scene.createEntity();
-    standard.addComponent<Transform3DComponent>();
+    standard.addComponent<TransformComponent>();
     standard.addComponent<ScriptComponent>(
         "Mover"); // no saved values: defaults
     world.scene.flushEntities();
@@ -146,9 +146,9 @@ int main()
 
     world.scene.update(0.5);
     CHECK(testing::approx(
-        fast.getComponent<Transform3DComponent>().position.x, 2.0f));
+        fast.getComponent<TransformComponent>().position.x, 2.0f));
     CHECK(testing::approx(
-        standard.getComponent<Transform3DComponent>().position.x, 0.5f));
+        standard.getComponent<TransformComponent>().position.x, 0.5f));
   }
 
   TEST("startScripts should add game systems that see existing entities")

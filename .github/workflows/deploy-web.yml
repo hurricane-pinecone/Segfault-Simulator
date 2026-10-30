@@ -127,9 +127,9 @@ jobs:
       - name: Run tests under sanitizers
         run: ctest --test-dir build-core --output-on-failure --parallel "$(nproc)"
 
-  # Runtime tests link the full engine (SDL/OpenGL), so this job restores the
+  # Runtime tests link the full engine (SDL/imgui), so this job restores the
   # Conan dependency closure and runs a native build. They drive systems and
-  # render modules through mock seams (a fake IQuadRenderer, stub services), so
+  # render modules through mock seams (a fake IRenderer, stub services), so
   # they run headless: no window, no GPU, no display. Split from the core test
   # job so a standalone engine-core release can gate on the core jobs alone; the
   # web deploy ships the runtime (both sample games), so it needs all of them.
@@ -144,7 +144,7 @@ jobs:
 
       # Caches compiled object files (vendored Lua/imgui/tracy and the engine's
       # own) across runs. Separate from the Conan cache below, which holds the
-      # third-party dependency binaries (SDL/imgui/glew).
+      # third-party dependency binaries (SDL/imgui).
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
@@ -161,8 +161,8 @@ jobs:
       - name: Detect Conan profile
         run: conan profile detect --force
 
-      # Cache the built dependency closure so reruns skip recompiling SDL/imgui/
-      # glew. The key hashes conanfile.py (where the deps are declared), so adding
+      # Cache the built dependency closure so reruns skip recompiling SDL/
+      # imgui. The key hashes conanfile.py (where the deps are declared), so adding
       # or bumping a dep makes a new key. restore-keys then seeds the run from the
       # previous cache, and --build=missing compiles only the genuinely new
       # package -- Conan's store is keyed by package_id, so an unchanged dep is

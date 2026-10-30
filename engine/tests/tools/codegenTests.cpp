@@ -310,7 +310,7 @@ int main()
     options.function = "sfsRegisterModule";
     options.includeRoot = "/project/scripts";
     const std::string code = generateRegistration({*result.type}, options);
-    CHECK(code.find("#include \"engine/runtime/rendering3d/meshSource.h\"") !=
+    CHECK(code.find("#include \"engine/runtime/rendering/meshSource.h\"") !=
           std::string::npos);
     CHECK(code.find("script.kind = sfs::ScriptType::Kind::MeshSource;") !=
           std::string::npos);

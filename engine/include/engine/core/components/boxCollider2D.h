@@ -7,15 +7,12 @@ namespace sfs
 
 /**
  * Axis-aligned 2D box collider: `half`-extents centred on the entity's
- * TransformComponent.position, optionally shifted by `offset`. Units are the
- * entity's local units, scaled by the active projection like the sprite is --
- * world pixels on the flat path (1:1 at zoom 1), sprite pixels on the isometric
- * path (the projection bakes elevation into the sprite's screen position, so
- * the box carries no z). Used for 2D overlap: platform/solid blocking, bullet
- * and sprite hits.
+ * TransformComponent.position, optionally shifted by `offset`, in the same
+ * units as the position (a flat game's pixels). The box has no height. Used for
+ * 2D overlap: platform/solid blocking, bullet and sprite hits.
  *
- * For isometric GROUND movement and solid-object blocking (which need
- * elevation) use WorldCollider instead.
+ * For isometric ground movement and solid-object blocking (which need height)
+ * use WorldCollider instead.
  *
  * @param glm::vec2 half - half-extents
  * @param glm::vec2 offset - centre offset from the entity, default (0, 0)

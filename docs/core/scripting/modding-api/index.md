@@ -71,10 +71,9 @@ never capture a scene or system pointer up front:
 ```cpp
 sfs::ParticleEngine* particlesOf(sfs::Scene* scene)
 {
-  if (!scene || !scene->hasSystem<sfs::IsometricRenderSystem>())
+  if (!scene || !scene->hasSystem<sfs::RenderSystem>())
     return nullptr;
-  return scene->getSystem<sfs::IsometricRenderSystem>()
-      .module<sfs::Particles<sfs::IsometricRenderContext>>();
+  return scene->getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>();
 }
 // inside a bind: particlesOf(game.currentScene())  // re-resolved every call
 ```

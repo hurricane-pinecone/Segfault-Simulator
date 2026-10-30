@@ -4,9 +4,9 @@
 #include "sampleGame.h"
 #include <engine/core/scripting/luaScripting.h>
 #include <engine/core/scripting/particleLuaApi.h>
-#include <engine/runtime/rendering/modules/particles.h>
+#include <engine/runtime/rendering/modules/particleModule.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/systems/isometric/isometricRenderSystem.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
 // Particle Lua bindings (inline). registerParticleBindings() wires the game's
@@ -15,17 +15,14 @@
 namespace gamebindings
 {
 
-using IsometricParticles = sfs::Particles<sfs::IsometricRenderContext>;
-
 // The live particle engine for a scene, or nullptr if the scene isn't up / has
 // no render system. Returned as the base ParticleEngine -- all the modding API
 // (engine particle table, spawnGore) works on that.
 inline sfs::ParticleEngine* particlesOf(sfs::Scene* scene)
 {
-  if (!scene || !scene->hasSystem<sfs::IsometricRenderSystem>())
+  if (!scene || !scene->hasSystem<sfs::RenderSystem>())
     return nullptr;
-  return scene->getSystem<sfs::IsometricRenderSystem>()
-      .module<IsometricParticles>();
+  return scene->getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>();
 }
 
 // Spray a gore blast at a world position, on the terrain there.

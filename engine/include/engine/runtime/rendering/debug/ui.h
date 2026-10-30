@@ -1,14 +1,8 @@
 #pragma once
 
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
-#include "engine/runtime/rendering/modules/blockGeometry.h"
-#include "engine/runtime/rendering/modules/isometricDecalSink.h"
-#include "engine/runtime/rendering/modules/isometricWater.h"
-#include "engine/runtime/rendering/modules/spriteShadow.h"
-#include "engine/runtime/rendering/modules/terrainShadow.h"
-#include "engine/runtime/rendering/util/renderStats.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
-#include "engine/runtime/systems/isometric/isometricRenderSystem.h"
 #ifndef ENGINE_WEB
   #include "engine/core/util/allocationMetrics.h"
   #include "engine/core/util/format.h"
@@ -79,42 +73,7 @@ inline static void renderDebugStats()
 
   ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
 
-  ImGui::Separator();
-
-  ImGui::Text("Render Items: %d", gRenderItemCount);
-  ImGui::Text("Terrain Shadow Items: %d", gTerrainShadowItems);
-  ImGui::Text("Terrain shadow batches: %d", gTerrainShadowBatchCount);
-  ImGui::Text("Terrain Shadow Flushes: %d", gTerrainShadowFlushes);
-  ImGui::Text("Shadow edges processed: %d", gTerrainShadowEdgesProcessed);
-  ImGui::Text("Tile render items: %d", gTileRenderItems);
-  ImGui::Text("Sprite render items: %d", gSpriteRenderItems);
-  ImGui::Text("Sprite shadows: %d", gSpriteProjectedShadowItems);
-  ImGui::Text("Shadow path checks: %llu",
-              static_cast<unsigned long long>(
-                  gShadowPathChecks.load(std::memory_order_relaxed)));
-  ImGui::Text("Shadow tiles traversed: %llu",
-              static_cast<unsigned long long>(
-                  gShadowTilesTraversed.load(std::memory_order_relaxed)));
-
   ImGui::End();
-}
-
-// Checkbox bound to a render module's presence: registering the module when
-// ticked, removing it when unticked. Use only for modules that are safe to
-// default-construct -- modules carrying game-side configuration (e.g. Particles
-// effects) would lose it on re-creation and should not be toggled this way.
-template <class TModule>
-inline static void moduleCheckbox(IsometricRenderSystem& render,
-                                  const char* label)
-{
-  bool on = render.hasModule<TModule>();
-  if (ImGui::Checkbox(label, &on))
-  {
-    if (on)
-      render.withModule<TModule>();
-    else
-      render.removeModule<TModule>();
-  }
 }
 
 // Render one module setting descriptor with the matching ImGui control, binding
@@ -170,8 +129,9 @@ inline static void renderModuleSetting(const ModuleSetting& setting)
     ImGui::EndDisabled();
 }
 
-// Debug-only controls: toggle each system (except the render system), enable or
-// disable render modules, and tweak each module's own settings live.
+// Debug-only controls: toggle each system (except the render system) and tweak
+// its settings, see what the renderer drew, and tweak each render module's
+// own settings live.
 inline static void renderDebugControls(Scene* scene)
 {
   if (!scene)
@@ -187,7 +147,7 @@ inline static void renderDebugControls(Scene* scene)
       [](System& system)
       {
         // The render system is required for anything to draw.
-        if (typeid(system) == typeid(IsometricRenderSystem))
+        if (typeid(system) == typeid(RenderSystem))
           return;
 
         const std::string name = prettyTypeName(typeid(system));
@@ -210,77 +170,23 @@ inline static void renderDebugControls(Scene* scene)
         }
       });
 
-  if (scene->hasSystem<IsometricRenderSystem>())
+  if (auto* render = scene->tryGetSystem<RenderSystem>())
   {
-    auto& render = scene->getSystem<IsometricRenderSystem>();
-    const bool geometryActive = render.hasModule<BlockGeometry>();
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Render Modules");
-
-    // Block geometry and water hold no game-side configuration, so toggling
-    // them just adds/removes the module (re-registration rebuilds per frame).
-    moduleCheckbox<BlockGeometry>(render, "Block geometry");
-    moduleCheckbox<IsometricWater>(render, "Water");
-
-    // Decals toggle HIDES drawing rather than removing the module: the module
-    // owns the accumulated stains (and the particle engine holds a raw sink
-    // pointer to it), so removing it would drop the stains and dangle the sink.
-    // Hiding keeps both, so the stains persist across the toggle.
-    if (auto* decals = render.module<IsometricDecalSink>())
-    {
-      bool show = decals->visible();
-      if (ImGui::Checkbox("Decals", &show))
-        decals->setVisible(show);
-    }
-
-    // Sun shadows are a paired terrain+actor feature; the active technique
-    // follows the render style, so the two modules toggle together.
-    bool shadowsOn = render.hasModule<TerrainShadow>();
-    if (ImGui::Checkbox("Shadows", &shadowsOn))
-    {
-      if (shadowsOn)
-        render.withModules<TerrainShadow, SpriteShadow>();
-      else
-      {
-        render.removeModule<TerrainShadow>();
-        render.removeModule<SpriteShadow>();
-      }
-    }
-
-    // Sun shadow style is a backend/march property (not a module setting): the
-    // smooth/sharp choice only exists for the block-geometry march, so the
-    // dropdown offers only what the active render style supports.
-    if (render.hasModule<TerrainShadow>())
-    {
-      if (geometryActive)
-      {
-        const char* styles[] = {"Smooth", "Sharp"};
-        int style = render.sunShadowStyle() == SunShadowStyle::Sharp ? 1 : 0;
-        if (ImGui::Combo("Sun shadow style", &style, styles, 2))
-          render.setSunShadowStyle(style == 1 ? SunShadowStyle::Sharp
-                                              : SunShadowStyle::Smooth);
-      }
-      else
-      {
-        // Billboard terrain shadows are projected quads -- tile-aligned, so
-        // "Sharp" is the only supported look (the march needs block geometry).
-        ImGui::BeginDisabled();
-        const char* projected[] = {"Sharp"};
-        int style = 0;
-        ImGui::Combo("Sun shadow style", &style, projected, 1);
-        ImGui::EndDisabled();
-      }
-    }
+    const RenderStats& stats = render->stats();
+    ImGui::SeparatorText("Renderer");
+    ImGui::Text("Draws: %zu  Instances: %zu", stats.drawCalls, stats.instances);
+    ImGui::Text("Point lights: %zu (%zu shadowed)",
+                stats.pointLights,
+                stats.shadowedLights);
+    for (const ModuleSetting& setting : render->settings())
+      renderModuleSetting(setting);
 
     // Each module owns its settings as UI-agnostic descriptors; pull them in
-    // and render generically. A module that exposes none is skipped. The render
-    // context lets a module return only the settings that apply to the current
-    // render mode.
-    render.forEachModule(
+    // and render generically. A module that exposes none is skipped.
+    render->forEachModule(
         [](std::type_index type,
-           IRenderModule<IsometricRenderContext>& module,
-           const IsometricRenderContext& context)
+           IRenderModule<RenderContext>& module,
+           const RenderContext& context)
         {
           const std::vector<ModuleSetting> moduleSettings =
               module.settings(context);

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/assets/assetDatabase.h"
-#include "engine/webgpu/wgpuHandle.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 
 #include "imgui.h"
 
@@ -17,7 +17,6 @@
 namespace sfs
 {
 class AssetStore;
-class WebGpuContext;
 class WorkerPool;
 } // namespace sfs
 
@@ -33,7 +32,7 @@ class Thumbnails
 public:
   static constexpr int kSize = 128; // pixels square; drawn smaller as needed
 
-  explicit Thumbnails(sfs::WebGpuContext& context);
+  explicit Thumbnails(sfs::IRenderBackend& backend);
   ~Thumbnails();
 
   /** Call once a frame, before get(): takes in the previews finished since. */
@@ -66,8 +65,7 @@ public:
 private:
   struct Entry
   {
-    sfs::wgpu::Texture texture;
-    sfs::wgpu::TextureView view; // null: nothing to show
+    std::unique_ptr<sfs::IImage> image; // null: nothing to show
     std::filesystem::file_time_type stamp;
     uint64_t checked = 0; // the generation its file was last checked in
     uint64_t ticket = 0;  // the preview being made for it (0: none)
@@ -90,7 +88,7 @@ private:
                              EditorScene* scene);
   bool upload(Entry& entry, const std::vector<uint8_t>& rgba);
 
-  sfs::WebGpuContext& m_context;
+  sfs::IRenderBackend& m_backend;
   std::unordered_map<sfs::AssetId, Entry, sfs::AssetIdHash> m_entries;
   int m_budget = 0; // previews still to start this frame
   // Files are checked once per generation, not continually: on a network

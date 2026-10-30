@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/runtime/rendering/modules/particles.h"
+#include "engine/core/particles/particleEngine.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include <string>
 

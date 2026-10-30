@@ -1,9 +1,9 @@
 #include "engine/runtime/voxel/voxelWorld.h"
 
-#include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/util/profiling.h"
+#include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/common.hpp"
 
 #include <vector>
@@ -384,13 +384,11 @@ void VoxelWorld::update(double deltaTime)
   // The fluid sim runs every frame regardless of camera movement.
   simulateWater(deltaTime);
 
-  auto cameras = registry->view<CameraComponent, TransformComponent>();
-  if (cameras.empty())
+  const ActiveCamera camera = findActiveCamera(*registry);
+  if (!camera.transform)
     return;
 
-  const auto& transform = cameras.front().getComponent<TransformComponent>();
-  const auto& camera = cameras.front().getComponent<CameraComponent>();
-  const glm::vec2 focus = transform.position + camera.offset;
+  const glm::vec2 focus = camera.getCameraPosition();
   const glm::ivec2 focusTile{static_cast<int>(glm::floor(focus.x)),
                              static_cast<int>(glm::floor(focus.y))};
 

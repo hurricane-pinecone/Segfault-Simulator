@@ -8,7 +8,7 @@
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/runtime/rendering/debug/ui.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 
 #include <algorithm>
@@ -80,6 +80,93 @@ void gameSystems(EditorScene& scene, EditorHistory& history)
     ImGui::EndCombo();
   }
 }
+
+// The scene's style: 3D, or a 2D game's plane (flat or isometric) and how its
+// pixels map to the world. Only the settings the chosen style uses show.
+void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
+{
+  if (!ImGui::CollapsingHeader("Style", ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+
+  using Projection = sfs::Space2D::Projection;
+  const std::optional<sfs::Space2D>& current = render.space2D();
+  const char* kinds[] = {"3D", "Flat 2D", "Isometric 2D"};
+  int kind = !current                                     ? 0
+             : current->projection == Projection::Flat ? 1
+                                                          : 2;
+  widgets::propertyLabel("Style");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (ImGui::Combo("##style", &kind, kinds, 3))
+    history.change(
+        [&]
+        {
+          if (kind == 0)
+          {
+            render.clearSpace2D();
+            return;
+          }
+          sfs::Space2D space = render.space2D().value_or(sfs::Space2D{});
+          space.projection =
+              kind == 1 ? Projection::Flat : Projection::Isometric;
+          render.setSpace2D(space);
+        });
+  ImGui::SetItemTooltip(
+      "3D: a world in metres, seen through a camera you place.\n"
+      "Flat 2D: sprites on a plane, seen straight on (platformers,\n"
+      "top-down games). Isometric 2D: a tile grid seen at an angle.");
+
+  if (!render.space2D())
+    return;
+  sfs::Space2D space = *render.space2D();
+  bool changed = widgets::undoable(&history,
+                                   space.pixelsPerUnit,
+                                   [](float& value)
+                                   {
+                                     widgets::propertyLabel("Pixels Per Unit");
+                                     ImGui::SetNextItemWidth(-FLT_MIN);
+                                     return ImGui::DragFloat("##ppu",
+                                                             &value,
+                                                             0.1f,
+                                                             0.01f,
+                                                             1000.0f);
+                                   });
+  if (space.projection == Projection::Flat)
+  {
+    changed |= widgets::undoable(
+        &history,
+        space.yDown,
+        [](bool& value)
+        { return widgets::propertyCheckbox("Y Runs Down", &value); });
+    changed |= widgets::undoable(
+        &history,
+        space.ySort,
+        [](bool& value)
+        { return widgets::propertyCheckbox("Sort By Y", &value); });
+  }
+  else
+  {
+    changed |= widgets::undoable(&history,
+                                 space.tilePixels,
+                                 [](glm::vec2& value)
+                                 {
+                                   widgets::propertyLabel("Tile Pixels");
+                                   ImGui::SetNextItemWidth(-FLT_MIN);
+                                   return ImGui::DragFloat2(
+                                       "##tile", &value.x, 0.5f, 1.0f, 512.0f);
+                                 });
+    changed |= widgets::undoable(&history,
+                                 space.heightPixels,
+                                 [](float& value)
+                                 {
+                                   widgets::propertyLabel("Height Pixels");
+                                   ImGui::SetNextItemWidth(-FLT_MIN);
+                                   return ImGui::DragFloat(
+                                       "##height", &value, 0.5f, 0.0f, 512.0f);
+                                 });
+  }
+  if (changed)
+    render.setSpace2D(space);
+}
 } // namespace
 
 void SceneSettingsPanel::drawContents(EditorContext& context)
@@ -89,9 +176,9 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
 
   EditorHistory& history = *context.history;
   gameSystems(*context.scene, history);
+  sfs::RenderSystem& render = *context.render;
+  sceneStyle(render, history);
   ImGui::Separator();
-
-  sfs::RenderSystem3D& render = *context.render;
 
   // Which view the game starts from.
   if (const sfs::Entity camera = render.sceneCamera(); camera.isValid())
@@ -112,7 +199,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
 
   // Sun direction and colours aren't ModuleSettings (they're vectors), so they
   // get their own widgets; the rest comes from the descriptors.
-  sfs::SceneLighting3D lighting = render.lighting();
+  sfs::SceneLighting lighting = render.lighting();
   bool lightingChanged = false;
   lightingChanged |= widgets::undoable(
       &history,
@@ -151,7 +238,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   }
 
   ImGui::Separator();
-  const sfs::RenderStats3D& stats = render.stats();
+  const sfs::RenderStats& stats = render.stats();
   const float framerate = ImGui::GetIO().Framerate;
   ImGui::Text("Frame: %.1f ms (%.0f fps)",
               framerate > 0.0f ? 1000.0f / framerate : 0.0f,

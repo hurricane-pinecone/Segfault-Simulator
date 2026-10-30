@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/assets/assetDatabase.h"
-#include "engine/core/rendering/3d/mesh.h"
+#include "engine/core/rendering/mesh.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 
 #include <optional>

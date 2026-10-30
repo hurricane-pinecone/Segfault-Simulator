@@ -1,15 +1,15 @@
 #include "../../testHarness.h"
-#include "../rendering3d/mockRenderer3D.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
-#include <engine/core/components/pointLight3DComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/pointLightComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
-#include <engine/core/rendering/3d/meshPrimitives.h>
+#include <engine/core/rendering/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering3d/renderSystem3D.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/serialization/prefabComponents.h>
 #include <engine/runtime/serialization/sceneSerializer.h>
@@ -19,7 +19,7 @@
 #include <string>
 
 using namespace sfs;
-using sfs::testing3d::MockRenderer3D;
+using sfs::testing3d::MockRenderer;
 using json = nlohmann::json;
 
 namespace
@@ -28,9 +28,9 @@ namespace
 struct World
 {
   AssetStore store;
-  MockRenderer3D renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
-  RenderSystem3D& render = scene.addSystem<RenderSystem3D>(renderer);
+  MockRenderer renderer;
+  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
   std::map<std::string, json> prefabs;
 
@@ -83,7 +83,7 @@ json named(const std::string& name, json extra = json::object())
 json fencePrefab()
 {
   json post =
-      named("Post", {{"Transform3DComponent", {{"position", {0, 0, 0}}}}});
+      named("Post", {{"TransformComponent", {{"position", {0, 0, 0}}}}});
   post["children"] = json::array(
       {named("Rail A",
              {{"$id", 1},
@@ -133,21 +133,19 @@ int main()
     World w;
     w.prefabs["asset:fence"] = fencePrefab();
     const Entity root = w.serializer().instantiate("asset:fence", w.scene);
-    root.getComponent<Transform3DComponent>().position = {5, 0, 0};
+    root.getComponent<TransformComponent>().position = {5, 0, 0};
     w.find("Rail A").getComponent<MeshRendererComponent>().tint = {0, 0, 1, 1};
 
     const json entry = w.serializer().save(w.scene)["entities"][0];
     CHECK(entry["$overrides"].size() == 2u);
-    CHECK(entry["$overrides"][""]["Transform3DComponent"]["position"][0] ==
-          5.0);
+    CHECK(entry["$overrides"][""]["TransformComponent"]["position"][0] == 5.0);
     CHECK(entry["$overrides"]["1"]["MeshRendererComponent"].size() ==
           1u); // just the tint
     CHECK(!entry["$overrides"].contains("2"));
 
     w.reload();
     CHECK(w.tint("Rail A").b == 1.0f);
-    CHECK(w.find("Post").getComponent<Transform3DComponent>().position.x ==
-          5.0f);
+    CHECK(w.find("Post").getComponent<TransformComponent>().position.x == 5.0f);
     CHECK(w.find("Post").hasComponent<PrefabInstanceComponent>());
   }
 
@@ -182,7 +180,7 @@ int main()
     w.scene.update(0.0);
     Entity lamp = w.scene.createEntity();
     lamp.addComponent<NameComponent>("Lamp");
-    lamp.addComponent<PointLight3DComponent>();
+    lamp.addComponent<PointLightComponent>();
     hierarchy::setParent(lamp, root);
 
     const json entry = w.serializer().save(w.scene)["entities"][0];
@@ -253,13 +251,13 @@ int main()
         {{{"$id", 5},
           {"$prefab", "asset:fence"},
           {"$overrides",
-           {{"", {{"Transform3DComponent", {{"position", {3, 0, 0}}}}}}}},
+           {{"", {{"TransformComponent", {{"position", {3, 0, 0}}}}}}}},
           {"$added", json::array({named("Sign", {{"$parent", ""}})})}}});
     w.prefabs["asset:yard"] = {{"formatVersion", 1}, {"root", yard}};
 
     w.serializer().instantiate("asset:yard", w.scene);
     const Entity fence = w.find("Post");
-    CHECK(fence.getComponent<Transform3DComponent>().position.x == 3.0f);
+    CHECK(fence.getComponent<TransformComponent>().position.x == 3.0f);
     CHECK(hierarchy::parentOf(w.find("Sign")) == fence);
   }
 
@@ -323,7 +321,7 @@ int main()
     w.prefabs["asset:fence"] = fencePrefab();
     Entity barn = w.scene.createEntity();
     barn.addComponent<NameComponent>("Barn");
-    barn.addComponent<Transform3DComponent>(Transform3DComponent{{3, 4, 0}});
+    barn.addComponent<TransformComponent>(TransformComponent{{3, 4, 0}});
     Entity door = w.scene.createEntity();
     door.addComponent<NameComponent>("Door");
     hierarchy::setParent(door, barn);
@@ -333,7 +331,7 @@ int main()
 
     const json prefab = w.serializer().savePrefab(w.scene, barn);
     const json& root = prefab["root"];
-    CHECK(root["Transform3DComponent"]["position"] ==
+    CHECK(root["TransformComponent"]["position"] ==
           json::array({0.0, 0.0, 0.0}));
     CHECK(root["children"].size() == 2u);
     CHECK(root["children"][0].contains("$id"));
@@ -359,10 +357,10 @@ int main()
     World w;
     w.prefabs["asset:fence"] = fencePrefab();
     const Entity root = w.serializer().instantiate("asset:fence", w.scene);
-    root.getComponent<Transform3DComponent>().position = {9, 9, 0};
+    root.getComponent<TransformComponent>().position = {9, 9, 0};
     w.find("Rail A").getComponent<MeshRendererComponent>().tint = {0, 0, 0, 1};
     const json applied = w.serializer().savePrefab(w.scene, root);
-    CHECK(applied["root"]["Transform3DComponent"]["position"] ==
+    CHECK(applied["root"]["TransformComponent"]["position"] ==
           json::array({0, 0, 0}));
     CHECK(applied["root"]["children"][0]["MeshRendererComponent"]["tint"][0] ==
           0.0);

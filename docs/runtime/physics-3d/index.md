@@ -1,7 +1,11 @@
 # 3D physics
 
-3D scenes get rigid-body physics from `PhysicsSystem3D`, built on
-[Jolt Physics](https://github.com/jrouwe/JoltPhysics).
+3D games get rigid-body physics from `PhysicsSystem3D`, built on
+[Jolt Physics](https://github.com/jrouwe/JoltPhysics). As in Unity, it keeps
+its 3D suffix (`RigidBody3DComponent`, `BoxCollider3DComponent`...) to tell it
+from a 2D game's movement and collision (`RigidBody2DComponent`,
+`BoxCollider2D`; see [Runtime systems](../systems/index.md#2d-movement-and-collision)).
+The web build has no 3D physics.
 
 ## Turning it on
 
@@ -15,7 +19,7 @@ list its game systems go in:
 
 Like a game system, it's created when the scene plays, and only then: in the
 editor it doesn't exist while you edit. Code that may run in a scene without
-physics should ask with `scene3D.physicsSystem()` or
+physics should ask with `StandardScene::physicsSystem()` or
 `scene().tryGetSystem<sfs::PhysicsSystem3D>()`, which return null when it's
 off. `getSystem` stops the game with an error when the system is missing.
 
@@ -24,7 +28,7 @@ The collider and rigid body components are plain data, so a game can also leave
 
 ## Bodies from components
 
-An entity with a `Transform3DComponent` and at least one collider is a physics
+An entity with a `TransformComponent` and at least one collider is a physics
 body:
 
 | Components | Body |
@@ -109,9 +113,9 @@ that isn't a game object, such as a System script.
 ## Raycasts
 
 ```cpp
-auto& render = scene().getSystem<sfs::RenderSystem3D>();
+auto& render = scene().getSystem<sfs::RenderSystem>();
 auto& physics = scene().getSystem<sfs::PhysicsSystem3D>();
-const sfs::Ray3D ray = render.screenRay(input.mouse().getPosition());
+const sfs::Ray ray = render.screenRay(input.mouse().getPosition());
 if (const auto hit = physics.raycast(ray, 200.0f))
   placeBuilding(hit->point, hit->normal);
 ```

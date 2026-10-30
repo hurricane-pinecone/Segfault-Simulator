@@ -8,13 +8,12 @@
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering3d/modules/uiModule.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/ui/layer.h"
 #include "engine/runtime/ui/preview.h"
-#include "engine/webgpu/webGpuContext.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -106,11 +105,11 @@ std::vector<const T*> withOthers(const std::vector<const T*>& ours,
 
 } // namespace
 
-UiPreviewPanel::UiPreviewPanel(sfs::WebGpuContext& gpu,
+UiPreviewPanel::UiPreviewPanel(sfs::IRenderBackend& backend,
                                const sfs::SceneServices& services,
                                const CodePanel& code)
-    : Panel("UI Preview"), m_gpu(gpu), m_services(services), m_code(code),
-      m_renderer(gpu, 256), m_target(gpu)
+    : Panel("UI Preview"), m_backend(backend), m_services(services),
+      m_code(code)
 {
 }
 
@@ -473,7 +472,9 @@ void UiPreviewPanel::drawUi(EditorContext& context,
     return;
   if (!m_initialized)
   {
-    m_initialized = m_renderer.initialize();
+    m_renderer = m_backend.createRenderer(256);
+    m_target = m_backend.createRenderTarget();
+    m_initialized = m_renderer && m_target;
     m_failed = !m_initialized;
     if (m_failed)
     {
@@ -534,7 +535,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
                 over && ImGui::IsMouseClicked(ImGuiMouseButton_Left),
                 ImGui::IsMouseReleased(ImGuiMouseButton_Left),
                 ImGui::IsMouseDown(ImGuiMouseButton_Left));
-  sfs::RenderContext3D frameContext;
+  sfs::RenderContext frameContext;
   frameContext.viewportSize = glm::ivec2(screen);
   frameContext.meshes = context.render ? &context.render->meshes() : nullptr;
   try
@@ -568,25 +569,22 @@ void UiPreviewPanel::drawUi(EditorContext& context,
         list.quads.push_back(quad);
       }
 
-  m_target.resize(targetPixels);
-  if (!m_target.valid())
+  m_target->resize(targetPixels);
+  if (!m_target->valid())
     return;
-  sfs::FrameParams3D frame;
+  sfs::FrameParams frame;
   frame.shadows.enabled = false;
-  const WGPUCommandEncoder encoder =
-      wgpuDeviceCreateCommandEncoder(m_gpu.device(), nullptr);
-  m_renderer.setTarget(encoder, m_target.view(), targetPixels);
-  m_renderer.beginFrame(frame);
-  m_renderer.drawUi(list);
-  m_renderer.endFrame();
-  const WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
-  wgpuQueueSubmit(m_gpu.queue(), 1, &commands);
-  wgpuCommandBufferRelease(commands);
-  wgpuCommandEncoderRelease(encoder);
+  m_backend.drawInto(*m_target,
+                     *m_renderer,
+                     [&]
+                     {
+                       m_renderer->beginFrame(frame);
+                       m_renderer->drawUi(list);
+                       m_renderer->endFrame();
+                     });
 
   ImDrawList* draw = ImGui::GetWindowDrawList();
-  draw->AddImage(static_cast<ImTextureID>(
-                     reinterpret_cast<intptr_t>(m_target.imguiView())),
+  draw->AddImage(static_cast<ImTextureID>(m_target->imguiTexture()),
                  min,
                  ImVec2(min.x + canvas.x, min.y + canvas.y));
 

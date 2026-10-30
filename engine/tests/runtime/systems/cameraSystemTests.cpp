@@ -1,6 +1,7 @@
 #include "../../testHarness.h"
 
 #include <engine/core/components/cameraComponent.h>
+#include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/runtime/systems/cameraSystem.h>
@@ -18,11 +19,14 @@ float smoothed(float from, float to, float smoothing, float dt)
   return from + (to - from) * t;
 }
 
-Entity addCamera(Registry& reg, glm::vec2 position, const CameraComponent& cam)
+Entity addCamera(Registry& reg,
+                 glm::vec2 position,
+                 const CameraFollowComponent& follow)
 {
   Entity e = reg.createEntity();
   e.addComponent<TransformComponent>(TransformComponent{position});
-  e.addComponent<CameraComponent>(cam);
+  e.addComponent<CameraComponent>();
+  e.addComponent<CameraFollowComponent>(follow);
   return e;
 }
 } // namespace
@@ -37,7 +41,7 @@ int main()
     Entity target = reg.createEntity();
     target.addComponent<TransformComponent>(TransformComponent{{10.0f, 0.0f}});
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = static_cast<int>(target.getId());
     cam.smoothing = 8.0f;
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
@@ -58,10 +62,10 @@ int main()
     Entity target = reg.createEntity();
     target.addComponent<TransformComponent>(TransformComponent{{10.0f, 0.0f}});
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = static_cast<int>(target.getId());
     cam.smoothing = 8.0f;
-    cam.offset = {0.0f, 4.0f}; // desired = target + offset
+    cam.offset = {0.0f, 4.0f, 0.0f}; // desired = target + offset
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
@@ -76,7 +80,7 @@ int main()
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = 9999; // no such entity
     Entity camera = addCamera(reg, {3.0f, 7.0f}, cam);
     reg.flushEntities();
@@ -94,7 +98,7 @@ int main()
     CameraSystem& sys = reg.addSystem<CameraSystem>();
     CHECK(sys.activeCamera().camera == nullptr); // none registered yet
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     Entity camera = addCamera(reg, {1.0f, 2.0f}, cam);
     reg.flushEntities();
 
@@ -104,6 +108,52 @@ int main()
     CHECK(testing::approx(active.transform->position.x, 1.0f));
   }
 
+  TEST("activeCamera should skip inactive cameras, and need no follow")
+  {
+    Registry reg;
+    CameraSystem& sys = reg.addSystem<CameraSystem>();
+
+    Entity off = reg.createEntity();
+    off.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2{1.0f, 0.0f}});
+    off.addComponent<CameraComponent>();
+    off.getComponent<CameraComponent>().active = false;
+
+    Entity on = reg.createEntity();
+    on.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2{4.0f, 0.0f}});
+    on.addComponent<CameraComponent>();
+    on.getComponent<CameraComponent>().zoom = 2.0f;
+    reg.flushEntities();
+
+    const ActiveCamera active = sys.activeCamera();
+    CHECK(active.follow == nullptr);
+    CHECK(testing::approx(active.getCameraPosition().x, 4.0f));
+    CHECK(testing::approx(active.zoom(), 2.0f));
+  }
+
+  TEST("a 3D camera should follow its target in all three axes")
+  {
+    Registry reg;
+    CameraSystem& sys = reg.addSystem<CameraSystem>();
+
+    Entity target = reg.createEntity();
+    target.addComponent<TransformComponent>(
+        TransformComponent{glm::vec3{0.0f, 0.0f, 10.0f}});
+
+    CameraFollowComponent cam;
+    cam.target = static_cast<int>(target.getId());
+    cam.offset = {0.0f, -5.0f, 2.0f};
+    Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
+    reg.flushEntities();
+
+    sys.update(0.1);
+
+    const auto& t = camera.getComponent<TransformComponent>();
+    CHECK(testing::approx(t.position.y, smoothed(0.0f, -5.0f, 8.0f, 0.1f)));
+    CHECK(testing::approx(t.position.z, smoothed(0.0f, 12.0f, 8.0f, 0.1f)));
+  }
+
   TEST("shake produces a bounded offset without moving the base position")
   {
     Registry reg;
@@ -111,13 +161,13 @@ int main()
 
     // No valid target, so the followed base position stays put and only the
     // shake offset can change.
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = 9999;
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {5.0f, 5.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraComponent>();
+    auto& c = camera.getComponent<CameraFollowComponent>();
     c.shake(1.0f, 1.0f, 1.0f); // full strength, 1s, linear
     sys.update(0.1);
 
@@ -138,13 +188,13 @@ int main()
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = 9999;
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraComponent>();
+    auto& c = camera.getComponent<CameraFollowComponent>();
     c.shake(1.0f, 0.5f);
 
     for (int i = 0; i < 10; i++) // 1.0s elapsed > 0.5s duration
@@ -159,13 +209,13 @@ int main()
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = 9999;
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraComponent>();
+    auto& c = camera.getComponent<CameraFollowComponent>();
     c.shake(5.0f, 1.0f); // over-strength: clamps to 1.0
     sys.update(0.05);    // early in the shake, amplitude ~ strength
 
@@ -178,13 +228,13 @@ int main()
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
-    CameraComponent cam;
+    CameraFollowComponent cam;
     cam.target = 9999;
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {2.0f, 3.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraComponent>();
+    auto& c = camera.getComponent<CameraFollowComponent>();
     c.shake(1.0f, 1.0f);
     sys.update(0.1);
 

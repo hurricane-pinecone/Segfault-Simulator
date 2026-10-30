@@ -7,11 +7,10 @@
 #include "widgets/widgets.h"
 
 #include "engine/core/logger/logger.h"
-#include "engine/core/rendering/3d/materialNodes.h"
+#include "engine/core/rendering/materialNodes.h"
 #include "engine/runtime/assetStore/assetStore.h"
-#include "engine/runtime/rendering3d/meshLibrary.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
-#include "engine/webgpu/webGpuContext.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/renderSystem.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // NavWindow, RootWindowDockTree, FindWindowByName
@@ -30,12 +29,12 @@ const char* kAlphaModes[] = {"Opaque", "Cut-out (mask)", "See-through (blend)"};
 
 } // namespace
 
-MaterialEditorPanel::MaterialEditorPanel(sfs::WebGpuContext& gpu,
+MaterialEditorPanel::MaterialEditorPanel(sfs::IRenderBackend& backend,
                                          const sfs::AssetRecord& record)
     : Panel(record.path.stem().string() + "###material-" +
             record.id.toString()),
       m_material(record.id), m_name(record.path.generic_string()),
-      m_preview(gpu), m_opened(std::chrono::steady_clock::now())
+      m_preview(backend), m_opened(std::chrono::steady_clock::now())
 {
 }
 

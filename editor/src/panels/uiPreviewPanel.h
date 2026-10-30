@@ -2,9 +2,9 @@
 
 #include "panels/panel.h"
 
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/scripting/moduleHost.h"
-#include "engine/webgpu/render3d/webGpuRenderer3D.h"
-#include "engine/webgpu/webGpuRenderTarget.h"
 
 #include <filesystem>
 #include <memory>
@@ -16,7 +16,6 @@ namespace sfs
 class GameObject;
 class Scene;
 class UiModule;
-class WebGpuContext;
 struct SceneServices;
 namespace ui
 {
@@ -40,7 +39,7 @@ class CodePanel;
 class UiPreviewPanel : public Panel
 {
 public:
-  UiPreviewPanel(sfs::WebGpuContext& gpu,
+  UiPreviewPanel(sfs::IRenderBackend& backend,
                  const sfs::SceneServices& services,
                  const CodePanel& code);
   ~UiPreviewPanel() override;
@@ -96,11 +95,11 @@ private:
               float room,
               bool screenGuides);
 
-  sfs::WebGpuContext& m_gpu;
+  sfs::IRenderBackend& m_backend;
   const sfs::SceneServices& m_services;
   const CodePanel& m_code;
-  sfs::WebGpuRenderer3D m_renderer;
-  sfs::WebGpuRenderTarget m_target;
+  std::unique_ptr<sfs::IRenderer> m_renderer;
+  std::unique_ptr<sfs::IRenderTarget> m_target;
   bool m_initialized = false;
   bool m_failed = false;
 

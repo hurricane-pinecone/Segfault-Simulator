@@ -34,14 +34,28 @@ public:
   // it doesn't wait for the display too: the main window already paces the
   // frame, and waiting once per window would slow it down.
   void configureSurface(WGPUSurface surface, int width, int height) const;
+
+  // A view to draw into a surface's texture this frame, in format(): sRGB,
+  // even where the surface itself isn't (a browser canvas), so shaders' linear
+  // colour shows the same everywhere.
+  WGPUTextureView surfaceView(WGPUTexture texture) const;
   void release();
 
   WGPUInstance instance() const { return m_instance; }
   WGPUSurface surface() const { return m_surface; }
   WGPUAdapter adapter() const { return m_adapter; }
+  // Whether wgpu runs on OpenGL (its fallback for machines without Vulkan,
+  // D3D12 or Metal), which can't do everything the others can.
+  bool onOpenGL() const { return m_onOpenGL; }
   WGPUDevice device() const { return m_device; }
   WGPUQueue queue() const { return m_queue; }
+  // The format everything drawn to a window renders in (sRGB where the
+  // surface offers it or can be viewed as it).
   WGPUTextureFormat format() const { return m_format; }
+
+  // Run the device's finished async work's callbacks (buffer maps, timestamp
+  // readbacks); with `wait`, first wait a little for some to finish.
+  void poll(bool wait = false) const;
 
   // Whether the device was created with GPU timestamp queries (benchmark HUD).
   bool hasTimestamps() const { return m_hasTimestamps; }
@@ -50,9 +64,11 @@ private:
   WGPUInstance m_instance = nullptr;
   WGPUSurface m_surface = nullptr;
   WGPUAdapter m_adapter = nullptr;
+  bool m_onOpenGL = false;
   WGPUDevice m_device = nullptr;
   WGPUQueue m_queue = nullptr;
   WGPUTextureFormat m_format = WGPUTextureFormat_BGRA8Unorm;
+  WGPUTextureFormat m_surfaceFormat = WGPUTextureFormat_BGRA8Unorm; // its own
   WGPUPresentMode m_present = WGPUPresentMode_Fifo;  // the main window's
   WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo; // the fastest available
   bool m_vsync = false;

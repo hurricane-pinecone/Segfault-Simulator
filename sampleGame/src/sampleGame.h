@@ -2,10 +2,8 @@
 #pragma once
 
 #include <SDL_events.h>
-#include <engine/core/rendering/projection/isometricProjection.h>
 #include <engine/core/scripting/luaScripting.h>
 #include <engine/runtime/game/game.h>
-#include <engine/runtime/rendering/iQuadRenderer.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <memory>
 #include <string>
@@ -22,19 +20,13 @@ public:
 protected:
   void onSetup() override;
   void onProcessInput(const sfs::Input& input) override;
-  void onUpdate(double deltaTime) override;
   void onDestroy() override;
-
-  std::unique_ptr<sfs::IQuadRenderer>
-  createQuadRenderer(int windowWidth, int windowHeight) override;
+  std::unique_ptr<sfs::IRenderBackend> makeRenderBackend() override;
 
 private:
   // Live Lua VM, owned at the app level so it persists across scenes. Bindings
   // reach the active scene's systems lazily (resolved at call time).
   void setupLua();
-
-  sfs::IsometricProjectionConfig m_isoConfig;
-  sfs::IsometricProjection m_isoProjection;
 
   std::unique_ptr<sfs::LuaScripting> m_lua;
 };

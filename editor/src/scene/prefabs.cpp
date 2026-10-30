@@ -6,7 +6,7 @@
 #include "scene/sceneDocument.h"
 
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
@@ -133,8 +133,8 @@ sfs::Entity place(EditorContext& context,
         context.scene->flushEntities();
         if (!root.isValid() || !position)
           return;
-        if (!root.hasComponent<sfs::Transform3DComponent>())
-          root.addComponent<sfs::Transform3DComponent>();
+        if (!root.hasComponent<sfs::TransformComponent>())
+          root.addComponent<sfs::TransformComponent>();
         // The point is in the world; under a parent, place it there.
         glm::mat4 world = sfs::hierarchy::worldMatrix(root);
         world[3] = glm::vec4(*position, 1.0f);
@@ -198,8 +198,8 @@ void revert(EditorContext& context, const sfs::Entity& root)
         // Keep where it is: its root's transform, nothing else.
         json kept = json::object();
         if (entry.contains("$overrides") && entry["$overrides"].contains("") &&
-            entry["$overrides"][""].contains("Transform3DComponent"))
-          kept[""]["Transform3DComponent"] = entry["$overrides"][""]["Transform3DComponent"];
+            entry["$overrides"][""].contains("TransformComponent"))
+          kept[""]["TransformComponent"] = entry["$overrides"][""]["TransformComponent"];
         entry.erase("$removed");
         entry.erase("$added");
         entry.erase("$overrides");

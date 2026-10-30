@@ -34,12 +34,12 @@ tracks cell capacity accordingly.
 
 Setting `liquid = true` marks a block that is physically present but emits no
 opaque geometry. The mesher skips liquid blocks so solid terrain behind or below
-the water stays visible. The water render path draws the animated surface instead.
+the water stays visible. `VoxelModule` draws the water's surface instead.
 
 ## Block registry
 
 `IBlockRegistry` maps a `BlockId` to its `BlockType`. Your game implements it
-and passes the registry to `VoxelWorld` and to `VoxelTerrain`.
+and passes the registry to `VoxelWorld` and to `VoxelModule`.
 
 ```cpp
 class MyBlockRegistry : public sfs::IBlockRegistry
@@ -111,9 +111,9 @@ and does not wake the simulation.
 `meshChunk()` converts one chunk into a list of `VoxelMeshSlice` objects, one
 per distinct material (texture and surface effect). The mesher emits only the
 three camera-facing faces (`+x`, `+y`, `+z`) and culls faces whose neighbour is
-opaque, so interior faces are never produced. It works in world space with no
-projection; the `VoxelTerrain` render module projects the cached results to
-screen each frame.
+opaque, so interior faces are never produced. It works in the grid's own
+space, with no projection; the `VoxelModule` render module places the results
+in the world through the game's `Space2D`, once per chunk change.
 
 ```cpp
 std::vector<sfs::VoxelMeshSlice> slices =
@@ -158,14 +158,12 @@ implements it. In tests a simple dense-array implementation is enough.
 
 ### Water surface source
 
-`IWaterSurfaceSource` supplies the list of water columns for the water render
-module (`IsometricWater`). `VoxelWorld` implements it automatically. You only
-need to know about this interface if you build a custom water source that feeds
-the same water render path.
+`IWaterSurfaceSource` supplies the list of water columns (`collectWaterColumns`)
+that `VoxelModule` draws as water. `VoxelWorld` implements it.
 
 ## Read more
 
 - [Voxel world](../../runtime/voxel/index.md) — the runtime streaming store
   built on these types.
-- [Render modules](../../runtime/rendering/render-modules/index.md) — the
-  `VoxelTerrain` and `IsometricWater` modules that draw a voxel world.
+- [Render modules](../../runtime/rendering/render-modules/index.md#voxelmodule): the
+  `VoxelModule` that draws a voxel world.

@@ -1,9 +1,7 @@
 #pragma once
 
-#include "engine/runtime/TextRenderer/textRenderer.h"
 #include "engine/runtime/console/devConsole.h"
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
-#include "engine/runtime/rendering/iQuadRenderer.h"
 #include "engine/runtime/sceneManager/sceneManager.h"
 #include <SDL_events.h>
 #include <SDL_render.h>
@@ -24,7 +22,7 @@
 namespace sfs
 {
 
-class Scene3D;
+class StandardScene;
 
 const double TARGET_FPS = 165.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
@@ -99,21 +97,9 @@ protected:
   virtual void onDestroy() = 0;
 
   /**
-   * Create the quad-rendering backend the game draws through. The default backs
-   * the core 2D renderer; a game needing the isometric heightfield path
-   * overrides this to return an isometric backend.
-   *
-   * @param windowWidth  viewport width in pixels
-   * @param windowHeight viewport height in pixels
-   * @return owning handle to the renderer
-   */
-  virtual std::unique_ptr<IQuadRenderer> createQuadRenderer(int windowWidth,
-                                                            int windowHeight);
-
-  /**
-   * Create the render backend the game runs on. The default returns an OpenGL
-   * backend wrapping createQuadRenderer(); a game on a different graphics API
-   * (e.g. WebGPU) overrides this to return its own backend.
+   * Create the render backend the game runs on. The default is the first one
+   * the program offers (RenderBackends: a player registers the engine's, see
+   * registerWebGpuBackend()); a game can return any backend of its own.
    */
   virtual std::unique_ptr<IRenderBackend> makeRenderBackend();
 
@@ -150,8 +136,8 @@ protected:
 
   /**
    * Replace the current scene with a scene file (relative to gameFolder()) and
-   * start it: a fresh scene from replaceScene(), then Scene3D::play. Needs a
-   * 3D renderer.
+   * start it: a fresh scene from replaceScene(), then StandardScene::play.
+   * Needs a renderer.
    *
    * @return false (logged) if it can't
    */
@@ -172,10 +158,10 @@ protected:
 
   /**
    * Destroy the current scene and create the new, current one a scene file is
-   * played into. A plain Scene3D by default; a host with its own kind of scene
-   * (the editor) makes that instead.
+   * played into. A plain StandardScene by default; a host with its own kind of
+   * scene (the editor) makes that instead.
    */
-  virtual Scene3D& replaceScene();
+  virtual StandardScene& replaceScene();
 
   /** Whether the window belongs to the game (not when it runs in the editor).
    */

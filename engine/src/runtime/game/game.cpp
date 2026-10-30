@@ -1,9 +1,10 @@
 #include <engine/runtime/game/game.h>
 
 #include "engine/core/scripting/luaScripting.h"
-#include "engine/runtime/rendering/backend/glRenderBackend.h"
-#include "engine/runtime/rendering/gl/openGLQuadRenderer.h"
-#include "engine/runtime/rendering3d/scene3D.h"
+#include "engine/runtime/rendering/backend/renderBackends.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/standardScene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 
 #include "SDL.h"
@@ -53,11 +54,38 @@ bool Game::init(int windowWidth, int windowHeight)
   }
 
   m_backend = makeRenderBackend();
-  if (!m_backend->init("SegFaultSimulator", windowWidth, windowHeight))
+  if (!m_backend ||
+      !m_backend->init("SegFaultSimulator", windowWidth, windowHeight))
   {
-    LOG_ERROR("Failed to initialize render backend");
-    return false;
+    // Another backend may have a driver here (the game's choice may not).
+    const std::string failed(m_backend ? m_backend->name() : "");
+    if (m_backend)
+      m_backend->shutdown();
+    m_backend.reset();
+    for (const std::string& name : RenderBackends::names())
+    {
+      if (name == failed)
+        continue;
+      std::unique_ptr<IRenderBackend> backend = RenderBackends::make(name);
+      LOG_INFO("Trying the " + name + " renderer instead");
+      if (backend &&
+          backend->init("SegFaultSimulator", windowWidth, windowHeight))
+      {
+        m_backend = std::move(backend);
+        break;
+      }
+      if (backend)
+        backend->shutdown();
+    }
+    if (!m_backend)
+    {
+      LOG_ERROR("Failed to initialize render backend");
+      return false;
+    }
   }
+  LOG_INFO("Rendering with " + (m_backend->name().empty()
+                                    ? std::string("a custom backend")
+                                    : std::string(m_backend->name())));
   window = m_backend->window();
 
   onInit();
@@ -67,16 +95,16 @@ bool Game::init(int windowWidth, int windowHeight)
   return true;
 }
 
-std::unique_ptr<IQuadRenderer> Game::createQuadRenderer(int windowWidth,
-                                                        int windowHeight)
-{
-  return std::make_unique<OpenGLQuadRenderer>(windowWidth, windowHeight);
-}
-
 std::unique_ptr<IRenderBackend> Game::makeRenderBackend()
 {
-  return std::make_unique<GLRenderBackend>(
-      [this](int w, int h) { return createQuadRenderer(w, h); });
+  const std::vector<std::string> names = RenderBackends::names();
+  if (names.empty())
+  {
+    LOG_ERROR("No render backend to run on (register one, e.g. "
+              "registerWebGpuBackend())");
+    return nullptr;
+  }
+  return RenderBackends::make(names.front());
 }
 
 void Game::setup()
@@ -161,10 +189,10 @@ void Game::onLoadScene(const std::filesystem::path& scene)
 
 bool Game::playScene(const std::filesystem::path& scene)
 {
-  if (!m_services || !m_services->renderer3D)
+  if (!m_services || !m_services->renderer)
   {
     LOG_ERROR("Playing " + scene.generic_string() +
-              ": scene files need a 3D renderer, and this game has none");
+              ": scene files need a renderer, and this game has none");
     return false;
   }
   AssetStore& store = m_services->assetStore;
@@ -191,10 +219,10 @@ void Game::setAssetDatabase(const AssetDatabase* database)
     m_services->assetStore.setDatabase(database);
 }
 
-Scene3D& Game::replaceScene()
+StandardScene& Game::replaceScene()
 {
   sceneManager.destroyAll();
-  return *sceneManager.createScene<Scene3D>();
+  return *sceneManager.createScene<StandardScene>();
 }
 
 void Game::applyRequests()
@@ -380,6 +408,11 @@ void Game::render()
     if (!sceneManager)
       return;
 
+    // The console shows over the scene's UI, where it has one.
+    if (auto* render = sceneManager.current()->tryGetSystem<RenderSystem>())
+      if (auto* ui = render->module<UiModule>())
+        ui->setOverlay(devConsoleEnabled() ? &m_console.layer() : nullptr);
+
     sceneManager.current()->render();
 
     {
@@ -388,16 +421,6 @@ void Game::render()
       onRender();
     }
   }
-
-  // The console draws through the 2D quad + text renderers, so it only
-  // appears on a backend that has them.
-  if (devConsoleEnabled() && m_services && m_services->textRenderer &&
-      m_services->quadRenderer)
-    m_console.render(*m_services->textRenderer,
-                     *m_services->quadRenderer,
-                     m_services->assetStore,
-                     windowWidth,
-                     windowHeight);
 
 #if !defined(NDEBUG) && !defined(ENGINE_WEB)
   if (m_debugUiVisible && m_backend->imguiAvailable())

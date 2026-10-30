@@ -4,8 +4,9 @@ namespace sfs
 {
 
 /**
- * Tag: the entity casts a projected sprite shadow on the isometric path.
- * Presence alone opts the sprite in -- it carries no data.
+ * Tag: the entity's sprite casts shadows (from the sun and from point lights,
+ * where the scene has them on). Presence alone opts the sprite in -- it
+ * carries no data.
  */
 struct ShadowCasterComponent
 {

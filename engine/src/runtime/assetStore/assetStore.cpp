@@ -1,14 +1,15 @@
 #include "engine/runtime/assetStore/assetStore.h"
 
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
-#include "engine/core/rendering/3d/material.h"
-#include "engine/core/rendering/3d/materialGraphCompiler.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/assetStore/textureImporter.h"
+#include "engine/runtime/serialization/legacyComponentNames.h"
 #include "glm/glm/exponential.hpp"
 
 #include <SDL_image.h>
@@ -34,6 +35,7 @@ AssetStore::~AssetStore()
 void AssetStore::clearAssets()
 {
   m_surfaces.clear();
+  m_imageTextures.clear();
   m_sprites.clear();
   m_spriteNameToId.clear();
   m_fonts.clear();
@@ -273,6 +275,12 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
 
 void AssetStore::forgetMaterial(const AssetId& id) { m_materials.erase(id); }
 
+void AssetStore::forgetTexture(const AssetId& id)
+{
+  m_textures.erase(id);
+  m_dataTextures.erase(id);
+}
+
 std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
 {
   if (const auto it = m_prefabs.find(id); it != m_prefabs.end())
@@ -302,6 +310,7 @@ std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
   {
     std::ifstream in(m_database->absolutePath(*record));
     nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+    upgradeComponentNames(json);
     if (json.is_object() && json.contains("root"))
       loaded = std::move(json);
     else
@@ -316,7 +325,7 @@ namespace
 {
 nlohmann::json transformJson(const glm::mat4& matrix)
 {
-  const Transform3DComponent t = Transform3DComponent::fromMatrix(matrix);
+  const TransformComponent t = TransformComponent::fromMatrix(matrix);
   return {
       {"position", {t.position.x, t.position.y, t.position.z}},
       {"rotation", {t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z}},
@@ -330,7 +339,7 @@ nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes,
 {
   nlohmann::json root = {
       {"NameComponent", {{"name", name}}},
-      {"Transform3DComponent", transformJson(glm::mat4(1.0f))}};
+      {"TransformComponent", transformJson(glm::mat4(1.0f))}};
   if (nodes.empty())
   {
     root["MeshRendererComponent"] = {{"mesh", assetMeshName(id)}};
@@ -347,7 +356,7 @@ nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes,
     const ModelNode& node = nodes[i];
     entries[i] = {{"$id", i + 1},
                   {"NameComponent", {{"name", node.name}}},
-                  {"Transform3DComponent", transformJson(node.local)}};
+                  {"TransformComponent", transformJson(node.local)}};
     if (!node.part.empty())
       entries[i]["MeshRendererComponent"] = {
           {"mesh", assetMeshName(id, node.part)}};
@@ -397,6 +406,58 @@ void AssetStore::addTexture(const std::string& assetId,
 void AssetStore::removeTexture(const std::string& assetId)
 {
   m_surfaces.erase(assetId);
+  m_imageTextures.erase(assetId);
+}
+
+std::shared_ptr<const TextureData>
+AssetStore::imageTexture(const std::string& assetId)
+{
+  if (assetId.starts_with("asset:"))
+  {
+    const std::optional<AssetId> id = AssetId::parse(assetId.substr(6));
+    return id ? texture(*id) : nullptr;
+  }
+  if (const auto it = m_imageTextures.find(assetId);
+      it != m_imageTextures.end())
+    return it->second;
+  SDL_Surface* surface = getSurface(assetId);
+  std::shared_ptr<TextureData> texture =
+      surface ? textureFromSurface(*surface) : nullptr;
+  if (texture)
+    texture->nearest = true;
+  return m_imageTextures.emplace(assetId, std::move(texture)).first->second;
+}
+
+std::optional<AssetStore::SpriteFrame>
+AssetStore::spriteFrame(const std::string& image, int frame)
+{
+  SpriteFrame out;
+  out.sheet = imageTexture(image);
+  if (!out.sheet || out.sheet->empty())
+    return std::nullopt;
+  const glm::vec2 texels(out.sheet->width, out.sheet->height);
+  out.pixels = texels;
+
+  // A texture asset may be a grid of frames.
+  glm::ivec2 cell{0, 0};
+  if (image.starts_with("asset:") && m_database)
+    if (const std::optional<AssetId> id = AssetId::parse(image.substr(6)))
+      if (const AssetRecord* record = m_database->find(*id))
+        cell = TextureImportSettings::fromJson(record->settings).spriteCell;
+  const glm::ivec2 grid(cell.x > 0 ? int(texels.x) / cell.x : 0,
+                        cell.y > 0 ? int(texels.y) / cell.y : 0);
+  if (grid.x <= 0 || grid.y <= 0)
+    return out;
+
+  const int count = grid.x * grid.y;
+  const int index = ((frame % count) + count) % count;
+  const glm::vec2 size(cell);
+  out.pixels = size;
+  out.uvRect = glm::vec4(float(index % grid.x) * size.x / texels.x,
+                         float(index / grid.x) * size.y / texels.y,
+                         size.x / texels.x,
+                         size.y / texels.y);
+  return out;
 }
 
 SDL_Surface* AssetStore::getSurface(const std::string& assetId) const

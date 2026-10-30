@@ -12,7 +12,7 @@ namespace sfs
  * blades, each a curved, tapering strip, on every part of the mesh that faces
  * up (no steeper than 60 degrees). The GPU grows them around the camera each
  * frame, densest near it. They sway in the scene's wind
- * (RenderSystem3D::windSettings()), and flatten where things move through
+ * (RenderSystem::windSettings()), and flatten where things move through
  * them (rigid bodies that bend grass, and GrassBenderComponent entities),
  * springing back afterwards.
  *

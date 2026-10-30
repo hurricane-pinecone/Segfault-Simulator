@@ -3,8 +3,8 @@
 `AssetDatabase` is the catalogue of a project's asset files: everything in
 its `assets/` and `prefabs/` folders. Each file gets a stable **asset id**, kept in a small
 `.meta` file beside it, so the asset keeps its identity when it's renamed or
-moved. It's in engine-core and knows nothing about rendering, so 2D,
-isometric and 3D games, the editor and tools all share it.
+moved. It's in engine-core and knows nothing about rendering, so games of
+every style, the editor and tools all share it.
 
 It catalogues files; it doesn't load them. Loading is the
 [`AssetStore`](#how-it-fits-with-the-assetstore)'s job.
@@ -98,11 +98,11 @@ under its root, with paths relative to that.
 | `AssetDatabase` | Which files exist, their ids and import settings | `AssetId` |
 | `AssetStore` | Loaded data: images (`SDL_Surface`), sprites, fonts | Names game code chooses |
 | | Models (meshes, and the textures inside them) | `AssetId` |
-| Each renderer | GPU copies of the store's images and meshes | The store's names, or the mesh |
+| The renderer | GPU copies of the store's images and meshes | The store's names, or the mesh |
 
 The two are separate on purpose: the database is the catalogue and the store is
 the cache. `AssetStore::model(id)` looks the model up in the database, imports
-it on first use and keeps it. The 3D renderer uploads each of a model's
+it on first use and keeps it. The renderer uploads each of a model's
 textures once, however many meshes share it.
 
 ## Models
@@ -149,7 +149,7 @@ and transparency. Meshes are only shape; materials are separate.
   [Scripting](../../editor/scripting/index.md#scriptable-objects).
 - A **material asset** (`.mat`, JSON; see `MaterialAsset`) names its textures
   by asset id. A node-graph material (format version 2) holds its graph instead;
-  see [Material graphs](../rendering-3d/material-graphs/index.md#in-a-material-file).
+  see [Material graphs](../rendering/material-graphs/index.md#in-a-material-file).
   A standard one looks like this:
 
 ```json
@@ -179,5 +179,20 @@ The built-in cube and plane map a texture once onto each face.
 
 ### Textures
 
-A texture's `.meta` settings take `"filter": "nearest"` for pixel art (hard
-texel edges); the default is smooth.
+A texture's `.meta` settings say how it's brought in (`TextureImportSettings`):
+
+```json
+"settings": { "filter": "nearest", "spriteCell": [16, 16] }
+```
+
+- `"filter": "nearest"` draws texels with hard edges, for pixel art; the
+  default is smooth.
+- `"spriteCell": [w, h]` makes it a sprite sheet: a grid of frames this many
+  pixels each, numbered across then down from the top left. A
+  `SpriteComponent`'s `frame` picks one (see
+  [Sprites & sprite sheets](../../runtime/rendering/sprites/index.md)).
+
+`AssetStore::imageTexture("asset:<id>")` gives a texture asset's image, and
+`AssetStore::spriteFrame(image, frame)` one frame of it. In the editor these
+settings are the texture's **Filter**, **Sprite Sheet** and **Frame Size** in
+the Inspector.

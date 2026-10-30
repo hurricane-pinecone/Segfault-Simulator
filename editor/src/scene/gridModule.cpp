@@ -1,6 +1,6 @@
 #include "scene/gridModule.h"
 
-#include "engine/runtime/rendering3d/meshLibrary.h"
+#include "engine/runtime/rendering/meshLibrary.h"
 
 #include <cmath>
 #include <memory>
@@ -71,7 +71,7 @@ sfs::MeshData gridMesh()
 
 GridModule::GridModule(sfs::MeshLibrary& meshes) : m_mesh(meshes.add(gridMesh())) {}
 
-void GridModule::computeCommands(const sfs::RenderContext3D&)
+void GridModule::computeCommands(const sfs::RenderContext&)
 {
   flush();
   // Seen, never casting a shadow (the sun would draw it onto nothing).
