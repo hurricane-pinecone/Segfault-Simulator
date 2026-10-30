@@ -129,7 +129,7 @@ jobs:
 
   # Runtime tests link the full engine (SDL/imgui), so this job restores the
   # Conan dependency closure and runs a native build. They drive systems and
-  # render modules through mock seams (a fake IRenderer3D, stub services), so
+  # render modules through mock seams (a fake IRenderer, stub services), so
   # they run headless: no window, no GPU, no display. Split from the core test
   # job so a standalone engine-core release can gate on the core jobs alone; the
   # web deploy ships the runtime (both sample games), so it needs all of them.

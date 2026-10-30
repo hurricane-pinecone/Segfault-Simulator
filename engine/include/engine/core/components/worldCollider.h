@@ -15,10 +15,8 @@ namespace sfs
  * `offset`/`size` are authored in PIXELS relative to the sprite's feet (the
  * transform sits at the sprite's bottom edge), with pixel-x mapping to world-x
  * and pixel-y to world depth (y). They convert to world tiles via
- * `pixelsPerUnit` (the source tile width). Deliberately render-scale
- * independent: `worldScale` magnifies sprites AND tiles together at draw time,
- * so the footprint already grows on screen with the sprite without collision
- * changing when the view is zoomed.
+ * `pixelsPerUnit` (the source tile width), so they don't change when the view
+ * is zoomed.
  *
  * Solver: AABB-vs-AABB on the ground plane, gated by matching elevation. For
  * billboard / bullet hits use BoxCollider2D instead.
@@ -29,7 +27,7 @@ namespace sfs
 struct WorldCollider
 {
   // Pixels per world tile, converting pixel offset/size to world units. Set
-  // once at startup from the projection's tile width (defaults to 32px tiles).
+  // once at startup to the game's tile width (defaults to 32px tiles).
   // Defined in engine-core, so every module sees the one value.
   static float pixelsPerUnit;
 

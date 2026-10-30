@@ -2,9 +2,9 @@
 
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/rendering/backend/renderBackends.h"
-#include "engine/runtime/rendering3d/modules/uiModule.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
-#include "engine/runtime/rendering3d/scene3D.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/standardScene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 
 #include "SDL.h"
@@ -189,10 +189,10 @@ void Game::onLoadScene(const std::filesystem::path& scene)
 
 bool Game::playScene(const std::filesystem::path& scene)
 {
-  if (!m_services || !m_services->renderer3D)
+  if (!m_services || !m_services->renderer)
   {
     LOG_ERROR("Playing " + scene.generic_string() +
-              ": scene files need a 3D renderer, and this game has none");
+              ": scene files need a renderer, and this game has none");
     return false;
   }
   AssetStore& store = m_services->assetStore;
@@ -219,10 +219,10 @@ void Game::setAssetDatabase(const AssetDatabase* database)
     m_services->assetStore.setDatabase(database);
 }
 
-Scene3D& Game::replaceScene()
+StandardScene& Game::replaceScene()
 {
   sceneManager.destroyAll();
-  return *sceneManager.createScene<Scene3D>();
+  return *sceneManager.createScene<StandardScene>();
 }
 
 void Game::applyRequests()
@@ -409,7 +409,7 @@ void Game::render()
       return;
 
     // The console shows over the scene's UI, where it has one.
-    if (auto* render = sceneManager.current()->tryGetSystem<RenderSystem3D>())
+    if (auto* render = sceneManager.current()->tryGetSystem<RenderSystem>())
       if (auto* ui = render->module<UiModule>())
         ui->setOverlay(devConsoleEnabled() ? &m_console.layer() : nullptr);
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/core/rendering/3d/materialGraph.h"
-#include "engine/core/rendering/3d/materialGraphCompiler.h"
+#include "engine/core/rendering/materialGraph.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
 
 #include "imgui.h"
 

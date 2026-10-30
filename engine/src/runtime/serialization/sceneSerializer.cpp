@@ -4,8 +4,8 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
-#include "engine/runtime/rendering3d/meshLibrary.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/legacyComponentNames.h"
 #include "engine/runtime/serialization/prefabComponents.h"
@@ -71,7 +71,15 @@ bool vecFromJson(const json& value, float* out)
   return true;
 }
 
+json toJson(const glm::vec2& v) { return vecToJson<2>(&v.x); }
 json toJson(const glm::vec3& v) { return vecToJson<3>(&v.x); }
+
+glm::vec2 vec2Or(const json& object, const char* key, glm::vec2 fallback)
+{
+  if (object.contains(key))
+    vecFromJson<2>(object[key], &fallback.x);
+  return fallback;
+}
 
 glm::vec3 vec3Or(const json& object, const char* key, glm::vec3 fallback)
 {
@@ -249,13 +257,49 @@ bool fieldFromJson(const reflect::FieldInfo& field,
 // --- render settings
 // -----------------------------------------------------------
 
-json renderToJson(const RenderSystem3D& render)
+// The scene's style: "3d", or a 2D game's plane ("flat" / "isometric") and
+// how it maps to the screen.
+json styleToJson(const std::optional<Space2D>& space)
 {
-  const SceneLighting3D& lighting = render.lighting();
-  const ShadowSettings3D& shadows = render.shadowSettings();
-  const Camera3D& camera = render.camera();
+  if (!space)
+    return {{"kind", "3d"}};
+  return {{"kind",
+           space->projection == Space2D::Projection::Isometric ? "isometric"
+                                                               : "flat"},
+          {"pixelsPerUnit", cleanFloat(space->pixelsPerUnit)},
+          {"tilePixels", toJson(space->tilePixels)},
+          {"heightPixels", cleanFloat(space->heightPixels)},
+          {"yDown", space->yDown},
+          {"ySort", space->ySort}};
+}
+
+void styleFromJson(const json& in, RenderSystem& render)
+{
+  const std::string kind = valueOr<std::string>(in, "kind", "3d");
+  if (kind != "flat" && kind != "isometric")
+  {
+    render.clearSpace2D();
+    return;
+  }
+  Space2D space = render.space2D().value_or(Space2D{});
+  space.projection = kind == "isometric" ? Space2D::Projection::Isometric
+                                         : Space2D::Projection::Flat;
+  space.pixelsPerUnit = valueOr(in, "pixelsPerUnit", space.pixelsPerUnit);
+  space.tilePixels = vec2Or(in, "tilePixels", space.tilePixels);
+  space.heightPixels = valueOr(in, "heightPixels", space.heightPixels);
+  space.yDown = valueOr(in, "yDown", space.yDown);
+  space.ySort = valueOr(in, "ySort", space.ySort);
+  render.setSpace2D(space);
+}
+
+json renderToJson(const RenderSystem& render)
+{
+  const SceneLighting& lighting = render.lighting();
+  const ShadowSettings& shadows = render.shadowSettings();
+  const Camera& camera = render.camera();
 
   return {
+      {"style", styleToJson(render.space2D())},
       {"lighting",
        {{"sunDirection", toJson(lighting.sun.direction)},
         {"sunColor", toJson(lighting.sun.color)},
@@ -281,19 +325,22 @@ json renderToJson(const RenderSystem3D& render)
         {"yaw", cleanFloat(camera.yaw)},
         {"pitch", cleanFloat(camera.pitch)},
         {"distance", cleanFloat(camera.distance)},
-        {"orthographic",
-         camera.projection == Camera3D::Projection::Orthographic},
+        {"orthographic", camera.projection == Camera::Projection::Orthographic},
         {"fieldOfView", cleanFloat(camera.fieldOfView)},
         {"orthoHeight", cleanFloat(camera.orthoHeight)}}},
   };
 }
 
-// Missing keys keep their current values, so older files load.
-void renderFromJson(const json& value, RenderSystem3D& render)
+// Missing keys keep their current values, so older files load (as 3D: the
+// only style there was).
+void renderFromJson(const json& value, RenderSystem& render)
 {
+  if (const json& in = value.value("style", json::object()); in.is_object())
+    styleFromJson(in, render);
+
   if (const json& in = value.value("lighting", json::object()); in.is_object())
   {
-    SceneLighting3D lighting = render.lighting();
+    SceneLighting lighting = render.lighting();
     lighting.sun.direction = vec3Or(in, "sunDirection", lighting.sun.direction);
     lighting.sun.color = vec3Or(in, "sunColor", lighting.sun.color);
     lighting.sun.diffuseStrength =
@@ -305,7 +352,7 @@ void renderFromJson(const json& value, RenderSystem3D& render)
 
   if (const json& in = value.value("shadows", json::object()); in.is_object())
   {
-    ShadowSettings3D shadows = render.shadowSettings();
+    ShadowSettings shadows = render.shadowSettings();
     shadows.enabled = valueOr(in, "enabled", shadows.enabled);
     shadows.distance = valueOr(in, "distance", shadows.distance);
     shadows.depthBias = valueOr(in, "depthBias", shadows.depthBias);
@@ -318,7 +365,7 @@ void renderFromJson(const json& value, RenderSystem3D& render)
 
   if (const json& in = value.value("wind", json::object()); in.is_object())
   {
-    WindSettings3D wind = render.windSettings();
+    WindSettings wind = render.windSettings();
     wind.direction = valueOr(in, "direction", wind.direction);
     wind.strength = valueOr(in, "strength", wind.strength);
     wind.gustiness = valueOr(in, "gustiness", wind.gustiness);
@@ -327,7 +374,7 @@ void renderFromJson(const json& value, RenderSystem3D& render)
 
   if (const json& in = value.value("haze", json::object()); in.is_object())
   {
-    HazeSettings3D haze = render.hazeSettings();
+    HazeSettings haze = render.hazeSettings();
     haze.strength = valueOr(in, "strength", haze.strength);
     haze.distance = valueOr(in, "distance", haze.distance);
     render.setHazeSettings(haze);
@@ -335,14 +382,14 @@ void renderFromJson(const json& value, RenderSystem3D& render)
 
   if (const json& in = value.value("camera", json::object()); in.is_object())
   {
-    Camera3D& camera = render.camera();
+    Camera& camera = render.camera();
     camera.target = vec3Or(in, "target", camera.target);
     camera.yaw = valueOr(in, "yaw", camera.yaw);
     camera.pitch = valueOr(in, "pitch", camera.pitch);
     camera.distance = valueOr(in, "distance", camera.distance);
     camera.projection = valueOr(in, "orthographic", false)
-                            ? Camera3D::Projection::Orthographic
-                            : Camera3D::Projection::Perspective;
+                            ? Camera::Projection::Orthographic
+                            : Camera::Projection::Perspective;
     camera.fieldOfView = valueOr(in, "fieldOfView", camera.fieldOfView);
     camera.orthoHeight = valueOr(in, "orthoHeight", camera.orthoHeight);
   }
@@ -562,7 +609,7 @@ json SceneSerializer::save(Scene& scene,
   json out = {{"formatVersion", kFormatVersion},
               {"systems", gameSystems},
               {"entities", std::move(entities)}};
-  if (const RenderSystem3D* render = scene.tryGetSystem<RenderSystem3D>())
+  if (const RenderSystem* render = scene.tryGetSystem<RenderSystem>())
     out["render"] = renderToJson(*render);
   return out;
 }
@@ -598,7 +645,7 @@ bool SceneSerializer::load(const json& in,
   }
 
   if (in.contains("render"))
-    if (RenderSystem3D* render = scene.tryGetSystem<RenderSystem3D>())
+    if (RenderSystem* render = scene.tryGetSystem<RenderSystem>())
       renderFromJson(in["render"], *render);
 
   if (gameSystems)

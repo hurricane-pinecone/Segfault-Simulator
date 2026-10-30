@@ -18,7 +18,7 @@ namespace sfs
 using SceneId = uint32_t;
 
 class Game;
-class IRenderer3D;
+class IRenderer;
 
 // Engine-owned services a scene draws and loads assets through, supplied by the
 // active render backend. Bundled into one value so they can be
@@ -29,20 +29,20 @@ class IRenderer3D;
 struct SceneServices
 {
   AssetStore& assetStore;
-  IRenderer3D* renderer3D = nullptr;
+  IRenderer* renderer = nullptr;
 };
 
 class Scene
 {
 public:
   Scene(SceneId id, const SceneServices& services)
-      : m_assetStore(services.assetStore), m_renderer3D(services.renderer3D),
+      : m_assetStore(services.assetStore), m_renderer(services.renderer),
         m_id(id), m_name("scene_" + std::to_string(id))
   {
   }
 
   Scene(SceneId id, const SceneServices& services, const std::string& name)
-      : m_assetStore(services.assetStore), m_renderer3D(services.renderer3D),
+      : m_assetStore(services.assetStore), m_renderer(services.renderer),
         m_id(id), m_name(name)
   {
   }
@@ -94,15 +94,15 @@ public:
   AssetStore& assetStore() const { return m_assetStore; }
   // The backend's renderer. Asking for it where there's none (a tool without
   // a GPU) is a setup bug, so it logs and aborts, like getSystem;
-  // tryRenderer3D() returns null instead.
-  IRenderer3D& renderer3D() const;
+  // tryRenderer() returns null instead.
+  IRenderer& renderer() const;
   // The game this scene runs in: quit, switch scenes, change the window. Like
   // the renderer, game() assumes there is one (there always is when a game or
   // the editor runs the scene); tryGame() is null in tools and tests.
   Game& game() const;
   Game* tryGame() const { return m_game; }
 
-  IRenderer3D* tryRenderer3D() const { return m_renderer3D; }
+  IRenderer* tryRenderer() const { return m_renderer; }
 
   template <typename TObject, typename... TArgs>
   TObject& createObject(TArgs&&... args);
@@ -177,7 +177,7 @@ protected:
 
 private:
   // Constructor-injected by SceneManager; null where there's no renderer.
-  IRenderer3D* m_renderer3D = nullptr;
+  IRenderer* m_renderer = nullptr;
   Game* m_game = nullptr; // set by SceneManager
 
   SceneId m_id = 0;

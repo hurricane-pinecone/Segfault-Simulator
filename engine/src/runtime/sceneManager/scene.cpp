@@ -28,9 +28,9 @@ T& requireService(T* service, const char* name)
 }
 } // namespace
 
-IRenderer3D& Scene::renderer3D() const
+IRenderer& Scene::renderer() const
 {
-  return requireService(m_renderer3D, "3D renderer");
+  return requireService(m_renderer, "renderer");
 }
 
 Game& Scene::game() const

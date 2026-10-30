@@ -1,6 +1,6 @@
 # Parents & children
 
-Any entity can be the child of another. A child's `Transform3DComponent` is
+Any entity can be the child of another. A child's `TransformComponent` is
 relative to its parent: move, turn or scale the parent and its children follow.
 A cart carries its crates, a lantern hangs from its post, and a "Fences" entity
 can hold every fence segment so the editor's Hierarchy stays tidy.
@@ -9,10 +9,10 @@ can hold every fence segment so the editor's Hierarchy stays tidy.
 #include "engine/core/hierarchy/hierarchy.h"
 
 sfs::Entity cart = scene.createEntity();
-cart.addComponent<sfs::Transform3DComponent>(sfs::Transform3DComponent{{10.0f, 0.0f, 0.0f}});
+cart.addComponent<sfs::TransformComponent>(sfs::TransformComponent{{10.0f, 0.0f, 0.0f}});
 
 sfs::Entity crate = scene.createEntity();
-crate.addComponent<sfs::Transform3DComponent>(sfs::Transform3DComponent{{0.0f, 1.0f, 0.5f}});
+crate.addComponent<sfs::TransformComponent>(sfs::TransformComponent{{0.0f, 1.0f, 0.5f}});
 sfs::hierarchy::setParent(crate, cart);
 
 sfs::hierarchy::worldPosition(crate); // (10, 1, 0.5)
@@ -39,9 +39,9 @@ All are in `sfs::hierarchy`.
 | `setWorldMatrix(entity, m)` | Sets the local transform so the world matrix becomes `m` |
 
 World matrices are worked out when asked for, by walking up the parents, so they
-are never out of date. The 3D renderer, point lights and picking all use them.
+are never out of date. The renderer, point lights and picking all use them.
 
-A parent doesn't need a `Transform3DComponent`. Without one it only groups its
+A parent doesn't need a `TransformComponent`. Without one it only groups its
 children, which then sit in world space.
 
 A transform can't hold shear, so `setParentKeepWorld` and `setWorldMatrix` can't

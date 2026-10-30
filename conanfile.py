@@ -31,7 +31,7 @@ class SfsEngineConan(ConanFile):
     name = "sfs-engine"
     version = "0.1.0"
     description = (
-        "SegFaultSimulator: a 2.5D isometric heightfield game engine "
+        "SegFaultSimulator: a game engine for flat 2D, isometric and 3D games "
         "(dependency-free ECS/scripting core + SDL/WebGPU render runtime)."
     )
     license = "MIT"
@@ -155,3 +155,14 @@ class SfsEngineConan(ConanFile):
                 "joltphysics::joltphysics",
                 "cgltf::cgltf",
             ]
+
+            # The renderer: engine-webgpu on the prebuilt wgpu-native library
+            # it installs beside it.
+            gpu = self.cpp_info.components["engine-webgpu"]
+            gpu.set_property("cmake_target_name", "sfs::engine-webgpu")
+            gpu.libs = ["engine-webgpu", "wgpu_native"]
+            gpu.includedirs = ["include", "include/wgpu-native",
+                               "include/wgpu-native/webgpu"]
+            gpu.requires = ["engine"]
+            if self.settings.os == "Macos":
+                gpu.frameworks = ["CoreVideo", "IOKit", "QuartzCore", "Cocoa"]

@@ -5,7 +5,7 @@
 #
 # Run as a script: cmake -DSHADER_DIR=<dir> -DOUT=<header> -P embedShaders.cmake
 # Each <name>.<ext> becomes sfs::shaders::<name><Ext>, e.g. quad.frag -> quadFrag,
-# mesh3DLit.wgsl -> mesh3DLitWgsl.
+# meshLit.wgsl -> meshLitWgsl.
 
 # Recurse so iso shaders under isometric/ are embedded too. Symbols are derived
 # from the bare filename (quad.frag -> quadFrag), so filenames must stay unique

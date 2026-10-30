@@ -22,7 +22,7 @@
 namespace sfs
 {
 
-class Scene3D;
+class StandardScene;
 
 const double TARGET_FPS = 165.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
@@ -136,8 +136,8 @@ protected:
 
   /**
    * Replace the current scene with a scene file (relative to gameFolder()) and
-   * start it: a fresh scene from replaceScene(), then Scene3D::play. Needs a
-   * 3D renderer.
+   * start it: a fresh scene from replaceScene(), then StandardScene::play.
+   * Needs a renderer.
    *
    * @return false (logged) if it can't
    */
@@ -158,10 +158,10 @@ protected:
 
   /**
    * Destroy the current scene and create the new, current one a scene file is
-   * played into. A plain Scene3D by default; a host with its own kind of scene
-   * (the editor) makes that instead.
+   * played into. A plain StandardScene by default; a host with its own kind of
+   * scene (the editor) makes that instead.
    */
-  virtual Scene3D& replaceScene();
+  virtual StandardScene& replaceScene();
 
   /** Whether the window belongs to the game (not when it runs in the editor).
    */

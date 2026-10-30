@@ -27,8 +27,7 @@ Subclass `Game` and override the hooks you need. The engine runs `init()` →
 | `onRender()` | each frame | app-level draw (HUD, overlays) |
 | `onDebugUI()` | each frame (debug builds) | an ImGui debug panel |
 | `onDestroy()` | at shutdown | teardown (the one required override) |
-| `makeRenderBackend()` | once | return the backend for the graphics API; defaults to OpenGL |
-| `createQuadRenderer(w, h)` | once (OpenGL path) | pick the 2D renderer within the OpenGL backend (flat or isometric) |
+| `makeRenderBackend()` | once | return the render backend; defaults to the first one offered |
 
 ```cpp
 class MyGame : public sfs::Game
@@ -44,15 +43,14 @@ protected:
 };
 ```
 
-The default `makeRenderBackend()` returns an OpenGL backend. Within that path,
-`createQuadRenderer()` selects the 2D renderer: flat-2D by default, or an
-isometric renderer for heightfield games. A game using WebGPU overrides
-`makeRenderBackend()` to return a `WebGpuRenderBackend` instead, and
-`createQuadRenderer()` is not called in that path.
+The default `makeRenderBackend()` returns the first backend registered in
+`RenderBackends` (call `registerWebGpuBackend()` before `init()` to offer the
+engine's), or override it to return one directly, such as a
+`WebGpuRenderBackend`. The same backend and renderer draw every style of game;
+see [Render backends](../rendering/backends/index.md).
 
 `renderBackend()` returns a non-owning pointer to the active backend; cast it to
-the concrete type when a scene needs the device directly (for example, to
-create its own GPU buffers or record its own passes).
+the concrete type when a scene needs the device directly.
 
 ### Controlling the game from game code
 
@@ -68,8 +66,8 @@ Both requests run after every script has updated, so a script can call them
 without being destroyed partway through its own update.
 
 `playScene(path)` is the one way a scene file gets played: `replaceScene()`
-destroys the current scene and creates a fresh `Scene3D`, then
-`Scene3D::play(file)` loads the file and starts its scripts and game systems.
+destroys the current scene and creates a fresh `StandardScene`, then
+`StandardScene::play(file)` loads the file and starts its scripts and game systems.
 Paths are relative to `gameFolder()`. The exported-game player starts its
 first scene this way, and the editor does the same during Play. Hosts change
 only the pieces that differ:
@@ -77,7 +75,7 @@ only the pieces that differ:
 | Hook | Default | Player | Editor |
 | --- | --- | --- | --- |
 | `gameFolder()` | The working directory | The export folder | The project folder |
-| `replaceScene()` | A plain `Scene3D` | (default) | Its own scene type, seen through the scene's camera |
+| `replaceScene()` | A plain `StandardScene` | (default) | Its own scene type, seen through the scene's camera |
 | `onLoadScene(path)` | `playScene`, logging a failure | Shows an error and exits on failure | Stops Play on failure, and only switches while playing |
 
 A host that draws the scene into part of its window overrides `sceneView()` to
@@ -113,7 +111,8 @@ protected:
   void onInit() override
   {
     addSystem<MovementSystem>();                       // register systems
-    addSystem<sfs::FlatRenderSystem>(assetStore(), quadRenderer());
+    auto& render = addSystem<sfs::RenderSystem>(renderer());
+    render.withModule<sfs::SpriteModule>(assetStore()); // what it draws
 
     sfs::Entity e = createEntity();                    // spawn entities
     e.addComponent<sfs::TransformComponent>();
@@ -127,11 +126,11 @@ protected:
 
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
 `getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, plus the engine
-services: `assetStore()` and whichever renderers the backend provides --
-`quadRenderer()` and `textRenderer()` on the OpenGL backend, `renderer3D()` on
-the WebGPU backend. Asking for one the backend lacks logs and aborts; the
-`try` forms (`tryQuadRenderer()`, ...) return null instead. See
-[3D rendering](../rendering-3d/index.md#scene-services).
+services: `assetStore()` and `renderer()`, the backend's renderer. Without a
+renderer (a headless host) `renderer()` logs and aborts; `tryRenderer()`
+returns null instead. See [Rendering](../rendering/index.md#scene-services).
+Without a `Space2D` the render system draws a 3D world; see
+[Styles](../rendering/styles/index.md) for a flat or isometric game.
 
 Manage scenes through the scene manager: `sceneManager.createScene<T>(name)` builds
 one (and makes it current), `sceneManager.load(name)` switches to an existing one,
@@ -150,7 +149,7 @@ processInput → update(dt) → render
   GameObject's `onProcessInput`.
 - **update** — `Game::onUpdate`, the scene's `onUpdate`, every enabled `System`'s
   `update(dt)`, and each GameObject's `onUpdate`.
-- **render** — every `System`'s `render()` (this is where the render systems draw),
+- **render** — every `System`'s `render()` (this is where `RenderSystem` draws),
   then `onRender`.
 
 ## Putting it together
@@ -160,7 +159,7 @@ processInput → update(dt) → render
 int main()
 {
   MyGame game;
-  if (!game.init(1280, 720))   // window, GL context, engine services
+  if (!game.init(1280, 720))   // window, GPU device, engine services
     return 1;
   game.setup();                // runs your onSetup -> create scenes
   game.run();                  // the main loop until quit; tears down on exit

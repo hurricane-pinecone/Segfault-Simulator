@@ -36,7 +36,7 @@ private:
 These rules decide what is reflected:
 
 - **The type:** the class or struct named after the file. The match ignores
-  case, so `transform3DComponent.h` declares `Transform3DComponent`.
+  case, so `transformComponent.h` declares `TransformComponent`.
 - **What kind of type it is:** a type deriving from `sfs::GameObject` is a game
   object, one deriving from `sfs::System` is a system, one deriving from
   `sfs::MeshSource` is a mesh source, and one deriving from

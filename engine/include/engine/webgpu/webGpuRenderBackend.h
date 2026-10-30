@@ -2,9 +2,9 @@
 
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "engine/runtime/sceneManager/scene.h"
-#include "engine/webgpu/render3d/webGpuRenderer3D.h"
 #include "engine/webgpu/webGpuContext.h"
 #include "engine/webgpu/webGpuRenderTarget.h"
+#include "engine/webgpu/webGpuRenderer.h"
 
 #include <webgpu/webgpu.h>
 
@@ -19,9 +19,9 @@ class AssetStore;
 
 // WebGPU render backend: an SDL window (no GL context) plus a WebGPU device and
 // surface. Each frame it opens a command encoder and backbuffer view; scenes
-// draw into them through the 3D renderer it provides (SceneServices::
-// renderer3D), or record their own passes via currentEncoder(). It has no 2D
-// quad or text renderer, so those services are absent.
+// draw into them through the renderer it provides (SceneServices::
+// renderer). For tools it also makes render targets, preview renderers and
+// images (see IRenderBackend).
 //
 // It also hosts Dear ImGui with docking and multi-viewport enabled: panels dock
 // into the main window or drag out into their own OS windows.
@@ -44,23 +44,22 @@ public:
   void imguiNewFrame() override;
   void imguiRenderDrawData() override;
   bool imguiAvailable() const override { return m_imguiReady; }
+  void setVsync(bool vsync) override { m_context.setVsync(vsync); }
 
-  /**
-   * Render the 3D scene into `target` instead of the window (e.g. an editor's
-   * viewport panel), or back to the window when null. The window is then
-   * cleared each frame and only ImGui draws on it. The target must outlive
-   * its use here.
-   */
-  void setSceneTarget(WebGpuRenderTarget* target) { m_sceneTarget = target; }
+  std::unique_ptr<IRenderTarget> createRenderTarget() override;
+  /** The target must be one of createRenderTarget()'s, and outlive its use. */
+  void setSceneTarget(IRenderTarget* target) override;
+  std::unique_ptr<IRenderer>
+  createRenderer(uint32_t shadowMapResolution) override;
+  void drawInto(IRenderTarget& target,
+                IRenderer& renderer,
+                const std::function<void()>& draw) override;
+  std::unique_ptr<IImage> createImage(glm::ivec2 size,
+                                      std::span<const uint8_t> rgba) override;
 
   void shutdown() override;
 
-  // Reached by systems that record their own WebGPU passes.
   WebGpuContext& context() { return m_context; }
-  WGPUCommandEncoder currentEncoder() const { return m_encoder; }
-  WGPUTextureView currentView() const { return m_view; }
-  int width() const { return m_width; }
-  int height() const { return m_height; }
 
 private:
   bool initImGui();
@@ -77,7 +76,7 @@ private:
   WGPUCommandEncoder m_encoder = nullptr;
 
   std::unique_ptr<AssetStore> m_assetStore;
-  std::unique_ptr<WebGpuRenderer3D> m_renderer3D;
+  std::unique_ptr<WebGpuRenderer> m_renderer;
   std::optional<SceneServices> m_services;
 
   WebGpuRenderTarget* m_sceneTarget = nullptr;

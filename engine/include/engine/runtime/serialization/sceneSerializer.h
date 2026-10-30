@@ -37,7 +37,7 @@ struct TypeInfo;
  * scene still loads after its code changes. Meshes are stored by their
  * MeshLibrary name.
  *
- * When the scene has a RenderSystem3D, its lighting, shadow and camera settings
+ * When the scene has a RenderSystem, its lighting, shadow and camera settings
  * are saved and restored too.
  *
  * The scene's game systems (the System scripts it runs when it plays) are
@@ -52,7 +52,8 @@ struct TypeInfo;
  * Layout:
  *   { "formatVersion": 2,
  *     "systems": [ "GrowthSystem", ... ],
- *     "render": { "lighting": {...}, "shadows": {...}, "camera": {...} },
+ *     "render": { "style": { "kind": "3d" | "flat" | "isometric", ... },
+ *                 "lighting": {...}, "shadows": {...}, "camera": {...} },
  *     "entities": [ { "TypeName": { "field": value, ... }, ...,
  *                     "children": [ { ... }, ... ] }, ... ] }
  *

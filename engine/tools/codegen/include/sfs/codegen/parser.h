@@ -12,7 +12,7 @@ namespace sfs::codegen
  * Find a header's script type and its editable fields.
  *
  * The script type is the class or struct named after the file (compared
- * case-insensitively, so transform3DComponent.h declares
+ * case-insensitively, so transformComponent.h declares
  * TransformComponent). Its base decides the kind: sfs::GameObject or
  * sfs::System, or none for a component. Fields are public data members (minus
  * [[sfs::hide]]) plus non-public ones marked [[sfs::show]]; static members

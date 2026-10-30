@@ -4,8 +4,8 @@ namespace sfs
 {
 
 /**
- * Optional 2D draw-order hint for the flat render path. Sprites are ordered by
- * layer first, then by world Y within a layer (lower Y draws behind), so a
+ * Optional draw-order hint for a 2D game's sprites. Higher layers draw in
+ * front (within a layer, by Y too where the game's Space2D sorts by it), so a
  * parallax background sits on a low layer and foreground decoration on a high
  * one. An entity without this component is treated as layer 0.
  *

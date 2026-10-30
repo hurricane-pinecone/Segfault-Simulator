@@ -5,7 +5,7 @@
 #include "scene/sceneDocument.h"
 
 #include "engine/core/hierarchy/hierarchy.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 
 #include <algorithm>
 
@@ -107,7 +107,7 @@ void EditorHistory::apply(const nlohmann::json& snapshot, Selection selection)
     return;
 
   // Undo is about the scene, not where you were looking at it from.
-  const sfs::Camera3D camera = m_context.render->camera();
+  const sfs::Camera camera = m_context.render->camera();
   m_context.document->restore(snapshot);
   m_context.render->camera() = camera;
 

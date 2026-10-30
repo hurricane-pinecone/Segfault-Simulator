@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/system.h"
-#include "engine/core/rendering/3d/camera3D.h"
+#include "engine/core/rendering/camera.h"
 #include "engine/runtime/systems/collision3D.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
@@ -32,8 +32,8 @@ struct RaycastHit3D
  * dynamic body may be a child). Moving a body's transform from code teleports
  * it; for a kinematic body it's a move that pushes what's in the way.
  *
- * Scene3D adds one. The editor keeps it disabled while editing, so nothing
- * falls until Play.
+ * StandardScene adds one. The editor keeps it disabled while editing, so
+ * nothing falls until Play.
  */
 class PhysicsSystem3D : public System
 {
@@ -50,10 +50,10 @@ public:
 
   /**
    * The nearest body the ray hits within `maxDistance` (triggers are ignored),
-   * as of the last update. Pair with RenderSystem3D::screenRay to find what
+   * as of the last update. Pair with RenderSystem::screenRay to find what
    * the mouse is over.
    */
-  std::optional<RaycastHit3D> raycast(const Ray3D& ray,
+  std::optional<RaycastHit3D> raycast(const Ray& ray,
                                       float maxDistance = 1000.0f) const;
 
   // A dynamic body's motion; no effect on an entity that isn't one.

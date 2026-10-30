@@ -202,7 +202,7 @@ void emitType(std::ostringstream& out,
     out << "    static_assert(std::is_base_of_v<sfs::MeshSource, "
         << type.qualifiedName << ">,\n                  "
         << literal(type.name + " must derive from sfs::MeshSource") << ");\n";
-    // Scene3D asks every mesh source for its meshes when it is created.
+    // StandardScene asks every mesh source for its meshes when it is created.
     out << "    {\n      sfs::ScriptType script;\n"
         << "      script.name = " << name << ";\n"
         << "      script.module = " << module << ";\n"
@@ -317,7 +317,7 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
       types.end(),
       [](const TypeModel& type) { return type.kind != TypeKind::Component; });
   if (hasScripts)
-    out << "#include \"engine/runtime/rendering3d/meshSource.h\"\n"
+    out << "#include \"engine/runtime/rendering/meshSource.h\"\n"
         << "#include \"engine/runtime/sceneManager/scene.h\"\n"
         << "#include \"engine/runtime/scripting/scriptRegistry.h\"\n";
   out << "\n";

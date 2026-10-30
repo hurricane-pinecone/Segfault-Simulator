@@ -1,8 +1,15 @@
 #pragma once
 
+#include "engine/runtime/rendering/backend/renderTarget.h"
+#include "engine/runtime/rendering/iRenderer.h"
+
 #include <SDL_events.h>
 #include <SDL_video.h>
 
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <span>
 #include <string_view>
 
 namespace sfs
@@ -48,6 +55,46 @@ public:
   virtual void imguiNewFrame() {}
   virtual void imguiRenderDrawData() {}
   virtual bool imguiAvailable() const { return false; }
+
+  // Wait for the display when presenting (vsync), e.g. for a tool that needn't
+  // redraw faster than the screen. Set before init().
+  virtual void setVsync(bool) {}
+
+  // --- For tools (the editor). A backend without them returns null, and the
+  // tool shows less (no viewport panel, previews or thumbnails).
+
+  // An offscreen picture to draw into and show in a panel.
+  virtual std::unique_ptr<IRenderTarget> createRenderTarget()
+  {
+    return nullptr;
+  }
+
+  // Draw the scene into `target` (one of createRenderTarget()'s) instead of
+  // the window, which then only shows ImGui; null: back to the window.
+  virtual void setSceneTarget(IRenderTarget* target) {}
+
+  // Another renderer on this backend's device, for previews drawn apart from
+  // the scene (shadow maps of `shadowMapResolution` pixels).
+  virtual std::unique_ptr<IRenderer>
+  createRenderer(uint32_t shadowMapResolution)
+  {
+    return nullptr;
+  }
+
+  // Draw one frame of `renderer` (one of createRenderer()'s) into `target`:
+  // `draw` runs its beginFrame(), draws and endFrame().
+  virtual void drawInto(IRenderTarget& target,
+                        IRenderer& renderer,
+                        const std::function<void()>& draw)
+  {
+  }
+
+  // A picture of `size` pixels from tightly packed 8-bit RGBA, top row first.
+  virtual std::unique_ptr<IImage> createImage(glm::ivec2 size,
+                                              std::span<const uint8_t> rgba)
+  {
+    return nullptr;
+  }
 
   virtual void shutdown() = 0;
 };

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "engine/core/rendering/3d/mesh.h"
+#include "engine/core/rendering/mesh.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
-#include "engine/runtime/rendering3d/commands3D.h"
-#include "engine/runtime/rendering3d/renderContext3D.h"
+#include "engine/runtime/rendering/commands.h"
+#include "engine/runtime/rendering/renderContext.h"
 
 namespace sfs
 {
@@ -15,13 +15,13 @@ class MeshLibrary;
 // and the X (red) and Y (green) axes. Drawn by the render system, so things
 // hide it and cast shadows on it, but not part of the scene: nothing saves,
 // picks or lists it.
-class GridModule : public sfs::CommandModule<sfs::RenderContext3D, sfs::MeshDrawCommand>
+class GridModule : public sfs::CommandModule<sfs::RenderContext, sfs::MeshDrawCommand>
 {
 public:
   /** Upload the grid's mesh into `meshes` (the scene's). */
   explicit GridModule(sfs::MeshLibrary& meshes);
 
-  void computeCommands(const sfs::RenderContext3D& context) override;
+  void computeCommands(const sfs::RenderContext& context) override;
 
 private:
   sfs::MeshHandle m_mesh;

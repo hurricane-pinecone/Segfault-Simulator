@@ -88,6 +88,11 @@ public:
 
     return nullptr;
   }
+  template <class T>
+  const T* module() const
+  {
+    return const_cast<RenderModuleHost*>(this)->module<T>();
+  }
 
   /** Unregister (and destroy) the module of type T, disabling its feature. */
   template <class T>

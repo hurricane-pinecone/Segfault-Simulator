@@ -1,5 +1,5 @@
 # Runtime tests link the full engine (SDL/imgui). They drive systems and render
-# modules through their seams (a mock IRenderer3D, stub services), so they run
+# modules through their seams (a mock IRenderer, stub services), so they run
 # headless with no window or GPU. add_runtime_test(name source)
 # declares one in a line.
 function(add_runtime_test name source)
@@ -17,6 +17,7 @@ function(add_runtime_test name source)
 endfunction()
 
 # systems/
+add_runtime_test(spriteFrameTests assetStore/spriteFrameTests.cpp)
 add_runtime_test(movementSystemTests systems/movementSystemTests.cpp)
 add_runtime_test(collisionSystemTests systems/collisionSystemTests.cpp)
 add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
@@ -40,11 +41,11 @@ add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
 # assetStore/
 add_runtime_test(modelImporterTests assetStore/modelImporterTests.cpp)
 
-# rendering3d/
-add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)
-add_runtime_test(scene2DTests rendering3d/scene2DTests.cpp)
+# rendering/
+add_runtime_test(renderSystemTests rendering/renderSystemTests.cpp)
+add_runtime_test(scene2DTests rendering/scene2DTests.cpp)
 add_runtime_test(uiLayoutTests ui/uiLayoutTests.cpp)
-add_runtime_test(pickingTests rendering3d/pickingTests.cpp)
+add_runtime_test(pickingTests rendering/pickingTests.cpp)
 
 # serialization/
 add_runtime_test(sceneSerializerTests serialization/sceneSerializerTests.cpp)

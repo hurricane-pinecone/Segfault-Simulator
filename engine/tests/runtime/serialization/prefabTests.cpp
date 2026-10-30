@@ -1,5 +1,5 @@
 #include "../../testHarness.h"
-#include "../rendering3d/mockRenderer3D.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
@@ -7,9 +7,9 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
-#include <engine/core/rendering/3d/meshPrimitives.h>
+#include <engine/core/rendering/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering3d/renderSystem3D.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/serialization/prefabComponents.h>
 #include <engine/runtime/serialization/sceneSerializer.h>
@@ -19,7 +19,7 @@
 #include <string>
 
 using namespace sfs;
-using sfs::testing3d::MockRenderer3D;
+using sfs::testing3d::MockRenderer;
 using json = nlohmann::json;
 
 namespace
@@ -28,9 +28,9 @@ namespace
 struct World
 {
   AssetStore store;
-  MockRenderer3D renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
-  RenderSystem3D& render = scene.addSystem<RenderSystem3D>(renderer);
+  MockRenderer renderer;
+  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
   std::map<std::string, json> prefabs;
 

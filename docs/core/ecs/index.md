@@ -83,7 +83,7 @@ protected:
     {
       auto& t       = e.getComponent<sfs::TransformComponent>();
       const auto& v = e.getComponent<Velocity>();
-      t.position += v.value * static_cast<float>(dt);
+      t.setPosition2D(t.position2D() + v.value * static_cast<float>(dt));
     }
   }
 };

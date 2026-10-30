@@ -665,7 +665,7 @@ void PhysicsSystem3D::update(double deltaTime)
     m->writeBack();
 }
 
-std::optional<RaycastHit3D> PhysicsSystem3D::raycast(const Ray3D& ray,
+std::optional<RaycastHit3D> PhysicsSystem3D::raycast(const Ray& ray,
                                                      float maxDistance) const
 {
   class SolidOnly : public JPH::BodyFilter

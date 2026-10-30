@@ -13,7 +13,7 @@ class RenderModuleHost;
 
 /**
  * The render-command type a module for TContext emits: specialised next to
- * the context's definition (RenderContext3D's: AnyRenderCommand3D).
+ * the context's definition (RenderContext's: AnyRenderCommand).
  */
 template <typename TContext>
 struct RenderCommandTraits;

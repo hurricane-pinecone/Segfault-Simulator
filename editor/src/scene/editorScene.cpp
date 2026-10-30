@@ -4,14 +4,15 @@
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 
 void EditorScene::onInit()
 {
-  sfs::Scene3D::onInit();
+  sfs::StandardScene::onInit();
 
-  sfs::Camera3D& camera = renderSystem().camera();
+  sfs::Camera& camera = renderSystem().camera();
   camera.yaw = 0.9f;
   camera.pitch = 0.55f;
   camera.distance = 14.0f;
@@ -43,9 +44,29 @@ sfs::Entity EditorScene::createPointLight(const std::string& name)
   return entity;
 }
 
-sfs::Entity EditorScene::createCamera(const std::string& name, const sfs::Camera3D& view)
+sfs::Entity EditorScene::createSprite(const std::string& name)
 {
   sfs::Entity entity = createEmpty(name);
+  entity.addComponent<sfs::SpriteComponent>();
+  return entity;
+}
+
+sfs::Entity EditorScene::createCamera(const std::string& name,
+                                      const sfs::Camera& view,
+                                      const sfs::Space2D* space)
+{
+  sfs::Entity entity = createEmpty(name);
+  if (space)
+  {
+    entity.getComponent<sfs::TransformComponent>().setPosition2D(
+        space->unplace(glm::vec2(view.target), 0.0f));
+    sfs::CameraComponent camera;
+    camera.orthographic = true;
+    camera.orthoHeight = view.orthoHeight;
+    camera.farPlane = 100000.0f;
+    entity.addComponent<sfs::CameraComponent>(camera);
+    return entity;
+  }
   entity.getComponent<sfs::TransformComponent>() =
       sfs::TransformComponent(view.position(), view.orientation());
   sfs::CameraComponent camera;

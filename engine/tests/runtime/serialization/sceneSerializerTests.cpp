@@ -1,5 +1,5 @@
 #include "../../testHarness.h"
-#include "../rendering3d/mockRenderer3D.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/cameraComponent.h>
 #include <engine/core/components/grassBenderComponent.h>
@@ -11,10 +11,10 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
-#include <engine/core/rendering/3d/grass.h>
-#include <engine/core/rendering/3d/meshPrimitives.h>
+#include <engine/core/rendering/grass.h>
+#include <engine/core/rendering/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
-#include <engine/runtime/rendering3d/renderSystem3D.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/serialization/sceneSerializer.h>
 #include <engine/runtime/serialization/unresolvedComponents.h>
@@ -28,7 +28,7 @@
 #include <vector>
 
 using namespace sfs;
-using sfs::testing3d::MockRenderer3D;
+using sfs::testing3d::MockRenderer;
 
 namespace
 {
@@ -36,9 +36,9 @@ namespace
 struct World
 {
   AssetStore store;
-  MockRenderer3D renderer;
-  Scene scene{0, SceneServices{.assetStore = store, .renderer3D = &renderer}};
-  RenderSystem3D& render = scene.addSystem<RenderSystem3D>(renderer);
+  MockRenderer renderer;
+  Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+  RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
   MeshHandle cube = render.meshes().add(meshes::box({1, 1, 1}), "builtin:cube");
 
   SceneSerializer serializer()
@@ -117,7 +117,7 @@ int main()
   TEST("render settings should round-trip with the scene")
   {
     World source;
-    SceneLighting3D lighting;
+    SceneLighting lighting;
     lighting.ambient = 0.2f;
     lighting.skyColor = {0.1f, 0.2f, 0.3f};
     source.render.setLighting(lighting);
@@ -129,7 +129,7 @@ int main()
         {.direction = 200.0f, .strength = 0.8f, .gustiness = 0.1f});
     source.render.setHazeSettings({.strength = 0.4f, .distance = 300.0f});
     source.render.camera().yaw = 1.25f;
-    source.render.camera().projection = Camera3D::Projection::Orthographic;
+    source.render.camera().projection = Camera::Projection::Orthographic;
 
     World target;
     target.serializer().load(
@@ -148,7 +148,42 @@ int main()
     CHECK(testing::approx(target.render.hazeSettings().distance, 300.0f));
     CHECK(testing::approx(target.render.camera().yaw, 1.25f));
     CHECK(target.render.camera().projection ==
-          Camera3D::Projection::Orthographic);
+          Camera::Projection::Orthographic);
+  }
+
+  TEST("a scene's style should round-trip, and old files load as 3D")
+  {
+    World source;
+    Space2D iso;
+    iso.projection = Space2D::Projection::Isometric;
+    iso.tilePixels = {64.0f, 32.0f};
+    iso.heightPixels = 16.0f;
+    iso.pixelsPerUnit = 2.0f;
+    source.render.setSpace2D(iso);
+
+    World target;
+    target.serializer().load(
+        source.serializer().save(source.scene), target.scene);
+    CHECK(target.render.space2D().has_value());
+    CHECK(target.render.space2D()->projection ==
+          Space2D::Projection::Isometric);
+    CHECK(testing::approx(target.render.space2D()->tilePixels.x, 64.0f));
+    CHECK(testing::approx(target.render.space2D()->heightPixels, 16.0f));
+    CHECK(testing::approx(target.render.space2D()->pixelsPerUnit, 2.0f));
+
+    // A 3D scene saves as one, clearing a 2D style it's loaded over.
+    World threeD;
+    World flat;
+    flat.render.setSpace2D(Space2D{.yDown = true});
+    flat.serializer().load(threeD.serializer().save(threeD.scene), flat.scene);
+    CHECK(!flat.render.space2D().has_value());
+
+    // A file from before styles has no "style": a fresh scene stays 3D.
+    nlohmann::json old = source.serializer().save(source.scene);
+    old["render"].erase("style");
+    World loaded;
+    loaded.serializer().load(old, loaded.scene);
+    CHECK(!loaded.render.space2D().has_value());
   }
 
   TEST("grass, with what's been painted, should load back as it was saved")

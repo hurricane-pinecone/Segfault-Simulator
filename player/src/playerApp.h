@@ -11,7 +11,7 @@
 #include <string>
 
 // Plays an exported game: loads its module and start scene (named by game.json)
-// into the engine's standard 3D scene, starts its scripts and runs it -- what
+// into the engine's standard scene, starts its scripts and runs it -- what
 // the editor's Play does, without the editor.
 class PlayerApp : public sfs::Game
 {

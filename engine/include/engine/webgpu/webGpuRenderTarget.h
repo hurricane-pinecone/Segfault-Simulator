@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/runtime/rendering/backend/renderTarget.h"
 #include "engine/webgpu/wgpuHandle.h"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -15,7 +16,7 @@ class WebGpuContext;
  * which can then be sampled, e.g. shown in an editor viewport panel with
  * ImGui::Image(target.imguiView(), ...). Same format as the window surface.
  */
-class WebGpuRenderTarget
+class WebGpuRenderTarget final : public IRenderTarget
 {
 public:
   explicit WebGpuRenderTarget(WebGpuContext& context);
@@ -24,9 +25,9 @@ public:
    * Resize to `size` pixels, recreating the texture only when it changes.
    * Non-positive sizes release it.
    */
-  void resize(glm::ivec2 size);
+  void resize(glm::ivec2 size) override;
 
-  glm::ivec2 size() const { return m_size; }
+  glm::ivec2 size() const override { return m_size; }
   /** Its texture (e.g. to copy what was drawn out of it). */
   WGPUTexture texture() const { return m_texture.get(); }
   /** The view the scene renders into. */
@@ -42,7 +43,11 @@ public:
   {
     return m_imguiView ? m_imguiView.get() : m_view.get();
   }
-  bool valid() const { return static_cast<bool>(m_view); }
+  bool valid() const override { return static_cast<bool>(m_view); }
+  uint64_t imguiTexture() const override
+  {
+    return reinterpret_cast<uintptr_t>(imguiView());
+  }
 
 private:
   WebGpuContext& m_context;

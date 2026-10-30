@@ -44,7 +44,7 @@ public:
     std::function<void(const std::filesystem::path& from, const std::filesystem::path& to)> moved;
   };
 
-  AssetBrowserPanel(Actions actions, sfs::WebGpuContext& gpu);
+  AssetBrowserPanel(Actions actions, sfs::IRenderBackend& backend);
   ~AssetBrowserPanel() override;
 
   // Its view settings (tile size, grid or list), kept in imgui.ini.

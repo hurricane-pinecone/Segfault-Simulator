@@ -17,7 +17,7 @@ class Player;
 
 // The platformer scene: builds the level (player, platforms, lit torches that
 // emit sparks), runs the local physics system, and draws as a 2D game through
-// the engine's renderer (a RenderSystem3D with a flat Space2D).
+// the engine's renderer (a RenderSystem with a flat Space2D).
 // The HUD: controls, kills, frame rate and spells, top left.
 class PlatformerHud : public sfs::ui::Layer
 {

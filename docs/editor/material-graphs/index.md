@@ -57,7 +57,7 @@ Every graph ends in one **Material Output** node. Its inputs are the surface:
 | Metallic | 0 for paint, wood and plastic; 1 for bare metal |
 | Roughness | 0 is mirror-smooth; 1 is matte |
 | Normal | Which way the surface faces, for bumps: link a Normal Map node here |
-| Emission | Light the surface gives off, unaffected by the scene's lighting (glows, screens). It lights the things around it too, more strongly the brighter it glows and farther the more of it there is (see [Emission lights](../../runtime/rendering-3d/index.md#emission-lights)). Above 1 (brighter than white) it also blooms. |
+| Emission | Light the surface gives off, unaffected by the scene's lighting (glows, screens). It lights the things around it too, more strongly the brighter it glows and farther the more of it there is (see [Emission lights](../../runtime/rendering/meshes-and-lighting/index.md#emission-lights)). Above 1 (brighter than white) it also blooms. |
 | Alpha Clip | For cut-out materials: parts with less Alpha than this aren't drawn |
 | Bloom | How much of its light blooms (1). 0 never blooms, however bright; above 1 blooms more than its brightness alone would. The camera sets how bloom looks. |
 
@@ -201,4 +201,4 @@ and that node gets a red outline. Until it's fixed, the scene keeps showing the
 graph as it last worked. A graph saved with a problem draws magenta in the game,
 so it's easy to spot.
 
-Read more: [Material graphs in the engine](../../core/rendering-3d/material-graphs/index.md).
+Read more: [Material graphs in the engine](../../core/rendering/material-graphs/index.md).

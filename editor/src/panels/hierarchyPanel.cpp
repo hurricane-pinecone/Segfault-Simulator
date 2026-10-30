@@ -11,7 +11,7 @@
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 
 #include "imgui.h"
@@ -508,9 +508,19 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
   if (ImGui::MenuItem("Plane"))
     create([&] { return scene.createPrimitive(Primitive::Plane, "Plane"); });
   ImGui::Separator();
+  if (ImGui::MenuItem("Sprite"))
+    create([&] { return scene.createSprite("Sprite"); });
+  ImGui::SetItemTooltip("Pick its image (a texture) in the Inspector");
+  ImGui::Separator();
   if (ImGui::MenuItem("Point Light"))
     create([&] { return scene.createPointLight("Point Light"); });
   if (ImGui::MenuItem("Camera"))
-    create([&] { return scene.createCamera("Camera", context.render->camera()); }, true);
+    create(
+        [&]
+        {
+          const auto& space = context.render->space2D();
+          return scene.createCamera("Camera", context.render->camera(), space ? &*space : nullptr);
+        },
+        true);
   ImGui::SetItemTooltip("A game camera, looking the way the viewport does");
 }

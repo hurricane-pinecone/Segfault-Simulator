@@ -3,8 +3,8 @@
 #include "camera/viewportCamera.h"
 #include "panels/panel.h"
 
-#include "engine/runtime/rendering3d/picking.h"
-#include "engine/webgpu/webGpuRenderTarget.h"
+#include "engine/runtime/rendering/picking.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 
 #include "imgui.h"
@@ -13,11 +13,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace sfs
-{
-class WebGpuRenderBackend;
-}
 
 // Shows the edited scene: the backend renders the scene into an offscreen
 // target sized to this panel, which is drawn here as an image. Over it:
@@ -40,7 +35,7 @@ class WebGpuRenderBackend;
 class ViewportPanel : public Panel
 {
 public:
-  explicit ViewportPanel(sfs::WebGpuRenderBackend& backend, std::string title = "Viewport");
+  explicit ViewportPanel(sfs::IRenderBackend& backend, std::string title = "Viewport");
   ~ViewportPanel() override;
 
   void update(EditorContext& context) override;
@@ -91,6 +86,8 @@ private:
   void handleShortcuts(EditorContext& context);
   // True while the gizmo is hovered or dragging (so clicks don't pick).
   bool drawGizmo(EditorContext& context, const View& view);
+  // A 2D game's: moves (turns, scales) on its plane, through its Space2D.
+  bool drawPlanarGizmo(EditorContext& context, const View& view, bool snapping);
   // Several selected: the gizmo in their middle, each moving, turning and
   // scaling as much as it does (about its own origin). `operation` is an
   // ImGuizmo::OPERATION.
@@ -128,8 +125,8 @@ private:
   void drawCameraIcons(const EditorContext& context, const View& view) const;
   void drawColliders(const EditorContext& context, const View& view) const;
 
-  sfs::WebGpuRenderBackend& m_backend;
-  sfs::WebGpuRenderTarget m_target;
+  sfs::IRenderBackend& m_backend;
+  std::unique_ptr<sfs::IRenderTarget> m_target; // null: the backend has none
   ViewportCamera m_navigation;
 
   Tool m_tool = Tool::Move;
@@ -138,7 +135,8 @@ private:
   bool m_snap = false;
   bool m_gizmosInEdit = true;
   bool m_gizmosInPlay = false;
-  bool m_animate = true; // while editing (see RenderSystem3D::setAnimating)
+  bool m_animate = true; // while editing (see RenderSystem::setAnimating)
+  bool m_wasPlanar = false; // the scene was 2D last frame (its view top-down)
 
   // The grass brush: world units across, how fast it paints, erasing.
   float m_brushSize = 1.5f;

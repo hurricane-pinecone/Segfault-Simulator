@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/core/rendering/3d/mesh.h"
+#include "engine/core/rendering/mesh.h"
+#include "glm/glm/ext/vector_int2.hpp"
 #include "nlohmann/json.hpp"
 
 #include <cstddef>
@@ -19,6 +20,10 @@ struct TextureImportSettings
 {
   bool nearest =
       false; // "filter": "nearest" draws texels with hard edges (pixel art)
+  // "spriteCell": [w, h] -- as a sprite sheet, a grid of frames this many
+  // pixels each, numbered across then down from the top left; 0: the whole
+  // image is one sprite.
+  glm::ivec2 spriteCell{0, 0};
 
   static TextureImportSettings fromJson(const nlohmann::json& settings);
 };

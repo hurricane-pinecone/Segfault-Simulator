@@ -8,12 +8,12 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/scripting/luaScripting.h"
 #include "engine/runtime/particles/prefabs.h"
-#include "engine/runtime/rendering3d/modules/decalModule.h"
-#include "engine/runtime/rendering3d/modules/particleModule.h"
-#include "engine/runtime/rendering3d/modules/spriteModule.h"
-#include "engine/runtime/rendering3d/modules/uiModule.h"
-#include "engine/runtime/rendering3d/modules/voxelModule.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/modules/decalModule.h"
+#include "engine/runtime/rendering/modules/particleModule.h"
+#include "engine/runtime/rendering/modules/spriteModule.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/modules/voxelModule.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/systems/cameraSystem.h"
 #include "engine/runtime/systems/collisionSystem.h"
 #include "engine/runtime/voxel/voxelWorld.h"
@@ -53,9 +53,9 @@ void GameScene::onInit()
 
   // A 2D isometric game: positions are tiles and height levels on the grid,
   // drawn by the engine's one renderer.
-  auto& render = addSystem<sfs::RenderSystem3D>(renderer3D());
+  auto& render = addSystem<sfs::RenderSystem>(renderer());
   render.setSpace2D(isometricSpace());
-  sfs::ShadowSettings3D shadows;
+  sfs::ShadowSettings shadows;
   shadows.enabled = false;
   shadows.pointLights = 0;
   render.setShadowSettings(shadows);
@@ -102,7 +102,7 @@ bool GameScene::pickTile(glm::vec2 pixel, TilePick& pick)
 {
   // Under the mouse, from as high as the terrain goes on down: the first tile
   // whose ground is at the height looked through.
-  auto& render = getSystem<sfs::RenderSystem3D>();
+  auto& render = getSystem<sfs::RenderSystem>();
   auto& voxels = getSystem<sfs::VoxelWorld>();
   const glm::vec2 world(render.screenRay(pixel).origin);
   const sfs::Space2D& space = *render.space2D();
@@ -136,7 +136,7 @@ void GameScene::onProcessInput(const sfs::Input& input)
     dir = len > 0.0001f ? dir / len : glm::vec2{1.0f, 0.0f};
 
     // Layered shotgun gore blast along the shot direction.
-    spawnGore(*getSystem<sfs::RenderSystem3D>().module<sfs::ParticleModule>(),
+    spawnGore(*getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>(),
               pick.point,
               static_cast<float>(pick.level),
               dir,

@@ -1,19 +1,15 @@
 #pragma once
 
-#include "engine/core/rendering/3d/mesh.h"
-#include "engine/webgpu/render3d/webGpuRenderer3D.h"
-#include "engine/webgpu/webGpuRenderTarget.h"
+#include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/backend/iRenderBackend.h"
+#include "engine/runtime/rendering/iRenderer.h"
 
 #include <array>
+#include <memory>
 
-namespace sfs
-{
-class WebGpuContext;
-}
-
-// A material drawn by the real 3D renderer on a sphere, cube or plane, for the
+// A material drawn by the real renderer on a sphere, cube or plane, for the
 // Material Editor: exactly as the scene draws it, Time running. It has its own
-// renderer (on the editor's device) and target, so it draws whatever the
+// renderer (from the editor's backend) and target, so it draws whatever the
 // scene is doing.
 class MaterialPreview
 {
@@ -25,7 +21,7 @@ public:
     Plane,
   };
 
-  explicit MaterialPreview(sfs::WebGpuContext& gpu);
+  explicit MaterialPreview(sfs::IRenderBackend& backend);
 
   /** Draw with this material from now on. */
   void setMaterial(const sfs::MeshMaterial& material);
@@ -44,9 +40,9 @@ private:
   bool ensureReady();
   void render(glm::ivec2 size, float time);
 
-  sfs::WebGpuContext& m_gpu;
-  sfs::WebGpuRenderer3D m_renderer;
-  sfs::WebGpuRenderTarget m_target;
+  sfs::IRenderBackend& m_backend;
+  std::unique_ptr<sfs::IRenderer> m_renderer;
+  std::unique_ptr<sfs::IRenderTarget> m_target;
   bool m_initialized = false;
   bool m_failed = false;
   std::array<sfs::MeshHandle, 3> m_meshes{}; // by Shape

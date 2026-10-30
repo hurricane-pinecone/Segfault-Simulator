@@ -3,8 +3,8 @@
 // How the engine's mesh shaders are put together, for every GPU backend: the
 // WGSL each pass compiles, whichever API then runs it.
 
-#include "engine/core/rendering/3d/material.h"
-#include "engine/core/rendering/3d/materialGraphCompiler.h"
+#include "engine/core/rendering/material.h"
+#include "engine/core/rendering/materialGraphCompiler.h"
 
 #include <engine/generated/embeddedWgsl.h>
 
@@ -20,8 +20,8 @@ namespace sfs::shaders
  */
 inline std::string meshPass(std::string_view surface, std::string_view pass)
 {
-  std::string source(mesh3DCommonWgsl);
-  source += mesh3DSurfaceWgsl;
+  std::string source(meshCommonWgsl);
+  source += meshSurfaceWgsl;
   source += surface;
   source += pass;
   return source;
@@ -30,7 +30,7 @@ inline std::string meshPass(std::string_view surface, std::string_view pass)
 /** The standard surface's WGSL (for materials without a graph). */
 inline std::string standardSurface()
 {
-  return std::string(mesh3DStandardSurfaceWgsl);
+  return std::string(meshStandardSurfaceWgsl);
 }
 
 /**

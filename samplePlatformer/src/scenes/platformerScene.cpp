@@ -21,11 +21,11 @@
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/particles/particleEffect.h"
-#include "engine/runtime/rendering3d/modules/decalModule.h"
-#include "engine/runtime/rendering3d/modules/particleModule.h"
-#include "engine/runtime/rendering3d/modules/spriteModule.h"
-#include "engine/runtime/rendering3d/modules/uiModule.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/modules/decalModule.h"
+#include "engine/runtime/rendering/modules/particleModule.h"
+#include "engine/runtime/rendering/modules/spriteModule.h"
+#include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/systems/cameraSystem.h"
 #include "engine/runtime/ui/ui.h"
 #include "glm/glm/common.hpp"
@@ -228,7 +228,7 @@ void PlatformerScene::onInit()
 
   // A 2D game: its positions are pixels on a plane whose y runs down the
   // screen, drawn by the engine's one renderer.
-  auto& render = addSystem<sfs::RenderSystem3D>(renderer3D());
+  auto& render = addSystem<sfs::RenderSystem>(renderer());
   sfs::Space2D space;
   space.yDown = true;
   render.setSpace2D(space);
@@ -236,12 +236,12 @@ void PlatformerScene::onInit()
 
   // Dark, moody base so the point lights (player lamp, torches, muzzle and
   // death flashes) carry the scene -- gunfire and kills light the room.
-  sfs::SceneLighting3D lighting;
+  sfs::SceneLighting lighting;
   lighting.ambient = 0.28f;
   lighting.skyColor = glm::vec3{0.02f, 0.022f, 0.035f}; // the backdrop
   lighting.sun.diffuseStrength = 0.0f;
   render.setLighting(lighting);
-  sfs::ShadowSettings3D shadows;
+  sfs::ShadowSettings shadows;
   shadows.enabled = false;
   shadows.pointLights = 0;
   render.setShadowSettings(shadows);

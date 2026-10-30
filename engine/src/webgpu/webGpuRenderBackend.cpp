@@ -49,8 +49,8 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
     return false;
   m_context.configure(width, height);
 
-  m_renderer3D = std::make_unique<WebGpuRenderer3D>(m_context);
-  if (!m_renderer3D->initialize())
+  m_renderer = std::make_unique<WebGpuRenderer>(m_context);
+  if (!m_renderer->initialize())
     return false;
 
   if (const char* path = std::getenv("SFS_SCREENSHOT"))
@@ -66,8 +66,8 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
   // to its edge (soft particles and marks).
   m_assetStore->addWhitePixelTexture("white_pixel");
   m_assetStore->addRadialTexture("white_dot", 32);
-  m_services.emplace(SceneServices{
-      .assetStore = *m_assetStore, .renderer3D = m_renderer3D.get()});
+  m_services.emplace(
+      SceneServices{.assetStore = *m_assetStore, .renderer = m_renderer.get()});
 
   return initImGui();
 }
@@ -224,7 +224,7 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
     m_context.configure(width, height);
     m_view = nullptr;
     m_encoder = nullptr;
-    m_renderer3D->setTarget(nullptr, nullptr, {width, height});
+    m_renderer->setTarget(nullptr, nullptr, {width, height});
     return;
   }
 
@@ -243,20 +243,20 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
   if (target && target->valid())
   {
     // The scene draws offscreen; the window only shows ImGui, so clear it.
-    m_renderer3D->setTarget(m_encoder, target->view(), target->size());
+    m_renderer->setTarget(m_encoder, target->view(), target->size());
     clearWindow();
   }
   else
   {
-    m_renderer3D->setTarget(m_encoder, m_view, {width, height});
+    m_renderer->setTarget(m_encoder, m_view, {width, height});
   }
 }
 
 void WebGpuRenderBackend::endFrame()
 {
-  // The 3D renderer recorded into this frame's encoder during the scene's
+  // The renderer recorded into this frame's encoder during the scene's
   // render; detach it before the encoder is released.
-  m_renderer3D->setTarget(nullptr, nullptr, {m_width, m_height});
+  m_renderer->setTarget(nullptr, nullptr, {m_width, m_height});
 
   if (m_encoder)
   {
@@ -309,13 +309,109 @@ void WebGpuRenderBackend::shutdown()
   shutdownImGui(); // its GPU objects live on the device released below
   m_services.reset();
   m_assetStore.reset();
-  m_renderer3D.reset(); // before the device it was built on
+  m_renderer.reset(); // before the device it was built on
   m_context.release();
   if (m_window)
   {
     SDL_DestroyWindow(m_window);
     m_window = nullptr;
   }
+}
+
+namespace
+{
+// A picture uploaded once, sampled by ImGui.
+class WebGpuImage final : public IImage
+{
+public:
+  WebGpuImage(WebGpuContext& context,
+              glm::ivec2 size,
+              std::span<const uint8_t> rgba)
+      : m_size(size)
+  {
+    WGPUTextureDescriptor desc = {};
+    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = {uint32_t(size.x), uint32_t(size.y), 1};
+    desc.format = WGPUTextureFormat_RGBA8Unorm;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    m_texture.reset(wgpuDeviceCreateTexture(context.device(), &desc));
+
+    WGPUTexelCopyTextureInfo destination = {};
+    destination.texture = m_texture.get();
+    destination.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyBufferLayout layout = {};
+    layout.bytesPerRow = uint32_t(size.x) * 4;
+    layout.rowsPerImage = uint32_t(size.y);
+    wgpuQueueWriteTexture(context.queue(),
+                          &destination,
+                          rgba.data(),
+                          rgba.size(),
+                          &layout,
+                          &desc.size);
+    m_view.reset(wgpuTextureCreateView(m_texture.get(), nullptr));
+  }
+
+  glm::ivec2 size() const override { return m_size; }
+  uint64_t imguiTexture() const override
+  {
+    return reinterpret_cast<uintptr_t>(m_view.get());
+  }
+
+private:
+  glm::ivec2 m_size;
+  wgpu::Texture m_texture;
+  wgpu::TextureView m_view;
+};
+} // namespace
+
+std::unique_ptr<IRenderTarget> WebGpuRenderBackend::createRenderTarget()
+{
+  return std::make_unique<WebGpuRenderTarget>(m_context);
+}
+
+void WebGpuRenderBackend::setSceneTarget(IRenderTarget* target)
+{
+  m_sceneTarget = static_cast<WebGpuRenderTarget*>(target);
+}
+
+std::unique_ptr<IRenderer>
+WebGpuRenderBackend::createRenderer(uint32_t shadowMapResolution)
+{
+  auto renderer =
+      std::make_unique<WebGpuRenderer>(m_context, shadowMapResolution);
+  if (!renderer->initialize())
+    return nullptr;
+  return renderer;
+}
+
+void WebGpuRenderBackend::drawInto(IRenderTarget& target,
+                                   IRenderer& renderer,
+                                   const std::function<void()>& draw)
+{
+  auto& into = static_cast<WebGpuRenderTarget&>(target);
+  auto& gpu = static_cast<WebGpuRenderer&>(renderer);
+  if (!into.valid())
+    return;
+  const WGPUCommandEncoder encoder =
+      wgpuDeviceCreateCommandEncoder(m_context.device(), nullptr);
+  gpu.setTarget(encoder, into.view(), into.size());
+  draw();
+  gpu.setTarget(nullptr, nullptr, into.size());
+  const WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
+  wgpuQueueSubmit(m_context.queue(), 1, &commands);
+  wgpuCommandBufferRelease(commands);
+  wgpuCommandEncoderRelease(encoder);
+}
+
+std::unique_ptr<IImage>
+WebGpuRenderBackend::createImage(glm::ivec2 size, std::span<const uint8_t> rgba)
+{
+  if (size.x <= 0 || size.y <= 0 ||
+      rgba.size() < std::size_t(size.x) * size.y * 4)
+    return nullptr;
+  return std::make_unique<WebGpuImage>(m_context, size, rgba);
 }
 
 void registerWebGpuBackend()

@@ -32,34 +32,33 @@ d.decal.streaks.maxCount = 2;              // crisp streaks flung along the impa
 d.decal.streaks.width = 1.5f;
 ```
 
-`impactRef` is in the effect's velocity units (a few tiles/sec on the isometric
-path, a few hundred px/sec on the flat path), so set it to roughly the speed at
-which you want a hit to read as a full directional splash.
+`impactRef` is in the effect's velocity units (a few tiles/sec in an isometric
+game, a few hundred px/sec in a flat game in pixels), so set it to roughly the
+speed at which you want a hit to read as a full directional splash.
 
-## Surfaces (isometric)
+## Surfaces
 
-On the heightfield, a hit is classified by what it struck and the mark adapts:
+What a particle lands on depends on the collision source the game turned on
+(see [Making decals stick](../../../runtime/particles/index.md#making-decals-stick)),
+and the mark adapts to it:
 
-- **Ground** — a pool with directional streaks at the landing tile.
-- **Wall** — splatter on the camera-facing face at the impact height, scattered
-  along the travel direction (faster hits throw a wider splash) with a drip running
-  down from the hit.
-- **Water** — a single mark that fades over time.
+- **On a terrain** (an `ITerrainSurfaceSource`, such as a voxel world):
+  - **Ground**: a pool with directional streaks where it landed.
+  - **Wall**: a particle that runs into a taller tile hits its camera-facing
+    face: splatter at the impact height, scattered along the travel direction
+    (faster hits throw a wider splash), with a drip running down from the hit.
+  - **Water**: a single mark that fades over time.
+- **On colliders** (`SolidObject` + `BoxCollider2D`): the mark is stamped onto
+  the collider it hit and clipped to it, so it never spills off a platform.
 
-The flat path stamps onto the collider it hit and clips the mark to that collider
-so it never spills off the platform.
+## How marks are kept
 
-## Memory model
-
-Permanent marks on the isometric path (ground and wall stains) are baked into paint
-textures the first time a tile or wall face is hit. Each subsequent splat on the same
-spot paints over the same texels rather than adding geometry. Memory scales with the
-number of distinct tiles and wall faces that have been painted, not with how many
-times each was hit, so a level that gets hammered by particle effects stays bounded.
-
-Baked stains also shade with the sun shadow. A stain on a surface that sits in
-cast shadow darkens to match the shadow the terrain beneath it receives, so marks
-read as painted on rather than floating above the scene.
+Each mark is a tinted image lying on the game's plane, drawn by the
+`DecalModule` the game gave as the sink. Lasting marks stay until there are
+too many: the module keeps at most `setMaxDecals(n)` (the oldest go first),
+and `setCoverage(cellSize, perCell)` caps the marks in each small square of
+the plane, so a spot hit again and again loses its oldest marks rather than
+piling up more. Fading marks (water, drips) go when they've faded.
 
 ## Custom splatter topology
 

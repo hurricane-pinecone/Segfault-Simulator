@@ -1,10 +1,9 @@
 # Voxel world
 
 `VoxelWorld` is the runtime voxel terrain store. It is a `System` that manages
-a sparse, streaming 3D grid of blocks and a fluid-simulated water layer. The
-`VoxelTerrain` render module reads it to draw terrain; `IsometricWater` reads
-it to draw the animated water surface. `VoxelWorld` is the data authority; it
-does not own or drive any renderer.
+a sparse, streaming grid of blocks and a fluid-simulated water layer. The
+`VoxelModule` render module reads it to draw the terrain and its water.
+`VoxelWorld` is the data authority; it does not own or drive any renderer.
 
 ## Construction and setup
 
@@ -48,7 +47,7 @@ int amount = world.waterAt(x, y, z);
 ```
 
 `setBlock` marks the affected chunk (and up to three neighbours whose faces
-abut the edited block) dirty, so `VoxelTerrain` remeshes only what changed.
+abut the edited block) dirty, so `VoxelModule` remeshes only what changed.
 
 ## Water simulation
 
@@ -58,33 +57,36 @@ simulated until they settle. A fully settled region costs no CPU.
 
 ## Wiring to rendering
 
-Register both render modules on your isometric render system:
+`VoxelModule` draws the world in a 2D game, placed through its `Space2D`
+(an isometric game's grid, in the sample). Register it with the asset store,
+the world and the block registry:
 
 ```cpp
-auto& terrain = renderSystem.withModule<sfs::VoxelTerrain>();
-terrain.setWorld(world, myBlockRegistry);
-
-auto& water = renderSystem.withModule<sfs::IsometricWater>();
-water.setWaterSurfaceSource(&world);
-water.setWaveStrength(1.0f);   // Gerstner 3D waves (default for voxel)
-water.setRippleStrength(0.0f); // flat colour ripple off (default for voxel)
+auto& render = addSystem<sfs::RenderSystem>(renderer());
+render.setSpace2D(isometricSpace); // see Styles
+render.withModule<sfs::VoxelModule>(assetStore(), world, myBlockRegistry);
 ```
 
-`VoxelTerrain` reports `providesTerrainGeometry() = true`, which suppresses
-billboard terrain tiles exactly as `BlockGeometry` does. You should not
-register both `VoxelTerrain` and `BlockGeometry` at the same time.
+Each chunk's visible block faces, cut from its block types' sprites, are
+meshed when the chunk streams in or changes and kept until then. Water draws
+as see-through surfaces at each column's level; `setWaterColor(rgba)` sets its
+colour and how see-through it is. The terrain is lit and shadowed like
+everything else, and the depth buffer puts sprites in front of or behind its
+blocks.
 
 ## Terrain surface integration
 
 `VoxelWorld` implements `ITerrainSurfaceSource`, `ITerrainHeightSource`, and
-`IWaterSurfaceSource`. The render system picks these up automatically when
-`VoxelWorld` is a registered system, so sun shadows, actor standing elevation,
-blood-decal fade (puddles on water), and terrain-height sampling all work
-without extra wiring.
+`IWaterSurfaceSource`, so other parts of a game can use it as their terrain:
+
+- `MovementSystem::setTerrainHeightSource(&world)` stops bodies at cliffs.
+- `ParticleModule::enableStains(decals, &world)` lands particles on its
+  ground, walls and water.
+- `VoxelModule` reads its water columns to draw the water.
 
 ## Read more
 
 - [Core voxel layer](../../core/voxel/index.md) — block types, chunk layout,
   the mesher, and the water simulation.
-- [Render modules](../rendering/render-modules/index.md) — `VoxelTerrain` and
-  `IsometricWater` in detail.
+- [Render modules](../rendering/render-modules/index.md#voxelmodule): `VoxelModule`.
+- [Styles](../rendering/styles/index.md): setting up an isometric game.

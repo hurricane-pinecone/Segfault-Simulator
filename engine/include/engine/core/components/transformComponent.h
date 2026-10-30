@@ -15,8 +15,8 @@ namespace sfs
 /**
  * An entity's placement in the world: position, orientation and scale. Every
  * render style shares it. The world is Z-up: a 3D scene uses all three axes,
- * while flat and isometric scenes place things on the ground plane (x, y)
- * through the 2D helpers (position2D(), angle2D()) and leave z at 0.
+ * while flat and isometric scenes place things on their plane (x, y) through
+ * the 2D helpers (position2D(), yaw()) and use z as the height above it.
  *
  * @param glm::vec3 position - world position, default origin
  * @param glm::quat rotation - orientation, default identity

@@ -31,13 +31,17 @@ build itself.
 ## Repo Layout
 
 ```text
-engine/       → the engine library (engine-core + render runtime)
-engine/docs/  → contributor docs (internal engine design)
-sampleGame/   → a game built on the engine
+engine/            → the engine libraries (engine-core, engine, engine-webgpu)
+engine/src/shaders → the WGSL shaders, embedded into engine-webgpu
+engine/docs/       → contributor docs (internal engine design)
+editor/            → SfsEditor, the editor
+player/            → SfsPlayer, which plays an exported game
+sampleGame/        → the isometric sample game
+samplePlatformer/  → the flat 2D sample game
 ```
 
-The workspace build below compiles the engine and the sample together in one
-tree, which is the fast path for iterating on engine code.
+The workspace build below compiles the engine, the editor and the samples
+together in one tree, which is the fast path for iterating on engine code.
 
 ## Documentation
 
@@ -125,26 +129,32 @@ values; `testing::approx(a, b)` compares floats with a tolerance.
 
 The tests split to match the two libraries:
 
-- **Core tests** (`engine/tests/core/`) link `engine-core` only, with no SDL, GL, or
-  Conan. Register one with `add_core_test(name path/to/test.cpp)` in
+- **Core tests** (`engine/tests/core/`) link `engine-core` only, with no SDL, GPU,
+  or Conan. Register one with `add_core_test(name path/to/test.cpp)` in
   `engine/tests/core/CMakeLists.txt`.
 - **Runtime tests** (`engine/tests/runtime/`) link the full `engine` and drive
-  systems and render modules through their seams (a mock `IQuadRenderer`, stub
-  services), so they run headless: no window, no GPU, no display. Register one with
+  systems and render modules through their seams (a mock `IRenderer`,
+  `engine/tests/runtime/rendering/mockRenderer.h`, and stub services), so they
+  run headless: no window, no GPU, no display.
+- **WebGPU tests** (`engine/tests/webgpu/`) link `engine-webgpu` and drive the
+  real `WebGpuRenderer` on a GPU, headless (no window), once on whatever wgpu
+  picks and once on its OpenGL fallback (`SFS_WGPU_BACKEND=gl`). A machine with
+  no usable GPU skips them. They carry the `webgpu` label. Register one with
+  `add_webgpu_test(name path/to/test.cpp)` in `engine/tests/webgpu/CMakeLists.txt`. Register one with
   `add_runtime_test(name path/to/test.cpp)` in `engine/tests/runtime/CMakeLists.txt`.
 
 Test files mirror the source tree they cover. A module test for
 `src/runtime/rendering/modules/` lives in `engine/tests/runtime/rendering/modules/`.
-Each test carries a CTest label (`core` or `runtime`) so you can run one group on
-its own. The line for what is tested is drawn at rendered pixels: everything up to
-the GL draw call (command building, batching, depth assignment) is covered by
-inspecting what a system submits to the mock renderer, but framebuffer contents are
-not asserted.
+Each test carries a CTest label (`core`, `runtime` or `webgpu`) so you can run one
+group on its own. The line for what is tested is drawn at rendered pixels: everything up to
+the GPU draw call (command building, batching, placement through a `Space2D`) is
+covered by inspecting what a system submits to the mock renderer, but framebuffer
+contents are not asserted.
 
 ### Build and run
 
 With `ENGINE_CORE_ONLY` the core suite builds from just CMake and a compiler, with no
-Conan, SDL, or OpenGL, so it is fast, and is what CI's core job runs:
+Conan, SDL, or GPU libraries, so it is fast, and is what CI's core job runs:
 
 ```bash
 cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
@@ -366,7 +376,7 @@ It exits non-zero on a failure and prints the offending file with GCC's own
 diagnostic, which names the exact header to add, for example `<limits>` for
 `std::numeric_limits`, `<algorithm>` for `std::sort`, `<utility>` for `std::move`,
 `<cstring>` for `std::strrchr`. The first run builds the image (gcc:14 plus the SDL
-and GLEW headers, from `scripts/gcc-lint.Dockerfile`); later runs finish in a few
+headers, from `scripts/gcc-lint.Dockerfile`); later runs finish in a few
 seconds. Vendored code under `engine/lib` is not linted, since it is not ours to
 change.
 

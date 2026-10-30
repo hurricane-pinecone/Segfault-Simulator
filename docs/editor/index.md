@@ -2,7 +2,9 @@
 
 SfsEditor is the engine's editor application. It opens a project folder, and
 edits scenes in a docking UI. Any panel can be docked, tabbed, or dragged out
-into its own OS window.
+into its own OS window. It edits games of every style, flat 2D, isometric 2D
+and 3D (see [Styles: 2D and 3D](#styles-2d-and-3d)), and draws them with the
+engine's own renderer, so the viewport looks like the game.
 
 The editor is built with the engine (`ENGINE_BUILD_EDITOR`, on when the engine
 is the top-level project). It uses the engine only through its public `sfs::`
@@ -51,10 +53,37 @@ Scene files are plain JSON and diff cleanly. See
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name and components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
-| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
+| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
+
+## Styles: 2D and 3D
+
+A scene's style is in Scene Settings → **Style**:
+
+| Style | For | Settings |
+| --- | --- | --- |
+| 3D | A world in metres, seen through a camera you place | none |
+| Flat 2D | Sprites on a plane, seen straight on: platformers, top-down games | **Pixels Per Unit**, **Y Runs Down**, **Sort By Y** |
+| Isometric 2D | A tile grid seen at an angle | **Pixels Per Unit**, **Tile Pixels**, **Height Pixels** |
+
+Changing it is one undo step, and it's saved with the scene (see
+[Styles](../runtime/rendering/styles/index.md)). Only the settings the chosen
+style uses show.
+
+In a 2D scene:
+
+- The viewport looks straight down at the game's plane, orthographic.
+  Right-drag or middle-drag pans, and the wheel zooms.
+- The gizmo moves things across the plane (and, in a flat scene, turns them
+  around it); a moved thing keeps its height. With snapping on, moves snap to
+  whole pixels (flat) or half tiles (isometric). An isometric sprite always
+  faces the view, so it doesn't turn.
+- Clicking a sprite selects it.
+- **+ → Sprite** adds an entity with a Sprite component. Pick its **Image**
+  (a texture) and **Frame** in the Inspector. A texture's import settings make
+  it a sprite sheet (see [Assets](#assets)).
 
 ## Viewport
 
@@ -66,11 +95,13 @@ Scene files are plain JSON and diff cleanly. See
 | W / E / R | Move / rotate / scale gizmo (also in the viewport toolbar) |
 | World / Local (toolbar) | Gizmo axes aligned to the world or to the object |
 | Snap (toolbar), or hold Ctrl while dragging | Snap to 0.5 units, 15° or 0.1 scale |
-| Right-drag | Orbit |
+| Right-drag | Orbit (in a 2D scene: pan) |
 | Middle-drag, or Shift+right-drag | Pan |
 | Wheel | Zoom |
 | F | Frame the selection |
 | B, or Grass (toolbar), with grass selected | The grass brush (see [Grass](#grass)) |
+
+A 2D scene's viewport is described in [Styles: 2D and 3D](#styles-2d-and-3d).
 
 The selection is outlined, and lights are drawn as small sun icons, so entities
 without a mesh can be seen and clicked. These overlays are editor-only: exported
@@ -131,6 +162,12 @@ during a scene's loading waits for the rest of it first.
 Models (`.glb`, `.gltf`) appear in a Mesh Renderer's **Mesh** list, under
 *Assets*; picking one loads it. The scene refers to it by id, so it stays
 attached when the file is moved or renamed.
+
+Selecting a texture shows its import settings in the Inspector: **Filter**
+(Smooth, or Pixel Art for crisp texels) and **Sprite Sheet**, with its
+**Frame Size**, to use it as a grid of sprite frames, numbered across then
+down from the top left. They're saved in its `.meta` and show straight away
+(see [Sprites & sprite sheets](../runtime/rendering/sprites/index.md)).
 
 Selecting a material asset (`.mat`) edits it in the Inspector: base colour,
 texture, tiling and offset (how often the texture repeats, and where it
@@ -222,10 +259,11 @@ folder: its children keep their places when it sits at the origin.
 
 The viewport is the editor's own view: looking around while editing never moves
 the game's camera. The game sees through a **camera entity** instead, an entity
-with a Camera3D component (see
-[Camera entities](../runtime/rendering-3d/index.md#camera-entities)):
+with a Camera component (see
+[Camera entities](../runtime/rendering/meshes-and-lighting/index.md#camera-entities)):
 
-- **+ → Camera** adds one, looking the way the viewport is looking.
+- **+ → Camera** adds one, looking the way the viewport is looking (in a 2D
+  scene: an orthographic camera over the middle of the view, as tall as it).
 - **Edit → Align With View** (Ctrl+Shift+F) moves the selection to the
   viewport's view, to re-aim a camera.
 - **Edit → Align View With Selected** looks through the selection, to see what
@@ -460,7 +498,7 @@ paints. **Fill** sets all of it back to unpainted: full, full-length grass.
 **Clear** removes it all, so you can paint it in only where you want it. Each
 stroke is one undo step, and what's painted saves with the scene. A game can
 change the same maps as it plays (see
-[Rendering 3D: Grass](../runtime/rendering-3d/index.md#grass)).
+[Meshes, materials & lighting: Grass](../runtime/rendering/meshes-and-lighting/index.md#grass)).
 
 ## Built-in meshes
 

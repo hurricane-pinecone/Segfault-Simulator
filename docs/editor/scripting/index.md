@@ -185,10 +185,10 @@ thing in both. `inView()` says whether the cursor is over the view. To find what
 the mouse is over, cast a ray through it:
 
 ```cpp
-#include "engine/runtime/rendering3d/picking.h"
+#include "engine/runtime/rendering/picking.h"
 
-auto& render = scene().getSystem<sfs::RenderSystem3D>();
-const sfs::Ray3D ray = render.screenRay(input.mouse().getPosition());
+auto& render = scene().getSystem<sfs::RenderSystem>();
+const sfs::Ray ray = render.screenRay(input.mouse().getPosition());
 if (const auto hit = sfs::pickEntity(scene(), render.meshes(), ray))
   select(hit->entity);
 ```

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/rendering/3d/mesh.h"
+#include "engine/core/rendering/mesh.h"
 
 #include <concepts>
 #include <functional>

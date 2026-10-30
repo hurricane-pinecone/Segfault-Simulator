@@ -19,6 +19,13 @@ TextureImportSettings::fromJson(const nlohmann::json& settings)
   if (settings.is_object() && settings.contains("filter") &&
       settings["filter"].is_string())
     result.nearest = settings["filter"].get<std::string>() == "nearest";
+  if (settings.is_object() && settings.contains("spriteCell"))
+  {
+    const nlohmann::json& cell = settings["spriteCell"];
+    if (cell.is_array() && cell.size() == 2 && cell[0].is_number_integer() &&
+        cell[1].is_number_integer())
+      result.spriteCell = {cell[0].get<int>(), cell[1].get<int>()};
+  }
   return result;
 }
 

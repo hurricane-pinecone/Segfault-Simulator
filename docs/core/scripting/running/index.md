@@ -5,12 +5,16 @@ Running Lua against the live game, and the guarantees around it.
 ## In-app dev console (built in)
 
 A developer console toggled with the **backtick** (`` ` ``) key runs commands
-against the live VM without a rebuild. The engine's `Game` base owns and draws it
-through `TextRenderer` (no ImGui dependency), so it ships in every build of your
-game (debug or release) with nothing extra to wire up.
+against the live VM without a rebuild. The engine's `Game` base owns it, and it
+draws as [game UI](../../../runtime/ui/index.md): a `ui::Layer` shown over the
+scene by its `UiModule` (`UiModule::setOverlay`). It needs no ImGui, so it ships in
+every build of your game (debug or release), on the web too, with nothing extra
+to wire up. It shows in any scene whose `RenderSystem` has a `UiModule`, which
+`StandardScene` always does.
 
 It is **opt-in**, since it needs a VM to run against: call `setConsoleEnabled(true)`
-once after `init()`. The host then exposes it automatically, with no per-frame code.
+on your `LuaScripting` once after `init()`. The host then exposes it
+automatically, with no per-frame code.
 
 You type into a single input line at the bottom. Output appears above it, one
 screen line per newline in the result. A table result prints one key per line.

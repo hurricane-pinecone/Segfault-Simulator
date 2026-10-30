@@ -16,7 +16,7 @@
 namespace sfs
 {
 class Scene;
-class RenderSystem3D;
+class RenderSystem;
 } // namespace sfs
 
 class EditorHistory;
@@ -30,7 +30,7 @@ struct EditorContext
   std::optional<Project> project;
 
   EditorScene* scene = nullptr;
-  sfs::RenderSystem3D* render = nullptr;
+  sfs::RenderSystem* render = nullptr;
   SceneDocument* document = nullptr;
 
   // Every scene edit goes through here so it can be undone.

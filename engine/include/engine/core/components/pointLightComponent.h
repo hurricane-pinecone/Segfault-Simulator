@@ -18,7 +18,7 @@ namespace sfs
  *                           a lantern's flame above its base, default origin
  * @param bool castsShadow - whether things block its light, default true (the
  *                           lights nearest the view, up to
- *                           ShadowSettings3D::pointLights, cast them)
+ *                           ShadowSettings::pointLights, cast them)
  * @param float sourceRadius - how big the lamp is (its bulb, its flame):
  *                             shiny things reflect a highlight that big,
  *                             default 0.05

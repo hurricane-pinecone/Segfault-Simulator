@@ -20,13 +20,15 @@ replace a scene's contents, destroy its entities and call
 
 ## What is saved
 
-- **Every reflected component on every entity**, field by field. Components
-  that aren't reflected, such as most of the 2D/isometric ones, are left out.
+- **Every reflected component on every entity**, field by field. The engine's
+  components are reflected (transforms, cameras, lights, sprites, 2D and 3D
+  physics, particle emitters, grass, meshes...); the few that aren't (such as
+  `WorldCollider` and the `SolidObject` tag) are left out.
 - **The [hierarchy](../../core/hierarchy/index.md)**, as nesting: an entity's
   children are listed under its `"children"` key, beside its components. A
   component can't be called `children`.
-- **The scene's render settings**, when it has a `RenderSystem3D`: lighting,
-  shadows and the camera. In an editor scene, that camera is the viewport's
+- **The scene's render settings**, when it has a `RenderSystem`: its
+  [style](#the-style), lighting, shadows, wind, haze and the camera. In an editor scene, that camera is the viewport's
   view. The game sees through a camera entity, which is saved like any other
   entity.
 - **The scene's systems** (the `System` scripts it runs when it plays, and
@@ -50,7 +52,7 @@ replace a scene's contents, destroy its entities and call
       "NameComponent": {
         "name": "Red Box"
       },
-      "Transform3DComponent": {
+      "TransformComponent": {
         "position": [-2.0, 1.0, 0.0],
         "rotation": [1.0, 0.0, 0.0, 0.0],
         "scale": [1.0, 1.0, 2.0]
@@ -58,13 +60,13 @@ replace a scene's contents, destroy its entities and call
       "children": [
         {
           "NameComponent": { "name": "Lid" },
-          "Transform3DComponent": { "position": [0.0, 0.0, 1.0], ... }
+          "TransformComponent": { "position": [0.0, 0.0, 1.0], ... }
         }
       ]
     }
   ],
   "formatVersion": 2,
-  "render": { "camera": {}, "lighting": {}, "shadows": {} }
+  "render": { "style": { "kind": "3d" }, "camera": {}, "lighting": {}, "shadows": {} }
 }
 ```
 
@@ -73,6 +75,21 @@ its parent.
 
 Format 1 files, from before hierarchies, are the same without `"children"`, and
 still load.
+
+## The style
+
+`"render"` → `"style"` says how the scene is drawn (see
+[Styles](../rendering/styles/index.md)):
+
+```json
+"style": { "kind": "flat", "pixelsPerUnit": 1, "tilePixels": [32, 16],
+           "heightPixels": 8, "yDown": true, "ySort": false }
+```
+
+`"kind"` is `"3d"`, `"flat"` or `"isometric"`. For a 2D kind the other keys are
+the scene's `Space2D`; loading gives the `RenderSystem` that `Space2D`
+(`setSpace2D`), and `"3d"` clears it. A file without `"style"`, from before
+there were styles, loads as 3D. `StandardScene` plays a file in any style.
 
 ## Saving part of a scene
 
@@ -95,7 +112,7 @@ entity below the root (unique in the file):
 
 ```json
 { "formatVersion": 1,
-  "root": { "NameComponent": { "name": "Fence" }, "Transform3DComponent": { ... },
+  "root": { "NameComponent": { "name": "Fence" }, "TransformComponent": { ... },
             "children": [ { "$id": 1, "MeshRendererComponent": { ... }, ... } ] } }
 ```
 
@@ -103,7 +120,7 @@ A copy (an *instance*) is saved as the prefab and how it differs from it:
 
 ```json
 { "$prefab": "asset:99f82e199edf433a8766a309dc98d973",
-  "$overrides": { "": { "Transform3DComponent": { "position": [3, 1, 0] } },
+  "$overrides": { "": { "TransformComponent": { "position": [3, 1, 0] } },
                   "1": { "MeshRendererComponent": { "tint": [1, 0, 0, 1] } } },
   "$removed": [ "2" ],
   "$added": [ { "$parent": "", "NameComponent": { "name": "Lamp" }, ... } ] }
@@ -122,7 +139,7 @@ A copy (an *instance*) is saved as the prefab and how it differs from it:
   back unchanged; a prefab containing itself is left out (logged).
 
 `SceneSerializer::instantiate`, `savePrefab` and `instanceEntry` do this from
-code; `setPrefabSource` says where prefabs come from (`Scene3D::serializer()`
+code; `setPrefabSource` says where prefabs come from (`StandardScene::serializer()`
 reads them through the asset store). At runtime an instance's root has a
 `PrefabInstanceComponent`, and each entity from a prefab a
 `PrefabLinkComponent` with its `$id`.
@@ -147,6 +164,7 @@ A scene still loads after the code it was saved with has changed:
 | Field added to a component | Keeps its default value |
 | Field removed or renamed | Ignored |
 | Field's type changed | Keeps its default; an error is logged |
+| Component saved under a retired engine name (`Transform3DComponent`, `Camera3DComponent`, `PointLight3DComponent`) | Loads as the current one (`TransformComponent`, `CameraComponent`, `PointLightComponent`) |
 | Component type not registered (renamed, removed, or its module not built yet) | Its data is kept on the entity and written back unchanged on save; it loads as a real component once the type exists |
 | Mesh name not found | A stand-in that keeps the name and draws nothing (an error is logged); saving writes the name back, and it loads as the real mesh once one has that name |
 | File from a newer format | Refused |

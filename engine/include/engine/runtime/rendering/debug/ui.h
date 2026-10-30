@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
 #ifndef ENGINE_WEB
   #include "engine/core/util/allocationMetrics.h"
@@ -147,7 +147,7 @@ inline static void renderDebugControls(Scene* scene)
       [](System& system)
       {
         // The render system is required for anything to draw.
-        if (typeid(system) == typeid(RenderSystem3D))
+        if (typeid(system) == typeid(RenderSystem))
           return;
 
         const std::string name = prettyTypeName(typeid(system));
@@ -170,9 +170,9 @@ inline static void renderDebugControls(Scene* scene)
         }
       });
 
-  if (auto* render = scene->tryGetSystem<RenderSystem3D>())
+  if (auto* render = scene->tryGetSystem<RenderSystem>())
   {
-    const RenderStats3D& stats = render->stats();
+    const RenderStats& stats = render->stats();
     ImGui::SeparatorText("Renderer");
     ImGui::Text("Draws: %zu  Instances: %zu", stats.drawCalls, stats.instances);
     ImGui::Text("Point lights: %zu (%zu shadowed)",
@@ -185,8 +185,8 @@ inline static void renderDebugControls(Scene* scene)
     // and render generically. A module that exposes none is skipped.
     render->forEachModule(
         [](std::type_index type,
-           IRenderModule<RenderContext3D>& module,
-           const RenderContext3D& context)
+           IRenderModule<RenderContext>& module,
+           const RenderContext& context)
         {
           const std::vector<ModuleSetting> moduleSettings =
               module.settings(context);

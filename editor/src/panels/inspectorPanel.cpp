@@ -21,12 +21,13 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
-#include "engine/core/rendering/3d/aabb.h"
-#include "engine/core/rendering/3d/emissionLights.h"
+#include "engine/core/rendering/aabb.h"
+#include "engine/core/rendering/emissionLights.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/game/gameObject.h"
-#include "engine/runtime/rendering3d/meshLibrary.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/meshLibrary.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/prefabComponents.h"
@@ -131,7 +132,7 @@ void textureField(const FieldInfo& field,
                   EditorHistory* history)
 {
   std::string& texture = field.in<std::string>(object);
-  const std::string current = texture.empty() ? "Mesh's own"
+  const std::string current = texture.empty() ? "None"
                               : meshes        ? meshes->label(texture)
                                               : texture;
 
@@ -145,7 +146,7 @@ void textureField(const FieldInfo& field,
     else
       texture = chosen;
   };
-  if (ImGui::Selectable("Mesh's own", texture.empty()))
+  if (ImGui::Selectable("None", texture.empty()))
     choose({});
   if (meshes)
     for (const auto& [name, label] : meshes->availableTextures())
@@ -1246,11 +1247,68 @@ void assetDetails(const sfs::AssetDatabase& assets,
   if (ImGui::Button("Show in Folder"))
     shell::showInFolder(file);
 
+  // A texture's are edited below (textureSettings()).
+  if (record.kind == sfs::AssetKind::Texture)
+    return;
   ImGui::SeparatorText("Import Settings");
   if (record.settings.empty())
     ImGui::TextDisabled("None");
   else
     ImGui::TextUnformatted(record.settings.dump(2).c_str());
+}
+
+// How a texture is brought in: smooth or pixel art, and whether it's a sprite
+// sheet (a grid of frames). Saved to its .meta, and shown straight away.
+void textureSettings(EditorContext& context, const sfs::AssetRecord& record)
+{
+  ImGui::SeparatorText("Import Settings");
+  nlohmann::json settings =
+      record.settings.is_object() ? record.settings : nlohmann::json::object();
+  const sfs::TextureImportSettings current =
+      sfs::TextureImportSettings::fromJson(settings);
+  bool changed = false;
+
+  const char* filters[] = {"Smooth", "Pixel Art"};
+  int filter = current.nearest ? 1 : 0;
+  widgets::propertyLabel("Filter");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (ImGui::Combo("##filter", &filter, filters, 2))
+  {
+    settings["filter"] = filter == 1 ? "nearest" : "linear";
+    changed = true;
+  }
+  ImGui::SetItemTooltip("Pixel Art keeps its texels crisp when scaled up");
+
+  bool sheet = current.spriteCell.x > 0 && current.spriteCell.y > 0;
+  if (widgets::propertyCheckbox("Sprite Sheet", &sheet))
+  {
+    if (sheet)
+      settings["spriteCell"] = {32, 32};
+    else
+      settings.erase("spriteCell");
+    changed = true;
+  }
+  ImGui::SetItemTooltip(
+      "A grid of frames, numbered across then down from the top left;\n"
+      "a sprite picks one by its Frame");
+  if (sheet)
+  {
+    glm::ivec2 cell = current.spriteCell;
+    widgets::propertyLabel("Frame Size");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::InputInt2("##cell", &cell.x))
+    {
+      settings["spriteCell"] = {std::max(cell.x, 1), std::max(cell.y, 1)};
+      changed = true;
+    }
+  }
+
+  if (changed && context.assets->setSettings(record.id, settings))
+  {
+    if (context.scene)
+      context.scene->assetStore().forgetTexture(record.id);
+    context.assetFilesChanged = true; // its preview
+  }
 }
 } // namespace
 
@@ -1466,6 +1524,8 @@ void InspectorPanel::drawContents(EditorContext& context)
     if (asset)
     {
       assetDetails(*context.assets, *asset);
+      if (asset->kind == sfs::AssetKind::Texture)
+        textureSettings(context, *asset);
       if (asset->kind == sfs::AssetKind::Material)
         drawMaterial(context, *asset);
       if (asset->kind == sfs::AssetKind::ScriptableObject)

@@ -4,8 +4,8 @@
 #include "sampleGame.h"
 #include <engine/core/scripting/luaScripting.h>
 #include <engine/core/scripting/particleLuaApi.h>
-#include <engine/runtime/rendering3d/modules/particleModule.h>
-#include <engine/runtime/rendering3d/renderSystem3D.h>
+#include <engine/runtime/rendering/modules/particleModule.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <glm/glm/ext/vector_float2.hpp>
 
@@ -20,9 +20,9 @@ namespace gamebindings
 // (engine particle table, spawnGore) works on that.
 inline sfs::ParticleEngine* particlesOf(sfs::Scene* scene)
 {
-  if (!scene || !scene->hasSystem<sfs::RenderSystem3D>())
+  if (!scene || !scene->hasSystem<sfs::RenderSystem>())
     return nullptr;
-  return scene->getSystem<sfs::RenderSystem3D>().module<sfs::ParticleModule>();
+  return scene->getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>();
 }
 
 // Spray a gore blast at a world position, on the terrain there.

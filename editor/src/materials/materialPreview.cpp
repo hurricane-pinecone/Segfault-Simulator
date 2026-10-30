@@ -1,9 +1,8 @@
 #include "materials/materialPreview.h"
 
 #include "engine/core/logger/logger.h"
-#include "engine/core/rendering/3d/camera3D.h"
-#include "engine/core/rendering/3d/meshPrimitives.h"
-#include "engine/webgpu/webGpuContext.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/meshPrimitives.h"
 
 #include "glm/glm/geometric.hpp"
 
@@ -13,8 +12,8 @@
 #include <cmath>
 #include <cstdint>
 
-MaterialPreview::MaterialPreview(sfs::WebGpuContext& gpu)
-    : m_gpu(gpu), m_renderer(gpu, 256), m_target(gpu)
+MaterialPreview::MaterialPreview(sfs::IRenderBackend& backend)
+    : m_backend(backend)
 {
 }
 
@@ -22,7 +21,9 @@ bool MaterialPreview::ensureReady()
 {
   if (m_initialized || m_failed)
     return m_initialized;
-  if (!m_renderer.initialize())
+  m_renderer = m_backend.createRenderer(256);
+  m_target = m_backend.createRenderTarget();
+  if (!m_renderer || !m_target)
   {
     LOG_ERROR("The material preview can't draw");
     m_failed = true;
@@ -34,7 +35,7 @@ bool MaterialPreview::ensureReady()
                                   sfs::meshes::plane(glm::vec2(2.4f))};
   for (std::size_t i = 0; i < m_meshes.size(); ++i)
   {
-    m_meshes[i] = m_renderer.createMesh(shapes[i]);
+    m_meshes[i] = m_renderer->createMesh(shapes[i]);
     m_centres[i] = shapes[i].bounds().center();
     for (const sfs::MeshVertex& vertex : shapes[i].vertices)
       m_radii[i] =
@@ -49,20 +50,20 @@ void MaterialPreview::setMaterial(const sfs::MeshMaterial& material)
   if (!ensureReady())
     return;
   if (m_material.valid())
-    m_renderer.updateMaterial(m_material, material);
+    m_renderer->updateMaterial(m_material, material);
   else
-    m_material = m_renderer.createMaterial(material);
+    m_material = m_renderer->createMaterial(material);
 }
 
 void MaterialPreview::render(glm::ivec2 size, float time)
 {
-  m_target.resize(size);
-  if (!m_target.valid())
+  m_target->resize(size);
+  if (!m_target->valid())
     return;
 
   // Orbiting the shape's middle, far enough back to fit it.
   const float radius = std::max(m_radii[static_cast<int>(m_shape)], 0.5f);
-  sfs::Camera3D camera;
+  sfs::Camera camera;
   camera.target = m_centres[static_cast<int>(m_shape)];
   camera.yaw = m_yaw;
   camera.pitch = m_pitch;
@@ -71,7 +72,7 @@ void MaterialPreview::render(glm::ivec2 size, float time)
   camera.nearPlane = camera.distance * 0.05f;
   camera.farPlane = camera.distance * 4.0f;
 
-  sfs::FrameParams3D frame;
+  sfs::FrameParams frame;
   frame.cameraPosition = camera.position();
   frame.view = camera.viewMatrix();
   frame.projection = camera.projectionMatrix(static_cast<float>(size.x) /
@@ -83,22 +84,20 @@ void MaterialPreview::render(glm::ivec2 size, float time)
   frame.shadows.enabled = false; // nothing to cast onto
   frame.time = time;
 
-  const WGPUCommandEncoder encoder =
-      wgpuDeviceCreateCommandEncoder(m_gpu.device(), nullptr);
-  m_renderer.setTarget(encoder, m_target.view(), size);
-  m_renderer.beginFrame(frame);
-  const sfs::MeshInstance instance;
-  const sfs::MaterialHandle materials[] = {m_material};
-  sfs::MeshBatch3D batch;
-  batch.mesh = m_meshes[static_cast<int>(m_shape)];
-  batch.materials = materials;
-  batch.instances = {&instance, 1};
-  m_renderer.drawMesh(batch);
-  m_renderer.endFrame();
-  const WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
-  wgpuQueueSubmit(m_gpu.queue(), 1, &commands);
-  wgpuCommandBufferRelease(commands);
-  wgpuCommandEncoderRelease(encoder);
+  m_backend.drawInto(*m_target,
+                     *m_renderer,
+                     [&]
+                     {
+                       m_renderer->beginFrame(frame);
+                       const sfs::MeshInstance instance;
+                       const sfs::MaterialHandle materials[] = {m_material};
+                       sfs::MeshBatch batch;
+                       batch.mesh = m_meshes[static_cast<int>(m_shape)];
+                       batch.materials = materials;
+                       batch.instances = {&instance, 1};
+                       m_renderer->drawMesh(batch);
+                       m_renderer->endFrame();
+                     });
 }
 
 void MaterialPreview::draw(float size, float time)
@@ -119,8 +118,7 @@ void MaterialPreview::draw(float size, float time)
   ImGui::InvisibleButton("##preview", extent);
   const ImVec2 min = ImGui::GetItemRectMin();
   ImGui::GetWindowDrawList()->AddImage(
-      static_cast<ImTextureID>(
-          reinterpret_cast<intptr_t>(m_target.imguiView())),
+      static_cast<ImTextureID>(m_target->imguiTexture()),
       min,
       ImVec2(min.x + size, min.y + size));
   ImGui::SetItemTooltip("Drag to turn it");

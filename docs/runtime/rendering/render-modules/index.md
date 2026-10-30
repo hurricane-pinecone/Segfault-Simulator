@@ -1,152 +1,129 @@
 # Render modules
 
-Each render system composes its features as **render modules** rather than baking
-them in. This is how a game enables the built-in rendering features and how it
-adds its own.
+A `RenderSystem` composes its features as **render modules** rather than
+baking them in. Sprites, meshes, particles, decals, voxel terrain, grass and
+UI are all modules, and they work in every [style](../styles/index.md). This
+is how a game turns the built-in features on and how it adds its own.
 
 ## The model
 
-A module is an `IRenderModule<TContext>` (usually a `CommandModule<TContext,
-Command>`) that emits the frame's render commands for one feature. A render system
-is a `RenderModuleHost<TContext>` that constructs, owns, and drives the modules it
-is given — `TContext` is the render context the modules read (`IsometricRenderContext`
-or `FlatRenderContext`), which keeps host and modules matched at compile time.
+A module is an `IRenderModule<RenderContext>` (usually a
+`CommandModule<RenderContext, Command>`) that emits the frame's render
+commands for one feature. `RenderSystem` is a
+`RenderModuleHost<RenderContext>`: it constructs, owns and drives the modules
+it's given.
 
 ```cpp
-// Register features on a render system. Order doesn't matter; registration enables.
-renderSystem.withModules<sfs::TerrainShadow, sfs::SpriteShadow, sfs::BlockGeometry>();
-
-auto& particles = renderSystem.withModule<sfs::Particles<Context>>();
+auto& render = addSystem<sfs::RenderSystem>(renderer());
+render.withModule<sfs::MeshModule>();
+render.withModule<sfs::SpriteModule>(assetStore());
+auto& particles = render.withModule<sfs::ParticleModule>(assetStore());
 ```
+
+`withModule<T>(args...)` constructs the module with those arguments and
+returns it for configuring. `module<T>()` finds a registered one (null if
+there's none), `hasModule<T>()` asks, and `withModules<A, B, ...>()` registers
+several default-constructed ones at once.
 
 ## Registration is the enable
 
-A feature is active **iff** its module type is registered. Adding the module turns
-it on; removing it (`removeModule<T>()`) turns it off and drops its accumulated
-state. There is no separate "enabled" flag to track.
-
-Built-in modules include terrain shadows, sprite shadows, water, block geometry,
-and particles (the isometric system); the flat system hosts particles the same
-way. Decals are a module too, but the render system registers that one for you the
-first time a feature asks for its decal sink — a game never registers it directly.
+A feature is on **iff** its module type is registered. Adding the module turns
+it on; removing it (`removeModule<T>()`) turns it off and drops its state.
+There is no separate "enabled" flag to track. A module type registers once;
+registering it again logs an error and returns the existing one.
 
 ## Modules are independent
 
 A module depends only on:
 
-1. **The render context** — shared per-frame data such as the projection and the
-   terrain elevation grid, plus cross-cutting flags (e.g. whether terrain is drawn
-   as block faces).
-2. **Host-provided capabilities** — e.g. the decal sink, reached through the host.
+1. **The render context**: the frame's `RenderContext`, with the camera and
+   its frustum, the sun's shadow volume, the lighting and point lights, the
+   mesh library, and the game's `Space2D` (null in a 3D world).
+2. **What it was given**: the registry and asset store (`ModuleInit`, at
+   registration), the host (`setHost`), and its constructor's arguments.
 
-A module **never** references a sibling module. So features compose in any
-combination, and a game can add its own module without touching the others. (For
-the rule and its rationale, this is the engine-side counterpart of keeping systems
-independent.)
-
-## Dependencies are injected
-
-The host hands each module its registry and asset store at registration, and
-hands it the host itself, so a module **pulls** what it needs rather than wiring it
-up by hand. A game registers a module and the host connects it.
-
-## Writing your own module
-
-Implement `IRenderModule<TContext>` (or extend `CommandModule<TContext, Command>`
-to build one command type), then register it with `withModule<T>()`. Emit your
-commands in the module's per-frame hook; they are ordered with everything else by
-`RenderPass`.
-
-If your module renders the terrain surface itself (real face geometry rather
-than billboard tiles), override `providesTerrainGeometry()` to return `true`.
-The render system checks this flag to suppress billboard tiles and report the
-`geometryActive` context flag; it does not hard-code which concrete module owns
-terrain geometry.
+A module never references a sibling. Where two work together, the game
+connects them: `particles.enableStains(decals)` hands the particle module the
+decal module as its `IDecalSink`. So features compose in any combination, and a
+game can add its own module without touching the others.
 
 ## Built-in modules
 
-The engine ships the following optional modules for the isometric render path.
-Register whichever subset your scene needs; they compose in any order.
+All in `engine/runtime/rendering/modules/`. `StandardScene` (the scene a scene
+file describes) registers mesh, grass, sprite, decal, particle and UI modules.
 
-### BlockGeometry
+| Module | Draws | Construct with |
+| --- | --- | --- |
+| `MeshModule` | `MeshRendererComponent` entities, instanced per mesh and culled for the lit and shadow passes (see [Meshes, materials & lighting](../meshes-and-lighting/index.md)) | nothing |
+| `SpriteModule` | `SpriteComponent` entities (see [Sprites & sprite sheets](../sprites/index.md)) | the asset store, optionally a `Facing` |
+| `ParticleModule` | Particle effects, simulated in the game's own space (see [Particles in your game](../../particles/index.md)) | the asset store |
+| `DecalModule` | Marks left on a 2D game's surfaces: blood, scorches, paint | the asset store |
+| `VoxelModule` | A `VoxelWorld`'s block faces and water, in a 2D game (see [Voxel world](../../voxel/index.md)) | the asset store, the world, its block registry |
+| `GrassModule` | `GrassComponent` grass on mesh entities (see [Grass](../meshes-and-lighting/index.md#grass)) | the renderer |
+| `UiModule` | The scene's `ui::Layer`s, over the finished frame (see [Game UI](../../ui/index.md)) | the scene |
 
-`BlockGeometry` meshes every `IsometricTile`-tagged entity as a 3D block. Each
-entity needs a `TransformComponent`, an `ElevationComponent`, and a
-`SpriteComponent` that supplies the top-face texture. Adding a
-`TerrainBoundaryComponent` exposes the south and east side faces where a block
-drops to a lower neighbour.
+### DecalModule
 
-Tiles that share a texture merge into one draw command. Tiles with different
-textures produce separate commands. No geometry is emitted when the render
-context carries no projection.
+Marks lie flat on the game's plane where they landed, placed by its `Space2D`,
+each a tinted image drawn see-through. A mark can fade away, run down (a
+drip), and be cut to the surface it landed on. Particles that stain stamp them
+(`ParticleModule::enableStains`), and anything can call `addDecal()`.
 
-```cpp
-renderSystem.withModule<sfs::BlockGeometry>();
-```
+| Call | Does |
+| --- | --- |
+| `setLayer(layer)` | The `RenderLayerComponent` layer marks lie on (1 by default: in front of layer 0) |
+| `setMaxDecals(count)` | The most marks kept; the oldest go first (20000 by default) |
+| `setCoverage(cellSize, perCell)` | At most `perCell` lasting marks in each `cellSize` square, so a spot hit again and again doesn't pile up marks |
+| `count()` | How many marks there are |
 
-### VoxelTerrain
+### VoxelModule
 
-`VoxelTerrain` draws a `VoxelWorld` as real block-face geometry. It reads the
-world through the injected reference, meshes only the dirty chunks each frame
-(caching everything else, since full rebuilds are expensive), and emits one
-`GeometryCommand` per material.
+Draws a `VoxelWorld` in a 2D game: each chunk's visible block faces, cut from
+its block types' sprites and placed by the game's `Space2D`, meshed when a
+chunk streams in or changes and kept until then. Water draws as see-through
+surfaces at each column's level (`setWaterColor` sets its colour and
+opacity).
 
-Registering `VoxelTerrain` suppresses billboard terrain tiles, the same as
-`BlockGeometry` does. Do not register both modules at the same time.
+### UiModule
 
-```cpp
-auto& terrain = renderSystem.withModule<sfs::VoxelTerrain>();
-terrain.setWorld(world, blockRegistry);
-```
+Lays out and draws every `ui::Layer` in the scene, and takes the scene's input
+first, so clicks on UI don't reach the game. `setOverlay(layer)` adds one more
+layer drawn over the rest; the engine's dev console shows this way.
 
-See [Voxel world](../../voxel/index.md) for a full setup walkthrough.
+## Writing your own module
 
-### IsometricWater
-
-`IsometricWater` renders water tiles as a single animated surface mesh. In the
-ECS path each tile entity needs a `TransformComponent`, an `ElevationComponent`
-for the terrain height beneath it, and a `WaterTileComponent` that carries the
-water-surface elevation. For a voxel world, supply a `VoxelWorld` (or any
-`IWaterSurfaceSource`) instead and the ECS path is bypassed.
-
-All visible water merges into a single draw command. Neighbouring tiles at
-different water levels blend into a continuous heightfield, so a flowing water
-body has no visible seams.
-
-```cpp
-renderSystem.withModule<sfs::IsometricWater>();
-```
-
-When drawing voxel water, set the water source and wave style on the module:
+Extend `CommandModule<RenderContext, Command>`, where `Command` is one of the
+commands in `commands.h` (`MeshDrawCommand`, `GrassDrawCommand` or
+`UiDrawCommand`), and build the frame's commands in `computeCommands()`:
 
 ```cpp
-auto& water = renderSystem.withModule<sfs::IsometricWater>();
-water.setWaterSurfaceSource(&voxelWorld); // bypasses WaterTileComponent ECS scan
-water.setWaveStrength(1.0f);              // Gerstner 3D displacement (0 = flat)
-water.setRippleStrength(0.0f);            // flat colour-ripple animation (0 = off)
+class MarkerModule : public sfs::CommandModule<sfs::RenderContext, sfs::MeshDrawCommand>
+{
+public:
+  void init(const sfs::ModuleInit& init) override { m_registry = init.registry; }
+
+  void computeCommands(const sfs::RenderContext& context) override
+  {
+    flush(); // forget last frame's
+    if (!context.meshes)
+      return;
+    sfs::MeshDrawCommand command;
+    command.mesh = m_marker; // a mesh added to context.meshes
+    // ... one MeshInstance per thing to draw, placed through
+    // context.space2D when the game has one
+    m_commands.push_back(std::move(command));
+  }
+
+private:
+  sfs::Registry* m_registry = nullptr;
+  sfs::MeshHandle m_marker;
+};
+
+render.withModule<MarkerModule>();
 ```
 
-`setWaveStrength` controls the Gerstner wave displacement applied in the vertex
-shader. A value of 0 leaves the surface flat, which suits ECS water. A value of
-1 gives the default 3D wave look suited to voxel terrain. `setRippleStrength`
-controls the old flat colour-ripple animation; ECS water uses it by default,
-voxel water turns it off.
-
-### SpriteShadow
-
-`SpriteShadow` casts a projected shadow for every entity that has a
-`ShadowCasterComponent` and a resolvable `SpriteComponent`. The module emits
-nothing when the render context supplies no light source (no ambient lighting
-and no point lights).
-
-```cpp
-renderSystem.withModule<sfs::SpriteShadow>();
-```
-
-## Deferred: core passes as modules
-
-The optional isometric features (shadows, water, block geometry, decals,
-particles) are render modules, but the **core passes** — terrain tiles and sprites
-— are still drawn directly by the render system. Some passes need cross-pass
-orchestration (e.g. terrain shadows are skipped while block geometry is active),
-so folding the core ones into modules is possible but not required.
+Or implement `IRenderModule<RenderContext>` directly and append to the
+frame's `AnyRenderCommand`s in `emit()`. Either way the render system sorts
+your commands with everyone else's by `RenderPass` and submits them; a module
+never talks to the renderer. Override `update(dt)` for per-frame simulation
+and `settings(context)` to show knobs in a debug panel.

@@ -1,5 +1,5 @@
 # A flat 2D platformer built on the engine: a 2D game drawn through the
-# engine's one renderer (a RenderSystem3D with a flat Space2D).
+# engine's one renderer (a RenderSystem with a flat Space2D).
 
 set(IS_WEB_BUILD FALSE)
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)

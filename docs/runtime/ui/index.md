@@ -167,7 +167,9 @@ Layers draw in order (`Layer::order`, higher on top) and can be hidden
 
 ## How it works
 
-`UiModule` (a render module every 3D scene has) asks each layer for its
+`UiModule` (a [render module](../rendering/render-modules/index.md) every
+`StandardScene` has, in any style; a scene of your own registers it with
+`render.withModule<sfs::UiModule>(*this)`) asks each layer for its
 `body()` every frame and lays it out: stacks measure their children and share
 spare room between flexible ones (spacers, infinite frames). It outputs quads
 (rounded boxes, glyphs) and what's clickable. The WebGPU renderer draws the

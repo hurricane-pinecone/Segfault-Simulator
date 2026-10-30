@@ -35,7 +35,7 @@ struct ActiveCamera
 };
 
 // The scene's first active camera (CameraComponent + TransformComponent, in
-// id order, as RenderSystem3D picks it), or an empty ActiveCamera when none.
+// id order, as RenderSystem picks it), or an empty ActiveCamera when none.
 inline ActiveCamera findActiveCamera(Registry& registry)
 {
   for (const auto& entity :

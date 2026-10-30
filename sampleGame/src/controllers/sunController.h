@@ -3,7 +3,7 @@
 #include "engine/core/ecs/system.h"
 #include "engine/core/scripting/iLuaConfigurable.h"
 #include "engine/core/scripting/luaScripting.h"
-#include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering/renderSystem.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
 #include "glm/glm/geometric.hpp"
@@ -28,10 +28,10 @@ public:
     if (!registry)
       return;
 
-    if (!registry->hasSystem<sfs::RenderSystem3D>())
+    if (!registry->hasSystem<sfs::RenderSystem>())
       return;
 
-    auto& renderSystem = registry->getSystem<sfs::RenderSystem3D>();
+    auto& renderSystem = registry->getSystem<sfs::RenderSystem>();
 
     m_renderSystem = &renderSystem;
 
@@ -225,7 +225,7 @@ private:
              float diffuseStrength,
              const glm::vec3& color)
   {
-    sfs::SceneLighting3D lighting;
+    sfs::SceneLighting lighting;
     const auto& space = m_renderSystem->space2D();
     lighting.sun.direction =
         space ? glm::normalize(space->direction(direction)) : direction;
@@ -237,7 +237,7 @@ private:
   }
 
 private:
-  sfs::RenderSystem3D* m_renderSystem = nullptr;
+  sfs::RenderSystem* m_renderSystem = nullptr;
 
   bool m_isSunEnabled = true;
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/core/rendering/3d/camera3D.h"
-#include "engine/core/rendering/3d/lighting3D.h"
+#include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/lighting.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/geometric.hpp"
@@ -16,7 +16,7 @@ namespace sfs
  * TransformComponent places it, looking along its +X axis with +Z up (the
  * way setYaw faces things). Move the entity to move the view.
  *
- * The scene renders through the first active camera entity (RenderSystem3D in
+ * The scene renders through the first active camera entity (RenderSystem in
  * place of its own camera(), unless told not to: the editor looks around
  * freely while editing; a flat or isometric render system centres on it).
  * Roll is ignored: the view stays level.
@@ -35,7 +35,7 @@ namespace sfs
  *                              lights nearest it are kept when there are too
  *                              many
  * @param bool bloom - light brighter than white glows past its edges, as
- *                     through a real lens (see BloomSettings3D); how much an
+ *                     through a real lens (see BloomSettings); how much an
  *                     object blooms is its emission's brightness, x its
  *                     material's Bloom
  * @param float bloomIntensity - how strong the glow is
@@ -44,7 +44,7 @@ namespace sfs
  * @param float bloomRadius - how far the glow spreads (1 = normal)
  * @param bool depthOfField - what's nearer or farther than focusDistance
  *                            blurs, as through a real lens (see
- *                            DepthOfFieldSettings3D)
+ *                            DepthOfFieldSettings)
  * @param float focusRange - how deep the sharp part around the focus is
  * @param float focusBlur - how blurred the farthest things get (1 = normal)
  */
@@ -52,11 +52,13 @@ struct CameraComponent
 {
   bool active = true;
   bool orthographic = false;
-  [[sfs::range(10, 120)]] float fieldOfView = 46.0f;
-  [[sfs::range(1, 200)]] float orthoHeight = 20.0f;
+  [[sfs::range(10, 120)]] [[sfs::showIf(!orthographic)]] float fieldOfView =
+      46.0f;
+  // No range: a 2D game's world is in pixels (or tiles), a 3D one's in metres.
+  [[sfs::showIf(orthographic)]] float orthoHeight = 20.0f;
   [[sfs::range(0.1, 10)]] float zoom = 1.0f;
   [[sfs::range(0.01, 10)]] float nearPlane = 0.1f;
-  [[sfs::range(10, 5000)]] float farPlane = 500.0f;
+  float farPlane = 500.0f;
   [[sfs::range(1, 200)]] float focusDistance = 20.0f;
   bool bloom = true;
   [[sfs::range(0, 3)]] [[sfs::showIf(bloom)]] float bloomIntensity = 0.6f;
@@ -68,26 +70,26 @@ struct CameraComponent
   [[sfs::range(0, 3)]] [[sfs::showIf(depthOfField)]] float focusBlur = 1.0f;
 
   /** The bloom seen through this camera. */
-  BloomSettings3D bloomSettings() const
+  BloomSettings bloomSettings() const
   {
     return {bloom, bloomIntensity, bloomThreshold, bloomSoftness, bloomRadius};
   }
 
   /** The depth of field seen through this camera. */
-  DepthOfFieldSettings3D depthOfFieldSettings() const
+  DepthOfFieldSettings depthOfFieldSettings() const
   {
     return {depthOfField, focusRange, focusBlur};
   }
 
   /** Point `camera` the way this camera, with world matrix `world`, looks. */
-  void applyTo(Camera3D& camera, const glm::mat4& world) const
+  void applyTo(Camera& camera, const glm::mat4& world) const
   {
     camera.setPose(glm::vec3(world[3]),
                    glm::vec3(world[0]),
                    focusDistance,
                    glm::vec3(world[2]));
-    camera.projection = orthographic ? Camera3D::Projection::Orthographic
-                                     : Camera3D::Projection::Perspective;
+    camera.projection = orthographic ? Camera::Projection::Orthographic
+                                     : Camera::Projection::Perspective;
     const float magnify = glm::max(zoom, 0.01f);
     camera.fieldOfView =
         2.0f * glm::atan(glm::tan(glm::radians(fieldOfView) * 0.5f) / magnify);

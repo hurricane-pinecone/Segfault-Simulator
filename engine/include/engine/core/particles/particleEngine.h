@@ -128,7 +128,6 @@ public:
   // Advance every emitter and burst.
   void simulate(double deltaTime);
 
-  // Project live particles into drawable batches through the projection.
   // The live particles as drawn, a batch an effect instance.
   void sprites(std::vector<ParticleSpriteBatch>& out) const;
 

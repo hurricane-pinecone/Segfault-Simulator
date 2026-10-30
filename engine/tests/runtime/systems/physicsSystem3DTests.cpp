@@ -1,5 +1,5 @@
 #include "../../testHarness.h"
-#include "../rendering3d/mockRenderer3D.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/boxCollider3DComponent.h>
 #include <engine/core/components/nameComponent.h>
@@ -9,7 +9,7 @@
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
-#include <engine/runtime/rendering3d/scene3D.h>
+#include <engine/runtime/rendering/standardScene.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/sceneManager/sceneManager.h>
 #include <engine/runtime/scripting/scriptRegistry.h>
@@ -163,14 +163,13 @@ int main()
     world.run(kFrame);
 
     const auto hit =
-        world.physics.raycast(Ray3D{{0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}});
+        world.physics.raycast(Ray{{0.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}});
     CHECK(hit.has_value());
     CHECK(hit->entity == floor);
     CHECK(testing::approx(hit->distance, 10.0f, 1e-3f));
     CHECK(testing::approx(hit->normal.z, 1.0f, 1e-3f));
-    CHECK(
-        !world.physics.raycast(Ray3D{{50.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}})
-             .has_value());
+    CHECK(!world.physics.raycast(Ray{{50.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}})
+               .has_value());
   }
 
   TEST("moving a body's transform from code should move the body")
@@ -181,7 +180,7 @@ int main()
     wall.getComponent<TransformComponent>().position = {10.0f, 0.0f, 0.0f};
     world.run(kFrame);
     const auto hit =
-        world.physics.raycast(Ray3D{{10.0f, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
+        world.physics.raycast(Ray{{10.0f, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
     CHECK(hit.has_value() && hit->entity == wall);
   }
 
@@ -255,28 +254,28 @@ int main()
     CHECK(!world.physics.hasBody(crate));
   }
 
-  TEST("a Scene3D should have physics only when it lists the system")
+  TEST("a StandardScene should have physics only when it lists the system")
   {
     AssetStore store;
-    testing3d::MockRenderer3D renderer;
-    SceneServices services{.assetStore = store, .renderer3D = &renderer};
+    testing3d::MockRenderer renderer;
+    SceneServices services{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
     manager.setSceneServices(&services);
-    Scene3D& scene = *manager.createScene<Scene3D>();
+    StandardScene& scene = *manager.createScene<StandardScene>();
     CHECK(scene.physicsSystem() == nullptr);
     startScripts(scene, {"PhysicsSystem3D"});
     CHECK(scene.physicsSystem() != nullptr);
   }
 
-  TEST("game objects on a Scene3D should hear about their collisions and "
+  TEST("game objects on a StandardScene should hear about their collisions and "
        "triggers")
   {
     AssetStore store;
-    testing3d::MockRenderer3D renderer;
-    SceneServices services{.assetStore = store, .renderer3D = &renderer};
+    testing3d::MockRenderer renderer;
+    SceneServices services{.assetStore = store, .renderer = &renderer};
     SceneManager manager;
     manager.setSceneServices(&services);
-    Scene3D& scene = *manager.createScene<Scene3D>();
+    StandardScene& scene = *manager.createScene<StandardScene>();
     startScripts(
         scene, {"PhysicsSystem3D"}); // as when a scene lists it and plays
 
