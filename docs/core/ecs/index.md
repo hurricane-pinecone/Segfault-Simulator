@@ -61,6 +61,11 @@ components — e.g. `e.addTag<Player>()`.
 in headless use). This is handy for a tool that needs to list every entity
 regardless of which components it carries, such as a hierarchy panel.
 
+`scene.view<A, B, ...>()` narrows that to the entities carrying all of the
+given components (`registry.view<A, B, ...>()` in headless use), for an ad-hoc
+query from code that only has the scene, such as a script, rather than a
+system's own tracked membership (see [Systems](#systems) below).
+
 ## Systems
 
 A system declares which components it cares about and runs logic over the matching

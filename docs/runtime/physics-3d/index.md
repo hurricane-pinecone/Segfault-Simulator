@@ -5,7 +5,6 @@
 its 3D suffix (`RigidBody3DComponent`, `BoxCollider3DComponent`...) to tell it
 from a 2D game's movement and collision (`RigidBody2DComponent`,
 `BoxCollider2D`; see [Runtime systems](../systems/index.md#2d-movement-and-collision)).
-The web build has no 3D physics.
 
 ## Turning it on
 
@@ -135,8 +134,10 @@ Each frame, before the game objects update, the system:
    After a long hitch it drops the rest rather than trying to catch up.
 3. Writes dynamic bodies' new positions into their transforms.
 
-The engine's prebuilt Jolt package targets AVX2 CPUs, so games need an x86-64
-CPU from about 2013 or later. Physics isn't part of the web build.
+The engine's prebuilt Jolt package targets AVX2 CPUs, so a desktop game needs
+an x86-64 CPU from about 2013 or later. The web build compiles Jolt itself
+instead of using that package, so it has no such requirement; it runs
+wherever the browser's WebAssembly does.
 
 ## In the editor
 
