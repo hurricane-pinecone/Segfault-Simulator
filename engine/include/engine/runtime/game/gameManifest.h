@@ -27,6 +27,12 @@ struct GameManifest
   // RenderBackends);
   // empty: the player's first. Another is tried if it can't start.
   std::string backend;
+  // Wait for the display before showing a frame ("vsync"): no tearing, and
+  // no faster than the screen shows. On unless the game turns it off.
+  bool vsync = true;
+  // At most this many frames a second ("maxFrameRate"); 0: no cap (beyond
+  // vsync's).
+  double maxFrameRate = 0.0;
 
   /** Read `folder/game.json`; nothing (logged) if missing or invalid. */
   static std::optional<GameManifest> read(const std::filesystem::path& folder);

@@ -31,6 +31,12 @@ GameManifest::read(const std::filesystem::path& folder)
   manifest.windowWidth = json->value("windowWidth", manifest.windowWidth);
   manifest.windowHeight = json->value("windowHeight", manifest.windowHeight);
   manifest.backend = json->value("backend", std::string());
+  if (const auto vsync = json->find("vsync");
+      vsync != json->end() && vsync->is_boolean())
+    manifest.vsync = vsync->get<bool>();
+  if (const auto rate = json->find("maxFrameRate");
+      rate != json->end() && rate->is_number() && rate->get<double>() > 0.0)
+    manifest.maxFrameRate = rate->get<double>();
 
   if (manifest.startScene.empty())
   {
@@ -49,9 +55,12 @@ bool GameManifest::write(const std::filesystem::path& folder) const
                          {"module", module.generic_string()},
                          {"startScene", startScene.generic_string()},
                          {"windowWidth", windowWidth},
-                         {"windowHeight", windowHeight}};
+                         {"windowHeight", windowHeight},
+                         {"vsync", vsync}};
   if (!backend.empty())
     json["backend"] = backend;
+  if (maxFrameRate > 0.0)
+    json["maxFrameRate"] = maxFrameRate;
   return SceneSerializer::writeJsonFile(json, folder / kFileName);
 }
 

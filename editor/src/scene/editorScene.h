@@ -43,8 +43,16 @@ public:
   /** Remove every entity (applied immediately). */
   void clear();
 
-  /** Replace the contents with a starting layout: ground, a cube, a light. */
-  void resetToDefault();
+  /** The styles a new scene can start in. */
+  enum class Style
+  {
+    ThreeD,    // ground, a cube, a light
+    Flat,      // a flat 2D game's camera and a sprite
+    Isometric, // an isometric 2D game's camera and a sprite
+  };
+
+  /** Replace the contents (and the style) with a starting layout. */
+  void resetToDefault(Style style = Style::ThreeD);
 
 protected:
   void onInit() override;

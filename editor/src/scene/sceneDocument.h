@@ -1,5 +1,7 @@
 #pragma once
 
+#include "scene/editorScene.h"
+
 #include "nlohmann/json.hpp"
 
 #include <chrono>
@@ -8,7 +10,6 @@
 #include <optional>
 #include <utility>
 
-class EditorScene;
 
 // The scene file being edited: tracks its path and moves the EditorScene's
 // contents to and from disk (and memory, for Play/Stop and module reloads)
@@ -31,7 +32,7 @@ public:
   void setPath(const std::filesystem::path& path) { m_path = path; }
 
   /** Replace the scene with the default layout, not yet saved anywhere. */
-  void newScene();
+  void newScene(EditorScene::Style style = EditorScene::Style::ThreeD);
 
   /** Replace the scene with a file's contents. @return false (logged) on failure. */
   bool open(const std::filesystem::path& path);

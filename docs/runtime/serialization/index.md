@@ -22,8 +22,8 @@ replace a scene's contents, destroy its entities and call
 
 - **Every reflected component on every entity**, field by field. The engine's
   components are reflected (transforms, cameras, lights, sprites, 2D and 3D
-  physics, particle emitters, grass, meshes...); the few that aren't (such as
-  `WorldCollider` and the `SolidObject` tag) are left out.
+  physics, particle emitters, grass, meshes...). A component that isn't
+  reflected is left out.
 - **The [hierarchy](../../core/hierarchy/index.md)**, as nesting: an entity's
   children are listed under its `"children"` key, beside its components. A
   component can't be called `children`.
@@ -165,6 +165,7 @@ A scene still loads after the code it was saved with has changed:
 | Field removed or renamed | Ignored |
 | Field's type changed | Keeps its default; an error is logged |
 | Component saved under a retired engine name (`Transform3DComponent`, `Camera3DComponent`, `PointLight3DComponent`) | Loads as the current one (`TransformComponent`, `CameraComponent`, `PointLightComponent`) |
+| A retired sprite component (`SpriteTint`, `ShadowCasterComponent`) | Folded into the entity's `SpriteComponent` (its `tint`, `castsShadow`); dropped if it has none |
 | Component type not registered (renamed, removed, or its module not built yet) | Its data is kept on the entity and written back unchanged on save; it loads as a real component once the type exists |
 | Mesh name not found | A stand-in that keeps the name and draws nothing (an error is logged); saving writes the name back, and it loads as the real mesh once one has that name |
 | File from a newer format | Refused |

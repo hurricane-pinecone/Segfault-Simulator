@@ -15,10 +15,10 @@ sfs::SceneSerializer serializerFor(EditorScene& scene)
 }
 } // namespace
 
-void SceneDocument::newScene()
+void SceneDocument::newScene(EditorScene::Style style)
 {
   m_opening.reset();
-  m_scene->resetToDefault();
+  m_scene->resetToDefault(style);
   m_path.clear();
 }
 

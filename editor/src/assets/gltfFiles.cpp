@@ -1,6 +1,7 @@
 #include "assets/gltfFiles.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/atomicFile.h"
 
 #include "nlohmann/json.hpp"
 
@@ -103,9 +104,7 @@ bool move(sfs::AssetDatabase& assets, const sfs::AssetId& id, const fs::path& re
   if (!gltf.is_discarded() &&
       repoint(gltf, oldFolder, newFolder, dataId ? oldDataName : std::string(), newData.filename().string()))
   {
-    std::ofstream out(assets.root() / relative, std::ios::binary);
-    out << gltf.dump(2) << '\n';
-    if (!out)
+    if (!sfs::writeFileAtomically(assets.root() / relative, gltf.dump(2) + '\n'))
       LOG_ERROR("Moved " + relative.generic_string() + " but couldn't update the paths in it");
   }
   return true;

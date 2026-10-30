@@ -504,6 +504,31 @@ int main()
           bigger[0].texture != quads[0].texture);
   }
 
+  TEST("a font atlas should let go of faces unused through a frame, past its "
+       "limit, keeping the ones in use")
+  {
+    const std::filesystem::path font =
+        std::filesystem::path(__FILE__).parent_path() /
+        "../../../include/assets/fonts/m6x11.ttf";
+    FontAtlas atlas(
+        [&](const std::string&) { return font.string(); }, "fallback.ttf");
+    // UI scaled smoothly: a new size every frame.
+    std::vector<UiQuad> quads;
+    for (int size = 10; size < 10 + 3 * int(FontAtlas::kMostFaces); ++size)
+    {
+      atlas.beginFrame();
+      quads.clear();
+      atlas.draw(
+          "m6x11", float(size), "a", {0.0f, 0.0f}, glm::vec4(1.0f), quads);
+    }
+    CHECK(atlas.faceCount() <= FontAtlas::kMostFaces + 1);
+    // This frame's text is still drawable: its texture wasn't dropped.
+    CHECK(quads.size() == 1u && quads[0].texture != nullptr &&
+          !quads[0].texture->pixels.empty());
+    atlas.beginFrame();
+    CHECK(quads[0].texture->size.x > 0);
+  }
+
   TEST("UTF-8 should come apart into its codepoints")
   {
     std::u32string out;

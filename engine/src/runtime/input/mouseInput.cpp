@@ -6,6 +6,18 @@
 namespace sfs
 {
 
+namespace
+{
+// A button's index into the button arrays; a button past them (a mouse with
+// many) is ignored.
+template <std::size_t N>
+bool inRange(const std::array<bool, N>&, MouseButton button)
+{
+  const int index = static_cast<int>(button);
+  return index >= 0 && static_cast<std::size_t>(index) < N;
+}
+} // namespace
+
 void MouseInput::beginFrame()
 {
   previousButtons = currentButtons;
@@ -34,6 +46,8 @@ void MouseInput::block()
 
 void MouseInput::pressButton(MouseButton button)
 {
+  if (!inRange(currentButtons, button))
+    return;
   currentButtons[static_cast<int>(button)] = true;
 
   dragStartPosition = position;
@@ -44,6 +58,8 @@ void MouseInput::pressButton(MouseButton button)
 
 void MouseInput::releaseButton(MouseButton button)
 {
+  if (!inRange(currentButtons, button))
+    return;
   currentButtons[static_cast<int>(button)] = false;
 
   if (dragActive)
@@ -93,17 +109,23 @@ void MouseInput::processDrag()
 
 bool MouseInput::mouseHeld(MouseButton button) const
 {
+  if (!inRange(currentButtons, button))
+    return false;
   return currentButtons[static_cast<int>(button)];
 }
 
 bool MouseInput::mousePressed(MouseButton button) const
 {
+  if (!inRange(currentButtons, button))
+    return false;
   int b = static_cast<int>(button);
   return currentButtons[b] && !previousButtons[b];
 }
 
 bool MouseInput::mouseReleased(MouseButton button) const
 {
+  if (!inRange(currentButtons, button))
+    return false;
   int b = static_cast<int>(button);
   return !currentButtons[b] && previousButtons[b];
 }

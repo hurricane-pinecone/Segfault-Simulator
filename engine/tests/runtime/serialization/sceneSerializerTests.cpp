@@ -8,6 +8,7 @@
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/parentComponent.h>
 #include <engine/core/components/pointLightComponent.h>
+#include <engine/core/components/spriteComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
@@ -391,6 +392,35 @@ int main()
     CHECK(!root.hasComponent<UnresolvedComponents>());
     CHECK(testing::approx(
         entities[1].getComponent<TransformComponent>().position.z, 5.0f));
+
+    std::filesystem::remove_all(dir);
+  }
+
+  TEST("a sprite's old tint and shadow components should fold into it")
+  {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "sfsSceneSerializerSprite";
+    std::filesystem::create_directories(dir);
+    const nlohmann::json legacy = {
+        {"formatVersion", 1},
+        {"entities",
+         {{{"SpriteComponent", {{"image", "white_pixel"}}},
+           {"SpriteTint", {{"color", {0.5, 0.25, 1.0}}, {"alpha", 0.75}}},
+           {"ShadowCasterComponent", nlohmann::json::object()}}}}};
+    std::ofstream(dir / "old.scene") << legacy.dump();
+
+    World world;
+    CHECK(world.serializer().loadFile(dir / "old.scene", world.scene));
+    world.scene.flushEntities();
+
+    const auto entities = world.scene.entities();
+    CHECK(entities.size() == 1u);
+    const auto& sprite = entities[0].getComponent<SpriteComponent>();
+    CHECK(sprite.image == "white_pixel");
+    CHECK(testing::approx(sprite.tint.y, 0.25f));
+    CHECK(testing::approx(sprite.tint.w, 0.75f));
+    CHECK(sprite.castsShadow);
+    CHECK(!entities[0].hasComponent<UnresolvedComponents>());
 
     std::filesystem::remove_all(dir);
   }

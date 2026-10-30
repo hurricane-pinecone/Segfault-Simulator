@@ -6,7 +6,7 @@ namespace sfs
 
 void GameObject::destroy(Scene& scene)
 {
-  if (m_entity.isAlive())
+  if (m_entity.isValid() && m_entity.isAlive())
   {
     scene.destroyEntity(m_entity);
     m_entity = {};

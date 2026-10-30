@@ -11,8 +11,6 @@ Game     your application — window, the main loop, which scenes exist
 
 You never write the loop yourself; you override hooks and the engine drives them.
 
-![Ownership: the Game owns its scenes; each Scene owns its entities, systems, and game objects](../../images/high-level-ownership.png)
-
 ## Game — the application
 
 Subclass `Game` and override the hooks you need. The engine runs `init()` →
@@ -110,7 +108,7 @@ class MyScene : public sfs::Scene
 protected:
   void onInit() override
   {
-    addSystem<MovementSystem>();                       // register systems
+    addSystem<DriftSystem>();                          // register systems
     auto& render = addSystem<sfs::RenderSystem>(renderer());
     render.withModule<sfs::SpriteModule>(assetStore()); // what it draws
 
@@ -127,8 +125,8 @@ protected:
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
 `getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, plus the engine
 services: `assetStore()` and `renderer()`, the backend's renderer. Without a
-renderer (a headless host) `renderer()` logs and aborts; `tryRenderer()`
-returns null instead. See [Rendering](../rendering/index.md#scene-services).
+renderer (a headless host) `renderer()` is a fatal error (logged, and the game
+ends with a message); `tryRenderer()` returns null instead. See [Rendering](../rendering/index.md#scene-services).
 Without a `Space2D` the render system draws a 3D world; see
 [Styles](../rendering/styles/index.md) for a flat or isometric game.
 

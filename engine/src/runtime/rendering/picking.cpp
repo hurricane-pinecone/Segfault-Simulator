@@ -55,8 +55,7 @@ std::optional<Aabb> entityBounds(const Entity& entity,
   if (drawnBy && drawnBy->space2D())
   {
     const Space2D& space = *drawnBy->space2D();
-    const auto& transform = entity.getComponent<TransformComponent>();
-    position = space.place(transform.position2D(), transform.position.z);
+    position = space.place(glm::vec2(position), position.z);
     radius = 8.0f / std::max(space.pixelsPerUnit, 1.0e-3f);
   }
   Aabb marker;

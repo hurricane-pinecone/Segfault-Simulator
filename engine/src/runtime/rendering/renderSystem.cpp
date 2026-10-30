@@ -9,6 +9,7 @@
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
 #include "engine/runtime/rendering/iRenderer.h"
+#include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/matrix.hpp"
 
@@ -29,13 +30,7 @@ RenderSystem::RenderSystem(IRenderer& renderer)
 
 Entity RenderSystem::sceneCamera() const
 {
-  if (!registry)
-    return {};
-  for (const Entity& entity :
-       registry->view<TransformComponent, CameraComponent>())
-    if (entity.getComponent<CameraComponent>().active)
-      return entity;
-  return {};
+  return registry ? findActiveCamera(*registry) : Entity{};
 }
 
 Ray RenderSystem::screenRay(const glm::vec2& pixel) const
@@ -61,7 +56,7 @@ void RenderSystem::render()
     if (const Entity camera = sceneCamera(); camera.isValid())
     {
       const auto& lens = camera.getComponent<CameraComponent>();
-      glm::vec2 point = camera.getComponent<TransformComponent>().position2D();
+      glm::vec2 point = hierarchy::worldTransform(camera).position2D();
       if (camera.hasComponent<CameraFollowComponent>())
         point += camera.getComponent<CameraFollowComponent>().shakeOffset() *
                  glm::vec2(1.0f, m_space2D->ySign());
@@ -150,9 +145,11 @@ void RenderSystem::render()
   frame.bloom = camera.isValid()
                     ? camera.getComponent<CameraComponent>().bloomSettings()
                     : m_bloom;
-  frame.lighting = m_lighting;
+  frame.lighting = m_worldLighting;
   frame.wind = m_wind;
-  frame.haze = m_haze;
+  // Haze is distance from the camera, which in a 2D game is the same for
+  // everything on its plane: there it would only fog the whole picture.
+  frame.haze = m_space2D ? HazeSettings{0.0f, m_haze.distance} : m_haze;
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
   if (camera.isValid())
@@ -187,12 +184,22 @@ bool RenderSystem::buildContext(const glm::ivec2& viewport)
   m_context.viewProjection = m_camera.viewProjection(aspect);
   m_context.frustum = Frustum::fromViewProjection(m_context.viewProjection);
 
+  // A 2D game's sun shines from a direction of its own space (its plane's x
+  // and y, and z up from it): into the world's.
+  m_worldLighting = m_lighting;
+  if (m_space2D)
+  {
+    const glm::vec3 sun = m_space2D->direction(m_lighting.sun.direction);
+    if (glm::dot(sun, sun) > 0.0f)
+      m_worldLighting.sun.direction = glm::normalize(sun);
+  }
+
   // A sun below the horizon casts nothing, so skip the shadow pass entirely.
   m_context.shadowsEnabled =
-      m_shadows.enabled && m_lighting.sun.direction.z > 0.0f;
+      m_shadows.enabled && m_worldLighting.sun.direction.z > 0.0f;
   if (m_context.shadowsEnabled)
   {
-    m_lightViewProjection = fitSunShadow(m_lighting.sun.direction,
+    m_lightViewProjection = fitSunShadow(m_worldLighting.sun.direction,
                                          m_camera.target,
                                          m_shadows.distance,
                                          m_renderer.shadowMapResolution());
@@ -201,7 +208,7 @@ bool RenderSystem::buildContext(const glm::ivec2& viewport)
   }
 
   gatherPointLights();
-  m_context.lighting = &m_lighting;
+  m_context.lighting = &m_worldLighting;
   m_context.pointLights = &m_pointLights;
   m_context.shadowedLights = &m_shadowedLights;
   m_context.meshes = &m_meshes;
@@ -447,7 +454,7 @@ void RenderSystem::gatherPointLights()
     if (m_space2D)
     {
       radius *= m_space2D->scale();
-      const auto& transform = entity.getComponent<TransformComponent>();
+      const TransformComponent transform = hierarchy::worldTransform(entity);
       const glm::vec2 offset(light.offset.x, light.offset.y);
       if (m_space2D->projection == Space2D::Projection::Isometric)
         position = m_space2D->place(transform.position2D() + offset,
@@ -583,7 +590,7 @@ void RenderSystem::submit(const MeshDrawCommand& command)
 
 std::vector<ModuleSetting> RenderSystem::settings()
 {
-  return {
+  std::vector<ModuleSetting> out = {
       settings::floatRange(
           "Ambient",
           0.0f,
@@ -632,43 +639,49 @@ std::vector<ModuleSetting> RenderSystem::settings()
           },
           [this](int v)
           { m_shadows.pointResolution = kPointShadowResolutions[v]; }),
-      settings::floatRange(
-          "Wind direction",
-          0.0f,
-          360.0f,
-          [this] { return m_wind.direction; },
-          [this](float v) { m_wind.direction = v; }),
-      settings::floatRange(
-          "Wind strength",
-          0.0f,
-          1.0f,
-          [this] { return m_wind.strength; },
-          [this](float v) { m_wind.strength = v; }),
-      settings::floatRange(
-          "Wind gustiness",
-          0.0f,
-          1.0f,
-          [this] { return m_wind.gustiness; },
-          [this](float v) { m_wind.gustiness = v; }),
-      settings::floatRange(
-          "Haze",
-          0.0f,
-          1.0f,
-          [this] { return m_haze.strength; },
-          [this](float v) { m_haze.strength = v; }),
-      settings::floatRange(
-          "Haze distance",
-          5.0f,
-          1000.0f,
-          [this] { return m_haze.distance; },
-          [this](float v) { m_haze.distance = v; }),
-      settings::enumChoice(
-          "Projection",
-          {"Perspective", "Orthographic"},
-          [this] { return static_cast<int>(m_camera.projection); },
-          [this](int v)
-          { m_camera.projection = static_cast<Camera::Projection>(v); }),
   };
+  // Wind (what grass sways in) and haze are a 3D world's.
+  if (!m_space2D)
+    out.insert(out.end(),
+               {
+                   settings::floatRange(
+                       "Wind direction",
+                       0.0f,
+                       360.0f,
+                       [this] { return m_wind.direction; },
+                       [this](float v) { m_wind.direction = v; }),
+                   settings::floatRange(
+                       "Wind strength",
+                       0.0f,
+                       1.0f,
+                       [this] { return m_wind.strength; },
+                       [this](float v) { m_wind.strength = v; }),
+                   settings::floatRange(
+                       "Wind gustiness",
+                       0.0f,
+                       1.0f,
+                       [this] { return m_wind.gustiness; },
+                       [this](float v) { m_wind.gustiness = v; }),
+                   settings::floatRange(
+                       "Haze",
+                       0.0f,
+                       1.0f,
+                       [this] { return m_haze.strength; },
+                       [this](float v) { m_haze.strength = v; }),
+                   settings::floatRange(
+                       "Haze distance",
+                       5.0f,
+                       1000.0f,
+                       [this] { return m_haze.distance; },
+                       [this](float v) { m_haze.distance = v; }),
+               });
+  out.push_back(settings::enumChoice(
+      "Projection",
+      {"Perspective", "Orthographic"},
+      [this] { return static_cast<int>(m_camera.projection); },
+      [this](int v)
+      { m_camera.projection = static_cast<Camera::Projection>(v); }));
+  return out;
 }
 
 void RenderSystem::forEachModule(

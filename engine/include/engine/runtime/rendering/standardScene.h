@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sfs
@@ -77,6 +78,15 @@ public:
    */
   bool play(const std::filesystem::path& file);
 
+  /**
+   * Make an instance of a prefab ("asset:<id>") while the game runs, under
+   * `parent` (none: a root), and start its scripts: each entity's game object
+   * is made and its onCreate run, as when a scene starts.
+   *
+   * @return its root, or a placeholder (logged) if the prefab can't be read
+   */
+  Entity instantiate(std::string_view prefab, const Entity& parent = {});
+
 protected:
   /** Sets up rendering and the built-in meshes; overrides must call it first.
    */
@@ -84,10 +94,7 @@ protected:
   // Its UI (UiModule) takes clicks on it first.
   void filterInput(Input& input) override;
 
-  /**
-   * Swaps in models loaded in the background, and delivers the frame's
-   * physics contacts to game objects; overrides must call it.
-   */
+  /** Swaps in models loaded in the background; overrides must call it. */
   void onUpdate(double deltaTime) override;
 
 private:

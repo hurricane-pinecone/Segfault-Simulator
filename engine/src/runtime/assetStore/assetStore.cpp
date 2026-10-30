@@ -5,9 +5,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/material.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
-#include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/modelImporter.h"
-#include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/serialization/legacyComponentNames.h"
 #include "glm/glm/exponential.hpp"
@@ -17,6 +15,7 @@
 #include <fstream>
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <unordered_set>
 #include <utility>
 
 namespace sfs
@@ -36,8 +35,6 @@ void AssetStore::clearAssets()
 {
   m_surfaces.clear();
   m_imageTextures.clear();
-  m_sprites.clear();
-  m_spriteNameToId.clear();
   m_fonts.clear();
   m_models.clear();
   m_textures.clear();
@@ -45,6 +42,7 @@ void AssetStore::clearAssets()
   m_materials.clear();
   m_prefabs.clear();
   m_loading.clear(); // loads under way are dropped when they finish
+  m_lastUse.clear();
 
   LOG_DEBUG("Asset store cleared.");
 }
@@ -65,6 +63,7 @@ void AssetStore::setDatabase(const AssetDatabase* database)
 
 const ModelData* AssetStore::model(const AssetId& id)
 {
+  used(id);
   if (const auto it = m_models.find(id); it != m_models.end())
     return it->second ? &*it->second : nullptr;
 
@@ -105,6 +104,7 @@ AssetStore::LoadState AssetStore::requestModel(const AssetId& id,
                                                const ModelData** model)
 {
   *model = nullptr;
+  used(id);
   if (const auto it = m_models.find(id); it != m_models.end())
   {
     *model = it->second ? &*it->second : nullptr;
@@ -165,6 +165,7 @@ void AssetStore::collectLoads()
 
 std::shared_ptr<const TextureData> AssetStore::texture(const AssetId& id)
 {
+  used(id);
   if (const auto it = m_textures.find(id); it != m_textures.end())
     return it->second;
 
@@ -182,6 +183,7 @@ std::shared_ptr<const TextureData> AssetStore::texture(const AssetId& id)
 
 std::shared_ptr<const TextureData> AssetStore::dataTexture(const AssetId& id)
 {
+  used(id);
   if (const auto it = m_dataTextures.find(id); it != m_dataTextures.end())
     return it->second;
   std::shared_ptr<const TextureData> data = texture(id);
@@ -196,6 +198,7 @@ std::shared_ptr<const TextureData> AssetStore::dataTexture(const AssetId& id)
 
 std::shared_ptr<const MeshMaterial> AssetStore::material(const AssetId& id)
 {
+  used(id);
   if (const auto it = m_materials.find(id); it != m_materials.end())
     return it->second;
 
@@ -283,6 +286,7 @@ void AssetStore::forgetTexture(const AssetId& id)
 
 std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
 {
+  used(id);
   if (const auto it = m_prefabs.find(id); it != m_prefabs.end())
     return it->second;
 
@@ -320,6 +324,55 @@ std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
 }
 
 void AssetStore::forgetPrefab(const AssetId& id) { m_prefabs.erase(id); }
+
+void AssetStore::beginUseTracking() { ++m_useEpoch; }
+
+std::size_t AssetStore::collectUnused()
+{
+  const auto unused = [this](const AssetId& id)
+  {
+    const auto it = m_lastUse.find(id);
+    return it == m_lastUse.end() || it->second < m_useEpoch;
+  };
+  std::size_t dropped = 0;
+  const auto drop = [&](auto& assets)
+  {
+    dropped += std::erase_if(
+        assets, [&](const auto& entry) { return unused(entry.first); });
+  };
+  drop(m_models);
+  drop(m_materials);
+  drop(m_prefabs);
+
+  // A kept material's textures stay (else asking for one again would read a
+  // second copy).
+  std::unordered_set<const TextureData*> kept;
+  for (const auto& [id, material] : m_materials)
+    if (material)
+    {
+      kept.insert(material->baseTexture.get());
+      kept.insert(material->metallicRoughnessTexture.get());
+      kept.insert(material->normalTexture.get());
+      for (const auto& texture : material->shaderTextures)
+        kept.insert(texture.get());
+    }
+  const auto dropTextures = [&](auto& textures)
+  {
+    dropped += std::erase_if(
+        textures,
+        [&](const auto& entry)
+        { return unused(entry.first) && !kept.contains(entry.second.get()); });
+  };
+  dropTextures(m_textures);
+  dropTextures(m_dataTextures);
+
+  std::erase_if(
+      m_lastUse, [&](const auto& entry) { return entry.second < m_useEpoch; });
+  if (dropped > 0)
+    LOG_INFO("Let go of " + std::to_string(dropped) +
+             " assets the new scene doesn't use");
+  return dropped;
+}
 
 namespace
 {
@@ -438,12 +491,17 @@ AssetStore::spriteFrame(const std::string& image, int frame)
   const glm::vec2 texels(out.sheet->width, out.sheet->height);
   out.pixels = texels;
 
-  // A texture asset may be a grid of frames.
+  // A texture asset may be a grid of frames, and have its own scale.
   glm::ivec2 cell{0, 0};
   if (image.starts_with("asset:") && m_database)
     if (const std::optional<AssetId> id = AssetId::parse(image.substr(6)))
       if (const AssetRecord* record = m_database->find(*id))
-        cell = TextureImportSettings::fromJson(record->settings).spriteCell;
+      {
+        const TextureImportSettings settings =
+            TextureImportSettings::fromJson(record->settings);
+        cell = settings.spriteCell;
+        out.pixelsPerUnit = settings.pixelsPerUnit;
+      }
   const glm::ivec2 grid(cell.x > 0 ? int(texels.x) / cell.x : 0,
                         cell.y > 0 ? int(texels.y) / cell.y : 0);
   if (grid.x <= 0 || grid.y <= 0)
@@ -468,211 +526,6 @@ SDL_Surface* AssetStore::getSurface(const std::string& assetId) const
     return nullptr;
 
   return it->second.get();
-}
-
-SpriteId AssetStore::addSprite(const std::string& textureId,
-                               const std::string& spriteName,
-                               SDL_Rect srcRect)
-{
-  const auto id = m_nextSpriteId++;
-  auto sn = toLower(spriteName);
-
-  m_sprites.emplace(id, Sprite{id, textureId, sn, srcRect});
-  m_spriteNameToId[sn] = id;
-
-  LOG_DEBUG("Created sprite: " + sn);
-
-  return id;
-}
-
-SpriteId AssetStore::getOrCreateSprite(const std::string& spriteName,
-                                       const std::string& path,
-                                       SDL_Rect src)
-{
-  auto sprite = getSprite(spriteName);
-
-  SpriteId spriteId;
-
-  if (!sprite)
-  {
-    addTexture(spriteName, path);
-    spriteId = addSprite(spriteName, spriteName, src);
-  }
-  else
-  {
-    spriteId = sprite->id;
-  }
-  return spriteId;
-}
-
-std::pair<SpriteId, SpriteId>
-AssetStore::getOrCreateSpriteWithNormal(const std::string& spriteName,
-                                        const std::string& path,
-                                        SDL_Rect src,
-                                        const std::string& normal)
-{
-  std::string normalPath = normal;
-  if (normal == "")
-  {
-    size_t dot = path.find_last_of('.');
-    normalPath = path.substr(0, dot) + "_normal" + path.substr(dot);
-  }
-
-  return std::make_pair(
-      getOrCreateSprite(spriteName, path, src),
-      getOrCreateSprite(spriteName + "_normal", normalPath, src));
-}
-
-std::vector<SpriteId>
-AssetStore::addSprites(const std::string& textureId,
-                       const std::vector<SpriteRegion>& regions)
-{
-  std::vector<SpriteId> ids;
-
-  for (const auto& region : regions)
-  {
-    ids.push_back(addSprite(textureId, region.name, region.srcRect));
-  }
-
-  return ids;
-}
-
-SpriteId AssetStore::addSpriteFromSheet(const std::string& textureId,
-                                        const std::string& spriteName,
-                                        uint16_t width,
-                                        uint16_t height,
-                                        uint16_t col,
-                                        uint16_t row,
-                                        uint8_t gap,
-                                        uint8_t padding)
-{
-  SDL_Rect srcRect{padding + col * (width + gap),
-                   padding + row * (height + gap),
-                   width,
-                   height};
-
-  return addSprite(textureId, spriteName, srcRect);
-}
-
-std::vector<SpriteId>
-AssetStore::addSpritesFromSheet(const std::string& textureId,
-                                const std::string& baseSpriteName,
-                                uint16_t width,
-                                uint16_t height,
-                                uint8_t gap,
-                                uint8_t padding)
-{
-  SDL_Surface* surface = getSurface(textureId);
-
-  if (!surface)
-  {
-    LOG_ERROR("Surface not found for sprite sheet: " + textureId);
-    return {};
-  }
-
-  const int textureWidth = surface->w;
-  const int textureHeight = surface->h;
-
-  const int cols = (textureWidth - padding * 2 + gap) / (width + gap);
-  const int rows = (textureHeight - padding * 2 + gap) / (height + gap);
-
-  std::vector<SpriteId> ids;
-
-  for (int row = 0; row < rows; row++)
-  {
-    for (int col = 0; col < cols; col++)
-    {
-      int count = row * cols + col;
-      std::string name = baseSpriteName + "_" + std::to_string(count);
-
-      ids.push_back(addSpriteFromSheet(
-          textureId, name, width, height, col, row, gap, padding));
-    }
-  }
-
-  return ids;
-}
-
-void AssetStore::loadAsepriteAtlas(const std::string& textureId,
-                                   const std::string& jsonPath)
-{
-  std::ifstream file(jsonPath);
-
-  if (!file)
-  {
-    LOG_ERROR("Failed to open atlas JSON: " + jsonPath);
-    return;
-  }
-
-  json data;
-  file >> data;
-
-  for (auto& [key, value] : data["frames"].items())
-  {
-    const auto& frame = value["frame"];
-
-    SDL_Rect srcRect{frame["x"], frame["y"], frame["w"], frame["h"]};
-
-    std::string name = key;
-
-    auto start = name.find("(");
-    auto end = name.find(")");
-
-    if (start == std::string::npos || end == std::string::npos || end <= start)
-    {
-      addSprite(textureId, name, srcRect);
-      continue;
-    }
-
-    std::string plant = name.substr(start + 1, end - start - 1);
-
-    int stage = 0;
-
-    try
-    {
-      stage = std::stoi(name.substr(end + 2));
-    }
-    catch (...)
-    {
-      addSprite(textureId, plant, srcRect);
-      continue;
-    }
-
-    std::string cleanName = plant + "_stage_" + std::to_string(stage);
-
-    addSprite(textureId, cleanName, srcRect);
-  }
-}
-
-void AssetStore::removeSprite(SpriteId spriteId)
-{
-  auto it = m_sprites.find(spriteId);
-
-  if (it == m_sprites.end())
-    return;
-
-  m_spriteNameToId.erase(it->second.name);
-  m_sprites.erase(it);
-}
-
-const Sprite* AssetStore::getSprite(SpriteId spriteId) const
-{
-  auto it = m_sprites.find(spriteId);
-
-  if (it == m_sprites.end())
-    return nullptr;
-
-  return &it->second;
-}
-
-const Sprite* AssetStore::getSprite(const std::string& spriteId) const
-{
-  auto it = m_spriteNameToId.find(toLower(spriteId));
-
-  if (it == m_spriteNameToId.end())
-    return nullptr;
-
-  return getSprite(it->second);
 }
 
 TTF_Font* AssetStore::addFont(const std::string& fontId,

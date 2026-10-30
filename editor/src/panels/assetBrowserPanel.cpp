@@ -17,6 +17,7 @@
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/core/util/atomicFile.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
@@ -631,7 +632,7 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context,
     if (json.is_discarded() || !json.is_object())
       return;
     json["id"] = sfs::AssetId::generate().toString();
-    std::ofstream(meta) << json.dump(2) << "\n";
+    sfs::writeFileAtomically(meta, json.dump(2) + "\n");
   };
   if (directory)
   {
@@ -672,7 +673,7 @@ std::vector<fs::path> AssetBrowserPanel::copyInto(EditorContext& context,
           for (nlohmann::json& buffer : gltf["buffers"])
             if (buffer.value("uri", std::string()) == bin.filename().string())
               buffer["uri"] = newBin.filename().string();
-          std::ofstream(target) << gltf.dump(2);
+          sfs::writeFileAtomically(target, gltf.dump(2));
         }
       }
     }
@@ -850,8 +851,9 @@ void AssetBrowserPanel::refresh(EditorContext& context)
   m_scan = std::async(std::launch::async,
                       [root = m_scanRoot,
                        mode = context.assets->mode(),
-                       folders = context.assets->scannedFolders()] {
-                        return sfs::AssetDatabase::scan(root, mode, folders);
+                       folders = context.assets->scannedFolders(),
+                       previous = context.assets->records()] {
+                        return sfs::AssetDatabase::scan(root, mode, folders, previous);
                       });
 }
 

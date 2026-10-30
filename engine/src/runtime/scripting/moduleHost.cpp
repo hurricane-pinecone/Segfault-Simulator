@@ -2,12 +2,14 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/gameModule.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 
 #include <SDL_loadso.h>
 #include <SDL_timer.h>
 
+#include <string>
 #include <system_error>
 
 namespace sfs
@@ -56,6 +58,24 @@ bool ModuleHost::load(const std::filesystem::path& module,
     return false;
   }
 
+  // Built against this engine? Its types' layouts and the engine's must
+  // agree, or the first call into it can crash.
+  const auto abi = reinterpret_cast<sfs::ModuleAbiEntryPoint>(
+      SDL_LoadFunction(handle, sfs::kModuleAbiEntryPoint));
+  const std::string moduleAbi = abi && abi() ? abi() : "";
+  if (moduleAbi != sfs::kEngineAbi)
+  {
+    LOG_ERROR("The game module " + module.filename().string() +
+              " was built for a different engine (" +
+              (moduleAbi.empty() ? std::string("an older one") : moduleAbi) +
+              "; this is " + sfs::kEngineAbi +
+              "): rebuild it against this engine");
+    SDL_UnloadObject(handle);
+    if (!copy.empty())
+      std::filesystem::remove(copy, error);
+    return false;
+  }
+
   const auto entry = reinterpret_cast<sfs::ModuleEntryPoint>(
       SDL_LoadFunction(handle, sfs::kModuleEntryPoint));
   if (!entry)
@@ -83,6 +103,9 @@ void ModuleHost::unload()
   if (!m_handle)
     return;
 
+  // Loaded scriptable objects may be of the module's types (their
+  // destructors are its code).
+  sfs::scriptableObjects().clearModule(m_moduleName);
   sfs::reflect::types().removeModule(m_moduleName);
   sfs::scripts().removeModule(m_moduleName);
   SDL_UnloadObject(m_handle);

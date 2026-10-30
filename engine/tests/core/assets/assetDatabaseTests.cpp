@@ -182,6 +182,47 @@ int main()
     CHECK(database.findByPath("b.png")->id.valid());
   }
 
+  TEST("a copy sorting before the original should not take its id")
+  {
+    TempFolder root("sfs_assets_copy_first");
+    touch(root.path / "a.png");
+    AssetDatabase database(root.path);
+    const AssetId original = database.findByPath("a.png")->id;
+    // "a - Copy.png" sorts before "a.png" (' ' < '.').
+    fs::copy_file(root.path / "a.png", root.path / "a - Copy.png");
+    fs::copy_file(root.path / "a.png.meta", root.path / "a - Copy.png.meta");
+
+    CHECK(database.refresh());
+    CHECK(database.findByPath("a.png")->id == original);
+    CHECK(database.findByPath("a - Copy.png")->id != original);
+    CHECK(database.findByPath("a - Copy.png")->id.valid());
+    CHECK(database.find(original)->path == fs::path("a.png"));
+    // And on disk: a fresh catalogue agrees.
+    CHECK(AssetDatabase(root.path).findByPath("a.png")->id == original);
+  }
+
+  TEST("a corrupt .meta should be left alone, its file listed without an id")
+  {
+    TempFolder root("sfs_assets_corrupt");
+    touch(root.path / "tree.png");
+    touch(root.path / "rock.png");
+    AssetDatabase(root.path); // writes both .meta files
+    const std::string corrupt = "<<<<<<< HEAD\n{\"id\": \"0123\"}\n=======\n";
+    touch(root.path / "tree.png.meta", corrupt.c_str());
+    touch(root.path / "rock.png.meta", ""); // empty: an old crash's
+
+    AssetDatabase database(root.path);
+    const AssetRecord* tree = database.findByPath("tree.png");
+    CHECK(tree != nullptr);
+    CHECK(tree && !tree->id.valid());
+    std::ifstream in(root.path / "tree.png.meta");
+    const std::string kept{
+        std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    CHECK(kept == corrupt); // not overwritten
+    // An empty one had nothing to keep: a new id.
+    CHECK(database.findByPath("rock.png")->id.valid());
+  }
+
   TEST("delete, new folder and import should update the catalogue and disk")
   {
     TempFolder root("sfs_assets_edit");

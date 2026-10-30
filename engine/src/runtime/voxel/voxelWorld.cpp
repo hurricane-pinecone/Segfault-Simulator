@@ -2,6 +2,7 @@
 
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/util/profiling.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/common.hpp"
@@ -384,11 +385,11 @@ void VoxelWorld::update(double deltaTime)
   // The fluid sim runs every frame regardless of camera movement.
   simulateWater(deltaTime);
 
-  const ActiveCamera camera = findActiveCamera(*registry);
-  if (!camera.transform)
+  const Entity camera = findActiveCamera(*registry);
+  if (!camera.isValid())
     return;
 
-  const glm::vec2 focus = camera.getCameraPosition();
+  const glm::vec2 focus = hierarchy::worldTransform(camera).position2D();
   const glm::ivec2 focusTile{static_cast<int>(glm::floor(focus.x)),
                              static_cast<int>(glm::floor(focus.y))};
 

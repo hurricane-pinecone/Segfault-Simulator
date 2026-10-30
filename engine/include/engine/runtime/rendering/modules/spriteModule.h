@@ -16,9 +16,9 @@ class AssetStore;
 
 /**
  * Draws SpriteComponent entities: each a quad mesh showing its sprite sheet
- * frame (MeshInstance::uvRect), with the sheet as its material, lit and
- * shadowed like any mesh. Sheets with soft edges draw see-through; the rest
- * are cut out at half alpha.
+ * frame (MeshInstance::uvRect), with the sheet (and its normal map) as its
+ * material, lit like any mesh, tinted, and shadowing if it casts shadows.
+ * Sheets with soft edges draw see-through; the rest are cut out at half alpha.
  *
  * Flat sprites belong to a 2D game: placed by its Space2D (flat or
  * isometric; see RenderSystem::setSpace2D), lying in the XY plane, each
@@ -38,7 +38,11 @@ public:
 
   explicit SpriteModule(AssetStore& assets, Facing facing = Facing::Auto);
 
-  /** Upright sprites' pixels per world unit (a 2D game's: its Space2D's). */
+  /**
+   * In 3D, the pixels per world unit of sprites whose image doesn't set its
+   * own (TextureImportSettings::pixelsPerUnit); default 1. A 2D game's are its
+   * Space2D's.
+   */
   void setPixelsPerUnit(float pixels) { m_pixelsPerUnit = pixels; }
 
   void setFacing(Facing facing) { m_facing = facing; }

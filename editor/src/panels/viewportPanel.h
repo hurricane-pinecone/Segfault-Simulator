@@ -3,6 +3,7 @@
 #include "camera/viewportCamera.h"
 #include "panels/panel.h"
 
+#include "engine/core/components/transformComponent.h"
 #include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/backend/iRenderBackend.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
@@ -12,6 +13,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Shows the edited scene: the backend renders the scene into an offscreen
@@ -86,7 +88,8 @@ private:
   void handleShortcuts(EditorContext& context);
   // True while the gizmo is hovered or dragging (so clicks don't pick).
   bool drawGizmo(EditorContext& context, const View& view);
-  // A 2D game's: moves (turns, scales) on its plane, through its Space2D.
+  // A 2D game's: moves (turns, scales) the selection on its plane, through
+  // its Space2D.
   bool drawPlanarGizmo(EditorContext& context, const View& view, bool snapping);
   // Several selected: the gizmo in their middle, each moving, turning and
   // scaling as much as it does (about its own origin). `operation` is an
@@ -132,6 +135,10 @@ private:
   Tool m_tool = Tool::Move;
   bool m_localSpace = false;
   glm::mat4 m_groupHandles{1.0f}; // the gizmo's, with several selected
+  // A 2D game's gizmo: its handles now (m_groupHandles: as the drag
+  // started), and the world transforms of what it moves, as the drag started.
+  glm::mat4 m_planarHandles{1.0f};
+  std::vector<std::pair<sfs::Entity, sfs::TransformComponent>> m_planarStart;
   bool m_snap = false;
   bool m_gizmosInEdit = true;
   bool m_gizmosInPlay = false;

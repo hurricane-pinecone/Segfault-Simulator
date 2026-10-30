@@ -2,6 +2,7 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/assetStore/textureImporter.h"
+#include "engine/core/util/atomicFile.h"
 
 #include <cctype>
 #include <fstream>
@@ -67,14 +68,10 @@ std::optional<sfs::AssetId> create(sfs::AssetDatabase& assets,
   std::error_code error;
   fs::create_directories(assets.root() / folder, error);
   const fs::path relative = freeName(assets, folder, safeName(name), ".mat");
+  if (!sfs::writeFileAtomically(assets.root() / relative, material.toJson().dump(2) + "\n"))
   {
-    std::ofstream out(assets.root() / relative);
-    out << material.toJson().dump(2) << "\n";
-    if (!out)
-    {
-      LOG_ERROR("Can't write the material " + relative.generic_string());
-      return std::nullopt;
-    }
+    LOG_ERROR("Can't write the material " + relative.generic_string());
+    return std::nullopt;
   }
   assets.refresh();
   if (const sfs::AssetRecord* record = assets.findByPath(relative))
@@ -98,11 +95,10 @@ bool write(const sfs::AssetDatabase& assets,
            const sfs::AssetRecord& record,
            const sfs::MaterialAsset& material)
 {
-  std::ofstream out(assets.absolutePath(record));
-  out << material.toJson().dump(2) << "\n";
-  if (!out)
-    LOG_ERROR("Can't save the material " + record.path.generic_string());
-  return static_cast<bool>(out);
+  if (sfs::writeFileAtomically(assets.absolutePath(record), material.toJson().dump(2) + "\n"))
+    return true;
+  LOG_ERROR("Can't save the material " + record.path.generic_string());
+  return false;
 }
 
 std::optional<sfs::AssetId> extract(sfs::AssetDatabase& assets,

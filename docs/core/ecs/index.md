@@ -5,8 +5,6 @@ optional Unity-style **GameObject** layer on top. You'll use both: ECS for
 data-driven behaviour over many entities, GameObjects for individually scripted
 actors.
 
-![The ECS: entities carry components; systems run over the entities that match a component signature](../../images/ecs.png)
-
 ## The model
 
 - **Entity** — a lightweight id. It holds no data itself; you attach components.
@@ -57,6 +55,18 @@ scene.destroyEntity(e);
 `addTag<T>()` is `addComponent<T>()` read more naturally for empty marker
 components — e.g. `e.addTag<Player>()`.
 
+A reference from `getComponent` stays good while other entities get
+components (each type's storage grows in pages that never move), until that
+component is removed or its entity destroyed. `removeComponent` destroys the
+component, and the entity leaves (or, adding one, joins) the systems that no
+longer (or now) match it.
+
+An `Entity` is a handle: an id and a generation. Once its entity is destroyed
+(at the next flush) `isAlive()` is false, even after a new entity reuses the
+id, and `hasComponent` is false. Reading or changing the components of an
+entity that isn't alive, or of a default-made `Entity`, is a fatal error (see
+below) naming the component and why, instead of reading another entity's data.
+
 `scene.entities()` returns every living entity, in id order (`registry.entities()`
 in headless use). This is handy for a tool that needs to list every entity
 regardless of which components it carries, such as a hierarchy panel.
@@ -68,7 +78,7 @@ entities each frame. Subclass `System`, register its components in `create()`, a
 do the work in `update()`:
 
 ```cpp
-class MovementSystem : public sfs::System
+class DriftSystem : public sfs::System
 {
 protected:
   void create() override
@@ -98,21 +108,30 @@ components), `update(double dt)` (per frame), and `render()` (per frame, after
 update). Add it to a scene and fetch it later:
 
 ```cpp
-scene.addSystem<MovementSystem>();
+scene.addSystem<DriftSystem>();
 
-MovementSystem& move = scene.getSystem<MovementSystem>(); // system must be present
-if (scene.hasSystem<MovementSystem>()) { /* ... */ }
+DriftSystem& drift = scene.getSystem<DriftSystem>(); // system must be present
+if (scene.hasSystem<DriftSystem>()) { /* ... */ }
 
 // When presence is conditional, use tryGetSystem -- it returns null if absent.
-if (MovementSystem* opt = scene.tryGetSystem<MovementSystem>())
+if (DriftSystem* opt = scene.tryGetSystem<DriftSystem>())
 {
   // ...
 }
 ```
 
 `getSystem<T>()` asserts the system was registered. Calling it for an absent
-system is a programming error: the engine logs the missing type and aborts.
-Use `tryGetSystem<T>()` when a system may or may not be present.
+system is a programming error: a fatal error (`sfs::fatalError`, which logs
+it and throws `sfs::FatalError`) naming the missing type. The game loop
+catches it, tells the player in a message box and ends the game. Use
+`tryGetSystem<T>()` when a system may or may not be present.
+
+`scene.view<A, B>()` makes a list; `registry->each<A, B>(fn)` (in a system)
+calls `fn(entity, a, b)` for each match without one, for code that runs every
+frame.
+
+A program can have at most `MAX_COMPONENTS` (128) component types; one more is
+a fatal error when it's first used.
 
 `setEnabled(false)` skips a system's update/render (handy for debug toggles).
 
@@ -144,6 +163,17 @@ sfs::Entity& e = player.entity();           // the underlying entity
 Player* p = scene.tryFindObject<Player>();   // find one later (or nullptr)
 ```
 
+`scene.destroyObject(&player)` destroys an object and its entity. Inside an
+update, input or contact callback it only marks it (it gets no more calls, and
+isn't found); once they're done its `onDestroy()` runs and it's deleted.
+Destroying an object's entity (`scene.destroyEntity`) destroys the object too,
+at the next flush, and a scene's objects get `onDestroy()` when it ends.
+Objects made during an update start getting updates next frame.
+
+In a `StandardScene` (a scene file played), `scene.instantiate("asset:<id>")`
+makes a prefab's instance while the game runs and starts its scripts, as when
+the scene started.
+
 Rule of thumb: use **systems** for behaviour over many homogeneous entities
 (movement, physics, rendering); use **GameObjects** for individually scripted
 actors. Both sit on the same entities, so they compose freely.
@@ -161,7 +191,7 @@ sfs::Entity e = reg.createEntity();
 e.addComponent<Position>(Position{1.0f, 2.0f});
 e.addComponent<Velocity>(Velocity{0.0f, 1.0f});
 
-reg.addSystem<MovementSystem>(); // create() runs immediately
+reg.addSystem<DriftSystem>();    // create() runs immediately
 reg.flushEntities();             // distributes new entities to matched systems
 
 reg.destroyEntity(e);

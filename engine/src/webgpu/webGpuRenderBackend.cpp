@@ -47,7 +47,10 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
 
   if (!m_context.init(m_window))
     return false;
-  m_context.configure(width, height);
+  // In pixels: more than the window's size on a high-DPI screen that counts
+  // it in points.
+  SDL_GetWindowSizeInPixels(m_window, &m_width, &m_height);
+  m_context.configure(m_width, m_height);
 
   m_renderer = std::make_unique<WebGpuRenderer>(m_context);
   if (!m_renderer->initialize())
@@ -216,11 +219,24 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
   m_width = width;
   m_height = height;
 
+  // Nothing to draw into (a window of no size): the frame is skipped.
+  if (width <= 0 || height <= 0)
+  {
+    m_surfTex = {};
+    m_view = nullptr;
+    m_encoder = nullptr;
+    m_renderer->setTarget(nullptr, nullptr, {0, 0});
+    return;
+  }
+
   wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
   if (m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
       m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
   {
     // Lost/outdated surface: reconfigure and skip recording this frame.
+    if (m_surfTex.texture)
+      wgpuTextureRelease(m_surfTex.texture);
+    m_surfTex = {};
     m_context.configure(width, height);
     m_view = nullptr;
     m_encoder = nullptr;

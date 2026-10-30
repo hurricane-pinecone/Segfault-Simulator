@@ -57,7 +57,8 @@ interface every backend implements:
 | `onResize(w, h)` | Called when the window changes size |
 | `sceneServices()` | The renderer and asset store scenes are constructed with |
 | `beginFrame(w, h)` / `endFrame()` | Acquire and clear the backbuffer; submit and present |
-| `setVsync(on)` | Wait for the display when presenting. Set before `init()`. |
+| `setVsync(on)` | Wait for the display when presenting, before `init()` or any time after. |
+| `deviceLost()` | Whether the GPU device was lost; `Game` ends the game (with a message) if so. |
 | `shutdown()` | Destroy all GPU resources while the device is still valid |
 
 ImGui integration is optional: `imguiProcessEvent`, `imguiNewFrame`,
@@ -103,9 +104,13 @@ window opens hidden and shows once the first frame is drawn, so it never sits
 black while the GPU is set up.
 
 By default it presents without waiting for the display (Mailbox, else
-Immediate), so frame timings show what the GPU can do. `setVsync(true)`
-before `init()` caps the frame rate at the display's refresh rate, as the
-editor does.
+Immediate), so frame timings show what the GPU can do. `setVsync(true)` caps
+the frame rate at the display's refresh rate, as the editor and an exported
+game (unless its `game.json` says `"vsync": false`) do; `Game::setVsync`
+changes it while the game runs, and `Game::setMaxFrameRate` (`"maxFrameRate"`
+in `game.json`) caps it further. The surface is sized in pixels, which on a
+high-DPI screen is more than the window's size in points; mouse positions are
+given in the same pixels.
 
 `SFS_SCREENSHOT=<file.png>` draws the scene offscreen and saves frame
 `SFS_SCREENSHOT_FRAME` (60 by default) there, for checking how a game looks

@@ -9,12 +9,20 @@
   #include <webgpu/wgpu.h>
 #endif
 
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <string>
 
 namespace sfs
 {
+
+struct WebGpuDeviceState
+{
+  std::atomic<bool> lost{false};
+  std::atomic<bool> releasing{false}; // a loss now is the context's own doing
+};
+
 namespace
 {
 void logStr(const char* label, WGPUStringView s)
@@ -99,7 +107,9 @@ WGPUAdapter requestAdapterSync(WGPUInstance instance, WGPUSurface surface)
   return out.adapter;
 }
 
-WGPUDevice requestDeviceSync(WGPUAdapter adapter, bool* hasTimestamps)
+WGPUDevice requestDeviceSync(WGPUAdapter adapter,
+                             bool* hasTimestamps,
+                             WebGpuDeviceState* deviceState)
 {
   struct Out
   {
@@ -145,6 +155,26 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter, bool* hasTimestamps)
               "): " +
               std::string(message.data ? message.data : "",
                           message.data ? message.length : 0));
+  };
+  // Losing the device (a driver crash or update, the GPU removed) ends the
+  // game: Game asks deviceLost() after each frame.
+  desc.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
+  desc.deviceLostCallbackInfo.userdata1 = deviceState;
+  desc.deviceLostCallbackInfo.callback = [](WGPUDevice const*,
+                                            WGPUDeviceLostReason reason,
+                                            WGPUStringView message,
+                                            void* state,
+                                            void*)
+  {
+    auto* device = static_cast<WebGpuDeviceState*>(state);
+    // Released on purpose (shutting down): not a loss.
+    if (reason == WGPUDeviceLostReason_Destroyed ||
+        reason == WGPUDeviceLostReason_InstanceDropped ||
+        (device && device->releasing.load()))
+      return;
+    logStr("The WebGPU device was lost", message);
+    if (device)
+      device->lost.store(true);
   };
   WGPURequestDeviceCallbackInfo cb = {};
   cb.mode = kRequestMode;
@@ -225,13 +255,15 @@ bool WebGpuContext::init(SDL_Window* window)
     return false;
   }
 
-  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps);
+  m_deviceState = new WebGpuDeviceState; // kept: see m_deviceState
+  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps, m_deviceState);
   if (!m_device)
   {
     LOG_ERROR("Failed to acquire WebGPU device");
     return false;
   }
   m_queue = wgpuDeviceGetQueue(m_device);
+  readLimits();
 
   WGPUSurfaceCapabilities caps = {};
   wgpuSurfaceGetCapabilities(m_surface, m_adapter, &caps);
@@ -254,8 +286,34 @@ bool WebGpuContext::init(SDL_Window* window)
       m_unsynced = WGPUPresentMode_Immediate;
   }
   m_present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
+  wgpuSurfaceCapabilitiesFreeMembers(caps);
 
   return true;
+}
+
+void WebGpuContext::readLimits()
+{
+  WGPULimits limits = {};
+  if (wgpuDeviceGetLimits(m_device, &limits) == WGPUStatus_Success &&
+      limits.maxTextureDimension2D > 0 &&
+      limits.maxTextureDimension2D != WGPU_LIMIT_U32_UNDEFINED)
+    m_maxTextureSize = limits.maxTextureDimension2D;
+}
+
+void WebGpuContext::setVsync(bool vsync)
+{
+  m_vsync = vsync;
+  const WGPUPresentMode present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
+  if (present == m_present)
+    return;
+  m_present = present;
+  if (m_surface && m_width > 0 && m_height > 0)
+    configure(m_width, m_height);
+}
+
+bool WebGpuContext::deviceLost() const
+{
+  return m_deviceState && m_deviceState->lost.load();
 }
 
 bool WebGpuContext::initHeadless(WGPUTextureFormat format)
@@ -280,13 +338,15 @@ bool WebGpuContext::initHeadless(WGPUTextureFormat format)
     LOG_ERROR("Failed to acquire WebGPU adapter");
     return false;
   }
-  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps);
+  m_deviceState = new WebGpuDeviceState; // kept: see m_deviceState
+  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps, m_deviceState);
   if (!m_device)
   {
     LOG_ERROR("Failed to acquire WebGPU device");
     return false;
   }
   m_queue = wgpuDeviceGetQueue(m_device);
+  readLimits();
   m_format = format;
   m_surfaceFormat = format;
   return true;
@@ -294,6 +354,10 @@ bool WebGpuContext::initHeadless(WGPUTextureFormat format)
 
 void WebGpuContext::configure(int width, int height)
 {
+  if (!m_surface || width <= 0 || height <= 0)
+    return;
+  m_width = width;
+  m_height = height;
   configureSurface(m_surface, width, height);
 }
 
@@ -301,6 +365,9 @@ void WebGpuContext::configureSurface(WGPUSurface surface,
                                      int width,
                                      int height) const
 {
+  // A surface of no size can't be configured (a minimized window's).
+  if (!surface || !m_device || width <= 0 || height <= 0)
+    return;
   WGPUSurfaceConfiguration cfg = {};
   cfg.device = m_device;
   cfg.format = m_surfaceFormat;
@@ -344,15 +411,29 @@ void WebGpuContext::poll(bool wait) const
 
 void WebGpuContext::release()
 {
-  if (m_surface)
+  if (m_deviceState)
+    m_deviceState->releasing.store(true);
+  if (m_surface && m_width > 0)
     wgpuSurfaceUnconfigure(m_surface);
-  // wgpu-native cleans device/adapter/instance/surface up at process exit; the
-  // app holds a single context for its whole lifetime.
+  // Device last but one (what was made on it holds references to it), then
+  // what it came from.
+  if (m_queue)
+    wgpuQueueRelease(m_queue);
+  if (m_device)
+    wgpuDeviceRelease(m_device);
+  if (m_adapter)
+    wgpuAdapterRelease(m_adapter);
+  if (m_surface)
+    wgpuSurfaceRelease(m_surface);
+  if (m_instance)
+    wgpuInstanceRelease(m_instance);
   m_queue = nullptr;
   m_device = nullptr;
   m_adapter = nullptr;
   m_surface = nullptr;
   m_instance = nullptr;
+  m_width = m_height = 0;
+  m_deviceState = nullptr; // kept for a late callback; see the header
 }
 
 } // namespace sfs

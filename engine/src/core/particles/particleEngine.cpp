@@ -2,6 +2,7 @@
 
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/particles/decalSplatter.h"
 // Pulled in for the Entity::getComponent<T> template definitions in entity.inl.
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
@@ -125,35 +126,9 @@ bool ParticleEngine::spawnBurst(const std::string& effect,
 
   EmitterInstance inst;
   inst.effect = fx;
-  inst.screenSpace = desc.space == SimulationSpace::Screen;
   inst.origin = worldPos;
   inst.groundLevel = elevation;
   inst.emitting = false; // one-shot: emit the pending burst, then drain
-  inst.pendingBurst = desc.burstCount > 0 ? desc.burstCount : 1;
-  inst.rng = (m_burstSeed += 0x9e3779b9u) | 1u;
-  applySpawnParams(inst, spawn);
-
-  m_bursts.push_back(std::move(inst));
-  return true;
-}
-
-bool ParticleEngine::spawnScreenBurst(const std::string& effect,
-                                      glm::vec2 screenPos,
-                                      const ParticleSpawnParams& spawn)
-{
-  const EffectId fx = effectIdOf(effect);
-
-  if (fx < 0)
-    return false;
-
-  const ParticleEffectDesc& desc = m_effects[fx];
-
-  EmitterInstance inst;
-  inst.effect = fx;
-  inst.screenSpace = true;
-  inst.origin = screenPos;
-  inst.groundLevel = 0.0f;
-  inst.emitting = false;
   inst.pendingBurst = desc.burstCount > 0 ? desc.burstCount : 1;
   inst.rng = (m_burstSeed += 0x9e3779b9u) | 1u;
   applySpawnParams(inst, spawn);
@@ -325,8 +300,8 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     p.height += p.velZ * dt;
     p.rotation += p.angularVel * dt;
 
-    // Screen particles and effects without a GroundBehavior never collide.
-    if (inst.screenSpace || desc.ground == GroundBehavior::None)
+    // Effects without a GroundBehavior never collide.
+    if (desc.ground == GroundBehavior::None)
     {
       ++i;
       continue;
@@ -578,7 +553,8 @@ void ParticleEngine::syncComponentEmitters()
     if (fx < 0)
       continue; // unknown effect name -- skip
 
-    const auto& transform = entity.getComponent<TransformComponent>();
+    // Where it is in the world (a child emitter follows its parent).
+    const TransformComponent transform = hierarchy::worldTransform(entity);
 
     const float ground = transform.position.z; // its height above the plane
 
@@ -595,7 +571,6 @@ void ParticleEngine::syncComponentEmitters()
       inst.rng = (entity.getId() * 747796405u + 2891336453u) | 1u;
     }
 
-    inst.screenSpace = m_effects[fx].space == SimulationSpace::Screen;
     inst.origin = transform.position2D() + glm::vec2(emitter.offset);
     inst.groundLevel = ground;
     inst.spawnHeightBias = emitter.offset.z;
@@ -651,7 +626,6 @@ void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
     ParticleSpriteBatch batch;
     batch.textureId = &desc.texture;
     batch.blend = desc.blend;
-    batch.screenSpace = inst.screenSpace;
     const int cols = glm::max(1, desc.frameCols);
     const int rows = glm::max(1, desc.frameRows);
     const int frames = cols * rows;
@@ -667,7 +641,7 @@ void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
       if (sprite.color.a <= 0.0f || sprite.size <= 0.0f)
         continue;
       sprite.position = p.pos;
-      sprite.height = inst.screenSpace ? 0.0f : inst.groundLevel + p.height;
+      sprite.height = inst.groundLevel + p.height;
       sprite.rotation = p.rotation;
       if (frames > 1)
       {

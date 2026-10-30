@@ -12,6 +12,8 @@
 namespace sfs
 {
 
+class Scene;
+
 /** Where a raycast hit a physics body. */
 struct RaycastHit3D
 {
@@ -32,13 +34,19 @@ struct RaycastHit3D
  * dynamic body may be a child). Moving a body's transform from code teleports
  * it; for a kinematic body it's a move that pushes what's in the way.
  *
- * StandardScene adds one. The editor keeps it disabled while editing, so
- * nothing falls until Play.
+ * Contacts that begin or end (touching, or passing through a trigger) are
+ * told to the game objects on both entities (GameObject::onCollisionEnter and
+ * the rest) when it knows its scene, and kept as contactsBegun() and
+ * contactsEnded().
+ *
+ * A scene lists it by name ("PhysicsSystem3D") to have physics. The editor
+ * keeps it disabled while editing, so nothing falls until Play.
  */
 class PhysicsSystem3D : public System
 {
 public:
-  PhysicsSystem3D();
+  /** `scene`: whose game objects hear about contacts (none: nobody's). */
+  explicit PhysicsSystem3D(Scene* scene = nullptr);
   ~PhysicsSystem3D() override;
 
   PhysicsSystem3D(const PhysicsSystem3D&) = delete;
@@ -80,6 +88,7 @@ protected:
 private:
   struct Impl;
   std::unique_ptr<Impl> m;
+  Scene* m_scene = nullptr;
 };
 
 } // namespace sfs

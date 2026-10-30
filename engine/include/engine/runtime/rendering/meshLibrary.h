@@ -260,7 +260,17 @@ private:
   std::unordered_map<uint32_t, Entry> m_meshes;
   uint32_t m_nextMissingId = kMissingIdBase;
   bool m_missingExpected = false;
-  std::unordered_map<std::string, MaterialHandle>
+  // Looked up by string_view without making a string (MeshModule asks for
+  // every drawn entity's materials every frame).
+  struct NameHash
+  {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view name) const
+    {
+      return std::hash<std::string_view>()(name);
+    }
+  };
+  std::unordered_map<std::string, MaterialHandle, NameHash, std::equal_to<>>
       m_materials; // invalid: not found
   // What each of m_materials is, by handle id.
   std::unordered_map<uint32_t, std::shared_ptr<const MeshMaterial>>

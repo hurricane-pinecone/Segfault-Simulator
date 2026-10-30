@@ -372,10 +372,16 @@ MeshHandle WebGpuRenderer::createMesh(const MeshData& mesh)
   else
   {
     slot = static_cast<uint32_t>(m_meshes.size());
+    if (slot >= kMeshSlotMask)
+    {
+      LOG_ERROR("Too many meshes (" + std::to_string(slot) + ")");
+      return {};
+    }
     m_meshes.emplace_back(std::move(gpu));
+    m_meshGenerations.push_back(0);
   }
 
-  return MeshHandle{slot + 1};
+  return MeshHandle{(slot + 1) | (m_meshGenerations[slot] << kMeshSlotBits)};
 }
 
 void WebGpuRenderer::destroyMesh(MeshHandle mesh)
@@ -383,8 +389,10 @@ void WebGpuRenderer::destroyMesh(MeshHandle mesh)
   if (!findMesh(mesh))
     return;
 
-  const uint32_t slot = mesh.id - 1;
+  const uint32_t slot = meshSlotOf(mesh);
   m_meshes[slot].reset();
+  // Handles to it no longer match the slot.
+  m_meshGenerations[slot] = (m_meshGenerations[slot] + 1) % kMeshGenerations;
   m_freeSlots.push_back(slot);
 }
 
@@ -862,11 +870,7 @@ void WebGpuRenderer::encodeGrass(WGPURenderPassEncoder pass)
     m_boundPipeline = nullptr; // the mesh pipelines need setting again after
 
     // The ground first, tinted where grass covers it.
-    const uint32_t meshSlot = batch.mesh.id - 1;
-    const GpuMesh* mesh =
-        batch.mesh.id > 0 && meshSlot < m_meshes.size() && m_meshes[meshSlot]
-            ? &*m_meshes[meshSlot]
-            : nullptr;
+    const GpuMesh* mesh = findMesh(batch.mesh);
     if (const WGPURenderPipeline ground =
             mesh ? grassPipeline(*material->surface, true) : nullptr)
     {
@@ -931,7 +935,7 @@ void WebGpuRenderer::drawMesh(const MeshBatch& batch)
             : mesh->sections[i].material;
     hasBlend = hasBlend || isSeeThrough(material.alphaMode);
   }
-  m_plan.addMesh(batch, batch.mesh.id - 1, plannedMesh(*mesh), hasBlend);
+  m_plan.addMesh(batch, meshSlotOf(batch.mesh), plannedMesh(*mesh), hasBlend);
 }
 
 void WebGpuRenderer::endFrame()
@@ -1048,12 +1052,31 @@ WebGpuRenderer::uploadTexture(const std::shared_ptr<const TextureData>& texture)
     m_textures.erase(it);
   }
 
+  // Bigger than the device can make (a huge image, a modest GPU): halved
+  // until it fits.
+  uint32_t width = texture->width, height = texture->height;
+  const std::vector<uint8_t>* texels = &texture->rgba;
+  std::vector<uint8_t> shrunk;
+  const uint32_t most = std::max(m_context.maxTextureSize(), 1u);
+  if (width > most || height > most)
+    LOG_INFO("A " + std::to_string(width) + "x" + std::to_string(height) +
+             " texture is bigger than this GPU allows (" +
+             std::to_string(most) + "); it's drawn at a smaller size");
+  while (width > most || height > most)
+  {
+    uint32_t nextWidth = 0, nextHeight = 0;
+    shrunk = halve(*texels, width, height, nextWidth, nextHeight);
+    texels = &shrunk;
+    width = nextWidth;
+    height = nextHeight;
+  }
+
   const WGPUDevice device = m_context.device();
-  const uint32_t levels = mipLevels(texture->width, texture->height);
+  const uint32_t levels = mipLevels(width, height);
   WGPUTextureDescriptor desc = {};
   desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
   desc.dimension = WGPUTextureDimension_2D;
-  desc.size = {texture->width, texture->height, 1};
+  desc.size = {width, height, 1};
   // Colour images are sRGB, so sampling gives linear colour; data stays as is.
   desc.format = texture->linear ? WGPUTextureFormat_RGBA8Unorm
                                 : WGPUTextureFormat_RGBA8UnormSrgb;
@@ -1066,11 +1089,9 @@ WebGpuRenderer::uploadTexture(const std::shared_ptr<const TextureData>& texture)
   if (!gpu->texture)
     return nullptr;
 
-  uint32_t width = texture->width, height = texture->height;
-  writeLevel(
-      m_context.queue(), gpu->texture.get(), 0, texture->rgba, width, height);
+  writeLevel(m_context.queue(), gpu->texture.get(), 0, *texels, width, height);
   std::vector<uint8_t> level;
-  const std::vector<uint8_t>* previous = &texture->rgba;
+  const std::vector<uint8_t>* previous = texels;
   for (uint32_t i = 1; i < levels; ++i)
   {
     uint32_t nextWidth = 0, nextHeight = 0;
@@ -2625,10 +2646,14 @@ WGPURenderPipeline WebGpuRenderer::pipelineFor(const Surface& surface,
 
 const WebGpuRenderer::GpuMesh* WebGpuRenderer::findMesh(MeshHandle mesh) const
 {
-  if (!mesh.valid() || mesh.id > m_meshes.size())
+  if (!mesh.valid() || (mesh.id & kMeshSlotMask) == 0)
+    return nullptr;
+  const uint32_t index = meshSlotOf(mesh);
+  if (index >= m_meshes.size() ||
+      m_meshGenerations[index] != mesh.id >> kMeshSlotBits)
     return nullptr;
 
-  const std::optional<GpuMesh>& slot = m_meshes[mesh.id - 1];
+  const std::optional<GpuMesh>& slot = m_meshes[index];
   return slot ? &*slot : nullptr;
 }
 

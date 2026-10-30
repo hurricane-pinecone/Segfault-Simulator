@@ -35,7 +35,12 @@ public:
   EntityId getId() const { return id; };
   DebugId getDebugId() const { return debugId; }
   uint32_t getGeneration() const { return generation; }
+  // Whether it still exists: not destroyed (and flushed), and not a stale
+  // handle to an id since reused by another entity (its generation differs).
+  // Reading or changing the components of an entity that isn't alive is a
+  // fatal error (see fatalError()); hasComponent() is simply false.
   bool isAlive() const;
+  // Whether it's an entity at all (not default-made); see isAlive().
   bool isValid() const { return id != InvalidId && registry != nullptr; }
 
   void setRegistry(Registry* registry) { this->registry = registry; }

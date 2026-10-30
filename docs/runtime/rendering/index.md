@@ -74,7 +74,7 @@ A scene reaches the backend's renderer and the asset store through the
 
 | Accessor | Returns |
 | --- | --- |
-| `renderer()` | The renderer. Logs and aborts if the backend has none. |
+| `renderer()` | The renderer. A fatal error if the backend has none. |
 | `tryRenderer()` | The renderer, or null (for code that also runs headless). |
 | `assetStore()` | The asset store: images, sprites, fonts, models, materials |
 

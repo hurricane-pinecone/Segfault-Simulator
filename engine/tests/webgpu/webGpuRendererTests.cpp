@@ -1429,5 +1429,40 @@ int main()
     CHECK(reportErrors());
   }
 
+  TEST("a mesh handle kept after its mesh is destroyed should find nothing, "
+       "even once another mesh has its place")
+  {
+    const MeshHandle old =
+        harness.renderer.createMesh(meshes::plane({1.0f, 1.0f}));
+    CHECK(old.valid());
+    harness.renderer.destroyMesh(old);
+    const MeshHandle next =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    CHECK(next.valid());
+    CHECK(next != old);
+    CHECK(!harness.renderer.hasMesh(old));
+    CHECK(harness.renderer.hasMesh(next));
+    harness.renderer.destroyMesh(old); // stale: leaves `next` alone
+    CHECK(harness.renderer.hasMesh(next));
+    harness.renderer.destroyMesh(next);
+    CHECK(reportErrors());
+  }
+
+  TEST("a texture bigger than the device allows should be drawn smaller, not "
+       "fail")
+  {
+    auto wide = std::make_shared<TextureData>();
+    wide->width = context.maxTextureSize() * 2;
+    wide->height = 2;
+    wide->rgba.assign(std::size_t(wide->width) * wide->height * 4, 200);
+    MeshMaterial material;
+    material.baseTexture = wide;
+    const MaterialHandle handle = harness.renderer.createMaterial(material);
+    CHECK(handle.valid());
+    harness.draw(handle);
+    harness.renderer.destroyMaterial(handle);
+    CHECK(reportErrors());
+  }
+
   return testing::report("webGpuRendererTests");
 }

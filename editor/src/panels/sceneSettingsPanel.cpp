@@ -206,6 +206,9 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
       lighting.sun.direction,
       [](glm::vec3& v)
       { return ImGui::DragFloat3("Sun Direction", &v.x, 0.01f); });
+  if (render.space2D())
+    ImGui::SetItemTooltip("Where the sun shines from, in the game's space: x and y across\n"
+                          "its plane, z up from it (toward the viewer, in a flat game)");
   lightingChanged |= widgets::undoable(
       &history,
       lighting.sun.color,
@@ -251,5 +254,6 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
               stats.pointLights,
               stats.emissionLights,
               stats.shadowedLights);
-  ImGui::Text("Grass fields: %zu", stats.grassFields);
+  if (!render.space2D())
+    ImGui::Text("Grass fields: %zu", stats.grassFields);
 }

@@ -150,6 +150,22 @@ void ScriptableObjects::clear()
   m_types.clear();
 }
 
+void ScriptableObjects::clearModule(std::string_view module)
+{
+  std::erase_if(m_loaded,
+                [module](auto& entry)
+                {
+                  Loaded& loaded = entry.second;
+                  const reflect::TypeInfo* info =
+                      reflect::types().find(loaded.type);
+                  if (!loaded.object || !info || info->module != module)
+                    return false;
+                  if (loaded.destroy)
+                    loaded.destroy(loaded.object);
+                  return true;
+                });
+}
+
 nlohmann::json ScriptableObjects::fileContents(const std::string& type,
                                                const nlohmann::json& fields)
 {

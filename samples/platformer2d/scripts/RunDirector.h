@@ -470,9 +470,9 @@ inline void RunDirector::onCreate(sfs::Scene& scene)
       sfs::TransformComponent(glm::vec2(m_wallX, 0.0f), glm::vec2(2.5f, 5.0f)));
   sfs::SpriteComponent look;
   look.image = glitch;
+  look.tint = glm::vec4(1.4f, 1.2f, 1.4f, 0.92f);
   m_wall.addComponent<sfs::SpriteComponent>(look);
   m_wall.addComponent<sfs::RenderLayerComponent>(4);
-  m_wall.addComponent<sfs::SpriteTint>(glm::vec3(1.4f, 1.2f, 1.4f), 0.92f);
   m_wall.addComponent<sfs::PointLightComponent>(glm::vec3(1.0f, 0.25f, 0.8f),
                                                 4.0f,
                                                 900.0f,

@@ -27,7 +27,13 @@ MeshMaterial imageMaterial(AssetStore& assets,
 {
   MeshMaterial material;
   material.baseTexture = assets.imageTexture(image);
-  if (!normalImage.empty())
+  // Normals are data, not colour: a texture asset's are read as such.
+  if (normalImage.starts_with("asset:"))
+  {
+    if (const std::optional<AssetId> id = AssetId::parse(normalImage.substr(6)))
+      material.normalTexture = assets.dataTexture(*id);
+  }
+  else if (!normalImage.empty())
     material.normalTexture = assets.imageTexture(normalImage);
   material.roughness = 1.0f;
   material.alphaMode = mode;

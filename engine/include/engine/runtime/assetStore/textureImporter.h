@@ -24,6 +24,9 @@ struct TextureImportSettings
   // pixels each, numbered across then down from the top left; 0: the whole
   // image is one sprite.
   glm::ivec2 spriteCell{0, 0};
+  // "pixelsPerUnit": drawn as a sprite, its pixels per world unit (a 64 pixel
+  // sprite at 32 is 2 units tall); 0: the scene's (a 2D game's Space2D's).
+  float pixelsPerUnit = 0.0f;
 
   static TextureImportSettings fromJson(const nlohmann::json& settings);
 };

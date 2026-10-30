@@ -3,8 +3,8 @@
 3D games get rigid-body physics from `PhysicsSystem3D`, built on
 [Jolt Physics](https://github.com/jrouwe/JoltPhysics). As in Unity, it keeps
 its 3D suffix (`RigidBody3DComponent`, `BoxCollider3DComponent`...) to tell it
-from a 2D game's movement and collision (`RigidBody2DComponent`,
-`BoxCollider2D`; see [Runtime systems](../systems/index.md#2d-movement-and-collision)).
+from a 2D game's physics (`PhysicsSystem2D`, `RigidBody2DComponent`,
+`BoxCollider2D`; see [Runtime systems](../systems/index.md#2d-physics)).
 The web build has no 3D physics.
 
 ## Turning it on
@@ -99,8 +99,10 @@ protected:
 | `onTriggerEnter(collision)` / `onTriggerExit` | It starts or stops overlapping, where one of the two is a trigger |
 
 `collision.other` is the entity it touched. Each pair reports one enter and one
-exit, however many points touch. Callbacks arrive after the frame's
-`onUpdate`s.
+exit, however many points touch. `PhysicsSystem3D` tells the game objects
+itself, as it updates (before the objects' own `onUpdate`s), when it knows its
+scene: a scene that lists it gets one that does. One made in code is told with
+`addSystem<sfs::PhysicsSystem3D>(&scene)`.
 
 A **trigger** collider detects bodies passing through instead of blocking them,
 like a pickup, a checkpoint or a zone that opens a door. An entity whose

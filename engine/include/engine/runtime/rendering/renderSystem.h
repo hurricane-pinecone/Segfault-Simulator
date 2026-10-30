@@ -99,7 +99,11 @@ public:
   void clearSpace2D() { m_space2D.reset(); }
   const std::optional<Space2D>& space2D() const { return m_space2D; }
 
-  /** Sun, ambient and sky (e.g. driven by a day/night cycle). */
+  /**
+   * Sun, ambient and sky (e.g. driven by a day/night cycle). A 2D game's sun
+   * direction is in its own space: x and y across its plane (y down the
+   * screen if it runs down), z up from it (toward the viewer, in a flat game).
+   */
   void setLighting(const SceneLighting& lighting) { m_lighting = lighting; }
   const SceneLighting& lighting() const { return m_lighting; }
 
@@ -113,7 +117,7 @@ public:
   void setWindSettings(const WindSettings& settings) { m_wind = settings; }
   const WindSettings& windSettings() const { return m_wind; }
 
-  /** The scene's haze (see HazeSettings). */
+  /** The scene's haze (see HazeSettings); a 3D scene's only. */
   void setHazeSettings(const HazeSettings& settings) { m_haze = settings; }
   const HazeSettings& hazeSettings() const { return m_haze; }
 
@@ -186,6 +190,7 @@ private:
   std::optional<Space2D> m_space2D;
   bool m_followSceneCamera = true;
   SceneLighting m_lighting;
+  SceneLighting m_worldLighting; // this frame's: the sun in the world's space
   ShadowSettings m_shadows;
   BloomSettings m_bloom;
   WindSettings m_wind;

@@ -1,8 +1,12 @@
 #include "../../testHarness.h"
 
 #include <engine/core/ecs/ecs.h>
+#include <engine/core/util/fatalError.h>
 
 #include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace sfs;
 
@@ -25,6 +29,35 @@ struct Health
 struct Enemy
 {
 }; // data-free tag
+
+// Runs `body`, which should stop with a FatalError; its message, or empty if
+// it didn't.
+template <typename Body>
+std::string fatalMessage(Body&& body)
+{
+  try
+  {
+    body();
+  }
+  catch (const FatalError& error)
+  {
+    return error.what();
+  }
+  return {};
+}
+
+template <int N>
+struct Numbered
+{
+  int value = N;
+};
+
+// Every Numbered<0>..Numbered<N-1> registers a component type.
+template <int... Ns>
+void registerNumbered(std::integer_sequence<int, Ns...>)
+{
+  (Component<Numbered<Ns>>::getId(), ...);
+}
 
 // Interested in entities that have both Position and Velocity.
 class MovementSystem : public System
@@ -284,6 +317,178 @@ int main()
     CHECK(reg.createEntity().getId() == a.getId());
     CHECK(reg.createEntity().getId() == b.getId());
     CHECK(reg.createEntity().getId() == c.getId());
+  }
+
+  TEST("a component reference should stay good while the pool grows")
+  {
+    Registry reg;
+    Entity first = reg.createEntity();
+    first.addComponent<Health>(Health{7});
+    Health& health = first.getComponent<Health>();
+    for (int i = 0; i < 1000; ++i)
+      reg.createEntity().addComponent<Health>(Health{i});
+    CHECK(&health == &first.getComponent<Health>());
+    CHECK(health.hp == 7);
+  }
+
+  TEST("a stale handle should not read the components of its id's new entity")
+  {
+    Registry reg;
+    Entity old = reg.createEntity();
+    old.addComponent<Health>(Health{1});
+    reg.flushEntities();
+    reg.destroyEntity(old);
+    reg.flushEntities();
+
+    Entity reused = reg.createEntity();
+    reused.addComponent<Health>(Health{2});
+    CHECK(reused.getId() == old.getId());
+    CHECK(!old.isAlive());
+    CHECK(!old.hasComponent<Health>());
+    const std::string message =
+        fatalMessage([&] { (void)old.getComponent<Health>(); });
+    CHECK(message.find("destroyed") != std::string::npos);
+    CHECK(message.find("Health") != std::string::npos);
+    CHECK(reused.getComponent<Health>().hp == 2);
+  }
+
+  TEST("component access on a dead or invalid entity should be a fatal error")
+  {
+    Registry reg;
+    Entity e = reg.createEntity();
+    reg.flushEntities();
+    CHECK(fatalMessage([&] { (void)e.getComponent<Health>(); })
+              .find("has no such component") != std::string::npos);
+    reg.destroyEntity(e);
+    reg.flushEntities();
+    CHECK(!fatalMessage([&] { e.addComponent<Health>(); }).empty());
+    e.removeComponent<Health>(); // nothing to remove: no error
+
+    Entity none;
+    CHECK(!none.hasComponent<Health>());
+    CHECK(!none.isAlive());
+    CHECK(!fatalMessage([&] { (void)none.getComponent<Health>(); }).empty());
+    CHECK(!fatalMessage([&] { none.addComponent<Health>(); }).empty());
+  }
+
+  TEST("removeComponent should destroy the component")
+  {
+    static int alive = 0;
+    struct Counted
+    {
+      Counted() { ++alive; }
+      Counted(const Counted&) { ++alive; }
+      ~Counted() { --alive; }
+    };
+    Registry reg;
+    Entity e = reg.createEntity();
+    e.addComponent<Counted>();
+    CHECK(alive == 1);
+    e.removeComponent<Counted>();
+    CHECK(alive == 0);
+    CHECK(!e.hasComponent<Counted>());
+  }
+
+  TEST("adding and removing components should move a live entity between "
+       "systems")
+  {
+    Registry reg;
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    reg.flushEntities();
+    CHECK(movement.getEntities().empty());
+
+    e.addComponent<Velocity>(); // now it matches
+    CHECK(movement.getEntities().size() == 1u);
+    e.addComponent<Velocity>(Velocity{1.0f, 0.0f}); // again: still once
+    CHECK(movement.getEntities().size() == 1u);
+
+    e.removeComponent<Position>(); // no longer
+    CHECK(movement.getEntities().empty());
+  }
+
+  TEST("destroying many entities should leave each system's list right")
+  {
+    Registry reg;
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    std::vector<Entity> made;
+    for (int i = 0; i < 200; ++i)
+    {
+      Entity e = reg.createEntity();
+      e.addComponent<Position>();
+      e.addComponent<Velocity>();
+      made.push_back(e);
+    }
+    reg.flushEntities();
+    CHECK(movement.getEntities().size() == 200u);
+    for (std::size_t i = 0; i < made.size(); i += 2)
+      reg.destroyEntity(made[i]);
+    reg.flushEntities();
+    CHECK(movement.getEntities().size() == 100u);
+    bool onlyOdd = true;
+    for (const Entity& e : movement.getEntities())
+      onlyOdd = onlyOdd && e.getId() % 2 == 1;
+    CHECK(onlyOdd);
+  }
+
+  TEST("an entity made and destroyed before a flush should join no system")
+  {
+    Registry reg;
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    e.addComponent<Velocity>();
+    reg.destroyEntity(e);
+    reg.flushEntities();
+    CHECK(movement.getEntities().empty());
+  }
+
+  TEST("each should visit the matching living entities with their components")
+  {
+    Registry reg;
+    Entity a = reg.createEntity();
+    a.addComponent<Position>(Position{1.0f, 0.0f});
+    a.addComponent<Velocity>();
+    Entity b = reg.createEntity();
+    b.addComponent<Position>(Position{2.0f, 0.0f});
+    Entity c = reg.createEntity();
+    c.addComponent<Position>(Position{3.0f, 0.0f});
+    c.addComponent<Velocity>();
+    reg.flushEntities();
+    reg.destroyEntity(c);
+    reg.flushEntities();
+
+    std::vector<float> seen;
+    reg.each<Position, Velocity>(
+        [&](const Entity& entity, Position& position, Velocity&)
+        {
+          CHECK(entity == a);
+          seen.push_back(position.x);
+        });
+    CHECK(seen.size() == 1u);
+    reg.each<Health>([&](const Entity&, Health&) { seen.clear(); });
+    CHECK(seen.size() == 1u); // no entity has had a Health
+  }
+
+  TEST("getSystem on a missing system should be a fatal error naming it")
+  {
+    Registry reg;
+    const std::string message =
+        fatalMessage([&] { (void)reg.getSystem<MovementSystem>(); });
+    CHECK(message.find("MovementSystem") != std::string::npos);
+  }
+
+  TEST("more component types than MAX_COMPONENTS should be a fatal error")
+  {
+    // However many the program has registered so far, this many more is past
+    // the limit.
+    const std::string message = fatalMessage(
+        [] {
+          registerNumbered(std::make_integer_sequence<int, MAX_COMPONENTS>());
+        });
+    CHECK(message.find("MAX_COMPONENTS") != std::string::npos);
+    CHECK(message.find("Numbered") != std::string::npos);
   }
 
   return testing::report("ecsTests");

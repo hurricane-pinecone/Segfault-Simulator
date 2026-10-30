@@ -22,14 +22,10 @@ void EditorHistory::endChange()
   if (!m_pendingBefore || !m_context.document)
     return;
 
-  nlohmann::json after = m_context.document->snapshot();
+  const nlohmann::json after = m_context.document->snapshot();
   if (after != *m_pendingBefore)
   {
-    m_undo.push_back(
-        {std::move(*m_pendingBefore), std::move(after), m_pendingSelection, currentSelection()});
-    if (m_undo.size() > kMaxSteps)
-      m_undo.pop_front();
-    m_redo.clear();
+    m_steps.push(*m_pendingBefore, after, m_pendingSelection, currentSelection());
     ++m_revision;
   }
   m_pendingBefore.reset();
@@ -37,20 +33,17 @@ void EditorHistory::endChange()
 
 void EditorHistory::amendLast()
 {
-  if (m_pendingBefore || m_undo.empty() || !m_context.document)
+  if (m_pendingBefore || !m_steps.canUndo() || !m_context.document)
     return;
-  m_undo.back().after = m_context.document->snapshot();
-  m_undo.back().selectionAfter = currentSelection();
+  m_steps.amendLast(m_context.document->snapshot(), currentSelection());
 }
 
 void EditorHistory::undo()
 {
   if (!canUndo() || m_pendingBefore)
     return;
-  Step step = std::move(m_undo.back());
-  m_undo.pop_back();
-  apply(step.before, step.selectionBefore);
-  m_redo.push_back(std::move(step));
+  if (const std::optional<HistorySteps::Restore> restore = m_steps.undo())
+    apply(restore->snapshot, restore->selection);
   ++m_revision;
 }
 
@@ -58,27 +51,19 @@ void EditorHistory::redo()
 {
   if (!canRedo() || m_pendingBefore)
     return;
-  Step step = std::move(m_redo.back());
-  m_redo.pop_back();
-  apply(step.after, step.selectionAfter);
-  m_undo.push_back(std::move(step));
+  if (const std::optional<HistorySteps::Restore> restore = m_steps.redo())
+    apply(restore->snapshot, restore->selection);
   ++m_revision;
 }
 
 void EditorHistory::rewrite(const std::function<void(nlohmann::json&)>& edit)
 {
-  for (std::deque<Step>* steps : {&m_undo, &m_redo})
-    for (Step& step : *steps)
-    {
-      edit(step.before);
-      edit(step.after);
-    }
+  m_steps.rewrite(edit);
 }
 
 void EditorHistory::clear()
 {
-  m_undo.clear();
-  m_redo.clear();
+  m_steps.clear();
   m_pendingBefore.reset();
 }
 

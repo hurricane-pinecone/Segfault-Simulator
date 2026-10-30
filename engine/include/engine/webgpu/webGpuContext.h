@@ -7,6 +7,8 @@ struct SDL_Window;
 namespace sfs
 {
 
+struct WebGpuDeviceState;
+
 // Owns the WebGPU instance, surface, adapter, device and queue for a window,
 // and the surface configuration (format + present mode). The full adapter
 // limits are requested so multi-hundred-MB storage buffers are allowed.
@@ -22,12 +24,15 @@ public:
    */
   bool initHeadless(WGPUTextureFormat format = WGPUTextureFormat_RGBA8Unorm);
 
+  // Configure the window's surface at this size, in pixels (nothing for a
+  // size of 0: a minimized window keeps its last).
   void configure(int width, int height);
 
   // Wait for the display when presenting (vsync), capping the frame rate at
-  // its refresh rate (e.g. an editor, which needn't redraw faster). Off by
-  // default, so frame timings show what the GPU can do. Set before init().
-  void setVsync(bool vsync) { m_vsync = vsync; }
+  // its refresh rate (a shipped game, an editor). Off by default, so frame
+  // timings show what the GPU can do. Before init(), or after: then the
+  // surface is configured again at once.
+  void setVsync(bool vsync);
 
   // Configure another window's surface (e.g. an ImGui panel dragged out into
   // its own OS window) like the main one: same device and format. With vsync
@@ -60,7 +65,17 @@ public:
   // Whether the device was created with GPU timestamp queries (benchmark HUD).
   bool hasTimestamps() const { return m_hasTimestamps; }
 
+  // Whether the device has been lost (a driver crash or update, the GPU
+  // removed, out of memory): nothing more can be drawn with it.
+  bool deviceLost() const;
+
+  // The widest or tallest texture the device can make, in texels.
+  uint32_t maxTextureSize() const { return m_maxTextureSize; }
+
 private:
+  // What the device can do (maxTextureSize()).
+  void readLimits();
+
   WGPUInstance m_instance = nullptr;
   WGPUSurface m_surface = nullptr;
   WGPUAdapter m_adapter = nullptr;
@@ -73,6 +88,14 @@ private:
   WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo; // the fastest available
   bool m_vsync = false;
   bool m_hasTimestamps = false;
+  int m_width = 0; // the main surface's configured size (0: not yet)
+  int m_height = 0;
+  uint32_t m_maxTextureSize = 8192;
+
+  // Told by the device-lost callback, which may come at any time (even after
+  // this context is gone), so it outlives the context: one small block a
+  // device, kept for the program's life.
+  WebGpuDeviceState* m_deviceState = nullptr;
 };
 
 } // namespace sfs

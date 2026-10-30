@@ -3,8 +3,8 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/fatalError.h"
 #include "engine/runtime/input/input.h"
-#include <cstdlib>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/util/profiling.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -23,8 +23,7 @@ T& requireService(T* service, const char* name)
   if (service)
     return *service;
 
-  LOG_ERROR(std::string("Scene: the render backend provides no ") + name);
-  std::abort();
+  fatalError(std::string("Scene: the render backend provides no ") + name);
 }
 } // namespace
 
@@ -37,8 +36,7 @@ Game& Scene::game() const
 {
   if (m_game)
     return *m_game;
-  LOG_ERROR("Scene: game() called on a scene that isn't running in a game");
-  std::abort();
+  fatalError("Scene: game() called on a scene that isn't running in a game");
 }
 
 SceneId Scene::id() const { return m_id; }
@@ -118,8 +116,16 @@ void Scene::update(double deltaTime)
 {
   ZoneScopedN("Scene::update");
 
-  m_registry.flushEntities();
+  flushEntities();
+  {
+    const ObjectCalls calls(*this);
+    updateObjects(deltaTime);
+  }
+  deleteDestroyedObjects();
+}
 
+void Scene::updateObjects(double deltaTime)
+{
   {
     ZoneScopedN("Scene: systems update");
     m_registry.forEachSystem(
@@ -130,12 +136,23 @@ void Scene::update(double deltaTime)
         });
   }
 
-  for (auto& obj : m_gameObjects)
+  // By index, and only those there now: an object may create others (which
+  // grows the list), and the ones it makes start next frame.
+  for (std::size_t i = 0, count = m_gameObjects.size(); i < count; ++i)
   {
-    obj->onUpdate(deltaTime);
+    GameObject& object = *m_gameObjects[i];
+    if (!object.m_destroyed)
+      object.onUpdate(deltaTime);
   }
 
   onUpdate(deltaTime);
+}
+
+void Scene::flushEntities()
+{
+  m_registry.flushEntities();
+  destroyObjectsOfDeadEntities();
+  deleteDestroyedObjects();
 }
 
 GameObject& Scene::adoptObject(std::unique_ptr<GameObject> object,
@@ -145,6 +162,7 @@ GameObject& Scene::adoptObject(std::unique_ptr<GameObject> object,
   ref.m_entity = entity;
   ref.m_scene = this;
   m_gameObjects.push_back(std::move(object));
+  const ObjectCalls calls(*this); // not deleted under its own onCreate
   ref.onCreate(*this);
   return ref;
 }
@@ -156,11 +174,17 @@ void Scene::processInput(const Input& input)
   // What the scene takes first (its UI's clicks) the objects don't see.
   Input seen = input;
   filterInput(seen);
-  for (auto& obj : m_gameObjects)
   {
-    obj->onProcessInput(seen);
+    const ObjectCalls calls(*this);
+    for (std::size_t i = 0, count = m_gameObjects.size(); i < count; ++i)
+    {
+      GameObject& object = *m_gameObjects[i];
+      if (!object.m_destroyed)
+        object.onProcessInput(seen);
+    }
+    onProcessInput(seen);
   }
-  onProcessInput(seen);
+  deleteDestroyedObjects();
 }
 void Scene::render()
 
@@ -191,7 +215,7 @@ void Scene::notifyContact(const Contact3D& contact, bool begun)
          ++i)
     {
       GameObject& object = *m_gameObjects[i];
-      if (object.m_entity != self)
+      if (object.m_destroyed || object.m_entity != self)
         continue;
       if (contact.trigger)
         begun ? object.onTriggerEnter(collision)
@@ -201,23 +225,88 @@ void Scene::notifyContact(const Contact3D& contact, bool begun)
               : object.onCollisionExit(collision);
     }
   };
-  tell(contact.a, contact.b);
-  tell(contact.b, contact.a);
+  {
+    const ObjectCalls calls(*this);
+    tell(contact.a, contact.b);
+    tell(contact.b, contact.a);
+  }
+  deleteDestroyedObjects();
+}
+
+void Scene::notifyContact(const Contact2D& contact, bool begun)
+{
+  const auto tell =
+      [&](const Entity& self, const Entity& other, glm::vec2 normal)
+  {
+    if (!self.isValid())
+      return;
+    const Collision2D collision{other, normal};
+    // By index, as above.
+    for (std::size_t i = 0, count = m_gameObjects.size();
+         i < count && i < m_gameObjects.size();
+         ++i)
+    {
+      GameObject& object = *m_gameObjects[i];
+      if (object.m_entity != self)
+        continue;
+      if (contact.trigger)
+        begun ? object.onTriggerEnter2D(collision)
+              : object.onTriggerExit2D(collision);
+      else
+        begun ? object.onCollisionEnter2D(collision)
+              : object.onCollisionExit2D(collision);
+    }
+  };
+  tell(contact.a, contact.b, contact.normal);
+  tell(contact.b, contact.a, -contact.normal);
 }
 
 void Scene::destroyObject(GameObject* object)
 {
-  if (!object)
+  if (!object || object->m_destroyed || object->m_scene != this)
     return;
 
+  object->m_destroyed = true;
+  m_objectsDestroyed = true;
   object->destroy(*this);
+  deleteDestroyedObjects();
+}
 
-  m_gameObjects.erase(
-      std::remove_if(m_gameObjects.begin(),
-                     m_gameObjects.end(),
-                     [object](const std::unique_ptr<GameObject>& current)
-                     { return current.get() == object; }),
-      m_gameObjects.end());
+void Scene::destroyObjects()
+{
+  for (const std::unique_ptr<GameObject>& object : m_gameObjects)
+    object->m_destroyed = true;
+  m_objectsDestroyed = !m_gameObjects.empty();
+  deleteDestroyedObjects();
+}
+
+void Scene::destroyObjectsOfDeadEntities()
+{
+  for (const std::unique_ptr<GameObject>& object : m_gameObjects)
+    if (!object->m_destroyed && object->m_entity.isValid() &&
+        !object->m_entity.isAlive())
+    {
+      object->m_destroyed = true;
+      m_objectsDestroyed = true;
+    }
+}
+
+void Scene::deleteDestroyedObjects()
+{
+  // An onDestroy may destroy more: they're deleted in the next round.
+  while (m_objectsDestroyed && m_objectCalls == 0)
+  {
+    m_objectsDestroyed = false;
+    std::vector<std::unique_ptr<GameObject>> doomed;
+    for (std::unique_ptr<GameObject>& object : m_gameObjects)
+      if (object->m_destroyed)
+        doomed.push_back(std::move(object));
+    std::erase(m_gameObjects, nullptr);
+
+    const ObjectCalls calls(*this);
+    for (const std::unique_ptr<GameObject>& object : doomed)
+      object->onDestroy();
+  }
 }
 
 } // namespace sfs

@@ -11,18 +11,22 @@
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
+#include "engine/core/components/spriteComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/emissionLights.h"
+#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/game/gameObject.h"
@@ -876,13 +880,43 @@ bool materialsCanGlow(const TypeInfo& type,
   return false;
 }
 
-// What a collider is fitted to: the meshes in the scene.
+// What a collider is fitted to: the meshes in the scene (or, in a 2D game,
+// the sprites).
 struct MeshScene
 {
   const sfs::MeshLibrary* meshes = nullptr;
   const sfs::hierarchy::EntityTree* tree = nullptr;
   sfs::AssetDatabase* assets = nullptr; // where Extract writes materials
+  const sfs::RenderSystem* render = nullptr;
+  sfs::AssetStore* store = nullptr; // sprites' images
 };
+
+// A 2D game's sprite's box on its plane, about the entity (its pixels over the
+// pixels per unit, scaled, off its anchor), for a BoxCollider2D to fit. Empty
+// unless the game is flat and the sprite's image is there.
+std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& entity, const MeshScene& scene)
+{
+  if (!scene.render || !scene.store || !entity.hasComponent<sfs::SpriteComponent>() ||
+      !entity.hasComponent<sfs::TransformComponent>())
+    return std::nullopt;
+  const std::optional<sfs::Space2D>& space = scene.render->space2D();
+  if (!space || space->projection != sfs::Space2D::Projection::Flat)
+    return std::nullopt;
+  const auto& sprite = entity.getComponent<sfs::SpriteComponent>();
+  const std::optional<sfs::AssetStore::SpriteFrame> frame =
+      sprite.image.empty() ? std::nullopt : scene.store->spriteFrame(sprite.image, sprite.frame);
+  if (!frame)
+    return std::nullopt;
+  const float pixelsPerUnit = frame->pixelsPerUnit > 0.0f ? frame->pixelsPerUnit : space->pixelsPerUnit;
+  const glm::vec2 size =
+      frame->pixels * glm::abs(entity.getComponent<sfs::TransformComponent>().scale2D()) / pixelsPerUnit;
+  // As SpriteModule draws it: its centre off the anchor (image y down), on
+  // the game's plane (its y down too, if the game's runs down).
+  const glm::vec2 pivot(sprite.anchor.x - 0.5f, 0.5f - sprite.anchor.y);
+  const glm::vec2 centre =
+      -pivot * size + glm::vec2(sprite.renderOffset.x, -sprite.renderOffset.y) / pixelsPerUnit;
+  return std::pair(size * 0.5f, glm::vec2(centre.x, centre.y * space->ySign()));
+}
 
 // The bounds, in the entity's local space, of its mesh and its descendants'
 // (a collider on a group covers the group). Empty if there are none (or only
@@ -911,7 +945,7 @@ sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene)
 
 bool isCollider(const TypeInfo& type)
 {
-  return type.name == "BoxCollider3DComponent" ||
+  return type.name == "BoxCollider2D" || type.name == "BoxCollider3DComponent" ||
          type.name == "SphereCollider3DComponent" ||
          type.name == "CapsuleCollider3DComponent";
 }
@@ -922,6 +956,16 @@ void fitCollider(const TypeInfo& type,
                  const sfs::Entity& entity,
                  const MeshScene& scene)
 {
+  if (type.name == "BoxCollider2D")
+  {
+    if (const auto box = spriteBox(entity, scene))
+    {
+      auto& collider = *static_cast<sfs::BoxCollider2D*>(type.component.get(entity));
+      collider.half = box->first;
+      collider.offset = box->second;
+    }
+    return;
+  }
   const sfs::Aabb bounds =
       isCollider(type) ? meshBounds(entity, scene) : sfs::Aabb();
   if (bounds.empty())
@@ -956,6 +1000,102 @@ void fitCollider(const TypeInfo& type,
     capsule.height = std::max(half.z * 2.0f, capsule.radius * 2.0f);
     capsule.offset = bounds.center();
   }
+}
+
+// One edit of the 2D transform widgets below: `edit` changes a copy, `apply`
+// copies the part it edited onto another (so several selected keep the rest
+// of theirs). One undo step, as widgets::undoable.
+template <typename Edit, typename Apply>
+void planarEdit(EditorHistory* history, const std::vector<sfs::TransformComponent*>& all, Edit&& edit, Apply&& apply)
+{
+  sfs::TransformComponent copy = *all.front();
+  const bool changed = edit(copy);
+  if (history && (ImGui::IsItemActivated() || changed))
+    history->beginChange();
+  if (changed)
+    for (sfs::TransformComponent* transform : all)
+      apply(copy, *transform);
+  if (history && (ImGui::IsItemDeactivated() || (changed && !ImGui::IsItemActive())))
+    history->endChange();
+}
+
+// A 2D game's TransformComponent: where it is on the plane, its height above
+// it, how far it's turned (a flat game's; an isometric sprite always faces
+// the view) and its size.
+void planarTransform(const sfs::Entity& entity,
+                     std::span<const sfs::Entity> others,
+                     EditorHistory* history,
+                     bool isometric)
+{
+  std::vector<sfs::TransformComponent*> all{&entity.getComponent<sfs::TransformComponent>()};
+  for (const sfs::Entity& other : others)
+    if (other.hasComponent<sfs::TransformComponent>())
+      all.push_back(&other.getComponent<sfs::TransformComponent>());
+
+  widgets::propertyLabel("Position");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  planarEdit(
+      history,
+      all,
+      [](sfs::TransformComponent& t)
+      {
+        glm::vec2 xy = t.position2D();
+        if (!ImGui::DragFloat2("##position", &xy.x, 0.05f))
+          return false;
+        t.setPosition2D(xy);
+        return true;
+      },
+      [](const sfs::TransformComponent& from, sfs::TransformComponent& to) { to.setPosition2D(from.position2D()); });
+  ImGui::SetItemTooltip("Where it is on the game's plane");
+
+  widgets::propertyLabel("Height");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  planarEdit(
+      history,
+      all,
+      [](sfs::TransformComponent& t) { return ImGui::DragFloat("##height", &t.position.z, 0.05f); },
+      [](const sfs::TransformComponent& from, sfs::TransformComponent& to) { to.position.z = from.position.z; });
+  ImGui::SetItemTooltip(isometric ? "How high above the ground (levels)"
+                                  : "How high up the screen it's lifted");
+
+  if (!isometric)
+  {
+    widgets::propertyLabel("Rotation");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    planarEdit(
+        history,
+        all,
+        [](sfs::TransformComponent& t)
+        {
+          float degrees = glm::degrees(t.yaw());
+          if (!ImGui::DragFloat("##rotation", &degrees, 0.5f, 0.0f, 0.0f, "%.1f deg"))
+            return false;
+          t.setYaw(glm::radians(degrees));
+          return true;
+        },
+        [](const sfs::TransformComponent& from, sfs::TransformComponent& to) { to.rotation = from.rotation; });
+  }
+
+  widgets::propertyLabel("Scale");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  planarEdit(
+      history,
+      all,
+      [](sfs::TransformComponent& t)
+      {
+        glm::vec2 scale = t.scale2D();
+        if (!ImGui::DragFloat2("##scale", &scale.x, 0.01f))
+          return false;
+        t.scale.x = scale.x;
+        t.scale.y = scale.y;
+        return true;
+      },
+      [](const sfs::TransformComponent& from, sfs::TransformComponent& to)
+      {
+        to.scale.x = from.scale.x;
+        to.scale.y = from.scale.y;
+      });
+  ImGui::SetItemTooltip("Negative mirrors it");
 }
 
 // A collapsible section for one component, with Remove in its context menu.
@@ -1009,7 +1149,15 @@ void componentSection(
                   : "(unnamed)");
       }
     const bool glows = materialsCanGlow(type, object, meshes);
-    for (const FieldInfo& field : type.fields)
+    // A 2D game's transform is edited as it's used: on the plane.
+    const bool planar = type.name == "TransformComponent" && scene.render && scene.render->space2D();
+    if (planar)
+      planarTransform(entity,
+                      others,
+                      history,
+                      scene.render->space2D()->projection == sfs::Space2D::Projection::Isometric);
+    static const std::vector<FieldInfo> kNoFields;
+    for (const FieldInfo& field : planar ? kNoFields : type.fields)
     {
       if (field.attributes.emissionLight && !glows)
         continue; // nothing of it glows: no light to set
@@ -1081,8 +1229,16 @@ void componentSection(
     }
     if (type.fields.empty())
       ImGui::TextDisabled("No editable fields");
-    if (isCollider(type) && !meshBounds(entity, scene).empty() &&
-        ImGui::Button("Fit to Mesh"))
+    if (type.name == "BoxCollider2D" && spriteBox(entity, scene) && ImGui::Button("Fit to Sprite"))
+      history->change(
+          [&]
+          {
+            fitCollider(type, entity, scene);
+            for (const sfs::Entity& other : others)
+              fitCollider(type, other, scene);
+          });
+    else if (isCollider(type) && type.name != "BoxCollider2D" && !meshBounds(entity, scene).empty() &&
+             ImGui::Button("Fit to Mesh"))
       history->change(
           [&]
           {
@@ -1302,6 +1458,21 @@ void textureSettings(EditorContext& context, const sfs::AssetRecord& record)
       changed = true;
     }
   }
+
+  // Its size as a sprite: 0 leaves it to the scene (a 2D game's Space2D).
+  float pixelsPerUnit = current.pixelsPerUnit;
+  widgets::propertyLabel("Pixels Per Unit");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (ImGui::DragFloat("##pixelsPerUnit", &pixelsPerUnit, 0.5f, 0.0f, 4096.0f, pixelsPerUnit > 0.0f ? "%.1f" : "Scene's"))
+  {
+    if (pixelsPerUnit > 0.0f)
+      settings["pixelsPerUnit"] = pixelsPerUnit;
+    else
+      settings.erase("pixelsPerUnit");
+    changed = true;
+  }
+  ImGui::SetItemTooltip("Drawn as a sprite: how many of its pixels make one world unit\n"
+                        "(0: the scene's, a 2D game's pixels per unit)");
 
   if (changed && context.assets->setSettings(record.id, settings))
   {
@@ -1543,7 +1714,7 @@ void InspectorPanel::drawContents(EditorContext& context)
   sfs::MeshLibrary* meshes =
       context.render ? &context.render->meshes() : nullptr;
   const sfs::hierarchy::EntityTree tree(context.scene->entities());
-  const MeshScene scene{meshes, &tree, context.assets};
+  const MeshScene scene{meshes, &tree, context.assets, context.render, context.scene ? &context.scene->assetStore() : nullptr};
 
   EditorHistory* history = context.history;
 

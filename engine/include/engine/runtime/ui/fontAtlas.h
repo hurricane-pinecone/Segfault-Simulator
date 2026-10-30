@@ -2,6 +2,8 @@
 
 #include "engine/runtime/ui/layout.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -33,6 +35,20 @@ public:
   FontAtlas(const FontAtlas&) = delete;
   FontAtlas& operator=(const FontAtlas&) = delete;
 
+  /**
+   * A new frame of text starts: faces (a font at a size) unused through the
+   * last frame may be dropped, when there are more than kMostFaces (UI
+   * scaled smoothly would otherwise make a texture at every size it passes).
+   * Text drawn before this call mustn't be drawn after it.
+   */
+  void beginFrame();
+
+  /** The faces kept beyond those in use. */
+  static constexpr std::size_t kMostFaces = 24;
+
+  /** How many faces (a font at a size) it has now. */
+  std::size_t faceCount() const { return m_faces.size(); }
+
   float lineHeight(const std::string& font, float pixels) override;
   float
   width(const std::string& font, float pixels, std::string_view line) override;
@@ -59,6 +75,7 @@ private:
     glm::ivec2 shelf{1, 1}; // where the next glyph goes
     int shelfHeight = 0;
     std::unordered_map<char32_t, Glyph> glyphs;
+    uint64_t lastUsed = 0; // the frame it was last used in
   };
 
   Face* face(const std::string& font, float pixels);
@@ -68,6 +85,7 @@ private:
   std::string m_fallback;
   std::map<std::pair<std::string, int>, std::unique_ptr<Face>> m_faces;
   bool m_initialised = false;
+  uint64_t m_frame = 0;
 };
 
 /** The codepoints of UTF-8 text, one at a time (bad bytes come out as U+FFFD).

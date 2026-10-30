@@ -2,12 +2,10 @@
 
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/runtime/assetStore/modelData.h"
-#include "engine/runtime/assetStore/sprite.h"
 
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
-#include <SDL_rect.h>
 #include <SDL_surface.h>
 #include <SDL_ttf.h>
 
@@ -29,11 +27,11 @@ using SurfacePtr = std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)>;
 using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
 
 /**
- * The loaded assets a game draws with: images (as CPU surfaces), sprites
- * (named regions of an image), fonts and models. Renderers keep their own GPU
+ * The loaded assets a game draws with: images (as CPU surfaces), fonts and
+ * models. Renderers keep their own GPU
  * copies, keyed the same way.
  *
- * Images, sprites and fonts are added from file paths under names the game
+ * Images and fonts are added from file paths under names the game
  * picks. Given the project's AssetDatabase, the store also loads assets by
  * their AssetId (models, materials and textures), keeping each until
  * cleared.
@@ -155,6 +153,26 @@ public:
   /** Forget a loaded prefab, so the next prefab() reads its file again. */
   void forgetPrefab(const AssetId& id);
 
+  // --- letting go of what's no longer used
+  // ------------------------------------
+
+  /**
+   * Start noting which assets loaded by id (models, textures, materials,
+   * prefabs) are asked for, e.g. as a new scene loads; collectUnused() then
+   * lets go of the rest. A game does this as it changes scenes.
+   */
+  void beginUseTracking();
+
+  /**
+   * Forget the assets loaded by id that haven't been asked for since
+   * beginUseTracking() (keeping textures a kept material uses). What still
+   * holds one (a renderer's copy) keeps it alive; asked for again, it's read
+   * again.
+   *
+   * @return how many were let go
+   */
+  std::size_t collectUnused();
+
   void addTexture(const std::string& assetId, const std::string& filePath);
   void removeTexture(const std::string& assetId);
   SDL_Surface* getSurface(const std::string& assetId) const;
@@ -173,53 +191,16 @@ public:
     std::shared_ptr<const TextureData> sheet;
     glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f}; // x, y, width, height in 0..1
     glm::vec2 pixels{0.0f};                   // the frame's size
+    float pixelsPerUnit = 0.0f; // its import setting; 0: the scene's
   };
 
   /**
    * Frame `frame` of an image (as imageTexture() names it): of a texture
    * asset's sprite grid (its import settings' spriteCell; counted across then
-   * down, wrapping past the last), or the whole image if it has none. Empty if
-   * there's no such image.
+   * down, wrapping past the last), or the whole image if it has none, with
+   * its import settings' pixelsPerUnit. Empty if there's no such image.
    */
   std::optional<SpriteFrame> spriteFrame(const std::string& image, int frame);
-
-  SpriteId addSprite(const std::string& textureId,
-                     const std::string& spriteName,
-                     SDL_Rect srcRect);
-  SpriteId getOrCreateSprite(const std::string& spriteName,
-                             const std::string& path,
-                             SDL_Rect src);
-  std::pair<SpriteId, SpriteId>
-  getOrCreateSpriteWithNormal(const std::string& spriteName,
-                              const std::string& path,
-                              SDL_Rect src,
-                              const std::string& normal = "");
-
-  std::vector<SpriteId> addSprites(const std::string& textureId,
-                                   const std::vector<SpriteRegion>& regions);
-
-  SpriteId addSpriteFromSheet(const std::string& textureId,
-                              const std::string& spriteName,
-                              uint16_t width,
-                              uint16_t height,
-                              uint16_t col,
-                              uint16_t row,
-                              uint8_t gap,
-                              uint8_t padding);
-
-  std::vector<SpriteId> addSpritesFromSheet(const std::string& textureId,
-                                            const std::string& baseSpriteName,
-                                            uint16_t width,
-                                            uint16_t height,
-                                            uint8_t gap,
-                                            uint8_t padding);
-
-  void loadAsepriteAtlas(const std::string& textureId,
-                         const std::string& jsonPath);
-
-  void removeSprite(SpriteId spriteId);
-  const Sprite* getSprite(SpriteId spriteId) const;
-  const Sprite* getSprite(const std::string& spriteId) const;
 
   TTF_Font*
   addFont(const std::string& fontId, const std::string& filePath, int size);
@@ -281,10 +262,10 @@ private:
   std::unordered_map<AssetId, std::optional<nlohmann::json>, AssetIdHash>
       m_prefabs; // nullopt: failed
 
-  SpriteId m_nextSpriteId = 0;
-
-  std::unordered_map<SpriteId, Sprite> m_sprites;
-  std::unordered_map<std::string, SpriteId> m_spriteNameToId;
+  // When each asset loaded by id was last asked for (see beginUseTracking()).
+  void used(const AssetId& id) { m_lastUse[id] = m_useEpoch; }
+  std::unordered_map<AssetId, uint64_t, AssetIdHash> m_lastUse;
+  uint64_t m_useEpoch = 0;
 };
 
 } // namespace sfs

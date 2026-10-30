@@ -1,13 +1,15 @@
 #include "engine/core/assets/assetDatabase.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/atomicFile.h"
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <random>
 #include <system_error>
-#include <unordered_set>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -181,22 +183,28 @@ fs::path AssetDatabase::metaPathFor(const fs::path& file)
   return meta;
 }
 
-std::optional<AssetDatabase::Meta> AssetDatabase::readMeta(const fs::path& file)
+AssetDatabase::MetaState AssetDatabase::readMeta(const fs::path& file,
+                                                 std::optional<Meta>& meta)
 {
+  meta.reset();
   std::ifstream in(metaPathFor(file), std::ios::binary);
   if (!in)
-    return std::nullopt;
-  const json data = json::parse(in, nullptr, false);
+    return MetaState::Missing;
+  const std::string text{
+      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  if (text.find_first_not_of(" \t\r\n") == std::string::npos)
+    return MetaState::Missing; // empty: nothing in it to keep
+  const json data = json::parse(text, nullptr, false);
   if (!data.is_object() || !data.contains("id") || !data["id"].is_string())
-    return std::nullopt;
+    return MetaState::Corrupt;
   const std::optional<AssetId> id =
       AssetId::parse(data["id"].get<std::string>());
   if (!id || !id->valid())
-    return std::nullopt;
-  Meta meta{*id, data.value("settings", json::object())};
-  if (!meta.settings.is_object())
-    meta.settings = json::object();
-  return meta;
+    return MetaState::Corrupt;
+  meta = Meta{*id, data.value("settings", json::object())};
+  if (!meta->settings.is_object())
+    meta->settings = json::object();
+  return MetaState::Read;
 }
 
 bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta)
@@ -204,19 +212,14 @@ bool AssetDatabase::writeMeta(const fs::path& file, const Meta& meta)
   const json data = {{"formatVersion", kMetaFormatVersion},
                      {"id", meta.id.toString()},
                      {"settings", meta.settings}};
-  std::ofstream out(metaPathFor(file), std::ios::binary);
-  out << data.dump(2) << '\n';
-  if (!out)
-  {
-    LOG_ERROR("AssetDatabase: can't write " + metaPathFor(file).string());
-    return false;
-  }
-  return true;
+  return writeFileAtomically(metaPathFor(file), data.dump(2) + '\n');
 }
 
-AssetDatabase::Scan AssetDatabase::scan(const fs::path& root,
-                                        Mode mode,
-                                        const std::vector<fs::path>& catalogued)
+AssetDatabase::Scan
+AssetDatabase::scan(const fs::path& root,
+                    Mode mode,
+                    const std::vector<fs::path>& catalogued,
+                    const std::vector<AssetRecord>& previous)
 {
   std::vector<fs::path> files;
   std::vector<fs::path> folders;
@@ -260,32 +263,71 @@ AssetDatabase::Scan AssetDatabase::scan(const fs::path& root,
             [](const fs::path& a, const fs::path& b)
             { return key(a) < key(b); });
 
+  // Every file's .meta first: which file keeps an id two claim depends on
+  // all of them.
+  struct Found
+  {
+    fs::path relative;
+    MetaState state = MetaState::Missing;
+    std::optional<Meta> meta;
+  };
+  std::vector<Found> found(files.size());
+  for (std::size_t i = 0; i < files.size(); ++i)
+  {
+    found[i].relative = files[i];
+    found[i].state = readMeta(root / files[i], found[i].meta);
+  }
+
+  // Who keeps an id claimed twice (a file and its .meta copied, say "a.png"
+  // to "a - Copy.png"): the path it belonged to before, else the first path.
+  std::unordered_map<AssetId, std::string, AssetIdHash> before;
+  for (const AssetRecord& record : previous)
+    if (record.id.valid())
+      before.emplace(record.id, key(record.path));
+  std::unordered_map<AssetId, std::size_t, AssetIdHash> owner;
+  for (std::size_t i = 0; i < found.size(); ++i)
+  {
+    if (!found[i].meta)
+      continue;
+    const AssetId id = found[i].meta->id;
+    const auto [claim, first] = owner.emplace(id, i);
+    const auto had = before.find(id);
+    if (!first && had != before.end() &&
+        had->second == key(found[i].relative) &&
+        had->second != key(found[claim->second].relative))
+      claim->second = i;
+  }
+
   std::vector<AssetRecord> records;
   records.reserve(files.size());
-  std::unordered_set<AssetId, AssetIdHash> seen;
-  for (const fs::path& relative : files)
+  for (std::size_t i = 0; i < found.size(); ++i)
   {
-    const fs::path file = root / relative;
-    std::optional<Meta> meta = readMeta(file);
+    Found& file = found[i];
+    const fs::path absolute = root / file.relative;
+    const bool duplicate = file.meta && owner.at(file.meta->id) != i;
 
-    const bool duplicate = meta && seen.contains(meta->id);
-    if (mode == Mode::ReadWrite && (!meta || duplicate))
+    if (file.state == MetaState::Corrupt)
+      LOG_ERROR("Assets: " + key(file.relative) +
+                ".meta can't be read (a merge conflict? hand-edited?). It's "
+                "left as it is and the file has no id meanwhile: fix the "
+                ".meta (or delete it for a new id) and refresh");
+    else if (mode == Mode::ReadWrite && (!file.meta || duplicate))
     {
       if (duplicate)
-        LOG_INFO("Assets: " + key(relative) +
+        LOG_INFO("Assets: " + key(file.relative) +
                  " has another asset's id (a copy?); giving it its own");
-      meta = Meta{AssetId::generate(), meta ? meta->settings : json::object()};
-      writeMeta(file, *meta);
+      file.meta = Meta{AssetId::generate(),
+                       file.meta ? file.meta->settings : json::object()};
+      writeMeta(absolute, *file.meta);
     }
 
     AssetRecord record;
-    record.path = fs::path(key(relative));
-    record.kind = assetKindOf(relative);
-    if (meta && !(duplicate && mode == Mode::ReadOnly))
+    record.path = fs::path(key(file.relative));
+    record.kind = assetKindOf(file.relative);
+    if (file.meta && !(duplicate && mode == Mode::ReadOnly))
     {
-      record.id = meta->id;
-      record.settings = std::move(meta->settings);
-      seen.insert(record.id);
+      record.id = file.meta->id;
+      record.settings = std::move(file.meta->settings);
     }
     records.push_back(std::move(record));
   }

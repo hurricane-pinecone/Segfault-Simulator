@@ -45,6 +45,7 @@ public:
   void imguiRenderDrawData() override;
   bool imguiAvailable() const override { return m_imguiReady; }
   void setVsync(bool vsync) override { m_context.setVsync(vsync); }
+  bool deviceLost() const override { return m_context.deviceLost(); }
 
   std::unique_ptr<IRenderTarget> createRenderTarget() override;
   /** The target must be one of createRenderTarget()'s, and outlive its use. */

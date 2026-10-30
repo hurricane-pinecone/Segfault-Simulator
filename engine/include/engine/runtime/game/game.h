@@ -27,6 +27,10 @@ class StandardScene;
 const double TARGET_FPS = 165.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
 
+// The longest a frame's update steps the game: a longer frame (a stall, a
+// breakpoint, dragging the window) counts as this long, so nothing jumps.
+const double MAX_FRAME_TIME = 0.1;
+
 class Game
 {
 public:
@@ -70,6 +74,25 @@ public:
   bool isFullscreen() const;
   void setWindowSize(int width, int height);
   glm::ivec2 windowSize() const { return {windowWidth, windowHeight}; }
+  /**
+   * The window's size in pixels: windowSize() on most screens, more on a
+   * high-DPI one where the system counts window sizes in points. What the
+   * scene draws at, and what its mouse positions are in.
+   */
+  glm::ivec2 pixelSize() const { return {m_pixelWidth, m_pixelHeight}; }
+
+  /**
+   * Wait for the display before showing each frame (vsync, the default in a
+   * shipped game: no tearing, and no faster than the screen shows), or show
+   * frames as soon as they're drawn. Takes effect at once.
+   */
+  void setVsync(bool vsync);
+  /** At most this many frames a second (0: no cap beyond vsync's). */
+  void setMaxFrameRate(double framesPerSecond)
+  {
+    m_maxFrameRate = framesPerSecond > 0.0 ? framesPerSecond : 0.0;
+  }
+  double maxFrameRate() const { return m_maxFrameRate; }
 
   /**
    * Where the current scene is drawn: an OS window (by SDL window id) and a
@@ -129,6 +152,21 @@ protected:
   virtual void onQuit() { isRunning = false; }
 
   /**
+   * The window's close button was pressed (or the OS asked the program to
+   * quit). Return false to keep running, e.g. to ask about unsaved changes
+   * first (the editor). By default the game loop ends.
+   */
+  virtual bool onCloseRequested() { return true; }
+
+  /**
+   * The game can't go on: an uncaught exception or fatal error (see
+   * fatalError()) in a frame, or the graphics device was lost. By default:
+   * logged, said in a message box (a shipped game has no console), and the
+   * game loop ends. A host may handle it its own way (the editor stops Play).
+   */
+  virtual void onFatalError(const std::string& message);
+
+  /**
    * Carry out loadScene(), between frames. By default, playScene() (logging a
    * failure); a host overrides it to handle failure its own way.
    */
@@ -184,6 +222,20 @@ private:
   void update(double deltaTime);
   void render();
 
+  // One pass of the game loop (input, update, render), its errors handed to
+  // onFatalError.
+  void frame();
+
+  // Read the window's size in pixels (pixelSize()) after it changed.
+  void updatePixelSize();
+
+  // Desktop: while the window is minimized, wait for something to happen
+  // instead of drawing frames no one sees. True if it waited.
+  bool waitWhileMinimized();
+
+  // Desktop: sleep out the rest of the frame under setMaxFrameRate().
+  void capFrameRate(Uint64 frameStart);
+
   // Act on quit() and loadScene() calls, after the frame's updates.
   void applyRequests();
 
@@ -196,6 +248,13 @@ private:
 private:
   Uint64 previousTime;
   Input input;
+
+  int m_pixelWidth = 0;
+  int m_pixelHeight = 0;
+  double m_maxFrameRate = 0.0;
+  // A scene was played: let go of the assets it doesn't use after its first
+  // frame (see AssetStore::collectUnused()).
+  bool m_collectUnusedAssets = false;
 
   bool m_debugUiVisible = true;
 

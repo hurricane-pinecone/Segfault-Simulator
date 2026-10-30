@@ -88,10 +88,27 @@ void EditorScene::clear()
   flushEntities();
 }
 
-void EditorScene::resetToDefault()
+void EditorScene::resetToDefault(Style style)
 {
   clear();
   gameSystems().clear();
+
+  sfs::RenderSystem& render = renderSystem();
+  if (style != Style::ThreeD)
+  {
+    // A 2D game: its plane, a camera over it, and a sprite to give an image.
+    sfs::Space2D space;
+    if (style == Style::Isometric)
+      space.projection = sfs::Space2D::Projection::Isometric;
+    render.setSpace2D(space);
+    sfs::Camera view;
+    view.orthoHeight = 360.0f;
+    createCamera("Camera", view, &space);
+    createSprite("Sprite");
+    flushEntities();
+    return;
+  }
+  render.clearSpace2D();
 
   sfs::Entity ground = createPrimitive(Primitive::Plane, "Ground");
   auto& groundRenderer = ground.getComponent<sfs::MeshRendererComponent>();

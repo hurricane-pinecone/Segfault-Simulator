@@ -265,8 +265,8 @@ jobs:
   # GCC/Clang (Linux + macOS) or emcc (web); this is the only thing that
   # actually compiles the engine with the Microsoft toolchain, so it catches the
   # MSVC-specific issues those compilers don't (e.g. __FUNCSIG__ vs
-  # __PRETTY_FUNCTION__, /bigobj, stricter template parsing). Builds the engine
-  # and both sample games (exercising the Windows SDL entry-point link) and runs
+  # __PRETTY_FUNCTION__, /bigobj, stricter template parsing). Builds the engine,
+  # editor and player (exercising the Windows SDL entry-point link) and runs
   # the full headless test suite. Independent of the web deploy: a failure here
   # reports a red check without blocking the Pages publish.
   build-windows:
@@ -306,7 +306,7 @@ jobs:
 
       # cppstd=23: `conan profile detect` defaults MSVC to C++14, which the
       # toolchain would otherwise force onto our C++23 build. shared=False keeps
-      # the dependency closure static, so the test/sample executables are
+      # the dependency closure static, so the test/editor executables are
       # self-contained (no DLLs to stage on PATH before ctest).
       - name: Install dependencies
         run: >
@@ -325,7 +325,7 @@ jobs:
       - name: Run tests
         run: ctest --preset conan-release --output-on-failure
 
-  # Enforce .clang-format on the engine and game sources. Pinned to the same
+  # Enforce .clang-format on the engine sources. Pinned to the same
   # clang-format version the pre-commit hook uses, so local formatting and CI
   # never disagree (the vendored lib/ tree is excluded -- it has its own style).
   format:
@@ -347,7 +347,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find engine/src engine/include engine/tests sampleGame/src samplePlatformer/src \
+          find engine/src engine/include engine/tests \
             \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.inl' \) \
             ! -path '*/engine/lib/*' -print0 \
           | xargs -0 clang-format --dry-run --Werror

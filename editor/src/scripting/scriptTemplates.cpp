@@ -3,6 +3,7 @@
 #include "scripting/scriptFiles.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/atomicFile.h"
 
 #include <cctype>
 #include <fstream>
@@ -117,13 +118,8 @@ std::optional<std::filesystem::path> create(Kind kind,
 
   const std::filesystem::path path = folder / (name + ".h");
   std::filesystem::create_directories(folder);
-  std::ofstream out(path, std::ios::binary);
-  out << source(kind, name);
-  if (!out)
-  {
-    LOG_ERROR("Can't write " + path.string());
+  if (!sfs::writeFileAtomically(path, source(kind, name)))
     return std::nullopt;
-  }
 
   LOG_INFO("Created " + std::string(label(kind)) + " " + path.filename().string());
   return path;

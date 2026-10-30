@@ -18,8 +18,7 @@ endfunction()
 
 # systems/
 add_runtime_test(spriteFrameTests assetStore/spriteFrameTests.cpp)
-add_runtime_test(movementSystemTests systems/movementSystemTests.cpp)
-add_runtime_test(collisionSystemTests systems/collisionSystemTests.cpp)
+add_runtime_test(physicsSystem2DTests systems/physicsSystem2DTests.cpp)
 add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
 add_runtime_test(physicsSystem3DTests systems/physicsSystem3DTests.cpp)
 
@@ -40,6 +39,10 @@ add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
 
 # assetStore/
 add_runtime_test(modelImporterTests assetStore/modelImporterTests.cpp)
+add_runtime_test(assetStoreTests assetStore/assetStoreTests.cpp)
+
+# game/
+add_runtime_test(gameManifestTests game/gameManifestTests.cpp)
 
 # rendering/
 add_runtime_test(renderSystemTests rendering/renderSystemTests.cpp)
@@ -53,6 +56,25 @@ add_runtime_test(prefabTests serialization/prefabTests.cpp)
 
 # scripting/
 add_runtime_test(scriptRegistryTests scripting/scriptRegistryTests.cpp)
+# Two game modules for ModuleHost to load: one built as sfs_add_game_module
+# builds them (reporting the engine ABI it was built against), and one from
+# before modules reported it.
+add_library(moduleHostCurrentModule SHARED scripting/moduleFixture.cpp)
+target_link_libraries(moduleHostCurrentModule PRIVATE engine)
+target_compile_definitions(moduleHostCurrentModule PRIVATE SFS_GAME_MODULE)
+add_library(moduleHostStaleModule SHARED scripting/moduleFixture.cpp)
+target_link_libraries(moduleHostStaleModule PRIVATE engine)
+foreach(fixture moduleHostCurrentModule moduleHostStaleModule)
+    set_target_properties(${fixture} PROPERTIES
+        PREFIX ""
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+endforeach()
+add_runtime_test(moduleHostTests scripting/moduleHostTests.cpp)
+add_dependencies(moduleHostTests moduleHostCurrentModule moduleHostStaleModule)
+target_compile_definitions(moduleHostTests PRIVATE
+    SFS_CURRENT_MODULE="$<TARGET_FILE:moduleHostCurrentModule>"
+    SFS_STALE_MODULE="$<TARGET_FILE:moduleHostStaleModule>")
 
 # scriptableObjects/
 add_runtime_test(scriptableObjectsTests scriptableObjects/scriptableObjectsTests.cpp)

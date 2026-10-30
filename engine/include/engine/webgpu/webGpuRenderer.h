@@ -92,6 +92,8 @@ public:
 
   MeshHandle createMesh(const MeshData& mesh) override;
   void destroyMesh(MeshHandle mesh) override;
+  // Whether a handle is one of its meshes now (not destroyed, nor stale).
+  bool hasMesh(MeshHandle mesh) const { return findMesh(mesh) != nullptr; }
   MaterialHandle createMaterial(const MeshMaterial& material) override;
   void updateMaterial(MaterialHandle handle,
                       const MeshMaterial& material) override;
@@ -308,6 +310,19 @@ private:
 
   const GpuMesh* findMesh(MeshHandle mesh) const;
 
+  // A mesh handle is its slot (plus one) in the low bits and the slot's
+  // generation above, so a handle kept after its mesh is destroyed doesn't
+  // find the mesh that takes the slot next (it draws nothing). The top bit
+  // stays clear: MeshLibrary's stand-ins use it.
+  static constexpr uint32_t kMeshSlotBits = 20;
+  static constexpr uint32_t kMeshSlotMask = (1u << kMeshSlotBits) - 1;
+  static constexpr uint32_t kMeshGenerations = 1u << (31 - kMeshSlotBits);
+  // The slot a handle names (whether or not it's current).
+  static uint32_t meshSlotOf(MeshHandle mesh)
+  {
+    return (mesh.id & kMeshSlotMask) - 1;
+  }
+
   WebGpuContext& m_context;
   uint32_t m_shadowResolution;
   RendererCapabilities m_capabilities;
@@ -317,6 +332,7 @@ private:
 
   // Mesh slots; a handle's id is its slot index + 1 (0 stays the null handle).
   std::vector<std::optional<GpuMesh>> m_meshes;
+  std::vector<uint32_t> m_meshGenerations; // per slot (see meshSlotOf())
   std::vector<uint32_t> m_freeSlots;
 
   // Objects' own materials (createMaterial), in slots like meshes.

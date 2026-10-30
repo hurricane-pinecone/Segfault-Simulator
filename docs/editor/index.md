@@ -38,13 +38,36 @@ has no `main.scene`.
 
 | Command | Effect |
 | --- | --- |
-| File → New Scene | A fresh scene (ground, cube, light), not yet saved |
+| File → New Scene → 3D / 2D Flat / 2D Isometric | A fresh scene in that style, not yet saved: 3D starts with a ground, a cube and a light; 2D with a camera over the plane and a sprite |
 | File → Open Scene | Pick from the project's `scenes/` folder |
 | File → Save Scene (Ctrl+S) | Save to the current file; a new scene asks for a name |
 | File → Save Scene As | Save under a new name in `scenes/` |
 
 Scene files are plain JSON and diff cleanly. See
 [Scene files](../runtime/serialization/index.md).
+
+### Unsaved changes, autosave and recovery
+
+A scene with unsaved changes shows a `*` after its name in the window title,
+and a dot on its viewport tab (as a prefab tab with changes not yet applied
+does). Closing the editor (**File → Exit** or the window's close button),
+opening another scene or project, or **New Scene** asks first: **Save**,
+**Don't Save** or **Cancel**. A scene that was never saved is named in the same
+prompt. Closing the editor also asks about prefab tabs and material tabs with
+changes.
+
+Every minute, a scene with unsaved changes is autosaved to
+`.sfs/autosave/` in the project (never over its own file). Saving it, or
+choosing **Don't Save**, removes the autosave. If the editor stops without
+either (a crash, a power cut), opening the project again offers each autosave
+newer than its scene's file: **Recover** opens the scene with the autosaved
+changes (still unsaved: save to keep them), **Discard** deletes the autosave,
+and **Later** keeps them to be offered next time.
+
+Every file the editor writes (scenes, prefabs, materials, `.meta` files, the
+project file, scripts) is written to a temporary file beside it first and then
+swapped in, so a crash mid-save leaves the old file or the new one, never half
+of one.
 
 ## Panels
 
@@ -79,11 +102,23 @@ In a 2D scene:
 - The gizmo moves things across the plane (and, in a flat scene, turns them
   around it); a moved thing keeps its height. With snapping on, moves snap to
   whole pixels (flat) or half tiles (isometric). An isometric sprite always
-  faces the view, so it doesn't turn.
-- Clicking a sprite selects it.
+  faces the view, so it doesn't turn. It works on world transforms, so a
+  child moves where it's seen, and with several selected it sits in their
+  middle and moves, turns and scales them all.
+- The Inspector edits a Transform as the game uses it: **Position** on the
+  plane, **Height** above it, **Rotation** (flat only) and **Scale** (negative
+  mirrors).
+- Clicking a sprite selects it, and a prefab dragged into the viewport lands on
+  the plane under the pointer.
 - **+ → Sprite** adds an entity with a Sprite component. Pick its **Image**
   (a texture) and **Frame** in the Inspector. A texture's import settings make
-  it a sprite sheet (see [Assets](#assets)).
+  it a sprite sheet (see [Assets](#assets)). The mesh primitives (Cube,
+  Sphere...) and the grass brush are a 3D scene's, so they're hidden.
+- A **Box Collider 2D** added to a sprite fits itself to the sprite (flat
+  scenes); **Fit to Sprite** fits it again.
+- Scene Settings hides what only a 3D world has (wind, haze, the grass count),
+  and the sun's direction is in the game's own space (see
+  [Styles](../runtime/rendering/styles/index.md#lighting-in-2d)).
 
 ## Viewport
 
@@ -164,9 +199,10 @@ Models (`.glb`, `.gltf`) appear in a Mesh Renderer's **Mesh** list, under
 attached when the file is moved or renamed.
 
 Selecting a texture shows its import settings in the Inspector: **Filter**
-(Smooth, or Pixel Art for crisp texels) and **Sprite Sheet**, with its
+(Smooth, or Pixel Art for crisp texels), **Sprite Sheet**, with its
 **Frame Size**, to use it as a grid of sprite frames, numbered across then
-down from the top left. They're saved in its `.meta` and show straight away
+down from the top left, and **Pixels Per Unit**: how big it is drawn as a
+sprite (0 leaves it to the scene). They're saved in its `.meta` and show straight away
 (see [Sprites & sprite sheets](../runtime/rendering/sprites/index.md)).
 
 Selecting a material asset (`.mat`) edits it in the Inspector: base colour,
@@ -213,7 +249,7 @@ scene places copies of it, and editing the prefab updates every copy.
 | Action | Result |
 | --- | --- |
 | Drag an object from the Hierarchy into the Assets panel, or right-click it → Create Prefab | Saves it, and everything under it, as a `.prefab`; the object becomes a copy of it |
-| Drag a prefab (or a model) into the viewport | Places a copy where the pointer meets a surface or the ground |
+| Drag a prefab (or a model) into the viewport | Places a copy where the pointer meets a surface or the ground (in a 2D scene, the plane) |
 | Drag a prefab onto a Hierarchy row, or below the list | Places a copy under that object, or at the top |
 | Double-click a prefab, or Edit in the Inspector | Opens the prefab in its own viewport tab, named after it |
 | **Apply** on a prefab's tab (or Ctrl+S there) | Writes the prefab; every copy updates, except where a copy changed something itself |
@@ -318,7 +354,9 @@ restores the selection.
 While the Assets panel was the last panel used, the Edit menu and these keys
 work on its file operations instead (see [Assets](#assets)). History is cleared
 when another scene is opened. Edits made while playing aren't
-recorded, because Stop discards them anyway.
+recorded, because Stop discards them anyway. The history keeps up to 200
+steps, and fewer for a big scene: the oldest steps go once their snapshots
+pass 256 MB.
 
 The inspector is generated from [reflection](../core/reflection/index.md). Every
 reflected component gets an editor built from its fields and attributes, so a
@@ -428,13 +466,24 @@ builds/windows/
   MyGame.dll          the game module (your scripts)
   scenes/  assets/    the project's content
   game.json           what to load: module, start scene, window size
-  log.txt             written when the game runs
 ```
 
 The exported game plays the start scene exactly as **Play** does: same scene
 setup, same scripts and game systems, with no editor UI. It sees through the
 scene's [game camera](#the-game-camera). If it can't start (a missing file, a module
-that fails to load), it says so in a message box, with details in `log.txt`.
+that fails to load), it says so in a message box, naming its log file.
+
+The game writes its log to `log.txt` in its own folder for user files, named
+after the game: `%APPDATA%\SegfaultSimulator\<game>\` on Windows,
+`~/.local/share/SegfaultSimulator/<game>/` on Linux (the game's own folder may
+not be writable, e.g. under Program Files). The previous run's log is kept as
+`log.prev.txt`. On Windows the game opens no console window; started from a
+terminal, it logs there too. Release builds log from INFO up, debug builds
+everything; a message repeated many times in a row is written once with a
+count.
+
+On x86-64 the engine's 3D physics is built for AVX2 (a CPU from about 2013 on):
+on an older processor the game says so in a message box instead of crashing.
 
 Export replaces the folder's contents, so it only writes into an empty folder
 or a previous export (one with a `game.json`). It never overwrites anything

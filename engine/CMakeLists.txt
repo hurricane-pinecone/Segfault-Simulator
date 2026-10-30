@@ -67,6 +67,7 @@ endif()
 function(sfs_engine_library_output target)
     set_target_properties(${target} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    target_compile_options(${target} PRIVATE ${ENGINE_FILE_PREFIX_MAP}) # see below
 endfunction()
 
 # AddressSanitizer + UndefinedBehaviorSanitizer build, used by the sanitize CI
@@ -78,6 +79,15 @@ if(ENGINE_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
 endif()
+
+# __FILE__ (in log lines, asserts, profiler zones) relative to the engine's
+# folder, not the build machine's full path, which a shipped binary would
+# otherwise carry. (The logger prints only the file name anyway.) For the
+# engine libraries only: tests find their data files from __FILE__.
+set(ENGINE_FILE_PREFIX_MAP
+    "$<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=engine/>"
+    "$<$<COMPILE_LANG_AND_ID:C,GNU,Clang,AppleClang>:-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=engine/>"
+)
 
 # Standard install layout (CMAKE_INSTALL_INCLUDEDIR / LIBDIR), used both by the
 # INSTALL_INTERFACE include paths below and by the install/export section.
@@ -136,8 +146,6 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/particleEmitterComponent.h"
             "${ENGINE_COMPONENT_DIR}/renderLayerComponent.h"
             "${ENGINE_COMPONENT_DIR}/spriteComponent.h"
-            "${ENGINE_COMPONENT_DIR}/spriteTint.h"
-            "${ENGINE_COMPONENT_DIR}/shadowCasterComponent.h"
             "${ENGINE_COMPONENT_DIR}/tags/solidObject.h")
 else()
     target_sources(engine-core PRIVATE
@@ -187,7 +195,7 @@ if(ENGINE_SANITIZE)
         APPEND PROPERTY COMPILE_OPTIONS -fno-sanitize=vptr)
 endif()
 
-# Namespaced alias so in-tree consumers (sample game, web build) link the exact
+# Namespaced alias so in-tree consumers (editor, player, web build) link the exact
 # same target name an out-of-tree consumer gets from find_package(engine).
 add_library(sfs::engine-core ALIAS engine-core)
 
@@ -283,8 +291,13 @@ if(NOT ENGINE_WEB_BUILD AND CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/tracy/public/TracyClient.cpp"
     )
 
+    # On demand: a game built this way (an export inherits the editor's build
+    # type) only profiles while the Tracy profiler is connected; without it, it
+    # would record from startup, its memory growing until one connects, and
+    # listen on the network for anyone to. Never TRACY_ENABLE without it.
     target_compile_definitions(engine PUBLIC
         TRACY_ENABLE
+        TRACY_ON_DEMAND
     )
 endif()
 
@@ -356,6 +369,15 @@ else()
     target_compile_definitions(engine PRIVATE SFS_HAS_PHYSICS=1 SFS_HAS_MODEL_IMPORT=1)
     # Jolt's package is built for AVX2 (its defines say so) but doesn't pass on
     # the matching compiler flags; the code including its headers needs them.
+    # Only that one file (the only one including Jolt) is built for AVX2; the
+    # rest of the engine stays on the x86-64 baseline. ConanCenter's recipe has
+    # no option for another instruction set (its package_info hard-codes the
+    # AVX2 defines), so instead of crashing with an illegal instruction on an
+    # older CPU, programs check for it at startup and say so
+    # (missingCpuFeatures(), SFS_REQUIRE_AVX2).
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        target_compile_definitions(engine-core PRIVATE SFS_REQUIRE_AVX2=1)
+    endif()
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         # (Appended, not set: the sanitizer build adds an option of its own.)
         set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/systems/physicsSystem3D.cpp"

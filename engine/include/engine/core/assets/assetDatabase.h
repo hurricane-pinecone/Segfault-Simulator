@@ -120,8 +120,15 @@ public:
 
   /**
    * Rescan the root. Read-write, it also writes a .meta for each file that has
-   * none, and gives a fresh id to a copy (two files claiming one id: the first
-   * path keeps it).
+   * none, and gives a fresh id to a copy: of two files claiming one id, the
+   * one that had it in the catalogue before keeps it (else the first by path),
+   * so "a - Copy.png" never takes "a.png"'s id however the names sort.
+   *
+   * A .meta that can't be read (hand-edited, a merge conflict left in it) is
+   * never replaced: that would lose the id everything refers to the asset by.
+   * Its file is listed without an id, an error is logged, and it gets its id
+   * back once the .meta is fixed. (An empty .meta, from a crash in an older
+   * version, has no id to keep, and gets a new one.)
    *
    * @return true if the catalogue changed
    */
@@ -137,10 +144,12 @@ public:
     std::vector<AssetRecord> records;
     std::vector<std::filesystem::path> folders;
   };
+  /** @param previous the catalogue before (whose ids copies don't take) */
   static Scan scan(const std::filesystem::path& root,
                    Mode mode,
-                   const std::vector<std::filesystem::path>& folders);
-  Scan scan() const { return scan(m_root, m_mode, m_scanned); }
+                   const std::vector<std::filesystem::path>& folders,
+                   const std::vector<AssetRecord>& previous = {});
+  Scan scan() const { return scan(m_root, m_mode, m_scanned, m_records); }
   /** @return true if the catalogue changed */
   bool apply(Scan scan);
 
@@ -214,7 +223,14 @@ private:
 
   bool writable(const char* action) const;
   static std::filesystem::path metaPathFor(const std::filesystem::path& file);
-  static std::optional<Meta> readMeta(const std::filesystem::path& file);
+  enum class MetaState
+  {
+    Read,
+    Missing, // no .meta, or an empty one
+    Corrupt, // there, but not something with an id in it
+  };
+  static MetaState readMeta(const std::filesystem::path& file,
+                            std::optional<Meta>& meta);
   static bool writeMeta(const std::filesystem::path& file, const Meta& meta);
   void rebuildIndex();
   // After an edit made here: re-sort and re-index, and bump the version.

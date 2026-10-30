@@ -17,6 +17,8 @@ void SceneManager::destroyScene(SceneId id)
     return;
 
   m_nameToId.erase(it->second->name());
+  // Its objects' onDestroy, while the scene is whole.
+  it->second->destroyObjects();
   m_scenes.erase(it);
 }
 
@@ -37,6 +39,9 @@ void SceneManager::destroyAll()
     m_currentScene->onExit();
 
   m_currentScene = nullptr;
+  // Their objects' onDestroy, while each scene is whole.
+  for (auto& [id, scene] : m_scenes)
+    scene->destroyObjects();
   m_scenes.clear();
   m_nameToId.clear();
 }

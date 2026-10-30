@@ -16,6 +16,8 @@ namespace
 // The images marks use unless their spawn names one.
 constexpr const char* kSoftImage = "white_dot";
 constexpr const char* kCrispImage = "white_pixel";
+// In 3D, how far above its surface a mark lies (so it doesn't flicker with it).
+constexpr float kLift = 0.01f;
 } // namespace
 
 DecalModule::DecalModule(AssetStore& assets) : m_assets(assets)
@@ -108,9 +110,17 @@ void DecalModule::update(double deltaTime)
 void DecalModule::computeCommands(const RenderContext& context)
 {
   flush();
-  if (!context.meshes || !context.space2D || m_decals.empty())
+  if (!context.meshes || m_decals.empty())
     return;
-  const Space2D& space = *context.space2D;
+  // In 3D the game's plane is the ground (z up), each mark a hair above what
+  // it landed on.
+  const Space2D* space2D = context.space2D;
+  const Space2D space = space2D ? *space2D : Space2D{};
+  const auto place = [&](glm::vec2 position, float height)
+  {
+    return space2D ? space.place(position, height, m_layer)
+                   : glm::vec3(position, height + kLift);
+  };
   MeshLibrary& meshes = *context.meshes;
   if (!m_quad.valid())
     m_quad = imageQuad(meshes);
@@ -134,7 +144,7 @@ void DecalModule::computeCommands(const RenderContext& context)
     }
 
     MeshInstance instance;
-    if (space.projection == Space2D::Projection::Flat)
+    if (space2D && space.projection == Space2D::Projection::Flat)
     {
       // Upright on the screen, turned by its rotation (as the game's plane
       // turns), centred off its anchor (its image's y runs down the screen).
@@ -174,19 +184,18 @@ void DecalModule::computeCommands(const RenderContext& context)
     }
     else
     {
-      // Lying on the ground: a rectangle of the plane, drawn as the plane is.
+      // Lying on the ground: a rectangle of the plane, drawn as the plane is
+      // (isometric, or a 3D world's ground).
       const float c = std::cos(decal.rotation), s = std::sin(decal.rotation);
       const glm::vec2 x(c, s), y(-s, c);
       const glm::vec2 centre = decal.position +
                                x * ((0.5f - decal.anchor.x) * decal.size.x) +
                                y * ((decal.anchor.y - 0.5f) * decal.size.y);
-      const glm::vec3 origin = space.place(centre, decal.height, m_layer);
+      const glm::vec3 origin = place(centre, decal.height);
       const glm::vec3 along =
-          space.place(centre + x * decal.size.x, decal.height, m_layer) -
-          origin;
+          place(centre + x * decal.size.x, decal.height) - origin;
       const glm::vec3 up =
-          space.place(centre + y * decal.size.y, decal.height, m_layer) -
-          origin;
+          place(centre + y * decal.size.y, decal.height) - origin;
       instance.model[0] = glm::vec4(along, 0.0f);
       instance.model[1] = glm::vec4(up, 0.0f);
       instance.model[3] = glm::vec4(origin, 1.0f);

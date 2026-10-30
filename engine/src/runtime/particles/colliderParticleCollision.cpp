@@ -4,6 +4,7 @@
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/util/algorithms/aabbSweep.h"
 #include "glm/glm/ext/vector_float2.hpp"
 
@@ -24,7 +25,7 @@ ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
   {
     const auto& box = solid.getComponent<BoxCollider2D>();
     const glm::vec2 centre =
-        solid.getComponent<TransformComponent>().position2D() + box.offset;
+        hierarchy::worldTransform(solid).position2D() + box.offset;
 
     float t = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};

@@ -6,6 +6,7 @@
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
 
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
@@ -327,8 +328,8 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
   toolButton("Move", Tool::Move, "Move (W)");
   toolButton("Rotate", Tool::Rotate, "Rotate (E)");
   toolButton("Scale", Tool::Scale, "Scale (R)");
-  // The grass brush, for grass (only then).
-  if (hasGrass(context.selection))
+  // The grass brush, for grass (only then: a 3D scene's).
+  if (hasGrass(context.selection) && !context.render->space2D())
     toolButton("Grass",
                Tool::GrassBrush,
                "Paint where the grass grows (B): drag over it, Shift to erase");
@@ -410,7 +411,7 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
     m_tool = Tool::Rotate;
   if (ImGui::IsKeyPressed(ImGuiKey_R, false))
     m_tool = Tool::Scale;
-  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection))
+  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection) && !context.render->space2D())
     m_tool = Tool::GrassBrush;
 
   if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
@@ -476,16 +477,40 @@ bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
 
 bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bool snapping)
 {
-  // The selection where its plane puts it; the handles move it across the
-  // plane (an isometric sprite always faces the view, so it doesn't turn).
+  // The selection where its plane puts it (several: their middle, turned as
+  // the one selected last); the handles move them across the plane, each by
+  // as much (an isometric sprite always faces the view, so they don't turn).
+  // It works on world transforms, so a child moves where it's seen.
   const sfs::Space2D& space = *context.render->space2D();
   const bool isometric = space.projection == sfs::Space2D::Projection::Isometric;
-  sfs::TransformComponent& transform = context.selection.getComponent<sfs::TransformComponent>();
-  const glm::vec3 placed = space.place(transform.position2D(), transform.position.z);
-  const float turn = isometric ? 0.0f : transform.yaw() * space.ySign();
-  glm::mat4 model = glm::translate(glm::mat4(1.0f), placed) *
-                    glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 0.0f, 1.0f)) *
-                    glm::scale(glm::mat4(1.0f), glm::vec3(transform.scale2D(), 1.0f));
+  const std::vector<sfs::Entity> group = movableSelection(context);
+  if (group.empty())
+    return false;
+
+  const bool wasUsing = ImGuizmo::IsUsing();
+  if (!wasUsing)
+  {
+    // The handles, and where everything is as a drag starts: each frame's
+    // drag is applied to that, so nothing drifts or sticks while snapping.
+    m_planarStart.clear();
+    glm::vec3 middle(0.0f);
+    for (const sfs::Entity& entity : group)
+    {
+      const sfs::TransformComponent world = sfs::hierarchy::worldTransform(entity);
+      m_planarStart.emplace_back(entity, world);
+      middle += space.place(world.position2D(), world.position.z);
+    }
+    middle /= static_cast<float>(group.size());
+    const sfs::TransformComponent primary = sfs::hierarchy::worldTransform(
+        context.selection.hasComponent<sfs::TransformComponent>() ? context.selection : group.front());
+    const float turn = isometric ? 0.0f : primary.yaw() * space.ySign();
+    // A mirrored (negative) scale stays the entity's: the handles get its size.
+    const glm::vec2 size = group.size() == 1 ? glm::abs(primary.scale2D()) : glm::vec2(1.0f);
+    m_groupHandles = glm::translate(glm::mat4(1.0f), middle) *
+                     glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 0.0f, 1.0f)) *
+                     glm::scale(glm::mat4(1.0f), glm::vec3(size, 1.0f));
+    m_planarHandles = m_groupHandles;
+  }
 
   ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE_X | ImGuizmo::TRANSLATE_Y;
   if (m_tool == Tool::Rotate && !isometric)
@@ -499,12 +524,11 @@ bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bo
                       : m_tool == Tool::Scale           ? scaleSnap.data()
                                                         : nullptr; // moves snap below
 
-  const bool wasUsing = ImGuizmo::IsUsing();
   const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
                                             glm::value_ptr(view.projection),
                                             operation,
                                             ImGuizmo::LOCAL,
-                                            glm::value_ptr(model),
+                                            glm::value_ptr(m_planarHandles),
                                             nullptr,
                                             snap);
   const bool usingNow = ImGuizmo::IsUsing();
@@ -512,24 +536,35 @@ bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bo
     context.history->beginChange();
   if (changed)
   {
-    std::array<float, 3> moved{};
-    std::array<float, 3> turned{};
-    std::array<float, 3> scaled{};
-    ImGuizmo::DecomposeMatrixToComponents(
-        glm::value_ptr(model), moved.data(), turned.data(), scaled.data());
-    // Back onto the game's plane, at the same height: whole pixels (flat) or
-    // half tiles (isometric) when snapping.
-    glm::vec2 position = space.unplace(glm::vec2(moved[0], moved[1]), transform.position.z);
-    if (snapping && m_tool == Tool::Move)
+    // The drag so far: how far the handles moved, turned and scaled.
+    const auto axes = [](const glm::mat4& m)
+    { return glm::vec2(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1]))); };
+    const auto turnOf = [](const glm::mat4& m) { return std::atan2(m[0][1], m[0][0]); };
+    const glm::vec3 moved = glm::vec3(m_planarHandles[3]) - glm::vec3(m_groupHandles[3]);
+    const float turned = (turnOf(m_planarHandles) - turnOf(m_groupHandles)) * space.ySign();
+    const glm::vec2 scaled = axes(m_planarHandles) / glm::max(axes(m_groupHandles), glm::vec2(1.0e-6f));
+    for (const auto& [entity, start] : m_planarStart)
     {
-      const float step = isometric ? 0.5f : 1.0f;
-      position = glm::round(position / step) * step;
+      if (!entity.isAlive())
+        continue;
+      sfs::TransformComponent world = start;
+      // Back onto the game's plane, at the same height: whole pixels (flat)
+      // or half tiles (isometric) when snapping.
+      const float height = start.position.z;
+      glm::vec2 position =
+          space.unplace(glm::vec2(space.place(start.position2D(), height) + moved), height);
+      if (snapping && m_tool == Tool::Move)
+      {
+        const float step = isometric ? 0.5f : 1.0f;
+        position = glm::round(position / step) * step;
+      }
+      world.setPosition2D(position);
+      if (!isometric)
+        world.rotation = glm::angleAxis(turned, glm::vec3(0.0f, 0.0f, 1.0f)) * start.rotation;
+      world.scale.x = start.scale.x * scaled.x;
+      world.scale.y = start.scale.y * scaled.y;
+      sfs::hierarchy::setWorldTransform(entity, world);
     }
-    transform.setPosition2D(position);
-    if (!isometric)
-      transform.setYaw(glm::radians(turned[2]) * space.ySign());
-    transform.scale.x = scaled[0];
-    transform.scale.y = scaled[1];
   }
   if (wasUsing && !usingNow)
     context.history->endChange();
@@ -750,9 +785,14 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
     const ImVec2 mouse = ImGui::GetMousePos();
     const sfs::Ray ray = context.render->camera().screenRay(
         {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
+    // A 2D game's: on its plane, where it's drawn.
+    const std::optional<sfs::Space2D>& space = context.render->space2D();
     std::optional<glm::vec3> point;
     float distance = 0.0f;
-    if (const auto hit = sfs::pickSurface(*context.scene, context.render->meshes(), ray))
+    std::optional<sfs::SurfaceHit> hit;
+    if (!space)
+      hit = sfs::pickSurface(*context.scene, context.render->meshes(), ray);
+    if (hit)
       point = ray.at(hit->distance);
     else if (ray.intersectPlaneZ(0.0f, distance))
       point = ray.at(distance);
@@ -771,7 +811,10 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
         draw->AddCircleFilled(*at, 3.0f, kDropColor);
       }
       if (payload->IsDelivery())
-        prefabs::place(context, prefabs::nameOf(dragged->id), {}, point);
+        prefabs::place(context,
+                       prefabs::nameOf(dragged->id),
+                       {},
+                       space ? glm::vec3(space->unplace(glm::vec2(*point)), 0.0f) : *point);
     }
   }
   else if (dragged && assetDrop::fitsMaterialSlot(*dragged))
@@ -1046,6 +1089,29 @@ void ViewportPanel::drawColliders(const EditorContext& context, const View& view
     }
   };
   const glm::vec3 x{1, 0, 0}, y{0, 1, 0}, z{0, 0, 1};
+
+  // A 2D game's box: on its plane, where PhysicsSystem2D has it (unturned,
+  // unscaled), drawn where the plane puts it.
+  const std::optional<sfs::Space2D>& space = context.render->space2D();
+  if (space && entity.hasComponent<sfs::BoxCollider2D>())
+  {
+    const auto& box = entity.getComponent<sfs::BoxCollider2D>();
+    color = box.trigger ? kTriggerColor : kColliderColor;
+    const sfs::TransformComponent placed = sfs::hierarchy::worldTransform(entity);
+    const glm::vec2 centre = placed.position2D() + box.offset;
+    const glm::vec2 half = glm::abs(box.half);
+    const glm::vec2 corners[] = {centre - half,
+                                 {centre.x + half.x, centre.y - half.y},
+                                 centre + half,
+                                 {centre.x - half.x, centre.y + half.y}};
+    for (int i = 0; i < 4; ++i)
+    {
+      const auto from = toScreen(view, space->place(corners[i], placed.position.z));
+      const auto to = toScreen(view, space->place(corners[(i + 1) % 4], placed.position.z));
+      if (from && to)
+        drawList->AddLine(*from, *to, color, 1.5f);
+    }
+  }
 
   if (entity.hasComponent<sfs::BoxCollider3DComponent>())
   {

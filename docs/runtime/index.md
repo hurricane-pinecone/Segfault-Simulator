@@ -22,8 +22,9 @@ Game     your application — window, the main loop, which scenes exist
   their style included.
 - **[Rendering](./rendering/index.md)**: the one renderer, the styles, render
   modules, sprites, meshes and lighting, and render backends.
-- **[2D and 3D physics](./systems/index.md)**: movement and collision on a 2D
-  game's plane, and [3D physics](./physics-3d/index.md) with Jolt.
+- **[2D and 3D physics](./systems/index.md#2d-physics)**: `PhysicsSystem2D`
+  on a 2D game's plane (gravity, swept boxes, triggers and contacts), and
+  [3D physics](./physics-3d/index.md) with Jolt.
 - **[Runtime systems](./systems/index.md)**: built-in systems such as camera
   follow.
 - **[Game UI](./ui/index.md)**: HUDs and menus, drawn over the scene.

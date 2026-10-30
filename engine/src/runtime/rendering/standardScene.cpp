@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/standardScene.h"
 
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
@@ -45,19 +46,6 @@ void StandardScene::onUpdate(double)
     if (m_render)
       m_render->meshes().fulfilPending();
   }
-
-#ifdef SFS_HAS_PHYSICS
-  PhysicsSystem3D* physics = physicsSystem();
-  if (!physics || !physics->enabled())
-    return;
-  // Copied: a handler may destroy entities or switch scenes.
-  const std::vector<Contact3D> begun = physics->contactsBegun();
-  const std::vector<Contact3D> ended = physics->contactsEnded();
-  for (const Contact3D& contact : begun)
-    notifyContact(contact, true);
-  for (const Contact3D& contact : ended)
-    notifyContact(contact, false);
-#endif
 }
 
 SceneSerializer StandardScene::serializer()
@@ -88,6 +76,16 @@ bool StandardScene::play(const std::filesystem::path& file)
   scriptableObjects().setMeshes(&m_render->meshes());
   startScripts(*this, m_gameSystems, &m_render->meshes());
   return true;
+}
+
+Entity StandardScene::instantiate(std::string_view prefab, const Entity& parent)
+{
+  const Entity root = serializer().instantiate(prefab, *this, parent);
+  if (root.isValid())
+    startObjects(*this,
+                 hierarchy::EntityTree(entities()).subtree(root),
+                 &m_render->meshes());
+  return root;
 }
 
 void StandardScene::filterInput(Input& input)

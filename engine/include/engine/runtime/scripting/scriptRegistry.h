@@ -83,4 +83,14 @@ void startScripts(Scene& scene,
                   const std::vector<std::string>& systems,
                   MeshLibrary* meshes = nullptr);
 
+/**
+ * Start the game objects of some entities (e.g. a prefab instance made while
+ * the game runs), as startScripts() does for a whole scene: a game object for
+ * each with a ScriptComponent, its fields from the component, then its
+ * onCreate.
+ */
+void startObjects(Scene& scene,
+                  const std::vector<Entity>& entities,
+                  MeshLibrary* meshes = nullptr);
+
 } // namespace sfs

@@ -6,24 +6,27 @@ namespace sfs
 {
 
 /**
- * A body moving on the ground plane: the velocity, in world units per second,
- * that MovementSystem integrates into the entity's TransformComponent each
- * frame, and that CollisionSystem stops against solid WorldColliders. The
- * engine's basic 2D body (RigidBody3DComponent is the physics engine's); a
- * game with richer motion builds on top of it.
+ * A body moving on a 2D game's plane: PhysicsSystem2D speeds it up by its
+ * gravity, moves it by its velocity each frame, and stops it against static
+ * BoxCollider2Ds (with one of its own). Units are the game's (a flat game's
+ * pixels, an isometric game's tiles) per second.
  *
- * @param glm::vec2 velocity - initial velocity (world units/second), default 0
+ * @param glm::vec2 velocity - initial velocity, default 0
+ * @param glm::vec2 gravity - how fast it speeds up falling, default 0 (a
+ *                            top-down game); a platformer's points down
  */
 struct RigidBody2DComponent
 {
   glm::vec2 velocity{0.0f};
+  glm::vec2 gravity{0.0f};
 
-  // Where the body was on the ground plane before this frame's move (set by
-  // MovementSystem), for resolving collisions by the side they came from.
+  // Where the body was on the plane before this frame's move (set by
+  // PhysicsSystem2D).
   [[sfs::hide]] glm::vec2 previousPosition{0.0f};
 
-  RigidBody2DComponent(glm::vec2 velocity = glm::vec2(0.0f))
-      : velocity(velocity)
+  RigidBody2DComponent(glm::vec2 velocity = glm::vec2(0.0f),
+                       glm::vec2 gravity = glm::vec2(0.0f))
+      : velocity(velocity), gravity(gravity)
   {
   }
 };

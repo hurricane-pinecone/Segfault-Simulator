@@ -1,10 +1,11 @@
 #pragma once
 
+#include "history/historySteps.h"
+
 #include "nlohmann/json.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <optional>
 
@@ -18,7 +19,8 @@ struct EditorContext;
 // endChange() (captures "after"; records the pair if anything changed), so a
 // drag spanning many frames is one step. Undo/redo restore a snapshot but keep
 // the camera where it is, and bring back the selection the step started (undo)
-// or ended (redo) with.
+// or ended (redo) with. The steps are kept within a step count and a memory
+// budget (see HistorySteps): with a huge scene, fewer of them.
 class EditorHistory
 {
 public:
@@ -52,8 +54,8 @@ public:
   /** Counts edits, undos and redos: unchanged means the scene is as it was. */
   uint64_t revision() const { return m_revision; }
 
-  bool canUndo() const { return !m_undo.empty(); }
-  bool canRedo() const { return !m_redo.empty(); }
+  bool canUndo() const { return m_steps.canUndo(); }
+  bool canRedo() const { return m_steps.canRedo(); }
   void undo();
   void redo();
 
@@ -77,26 +79,15 @@ private:
   // A restore recreates entities in that order, so the position names the
   // same entity afterwards; its id may differ (ids follow creation order,
   // which reparenting doesn't change until the scene is reloaded).
-  using Selection = std::optional<std::size_t>;
-
-  struct Step
-  {
-    nlohmann::json before;
-    nlohmann::json after;
-    Selection selectionBefore;
-    Selection selectionAfter;
-  };
+  using Selection = HistorySteps::Selection;
 
   Selection currentSelection() const;
 
   // Restore a snapshot and selection, keeping the camera.
   void apply(const nlohmann::json& snapshot, Selection selection);
 
-  static constexpr std::size_t kMaxSteps = 200;
-
   EditorContext& m_context;
-  std::deque<Step> m_undo;
-  std::deque<Step> m_redo;
+  HistorySteps m_steps;
   std::optional<nlohmann::json> m_pendingBefore;
   Selection m_pendingSelection;
   uint64_t m_revision = 0;

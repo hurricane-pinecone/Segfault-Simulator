@@ -7,6 +7,7 @@
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/gtc/quaternion.hpp"
+#include "glm/glm/matrix.hpp"
 #include "glm/glm/trigonometric.hpp"
 
 namespace sfs
@@ -91,13 +92,16 @@ struct TransformComponent
 
   /**
    * The transform a translate * rotate * scale matrix was built from (the
-   * inverse of matrix()). Shear, which no transform can hold, is dropped.
+   * inverse of matrix()). Shear, which no transform can hold, is dropped. A
+   * mirrored matrix comes back with a negative x scale.
    */
   static TransformComponent fromMatrix(const glm::mat4& m)
   {
-    const glm::vec3 scale{glm::length(glm::vec3(m[0])),
-                          glm::length(glm::vec3(m[1])),
-                          glm::length(glm::vec3(m[2]))};
+    const bool mirrored = glm::determinant(glm::mat3(m)) < 0.0f;
+    const glm::vec3 scale{
+        glm::length(glm::vec3(m[0])) * (mirrored ? -1.0f : 1.0f),
+        glm::length(glm::vec3(m[1])),
+        glm::length(glm::vec3(m[2]))};
     const glm::mat3 rotation{glm::vec3(m[0]) / scale.x,
                              glm::vec3(m[1]) / scale.y,
                              glm::vec3(m[2]) / scale.z};

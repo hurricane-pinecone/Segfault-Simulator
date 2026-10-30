@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace sfs::ui
 {
@@ -35,12 +36,40 @@ FontAtlas::~FontAtlas()
       TTF_CloseFont(face->font);
 }
 
+void FontAtlas::beginFrame()
+{
+  ++m_frame;
+  if (m_faces.size() <= kMostFaces)
+    return;
+  // The longest unused first, of those not used in the last frame (whose
+  // text may still be on its way to the screen).
+  std::vector<
+      std::map<std::pair<std::string, int>, std::unique_ptr<Face>>::iterator>
+      idle;
+  for (auto it = m_faces.begin(); it != m_faces.end(); ++it)
+    if (it->second->lastUsed + 1 < m_frame)
+      idle.push_back(it);
+  std::sort(idle.begin(),
+            idle.end(),
+            [](const auto& a, const auto& b)
+            { return a->second->lastUsed < b->second->lastUsed; });
+  for (std::size_t i = 0; i < idle.size() && m_faces.size() > kMostFaces; ++i)
+  {
+    if (idle[i]->second->font)
+      TTF_CloseFont(idle[i]->second->font);
+    m_faces.erase(idle[i]);
+  }
+}
+
 FontAtlas::Face* FontAtlas::face(const std::string& font, float pixels)
 {
   const int size = std::max(1, static_cast<int>(std::lround(pixels)));
   auto [it, added] = m_faces.try_emplace({font, size});
   if (!added)
+  {
+    it->second->lastUsed = m_frame;
     return it->second.get();
+  }
 
   auto made = std::make_unique<Face>();
   std::string path = m_initialised ? m_resolve(font) : std::string();
@@ -64,6 +93,7 @@ FontAtlas::Face* FontAtlas::face(const std::string& font, float pixels)
   }
   else
     made->lineHeight = static_cast<float>(size);
+  made->lastUsed = m_frame;
   made->texture.id = ++g_nextTextureId;
   made->texture.size = {kStartSize, kStartSize};
   made->texture.pixels.assign(std::size_t(kStartSize) * kStartSize * 4, 0);

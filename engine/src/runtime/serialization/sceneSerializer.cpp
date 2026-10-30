@@ -4,6 +4,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/core/util/atomicFile.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
@@ -679,14 +680,9 @@ bool SceneSerializer::writeJsonFile(const json& data,
 {
   std::string text;
   writePretty(text, data, 0);
-  std::ofstream out(path, std::ios::binary);
-  out << text << '\n';
-  if (!out)
-  {
-    LOG_ERROR("Can't write " + path.string());
-    return false;
-  }
-  return true;
+  text += '\n';
+  // Never half a scene on disk, whatever happens while it's written.
+  return writeFileAtomically(path, text);
 }
 
 std::optional<json>

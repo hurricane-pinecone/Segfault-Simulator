@@ -53,8 +53,7 @@ void ParticleModule::computeCommands(const RenderContext& context)
   sprites(batches);
   for (const ParticleSpriteBatch& batch : batches)
   {
-    // Screen-space effects (simulated in pixels) aren't drawn here.
-    if (batch.screenSpace || !batch.textureId)
+    if (!batch.textureId)
       continue;
     const bool glow = batch.blend == BlendMode::Additive;
     const std::string name =

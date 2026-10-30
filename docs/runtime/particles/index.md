@@ -2,7 +2,7 @@
 
 Getting particles into a rendered game: register the render module, spawn effects,
 and make their marks stick. Authoring the effects themselves — the
-`ParticleEffectDesc`, shapes, curves, prefabs — is engine-core; read more in
+`ParticleEffectDesc`, shapes, curves — is engine-core; read more in
 [Particle engine](../../core/particles/index.md) and [Decals & splatter](../../core/particles/decals/index.md).
 
 ## Add the particle module
@@ -28,36 +28,12 @@ on), so a scene made in the editor has it already:
 auto* particles = getSystem<sfs::RenderSystem>().module<sfs::ParticleModule>();
 ```
 
-## Built-in prefabs
-
-The engine ships ready-made effects so you get good results with no art — colour
-does the work. They are ordinary `ParticleEffectDesc` builders you register as-is
-or copy and tweak.
-
-```cpp
-#include "engine/runtime/particles/prefabs.h"
-
-// Four-layer blood, registered as "<prefix>_mist/_spray/_gobs/_drip":
-sfs::registerBloodEffects(particles);          // default red, prefix "blood"
-sfs::registerBloodEffects(particles, "ichor",  // a second colour
-                          glm::vec3{0.15f, 0.55f, 1.0f},
-                          glm::vec3{0.0f, 0.08f, 0.35f});
-
-// A continuous additive ember drift, for an emitter on a light:
-particles.registerEffect("embers", sfs::emberEffect());
-```
-
-The four blood layers (`bloodMistEffect`, `bloodSprayEffect`, `bloodGobsEffect`,
-`bloodDripEffect`) are meant to be fired together at one point for a layered burst;
-spray, gobs, and drip leave decals. `recolourBlood(desc, hi, lo)` returns a colour
-variant (its decals follow the particle colour).
-
 ## Spawning
 
 ### One-shot burst
 
 ```cpp
-particles.spawnBurst("blood", position, height);
+particles.spawnBurst("splash", position, height);
 ```
 
 `position` is a point on the game's plane and `height` the ground level the
@@ -68,24 +44,18 @@ To spawn "on the ground" without looking up the height yourself (once stains
 are enabled with a terrain):
 
 ```cpp
-particles.spawnBurst("blood", pos, particles.groundElevationAt(pos));
+particles.spawnBurst("splash", pos, particles.groundElevationAt(pos));
 ```
-
-### Screen-space burst
-
-Effects authored with `space = SimulationSpace::Screen` simulate in screen
-pixels, spawned with `spawnScreenBurst("ui_spark", screenPixel)`.
-`ParticleModule` doesn't draw them yet; use world-space effects, or the
-[game UI](../ui/index.md), for effects over the screen.
 
 ### Continuous emitter on an entity
 
 Attach a `ParticleEmitterComponent` to emit continuously from a moving entity (a
-torch, a wounded actor). The module follows the entity's transform each frame:
+torch, a wounded actor). The module follows the entity's world transform each
+frame, so an emitter that's a child of something moves with it:
 
 ```cpp
 entity.addComponent<sfs::ParticleEmitterComponent>(
-    "embers",                     // a registered effect with an emitRate
+    "smoke",                      // a registered effect with an emitRate
     glm::vec3{0.0f, 0.0f, 0.4f}); // offset from the entity (z: height)
 ```
 
@@ -102,7 +72,7 @@ same effect sprays along the impact direction:
 sfs::ParticleSpawnParams impact;
 impact.velocity = dir * 12.0f;   // added to every particle's launch velocity
 impact.aimAlongVelocity = true;  // fan the spray along that direction
-particles.spawnBurst("blood", pos, height, impact);
+particles.spawnBurst("splash", pos, height, impact);
 ```
 
 ## Making decals stick
@@ -147,7 +117,6 @@ custom shaping — is authoring; see [Decals & splatter](../../core/particles/de
 | --- | --- |
 | `registerEffect(name, desc)` | register or replace an effect by name |
 | `spawnBurst(name, position, height, spawn={})` | one-shot burst |
-| `spawnScreenBurst(name, screenPos, spawn={})` | one-shot screen-space burst |
 | `enableStains(decals, terrain = nullptr)` | make decal effects land and stick |
 | `groundElevationAt(position)` | surface height for a terrain-aware spawn |
 | `setMaxParticles(n)` | global live-particle ceiling |

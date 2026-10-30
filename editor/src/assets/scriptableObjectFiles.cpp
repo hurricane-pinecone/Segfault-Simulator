@@ -3,6 +3,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/core/util/atomicFile.h"
 
 #include <cctype>
 #include <fstream>
@@ -38,9 +39,7 @@ std::string safeName(std::string name)
 
 bool save(const fs::path& file, const nlohmann::json& contents)
 {
-  std::ofstream out(file);
-  out << contents.dump(2) << "\n";
-  return static_cast<bool>(out);
+  return sfs::writeFileAtomically(file, contents.dump(2) + "\n");
 }
 } // namespace
 

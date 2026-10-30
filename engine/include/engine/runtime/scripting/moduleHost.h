@@ -36,13 +36,17 @@ public:
   /**
    * Load `module` and register its types under `moduleName`.
    *
-   * @return false (logged) if it can't be loaded or has no entry point.
+   * @return false (logged) if it can't be loaded, has no entry point, or was
+   *         built against another engine (see kEngineAbi).
    */
   bool load(const std::filesystem::path& module,
             const std::string& moduleName,
             Load mode = Load::InPlace);
 
-  /** Unregister the module's types and unload it. No-op when none is loaded. */
+  /**
+   * Unregister the module's types and unload it, forgetting the loaded
+   * scriptable objects of its types first. No-op when none is loaded.
+   */
   void unload();
 
   bool loaded() const { return m_handle != nullptr; }

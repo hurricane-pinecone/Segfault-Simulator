@@ -12,6 +12,7 @@
 // Destroying an entity doesn't destroy its children; they become roots. Use
 // EntityTree::subtree() to destroy a branch.
 
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/entity.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -60,6 +61,20 @@ glm::vec3 worldPosition(const Entity& entity);
  * Needs a TransformComponent.
  */
 void setWorldMatrix(Entity entity, const glm::mat4& world);
+
+/**
+ * The entity's transform in the world: its own for a root, else its world
+ * matrix taken apart (see TransformComponent::fromMatrix). What 2D code reads
+ * a world position2D(), height (position.z), yaw() and scale2D() from.
+ * Needs a TransformComponent.
+ */
+TransformComponent worldTransform(const Entity& entity);
+
+/**
+ * Set the local transform so the entity's world transform becomes `world`
+ * (exactly, for a root). Needs a TransformComponent.
+ */
+void setWorldTransform(Entity entity, const TransformComponent& world);
 
 /**
  * A snapshot of the parent/child structure of a set of entities, for walking

@@ -116,10 +116,6 @@ sfs::Gradient{}.add(0.0f, {1,1,1}).add(1.0f, {1,0.5f,0});
 
 Up to 8 stops; sampling clamps outside the first/last stop.
 
-The engine also ships **ready-made effect prefabs** (blood layers, embers) you can
-register as-is or copy and tweak — those are a runtime helper, covered in
-[Particles in your game](../../runtime/particles/index.md#built-in-prefabs).
-
 Authoring types: `ParticleEffectDesc`, `DecalSpec`, `ParticleSpawnParams`,
-`ParticleShape`, `EmissionShape`, `GroundBehavior`, `SimulationSpace`, `BlendMode`,
+`ParticleShape`, `EmissionShape`, `GroundBehavior`, `BlendMode`,
 `Curve`, `Gradient`.

@@ -150,6 +150,7 @@ void UiModule::update(double deltaTime)
 void UiModule::computeCommands(const RenderContext& context)
 {
   flush();
+  m_fonts.beginFrame(); // last frame's text is drawn by now
   m_meshes = context.meshes;
   m_screen = glm::vec2(context.viewportSize);
   m_scale = m_fixedScale > 0.0f

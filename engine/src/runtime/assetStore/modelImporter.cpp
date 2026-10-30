@@ -302,18 +302,30 @@ void appendPrimitive(const cgltf_primitive& primitive,
   const cgltf_size count =
       primitive.indices ? primitive.indices->count : positions->count;
   const auto firstIndex = static_cast<uint32_t>(out.indices.size());
+  bool outOfRange = false;
   for (cgltf_size i = 0; i + 2 < count; i += 3)
   {
-    uint32_t corner[3];
+    cgltf_size corner[3];
     for (int c = 0; c < 3; ++c)
-      corner[c] = first + static_cast<uint32_t>(
-                              primitive.indices ? cgltf_accessor_read_index(
-                                                      primitive.indices, i + c)
-                                                : i + c);
+      corner[c] = primitive.indices
+                      ? cgltf_accessor_read_index(primitive.indices, i + c)
+                      : i + c;
+    // A corner past the vertices (a broken or hostile file) would read
+    // outside them: the triangle is left out.
+    if (corner[0] >= positions->count || corner[1] >= positions->count ||
+        corner[2] >= positions->count)
+    {
+      outOfRange = true;
+      continue;
+    }
     if (mirrored)
       std::swap(corner[1], corner[2]);
-    out.indices.insert(out.indices.end(), corner, corner + 3);
+    for (const cgltf_size index : corner)
+      out.indices.push_back(first + static_cast<uint32_t>(index));
   }
+  if (outOfRange)
+    LOG_ERROR("Model import: a mesh's triangles name vertices it doesn't "
+              "have; those triangles are left out");
 
   // One section per primitive; one after another with the same material merge.
   MeshMaterial material =
@@ -341,7 +353,7 @@ void appendPrimitive(const cgltf_primitive& primitive,
     // None in the file: average each vertex's face normals.
     for (uint32_t v = first; v < out.vertices.size(); ++v)
       out.vertices[v].normal = glm::vec3(0.0f);
-    const std::size_t from = out.indices.size() - (count / 3) * 3;
+    const std::size_t from = firstIndex;
     for (std::size_t i = from; i + 2 < out.indices.size(); i += 3)
     {
       MeshVertex& a = out.vertices[out.indices[i]];
@@ -472,6 +484,18 @@ readNodes(const cgltf_data& data,
         addNode(data.nodes[i], -1);
   return nodes;
 }
+// Whether a parsed file holds together (accessors inside their buffers,
+// indices inside their vertices, no node its own ancestor): reading one that
+// doesn't would go out of bounds. Logged if not.
+bool valid(cgltf_data& data, const std::string& path)
+{
+  const cgltf_result result = cgltf_validate(&data);
+  if (result == cgltf_result_success)
+    return true;
+  LOG_ERROR("Model import: " + path + " is damaged or not valid glTF (" +
+            std::to_string(static_cast<int>(result)) + ")");
+  return false;
+}
 } // namespace
 
 std::optional<std::vector<ModelNode>>
@@ -488,6 +512,8 @@ importModelNodes(const std::filesystem::path& file,
     return std::nullopt;
   }
   DataPtr data(raw, cgltf_free);
+  if (!valid(*data, path))
+    return std::nullopt;
   const glm::mat4 placement =
       glm::scale(glm::mat4(1.0f), glm::vec3(settings.scale)) * kYUpToZUp;
   const auto partOf = partNames(*data);
@@ -515,6 +541,8 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
     LOG_ERROR("Model import: can't load the data " + path + " refers to");
     return std::nullopt;
   }
+  if (!valid(*data, path))
+    return std::nullopt;
 
   const glm::mat4 placement =
       glm::scale(glm::mat4(1.0f), glm::vec3(settings.scale)) * kYUpToZUp;

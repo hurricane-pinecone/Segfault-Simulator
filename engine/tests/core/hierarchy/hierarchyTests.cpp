@@ -114,6 +114,56 @@ int main()
                     {1.0f, 1.0f, -3.0f}));
   }
 
+  TEST("worldTransform should be a root's own, and a child's in the world")
+  {
+    Registry reg;
+    Entity parent = reg.createEntity();
+    parent.addComponent<TransformComponent>(TransformComponent{
+        glm::vec2(10.0f, 0.0f), glm::vec2(-2.0f, 2.0f), glm::radians(90.0f)});
+    Entity child = reg.createEntity();
+    child.addComponent<TransformComponent>(
+        TransformComponent{glm::vec3(3.0f, 0.0f, 1.0f)});
+    hierarchy::setParent(child, parent);
+
+    // A root's comes back as it is, mirrored scale and all.
+    const TransformComponent root = hierarchy::worldTransform(parent);
+    CHECK(testing::approx(root.scale.x, -2.0f));
+
+    // The child: 3 along the parent's mirrored, turned x is 6 down -y.
+    const TransformComponent world = hierarchy::worldTransform(child);
+    CHECK(testing::approx(world.position2D().x, 10.0f));
+    CHECK(testing::approx(world.position2D().y, -6.0f));
+    CHECK(testing::approx(world.position.z, 1.0f)); // its height kept
+    CHECK(glm::abs(world.scale2D().x) > 1.99f);
+    // It's mirrored, as its parent is: its matrix is the same.
+    const glm::mat4 a = world.matrix();
+    const glm::mat4 b = hierarchy::worldMatrix(child);
+    for (int column = 0; column < 4; ++column)
+      for (int row = 0; row < 3; ++row)
+        CHECK(testing::approx(a[column][row], b[column][row]));
+  }
+
+  TEST("setWorldTransform should move a child to a world placement")
+  {
+    Registry reg;
+    Entity parent = reg.createEntity();
+    parent.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2(5.0f, 5.0f)});
+    Entity child = reg.createEntity();
+    child.addComponent<TransformComponent>();
+    hierarchy::setParent(child, parent);
+
+    TransformComponent world;
+    world.setPosition2D({7.0f, 1.0f});
+    world.scale = glm::vec3(-1.0f, 1.0f, 1.0f);
+    hierarchy::setWorldTransform(child, world);
+
+    const auto& local = child.getComponent<TransformComponent>();
+    CHECK(testing::approx(local.position.x, 2.0f));
+    CHECK(testing::approx(local.position.y, -4.0f));
+    CHECK(testing::approx(local.scale.x, -1.0f)); // still mirrored
+  }
+
   TEST("a destroyed parent should leave its children as roots")
   {
     Registry registry;

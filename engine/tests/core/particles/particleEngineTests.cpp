@@ -15,7 +15,6 @@ ParticleEffectDesc burstEffect(int count, float lifetime)
   d.burstCount = count;
   d.lifetime = FloatRange::of(lifetime);
   d.speed = FloatRange::of(0.0f);
-  d.space = SimulationSpace::World;
   d.ground = GroundBehavior::None;
   return d;
 }
@@ -95,7 +94,6 @@ int main()
     CHECK(batches.size() == 1);
     CHECK(batches[0].sprites.size() == 6);
     CHECK(testing::approx(batches[0].sprites[0].position.x, 2.0f));
-    CHECK(!batches[0].screenSpace);
     CHECK(batches[0].blend == BlendMode::Alpha);
 
     // with no live particles, no batch is handed out

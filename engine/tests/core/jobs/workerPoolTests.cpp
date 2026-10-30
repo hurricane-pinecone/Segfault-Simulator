@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 
 using namespace sfs;
@@ -58,6 +59,17 @@ int main()
       CHECK(waitFor([&] { return started.load(); }));
     }
     CHECK(ran == 1); // the running one finished; the rest never started
+  }
+
+  TEST("a job that throws should be logged, and the pool should carry on")
+  {
+    std::atomic<int> ran = 0;
+    WorkerPool pool(1);
+    pool.submit([] { throw std::runtime_error("broken job"); });
+    pool.submit([] { throw 42; });
+    pool.submit([&] { ++ran; });
+    CHECK(waitFor([&] { return ran.load() == 1; }));
+    CHECK(waitFor([&] { return pool.pending() == 0u; }));
   }
 
   return testing::report("workerPoolTests");

@@ -39,7 +39,8 @@ endfunction()
 #
 # Every header in SCRIPTS_DIR (default: ./scripts) is scanned by sfs-codegen;
 # every .cpp there is compiled in. The module lands in <build>/module/, and
-# exports only its entry point (see engine/runtime/scripting/gameModule.h).
+# exports only its entry point and the engine ABI it was built against (see
+# engine/runtime/scripting/gameModule.h).
 function(sfs_add_game_module name)
     cmake_parse_arguments(ARG "" "SCRIPTS_DIR" "" ${ARGN})
     if(NOT ARG_SCRIPTS_DIR)
@@ -49,9 +50,17 @@ function(sfs_add_game_module name)
     file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${ARG_SCRIPTS_DIR}/*.h")
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${ARG_SCRIPTS_DIR}/*.cpp")
 
-    add_library(${name} SHARED ${sources})
+    # The module's report of the engine it's built against (see
+    # engine/runtime/scripting/gameModule.h), which loading it checks: one file
+    # that defines it, compiled into the module and its UI preview.
+    set(abi_source "${CMAKE_CURRENT_BINARY_DIR}/generated/${name}EngineAbi.gen.cpp")
+    file(CONFIGURE OUTPUT "${abi_source}" CONTENT
+        "// Generated: the engine ABI this module is built against.\n#include <engine/runtime/scripting/gameModule.h>\n\nSFS_DEFINE_MODULE_ENGINE_ABI()\n")
+
+    add_library(${name} SHARED ${sources} "${abi_source}")
     target_link_libraries(${name} PRIVATE sfs::engine)
     target_include_directories(${name} PRIVATE "${ARG_SCRIPTS_DIR}")
+    target_compile_definitions(${name} PRIVATE SFS_GAME_MODULE)
     set_target_properties(${name} PROPERTIES
         PREFIX ""
         CXX_VISIBILITY_PRESET hidden
@@ -84,9 +93,10 @@ function(sfs_add_game_module name)
         DEPENDS ${SFS_CODEGEN_DEPENDS} ${ui_headers}
         COMMENT "Generating UI previews for ${name}"
         VERBATIM)
-    add_library(${preview} SHARED EXCLUDE_FROM_ALL ${ui_sources} "${preview_source}")
+    add_library(${preview} SHARED EXCLUDE_FROM_ALL ${ui_sources} "${preview_source}" "${abi_source}")
     target_link_libraries(${preview} PRIVATE sfs::engine)
     target_include_directories(${preview} PRIVATE "${ARG_SCRIPTS_DIR}")
+    target_compile_definitions(${preview} PRIVATE SFS_GAME_MODULE)
     # After the build type's flags, so it wins.
     target_compile_options(${preview} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/Od,-O0>)
     target_precompile_headers(${preview} PRIVATE <sfs/sfs.h> <functional> <string> <vector>)

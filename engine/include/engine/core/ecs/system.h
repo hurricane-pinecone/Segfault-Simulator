@@ -4,6 +4,7 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/moduleSettings.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace sfs
@@ -15,6 +16,8 @@ public:
   System() = default;
   virtual ~System() = default;
 
+  // The entities it works on, in no particular order. Iterate them; don't
+  // add, remove or reorder them (the registry keeps the list).
   const std::vector<Entity>& getEntities() const;
   std::vector<Entity>& getEntities();
   const Signature& getComponentSignature() const;
@@ -49,6 +52,10 @@ protected:
 private:
   Signature componentSignature;
   std::vector<Entity> entities;
+  // Each entity's place in `entities`, by id (kNowhere: not there), so one
+  // leaves in constant time.
+  static constexpr uint32_t kNowhere = 0xFFFFFFFFu;
+  std::vector<uint32_t> m_positions;
   bool m_enabled = true;
 
   friend class Registry;

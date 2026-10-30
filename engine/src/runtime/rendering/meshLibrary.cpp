@@ -361,9 +361,9 @@ MaterialHandle MeshLibrary::material(std::string_view name)
 {
   if (name.empty())
     return {};
-  const std::string key(name);
-  if (const auto it = m_materials.find(key); it != m_materials.end())
+  if (const auto it = m_materials.find(name); it != m_materials.end())
     return it->second;
+  const std::string key(name);
   const std::shared_ptr<const MeshMaterial> data =
       m_provider.loadMaterial ? m_provider.loadMaterial(name) : nullptr;
   const MaterialHandle handle =
@@ -395,7 +395,7 @@ MaterialHandle MeshLibrary::setMaterial(std::string_view name,
 
 void MeshLibrary::reloadMaterial(std::string_view name)
 {
-  const auto it = m_materials.find(std::string(name));
+  const auto it = m_materials.find(name);
   if (it == m_materials.end())
     return;
   const std::shared_ptr<const MeshMaterial> data =

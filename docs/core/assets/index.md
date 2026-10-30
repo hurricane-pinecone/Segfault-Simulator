@@ -46,8 +46,17 @@ the `.meta` along.
 `refresh()` rescans the folder. Read-write, it also:
 
 - writes a `.meta` with a new id for each file that has none
-- gives a copy its own id: when two files claim one id, the first by path keeps
-  it
+- gives a copy its own id: when two files claim one id, the one that had it in
+  the catalogue before keeps it (else the first by path), so `a - Copy.png`
+  never takes `a.png`'s id, however the names sort
+
+A `.meta` that can't be read (a merge conflict left in it, a bad hand edit) is
+never overwritten, since that would lose the id everything refers to the asset
+by: an error is logged, the file is listed without an id, and it gets its id
+back once the `.meta` is fixed (or a new one, if the `.meta` is deleted). An
+empty `.meta` has no id to keep and gets a new one. `.meta` files are written
+atomically (a temporary file swapped in), so a crash can't leave one half
+written.
 
 Hidden files and folders (names starting with `.`) are skipped. `records()`
 lists every asset sorted by path, and `folders()` lists the folders.

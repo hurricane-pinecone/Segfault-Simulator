@@ -11,7 +11,9 @@
 namespace sfs
 {
 
+class Entity;
 class Registry;
+struct MeshRendererComponent;
 
 /**
  * Render module that draws every entity with a TransformComponent and a
@@ -28,6 +30,11 @@ public:
   void computeCommands(const RenderContext& context) override;
 
 private:
+  // One entity's instance, into the command for its mesh and materials.
+  void addEntity(const RenderContext& context,
+                 const Entity& entity,
+                 const MeshRendererComponent& renderer);
+
   Registry* m_registry = nullptr;
 
   // Hash of (mesh, materials) -> index into m_commands, rebuilt each frame

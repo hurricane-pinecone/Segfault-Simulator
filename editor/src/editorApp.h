@@ -12,6 +12,7 @@
 
 #include "engine/runtime/game/game.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -59,6 +60,11 @@ protected:
   std::filesystem::path gameFolder() const override;
   sfs::StandardScene& replaceScene() override;
   bool ownsWindow() const override { return false; }
+  // The window's close button: asks about unsaved changes first.
+  bool onCloseRequested() override;
+  // A game's script failing (or anything else in a frame) stops Play, not the
+  // editor: the error goes to the Console and the scene being edited stays.
+  void onFatalError(const std::string& message) override;
   // Files dropped onto the window are imported into the Assets panel's folder.
   void onEvent(const SDL_Event& event) override;
 
@@ -105,7 +111,65 @@ private:
 
   void openScene(const std::filesystem::path& path);
   void saveScene();
+  /**
+   * Write the scene to its file (or to `as`, which becomes its file), and
+   * note it saved. @return false (logged) if it isn't
+   */
+  bool saveSceneFile(const std::filesystem::path& as = {});
   void updateWindowTitle();
+
+  // --- unsaved changes ---
+  // Closing the editor, opening another scene or project, or starting a new
+  // scene would lose changes not yet saved: it asks first (Save / Don't Save /
+  // Cancel). The scene's changes are counted from its history's revision when
+  // last saved (a prefab tab's, when last applied); the window title and the
+  // viewport tabs mark what has some.
+  enum class Pending
+  {
+    None,
+    Quit,
+    NewScene,
+    OpenScene,
+    OpenProject,
+  };
+  struct PendingAction
+  {
+    Pending kind = Pending::None;
+    std::filesystem::path path; // the scene or project to open
+    EditorScene::Style style = EditorScene::Style::ThreeD; // a new scene's
+  };
+  /** Do `action`, first asking to save whatever it would lose. */
+  void guarded(PendingAction action);
+  void perform(const PendingAction& action);
+  /** Whether `kind` would lose changes (quitting: any tab's; else the scene's). */
+  bool losesChanges(Pending kind) const;
+  /** Save what `kind` would lose. @return false (m_unsavedError says why) if something wasn't. */
+  bool saveBefore(Pending kind);
+  void drawUnsavedDialog();
+  PendingAction m_pendingAction;
+  std::string m_unsavedError;
+  bool m_titleUnsaved = false; // what the window title shows
+
+  // --- autosave ---
+  // Every so often the scene, if it has unsaved changes, is written to
+  // <project>/.sfs/autosave/<its path in the project> (never over its file);
+  // saving it, or choosing not to, deletes that. One found on opening the
+  // project, newer than its scene's file, is what a crash left: the editor
+  // offers to recover it.
+  std::filesystem::path autosavePath(const std::filesystem::path& scene) const;
+  void autosave();
+  void discardAutosave(const std::filesystem::path& scene);
+  void findAutosaves();
+  void drawRecoverDialog();
+  struct Autosave
+  {
+    std::filesystem::path file;  // in .sfs/autosave
+    std::filesystem::path scene; // the scene file it's of; empty: an unsaved one
+    std::filesystem::file_time_type written;
+  };
+  std::vector<Autosave> m_autosaves; // to offer to recover
+  std::chrono::steady_clock::time_point m_lastAutosave = std::chrono::steady_clock::now();
+  uint64_t m_autosavedRevision = 0;
 
   // --- game module & play mode ---
   enum class Mode
@@ -173,11 +237,19 @@ private:
     EditorHistory* history = nullptr;
     ViewportPanel* viewport = nullptr; // in m_panels
     sfs::Entity selection;             // kept while another is active
-    uint64_t appliedRevision = 0;      // the history's, when last applied
+    uint64_t appliedRevision = 0;      // the history's, when last applied (the scene's: saved)
     std::unique_ptr<SceneDocument> ownDocument; // a prefab's
     std::unique_ptr<EditorHistory> ownHistory;
   };
   Workspace& sceneWorkspace() { return *m_workspaces.front(); }
+  const Workspace& sceneWorkspace() const { return *m_workspaces.front(); }
+  /** Whether a tab has edits not yet saved (the scene) or applied (a prefab). */
+  bool unsaved(const Workspace& workspace) const;
+  /** The scene's edits are all in its file (just saved, opened or new). */
+  void markSceneSaved();
+  // A scene's appliedRevision never matching its history's: it isn't what's in
+  // its file, whatever's done to it (a recovered autosave).
+  static constexpr uint64_t kNeverSaved = UINT64_MAX;
   bool editingPrefab() const { return m_active && m_active->prefab.valid(); }
   /** Make `workspace` the one edited and rendered. */
   void activate(Workspace& workspace);
@@ -267,6 +339,8 @@ private:
     NewScript,
     Export,
     ClosePrefab,
+    Unsaved,
+    Recover,
   };
   Dialog m_requestedDialog = Dialog::None;
   std::string m_dialogPath;
