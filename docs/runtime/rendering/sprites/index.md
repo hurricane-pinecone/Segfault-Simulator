@@ -30,7 +30,9 @@ scene.createEntity()
 
 A sprite's size is its frame's size in pixels, divided by the style's
 `pixelsPerUnit`, times the transform's `scale2D()`. A flat game's sprite turns
-with its transform's `yaw()`; an isometric one always faces the view.
+with its transform's `yaw()`; an isometric one always faces the view. A
+negative scale mirrors the sprite (flipping its picture left-right or
+top-bottom) rather than turning it away from the camera.
 
 `SpriteComponent` is reflected, so it's saved with the scene and edited in the
 Inspector, where `image` is a texture picker.

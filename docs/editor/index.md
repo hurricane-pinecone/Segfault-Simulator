@@ -450,6 +450,41 @@ A Windows editor exports Windows games. A Linux export is the game plus the
 engine's libraries; system libraries (SDL and the rest) must be installed where
 it runs.
 
+### Web
+
+There's no **File → Export Game** for the web, since the editor itself doesn't
+run in a browser. A web build instead comes from a CMake function,
+`sfs_add_web_game`, run as part of building the engine for the web:
+
+```cmake
+sfs_add_web_game(MyGame
+    PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/MyGame" # your project folder
+    HINT "WASD to move, Space to jump")          # a line shown under the game
+```
+
+This needs the engine itself built for the web (with Emscripten) and a host
+`sfs-codegen`, built as part of a normal desktop build, since reflection can't
+run in the web toolchain: pass it as
+`-DSFS_CODEGEN_EXECUTABLE=<desktop-build>/bin/sfs-codegen`. Your project's
+`scripts/` are compiled straight into the resulting page, since there's
+nothing to load a game module from once it's running, and its `scenes/`,
+`assets/` and `prefabs/` are packed in alongside the engine's own assets.
+`WIDTH` and `HEIGHT` (default 1280 by 720) set the canvas's size and aspect
+ratio, and `OUTPUT_DIR` picks where the site is written (by default
+`bin/<target>` in the build folder).
+
+The result is a static site, `index.html` and its `.js`, `.wasm` and `.data`
+beside it, that plays the project's start scene exactly like an exported
+desktop build. Serve the folder over HTTP (opening the file directly won't
+work) to a browser with WebGPU; see [Render
+backends](../runtime/rendering/backends/index.md#webgpurenderbackend) for which
+ones qualify. A service worker ships alongside it that turns on the headers
+threads need (`coi-serviceworker.js`), so it still works on a host, such as
+GitHub Pages, that doesn't send them itself. An error that would otherwise
+crash the page (an exception escaping a frame) stops the game and logs what
+it was to the browser console instead of leaving the page frozen with no clue
+why.
+
 ## Grass
 
 Add a **Grass** component to anything with a Mesh Renderer, such as a plane, a
