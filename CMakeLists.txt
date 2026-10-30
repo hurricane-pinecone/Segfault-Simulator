@@ -41,6 +41,30 @@ if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_EDITOR AND NOT EMSCRIPTEN)
 endif()
 
 if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_SAMPLE)
-    add_subdirectory(sampleGame)
-    add_subdirectory(samplePlatformer)
+    if(EMSCRIPTEN)
+        # The site: the sample projects (made in the editor) as web pages, the
+        # 3D showcase at the root and the platformer under samplePlatformer/.
+        # They need a host sfs-codegen (SFS_CODEGEN_EXECUTABLE) for their scene
+        # files.
+        if(SFS_CODEGEN_EXECUTABLE)
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/samples/showcase3d/project.sfsproj")
+                sfs_add_web_game(showcase3d
+                    PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/samples/showcase3d"
+                    OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin"
+                    HINT "W/S run · A/D turn · Space jump (twice) · Shift dash · drag to look · T hurries the day · click the canvas first")
+            endif()
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/samples/platformer2d/project.sfsproj")
+                sfs_add_web_game(platformer2d
+                    PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/samples/platformer2d"
+                    OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/samplePlatformer"
+                    HINT "A/D or arrows run · Space or W jump (again in the air) · Shift dash · R restart · click the game first")
+            endif()
+        else()
+            message(WARNING "No SFS_CODEGEN_EXECUTABLE: the sample games aren't built for the web")
+        endif()
+    else()
+        # Code-built samples (the editor-made ones build in the editor).
+        add_subdirectory(sampleGame)
+        add_subdirectory(samplePlatformer)
+    endif()
 endif()

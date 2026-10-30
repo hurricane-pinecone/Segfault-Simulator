@@ -1,0 +1,5 @@
+# Editor build output and caches
+.sfs/
+builds/
+compile_commands.json
+imgui.ini

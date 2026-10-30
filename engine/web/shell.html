@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{{ SFS_GAME_TITLE }}}</title>
+    <!-- Sets COOP/COEP via a service worker so SharedArrayBuffer (threads)
+         works on hosts that don't send those headers, like GitHub Pages. -->
+    <script src="coi-serviceworker.js"></script>
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0a0a12;
+        color: #cdd2e0;
+        font-family: system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+      }
+      /* The largest box of the game's shape that fits the page. */
+      canvas {
+        background: #000;
+        outline: none;
+        max-width: 100vw;
+        max-height: 92vh;
+        aspect-ratio: var(--game-aspect, 16 / 9);
+        width: min(100vw, calc(92vh * var(--game-aspect-number, 1.7778)));
+      }
+      #status,
+      #hint {
+        padding: 6px;
+        font-size: 13px;
+        opacity: 0.7;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+      <div id="status">Loading…</div>
+      <div id="hint">{{{ SFS_GAME_HINT }}}</div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("canvas");
+      const status = document.getElementById("status");
+      const aspect = {{{ SFS_GAME_ASPECT }}};
+      document.documentElement.style.setProperty("--game-aspect", String(aspect));
+      document.documentElement.style.setProperty("--game-aspect-number", String(aspect));
+
+      // The engine draws with WebGPU; say so plainly where there's none.
+      if (!navigator.gpu) {
+        status.textContent =
+          "This game needs a browser with WebGPU: a recent Chrome, Edge or Safari, or Firefox 141+ on Windows.";
+        canvas.style.display = "none";
+      }
+
+      // The engine binds keyboard input to "#canvas", so the canvas must hold
+      // focus: take it on load and whenever it's clicked.
+      var Module = {
+        canvas,
+        setStatus(text) {
+          if (navigator.gpu) status.textContent = text;
+        },
+        onRuntimeInitialized() {
+          status.textContent = "";
+          canvas.focus();
+        },
+      };
+      window.addEventListener("load", () => canvas.focus());
+      canvas.addEventListener("mousedown", () => canvas.focus());
+    </script>
+
+    {{{ SCRIPT }}}
+  </body>
+</html>

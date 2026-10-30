@@ -1,0 +1,25 @@
+{
+ "formatVersion": 1,
+ "baseColor": [
+  0.55,
+  0.85,
+  1.0,
+  0.28
+ ],
+ "baseTexture": "",
+ "metallicRoughnessTexture": "",
+ "normalTexture": "",
+ "normalScale": 1,
+ "tiling": [
+  1,
+  1
+ ],
+ "offset": [
+  0,
+  0
+ ],
+ "metallic": 0.0,
+ "roughness": 0.05,
+ "alphaMode": "blend",
+ "alphaCutoff": 0.5
+}

@@ -1,0 +1,51 @@
+{
+ "formatVersion": 1,
+ "root": {
+  "NameComponent": {
+   "name": "Tree"
+  },
+  "TransformComponent": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ]
+  },
+  "MeshRendererComponent": {
+   "mesh": "glowfall:tree",
+   "materials": [],
+   "tint": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "castsShadow": true,
+   "emitsLight": false,
+   "lightStrength": 1.0,
+   "lightRange": 1.0,
+   "lightCastsShadows": true
+  },
+  "CapsuleCollider3DComponent": {
+   "radius": 0.35,
+   "height": 3.0,
+   "offset": [
+    0,
+    0,
+    1.5
+   ],
+   "trigger": false
+  }
+ }
+}

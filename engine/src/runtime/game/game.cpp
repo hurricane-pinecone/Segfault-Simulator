@@ -142,9 +142,20 @@ void Game::run()
 
     self->previousTime = now;
 
-    self->processInput();
-    self->update(deltaTime);
-    self->render();
+    // A throw escaping a frame would leave the page with no word of why:
+    // say what it was, and stop.
+    try
+    {
+      self->processInput();
+      self->update(deltaTime);
+      self->render();
+    }
+    catch (const std::exception& error)
+    {
+      LOG_ERROR(std::string("Stopped by an uncaught exception: ") +
+                error.what());
+      self->isRunning = false;
+    }
   };
 
   emscripten_set_main_loop(loop, 0, 1);

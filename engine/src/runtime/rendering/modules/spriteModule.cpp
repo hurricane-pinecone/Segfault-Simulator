@@ -133,6 +133,10 @@ void SpriteModule::computeCommands(const RenderContext& context)
         glm::vec2(sprite.renderOffset.x, -sprite.renderOffset.y) /
         pixelsPerUnit;
     const glm::vec2 centre = -pivot * size + nudge;
+    // A negative scale mirrors it (its pivot too, above): the quad is drawn
+    // the right way round, as a mirrored one would face away and be culled,
+    // and its picture flipped instead.
+    const glm::vec2 extent = glm::abs(size);
 
     MeshInstance instance;
     if (flat)
@@ -150,16 +154,16 @@ void SpriteModule::computeCommands(const RenderContext& context)
       const float lean = space.standingLean();
       const auto standing = [lean](glm::vec3 v)
       { return glm::vec3(v.x, v.y, v.y * lean); };
-      instance.model[0] = glm::vec4(standing(x * size.x), 0.0f);
-      instance.model[1] = glm::vec4(standing(y * size.y), 0.0f);
+      instance.model[0] = glm::vec4(standing(x * extent.x), 0.0f);
+      instance.model[1] = glm::vec4(standing(y * extent.y), 0.0f);
       instance.model[2] = glm::vec4(0.0f, 0.0f, 1.0f, 0.0f);
       instance.model[3] =
           glm::vec4(origin + standing(x * centre.x + y * centre.y), 1.0f);
     }
     else
     {
-      instance.model[0] = glm::vec4(across * size.x, 0.0f);
-      instance.model[1] = glm::vec4(up * size.y, 0.0f);
+      instance.model[0] = glm::vec4(across * extent.x, 0.0f);
+      instance.model[1] = glm::vec4(up * extent.y, 0.0f);
       instance.model[2] = glm::vec4(-toward, 0.0f);
       instance.model[3] = glm::vec4(
           transform.position + across * centre.x + up * centre.y, 1.0f);
@@ -170,6 +174,16 @@ void SpriteModule::computeCommands(const RenderContext& context)
       instance.tint = glm::vec4(tint.color, tint.alpha);
     }
     instance.uvRect = frame.uvRect;
+    if (size.x < 0.0f)
+      instance.uvRect = {instance.uvRect.x + instance.uvRect.z,
+                         instance.uvRect.y,
+                         -instance.uvRect.z,
+                         instance.uvRect.w};
+    if (size.y < 0.0f)
+      instance.uvRect = {instance.uvRect.x,
+                         instance.uvRect.y + instance.uvRect.w,
+                         instance.uvRect.z,
+                         -instance.uvRect.w};
     m_placed[entity.getId()] = instance.model;
 
     auto [at, added] = byMaterial.emplace(look.id, m_commands.size());

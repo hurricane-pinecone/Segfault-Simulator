@@ -332,6 +332,15 @@ void EditorApp::onUpdate(double)
     if (std::exchange(m_moduleBuildQueued, false))
       requestBuild(m_playAfterBuild);
   }
+  else if (built && m_builder.target() == ModuleBuilder::Target::Web)
+  {
+    if (*built)
+    {
+      LOG_INFO("Exported for the web to " + m_webExport.string() +
+               " (serve the folder over http to play it)");
+      shell::openExternally(m_webExport);
+    }
+  }
   else if (built)
   {
     const bool startPlaying = *built && m_playAfterBuild;
@@ -1990,6 +1999,17 @@ void EditorApp::drawExportDialog()
       "Builds the scripts, then writes a playable copy of the game.");
   ImGui::Spacing();
 
+  // Desktop: this platform's player and the module. Web: a page that plays it
+  // in a browser (the engine compiled for it too; the first export is slow).
+  int platform = m_exportWeb ? 1 : 0;
+  ImGui::RadioButton("Desktop", &platform, 0);
+  ImGui::SameLine();
+  ImGui::RadioButton("Web", &platform, 1);
+  ImGui::SetItemTooltip(
+      "A folder to put on a web server (index.html): plays in browsers with "
+      "WebGPU.\nNeeds Emscripten (emsdk) where the editor builds.");
+  m_exportWeb = platform == 1;
+
   ImGui::SetNextItemWidth(320.0f);
   if (ImGui::BeginCombo(
           "Start scene",
@@ -2037,8 +2057,17 @@ void EditorApp::drawExportDialog()
     }
     m_context.project->setStartScene(m_exportStartScene);
     m_lastExportFolder = m_exportFolder;
-    requestBuild(false);
-    m_exportAfterBuild = moduleBuilding();
+    if (m_exportWeb)
+    {
+      // The web build compiles the scripts itself.
+      m_webExport = exportTarget();
+      m_builder.startWeb(*m_context.project, m_webExport, m_exportWindowSize[0], m_exportWindowSize[1]);
+    }
+    else
+    {
+      requestBuild(false);
+      m_exportAfterBuild = moduleBuilding();
+    }
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndDisabled();

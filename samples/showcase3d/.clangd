@@ -1,0 +1,5 @@
+# clangd (the editor's Code panel, and most editors): the game module's
+# compile database, linked into .sfs/ by every build.
+CompileFlags:
+  CompilationDatabase: .sfs
+  Remove: [-fno-keep-inline-dllexport] # GCC-only (MinGW builds)

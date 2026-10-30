@@ -1,0 +1,3466 @@
+{
+ "formatVersion": 2,
+ "systems": [
+  "PhysicsSystem3D",
+  "BobSystem"
+ ],
+ "render": {
+  "style": {
+   "kind": "3d"
+  },
+  "lighting": {
+   "sunDirection": [
+    -0.5,
+    -0.35,
+    0.8
+   ],
+   "sunColor": [
+    1.0,
+    0.95,
+    0.85
+   ],
+   "sunStrength": 0.85,
+   "ambient": 0.45,
+   "skyColor": [
+    0.45,
+    0.66,
+    0.9
+   ]
+  },
+  "shadows": {
+   "enabled": true,
+   "distance": 55.0,
+   "depthBias": 0.0015,
+   "softness": 1.5,
+   "pointLights": 4,
+   "pointResolution": 512
+  },
+  "wind": {
+   "direction": 35.0,
+   "strength": 0.55,
+   "gustiness": 0.6
+  },
+  "haze": {
+   "strength": 0.35,
+   "distance": 110.0
+  },
+  "camera": {
+   "target": [
+    0,
+    -14,
+    1
+   ],
+   "yaw": 1.5707964,
+   "pitch": 0.42,
+   "distance": 14.0,
+   "orthographic": false,
+   "fieldOfView": 0.9,
+   "orthoHeight": 20.0
+  }
+ },
+ "entities": [
+  {
+   "NameComponent": {
+    "name": "Island"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     0,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "ScriptComponent": {
+    "script": "IslandDirector",
+    "fields": {}
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Hero"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     -18,
+     0.05
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "CapsuleCollider3DComponent": {
+    "radius": 0.4,
+    "height": 1.7,
+    "offset": [
+     0,
+     0,
+     0.85
+    ],
+    "trigger": false
+   },
+   "RigidBody3DComponent": {
+    "mass": 2.0,
+    "kinematic": false,
+    "friction": 0.0,
+    "bounciness": 0.0,
+    "linearDamping": 0.05,
+    "angularDamping": 0.05,
+    "gravityScale": 1.0,
+    "lockRotation": true,
+    "bendsGrass": true
+   },
+   "PointLightComponent": {
+    "color": [
+     0.6,
+     0.85,
+     1.0
+    ],
+    "intensity": 0.6,
+    "radius": 4.0,
+    "offset": [
+     0,
+     0,
+     1.4
+    ],
+    "castsShadow": false,
+    "sourceRadius": 0.08
+   },
+   "ScriptComponent": {
+    "script": "Hero",
+    "fields": {
+     "tuning": "asset:e4b385ab79615b5caef0f890d389b8e2",
+     "fallLimit": -3.0
+    }
+   },
+   "children": [
+    {
+     "NameComponent": {
+      "name": "Model"
+     },
+     "TransformComponent": {
+      "position": [
+       0,
+       0,
+       0
+      ],
+      "rotation": [
+       0.7071067811865476,
+       0.0,
+       0.0,
+       0.7071067811865475
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     },
+     "MeshRendererComponent": {
+      "mesh": "glowfall:hero",
+      "materials": [],
+      "tint": [
+       1,
+       1,
+       1,
+       1
+      ],
+      "castsShadow": true,
+      "emitsLight": false,
+      "lightStrength": 1.0,
+      "lightRange": 1.0,
+      "lightCastsShadows": true
+     },
+     "GrassBenderComponent": {
+      "fitMesh": true,
+      "radius": 0.5,
+      "offset": [
+       0,
+       0,
+       0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "NameComponent": {
+    "name": "Camera"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     -26,
+     4
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "CameraComponent": {
+    "active": true,
+    "orthographic": false,
+    "fieldOfView": 52.0,
+    "orthoHeight": 20.0,
+    "zoom": 1.0,
+    "nearPlane": 0.1,
+    "farPlane": 400.0,
+    "focusDistance": 8.0,
+    "bloom": true,
+    "bloomIntensity": 0.55,
+    "bloomThreshold": 1.0,
+    "bloomSoftness": 0.5,
+    "bloomRadius": 1.0,
+    "depthOfField": true,
+    "focusRange": 30.0,
+    "focusBlur": 0.3
+   },
+   "ScriptComponent": {
+    "script": "FollowCamera",
+    "fields": {}
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Island Ground"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     0,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:island",
+    "materials": [],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     52,
+     52,
+     4
+    ],
+    "offset": [
+     0,
+     0,
+     -2
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Sea"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     0,
+     -0.55
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     30,
+     30,
+     1
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:plane",
+    "materials": [
+     "asset:13e4ff16623d5400bb8f0947e52d1add"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Turf"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     0,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:turf",
+    "materials": [],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "GrassComponent": {
+    "material": "asset:66026749760454c098822e26431b21f7",
+    "density": 170.0,
+    "height": 0.28,
+    "heightVariation": 0.4,
+    "width": 0.03,
+    "stiffness": 0.45,
+    "recovery": 3.0,
+    "drawDistance": 38.0,
+    "paint": {
+     "grid": {
+      "min": [
+       -23.0,
+       -23.0
+      ],
+      "max": [
+       23.0,
+       23.0
+      ],
+      "size": [
+       184,
+       184
+      ]
+     },
+     "coverage": "/////////////////////////////////////////////1v/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88AHz/PAB8/zwAfP88ABT/BABk/zwAEf8KAGH/PAAP/w4AX/88AA3/EgBd/zwADP8UAFz/PAAL/xYAW/88AAv/FgBb/zwACv8YAFr/PAAK/xgAWv88AAn/GgBZ/zwACf8aAFn/PAAJ/xoAWf88AAj/HABY/zwACP8cAFj/PAAI/xwAWP88AAj/HABY/zwACf8aAFn/PAAJ/xoAWf88AAn/GgBZ/zwACv8YAFr/PAAK/xgAWv88AAv/FgCi/xYAo/8UAKX/EgCo/w4ArP8KABT/AgCb/wQAFP8IAEb/CABh/woAQ/8MAF7/DABB/w4AXP8OAD//EABb/w4APv8SAFr/DgA+/xIAWf8QADz/FABY/xAAPP8UAFn/DgA9/xQAWf8OAD3/FABZ/w4APf8UAFr/DAA+/xQAW/8KAD//FABc/wgAQP8UAF//AgBE/xIApv8SAKf/EACp/w4Aq/8MAK7/CAD///////////////////////////////////////////////////////////////////////////////////////96/wYAr/8MAKr/EACm/xQAo/8WAKH/GACf/xoAnf8cAJz/HACb/x4Amv8eAJn/IACY/yAAmP8gAJf/IgCW/yIAlv8iAJb/IgCW/yIAlv8iAJf/IACY/yAAmP8gAJn/HgCa/x4Am/8cAJz/HACd/xoAn/8YAKH/FgCj/xQApv8QAKr/DACv/wYA/////////////2b/"
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Meadow"
+   },
+   "TransformComponent": {
+    "position": [
+     -13,
+     -11,
+     0.02
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.5,
+     1.2,
+     1
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:plane",
+    "materials": [
+     "asset:e6029715440152eb9b786c349851cd25"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "GrassComponent": {
+    "material": "asset:1d87e90887275fecb468851e5888663d",
+    "density": 300.0,
+    "height": 1.05,
+    "heightVariation": 0.35,
+    "width": 0.04,
+    "stiffness": 0.3,
+    "recovery": 2.0,
+    "drawDistance": 45.0,
+    "paint": {}
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Meadow Sign"
+   },
+   "TransformComponent": {
+    "position": [
+     -6.8,
+     -12.5,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.06,
+     0.06,
+     0.06
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:ee060e0ef5ce5b3b834dc623486c498d",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     1.0
+    ],
+    "renderOffset": [
+     0,
+     0
+    ]
+   },
+   "Station": {
+    "title": "Meadow",
+    "hint": "Grass bends in the wind and where you walk. Sparks hide in it!",
+    "radius": 6.0
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       11.5,
+       -6.5,
+       0.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       11.5,
+       -5.48,
+       0.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.52,
+       -6.5,
+       0.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.52,
+       -5.48,
+       0.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       13.54,
+       -6.5,
+       0.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       13.54,
+       -5.48,
+       0.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.01,
+       -6.5,
+       1.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.01,
+       -5.48,
+       1.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       13.03,
+       -6.5,
+       1.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       13.03,
+       -5.48,
+       1.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.52,
+       -6.5,
+       2.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:639c4ed7b011503292575c7383c8ab2c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.52,
+       -5.48,
+       2.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:ccc57cde6ac157c5911a7bcdfc05bf86",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       18,
+       -14,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:ccc57cde6ac157c5911a7bcdfc05bf86",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       18.6,
+       -13.65,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:ccc57cde6ac157c5911a7bcdfc05bf86",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       18.6,
+       -14.35,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:ccc57cde6ac157c5911a7bcdfc05bf86",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       19.2,
+       -13.3,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:ccc57cde6ac157c5911a7bcdfc05bf86",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       19.2,
+       -14,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:ccc57cde6ac157c5911a7bcdfc05bf86",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       19.2,
+       -14.7,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ball"
+   },
+   "TransformComponent": {
+    "position": [
+     13,
+     -14.2,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:ball",
+    "materials": [
+     "asset:40d1b9d3043e5c559467865090dda03c"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "SphereCollider3DComponent": {
+    "radius": 0.45,
+    "offset": [
+     0,
+     0,
+     0.45
+    ],
+    "trigger": false
+   },
+   "RigidBody3DComponent": {
+    "mass": 4.0,
+    "kinematic": false,
+    "friction": 0.6,
+    "bounciness": 0.3,
+    "linearDamping": 0.05,
+    "angularDamping": 0.05,
+    "gravityScale": 1.0,
+    "lockRotation": false,
+    "bendsGrass": true
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Physics Yard Sign"
+   },
+   "TransformComponent": {
+    "position": [
+     10,
+     -12,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.06,
+     0.06,
+     0.06
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:ee060e0ef5ce5b3b834dc623486c498d",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     1.0
+    ],
+    "renderOffset": [
+     0,
+     0
+    ]
+   },
+   "Station": {
+    "title": "Physics Yard",
+    "hint": "Shove the crates, roll the ball into the pins!",
+    "radius": 6.0
+   }
+  },
+  {
+   "$prefab": "asset:b977b19d4b22552c93abe752b30788c6",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -15,
+       9,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:b977b19d4b22552c93abe752b30788c6",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -10,
+       14,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:b977b19d4b22552c93abe752b30788c6",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -16,
+       16,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:b977b19d4b22552c93abe752b30788c6",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -8.5,
+       9.5,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -12.5,
+       11.5,
+       0
+      ],
+      "rotation": [
+       -0.3310244072528874,
+       0.0,
+       0.0,
+       0.9436221923009624
+      ],
+      "scale": [
+       1.1,
+       1.1,
+       1.1
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -18,
+       12,
+       0
+      ],
+      "rotation": [
+       0.9998586363834151,
+       0.0,
+       0.0,
+       -0.016813900484349713
+      ],
+      "scale": [
+       0.9,
+       0.9,
+       0.9
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -13,
+       17.5,
+       0
+      ],
+      "rotation": [
+       -0.1616762163536865,
+       0.0,
+       0.0,
+       0.9868438585032365
+      ],
+      "scale": [
+       1.25,
+       1.25,
+       1.25
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -7,
+       15.5,
+       0
+      ],
+      "rotation": [
+       -0.7702312540473072,
+       0.0,
+       0.0,
+       -0.637764702134504
+      ],
+      "scale": [
+       0.95,
+       0.95,
+       0.95
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -19.5,
+       6.5,
+       0
+      ],
+      "rotation": [
+       0.8567742707189892,
+       0.0,
+       0.0,
+       -0.5156916220319507
+      ],
+      "scale": [
+       1.05,
+       1.05,
+       1.05
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -21,
+       -4,
+       0
+      ],
+      "rotation": [
+       0.4829159416559378,
+       0.0,
+       0.0,
+       -0.8756667135928823
+      ],
+      "scale": [
+       0.8,
+       0.8,
+       0.8
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       19.5,
+       0.5,
+       0
+      ],
+      "rotation": [
+       0.8567742707189892,
+       0.0,
+       0.0,
+       0.5156916220319507
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:59f2ad4dbcc15b598ae508ad503b56d9",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -11,
+       -21.5,
+       0
+      ],
+      "rotation": [
+       -0.7593990591375082,
+       0.0,
+       0.0,
+       0.650625137065167
+      ],
+      "scale": [
+       0.9,
+       0.9,
+       0.9
+      ]
+     }
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Fireflies"
+   },
+   "TransformComponent": {
+    "position": [
+     -13,
+     13,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "ParticleEmitterComponent": {
+    "effect": "fireflies",
+    "offset": [
+     0,
+     0,
+     0
+    ],
+    "enabled": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Lantern Grove Sign"
+   },
+   "TransformComponent": {
+    "position": [
+     -8.5,
+     8.5,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.06,
+     0.06,
+     0.06
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:ee060e0ef5ce5b3b834dc623486c498d",
+    "frame": 2,
+    "anchor": [
+     0.5,
+     1.0
+    ],
+    "renderOffset": [
+     0,
+     0
+    ]
+   },
+   "Station": {
+    "title": "Lantern Grove",
+    "hint": "Lanterns cast real shadows. Come back at night (hold T to hurry the day).",
+    "radius": 5.0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ridge Step"
+   },
+   "TransformComponent": {
+    "position": [
+     9,
+     9,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     2.6,
+     2.6,
+     0.6
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:e6029715440152eb9b786c349851cd25"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   },
+   "Station": {
+    "title": "Crystal Ridge",
+    "hint": "Glowing crystals light the rocks around them. Climb!",
+    "radius": 5.0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ridge Step"
+   },
+   "TransformComponent": {
+    "position": [
+     11.5,
+     11,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     2.6,
+     2.6,
+     1.3
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:e6029715440152eb9b786c349851cd25"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ridge Step"
+   },
+   "TransformComponent": {
+    "position": [
+     14,
+     13.5,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     2.6,
+     2.6,
+     2.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:e6029715440152eb9b786c349851cd25"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ridge Step"
+   },
+   "TransformComponent": {
+    "position": [
+     16.5,
+     16,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     2.6,
+     2.6,
+     2.7
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:e6029715440152eb9b786c349851cd25"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Crystal"
+   },
+   "TransformComponent": {
+    "position": [
+     17.3,
+     16.6,
+     2.7
+    ],
+    "rotation": [
+     -0.7145763808626919,
+     0.0,
+     0.0,
+     0.699557428602668
+    ],
+    "scale": [
+     1.2,
+     1.2,
+     1.2
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:crystal",
+    "materials": [
+     "asset:4822a154d8745f33b6cdbf83635f4e7f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": true,
+    "lightStrength": 1.4,
+    "lightRange": 1.2,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.3
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Crystal"
+   },
+   "TransformComponent": {
+    "position": [
+     15.8,
+     17,
+     2.7
+    ],
+    "rotation": [
+     -0.04600212563953695,
+     0.0,
+     0.0,
+     0.998941341839772
+    ],
+    "scale": [
+     0.8,
+     0.8,
+     0.8
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:crystal",
+    "materials": [
+     "asset:4822a154d8745f33b6cdbf83635f4e7f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": true,
+    "lightStrength": 1.4,
+    "lightRange": 1.2,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.3
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Crystal"
+   },
+   "TransformComponent": {
+    "position": [
+     14.5,
+     14.2,
+     2.0
+    ],
+    "rotation": [
+     0.5679241732886948,
+     0.0,
+     0.0,
+     0.8230808790115055
+    ],
+    "scale": [
+     0.7,
+     0.7,
+     0.7
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:crystal",
+    "materials": [
+     "asset:4822a154d8745f33b6cdbf83635f4e7f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": true,
+    "lightStrength": 1.4,
+    "lightRange": 1.2,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.3
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Crystal"
+   },
+   "TransformComponent": {
+    "position": [
+     12.3,
+     11.8,
+     1.3
+    ],
+    "rotation": [
+     0.991143939568469,
+     0.0,
+     0.0,
+     -0.13279190885251674
+    ],
+    "scale": [
+     0.6,
+     0.6,
+     0.6
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:crystal",
+    "materials": [
+     "asset:4822a154d8745f33b6cdbf83635f4e7f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": true,
+    "lightStrength": 1.4,
+    "lightRange": 1.2,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.3
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Pavilion Floor"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     17,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1,
+     1,
+     1
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:disc",
+    "materials": [
+     "asset:09d2414ed46a5b7c9e1c629e37871f39"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": true,
+    "lightStrength": 0.5,
+    "lightRange": 0.8,
+    "lightCastsShadows": true
+   },
+   "Station": {
+    "title": "Glass Pavilion",
+    "hint": "See-through glass, a cut-out lattice, runes drawn by a node graph.",
+    "radius": 5.0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Pillar"
+   },
+   "TransformComponent": {
+    "position": [
+     -3,
+     14,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.5,
+     0.5,
+     3.2
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     0.7,
+     0.7,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Pillar"
+   },
+   "TransformComponent": {
+    "position": [
+     3,
+     14,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.5,
+     0.5,
+     3.2
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     0.7,
+     0.7,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Pillar"
+   },
+   "TransformComponent": {
+    "position": [
+     -3,
+     20,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.5,
+     0.5,
+     3.2
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     0.7,
+     0.7,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Pillar"
+   },
+   "TransformComponent": {
+    "position": [
+     3,
+     20,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.5,
+     0.5,
+     3.2
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     0.7,
+     0.7,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Glass Wall"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     20,
+     0.3
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     5.4,
+     0.08,
+     2.6
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:260414b94ac65d34929bcf685ad2f82f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Glass Wall"
+   },
+   "TransformComponent": {
+    "position": [
+     -3,
+     17,
+     0.3
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.08,
+     5.4,
+     2.6
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:260414b94ac65d34929bcf685ad2f82f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Glass Wall"
+   },
+   "TransformComponent": {
+    "position": [
+     3,
+     17,
+     0.3
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.08,
+     5.4,
+     2.6
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:260414b94ac65d34929bcf685ad2f82f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Lattice Roof"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     17,
+     3.2
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     6.6,
+     6.6,
+     0.12
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:e44fd1b402e853c781591f7680b2703b"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Plinth"
+   },
+   "TransformComponent": {
+    "position": [
+     -6,
+     4,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.9,
+     0.9,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1.3,
+     1.3,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Rubber Sphere"
+   },
+   "TransformComponent": {
+    "position": [
+     -6,
+     4,
+     1.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:orb",
+    "materials": [
+     "asset:40d1b9d3043e5c559467865090dda03c"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.4
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Plinth"
+   },
+   "TransformComponent": {
+    "position": [
+     -3,
+     4,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.9,
+     0.9,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1.3,
+     1.3,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Copper Sphere"
+   },
+   "TransformComponent": {
+    "position": [
+     -3,
+     4,
+     1.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:orb",
+    "materials": [
+     "asset:f864ffff04ea5105945b8eb9d066ec78"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.4
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Plinth"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     4,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.9,
+     0.9,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1.3,
+     1.3,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Steel Sphere"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     4,
+     1.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:orb",
+    "materials": [
+     "asset:0049e444632f5d1fb654eb944ad516cf"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.4
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Plinth"
+   },
+   "TransformComponent": {
+    "position": [
+     3,
+     4,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.9,
+     0.9,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1.3,
+     1.3,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Gold Sphere"
+   },
+   "TransformComponent": {
+    "position": [
+     3,
+     4,
+     1.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:orb",
+    "materials": [
+     "asset:cd88f7528313501eb5b43f7d757feae8"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.4
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Plinth"
+   },
+   "TransformComponent": {
+    "position": [
+     6,
+     4,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.9,
+     0.9,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:column",
+    "materials": [
+     "asset:65ac1dd5884a58b9b479377824473e31"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1.3,
+     1.3,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ceramic Sphere"
+   },
+   "TransformComponent": {
+    "position": [
+     6,
+     4,
+     1.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:orb",
+    "materials": [
+     "asset:18515e3c722755d8a34ba4d92b26d68f"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 0.0,
+    "speed": 0.0,
+    "spin": 0.4
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Metal Garden Sign"
+   },
+   "TransformComponent": {
+    "position": [
+     -2,
+     1.0,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.06,
+     0.06,
+     0.06
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:ee060e0ef5ce5b3b834dc623486c498d",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     1.0
+    ],
+    "renderOffset": [
+     0,
+     0
+    ]
+   },
+   "Station": {
+    "title": "Metal Garden",
+    "hint": "Five surfaces, one sun: rough rubber to polished gold.",
+    "radius": 4.0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Fountain"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     -7,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "glowfall:fountain",
+    "materials": [
+     "asset:e6029715440152eb9b786c349851cd25"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "ParticleEmitterComponent": {
+    "effect": "fountain",
+    "offset": [
+     0,
+     0,
+     1.4
+    ],
+    "enabled": true
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Pool"
+   },
+   "TransformComponent": {
+    "position": [
+     0,
+     -7,
+     0.47
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.33,
+     0.33,
+     1
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:plane",
+    "materials": [
+     "asset:13e4ff16623d5400bb8f0947e52d1add"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": false,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Fountain Sign"
+   },
+   "TransformComponent": {
+    "position": [
+     3.5,
+     -10.5,
+     0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     0.06,
+     0.06,
+     0.06
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:ee060e0ef5ce5b3b834dc623486c498d",
+    "frame": 3,
+    "anchor": [
+     0.5,
+     1.0
+    ],
+    "renderOffset": [
+     0,
+     0
+    ]
+   },
+   "Station": {
+    "title": "Fountain",
+    "hint": "Particles, lit like everything else.",
+    "radius": 4.5
+   }
+  },
+  {
+   "$prefab": "asset:5d89729b51315bb8873078ebe155b98c",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -20,
+       -1,
+       0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Lighthouse Lamp"
+   },
+   "TransformComponent": {
+    "position": [
+     -20,
+     -1,
+     6.8
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "PointLightComponent": {
+    "color": [
+     1.0,
+     0.85,
+     0.5
+    ],
+    "intensity": 3.0,
+    "radius": 16.0,
+    "offset": [
+     0,
+     0,
+     0
+    ],
+    "castsShadow": false,
+    "sourceRadius": 0.08
+   },
+   "Station": {
+    "title": "Lighthouse",
+    "hint": "A model imported from a glTF file.",
+    "radius": 6.0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Lift"
+   },
+   "TransformComponent": {
+    "position": [
+     6.5,
+     -2,
+     0.3
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     2.4,
+     2.4,
+     0.35
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:0049e444632f5d1fb654eb944ad516cf"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   },
+   "RigidBody3DComponent": {
+    "mass": 50.0,
+    "kinematic": true,
+    "friction": 1.0,
+    "bounciness": 0.0,
+    "linearDamping": 0.05,
+    "angularDamping": 0.05,
+    "gravityScale": 1.0,
+    "lockRotation": false,
+    "bendsGrass": true
+   },
+   "Bob": {
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "amplitude": 2.2,
+    "speed": 0.55,
+    "spin": 0.0
+   },
+   "Station": {
+    "title": "The Lift",
+    "hint": "A kinematic platform: ride it up to the ledge.",
+    "radius": 3.5
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ledge"
+   },
+   "TransformComponent": {
+    "position": [
+     9.5,
+     0.5,
+     4.2
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     2.5,
+     2.5,
+     0.35
+    ]
+   },
+   "MeshRendererComponent": {
+    "mesh": "builtin:cube",
+    "materials": [
+     "asset:0049e444632f5d1fb654eb944ad516cf"
+    ],
+    "tint": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "castsShadow": true,
+    "emitsLight": false,
+    "lightStrength": 1.0,
+    "lightRange": 1.0,
+    "lightCastsShadows": true
+   },
+   "BoxCollider3DComponent": {
+    "size": [
+     1,
+     1,
+     1
+    ],
+    "offset": [
+     0,
+     0,
+     0.5
+    ],
+    "trigger": false
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -17,
+       -8,
+       0.6
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -9.5,
+       -14,
+       0.6
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       12.5,
+       -6,
+       3.8
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -16.5,
+       14.5,
+       0.9
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -9,
+       17.5,
+       0.9
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       16.5,
+       16,
+       4.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       0,
+       17,
+       1.0
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       0,
+       1.5,
+       1.2
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       0,
+       -7,
+       2.4
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       -20,
+       -3.6,
+       0.9
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  },
+  {
+   "$prefab": "asset:2e0a1d2291a55dc0bbe25d1bc3bccb4a",
+   "$overrides": {
+    "": {
+     "TransformComponent": {
+      "position": [
+       9.5,
+       0.5,
+       5.4
+      ],
+      "rotation": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "scale": [
+       1.0,
+       1.0,
+       1.0
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

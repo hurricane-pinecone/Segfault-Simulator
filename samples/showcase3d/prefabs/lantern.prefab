@@ -1,0 +1,138 @@
+{
+ "formatVersion": 1,
+ "root": {
+  "NameComponent": {
+   "name": "Lantern"
+  },
+  "TransformComponent": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ]
+  },
+  "MeshRendererComponent": {
+   "mesh": "glowfall:lanternPost",
+   "materials": [],
+   "tint": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "castsShadow": true,
+   "emitsLight": false,
+   "lightStrength": 1.0,
+   "lightRange": 1.0,
+   "lightCastsShadows": true
+  },
+  "BoxCollider3DComponent": {
+   "size": [
+    0.3,
+    0.3,
+    2.4
+   ],
+   "offset": [
+    0,
+    0,
+    1.2
+   ],
+   "trigger": false
+  },
+  "children": [
+   {
+    "NameComponent": {
+     "name": "Glass"
+    },
+    "TransformComponent": {
+     "position": [
+      0,
+      0,
+      2.05
+     ],
+     "rotation": [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "scale": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "MeshRendererComponent": {
+     "mesh": "glowfall:lanternGlass",
+     "materials": [
+      "asset:a14594da1f995e7b9ff1b8873ac907f2"
+     ],
+     "tint": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "castsShadow": false,
+     "emitsLight": false,
+     "lightStrength": 1.0,
+     "lightRange": 1.0,
+     "lightCastsShadows": true
+    },
+    "$id": 1
+   },
+   {
+    "NameComponent": {
+     "name": "Light"
+    },
+    "TransformComponent": {
+     "position": [
+      0,
+      0,
+      2.05
+     ],
+     "rotation": [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "scale": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "PointLightComponent": {
+     "color": [
+      1.0,
+      0.7,
+      0.4
+     ],
+     "intensity": 2.4,
+     "radius": 9.0,
+     "offset": [
+      0,
+      0,
+      0
+     ],
+     "castsShadow": true,
+     "sourceRadius": 0.08
+    },
+    "Lantern": {},
+    "$id": 2
+   }
+  ]
+ }
+}

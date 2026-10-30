@@ -1,0 +1,78 @@
+{
+ "formatVersion": 2,
+ "alphaMode": "opaque",
+ "graph": {
+  "nodes": [
+   {
+    "id": 1,
+    "type": "output",
+    "position": [
+     0,
+     0
+    ]
+   },
+   {
+    "id": 2,
+    "type": "color",
+    "position": [
+     -300,
+     0
+    ],
+    "value": [
+     1.0,
+     0.72,
+     0.35,
+     1
+    ]
+   },
+   {
+    "id": 3,
+    "type": "multiply",
+    "position": [
+     -150,
+     60
+    ],
+    "inputs": {
+     "B": [
+      4.0,
+      4.0,
+      4.0,
+      4.0
+     ]
+    }
+   }
+  ],
+  "links": [
+   {
+    "from": [
+     2,
+     "Colour"
+    ],
+    "to": [
+     1,
+     "Base Colour"
+    ]
+   },
+   {
+    "from": [
+     2,
+     "Colour"
+    ],
+    "to": [
+     3,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     3,
+     "Out"
+    ],
+    "to": [
+     1,
+     "Emission"
+    ]
+   }
+  ]
+ }
+}

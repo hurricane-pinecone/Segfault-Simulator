@@ -97,6 +97,26 @@ int main()
     CHECK(testing::approx(quad.uvRect.z, 1.0f));
   }
 
+  TEST("a sprite scaled negative should be mirrored, not turned away")
+  {
+    Harness h;
+    h.system.withModule<SpriteModule>(h.store);
+    h.store.addRadialTexture("glow", 8);
+    Entity e = h.scene.createEntity();
+    SpriteComponent sprite;
+    sprite.image = "glow";
+    e.addComponent<SpriteComponent>(sprite);
+    e.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2{1.0f, 2.0f}, glm::vec2{-1.0f, 1.0f}});
+    h.frame();
+
+    CHECK(h.renderer.drawn.size() == 1u);
+    const MeshInstance& quad = h.renderer.drawn.front();
+    CHECK(testing::approx(quad.model[0].x, 8.0f)); // facing the camera
+    CHECK(testing::approx(quad.uvRect.x, 1.0f));   // its picture flipped
+    CHECK(testing::approx(quad.uvRect.z, -1.0f));
+  }
+
   TEST("a sprite saved by image name should draw the whole image")
   {
     Harness h;

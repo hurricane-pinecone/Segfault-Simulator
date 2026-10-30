@@ -87,6 +87,14 @@ public:
   // Every living entity, in id order (e.g. for an editor's hierarchy).
   std::vector<Entity> entities() { return m_registry.entities(); }
 
+  // Every living entity with all these components, in id order: a query for
+  // scripts (a System keeps its own list of the entities it works on).
+  template <typename... TComponents>
+  std::vector<Entity> view()
+  {
+    return m_registry.view<TComponents...>();
+  }
+
   // Apply pending entity creation/destruction now instead of at the start of
   // the next update (e.g. after an editor replaces the scene's contents).
   void flushEntities() { m_registry.flushEntities(); }

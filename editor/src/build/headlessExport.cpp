@@ -60,3 +60,23 @@ int exportHeadless(const fs::path& projectFolder, const fs::path& outputFolder)
   const GameExporter exporter(base ? fs::path(base) : fs::current_path());
   return exporter.run(*project, options).empty() ? 1 : 0;
 }
+
+int exportWebHeadless(const fs::path& projectFolder, const fs::path& outputFolder)
+{
+  const std::optional<Project> project = Project::open(projectFolder);
+  if (!project)
+    return 1;
+  if (project->startScene().empty())
+  {
+    LOG_ERROR("The project has no start scene to play");
+    return 1;
+  }
+  ModuleBuilder builder(BuildEnvironment::current());
+  const fs::path output = outputFolder.empty() ? project->exportFolder() / "web" : outputFolder;
+  if (!builder.startWeb(*project, output, 1280, 720))
+    return 1;
+  std::optional<bool> built;
+  while (!(built = builder.poll()))
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  return *built ? 0 : 1;
+}

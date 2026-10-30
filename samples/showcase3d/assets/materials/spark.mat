@@ -1,0 +1,284 @@
+{
+ "formatVersion": 2,
+ "alphaMode": "opaque",
+ "graph": {
+  "nodes": [
+   {
+    "id": 1,
+    "type": "output",
+    "position": [
+     0,
+     0
+    ],
+    "inputs": {
+     "Roughness": [
+      0.25,
+      0,
+      0,
+      0
+     ],
+     "Metallic": [
+      0.1,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 2,
+    "type": "color",
+    "position": [
+     -700,
+     -150
+    ],
+    "value": [
+     0.6,
+     0.42,
+     0.08,
+     1
+    ]
+   },
+   {
+    "id": 3,
+    "type": "time",
+    "position": [
+     -900,
+     100
+    ]
+   },
+   {
+    "id": 4,
+    "type": "position",
+    "position": [
+     -900,
+     220
+    ]
+   },
+   {
+    "id": 5,
+    "type": "split",
+    "position": [
+     -720,
+     220
+    ]
+   },
+   {
+    "id": 6,
+    "type": "multiply",
+    "position": [
+     -560,
+     100
+    ],
+    "inputs": {
+     "B": [
+      5.0,
+      5.0,
+      5.0,
+      5.0
+     ]
+    }
+   },
+   {
+    "id": 7,
+    "type": "add",
+    "position": [
+     -420,
+     140
+    ]
+   },
+   {
+    "id": 8,
+    "type": "sine",
+    "position": [
+     -300,
+     140
+    ]
+   },
+   {
+    "id": 9,
+    "type": "remap",
+    "position": [
+     -170,
+     140
+    ],
+    "inputs": {
+     "From Min": [
+      -1,
+      -1,
+      -1,
+      -1
+     ],
+     "From Max": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "To Min": [
+      0.45,
+      0.45,
+      0.45,
+      0.45
+     ],
+     "To Max": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "id": 10,
+    "type": "color",
+    "position": [
+     -300,
+     0
+    ],
+    "value": [
+     1.0,
+     0.72,
+     0.2,
+     1
+    ]
+   },
+   {
+    "id": 11,
+    "type": "multiply",
+    "position": [
+     -40,
+     60
+    ],
+    "inputs": {
+     "B": [
+      2.6,
+      2.6,
+      2.6,
+      2.6
+     ]
+    }
+   },
+   {
+    "id": 12,
+    "type": "multiply",
+    "position": [
+     -150,
+     40
+    ]
+   }
+  ],
+  "links": [
+   {
+    "from": [
+     2,
+     "Colour"
+    ],
+    "to": [
+     1,
+     "Base Colour"
+    ]
+   },
+   {
+    "from": [
+     4,
+     "Position"
+    ],
+    "to": [
+     5,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     3,
+     "Time"
+    ],
+    "to": [
+     6,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     6,
+     "Out"
+    ],
+    "to": [
+     7,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     5,
+     "B"
+    ],
+    "to": [
+     7,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     7,
+     "Out"
+    ],
+    "to": [
+     8,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     8,
+     "Out"
+    ],
+    "to": [
+     9,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     10,
+     "Colour"
+    ],
+    "to": [
+     12,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     9,
+     "Out"
+    ],
+    "to": [
+     12,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     12,
+     "Out"
+    ],
+    "to": [
+     11,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     11,
+     "Out"
+    ],
+    "to": [
+     1,
+     "Emission"
+    ]
+   }
+  ]
+ }
+}

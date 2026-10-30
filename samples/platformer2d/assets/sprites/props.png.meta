@@ -1,0 +1,11 @@
+{
+  "formatVersion": 1,
+  "id": "bf3872d1cae25e49ad4741c4b52ddd7c",
+  "settings": {
+    "filter": "nearest",
+    "spriteCell": [
+      16,
+      16
+    ]
+  }
+}

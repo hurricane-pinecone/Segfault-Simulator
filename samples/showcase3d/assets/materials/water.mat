@@ -1,0 +1,204 @@
+{
+ "formatVersion": 2,
+ "alphaMode": "blend",
+ "graph": {
+  "nodes": [
+   {
+    "id": 1,
+    "type": "output",
+    "position": [
+     0,
+     0
+    ],
+    "inputs": {
+     "Roughness": [
+      0.08,
+      0,
+      0,
+      0
+     ],
+     "Alpha": [
+      0.78,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 2,
+    "type": "uv",
+    "position": [
+     -900,
+     0
+    ]
+   },
+   {
+    "id": 3,
+    "type": "time",
+    "position": [
+     -900,
+     150
+    ]
+   },
+   {
+    "id": 4,
+    "type": "multiply",
+    "position": [
+     -760,
+     150
+    ],
+    "inputs": {
+     "B": [
+      0.02,
+      0.013,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 5,
+    "type": "add",
+    "position": [
+     -620,
+     40
+    ]
+   },
+   {
+    "id": 6,
+    "type": "noise",
+    "position": [
+     -480,
+     40
+    ],
+    "inputs": {
+     "Scale": [
+      60,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 7,
+    "type": "color",
+    "position": [
+     -480,
+     -160
+    ],
+    "value": [
+     0.02,
+     0.18,
+     0.32,
+     1
+    ]
+   },
+   {
+    "id": 8,
+    "type": "color",
+    "position": [
+     -480,
+     -280
+    ],
+    "value": [
+     0.12,
+     0.55,
+     0.62,
+     1
+    ]
+   },
+   {
+    "id": 9,
+    "type": "lerp",
+    "position": [
+     -260,
+     -120
+    ]
+   }
+  ],
+  "links": [
+   {
+    "from": [
+     3,
+     "Time"
+    ],
+    "to": [
+     4,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     2,
+     "UV"
+    ],
+    "to": [
+     5,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     4,
+     "Out"
+    ],
+    "to": [
+     5,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     5,
+     "Out"
+    ],
+    "to": [
+     6,
+     "UV"
+    ]
+   },
+   {
+    "from": [
+     7,
+     "Colour"
+    ],
+    "to": [
+     9,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     8,
+     "Colour"
+    ],
+    "to": [
+     9,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     6,
+     "Out"
+    ],
+    "to": [
+     9,
+     "T"
+    ]
+   },
+   {
+    "from": [
+     9,
+     "Out"
+    ],
+    "to": [
+     1,
+     "Base Colour"
+    ]
+   }
+  ]
+ }
+}

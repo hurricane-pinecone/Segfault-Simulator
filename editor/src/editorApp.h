@@ -283,4 +283,6 @@ private:
   std::string m_exportStartScene; // relative to the project
   int m_exportWindowSize[2] = {1600, 900};
   bool m_exportAfterBuild = false;
+  bool m_exportWeb = false;          // a web page instead of a desktop game
+  std::filesystem::path m_webExport; // where the running web export goes
 };

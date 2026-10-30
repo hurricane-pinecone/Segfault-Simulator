@@ -1,0 +1,2633 @@
+{
+ "formatVersion": 2,
+ "systems": [
+  "CameraSystem"
+ ],
+ "render": {
+  "style": {
+   "kind": "flat",
+   "pixelsPerUnit": 0.25,
+   "tilePixels": [
+    32.0,
+    16.0
+   ],
+   "heightPixels": 8.0,
+   "yDown": true,
+   "ySort": false
+  },
+  "lighting": {
+   "sunDirection": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "sunColor": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "sunStrength": 0.0,
+   "ambient": 0.62,
+   "skyColor": [
+    0.03,
+    0.02,
+    0.08
+   ]
+  },
+  "shadows": {
+   "enabled": false,
+   "distance": 40.0,
+   "depthBias": 0.0015,
+   "softness": 1.5,
+   "pointLights": 0,
+   "pointResolution": 256
+  },
+  "camera": {
+   "target": [
+    384.0,
+    -64.0,
+    0.0
+   ],
+   "yaw": 1.5707964,
+   "pitch": 1.5707964,
+   "distance": 50000.0,
+   "orthographic": true,
+   "fieldOfView": 0.8,
+   "orthoHeight": 900.0
+  }
+ },
+ "entities": [
+  {
+   "NameComponent": {
+    "name": "Run"
+   },
+   "TransformComponent": {
+    "position": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "ScriptComponent": {
+    "script": "RunDirector",
+    "fields": {
+     "props": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+     "glitch": "asset:4ef458ad3f905e1d899232d4326de4d5"
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Runner"
+   },
+   "TransformComponent": {
+    "position": [
+     192.0,
+     0.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:d1087e1afbd35d0f9b0612a6bf20dde7",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.8125
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 3
+   },
+   "PointLightComponent": {
+    "color": [
+     0.35,
+     0.95,
+     1.0
+    ],
+    "intensity": 1.6,
+    "radius": 320.0,
+    "offset": [
+     0.0,
+     0.0,
+     60.0
+    ],
+    "castsShadow": false,
+    "sourceRadius": 0.05
+   },
+   "ScriptComponent": {
+    "script": "Runner",
+    "fields": {}
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Camera"
+   },
+   "TransformComponent": {
+    "position": [
+     384.0,
+     -128.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "CameraComponent": {
+    "active": true,
+    "orthographic": true,
+    "orthoHeight": 760.0,
+    "zoom": 1.0,
+    "nearPlane": 1.0,
+    "farPlane": 100000.0,
+    "bloom": true,
+    "bloomIntensity": 0.9,
+    "bloomThreshold": 0.85,
+    "bloomSoftness": 0.5,
+    "bloomRadius": 1.0,
+    "depthOfField": false
+   },
+   "CameraFollowComponent": {
+    "target": -1,
+    "offset": [
+     320.0,
+     -96.0,
+     0.0
+    ],
+    "smoothing": 7.0,
+    "shakeMaxOffset": 36.0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Sky"
+   },
+   "TransformComponent": {
+    "position": [
+     0.0,
+     -128.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     5.0,
+     5.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:1c2d73de0651591abee8946b038da05c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": -30
+   },
+   "ScriptComponent": {
+    "script": "Parallax",
+    "fields": {
+     "follow": 1.0,
+     "width": 2560.0,
+     "copies": 2,
+     "height": 0.0
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "City Far"
+   },
+   "TransformComponent": {
+    "position": [
+     0.0,
+     -128.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     4.0,
+     4.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:1ef5888e295f5743854f817138798f83",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": -20
+   },
+   "ScriptComponent": {
+    "script": "Parallax",
+    "fields": {
+     "follow": 0.8,
+     "width": 2048.0,
+     "copies": 4,
+     "height": -120.0
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "City Near"
+   },
+   "TransformComponent": {
+    "position": [
+     0.0,
+     -128.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     4.0,
+     4.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:deb359bfe8d052c29bcfd91f141ed053",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": -10
+   },
+   "SpriteTint": {
+    "color": [
+     0.8,
+     0.85,
+     1.0
+    ],
+    "alpha": 1.0
+   },
+   "ScriptComponent": {
+    "script": "Parallax",
+    "fields": {
+     "follow": 0.55,
+     "width": 2048.0,
+     "copies": 4,
+     "height": -220.0
+    }
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Start Ground"
+   },
+   "TransformComponent": {
+    "position": [
+     384.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "BoxCollider2D": {
+    "half": [
+     512.0,
+     96.0
+    ],
+    "offset": [
+     0.0,
+     0.0
+    ]
+   },
+   "SolidObject": {}
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -96.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -96.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -96.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -32.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -32.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -32.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     32.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     32.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     32.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     96.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     96.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     96.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     160.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     160.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     160.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     224.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     224.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     224.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     288.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     288.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     288.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     352.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     352.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     352.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     416.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     416.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     416.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     480.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     480.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     480.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     544.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     544.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     544.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     608.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     608.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     608.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     672.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     672.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     672.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     736.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     736.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     736.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     800.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     800.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     800.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     864.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     864.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Ground Block"
+   },
+   "TransformComponent": {
+    "position": [
+     864.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Back Wall"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "BoxCollider2D": {
+    "half": [
+     32.0,
+     288.0
+    ],
+    "offset": [
+     0.0,
+     0.0
+    ]
+   },
+   "SolidObject": {}
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -352.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 0,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -288.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -224.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     -32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     32.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Wall Block"
+   },
+   "TransformComponent": {
+    "position": [
+     -160.0,
+     160.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 1,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": 0
+   }
+  },
+  {
+   "NameComponent": {
+    "name": "Beacon"
+   },
+   "TransformComponent": {
+    "position": [
+     512.0,
+     -96.0,
+     0.0
+    ],
+    "rotation": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     2.0,
+     1.0
+    ]
+   },
+   "SpriteComponent": {
+    "image": "asset:bf3872d1cae25e49ad4741c4b52ddd7c",
+    "frame": 9,
+    "anchor": [
+     0.5,
+     0.5
+    ],
+    "renderOffset": [
+     0.0,
+     0.0
+    ]
+   },
+   "RenderLayerComponent": {
+    "layer": -1
+   },
+   "PointLightComponent": {
+    "color": [
+     1.0,
+     0.85,
+     0.4
+    ],
+    "intensity": 2.2,
+    "radius": 420.0,
+    "offset": [
+     0.0,
+     0.0,
+     60.0
+    ],
+    "castsShadow": false,
+    "sourceRadius": 0.05
+   }
+  }
+ ]
+}

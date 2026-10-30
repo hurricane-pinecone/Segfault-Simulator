@@ -366,6 +366,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The sample games are editor projects: their scene files need reflection,
+      # which sfs-codegen generates on the build machine. Build it natively
+      # first (it needs tree-sitter, from Conan; the same package cache as the
+      # runtime jobs, so a warm run only compiles the tool).
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.x"
+
+      - name: Install Conan
+        run: pip install "conan==2.*"
+
+      - name: Detect Conan profile
+        run: conan profile detect --force
+
+      - name: Cache Conan packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      - name: Build the host sfs-codegen
+        run: |
+          conan install . --build=missing -s build_type=Debug \
+            -c tools.build:jobs="$(nproc)" \
+            -c tools.system.package_manager:mode=install \
+            -c tools.system.package_manager:sudo=True
+          cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF -DENGINE_BUILD_TESTS=OFF \
+            -DENGINE_BUILD_EDITOR=OFF
+          cmake --build build/Debug --target sfs-codegen -j "$(nproc)"
+
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
@@ -381,6 +414,7 @@ jobs:
       - name: Configure web build
         run: >
           emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+          -DSFS_CODEGEN_EXECUTABLE="$PWD/build/Debug/bin/sfs-codegen"
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build web
@@ -388,11 +422,6 @@ jobs:
 
       # Docs share the game's single Pages site: the game at the root, the MkDocs
       # site under /docs. --strict fails the deploy on a broken link or nav entry.
-      - name: Setup Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.x"
-
       - name: Build docs (into /docs)
         run: |
           pip install "mkdocs-material==9.*"

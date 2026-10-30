@@ -1,0 +1,110 @@
+{
+ "formatVersion": 2,
+ "alphaMode": "opaque",
+ "graph": {
+  "nodes": [
+   {
+    "id": 1,
+    "type": "output",
+    "position": [
+     0,
+     0
+    ],
+    "inputs": {
+     "Roughness": [
+      0.8,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 2,
+    "type": "grass",
+    "position": [
+     -600,
+     80
+    ]
+   },
+   {
+    "id": 3,
+    "type": "color",
+    "position": [
+     -600,
+     -160
+    ],
+    "value": [
+     0.45,
+     0.3,
+     0.06,
+     1
+    ]
+   },
+   {
+    "id": 4,
+    "type": "color",
+    "position": [
+     -600,
+     -280
+    ],
+    "value": [
+     0.95,
+     0.82,
+     0.38,
+     1
+    ]
+   },
+   {
+    "id": 5,
+    "type": "lerp",
+    "position": [
+     -300,
+     -120
+    ]
+   }
+  ],
+  "links": [
+   {
+    "from": [
+     3,
+     "Colour"
+    ],
+    "to": [
+     5,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     4,
+     "Colour"
+    ],
+    "to": [
+     5,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     2,
+     "Height"
+    ],
+    "to": [
+     5,
+     "T"
+    ]
+   },
+   {
+    "from": [
+     5,
+     "Out"
+    ],
+    "to": [
+     1,
+     "Base Colour"
+    ]
+   }
+  ]
+ }
+}

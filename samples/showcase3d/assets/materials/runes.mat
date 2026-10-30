@@ -1,0 +1,344 @@
+{
+ "formatVersion": 2,
+ "alphaMode": "opaque",
+ "graph": {
+  "nodes": [
+   {
+    "id": 1,
+    "type": "output",
+    "position": [
+     0,
+     0
+    ],
+    "inputs": {
+     "Roughness": [
+      0.6,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 2,
+    "type": "color",
+    "position": [
+     -300,
+     -200
+    ],
+    "value": [
+     0.32,
+     0.3,
+     0.34,
+     1
+    ]
+   },
+   {
+    "id": 3,
+    "type": "uv",
+    "position": [
+     -1000,
+     0
+    ]
+   },
+   {
+    "id": 4,
+    "type": "voronoi",
+    "position": [
+     -820,
+     0
+    ],
+    "inputs": {
+     "Scale": [
+      7,
+      0,
+      0,
+      0
+     ],
+     "Randomness": [
+      0.9,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 5,
+    "type": "smoothstep",
+    "position": [
+     -700,
+     0
+    ],
+    "inputs": {
+     "Edge 1": [
+      0.0,
+      0,
+      0,
+      0
+     ],
+     "Edge 2": [
+      0.06,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "id": 6,
+    "type": "oneMinus",
+    "position": [
+     -600,
+     0
+    ]
+   },
+   {
+    "id": 7,
+    "type": "time",
+    "position": [
+     -820,
+     200
+    ]
+   },
+   {
+    "id": 8,
+    "type": "add",
+    "position": [
+     -640,
+     200
+    ]
+   },
+   {
+    "id": 9,
+    "type": "sine",
+    "position": [
+     -500,
+     200
+    ]
+   },
+   {
+    "id": 10,
+    "type": "remap",
+    "position": [
+     -380,
+     200
+    ],
+    "inputs": {
+     "From Min": [
+      -1,
+      -1,
+      -1,
+      -1
+     ],
+     "From Max": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "To Min": [
+      0.1,
+      0.1,
+      0.1,
+      0.1
+     ],
+     "To Max": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   {
+    "id": 11,
+    "type": "multiply",
+    "position": [
+     -380,
+     40
+    ]
+   },
+   {
+    "id": 12,
+    "type": "color",
+    "position": [
+     -380,
+     -80
+    ],
+    "value": [
+     0.2,
+     0.9,
+     1.0,
+     1
+    ]
+   },
+   {
+    "id": 13,
+    "type": "multiply",
+    "position": [
+     -200,
+     0
+    ],
+    "inputs": {
+     "B": [
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ]
+    }
+   },
+   {
+    "id": 14,
+    "type": "multiply",
+    "position": [
+     -280,
+     -20
+    ]
+   }
+  ],
+  "links": [
+   {
+    "from": [
+     2,
+     "Colour"
+    ],
+    "to": [
+     1,
+     "Base Colour"
+    ]
+   },
+   {
+    "from": [
+     3,
+     "UV"
+    ],
+    "to": [
+     4,
+     "UV"
+    ]
+   },
+   {
+    "from": [
+     4,
+     "Distance"
+    ],
+    "to": [
+     5,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     5,
+     "Out"
+    ],
+    "to": [
+     6,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     7,
+     "Time"
+    ],
+    "to": [
+     8,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     4,
+     "Cell"
+    ],
+    "to": [
+     8,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     8,
+     "Out"
+    ],
+    "to": [
+     9,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     9,
+     "Out"
+    ],
+    "to": [
+     10,
+     "In"
+    ]
+   },
+   {
+    "from": [
+     6,
+     "Out"
+    ],
+    "to": [
+     11,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     10,
+     "Out"
+    ],
+    "to": [
+     11,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     12,
+     "Colour"
+    ],
+    "to": [
+     14,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     11,
+     "Out"
+    ],
+    "to": [
+     14,
+     "B"
+    ]
+   },
+   {
+    "from": [
+     14,
+     "Out"
+    ],
+    "to": [
+     13,
+     "A"
+    ]
+   },
+   {
+    "from": [
+     13,
+     "Out"
+    ],
+    "to": [
+     1,
+     "Emission"
+    ]
+   }
+  ]
+ }
+}

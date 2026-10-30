@@ -2,6 +2,7 @@
 #include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/nameComponent.h>
+#include <engine/core/components/parentComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
@@ -58,6 +59,21 @@ int main()
     CHECK(!world.scene.findEntity("Barn").isValid());
     CHECK(world.scene.findEntities("Gate").size() == 2u);
     CHECK(world.scene.findEntities("Gate")[1] == loose);
+  }
+
+  TEST("view should list the entities with all the given components")
+  {
+    World world;
+    Entity named = world.named("Farm");
+    Entity tagged = world.named("Gate");
+    tagged.addComponent<ParentComponent>();
+    world.scene.flushEntities();
+
+    CHECK(world.scene.view<NameComponent>().size() == 2u);
+    const std::vector<Entity> both =
+        world.scene.view<NameComponent, ParentComponent>();
+    CHECK(both.size() == 1u && both[0] == tagged);
+    CHECK(named.isValid());
   }
 
   TEST("findEntity should follow a path of names from a root")

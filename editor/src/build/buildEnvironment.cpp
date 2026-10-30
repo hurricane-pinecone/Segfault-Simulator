@@ -27,6 +27,7 @@ BuildEnvironment BuildEnvironment::current()
   env.m_toolchainFile = SFS_EDITOR_TOOLCHAIN_FILE;
   env.m_enginePrefix = SFS_EDITOR_ENGINE_PREFIX;
   env.m_codegen = SFS_EDITOR_CODEGEN;
+  env.m_sourceDir = SFS_EDITOR_SOURCE_DIR;
   env.m_generator = SFS_EDITOR_GENERATOR;
   env.m_buildType = SFS_EDITOR_BUILD_TYPE;
   env.m_moduleSuffix = SFS_EDITOR_MODULE_SUFFIX;

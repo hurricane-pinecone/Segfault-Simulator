@@ -4,6 +4,10 @@
 #include "engine/runtime/rendering/backend/renderBackends.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
 
+#ifdef SFS_STATIC_GAME_MODULE
+  #include "engine/runtime/scripting/gameModule.h"
+#endif
+
 #include <SDL_filesystem.h>
 #include <SDL_messagebox.h>
 #include <SDL_video.h>
@@ -53,13 +57,18 @@ void PlayerApp::onSetup()
   if (window && !m_manifest.name.empty())
     SDL_SetWindowTitle(window, m_manifest.name.c_str());
 
-  // Scripts first: the scene's components and game objects live in the module.
+  // Scripts first: the scene's components and game objects live in the module
+  // (compiled into this player on the web, which can't load libraries).
+#ifdef SFS_STATIC_GAME_MODULE
+  sfsRegisterModule(sfs::reflect::types());
+#else
   if (!m_manifest.module.empty() &&
       !m_module.load(m_folder / m_manifest.module, m_manifest.moduleName))
   {
     fail("The game's code (" + m_manifest.module.string() + ") couldn't be loaded.");
     return;
   }
+#endif
 
   if (!playScene(m_manifest.startScene))
   {

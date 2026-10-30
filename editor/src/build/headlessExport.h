@@ -12,3 +12,13 @@
  */
 int exportHeadless(const std::filesystem::path& projectFolder,
                    const std::filesystem::path& outputFolder);
+
+/**
+ * `SfsEditor --export-web <project> [folder]`: build the project as a web page
+ * (index.html and its files) into `folder`, or the project's builds/web. Needs
+ * Emscripten where the editor builds (see ModuleBuilder::startWeb()).
+ *
+ * @return the process exit code (0 on success).
+ */
+int exportWebHeadless(const std::filesystem::path& projectFolder,
+                      const std::filesystem::path& outputFolder);

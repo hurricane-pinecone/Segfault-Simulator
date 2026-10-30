@@ -29,6 +29,8 @@ public:
   const std::string& toolchainFile() const { return m_toolchainFile; }
   const std::string& enginePrefix() const { return m_enginePrefix; }
   const std::string& codegen() const { return m_codegen; }
+  /** The engine's source tree (as the build machine sees it); empty if none. */
+  const std::string& sourceDir() const { return m_sourceDir; }
   const std::string& generator() const { return m_generator; }
   const std::string& buildType() const { return m_buildType; }
 
@@ -64,6 +66,7 @@ private:
   std::string m_toolchainFile;
   std::string m_enginePrefix;
   std::string m_codegen;
+  std::string m_sourceDir;
   std::string m_generator;
   std::string m_buildType;
   std::string m_moduleSuffix;

@@ -1,0 +1,16 @@
+{
+ "formatVersion": 1,
+ "type": "HeroTuning",
+ "fields": {
+  "runSpeed": 7.0,
+  "groundAcceleration": 55.0,
+  "airAcceleration": 22.0,
+  "jumpSpeed": 7.2,
+  "airJumps": 1,
+  "dashSpeed": 17.0,
+  "dashTime": 0.18,
+  "coyoteTime": 0.12,
+  "jumpBuffer": 0.12,
+  "turnSpeed": 3.2
+ }
+}

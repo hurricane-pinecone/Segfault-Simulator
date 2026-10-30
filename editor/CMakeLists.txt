@@ -103,6 +103,13 @@ else()
     set(SFS_EDITOR_CODEGEN "${CMAKE_BINARY_DIR}/bin/sfs-codegen")
 endif()
 set(SFS_EDITOR_TOOLCHAIN_FILE "${CMAKE_TOOLCHAIN_FILE}")
+# The engine's source, which a web export builds for the browser (in-tree only:
+# an installed engine has no sources, and can't export for the web).
+if(TARGET engine-core)
+    get_filename_component(SFS_EDITOR_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+else()
+    set(SFS_EDITOR_SOURCE_DIR "")
+endif()
 set(SFS_EDITOR_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/build/editorBuildConfig.h.in"

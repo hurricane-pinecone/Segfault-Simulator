@@ -34,6 +34,7 @@ public:
   {
     Module,
     UiPreview,
+    Web, // the whole game, for the browser (see startWeb())
   };
 
   bool busy() const { return m_process != nullptr; }
@@ -56,6 +57,19 @@ public:
    * failed.
    */
   void cancel();
+
+  /**
+   * Start building `project` as a web page into `output` (index.html and its
+   * files), its canvas `size` pixels: the engine and the scripts compiled for
+   * the browser with Emscripten (found as $EMSDK, else ~/emsdk). The first
+   * build compiles the engine too, so it takes a while.
+   *
+   * @return false (logged) if a build is running, or this editor can't.
+   */
+  bool startWeb(const Project& project,
+                const std::filesystem::path& output,
+                int width,
+                int height);
 
   /**
    * Advance the build. Returns nothing while it runs (or when idle), then once

@@ -1,0 +1,67 @@
+{
+ "formatVersion": 1,
+ "root": {
+  "NameComponent": {
+   "name": "Crate"
+  },
+  "TransformComponent": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ]
+  },
+  "MeshRendererComponent": {
+   "mesh": "builtin:cube",
+   "materials": [
+    "asset:e313d540290653139a1d1effe5ebaead"
+   ],
+   "tint": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "castsShadow": true,
+   "emitsLight": false,
+   "lightStrength": 1.0,
+   "lightRange": 1.0,
+   "lightCastsShadows": true
+  },
+  "BoxCollider3DComponent": {
+   "size": [
+    1,
+    1,
+    1
+   ],
+   "offset": [
+    0,
+    0,
+    0.5
+   ],
+   "trigger": false
+  },
+  "RigidBody3DComponent": {
+   "mass": 0.7,
+   "kinematic": false,
+   "friction": 0.6,
+   "bounciness": 0.0,
+   "linearDamping": 0.05,
+   "angularDamping": 0.05,
+   "gravityScale": 1.0,
+   "lockRotation": false,
+   "bendsGrass": true
+  }
+ }
+}

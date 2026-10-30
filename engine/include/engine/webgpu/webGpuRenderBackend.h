@@ -92,7 +92,7 @@ private:
 
   bool m_imguiReady = false;
   // Set when this frame drew ImGui, so endFrame renders the detached panels.
-  bool m_imguiRendered = false;
+  [[maybe_unused]] bool m_imguiRendered = false; // (no ImGui on the web)
   bool m_shown = false; // the window, after the first frame
 };
 

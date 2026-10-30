@@ -30,12 +30,17 @@ endif()
 message(STATUS "ENGINE_LIBRARY_TYPE=${ENGINE_LIBRARY_TYPE}")
 
 # sfs-codegen generates reflection from headers. It must run on the build
-# machine, so a native build builds it, while a cross-build (e.g. Windows from
-# WSL) uses a host copy given in SFS_CODEGEN_EXECUTABLE. Core-only and web
-# builds have no codegen (no tree-sitter), and register no engine types.
+# machine, so a native build builds it, while a cross-build (Windows from WSL,
+# or the web) uses a host copy given in SFS_CODEGEN_EXECUTABLE. Core-only builds
+# have no codegen (no tree-sitter), and register no engine types; nor does a
+# web build without a host codegen (it can't load scene files).
 set(SFS_CODEGEN_EXECUTABLE "" CACHE FILEPATH
     "Host sfs-codegen to use when cross-compiling (e.g. from a native build's bin/)")
-if(ENGINE_CORE_ONLY OR ENGINE_WEB_BUILD)
+if(ENGINE_CORE_ONLY)
+    set(SFS_CODEGEN_AVAILABLE FALSE)
+elseif(ENGINE_WEB_BUILD AND NOT SFS_CODEGEN_EXECUTABLE)
+    message(STATUS "Web build without SFS_CODEGEN_EXECUTABLE: no reflection, "
+                   "so scene files and editor projects can't be built")
     set(SFS_CODEGEN_AVAILABLE FALSE)
 elseif(CMAKE_CROSSCOMPILING)
     if(NOT SFS_CODEGEN_EXECUTABLE)
@@ -53,6 +58,9 @@ else()
     set(SFS_CODEGEN_AVAILABLE TRUE)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsCodegen.cmake")
+if(ENGINE_WEB_BUILD)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsWebGame.cmake")
+endif()
 
 # Engine DLLs go next to the executables (Windows finds DLLs beside the exe,
 # not via an rpath).
@@ -102,7 +110,7 @@ target_compile_options(engine-core PUBLIC
 )
 
 # Reflection for the engine's own components, generated the same way a game's
-# is. Without codegen (core-only / web) a stub registers nothing.
+# is. Without codegen a stub registers nothing.
 if(SFS_CODEGEN_AVAILABLE)
     set(ENGINE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/components")
     sfs_generate_reflection(engine-core
@@ -129,7 +137,8 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/renderLayerComponent.h"
             "${ENGINE_COMPONENT_DIR}/spriteComponent.h"
             "${ENGINE_COMPONENT_DIR}/spriteTint.h"
-            "${ENGINE_COMPONENT_DIR}/shadowCasterComponent.h")
+            "${ENGINE_COMPONENT_DIR}/shadowCasterComponent.h"
+            "${ENGINE_COMPONENT_DIR}/tags/solidObject.h")
 else()
     target_sources(engine-core PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineReflection.cpp")
@@ -211,7 +220,11 @@ target_compile_options(engine-core PRIVATE
 if(ENGINE_WEB_BUILD)
     target_compile_definitions(engine-core PUBLIC ENGINE_WEB=1)
     # Threads/atomics flags must match across every wasm object in the link.
-    target_compile_options(engine-core PUBLIC -pthread -matomics -mbulk-memory)
+    # Exceptions too: the engine throws and catches them (its JSON readers do),
+    # and without them a throw aborts the page. WebAssembly's own exceptions:
+    # every browser with WebGPU has them.
+    target_compile_options(engine-core PUBLIC -pthread -matomics -mbulk-memory -fwasm-exceptions)
+    target_link_options(engine-core PUBLIC -fwasm-exceptions)
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(engine-core PUBLIC Threads::Threads)
@@ -227,10 +240,6 @@ if(NOT ENGINE_CORE_ONLY)
 file(GLOB_RECURSE ENGINE_RENDER_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/*.cpp"
 )
-# 3D physics is built on Jolt, which the web build doesn't provide.
-if(ENGINE_WEB_BUILD)
-    list(FILTER ENGINE_RENDER_SRC EXCLUDE REGEX "/src/runtime/systems/physicsSystem3D\\.cpp$")
-endif()
 
 file(GLOB_RECURSE ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
@@ -297,6 +306,40 @@ if(ENGINE_WEB_BUILD)
         -sUSE_PTHREADS=1
         -sPTHREAD_POOL_SIZE=4
     )
+
+    # Jolt (3D physics) and cgltf (model import) as on the desktop, fetched
+    # and built for the browser (there's no Conan here), private to the engine.
+    include(FetchContent)
+    set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+    set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+    set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+    set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+    # The engine uses RTTI and exceptions; Jolt's defaults turn both off.
+    set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+    set(CPP_EXCEPTIONS_ENABLED ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(JoltPhysics
+        GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+        GIT_TAG v5.2.0
+        SOURCE_SUBDIR Build)
+    FetchContent_MakeAvailable(JoltPhysics)
+    target_compile_options(Jolt PRIVATE -pthread -matomics -mbulk-memory -fwasm-exceptions)
+
+    FetchContent_Declare(cgltf
+        GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
+        GIT_TAG v1.15
+        SOURCE_SUBDIR do-not-build)
+    FetchContent_MakeAvailable(cgltf)
+    set(CGLTF_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/cgltf.c")
+    file(WRITE "${CGLTF_SOURCE}" "#define CGLTF_IMPLEMENTATION\n#include <cgltf.h>\n")
+    add_library(sfs-cgltf STATIC "${CGLTF_SOURCE}")
+    target_include_directories(sfs-cgltf PUBLIC "${cgltf_SOURCE_DIR}")
+    target_compile_options(sfs-cgltf PRIVATE -pthread -matomics -mbulk-memory)
+
+    target_link_libraries(engine PRIVATE Jolt sfs-cgltf)
+    target_compile_definitions(engine PRIVATE SFS_HAS_PHYSICS=1 SFS_HAS_MODEL_IMPORT=1)
 else()
     find_package(SDL2 REQUIRED)
     find_package(SDL2_image REQUIRED)
