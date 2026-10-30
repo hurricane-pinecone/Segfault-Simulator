@@ -23,6 +23,10 @@ struct GameManifest
   std::filesystem::path startScene;
   int windowWidth = 1600;
   int windowHeight = 900;
+  // The render backend it prefers ("webgpu", or one the player adds; see
+  // RenderBackends);
+  // empty: the player's first. Another is tried if it can't start.
+  std::string backend;
 
   /** Read `folder/game.json`; nothing (logged) if missing or invalid. */
   static std::optional<GameManifest> read(const std::filesystem::path& folder);

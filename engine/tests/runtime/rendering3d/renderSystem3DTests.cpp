@@ -2,14 +2,15 @@
 #include "mockRenderer3D.h"
 
 #include <engine/core/components/boxCollider3DComponent.h>
-#include <engine/core/components/camera3DComponent.h>
+#include <engine/core/components/cameraComponent.h>
+#include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/grassBenderComponent.h>
 #include <engine/core/components/grassComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/pointLight3DComponent.h>
+#include <engine/core/components/pointLightComponent.h>
 #include <engine/core/components/rigidBody3DComponent.h>
 #include <engine/core/components/sphereCollider3DComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/3d/materialGraphCompiler.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
@@ -73,7 +74,7 @@ struct Harness
   Entity spawn(MeshHandle mesh, const glm::vec3& position, bool shadow = true)
   {
     Entity e = scene.createEntity();
-    e.addComponent<Transform3DComponent>(Transform3DComponent{position});
+    e.addComponent<TransformComponent>(TransformComponent{position});
     e.addComponent<MeshRendererComponent>(
         MeshRendererComponent{mesh, glm::vec4(1.0f), shadow});
     return e;
@@ -89,13 +90,11 @@ struct Harness
 
 int main()
 {
-  TEST("the scene should expose only the renderers the backend has")
+  TEST("the scene should expose the backend's renderer")
   {
     Harness h;
     CHECK(&h.scene.renderer3D() == &h.renderer);
     CHECK(h.scene.tryRenderer3D() == &h.renderer);
-    CHECK(h.scene.tryQuadRenderer() == nullptr);
-    CHECK(h.scene.tryTextRenderer() == nullptr);
   }
 
   TEST("entities sharing a mesh should batch into one draw")
@@ -206,10 +205,10 @@ int main()
   {
     Harness h;
     Entity lamp = h.scene.createEntity();
-    lamp.addComponent<Transform3DComponent>(
-        Transform3DComponent{{4.0f, 5.0f, 0.0f}});
-    lamp.addComponent<PointLight3DComponent>(
-        PointLight3DComponent{{1, 1, 1}, 1.0f, 6.0f, {0.0f, 0.0f, 2.0f}});
+    lamp.addComponent<TransformComponent>(
+        TransformComponent{{4.0f, 5.0f, 0.0f}});
+    lamp.addComponent<PointLightComponent>(
+        PointLightComponent{{1, 1, 1}, 1.0f, 6.0f, {0.0f, 0.0f, 2.0f}});
 
     h.frame();
 
@@ -223,14 +222,14 @@ int main()
     Harness h;
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
     Entity cart = h.scene.createEntity();
-    cart.addComponent<Transform3DComponent>(
-        Transform3DComponent{{2.0f, 0.0f, 0.0f}});
+    cart.addComponent<TransformComponent>(
+        TransformComponent{{2.0f, 0.0f, 0.0f}});
     Entity crate = h.spawn(box, {0.0f, 1.0f, 0.0f});
     hierarchy::setParent(crate, cart);
     Entity lantern = h.scene.createEntity();
-    lantern.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, 0.0f, 1.0f}});
-    lantern.addComponent<PointLight3DComponent>();
+    lantern.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 1.0f}});
+    lantern.addComponent<PointLightComponent>();
     hierarchy::setParent(lantern, crate);
 
     h.frame();
@@ -247,24 +246,23 @@ int main()
   {
     Harness h;
     Entity off = h.scene.createEntity();
-    off.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, 0.0f, 50.0f}});
-    off.addComponent<Camera3DComponent>()
-        .getComponent<Camera3DComponent>()
-        .active = false;
+    off.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 50.0f}});
+    off.addComponent<CameraComponent>().getComponent<CameraComponent>().active =
+        false;
 
     Entity rig = h.scene.createEntity();
-    rig.addComponent<Transform3DComponent>(
-        Transform3DComponent{{-5.0f, 2.0f, 3.0f}});
+    rig.addComponent<TransformComponent>(
+        TransformComponent{{-5.0f, 2.0f, 3.0f}});
     Entity eye = h.scene.createEntity();
-    Transform3DComponent eyeTransform{{0.0f, 0.0f, 1.0f}};
+    TransformComponent eyeTransform{{0.0f, 0.0f, 1.0f}};
     eyeTransform.setYaw(1.5707964f); // facing +Y
-    eye.addComponent<Transform3DComponent>(eyeTransform);
-    Camera3DComponent lens;
+    eye.addComponent<TransformComponent>(eyeTransform);
+    CameraComponent lens;
     lens.orthographic = true;
     lens.orthoHeight = 9.0f;
     lens.focusDistance = 4.0f;
-    eye.addComponent<Camera3DComponent>(lens);
+    eye.addComponent<CameraComponent>(lens);
     hierarchy::setParent(eye, rig);
 
     h.frame();
@@ -279,13 +277,43 @@ int main()
     CHECK(testing::approx(camera.orthoHeight, 9.0f));
   }
 
+  TEST("the scene camera's zoom and its follow's shake should reach the view")
+  {
+    Harness h;
+    Entity eye = h.scene.createEntity();
+    eye.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 1.0f}}); // facing +X
+    CameraComponent lens;
+    lens.orthographic = true;
+    lens.orthoHeight = 10.0f;
+    lens.focusDistance = 4.0f;
+    lens.zoom = 2.0f;
+    eye.addComponent<CameraComponent>(lens);
+    CameraFollowComponent follow;
+    follow.shakeMaxOffset = 1.0f;
+    follow.shake(1.0f, 1.0f);
+    follow.updateShake(0.1f);
+    eye.addComponent<CameraFollowComponent>(follow);
+
+    h.frame();
+
+    const Camera3D& camera = h.system.camera();
+    CHECK(testing::approx(camera.orthoHeight, 5.0f)); // twice as big
+    // Shaken across the view: sideways is -Y here, up is +Z.
+    const glm::vec2 shake = follow.shakeOffset();
+    CHECK(std::abs(shake.x) > 0.0f || std::abs(shake.y) > 0.0f);
+    CHECK(testing::approx(camera.target.x, 4.0f));
+    CHECK(testing::approx(camera.target.y, -shake.x));
+    CHECK(testing::approx(camera.target.z, 1.0f + shake.y));
+  }
+
   TEST("not following the scene camera should leave camera() to its driver")
   {
     Harness h;
     Entity eye = h.scene.createEntity();
-    eye.addComponent<Transform3DComponent>(
-        Transform3DComponent{{40.0f, 0.0f, 0.0f}});
-    eye.addComponent<Camera3DComponent>();
+    eye.addComponent<TransformComponent>(
+        TransformComponent{{40.0f, 0.0f, 0.0f}});
+    eye.addComponent<CameraComponent>();
     h.system.setFollowSceneCamera(false);
 
     h.frame();
@@ -325,9 +353,9 @@ int main()
     for (int i = 0; i < count; ++i)
     {
       Entity lamp = h.scene.createEntity();
-      lamp.addComponent<Transform3DComponent>(
-          Transform3DComponent{{static_cast<float>(i), 0.0f, 0.0f}});
-      lamp.addComponent<PointLight3DComponent>();
+      lamp.addComponent<TransformComponent>(
+          TransformComponent{{static_cast<float>(i), 0.0f, 0.0f}});
+      lamp.addComponent<PointLightComponent>();
     }
 
     h.frame();
@@ -365,7 +393,7 @@ int main()
     // Twice the size: four times the glowing area, so it reaches twice as far.
     const float radius =
         h.renderer.lights.empty() ? 0.0f : h.renderer.lights[0].radius;
-    lamp.getComponent<Transform3DComponent>().scale = glm::vec3(2.0f);
+    lamp.getComponent<TransformComponent>().scale = glm::vec3(2.0f);
     h.frame();
     CHECK(h.renderer.lights.size() == 1u &&
           testing::approx(h.renderer.lights[0].radius, radius * 2.0f, 1e-2f));
@@ -431,11 +459,11 @@ int main()
     CHECK(!h.renderer.frame.bloom.enabled);
 
     Entity camera = h.scene.createEntity();
-    camera.addComponent<Transform3DComponent>();
-    Camera3DComponent lens;
+    camera.addComponent<TransformComponent>();
+    CameraComponent lens;
     lens.bloomIntensity = 1.7f;
     lens.bloomThreshold = 2.5f;
-    camera.addComponent<Camera3DComponent>(lens);
+    camera.addComponent<CameraComponent>(lens);
     h.system.setFollowSceneCamera(false); // as the editor, looking around
     h.frame();
     CHECK(h.renderer.frame.bloom.enabled);
@@ -550,22 +578,22 @@ int main()
     for (int i = 0; i < 5; ++i)
     {
       Entity lamp = h.scene.createEntity();
-      lamp.addComponent<Transform3DComponent>(
-          Transform3DComponent{{0.0f, static_cast<float>(i) * 3.0f, 0.0f}});
-      lamp.addComponent<PointLight3DComponent>(
-          PointLight3DComponent{glm::vec3(1.0f), 1.0f, 2.0f});
+      lamp.addComponent<TransformComponent>(
+          TransformComponent{{0.0f, static_cast<float>(i) * 3.0f, 0.0f}});
+      lamp.addComponent<PointLightComponent>(
+          PointLightComponent{glm::vec3(1.0f), 1.0f, 2.0f});
     }
     Entity behind = h.scene.createEntity();
-    behind.addComponent<Transform3DComponent>(
-        Transform3DComponent{{-60.0f, 0.0f, 0.0f}});
-    behind.addComponent<PointLight3DComponent>(
-        PointLight3DComponent{glm::vec3(1.0f), 1.0f, 2.0f});
+    behind.addComponent<TransformComponent>(
+        TransformComponent{{-60.0f, 0.0f, 0.0f}});
+    behind.addComponent<PointLightComponent>(
+        PointLightComponent{glm::vec3(1.0f), 1.0f, 2.0f});
     Entity plain = h.scene.createEntity();
-    plain.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, -1.0f, 0.0f}});
-    PointLight3DComponent noShadow{glm::vec3(1.0f), 1.0f, 2.0f};
+    plain.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, -1.0f, 0.0f}});
+    PointLightComponent noShadow{glm::vec3(1.0f), 1.0f, 2.0f};
     noShadow.castsShadow = false;
-    plain.addComponent<PointLight3DComponent>(noShadow);
+    plain.addComponent<PointLightComponent>(noShadow);
 
     // A box by the first light, and one well away from every light.
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
@@ -622,7 +650,7 @@ int main()
     // Denser, or moved: the same ground, drawn as it now is.
     const uint32_t first = h.renderer.liveGrass.begin()->first;
     lawn.getComponent<GrassComponent>().density = 40.0f;
-    lawn.getComponent<Transform3DComponent>().position = {10.0f, 0.0f, 0.0f};
+    lawn.getComponent<TransformComponent>().position = {10.0f, 0.0f, 0.0f};
     h.frame();
     CHECK(h.renderer.liveGrass.size() == 1u &&
           h.renderer.liveGrass.begin()->first == first);
@@ -632,7 +660,7 @@ int main()
     CHECK(h.renderer.mapUpdates.size() == 1u); // nothing new
 
     // Scaled: built again (more texels), the old one freed.
-    lawn.getComponent<Transform3DComponent>().scale = {2.0f, 2.0f, 1.0f};
+    lawn.getComponent<TransformComponent>().scale = {2.0f, 2.0f, 1.0f};
     h.frame();
     CHECK(h.renderer.liveGrass.size() == 1u &&
           h.renderer.liveGrass.begin()->first != first);
@@ -717,8 +745,8 @@ int main()
     aloof.addComponent<SphereCollider3DComponent>(
         SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
     Entity walker = h.scene.createEntity();
-    walker.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, -3.0f, 0.4f}});
+    walker.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, -3.0f, 0.4f}});
     walker.addComponent<GrassBenderComponent>(
         GrassBenderComponent{.radius = 0.4f});
 
@@ -733,7 +761,7 @@ int main()
     CHECK(!h.renderer.trampleUpdates.empty());
 
     // The ball rolls away: where it was springs back over its recovery time.
-    ball.getComponent<Transform3DComponent>().position = {-3.0f, -3.0f, 5.0f};
+    ball.getComponent<TransformComponent>().position = {-3.0f, -3.0f, 5.0f};
     h.scene.update(1.0);
     h.scene.render();
     const float rising = grassModule.flattened(lawn, {-3.0f, 0.0f});
@@ -752,7 +780,7 @@ int main()
     const MeshHandle wheelMesh =
         h.system.meshes().add(meshes::cylinder(0.2f, 0.3f, 12));
     Entity wheel = h.spawn(wheelMesh, {2.0f, 1.0f, 0.0f});
-    wheel.getComponent<Transform3DComponent>().scale = glm::vec3(1.5f);
+    wheel.getComponent<TransformComponent>().scale = glm::vec3(1.5f);
     wheel.addComponent<GrassBenderComponent>();
     Entity unfitted = h.spawn(wheelMesh, {-2.0f, 0.0f, 0.0f});
     unfitted.addComponent<GrassBenderComponent>(
@@ -918,13 +946,13 @@ int main()
         h.renderer.frame.focusDistance, h.system.camera().distance));
 
     Entity eye = h.scene.createEntity();
-    eye.addComponent<Transform3DComponent>();
-    Camera3DComponent lens;
+    eye.addComponent<TransformComponent>();
+    CameraComponent lens;
     lens.depthOfField = true;
     lens.focusDistance = 7.0f;
     lens.focusRange = 3.0f;
     lens.focusBlur = 2.0f;
-    eye.addComponent<Camera3DComponent>(lens);
+    eye.addComponent<CameraComponent>(lens);
     h.frame();
     CHECK(h.renderer.frame.depthOfField.enabled);
     CHECK(testing::approx(h.renderer.frame.depthOfField.range, 3.0f));

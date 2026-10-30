@@ -28,16 +28,6 @@ T& requireService(T* service, const char* name)
 }
 } // namespace
 
-IQuadRenderer& Scene::quadRenderer() const
-{
-  return requireService(m_quadRenderer, "quad renderer");
-}
-
-TextRenderer& Scene::textRenderer() const
-{
-  return requireService(m_textRenderer, "text renderer");
-}
-
 IRenderer3D& Scene::renderer3D() const
 {
   return requireService(m_renderer3D, "3D renderer");

@@ -81,8 +81,7 @@ public:
   bool isWaterAt(int tileX, int tileY) const override;
 
   // IWaterSurfaceSource: every column with water above its floor, for the water
-  // render module to draw the animated surface (the voxel counterpart to
-  // WaterTileComponent entities).
+  // render module to draw the surface.
   void collectWaterColumns(std::vector<WaterColumn>& out) const override;
 
   // Edit one block; marks its chunk (and the -x/-y/-z neighbours whose +faces

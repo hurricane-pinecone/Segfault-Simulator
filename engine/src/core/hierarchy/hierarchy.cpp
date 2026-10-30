@@ -1,7 +1,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 
 #include "engine/core/components/parentComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "glm/glm/matrix.hpp"
 
@@ -18,8 +18,8 @@ constexpr int kMaxDepth = 1024;
 
 glm::mat4 localMatrix(const Entity& entity)
 {
-  return entity.hasComponent<Transform3DComponent>()
-             ? entity.getComponent<Transform3DComponent>().matrix()
+  return entity.hasComponent<TransformComponent>()
+             ? entity.getComponent<TransformComponent>().matrix()
              : glm::mat4(1.0f);
 }
 } // namespace
@@ -75,7 +75,7 @@ bool setParentKeepWorld(Entity child, const Entity& parent)
   const glm::mat4 world = worldMatrix(child);
   if (!setParent(child, parent))
     return false;
-  if (child.hasComponent<Transform3DComponent>())
+  if (child.hasComponent<TransformComponent>())
     setWorldMatrix(child, world);
   return true;
 }
@@ -105,9 +105,8 @@ glm::vec3 worldPosition(const Entity& entity)
 
 void setWorldMatrix(Entity entity, const glm::mat4& world)
 {
-  entity.getComponent<Transform3DComponent>() =
-      Transform3DComponent::fromMatrix(glm::inverse(parentWorldMatrix(entity)) *
-                                       world);
+  entity.getComponent<TransformComponent>() = TransformComponent::fromMatrix(
+      glm::inverse(parentWorldMatrix(entity)) * world);
 }
 
 EntityTree::EntityTree(const std::vector<Entity>& entities)

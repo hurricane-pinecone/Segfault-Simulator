@@ -76,10 +76,13 @@ struct Camera3D
   /**
    * Look from `eye` along `forward` (any length): sets yaw and pitch from the
    * direction, and puts the target `focusDistance` ahead. There's no roll, so
-   * the view stays level.
+   * the view stays level. Looking straight up or down, `up` says which way is
+   * up the screen.
    */
-  void
-  setPose(const glm::vec3& eye, const glm::vec3& forward, float focusDistance);
+  void setPose(const glm::vec3& eye,
+               const glm::vec3& forward,
+               float focusDistance,
+               const glm::vec3& up = glm::vec3(0.0f, 0.0f, 1.0f));
 
   /**
    * The eye's orientation: +X along the view direction, +Z leaning up (the

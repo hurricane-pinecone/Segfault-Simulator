@@ -1,8 +1,8 @@
 #pragma once
 
 #include "config.h"
-#include "engine/core/components/elevationComponent.h"
-#include "engine/core/components/lightEmitterComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/tags/solidObject.h"
@@ -48,7 +48,8 @@ public:
     m_entity =
         scene.createEntity()
             .addComponent<sfs::TransformComponent>(m_position)
-            .addComponent<sfs::ElevationComponent>(0)
+            // A body at rest, so it stands on the terrain wherever that is.
+            .addComponent<sfs::RigidBody2DComponent>()
             .addComponent<sfs::SpriteComponent>(sprite, glm::vec2{0.5f, 1.0f})
             .addComponent<sfs::NormalMapComponent>(normal)
             // Ground footprint in pixels, relative to the feet: a small base
@@ -56,8 +57,9 @@ public:
             // whole sprite).
             .addComponent<sfs::WorldCollider>(
                 glm::vec2{-2.0f, -2.0f}, glm::vec2{4.0f, 4.0f})
-            .addComponent<sfs::LightEmitterComponent>(
-                640.0f, 1.0f, 32.0f, m_color)
+            // 10 tiles of reach, from 2 levels up.
+            .addComponent<sfs::PointLightComponent>(
+                m_color, 1.0f, 10.0f, glm::vec3{0.0f, 0.0f, 2.0f})
             .addComponent<sfs::ShadowCasterComponent>()
             .addTag<sfs::SolidObject>();
 

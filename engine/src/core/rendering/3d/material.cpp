@@ -31,6 +31,8 @@ const char* alphaModeName(AlphaMode mode)
     return "mask";
   case AlphaMode::Blend:
     return "blend";
+  case AlphaMode::Additive:
+    return "additive";
   case AlphaMode::Opaque:
     break;
   }
@@ -39,8 +41,10 @@ const char* alphaModeName(AlphaMode mode)
 
 std::optional<AlphaMode> alphaModeFromName(std::string_view name)
 {
-  for (const AlphaMode mode :
-       {AlphaMode::Opaque, AlphaMode::Mask, AlphaMode::Blend})
+  for (const AlphaMode mode : {AlphaMode::Opaque,
+                               AlphaMode::Mask,
+                               AlphaMode::Blend,
+                               AlphaMode::Additive})
     if (name == alphaModeName(mode))
       return mode;
   return std::nullopt;

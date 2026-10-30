@@ -37,6 +37,17 @@ decodeTexture(const void* bytes, std::size_t size, const std::string& what)
     return nullptr;
   }
 
+  std::shared_ptr<TextureData> texture = textureFromSurface(*rgba);
+  SDL_FreeSurface(rgba);
+  return texture;
+}
+
+std::shared_ptr<TextureData> textureFromSurface(const SDL_Surface& surface)
+{
+  SDL_Surface* rgba = SDL_ConvertSurfaceFormat(
+      const_cast<SDL_Surface*>(&surface), SDL_PIXELFORMAT_RGBA32, 0);
+  if (!rgba)
+    return nullptr;
   auto texture = std::make_shared<TextureData>();
   texture->width = static_cast<uint32_t>(rgba->w);
   texture->height = static_cast<uint32_t>(rgba->h);

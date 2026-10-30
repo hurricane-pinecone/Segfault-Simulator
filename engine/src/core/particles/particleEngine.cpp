@@ -1,6 +1,5 @@
 #include "engine/core/particles/particleEngine.h"
 
-#include "engine/core/components/elevationComponent.h"
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/particles/decalSplatter.h"
@@ -21,10 +20,6 @@ namespace
 {
 
 constexpr float kTwoPi = 6.28318530718f;
-
-// Small forward bias so a particle sitting on a tile sorts just in front of
-// that tile's surface (matches how sprites sit above the ground they stand on).
-constexpr float kParticleBias = 0.02f;
 
 inline uint32_t nextRand(uint32_t& state)
 {
@@ -585,13 +580,7 @@ void ParticleEngine::syncComponentEmitters()
 
     const auto& transform = entity.getComponent<TransformComponent>();
 
-    float ground = 0.0f;
-    if (entity.hasComponent<ElevationComponent>())
-    {
-      const int level = entity.getComponent<ElevationComponent>().level;
-      if (level != EmptyElevation)
-        ground = static_cast<float>(level);
-    }
+    const float ground = transform.position.z; // its height above the plane
 
     EmitterInstance& inst = m_entityEmitters[entity.getId()];
 
@@ -607,9 +596,9 @@ void ParticleEngine::syncComponentEmitters()
     }
 
     inst.screenSpace = m_effects[fx].space == SimulationSpace::Screen;
-    inst.origin = transform.position + emitter.offset;
+    inst.origin = transform.position2D() + glm::vec2(emitter.offset);
     inst.groundLevel = ground;
-    inst.spawnHeightBias = emitter.heightOffset;
+    inst.spawnHeightBias = emitter.offset.z;
     inst.emitting = emitter.enabled;
   }
 }
@@ -652,122 +641,55 @@ void ParticleEngine::simulate(double deltaTime)
   }
 }
 
-void ParticleEngine::appendBatch(const EmitterInstance& inst,
-                                 const ParticleEffectDesc& desc,
-                                 const IProjection& proj,
-                                 std::vector<ParticleRenderBatch>& out)
+void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
 {
-  ParticleRenderBatch cmd;
-  cmd.textureId = &desc.texture;
-  cmd.blend = desc.blend;
-
-  const bool screen = inst.screenSpace;
-  cmd.screenSpace = screen;
-  cmd.depth =
-      screen ? 0.0f : (inst.origin.x + inst.origin.y + inst.groundLevel * 0.5f);
-
-  const float pixelPerTile = proj.worldUnitToPixels();
-
-  const int frameCols = glm::max(1, desc.frameCols);
-  const int frameRows = glm::max(1, desc.frameRows);
-  const int frameCount = frameCols * frameRows;
-  const float invCols = 1.0f / static_cast<float>(frameCols);
-  const float invRows = 1.0f / static_cast<float>(frameRows);
-
-  auto& quads = cmd.geometry.quads;
-  quads.reserve(inst.particles.size());
-
-  for (const auto& p : inst.particles)
+  const auto append = [&](const EmitterInstance& inst)
   {
-    const float n =
-        p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
-
-    const glm::vec3 rgb = desc.colorOverLife.sample(n);
-    const float alpha = desc.alphaOverLife.sample(n);
-    const float sizeUnits = p.baseSize * desc.sizeOverLife.sample(n);
-
-    if (alpha <= 0.0f || sizeUnits <= 0.0f)
-      continue;
-
-    glm::vec2 center;
-    float halfPx;
-    float zKey;
-
-    if (screen)
+    if (inst.particles.empty())
+      return;
+    const ParticleEffectDesc& desc = m_effects[inst.effect];
+    ParticleSpriteBatch batch;
+    batch.textureId = &desc.texture;
+    batch.blend = desc.blend;
+    batch.screenSpace = inst.screenSpace;
+    const int cols = glm::max(1, desc.frameCols);
+    const int rows = glm::max(1, desc.frameRows);
+    const int frames = cols * rows;
+    batch.sprites.reserve(inst.particles.size());
+    for (const Particle& p : inst.particles)
     {
-      center = p.pos;
-      halfPx = sizeUnits * 0.5f; // screen-space size is authored in pixels
-      zKey = 0.0f;
+      const float n =
+          p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
+      ParticleSprite sprite;
+      sprite.color =
+          glm::vec4(desc.colorOverLife.sample(n), desc.alphaOverLife.sample(n));
+      sprite.size = p.baseSize * desc.sizeOverLife.sample(n);
+      if (sprite.color.a <= 0.0f || sprite.size <= 0.0f)
+        continue;
+      sprite.position = p.pos;
+      sprite.height = inst.screenSpace ? 0.0f : inst.groundLevel + p.height;
+      sprite.rotation = p.rotation;
+      if (frames > 1)
+      {
+        int frame = 0;
+        if (desc.frameOverLife)
+          frame = glm::min(frames - 1, static_cast<int>(n * frames));
+        else if (desc.frameFps > 0.0f)
+          frame = static_cast<int>(p.age * desc.frameFps) % frames;
+        sprite.uvRect = glm::vec4(static_cast<float>(frame % cols) / cols,
+                                  static_cast<float>(frame / cols) / rows,
+                                  1.0f / cols,
+                                  1.0f / rows);
+      }
+      batch.sprites.push_back(sprite);
     }
-    else
-    {
-      const float elevation = inst.groundLevel + p.height;
-      center = proj.worldToScreen(p.pos, elevation);
-      halfPx = sizeUnits * pixelPerTile * 0.5f;
-      zKey = p.pos.x + p.pos.y + elevation * 0.5f + kParticleBias;
-    }
-
-    // Billboard corners, rotated in screen space.
-    const float c = glm::cos(p.rotation);
-    const float s = glm::sin(p.rotation);
-    const glm::vec2 ex{c * halfPx, s * halfPx};
-    const glm::vec2 ey{-s * halfPx, c * halfPx};
-
-    ParticleQuad q;
-    q.points[0] = center - ex - ey;
-    q.points[1] = center + ex - ey;
-    q.points[2] = center + ex + ey;
-    q.points[3] = center - ex + ey;
-
-    // Not premultiplied: the fragment shader does texture * color and the blend
-    // mode applies src.a, so colour and alpha stay independent.
-    q.color = glm::vec4(rgb, alpha);
-
-    if (frameCount > 1)
-    {
-      int frame = 0;
-      if (desc.frameOverLife)
-        frame = glm::min(frameCount - 1, static_cast<int>(n * frameCount));
-      else if (desc.frameFps > 0.0f)
-        frame = static_cast<int>(p.age * desc.frameFps) % frameCount;
-
-      const int fx = frame % frameCols;
-      const int fy = frame / frameCols;
-      const float u0 = static_cast<float>(fx) * invCols;
-      const float v0 = static_cast<float>(fy) * invRows;
-      const float u1 = u0 + invCols;
-      const float v1 = v0 + invRows;
-
-      q.uvs[0] = {u0, v0};
-      q.uvs[1] = {u1, v0};
-      q.uvs[2] = {u1, v1};
-      q.uvs[3] = {u0, v1};
-    }
-
-    q.z = zKey;
-    quads.push_back(q);
-  }
-
-  if (!quads.empty())
-    out.push_back(std::move(cmd));
-}
-
-void ParticleEngine::buildBatches(const IProjection& projection,
-                                  std::vector<ParticleRenderBatch>& out)
-{
-  ZoneScopedN("ParticleEngine::buildBatches");
-
+    if (!batch.sprites.empty())
+      out.push_back(std::move(batch));
+  };
   for (const auto& [id, inst] : m_entityEmitters)
-  {
-    if (!inst.particles.empty())
-      appendBatch(inst, m_effects[inst.effect], projection, out);
-  }
-
+    append(inst);
   for (const auto& inst : m_bursts)
-  {
-    if (!inst.particles.empty())
-      appendBatch(inst, m_effects[inst.effect], projection, out);
-  }
+    append(inst);
 }
 
 } // namespace sfs

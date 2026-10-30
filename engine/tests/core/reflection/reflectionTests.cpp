@@ -1,7 +1,7 @@
 #include "../../testHarness.h"
 
 #include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/reflection/reflection.h>
 
@@ -28,16 +28,16 @@ int main()
   TEST("the engine's components should be registered with their fields")
   {
     const reflect::TypeInfo* transform =
-        reflect::types().find("Transform3DComponent");
+        reflect::types().find("TransformComponent");
     CHECK(transform != nullptr);
     CHECK(transform->kind == reflect::TypeKind::Component);
-    CHECK(transform->displayName == std::string("Transform 3D"));
+    CHECK(transform->displayName == std::string("Transform"));
     CHECK(transform->module == std::string("engine"));
     CHECK(transform->fields.size() == 3u);
     CHECK(findField(*transform, "rotation")->kind == reflect::FieldKind::Quat);
 
     CHECK(reflect::types().find("NameComponent") != nullptr);
-    CHECK(reflect::types().find("PointLight3DComponent") != nullptr);
+    CHECK(reflect::types().find("PointLightComponent") != nullptr);
   }
 
   TEST("attributes should carry through from the headers")
@@ -48,7 +48,7 @@ int main()
     CHECK(findField(*renderer, "mesh")->kind == reflect::FieldKind::Mesh);
 
     const reflect::TypeInfo* light =
-        reflect::types().find("PointLight3DComponent");
+        reflect::types().find("PointLightComponent");
     const reflect::FieldInfo* intensity = findField(*light, "intensity");
     CHECK(intensity->attributes.hasRange);
     CHECK(testing::approx(intensity->attributes.max, 10.0f));
@@ -59,7 +59,7 @@ int main()
     Registry registry;
     Entity entity = registry.createEntity();
     const reflect::TypeInfo* transform =
-        reflect::types().find("Transform3DComponent");
+        reflect::types().find("TransformComponent");
 
     CHECK(!transform->component.has(entity));
     CHECK(transform->component.get(entity) == nullptr);
@@ -71,10 +71,10 @@ int main()
     findField(*transform, "position")->in<glm::vec3>(object) = {
         1.0f, 2.0f, 3.0f};
     CHECK(testing::approx(
-        entity.getComponent<Transform3DComponent>().position.y, 2.0f));
+        entity.getComponent<TransformComponent>().position.y, 2.0f));
 
     transform->component.remove(entity);
-    CHECK(!entity.hasComponent<Transform3DComponent>());
+    CHECK(!entity.hasComponent<TransformComponent>());
   }
 
   TEST("a module's types should be removable as a unit")

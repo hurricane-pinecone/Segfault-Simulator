@@ -5,7 +5,7 @@
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/rigidBody3DComponent.h>
 #include <engine/core/components/sphereCollider3DComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
@@ -35,7 +35,7 @@ struct World
              bool trigger = false)
   {
     Entity entity = scene.createEntity();
-    entity.addComponent<Transform3DComponent>(Transform3DComponent{position});
+    entity.addComponent<TransformComponent>(TransformComponent{position});
     entity.addComponent<BoxCollider3DComponent>(
         BoxCollider3DComponent{size, glm::vec3(0.0f), trigger});
     if (dynamic)
@@ -137,8 +137,8 @@ int main()
     Entity zone =
         world.box({0.0f, 0.0f, 3.0f}, {4.0f, 4.0f, 1.0f}, false, true);
     Entity ball = world.scene.createEntity();
-    ball.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, 0.0f, 6.0f}});
+    ball.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 6.0f}});
     ball.addComponent<SphereCollider3DComponent>();
     ball.addComponent<RigidBody3DComponent>();
 
@@ -178,7 +178,7 @@ int main()
     World world;
     Entity wall = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
     world.run(kFrame);
-    wall.getComponent<Transform3DComponent>().position = {10.0f, 0.0f, 0.0f};
+    wall.getComponent<TransformComponent>().position = {10.0f, 0.0f, 0.0f};
     world.run(kFrame);
     const auto hit =
         world.physics.raycast(Ray3D{{10.0f, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
@@ -192,7 +192,7 @@ int main()
     lift.getComponent<RigidBody3DComponent>().kinematic = true;
     world.run(1.0);
     CHECK(testing::approx(world.z(lift), 2.0f));
-    lift.getComponent<Transform3DComponent>().position.z = 3.0f;
+    lift.getComponent<TransformComponent>().position.z = 3.0f;
     world.run(0.2);
     CHECK(testing::approx(world.z(lift), 3.0f));
   }
@@ -203,14 +203,14 @@ int main()
     World world;
     world.ground();
     Entity rack = world.scene.createEntity();
-    rack.addComponent<Transform3DComponent>(
-        Transform3DComponent{{5.0f, 0.0f, 0.0f}});
+    rack.addComponent<TransformComponent>(
+        TransformComponent{{5.0f, 0.0f, 0.0f}});
     Entity crate = world.box({0.0f, 0.0f, 3.0f}, {1.0f, 1.0f, 1.0f}, true);
     hierarchy::setParent(crate, rack);
     world.run(3.0);
     CHECK(testing::approx(hierarchy::worldPosition(crate).x, 5.0f, 0.02f));
     CHECK(testing::approx(world.z(crate), 0.5f, 0.03f));
-    CHECK(testing::approx(crate.getComponent<Transform3DComponent>().position.x,
+    CHECK(testing::approx(crate.getComponent<TransformComponent>().position.x,
                           0.0f,
                           0.02f)); // local
   }
@@ -281,18 +281,18 @@ int main()
         scene, {"PhysicsSystem3D"}); // as when a scene lists it and plays
 
     Entity floor = scene.createEntity();
-    floor.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, 0.0f, -0.5f}});
+    floor.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, -0.5f}});
     floor.addComponent<BoxCollider3DComponent>(
         BoxCollider3DComponent{{20.0f, 20.0f, 1.0f}});
     Entity zone = scene.createEntity();
-    zone.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, 0.0f, 2.0f}});
+    zone.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 2.0f}});
     zone.addComponent<BoxCollider3DComponent>(
         BoxCollider3DComponent{{3.0f, 3.0f, 0.5f}, {}, true});
     Entity crate = scene.createEntity();
-    crate.addComponent<Transform3DComponent>(
-        Transform3DComponent{{0.0f, 0.0f, 4.0f}});
+    crate.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 4.0f}});
     crate.addComponent<BoxCollider3DComponent>();
     crate.addComponent<RigidBody3DComponent>();
     Listener& listener = scene.attachObject<Listener>(crate);

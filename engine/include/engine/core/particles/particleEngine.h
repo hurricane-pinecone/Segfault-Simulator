@@ -5,9 +5,7 @@
 #include "engine/core/particles/decal.h"
 #include "engine/core/particles/iParticleCollisionSource.h"
 #include "engine/core/particles/particle.h"
-#include "engine/core/particles/particleBatch.h"
 #include "engine/core/particles/particleEffect.h"
-#include "engine/core/rendering/iProjection.h"
 #include "engine/core/types/blendMode.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
@@ -36,24 +34,31 @@ struct ParticleSpawnParams
   bool aimAlongVelocity = true;
 };
 
-// A drawable batch of particles: the projected geometry plus the render
-// attributes a renderer needs to pack it into a draw command. Render-command
-// and render-pass types stay out of here so the engine has no render
-// dependency.
-struct ParticleRenderBatch
+// A live particle as it's drawn, in the game's own 2D space (Space2D places it
+// in the world), or in screen pixels when its effect simulates there.
+struct ParticleSprite
 {
-  ParticleBatch geometry;
-  const std::string* textureId = nullptr;
-  BlendMode blend = BlendMode::Alpha;
-  bool screenSpace = false; // screen overlay (no terrain occlusion) vs world
-  float depth = 0.0f;       // world sort-key (0 for screen-space)
+  glm::vec2 position{0.0f};
+  float height = 0.0f; // above the ground it moves over
+  float size = 1.0f;   // across, in the game's units (pixels on screen)
+  float rotation = 0.0f;
+  glm::vec4 color{1.0f}; // linear RGB, and alpha (not premultiplied)
+  glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f}; // its texture's frame
 };
 
-// Render-context-free particle engine: simulates particles in simulate() and
-// projects live ones into ParticleRenderBatches through an IProjection in
-// buildBatches(). It depends only on the world-to-screen projection interface,
-// so the same engine drives the isometric path and a flat-2D one; a render
-// module turns the batches into draw commands.
+// One effect's live particles, sharing a texture and blending.
+struct ParticleSpriteBatch
+{
+  const std::string* textureId = nullptr;
+  BlendMode blend = BlendMode::Alpha;
+  bool screenSpace = false;
+  std::vector<ParticleSprite> sprites;
+};
+
+// Render-free particle engine: simulates particles in simulate(), in the game's
+// own space (a position on its plane and a height), and hands the live ones
+// out as ParticleSprites (sprites()); a render module (ParticleModule) draws
+// them.
 //
 // Effects are registered by name as POD ParticleEffectDesc. Two spawn paths:
 //   - spawnBurst(name, worldPos, elevation): fire-and-forget one-shots.
@@ -124,8 +129,8 @@ public:
   void simulate(double deltaTime);
 
   // Project live particles into drawable batches through the projection.
-  void buildBatches(const IProjection& projection,
-                    std::vector<ParticleRenderBatch>& out);
+  // The live particles as drawn, a batch an effect instance.
+  void sprites(std::vector<ParticleSpriteBatch>& out) const;
 
 private:
   Registry* registry = nullptr;
@@ -180,10 +185,6 @@ private:
                  const Particle& p,
                  const ParticleHit& hit);
   void syncComponentEmitters();
-  void appendBatch(const EmitterInstance& inst,
-                   const ParticleEffectDesc& desc,
-                   const IProjection& projection,
-                   std::vector<ParticleRenderBatch>& out);
 
   const IParticleCollisionSource* m_collisionSource = nullptr;
   IDecalSink* m_decalSink = nullptr;

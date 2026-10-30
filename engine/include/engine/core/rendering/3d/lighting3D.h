@@ -8,8 +8,7 @@ namespace sfs
 {
 
 /**
- * The directional sun. Same knobs as the isometric path's ambient lighting, so
- * a day/night controller drives either renderer the same way.
+ * The directional sun.
  *
  * @param direction       vector pointing toward the sun (need not be unit
  *                        length); Z is up, so Z <= 0 means the sun has set
@@ -29,7 +28,7 @@ struct SunLight3D
  *
  * @param ambient  base brightness everything receives (0 = black night,
  *                 1 = fully lit); also gates point lights, which fade in as
- *                 ambient drops, exactly like the isometric renderer
+ *                 ambient drops
  * @param skyColor linear RGB background clear colour
  */
 struct SceneLighting3D

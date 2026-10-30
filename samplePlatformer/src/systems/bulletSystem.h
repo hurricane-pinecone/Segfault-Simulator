@@ -3,8 +3,8 @@
 #include "components/platformerComponents.h"
 #include "config.h"
 #include "engine/core/components/boxCollider2D.h"
-#include "engine/core/components/lightEmitterComponent.h"
-#include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
@@ -35,8 +35,8 @@ namespace platformer
 class BulletSystem : public sfs::System
 {
 public:
-  // The particle engine effects fire through (the FlatRenderSystem's Particles
-  // module): "blood" / "gore" / "explosion" / "spark".
+  // The particle engine effects fire through (the scene's ParticleModule):
+  // "blood" / "gore" / "explosion" / "spark".
   void setParticles(sfs::ParticleEngine* particles) { m_particles = particles; }
 
   // Called at an enemy's death position (score, screen shake, spell drop).
@@ -66,17 +66,19 @@ protected:
     {
       auto& transform = bulletEntity.getComponent<sfs::TransformComponent>();
       auto& bullet = bulletEntity.getComponent<Bullet>();
+      glm::vec2 position = transform.position2D();
 
       if (bullet.homing)
-        steerToward(transform.position, bullet, dt);
+        steerToward(position, bullet, dt);
 
       bullet.velocity.y += bullet.gravity * dt;
-      transform.position += bullet.velocity * dt;
+      position += bullet.velocity * dt;
 
       if (bullet.bounces > 0)
-        bounceOffPlatforms(transform.position, bulletHalf, bullet);
+        bounceOffPlatforms(position, bulletHalf, bullet);
 
-      transform.rotation = glm::atan(bullet.velocity.y, bullet.velocity.x);
+      transform.setPosition2D(position);
+      transform.setYaw(glm::atan(bullet.velocity.y, bullet.velocity.x));
 
       bullet.life -= dt;
       if (bullet.life <= 0.0f)
@@ -94,26 +96,25 @@ protected:
           continue;
 
         const glm::vec2 enemyPos =
-            enemyEntity.getComponent<sfs::TransformComponent>().position;
+            enemyEntity.getComponent<sfs::TransformComponent>().position2D();
         const glm::vec2 enemyHalf =
             enemyEntity.getComponent<sfs::BoxCollider2D>().half;
-        if (!overlaps(transform.position, bulletHalf, enemyPos, enemyHalf))
+        if (!overlaps(position, bulletHalf, enemyPos, enemyHalf))
           continue;
 
-        enemyEntity.getComponent<sfs::RigidBodyComponent>().velocity.y =
+        enemyEntity.getComponent<sfs::RigidBody2DComponent>().velocity.y =
             -ENEMY_KNOCKBACK;
         // Blood is biased along the bullet's travel; droplets fly, then stick
         // to whatever platform they land on (generic particle->decal path), so
         // the stains trace the actual impact rather than a drawn shape.
-        damageEnemy(
-            enemyEntity, bullet.damage, transform.position, bullet.velocity);
+        damageEnemy(enemyEntity, bullet.damage, position, bullet.velocity);
 
         if (bullet.chain)
           chainArc(enemyPos, bullet.color, enemyEntity);
 
         if (bullet.explosive)
         {
-          explode(transform.position, bullet.color);
+          explode(position, bullet.color);
           consumed = true;
           break;
         }
@@ -156,7 +157,8 @@ private:
     {
       if (e == exclude || e.getComponent<Enemy>().health <= 0.0f)
         continue;
-      const glm::vec2 p = e.getComponent<sfs::TransformComponent>().position;
+      const glm::vec2 p =
+          e.getComponent<sfs::TransformComponent>().position2D();
       const float d2 =
           (p.x - from.x) * (p.x - from.x) + (p.y - from.y) * (p.y - from.y);
       if (d2 < best)
@@ -194,7 +196,7 @@ private:
                                             sfs::BoxCollider2D>())
     {
       const glm::vec2 sc =
-          solid.getComponent<sfs::TransformComponent>().position;
+          solid.getComponent<sfs::TransformComponent>().position2D();
       const glm::vec2 sh = solid.getComponent<sfs::BoxCollider2D>().half;
       if (!overlaps(pos, half, sc, sh))
         continue;
@@ -241,7 +243,7 @@ private:
     if (enemy.health <= 0.0f)
     {
       const glm::vec2 pos =
-          entity.getComponent<sfs::TransformComponent>().position;
+          entity.getComponent<sfs::TransformComponent>().position2D();
       // A heavy radial eruption of gibs -- they fly up and out, then gravity
       // rains them onto the platforms where they stick as organic splatter.
       if (m_particles)
@@ -264,14 +266,15 @@ private:
     {
       if (e.getComponent<Enemy>().health <= 0.0f)
         continue;
-      const glm::vec2 p = e.getComponent<sfs::TransformComponent>().position;
+      const glm::vec2 p =
+          e.getComponent<sfs::TransformComponent>().position2D();
       const glm::vec2 d = p - center;
       const float dist = glm::length(d);
       if (dist >= EXPLOSION_RADIUS)
         continue;
 
       const glm::vec2 dir = dist > 0.01f ? d / dist : glm::vec2{0.0f, -1.0f};
-      auto& rb = e.getComponent<sfs::RigidBodyComponent>();
+      auto& rb = e.getComponent<sfs::RigidBody2DComponent>();
       rb.velocity += dir * 260.0f;
       rb.velocity.y -= 220.0f;
       damageEnemy(e, EXPLOSION_DAMAGE, p);
@@ -295,7 +298,8 @@ private:
     {
       if (e == source || e.getComponent<Enemy>().health <= 0.0f)
         continue;
-      const glm::vec2 p = e.getComponent<sfs::TransformComponent>().position;
+      const glm::vec2 p =
+          e.getComponent<sfs::TransformComponent>().position2D();
       const float d2 =
           (p.x - from.x) * (p.x - from.x) + (p.y - from.y) * (p.y - from.y);
       if (d2 < CHAIN_RANGE * CHAIN_RANGE)
@@ -322,7 +326,7 @@ private:
   {
     registry->createEntity()
         .addComponent<sfs::TransformComponent>(pos)
-        .addComponent<sfs::LightEmitterComponent>(radius, 3.0f, 0.0f, color)
+        .addComponent<sfs::PointLightComponent>(color, 3.0f, radius)
         .addComponent<Lifetime>(time);
   }
 

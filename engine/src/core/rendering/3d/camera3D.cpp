@@ -90,13 +90,18 @@ glm::vec3 Camera3D::groundRight() const
 
 void Camera3D::setPose(const glm::vec3& eye,
                        const glm::vec3& forward,
-                       float focusDistance)
+                       float focusDistance,
+                       const glm::vec3& up)
 {
   const float length = glm::length(forward);
   if (length < 1.0e-6f)
     return;
   const glm::vec3 direction = forward / length;
-  yaw = std::atan2(direction.y, direction.x);
+  // Looking straight up or down, the heading is which way is up the screen.
+  const bool vertical =
+      direction.x * direction.x + direction.y * direction.y < 1.0e-8f;
+  const glm::vec3 heading = vertical ? up * -direction.z : direction;
+  yaw = std::atan2(heading.y, heading.x);
   pitch = std::asin(std::clamp(-direction.z, -1.0f, 1.0f));
   distance = std::max(focusDistance, 1.0e-3f);
   target = eye + direction * distance;
@@ -112,7 +117,10 @@ glm::quat Camera3D::orientation() const
 
 glm::mat4 Camera3D::viewMatrix() const
 {
-  return glm::lookAtRH(position(), target, kUp);
+  // Up the screen: at right angles to the view and its ground-level right,
+  // so a camera looking straight down still knows which way is up.
+  return glm::lookAtRH(
+      position(), target, glm::cross(groundRight(), viewDirection()));
 }
 
 glm::mat4 Camera3D::projectionMatrix(float aspect) const

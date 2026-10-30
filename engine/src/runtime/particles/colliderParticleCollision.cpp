@@ -24,7 +24,7 @@ ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
   {
     const auto& box = solid.getComponent<BoxCollider2D>();
     const glm::vec2 centre =
-        solid.getComponent<TransformComponent>().position + box.offset;
+        solid.getComponent<TransformComponent>().position2D() + box.offset;
 
     float t = 0.0f;
     glm::vec2 normal{0.0f, 0.0f};

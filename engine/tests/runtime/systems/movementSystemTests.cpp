@@ -1,7 +1,6 @@
 #include "../../testHarness.h"
 
-#include <engine/core/components/elevationComponent.h>
-#include <engine/core/components/rigidBodyComponent.h>
+#include <engine/core/components/rigidBody2DComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/components/worldCollider.h>
 #include <engine/core/ecs/ecs.h>
@@ -31,7 +30,7 @@ Entity addMover(Registry& reg, glm::vec2 position, glm::vec2 velocity)
 {
   Entity e = reg.createEntity();
   e.addComponent<TransformComponent>(TransformComponent{position});
-  e.addComponent<RigidBodyComponent>(RigidBodyComponent{velocity});
+  e.addComponent<RigidBody2DComponent>(RigidBody2DComponent{velocity});
   return e;
 }
 } // namespace
@@ -50,7 +49,9 @@ int main()
     const auto& t = e.getComponent<TransformComponent>();
     CHECK(testing::approx(t.position.x, 1.0f));
     CHECK(testing::approx(t.position.y, 0.4f));
-    CHECK(testing::approx(t.previousPosition.x, 0.0f)); // captured pre-move
+    CHECK(testing::approx(
+        e.getComponent<RigidBody2DComponent>().previousPosition.x,
+        0.0f)); // captured pre-move
   }
 
   TEST("a tall step should block movement and stop the velocity")
@@ -67,7 +68,7 @@ int main()
     sys.update(0.1);
 
     const auto& t = e.getComponent<TransformComponent>();
-    const auto& rb = e.getComponent<RigidBodyComponent>();
+    const auto& rb = e.getComponent<RigidBody2DComponent>();
     CHECK(testing::approx(t.position.x, 0.0f)); // held at the cliff edge
     CHECK(testing::approx(rb.velocity.x, 0.0f));
   }
@@ -119,14 +120,14 @@ int main()
     sys.update(0.1);
 
     const auto& t = e.getComponent<TransformComponent>();
-    const auto& rb = e.getComponent<RigidBodyComponent>();
+    const auto& rb = e.getComponent<RigidBody2DComponent>();
     CHECK(testing::approx(t.position.x, 0.5f)); // x blocked by the wall
     CHECK(testing::approx(t.position.y, 1.5f)); // y slides past it
     CHECK(testing::approx(rb.velocity.x, 0.0f));
     CHECK(testing::approx(rb.velocity.y, 10.0f));
   }
 
-  TEST("elevation should follow the terrain the entity stands on")
+  TEST("height (z) should follow the terrain the entity stands on")
   {
     Registry reg;
     MovementSystem& sys = reg.addSystem<MovementSystem>();
@@ -135,11 +136,11 @@ int main()
     sys.setTerrainHeightSource(&terrain);
 
     Entity e = addMover(reg, {0.0f, 0.0f}, {5.0f, 0.0f});
-    e.addComponent<ElevationComponent>(ElevationComponent{0});
     reg.flushEntities();
     sys.update(0.1);
 
-    CHECK(e.getComponent<ElevationComponent>().level == 3);
+    CHECK(
+        testing::approx(e.getComponent<TransformComponent>().position.z, 3.0f));
   }
 
   TEST("a world collider's bounds should track the moved position")

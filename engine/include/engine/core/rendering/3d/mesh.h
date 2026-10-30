@@ -52,10 +52,18 @@ struct TextureData
 /** How a material's alpha is used (glTF's alphaMode). */
 enum class AlphaMode : uint8_t
 {
-  Opaque, // alpha ignored
-  Mask,   // cut out where alpha is below alphaCutoff (leaves, fences)
-  Blend,  // see-through by alpha (glass, water); drawn after opaque things
+  Opaque,   // alpha ignored
+  Mask,     // cut out where alpha is below alphaCutoff (leaves, fences)
+  Blend,    // see-through by alpha (glass, water); drawn after opaque things
+  Additive, // its light added to what's behind (fire, sparks, glows); drawn
+            // after opaque things, casting no shadow
 };
+
+/** Whether a mode draws see-through, after everything opaque. */
+inline bool isSeeThrough(AlphaMode mode)
+{
+  return mode == AlphaMode::Blend || mode == AlphaMode::Additive;
+}
 
 /**
  * How a surface looks, glTF's metallic-roughness model: the albedo is the
@@ -85,6 +93,9 @@ struct MeshMaterial
   float roughness = 1.0f; // 0: mirror-smooth; 1: matte
   AlphaMode alphaMode = AlphaMode::Opaque;
   float alphaCutoff = 0.5f; // for AlphaMode::Mask
+  // Shows its colour as it is, whatever light falls on it (particles, glows,
+  // vivid marks): drawn as emission.
+  bool unlit = false;
 
   // A material graph's shader (see materialGraphCompiler.h), and the values
   // and textures it reads, in its order (a null texture reads white). Null:

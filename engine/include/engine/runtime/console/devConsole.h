@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine/runtime/ui/layer.h"
+#include "engine/runtime/ui/ui.h"
+
 #include <SDL_events.h>
 #include <cstddef>
 #include <string>
@@ -8,21 +11,18 @@
 namespace sfs
 {
 
-class TextRenderer;
-class IQuadRenderer;
-class AssetStore;
-
 /**
  * In-app developer console: a single-line input with multi-line output. Toggle
  * with the backtick key, type a Lua statement, and press Enter to run it
  * against the live VM (sfs::activeLua). A table result prints pretty, one key
  * per line.
  *
- * It draws through the engine's TextRenderer, so it carries no ImGui dependency
- * and ships in every build -- on web it shares the VM the on-page editor
- * drives. Input is fed from the host's SDL event stream; while the console is
- * open the host withholds input from the game (keyboard state is polled, so
- * swallowing events alone wouldn't stop the player moving as you type).
+ * It draws as game UI (layer(): a ui::Layer the host shows over the scene),
+ * so it needs no ImGui and ships in every build -- on web it shares the VM
+ * the on-page editor drives. Input is fed from the host's SDL event stream;
+ * while the console is open the host withholds input from the game (keyboard
+ * state is polled, so swallowing events alone wouldn't stop the player moving
+ * as you type).
  */
 class DevConsole
 {
@@ -39,17 +39,29 @@ public:
   // (closes).
   bool handleEvent(const SDL_Event& event);
 
-  // Draw the console bar (background, last result, prompt + input) along the
-  // bottom of a viewportWidth x viewportHeight frame. No-op while closed.
-  void render(TextRenderer& text,
-              IQuadRenderer& quads,
-              AssetStore& assets,
-              int viewportWidth,
-              int viewportHeight) const;
+  // The console bar (last result, prompt + input) along the bottom of the
+  // screen, as UI to draw over the scene: hidden while closed.
+  ui::Layer& layer() { return m_layer; }
 
 private:
   // Run the current line against the live VM and keep its result/error to show.
   void submit();
+  ui::View view() const;
+
+  // Shows the console's view.
+  class Layer : public ui::Layer
+  {
+  public:
+    explicit Layer(DevConsole& console) : m_console(console)
+    {
+      order = 1000;
+      visible = false; // until opened
+    }
+    ui::View body() override { return m_console.view(); }
+
+  private:
+    DevConsole& m_console;
+  };
 
   // Walk the submitted-command history into the input line (older / newer).
   void recallOlder();
@@ -64,6 +76,7 @@ private:
   // equals m_history.size() when not browsing (the live, editable line).
   std::vector<std::string> m_history;
   std::size_t m_historyPos = 0;
+  Layer m_layer{*this};
 };
 
 } // namespace sfs

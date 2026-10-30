@@ -997,7 +997,7 @@ void componentSection(
   else if (expanded)
   {
     void* object = type.component.get(entity);
-    if (type.name == "Transform3DComponent")
+    if (type.name == "TransformComponent")
       if (const sfs::Entity parent = sfs::hierarchy::parentOf(entity);
           parent.isValid())
       {
@@ -1413,9 +1413,12 @@ void InspectorPanel::drawMaterial(EditorContext& context,
         "How deep the normal map's bumps look: 0 is flat, above 1 deeper");
   }
 
-  const char* modes[] = {"Opaque", "Cut-out (mask)", "See-through (blend)"};
+  const char* modes[] = {"Opaque",
+                         "Cut-out (mask)",
+                         "See-through (blend)",
+                         "Glow (additive)"};
   int mode = static_cast<int>(material.alphaMode);
-  if (ImGui::Combo(row("Transparency").c_str(), &mode, modes, 3))
+  if (ImGui::Combo(row("Transparency").c_str(), &mode, modes, 4))
   {
     material.alphaMode = static_cast<sfs::AlphaMode>(mode);
     changed = true;
@@ -1423,7 +1426,7 @@ void InspectorPanel::drawMaterial(EditorContext& context,
   if (material.alphaMode == sfs::AlphaMode::Mask)
     changed |= ImGui::SliderFloat(
         row("Cutoff").c_str(), &material.alphaCutoff, 0.0f, 1.0f);
-  else if (material.alphaMode == sfs::AlphaMode::Blend)
+  else if (sfs::isSeeThrough(material.alphaMode))
     ImGui::TextDisabled(
         "Opacity is the base colour's alpha, times the texture's");
 

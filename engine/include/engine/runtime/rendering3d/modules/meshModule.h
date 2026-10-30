@@ -14,7 +14,7 @@ namespace sfs
 class Registry;
 
 /**
- * Render module that draws every entity with a Transform3DComponent and a
+ * Render module that draws every entity with a TransformComponent and a
  * MeshRendererComponent. Entities sharing a mesh merge into one
  * MeshDrawCommand (one instanced draw). Each instance is culled twice: against
  * the camera frustum for the lit pass, and against the sun's shadow volume for

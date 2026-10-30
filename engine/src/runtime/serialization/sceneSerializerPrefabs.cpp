@@ -517,19 +517,18 @@ json SceneSerializer::savePrefab(Scene& scene,
          expandBase(root.getComponent<PrefabInstanceComponent>().prefab))
       if (node.key.empty())
       {
-        const auto transform = node.components.find("Transform3DComponent");
+        const auto transform = node.components.find("TransformComponent");
         if (transform != node.components.end())
-          rootEntry["Transform3DComponent"] = *transform;
+          rootEntry["TransformComponent"] = *transform;
         else
-          rootEntry.erase("Transform3DComponent");
+          rootEntry.erase("TransformComponent");
       }
   }
-  else if (rootEntry.contains("Transform3DComponent") && !keepRootPlacement)
+  else if (rootEntry.contains("TransformComponent") && !keepRootPlacement)
   {
     // A new prefab is placed by its instances: its own root sits at the origin
     // (keeping its turn and size).
-    rootEntry["Transform3DComponent"]["position"] =
-        json::array({0.0, 0.0, 0.0});
+    rootEntry["TransformComponent"]["position"] = json::array({0.0, 0.0, 0.0});
   }
 
   json children = json::array();

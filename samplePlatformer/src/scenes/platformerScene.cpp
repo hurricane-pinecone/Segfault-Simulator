@@ -12,25 +12,26 @@
 #include "systems/platformerPhysicsSystem.h"
 
 #include "engine/core/components/cameraComponent.h"
-#include "engine/core/components/lightEmitterComponent.h"
+#include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/particleEmitterComponent.h"
+#include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
-#include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/particles/particleEffect.h"
-#include "engine/runtime/TextRenderer/textRenderer.h"
-#include "engine/runtime/rendering/flatRenderContext.h"
-#include "engine/runtime/rendering/modules/particles.h"
+#include "engine/runtime/rendering3d/modules/decalModule.h"
+#include "engine/runtime/rendering3d/modules/particleModule.h"
+#include "engine/runtime/rendering3d/modules/spriteModule.h"
+#include "engine/runtime/rendering3d/modules/uiModule.h"
+#include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/systems/cameraSystem.h"
-#include "engine/runtime/systems/flatRenderSystem.h"
+#include "engine/runtime/ui/ui.h"
 #include "glm/glm/common.hpp"
 
 #include <SDL_rect.h>
 #include <string>
-
-using FlatParticles = sfs::Particles<sfs::FlatRenderContext>;
 
 namespace
 {
@@ -225,22 +226,33 @@ void PlatformerScene::onInit()
   // stuck decals).
   addSystem<platformer::LifetimeSystem>(); // expires muzzle/death flash lights
 
-  auto& render = addSystem<sfs::FlatRenderSystem>(m_assetStore, quadRenderer());
+  // A 2D game: its positions are pixels on a plane whose y runs down the
+  // screen, drawn by the engine's one renderer.
+  auto& render = addSystem<sfs::RenderSystem3D>(renderer3D());
+  sfs::Space2D space;
+  space.yDown = true;
+  render.setSpace2D(space);
+  render.withModule<sfs::SpriteModule>(m_assetStore);
 
   // Dark, moody base so the point lights (player lamp, torches, muzzle and
   // death flashes) carry the scene -- gunfire and kills light the room.
-  sfs::FlatLighting lighting;
+  sfs::SceneLighting3D lighting;
   lighting.ambient = 0.28f;
-  lighting.ambientColor = glm::vec3{0.32f, 0.36f, 0.5f};
-  lighting.diffuseStrength = 0.0f;
+  lighting.skyColor = glm::vec3{0.02f, 0.022f, 0.035f}; // the backdrop
+  lighting.sun.diffuseStrength = 0.0f;
   render.setLighting(lighting);
-  render.setMaxDecals(24000); // global backstop (bounds memory/frame cost)
-  // Gore-heavy: a 12px cell holds up to 16 blood marks, then that spot is
-  // saturated and stops accepting more -- so platforms cake up and STAY bloody
-  // (no churn) instead of old blood being evicted as new blood lands.
-  render.setDecalCoverage(12.0f, 16);
+  sfs::ShadowSettings3D shadows;
+  shadows.enabled = false;
+  shadows.pointLights = 0;
+  render.setShadowSettings(shadows);
 
-  auto& particles = render.withModule<FlatParticles>();
+  auto& decals = render.withModule<sfs::DecalModule>(m_assetStore);
+  decals.setMaxDecals(24000); // global backstop (bounds memory/frame cost)
+  // Gore-heavy: a 12px cell holds up to 16 blood marks, then that spot loses
+  // its oldest -- so platforms cake up and stay bloody.
+  decals.setCoverage(12.0f, 16);
+
+  auto& particles = render.withModule<sfs::ParticleModule>(m_assetStore);
   // This game is gore-heavy (big splatter + persistent stains + drips), so it
   // lifts the engine's default particle ceiling -- it has the frame headroom.
   particles.setMaxParticles(14000);
@@ -252,12 +264,10 @@ void PlatformerScene::onInit()
   particles.registerEffect("pickup", makePickupEffect());
   particles.registerEffect("aura", makeAuraEffect());
 
-  // Generic particle->decal stick: any effect with leavesDecal now sticks to
-  // the platforms (SolidObject + BoxCollider2D) and stamps a flat decal, using
-  // the shaping shared with the iso path. enableStains() with no terrain picks
-  // the collider collision and the sink wired above -- the iso game calls the
-  // same.
-  particles.enableStains();
+  // Any effect with leavesDecal sticks to the platforms (SolidObject +
+  // BoxCollider2D) and stamps a mark through the decals.
+  particles.enableStains(decals);
+  render.withModule<sfs::UiModule>(*this);
 
   // Spell pickups: collecting an orb appends its spell to the player's loadout.
   addSystem<platformer::PickupSystem>().setParticles(&particles);
@@ -271,7 +281,7 @@ void PlatformerScene::onInit()
       [this](glm::vec2 pos)
       {
         ++m_kills;
-        m_camera.getComponent<sfs::CameraComponent>().shake(
+        m_camera.getComponent<sfs::CameraFollowComponent>().shake(
             1.0f, SHAKE_DURATION);
         spawnFlash(pos, glm::vec3{1.0f, 0.3f, 0.15f}, 340.0f, DEATH_FLASH_TIME);
 
@@ -302,19 +312,24 @@ void PlatformerScene::createEntities()
   generatePlatforms();
 
   m_player = &createObject<Player>();
+  createObject<PlatformerHud>();
 
   // Camera: an ECS entity the engine CameraSystem follows (and shakes). Started
   // on the player so it doesn't pan in from the origin.
   const glm::vec2 cameraStart =
-      m_player->entity().getComponent<sfs::TransformComponent>().position;
+      m_player->entity().getComponent<sfs::TransformComponent>().position2D();
+  sfs::CameraComponent lens;
+  lens.orthographic = true;
+  lens.orthoHeight = static_cast<float>(WINDOW_HEIGHT); // a pixel a pixel
+  lens.bloomThreshold = 1.2f; // the glows bloom, not lit walls
   m_camera = createEntity()
                  .addComponent<sfs::TransformComponent>(cameraStart)
-                 .addComponent<sfs::CameraComponent>(
+                 .addComponent<sfs::CameraComponent>(lens)
+                 .addComponent<sfs::CameraFollowComponent>(
                      static_cast<int>(m_player->entity().getId()),
-                     glm::vec2{0.0f, 0.0f},
-                     CAMERA_SMOOTHING,
-                     1.0f);
-  m_camera.getComponent<sfs::CameraComponent>().shakeMaxOffset =
+                     glm::vec3{0.0f},
+                     CAMERA_SMOOTHING);
+  m_camera.getComponent<sfs::CameraFollowComponent>().shakeMaxOffset =
       SHAKE_MAX_OFFSET;
 
   // Coloured torches on a few generated platforms; they light the dark level
@@ -378,9 +393,8 @@ void PlatformerScene::createTorch(const glm::vec2& pos, const glm::vec3& color)
 {
   createEntity()
       .addComponent<sfs::TransformComponent>(pos)
-      .addComponent<sfs::LightEmitterComponent>(460.0f, 1.7f, 0.0f, color)
-      .addComponent<sfs::ParticleEmitterComponent>(
-          "sparkle", glm::vec2{0.0f, 0.0f}, 0.0f);
+      .addComponent<sfs::PointLightComponent>(color, 1.7f, 460.0f)
+      .addComponent<sfs::ParticleEmitterComponent>("sparkle");
 }
 
 void PlatformerScene::spawnFlash(const glm::vec2& pos,
@@ -390,7 +404,7 @@ void PlatformerScene::spawnFlash(const glm::vec2& pos,
 {
   createEntity()
       .addComponent<sfs::TransformComponent>(pos)
-      .addComponent<sfs::LightEmitterComponent>(radius, 2.6f, 0.0f, color)
+      .addComponent<sfs::PointLightComponent>(color, 2.6f, radius)
       .addComponent<platformer::Lifetime>(time);
 }
 
@@ -411,7 +425,7 @@ void PlatformerScene::createEnemy(const glm::vec2& center)
   createEntity()
       .addComponent<sfs::SpriteComponent>(m_guySprite, glm::vec2{0.5f, 0.5f})
       .addComponent<sfs::TransformComponent>(center, glm::vec2{2.5f, 2.5f})
-      .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0f, 0.0f})
+      .addComponent<sfs::RigidBody2DComponent>(glm::vec2{0.0f, 0.0f})
       .addComponent<sfs::BoxCollider2D>(glm::vec2{18.0f, 20.0f})
       .addComponent<platformer::PlatformerBody>()
       .addComponent<platformer::Enemy>(ENEMY_HEALTH)
@@ -437,44 +451,47 @@ void PlatformerScene::onUpdate(double deltaTime)
     m_fps += (1.0 / deltaTime - m_fps) * 0.1;
 }
 
-void PlatformerScene::onRender()
+sfs::ui::View PlatformerHud::body()
 {
-  textRenderer().drawText(
-      20, 20, "Move: A / D   Jump: Space   Hold L-click: shoot");
-  textRenderer().drawText(20, 44, "KILLS: " + std::to_string(m_kills));
-  textRenderer().drawText(
-      20, 68, "FPS: " + std::to_string(static_cast<int>(m_fps)));
+  using namespace sfs::ui;
+  const auto& scene = static_cast<const PlatformerScene&>(this->scene());
+  return VStack(
+             Alignment::Leading,
+             {
+                 Text("Move: A / D   Jump: Space   Hold L-click: shoot"),
+                 Text("KILLS: " + std::to_string(scene.kills())),
+                 Text("FPS: " + std::to_string(static_cast<int>(scene.fps()))),
+                 Text(scene.spellLine()),
+             })
+      .spacing(4)
+      .padding(20)
+      .align(Alignment::TopLeading);
+}
 
-  // Active spell loadout (collected from enemy drops).
-  if (m_player)
+std::string PlatformerScene::spellLine() const
+{
+  // The active spell loadout (collected from enemy drops).
+  if (!m_player)
+    return {};
+  const auto& spells =
+      m_player->entity().getComponent<platformer::Loadout>().spells;
+  if (spells.empty())
+    return "SPELLS: none - kill enemies for spell orbs";
+
+  int counts[static_cast<int>(platformer::Spell::Count)] = {0};
+  for (const platformer::Spell s : spells)
+    ++counts[static_cast<int>(s)];
+  std::string line = "SPELLS: ";
+  for (int i = 0; i < static_cast<int>(platformer::Spell::Count); ++i)
   {
-    const auto& spells =
-        m_player->entity().getComponent<platformer::Loadout>().spells;
-
-    if (spells.empty())
-    {
-      textRenderer().drawText(
-          20, 92, "SPELLS: none - kill enemies for spell orbs");
-    }
-    else
-    {
-      int counts[static_cast<int>(platformer::Spell::Count)] = {0};
-      for (const platformer::Spell s : spells)
-        ++counts[static_cast<int>(s)];
-
-      std::string line = "SPELLS: ";
-      for (int i = 0; i < static_cast<int>(platformer::Spell::Count); ++i)
-      {
-        if (counts[i] == 0)
-          continue;
-        line += platformer::spellName(static_cast<platformer::Spell>(i));
-        if (counts[i] > 1)
-          line += "x" + std::to_string(counts[i]);
-        line += " ";
-      }
-      textRenderer().drawText(20, 92, line);
-    }
+    if (counts[i] == 0)
+      continue;
+    line += platformer::spellName(static_cast<platformer::Spell>(i));
+    if (counts[i] > 1)
+      line += "x" + std::to_string(counts[i]);
+    line += " ";
   }
+  return line;
 }
 
 void PlatformerScene::dropSpell(const glm::vec2& pos)
@@ -486,10 +503,9 @@ void PlatformerScene::dropSpell(const glm::vec2& pos)
   createEntity()
       .addComponent<sfs::TransformComponent>(pos, glm::vec2{1.2f, 1.2f})
       .addComponent<sfs::SpriteComponent>(m_orbSprite, glm::vec2{0.5f, 0.5f})
-      .addComponent<sfs::LightEmitterComponent>(
-          300.0f, 2.0f, 0.0f, platformer::spellColor(spell))
-      .addComponent<sfs::ParticleEmitterComponent>(
-          "aura", glm::vec2{0.0f, 0.0f}, 0.0f)
+      .addComponent<sfs::PointLightComponent>(
+          platformer::spellColor(spell), 2.0f, 300.0f)
+      .addComponent<sfs::ParticleEmitterComponent>("aura")
       .addComponent<platformer::SpellPickup>(spell)
       .addComponent<sfs::RenderLayerComponent>(8);
 }

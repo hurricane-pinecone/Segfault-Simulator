@@ -21,7 +21,7 @@ inline constexpr float kPickMarkerRadius = 0.3f;
  * An entity's world-space bounds: its mesh's bounds through its world matrix
  * (parents included), or a small marker box at its position if it has no mesh.
  *
- * @return nothing if the entity has no Transform3DComponent.
+ * @return nothing if the entity has no TransformComponent.
  */
 std::optional<Aabb> entityBounds(const Entity& entity,
                                  const MeshLibrary& meshes);

@@ -23,7 +23,7 @@ struct RaycastHit3D
 
 /**
  * 3D physics for a Z-up world (built on Jolt Physics). Every entity with a
- * Transform3DComponent and a collider (box, sphere or capsule) is a body:
+ * TransformComponent and a collider (box, sphere or capsule) is a body:
  * static on its own, dynamic or kinematic with a RigidBody3DComponent.
  *
  * Each update it picks up bodies that were added, removed or changed, steps

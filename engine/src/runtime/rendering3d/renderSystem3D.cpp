@@ -1,9 +1,10 @@
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 
-#include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
-#include "engine/core/components/pointLight3DComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/3d/materialGraphCompiler.h"
 #include "engine/core/rendering/3d/sunShadow.h"
@@ -31,8 +32,8 @@ Entity RenderSystem3D::sceneCamera() const
   if (!registry)
     return {};
   for (const Entity& entity :
-       registry->view<Transform3DComponent, Camera3DComponent>())
-    if (entity.getComponent<Camera3DComponent>().active)
+       registry->view<TransformComponent, CameraComponent>())
+    if (entity.getComponent<CameraComponent>().active)
       return entity;
   return {};
 }
@@ -53,10 +54,50 @@ void RenderSystem3D::render()
   m_stats = {};
 
   // Late as possible, so this frame's moves of the camera entity are seen.
-  if (m_followSceneCamera)
+  if (m_followSceneCamera && m_space2D)
+  {
+    // A 2D game's camera: over its point of the plane, looking straight at
+    // it (up the screen: the plane's up), shaken across it.
     if (const Entity camera = sceneCamera(); camera.isValid())
-      camera.getComponent<Camera3DComponent>().applyTo(
+    {
+      const auto& lens = camera.getComponent<CameraComponent>();
+      glm::vec2 point = camera.getComponent<TransformComponent>().position2D();
+      if (camera.hasComponent<CameraFollowComponent>())
+        point += camera.getComponent<CameraFollowComponent>().shakeOffset() *
+                 glm::vec2(1.0f, m_space2D->ySign());
+      const glm::vec3 centre = m_space2D->place(point);
+      const float back = std::max(lens.farPlane * 0.5f, 1.0f);
+      m_camera.setPose(glm::vec3(centre.x, centre.y, back),
+                       glm::vec3(0.0f, 0.0f, -1.0f),
+                       back,
+                       glm::vec3(0.0f, 1.0f, 0.0f));
+      m_camera.projection = lens.orthographic
+                                ? Camera3D::Projection::Orthographic
+                                : Camera3D::Projection::Perspective;
+      const float magnify = std::max(lens.zoom, 0.01f);
+      m_camera.orthoHeight = lens.orthoHeight / magnify;
+      m_camera.fieldOfView = glm::radians(lens.fieldOfView);
+      m_camera.nearPlane = lens.nearPlane;
+      m_camera.farPlane = lens.farPlane;
+    }
+  }
+  else if (m_followSceneCamera)
+    if (const Entity camera = sceneCamera(); camera.isValid())
+    {
+      camera.getComponent<CameraComponent>().applyTo(
           m_camera, hierarchy::worldMatrix(camera));
+
+      // A follow's shake moves the view across itself (as it moves a flat
+      // or isometric camera across the ground).
+      if (camera.hasComponent<CameraFollowComponent>())
+      {
+        const glm::vec2 shake =
+            camera.getComponent<CameraFollowComponent>().shakeOffset();
+        const glm::vec3 right = m_camera.groundRight();
+        const glm::vec3 up = glm::cross(right, m_camera.viewDirection());
+        m_camera.target += right * shake.x + up * shake.y;
+      }
+    }
 
   if (!buildContext(m_renderer.viewportSize()))
     return;
@@ -95,7 +136,7 @@ void RenderSystem3D::render()
   frame.farPlane = m_camera.farPlane;
   const Entity camera = sceneCamera();
   frame.bloom = camera.isValid()
-                    ? camera.getComponent<Camera3DComponent>().bloomSettings()
+                    ? camera.getComponent<CameraComponent>().bloomSettings()
                     : m_bloom;
   frame.lighting = m_lighting;
   frame.wind = m_wind;
@@ -104,7 +145,7 @@ void RenderSystem3D::render()
   // is (the editor's orbit target, while it looks around freely).
   if (camera.isValid())
     frame.depthOfField =
-        camera.getComponent<Camera3DComponent>().depthOfFieldSettings();
+        camera.getComponent<CameraComponent>().depthOfFieldSettings();
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = m_shadows;
@@ -129,6 +170,7 @@ bool RenderSystem3D::buildContext(const glm::ivec2& viewport)
       static_cast<float>(viewport.x) / static_cast<float>(viewport.y);
 
   m_context.viewportSize = viewport;
+  m_context.space2D = m_space2D ? &*m_space2D : nullptr;
   m_context.camera = &m_camera;
   m_context.viewProjection = m_camera.viewProjection(aspect);
   m_context.frustum = Frustum::fromViewProjection(m_context.viewProjection);
@@ -173,6 +215,7 @@ glm::vec3 glowAt(const MeshMaterial& material,
   case AlphaMode::Mask:
     return surface.alpha < surface.alphaClip ? glm::vec3(0.0f) : emission;
   case AlphaMode::Blend:
+  case AlphaMode::Additive:
     return emission * std::clamp(surface.alpha, 0.0f, 1.0f);
   }
   return emission;
@@ -277,7 +320,7 @@ void RenderSystem3D::gatherEmissionLights()
   };
 
   for (const Entity& entity :
-       registry->view<Transform3DComponent, MeshRendererComponent>())
+       registry->view<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
@@ -379,18 +422,38 @@ void RenderSystem3D::gatherPointLights()
     return;
 
   for (const Entity& entity :
-       registry->view<Transform3DComponent, PointLight3DComponent>())
+       registry->view<TransformComponent, PointLightComponent>())
   {
-    const auto& light = entity.getComponent<PointLight3DComponent>();
+    const auto& light = entity.getComponent<PointLightComponent>();
     if (light.intensity <= 0.0f || light.radius <= 0.0f)
       continue;
 
-    const glm::mat4 model = hierarchy::worldMatrix(entity);
+    // A 2D game's lights are where they are on its plane, at their height
+    // above it (offset z). A flat game's shine from in front of the plane.
+    float radius = light.radius;
+    glm::vec3 position;
+    if (m_space2D)
+    {
+      radius *= m_space2D->scale();
+      const auto& transform = entity.getComponent<TransformComponent>();
+      const glm::vec2 offset(light.offset.x, light.offset.y);
+      if (m_space2D->projection == Space2D::Projection::Isometric)
+        position = m_space2D->place(transform.position2D() + offset,
+                                    transform.position.z + light.offset.z);
+      else
+      {
+        position = m_space2D->place(transform.position2D() + offset);
+        position.z += std::max(light.offset.z, radius * 0.25f);
+      }
+    }
+    else
+      position = glm::vec3(hierarchy::worldMatrix(entity) *
+                           glm::vec4(light.offset, 1.0f));
     m_pointLights.push_back(PointLight3D{
-        glm::vec3(model * glm::vec4(light.offset, 1.0f)),
+        position,
         light.color,
         light.intensity,
-        light.radius,
+        radius,
         light.castsShadow,
         PointLight3D{}.shadowNear,
         light.sourceRadius,
@@ -473,6 +536,8 @@ void RenderSystem3D::submit(const UiDrawCommand& command)
 
 void RenderSystem3D::submit(const GrassDrawCommand& command)
 {
+  if (!m_renderer.capabilities().grass)
+    return;
   m_renderer.drawGrass(GrassBatch3D{command.grass,
                                     command.material,
                                     command.mesh,
@@ -492,6 +557,7 @@ void RenderSystem3D::submit(const MeshDrawCommand& command)
   // Commands name meshes by library handle; a stand-in that has loaded since
   // is a different renderer mesh.
   m_renderer.drawMesh(MeshBatch3D{m_meshes.gpuHandle(command.mesh),
+                                  command.pass == RenderPass3D::Transparent,
                                   command.materials,
                                   command.instances,
                                   command.shadowInstances,

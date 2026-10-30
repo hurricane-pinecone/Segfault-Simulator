@@ -7,7 +7,7 @@
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/iRenderer3D.h"
@@ -94,7 +94,7 @@ void GrassModule::gatherBenders(float seconds)
   // box or capsule as a sphere as wide as its footprint, its bottom where
   // theirs is.
   for (const Entity& entity :
-       m_registry->view<Transform3DComponent, RigidBody3DComponent>())
+       m_registry->view<TransformComponent, RigidBody3DComponent>())
   {
     if (!entity.getComponent<RigidBody3DComponent>().bendsGrass)
       continue;
@@ -139,7 +139,7 @@ void GrassModule::gatherBenders(float seconds)
   }
 
   for (const Entity& entity :
-       m_registry->view<Transform3DComponent, GrassBenderComponent>())
+       m_registry->view<TransformComponent, GrassBenderComponent>())
   {
     const auto& bender = entity.getComponent<GrassBenderComponent>();
     const glm::mat4 model = hierarchy::worldMatrix(entity);
@@ -191,7 +191,7 @@ void GrassModule::update(double deltaTime)
 GrassModule::Patch* GrassModule::refresh(const Entity& entity)
 {
   if (!m_meshes || !entity.isValid() ||
-      !entity.hasComponent<Transform3DComponent>() ||
+      !entity.hasComponent<TransformComponent>() ||
       !entity.hasComponent<MeshRendererComponent>() ||
       !entity.hasComponent<GrassComponent>())
     return nullptr;
@@ -268,9 +268,9 @@ void GrassModule::computeCommands(const RenderContext3D& context)
   for (auto& [key, patch] : m_patches)
     patch.seen = false;
 
-  for (const Entity& entity : m_registry->view<Transform3DComponent,
-                                               MeshRendererComponent,
-                                               GrassComponent>())
+  for (const Entity& entity :
+       m_registry
+           ->view<TransformComponent, MeshRendererComponent, GrassComponent>())
   {
     const Patch* patch = refresh(entity);
     if (!patch)

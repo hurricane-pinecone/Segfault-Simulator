@@ -166,6 +166,8 @@ void UiModule::computeCommands(const RenderContext3D& context)
                    layers.end(),
                    [](const ui::Layer* a, const ui::Layer* b)
                    { return a->order < b->order; });
+  if (m_overlay && m_overlay->visible)
+    layers.push_back(m_overlay);
 
   m_hits.clear();
   m_placed.clear();

@@ -7,6 +7,7 @@
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/sceneManager/scene.h"
+#include "engine/runtime/serialization/legacyComponentNames.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/unresolvedComponents.h"
 #include "glm/glm/ext/quaternion_float.hpp"
@@ -657,6 +658,7 @@ SceneSerializer::readJsonFile(const std::filesystem::path& path)
     LOG_ERROR("Not valid JSON: " + path.string());
     return std::nullopt;
   }
+  upgradeComponentNames(data);
   return data;
 }
 

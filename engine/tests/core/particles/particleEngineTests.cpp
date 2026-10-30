@@ -1,7 +1,6 @@
 #include "../../testHarness.h"
 
 #include <engine/core/particles/particleEngine.h>
-#include <engine/core/rendering/iProjection.h>
 
 #include <string>
 #include <vector>
@@ -10,21 +9,6 @@ using namespace sfs;
 
 namespace
 {
-// Identity projection so a world position maps straight to a screen pixel and a
-// world unit is one pixel -- enough to drive buildBatches in isolation.
-struct StubProjection : IProjection
-{
-  glm::vec2 worldToScreen(const glm::vec2& world, float) const override
-  {
-    return world;
-  }
-  glm::vec2 screenToWorld(const glm::vec2& screen, float) const override
-  {
-    return screen;
-  }
-  float worldUnitToPixels() const override { return 1.0f; }
-};
-
 ParticleEffectDesc burstEffect(int count, float lifetime)
 {
   ParticleEffectDesc d;
@@ -99,25 +83,25 @@ int main()
     CHECK(engine.liveParticleCount() == 3);
   }
 
-  TEST("buildBatches should project live particles into one batch")
+  TEST("sprites should hand out the live particles, an effect a batch")
   {
     ParticleEngine engine;
     engine.registerEffect("spark", burstEffect(6, 1.0f));
     engine.spawnBurst("spark", {2.0f, 3.0f});
     engine.simulate(0.1);
 
-    StubProjection proj;
-    std::vector<ParticleRenderBatch> batches;
-    engine.buildBatches(proj, batches);
+    std::vector<ParticleSpriteBatch> batches;
+    engine.sprites(batches);
     CHECK(batches.size() == 1);
-    CHECK(batches[0].geometry.quads.size() == 6);
+    CHECK(batches[0].sprites.size() == 6);
+    CHECK(testing::approx(batches[0].sprites[0].position.x, 2.0f));
     CHECK(!batches[0].screenSpace);
     CHECK(batches[0].blend == BlendMode::Alpha);
 
-    // with no live particles, no batch is emitted
+    // with no live particles, no batch is handed out
     engine.simulate(5.0);
-    std::vector<ParticleRenderBatch> empty;
-    engine.buildBatches(proj, empty);
+    std::vector<ParticleSpriteBatch> empty;
+    engine.sprites(empty);
     CHECK(empty.empty());
   }
 
@@ -130,9 +114,8 @@ int main()
     engine.spawnBurst("glow", {0.0f, 0.0f});
     engine.simulate(0.1);
 
-    StubProjection proj;
-    std::vector<ParticleRenderBatch> batches;
-    engine.buildBatches(proj, batches);
+    std::vector<ParticleSpriteBatch> batches;
+    engine.sprites(batches);
     CHECK(batches.size() == 1);
     CHECK(batches[0].blend == BlendMode::Additive);
   }

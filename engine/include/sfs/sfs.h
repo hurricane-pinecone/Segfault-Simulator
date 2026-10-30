@@ -1,20 +1,31 @@
 #pragma once
 
-// Everything a game script usually needs, in one include. Scripts written from
-// the editor's templates start with `#include <sfs/sfs.h>`.
+// Everything a game script usually needs, flat, isometric or 3D, in one
+// include. Scripts written from the editor's templates start with
+// `#include <sfs/sfs.h>`.
 
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
-#include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/camera3DComponent.h" // deprecated alias
+#include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/grassBenderComponent.h"
 #include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/components/pointLight3DComponent.h"
+#include "engine/core/components/particleEmitterComponent.h"
+#include "engine/core/components/pointLight3DComponent.h" // deprecated alias
+#include "engine/core/components/pointLightComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/scriptComponent.h"
+#include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/spriteComponent.h"
+#include "engine/core/components/transform3DComponent.h" // deprecated alias
+#include "engine/core/components/transformComponent.h"
+#include "engine/core/components/worldCollider.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: export
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
@@ -23,11 +34,19 @@
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/meshSource.h"
+#include "engine/runtime/rendering3d/modules/decalModule.h"
 #include "engine/runtime/rendering3d/modules/grassModule.h"
+#include "engine/runtime/rendering3d/modules/particleModule.h"
+#include "engine/runtime/rendering3d/modules/spriteModule.h"
 #include "engine/runtime/rendering3d/modules/uiModule.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
+#include "engine/runtime/rendering3d/space2D.h"
+#include "engine/runtime/rendering3d/views.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
+#include "engine/runtime/systems/cameraSystem.h"
+#include "engine/runtime/systems/collisionSystem.h"
+#include "engine/runtime/systems/movementSystem.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 #include "engine/runtime/ui/layer.h"
 #include "engine/runtime/ui/preview.h"

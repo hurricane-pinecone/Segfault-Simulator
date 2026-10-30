@@ -264,8 +264,10 @@ int main()
     bumps->rgba = {200, 128, 230, 255};
     bumps->linear = true;
     standard.normalTexture = bumps;
-    for (const AlphaMode mode :
-         {AlphaMode::Opaque, AlphaMode::Mask, AlphaMode::Blend})
+    for (const AlphaMode mode : {AlphaMode::Opaque,
+                                 AlphaMode::Mask,
+                                 AlphaMode::Blend,
+                                 AlphaMode::Additive})
     {
       standard.alphaMode = mode;
       const MaterialHandle handle = harness.renderer.createMaterial(standard);
@@ -313,8 +315,10 @@ int main()
     const graph::NodeId noise = g.add("noise", {});
     g.connect(texture, 5, g.output(), graph::kAlpha);
     g.connect(noise, 0, g.output(), graph::kEmission);
-    for (const AlphaMode mode :
-         {AlphaMode::Opaque, AlphaMode::Mask, AlphaMode::Blend})
+    for (const AlphaMode mode : {AlphaMode::Opaque,
+                                 AlphaMode::Mask,
+                                 AlphaMode::Blend,
+                                 AlphaMode::Additive})
     {
       MeshMaterial material = graphMaterial(g, mode);
       auto image = std::make_shared<TextureData>();
@@ -643,6 +647,9 @@ int main()
     for (const Case& test : cases)
       for (const bool shadows : {true, false})
       {
+        // A backend without them (wgpu's OpenGL fallback) lights unshadowed.
+        if (shadows && !harness.renderer.capabilities().pointLightShadows)
+          continue;
         PointLight3D light;
         light.position = test.light;
         light.radius = 6.0f;
@@ -1133,6 +1140,7 @@ int main()
 
   TEST("edges should be anti-aliased: blended where a pixel is partly "
        "covered")
+  if (harness.renderer.capabilities().antiAliasing)
   {
     // A white square turned 30 degrees, small enough to sit inside the view,
     // against a black sky: its slanted edges cross pixels part way.
@@ -1271,6 +1279,7 @@ int main()
 
   TEST("depth of field should blur what's out of focus, and leave what's in "
        "it sharp")
+  if (harness.renderer.capabilities().depthOfField)
   {
     // A white plane with a black square on its right: a hard edge, 5 from
     // the camera.

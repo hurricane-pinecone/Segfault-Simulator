@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace sfs
 {
@@ -30,6 +31,7 @@ public:
   WebGpuRenderBackend();
   ~WebGpuRenderBackend() override;
 
+  std::string_view name() const override { return "webgpu"; }
   bool init(const char* title, int width, int height) override;
   SDL_Window* window() const override { return m_window; }
   void onResize(int width, int height) override;
@@ -80,10 +82,22 @@ private:
 
   WebGpuRenderTarget* m_sceneTarget = nullptr;
 
+  // SFS_SCREENSHOT=<file.png>: the scene draws offscreen, and frame
+  // SFS_SCREENSHOT_FRAME (60 by default) is saved there (for checking how a
+  // game looks without seeing its window).
+  void saveScreenshot();
+  std::unique_ptr<WebGpuRenderTarget> m_screenshotTarget;
+  std::string m_screenshotPath;
+  int m_screenshotFrame = 60;
+  int m_frame = 0;
+
   bool m_imguiReady = false;
   // Set when this frame drew ImGui, so endFrame renders the detached panels.
   bool m_imguiRendered = false;
   bool m_shown = false; // the window, after the first frame
 };
+
+/** Offer WebGpuRenderBackend among RenderBackends, as "webgpu". */
+void registerWebGpuBackend();
 
 } // namespace sfs

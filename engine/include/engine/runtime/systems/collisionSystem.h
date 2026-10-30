@@ -1,12 +1,13 @@
 #pragma once
 
-#include "engine/core/components/elevationComponent.h"
-#include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/tags/solidObject.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/worldCollider.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
+
+#include <cmath>
 
 namespace sfs
 {
@@ -19,23 +20,11 @@ public:
   CollisionSystem()
   {
     registerComponent<WorldCollider>();
-    registerComponent<RigidBodyComponent>();
+    registerComponent<RigidBody2DComponent>();
     registerComponent<TransformComponent>();
   }
 
   ~CollisionSystem() = default;
-
-  // Draw the debug collider overlay this frame (IsometricRenderSystem renders
-  // it; the scene gates its call on this).
-  bool debugDraw() const { return m_debugDraw; }
-
-  std::vector<ModuleSetting> settings() override
-  {
-    return {settings::boolean(
-        "Show colliders",
-        [this] { return m_debugDraw; },
-        [this](bool value) { m_debugDraw = value; })};
-  }
 
   void update(double deltaTime) override
   {
@@ -45,12 +34,12 @@ public:
       auto& collider = entity.getComponent<WorldCollider>();
       const auto& transform = entity.getComponent<TransformComponent>();
 
-      collider.updateBounds(transform.position);
+      collider.updateBounds(transform.position2D());
     }
 
     for (auto& entity : getEntities())
     {
-      auto& rb = entity.getComponent<RigidBodyComponent>();
+      auto& rb = entity.getComponent<RigidBody2DComponent>();
 
       // If the entity is not moving, there's no point checking for collisions
       if (rb.velocity.x == 0.0f && rb.velocity.y == 0.0f)
@@ -60,7 +49,7 @@ public:
       auto& collider = entity.getComponent<WorldCollider>();
 
       WorldCollider previousCollider = collider;
-      previousCollider.updateBounds(transform.previousPosition);
+      previousCollider.updateBounds(rb.previousPosition);
 
       if (const auto* hit = getCollision(entity, collider))
       {
@@ -80,7 +69,7 @@ public:
           rb.velocity.x = 0.0f;
         }
 
-        collider.updateBounds(transform.position);
+        collider.updateBounds(transform.position2D());
       }
 
       if (const auto* hit = getCollision(entity, collider))
@@ -101,7 +90,7 @@ public:
           rb.velocity.y = 0.0f;
         }
 
-        collider.updateBounds(transform.position);
+        collider.updateBounds(transform.position2D());
       }
     }
   }
@@ -110,22 +99,21 @@ private:
   const WorldCollider* getCollision(const Entity& entity,
                                     const WorldCollider& collider)
   {
-    int entityElevation = 0;
-
-    if (entity.hasComponent<ElevationComponent>())
-      entityElevation = entity.getComponent<ElevationComponent>().level;
+    // Only things at the same height (the transform's z) meet.
+    const auto heightOf = [](const Entity& e)
+    {
+      return e.hasComponent<TransformComponent>()
+                 ? std::lround(e.getComponent<TransformComponent>().position.z)
+                 : 0L;
+    };
+    const long entityElevation = heightOf(entity);
 
     for (const auto& other : registry->view<WorldCollider, SolidObject>())
     {
       if (entity == other)
         continue;
 
-      int otherElevation = 0;
-
-      if (other.hasComponent<ElevationComponent>())
-        otherElevation = other.getComponent<ElevationComponent>().level;
-
-      if (entityElevation != otherElevation)
+      if (entityElevation != heightOf(other))
         continue;
 
       const auto& otherCollider = other.getComponent<WorldCollider>();
@@ -136,8 +124,6 @@ private:
 
     return nullptr;
   }
-
-  bool m_debugDraw = false;
 };
 
 } // namespace sfs

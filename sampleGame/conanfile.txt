@@ -7,7 +7,7 @@
 #     cmake --preset conan-release   # (or conan-debug)
 #     cmake --build --preset conan-release
 #
-# The engine's SDL/imgui/GLEW closure comes in transitively via sfs-engine, so
+# The engine's SDL/imgui closure comes in transitively via sfs-engine, so
 # it is not listed here.
 
 [requires]

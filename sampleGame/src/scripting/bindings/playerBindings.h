@@ -24,7 +24,7 @@ inline void registerPlayerBindings(sfs::LuaScripting& lua, SampleGame& game)
                spawnGoreAt(*particles,
                            player->entity()
                                .getComponent<sfs::TransformComponent>()
-                               .position);
+                               .position2D());
            });
 }
 

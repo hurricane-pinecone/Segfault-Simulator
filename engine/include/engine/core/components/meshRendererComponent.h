@@ -10,7 +10,7 @@ namespace sfs
 {
 
 /**
- * Draws a mesh at the entity's Transform3DComponent. Entities sharing a mesh
+ * Draws a mesh at the entity's TransformComponent. Entities sharing a mesh
  * are batched into one instanced draw, so a field of identical crops costs
  * one draw call however many there are.
  *
@@ -29,7 +29,7 @@ namespace sfs
  *                           as that much glow would reach)
  * @param bool lightCastsShadows - whether things block its emission's light
  *                                 (as a point light's; see
- *                                 PointLight3DComponent), default true
+ *                                 PointLightComponent), default true
  */
 struct MeshRendererComponent
 {

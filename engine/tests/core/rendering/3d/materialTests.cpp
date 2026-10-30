@@ -64,8 +64,10 @@ int main()
 
   TEST("alpha mode names should round-trip")
   {
-    for (const AlphaMode mode :
-         {AlphaMode::Opaque, AlphaMode::Mask, AlphaMode::Blend})
+    for (const AlphaMode mode : {AlphaMode::Opaque,
+                                 AlphaMode::Mask,
+                                 AlphaMode::Blend,
+                                 AlphaMode::Additive})
       CHECK(alphaModeFromName(alphaModeName(mode)) == mode);
     CHECK(!alphaModeFromName("glass").has_value());
   }

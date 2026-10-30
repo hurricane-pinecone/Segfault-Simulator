@@ -7,9 +7,11 @@
 #include "engine/runtime/rendering3d/commands3D.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/rendering3d/renderContext3D.h"
+#include "engine/runtime/rendering3d/space2D.h"
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
@@ -33,12 +35,13 @@ struct RenderStats3D
 };
 
 /**
- * The 3D render system: owns the scene's camera, lighting and meshes, hosts
- * the 3D render modules, and drives an IRenderer3D each frame. The 3D
- * counterpart of IsometricRenderSystem.
+ * The render system, for every style of game: owns the scene's camera,
+ * lighting and meshes, hosts the render modules (sprites, particles, decals,
+ * voxels, grass, UI...), and drives an IRenderer3D each frame. A flat or
+ * isometric game gives it a Space2D (setSpace2D()).
  *
  * Each frame it builds a RenderContext3D (camera, frusta, lighting, the point
- * lights gathered from PointLight3DComponent entities), lets every module emit
+ * lights gathered from PointLightComponent entities), lets every module emit
  * commands, sorts them, and submits them to the renderer. Features are modules
  * (registration is the enable); MeshModule draws MeshRendererComponent
  * entities.
@@ -67,8 +70,8 @@ public:
   bool followsSceneCamera() const { return m_followSceneCamera; }
 
   /**
-   * The first entity with an active Camera3DComponent and a
-   * Transform3DComponent, in id order; invalid if there is none.
+   * The first entity with an active CameraComponent and a
+   * TransformComponent, in id order; invalid if there is none.
    */
   Entity sceneCamera() const;
 
@@ -81,6 +84,18 @@ public:
 
   /** The scene's uploaded meshes. Freed with this system. */
   MeshLibrary& meshes() { return m_meshes; }
+
+  /**
+   * Make this a 2D game's render system: its entities' positions are on the
+   * game's plane, placed in the world by `space` -- sprites, particles and
+   * decals (their modules), and the camera entity (looking straight at the
+   * plane) and point lights. An entity's height above the plane is its
+   * transform's z (a light's offset z adds to it); a flat game's lights shine
+   * from in front of the plane (offset z: how far; at least a quarter of
+   * their reach).
+   */
+  void setSpace2D(const Space2D& space) { m_space2D = space; }
+  const std::optional<Space2D>& space2D() const { return m_space2D; }
 
   /** Sun, ambient and sky (e.g. driven by a day/night cycle). */
   void setLighting(const SceneLighting3D& lighting) { m_lighting = lighting; }
@@ -102,7 +117,7 @@ public:
 
   /**
    * Bloom (see BloomSettings3D) is the scene camera's (sceneCamera(), its
-   * Camera3DComponent's settings), even while not following it, so the
+   * CameraComponent's settings), even while not following it, so the
    * editor shows what the game camera sees. These are for a scene without a
    * camera entity.
    */
@@ -145,7 +160,7 @@ private:
   // Fill m_context for a viewport; false if there is nothing to draw into.
   bool buildContext(const glm::ivec2& viewport);
 
-  // Rebuild m_pointLights from PointLight3DComponent entities and glowing
+  // Rebuild m_pointLights from PointLightComponent entities and glowing
   // meshes (gatherEmissionLights), keeping the kMaxPointLights3D nearest the
   // camera target.
   void gatherPointLights();
@@ -166,6 +181,7 @@ private:
   MeshLibrary m_meshes;
 
   Camera3D m_camera;
+  std::optional<Space2D> m_space2D;
   bool m_followSceneCamera = true;
   SceneLighting3D m_lighting;
   ShadowSettings3D m_shadows;

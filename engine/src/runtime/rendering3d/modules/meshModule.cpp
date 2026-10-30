@@ -1,7 +1,7 @@
 #include "engine/runtime/rendering3d/modules/meshModule.h"
 
 #include "engine/core/components/meshRendererComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
@@ -18,7 +18,7 @@ void MeshModule::computeCommands(const RenderContext3D& context)
     return;
 
   for (const Entity& entity :
-       m_registry->view<Transform3DComponent, MeshRendererComponent>())
+       m_registry->view<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     const Aabb* localBounds = context.meshes->bounds(renderer.mesh);

@@ -7,14 +7,14 @@
 #include "scene/prefabs.h"
 
 #include "engine/core/components/boxCollider3DComponent.h"
-#include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/components/pointLight3DComponent.h"
+#include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/3d/grass.h"
@@ -411,7 +411,7 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
 
 bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
 {
-  if (!context.hasSelection() || !context.selection.hasComponent<sfs::Transform3DComponent>())
+  if (!context.hasSelection() || !context.selection.hasComponent<sfs::TransformComponent>())
     return false;
 
   ImGuizmo::SetDrawlist();
@@ -471,7 +471,7 @@ std::vector<sfs::Entity> ViewportPanel::movableSelection(const EditorContext& co
   const std::vector<sfs::Entity> selected = context.selected();
   std::vector<sfs::Entity> movable;
   for (const sfs::Entity& entity : selected)
-    if (entity.hasComponent<sfs::Transform3DComponent>() &&
+    if (entity.hasComponent<sfs::TransformComponent>() &&
         std::none_of(selected.begin(),
                      selected.end(),
                      [&](const sfs::Entity& outer)
@@ -837,12 +837,12 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   for (const sfs::Entity& entity : context.scene->entities())
   {
-    if (!entity.hasComponent<sfs::PointLight3DComponent>() ||
-        !entity.hasComponent<sfs::Transform3DComponent>())
+    if (!entity.hasComponent<sfs::PointLightComponent>() ||
+        !entity.hasComponent<sfs::TransformComponent>())
       continue;
 
     // Where the renderer puts it: the offset turns and scales with the entity.
-    const auto& light = entity.getComponent<sfs::PointLight3DComponent>();
+    const auto& light = entity.getComponent<sfs::PointLightComponent>();
     const std::optional<ImVec2> at =
         toScreen(view,
                  glm::vec3(sfs::hierarchy::worldMatrix(entity) *
@@ -874,13 +874,13 @@ void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& vi
 
   for (const sfs::Entity& entity : context.scene->entities())
   {
-    if (!entity.hasComponent<sfs::Camera3DComponent>() ||
-        !entity.hasComponent<sfs::Transform3DComponent>())
+    if (!entity.hasComponent<sfs::CameraComponent>() ||
+        !entity.hasComponent<sfs::TransformComponent>())
       continue;
 
     // The camera's view, as the game would set it up.
     sfs::Camera3D camera;
-    entity.getComponent<sfs::Camera3DComponent>().applyTo(
+    entity.getComponent<sfs::CameraComponent>().applyTo(
         camera, sfs::hierarchy::worldMatrix(entity));
     const glm::vec3 eye = camera.position();
     const glm::vec3 forward = camera.viewDirection();
@@ -931,7 +931,7 @@ void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& vi
 
 void ViewportPanel::drawColliders(const EditorContext& context, const View& view) const
 {
-  if (!context.hasSelection() || !context.selection.hasComponent<sfs::Transform3DComponent>())
+  if (!context.hasSelection() || !context.selection.hasComponent<sfs::TransformComponent>())
     return;
 
   const sfs::Entity& entity = context.selection;

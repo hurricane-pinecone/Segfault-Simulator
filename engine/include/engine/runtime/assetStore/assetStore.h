@@ -153,6 +153,13 @@ public:
   void removeTexture(const std::string& assetId);
   SDL_Surface* getSurface(const std::string& assetId) const;
 
+  /**
+   * An image added by name (a sprite sheet) as texels the renderer draws
+   * from, converted on first use and kept. Sampled without smoothing (pixel
+   * art). Null if there's no such image.
+   */
+  std::shared_ptr<const TextureData> imageTexture(const std::string& assetId);
+
   SpriteId addSprite(const std::string& textureId,
                      const std::string& spriteName,
                      SDL_Rect srcRect);
@@ -240,6 +247,9 @@ private:
   // Null: tried and failed.
   std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
       m_textures;
+  // Images added by name, as texels (imageTexture()).
+  std::unordered_map<std::string, std::shared_ptr<const TextureData>>
+      m_imageTextures;
   // Textures read as data (dataTexture()).
   std::unordered_map<AssetId, std::shared_ptr<const TextureData>, AssetIdHash>
       m_dataTextures;

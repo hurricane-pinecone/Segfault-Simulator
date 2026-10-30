@@ -512,6 +512,15 @@ particles                 -- dump the whole particles API
     <script>
       const canvas = document.getElementById("canvas");
 
+      // The engine draws with WebGPU; say so plainly where there's none.
+      if (!navigator.gpu) {
+        const note = document.createElement("p");
+        note.textContent =
+          "This game needs a browser with WebGPU: a recent Chrome, Edge or Safari, or Firefox 141+ on Windows.";
+        note.style.cssText = "color:#ddd;font:16px sans-serif;text-align:center;padding:2em";
+        canvas.replaceWith(note);
+      }
+
       var Module = {
         canvas,
       };

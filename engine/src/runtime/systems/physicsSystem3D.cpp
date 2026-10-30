@@ -4,7 +4,7 @@
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
@@ -414,7 +414,7 @@ struct PhysicsSystem3D::Impl
     if (!shape)
       return false;
 
-    const Transform3DComponent pose = Transform3DComponent::fromMatrix(world);
+    const TransformComponent pose = TransformComponent::fromMatrix(world);
     const bool moving = record.desc.motion != JPH::EMotionType::Static;
     JPH::BodyCreationSettings settings(shape,
                                        toJolt(pose.position),
@@ -523,7 +523,7 @@ struct PhysicsSystem3D::Impl
         return;
 
       // Moved by code since the last update.
-      const Transform3DComponent pose = Transform3DComponent::fromMatrix(world);
+      const TransformComponent pose = TransformComponent::fromMatrix(world);
       switch (record.desc.motion)
       {
       case JPH::EMotionType::Static:
@@ -550,13 +550,13 @@ struct PhysicsSystem3D::Impl
     };
 
     for (const Entity& entity :
-         registry.view<Transform3DComponent, BoxCollider3DComponent>())
+         registry.view<TransformComponent, BoxCollider3DComponent>())
       visit(entity);
     for (const Entity& entity :
-         registry.view<Transform3DComponent, SphereCollider3DComponent>())
+         registry.view<TransformComponent, SphereCollider3DComponent>())
       visit(entity);
     for (const Entity& entity :
-         registry.view<Transform3DComponent, CapsuleCollider3DComponent>())
+         registry.view<TransformComponent, CapsuleCollider3DComponent>())
       visit(entity);
 
     // Bodies whose entity is gone, or lost its colliders.
@@ -588,7 +588,7 @@ struct PhysicsSystem3D::Impl
       JPH::Quat rotation;
       bodies().GetPositionAndRotation(record.body, position, rotation);
       const glm::mat4 world =
-          Transform3DComponent(
+          TransformComponent(
               toGlm(position), toGlm(rotation), record.desc.scale)
               .matrix();
       hierarchy::setWorldMatrix(record.entity, world);

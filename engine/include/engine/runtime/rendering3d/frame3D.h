@@ -21,11 +21,17 @@ namespace sfs
  */
 inline constexpr std::size_t kMaxPointLights3D = 4096;
 
-/** One drawn copy of a mesh: where it is and how it's tinted. */
+/**
+ * One drawn copy of a mesh: where it is, how it's tinted, and which part of
+ * its textures it shows. `uvRect` maps the mesh's UVs into a rectangle (x, y:
+ * its corner; z, w: its size): the whole texture by default, or one frame of a
+ * sprite sheet, so a sprite is a quad mesh whose instances pick their frames.
+ */
 struct MeshInstance
 {
   glm::mat4 model{1.0f};
   glm::vec4 tint{1.0f};
+  glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f};
 };
 
 /**
@@ -125,6 +131,9 @@ struct GrassBatch3D
 struct MeshBatch3D
 {
   MeshHandle mesh;
+  // See-through instances draw together, sorted among themselves (see
+  // RenderPass3D::Transparent), rather than each among everything.
+  bool together = false;
   // A material for each of the mesh's sections, in order, in place of its own;
   // an invalid handle (or none, past the end) keeps the section's own.
   std::span<const MaterialHandle> materials;

@@ -2,7 +2,7 @@
 #include "mockRenderer3D.h"
 
 #include <engine/core/components/meshRendererComponent.h>
-#include <engine/core/components/transform3DComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
@@ -27,7 +27,7 @@ struct World
   Entity spawn(MeshHandle mesh, const glm::vec3& position)
   {
     Entity entity = scene.createEntity();
-    entity.addComponent<Transform3DComponent>(Transform3DComponent{position});
+    entity.addComponent<TransformComponent>(TransformComponent{position});
     if (mesh.valid())
       entity.addComponent<MeshRendererComponent>(MeshRendererComponent{mesh});
     return entity;
@@ -90,7 +90,7 @@ int main()
   {
     World world;
     Entity box = world.spawn(world.cube, {1, 2, 3});
-    box.getComponent<Transform3DComponent>().scale = {2, 2, 2};
+    box.getComponent<TransformComponent>().scale = {2, 2, 2};
 
     const auto bounds = entityBounds(box, world.meshes);
     CHECK(testing::approx(bounds->min.x, 0.0f));
@@ -145,7 +145,7 @@ int main()
   {
     World world;
     Entity moved = world.spawn(world.cube, {5, 0, 0});
-    moved.getComponent<Transform3DComponent>().scale = {2, 2, 2};
+    moved.getComponent<TransformComponent>().scale = {2, 2, 2};
     CHECK(pickSurface(world.scene, world.meshes, downAt(5.9f, 0.0f))
               .has_value()); // scaled to +-1
     CHECK(!pickSurface(world.scene, world.meshes, downAt(0.0f, 0.0f))

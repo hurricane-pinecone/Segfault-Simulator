@@ -27,6 +27,8 @@ public:
   void resize(glm::ivec2 size);
 
   glm::ivec2 size() const { return m_size; }
+  /** Its texture (e.g. to copy what was drawn out of it). */
+  WGPUTexture texture() const { return m_texture.get(); }
   /** The view the scene renders into. */
   WGPUTextureView view() const { return m_view.get(); }
 

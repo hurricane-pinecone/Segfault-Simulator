@@ -99,7 +99,7 @@ void renderWindow(ImGuiViewport* viewport, void*)
   }
 
   const WGPUDevice device = g_context->device();
-  WGPUTextureView view = wgpuTextureCreateView(target->frame.texture, nullptr);
+  WGPUTextureView view = g_context->surfaceView(target->frame.texture);
   WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
 
   WGPURenderPassColorAttachment color = {};

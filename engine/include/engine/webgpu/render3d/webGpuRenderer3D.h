@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/core/rendering/3d/lightClusters.h"
+#include "engine/runtime/rendering3d/framePlan3D.h"
 #include "engine/runtime/rendering3d/iRenderer3D.h"
 #include "engine/webgpu/wgpuHandle.h"
 
@@ -19,12 +19,6 @@ namespace sfs
 {
 
 class WebGpuContext;
-
-/**
- * Most point lights with shadows at once (ShadowSettings3D::pointLights is
- * capped to it): six cube faces each fit a texture array's 256 layers.
- */
-inline constexpr uint32_t kMaxShadowedPointLights = 32;
 
 namespace materialGraph
 {
@@ -65,6 +59,9 @@ class MaterialShader;
  * without writing depth. Masked and see-through sections cast shadows only
  * where they're solid enough (alpha at least the cutoff, or a half).
  *
+ * What draws where is worked out by a FramePlan3D, as for every backend; this
+ * uploads what it works out and records the passes.
+ *
  * Owned by WebGpuRenderBackend, which points it at each frame's encoder and
  * backbuffer with setTarget().
  */
@@ -99,6 +96,7 @@ public:
   void updateMaterial(MaterialHandle handle,
                       const MeshMaterial& material) override;
   void destroyMaterial(MaterialHandle material) override;
+  RendererCapabilities capabilities() const override { return m_capabilities; }
   glm::ivec2 viewportSize() const override { return m_viewport; }
   uint32_t shadowMapResolution() const override { return m_shadowResolution; }
   void beginFrame(const FrameParams3D& frame) override;
@@ -129,6 +127,7 @@ private:
     wgpu::RenderPipeline shadow;
     wgpu::RenderPipeline lit;
     wgpu::RenderPipeline blend;       // see-through
+    wgpu::RenderPipeline additive;    // light added to what's behind
     wgpu::RenderPipeline pointShadow; // a point light's shadow map's face
     // Grass with this surface's look: built the first time grass uses it
     // (most surfaces never are), from its WGSL.
@@ -153,16 +152,12 @@ private:
   // list).
   struct GpuGrass
   {
-    GrassGrid groundGrid;
-    float groundArea = 0.0f; // with ground, in its own XY's units
+    GrassFieldState state; // its grids, trample bounds and blade capacity
     GpuImage ground;
-    GrassGrid mapsGrid; // empty: unpainted
     GpuImage shape;
     GpuImage data;
     GpuImage trample;
-    glm::vec4 trampleBounds{0.0f, 0.0f, 1.0f, 1.0f}; // min xy, 1 / size
 
-    std::array<uint32_t, 3> capacity{0, 0, 0}; // blades a list
     wgpu::Buffer blades;
     wgpu::Buffer draws;
     wgpu::Buffer growUniforms;
@@ -210,26 +205,13 @@ private:
     std::weak_ptr<GpuTexture> gpu;
   };
 
-  // One instanced draw: a mesh, its run of instances in m_instances, and its
-  // sections' materials in place of their own (a run of m_drawMaterials; 0:
-  // the section's own).
-  struct Draw
-  {
-    uint32_t meshSlot = 0;
-    uint32_t firstInstance = 0;
-    uint32_t instanceCount = 0;
-    uint32_t firstMaterial = 0;
-    uint32_t materialCount = 0;
-    bool allSections =
-        false; // see-through draws: every section, not just Blend ones
-  };
+  using Draw = FramePlan3D::Draw;
 
-  // A see-through draw, sorted back to front before drawing.
-  struct BlendDraw
+  // What the plan needs of a mesh.
+  static PlannedMesh plannedMesh(const GpuMesh& mesh)
   {
-    Draw draw;
-    float distance = 0.0f; // from the camera
-  };
+    return {mesh.sections.size(), mesh.boundsCenter, mesh.boundsRadius};
+  }
 
   bool createPipelines();
   // Bloom's and the composite's (post3D.wgsl).
@@ -305,7 +287,6 @@ private:
   // `resolution` texels; rebuilding the lit bindings when remade), which
   // lights get them this frame and their casters, and drawing them.
   void ensurePointShadowMaps(uint32_t lights, uint32_t resolution);
-  void assignShadowedLights();
   void encodePointShadows();
   void ensureInstanceCapacity(std::size_t instanceCount);
   void uploadFrame();
@@ -322,12 +303,17 @@ private:
   };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
   // The pipeline a surface draws with in a pass (see Sections).
-  static WGPURenderPipeline pipelineFor(const Surface& surface, Sections which);
+  static WGPURenderPipeline
+  pipelineFor(const Surface& surface, Sections which, AlphaMode mode);
 
   const GpuMesh* findMesh(MeshHandle mesh) const;
 
   WebGpuContext& m_context;
   uint32_t m_shadowResolution;
+  RendererCapabilities m_capabilities;
+  // Samples a pixel the lit pass draws with (multisampled anti-aliasing),
+  // resolved into the scene's textures after it.
+  uint32_t m_sampleCount = 4;
 
   // Mesh slots; a handle's id is its slot index + 1 (0 stays the null handle).
   std::vector<std::optional<GpuMesh>> m_meshes;
@@ -341,7 +327,6 @@ private:
   wgpu::BindGroupLayout m_grassLayout;
   wgpu::BindGroupLayout m_grassGrowLayout;
   wgpu::ComputePipeline m_grassGrowPipeline;
-  std::vector<GrassBatch3D> m_grassDraws; // this frame's
 
   wgpu::Buffer m_frameUniforms;
   wgpu::Buffer m_instanceBuffer;
@@ -400,7 +385,6 @@ private:
     wgpu::BindGroup bindings;
     bool used = false; // this frame
   };
-  std::vector<UiQuad> m_uiQuads;
   std::unordered_map<uint32_t, GpuUiTexture> m_uiTextures;
   GpuUiTexture m_uiWhite; // what untextured boxes bind
   wgpu::RenderPipeline m_uiPipeline;
@@ -440,8 +424,6 @@ private:
   std::size_t m_lightCapacity = 0;
   std::size_t m_clusterRangeCapacity = 0;
   std::size_t m_clusterIndexCapacity = 0;
-  ClusterGrid m_grid;
-  ClusterLights m_clusters;
 
   // Point-light shadow maps: a cube array, a cube per shadowed light, and a
   // view of each face to draw into; the faces' uniforms (each at a 256-byte
@@ -471,7 +453,7 @@ private:
   // Ones that didn't build (already logged), so they aren't tried again.
   std::unordered_set<std::string> m_brokenSurfaces;
   // The surface whose pipeline the pass being encoded has set.
-  const Surface* m_boundSurface = nullptr;
+  WGPURenderPipeline m_boundPipeline = nullptr;
 
   // This frame's target, set by the backend.
   WGPUCommandEncoder m_encoder = nullptr;
@@ -479,32 +461,8 @@ private:
   glm::ivec2 m_viewport{0, 0};
 
   // This frame's work, gathered between beginFrame() and endFrame().
-  bool m_frameOpen = false;
-  FrameParams3D m_frame;
-  std::vector<PointLight3D> m_pointLights; // m_frame.pointLights copied out
-  std::vector<MeshInstance> m_instances;
-  std::vector<uint32_t> m_drawMaterials; // Draw::firstMaterial indexes this
-  std::vector<Draw> m_litDraws;
-  std::vector<BlendDraw> m_blendDraws;
-  std::vector<Draw> m_shadowDraws;
-  // Casters for the shadowed point lights, as drawMesh() got them: each
-  // batch's draw and its run of m_casters.
-  struct CasterBatch
-  {
-    Draw base;
-    std::size_t first = 0;
-    std::size_t count = 0;
-  };
-  std::vector<CasterBatch> m_casterBatches;
-  std::vector<MeshInstance> m_casters;
-  // The frame's shadowed lights (indices into m_pointLights; the i-th has
-  // cube i) and the draws of the casters within each one's reach.
-  struct ShadowedLight
-  {
-    std::size_t light = 0;
-    std::vector<Draw> draws;
-  };
-  std::vector<ShadowedLight> m_shadowedLights;
+  FramePlan3D m_plan;
+  PlannedMesh m_plannedMesh; // the last one finish() asked for
 };
 
 } // namespace sfs

@@ -3,19 +3,25 @@
 #include <SDL_events.h>
 #include <SDL_video.h>
 
+#include <string_view>
+
 namespace sfs
 {
 
 struct SceneServices;
 
 // The platform window + GPU context + per-frame lifecycle a Game draws through.
-// One concrete backend per graphics API (OpenGL, WebGPU). Game owns one and
+// One concrete backend per graphics API (WebGPU today). Game owns one and
 // drives it; scenes never touch it directly -- they reach drawing through the
 // SceneServices the backend supplies.
 class IRenderBackend
 {
 public:
   virtual ~IRenderBackend() = default;
+
+  // Its name among RenderBackends ("webgpu", "opengl", ...), for logs and
+  // settings.
+  virtual std::string_view name() const { return {}; }
 
   // Create the window + graphics context/device. Returns false (and logs) on
   // failure. SDL is already initialised by Game before this runs.

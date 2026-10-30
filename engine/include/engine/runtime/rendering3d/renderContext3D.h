@@ -5,6 +5,7 @@
 #include "engine/core/rendering/3d/lighting3D.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering3d/commands3D.h"
+#include "engine/runtime/rendering3d/space2D.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 
@@ -42,6 +43,9 @@ struct RenderContext3D
   // Local bounds of the scene's meshes, for culling, and the textures objects
   // use in place of their meshes' (uploaded when first asked for).
   MeshLibrary* meshes = nullptr;
+
+  // A 2D game's: where its positions sit in the world (null in a 3D world).
+  const Space2D* space2D = nullptr;
 };
 
 /** 3D render modules emit AnyRenderCommand3D. */

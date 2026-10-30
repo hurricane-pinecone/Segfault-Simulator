@@ -16,9 +16,9 @@
 #include "scene/gridModule.h"
 #include "widgets/widgets.h"
 
-#include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/reflection/reflection.h"
@@ -733,7 +733,7 @@ void EditorApp::drawEditMenu()
   ImGui::Separator();
   const bool canAlign =
       m_mode == Mode::Edit && m_context.hasSelection() &&
-      m_context.selection.hasComponent<sfs::Transform3DComponent>();
+      m_context.selection.hasComponent<sfs::TransformComponent>();
   if (ImGui::MenuItem("Align With View", "Ctrl+Shift+F", false, canAlign))
     alignSelectionWithView();
   ImGui::SetItemTooltip(
@@ -804,7 +804,7 @@ void EditorApp::deleteSelection()
 void EditorApp::alignSelectionWithView()
 {
   if (m_mode != Mode::Edit || !m_context.hasSelection() ||
-      !m_context.selection.hasComponent<sfs::Transform3DComponent>())
+      !m_context.selection.hasComponent<sfs::TransformComponent>())
     return;
 
   m_context.history->change(
@@ -813,14 +813,14 @@ void EditorApp::alignSelectionWithView()
         const sfs::Camera3D& view = m_context.render->camera();
         sfs::Entity entity = m_context.selection;
         const glm::vec3 scale =
-            entity.getComponent<sfs::Transform3DComponent>().scale;
+            entity.getComponent<sfs::TransformComponent>().scale;
         sfs::hierarchy::setWorldMatrix(
             entity,
-            sfs::Transform3DComponent(view.position(), view.orientation())
+            sfs::TransformComponent(view.position(), view.orientation())
                 .matrix());
-        entity.getComponent<sfs::Transform3DComponent>().scale = scale;
-        if (entity.hasComponent<sfs::Camera3DComponent>())
-          entity.getComponent<sfs::Camera3DComponent>().focusDistance =
+        entity.getComponent<sfs::TransformComponent>().scale = scale;
+        if (entity.hasComponent<sfs::CameraComponent>())
+          entity.getComponent<sfs::CameraComponent>().focusDistance =
               view.distance;
       });
 }
@@ -828,15 +828,15 @@ void EditorApp::alignSelectionWithView()
 void EditorApp::alignViewWithSelection()
 {
   if (!m_context.hasSelection() ||
-      !m_context.selection.hasComponent<sfs::Transform3DComponent>())
+      !m_context.selection.hasComponent<sfs::TransformComponent>())
     return;
 
   // Not an edit: the editor's view isn't part of the scene's undo history.
   const sfs::Entity entity = m_context.selection;
   const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
   sfs::Camera3D& view = m_context.render->camera();
-  if (entity.hasComponent<sfs::Camera3DComponent>())
-    entity.getComponent<sfs::Camera3DComponent>().applyTo(view, world);
+  if (entity.hasComponent<sfs::CameraComponent>())
+    entity.getComponent<sfs::CameraComponent>().applyTo(view, world);
   else
     view.setPose(glm::vec3(world[3]), glm::vec3(world[0]), view.distance);
 }

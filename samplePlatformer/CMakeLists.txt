@@ -1,6 +1,5 @@
-# A flat 2D platformer built on the engine, proving the generic (non-isometric)
-# render path. Links the engine's namespaced target like any consumer; uses the
-# default flat OpenGLQuadRenderer (no isometric backend).
+# A flat 2D platformer built on the engine: a 2D game drawn through the
+# engine's one renderer (a RenderSystem3D with a flat Space2D).
 
 set(IS_WEB_BUILD FALSE)
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
@@ -17,7 +16,12 @@ target_include_directories(samplePlatformer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-target_link_libraries(samplePlatformer PRIVATE sfs::engine)
+if(TARGET sfs::engine-webgpu)
+    target_link_libraries(samplePlatformer PRIVATE sfs::engine-webgpu)
+    sfs_deploy_runtime(samplePlatformer)
+else()
+    target_link_libraries(samplePlatformer PRIVATE sfs::engine)
+endif()
 
 if(IS_WEB_BUILD)
     # Web build deploys under <pages-url>/samplePlatformer, so output into a
@@ -42,9 +46,6 @@ if(IS_WEB_BUILD)
         -sUSE_SDL_IMAGE=2
         -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
-        -sMIN_WEBGL_VERSION=2
-        -sMAX_WEBGL_VERSION=2
-        -sFULL_ES3=1
         -sUSE_PTHREADS=1
         -sPTHREAD_POOL_SIZE=4
     )

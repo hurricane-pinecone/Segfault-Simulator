@@ -1,7 +1,7 @@
 #include "engine/runtime/rendering3d/picking.h"
 
 #include "engine/core/components/meshRendererComponent.h"
-#include "engine/core/components/transform3DComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
 #include "engine/runtime/sceneManager/scene.h"
@@ -21,7 +21,7 @@ float volume(const Aabb& box)
 std::optional<Aabb> entityBounds(const Entity& entity,
                                  const MeshLibrary& meshes)
 {
-  if (!entity.hasComponent<Transform3DComponent>())
+  if (!entity.hasComponent<TransformComponent>())
     return std::nullopt;
   const glm::mat4 world = hierarchy::worldMatrix(entity);
 
@@ -71,7 +71,7 @@ pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray3D& ray)
   for (const Entity& entity : scene.entities())
   {
     if (!entity.hasComponent<MeshRendererComponent>() ||
-        !entity.hasComponent<Transform3DComponent>())
+        !entity.hasComponent<TransformComponent>())
       continue;
     const MeshHandle mesh = entity.getComponent<MeshRendererComponent>().mesh;
     const Aabb* local = meshes.bounds(mesh);

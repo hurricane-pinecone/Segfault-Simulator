@@ -3,9 +3,9 @@
 #include "components/platformerComponents.h"
 #include "config.h"
 #include "engine/core/components/boxCollider2D.h"
-#include "engine/core/components/lightEmitterComponent.h"
+#include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
-#include "engine/core/components/rigidBodyComponent.h"
+#include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/runtime/assetStore/assetStore.h"
@@ -39,20 +39,21 @@ public:
     const sfs::Sprite* bolt = scene.assetStore().getSprite("bolt");
     m_boltSprite = bolt ? bolt->id : 0;
 
-    m_entity = scene.createEntity()
-                   .addComponent<sfs::SpriteComponent>(
-                       guy ? guy->id : 0, glm::vec2{0.5f, 0.5f})
-                   .addComponent<sfs::TransformComponent>(
-                       glm::vec2{PLAYER_START_X, PLAYER_START_Y},
-                       glm::vec2{3.0f, 3.0f})
-                   .addComponent<sfs::RigidBodyComponent>(glm::vec2{0.0f, 0.0f})
-                   .addComponent<sfs::BoxCollider2D>(glm::vec2{20.0f, 24.0f})
-                   .addComponent<platformer::PlatformerBody>()
-                   .addComponent<platformer::PlayerTag>()
-                   .addComponent<platformer::Loadout>()
-                   .addComponent<sfs::LightEmitterComponent>(
-                       380.0f, 1.3f, 0.0f, glm::vec3{1.0f, 0.85f, 0.55f})
-                   .addComponent<sfs::RenderLayerComponent>(10);
+    m_entity =
+        scene.createEntity()
+            .addComponent<sfs::SpriteComponent>(
+                guy ? guy->id : 0, glm::vec2{0.5f, 0.5f})
+            .addComponent<sfs::TransformComponent>(
+                glm::vec2{PLAYER_START_X, PLAYER_START_Y},
+                glm::vec2{3.0f, 3.0f})
+            .addComponent<sfs::RigidBody2DComponent>(glm::vec2{0.0f, 0.0f})
+            .addComponent<sfs::BoxCollider2D>(glm::vec2{20.0f, 24.0f})
+            .addComponent<platformer::PlatformerBody>()
+            .addComponent<platformer::PlayerTag>()
+            .addComponent<platformer::Loadout>()
+            .addComponent<sfs::PointLightComponent>(
+                glm::vec3{1.0f, 0.85f, 0.55f}, 1.3f, 380.0f)
+            .addComponent<sfs::RenderLayerComponent>(10);
   }
 
   void onUpdate(double deltaTime) override
@@ -63,7 +64,7 @@ public:
 
   void onProcessInput(const sfs::Input& input) override
   {
-    auto& body = m_entity.getComponent<sfs::RigidBodyComponent>();
+    auto& body = m_entity.getComponent<sfs::RigidBody2DComponent>();
     auto& state = m_entity.getComponent<platformer::PlatformerBody>();
 
     float vx = 0.0f;
@@ -162,7 +163,7 @@ private:
       bullet.life *= 2.6f;
 
     const glm::vec2 origin =
-        m_entity.getComponent<sfs::TransformComponent>().position;
+        m_entity.getComponent<sfs::TransformComponent>().position2D();
     const float speed = BULLET_SPEED * speedMul;
     const float spreadStep = SPREAD_DEGREES * 0.01745329f; // deg -> rad
 
@@ -183,16 +184,15 @@ private:
           .addComponent<sfs::SpriteComponent>(
               m_boltSprite, glm::vec2{0.5f, 0.5f})
           .addComponent<platformer::Bullet>(b)
-          .addComponent<sfs::LightEmitterComponent>(
-              170.0f * sizeMul, 2.2f, 0.0f, b.color)
+          .addComponent<sfs::PointLightComponent>(
+              b.color, 2.2f, 170.0f * sizeMul)
           .addComponent<sfs::RenderLayerComponent>(11);
     }
 
     // Muzzle flash, tinted by the current bolt colour.
     m_scene->createEntity()
         .addComponent<sfs::TransformComponent>(origin + aim * 30.0f)
-        .addComponent<sfs::LightEmitterComponent>(
-            240.0f, 2.4f, 0.0f, bullet.color)
+        .addComponent<sfs::PointLightComponent>(bullet.color, 2.4f, 240.0f)
         .addComponent<platformer::Lifetime>(MUZZLE_FLASH_TIME);
   }
 

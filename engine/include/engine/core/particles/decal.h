@@ -60,14 +60,13 @@ struct DecalSpawn
 
   // Keep the mark on the surface it hit (clip to clipMin..clipMax,
   // world-space). Default clips; set None to let it extend past the rect. The
-  // flat path fills the rect from the collider it stuck to; the isometric sink
-  // ignores this and clips per tile/face.
+  // rect is usually the collider or tile the mark stuck to.
   Clipping clipping = Clipping::Surface;
   glm::vec2 clipMin{0.0f, 0.0f};
   glm::vec2 clipMax{0.0f, 0.0f};
 
   // Hint for sinks that keep a hard + soft sprite: true = a crisp streak (hard
-  // edge), false = a soft area blob. The isometric sink ignores it.
+  // edge), false = a soft area blob.
   bool crisp = false;
 };
 

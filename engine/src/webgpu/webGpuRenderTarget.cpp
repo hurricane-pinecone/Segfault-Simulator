@@ -40,8 +40,8 @@ void WebGpuRenderTarget::resize(glm::ivec2 size)
     return;
 
   WGPUTextureDescriptor desc = {};
-  desc.usage =
-      WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+  desc.usage = WGPUTextureUsage_RenderAttachment |
+               WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc;
   desc.dimension = WGPUTextureDimension_2D;
   desc.size = {static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1};
   desc.format = m_context.format();

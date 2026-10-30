@@ -303,7 +303,7 @@ render(const sfs::MeshData& mesh, int size, const sfs::MeshMaterial* material)
             continue;
           alpha = 1.0f;
         }
-        else if (material.alphaMode == sfs::AlphaMode::Blend && alpha < 0.02f)
+        else if (sfs::isSeeThrough(material.alphaMode) && alpha < 0.02f)
           continue;
 
         pixel.depth = depth;

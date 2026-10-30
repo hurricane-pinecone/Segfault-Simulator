@@ -11,9 +11,24 @@ namespace sfs
 {
 
 /**
- * Backend-agnostic 3D renderer: the contract RenderSystem3D draws through, and
- * the seam a second graphics API plugs into (WebGpuRenderer3D today). The 3D
- * counterpart of IQuadRenderer.
+ * What a renderer can draw, for a backend that can't do everything (e.g. one
+ * without compute shaders). Render modules and the editor skip what it lacks
+ * rather than ask for it; the renderer ignores such draws anyway.
+ */
+struct RendererCapabilities
+{
+  bool grass = true;             // drawGrass (grown by a compute pass)
+  bool materialGraphs = true;    // materials with a compiled graph shader
+  bool pointLightShadows = true; // PointLight3D::castsShadow
+  bool postEffects = true;       // bloom
+  bool depthOfField = true;      // DepthOfFieldSettings3D
+  bool antiAliasing = true;      // multisampled edges
+};
+
+/**
+ * Backend-agnostic renderer: the contract RenderSystem3D draws through (for
+ * flat, isometric and 3D games alike), and the seam a second graphics API
+ * plugs into (WebGpuRenderer3D today).
  *
  * A frame is beginFrame(), any number of drawMesh(), then endFrame(), which
  * renders the sun's shadow map and the lit scene into the backend's current
@@ -71,6 +86,9 @@ public:
 
   /** Free a grass field. Unknown or invalid handles are ignored. */
   virtual void destroyGrass(GrassHandle grass) = 0;
+
+  /** What it can draw. Everything, unless a backend says otherwise. */
+  virtual RendererCapabilities capabilities() const { return {}; }
 
   /** Size of the render target in pixels; zero while minimised. */
   virtual glm::ivec2 viewportSize() const = 0;

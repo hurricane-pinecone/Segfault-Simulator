@@ -35,9 +35,12 @@ target_include_directories(sampleGame PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-target_link_libraries(sampleGame PRIVATE
-    sfs::engine
-)
+if(TARGET sfs::engine-webgpu)
+    target_link_libraries(sampleGame PRIVATE sfs::engine-webgpu)
+    sfs_deploy_runtime(sampleGame)
+else()
+    target_link_libraries(sampleGame PRIVATE sfs::engine)
+endif()
 
 set_target_properties(sampleGame PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -68,9 +71,6 @@ if(IS_WEB_BUILD)
         -sUSE_SDL_IMAGE=2
         -sSDL2_IMAGE_FORMATS=["png"]
         -sUSE_SDL_TTF=2
-        -sMIN_WEBGL_VERSION=2
-        -sMAX_WEBGL_VERSION=2
-        -sFULL_ES3=1
         -sUSE_PTHREADS=1
         -sPTHREAD_POOL_SIZE=4
 

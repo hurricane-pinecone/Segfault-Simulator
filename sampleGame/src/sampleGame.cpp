@@ -7,28 +7,15 @@
 #include <engine/core/logger/logger.h>
 #include <engine/core/scripting/luaScripting.h>
 #include <engine/runtime/input/keyboardInput.h>
-#include <engine/runtime/rendering/gl/isometricGeometryRenderer.h>
-#include <engine/runtime/rendering/util/isometric/camera.h>
 #include <engine/runtime/sceneManager/scene.h>
-#include <engine/runtime/systems/cameraSystem.h>
-#include <engine/runtime/systems/isometric/isometricRenderSystem.h>
-#include <glm/glm/ext/vector_float2.hpp>
+#include <engine/webgpu/webGpuRenderBackend.h>
 #include <memory>
 
 void SampleGame::onSetup()
 {
-  m_isoConfig = sfs::IsometricProjectionConfig{
-      32,
-      16,
-      8,
-      WORLD_SCALE,
-      glm::vec2{WINDOW_WIDTH / 2.0f, WINDOW_HEIGHT / 2.0f},
-  };
-
   // WorldCollider offset/size are authored in pixels; one world tile is
-  // tileWidth px (render-scale independent -- worldScale magnifies the box on
-  // screen anyway).
-  sfs::WorldCollider::pixelsPerUnit = static_cast<float>(m_isoConfig.tileWidth);
+  // TILE_PIXELS px (render-scale independent).
+  sfs::WorldCollider::pixelsPerUnit = TILE_PIXELS;
 
   // Stand up the VM before the scene: createScene() runs the scene's onInit()
   // synchronously, and that's where scene systems register their
@@ -61,24 +48,6 @@ void SampleGame::setupLua()
   m_lua->registerApi(api);
 }
 
-void SampleGame::onUpdate(double deltaTime)
-{
-  sfs::Scene* scene = sceneManager.current();
-
-  if (!scene || !scene->hasSystem<sfs::IsometricRenderSystem>())
-    return;
-
-  const sfs::ActiveCamera camera =
-      scene->hasSystem<sfs::CameraSystem>()
-          ? scene->getSystem<sfs::CameraSystem>().activeCamera()
-          : sfs::ActiveCamera{};
-
-  m_isoProjection = sfs::makeProjection(m_isoConfig, camera);
-
-  scene->getSystem<sfs::IsometricRenderSystem>().setProjection(
-      &m_isoProjection);
-}
-
 void SampleGame::onProcessInput(const sfs::Input& input)
 {
   if (input.keyboard().keyPressed(sfs::Key::Escape))
@@ -99,9 +68,7 @@ void SampleGame::onDestroy()
   sfs::setActiveLua(nullptr); // m_lua is destroyed after this
 }
 
-std::unique_ptr<sfs::IQuadRenderer>
-SampleGame::createQuadRenderer(int windowWidth, int windowHeight)
+std::unique_ptr<sfs::IRenderBackend> SampleGame::makeRenderBackend()
 {
-  return std::make_unique<sfs::IsometricGeometryRenderer>(
-      windowWidth, windowHeight);
+  return std::make_unique<sfs::WebGpuRenderBackend>();
 }

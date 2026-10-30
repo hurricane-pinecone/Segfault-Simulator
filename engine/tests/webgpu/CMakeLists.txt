@@ -11,3 +11,9 @@ function(add_webgpu_test name source)
 endfunction()
 
 add_webgpu_test(webGpuRenderer3DTests webGpuRenderer3DTests.cpp)
+
+# The same tests on wgpu's OpenGL fallback, which runs the engine on machines
+# without Vulkan, Direct3D 12 or Metal (skipped where there's no GL either).
+add_test(NAME webGpuRenderer3DTestsOnOpenGL COMMAND webGpuRenderer3DTests)
+set_tests_properties(webGpuRenderer3DTestsOnOpenGL PROPERTIES
+    LABELS webgpu SKIP_RETURN_CODE 77 ENVIRONMENT SFS_WGPU_BACKEND=gl)

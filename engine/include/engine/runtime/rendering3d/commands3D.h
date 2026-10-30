@@ -14,8 +14,10 @@ namespace sfs
 
 /**
  * Coarse draw order for 3D commands. Opaque geometry draws first (sorted to
- * minimise state changes); transparent geometry will draw after it, back to
- * front.
+ * minimise state changes). A Transparent command's see-through instances (a
+ * particle effect, a 2D game's soft sprites) draw together after it, sorted
+ * back to front among themselves, in one call however many there are; an
+ * Opaque command's each sort among every see-through thing in the scene.
  */
 enum class RenderPass3D : uint8_t
 {

@@ -96,7 +96,8 @@ public:
                        batch.instances.size(),
                        batch.shadowInstances.size(),
                        {batch.materials.begin(), batch.materials.end()},
-                       batch.lightShadowInstances.size()});
+                       batch.lightShadowInstances.size(),
+                       batch.together});
     drawn.insert(drawn.end(), batch.instances.begin(), batch.instances.end());
   }
 
@@ -109,6 +110,7 @@ public:
     std::size_t shadowInstances = 0;
     std::vector<MaterialHandle> materials;
     std::size_t lightShadowInstances = 0;
+    bool together = false;
   };
 
   glm::ivec2 viewport{1280, 720};

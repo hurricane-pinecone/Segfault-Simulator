@@ -87,7 +87,11 @@ cmake --build --preset release --target run
 
 ## Web Build
 
-ImGui is stripped from the web build, so it has no debug variant.
+The web build draws with the same renderer as the desktop, on the browser's
+WebGPU (emscripten's `emdawnwebgpu` port, fetched by `emcc` on first build).
+It runs in a recent Chrome, Edge or Safari, or Firefox 141+ on Windows; other
+browsers get a message saying so. ImGui is stripped from the web build, so it
+has no debug variant.
 
 ```bash
 rm -rf build-web

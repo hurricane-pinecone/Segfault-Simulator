@@ -18,22 +18,17 @@ namespace sfs
 using SceneId = uint32_t;
 
 class Game;
-class IQuadRenderer;
 class IRenderer3D;
-class TextRenderer;
 
 // Engine-owned services a scene draws and loads assets through, supplied by the
 // active render backend. Bundled into one value so they can be
-// constructor-injected as a unit. The asset store always exists; the renderers
-// are whichever the backend actually has (an OpenGL backend draws 2D quads and
-// text, a WebGPU backend draws 3D), so each is null when absent. The
-// SceneManager builds this before constructing any scene, and everything in it
-// outlives every scene.
+// constructor-injected as a unit. The asset store always exists; the renderer
+// is null without one (a tool or test with no GPU). The SceneManager builds
+// this before constructing any scene, and everything in it outlives every
+// scene.
 struct SceneServices
 {
   AssetStore& assetStore;
-  IQuadRenderer* quadRenderer = nullptr;
-  TextRenderer* textRenderer = nullptr;
   IRenderer3D* renderer3D = nullptr;
 };
 
@@ -41,19 +36,14 @@ class Scene
 {
 public:
   Scene(SceneId id, const SceneServices& services)
-      : m_assetStore(services.assetStore),
-        m_quadRenderer(services.quadRenderer),
-        m_textRenderer(services.textRenderer),
-        m_renderer3D(services.renderer3D), m_id(id),
-        m_name("scene_" + std::to_string(id))
+      : m_assetStore(services.assetStore), m_renderer3D(services.renderer3D),
+        m_id(id), m_name("scene_" + std::to_string(id))
   {
   }
 
   Scene(SceneId id, const SceneServices& services, const std::string& name)
-      : m_assetStore(services.assetStore),
-        m_quadRenderer(services.quadRenderer),
-        m_textRenderer(services.textRenderer),
-        m_renderer3D(services.renderer3D), m_id(id), m_name(name)
+      : m_assetStore(services.assetStore), m_renderer3D(services.renderer3D),
+        m_id(id), m_name(name)
   {
   }
 
@@ -102,21 +92,16 @@ public:
   void flushEntities() { m_registry.flushEntities(); }
 
   AssetStore& assetStore() const { return m_assetStore; }
-  // The backend's renderers. Each accessor assumes the backend provides that
-  // renderer: asking for one it lacks is a setup bug (e.g. a 3D scene on the
-  // OpenGL backend), so it logs and aborts, like getSystem. The try- forms
-  // return null instead, for code that adapts to the backend.
-  IQuadRenderer& quadRenderer() const;
-  TextRenderer& textRenderer() const;
+  // The backend's renderer. Asking for it where there's none (a tool without
+  // a GPU) is a setup bug, so it logs and aborts, like getSystem;
+  // tryRenderer3D() returns null instead.
   IRenderer3D& renderer3D() const;
   // The game this scene runs in: quit, switch scenes, change the window. Like
-  // the renderers, game() assumes there is one (there always is when a game or
+  // the renderer, game() assumes there is one (there always is when a game or
   // the editor runs the scene); tryGame() is null in tools and tests.
   Game& game() const;
   Game* tryGame() const { return m_game; }
 
-  IQuadRenderer* tryQuadRenderer() const { return m_quadRenderer; }
-  TextRenderer* tryTextRenderer() const { return m_textRenderer; }
   IRenderer3D* tryRenderer3D() const { return m_renderer3D; }
 
   template <typename TObject, typename... TArgs>
@@ -191,9 +176,7 @@ protected:
   AssetStore& m_assetStore;
 
 private:
-  // Constructor-injected by SceneManager; null where the backend has none.
-  IQuadRenderer* m_quadRenderer = nullptr;
-  TextRenderer* m_textRenderer = nullptr;
+  // Constructor-injected by SceneManager; null where there's no renderer.
   IRenderer3D* m_renderer3D = nullptr;
   Game* m_game = nullptr; // set by SceneManager
 

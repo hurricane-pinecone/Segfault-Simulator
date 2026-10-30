@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 
+struct SDL_Surface;
+
 namespace sfs
 {
 
@@ -29,6 +31,9 @@ struct TextureImportSettings
  */
 std::shared_ptr<TextureData>
 decodeTexture(const void* bytes, std::size_t size, const std::string& what);
+
+/** An SDL surface's pixels as RGBA texels. Null if it can't be converted. */
+std::shared_ptr<TextureData> textureFromSurface(const SDL_Surface& surface);
 
 /** Save a texture's texels as a PNG file. False (logged) if it can't. */
 bool saveTexturePng(const TextureData& texture,

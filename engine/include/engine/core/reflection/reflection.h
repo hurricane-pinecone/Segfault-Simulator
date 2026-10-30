@@ -103,8 +103,8 @@ struct ScriptableOps
 /** A reflected type: its names, kind, fields and (for components) ops. */
 struct TypeInfo
 {
-  std::string name;        // C++ name, e.g. "Transform3DComponent"
-  std::string displayName; // for the editor, e.g. "Transform3D"
+  std::string name;        // C++ name, e.g. "TransformComponent"
+  std::string displayName; // for the editor, e.g. "Transform"
   std::string module;      // which module registered it (e.g. "engine")
   TypeKind kind = TypeKind::Component;
   std::vector<FieldInfo> fields;

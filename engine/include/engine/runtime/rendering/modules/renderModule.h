@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/core/ecs/moduleSettings.h"
-#include "engine/runtime/rendering/commands/commands.h" // AnyRenderCommand
 #include <vector>
 
 namespace sfs
@@ -13,16 +12,11 @@ template <typename TContext>
 class RenderModuleHost;
 
 /**
- * The render-command type a module for TContext emits. Defaults to the 2D/
- * isometric AnyRenderCommand; a render context with its own command set (e.g.
- * RenderContext3D) specialises this next to its definition, so the same
- * module/host machinery serves every render path.
+ * The render-command type a module for TContext emits: specialised next to
+ * the context's definition (RenderContext3D's: AnyRenderCommand3D).
  */
 template <typename TContext>
-struct RenderCommandTraits
-{
-  using Command = AnyRenderCommand;
-};
+struct RenderCommandTraits;
 
 template <typename TContext>
 using RenderCommandFor = typename RenderCommandTraits<TContext>::Command;
@@ -39,8 +33,7 @@ struct ModuleInit
  * Registration is the enable. The host constructs + owns modules, init()s them,
  * forwards update(), and calls emit() each frame.
  *
- * Templated on the render context the module consumes (the isometric
- * heightfield context today, a flat-2D context later), so a module is matched
+ * Templated on the render context the module consumes, so a module is matched
  * at compile time to the render systems that can host it.
  */
 template <typename TContext>
@@ -53,23 +46,13 @@ public:
   virtual void init(const ModuleInit&) {}
 
   /**
-   * Receive the host this module was registered on. Lets a module reach
-   * host-provided capabilities (e.g. the decal sink) without depending on a
-   * sibling module. Default: ignored.
+   * Receive the host this module was registered on, to reach what it offers
+   * without depending on a sibling module. Default: ignored.
    */
   virtual void setHost(RenderModuleHost<TContext>&) {}
 
   /** Advance any per-frame simulation the module owns. */
   virtual void update(double /*deltaTime*/) {}
-
-  /**
-   * True if this module renders the terrain surface itself (real face
-   * geometry), so the host suppresses billboard tiles and reports
-   * geometryActive. Lets any terrain-geometry module (block geometry, voxels)
-   * take over from billboards without the render system hard-coding concrete
-   * module types. Default: false.
-   */
-  virtual bool providesTerrainGeometry() const { return false; }
 
   /** Append this module's render commands for the frame. */
   virtual void emit(const TContext& context,
@@ -78,8 +61,7 @@ public:
   /**
    * UI-agnostic descriptors for this module's settings, for a debug panel or
    * editor. The render context lets a module expose only the settings that
-   * apply to the active render mode (e.g. hide projected-shadow settings while
-   * block geometry self-shadows). Default: none.
+   * apply to what's being drawn. Default: none.
    */
   virtual std::vector<ModuleSetting> settings(const TContext&) { return {}; }
 };

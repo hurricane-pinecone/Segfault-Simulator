@@ -1,9 +1,9 @@
 #pragma once
 
 // Parent/child links between entities (ParentComponent) and the world
-// transforms they imply. A child's Transform3DComponent is relative to its
+// transforms they imply. A child's TransformComponent is relative to its
 // parent, so its world matrix is the product of the local matrices up its
-// chain of parents; an ancestor without a Transform3DComponent contributes
+// chain of parents; an ancestor without a TransformComponent contributes
 // nothing (it only groups).
 //
 // World matrices are computed on demand, walking up the chain, so they are
@@ -52,12 +52,12 @@ glm::mat4 worldMatrix(const Entity& entity);
 /** The parent's world matrix (identity for a root). */
 glm::mat4 parentWorldMatrix(const Entity& entity);
 
-/** The entity's world position (its Transform3DComponent's origin). */
+/** The entity's world position (its TransformComponent's origin). */
 glm::vec3 worldPosition(const Entity& entity);
 
 /**
  * Set the local transform so the entity's world matrix becomes `world`.
- * Needs a Transform3DComponent.
+ * Needs a TransformComponent.
  */
 void setWorldMatrix(Entity entity, const glm::mat4& world);
 

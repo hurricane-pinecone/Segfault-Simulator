@@ -3,7 +3,7 @@
 #include "engine/core/ecs/system.h"
 #include "engine/core/scripting/iLuaConfigurable.h"
 #include "engine/core/scripting/luaScripting.h"
-#include "engine/runtime/systems/isometric/isometricRenderSystem.h"
+#include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
 #include "glm/glm/geometric.hpp"
@@ -28,10 +28,10 @@ public:
     if (!registry)
       return;
 
-    if (!registry->hasSystem<sfs::IsometricRenderSystem>())
+    if (!registry->hasSystem<sfs::RenderSystem3D>())
       return;
 
-    auto& renderSystem = registry->getSystem<sfs::IsometricRenderSystem>();
+    auto& renderSystem = registry->getSystem<sfs::RenderSystem3D>();
 
     m_renderSystem = &renderSystem;
 
@@ -148,13 +148,7 @@ public:
 private:
   void applyNightLighting()
   {
-    sfs::IsometricAmbientLighting ambient;
-    ambient.direction = glm::vec3{0.0f, 0.0f, 1.0f};
-    ambient.ambient = 0.06f;
-    ambient.diffuseStrength = 0.0f;
-    ambient.color = glm::vec3{0.08f, 0.13f, 0.30f};
-
-    m_renderSystem->setAmbientLighting(ambient);
+    apply(glm::vec3{0.0f, 0.0f, 1.0f}, 0.06f, 0.0f, {0.08f, 0.13f, 0.30f});
   }
 
   void applyTimeOfDay(float t)
@@ -216,21 +210,34 @@ private:
 
     const glm::vec3 daylightColor = glm::mix(dayColor, duskColor, dusk);
 
-    sfs::IsometricAmbientLighting ambient;
-    ambient.direction = sunDir;
+    // Shading: strongest when the sun is low, softer at noon.
+    apply(sunDir,
+          0.02f + daylight * 0.98f,
+          daylight * glm::mix(0.65f, 0.30f, noonAmount),
+          glm::mix(nightColor, daylightColor, daylight));
+  }
 
-    ambient.ambient = 0.02f + daylight * 0.98;
-
-    // Shadows: strongest when sun is low, softer at noon.
-    ambient.diffuseStrength = daylight * glm::mix(0.65f, 0.30f, noonAmount);
-
-    ambient.color = glm::mix(nightColor, daylightColor, daylight);
-
-    m_renderSystem->setAmbientLighting(ambient);
+  // The scene's light: the sun from `direction` on the grid (z up), the
+  // ambient level, how much the sun's direction shades, and the light's
+  // colour (the sky a dim shade of it).
+  void apply(const glm::vec3& direction,
+             float ambient,
+             float diffuseStrength,
+             const glm::vec3& color)
+  {
+    sfs::SceneLighting3D lighting;
+    const auto& space = m_renderSystem->space2D();
+    lighting.sun.direction =
+        space ? glm::normalize(space->direction(direction)) : direction;
+    lighting.sun.diffuseStrength = diffuseStrength;
+    lighting.sun.color = color;
+    lighting.ambient = ambient;
+    lighting.skyColor = color * (0.05f + 0.25f * ambient);
+    m_renderSystem->setLighting(lighting);
   }
 
 private:
-  sfs::IsometricRenderSystem* m_renderSystem = nullptr;
+  sfs::RenderSystem3D* m_renderSystem = nullptr;
 
   bool m_isSunEnabled = true;
 

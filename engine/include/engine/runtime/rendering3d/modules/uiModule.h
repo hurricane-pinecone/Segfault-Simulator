@@ -66,6 +66,12 @@ public:
   }
 
   /**
+   * A layer of the host's (not the scene's) drawn over the scene's, e.g. the
+   * game's developer console; null for none. It must outlive its use here.
+   */
+  void setOverlay(ui::Layer* layer) { m_overlay = layer; }
+
+  /**
    * Pixels a point, fixed (the editor's UI Preview: points as its panel's);
    * 0 goes back to following the screen's height.
    */
@@ -122,6 +128,7 @@ private:
   float m_userScale = 1.0f;
   float m_fixedScale = 0.0f;
   std::function<std::vector<ui::Layer*>()> m_layerSource;
+  ui::Layer* m_overlay = nullptr;
   bool m_recordPlaced = false;
   std::vector<ui::Placed> m_placed;
   glm::vec2 m_screen{0.0f};
