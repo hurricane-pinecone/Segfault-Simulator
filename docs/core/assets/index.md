@@ -128,10 +128,11 @@ material as its own; an object can swap any of them (see
 - the alpha mode: `MASK` cuts out where the alpha is below the cutoff (leaves,
   fences), and `BLEND` makes it see-through by its alpha (glass, water). Both
   cast shadows only where solid.
+- the normal map, read as data (not colour) along with its scale, for bumps
+  that catch the light without adding geometry.
 
-Normal, occlusion and emissive maps and texture transforms are ignored for now.
-A texture that can't be read is logged, and its part of the model drawn
-untextured.
+Occlusion and emissive maps are ignored for now. A texture that can't be read
+is logged, and its part of the model drawn untextured.
 
 ## Materials
 
