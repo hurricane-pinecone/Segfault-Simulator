@@ -1,4 +1,4 @@
-#include "assets/previewRenderer.h"
+#include "engine/core/rendering/3d/meshPreview.h"
 
 #include "engine/core/rendering/3d/materialGraphCompiler.h"
 #include "engine/core/rendering/3d/materialNodes.h"
@@ -13,7 +13,7 @@
 #include <cmath>
 #include <limits>
 
-namespace previewRenderer
+namespace sfs::meshPreview
 {
 
 namespace
@@ -417,4 +417,4 @@ std::vector<uint8_t> fitTexture(const sfs::TextureData& texture, int size)
   return out;
 }
 
-} // namespace previewRenderer
+} // namespace sfs::meshPreview

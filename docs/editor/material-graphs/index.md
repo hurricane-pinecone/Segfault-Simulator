@@ -126,7 +126,7 @@ the menu for what it does.
 - **Input:** Colour, Number, Texture, Normal Map, Triplanar Texture,
   Triplanar Normal Map, UV,
   Vertex Colour (a model's own colours), Position, Normal, View Direction,
-  Time.
+  Time, Grass.
 - **Math:** Add, Subtract, Multiply, Divide, Power, Minimum, Maximum, Mix,
   Clamp, Saturate, One Minus, Negate, Absolute, Fraction, Floor, Posterize,
   Square Root, Sine, Cosine, Step, Smoothstep, Remap.
@@ -154,10 +154,18 @@ A few need a word more:
 - **Voronoi** gives each cell a random number (**Cell**) and how far each
   point is from its cell's middle (**Distance**). Randomness 0 lines the cells
   up into a grid.
+- **Grass** is for a [grass](../index.md#grass) material. It gives each
+  blade's **Length** (1 is the grass's full height, less where it's mown) and
+  the point's **Height** up the blade (0 at the root, 1 at the tip). It also
+  gives the blade a **Random** number of its own, and the grass maps' **Data**
+  channels where it grows. A game writes those, such as moisture for grass
+  that yellows as it dries. The ground under the grass sees the same values.
+  On anything that isn't grass it reads Length 1 and 0 for the rest.
 
 Time counts the seconds the scene has been running, for things that move (water,
 flicker, pulsing glows). It runs while you edit too, so you see the movement in
-the viewport and the preview.
+the viewport and the preview; untick **Animate** in the viewport's toolbar to
+hold it still while editing.
 
 ## Transparency
 

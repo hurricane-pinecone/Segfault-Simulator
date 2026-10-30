@@ -50,6 +50,7 @@ add_runtime_test(modelImporterTests assetStore/modelImporterTests.cpp)
 
 # rendering3d/
 add_runtime_test(renderSystem3DTests rendering3d/renderSystem3DTests.cpp)
+add_runtime_test(uiLayoutTests ui/uiLayoutTests.cpp)
 add_runtime_test(pickingTests rendering3d/pickingTests.cpp)
 
 # serialization/

@@ -38,6 +38,8 @@ struct ScriptType
 
   // Kind::GameObject: a new, unattached instance (Scene::adoptObject binds it).
   std::unique_ptr<GameObject> (*createObject)() = nullptr;
+  // Kind::GameObject: it's an sfs::ui::Layer (the editor previews those).
+  bool uiLayer = false;
 
   // Kind::MeshSource: add its meshes to a scene's mesh library.
   void (*buildMeshes)(MeshLibrary& library) = nullptr;

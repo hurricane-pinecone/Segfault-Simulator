@@ -22,6 +22,8 @@ struct SurfaceIn {
   toView: vec3f,      // unit direction to the camera
   vertexColor: vec3f, // the mesh's own colour (before the object's tint)
   time: f32,          // seconds the scene has run
+  grass: vec4f,       // grass's blade: length, how far up it (0 root, 1 tip), random
+  grassData: vec4f,   // grass's maps' Data channels where it grows
 }
 
 // How it looks. The object's tint multiplies baseColor and alpha afterwards.
@@ -85,5 +87,8 @@ fn surfaceInput(uv: vec2f, position: vec3f, normal: vec3f, vertexColor: vec3f) -
   result.toView = normalize(frame.cameraPosition.xyz - position);
   result.vertexColor = vertexColor;
   result.time = frame.time.x;
+  // Not grass (grass's passes set their own): full length, at the root.
+  result.grass = vec4f(1.0, 0.0, 0.0, 0.0);
+  result.grassData = vec4f(0.0);
   return result;
 }

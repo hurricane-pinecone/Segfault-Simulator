@@ -498,6 +498,43 @@ Normal maps here are OpenGL style (green up), as Blender and glTF make them.
 If the bumps look like dents, the map is DirectX style: flip its green channel
 in an image editor.
 
+## Grass that dries out
+
+For a grass component's material: lush green where the ground is wet, straw
+yellow where it's dry. The game writes how dry the ground is (0 wet, 1 dry)
+into the grass's **Data 0** map, for example from sprinklers and the weather.
+Dryness rather than moisture, so unpainted grass (Data 0 is 0) is green.
+
+- Two **Colour** nodes (lush green and dry yellow) are **Mix**ed by the
+  **Grass** node's **Data 0**.
+- Times **Vertex Colour**: each blade's own tone, darker toward its root.
+- Into **Base Colour**, with Roughness 0.85 on the Material Output.
+
+```json
+{"sfsMaterialNodes": {
+  "nodes": [
+    {"id": 1, "type": "output", "position": [0, 0], "inputs": {"Roughness": [0.85, 0, 0, 0]}},
+    {"id": 2, "type": "grass", "position": [-700, 220]},
+    {"id": 3, "type": "color", "position": [-700, -60], "value": [0.2, 0.5, 0.12, 1]},
+    {"id": 4, "type": "color", "position": [-700, 80], "value": [0.62, 0.55, 0.22, 1]},
+    {"id": 5, "type": "lerp", "position": [-460, 40]},
+    {"id": 6, "type": "vertexColor", "position": [-460, 240]},
+    {"id": 7, "type": "multiply", "position": [-240, 60]}
+  ],
+  "links": [
+    {"from": [3, "Colour"], "to": [5, "A"]},
+    {"from": [4, "Colour"], "to": [5, "B"]},
+    {"from": [2, "Data 0"], "to": [5, "T"]},
+    {"from": [5, "Out"], "to": [7, "A"]},
+    {"from": [6, "Colour"], "to": [7, "B"]},
+    {"from": [7, "Out"], "to": [1, "Base Colour"]}
+  ]
+}}
+```
+
+To yellow the tips first as it dries, also mix by **Height**. Use **Length**
+for mown grass that's a shade lighter.
+
 ## Toon bands
 
 Colours flattened into a few even bands, for a painted or cartoon look.

@@ -234,6 +234,7 @@ eye.addComponent<sfs::Camera3DComponent>();
 | `nearPlane`, `farPlane` | The visible depth range |
 | `focusDistance` | How far ahead the camera's attention is. The sun's shadows are sharpest there, and when there are too many point lights, the ones nearest it are kept. |
 | `bloom` and `bloomIntensity`, `bloomThreshold`, `bloomSoftness`, `bloomRadius` | The camera's [bloom](#bloom) |
+| `depthOfField` and `focusRange`, `focusBlur` | The camera's [depth of field](#depth-of-field) |
 
 Roll is ignored, so the view stays level.
 
@@ -381,11 +382,58 @@ times its material's **Bloom** (the Material Output's input, 1 by default). At
 0 a material never blooms, however bright; above 1 it blooms more than its
 brightness alone would.
 
+The scene draws with 4x multisampled anti-aliasing: each pixel's coverage is
+sampled four times, so edges, and thin things like grass blades, come out smooth
+rather than stair-stepped. The samples are averaged (resolved) as the lit pass
+ends, and everything after it works on the resolved picture. Depth of field
+reads each pixel's first depth sample.
+
 The scene draws into an HDR texture, and beside it the light that blooms (its
 colour x each material's Bloom). Bloom then takes the part of that above the
 threshold and halves it down a chain of textures, up to six. It adds each one
 back onto the next size up, which spreads the glow wide and soft. Finally the
 scene and the glow are added together, clamped, and written to the target.
+
+### Depth of field
+
+With depth of field, what's nearer or farther than the camera's focus blurs,
+as through a real lens. It's off by default. Like bloom, it belongs to the
+scene camera's `Camera3DComponent`, and the editor viewport shows it while you
+look around freely. The focus is always the view's own: `focusDistance` ahead
+of a camera entity, or the editor's orbit target. A scene without a camera
+entity has none.
+
+| Field | Meaning |
+| --- | --- |
+| `depthOfField` | Whether to blur at all |
+| `focusRange` | How deep the sharp part around the focus is, in world units (10) |
+| `focusBlur` | How blurred the farthest and nearest things get (1) |
+
+Blur grows with distance beyond the sharp range. It's full a whole focus
+distance past it, and grows by as much toward the camera.
+
+It runs between the lit pass and bloom (`post3DFocus.wgsl`), reading the depth
+buffer:
+
+1. It halves the scene, and stores beside each pixel how blurred it is.
+2. It blurs that with a 32-tap disc as wide as each pixel's blur. Taps only
+   count where their own blur reaches, so sharp things don't smear over
+   blurred ones.
+3. It mixes the result over the full-size scene, by each pixel's blur.
+
+### Haze
+
+`setHazeSettings(HazeSettings3D)` sets the scene's haze, which Scene Settings
+shows as **Haze** and **Haze distance**. It's saved with the scene. Haze fades
+far things into the sky colour, as distance does outdoors, and hides where
+things stop being drawn, such as grass's draw distance. It's off by default.
+
+| Field | Meaning |
+| --- | --- |
+| `strength` | How hazed the farthest things get (0: none, 1: fully) |
+| `distance` | How far away things are half that hazed |
+
+It's applied as each surface is lit, so hazed things glow (bloom) less too.
 
 ### Shadows
 
@@ -424,9 +472,74 @@ all of its own light. Instead, anything within a box around the light holding
 the glowing surface (`PointLight3D::shadowNear`) doesn't block it. So
 something touching a glowing object can't shadow it either.
 
+## Grass
+
+`GrassComponent` grows grass on an entity's mesh; `GrassModule` (registered by
+`Scene3D`) draws it. For the settings, the wind, what flattens it and the
+brush, see the editor's [Grass](../../editor/index.md#grass). Underneath:
+
+- **Ground:** `GrassGround::build()` (`grass.h`) rasterises the mesh from
+  above onto a grid over its own XY, with texels about `kGrassTexel` (a
+  quarter of a world unit) across. Each texel keeps the height and normal of
+  the highest triangle facing up within 60 degrees there. It's built again
+  only when the mesh, or how it's turned or scaled, changes. Moving the
+  entity, or changing its grass's settings, costs nothing.
+- **Maps:** `GrassMaps` holds six channels over a grid: `Coverage` (how much
+  grows), `Length` (how tall it is), and `Data0` to `Data3`, which the engine
+  gives no meaning to, for a material to read. Values run from 0 to 1. A
+  component's `paint` holds them as saved: the grid, plus each changed channel
+  as run-length pairs in base64. With nothing painted, grass grows everywhere
+  at full length.
+- **Changing them as a game plays:** `GrassModule::maps(entity)` gives the
+  live maps. `stamp()` (with `Toward`, `Add`, `Max` or `Min` blending),
+  `fill()` and `sample()` take world positions and radii. Only the texels that
+  changed go up to the GPU (`IRenderer3D::updateGrassMaps`). These changes
+  aren't saved with the scene: a game saves `GrassMaps::toJson()` itself if it
+  wants them kept. Setting the component's `paint` starts the maps over from
+  it. For example, a game might lower `Coverage` a little wherever wheels go,
+  to wear a path, or write moisture into `Data0` for its grass material to
+  turn dry grass yellow.
+- **Growing blades:** nothing is stored per blade. Every frame a compute pass
+  (`mesh3DGrassGrow.wgsl`) grows the blades around the camera:
+  - Blades are spread over four lattices, each twice as coarse as the one
+    before and reaching further (0.2, 0.4, 0.65 and 1 of the draw distance).
+    Each lattice cell holds one blade at a hashed spot, so the grass is the
+    same every frame.
+  - Grass is at full density near the camera, thinning to a quarter, then a
+    sixteenth, further out, with coarser blades drawn wider. Each blade
+    shrinks away before its lattice's reach ends rather than popping.
+  - The pass drops blades out of view or where the maps leave none. The rest
+    go into three lists by distance, with 5, 2 or 1 segments, and each list is
+    one indirect draw. Short grass (under 0.22 tall, then under 0.1) gets
+    fewer segments near the camera too, since it barely curves. The cost
+    follows what's on screen, not how big the field is.
+- **The ground:** before its blades, the grass draws its mesh again in the
+  grass material's colour (shaded as low down in the grass), blended over the
+  ground by `Coverage`. The gaps between blades, and the field past the draw
+  distance, then look like grass, while a bare path shows the ground's own
+  material.
+- **Drawing:** each blade is a triangle strip built in the vertex shader
+  (`mesh3DGrass.wgsl`): a curve from its root, tapering to a point, bent over
+  by its own lean, the wind (`FrameParams3D::wind`) and trampling. How far
+  the wind bends a blade grows with its length: grass 0.35 tall or more sways
+  fully, and mown grass hardly moves. It's lit
+  by the same fragment stage as everything else, so materials, point lights,
+  shadows and bloom all work on grass. A material graph's Grass node reads
+  the blade's length, how far up it the point is, a random number, and the
+  Data channels where it grows (`SurfaceIn::grass` and `grassData`; the
+  defaults on anything else).
+- **Trampling:** `GrassTrample` is a grid over the field's ground in the
+  world. It's pressed by `GrassBender` spheres where they reach into the
+  grass, and springs back over `recovery` seconds. Each update the module
+  gathers benders (rigid bodies that bend grass, as their colliders, and
+  `GrassBenderComponent`s). When the map changes, it sends it to the renderer
+  as an image (`IRenderer3D::updateGrassTrample`).
+
+Grass receives shadows but doesn't cast them.
+
 ## Debug settings
 
-`RenderSystem3D::settings()` exposes ambient, sun strength, shadow and
+`RenderSystem3D::settings()` exposes ambient, sun strength, shadow, wind and
 projection controls as `ModuleSetting`s, so the debug panel shows them like any
 other system's settings. `stats()` reports the last frame's draw calls,
 instances, shadow instances, point lights, and how many of those came from

@@ -87,6 +87,7 @@ nav:
       - Game & scenes: runtime/game-and-scenes/index.md
       - Scene files: runtime/serialization/index.md
       - 3D physics: runtime/physics-3d/index.md
+      - Game UI: runtime/ui/index.md
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md

@@ -6,10 +6,12 @@
 #include "engine/core/ecs/entity.h"
 #include "glm/glm/ext/vector_int4.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace sfs
 {
@@ -56,8 +58,13 @@ struct EditorContext
   uint32_t viewportWindowId = 0;
   glm::ivec4 viewportRect{0};
 
-  // The selected entity; invalid (default) when nothing is selected.
+  // The selected entity; invalid (default) when nothing is selected. With
+  // several selected (Ctrl/Shift-click in the Hierarchy), the one clicked
+  // last: what works on one entity works on it.
   sfs::Entity selection;
+  // Everything selected, `selection` among them. Only counts while it holds
+  // `selection`: setting `selection` to anything else selects just that.
+  std::vector<sfs::Entity> selectionGroup;
 
   // Rewrites a prefab's file (`write`, false on failure), then reloads the
   // open scenes so their instances show it. Set by the app.
@@ -99,5 +106,28 @@ struct EditorContext
   bool hasSelection() const
   {
     return selection.isValid() && selection.isAlive();
+  }
+
+  /** Everything selected (alive), `selection` first; empty if nothing is. */
+  std::vector<sfs::Entity> selected() const
+  {
+    std::vector<sfs::Entity> all;
+    if (!hasSelection())
+      return all;
+    all.push_back(selection);
+    if (std::find(selectionGroup.begin(), selectionGroup.end(), selection) ==
+        selectionGroup.end())
+      return all;
+    for (const sfs::Entity& entity : selectionGroup)
+      if (entity != selection && entity.isValid() && entity.isAlive())
+        all.push_back(entity);
+    return all;
+  }
+
+  /** Whether an entity is among the selected. */
+  bool isSelected(const sfs::Entity& entity) const
+  {
+    const std::vector<sfs::Entity> all = selected();
+    return std::find(all.begin(), all.end(), entity) != all.end();
   }
 };

@@ -312,6 +312,35 @@ int main()
     CHECK(near(evaluate(compiled, point).roughness, 1.0f));
   }
 
+  TEST("the grass node should read the blade and its maps' data, and be "
+       "full length at the root on anything else")
+  {
+    Graph graph;
+    const NodeId out = graph.add(std::string(kOutputType), {});
+    const NodeId grass = graph.add("grass", {});
+    graph.connect(grass, 0, out, kAlpha);     // length
+    graph.connect(grass, 1, out, kMetallic);  // height up the blade
+    graph.connect(grass, 2, out, kRoughness); // random
+    graph.connect(grass, 6, out, kBloom);     // data 2
+    const CompiledGraph compiled = compile(graph);
+    CHECK(compiled.errors.empty());
+    if (!compiled.shader)
+      return testing::report("materialGraphTests");
+    CHECK(any(compiled.shader->reads(kAlpha) & PointInputs::Grass));
+
+    const SurfaceValues plain = evaluate(compiled);
+    CHECK(near(plain.alpha, 1.0f) && near(plain.metallic, 0.0f) &&
+          near(plain.bloom, 0.0f));
+    SurfacePoint blade;
+    blade.grass = {0.4f, 0.75f, 0.3f, 0.0f};
+    blade.grassData = {0.0f, 0.0f, 0.6f, 0.0f};
+    const SurfaceValues surface = evaluate(compiled, blade);
+    CHECK(near(surface.alpha, 0.4f));
+    CHECK(near(surface.metallic, 0.75f));
+    CHECK(near(surface.roughness, 0.3f));
+    CHECK(near(surface.bloom, 0.6f));
+  }
+
   TEST("a texture node should read its texture, white without one")
   {
     Graph graph;

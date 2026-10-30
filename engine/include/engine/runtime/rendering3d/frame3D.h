@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/rendering/3d/grass.h"
 #include "engine/core/rendering/3d/lighting3D.h"
 #include "engine/core/rendering/3d/mesh.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
@@ -51,6 +52,65 @@ struct FrameParams3D
   float time = 0.0f; // seconds the scene has run (animated materials)
 
   BloomSettings3D bloom;
+  DepthOfFieldSettings3D depthOfField;
+  float focusDistance = 20.0f; // the view's (where depth of field is sharp)
+  WindSettings3D wind;
+  HazeSettings3D haze;
+};
+
+/** A grass field the renderer holds (IRenderer3D::createGrass). */
+struct GrassHandle
+{
+  uint32_t id = 0;
+
+  bool valid() const { return id != 0; }
+
+  bool operator==(const GrassHandle&) const = default;
+};
+
+/**
+ * Where a grass field is flattened (GrassTrample::image()): RGBA8 pixels,
+ * `size` of them, rows from `min`'s y, over the world XY rectangle `min` to
+ * `max`.
+ */
+struct GrassTrampleImage
+{
+  glm::vec2 min{0.0f};
+  glm::vec2 max{0.0f};
+  glm::ivec2 size{0, 0};
+  std::span<const uint8_t> pixels;
+};
+
+/**
+ * A rectangle of a grass field's maps (GrassMaps::pixels()): `shape` and
+ * `data` RGBA8 pixels from texel `from` to `to` (exclusive), rows from its min
+ * y, of maps over `grid`. An empty grid: unpainted maps (full, full-length
+ * grass), no pixels.
+ */
+struct GrassMapsImage
+{
+  GrassGrid grid;
+  glm::ivec2 from{0, 0};
+  glm::ivec2 to{0, 0};
+  std::span<const uint8_t> shape;
+  std::span<const uint8_t> data;
+};
+
+/**
+ * A grass field's draw for a frame. The renderer grows its blades over its
+ * ground (createGrass), placed by `model`, as its maps say, around the camera:
+ * densest near it, thinning out to `drawDistance`.
+ */
+struct GrassBatch3D
+{
+  GrassHandle grass;
+  MaterialHandle
+      material;    // the blades' look; invalid: the renderer's own green
+  MeshHandle mesh; // what it grows on (its ground's tinted to match)
+  glm::mat4 model{1.0f};
+  GrassShape shape;
+  float stiffness = 0.4f; // how little it sways (GrassComponent::stiffness)
+  float drawDistance = 40.0f;
 };
 
 /**

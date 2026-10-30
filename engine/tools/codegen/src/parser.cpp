@@ -202,7 +202,7 @@ private:
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";
     model.qualifiedName += model.name;
-    model.kind = classify(node);
+    model.kind = classify(node, model.uiLayer);
 
     // struct members default to public, class members to private.
     bool isPublic = isStruct;
@@ -229,7 +229,7 @@ private:
     m_result.type = std::move(model);
   }
 
-  TypeKind classify(TSNode node)
+  TypeKind classify(TSNode node, bool& uiLayer)
   {
     TypeKind kind = TypeKind::Component;
     const uint32_t count = ts_node_named_child_count(node);
@@ -246,8 +246,14 @@ private:
         if (type(base) == "access_specifier")
           continue;
         const std::string name = normaliseType(text(base));
+        // A UI layer is a game object (drawn as UI).
         if (name == "GameObject" || name == "sfs::GameObject")
           kind = TypeKind::GameObject;
+        else if (name == "ui::Layer" || name == "sfs::ui::Layer")
+        {
+          kind = TypeKind::GameObject;
+          uiLayer = true;
+        }
         else if (name == "System" || name == "sfs::System")
           kind = TypeKind::System;
         else if (name == "MeshSource" || name == "sfs::MeshSource")
@@ -258,8 +264,8 @@ private:
           error(base,
                 "'" + name +
                     "' isn't a supported base; derive from sfs::GameObject, "
-                    "sfs::System, sfs::MeshSource or sfs::ScriptableObject, or "
-                    "nothing for a component");
+                    "sfs::ui::Layer, sfs::System, sfs::MeshSource or "
+                    "sfs::ScriptableObject, or nothing for a component");
       }
     }
     return kind;
@@ -379,10 +385,14 @@ private:
         fieldModel.texture = true;
       else if (name == "materials")
         fieldModel.materials = true;
+      else if (name == "material")
+        fieldModel.material = true;
       else if (name == "emissionLight")
         fieldModel.emissionLight = true;
       else if (name == "range")
         parseRange(attribute, fieldModel);
+      else if (name == "showIf")
+        parseShowIf(attribute, fieldModel);
       else
         warn(attribute, "unknown attribute [[sfs::" + name + "]]");
     }
@@ -405,6 +415,35 @@ private:
                         text(ts_node_named_child(arguments, 1))};
   }
 
+  void parseShowIf(TSNode attribute, FieldModel& fieldModel)
+  {
+    TSNode arguments{};
+    const uint32_t count = ts_node_named_child_count(attribute);
+    for (uint32_t i = 0; i < count; ++i)
+      if (type(ts_node_named_child(attribute, i)) == "argument_list")
+        arguments = ts_node_named_child(attribute, i);
+
+    // (field), or (!field) to show it while the field is off.
+    const TSNode argument = ts_node_is_null(arguments) ||
+                                    ts_node_named_child_count(arguments) != 1
+                                ? TSNode{}
+                                : ts_node_named_child(arguments, 0);
+    const bool negated =
+        !ts_node_is_null(argument) && type(argument) == "unary_expression" &&
+        ts_node_named_child_count(argument) == 1 &&
+        text(argument).starts_with("!") &&
+        type(ts_node_named_child(argument, 0)) == "identifier";
+    if (ts_node_is_null(argument) ||
+        (type(argument) != "identifier" && !negated))
+    {
+      warn(attribute,
+           "[[sfs::showIf]] needs a bool field's name: (field) or (!field)");
+      return;
+    }
+    fieldModel.showIf =
+        negated ? "!" + text(ts_node_named_child(argument, 0)) : text(argument);
+  }
+
   std::string_view m_source;
   std::filesystem::path m_path;
   std::string m_target;
@@ -413,12 +452,161 @@ private:
   bool m_helper = false; // the file's class is a helper (no type, no warning)
 };
 
+// Walks a UI header's syntax tree for its structs (see parseUiHeader).
+class UiHeaderParser
+{
+public:
+  UiHeaderParser(std::string_view source, const std::filesystem::path& path)
+      : m_source(source), m_path(path)
+  {
+  }
+
+  UiParseResult run()
+  {
+    const std::unique_ptr<TSParser, decltype(&ts_parser_delete)> parser(
+        ts_parser_new(), &ts_parser_delete);
+    ts_parser_set_language(parser.get(), tree_sitter_cpp());
+
+    const std::unique_ptr<TSTree, decltype(&ts_tree_delete)> tree(
+        ts_parser_parse_string(parser.get(),
+                               nullptr,
+                               m_source.data(),
+                               static_cast<uint32_t>(m_source.size())),
+        &ts_tree_delete);
+
+    visit(ts_tree_root_node(tree.get()));
+    return std::move(m_result);
+  }
+
+private:
+  std::string text(TSNode node) const
+  {
+    const uint32_t start = ts_node_start_byte(node);
+    const uint32_t end = ts_node_end_byte(node);
+    return std::string(m_source.substr(start, end - start));
+  }
+
+  static std::string type(TSNode node) { return ts_node_type(node); }
+
+  static TSNode field(TSNode node, const char* name)
+  {
+    return ts_node_child_by_field_name(
+        node, name, static_cast<uint32_t>(std::strlen(name)));
+  }
+
+  void visit(TSNode node)
+  {
+    const std::string kind = type(node);
+    if (kind == "namespace_definition")
+    {
+      const TSNode name = field(node, "name");
+      const std::size_t depth = m_namespaces.size();
+      if (!ts_node_is_null(name))
+        m_namespaces.push_back(text(name));
+      visitChildren(node);
+      m_namespaces.resize(depth);
+      return;
+    }
+    // Templates can't be made without arguments; nothing inside a function
+    // is the header's.
+    if (kind == "template_declaration" || kind == "function_definition")
+      return;
+    if ((kind == "class_specifier" || kind == "struct_specifier") &&
+        !ts_node_is_null(field(node, "body")))
+    {
+      if (!ts_node_is_null(field(node, "name")))
+        parseType(node, kind == "struct_specifier");
+      return; // nested types are left out
+    }
+    visitChildren(node);
+  }
+
+  void visitChildren(TSNode node)
+  {
+    const uint32_t count = ts_node_named_child_count(node);
+    for (uint32_t i = 0; i < count; ++i)
+      visit(ts_node_named_child(node, i));
+  }
+
+  void parseType(TSNode node, bool isStruct)
+  {
+    UiTypeModel model;
+    model.name = text(field(node, "name"));
+    model.header = m_path;
+    for (const std::string& ns : m_namespaces)
+      model.qualifiedName += ns + "::";
+    model.qualifiedName += model.name;
+
+    bool isPublic = isStruct;
+    const TSNode body = field(node, "body");
+    const uint32_t count = ts_node_named_child_count(body);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      const TSNode member = ts_node_named_child(body, i);
+      const std::string memberKind = type(member);
+      if (memberKind == "access_specifier")
+        isPublic = text(member) == "public";
+      else if (memberKind == "field_declaration" ||
+               memberKind == "function_definition")
+        parseMember(member, isPublic, model);
+    }
+    m_result.types.push_back(std::move(model));
+  }
+
+  // A data member's names, or a method (body() makes the type a view).
+  void parseMember(TSNode node, bool isPublic, UiTypeModel& model)
+  {
+    const uint32_t count = ts_node_named_child_count(node);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      const TSNode child = ts_node_named_child(node, i);
+      const std::string childKind = type(child);
+      if (childKind == "storage_class_specifier" && text(child) == "static")
+        return;
+      if (childKind == "type_qualifier" && text(child) == "const")
+        return; // can't be filled in
+    }
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      const char* fieldName = ts_node_field_name_for_named_child(node, i);
+      if (!fieldName || std::string_view(fieldName) != "declarator")
+        continue;
+      const TSNode declarator = ts_node_named_child(node, i);
+      const std::string declaratorKind = type(declarator);
+      if (declaratorKind == "function_declarator")
+      {
+        const TSNode name = field(declarator, "declarator");
+        if (!ts_node_is_null(name) && text(name) == "body")
+          model.view = true;
+      }
+      else if (declaratorKind == "field_identifier" && isPublic)
+        model.fields.push_back(text(declarator));
+    }
+  }
+
+  std::string_view m_source;
+  std::filesystem::path m_path;
+  std::vector<std::string> m_namespaces;
+  UiParseResult m_result;
+};
+
 } // namespace
 
 ParseResult parseHeader(std::string_view source,
                         const std::filesystem::path& path)
 {
+  // UI code (Hud.ui.h: views, previews) is the game's own, never a script
+  // or a component.
+  if (path.filename().string().ends_with(".ui.h"))
+    return {};
   return HeaderParser(source, path).run();
+}
+
+UiParseResult parseUiHeader(std::string_view source,
+                            const std::filesystem::path& path)
+{
+  return UiHeaderParser(source, path).run();
 }
 
 } // namespace sfs::codegen

@@ -29,7 +29,10 @@ struct FieldModel
   bool script = false;    // [[sfs::script]]
   bool texture = false;   // [[sfs::texture]]
   bool materials = false; // [[sfs::materials]]
+  bool material = false;  // [[sfs::material]]
   bool emissionLight = false; // [[sfs::emissionLight]]
+  std::string showIf;         // [[sfs::showIf(field)]]: a bool field's name
+                              // ("!name": while it's off)
   std::string assetType; // AssetRef: the scriptable object type, e.g. "ItemDef"
   std::optional<std::pair<std::string, std::string>> range; // [[sfs::range]]
 };
@@ -39,6 +42,7 @@ struct TypeModel
   std::string name;          // unqualified, e.g. "Player"
   std::string qualifiedName; // with namespaces, e.g. "game::Player"
   TypeKind kind = TypeKind::Component;
+  bool uiLayer = false; // a GameObject that's an sfs::ui::Layer
   std::vector<FieldModel> fields;
   std::filesystem::path header;
 };
@@ -60,6 +64,24 @@ struct Diagnostic
 struct ParseResult
 {
   std::optional<TypeModel> type; // the header's script type, if found
+  std::vector<Diagnostic> diagnostics;
+};
+
+// A struct in a UI header (*.ui.h): a view (it has body()) or something one
+// shows (a list's item). The editor's UI Preview shows each view filled with
+// placeholders, field by field.
+struct UiTypeModel
+{
+  std::string name;                // unqualified, e.g. "ClockPanel"
+  std::string qualifiedName;       // with namespaces, e.g. "farm::ClockPanel"
+  bool view = false;               // it has a body()
+  std::vector<std::string> fields; // public data members, in order
+  std::filesystem::path header;
+};
+
+struct UiParseResult
+{
+  std::vector<UiTypeModel> types; // in the order declared
   std::vector<Diagnostic> diagnostics;
 };
 

@@ -19,6 +19,15 @@ namespace sfs::codegen
  * and methods are ignored. A field whose type the editor can't edit is skipped
  * with a warning.
  */
+// A UI header (*.ui.h) is skipped: nothing in it is a script or a component.
 ParseResult parseHeader(std::string_view source, const std::filesystem::path& path);
+
+/**
+ * Find a UI header's (*.ui.h) structs and classes, at namespace scope: the
+ * views (with a body() method) and what they show. Fields are the public,
+ * non-static, non-const data members that aren't pointers, references or
+ * arrays. Templates and nested types are left out.
+ */
+UiParseResult parseUiHeader(std::string_view source, const std::filesystem::path& path);
 
 } // namespace sfs::codegen

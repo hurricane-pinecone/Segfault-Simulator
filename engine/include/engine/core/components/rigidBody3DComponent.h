@@ -23,6 +23,8 @@ namespace sfs
  * @param float angularDamping - how quickly it stops spinning by itself
  * @param float gravityScale - 1 = normal gravity, 0 = floats
  * @param bool lockRotation - never tips over or spins (e.g. a character)
+ * @param bool bendsGrass - flattens grass it moves through (GrassComponent),
+ *                          sized by its colliders
  */
 struct RigidBody3DComponent
 {
@@ -34,6 +36,7 @@ struct RigidBody3DComponent
   [[sfs::range(0, 1)]] float angularDamping = 0.05f;
   [[sfs::range(-2, 2)]] float gravityScale = 1.0f;
   bool lockRotation = false;
+  bool bendsGrass = true;
 };
 
 } // namespace sfs

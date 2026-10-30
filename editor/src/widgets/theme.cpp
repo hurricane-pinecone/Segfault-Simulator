@@ -14,6 +14,8 @@ ImVec4 rgb(int r, int g, int b, float a = 1.0f)
 {
   return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a);
 }
+
+std::string g_uiFontFile; // the UI font loadUiFont found
 } // namespace
 
 void apply()
@@ -154,10 +156,16 @@ void loadUiFont()
     if (atlas->AddFontFromFileTTF(path, 0.0f))
     {
       ImGui::GetStyle().FontSizeBase = 16.0f;
+      g_uiFontFile = path;
       LOG_INFO(std::string("UI font: ") + path);
       return;
     }
   }
+}
+
+const std::string& uiFontFile()
+{
+  return g_uiFontFile;
 }
 
 } // namespace theme

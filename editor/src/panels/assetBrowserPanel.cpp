@@ -845,7 +845,7 @@ void AssetBrowserPanel::refresh(EditorContext& context)
   if (!context.assets || m_scan.valid())
     return; // one at a time
   // Scanned on a worker (over a WSL share it takes a while), taken in when
-  // done (see drawContents).
+  // done (see update).
   m_scanRoot = context.assets->root();
   m_scan = std::async(std::launch::async,
                       [root = m_scanRoot,
@@ -924,14 +924,12 @@ AssetBrowserPanel::recordOf(const EditorContext& context,
 // --- drawing
 // ------------------------------------------------------------------------
 
-void AssetBrowserPanel::drawContents(EditorContext& context)
+void AssetBrowserPanel::update(EditorContext& context)
 {
+  // Scans and previews finish whether the panel's shown or not (the status
+  // bar counts them).
   if (!context.project)
-  {
-    ImGui::TextDisabled("No project open");
     return;
-  }
-
   if (m_root != context.project->root())
     showProject(context);
   if (m_refreshRequested)
@@ -943,6 +941,19 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
     if (context.assets && context.assets->root() == m_scanRoot)
       context.assets->apply(std::move(scan));
     readFolders();
+  }
+  if (std::exchange(context.assetFilesChanged, false))
+    m_thumbnails.recheck();
+
+  m_thumbnails.beginFrame();
+}
+
+void AssetBrowserPanel::drawContents(EditorContext& context)
+{
+  if (!context.project)
+  {
+    ImGui::TextDisabled("No project open");
+    return;
   }
 
   // Asked to show an asset: open its folder (and the tree down to it), come
@@ -971,11 +982,6 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
       ImGui::SetWindowFocus();
     }
   }
-  if (std::exchange(context.assetFilesChanged, false))
-    m_thumbnails.recheck();
-
-  m_thumbnails.beginFrame();
-
   // Whose the Edit menu is: this panel's while it, or one of its parts, was
   // the last panel focused (menus and popups don't count).
   if (const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow)

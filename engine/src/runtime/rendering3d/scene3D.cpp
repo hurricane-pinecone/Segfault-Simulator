@@ -4,7 +4,9 @@
 #include "engine/core/rendering/3d/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/rendering3d/modules/grassModule.h"
 #include "engine/runtime/rendering3d/modules/meshModule.h"
+#include "engine/runtime/rendering3d/modules/uiModule.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
@@ -85,10 +87,18 @@ bool Scene3D::play(const std::filesystem::path& file)
   return true;
 }
 
+void Scene3D::filterInput(Input& input)
+{
+  if (UiModule* ui = m_render ? m_render->module<UiModule>() : nullptr)
+    ui->handleInput(input);
+}
+
 void Scene3D::onInit()
 {
   m_render = &addSystem<RenderSystem3D>(renderer3D());
   m_render->withModule<MeshModule>();
+  m_render->withModule<GrassModule>(renderer3D());
+  m_render->withModule<UiModule>(*this);
 
   MeshLibrary& library = m_render->meshes();
   // Named, so scenes that use them save and load.

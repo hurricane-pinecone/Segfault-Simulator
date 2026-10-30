@@ -90,6 +90,22 @@ struct ShadowSettings3D
 };
 
 /**
+ * The scene's wind: what grass (GrassComponent) sways in, and anything else
+ * that moves with it. Gusts roll across the ground in waves, the way the wind
+ * blows.
+ *
+ * @param direction  which way it blows, in degrees from +X toward +Y
+ * @param strength   how hard (0: still air; 1: a gale)
+ * @param gustiness  how much it comes and goes in gusts (0: steady)
+ */
+struct WindSettings3D
+{
+  float direction = 30.0f;
+  float strength = 0.35f;
+  float gustiness = 0.5f;
+};
+
+/**
  * Bloom: light brighter than full white (emission above 1, bright glints)
  * spreading a soft glow around it, as a camera sees bright lights. Ordinary
  * lit surfaces never go above 1, so only things that should glow do.
@@ -109,6 +125,37 @@ struct BloomSettings3D
   float threshold = 1.0f;
   float softness = 0.5f;
   float radius = 1.0f;
+};
+
+/**
+ * Depth of field: what's nearer or farther than the camera's focus blurs, as
+ * through a real lens. The focus is the view's own (Camera3D::distance: a
+ * camera entity's focusDistance, or the editor's orbit target).
+ *
+ * @param enabled  whether to blur at all
+ * @param range    how deep the sharp part around the focus is, world units
+ * @param blur     how blurred the farthest (and nearest) things get (1 =
+ *                 normal; 0: none)
+ */
+struct DepthOfFieldSettings3D
+{
+  bool enabled = false;
+  float range = 10.0f;
+  float blur = 1.0f;
+};
+
+/**
+ * Haze: the air between the camera and far things, fading them into the sky's
+ * colour, as distance does outdoors. It hides where things stop being drawn
+ * (grass's draw distance, the far plane).
+ *
+ * @param strength  how hazed the farthest things get (0: none; 1: fully)
+ * @param distance  how far away things are half that hazed, world units
+ */
+struct HazeSettings3D
+{
+  float strength = 0.0f;
+  float distance = 120.0f;
 };
 
 } // namespace sfs

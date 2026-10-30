@@ -35,6 +35,14 @@ void EditorHistory::endChange()
   m_pendingBefore.reset();
 }
 
+void EditorHistory::amendLast()
+{
+  if (m_pendingBefore || m_undo.empty() || !m_context.document)
+    return;
+  m_undo.back().after = m_context.document->snapshot();
+  m_undo.back().selectionAfter = currentSelection();
+}
+
 void EditorHistory::undo()
 {
   if (!canUndo() || m_pendingBefore)

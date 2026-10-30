@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <vector>
 
 namespace sfs::testing3d
@@ -44,6 +45,37 @@ public:
         liveMaterials.end());
   }
 
+  GrassHandle createGrass(const GrassGround& ground) override
+  {
+    if (ground.empty())
+      return {};
+    const GrassHandle handle{++nextGrassId};
+    liveGrass[handle.id] = ground.groundTexels();
+    return handle;
+  }
+
+  void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override
+  {
+    if (liveGrass.contains(grass.id))
+      mapUpdates.push_back({grass, image.grid, image.from, image.to});
+  }
+
+  void updateGrassTrample(GrassHandle grass,
+                          const GrassTrampleImage& image) override
+  {
+    if (liveGrass.contains(grass.id))
+      trampleUpdates.push_back({grass, image.size});
+  }
+
+  void destroyGrass(GrassHandle grass) override { liveGrass.erase(grass.id); }
+
+  void drawGrass(const GrassBatch3D& batch) override
+  {
+    grassDrawn.push_back(batch);
+  }
+
+  void drawUi(const UiDrawList& list) override { uiDrawn = list.quads; }
+
   glm::ivec2 viewportSize() const override { return viewport; }
   uint32_t shadowMapResolution() const override { return 1024; }
 
@@ -53,6 +85,8 @@ public:
     lights.assign(params.pointLights.begin(), params.pointLights.end());
     batches.clear();
     drawn.clear();
+    grassDrawn.clear();
+    uiDrawn.clear();
     ++frames;
   }
 
@@ -88,6 +122,24 @@ public:
   std::vector<Batch> batches;
   std::vector<MeshInstance> drawn; // every lit instance this frame
   int frames = 0;
+
+  uint32_t nextGrassId = 0;
+  std::map<uint32_t, std::size_t> liveGrass; // ground texels, by handle
+  std::vector<GrassBatch3D> grassDrawn;      // this frame
+  std::vector<UiQuad> uiDrawn;               // this frame's UI
+  struct MapUpdate
+  {
+    GrassHandle grass;
+    GrassGrid grid;
+    glm::ivec2 from, to;
+  };
+  std::vector<MapUpdate> mapUpdates; // all of them
+  struct TrampleUpdate
+  {
+    GrassHandle grass;
+    glm::ivec2 size;
+  };
+  std::vector<TrampleUpdate> trampleUpdates; // all of them
 };
 
 } // namespace sfs::testing3d

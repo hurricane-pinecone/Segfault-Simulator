@@ -49,8 +49,8 @@ Scene files are plain JSON and diff cleanly. See
 | Panel | Purpose |
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
-| Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
-| Inspector | The selected entity's name and components, with **Add Component**. Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
+| Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
+| Inspector | The selected entity's name and components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
@@ -62,6 +62,7 @@ Scene files are plain JSON and diff cleanly. See
 | --- | --- |
 | Left-click | Select the entity under the cursor (nothing, if empty space) |
 | Gizmos (toolbar) | Show or hide the overlays below and the gizmo; on while editing, off during Play by default |
+| Animate (toolbar, while editing) | Untick it to hold animated materials and grass's wind still while you edit; Play always animates |
 | W / E / R | Move / rotate / scale gizmo (also in the viewport toolbar) |
 | World / Local (toolbar) | Gizmo axes aligned to the world or to the object |
 | Snap (toolbar), or hold Ctrl while dragging | Snap to 0.5 units, 15° or 0.1 scale |
@@ -69,6 +70,7 @@ Scene files are plain JSON and diff cleanly. See
 | Middle-drag, or Shift+right-drag | Pan |
 | Wheel | Zoom |
 | F | Frame the selection |
+| B, or Grass (toolbar), with grass selected | The grass brush (see [Grass](#grass)) |
 
 The selection is outlined, and lights are drawn as small sun icons, so entities
 without a mesh can be seen and clicked. These overlays are editor-only: exported
@@ -209,8 +211,8 @@ Any entity can be the child of another, and moves, turns and scales with it
 | Drag an entity onto the empty space below the list | It becomes a root, staying where it is |
 | Right-click → Create Child | A new entity under this one, at its origin |
 | Right-click → Unparent | It becomes a root, staying where it is |
-| Right-click → Delete, or Del | Deletes it and everything below it |
-| Ctrl+D | Duplicates it and everything below it, beside the original |
+| Right-click → Delete, or Del | Deletes it and everything below it (everything selected) |
+| Ctrl+D | Duplicates it and everything below it, beside the original (each selected one) |
 
 The Inspector shows a child's transform relative to its parent, and says which
 parent. The viewport gizmo works in world space. An empty entity makes a good
@@ -231,12 +233,35 @@ with a Camera3D component (see
 - Cameras are drawn in the viewport as outlines of what they see. The game
   camera is drawn brighter.
 - Scene Settings names the game camera: the first active one.
-- Bloom is the camera's: its Bloom settings in the Inspector. The viewport
-  shows the game camera's bloom while you look around.
+- Bloom and **Depth Of Field** are the camera's, in the Inspector, with
+  their settings showing only while they're on. The viewport shows the game
+  camera's while you look around. Depth of field is then focused on the
+  viewport's orbit target.
 
 Play and exported games see through the game camera, and scripts move it by
 moving its entity. A scene without one starts from the viewport's view as last
 saved, as before.
+
+## Editing several at once
+
+Select several objects with **Ctrl**+click (add or remove one) or **Shift**+click
+(a range) in the Hierarchy, or **Ctrl**+click in the viewport. They're all
+outlined, the one clicked last a little bolder.
+
+- The **Inspector** shows the components they all have, and the fields of a
+  script they all run. Changing a field sets
+  it on every one of them. A field whose values differ between them is dimmed
+  until you set it. **Add Component** adds one to each that hasn't one, and
+  right-click → **Remove Component** removes it from them all. Each of these is
+  one undo step.
+- The **gizmo** sits in the middle of them (the average of where they are).
+  Moving it moves them all as far; rotating or scaling it turns or scales
+  each one as much, about its own origin. To turn a set of objects about
+  their shared middle instead, put them under one parent and turn that.
+- **Delete** and **Duplicate** work on all of them.
+
+To give every wheel of a vehicle a Grass Bender, for example, select the wheels
+and add it once.
 
 ## Undo and editing
 
@@ -353,8 +378,10 @@ the engine and could crash it).
 
 **File → Export Game...** builds the scripts and writes a playable copy of the
 game into a folder (by default the project's `builds/<platform>/`). Choose the
-**start scene** the game opens on; it's saved with the project. The folder can
-be zipped and handed to anyone, with no editor or engine install needed:
+**start scene** the game opens on; it's saved with the project. Exporting first
+saves the open scene and applies any prefab tabs with changes, so the game has
+everything as you're editing it. The folder can be zipped and handed to anyone,
+with no editor or engine install needed:
 
 ```
 builds/windows/
@@ -384,6 +411,56 @@ SfsEditor --export <project-folder> [output-folder]
 A Windows editor exports Windows games. A Linux export is the game plus the
 engine's libraries; system libraries (SDL and the rest) must be installed where
 it runs.
+
+## Grass
+
+Add a **Grass** component to anything with a Mesh Renderer, such as a plane, a
+terrain or a hillside model, and grass grows on every part of it that faces up.
+The blades are real geometry, curved and tapering, varied in height and tone.
+They sway in the scene's wind, and flatten where things move through them.
+
+| Setting | What it does |
+| --- | --- |
+| Material | What the blades look like (none: a plain green). A node graph sees each blade's UV (U across it, V up it, 1 at the root and 0 at the tip). Its **Grass** node also gives each blade's length, a random number and the maps' Data channels (see [Material graphs](material-graphs/index.md#the-nodes)). |
+| Density | Blades per square unit |
+| Height, Height Variation, Width | The blades' size, and how much heights vary |
+| Stiffness | How little they sway in the wind |
+| Recovery | Seconds flattened grass takes to stand back up |
+| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out toward this distance. |
+
+**Wind** is the scene's, in Scene Settings: its direction (degrees), strength
+and gustiness. Gusts roll across the grass the way the wind blows. Long grass
+waves in it, and grass mown short (painted with **Length**) hardly moves.
+
+The grass's colour also tints the ground under it, so the gaps between blades
+look like grass. To hide where grass stops being drawn, add **Haze** in Scene
+Settings to fade the distance into the sky. You can also turn on the camera's
+**Depth Of Field** to soften what's far away.
+
+**What flattens grass:** anything with a Rigid Body, sized by its colliders,
+unless its **Bends Grass** is off. A **Grass Bender** component does the same
+for things without physics, such as a character moved by a script or a
+vehicle's wheels. With **Fit Mesh** on (the default) it's sized to its entity's
+own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
+or use it on something without a mesh, to set its **Radius** yourself. Grass is pressed the way a thing is moving, or outward under one
+standing still, and springs back afterwards.
+
+**The grass brush:** with grass selected, press **B** or click **Grass** in the
+viewport toolbar, then drag over the grass. Hold **Shift** (or tick **Erase**)
+to take away instead. The menu next to **Strength** picks what the brush
+paints:
+
+- **Coverage** paints grass in where it's thin; erasing clears it.
+- **Length** grows it full length; erasing mows it short.
+- **Data 0** to **Data 3** are numbers for the grass's material to read, such
+  as moisture for a game to colour.
+
+**Size** sets the brush's width in world units and **Strength** how fast it
+paints. **Fill** sets all of it back to unpainted: full, full-length grass.
+**Clear** removes it all, so you can paint it in only where you want it. Each
+stroke is one undo step, and what's painted saves with the scene. A game can
+change the same maps as it plays (see
+[Rendering 3D: Grass](../runtime/rendering-3d/index.md#grass)).
 
 ## Built-in meshes
 

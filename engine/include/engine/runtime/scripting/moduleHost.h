@@ -47,10 +47,17 @@ public:
 
   bool loaded() const { return m_handle != nullptr; }
 
+  /**
+   * Say nothing on loading (errors are still logged): for one that's reloaded
+   * often.
+   */
+  void setQuiet(bool quiet) { m_quiet = quiet; }
+
 private:
   void* m_handle = nullptr;
   std::string m_moduleName;
   std::filesystem::path m_copy;
+  bool m_quiet = false;
 };
 
 } // namespace sfs

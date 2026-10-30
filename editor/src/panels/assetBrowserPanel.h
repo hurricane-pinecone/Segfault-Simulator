@@ -89,6 +89,8 @@ public:
   /** Whether the folders are being read again (in the background). */
   bool refreshing() const { return m_scan.valid(); }
 
+  void update(EditorContext& context) override;
+
 protected:
   void drawContents(EditorContext& context) override;
 

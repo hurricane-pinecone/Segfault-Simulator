@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -103,6 +104,8 @@ void HierarchyPanel::drawContents(EditorContext& context)
          parent = sfs::hierarchy::parentOf(parent))
       m_reveal.insert(parent.getId());
 
+  m_lastRows = std::move(m_rows);
+  m_rows.clear();
   const std::vector<sfs::Entity> entities = context.scene->entities();
   if (m_filter.empty())
   {
@@ -139,11 +142,11 @@ void HierarchyPanel::drawTree(EditorContext& context,
 
 bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren)
 {
-  // Ids are reused after destruction, so the label pairs the name with the id
-  // to keep ImGui's widget ids stable and unique.
   const std::string name = displayName(entity);
-  const std::string label = name + "##" + std::to_string(entity.getId());
+  m_rows.push_back(entity);
+  // The one selected (clicked last), and whether it's among several.
   const bool selected = context.hasSelection() && context.selection == entity;
+  const bool highlighted = selected || context.isSelected(entity);
 
   // A click selects, the arrow opens, and a double-click frames the entity
   // and opens or closes it (handled below); AllowOverlap lets the focus
@@ -152,7 +155,7 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
                              ImGuiTreeNodeFlags_AllowOverlap;
   if (!hasChildren)
     flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-  if (selected)
+  if (highlighted)
     flags |= ImGuiTreeNodeFlags_Selected;
   if (m_reveal.contains(entity.getId()))
     ImGui::SetNextItemOpen(true);
@@ -165,22 +168,83 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
     color = ImGui::ColorConvertU32ToFloat4(theme::kAccent);
   else if (entity.hasComponent<sfs::PrefabLinkComponent>())
     color = ImVec4(0.67f, 0.84f, 0.63f, 0.75f);
+  // F2 renames the selection in place.
+  if (selected && m_renaming == UINT32_MAX && ImGui::IsKeyPressed(ImGuiKey_F2, false) &&
+      ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput)
+    startRename(entity);
+  const bool renaming = m_renaming == entity.getId();
+
   if (color)
     ImGui::PushStyleColor(ImGuiCol_Text, *color);
-  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  // Its id from the entity's (not its text, so renaming keeps it open);
+  // renaming: the row without its text, a box for the name over it.
+  const void* rowId = reinterpret_cast<const void*>(static_cast<uintptr_t>(entity.getId()) + 1);
+  const bool open = ImGui::TreeNodeEx(rowId, flags, "%s", renaming ? "" : name.c_str());
   if (color)
     ImGui::PopStyleColor();
+  const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
   const bool rowHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
+  const ImGuiIO& io = ImGui::GetIO();
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen() && (io.KeyCtrl || io.KeyShift))
   {
+    // Ctrl: add it to the selection or take it out; Shift: every row from
+    // the one selected to it.
+    std::vector<sfs::Entity> group = context.selected();
+    if (io.KeyShift && context.hasSelection())
+    {
+      const auto from = std::find(m_lastRows.begin(), m_lastRows.end(), context.selection);
+      const auto to = std::find(m_lastRows.begin(), m_lastRows.end(), entity);
+      if (from != m_lastRows.end() && to != m_lastRows.end())
+        for (auto it = std::min(from, to); it <= std::max(from, to); ++it)
+          if (std::find(group.begin(), group.end(), *it) == group.end())
+            group.push_back(*it);
+      context.selection = entity;
+    }
+    else if (const auto it = std::find(group.begin(), group.end(), entity); it != group.end())
+    {
+      group.erase(it);
+      context.selection = group.empty() ? sfs::Entity() : group.back();
+    }
+    else
+    {
+      group.push_back(entity);
+      context.selection = entity;
+    }
+    context.selectionGroup = std::move(group);
+    m_shownSelection = context.hasSelection() ? context.selection.getId() : UINT32_MAX;
+    m_slowClick = UINT32_MAX;
+  }
+  else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
+  {
+    const bool wasOnlySelected = selected && context.selected().size() == 1;
     context.selection = entity;
+    context.selectionGroup.clear();
     m_shownSelection = entity.getId(); // picked here: already in view
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
     {
       // Frames it, and opens (or closes) it to show what's inside.
+      m_slowClick = UINT32_MAX;
       context.focusRequest = entity;
       if (hasChildren)
         ImGui::TreeNodeSetOpen(ImGui::GetItemID(), !open);
+    }
+    else if (wasOnlySelected && !renaming)
+    {
+      // A click on the selected row's name renames it, once it's clearly not
+      // the start of a double-click.
+      m_slowClick = entity.getId();
+      m_slowClickAt = ImGui::GetTime();
+    }
+  }
+  if (m_slowClick == entity.getId())
+  {
+    if (!selected || ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+      m_slowClick = UINT32_MAX;
+    else if (ImGui::GetTime() - m_slowClickAt > ImGui::GetIO().MouseDoubleClickTime &&
+             !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    {
+      m_slowClick = UINT32_MAX;
+      startRename(entity);
     }
   }
   else if (selected && m_scrollToSelection)
@@ -213,6 +277,8 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
     context.selection = entity;
     if (ImGui::MenuItem("Focus", "F"))
       context.focusRequest = entity;
+    if (ImGui::MenuItem("Rename", "F2"))
+      startRename(entity);
     ImGui::Separator();
     if (ImGui::BeginMenu("Create Child"))
     {
@@ -231,10 +297,64 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
     ImGui::EndPopup();
   }
 
-  if (rowHovered || selected)
+  if (renaming)
+    drawRenameBox(context, entity, rowMin, rowMax);
+  else if (rowHovered || selected)
     drawFocusButton(context, entity);
 
   return open && hasChildren;
+}
+
+void HierarchyPanel::startRename(const sfs::Entity& entity)
+{
+  m_renaming = entity.getId();
+  m_renameText = entity.hasComponent<sfs::NameComponent>() ? entity.getComponent<sfs::NameComponent>().name : "";
+  m_renameFocus = true;
+}
+
+void HierarchyPanel::drawRenameBox(EditorContext& context, const sfs::Entity& entity, ImVec2 rowMin, ImVec2 rowMax)
+{
+  // Over the row, from where its name starts to its end, its height.
+  const ImVec2 cursor = ImGui::GetCursorScreenPos();
+  const float textX = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() - ImGui::GetStyle().FramePadding.x;
+  ImGui::SetCursorScreenPos(ImVec2(textX, rowMin.y));
+  ImGui::SetNextItemWidth(rowMax.x - textX);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                      ImVec2(ImGui::GetStyle().FramePadding.x, (rowMax.y - rowMin.y - ImGui::GetFontSize()) * 0.5f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+  ImGui::PushStyleColor(ImGuiCol_Border, theme::kAccent);
+  if (m_renameFocus)
+    ImGui::SetKeyboardFocusHere();
+  ImGui::PushID(static_cast<int>(entity.getId()));
+  const bool entered = widgets::inputText(
+      "##rename", m_renameText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+  ImGui::PopID();
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(2);
+  const bool active = ImGui::IsItemActive();
+  ImGui::SetCursorScreenPos(cursor);
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+    m_renaming = UINT32_MAX; // as it was
+  else if (entered || (!active && !m_renameFocus))
+    finishRename(context, entity); // Enter, or clicked away
+  m_renameFocus = false;
+}
+
+void HierarchyPanel::finishRename(EditorContext& context, const sfs::Entity& entity)
+{
+  m_renaming = UINT32_MAX;
+  const std::string current =
+      entity.hasComponent<sfs::NameComponent>() ? entity.getComponent<sfs::NameComponent>().name : "";
+  if (m_renameText == current || !entity.isAlive())
+    return;
+  context.history->change(
+      [&]
+      {
+        sfs::Entity named = entity;
+        if (!named.hasComponent<sfs::NameComponent>())
+          named.addComponent<sfs::NameComponent>();
+        named.getComponent<sfs::NameComponent>().name = m_renameText;
+      });
 }
 
 void HierarchyPanel::drawFocusButton(EditorContext& context, const sfs::Entity& entity)
@@ -246,7 +366,12 @@ void HierarchyPanel::drawFocusButton(EditorContext& context, const sfs::Entity& 
                   rowMin.y + (rowMax.y - rowMin.y - size) * 0.5f);
   const ImVec2 cursor = ImGui::GetCursorScreenPos();
   ImGui::SetCursorScreenPos(at);
-  if (ImGui::InvisibleButton("focus", ImVec2(size, size)))
+  // Its own id: rows without children don't push one, so siblings' buttons
+  // would share it.
+  ImGui::PushID(static_cast<int>(entity.getId()));
+  const bool clicked = ImGui::InvisibleButton("focus", ImVec2(size, size));
+  ImGui::PopID();
+  if (clicked)
     context.focusRequest = entity;
   const bool hovered = ImGui::IsItemHovered();
   ImGui::SetItemTooltip("Focus: frame it in the viewport (F, or double-click)");
@@ -317,10 +442,24 @@ void HierarchyPanel::applyPendingEdit(EditorContext& context)
     context.history->change(
         [&]
         {
-          if (context.hasSelection() && (context.selection == edit.entity ||
-                                         sfs::hierarchy::isAncestor(edit.entity, context.selection)))
+          // One of several selected: all of them.
+          const std::vector<sfs::Entity> doomed =
+              context.isSelected(edit.entity) ? context.selected() : std::vector<sfs::Entity>{edit.entity};
+          if (context.hasSelection() &&
+              std::any_of(doomed.begin(),
+                          doomed.end(),
+                          [&](const sfs::Entity& entity)
+                          {
+                            return context.selection == entity ||
+                                   sfs::hierarchy::isAncestor(entity, context.selection);
+                          }))
+          {
             context.selection = {};
-          context.scene->destroyBranch(edit.entity);
+            context.selectionGroup.clear();
+          }
+          for (const sfs::Entity& entity : doomed)
+            if (entity.isAlive())
+              context.scene->destroyBranch(entity);
         });
     break;
   case PendingEdit::Kind::MakePrefab:
@@ -352,6 +491,9 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
           context.selection = entity;
           scene.flushEntities();
         });
+    // Named straight away, as a new file is.
+    if (context.selection.isValid())
+      startRename(context.selection);
   };
 
   if (ImGui::MenuItem("Empty"))

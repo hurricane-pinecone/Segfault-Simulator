@@ -163,11 +163,14 @@ void Scene::processInput(const Input& input)
 {
   ZoneScopedN("Scene::processInput");
 
+  // What the scene takes first (its UI's clicks) the objects don't see.
+  Input seen = input;
+  filterInput(seen);
   for (auto& obj : m_gameObjects)
   {
-    obj->onProcessInput(input);
+    obj->onProcessInput(seen);
   }
-  onProcessInput(input);
+  onProcessInput(seen);
 }
 void Scene::render()
 

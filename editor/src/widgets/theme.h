@@ -2,6 +2,8 @@
 
 #include "imgui.h"
 
+#include <string>
+
 // The editor's look: soft warm greys with a desaturated sage-green accent,
 // rounded corners and a proportional UI font, in place of ImGui's defaults.
 namespace theme
@@ -23,5 +25,8 @@ void apply();
  * is added.
  */
 void loadUiFont();
+
+/** The file loadUiFont made the UI's font, or empty if it found none. */
+const std::string& uiFontFile();
 
 } // namespace theme

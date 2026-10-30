@@ -37,7 +37,13 @@ std::filesystem::path ModuleBuilder::modulePath(const Project& project) const
          (project.moduleName() + m_environment.moduleSuffix());
 }
 
-bool ModuleBuilder::start(const Project& project)
+std::filesystem::path ModuleBuilder::uiPreviewPath(const Project& project) const
+{
+  return buildDirectory(project) / "ui-preview" /
+         (project.moduleName() + "UiPreview" + m_environment.moduleSuffix());
+}
+
+bool ModuleBuilder::start(const Project& project, Target target)
 {
   if (busy())
   {
@@ -65,10 +71,18 @@ bool ModuleBuilder::start(const Project& project)
                        "-DSFS_CODEGEN_EXECUTABLE=" + m_environment.codegen()});
   // A few compiles at a time: more can swamp the machine (WSL, especially)
   // for a module this size, and keep the editor from being usable meanwhile.
-  m_steps.push_back({"cmake", "--build", build, "--parallel", std::to_string(kJobs)});
+  std::vector<std::string> buildStep = {"cmake", "--build", build, "--parallel", std::to_string(kJobs)};
+  if (target == Target::UiPreview)
+    buildStep.insert(buildStep.end(), {"--target", project.moduleName() + "UiPreview"});
+  m_steps.push_back(std::move(buildStep));
 
   m_percent = -1;
-  LOG_INFO("Building " + project.moduleName() + "...");
+  m_target = target;
+  m_heldOutput.reset();
+  if (target == Target::UiPreview)
+    m_heldOutput = std::make_shared<std::vector<std::string>>();
+  else
+    LOG_INFO("Building " + project.moduleName() + "...");
   return startNextStep();
 }
 
@@ -76,7 +90,7 @@ bool ModuleBuilder::startNextStep()
 {
   // Build output is text: log it line by line, errors highlighted.
   auto lines = std::make_shared<LineSplitter>(
-      [this](const std::string& line)
+      [this, held = m_heldOutput](const std::string& line)
       {
         // Where the build runs, so cancel() can stop it.
         if (line.starts_with(BuildEnvironment::kGroupMarker))
@@ -104,7 +118,9 @@ bool ModuleBuilder::startNextStep()
           if (digits && value <= 100)
             m_percent = value;
         }
-        if (looksLikeError(line))
+        if (held)
+          held->push_back(line); // read once the build's over
+        else if (looksLikeError(line))
           LOG_ERROR(line);
         else if (!line.empty())
           LOG_INFO(line);
@@ -162,12 +178,20 @@ std::optional<bool> ModuleBuilder::poll()
   if (exitCode != 0)
   {
     m_steps.clear();
-    LOG_ERROR("Build failed (exit code " + std::to_string(exitCode) + ")");
+    if (m_heldOutput)
+      for (const std::string& line : *m_heldOutput)
+        if (looksLikeError(line))
+          LOG_ERROR(line);
+        else if (!line.empty())
+          LOG_INFO(line);
+    LOG_ERROR(std::string(m_target == Target::UiPreview ? "UI Preview build" : "Build") + " failed (exit code " +
+              std::to_string(exitCode) + ")");
     return false;
   }
   if (!m_steps.empty())
     return startNextStep() ? std::nullopt : std::optional<bool>(false);
 
-  LOG_INFO("Build succeeded");
+  if (m_target == Target::Module)
+    LOG_INFO("Build succeeded");
   return true;
 }

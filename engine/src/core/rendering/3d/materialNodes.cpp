@@ -449,6 +449,47 @@ std::vector<NodeType> makeNodeTypes()
     };
     types.push_back(std::move(type));
   }
+  {
+    NodeType type;
+    type.id = "grass";
+    type.reads = PointInputs::Grass;
+    type.label = "Grass";
+    type.category = "Input";
+    type.description =
+        "For a grass material: the blade's length (1 is the grass's full "
+        "height), how far up it the point is (0 root, 1 tip), a random number "
+        "of its own, and the grass maps' Data channels where it grows (what a "
+        "game writes there, such as moisture). On anything else: 1, 0, 0 and "
+        "0.";
+    type.outputs = {output("Length", F),
+                    output("Height", F),
+                    output("Random", F),
+                    output("Data", V4),
+                    output("Data 0", F),
+                    output("Data 1", F),
+                    output("Data 2", F),
+                    output("Data 3", F)};
+    type.emit = [](const EmitArgs&)
+    {
+      return std::vector<std::string>{"in.grass.x",
+                                      "in.grass.y",
+                                      "in.grass.z",
+                                      "in.grassData",
+                                      "in.grassData.x",
+                                      "in.grassData.y",
+                                      "in.grassData.z",
+                                      "in.grassData.w"};
+    };
+    type.evaluate = [](const EvaluateArgs& a, Outputs out)
+    {
+      for (int i = 0; i < 3; ++i)
+        out[i] = glm::vec4(a.point->grass[i], 0, 0, 0);
+      out[3] = a.point->grassData;
+      for (int i = 0; i < 4; ++i)
+        out[4 + i] = glm::vec4(a.point->grassData[i], 0, 0, 0);
+    };
+    types.push_back(std::move(type));
+  }
 
   // --- Math: dynamic, component by component.
   types.push_back(math(

@@ -8,22 +8,26 @@
 
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/camera3DComponent.h"
+#include "engine/core/components/capsuleCollider3DComponent.h"
+#include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
-#include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/pointLight3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transform3DComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
-#include "engine/runtime/rendering3d/picking.h"
+#include "engine/core/rendering/3d/grass.h"
 #include "engine/runtime/rendering3d/meshLibrary.h"
+#include "engine/runtime/rendering3d/modules/grassModule.h"
+#include "engine/runtime/rendering3d/picking.h"
 #include "engine/runtime/rendering3d/renderSystem3D.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
+#include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/gtc/type_ptr.hpp"
 
-#include "imguizmo/ImGuizmo.h"
 #include "imgui_internal.h" // FindWindowByName, a window's dock node
+#include "imguizmo/ImGuizmo.h"
 
 #include <algorithm>
 #include <array>
@@ -34,6 +38,14 @@ namespace
 constexpr float kMoveSnap = 0.5f;    // world units
 constexpr float kRotateSnap = 15.0f; // degrees
 constexpr float kScaleSnap = 0.1f;
+
+// Whether an entity has grass the brush can paint: a GrassComponent on a mesh.
+bool hasGrass(const sfs::Entity& entity)
+{
+  return entity.isValid() && entity.isAlive() &&
+         entity.hasComponent<sfs::GrassComponent>() &&
+         entity.hasComponent<sfs::MeshRendererComponent>();
+}
 
 constexpr ImU32 kSelectionColor = IM_COL32(255, 170, 40, 255);
 // What a texture or material dragged over the viewport would land on.
@@ -120,12 +132,15 @@ std::optional<ImVec2> ViewportPanel::toScreen(const View& view, const glm::vec3&
 void ViewportPanel::drawContents(EditorContext& context)
 {
   const ImVec2 available = ImGui::GetContentRegionAvail();
-  m_desiredSize = {static_cast<int>(available.x), static_cast<int>(available.y)};
+  m_desiredSize = {
+      static_cast<int>(available.x), static_cast<int>(available.y)};
 
   if (!m_active)
   {
     if (m_target.valid())
-      ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(m_target.imguiView())), available);
+      ImGui::Image(static_cast<ImTextureID>(
+                       reinterpret_cast<intptr_t>(m_target.imguiView())),
+                   available);
     else
       ImGui::Dummy(available);
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
@@ -147,9 +162,14 @@ void ViewportPanel::drawContents(EditorContext& context)
   }
 
   const ImVec2 origin = ImGui::GetCursorScreenPos();
-  ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(m_target.imguiView())),
+  ImGui::Image(static_cast<ImTextureID>(
+                   reinterpret_cast<intptr_t>(m_target.imguiView())),
                available);
-  const bool imageHovered = ImGui::IsItemHovered();
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const bool overToolbar =
+      mouse.x >= m_toolbarMin.x && mouse.y >= m_toolbarMin.y &&
+      mouse.x <= m_toolbarMax.x && mouse.y <= m_toolbarMax.y;
+  const bool imageHovered = ImGui::IsItemHovered() && !overToolbar;
 
   // Frame what a panel (or F) asked for. While playing the game's camera is
   // the one shown, so it waits.
@@ -175,16 +195,22 @@ void ViewportPanel::drawContents(EditorContext& context)
   // Editor overlays are hidden during Play unless asked for, so the viewport
   // looks like the game.
   bool gizmoActive = false;
+  // A stroke ends with its tool (or when Play starts).
+  if (m_tool != Tool::GrassBrush || context.playing || !gizmosVisible(context))
+    endGrassStroke(context);
   if (gizmosVisible(context))
   {
     // Kept inside the image: an icon near its edge mustn't spill onto the
     // panel's frame.
-    ImGui::PushClipRect(origin, ImVec2(origin.x + available.x, origin.y + available.y), true);
+    ImGui::PushClipRect(
+        origin, ImVec2(origin.x + available.x, origin.y + available.y), true);
     drawLightIcons(context, view);
     drawCameraIcons(context, view);
     drawSelectionOutline(context, view);
     drawColliders(context, view);
-    gizmoActive = drawGizmo(context, view);
+    gizmoActive = m_tool == Tool::GrassBrush && !context.playing
+                      ? paintGrass(context, view, imageHovered)
+                      : drawGizmo(context, view);
     ImGui::PopClipRect();
   }
 
@@ -197,12 +223,19 @@ void ViewportPanel::drawContents(EditorContext& context)
     context.gameHasMouse = imageHovered;
     if (imageHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
       ImGui::SetWindowFocus();
-    const ImU32 border = focused ? IM_COL32(90, 200, 120, 255) : IM_COL32(200, 160, 60, 255);
-    ImGui::GetWindowDrawList()->AddRect(origin, ImVec2(origin.x + available.x, origin.y + available.y),
-                                        border, 0.0f, 0, 2.0f);
+    const ImU32 border =
+        focused ? IM_COL32(90, 200, 120, 255) : IM_COL32(200, 160, 60, 255);
+    ImGui::GetWindowDrawList()->AddRect(
+        origin,
+        ImVec2(origin.x + available.x, origin.y + available.y),
+        border,
+        0.0f,
+        0,
+        2.0f);
     if (!focused)
     {
-      ImGui::SetCursorScreenPos(ImVec2(origin.x + 8.0f, origin.y + available.y - 26.0f));
+      ImGui::SetCursorScreenPos(
+          ImVec2(origin.x + 8.0f, origin.y + available.y - 26.0f));
       ImGui::TextUnformatted("Click the viewport to control the game");
     }
   }
@@ -230,11 +263,12 @@ void ViewportPanel::drawContents(EditorContext& context)
   }
   ImGui::EndGroup();
   drawList->ChannelsSetCurrent(0);
-  const ImVec2 barMin = ImGui::GetItemRectMin(), barMax = ImGui::GetItemRectMax();
-  drawList->AddRectFilled(ImVec2(barMin.x - 6.0f, barMin.y - 5.0f),
-                          ImVec2(barMax.x + 8.0f, barMax.y + 5.0f),
-                          IM_COL32(38, 40, 39, 205),
-                          8.0f);
+  const ImVec2 barMin = ImGui::GetItemRectMin(),
+               barMax = ImGui::GetItemRectMax();
+  m_toolbarMin = ImVec2(barMin.x - 6.0f, barMin.y - 5.0f);
+  m_toolbarMax = ImVec2(barMax.x + 8.0f, barMax.y + 5.0f);
+  drawList->AddRectFilled(
+      m_toolbarMin, m_toolbarMax, IM_COL32(38, 40, 39, 205), 8.0f);
   drawList->ChannelsMerge();
 }
 
@@ -247,9 +281,23 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
 {
   // Separate settings for editing and Play: overlays usually help while
   // editing and get in the way of the game.
-  ImGui::Checkbox("Gizmos", context.playing ? &m_gizmosInPlay : &m_gizmosInEdit);
-  ImGui::SetItemTooltip("Show light icons, the selection outline and the gizmo\n(remembered "
-                        "separately for editing and Play)");
+  ImGui::Checkbox(
+      "Gizmos", context.playing ? &m_gizmosInPlay : &m_gizmosInEdit);
+  ImGui::SetItemTooltip(
+      "Show light icons, the selection outline and the gizmo\n(remembered "
+      "separately for editing and Play)");
+  // While editing, whether animated materials and grass's wind move; Play
+  // always does.
+  if (!context.playing)
+  {
+    ImGui::SameLine();
+    ImGui::Checkbox("Animate", &m_animate);
+    ImGui::SetItemTooltip(
+        "Move animated materials and sway grass in the wind while editing\n"
+        "(Play always does)");
+  }
+  if (context.render)
+    context.render->setAnimating(context.playing || m_animate);
   if (!gizmosVisible(context))
     return;
   ImGui::SameLine();
@@ -258,7 +306,8 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
   {
     const bool active = m_tool == tool;
     if (active)
-      ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+      ImGui::PushStyleColor(
+          ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
     if (ImGui::Button(label))
       m_tool = tool;
     if (active)
@@ -270,6 +319,69 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
   toolButton("Move", Tool::Move, "Move (W)");
   toolButton("Rotate", Tool::Rotate, "Rotate (E)");
   toolButton("Scale", Tool::Scale, "Scale (R)");
+  // The grass brush, for grass (only then).
+  if (hasGrass(context.selection))
+    toolButton("Grass",
+               Tool::GrassBrush,
+               "Paint where the grass grows (B): drag over it, Shift to erase");
+  else if (m_tool == Tool::GrassBrush)
+    m_tool = Tool::Move;
+  if (m_tool == Tool::GrassBrush)
+  {
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::SliderFloat("Size",
+                       &m_brushSize,
+                       0.1f,
+                       10.0f,
+                       "%.1f",
+                       ImGuiSliderFlags_Logarithmic);
+    ImGui::SetItemTooltip("How wide the brush is, in world units");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderFloat("Strength", &m_brushStrength, 0.05f, 1.0f, "%.2f");
+    ImGui::SetItemTooltip("How quickly it paints");
+    ImGui::SameLine();
+    // Which map: where it grows, how long, or data for its material.
+    static constexpr const char* kChannels[] = {
+        "Coverage", "Length", "Data 0", "Data 1", "Data 2", "Data 3"};
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::Combo(
+        "##channel", &m_brushChannel, kChannels, IM_ARRAYSIZE(kChannels));
+    ImGui::SetItemTooltip(
+        "What it paints: where grass grows, how long it is, or data its "
+        "material reads");
+    ImGui::SameLine();
+    ImGui::Checkbox("Erase", &m_brushErase);
+    ImGui::SetItemTooltip("Take away instead (or hold Shift)");
+    // All of it at once: grass everywhere, or none (to paint in from bare).
+    const auto fillAll = [&](bool full)
+    {
+      auto* grassModule = context.render->module<sfs::GrassModule>();
+      const sfs::GrassGround* ground =
+          grassModule ? grassModule->ground(context.selection) : nullptr;
+      if (!ground)
+        return;
+      auto& grass = context.selection.getComponent<sfs::GrassComponent>();
+      nlohmann::json paint = nlohmann::json::object();
+      if (!full)
+      {
+        sfs::GrassMaps bare(ground->grid());
+        bare.fill(sfs::GrassMaps::Coverage, 0.0f);
+        paint = bare.toJson();
+      }
+      context.history->change([&] { grass.paint = paint; });
+    };
+    ImGui::SameLine();
+    if (ImGui::Button("Fill"))
+      fillAll(true);
+    ImGui::SetItemTooltip("Unpainted again: full, full-length grass all over");
+    ImGui::SameLine();
+    if (ImGui::Button("Clear"))
+      fillAll(false);
+    ImGui::SetItemTooltip(
+        "Clear all of it, to paint grass in where you want it");
+    return;
+  }
   if (ImGui::Button(m_localSpace ? "Local" : "World"))
     m_localSpace = !m_localSpace;
   ImGui::SetItemTooltip("Gizmo axes: world or the object's own");
@@ -290,6 +402,8 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
     m_tool = Tool::Rotate;
   if (ImGui::IsKeyPressed(ImGuiKey_R, false))
     m_tool = Tool::Scale;
+  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection))
+    m_tool = Tool::GrassBrush;
 
   if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
     context.focusRequest = context.selection;
@@ -320,6 +434,11 @@ bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
   const bool snapping = m_snap || ImGui::GetIO().KeyCtrl;
   const std::array<float, 3> snap{snapValue, snapValue, snapValue};
 
+  // Several selected: the handles in the middle of them (see moveGroup()).
+  const std::vector<sfs::Entity> group = movableSelection(context);
+  if (context.selected().size() > 1 && !group.empty())
+    return drawGroupGizmo(context, view, group, operation, snapping ? snap.data() : nullptr);
+
   // Manipulate a copy, so an edit can be bracketed for undo before it lands:
   // the snapshot is taken the frame the drag starts, while the scene is still
   // unchanged. The gizmo works in world space; the result goes back into the
@@ -345,6 +464,181 @@ bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
   return usingNow || ImGuizmo::IsOver();
 }
 
+std::vector<sfs::Entity> ViewportPanel::movableSelection(const EditorContext& context)
+{
+  // Those with a place, but not inside another selected one (they move with
+  // it).
+  const std::vector<sfs::Entity> selected = context.selected();
+  std::vector<sfs::Entity> movable;
+  for (const sfs::Entity& entity : selected)
+    if (entity.hasComponent<sfs::Transform3DComponent>() &&
+        std::none_of(selected.begin(),
+                     selected.end(),
+                     [&](const sfs::Entity& outer)
+                     { return outer != entity && sfs::hierarchy::isAncestor(outer, entity); }))
+      movable.push_back(entity);
+  return movable;
+}
+
+bool ViewportPanel::drawGroupGizmo(EditorContext& context,
+                                   const View& view,
+                                   const std::vector<sfs::Entity>& group,
+                                   int operation,
+                                   const float* snap)
+{
+  // The handles: at their middle (the average of where they are), lined up
+  // with the world, or with the one selected last in Local. While dragging
+  // they're kept from frame to frame, so each frame's change is the step
+  // since the last.
+  const bool wasUsing = ImGuizmo::IsUsing();
+  if (!wasUsing)
+  {
+    glm::vec3 middle(0.0f);
+    for (const sfs::Entity& entity : group)
+      middle += glm::vec3(sfs::hierarchy::worldMatrix(entity)[3]);
+    middle /= static_cast<float>(group.size());
+    glm::mat4 turn(1.0f);
+    if (m_localSpace)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(context.selection);
+      turn = glm::mat4(glm::mat3(glm::normalize(glm::vec3(world[0])),
+                                 glm::normalize(glm::vec3(world[1])),
+                                 glm::normalize(glm::vec3(world[2]))));
+    }
+    m_groupHandles = turn;
+    m_groupHandles[3] = glm::vec4(middle, 1.0f);
+  }
+  glm::mat4 handles = m_groupHandles;
+  const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
+                                            glm::value_ptr(view.projection),
+                                            static_cast<ImGuizmo::OPERATION>(operation),
+                                            m_localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+                                            glm::value_ptr(handles),
+                                            nullptr,
+                                            snap);
+  const bool usingNow = ImGuizmo::IsUsing();
+  if (!wasUsing && usingNow)
+    context.history->beginChange();
+  if (changed)
+  {
+    // The step: how far the handles moved, turned and scaled. Each one moves
+    // as far, and turns and scales as much about its own origin.
+    const auto axes = [](const glm::mat4& m)
+    { return glm::vec3(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2]))); };
+    const auto turnOf = [&](const glm::mat4& m)
+    {
+      const glm::vec3 s = axes(m);
+      return glm::quat_cast(glm::mat3(glm::vec3(m[0]) / s.x, glm::vec3(m[1]) / s.y, glm::vec3(m[2]) / s.z));
+    };
+    const glm::vec3 moved = glm::vec3(handles[3]) - glm::vec3(m_groupHandles[3]);
+    const glm::quat turned = turnOf(handles) * glm::inverse(turnOf(m_groupHandles));
+    const glm::vec3 scaled = axes(handles) / axes(m_groupHandles);
+    for (const sfs::Entity& entity : group)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+      const glm::vec3 scale = axes(world) * scaled;
+      const glm::quat rotation = turned * turnOf(world);
+      glm::mat4 next = glm::mat4_cast(rotation);
+      next[0] *= scale.x;
+      next[1] *= scale.y;
+      next[2] *= scale.z;
+      next[3] = glm::vec4(glm::vec3(world[3]) + moved, 1.0f);
+      sfs::hierarchy::setWorldMatrix(entity, next);
+    }
+    m_groupHandles = handles;
+  }
+  if (wasUsing && !usingNow)
+    context.history->endChange();
+  return usingNow || ImGuizmo::IsOver();
+}
+
+bool ViewportPanel::paintGrass(EditorContext& context,
+                               const View& view,
+                               bool hovered)
+{
+  const sfs::Entity lawn = context.selection;
+  if (!hasGrass(lawn))
+  {
+    endGrassStroke(context);
+    return false;
+  }
+  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  if (m_brushStroke && !down)
+    endGrassStroke(context);
+  if (!hovered && !m_brushStroke)
+    return false;
+
+  // Where the cursor meets the grass's mesh.
+  const sfs::MeshHandle mesh =
+      lawn.getComponent<sfs::MeshRendererComponent>().mesh;
+  sfs::MeshLibrary& meshes = context.render->meshes();
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(lawn);
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const sfs::Ray3D ray = context.render->camera().screenRay(
+      {mouse.x - view.origin.x, mouse.y - view.origin.y},
+      {view.size.x, view.size.y});
+  const std::optional<sfs::MeshLibrary::RayHit> hit =
+      meshes.raycast(mesh, world, ray);
+  if (!hit)
+    return hovered;
+  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
+  const bool erase = m_brushErase || ImGui::GetIO().KeyShift;
+
+  // The brush's ring, flat on the ground under the cursor.
+  const float radius = m_brushSize * 0.5f;
+  std::array<ImVec2, 40> ring;
+  int count = 0;
+  for (int i = 0; i < static_cast<int>(ring.size()); ++i)
+  {
+    const float angle =
+        6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
+    if (const auto at = toScreen(
+            view,
+            point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) * radius))
+      ring[count++] = *at;
+  }
+  const ImU32 color =
+      erase ? IM_COL32(235, 110, 90, 230) : IM_COL32(150, 230, 120, 230);
+  ImGui::GetWindowDrawList()->AddPolyline(
+      ring.data(), count, color, ImDrawFlags_Closed, 2.0f);
+
+  // Painting while the button's down: one undo step a stroke.
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+  {
+    context.history->beginChange();
+    m_brushStroke = true;
+  }
+  // Into the grass's maps as they are (unpainted grass gets them, full: what's
+  // there stays until painted over), straight to the GPU; the component
+  // keeps them once the stroke ends. At full strength a stroke paints fully
+  // in a twelfth of a second.
+  if (m_brushStroke && down)
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->stamp(
+          lawn,
+          static_cast<sfs::GrassMaps::Channel>(m_brushChannel),
+          point,
+          radius,
+          erase ? 0.0f : 1.0f,
+          sfs::GrassMaps::Blend::Toward,
+          std::min(m_brushStrength * 12.0f * ImGui::GetIO().DeltaTime, 1.0f));
+  return true;
+}
+
+void ViewportPanel::endGrassStroke(EditorContext& context)
+{
+  if (!m_brushStroke)
+    return;
+  m_brushStroke = false;
+  // What the stroke painted, into the component (and so the undo step).
+  auto* grassModule = context.render->module<sfs::GrassModule>();
+  if (grassModule && hasGrass(context.selection))
+    if (const sfs::GrassMaps* maps = grassModule->maps(context.selection))
+      context.selection.getComponent<sfs::GrassComponent>().paint =
+          maps->toJson();
+  context.history->endChange();
+}
+
 void ViewportPanel::pick(EditorContext& context, const View& view)
 {
   const ImVec2 mouse = ImGui::GetMousePos();
@@ -353,6 +647,23 @@ void ViewportPanel::pick(EditorContext& context, const View& view)
 
   const std::optional<sfs::PickHit> hit =
       sfs::pickEntity(*context.scene, context.render->meshes(), ray);
+  // Ctrl: add what's clicked to the selection, or take it out.
+  if (ImGui::GetIO().KeyCtrl && hit)
+  {
+    std::vector<sfs::Entity> group = context.selected();
+    if (const auto it = std::find(group.begin(), group.end(), hit->entity); it != group.end())
+    {
+      group.erase(it);
+      context.selection = group.empty() ? sfs::Entity() : group.back();
+    }
+    else
+    {
+      group.push_back(hit->entity);
+      context.selection = hit->entity;
+    }
+    context.selectionGroup = std::move(group);
+    return;
+  }
   context.selection = hit ? hit->entity : sfs::Entity();
 }
 
@@ -374,9 +685,10 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
     else if (ray.intersectPlaneZ(0.0f, distance))
       point = ray.at(distance);
     const ImGuiPayload* payload =
-        point ? ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload,
-                                             ImGuiDragDropFlags_AcceptBeforeDelivery |
-                                                 ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
+        point ? ImGui::AcceptDragDropPayload(
+                    assetDrop::kAssetPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery |
+                        ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
               : nullptr;
     if (payload)
     {
@@ -402,20 +714,25 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
     // Accepted every frame it hovers (not only on release), so the object it
     // would land on is shown; the drop itself is the delivery.
     const ImGuiPayload* payload =
-        hit ? ImGui::AcceptDragDropPayload(assetDrop::kAssetPayload,
-                                           ImGuiDragDropFlags_AcceptBeforeDelivery |
-                                               ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
+        hit ? ImGui::AcceptDragDropPayload(
+                  assetDrop::kAssetPayload,
+                  ImGuiDragDropFlags_AcceptBeforeDelivery |
+                      ImGuiDragDropFlags_AcceptNoDrawDefaultRect)
             : nullptr;
     if (payload)
     {
-      ImGui::PushClipRect(view.origin, ImVec2(view.origin.x + view.size.x, view.origin.y + view.size.y), true);
+      ImGui::PushClipRect(
+          view.origin,
+          ImVec2(view.origin.x + view.size.x, view.origin.y + view.size.y),
+          true);
       drawDropTarget(context, view, *hit);
       ImGui::PopClipRect();
     }
     if (payload && payload->IsDelivery())
       if (const std::string material = assetDrop::materialFor(*context.assets, *dragged); !material.empty())
       {
-        assetDrop::setSlot(hit->entity, hit->section, material, context.history);
+        assetDrop::setSlot(
+            hit->entity, hit->section, material, context.history);
         context.selection = hit->entity;
         context.selectedAsset = {};
       }
@@ -435,7 +752,8 @@ void ViewportPanel::drawDropTarget(const EditorContext& context, const View& vie
   if (hit.entity.hasComponent<sfs::MeshRendererComponent>())
   {
     const std::vector<sfs::MeshSection> slots =
-        context.render->meshes().sections(hit.entity.getComponent<sfs::MeshRendererComponent>().mesh);
+        context.render->meshes().sections(
+            hit.entity.getComponent<sfs::MeshRendererComponent>().mesh);
     if (slots.size() > 1 && hit.section < slots.size())
       text += " : " + (slots[hit.section].name.empty() ? "Material " + std::to_string(hit.section + 1)
                                                        : slots[hit.section].name);
@@ -480,8 +798,9 @@ void ViewportPanel::navigate(EditorContext& context, float viewportHeight)
 
 void ViewportPanel::drawSelectionOutline(const EditorContext& context, const View& view) const
 {
-  if (context.hasSelection())
-    drawOutline(context, view, context.selection, kSelectionColor, 1.5f);
+  // Everything selected; the one selected last (the gizmo's) bolder.
+  for (const sfs::Entity& entity : context.selected())
+    drawOutline(context, view, entity, kSelectionColor, entity == context.selection ? 1.5f : 1.0f);
 }
 
 void ViewportPanel::drawOutline(const EditorContext& context,
@@ -524,8 +843,10 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
 
     // Where the renderer puts it: the offset turns and scales with the entity.
     const auto& light = entity.getComponent<sfs::PointLight3DComponent>();
-    const std::optional<ImVec2> at = toScreen(
-        view, glm::vec3(sfs::hierarchy::worldMatrix(entity) * glm::vec4(light.offset, 1.0f)));
+    const std::optional<ImVec2> at =
+        toScreen(view,
+                 glm::vec3(sfs::hierarchy::worldMatrix(entity) *
+                           glm::vec4(light.offset, 1.0f)));
     if (!at)
       continue;
 
@@ -535,10 +856,11 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
     {
       const float angle = static_cast<float>(i) * 0.785398f;
       const ImVec2 direction{std::cos(angle), std::sin(angle)};
-      drawList->AddLine(ImVec2(at->x + direction.x * 8.0f, at->y + direction.y * 8.0f),
-                        ImVec2(at->x + direction.x * 12.0f, at->y + direction.y * 12.0f),
-                        kLightColor,
-                        1.5f);
+      drawList->AddLine(
+          ImVec2(at->x + direction.x * 8.0f, at->y + direction.y * 8.0f),
+          ImVec2(at->x + direction.x * 12.0f, at->y + direction.y * 12.0f),
+          kLightColor,
+          1.5f);
     }
   }
 }
@@ -558,8 +880,8 @@ void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& vi
 
     // The camera's view, as the game would set it up.
     sfs::Camera3D camera;
-    entity.getComponent<sfs::Camera3DComponent>().applyTo(camera,
-                                                          sfs::hierarchy::worldMatrix(entity));
+    entity.getComponent<sfs::Camera3DComponent>().applyTo(
+        camera, sfs::hierarchy::worldMatrix(entity));
     const glm::vec3 eye = camera.position();
     const glm::vec3 forward = camera.viewDirection();
     const glm::vec3 right = camera.orientation() * glm::vec3(0.0f, -1.0f, 0.0f);
@@ -574,10 +896,11 @@ void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& vi
                      : std::tan(camera.fieldOfView * 0.5f) * depth;
     const float halfWidth = halfHeight * aspect;
     const glm::vec3 centre = eye + forward * depth;
-    const std::array<glm::vec3, 4> far{centre + right * halfWidth + up * halfHeight,
-                                       centre - right * halfWidth + up * halfHeight,
-                                       centre - right * halfWidth - up * halfHeight,
-                                       centre + right * halfWidth - up * halfHeight};
+    const std::array<glm::vec3, 4> far{
+        centre + right * halfWidth + up * halfHeight,
+        centre - right * halfWidth + up * halfHeight,
+        centre - right * halfWidth - up * halfHeight,
+        centre + right * halfWidth - up * halfHeight};
     const std::array<glm::vec3, 4> near =
         orthographic ? std::array<glm::vec3, 4>{far[0] - forward * depth,
                                                 far[1] - forward * depth,
@@ -630,9 +953,14 @@ void ViewportPanel::drawColliders(const EditorContext& context, const View& view
     if (from && to)
       drawList->AddLine(*from, *to, color, 1.5f);
   };
-  // A circle (or the arc from `start` to `end` turns) in the plane of axes u, v.
-  const auto circle = [&](const glm::vec3& centre, const glm::vec3& u, const glm::vec3& v,
-                          float radius, float start = 0.0f, float end = 1.0f)
+  // A circle (or the arc from `start` to `end` turns) in the plane of axes u,
+  // v.
+  const auto circle = [&](const glm::vec3& centre,
+                          const glm::vec3& u,
+                          const glm::vec3& v,
+                          float radius,
+                          float start = 0.0f,
+                          float end = 1.0f)
   {
     constexpr int kSegments = 32;
     const int segments = std::max(4, static_cast<int>(kSegments * (end - start)));

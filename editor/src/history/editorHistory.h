@@ -39,6 +39,16 @@ public:
     endChange();
   }
 
+  /** Whether a change has begun (beginChange) and not yet ended. */
+  bool changing() const { return m_pendingBefore.has_value(); }
+
+  /**
+   * Fold what's changed since into the last step (its "after"): for edits
+   * that follow on from one just recorded, as one undo step (an Inspector
+   * edit copied to every selected entity).
+   */
+  void amendLast();
+
   /** Counts edits, undos and redos: unchanged means the scene is as it was. */
   uint64_t revision() const { return m_revision; }
 

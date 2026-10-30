@@ -250,6 +250,20 @@ std::vector<MeshSection> MeshLibrary::sections(MeshHandle mesh) const
   return it->second.sections;
 }
 
+std::span<const glm::vec3> MeshLibrary::positions(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end() ? std::span<const glm::vec3>(it->second.positions)
+                              : std::span<const glm::vec3>();
+}
+
+std::span<const uint32_t> MeshLibrary::indices(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end() ? std::span<const uint32_t>(it->second.indices)
+                              : std::span<const uint32_t>();
+}
+
 std::size_t MeshLibrary::sectionCount(MeshHandle mesh) const
 {
   const auto it = m_meshes.find(mesh.id);

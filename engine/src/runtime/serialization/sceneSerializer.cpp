@@ -230,9 +230,11 @@ bool fieldFromJson(const reflect::FieldInfo& field,
       if (!mesh.valid() && meshes)
       {
         // Keep the name (a stand-in) so saving doesn't lose it; the mesh is
-        // usually one a game module provides, before the module is built.
-        LOG_ERROR("Loading field '" + field.name + "': no mesh named '" + name +
-                  "'");
+        // usually one a game module provides, before the module is built
+        // (then it's expected, and not an error).
+        if (!meshes->missingExpected())
+          LOG_ERROR("Loading field '" + field.name + "': no mesh named '" +
+                    name + "'");
         mesh = meshes->missing(name);
       }
     }
@@ -266,6 +268,13 @@ json renderToJson(const RenderSystem3D& render)
         {"softness", cleanFloat(shadows.softness)},
         {"pointLights", shadows.pointLights},
         {"pointResolution", shadows.pointResolution}}},
+      {"wind",
+       {{"direction", cleanFloat(render.windSettings().direction)},
+        {"strength", cleanFloat(render.windSettings().strength)},
+        {"gustiness", cleanFloat(render.windSettings().gustiness)}}},
+      {"haze",
+       {{"strength", cleanFloat(render.hazeSettings().strength)},
+        {"distance", cleanFloat(render.hazeSettings().distance)}}},
       {"camera",
        {{"target", toJson(camera.target)},
         {"yaw", cleanFloat(camera.yaw)},
@@ -304,6 +313,23 @@ void renderFromJson(const json& value, RenderSystem3D& render)
     shadows.pointResolution =
         valueOr(in, "pointResolution", shadows.pointResolution);
     render.setShadowSettings(shadows);
+  }
+
+  if (const json& in = value.value("wind", json::object()); in.is_object())
+  {
+    WindSettings3D wind = render.windSettings();
+    wind.direction = valueOr(in, "direction", wind.direction);
+    wind.strength = valueOr(in, "strength", wind.strength);
+    wind.gustiness = valueOr(in, "gustiness", wind.gustiness);
+    render.setWindSettings(wind);
+  }
+
+  if (const json& in = value.value("haze", json::object()); in.is_object())
+  {
+    HazeSettings3D haze = render.hazeSettings();
+    haze.strength = valueOr(in, "strength", haze.strength);
+    haze.distance = valueOr(in, "distance", haze.distance);
+    render.setHazeSettings(haze);
   }
 
   if (const json& in = value.value("camera", json::object()); in.is_object())

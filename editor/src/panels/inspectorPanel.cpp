@@ -44,6 +44,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -286,13 +287,106 @@ bool assetRefCombo(const char* label,
   return picked;
 }
 
+// What a material slot's icons do with its material asset: edit it (a graph
+// in the node editor; a standard one in the Inspector) and find it in the
+// Assets panel.
+struct MaterialActions
+{
+  std::function<void(const sfs::AssetRecord& material)> edit;
+  std::function<void(const sfs::AssetRecord& material)> reveal;
+};
+
+// The material asset a slot's material name ("asset:<id>") is, if it is one.
+const sfs::AssetRecord* materialAsset(const std::string& name,
+                                      const sfs::AssetDatabase* assets)
+{
+  const std::optional<sfs::AssetMeshName> asset =
+      assets ? sfs::parseAssetMeshName(name) : std::nullopt;
+  const sfs::AssetRecord* record =
+      asset && asset->part.empty() ? assets->find(asset->model) : nullptr;
+  return record && record->kind == sfs::AssetKind::Material ? record : nullptr;
+}
+
+// A material picker: none ("emptyLabel"), or one of the project's materials.
+// Returns true with `name` changed when one is picked.
+bool materialCombo(const char* label,
+                   const std::string& emptyLabel,
+                   std::string& name,
+                   sfs::MeshLibrary& meshes)
+{
+  const std::string preview = name.empty() ? emptyLabel : meshes.label(name);
+  bool picked = false;
+  if (ImGui::BeginCombo(label, preview.c_str()))
+  {
+    if (ImGui::Selectable(emptyLabel.c_str(), name.empty()))
+    {
+      name.clear();
+      picked = true;
+    }
+    for (const auto& [option, optionLabel] : meshes.availableMaterials())
+    {
+      ImGui::PushID(option.c_str());
+      if (ImGui::Selectable(optionLabel.c_str(), option == name))
+      {
+        name = option;
+        picked = true;
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndCombo();
+  }
+  return picked;
+}
+
+// A [[sfs::material]] string: pick one of the project's material assets (or
+// none), with icons to edit and find it, as a material slot has.
+void materialField(const FieldInfo& field,
+                   void* object,
+                   sfs::MeshLibrary* meshes,
+                   EditorHistory* history,
+                   const MaterialActions* actions)
+{
+  std::string& material = field.in<std::string>(object);
+  const sfs::AssetRecord* picked =
+      actions ? materialAsset(material, sfs::scriptableObjects().catalogue())
+              : nullptr;
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float iconsWidth =
+      picked ? 2.0f * (ImGui::GetFrameHeight() + style.ItemInnerSpacing.x)
+             : 0.0f;
+  widgets::propertyLabel(field.displayName.c_str());
+  ImGui::SetNextItemWidth(std::max(
+      ImGui::GetContentRegionAvail().x - iconsWidth, ImGui::GetFrameHeight()));
+  std::string chosen = material;
+  if (meshes && materialCombo("##value", "None", chosen, *meshes))
+  {
+    if (history)
+      history->change([&] { material = chosen; });
+    else
+      material = chosen;
+  }
+  if (picked)
+  {
+    const std::string file = picked->path.filename().string();
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    if (widgets::editButton("edit"))
+      actions->edit(*picked);
+    ImGui::SetItemTooltip("Edit %s", file.c_str());
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    if (widgets::targetButton("reveal"))
+      actions->reveal(*picked);
+    ImGui::SetItemTooltip("Show %s in the Assets panel", file.c_str());
+  }
+}
+
 // One field, with the widget its kind and attributes call for. Every edit is
 // recorded for undo.
 void fieldWidget(const FieldInfo& field,
                  void* object,
                  sfs::MeshLibrary* meshes,
                  EditorHistory* history,
-                 const ScriptActions* scriptActions = nullptr)
+                 const ScriptActions* scriptActions = nullptr,
+                 const MaterialActions* materialActions = nullptr)
 {
   const char* label = field.displayName.c_str();
   const auto& attributes = field.attributes;
@@ -344,6 +438,8 @@ void fieldWidget(const FieldInfo& field,
   case FieldKind::String:
     if (attributes.script)
       scriptField(field, object, history, scriptActions);
+    else if (attributes.material)
+      materialField(field, object, meshes, history, materialActions);
     else if (attributes.texture)
       textureField(field, object, meshes, history);
     else
@@ -416,12 +512,111 @@ void fieldWidget(const FieldInfo& field,
   }
 }
 
+// A field's value as JSON (a mesh by its handle's id), to compare and copy
+// between objects of a type.
+nlohmann::json fieldValue(const FieldInfo& field, void* object)
+{
+  using Kind = FieldKind;
+  switch (field.kind)
+  {
+  case Kind::Bool:
+    return field.in<bool>(object);
+  case Kind::Int:
+    return field.in<int>(object);
+  case Kind::UInt:
+    return field.in<uint32_t>(object);
+  case Kind::Float:
+    return field.in<float>(object);
+  case Kind::String:
+    return field.in<std::string>(object);
+  case Kind::Vec2:
+  {
+    const glm::vec2& v = field.in<glm::vec2>(object);
+    return {v.x, v.y};
+  }
+  case Kind::Vec3:
+  {
+    const glm::vec3& v = field.in<glm::vec3>(object);
+    return {v.x, v.y, v.z};
+  }
+  case Kind::Vec4:
+  {
+    const glm::vec4& v = field.in<glm::vec4>(object);
+    return {v.x, v.y, v.z, v.w};
+  }
+  case Kind::Quat:
+  {
+    const glm::quat& q = field.in<glm::quat>(object);
+    return {q.w, q.x, q.y, q.z};
+  }
+  case Kind::Mesh:
+    return field.in<sfs::MeshHandle>(object).id;
+  case Kind::Json:
+    return field.in<nlohmann::json>(object);
+  case Kind::StringList:
+    return field.in<std::vector<std::string>>(object);
+  case Kind::AssetRef:
+    return field.in<sfs::AssetRefBase>(object).asset;
+  }
+  return nullptr;
+}
+
+// Copy a field from one object of a type to another.
+void copyField(const FieldInfo& field, void* from, void* to)
+{
+  using Kind = FieldKind;
+  switch (field.kind)
+  {
+  case Kind::Bool:
+    field.in<bool>(to) = field.in<bool>(from);
+    break;
+  case Kind::Int:
+    field.in<int>(to) = field.in<int>(from);
+    break;
+  case Kind::UInt:
+    field.in<uint32_t>(to) = field.in<uint32_t>(from);
+    break;
+  case Kind::Float:
+    field.in<float>(to) = field.in<float>(from);
+    break;
+  case Kind::String:
+    field.in<std::string>(to) = field.in<std::string>(from);
+    break;
+  case Kind::Vec2:
+    field.in<glm::vec2>(to) = field.in<glm::vec2>(from);
+    break;
+  case Kind::Vec3:
+    field.in<glm::vec3>(to) = field.in<glm::vec3>(from);
+    break;
+  case Kind::Vec4:
+    field.in<glm::vec4>(to) = field.in<glm::vec4>(from);
+    break;
+  case Kind::Quat:
+    field.in<glm::quat>(to) = field.in<glm::quat>(from);
+    break;
+  case Kind::Mesh:
+    field.in<sfs::MeshHandle>(to) = field.in<sfs::MeshHandle>(from);
+    break;
+  case Kind::Json:
+    field.in<nlohmann::json>(to) = field.in<nlohmann::json>(from);
+    break;
+  case Kind::StringList:
+    field.in<std::vector<std::string>>(to) =
+        field.in<std::vector<std::string>>(from);
+    break;
+  case Kind::AssetRef:
+    field.in<sfs::AssetRefBase>(to) = field.in<sfs::AssetRefBase>(from);
+    break;
+  }
+}
+
 // The attached script's own fields: a game object script's reflected fields,
 // with this entity's values (kept in ScriptComponent::fields). Edited through a
 // scratch instance of the script, so its widgets are the components' ones.
 void scriptFields(sfs::ScriptComponent& component,
                   sfs::MeshLibrary* meshes,
-                  EditorHistory* history)
+                  EditorHistory* history,
+                  std::span<sfs::ScriptComponent* const> others = {})
 {
   if (component.script.empty())
     return;
@@ -441,12 +636,39 @@ void scriptFields(sfs::ScriptComponent& component,
   const sfs::SceneSerializer serializer(sfs::reflect::types(), meshes);
   serializer.loadObject(*type, object.get(), component.fields);
   nlohmann::json current = serializer.saveObject(*type, object.get());
+  // Several selected (all running it): theirs, the same way.
+  std::vector<std::unique_ptr<sfs::GameObject>> otherObjects;
+  std::vector<nlohmann::json> otherValues;
+  for (const sfs::ScriptComponent* other : others)
+  {
+    otherObjects.push_back(script->createObject());
+    serializer.loadObject(*type, otherObjects.back().get(), other->fields);
+    otherValues.push_back(serializer.saveObject(*type, otherObjects.back().get()));
+  }
 
   ImGui::SeparatorText(type->displayName.c_str());
   for (const FieldInfo& field : type->fields)
   {
     ImGui::PushID(field.name.c_str());
+    // Dimmed while theirs differ (see componentSection()).
+    const bool mixed = std::any_of(otherValues.begin(),
+                                   otherValues.end(),
+                                   [&](const nlohmann::json& values)
+                                   {
+                                     return values.value(field.name, nlohmann::json()) !=
+                                            current.value(field.name, nlohmann::json());
+                                   });
+    if (mixed)
+      ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.55f);
+    ImGui::BeginGroup();
     fieldWidget(field, object.get(), meshes, nullptr);
+    ImGui::EndGroup();
+    if (mixed)
+    {
+      ImGui::PopStyleVar();
+      ImGui::SetItemTooltip("Differs between the selected objects: "
+                            "editing it sets it on them all");
+    }
 
     // Bracketed like widgets::undoable: a drag is one undo step.
     const nlohmann::json edited = serializer.saveObject(*type, object.get());
@@ -457,6 +679,13 @@ void scriptFields(sfs::ScriptComponent& component,
     {
       component.fields = edited;
       current = edited;
+      // The same value on every other one running it.
+      for (std::size_t i = 0; i < others.size(); ++i)
+      {
+        copyField(field, object.get(), otherObjects[i].get());
+        others[i]->fields = serializer.saveObject(*type, otherObjects[i].get());
+        otherValues[i] = others[i]->fields;
+      }
     }
     if (history &&
         (ImGui::IsItemDeactivated() || (changed && !ImGui::IsItemActive())))
@@ -465,60 +694,9 @@ void scriptFields(sfs::ScriptComponent& component,
   }
 }
 
-// A material picker: none ("emptyLabel"), or one of the project's materials.
-// Returns true with `name` changed when one is picked.
-bool materialCombo(const char* label,
-                   const std::string& emptyLabel,
-                   std::string& name,
-                   sfs::MeshLibrary& meshes)
-{
-  const std::string preview = name.empty() ? emptyLabel : meshes.label(name);
-  bool picked = false;
-  if (ImGui::BeginCombo(label, preview.c_str()))
-  {
-    if (ImGui::Selectable(emptyLabel.c_str(), name.empty()))
-    {
-      name.clear();
-      picked = true;
-    }
-    for (const auto& [option, optionLabel] : meshes.availableMaterials())
-    {
-      ImGui::PushID(option.c_str());
-      if (ImGui::Selectable(optionLabel.c_str(), option == name))
-      {
-        name = option;
-        picked = true;
-      }
-      ImGui::PopID();
-    }
-    ImGui::EndCombo();
-  }
-  return picked;
-}
-
 // A [[sfs::materials]] list: a material picker for each section (material
 // slot) of the component's mesh, and Extract to turn a mesh's own material
 // into a material asset that can be edited.
-// What a material slot's icons do with its material asset: edit it (a graph
-// in the node editor; a standard one in the Inspector) and find it in the
-// Assets panel.
-struct MaterialActions
-{
-  std::function<void(const sfs::AssetRecord& material)> edit;
-  std::function<void(const sfs::AssetRecord& material)> reveal;
-};
-
-// The material asset a slot's material name ("asset:<id>") is, if it is one.
-const sfs::AssetRecord* materialAsset(const std::string& name,
-                                      const sfs::AssetDatabase* assets)
-{
-  const std::optional<sfs::AssetMeshName> asset =
-      assets ? sfs::parseAssetMeshName(name) : std::nullopt;
-  const sfs::AssetRecord* record =
-      asset && asset->part.empty() ? assets->find(asset->model) : nullptr;
-  return record && record->kind == sfs::AssetKind::Material ? record : nullptr;
-}
-
 void materialsField(const TypeInfo& type,
                     const FieldInfo& field,
                     void* object,
@@ -640,6 +818,23 @@ void materialsField(const TypeInfo& type,
     }
     ImGui::PopID();
   }
+}
+
+// Whether a field's [[sfs::showIf(field)]] switch is on (or it has none).
+bool fieldShown(const TypeInfo& type, void* object, const FieldInfo& field)
+{
+  std::string_view name = field.attributes.showIf;
+  if (name.empty())
+    return true;
+  const bool whenOff = name.starts_with('!'); // "!field": while it's off
+  if (whenOff)
+    name.remove_prefix(1);
+  const auto other =
+      std::find_if(type.fields.begin(),
+                   type.fields.end(),
+                   [&](const FieldInfo& f) { return f.name == name; });
+  return other == type.fields.end() || other->kind != FieldKind::Bool ||
+         other->in<bool>(object) != whenOff;
 }
 
 // Whether any of a component's materials can glow (see sfs::canGlow): those
@@ -765,6 +960,9 @@ void fitCollider(const TypeInfo& type,
 // A collapsible section for one component, with Remove in its context menu.
 // `overridden`: the fields a prefab instance overrides here (marked, with
 // Revert to Prefab on right-click, which calls `revert`); null if none.
+// `entity`'s component of a type, with every field it shows; with `others`
+// (several selected), edits to a field go to all of them, and fields whose
+// values differ between them are dimmed.
 void componentSection(
     const TypeInfo& type,
     const sfs::Entity& entity,
@@ -774,7 +972,8 @@ void componentSection(
     const std::set<std::string>* overridden = nullptr,
     const std::function<void(const std::string& field)>& revert = {},
     const ScriptActions* scriptActions = nullptr,
-    const MaterialActions* materialActions = nullptr)
+    const MaterialActions* materialActions = nullptr,
+    std::span<const sfs::Entity> others = {})
 {
   ImGui::PushID(type.name.c_str());
   const bool expanded = ImGui::CollapsingHeader(
@@ -788,7 +987,13 @@ void componentSection(
   }
 
   if (remove)
-    history->change([&] { type.component.remove(entity); });
+    history->change(
+        [&]
+        {
+          type.component.remove(entity);
+          for (const sfs::Entity& other : others)
+            type.component.remove(other);
+        });
   else if (expanded)
   {
     void* object = type.component.get(entity);
@@ -807,9 +1012,24 @@ void componentSection(
     {
       if (field.attributes.emissionLight && !glows)
         continue; // nothing of it glows: no light to set
+      if (!fieldShown(type, object, field))
+        continue; // its switch is off
       // Each field in its own ID scope: a label may repeat the header's (the
       // Script component's "Script" field) and must not share its ID.
       ImGui::PushID(field.name.c_str());
+      // Several selected: what it was, and whether theirs differ.
+      nlohmann::json before;
+      bool mixed = false;
+      if (!others.empty())
+      {
+        before = fieldValue(field, object);
+        for (const sfs::Entity& other : others)
+          mixed = mixed ||
+                  fieldValue(field, type.component.get(other)) != before;
+      }
+      if (mixed)
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            ImGui::GetStyle().Alpha * 0.55f);
       ImGui::BeginGroup();
       if (field.attributes.materials && field.kind == FieldKind::StringList)
         materialsField(type,
@@ -820,8 +1040,24 @@ void componentSection(
                        history,
                        materialActions);
       else
-        fieldWidget(field, object, meshes, history, scriptActions);
+        fieldWidget(
+            field, object, meshes, history, scriptActions, materialActions);
       ImGui::EndGroup();
+      if (mixed)
+      {
+        ImGui::PopStyleVar();
+        ImGui::SetItemTooltip("Differs between the selected objects: "
+                              "editing it sets it on them all");
+      }
+      // Edited: the same on every selected object, in the same undo step
+      // (folded into one just recorded, if the edit made its own).
+      if (!others.empty() && fieldValue(field, object) != before)
+      {
+        for (const sfs::Entity& other : others)
+          copyField(field, object, type.component.get(other));
+        if (history && !history->changing())
+          history->amendLast();
+      }
       if (overridden && overridden->contains(field.name))
       {
         // A sage bar at the window's edge: this copy differs from its prefab.
@@ -846,10 +1082,31 @@ void componentSection(
       ImGui::TextDisabled("No editable fields");
     if (isCollider(type) && !meshBounds(entity, scene).empty() &&
         ImGui::Button("Fit to Mesh"))
-      history->change([&] { fitCollider(type, entity, scene); });
+      history->change(
+          [&]
+          {
+            fitCollider(type, entity, scene);
+            for (const sfs::Entity& other : others)
+              fitCollider(type, other, scene);
+          });
     if (type.name == "ScriptComponent")
-      scriptFields(
-          *static_cast<sfs::ScriptComponent*>(object), meshes, history);
+    {
+      // Several selected: their fields too, if they all run the same script.
+      auto& script = *static_cast<sfs::ScriptComponent*>(object);
+      std::vector<sfs::ScriptComponent*> otherScripts;
+      for (const sfs::Entity& other : others)
+        otherScripts.push_back(
+            static_cast<sfs::ScriptComponent*>(type.component.get(other)));
+      if (std::all_of(otherScripts.begin(),
+                      otherScripts.end(),
+                      [&](const sfs::ScriptComponent* other)
+                      { return other->script == script.script; }))
+        scriptFields(script, meshes, history, otherScripts);
+      else
+        ImGui::TextDisabled(
+            "They run different scripts: select ones running the same "
+            "script to edit its fields together");
+    }
   }
   ImGui::PopID();
 }
@@ -867,7 +1124,8 @@ std::string lowercase(std::string text)
 void addComponentButton(const sfs::Entity& entity,
                         const MeshScene& scene,
                         EditorHistory* history,
-                        std::string& filter)
+                        std::string& filter,
+                        std::span<const sfs::Entity> others = {})
 {
   if (ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f)))
   {
@@ -886,7 +1144,12 @@ void addComponentButton(const sfs::Entity& entity,
   std::vector<const TypeInfo*> candidates;
   for (const TypeInfo& type : sfs::reflect::types().types())
     if (type.kind == sfs::reflect::TypeKind::Component &&
-        type.name != kNameType && !type.component.has(entity) &&
+        type.name != kNameType &&
+        (!type.component.has(entity) ||
+         std::any_of(others.begin(),
+                     others.end(),
+                     [&](const sfs::Entity& other)
+                     { return !type.component.has(other); })) &&
         lowercase(type.displayName).find(search) != std::string::npos)
       candidates.push_back(&type);
   std::stable_sort(candidates.begin(),
@@ -914,8 +1177,18 @@ void addComponentButton(const sfs::Entity& entity,
       history->change(
           [&]
           {
-            type->component.add(entity);
-            fitCollider(*type, entity, scene);
+            if (!type->component.has(entity))
+            {
+              type->component.add(entity);
+              fitCollider(*type, entity, scene);
+            }
+            // To every selected object that hasn't one.
+            for (const sfs::Entity& other : others)
+              if (!type->component.has(other))
+              {
+                type->component.add(other);
+                fitCollider(*type, other, scene);
+              }
           });
   }
   if (candidates.empty())
@@ -1211,18 +1484,31 @@ void InspectorPanel::drawContents(EditorContext& context)
 
   EditorHistory* history = context.history;
 
-  if (!entity.hasComponent<sfs::NameComponent>())
-    sfs::Entity(entity).addComponent<sfs::NameComponent>();
-  widgets::undoable(history,
-                    entity.getComponent<sfs::NameComponent>().name,
-                    [](std::string& name)
-                    {
-                      widgets::propertyLabel("Name");
-                      return widgets::inputText("##name", name);
-                    });
-  ImGui::Separator();
+  // Several selected: what they share, edited on them all at once.
+  const std::vector<sfs::Entity> selected = context.selected();
+  const std::span<const sfs::Entity> others =
+      std::span<const sfs::Entity>(selected).subspan(1);
+  if (!others.empty())
+  {
+    ImGui::Text("%zu objects selected", selected.size());
+    ImGui::TextDisabled("The components they all have: edits go to every one");
+    ImGui::Separator();
+  }
+  else
+  {
+    if (!entity.hasComponent<sfs::NameComponent>())
+      sfs::Entity(entity).addComponent<sfs::NameComponent>();
+    widgets::undoable(history,
+                      entity.getComponent<sfs::NameComponent>().name,
+                      [](std::string& name)
+                      {
+                        widgets::propertyLabel("Name");
+                        return widgets::inputText("##name", name);
+                      });
+    ImGui::Separator();
 
-  drawPrefabHeader(context, entity);
+    drawPrefabHeader(context, entity);
+  }
 
   // A script's icons: edit it in the code panel, or find it in Assets.
   const auto withScriptFile = [&](const std::string& script,
@@ -1273,7 +1559,11 @@ void InspectorPanel::drawContents(EditorContext& context)
   const auto overrides = prefabs::overridesOf(context, entity);
   for (const TypeInfo& type : sfs::reflect::types().types())
     if (type.kind == sfs::reflect::TypeKind::Component &&
-        type.name != kNameType && type.component.has(entity))
+        type.name != kNameType && type.component.has(entity) &&
+        std::all_of(others.begin(),
+                    others.end(),
+                    [&](const sfs::Entity& other)
+                    { return type.component.has(other); }))
     {
       const auto it = overrides.find(type.name);
       componentSection(
@@ -1287,11 +1577,12 @@ void InspectorPanel::drawContents(EditorContext& context)
             m_pendingRevert = {type.name, field};
           },
           &scriptActions,
-          &materialActions);
+          &materialActions,
+          others);
     }
 
   ImGui::Spacing();
-  addComponentButton(entity, scene, history, m_componentFilter);
+  addComponentButton(entity, scene, history, m_componentFilter, others);
 
   // Prefab actions rebuild entities: after drawing, not mid-way.
   if (m_pendingRevert)

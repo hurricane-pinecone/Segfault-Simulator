@@ -187,7 +187,7 @@ and its materials draw magenta. See
 | Category | Nodes |
 | --- | --- |
 | Output | Material Output |
-| Input | Colour, Number, Texture, Normal Map, Triplanar Texture, Triplanar Normal Map, UV, Vertex Colour, Position, Normal, View Direction, Time |
+| Input | Colour, Number, Texture, Normal Map, Triplanar Texture, Triplanar Normal Map, UV, Vertex Colour, Position, Normal, View Direction, Time, Grass |
 | Math | Add, Subtract, Multiply, Divide, Power, Minimum, Maximum, Mix, Clamp, Saturate, One Minus, Negate, Absolute, Fraction, Floor, Posterize, Square Root, Sine, Cosine, Step, Smoothstep, Remap |
 | Vector | Split, Combine, Dot Product, Cross Product, Length, Distance, Normalize |
 | UV | Tiling and Offset |

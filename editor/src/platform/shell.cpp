@@ -12,6 +12,7 @@
   #include <SDL_misc.h>
 #endif
 
+#include <filesystem>
 #include <string>
 
 namespace shell
@@ -30,6 +31,17 @@ bool succeeded(HINSTANCE result) { return reinterpret_cast<INT_PTR>(result) > 32
 void openExternally(const std::filesystem::path& path)
 {
   const std::wstring target = std::filesystem::path(path).make_preferred().wstring();
+  // A folder in Explorer, by name: "open" on a path with no extension runs a
+  // program beside it of that name first (builds\windows\CozyFarm opened an
+  // old builds\windows\CozyFarm.exe, not the folder).
+  std::error_code error;
+  if (std::filesystem::is_directory(path, error))
+  {
+    const std::wstring arguments = L"\"" + target + L"\"";
+    if (!succeeded(ShellExecuteW(nullptr, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL)))
+      LOG_ERROR("Can't open " + path.string() + " in Explorer");
+    return;
+  }
   if (!succeeded(ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL)))
     LOG_ERROR("Can't open " + path.string() + " (no app opens it?)");
 }

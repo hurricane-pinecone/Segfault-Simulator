@@ -79,6 +79,8 @@ protected:
   /** Sets up rendering and the built-in meshes; overrides must call it first.
    */
   void onInit() override;
+  // Its UI (UiModule) takes clicks on it first.
+  void filterInput(Input& input) override;
 
   /**
    * Swaps in models loaded in the background, and delivers the frame's

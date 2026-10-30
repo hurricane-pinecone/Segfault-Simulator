@@ -124,7 +124,9 @@ drawPlane(Harness& harness,
           float time,
           const std::function<void(FrameParams3D&)>& changeFrame = {},
           const MeshInstance& instance = {},
-          std::span<const MeshBatch3D> more = {})
+          std::span<const MeshBatch3D> more = {},
+          std::span<const GrassBatch3D> grass = {},
+          std::span<const UiQuad> ui = {})
 {
   WebGpuContext& context = harness.context;
   const WGPUCommandEncoder encoder =
@@ -151,6 +153,11 @@ drawPlane(Harness& harness,
   harness.renderer.drawMesh(batch);
   for (const MeshBatch3D& other : more)
     harness.renderer.drawMesh(other);
+  for (const GrassBatch3D& field : grass)
+    harness.renderer.drawGrass(field);
+  if (!ui.empty())
+    harness.renderer.drawUi(
+        UiDrawList{std::vector<UiQuad>(ui.begin(), ui.end())});
   harness.renderer.endFrame();
 
   // Rows padded to 256 bytes, as copies need.
@@ -817,6 +824,505 @@ int main()
     const int speck = highlightPixels(0.0f), panel = highlightPixels(0.4f);
     CHECK(panel > speck * 4 && panel > 40);
     harness.renderer.destroyMaterial(material);
+    CHECK(reportErrors());
+  }
+
+  TEST("grass should stand up, sway in the wind, lie flat where trampled, and "
+       "stop at its distance")
+  {
+    // A 2 x 2 lawn seen from the side, low down, against a black sky.
+    const MeshData lawn = meshes::plane({2.0f, 2.0f});
+    std::vector<glm::vec3> positions;
+    for (const MeshVertex& vertex : lawn.vertices)
+      positions.push_back(vertex.position);
+    const GrassGround ground =
+        GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
+    const GrassHandle grass = harness.renderer.createGrass(ground);
+    CHECK(grass.valid());
+    const MeshHandle plane = harness.renderer.createMesh(lawn);
+    MeshMaterial green;
+    green.baseColor = {0.3f, 0.7f, 0.2f, 1.0f};
+    const MaterialHandle material = harness.renderer.createMaterial(green);
+
+    glm::mat4 viewProjection(1.0f);
+    // `box`: the view's left, right, bottom and top.
+    const auto draw = [&](float wind,
+                          float drawDistance,
+                          MaterialHandle look,
+                          glm::vec4 box = glm::vec4(-1.2f, 1.2f, -0.15f, 0.55f))
+    {
+      const GrassBatch3D batch{grass,
+                               look,
+                               plane,
+                               glm::mat4(1.0f),
+                               {.density = 300.0f, .height = 0.3f},
+                               0.0f,
+                               drawDistance};
+      return drawPlane(
+          harness,
+          plane,
+          material,
+          2.0f,
+          [&](FrameParams3D& frame)
+          {
+            frame.cameraPosition = {0.0f, -5.0f, 0.2f};
+            frame.cameraForward = {0.0f, 1.0f, 0.0f};
+            frame.view = glm::lookAt(frame.cameraPosition,
+                                     glm::vec3(0.0f, 0.0f, 0.2f),
+                                     glm::vec3(0.0f, 0.0f, 1.0f));
+            frame.projection =
+                glm::orthoRH_ZO(box.x, box.y, box.z, box.w, 0.1f, 10.0f);
+            frame.viewProjection = frame.projection * frame.view;
+            viewProjection = frame.viewProjection;
+            frame.lighting.skyColor = glm::vec3(0.0f);
+            frame.wind = {
+                .direction = 0.0f, .strength = wind, .gustiness = 0.0f};
+            frame.bloom.enabled = false;
+          },
+          {},
+          {},
+          {&batch, 1});
+    };
+    // Grass pixels standing above a height (by default, a blade's flattened
+    // height), in the last view drawn.
+    const auto standing =
+        [&](const std::vector<uint8_t>& pixels, float above = 0.1f)
+    {
+      const glm::vec4 clip =
+          viewProjection * glm::vec4(0.0f, 0.0f, above, 1.0f);
+      const int rowAt = int((0.5f - clip.y / clip.w * 0.5f) * kSize.y);
+      int count = 0;
+      for (int y = 0; y < rowAt; ++y)
+        for (int x = 0; x < kSize.x; ++x)
+          count += pixels[(std::size_t(y) * kSize.x + x) * 4 + 1] > 20;
+      return count;
+    };
+
+    const std::vector<uint8_t> still = draw(0.0f, 40.0f, material);
+    CHECK(!still.empty());
+    if (still.empty())
+      return testing::report("webGpuRenderer3DTests");
+    const int upright = standing(still);
+    CHECK(upright > 200);
+
+    // In a gale: blades lean over, a different picture.
+    const std::vector<uint8_t> windy = draw(1.0f, 40.0f, material);
+    int differing = 0;
+    for (std::size_t i = 0; i < still.size(); i += 4)
+      differing += std::abs(int(still[i + 1]) - int(windy[i + 1])) > 10;
+    CHECK(differing > 100);
+
+    // Trampled flat all over: hardly anything stands.
+    const glm::ivec2 size(8, 8);
+    std::vector<uint8_t> flat(std::size_t(size.x) * size.y * 4);
+    for (std::size_t i = 0; i < flat.size(); i += 4)
+    {
+      flat[i] = 255; // pressed toward +x
+      flat[i + 1] = 128;
+      flat[i + 2] = 255; // all the way down
+      flat[i + 3] = 255;
+    }
+    harness.renderer.updateGrassTrample(
+        grass, GrassTrampleImage{{-1.5f, -1.5f}, {1.5f, 1.5f}, size, flat});
+    const int trampled = standing(draw(0.0f, 40.0f, material));
+    CHECK(trampled < upright / 5);
+
+    // Beyond its draw distance (5 away, drawn to 2): none at all.
+    CHECK(standing(draw(0.0f, 2.0f, material)) == 0);
+    harness.renderer.updateGrassTrample(
+        grass,
+        GrassTrampleImage{{-1.5f, -1.5f},
+                          {1.5f, 1.5f},
+                          {1, 1},
+                          std::vector<uint8_t>{128, 128, 0, 255}});
+    CHECK(standing(draw(0.0f, 40.0f, material)) > upright * 4 / 5);
+
+    // Its maps: mown short on the left half, bare on the right.
+    GrassMaps maps(ground.grid());
+    maps.stamp(GrassMaps::Length,
+               {-1.0f, 0.0f},
+               1.0f,
+               0.2f,
+               GrassMaps::Blend::Toward,
+               1.0f,
+               0.0f);
+    std::vector<uint8_t> shape, data;
+    maps.pixels({0, 0}, maps.grid().size, shape, data);
+    harness.renderer.updateGrassMaps(
+        grass,
+        GrassMapsImage{maps.grid(), {0, 0}, maps.grid().size, shape, data});
+    const int mown = standing(draw(0.0f, 40.0f, material));
+    CHECK(mown < upright * 3 / 4 && mown > upright / 4);
+    maps.fill(GrassMaps::Coverage, 0.0f);
+    maps.pixels({0, 0}, maps.grid().size, shape, data);
+    harness.renderer.updateGrassMaps(
+        grass,
+        GrassMapsImage{maps.grid(), {0, 0}, maps.grid().size, shape, data});
+    CHECK(standing(draw(0.0f, 40.0f, material)) == 0);
+    // Mown short all over: it hardly moves in the gale that bent it long.
+    maps.fill(GrassMaps::Coverage, 1.0f);
+    maps.fill(GrassMaps::Length, 0.35f);
+    maps.pixels({0, 0}, maps.grid().size, shape, data);
+    harness.renderer.updateGrassMaps(
+        grass,
+        GrassMapsImage{maps.grid(), {0, 0}, maps.grid().size, shape, data});
+    // Seen close up (heights -0.02 to 0.18: the camera's 0.2 up), the wind
+    // bends long grass well below its height, but short grass hardly at all.
+    const glm::vec4 close(-0.3f, 0.3f, -0.22f, -0.02f);
+    const int shortStill = standing(draw(0.0f, 40.0f, material, close), 0.08f);
+    const int shortWindy = standing(draw(1.0f, 40.0f, material, close), 0.08f);
+    CHECK(shortStill > 20);
+    CHECK(shortWindy > shortStill * 4 / 5);
+
+    // Unpainted again: all back.
+    harness.renderer.updateGrassMaps(grass, GrassMapsImage{});
+    CHECK(standing(draw(0.0f, 40.0f, material)) > upright * 4 / 5);
+
+    // A node-graph material colours grass too (its pipeline builds).
+    graph::Graph g;
+    const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
+    const graph::NodeId uv = g.add("uv", {});
+    const graph::NodeId split = g.add("split", {});
+    g.connect(uv, 0, split, 0);
+    g.connect(split, 1, out, graph::kBaseColor); // darker up the blade
+    const MaterialHandle graphLook =
+        harness.renderer.createMaterial(graphMaterial(g, AlphaMode::Opaque));
+    CHECK(!draw(0.0f, 40.0f, graphLook).empty());
+
+    harness.renderer.destroyGrass(grass);
+    harness.renderer.destroyMaterial(graphLook);
+    harness.renderer.destroyMaterial(material);
+    CHECK(reportErrors());
+  }
+
+  TEST("grass should tint the ground it covers in its own colour")
+  {
+    // A white 2 x 2 plane seen from above, grass too short to see on it:
+    // green where it covers it (the left half), white where it's bare.
+    const MeshData lawn = meshes::plane({2.0f, 2.0f});
+    std::vector<glm::vec3> positions;
+    for (const MeshVertex& vertex : lawn.vertices)
+      positions.push_back(vertex.position);
+    const GrassGround ground =
+        GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
+    const GrassHandle grass = harness.renderer.createGrass(ground);
+    const MeshHandle plane = harness.renderer.createMesh(lawn);
+    MeshMaterial white;
+    white.baseColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    MeshMaterial green;
+    green.baseColor = {0.1f, 0.8f, 0.1f, 1.0f};
+    const MaterialHandle whiteLook = harness.renderer.createMaterial(white);
+    const MaterialHandle greenLook = harness.renderer.createMaterial(green);
+    GrassMaps maps(ground.grid());
+    for (int y = 0; y < maps.grid().size.y; ++y)
+      for (int x = maps.grid().size.x / 2; x < maps.grid().size.x; ++x)
+        maps.set(GrassMaps::Coverage, x, y, 0.0f);
+    std::vector<uint8_t> shape, data;
+    maps.pixels({0, 0}, maps.grid().size, shape, data);
+    harness.renderer.updateGrassMaps(
+        grass,
+        GrassMapsImage{maps.grid(), {0, 0}, maps.grid().size, shape, data});
+
+    const GrassBatch3D batch{grass,
+                             greenLook,
+                             plane,
+                             glm::mat4(1.0f),
+                             {.density = 50.0f, .height = 0.001f},
+                             0.4f,
+                             40.0f};
+    const std::vector<uint8_t> pixels =
+        drawPlane(harness,
+                  plane,
+                  whiteLook,
+                  0.0f,
+                  [](FrameParams3D& frame) { frame.bloom.enabled = false; },
+                  {},
+                  {},
+                  {&batch, 1});
+    CHECK(!pixels.empty());
+    if (!pixels.empty())
+    {
+      const auto at = [&](int x, int y)
+      { return &pixels[(std::size_t(y) * kSize.x + x) * 4]; };
+      const uint8_t* covered = at(kSize.x / 4, kSize.y / 2);
+      const uint8_t* bare = at(kSize.x * 3 / 4, kSize.y / 2);
+      CHECK(covered[1] > covered[0] + 60);               // green
+      CHECK(std::abs(int(bare[0]) - int(bare[1])) < 12); // white (lit grey)
+    }
+    harness.renderer.destroyGrass(grass);
+    harness.renderer.destroyMaterial(whiteLook);
+    harness.renderer.destroyMaterial(greenLook);
+    CHECK(reportErrors());
+  }
+
+  TEST("a grass material should see its maps' data, on the blades and the "
+       "ground")
+  {
+    // A grey 2 x 2 plane from above, under grass whose material is as bright
+    // as its Data 0: painted 1 on the left half, 0 on the right.
+    const MeshData lawn = meshes::plane({2.0f, 2.0f});
+    std::vector<glm::vec3> positions;
+    for (const MeshVertex& vertex : lawn.vertices)
+      positions.push_back(vertex.position);
+    const GrassGround ground =
+        GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
+    const GrassHandle grass = harness.renderer.createGrass(ground);
+    const MeshHandle plane = harness.renderer.createMesh(lawn);
+    MeshMaterial grey;
+    grey.baseColor = {0.5f, 0.5f, 0.5f, 1.0f};
+    const MaterialHandle greyLook = harness.renderer.createMaterial(grey);
+    graph::Graph g;
+    const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
+    const graph::NodeId node = g.add("grass", {});
+    g.connect(node, 4, out, graph::kBaseColor); // data 0
+    const MaterialHandle dataLook =
+        harness.renderer.createMaterial(graphMaterial(g, AlphaMode::Opaque));
+    GrassMaps maps(ground.grid());
+    for (int y = 0; y < maps.grid().size.y; ++y)
+      for (int x = 0; x < maps.grid().size.x / 2; ++x)
+        maps.set(GrassMaps::Data0, x, y, 1.0f);
+    std::vector<uint8_t> shape, data;
+    maps.pixels({0, 0}, maps.grid().size, shape, data);
+    harness.renderer.updateGrassMaps(
+        grass,
+        GrassMapsImage{maps.grid(), {0, 0}, maps.grid().size, shape, data});
+
+    const auto draw = [&](float height)
+    {
+      const GrassBatch3D batch{grass,
+                               dataLook,
+                               plane,
+                               glm::mat4(1.0f),
+                               {.density = 200.0f, .height = height},
+                               0.4f,
+                               40.0f};
+      return drawPlane(harness,
+                       plane,
+                       greyLook,
+                       0.0f,
+                       [](FrameParams3D& frame)
+                       { frame.bloom.enabled = false; },
+                       {},
+                       {},
+                       {&batch, 1});
+    };
+    // The ground alone (blades too short to see), then blades over it.
+    for (const float height : {0.001f, 0.3f})
+    {
+      const std::vector<uint8_t> pixels = draw(height);
+      CHECK(!pixels.empty());
+      if (pixels.empty())
+        break;
+      const auto brightness = [&](int x0, int x1)
+      {
+        int sum = 0;
+        for (int y = kSize.y / 4; y < kSize.y * 3 / 4; ++y)
+          for (int x = x0; x < x1; ++x)
+            sum += pixels[(std::size_t(y) * kSize.x + x) * 4 + 1];
+        return sum / ((x1 - x0) * kSize.y / 2);
+      };
+      const int wet = brightness(kSize.x / 8, kSize.x * 3 / 8);
+      const int dry = brightness(kSize.x * 5 / 8, kSize.x * 7 / 8);
+      CHECK(wet > dry + 60);
+    }
+    harness.renderer.destroyGrass(grass);
+    harness.renderer.destroyMaterial(greyLook);
+    harness.renderer.destroyMaterial(dataLook);
+    CHECK(reportErrors());
+  }
+
+  TEST("edges should be anti-aliased: blended where a pixel is partly "
+       "covered")
+  {
+    // A white square turned 30 degrees, small enough to sit inside the view,
+    // against a black sky: its slanted edges cross pixels part way.
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial white;
+    white.baseColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    const MaterialHandle material = harness.renderer.createMaterial(white);
+    MeshInstance turned;
+    turned.model =
+        glm::rotate(
+            glm::mat4(1.0f), glm::radians(30.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+        glm::scale(glm::mat4(1.0f), glm::vec3(0.6f));
+    const std::vector<uint8_t> pixels = drawPlane(
+        harness,
+        plane,
+        material,
+        0.0f,
+        [](FrameParams3D& frame)
+        {
+          frame.lighting.skyColor = glm::vec3(0.0f);
+          frame.bloom.enabled = false;
+        },
+        turned);
+    CHECK(!pixels.empty());
+    int inside = 0, between = 0;
+    for (std::size_t i = 0; i < pixels.size(); i += 4)
+    {
+      inside += pixels[i] > 200;
+      between += pixels[i] > 25 && pixels[i] < 175;
+    }
+    CHECK(inside > 300);
+    // Without anti-aliasing every pixel is all square or all sky.
+    CHECK(between > 40);
+    harness.renderer.destroyMaterial(material);
+    CHECK(reportErrors());
+  }
+
+  TEST("UI should be drawn over the frame: boxes with smooth edges, and text "
+       "from its texture")
+  {
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial black;
+    black.baseColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    const MaterialHandle material = harness.renderer.createMaterial(black);
+
+    // A red box in the top left, rounded; a glyph (half covered) in white
+    // from a texture, bottom right.
+    UiTexture texture;
+    texture.id = 7;
+    texture.size = {2, 2};
+    texture.pixels.assign(16, 255);
+    for (int i = 0; i < 4; ++i)
+      texture.pixels[i * 4 + 3] = 128; // half coverage
+    UiQuad box;
+    box.rect = {4.0f, 4.0f, 24.0f, 24.0f};
+    box.color = {1.0f, 0.0f, 0.0f, 1.0f};
+    box.radius = 8.0f;
+    UiQuad glyph;
+    glyph.kind = UiQuad::Glyph;
+    glyph.texture = &texture;
+    glyph.rect = {40.0f, 40.0f, 16.0f, 16.0f};
+    glyph.uv = {0.0f, 0.0f, 1.0f, 1.0f};
+    glyph.color = {1.0f, 1.0f, 1.0f, 1.0f};
+    const UiQuad quads[] = {box, glyph};
+    const std::vector<uint8_t> pixels = drawPlane(
+        harness,
+        plane,
+        material,
+        0.0f,
+        [](FrameParams3D& frame)
+        {
+          frame.lighting.skyColor = glm::vec3(0.0f);
+          frame.bloom.enabled = false;
+        },
+        {},
+        {},
+        {},
+        quads);
+    CHECK(!pixels.empty());
+    if (!pixels.empty())
+    {
+      const auto at = [&](int x, int y)
+      { return &pixels[(std::size_t(y) * kSize.x + x) * 4]; };
+      CHECK(at(16, 16)[0] > 240 && at(16, 16)[1] < 15); // inside: red
+      CHECK(at(30, 16)[0] < 15);                        // beside: not
+      CHECK(at(4, 4)[0] < 60); // a rounded corner: (nearly) not
+      // Partly covered along its rounded corner.
+      bool soft = false;
+      for (int i = 4; i < 12; ++i)
+        soft = soft || (at(i, i)[0] > 30 && at(i, i)[0] < 220);
+      CHECK(soft);
+      // The glyph: white at half its coverage (as the screen shows it).
+      CHECK(at(48, 48)[0] > 90 && at(48, 48)[0] < 230 &&
+            std::abs(int(at(48, 48)[0]) - int(at(48, 48)[2])) < 10);
+    }
+    harness.renderer.destroyMaterial(material);
+    CHECK(reportErrors());
+  }
+
+  TEST("haze should fade far things into the sky")
+  {
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial red;
+    red.baseColor = {1.0f, 0.0f, 0.0f, 1.0f};
+    const MaterialHandle material = harness.renderer.createMaterial(red);
+    // The plane is 5 from the camera; the sky blue.
+    const auto draw = [&](float strength)
+    {
+      return drawPlane(harness,
+                       plane,
+                       material,
+                       0.0f,
+                       [&](FrameParams3D& frame)
+                       {
+                         frame.bloom.enabled = false;
+                         frame.lighting.skyColor = {0.0f, 0.0f, 1.0f};
+                         frame.haze = {.strength = strength, .distance = 2.0f};
+                       });
+    };
+    const std::vector<uint8_t> clear = draw(0.0f);
+    const std::vector<uint8_t> hazy = draw(1.0f);
+    CHECK(!clear.empty() && !hazy.empty());
+    if (!clear.empty() && !hazy.empty())
+    {
+      const std::size_t middle =
+          (std::size_t(kSize.y / 2) * kSize.x + kSize.x / 2) * 4;
+      CHECK(clear[middle] > 100 && clear[middle + 2] < 30);
+      CHECK(hazy[middle] < 20 && hazy[middle + 2] > 220);
+    }
+    harness.renderer.destroyMaterial(material);
+    CHECK(reportErrors());
+  }
+
+  TEST("depth of field should blur what's out of focus, and leave what's in "
+       "it sharp")
+  {
+    // A white plane with a black square on its right: a hard edge, 5 from
+    // the camera.
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial white;
+    white.baseColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    MeshMaterial black;
+    black.baseColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    const MaterialHandle whiteLook = harness.renderer.createMaterial(white);
+    const MaterialHandle blackLook = harness.renderer.createMaterial(black);
+    MeshInstance square;
+    square.model = glm::translate(glm::mat4(1.0f), {0.5f, 0.0f, 0.01f}) *
+                   glm::scale(glm::mat4(1.0f), {0.5f, 0.5f, 1.0f});
+    const MaterialHandle blackMaterials[] = {blackLook};
+    MeshBatch3D squareBatch;
+    squareBatch.mesh = plane;
+    squareBatch.materials = blackMaterials;
+    squareBatch.instances = {&square, 1};
+
+    const auto edge = [&](float focusDistance, bool enabled)
+    {
+      const std::vector<uint8_t> pixels =
+          drawPlane(harness,
+                    plane,
+                    whiteLook,
+                    0.0f,
+                    [&](FrameParams3D& frame)
+                    {
+                      frame.bloom.enabled = false;
+                      frame.depthOfField = {
+                          .enabled = enabled, .range = 0.5f, .blur = 3.0f};
+                      frame.focusDistance = focusDistance;
+                    },
+                    {},
+                    {&squareBatch, 1});
+      // The steepest step along the middle row.
+      int steepest = 0;
+      const std::size_t row = std::size_t(kSize.y / 2) * kSize.x;
+      for (int x = 0; x + 1 < kSize.x; ++x)
+        steepest = std::max(steepest,
+                            std::abs(int(pixels[(row + x) * 4]) -
+                                     int(pixels[(row + x + 1) * 4])));
+      return pixels.empty() ? -1 : steepest;
+    };
+    const int sharp = edge(5.0f, false);
+    CHECK(sharp > 150);
+    CHECK(edge(5.0f, true) > sharp * 9 / 10); // in focus: still sharp
+    CHECK(edge(40.0f, true) < sharp * 2 / 3); // focused far beyond: blurred
+    CHECK(edge(0.5f, true) < sharp * 2 / 3);  // and right up close
+    harness.renderer.destroyMaterial(whiteLook);
+    harness.renderer.destroyMaterial(blackLook);
     CHECK(reportErrors());
   }
 

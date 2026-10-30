@@ -71,6 +71,9 @@ public:
   /** True once after a file in the project's scripts/ was saved (the config reports it). */
   bool takeScriptSaved() { return std::exchange(m_scriptSaved, false); }
 
+  /** The project script being edited last (an editor path), if any. */
+  const std::filesystem::path& focusedScript() const { return m_focusedScript; }
+
 private:
   // Fire-and-forget: Neovim's replies are only checked for errors.
   void request(const std::string& method, const msgpack::Array& params);
@@ -81,6 +84,7 @@ private:
   std::unique_ptr<ChildProcess> m_process;
   NvimScreen m_screen;
   bool m_scriptSaved = false;
+  std::filesystem::path m_focusedScript;
   int m_columns = 0;
   int m_rows = 0;
   uint32_t m_nextRequestId = 1;

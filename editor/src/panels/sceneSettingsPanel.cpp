@@ -152,6 +152,10 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
 
   ImGui::Separator();
   const sfs::RenderStats3D& stats = render.stats();
+  const float framerate = ImGui::GetIO().Framerate;
+  ImGui::Text("Frame: %.1f ms (%.0f fps)",
+              framerate > 0.0f ? 1000.0f / framerate : 0.0f,
+              framerate);
   ImGui::Text("Draw calls: %zu", stats.drawCalls);
   ImGui::Text("Objects: %zu (%zu casting shadows)",
               stats.instances,
@@ -160,4 +164,5 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
               stats.pointLights,
               stats.emissionLights,
               stats.shadowedLights);
+  ImGui::Text("Grass fields: %zu", stats.grassFields);
 }

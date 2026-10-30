@@ -115,6 +115,14 @@ public:
   /** How many sections sections() gives, without copying them. */
   std::size_t sectionCount(MeshHandle mesh) const;
 
+  /**
+   * A mesh's triangles, as added: positions (its own space) and the indices
+   * into them, three a triangle. Empty if the mesh isn't ours (or is a
+   * stand-in).
+   */
+  std::span<const glm::vec3> positions(MeshHandle mesh) const;
+  std::span<const uint32_t> indices(MeshHandle mesh) const;
+
   /** Section `section`'s own material (as sections() has it), or null. */
   const MeshMaterial* sectionMaterial(MeshHandle mesh,
                                       std::size_t section) const;
@@ -186,6 +194,14 @@ public:
   bool isMissing(MeshHandle mesh) const;
 
   /**
+   * Whether named meshes it lacks are expected to come later: a scene loaded
+   * before its game module (which provides them) is built. Loading then keeps
+   * their stand-ins (missing()) without reporting each as an error.
+   */
+  void setMissingExpected(bool expected) { m_missingExpected = expected; }
+  bool missingExpected() const { return m_missingExpected; }
+
+  /**
    * A stand-in for a named mesh being loaded in the background (see
    * Provider::loaded): like missing(), but fulfilPending() turns it into the
    * mesh, under the same handle, once it's loaded.
@@ -242,6 +258,7 @@ private:
   Provider m_provider;
   std::unordered_map<uint32_t, Entry> m_meshes;
   uint32_t m_nextMissingId = kMissingIdBase;
+  bool m_missingExpected = false;
   std::unordered_map<std::string, MaterialHandle>
       m_materials; // invalid: not found
   // What each of m_materials is, by handle id.

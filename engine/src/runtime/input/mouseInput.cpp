@@ -20,6 +20,18 @@ void MouseInput::beginFrame()
 
 void MouseInput::update() { processDrag(); }
 
+void MouseInput::block()
+{
+  currentButtons.fill(false);
+  previousButtons.fill(false);
+  dragActive = false;
+  dragStartedThisFrame = false;
+  dragReleasedThisFrame = false;
+  scrollX = 0;
+  scrollY = 0;
+  isBlocked = true;
+}
+
 void MouseInput::pressButton(MouseButton button)
 {
   currentButtons[static_cast<int>(button)] = true;

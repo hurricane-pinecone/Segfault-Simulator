@@ -1,19 +1,28 @@
 #include "../../testHarness.h"
 #include "mockRenderer3D.h"
 
+#include <engine/core/components/boxCollider3DComponent.h>
 #include <engine/core/components/camera3DComponent.h>
+#include <engine/core/components/grassBenderComponent.h>
+#include <engine/core/components/grassComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/pointLight3DComponent.h>
+#include <engine/core/components/rigidBody3DComponent.h>
+#include <engine/core/components/sphereCollider3DComponent.h>
 #include <engine/core/components/transform3DComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/3d/materialGraphCompiler.h>
 #include <engine/core/rendering/3d/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
+#include <engine/runtime/input/input.h>
 #include <engine/runtime/rendering3d/iRenderer3D.h>
 #include <engine/runtime/rendering3d/meshLibrary.h>
+#include <engine/runtime/rendering3d/modules/grassModule.h>
 #include <engine/runtime/rendering3d/modules/meshModule.h>
+#include <engine/runtime/rendering3d/modules/uiModule.h>
 #include <engine/runtime/rendering3d/renderSystem3D.h>
 #include <engine/runtime/sceneManager/scene.h>
+#include <engine/runtime/ui/layer.h>
 
 #include <algorithm>
 #include <vector>
@@ -585,6 +594,349 @@ int main()
                        h.renderer.lights.end(),
                        [](const PointLight3D& light)
                        { return light.castsShadow; }));
+  }
+
+  TEST("grass's ground should be built once, and again only when its mesh is "
+       "turned or scaled; its maps sent up as they change")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle plane = h.system.meshes().add(meshes::plane({4.0f, 4.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(GrassComponent{.density = 20.0f});
+
+    h.frame();
+    CHECK(h.renderer.liveGrass.size() == 1u);
+    CHECK(h.renderer.grassDrawn.size() == 1u);
+    CHECK(grassModule.ground(lawn) &&
+          grassModule.ground(lawn)->groundTexels() == 256u);
+    CHECK(h.system.stats().grassFields == 1u);
+    // Without a material of its own: the module's green. Unpainted: sent up
+    // as such.
+    CHECK(!h.renderer.grassDrawn.empty() &&
+          h.renderer.grassDrawn[0].material.valid() &&
+          h.renderer.grassDrawn[0].shape.density == 20.0f);
+    CHECK(h.renderer.mapUpdates.size() == 1u &&
+          h.renderer.mapUpdates[0].grid.empty());
+
+    // Denser, or moved: the same ground, drawn as it now is.
+    const uint32_t first = h.renderer.liveGrass.begin()->first;
+    lawn.getComponent<GrassComponent>().density = 40.0f;
+    lawn.getComponent<Transform3DComponent>().position = {10.0f, 0.0f, 0.0f};
+    h.frame();
+    CHECK(h.renderer.liveGrass.size() == 1u &&
+          h.renderer.liveGrass.begin()->first == first);
+    CHECK(!h.renderer.grassDrawn.empty() &&
+          h.renderer.grassDrawn[0].shape.density == 40.0f &&
+          h.renderer.grassDrawn[0].model[3].x == 10.0f);
+    CHECK(h.renderer.mapUpdates.size() == 1u); // nothing new
+
+    // Scaled: built again (more texels), the old one freed.
+    lawn.getComponent<Transform3DComponent>().scale = {2.0f, 2.0f, 1.0f};
+    h.frame();
+    CHECK(h.renderer.liveGrass.size() == 1u &&
+          h.renderer.liveGrass.begin()->first != first);
+    CHECK(grassModule.ground(lawn)->groundTexels() == 1024u);
+
+    // Painted: its maps go up, all of them.
+    GrassMaps bare(grassModule.ground(lawn)->grid());
+    bare.fill(GrassMaps::Coverage, 0.0f);
+    lawn.getComponent<GrassComponent>().paint = bare.toJson();
+    h.frame();
+    CHECK(!h.renderer.mapUpdates.empty() &&
+          h.renderer.mapUpdates.back().grid == bare.grid() &&
+          h.renderer.mapUpdates.back().to == bare.grid().size);
+    CHECK(grassModule.sample(lawn, GrassMaps::Coverage, {10.0f, 0.0f, 0.0f}) ==
+          0.0f);
+
+    // A game wearing a path: just that part goes up, and isn't saved.
+    const std::size_t updates = h.renderer.mapUpdates.size();
+    grassModule.stamp(lawn,
+                      GrassMaps::Coverage,
+                      {11.0f, 1.0f, 0.0f},
+                      0.5f,
+                      1.0f,
+                      GrassMaps::Blend::Toward,
+                      1.0f,
+                      0.0f);
+    CHECK(grassModule.sample(lawn, GrassMaps::Coverage, {11.0f, 1.0f, 0.0f}) ==
+          1.0f);
+    CHECK(grassModule.sample(lawn, GrassMaps::Coverage, {9.0f, -1.0f, 0.0f}) ==
+          0.0f);
+    h.frame();
+    CHECK(h.renderer.mapUpdates.size() == updates + 1);
+    const auto& stamped = h.renderer.mapUpdates.back();
+    const glm::ivec2 area = stamped.to - stamped.from;
+    CHECK(area.x > 0 && area.x <= 6 && area.y > 0 && area.y <= 6);
+    CHECK(lawn.getComponent<GrassComponent>().paint == bare.toJson());
+
+    // Painting over it starts the maps over from the paint: unpainted.
+    lawn.getComponent<GrassComponent>().paint = nlohmann::json::object();
+    h.frame();
+    CHECK(h.renderer.mapUpdates.back().grid.empty());
+    CHECK(grassModule.sample(lawn, GrassMaps::Coverage, {10.0f, 0.0f, 0.0f}) ==
+          1.0f);
+    // A script asking for unpainted grass's maps gets them, full.
+    GrassMaps* maps = grassModule.maps(lawn);
+    CHECK(maps && maps->grid() == grassModule.ground(lawn)->grid());
+
+    // Gone with its component.
+    lawn.removeComponent<GrassComponent>();
+    h.frame();
+    CHECK(h.renderer.liveGrass.empty());
+    CHECK(h.renderer.grassDrawn.empty());
+    CHECK(grassModule.maps(lawn) == nullptr);
+  }
+
+  TEST("rigid bodies and grass benders should flatten grass, unless they opt "
+       "out")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle plane =
+        h.system.meshes().add(meshes::plane({10.0f, 10.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(GrassComponent{.density = 30.0f});
+
+    // A ball resting at (-3, 0), a crate (box) at (3, 0), a ball that opts
+    // out at (0, 3), and a bender with no physics at (0, -3).
+    const MeshHandle ballMesh =
+        h.system.meshes().add(meshes::sphere(0.5f, 12, 8));
+    Entity ball = h.spawn(ballMesh, {-3.0f, 0.0f, 0.0f});
+    ball.addComponent<RigidBody3DComponent>();
+    ball.addComponent<SphereCollider3DComponent>(
+        SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
+    Entity crate = h.spawn(ballMesh, {3.0f, 0.0f, 0.0f});
+    crate.addComponent<RigidBody3DComponent>();
+    crate.addComponent<BoxCollider3DComponent>(
+        BoxCollider3DComponent{{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.5f}});
+    Entity aloof = h.spawn(ballMesh, {0.0f, 3.0f, 0.0f});
+    RigidBody3DComponent noBending;
+    noBending.bendsGrass = false;
+    aloof.addComponent<RigidBody3DComponent>(noBending);
+    aloof.addComponent<SphereCollider3DComponent>(
+        SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
+    Entity walker = h.scene.createEntity();
+    walker.addComponent<Transform3DComponent>(
+        Transform3DComponent{{0.0f, -3.0f, 0.4f}});
+    walker.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.radius = 0.4f});
+
+    h.frame(); // builds the field
+    h.frame(); // and presses it
+    CHECK(grassModule.benders().size() == 3u);
+    CHECK(grassModule.flattened(lawn, {-3.0f, 0.0f}) > 0.9f);
+    CHECK(grassModule.flattened(lawn, {3.0f, 0.0f}) > 0.9f);
+    CHECK(grassModule.flattened(lawn, {0.0f, -3.0f}) > 0.9f);
+    CHECK(grassModule.flattened(lawn, {0.0f, 3.0f}) == 0.0f);
+    CHECK(grassModule.flattened(lawn, {0.0f, 0.0f}) == 0.0f);
+    CHECK(!h.renderer.trampleUpdates.empty());
+
+    // The ball rolls away: where it was springs back over its recovery time.
+    ball.getComponent<Transform3DComponent>().position = {-3.0f, -3.0f, 5.0f};
+    h.scene.update(1.0);
+    h.scene.render();
+    const float rising = grassModule.flattened(lawn, {-3.0f, 0.0f});
+    CHECK(rising > 0.5f && rising < 0.8f); // a third of the way up
+    h.scene.update(3.0);
+    h.scene.render();
+    CHECK(grassModule.flattened(lawn, {-3.0f, 0.0f}) == 0.0f);
+  }
+
+  TEST("a grass bender on a mesh should fit it, wherever and however big it "
+       "is; else take its radius")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    // A wheel: a cylinder 0.4 across, its middle 0.2 up, scaled 1.5.
+    const MeshHandle wheelMesh =
+        h.system.meshes().add(meshes::cylinder(0.2f, 0.3f, 12));
+    Entity wheel = h.spawn(wheelMesh, {2.0f, 1.0f, 0.0f});
+    wheel.getComponent<Transform3DComponent>().scale = glm::vec3(1.5f);
+    wheel.addComponent<GrassBenderComponent>();
+    Entity unfitted = h.spawn(wheelMesh, {-2.0f, 0.0f, 0.0f});
+    unfitted.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.fitMesh = false, .radius = 0.7f});
+
+    h.frame(); // the module learns the meshes
+    h.frame();
+    CHECK(grassModule.benders().size() == 2u);
+    for (const GrassBender& bender : grassModule.benders())
+      if (bender.center.x > 0.0f)
+      {
+        // Its widest: 0.4 x 1.5 across, so 0.3; its middle where it's placed.
+        CHECK(testing::approx(bender.radius, 0.3f));
+        CHECK(testing::approx(bender.center.x, 2.0f));
+        CHECK(testing::approx(bender.center.y, 1.0f));
+      }
+      else
+        CHECK(testing::approx(bender.radius, 0.7f));
+  }
+
+  TEST("UI layers should be drawn over the scene, their buttons clicked, and "
+       "clicks on them kept from the game")
+  {
+    // A layer with a button in the top left, and an object that sees what
+    // input the game gets.
+    struct Hud : public ui::Layer
+    {
+      int clicks = 0;
+      ui::View body() override
+      {
+        using namespace ui;
+        return VStack{Text("Day 1"), Button("Go", [this] { ++clicks; })}
+            .padding()
+            .background(Panel())
+            .align(Alignment::TopLeading);
+      }
+    };
+    struct Game : public GameObject
+    {
+      int presses = 0;
+      void onProcessInput(const Input& input) override
+      {
+        presses += input.mouse().mousePressed(MouseButton::Left);
+      }
+    };
+
+    Harness h;
+    UiModule& ui = h.system.withModule<UiModule>(h.scene);
+    Hud& hud = h.scene.createObject<Hud>();
+    Game& game = h.scene.createObject<Game>();
+    h.frame();
+    CHECK(!h.renderer.uiDrawn.empty());
+    const ui::Hit* button = nullptr;
+    for (const ui::Hit& hit : ui.hits())
+      if (hit.action)
+        button = &hit;
+    CHECK(button != nullptr);
+    if (!button)
+      return testing::report("renderSystem3DTests");
+    const glm::vec2 on(button->rect.x + button->rect.width * 0.5f,
+                       button->rect.y + button->rect.height * 0.5f);
+
+    // The scene's input, the UI first (as Scene3D does).
+    Input input;
+    input.mouse().setViewSize(h.renderer.viewport.x, h.renderer.viewport.y);
+    const auto send = [&]
+    {
+      Input seen = input;
+      ui.handleInput(seen);
+      for (GameObject* object : std::vector<GameObject*>{&game})
+        static_cast<Game*>(object)->onProcessInput(seen);
+      input.mouse().beginFrame();
+    };
+
+    // Pressed and let go on the button: clicked, and the game saw nothing.
+    input.mouse().setPosition(static_cast<int>(on.x), static_cast<int>(on.y));
+    input.mouse().pressButton(MouseButton::Left);
+    send();
+    input.mouse().releaseButton(MouseButton::Left);
+    send();
+    CHECK(hud.clicks == 1);
+    CHECK(game.presses == 0);
+
+    // Off the UI: the game's click.
+    input.mouse().setPosition(static_cast<int>(h.renderer.viewport.x - 5),
+                              static_cast<int>(h.renderer.viewport.y - 5));
+    input.mouse().pressButton(MouseButton::Left);
+    send();
+    input.mouse().releaseButton(MouseButton::Left);
+    send();
+    CHECK(hud.clicks == 1);
+    CHECK(game.presses == 1);
+
+    // Hidden: nothing drawn.
+    hud.visible = false;
+    h.frame();
+    CHECK(h.renderer.uiDrawn.empty());
+  }
+
+  TEST("a mesh's icon should be drawn once from the scene's meshes, and none "
+       "be made for a mesh there isn't")
+  {
+    Harness h;
+    UiModule& ui = h.system.withModule<UiModule>(h.scene);
+    const MeshHandle crate = h.system.meshes().add(
+        meshes::box({1.0f, 1.0f, 1.0f}, glm::vec3(0.8f, 0.3f, 0.2f)),
+        "test:crate");
+    h.frame(); // the module learns the meshes
+    const UiTexture* icon = ui.image("test:crate", true);
+    CHECK(icon != nullptr);
+    if (icon)
+    {
+      CHECK(icon->size == glm::ivec2(128, 128));
+      // Drawn, on nothing: some pixels solid, the corners clear.
+      bool solid = false;
+      for (std::size_t i = 3; i < icon->pixels.size(); i += 4)
+        solid = solid || icon->pixels[i] > 200;
+      CHECK(solid && icon->pixels[3] == 0);
+      CHECK(ui.image("test:crate", true) == icon); // once
+      // By handle (Image::mesh(MeshHandle)), the same picture.
+      CHECK(ui.image("#" + std::to_string(crate.id), true) != nullptr);
+    }
+    CHECK(ui.image("test:nothing", true) == nullptr);
+    CHECK(ui.image("no/such/file.png", false) == nullptr);
+  }
+
+  TEST("the clock should run while animating, and hold while not")
+  {
+    Harness h;
+    h.scene.update(0.5);
+    h.scene.render();
+    CHECK(testing::approx(h.renderer.frame.time, 0.5f));
+    h.system.setAnimating(false);
+    h.scene.update(2.0);
+    h.scene.render();
+    CHECK(testing::approx(h.renderer.frame.time, 0.5f)); // held
+    h.system.setAnimating(true);
+    h.scene.update(0.25);
+    h.scene.render();
+    CHECK(testing::approx(h.renderer.frame.time, 0.75f)); // on from there
+  }
+
+  TEST("the scene's wind should reach the renderer")
+  {
+    Harness h;
+    h.system.setWindSettings(
+        {.direction = 90.0f, .strength = 0.7f, .gustiness = 0.2f});
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.wind.direction, 90.0f));
+    CHECK(testing::approx(h.renderer.frame.wind.strength, 0.7f));
+  }
+
+  TEST("the scene's haze, and its camera's depth of field focused where the "
+       "view is, should reach the renderer")
+  {
+    Harness h;
+    h.system.setHazeSettings({.strength = 0.6f, .distance = 80.0f});
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.haze.strength, 0.6f));
+    CHECK(testing::approx(h.renderer.frame.haze.distance, 80.0f));
+    CHECK(!h.renderer.frame.depthOfField.enabled); // no camera: none
+    CHECK(testing::approx(
+        h.renderer.frame.focusDistance, h.system.camera().distance));
+
+    Entity eye = h.scene.createEntity();
+    eye.addComponent<Transform3DComponent>();
+    Camera3DComponent lens;
+    lens.depthOfField = true;
+    lens.focusDistance = 7.0f;
+    lens.focusRange = 3.0f;
+    lens.focusBlur = 2.0f;
+    eye.addComponent<Camera3DComponent>(lens);
+    h.frame();
+    CHECK(h.renderer.frame.depthOfField.enabled);
+    CHECK(testing::approx(h.renderer.frame.depthOfField.range, 3.0f));
+    CHECK(testing::approx(h.renderer.frame.depthOfField.blur, 2.0f));
+    CHECK(testing::approx(h.renderer.frame.focusDistance, 7.0f));
+
+    // Looking around freely (the editor), focused on its own target.
+    h.system.setFollowSceneCamera(false);
+    h.system.camera().distance = 12.0f;
+    h.frame();
+    CHECK(h.renderer.frame.depthOfField.enabled);
+    CHECK(testing::approx(h.renderer.frame.focusDistance, 12.0f));
   }
 
   TEST("a zero-size viewport should skip the frame")
