@@ -498,7 +498,9 @@ target_compile_options(engine-webgpu PRIVATE
 )
 
 add_dependencies(engine-webgpu engineWgslShaders)
-target_link_libraries(engine-webgpu PRIVATE engine-wgsl)
+# Build-only (the generated shader header): kept out of the installed package,
+# whose static engine-webgpu would otherwise name it as a link dependency.
+target_link_libraries(engine-webgpu PRIVATE $<BUILD_INTERFACE:engine-wgsl>)
 
 endif() # NOT ENGINE_CORE_ONLY
 
