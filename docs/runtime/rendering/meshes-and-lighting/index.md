@@ -494,9 +494,11 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   Data channels where it grows (`SurfaceIn::grass` and `grassData`; the
   defaults on anything else).
 - **Trampling:** `GrassTrample` is a grid over the field's ground in the
-  world. It's pressed by `GrassBender` spheres where they reach into the
-  grass, and springs back over `recovery` seconds. Each update the module
-  gathers benders (rigid bodies that bend grass, as their colliders, and
+  world, pressed where `GrassBender` spheres reach into the grass and
+  springing back over `recovery` seconds. A moving bender lays grass down
+  the way it's going, fanning out a little at its sides, all along its
+  path; a still one presses it outward. Each update the module gathers
+  benders (rigid bodies that bend grass, as their colliders, and
   `GrassBenderComponent`s). When the map changes, it sends it to the renderer
   as an image (`IRenderer::updateGrassTrample`).
 

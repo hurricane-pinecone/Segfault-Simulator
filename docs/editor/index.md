@@ -480,8 +480,10 @@ unless its **Bends Grass** is off. A **Grass Bender** component does the same
 for things without physics, such as a character moved by a script or a
 vehicle's wheels. With **Fit Mesh** on (the default) it's sized to its entity's
 own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
-or use it on something without a mesh, to set its **Radius** yourself. Grass is pressed the way a thing is moving, or outward under one
-standing still, and springs back afterwards.
+or use it on something without a mesh, to set its **Radius** yourself. A
+moving thing lays grass down the way it's going, fanning out a little at its
+sides, all along its path. A still one presses it outward instead. Either
+way, it springs back afterwards.
 
 **The grass brush:** with grass selected, press **B** or click **Grass** in the
 viewport toolbar, then drag over the grass. Hold **Shift** (or tick **Erase**)
