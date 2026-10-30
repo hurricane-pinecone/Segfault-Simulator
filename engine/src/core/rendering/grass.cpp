@@ -647,10 +647,13 @@ bool GrassTrample::update(float seconds,
             glm::floor((glm::vec2(bender.center) + reach - m_min) / texel)),
         glm::ivec2(0),
         m_size - 1);
-    // Pressed the way it's going, as it moves; else outward from it.
+    // Moving, it lays the grass down the way it's going (fanning out a little
+    // at its sides), all along its path; standing still, it presses it outward.
     const glm::vec2 velocity(bender.velocity);
     const float speed = glm::length(velocity);
-    const float along = std::min(speed / 2.0f, 0.8f);
+    const glm::vec2 heading =
+        speed > 1e-4f ? velocity / speed : glm::vec2(0.0f);
+    const float moving = smoothstep(0.2f, 1.2f, speed);
     for (int y = low.y; y <= high.y; ++y)
       for (int x = low.x; x <= high.x; ++x)
       {
@@ -679,17 +682,20 @@ bool GrassTrample::update(float seconds,
           continue;
         const float pressed =
             1.0f - smoothstep(0.6f, 1.0f, distance / footprint);
-        if (pressed <= m_amount[i])
+        // Moving over grass already down, it lays it its own way; still, it
+        // only presses harder.
+        if (pressed <= m_amount[i] && moving < 0.5f)
           continue;
         const glm::vec2 outward =
             distance > 1e-4f ? offset / distance : glm::vec2(0.0f);
-        glm::vec2 direction =
-            outward * (1.0f - along) +
-            (speed > 1e-4f ? velocity / speed : glm::vec2(0.0f)) * along;
+        const glm::vec2 sideways =
+            outward - heading * glm::dot(outward, heading);
+        const glm::vec2 laid = heading + sideways * 0.3f;
+        glm::vec2 direction = outward * (1.0f - moving) + laid * moving;
         const float length = glm::length(direction);
         m_direction[i] =
             length > 1e-4f ? direction / length : glm::vec2(1.0f, 0.0f);
-        m_amount[i] = pressed;
+        m_amount[i] = std::max(m_amount[i], pressed);
         changed = true;
       }
   }

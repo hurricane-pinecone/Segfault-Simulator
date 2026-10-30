@@ -274,8 +274,9 @@ public:
 
   /**
    * Spring back (fully over `recovery` seconds), then press down where
-   * `benders` reach into the grass: grass under one lies flat, pushed the way
-   * it's going (or away from it, standing still), softening to its edge.
+   * `benders` reach into the grass: grass under one lies flat, softening to
+   * its edge. A moving one lays it down the way it's going (fanning out a
+   * little at its sides), all along its path; a still one presses it outward.
    *
    * @return whether the map changed (it needs uploading again)
    */

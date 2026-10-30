@@ -218,6 +218,18 @@ int main()
     CHECK(trample.flattened({0.0f, 0.0f}) > 0.95f);
     CHECK(trample.flattened({3.0f, 3.0f}) == 0.0f);
     CHECK(trample.direction({0.1f, 0.0f}).x > 0.7f); // pressed along its way
+    // Behind it and beside it too: laid the way it's going, not outward.
+    CHECK(trample.direction({-0.35f, 0.0f}).x > 0.9f);
+    CHECK(trample.direction({0.0f, 0.35f}).x > 0.8f);
+    CHECK(trample.direction({0.0f, 0.35f}).y > 0.0f); // fanned a little out
+
+    // Walking on over grass it already laid down, it lays it its way.
+    GrassTrample turned(ground, glm::mat4(1.0f), 0.35f);
+    const GrassBender east{{0.0f, 0.0f, 0.5f}, 0.5f, {2.0f, 0.0f, 0.0f}};
+    const GrassBender north{{0.0f, 0.0f, 0.5f}, 0.5f, {0.0f, 2.0f, 0.0f}};
+    turned.update(0.0f, {&east, 1}, 3.0f);
+    turned.update(0.1f, {&north, 1}, 3.0f);
+    CHECK(turned.direction({0.0f, -0.2f}).y > 0.9f);
 
     // Standing still: pushed outward.
     GrassTrample still(ground, glm::mat4(1.0f), 0.35f);
