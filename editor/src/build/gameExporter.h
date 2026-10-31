@@ -28,6 +28,9 @@ public:
     std::filesystem::path module;     // the built module library
     int windowWidth = 1600;
     int windowHeight = 900;
+    // A development build: its development keys work (F8 switches visual
+    // styles; see sfs::Game::setDevKeys). Off for a game to ship.
+    bool development = false;
   };
 
   /** The player executable and libraries ship from the editor's own folder. */

@@ -119,6 +119,8 @@ AssetKind assetKindOf(const fs::path& file)
     return AssetKind::Material;
   if (any({".prefab"}))
     return AssetKind::Prefab;
+  if (any({".style"}))
+    return AssetKind::VisualStyle;
   if (any({".asset"}))
     return AssetKind::ScriptableObject;
   if (any({".ttf", ".otf"}))
@@ -142,6 +144,8 @@ const char* assetKindName(AssetKind kind)
     return "Material";
   case AssetKind::Prefab:
     return "Prefab";
+  case AssetKind::VisualStyle:
+    return "Visual Style";
   case AssetKind::ScriptableObject:
     return "Scriptable Object";
   case AssetKind::Font:

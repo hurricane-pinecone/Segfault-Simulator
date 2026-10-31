@@ -358,5 +358,6 @@ private:
   int m_exportWindowSize[2] = {1600, 900};
   bool m_exportAfterBuild = false;
   bool m_exportWeb = false;          // a web page instead of a desktop game
+  bool m_exportDevelopment = false;  // a development build (dev keys work)
   std::filesystem::path m_webExport; // where the running web export goes
 };

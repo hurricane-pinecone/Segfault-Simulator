@@ -18,7 +18,10 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
 #include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/terrain.h"
+#include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/picking.h"
@@ -46,6 +49,21 @@ bool hasGrass(const sfs::Entity& entity)
   return entity.isValid() && entity.isAlive() &&
          entity.hasComponent<sfs::GrassComponent>() &&
          entity.hasComponent<sfs::MeshRendererComponent>();
+}
+
+// The terrain an entity is drawn with (its first material slot's, as drawn
+// now: a visual style's variant may be one); null if it isn't one.
+std::shared_ptr<const sfs::TerrainMaterial> terrainOf(const EditorContext& context, const sfs::Entity& entity)
+{
+  if (!context.render || !entity.isValid() || !entity.isAlive() ||
+      !entity.hasComponent<sfs::MeshRendererComponent>())
+    return nullptr;
+  const auto& meshRenderer = entity.getComponent<sfs::MeshRendererComponent>();
+  if (meshRenderer.materials.empty() || meshRenderer.materials[0].empty())
+    return nullptr;
+  sfs::MeshLibrary& meshes = context.render->meshes();
+  const sfs::MeshMaterial* drawn = meshes.materialData(meshes.material(meshRenderer.materials[0]));
+  return drawn ? drawn->terrain : nullptr;
 }
 
 constexpr ImU32 kSelectionColor = IM_COL32(255, 170, 40, 255);
@@ -207,6 +225,8 @@ void ViewportPanel::drawContents(EditorContext& context)
   // A stroke ends with its tool (or when Play starts).
   if (m_tool != Tool::GrassBrush || context.playing || !gizmosVisible(context))
     endGrassStroke(context);
+  if (m_tool != Tool::TerrainBrush || context.playing || !gizmosVisible(context))
+    endTerrainStroke(context);
   if (gizmosVisible(context))
   {
     // Kept inside the image: an icon near its edge mustn't spill onto the
@@ -217,9 +237,12 @@ void ViewportPanel::drawContents(EditorContext& context)
     drawCameraIcons(context, view);
     drawSelectionOutline(context, view);
     drawColliders(context, view);
-    gizmoActive = m_tool == Tool::GrassBrush && !context.playing
-                      ? paintGrass(context, view, imageHovered)
-                      : drawGizmo(context, view);
+    if (m_tool == Tool::GrassBrush && !context.playing)
+      gizmoActive = paintGrass(context, view, imageHovered);
+    else if (m_tool == Tool::TerrainBrush && !context.playing)
+      gizmoActive = paintTerrain(context, view, imageHovered);
+    else
+      gizmoActive = drawGizmo(context, view);
     ImGui::PopClipRect();
   }
 
@@ -335,6 +358,54 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
                "Paint where the grass grows (B): drag over it, Shift to erase");
   else if (m_tool == Tool::GrassBrush)
     m_tool = Tool::Move;
+  // The terrain brush, for a terrain material (its splat map).
+  const std::shared_ptr<const sfs::TerrainMaterial> terrain = terrainOf(context, context.selection);
+  if (terrain && !context.render->space2D())
+    toolButton("Terrain", Tool::TerrainBrush, "Paint the terrain's layers (T): drag over it, Shift for the first layer");
+  else if (m_tool == Tool::TerrainBrush)
+    m_tool = Tool::Move;
+  if (m_tool == Tool::TerrainBrush && terrain)
+  {
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::SliderFloat("Size", &m_terrainSize, 0.25f, 40.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SetItemTooltip("How wide the brush is, in world units");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderFloat("Strength", &m_terrainStrength, 0.05f, 1.0f, "%.2f");
+    ImGui::SetItemTooltip("How quickly it paints");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderFloat("Softness", &m_terrainSoftness, 0.0f, 1.0f, "%.2f");
+    ImGui::SetItemTooltip("How gently its edge fades (0: a hard edge)");
+    ImGui::SameLine();
+    // Which layer: named as the material names them.
+    const int count = std::max(static_cast<int>(terrain->layers.size()), 1);
+    m_terrainLayer = std::clamp(m_terrainLayer, 0, count - 1);
+    std::vector<std::string> names;
+    names.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i)
+    {
+      const std::string own = i < static_cast<int>(terrain->layers.size())
+                                  ? terrain->layers[static_cast<std::size_t>(i)].name
+                                  : std::string();
+      names.push_back(std::to_string(i + 1) + ": " + (own.empty() ? "Layer" : own));
+    }
+    ImGui::SetNextItemWidth(110.0f);
+    if (ImGui::BeginCombo("##terrainLayer", names[static_cast<std::size_t>(m_terrainLayer)].c_str()))
+    {
+      for (int i = 0; i < count; ++i)
+        if (ImGui::Selectable(names[static_cast<std::size_t>(i)].c_str(), i == m_terrainLayer))
+          m_terrainLayer = i;
+      ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Which layer it paints (Shift: the first, as an eraser)");
+    if (!terrain->splat)
+    {
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No splat map: make one in the material");
+    }
+    return;
+  }
   if (m_tool == Tool::GrassBrush)
   {
     ImGui::SetNextItemWidth(110.0f);
@@ -413,6 +484,8 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
     m_tool = Tool::Scale;
   if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection) && !context.render->space2D())
     m_tool = Tool::GrassBrush;
+  if (ImGui::IsKeyPressed(ImGuiKey_T, false) && terrainOf(context, context.selection) && !context.render->space2D())
+    m_tool = Tool::TerrainBrush;
 
   if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
     context.focusRequest = context.selection;
@@ -744,6 +817,106 @@ void ViewportPanel::endGrassStroke(EditorContext& context)
       context.selection.getComponent<sfs::GrassComponent>().paint =
           maps->toJson();
   context.history->endChange();
+}
+
+bool ViewportPanel::paintTerrain(EditorContext& context, const View& view, bool hovered)
+{
+  const sfs::Entity ground = context.selection;
+  const std::shared_ptr<const sfs::TerrainMaterial> terrain = terrainOf(context, ground);
+  if (!terrain || !terrain->splat || terrain->splat->empty())
+  {
+    endTerrainStroke(context);
+    return false;
+  }
+  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  if (m_terrainSplat && (!down || m_terrainSplat != terrain->splat))
+    endTerrainStroke(context);
+  if (!hovered && !m_terrainSplat)
+    return false;
+
+  // Where the cursor meets the mesh, and its texture coordinates there.
+  const sfs::MeshHandle mesh = ground.getComponent<sfs::MeshRendererComponent>().mesh;
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(ground);
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const sfs::Ray ray = context.render->camera().screenRay({mouse.x - view.origin.x, mouse.y - view.origin.y},
+                                                          {view.size.x, view.size.y});
+  const std::optional<sfs::MeshLibrary::RayHit> hit = context.render->meshes().raycast(mesh, world, ray);
+  if (!hit)
+    return hovered;
+  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
+  const int layer = ImGui::GetIO().KeyShift ? 0 : m_terrainLayer;
+
+  // Its ring, flat on the ground, and its soft edge's start inside it.
+  const float radius = m_terrainSize * 0.5f;
+  const ImU32 color = layer == 0 ? IM_COL32(235, 180, 90, 230) : IM_COL32(120, 200, 255, 230);
+  for (const float scale : {1.0f, 1.0f - m_terrainSoftness})
+  {
+    if (scale <= 0.02f || (scale < 1.0f && m_terrainSoftness <= 0.02f))
+      continue;
+    std::array<ImVec2, 48> ring;
+    int count = 0;
+    for (int i = 0; i < static_cast<int>(ring.size()); ++i)
+    {
+      const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
+      if (const auto at = toScreen(view, point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) * radius * scale))
+        ring[count++] = *at;
+    }
+    ImGui::GetWindowDrawList()->AddPolyline(ring.data(), count, color, ImDrawFlags_Closed, scale < 1.0f ? 1.0f : 2.0f);
+  }
+
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+  {
+    m_terrainSplat = terrain->splat;
+    m_terrainSinceGrass = 0.0f;
+  }
+  if (!m_terrainSplat || !down || hit->uvPerUnit.x <= 0.0f)
+    return true;
+
+  // Into the splat map as it is, in place (every material using it shows the
+  // change), and up to the GPU; the grass on it grows to match every so
+  // often. At full strength a stroke paints fully in about a tenth of a
+  // second.
+  auto& splat = const_cast<sfs::TextureData&>(*m_terrainSplat); // painted in place, as intended
+  const float dt = ImGui::GetIO().DeltaTime;
+  const auto [from, to] = sfs::paintSplat(splat,
+                                          hit->uv,
+                                          hit->uvPerUnit * radius,
+                                          layer,
+                                          std::min(m_terrainStrength * 10.0f * dt, 1.0f),
+                                          m_terrainSoftness);
+  if (to.x > from.x && to.y > from.y)
+    context.render->renderer().updateTexture(m_terrainSplat, from, to);
+  m_terrainSinceGrass += dt;
+  if (m_terrainSinceGrass > 0.2f)
+  {
+    m_terrainSinceGrass = 0.0f;
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->terrainPainted(ground);
+  }
+  return true;
+}
+
+void ViewportPanel::endTerrainStroke(EditorContext& context)
+{
+  if (!m_terrainSplat)
+    return;
+  const std::shared_ptr<const sfs::TextureData> splat = std::move(m_terrainSplat);
+  m_terrainSplat.reset();
+  if (context.render)
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->terrainPainted(context.selection);
+  // Saved to the texture asset it was read from.
+  if (!context.scene || !context.assets)
+    return;
+  const std::optional<sfs::AssetId> id = context.scene->assetStore().textureId(splat.get());
+  const sfs::AssetRecord* record = id ? context.assets->find(*id) : nullptr;
+  if (!record)
+  {
+    LOG_ERROR("The terrain's splat map isn't a texture asset: its painting isn't saved");
+    return;
+  }
+  if (!sfs::saveTexturePng(*splat, context.assets->absolutePath(*record)))
+    LOG_ERROR("Can't save the splat map " + record->path.generic_string());
 }
 
 void ViewportPanel::pick(EditorContext& context, const View& view)

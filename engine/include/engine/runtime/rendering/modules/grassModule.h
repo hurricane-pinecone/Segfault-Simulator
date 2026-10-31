@@ -8,6 +8,7 @@
 #include "nlohmann/json.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -16,6 +17,7 @@ namespace sfs
 {
 
 class IRenderer;
+struct TerrainMaterial;
 class MeshLibrary;
 class Registry;
 
@@ -29,6 +31,11 @@ class Registry;
  * nothing. Each update, its trample map springs back and is pressed by the
  * frame's benders: rigid bodies that bend grass (sized by their colliders) and
  * GrassBenderComponent entities.
+ *
+ * On a terrain (the mesh's first material, as drawn: a visual style's variant
+ * may be one) whose layers keep grass off (TerrainLayer::grass), it grows
+ * only as much as they let it, x its maps: bare where dirt is painted. The
+ * maps themselves aren't changed by that.
  *
  * Its maps (GrassMaps: where it grows, how long, and data for its material)
  * start as the component's `paint`, and a game changes them as it plays
@@ -85,6 +92,12 @@ public:
   /** A channel to `value` everywhere. */
   void fill(const Entity& entity, GrassMaps::Channel channel, float value);
 
+  /**
+   * The terrain under an entity's grass was painted (its splat map changed):
+   * how much grows where, again, from the next frame.
+   */
+  void terrainPainted(const Entity& entity);
+
   // --- for tests and tools
   // ----------------------------------------------------
 
@@ -113,6 +126,12 @@ private:
 
     GrassTrample trample;
     float trampleHeight = 0.0f; // what `trample` was made for, with `model`
+    // A terrain under it keeping grass off some layers: how much grows on
+    // each of the maps' texels (255 all), worked out for `coverGrid`.
+    std::shared_ptr<const TerrainMaterial> terrain;
+    std::vector<uint8_t> cover;
+    GrassGrid coverGrid;
+    bool coverMadeMaps = false; // the maps were made (full) for it
     float recovery = 3.0f;
     bool seen = false; // this frame
   };
@@ -123,6 +142,10 @@ private:
   // one); and its maps sent up if they changed.
   Patch* refresh(const Entity& entity);
   void uploadMaps(Patch& patch);
+  // The terrain under a patch (null if none keeps grass off), and how much
+  // it lets grow over the maps' grid.
+  std::shared_ptr<const TerrainMaterial> terrainUnder(const Entity& entity);
+  static void workOutCover(Patch& patch);
   const Patch* find(const Entity& entity) const;
 
   IRenderer& m_renderer;

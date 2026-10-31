@@ -15,16 +15,50 @@ namespace sfs::shaders
 {
 
 /**
- * A mesh pass's whole shader: the shared declarations, the surface interface,
- * a material's surface, then the pass itself.
+ * A mesh pass's whole shader: the shared declarations (and the sky's
+ * helpers), the surface interface, a material's surface, then the pass
+ * itself.
  */
 inline std::string meshPass(std::string_view surface, std::string_view pass)
 {
   std::string source(meshCommonWgsl);
+  source += skyCommonWgsl;
   source += meshSurfaceWgsl;
   source += surface;
   source += pass;
   return source;
+}
+
+/** A physical sky's reflection passes (sky.wgsl). */
+inline std::string skyPasses()
+{
+  return std::string(skyCommonWgsl) + std::string(skyWgsl);
+}
+
+/** A physical sky's background, drawn in the lit pass. */
+inline std::string skyBackground()
+{
+  return std::string(meshCommonWgsl) + std::string(skyCommonWgsl) +
+         std::string(skyBackgroundWgsl) + std::string(fogWgsl);
+}
+
+/**
+ * The lit pass's lighting (meshLit.wgsl, with height fog), then its vertex
+ * stage: meshLitVertex.wgsl's for meshes, meshGrass.wgsl's for grass.
+ */
+inline std::string litPass(std::string_view vertex)
+{
+  return std::string(meshLitWgsl) + std::string(fogWgsl) + std::string(vertex);
+}
+
+/**
+ * The passes working out ambient occlusion (ambientOcclusion.wgsl): the
+ * depth and normals of what's drawn (a mesh pass), then the occlusion and
+ * its blur (full-screen passes).
+ */
+inline std::string occlusionPasses()
+{
+  return std::string(ambientOcclusionWgsl);
 }
 
 /** The standard surface's WGSL (for materials without a graph). */

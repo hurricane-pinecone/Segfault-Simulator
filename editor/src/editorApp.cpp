@@ -114,6 +114,9 @@ void EditorApp::onSetup()
 {
   // The editor draws its own UI; the engine's debug overlay would duplicate it.
   setDebugUiVisible(false);
+  // Play is for trying things out: its development keys work (F8 visual
+  // styles), in any build of the editor.
+  setDevKeys(true);
   m_context.history = &m_history;
 
   sfs::IRenderBackend& backend = *renderBackend();
@@ -2411,6 +2414,13 @@ void EditorApp::drawExportDialog()
   ImGui::InputInt2("Window size", m_exportWindowSize);
   m_exportWindowSize[0] = std::clamp(m_exportWindowSize[0], 320, 7680);
   m_exportWindowSize[1] = std::clamp(m_exportWindowSize[1], 240, 4320);
+  if (!m_exportWeb)
+  {
+    ImGui::Checkbox("Development build", &m_exportDevelopment);
+    ImGui::SetItemTooltip(
+        "For trying the game out, not for shipping: its development keys "
+        "work\n(F8 / Shift+F8 switch between the project's visual styles).");
+  }
 
   ImGui::Spacing();
   ImGui::BeginDisabled(m_exportStartScene.empty() || m_exportFolder.empty());
@@ -2464,6 +2474,7 @@ void EditorApp::exportGame()
   options.module = m_builder.modulePath(*m_context.project);
   options.windowWidth = m_exportWindowSize[0];
   options.windowHeight = m_exportWindowSize[1];
+  options.development = m_exportDevelopment;
 
   if (!exporter.run(*m_context.project, options).empty())
     shell::openExternally(options.output);

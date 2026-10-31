@@ -51,6 +51,16 @@ public:
   void toggleDebugUi() { m_debugUiVisible = !m_debugUiVisible; }
   bool isDebugUiVisible() const { return m_debugUiVisible; }
 
+  /**
+   * Development keys, for trying things out while a game is made: F8 switches
+   * the scene to the project's next visual style (Shift+F8: the one before;
+   * see cycleVisualStyle()). On in debug builds and in the editor's Play; a
+   * release game has them only when exported as a development build (its
+   * game.json says "development": true), so a shipped game never does.
+   */
+  void setDevKeys(bool on) { m_devKeys = on; }
+  bool devKeys() const { return m_devKeys; }
+
   // --- For game code (scripts reach the game through Scene::game()) --------
 
   /** End the game once this frame is done. In the editor, this stops Play. */
@@ -257,6 +267,15 @@ private:
   bool m_collectUnusedAssets = false;
 
   bool m_debugUiVisible = true;
+#ifdef NDEBUG
+  bool m_devKeys = false;
+#else
+  bool m_devKeys = true;
+#endif
+
+  // A development key (see setDevKeys()) was pressed: act on it. True if it
+  // was one.
+  bool handleDevKey(const SDL_Event& event);
 
   bool m_quitRequested = false;
   std::optional<std::filesystem::path> m_requestedScene;

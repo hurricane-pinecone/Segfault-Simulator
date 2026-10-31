@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 using namespace sfs;
 namespace fs = std::filesystem;
@@ -50,6 +51,8 @@ int main()
     CHECK(assetKindOf("ui.ttf") == AssetKind::Font);
     CHECK(assetKindOf("hit.wav") == AssetKind::Audio);
     CHECK(assetKindOf("atlas.json") == AssetKind::Data);
+    CHECK(assetKindOf("Realistic.style") == AssetKind::VisualStyle);
+    CHECK(std::string(assetKindName(AssetKind::VisualStyle)) == "Visual Style");
     CHECK(assetKindOf("notes.xyz") == AssetKind::Other);
   }
 

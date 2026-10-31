@@ -67,7 +67,8 @@ private:
     Move,
     Rotate,
     Scale,
-    GrassBrush, // paints the selection's GrassComponent
+    GrassBrush,   // paints the selection's GrassComponent
+    TerrainBrush, // paints the splat map of the selection's terrain material
   };
 
   // The frame's camera matrices and where the image sits on screen.
@@ -108,6 +109,10 @@ private:
   // clicks paint rather than pick).
   bool paintGrass(EditorContext& context, const View& view, bool hovered);
   void endGrassStroke(EditorContext& context);
+  // The terrain brush: the same, into the splat map of the terrain material
+  // the selection is drawn with (saved to its file as each stroke ends).
+  bool paintTerrain(EditorContext& context, const View& view, bool hovered);
+  void endTerrainStroke(EditorContext& context);
   // A texture or material dragged from the Assets panel onto an object: into
   // the material slot of the part under the cursor.
   void dropAsset(EditorContext& context, const View& view);
@@ -151,6 +156,16 @@ private:
   bool m_brushErase = false;
   int m_brushChannel = 0;     // which of the grass's maps (GrassMaps::Channel)
   bool m_brushStroke = false; // painting (an undo step open)
+
+  // The terrain brush: world units across, how fast, which layer, how soft
+  // its edge; the splat map a stroke is painting, and since the grass on it
+  // last grew to match.
+  float m_terrainSize = 4.0f;
+  float m_terrainStrength = 0.5f;
+  int m_terrainLayer = 1;
+  float m_terrainSoftness = 0.6f;
+  std::shared_ptr<const sfs::TextureData> m_terrainSplat;
+  float m_terrainSinceGrass = 0.0f;
 
   bool m_active = false;
   bool m_activationRequested = false;

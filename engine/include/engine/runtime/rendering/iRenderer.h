@@ -6,6 +6,7 @@
 #include "glm/glm/ext/vector_int2.hpp"
 
 #include <cstdint>
+#include <memory>
 
 namespace sfs
 {
@@ -17,12 +18,13 @@ namespace sfs
  */
 struct RendererCapabilities
 {
-  bool grass = true;             // drawGrass (grown by a compute pass)
-  bool materialGraphs = true;    // materials with a compiled graph shader
-  bool pointLightShadows = true; // PointLight::castsShadow
-  bool postEffects = true;       // bloom
-  bool depthOfField = true;      // DepthOfFieldSettings
-  bool antiAliasing = true;      // multisampled edges
+  bool grass = true;              // drawGrass (grown by a compute pass)
+  bool materialGraphs = true;     // materials with a compiled graph shader
+  bool pointLightShadows = true;  // PointLight::castsShadow
+  bool postEffects = true;        // bloom
+  bool depthOfField = true;       // DepthOfFieldSettings
+  bool antiAliasing = true;       // multisampled edges
+  uint32_t sunShadowCascades = 4; // most cascades the sun's shadow may have
 };
 
 /**
@@ -64,6 +66,23 @@ public:
 
   /** Free a material. Unknown or invalid handles are ignored. */
   virtual void destroyMaterial(MaterialHandle material) = 0;
+
+  /**
+   * A texture's pixels changed in a rectangle (`from` inclusive, `to`
+   * exclusive): show them, on every material using it. For textures edited
+   * as a game or the editor runs (a terrain's splat map being painted); only
+   * those uploaded without mipmaps (splat maps) change; others keep what they
+   * showed until a material using them is made again. Nothing if the
+   * texture isn't uploaded.
+   */
+  virtual void updateTexture(const std::shared_ptr<const TextureData>& texture,
+                             glm::ivec2 from,
+                             glm::ivec2 to)
+  {
+    (void)texture;
+    (void)from;
+    (void)to;
+  }
 
   /**
    * Upload the ground a grass field grows on (see grass.h), to draw with

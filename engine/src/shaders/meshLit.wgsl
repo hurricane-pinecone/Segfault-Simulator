@@ -33,11 +33,60 @@ struct VertexOut {
   @location(6) grassData: vec4f, // see SurfaceIn
 }
 
+// A physical sky's (see skyCommon.wgsl and sky.wgsl): its reflections, sharp
+// (mip 0) to rough; the sampler; the sky itself (what haze fades into); and
+// the split-sum BRDF table (r scale, g bias on f0; by n.v across, roughness
+// down).
+@group(0) @binding(7) var skyReflections: texture_2d<f32>;
+@group(0) @binding(8) var skySampler: sampler;
+@group(0) @binding(9) var skyRadiance: texture_2d<f32>;
+@group(0) @binding(10) var brdfTable: texture_2d<f32>;
+
+// Ambient occlusion (see ambientOcclusion.wgsl), at half the screen's size:
+// r how open each point is (1: fully), g its depth along the view. A 1x1
+// stand-in while it's off.
+@group(0) @binding(11) var occlusionMap: texture_2d<f32>;
+
+// How open a point drawn at `pixel` (framebuffer) is to the light from all
+// around: the occlusion map's four texels around it, weighted by how near
+// each is (bilinearly) and how near in depth to the point (so it doesn't
+// bleed across edges). 1 when ambient occlusion is off, or none of them is
+// at its depth (things it doesn't hold: grass blades, see-through things).
+fn ambientOcclusionAt(pixel: vec2f, worldPosition: vec3f) -> f32 {
+  if (frame.ambientOcclusion.x < 0.5) {
+    return 1.0;
+  }
+  let depth = dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+  let size = vec2i(textureDimensions(occlusionMap));
+  let at = pixel * 0.5 - vec2f(0.5);
+  let base = vec2i(floor(at));
+  let f = at - floor(at);
+  let tolerance = max(depth * frame.ambientOcclusion.y, 0.02);
+  var sum = 0.0;
+  var total = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let corner = vec2i(i & 1, i >> 1u);
+    let texel = textureLoad(occlusionMap, clamp(base + corner, vec2i(0), size - vec2i(1)), 0);
+    let across = select(1.0 - f.x, f.x, corner.x == 1);
+    let down = select(1.0 - f.y, f.y, corner.y == 1);
+    let weight = (across * down + 0.01) * max(1.0 - abs(texel.g - depth) / tolerance, 0.0);
+    sum += texel.r * weight;
+    total += weight;
+  }
+  if (total < 1e-4) {
+    return 1.0;
+  }
+  return sum / total;
+}
+
 // Sun visibility: 1 = lit, 0 = fully in shadow. A grid of hardware-filtered
 // comparison taps, spread by `softness` texels, gives soft edges.
 fn sunVisibility(worldPosition: vec3f, normal: vec3f) -> f32 {
   if (frame.shadow.x < 0.5) {
     return 1.0;
+  }
+  if (frame.cascadeInfo.x > 1.5) {
+    return cascadedVisibility(worldPosition, normal);
   }
 
   // Nudge the lookup off the surface along its normal, by a texel and a half
@@ -63,6 +112,61 @@ fn sunVisibility(worldPosition: vec3f, normal: vec3f) -> f32 {
     }
   }
   return sum / 9.0;
+}
+
+// One cascade's look at a point: x its visibility, y how far inside the
+// cascade it is (0 at its edge, 1 at its centre; below 0: outside it).
+fn cascadeTap(cascade: u32, worldPosition: vec3f, normal: vec3f) -> vec2f {
+  let params = frame.cascadeParams[cascade];
+  // Off the surface by a texel and a half of this cascade's, as the one map.
+  let offsetPosition = worldPosition + normal * (params.x * 1.5);
+  let lightClip = frame.cascades[cascade] * vec4f(offsetPosition, 1.0);
+  let ndc = lightClip.xyz / lightClip.w;
+  let inside = 1.0 - max(abs(ndc.x), abs(ndc.y));
+  if (inside <= 0.0 || ndc.z > 1.0 || ndc.z < 0.0) {
+    return vec2f(1.0, -1.0);
+  }
+  // Into its tile of the atlas, the filter's taps kept within it.
+  let rect = frame.cascadeRects[cascade];
+  let margin = params.zw / rect.zw * 1.5 + vec2f(1e-4);
+  let local = clamp(vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), margin, vec2f(1.0) - margin);
+  let uv = rect.xy + local * rect.zw;
+  let depth = ndc.z - params.y;
+  var sum = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let tap = uv + vec2f(f32(x), f32(y)) * params.zw;
+      sum += textureSampleCompareLevel(shadowMap, shadowSampler, tap, depth);
+    }
+  }
+  return vec2f(sum / 9.0, inside);
+}
+
+// Sun visibility from cascades: the finest whose box holds the point,
+// blended into the next over its edge, fading out at the far end.
+fn cascadedVisibility(worldPosition: vec3f, normal: vec3f) -> f32 {
+  let count = u32(frame.cascadeInfo.x);
+  let band = frame.cascadeInfo.y;
+  let along = dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+  let fade = smoothstep(frame.cascadeInfo.z, frame.cascadeInfo.w, along);
+  if (fade >= 1.0) {
+    return 1.0;
+  }
+  for (var c = 0u; c < count; c++) {
+    let tap = cascadeTap(c, worldPosition, normal);
+    if (tap.y < 0.0) {
+      continue;
+    }
+    var visibility = tap.x;
+    if (tap.y < band && c + 1u < count) {
+      let next = cascadeTap(c + 1u, worldPosition, normal);
+      if (next.y >= 0.0) {
+        visibility = mix(next.x, tap.x, tap.y / band);
+      }
+    }
+    return mix(visibility, 1.0, fade);
+  }
+  return 1.0;
 }
 
 // The frame's point lights, and which of them each cluster (a screen tile x a
@@ -248,6 +352,99 @@ fn environment(normal: vec3f, toView: vec3f, roughness: f32) -> vec3f {
   return mix(ground, above, smoothstep(-softness, softness * 0.5, up));
 }
 
+// A physical sky's diffuse light on a surface facing `normal` (its SH9).
+fn skyIrradianceAt(normal: vec3f) -> vec3f {
+  let n = normal;
+  let sh = frame.skyIrradiance;
+  let light = sh[0].rgb * 0.282095 +
+              (sh[1].rgb * n.y + sh[2].rgb * n.z + sh[3].rgb * n.x) * 0.488603 +
+              (sh[4].rgb * (n.x * n.y) + sh[5].rgb * (n.y * n.z) + sh[7].rgb * (n.x * n.z)) * 1.092548 +
+              sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) +
+              sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+  return max(light, vec3f(0.0));
+}
+
+// What a surface of `roughness` reflects of a physical sky from `direction`
+// (before its reflections are rendered: its diffuse light, as a blur).
+fn skyReflection(direction: vec3f, roughness: f32) -> vec3f {
+  if (frame.skyMode.y < 0.5) {
+    return skyIrradianceAt(direction);
+  }
+  return textureSampleLevel(skyReflections, skySampler, octEncode(direction), roughness * frame.skyMode.z).rgb *
+         frame.skyLight.x;
+}
+
+// The sky at the horizon behind a point: what haze fades it into, under a
+// physical sky (as the background shows it).
+fn hazeSky(worldPosition: vec3f) -> vec3f {
+  let away = worldPosition - frame.cameraPosition.xyz;
+  let level = normalize(vec3f(away.xy, max(away.z, 0.0) + 0.05 * length(away.xy) + 1e-4));
+  if (frame.skyMode.y < 0.5) {
+    return skyIrradianceAt(level) * frame.skyScale.rgb;
+  }
+  return textureSampleLevel(skyRadiance, skySampler, octEncode(level), 0.0).rgb * frame.skyScale.rgb;
+}
+
+// A surface lit by a physical sky: the sun's light (through the air; none
+// once it's set) as Lambert diffuse and a GGX glint, the sky's diffuse light
+// (its SH9) and its reflections (prefiltered, split sum), and point lights
+// as under a flat sky. A visual style scales the sun's light and the sky's
+// (diffuse and reflected) by its balance.
+fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f, albedo: vec3f,
+                 metallic: f32, roughness: f32, alpha: f32, occlusion: f32) -> LitOut {
+  let toSun = frame.sunDirection.xyz;
+  let toView = normalize(frame.cameraPosition.xyz - in.worldPosition);
+  let visibility = sunVisibility(in.worldPosition, geometryNormal);
+  let sun = frame.sunLight.rgb * frame.sunBalance.rgb;
+  let ambient = frame.ambientBalance.rgb;
+  let f0 = mix(vec3f(0.04), albedo, metallic);
+
+  let direct = sun * (max(dot(normal, toSun), 0.0) * visibility);
+  let skyLight = skyIrradianceAt(normal) * ambient * occlusion;
+
+  // Point lights brighten what daylight hasn't, as under a flat sky.
+  let daylight = smoothstep(0.20, 0.75, frame.sunColor.w);
+  let pointLit = pointLighting(in.clip.xy, in.worldPosition, normal, geometryNormal,
+                               Shine(toView, f0, roughness, 1.0));
+  let level = direct + skyLight;
+  let shadowRoom = mix(1.0, 1.0 - smoothstep(0.65, 1.0, max(max(level.r, level.g), level.b)), daylight);
+  let diffuse = min(level + pointLit.diffuse * (2.0 * shadowRoom), vec3f(frame.ambientBalance.w));
+
+  // The sky's reflection, hidden where it would come from below the
+  // surface's own horizon, and the sun's glint.
+  let ndotv = max(dot(normal, toView), 1e-3);
+  let brdf = textureSampleLevel(brdfTable, skySampler, vec2f(ndotv, roughness), 0.0).rg;
+  let reflected = reflect(-toView, normal);
+  let horizon = clamp(1.0 + dot(reflected, geometryNormal), 0.0, 1.0);
+  let reflection = skyReflection(reflected, roughness) * ambient * (f0 * brdf.x + brdf.y) * (horizon * horizon) *
+                   occlusion;
+  let glint = min(ggxSpecular(normal, toView, toSun, f0, roughness), vec3f(8.0)) * sun * (PI * visibility) +
+              pointLit.specular * shadowRoom;
+
+  let lightColor = albedo * (1.0 - metallic) * diffuse + reflection + glint +
+                   max(s.emission, vec3f(0.0)) * in.tint.rgb;
+  let haze = hazeAt(in.worldPosition);
+  var color = mix(lightColor, hazeSky(in.worldPosition), haze);
+  var clearness = 1.0 - haze;
+  if (frame.fogLight.z > 0.5) {
+    let fogged = fogAt(in.worldPosition);
+    color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), fogged);
+    clearness *= 1.0 - fogged;
+  }
+  return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * clearness, alpha));
+}
+
+// The colour of height fog toward `away` (from the camera): under a physical
+// sky, the sky at the horizon that way (as haze), glowing toward the sun; under
+// a flat one, the sky colour.
+fn fogColor(away: vec3f) -> vec3f {
+  if (frame.skyMode.x < 0.5) {
+    return frame.sky.rgb;
+  }
+  let direction = normalize(away);
+  return hazeSky(frame.cameraPosition.xyz + away) + fogSunGlow(direction);
+}
+
 // The lit colour, and the light of it that blooms: the same, x the
 // material's Bloom (post.wgsl's prefilter reads it).
 struct LitOut {
@@ -292,6 +489,11 @@ fn shade(in: VertexOut) -> LitOut {
   let albedo = s.baseColor * in.tint.rgb;
   let metallic = clamp(s.metallic, 0.0, 1.0);
   let roughness = clamp(s.roughness, 0.04, 1.0);
+  // How open it is to the light from all around (ambient occlusion).
+  let occlusion = ambientOcclusionAt(in.clip.xy, in.worldPosition);
+  if (frame.skyMode.x > 0.5) {
+    return shadePhysical(in, s, normal, geometryNormal, albedo, metallic, roughness, alpha, occlusion);
+  }
 
   let toSun = frame.sunDirection.xyz;
   let diffuseStrength = frame.sunDirection.w;
@@ -317,7 +519,16 @@ fn shade(in: VertexOut) -> LitOut {
   let visibility = sunVisibility(in.worldPosition, geometryNormal);
   lit = mix(shadedLevel, lit, visibility);
 
-  let sunlight = max(vec3f(lit) * frame.sunColor.rgb, vec3f(0.03));
+  var sunlight = max(vec3f(lit) * frame.sunColor.rgb, vec3f(0.03));
+  // A visual style re-balances the light: the sun's own share (what shadow
+  // and turning away take) and the ambient rest, each scaled and tinted.
+  // Ambient occlusion darkens only the ambient rest, the same way.
+  if (frame.sunBalance.w > 0.5 || occlusion < 1.0) {
+    let direct = clamp(sunDiffuse * diffuseStrength * (1.0 - shade) * visibility, 0.0, max(lit, 0.0));
+    sunlight = max((vec3f(lit - direct) * (frame.ambientBalance.rgb * occlusion) + vec3f(direct) * frame.sunBalance.rgb) *
+                       frame.sunColor.rgb,
+                   vec3f(0.03));
+  }
 
   // How the surface reflects (below), which point lights' highlights need.
   let toView = normalize(frame.cameraPosition.xyz - in.worldPosition);
@@ -334,7 +545,8 @@ fn shade(in: VertexOut) -> LitOut {
   let sunlightAmount = max(max(sunlight.r, sunlight.g), sunlight.b);
   let shadowRoom = mix(1.0, 1.0 - smoothstep(0.65, 1.0, sunlightAmount), daylight);
 
-  let total = clamp(sunlight + point * shadowRoom, vec3f(0.0), vec3f(1.0));
+  // Up to white, unless tone mapping rolls brighter light off.
+  let total = clamp(sunlight + point * shadowRoom, vec3f(0.0), vec3f(frame.ambientBalance.w));
 
   // Metal has no diffuse colour of its own: it shows what it reflects, tinted
   // by its albedo. Paint and plastic reflect a little, more when smooth (rough
@@ -343,8 +555,8 @@ fn shade(in: VertexOut) -> LitOut {
   let fresnel = f0 + (max(vec3f(1.0 - roughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
   // As bright as the scene's light: ambient plus some of the sun (dim at night).
   let reflection = environment(normal, toView, roughness) * fresnel * reflectivity *
-                   mix(0.6, 1.0, visibility) * (ambient + 0.5 * diffuseStrength);
-  let glint = min(ggxSpecular(normal, toView, toSun, f0, roughness), vec3f(8.0)) * frame.sunColor.rgb *
+                   mix(0.6, 1.0, visibility) * (ambient + 0.5 * diffuseStrength) * occlusion;
+  let glint = min(ggxSpecular(normal, toView, toSun, f0, roughness), vec3f(8.0)) * frame.sunColor.rgb * frame.sunBalance.rgb *
                   (diffuseStrength * visibility * reflectivity) +
               pointLit.specular * shadowRoom;
 
@@ -352,6 +564,13 @@ fn shade(in: VertexOut) -> LitOut {
   let lightColor = albedo * (1.0 - metallic) * total + reflection + glint + max(s.emission, vec3f(0.0)) * in.tint.rgb;
   // Into the haze, toward the sky (glowing less, the more it's hidden).
   let haze = hazeAt(in.worldPosition);
-  let color = mix(lightColor, frame.sky.rgb, haze);
-  return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * (1.0 - haze), alpha));
+  var color = mix(lightColor, frame.sky.rgb, haze);
+  var clearness = 1.0 - haze;
+  // Into height fog (in haze's place, when it's on).
+  if (frame.fogLight.z > 0.5) {
+    let fogged = fogAt(in.worldPosition);
+    color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), fogged);
+    clearness *= 1.0 - fogged;
+  }
+  return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * clearness, alpha));
 }

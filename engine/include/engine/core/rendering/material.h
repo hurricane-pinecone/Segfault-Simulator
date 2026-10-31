@@ -2,10 +2,12 @@
 
 #include "engine/core/rendering/materialGraph.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/terrain.h"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 #include "nlohmann/json.hpp"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -39,6 +41,20 @@ namespace sfs
  *     "alphaMode": "opaque",
  *     "graph": { ...materialGraph::Graph::toJson()... }
  *   }
+ *
+ * A terrain material (TerrainMaterial: ground layers blended by a splat map)
+ * has its layers instead:
+ *
+ *   {
+ *     "formatVersion": 2,
+ *     "alphaMode": "opaque",
+ *     "terrain": { ...TerrainAsset::toJson()... }
+ *   }
+ *
+ * Any kind may name variants: other materials to draw instead while the
+ * scene's visual style has their tag (VisualStyle::materialVariant), e.g.
+ *
+ *   "variants": {"realistic": "asset:9c1e..."}
  */
 struct MaterialAsset
 {
@@ -60,6 +76,15 @@ struct MaterialAsset
   // alphaMode is read from the fields above (a graph's cut-out threshold is
   // its Alpha Clip).
   std::optional<materialGraph::Graph> graph;
+
+  // Set for a terrain material: its layers and splat map (and nothing else
+  // is read but alphaMode, which is opaque).
+  std::optional<TerrainAsset> terrain;
+
+  // Materials ("asset:<id>") to draw instead under a visual style's tag
+  // (VisualStyle::materialVariant): tag -> material. A variant's own variants
+  // aren't followed.
+  std::map<std::string, std::string> variants;
 
   /**
    * A node graph that draws the same as this standard material (its fields

@@ -14,6 +14,7 @@
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/materialGraphCompiler.h>
 #include <engine/core/rendering/meshPrimitives.h>
+#include <engine/core/rendering/terrain.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/input/input.h>
 #include <engine/runtime/rendering/iRenderer.h>
@@ -22,6 +23,7 @@
 #include <engine/runtime/rendering/modules/meshModule.h>
 #include <engine/runtime/rendering/modules/uiModule.h>
 #include <engine/runtime/rendering/renderSystem.h>
+#include <engine/runtime/rendering/visualStyles.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/ui/layer.h>
 
@@ -716,6 +718,63 @@ int main()
     CHECK(grassModule.maps(lawn) == nullptr);
   }
 
+  TEST("grass on a terrain should grow only where its layers let it, as the "
+       "material drawn says")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle plane =
+        h.system.meshes().add(meshes::plane({10.0f, 10.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(GrassComponent{.density = 20.0f});
+    // Dirt (no grass) painted over the left half (u below 0.5: x below 0).
+    auto terrain = std::make_shared<TerrainMaterial>();
+    auto splat = blankSplat(8);
+    for (int y = 0; y < 8; ++y)
+      for (int x = 0; x < 4; ++x)
+        splat->rgba[(std::size_t(y) * 8 + x) * 4] = 255;
+    terrain->splat = splat;
+    terrain->layers = {TerrainLayer{}, TerrainLayer{.grass = 0.0f}};
+    MeshMaterial ground;
+    ground.terrain = terrain;
+    h.system.meshes().setMaterial("ground", ground);
+    lawn.getComponent<MeshRendererComponent>().materials = {"ground"};
+
+    h.frame();
+    CHECK(!h.renderer.mapUpdates.empty());
+    const auto coverageAt = [&](float x)
+    {
+      const auto& update = h.renderer.mapUpdates.back();
+      const glm::ivec2 texel(
+          glm::floor(update.grid.toTexels(glm::vec2(x, 0.0f))));
+      const int width = update.to.x - update.from.x;
+      return update.shape[(std::size_t(texel.y - update.from.y) * width +
+                           (texel.x - update.from.x)) *
+                          4];
+    };
+    CHECK(!h.renderer.mapUpdates.back().grid.empty());
+    CHECK(coverageAt(-3.0f) < 10);
+    CHECK(coverageAt(3.0f) == 255);
+    // The maps themselves keep it all (the game's to read and wear).
+    CHECK(grassModule.maps(lawn) &&
+          testing::approx(grassModule.sample(
+                              lawn, GrassMaps::Coverage, {-3.0f, 0.0f, 0.0f}),
+                          1.0f));
+
+    // Painted: grown again once told.
+    paintSplat(*splat, {0.75f, 0.5f}, {0.3f, 0.6f}, 1, 1.0f, 0.0f);
+    grassModule.terrainPainted(lawn);
+    h.frame();
+    CHECK(coverageAt(3.0f) < 10);
+
+    // A plain material again: full grass, as unpainted grass is.
+    h.system.meshes().setMaterial("ground", MeshMaterial{});
+    h.renderer.mapUpdates.clear();
+    h.frame();
+    CHECK(!h.renderer.mapUpdates.empty() &&
+          h.renderer.mapUpdates.back().grid.empty());
+  }
+
   TEST("rigid bodies and grass benders should flatten grass, unless they opt "
        "out")
   {
@@ -1155,6 +1214,398 @@ int main()
     CHECK(h.renderer.materialUpdates == 1);
     h.system.meshes().reloadMaterial("never loaded"); // ignored
     CHECK(h.renderer.materialUpdates == 1);
+  }
+
+  TEST("a visual style should stand in for the scene's look while it's on, "
+       "and re-balance its light")
+  {
+    Harness h;
+    std::vector<std::string> asked;
+    VisualStyle style;
+    style.grading.toneMapper = ToneMapper::Aces;
+    style.grading.exposure = 0.5f;
+    style.sunIntensity = 2.0f;
+    style.ambientTint = {0.5f, 1.0f, 1.0f};
+    style.skyIntensity = 0.5f;
+    style.bloom = BloomSettings{.intensity = 0.1f, .threshold = 2.0f};
+    style.shadowSoftness = 3.0f;
+    h.system.setStyleSource(
+        [&](std::string_view name) -> std::optional<VisualStyle>
+        {
+          asked.emplace_back(name);
+          if (name == "asset:real")
+            return style;
+          return std::nullopt;
+        });
+
+    SceneLighting lighting;
+    lighting.skyColor = {0.4f, 0.6f, 0.8f};
+    h.system.setLighting(lighting);
+    h.system.setHazeSettings({.strength = 0.3f, .distance = 90.0f});
+    ColorGrading own;
+    own.saturation = 1.5f;
+    h.system.setColorGrading(own);
+
+    // No style: the scene's own look, its light as it is.
+    h.frame();
+    CHECK(h.renderer.frame.grading == own);
+    CHECK(h.renderer.frame.lightBalance.neutral());
+    CHECK(testing::approx(h.renderer.frame.lighting.skyColor.g, 0.6f));
+    CHECK(testing::approx(h.renderer.frame.bloom.intensity, 0.6f));
+
+    // On: its grading, bloom and shadow softness; the haze it leaves alone
+    // stays the scene's; the sun doubled, ambient tinted, the sky halved.
+    CHECK(h.system.setVisualStyle("asset:real"));
+    CHECK(h.system.visualStyle() != nullptr);
+    h.frame();
+    CHECK(h.renderer.frame.grading == style.grading);
+    CHECK(testing::approx(h.renderer.frame.bloom.threshold, 2.0f));
+    CHECK(testing::approx(h.renderer.frame.shadows.softness, 3.0f));
+    CHECK(testing::approx(h.renderer.frame.haze.strength, 0.3f));
+    CHECK(h.renderer.frame.lightBalance.sun == glm::vec3(2.0f));
+    CHECK(h.renderer.frame.lightBalance.ambient == style.ambientTint);
+    CHECK(testing::approx(h.renderer.frame.lighting.skyColor.g, 0.3f));
+    // The scene's own settings are untouched: they come back with it off.
+    CHECK(h.system.colorGrading() == own);
+    CHECK(testing::approx(h.system.lighting().skyColor.g, 0.6f));
+
+    // A day/night cycle setting the lighting each frame stays re-balanced.
+    lighting.skyColor = {1.0f, 1.0f, 1.0f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.lighting.skyColor.r, 0.5f));
+
+    // One it can't load: the name kept, the scene's own look.
+    CHECK(!h.system.setVisualStyle("asset:gone"));
+    CHECK(h.system.visualStyleName() == "asset:gone");
+    h.frame();
+    CHECK(h.renderer.frame.grading == own);
+
+    // Off.
+    CHECK(h.system.setVisualStyle(""));
+    h.frame();
+    CHECK(h.renderer.frame.grading == own);
+    CHECK(h.renderer.frame.lightBalance.neutral());
+    CHECK(testing::approx(
+        h.renderer.frame.shadows.softness, ShadowSettings{}.softness));
+
+    // Given as is (an edit being previewed), not loaded.
+    const std::size_t asks = asked.size();
+    VisualStyle edited = style;
+    edited.grading.exposure = -1.0f;
+    h.system.setVisualStyle("asset:real", edited);
+    h.frame();
+    CHECK(asked.size() == asks);
+    CHECK(testing::approx(h.renderer.frame.grading.exposure, -1.0f));
+    // Reloading reads it again (the saved one).
+    h.system.reloadVisualStyle();
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.grading.exposure, 0.5f));
+  }
+
+  TEST("a physical sky should light the frame from the sun's direction, "
+       "working its diffuse light out again only when the sun has moved")
+  {
+    Harness h;
+    SceneLighting lighting;
+    lighting.sun.direction = {0.5f, -0.2f, 0.8f};
+    h.system.setLighting(lighting);
+
+    // Flat (the default): no model.
+    h.frame();
+    CHECK(!h.renderer.frame.sky.physical);
+
+    SkySettings physical;
+    physical.model = SkyModel::Physical;
+    h.system.setSkySettings(physical);
+    h.frame();
+    const FrameSky first = h.renderer.frame.sky;
+    CHECK(first.physical != nullptr);
+    CHECK(first.sunLight.r > 0.5f);
+    CHECK(first.irradiance.at({0, 0, 1}).b > 0.05f);
+    CHECK(glm::length(first.toSun - glm::normalize(lighting.sun.direction)) <
+          1e-5f);
+
+    // The same sun: nothing worked out again; the same model kept.
+    h.frame();
+    CHECK(h.renderer.frame.sky.revision == first.revision);
+    CHECK(h.renderer.frame.sky.physical == first.physical);
+    // A hair's move: still not; a degree: again.
+    lighting.sun.direction = {0.5f, -0.2001f, 0.8f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.revision == first.revision);
+    // (In the background: the frame keeps the old until it's ready.)
+    lighting.sun.direction = {0.5f, -0.2f, 0.75f};
+    h.system.setLighting(lighting);
+    h.frame();
+    h.system.finishSkyWork();
+    h.frame();
+    CHECK(h.renderer.frame.sky.revision != first.revision);
+    CHECK(glm::length(h.renderer.frame.sky.toSun -
+                      glm::normalize(lighting.sun.direction)) < 1e-5f);
+
+    // Set: no sun, no shadows.
+    lighting.sun.direction = {0.5f, -0.2f, -0.3f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.sunLight == glm::vec3(0.0f));
+    CHECK(!h.renderer.frame.shadows.enabled);
+
+    // A full moon up: it lights the frame in the sun's place, casting
+    // shadows, and the night sky glows brighter under it.
+    lighting.moon.direction = {-0.3f, -0.2f, 0.8f};
+    lighting.moon.phase = 1.0f;
+    h.system.setLighting(lighting);
+    // (Twice: the setting sun's may still have been being worked out.)
+    for (int i = 0; i < 2; ++i)
+    {
+      h.frame();
+      h.system.finishSkyWork();
+    }
+    h.frame();
+    const FrameSky moonlit = h.renderer.frame.sky;
+    CHECK(moonlit.moonLit);
+    CHECK(moonlit.sunLight.b > 0.002f);
+    CHECK(moonlit.night > 1.05f);
+    CHECK(h.renderer.frame.shadows.enabled);
+    CHECK(glm::length(h.renderer.frame.lighting.sun.direction -
+                      glm::normalize(lighting.moon.direction)) < 1e-5f);
+    CHECK(glm::length(moonlit.toSun -
+                      glm::normalize(glm::vec3(0.5f, -0.2f, -0.3f))) < 1e-5f);
+    // A half moon gives less; clouds less again.
+    lighting.moon.phase = 0.5f;
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.sunLight.b < moonlit.sunLight.b * 0.5f);
+    lighting.moon.phase = 1.0f;
+    lighting.cloudCover = 1.0f;
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.sunLight.b < moonlit.sunLight.b * 0.5f);
+    CHECK(h.renderer.frame.sky.cloudCover == 1.0f);
+    // Set too: nothing shines.
+    lighting.cloudCover = 0.0f;
+    lighting.moon.direction = {-0.3f, -0.2f, -0.5f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(!h.renderer.frame.sky.moonLit);
+    CHECK(!h.renderer.frame.shadows.enabled);
+
+    // A style's sky replaces the scene's; its sky balance scales it.
+    VisualStyle style;
+    style.sky = SkySettings{};
+    h.system.setVisualStyle("asset:flat", style);
+    h.frame();
+    CHECK(!h.renderer.frame.sky.physical);
+    style.sky = physical;
+    style.skyIntensity = 0.5f;
+    h.system.setVisualStyle("asset:physical", style);
+    h.system.setSkySettings({});
+    h.frame();
+    CHECK(h.renderer.frame.sky.physical != nullptr);
+    CHECK(h.renderer.frame.sky.scale == glm::vec3(0.5f));
+
+    // A 2D game's sky is always flat.
+    h.system.setSpace2D(Space2D{});
+    h.frame();
+    CHECK(!h.renderer.frame.sky.physical);
+  }
+
+  TEST("shadow cascades should reach along the view when asked for, and the "
+       "one map stay as ever otherwise")
+  {
+    Harness h;
+    SceneLighting lighting;
+    lighting.sun.direction = {0.4f, -0.3f, 0.8f};
+    h.system.setLighting(lighting);
+
+    h.frame();
+    CHECK(h.renderer.frame.shadows.enabled);
+    CHECK(h.renderer.frame.cascades.count == 0);
+    const glm::mat4 single = h.renderer.frame.lightViewProjection;
+
+    VisualStyle style;
+    style.shadowCascades = 4;
+    style.shadowCascadeDistance = 150.0f;
+    h.system.setVisualStyle("asset:far", style);
+    h.frame();
+    const SunCascades& cascades = h.renderer.frame.cascades;
+    CHECK(cascades.count == 4);
+    CHECK(cascades.cascades[3].splitFar <= 150.0f + 1e-3f);
+    CHECK(h.renderer.frame.shadows.cascades == 4u);
+
+    // Off again: the one map, exactly as before.
+    h.system.setVisualStyle("");
+    h.frame();
+    CHECK(h.renderer.frame.cascades.count == 0);
+    CHECK(h.renderer.frame.lightViewProjection == single);
+
+    // A 2D game: the one map.
+    ShadowSettings shadows = h.system.shadowSettings();
+    shadows.cascades = 3;
+    h.system.setShadowSettings(shadows);
+    h.frame();
+    CHECK(h.renderer.frame.cascades.count == 3);
+    h.system.setSpace2D(Space2D{});
+    h.frame();
+    CHECK(h.renderer.frame.cascades.count == 0);
+  }
+
+  TEST("materials should draw as their variants for the visual style's tag, "
+       "switching live, without loading anything more per frame")
+  {
+    Harness h;
+    MeshLibrary& library = h.system.meshes();
+    MeshLibrary::Provider provider;
+    int loads = 0;
+    provider.loadMaterial =
+        [&loads](std::string_view name) -> std::shared_ptr<const MeshMaterial>
+    {
+      ++loads;
+      auto material = std::make_shared<MeshMaterial>();
+      if (name == "turf")
+        material->variants = {
+            {"realistic", "turf real"}, {"painted", "turf painted"}};
+      if (name == "turf real" || name == "turf painted")
+        material->roughness = 0.5f;
+      if (name == "turf real") // not followed (a variant's own variant)
+        material->variants = {{"realistic", "turf painted"}};
+      return name == "nothing" ? nullptr : material;
+    };
+    library.setProvider(provider);
+
+    const MeshHandle box = library.add(meshes::box({1, 1, 1}));
+    h.spawn(box, {0.0f, 0.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"turf"};
+    h.spawn(box, {0.0f, 2.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"stone"};
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    (void)grassModule;
+    const MeshHandle plane = library.add(meshes::plane({4.0f, 4.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(
+        GrassComponent{.material = "turf", .density = 20.0f});
+
+    const auto drawnMaterials = [&]
+    {
+      std::vector<MaterialHandle> out;
+      for (const auto& batch : h.renderer.batches)
+        out.insert(out.end(), batch.materials.begin(), batch.materials.end());
+      return out;
+    };
+    const auto has =
+        [](const std::vector<MaterialHandle>& list, MaterialHandle material)
+    { return std::find(list.begin(), list.end(), material) != list.end(); };
+
+    h.frame();
+    const MaterialHandle turf = library.material("turf");
+    const MaterialHandle stone = library.material("stone");
+    CHECK(has(drawnMaterials(), turf) && has(drawnMaterials(), stone));
+    CHECK(h.renderer.grassDrawn.size() == 1u &&
+          h.renderer.grassDrawn[0].material == turf);
+    CHECK(loads == 2); // no variant loaded while none is asked for
+
+    // The style's tag: turf draws as its variant (grass too), stone as itself.
+    VisualStyle realistic;
+    realistic.materialVariant = "realistic";
+    h.system.setVisualStyle("asset:realistic", realistic);
+    CHECK(library.materialVariant() == "realistic");
+    h.frame();
+    const MaterialHandle real = library.material("turf");
+    CHECK(real.valid() && real != turf);
+    CHECK(library.materialData(real)->roughness == 0.5f);
+    CHECK(has(drawnMaterials(), real) && !has(drawnMaterials(), turf));
+    CHECK(has(drawnMaterials(), stone));
+    CHECK(h.renderer.grassDrawn.size() == 1u &&
+          h.renderer.grassDrawn[0].material == real);
+    // The variant asked as itself doesn't follow its own variant.
+    CHECK(library.material("turf real") == real);
+    const int loaded = loads;
+    for (int i = 0; i < 3; ++i)
+      h.frame();
+    CHECK(loads == loaded); // nothing more loads frame to frame
+
+    // Another tag, then none: back to the material itself, live.
+    VisualStyle painted;
+    painted.materialVariant = "painted";
+    h.system.setVisualStyle("asset:painted", painted);
+    h.frame();
+    const MaterialHandle paint = library.material("turf");
+    CHECK(paint != real && paint != turf);
+    CHECK(has(drawnMaterials(), paint));
+    h.system.setVisualStyle("");
+    h.frame();
+    CHECK(library.material("turf") == turf);
+    CHECK(has(drawnMaterials(), turf) && !has(drawnMaterials(), paint));
+
+    // A tag none has, and a variant that can't load: themselves.
+    library.setMaterialVariant("unknown");
+    CHECK(library.material("turf") == turf);
+    MeshMaterial broken;
+    broken.variants = {{"realistic", "nothing"}};
+    const MaterialHandle game = library.setMaterial("game:broken", broken);
+    library.setMaterialVariant("realistic");
+    CHECK(library.material("game:broken") == game);
+
+    // Materials loaded after the tag is set resolve straight away.
+    CHECK(library.material("turf") == real);
+
+    // Every material (variants included) is freed with the library.
+    const std::size_t live = h.renderer.liveMaterials.size();
+    CHECK(live >= 5u);
+  }
+
+  TEST("a style's material overrides should draw a game's own material as "
+       "another, and a terrain standing in for a painted one keep its paint")
+  {
+    Harness h;
+    MeshLibrary& library = h.system.meshes();
+    const auto image = [](uint8_t value)
+    {
+      auto texture = std::make_shared<TextureData>();
+      texture->width = texture->height = 1;
+      texture->rgba = {value, value, value, 255};
+      return texture;
+    };
+    // A game paints its ground in code; a terrain to stand in for it.
+    MeshMaterial painted;
+    painted.baseTexture = image(200);
+    const MaterialHandle ground = library.setMaterial("game:ground", painted);
+    MeshMaterial plain;
+    const MaterialHandle other = library.setMaterial("game:plain", plain);
+    MeshMaterial terrain;
+    auto layers = std::make_shared<TerrainMaterial>();
+    layers->layers.push_back({.name = "Grass"});
+    terrain.terrain = layers;
+    const MaterialHandle field = library.setMaterial("terrain", terrain);
+    CHECK(library.material("game:ground") == ground);
+    const std::size_t live = h.renderer.liveMaterials.size();
+
+    VisualStyle style;
+    style.materials = {{"game:ground", "terrain"}, {"game:plain", "missing"}};
+    h.system.setVisualStyle("asset:style", style);
+    const MaterialHandle drawn = library.material("game:ground");
+    CHECK(drawn.valid() && drawn != ground && drawn != field);
+    const MeshMaterial* standIn = library.materialData(drawn);
+    CHECK(standIn && standIn->terrain &&
+          standIn->terrain->tint == painted.baseTexture);
+    CHECK(standIn && standIn->terrain->layers.size() == 1u);
+    // An override that can't load: itself.
+    CHECK(library.material("game:plain") == other);
+
+    // Painted again: the same stand-in, its tint the new paint.
+    painted.baseTexture = image(90);
+    library.setMaterial("game:ground", painted);
+    CHECK(library.material("game:ground") == drawn);
+    CHECK(library.materialData(drawn)->terrain->tint == painted.baseTexture);
+
+    // No style: itself again, the stand-in let go.
+    h.system.setVisualStyle("");
+    CHECK(library.material("game:ground") == ground);
+    CHECK(h.renderer.liveMaterials.size() == live);
   }
 
   TEST("a mesh's sections should be its material slots")

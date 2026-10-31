@@ -3,6 +3,9 @@
 #include <engine/core/logger/logger.h>
 #include <engine/core/rendering/materialGraphCompiler.h>
 #include <engine/core/rendering/meshPrimitives.h>
+#include <engine/core/rendering/sky.h>
+#include <engine/core/rendering/sunShadow.h>
+#include <engine/core/rendering/terrain.h>
 #include <engine/webgpu/webGpuContext.h>
 #include <engine/webgpu/webGpuRenderer.h>
 #include <engine/webgpu/wgpuHandle.h>
@@ -13,6 +16,7 @@
 #include "glm/glm/ext/matrix_clip_space.hpp"
 #include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/gtc/constants.hpp"
+#include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -598,6 +602,182 @@ int main()
     harness.renderer.destroyMaterial(plain);
     CHECK(reportErrors());
   }
+
+  // --- tone mapping and grading (the composite) -----------------------------
+
+  // A plane glowing `light` x white all over (nothing lit: black base colour),
+  // drawn without bloom through `grading`; the middle pixel's channels, and
+  // a corner's red.
+  struct Graded
+  {
+    int r = -1, g = -1, b = -1, corner = -1;
+  };
+  const MeshHandle gradePlane =
+      harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+  const auto drawGraded =
+      [&](float light,
+          const ColorGrading& grading,
+          const LightBalance& balance = {},
+          const std::function<void(graph::Graph&, graph::NodeId)>& surface = {})
+  {
+    graph::Graph g;
+    const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
+    g.find(out)->inputs[graph::kBaseColor] = glm::vec4(0.0f);
+    g.find(out)->inputs[graph::kEmission] = glm::vec4(glm::vec3(light), 1.0f);
+    if (surface)
+      surface(g, out);
+    const MaterialHandle material =
+        harness.renderer.createMaterial(graphMaterial(g, AlphaMode::Opaque));
+    const std::vector<uint8_t> pixels = drawPlane(harness,
+                                                  gradePlane,
+                                                  material,
+                                                  0.0f,
+                                                  [&](FrameParams& frame)
+                                                  {
+                                                    frame.bloom.enabled = false;
+                                                    frame.grading = grading;
+                                                    frame.lightBalance =
+                                                        balance;
+                                                  });
+    harness.renderer.destroyMaterial(material);
+    Graded result;
+    if (pixels.empty())
+      return result;
+    const std::size_t middle =
+        (std::size_t(kSize.y / 2) * kSize.x + kSize.x / 2) * 4;
+    result.r = pixels[middle];
+    result.g = pixels[middle + 1];
+    result.b = pixels[middle + 2];
+    result.corner = pixels[0];
+    return result;
+  };
+  const auto grey = [](const Graded& p)
+  { return p.r >= 0 && std::abs(p.r - p.g) <= 1 && std::abs(p.r - p.b) <= 1; };
+
+  TEST("with no tone mapping the picture should be as it always was: clamped "
+       "at white")
+  {
+    ColorGrading none;
+    const Graded dim = drawGraded(0.18f, none);
+    const Graded white = drawGraded(1.0f, none);
+    const Graded bright = drawGraded(8.0f, none);
+    CHECK(grey(dim) && grey(white) && grey(bright));
+    CHECK(white.r == 255 && bright.r == 255);
+    // 0.18 x 255 (the test's target is plain, not sRGB).
+    CHECK(dim.r >= 40 && dim.r <= 52);
+    // Graded but still not tone mapped: exposure brightens, still clamped.
+    ColorGrading brighter;
+    brighter.exposure = 1.0f;
+    CHECK(drawGraded(0.18f, brighter).r > dim.r + 20);
+    CHECK(drawGraded(8.0f, brighter).r == 255);
+    CHECK(reportErrors());
+  }
+
+  // Each tone mapper: grey stays grey, brighter light stays brighter (never
+  // clipping as None does at 1), and mid-grey lands near where it was.
+  const auto checkToneMapper =
+      [&](ToneMapper mapper, int greyLow, int greyHigh, int whiteBelow)
+  {
+    ColorGrading grading;
+    grading.toneMapper = mapper;
+    const Graded dim = drawGraded(0.18f, grading);
+    const Graded white = drawGraded(1.0f, grading);
+    const Graded bright = drawGraded(8.0f, grading);
+    const Graded blazing = drawGraded(64.0f, grading);
+    CHECK(grey(dim) && grey(white) && grey(bright));
+    CHECK(dim.r >= greyLow && dim.r <= greyHigh);
+    CHECK(dim.r < white.r && white.r < bright.r && bright.r <= blazing.r);
+    CHECK(white.r < whiteBelow); // rolled off, not clipped at white
+    CHECK(bright.r > 200);
+    if (dim.r < greyLow || dim.r > greyHigh || white.r >= whiteBelow)
+      std::printf("    (tone mapper %d: 0.18 -> %d, 1 -> %d, 8 -> %d)\n",
+                  static_cast<int>(mapper),
+                  dim.r,
+                  white.r,
+                  bright.r);
+    CHECK(reportErrors());
+  };
+
+  TEST("ACES should roll highlights off with filmic contrast")
+  {
+    checkToneMapper(ToneMapper::Aces, 48, 62, 230);
+  }
+
+  TEST("AgX should roll highlights off, keeping mid-grey")
+  {
+    checkToneMapper(ToneMapper::AgX, 48, 64, 200);
+  }
+
+  TEST("PBR Neutral should keep colours and only compress the brightest")
+  {
+    checkToneMapper(ToneMapper::Neutral, 30, 42, 240);
+    // A saturated colour below the knee stays (nearly) as it was: its hue
+    // kept, only the small offset taken off.
+    ColorGrading neutral;
+    neutral.toneMapper = ToneMapper::Neutral;
+    const auto red = [](graph::Graph& g, graph::NodeId out)
+    { g.find(out)->inputs[graph::kEmission] = glm::vec4(0.5f, 0.1f, 0.1f, 1); };
+    const Graded mapped = drawGraded(0.0f, neutral, {}, red);
+    const Graded plain = drawGraded(0.0f, ColorGrading{}, {}, red);
+    CHECK(mapped.r > 0 && std::abs(mapped.r - plain.r) < 20);
+    CHECK(mapped.r > mapped.g + 60);
+    CHECK(reportErrors());
+  }
+
+  TEST("white balance, saturation and the vignette should grade the picture")
+  {
+    ColorGrading warm;
+    warm.temperature = 0.6f;
+    const Graded warmed = drawGraded(0.3f, warm);
+    CHECK(warmed.r > warmed.b + 15);
+    ColorGrading cool;
+    cool.temperature = -0.6f;
+    const Graded cooled = drawGraded(0.3f, cool);
+    CHECK(cooled.b > cooled.r + 15);
+
+    ColorGrading desaturated;
+    desaturated.saturation = 0.0f;
+    const auto red = [](graph::Graph& g, graph::NodeId out)
+    { g.find(out)->inputs[graph::kEmission] = glm::vec4(0.6f, 0.1f, 0.1f, 1); };
+    const Graded greyed = drawGraded(0.0f, desaturated, {}, red);
+    CHECK(std::abs(greyed.r - greyed.g) <= 1 &&
+          std::abs(greyed.r - greyed.b) <= 1);
+
+    ColorGrading vignette;
+    vignette.vignette = 1.0f;
+    const Graded framed = drawGraded(0.5f, vignette);
+    CHECK(framed.corner < framed.r - 60);
+    CHECK(reportErrors());
+  }
+
+  TEST("a visual style's light balance should scale the sun's and ambient's "
+       "shares of a lit surface")
+  {
+    // A white matte plane in sunlight, from straight above; no emission.
+    const auto lit = [&](const LightBalance& balance)
+    {
+      return drawGraded(0.0f,
+                        ColorGrading{},
+                        balance,
+                        [](graph::Graph& g, graph::NodeId out)
+                        {
+                          g.find(out)->inputs[graph::kBaseColor] =
+                              glm::vec4(0.6f, 0.6f, 0.6f, 1.0f);
+                          g.find(out)->inputs[graph::kEmission] =
+                              glm::vec4(0.0f);
+                        });
+    };
+    const Graded plain = lit({});
+    const Graded noSun = lit({.sun = glm::vec3(0.0f)});
+    const Graded blueAmbient = lit({.ambient = glm::vec3(0.2f, 0.2f, 1.0f)});
+    CHECK(plain.r > 0);
+    CHECK(noSun.r < plain.r - 10);
+    CHECK(blueAmbient.b > blueAmbient.r + 10);
+    // Neutral balance is exactly the unbalanced picture.
+    CHECK(lit(LightBalance{}).r == plain.r);
+    CHECK(reportErrors());
+  }
+  harness.renderer.destroyMesh(gradePlane);
 
   TEST("point lights' shadows should fall away from them, whichever way they "
        "point")
@@ -1463,6 +1643,523 @@ int main()
     harness.renderer.destroyMaterial(handle);
     CHECK(reportErrors());
   }
+
+  // --- a physical sky and cascaded shadows ---------------------------------
+
+  // A pixel's rgb (x across, y down).
+  const auto pixelAt = [](const std::vector<uint8_t>& pixels, int x, int y)
+  {
+    if (pixels.empty())
+      return glm::ivec3(-1);
+    const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+    return glm::ivec3(pixels[i], pixels[i + 1], pixels[i + 2]);
+  };
+  const auto sunAt = [](float degrees, float azimuth = 0.0f)
+  {
+    const float e = glm::radians(degrees);
+    const float a = glm::radians(azimuth);
+    return glm::vec3(
+        std::cos(e) * std::cos(a), std::cos(e) * std::sin(a), std::sin(e));
+  };
+  // A frame's physical sky, its sun toward `toSun`.
+  uint64_t skyRevision = 0;
+  const auto physicalSky = [&](FrameParams& frame, const glm::vec3& toSun)
+  {
+    SkySettings settings;
+    settings.model = SkyModel::Physical;
+    static const auto model = std::make_shared<const PhysicalSky>(settings);
+    frame.sky.physical = model;
+    frame.sky.toSun = glm::normalize(toSun);
+    frame.sky.sunLight = model->sunLight(toSun);
+    frame.sky.irradiance = model->irradiance(toSun);
+    frame.sky.groundLight = model->groundRadiance(toSun);
+    frame.sky.revision = ++skyRevision;
+    frame.lighting.sun.direction = frame.sky.toSun;
+    // Exposed as a photo of a sunny day would be (the test's target isn't
+    // sRGB, so mid-grey would be dark).
+    frame.grading.toneMapper = ToneMapper::Aces;
+    frame.grading.exposure = 1.5f;
+    frame.bloom.enabled = false;
+  };
+  const MeshHandle skyPlane =
+      harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+  MeshMaterial matte;
+  matte.baseColor = {0.6f, 0.6f, 0.6f, 1.0f};
+  matte.roughness = 1.0f;
+  const MaterialHandle matteMaterial = harness.renderer.createMaterial(matte);
+
+  TEST("a physical sky should be drawn behind everything: blue overhead by "
+       "day, warm toward a setting sun, dark at night")
+  {
+    // Nothing drawn (the plane scaled away); a camera looking at the sky.
+    MeshInstance nothing;
+    nothing.model = glm::scale(glm::mat4(1.0f), glm::vec3(0.0f));
+    const auto look = [&](const glm::vec3& toSun, const glm::vec3& at)
+    {
+      return drawPlane(
+          harness,
+          skyPlane,
+          matteMaterial,
+          0.0f,
+          [&](FrameParams& frame)
+          {
+            physicalSky(frame, toSun);
+            frame.cameraPosition = {0.0f, 0.0f, 1.7f};
+            frame.view = glm::lookAt(frame.cameraPosition,
+                                     frame.cameraPosition + at,
+                                     glm::vec3(0.0f, 0.0f, 1.0f));
+            frame.projection = glm::perspectiveRH_ZO(1.0f, 1.0f, 0.1f, 100.0f);
+            frame.viewProjection = frame.projection * frame.view;
+            frame.cameraForward = glm::normalize(at);
+          },
+          nothing);
+    };
+    const glm::vec3 upward = glm::normalize(glm::vec3(0.0f, 1.0f, 2.0f));
+    const glm::ivec3 day = pixelAt(look(sunAt(50.0f, 180.0f), upward), 32, 32);
+    CHECK(day.b > day.r + 30 && day.b > 60);
+
+    // Toward a setting sun, along the horizon (just above it).
+    const glm::vec3 west = sunAt(2.0f, 90.0f);
+    const std::vector<uint8_t> dusk =
+        look(west, glm::normalize(glm::vec3(0.0f, 1.0f, 0.12f)));
+    const glm::ivec3 glow = pixelAt(dusk, 32, 40);
+    CHECK(glow.r > glow.b + 30);
+
+    const glm::ivec3 night = pixelAt(look(sunAt(-20.0f), upward), 32, 32);
+    CHECK(night.r >= 0 && night.r + night.g + night.b < 40);
+    CHECK(night.b >= night.r);
+    if (day.b <= day.r + 30 || glow.r <= glow.b + 30 ||
+        night.r + night.g + night.b >= 40)
+      std::printf("    (sky: day %d %d %d, dusk %d %d %d, night %d %d %d)\n",
+                  day.r,
+                  day.g,
+                  day.b,
+                  glow.r,
+                  glow.g,
+                  glow.b,
+                  night.r,
+                  night.g,
+                  night.b);
+    CHECK(reportErrors());
+  }
+
+  TEST("a physical sky should light the scene: the sun by day, the sky's blue "
+       "in its place at night, its reflections on metal")
+  {
+    const auto lit = [&](const glm::vec3& toSun, MaterialHandle material)
+    {
+      return pixelAt(
+          drawPlane(harness,
+                    skyPlane,
+                    material,
+                    0.0f,
+                    [&](FrameParams& frame) { physicalSky(frame, toSun); }),
+          32,
+          32);
+    };
+    const glm::ivec3 noon = lit(sunAt(70.0f), matteMaterial);
+    const glm::ivec3 dusk = lit(sunAt(3.0f), matteMaterial);
+    const glm::ivec3 night = lit(sunAt(-20.0f), matteMaterial);
+    CHECK(noon.g > 120);
+    CHECK(dusk.g < noon.g - 40);
+    CHECK(night.g < dusk.g && night.b >= night.r);
+
+    // Smooth metal, seen from straight above, reflects the sky overhead.
+    MeshMaterial chrome;
+    chrome.baseColor = {0.95f, 0.95f, 0.95f, 1.0f};
+    chrome.metallic = 1.0f;
+    chrome.roughness = 0.05f;
+    const MaterialHandle chromeMaterial =
+        harness.renderer.createMaterial(chrome);
+    const glm::ivec3 mirror = lit(sunAt(40.0f, 180.0f), chromeMaterial);
+    CHECK(mirror.b > mirror.r + 20);
+    harness.renderer.destroyMaterial(chromeMaterial);
+    if (noon.g <= 120 || mirror.b <= mirror.r + 20)
+      std::printf("    (lit: noon %d %d %d, dusk %d, night %d, mirror %d %d "
+                  "%d)\n",
+                  noon.r,
+                  noon.g,
+                  noon.b,
+                  dusk.g,
+                  night.g,
+                  mirror.r,
+                  mirror.g,
+                  mirror.b);
+    CHECK(reportErrors());
+  }
+
+  // A small sphere above the plane's right half, shadowing its left half
+  // under a sun from +X, 45 degrees up.
+  const MeshHandle blocker =
+      harness.renderer.createMesh(meshes::sphere(0.25f, 12, 8));
+  MeshInstance blockerAt;
+  blockerAt.model =
+      glm::translate(glm::mat4(1.0f), glm::vec3(0.4f, 0.0f, 0.8f));
+  const MeshInstance blockers[] = {blockerAt};
+  MeshBatch blockerBatch;
+  blockerBatch.mesh = blocker;
+  blockerBatch.instances = blockers;
+  blockerBatch.shadowInstances = blockers;
+  MeshInstance groundInstance;
+  const MeshInstance grounds[] = {groundInstance};
+  const glm::vec3 lowSun = glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f));
+  const auto shadowed = [&](uint32_t cascades, bool physical)
+  {
+    MeshBatch ground;
+    ground.mesh = skyPlane;
+    const MaterialHandle materials[] = {matteMaterial};
+    ground.materials = materials;
+    ground.instances = grounds;
+    ground.shadowInstances = grounds;
+    const MeshBatch batches[] = {blockerBatch, ground};
+    MeshInstance nothing;
+    nothing.model = glm::scale(glm::mat4(1.0f), glm::vec3(0.0f));
+    return drawPlane(
+        harness,
+        skyPlane,
+        matteMaterial,
+        0.0f,
+        [&](FrameParams& frame)
+        {
+          if (physical)
+            physicalSky(frame, lowSun);
+          frame.bloom.enabled = false;
+          frame.lighting.sun.direction = lowSun;
+          frame.shadows.enabled = true;
+          frame.shadows.softness = 1.0f;
+          frame.shadows.distance = 3.0f;
+          frame.lightViewProjection =
+              fitSunShadow(lowSun, glm::vec3(0.0f), 3.0f, 256);
+          if (cascades > 1)
+          {
+            CascadeView view;
+            view.position = frame.cameraPosition;
+            view.forward = frame.cameraForward;
+            view.perspective = false;
+            view.halfExtent = {1.0f, 1.0f};
+            view.nearPlane = 0.1f;
+            view.farPlane = 10.0f;
+            frame.cascades =
+                fitSunCascades(lowSun, view, cascades, 10.0f, 0.5f, 256);
+            frame.shadows.cascades = cascades;
+          }
+        },
+        nothing,
+        batches);
+  };
+
+  TEST("cascaded shadows should fall where the one map's do, and a frame "
+       "without them should be exactly as before")
+  {
+    const std::vector<uint8_t> single = shadowed(1, false);
+    const std::vector<uint8_t> cascaded = shadowed(4, false);
+    // The sun from +X: the sphere at x = 0.4, 0.8 up, shadows x ~ -0.4.
+    const glm::ivec3 inShadow = pixelAt(single, 19, 32);
+    const glm::ivec3 inSun = pixelAt(single, 4, 10);
+    CHECK(inShadow.g >= 0 && inShadow.g < inSun.g - 20);
+    const glm::ivec3 cascadeShadow = pixelAt(cascaded, 19, 32);
+    const glm::ivec3 cascadeSun = pixelAt(cascaded, 4, 10);
+    CHECK(cascadeShadow.g < cascadeSun.g - 20);
+    CHECK(std::abs(cascadeShadow.g - inShadow.g) < 12);
+    CHECK(std::abs(cascadeSun.g - inSun.g) < 4);
+    if (inShadow.g >= inSun.g - 20 || cascadeShadow.g >= cascadeSun.g - 20)
+      std::printf("    (shadow %d sun %d; cascaded shadow %d sun %d)\n",
+                  inShadow.g,
+                  inSun.g,
+                  cascadeShadow.g,
+                  cascadeSun.g);
+
+    // Under a physical sky, too.
+    const std::vector<uint8_t> physical = shadowed(3, true);
+    CHECK(pixelAt(physical, 19, 32).g < pixelAt(physical, 4, 10).g - 20);
+
+    // Flat again, one map: every pixel as the first time (nothing of the
+    // physical sky or the cascades left over).
+    CHECK(shadowed(1, false) == single);
+    CHECK(reportErrors());
+  }
+  // --- ambient occlusion, height fog and terrain ----------------------------
+
+  // A 0.5 m box standing on the 2 x 2 plane, seen from above and to the side
+  // in perspective; a grey, mostly ambient-lit scene (the sun low and weak,
+  // no shadows), so what ambient occlusion takes shows.
+  const MeshHandle crate =
+      harness.renderer.createMesh(meshes::box({0.5f, 0.5f, 0.6f}));
+  MeshInstance crateAt;
+  const MeshInstance crates[] = {crateAt};
+  MeshBatch crateBatch;
+  crateBatch.mesh = crate;
+  crateBatch.instances = crates;
+  glm::mat4 cornerView(1.0f);
+  const auto corner =
+      [&](const AmbientOcclusionSettings& occlusion, bool physical)
+  {
+    const MeshBatch batches[] = {crateBatch};
+    return drawPlane(
+        harness,
+        skyPlane,
+        matteMaterial,
+        0.0f,
+        [&](FrameParams& frame)
+        {
+          if (physical)
+            physicalSky(frame, sunAt(10.0f, 200.0f));
+          frame.bloom.enabled = false;
+          frame.lighting.sun.direction = sunAt(10.0f, 200.0f);
+          frame.lighting.sun.diffuseStrength = 0.15f;
+          frame.lighting.ambient = 0.8f;
+          frame.cameraPosition = {2.2f, -2.2f, 2.0f};
+          frame.view = glm::lookAt(frame.cameraPosition,
+                                   glm::vec3(0.1f, -0.1f, 0.1f),
+                                   glm::vec3(0.0f, 0.0f, 1.0f));
+          frame.projection = glm::perspectiveRH_ZO(0.9f, 1.0f, 0.1f, 50.0f);
+          frame.viewProjection = frame.projection * frame.view;
+          frame.cameraForward = glm::normalize(glm::vec3(0.1f, -0.1f, 0.1f) -
+                                               frame.cameraPosition);
+          frame.nearPlane = 0.1f;
+          frame.farPlane = 50.0f;
+          frame.ambientOcclusion = occlusion;
+          cornerView = frame.viewProjection;
+        },
+        {},
+        batches);
+  };
+  // Where a world point is drawn, in the last corner view.
+  const auto pixelOf = [&](const glm::vec3& world)
+  {
+    const glm::vec4 clip = cornerView * glm::vec4(world, 1.0f);
+    return glm::ivec2(int((clip.x / clip.w * 0.5f + 0.5f) * kSize.x),
+                      int((0.5f - clip.y / clip.w * 0.5f) * kSize.y));
+  };
+
+  TEST("ambient occlusion should darken the ground at the foot of a wall and "
+       "not the open ground, on a flat sky and a physical one")
+  {
+    AmbientOcclusionSettings occlusion;
+    occlusion.enabled = true;
+    occlusion.radius = 0.5f;
+    occlusion.intensity = 1.5f;
+    occlusion.samples = 16;
+    for (const bool physical : {false, true})
+    {
+      const std::vector<uint8_t> open = corner({}, physical);
+      const std::vector<uint8_t> occluded = corner(occlusion, physical);
+      // Just outside the box's +X face, on the ground; and far from it.
+      const glm::ivec2 foot = pixelOf({0.29f, -0.05f, 0.0f});
+      const glm::ivec2 away = pixelOf({0.85f, -0.85f, 0.0f});
+      const glm::ivec3 footOpen = pixelAt(open, foot.x, foot.y);
+      const glm::ivec3 footShaded = pixelAt(occluded, foot.x, foot.y);
+      const glm::ivec3 awayOpen = pixelAt(open, away.x, away.y);
+      const glm::ivec3 awayShaded = pixelAt(occluded, away.x, away.y);
+      // (Under the physical sky, tone mapped, a little less.)
+      const int darker = physical ? 5 : 10;
+      CHECK(footOpen.g > 30);
+      CHECK(footShaded.g < footOpen.g - darker);
+      CHECK(std::abs(awayShaded.g - awayOpen.g) <= 3);
+      if (footShaded.g >= footOpen.g - darker ||
+          std::abs(awayShaded.g - awayOpen.g) > 3)
+        std::printf("    (%s: foot %d -> %d, away %d -> %d)\n",
+                    physical ? "physical" : "flat",
+                    footOpen.g,
+                    footShaded.g,
+                    awayOpen.g,
+                    awayShaded.g);
+    }
+    // Off again: exactly as before it was on.
+    const std::vector<uint8_t> before = corner({}, false);
+    corner(occlusion, false);
+    CHECK(corner({}, false) == before);
+    CHECK(reportErrors());
+  }
+  harness.renderer.destroyMesh(crate);
+
+  TEST("height fog should hide far things in the sky's colour, thin with "
+       "height, start where it starts, and take haze's place")
+  {
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial red;
+    red.baseColor = {1.0f, 0.0f, 0.0f, 1.0f};
+    const MaterialHandle material = harness.renderer.createMaterial(red);
+    // The plane 5 below the camera (at 5 up); the sky blue.
+    const auto draw = [&](const FogSettings& fog, float haze = 0.0f)
+    {
+      const std::vector<uint8_t> pixels =
+          drawPlane(harness,
+                    plane,
+                    material,
+                    0.0f,
+                    [&](FrameParams& frame)
+                    {
+                      frame.bloom.enabled = false;
+                      frame.lighting.skyColor = {0.0f, 0.0f, 1.0f};
+                      frame.haze = {.strength = haze, .distance = 2.0f};
+                      frame.fog = fog;
+                    });
+      return pixelAt(pixels, 32, 32);
+    };
+    const glm::ivec3 clear = draw({});
+    FogSettings thick{.enabled = true, .density = 1.0f, .heightFalloff = 0.0f};
+    const glm::ivec3 fogged = draw(thick);
+    CHECK(clear.r > 100 && clear.b < 30);
+    CHECK(fogged.r < 20 && fogged.b > 220);
+    // Thinner with height: based far below, little reaches up to the plane.
+    FogSettings low = thick;
+    low.heightFalloff = 2.0f;
+    low.baseHeight = -3.0f;
+    const glm::ivec3 thin = draw(low);
+    CHECK(thin.r > fogged.r + 60 && thin.b < fogged.b - 60);
+    // Starting past the plane: none.
+    FogSettings far = thick;
+    far.startDistance = 6.0f;
+    CHECK(draw(far) == clear);
+    // At most half.
+    FogSettings half = thick;
+    half.maxOpacity = 0.5f;
+    const glm::ivec3 halfway = draw(half);
+    CHECK(std::abs(halfway.b - 128) < 30 && halfway.r > 60);
+    // On, it takes haze's place (here, none at all).
+    FogSettings none{.enabled = true, .density = 0.0f};
+    const glm::ivec3 hazy = draw({}, 1.0f);
+    CHECK(hazy.b > 220);
+    CHECK(draw(none, 1.0f) == clear);
+    harness.renderer.destroyMaterial(material);
+    harness.renderer.destroyMesh(plane);
+    CHECK(reportErrors());
+  }
+
+  TEST("height fog under a physical sky should glow toward the sun, and fog "
+       "the sky's horizon")
+  {
+    MeshInstance nothing;
+    nothing.model = glm::scale(glm::mat4(1.0f), glm::vec3(0.0f));
+    const glm::vec3 west = sunAt(4.0f, 90.0f);
+    const auto look = [&](const FogSettings& fog, const glm::vec3& at)
+    {
+      return pixelAt(
+          drawPlane(
+              harness,
+              skyPlane,
+              matteMaterial,
+              0.0f,
+              [&](FrameParams& frame)
+              {
+                physicalSky(frame, west);
+                frame.sky.physical = std::make_shared<const PhysicalSky>(
+                    SkySettings{.model = SkyModel::Physical, .sunSize = 0.0f});
+                frame.cameraPosition = {0.0f, 0.0f, 1.7f};
+                frame.view = glm::lookAt(frame.cameraPosition,
+                                         frame.cameraPosition + at,
+                                         glm::vec3(0.0f, 0.0f, 1.0f));
+                frame.projection =
+                    glm::perspectiveRH_ZO(1.0f, 1.0f, 0.1f, 400.0f);
+                frame.viewProjection = frame.projection * frame.view;
+                frame.cameraForward = glm::normalize(at);
+                frame.farPlane = 400.0f;
+                frame.fog = fog;
+              },
+              nothing),
+          32,
+          32);
+    };
+    FogSettings fog{.enabled = true,
+                    .density = 0.05f,
+                    .heightFalloff = 0.05f,
+                    .sunGlow = 1.0f};
+    const glm::vec3 towardSun = glm::normalize(glm::vec3(0.0f, 1.0f, 0.05f));
+    const glm::vec3 awayFromSun = glm::normalize(glm::vec3(0.0f, -1.0f, 0.05f));
+    const glm::ivec3 sunward = look(fog, towardSun);
+    const glm::ivec3 behind = look(fog, awayFromSun);
+    const glm::ivec3 clearSunward = look({}, towardSun);
+    CHECK(sunward.r > behind.r + 20);
+    CHECK(sunward != clearSunward);
+    if (sunward.r <= behind.r + 20)
+      std::printf("    (toward the sun %d %d %d, away %d %d %d)\n",
+                  sunward.r,
+                  sunward.g,
+                  sunward.b,
+                  behind.r,
+                  behind.g,
+                  behind.b);
+    CHECK(reportErrors());
+  }
+
+  TEST("a terrain material should blend its layers by its splat map, and show "
+       "the map painted")
+  {
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    const auto solid = [](uint8_t r, uint8_t g, uint8_t b)
+    {
+      auto image = std::make_shared<TextureData>();
+      image->width = image->height = 8;
+      for (int i = 0; i < 64; ++i)
+        image->rgba.insert(image->rgba.end(), {r, g, b, 255});
+      return image;
+    };
+    // The left half the first layer (red), the right the second (green).
+    auto splat = blankSplat(16);
+    for (int y = 0; y < 16; ++y)
+      for (int x = 8; x < 16; ++x)
+        splat->rgba[(std::size_t(y) * 16 + x) * 4] = 255;
+    for (const bool antiTiling : {false, true})
+    {
+      auto terrain = std::make_shared<TerrainMaterial>();
+      terrain->splat = splat;
+      terrain->antiTiling = antiTiling;
+      terrain->variation = 0.0f;
+      terrain->layers.push_back({.baseTexture = solid(255, 0, 0)});
+      terrain->layers.push_back({.baseTexture = solid(0, 255, 0)});
+      MeshMaterial look;
+      look.terrain = terrain;
+      const MaterialHandle material = harness.renderer.createMaterial(look);
+      CHECK(material.valid());
+      const auto draw = [&]
+      {
+        return drawPlane(harness,
+                         plane,
+                         material,
+                         0.0f,
+                         [](FrameParams& frame)
+                         {
+                           frame.bloom.enabled = false;
+                           frame.lighting.ambient = 1.0f;
+                         });
+      };
+      const std::vector<uint8_t> pixels = draw();
+      const glm::ivec3 left = pixelAt(pixels, 8, 32);
+      const glm::ivec3 right = pixelAt(pixels, 56, 32);
+      CHECK(left.r > 120 && left.g < 30);
+      CHECK(right.g > 120 && right.r < 30);
+      if (!(left.r > 120 && left.g < 30 && right.g > 120 && right.r < 30))
+        std::printf("    (anti-tiling %d: left %d %d %d, right %d %d %d)\n",
+                    antiTiling,
+                    left.r,
+                    left.g,
+                    left.b,
+                    right.r,
+                    right.g,
+                    right.b);
+
+      // Paint the left green too: shown once updated.
+      if (antiTiling)
+      {
+        const auto changed =
+            paintSplat(*splat, {0.25f, 0.5f}, {0.3f, 0.6f}, 1, 1.0f, 0.0f);
+        CHECK(changed.second.x > changed.first.x);
+        harness.renderer.updateTexture(splat, changed.first, changed.second);
+        const glm::ivec3 painted = pixelAt(draw(), 8, 32);
+        CHECK(painted.g > 120 && painted.r < 30);
+      }
+      harness.renderer.destroyMaterial(material);
+    }
+    harness.renderer.destroyMesh(plane);
+    CHECK(reportErrors());
+  }
+
+  harness.renderer.destroyMesh(blocker);
+  harness.renderer.destroyMaterial(matteMaterial);
+  harness.renderer.destroyMesh(skyPlane);
 
   return testing::report("webGpuRendererTests");
 }

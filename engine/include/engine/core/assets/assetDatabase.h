@@ -52,6 +52,7 @@ enum class AssetKind
   Model,            // .glb .gltf .obj
   Material,         // .mat (see MaterialAsset)
   Prefab,           // .prefab (see SceneSerializer)
+  VisualStyle,      // .style: a scene's whole look (see VisualStyle)
   ScriptableObject, // .asset: a scriptable object type's values (see
                     // ScriptableObject, ScriptableObjects)
   Font,             // .ttf .otf

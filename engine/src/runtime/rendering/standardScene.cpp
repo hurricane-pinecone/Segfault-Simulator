@@ -1,6 +1,7 @@
 #include "engine/runtime/rendering/standardScene.h"
 
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
@@ -123,6 +124,20 @@ void StandardScene::onInit()
       script.buildMeshes(library);
 
   library.setProvider(modelMeshes());
+
+  // Visual styles: .style assets, by "asset:<id>".
+  AssetStore& store = assetStore();
+  m_render->setStyleSource(
+      [&store](std::string_view name) -> std::optional<VisualStyle>
+      {
+        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+        if (!asset || !asset->part.empty())
+        {
+          LOG_ERROR("Not a visual style asset: '" + std::string(name) + "'");
+          return std::nullopt;
+        }
+        return store.visualStyle(asset->model);
+      });
 }
 
 MeshLibrary::Provider StandardScene::modelMeshes()

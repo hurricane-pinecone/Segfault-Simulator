@@ -8,6 +8,7 @@
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
 #include "scripting/scriptFiles.h"
+#include "widgets/lookWidgets.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
@@ -26,6 +27,7 @@
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/emissionLights.h"
+#include "engine/core/util/atomicFile.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/assetStore/textureImporter.h"
@@ -300,6 +302,77 @@ struct MaterialActions
   std::function<void(const sfs::AssetRecord& material)> edit;
   std::function<void(const sfs::AssetRecord& material)> reveal;
 };
+
+// A material's variants: another material to draw instead while the scene's
+// visual style has the tag (see sfs::MaterialAsset::variants). Each row a tag
+// and its material; the last row adds one. True if they changed.
+bool materialVariants(sfs::MaterialAsset& material,
+                      sfs::MeshLibrary& meshes,
+                      std::string& newTag)
+{
+  ImGui::SeparatorText("Variants");
+  ImGui::TextDisabled("Drawn instead while a visual style has the tag");
+  bool changed = false;
+  const auto materials = meshes.availableMaterials();
+  const auto labelOf = [&](const std::string& name)
+  {
+    for (const auto& [candidate, label] : materials)
+      if (candidate == name)
+        return std::filesystem::path(label).stem().string();
+    return name;
+  };
+  std::optional<std::string> removed;
+  for (auto& [tag, name] : material.variants)
+  {
+    ImGui::PushID(tag.c_str());
+    widgets::propertyLabel(tag.c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN - ImGui::GetFrameHeight() -
+                            ImGui::GetStyle().ItemSpacing.x);
+    if (ImGui::BeginCombo("##variant", labelOf(name).c_str()))
+    {
+      for (const auto& [candidate, label] : materials)
+        if (ImGui::Selectable(label.c_str(), candidate == name))
+        {
+          name = candidate;
+          changed = true;
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+      removed = tag;
+    ImGui::SetItemTooltip("Remove this variant");
+    ImGui::PopID();
+  }
+  if (removed)
+  {
+    material.variants.erase(*removed);
+    changed = true;
+  }
+
+  // A new tag, and the material for it.
+  widgets::propertyLabel("Add Variant");
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+  widgets::inputText("##newTag", newTag);
+  ImGui::SetItemTooltip("The visual style's Material Variant tag, e.g. "
+                        "realistic");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::BeginDisabled(newTag.empty() || material.variants.contains(newTag));
+  if (ImGui::BeginCombo("##newMaterial", "Material..."))
+  {
+    for (const auto& [candidate, label] : materials)
+      if (ImGui::Selectable(label.c_str()))
+      {
+        material.variants[newTag] = candidate;
+        newTag.clear();
+        changed = true;
+      }
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+  return changed;
+}
 
 // The material asset a slot's material name ("asset:<id>") is, if it is one.
 const sfs::AssetRecord* materialAsset(const std::string& name,
@@ -1394,7 +1467,8 @@ void assetDetails(const sfs::AssetDatabase& assets,
   // Opened in another app; materials and scriptable objects are edited right
   // here.
   if (record.kind != sfs::AssetKind::Material &&
-      record.kind != sfs::AssetKind::ScriptableObject)
+      record.kind != sfs::AssetKind::ScriptableObject &&
+      record.kind != sfs::AssetKind::VisualStyle)
   {
     if (ImGui::Button("Open"))
       shell::openExternally(file);
@@ -1567,6 +1641,197 @@ void InspectorPanel::drawScriptableObject(EditorContext& context,
   }
 }
 
+void InspectorPanel::drawVisualStyle(EditorContext& context,
+                                     const sfs::AssetRecord& record)
+{
+  // Read once per selection; every edit saves the file and, if the scene
+  // uses the style, shows in it at once.
+  if (m_styleId != record.id)
+  {
+    m_styleId = record.id;
+    m_style = context.scene ? context.scene->assetStore().visualStyle(record.id)
+                            : std::nullopt;
+  }
+  ImGui::SeparatorText("Visual Style");
+  if (!m_style || !context.render)
+  {
+    ImGui::TextDisabled(m_style ? "Open a scene to edit visual styles"
+                                : "Can't read this visual style");
+    return;
+  }
+
+  sfs::RenderSystem& render = *context.render;
+  const std::string name = "asset:" + record.id.toString();
+  const bool inUse = render.visualStyleName() == name;
+  if (inUse)
+    ImGui::TextDisabled("The scene's look: edits show at once");
+  else if (ImGui::Button("Use in Scene"))
+    context.history->change([&] { render.setVisualStyle(name); });
+  if (!inUse)
+    ImGui::SetItemTooltip("Make it the scene's visual style (Scene Settings > "
+                          "Look), to see edits as they're made");
+
+  bool changed = lookWidgets::visualStyle(*m_style);
+
+  // Materials drawn as others while it's on, by name: also those a game makes
+  // in code (its painted ground, say), which have no variants of their own.
+  ImGui::SeparatorText("Material Overrides");
+  ImGui::TextDisabled("Draw a material (by name, a game's own too) as another");
+  sfs::MeshLibrary& meshes = render.meshes();
+  const auto materials = meshes.availableMaterials();
+  std::optional<std::string> removed;
+  for (auto& [from, to] : m_style->materials)
+  {
+    ImGui::PushID(from.c_str());
+    widgets::propertyLabel(from.c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+    std::string preview = to;
+    for (const auto& [candidate, label] : materials)
+      if (candidate == to)
+        preview = label;
+    if (ImGui::BeginCombo("##override", preview.c_str()))
+    {
+      for (const auto& [candidate, label] : materials)
+        if (ImGui::Selectable(label.c_str(), candidate == to))
+        {
+          to = candidate;
+          changed = true;
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+      removed = from;
+    ImGui::PopID();
+  }
+  if (removed)
+  {
+    m_style->materials.erase(*removed);
+    changed = true;
+  }
+  widgets::propertyLabel("Add Override");
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+  widgets::inputText("##overrideName", m_newOverrideName);
+  ImGui::SetItemTooltip("The material's name, as an entity's material slot has it (e.g. asset:..., or a game's "
+                        "own such as farm:field-paint)");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::BeginDisabled(m_newOverrideName.empty() || m_style->materials.contains(m_newOverrideName));
+  if (ImGui::BeginCombo("##overrideMaterial", "Material..."))
+  {
+    for (const auto& [candidate, label] : materials)
+      if (ImGui::Selectable(label.c_str()))
+      {
+        m_style->materials[m_newOverrideName] = candidate;
+        m_newOverrideName.clear();
+        changed = true;
+      }
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+
+  if (changed)
+  {
+    const std::filesystem::path file = context.assets->absolutePath(record);
+    if (!sfs::writeFileAtomically(file, m_style->toJson().dump(2) + "\n"))
+      LOG_ERROR("Can't write the visual style " + record.path.generic_string());
+    if (render.visualStyleName() == name)
+      render.setVisualStyle(name, *m_style);
+  }
+}
+
+bool InspectorPanel::drawTerrain(EditorContext& context,
+                                 const sfs::AssetRecord& record,
+                                 sfs::TerrainAsset& terrain)
+{
+  sfs::MeshLibrary& meshes = context.render->meshes();
+  bool changed = false;
+  const auto row = [](const char* label)
+  {
+    widgets::propertyLabel(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    return std::string("##") + label;
+  };
+  ImGui::TextWrapped("A terrain: ground layers laid over the world from above, blended by a splat map. Paint it with "
+                     "the Terrain brush (T) on a mesh drawn with it.");
+
+  changed |= textureCombo("Splat Map", terrain.splatMap, meshes);
+  ImGui::SetItemTooltip("Where each layer is, over the mesh's UVs: red, green, blue and alpha paint layers 2-5 over "
+                        "the first");
+  if (terrain.splatMap.empty())
+  {
+    widgets::propertyLabel("");
+    if (ImGui::Button("New Splat Map"))
+    {
+      const std::string made = materialFiles::createSplatMap(
+          *context.assets, record.path.parent_path(), record.path.stem().string() + " Splat");
+      if (!made.empty())
+      {
+        terrain.splatMap = made;
+        changed = true;
+        context.assetFilesChanged = true;
+      }
+    }
+    ImGui::SetItemTooltip("A blank 1024 x 1024 map beside the material: all the first layer, to paint over");
+  }
+  changed |= ImGui::SliderFloat(row("Blend Sharpness").c_str(), &terrain.blendSharpness, 0.0f, 1.0f);
+  ImGui::SetItemTooltip("How layers meet: 0 a soft cross-fade, toward 1 a crisp edge where the higher layer (its "
+                        "texture's alpha) pokes through");
+  changed |= widgets::propertyCheckbox("Anti-Tiling", &terrain.antiTiling);
+  ImGui::SetItemTooltip("Break each layer's repeats up: three randomly shifted and turned copies, blended on a hex "
+                        "grid (a little more costly)");
+  changed |= ImGui::SliderFloat(row("Variation").c_str(), &terrain.variation, 0.0f, 0.5f);
+  ImGui::SetItemTooltip("How much the brightness drifts over tens of metres, so a field isn't uniform");
+
+  std::optional<std::size_t> removed;
+  for (std::size_t i = 0; i < terrain.layers.size(); ++i)
+  {
+    sfs::TerrainLayerAsset& layer = terrain.layers[i];
+    ImGui::PushID(static_cast<int>(i));
+    static constexpr const char* kChannels[] = {"everywhere", "red", "green", "blue", "alpha"};
+    const std::string title = std::to_string(i + 1) + ": " + (layer.name.empty() ? "Layer" : layer.name) + " (" +
+                              kChannels[std::min<std::size_t>(i, 4)] + ")###layer";
+    if (ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      widgets::propertyLabel("Name");
+      ImGui::SetNextItemWidth(-FLT_MIN);
+      changed |= widgets::inputText("##name", layer.name);
+      changed |= textureCombo("Colour", layer.baseTexture, meshes);
+      ImGui::SetItemTooltip("Its colour; the alpha is its height, which layers blend by (opaque: flat)");
+      changed |= textureCombo("Normal Map", layer.normalTexture, meshes);
+      if (!layer.normalTexture.empty())
+        changed |= ImGui::SliderFloat(row("Bump Strength").c_str(), &layer.normalScale, 0.0f, 3.0f);
+      changed |= textureCombo("Roughness Map", layer.roughnessTexture, meshes);
+      ImGui::SetItemTooltip("Green x Roughness (none: Roughness all over)");
+      changed |= widgets::colorEdit3(row("Tint").c_str(), &layer.tint.x);
+      changed |=
+          ImGui::DragFloat(row("Tile Size").c_str(), &layer.tileSize, 0.05f, 0.1f, 100.0f, "%.2f m");
+      ImGui::SetItemTooltip("World units across one repeat of its textures");
+      changed |= ImGui::SliderFloat(row("Roughness").c_str(), &layer.roughness, 0.0f, 1.0f);
+      changed |= ImGui::SliderFloat(row("Grass").c_str(), &layer.grass, 0.0f, 1.0f);
+      ImGui::SetItemTooltip("How much of a grass field on the mesh grows over it (0: bare)");
+      if (terrain.layers.size() > 1)
+      {
+        widgets::propertyLabel("");
+        if (ImGui::Button("Remove Layer"))
+          removed = i;
+      }
+    }
+    ImGui::PopID();
+  }
+  if (removed)
+  {
+    terrain.layers.erase(terrain.layers.begin() + static_cast<std::ptrdiff_t>(*removed));
+    changed = true;
+  }
+  if (terrain.layers.size() < sfs::kMaxTerrainLayers && ImGui::Button("Add Layer"))
+  {
+    terrain.layers.push_back({.name = "Layer " + std::to_string(terrain.layers.size() + 1)});
+    changed = true;
+  }
+  return changed;
+}
+
 void InspectorPanel::drawMaterial(EditorContext& context,
                                   const sfs::AssetRecord& record)
 {
@@ -1596,6 +1861,12 @@ void InspectorPanel::drawMaterial(EditorContext& context,
       context.openMaterial = record.id;
     ImGui::SetItemTooltip("Open the graph in its own tab (or double-click the "
                           "material in Assets)");
+    if (materialVariants(material, meshes, m_newVariantTag) &&
+        materialFiles::write(*context.assets, record, material))
+    {
+      context.scene->assetStore().forgetMaterial(record.id);
+      meshes.reloadMaterial("asset:" + record.id.toString());
+    }
     return;
   }
 
@@ -1606,6 +1877,21 @@ void InspectorPanel::drawMaterial(EditorContext& context,
     widgets::propertyLabel(label);
     return std::string("##") + label;
   };
+
+  // A terrain material: its layers and splat map.
+  if (material.terrain)
+  {
+    changed |= drawTerrain(context, record, *material.terrain);
+    changed |= materialVariants(material, meshes, m_newVariantTag);
+    if (changed && materialFiles::write(*context.assets, record, material))
+    {
+      context.assetFilesChanged = true;
+      context.scene->assetStore().forgetMaterial(record.id);
+      meshes.reloadMaterial("asset:" + record.id.toString());
+    }
+    return;
+  }
+
   changed |=
       widgets::colorEdit4(row("Base Colour").c_str(), &material.baseColor.x);
   changed |= textureCombo("Texture", material.baseTexture, meshes);
@@ -1671,6 +1957,30 @@ void InspectorPanel::drawMaterial(EditorContext& context,
       "Make this material a node graph, to build its look from nodes (noise, "
       "masks,\n"
       "glow, ...). It looks the same until you change the graph.");
+  ImGui::SameLine();
+  if (ImGui::Button("Convert to Terrain"))
+  {
+    // Its texture as the first layer, tiled about every 4 m.
+    sfs::TerrainAsset terrain;
+    sfs::TerrainLayerAsset first;
+    first.name = "Ground";
+    first.baseTexture = material.baseTexture;
+    first.normalTexture = material.normalTexture;
+    first.tint = glm::vec3(material.baseColor);
+    first.roughness = material.roughness;
+    first.normalScale = material.normalScale;
+    terrain.layers.push_back(first);
+    material.terrain = terrain;
+    material.alphaMode = sfs::AlphaMode::Opaque;
+    changed = true;
+  }
+  ImGui::SetItemTooltip(
+      "Make this a terrain material: ground layers (grass, dirt, a path, "
+      "rock) laid\nover the world from above without repeating, blended by "
+      "a splat map you\npaint with the Terrain brush (T) on a mesh drawn "
+      "with it.");
+
+  changed |= materialVariants(material, meshes, m_newVariantTag);
 
   if (changed && materialFiles::write(*context.assets, record, material))
   {
@@ -1701,6 +2011,8 @@ void InspectorPanel::drawContents(EditorContext& context)
         drawMaterial(context, *asset);
       if (asset->kind == sfs::AssetKind::ScriptableObject)
         drawScriptableObject(context, *asset);
+      if (asset->kind == sfs::AssetKind::VisualStyle)
+        drawVisualStyle(context, *asset);
       if (asset->kind == sfs::AssetKind::Prefab && ImGui::Button("Edit Prefab"))
         context.openPrefab = asset->id;
     }

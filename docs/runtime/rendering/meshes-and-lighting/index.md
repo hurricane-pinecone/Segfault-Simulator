@@ -135,6 +135,79 @@ updated, for animated materials (a graph's Time node). The scene updates every
 frame, in a game and in the editor alike, so animated materials move while
 editing too.
 
+### Terrain materials
+
+A terrain material (`MeshMaterial::terrain`, a `TerrainMaterial` in
+`engine/core/rendering/terrain.h`; a `.mat` file's `"terrain"` section) textures
+big ground with up to five layers (grass, dirt, a path, rock) blended by a
+**splat map**, a texture over the mesh's UVs: the first layer is everywhere,
+and the map's red, green, blue and alpha paint the second to fifth over it
+(each 0 to 1; where they add up past 1 they share it).
+
+```json
+{
+  "formatVersion": 2,
+  "alphaMode": "opaque",
+  "terrain": {
+    "splatMap": "asset:<id>",
+    "blendSharpness": 0.65, "antiTiling": true, "variation": 0.18,
+    "layers": [
+      {"name": "Grass", "baseTexture": "asset:<id>", "normalTexture": "asset:<id>",
+       "roughnessTexture": "", "tint": [1, 1, 1], "tileSize": 3,
+       "roughness": 0.95, "normalScale": 0.8, "grass": 1},
+      {"name": "Dirt", "baseTexture": "asset:<id>", "normalTexture": "asset:<id>",
+       "tileSize": 2.5, "roughness": 0.92, "grass": 0}
+    ]
+  }
+}
+```
+
+| Layer field | Meaning (default) |
+| --- | --- |
+| `baseTexture` | Its colour (sRGB); the alpha is its height, which layers blend by (opaque: flat) |
+| `normalTexture` | A normal map (OpenGL style), read as data ("": flat) |
+| `roughnessTexture` | Green x `roughness` ("": `roughness` all over) |
+| `tint` | Its colour, x (1, 1, 1) |
+| `tileSize` | World units across one repeat of its textures (4) |
+| `roughness`, `normalScale` | As a standard material's (1, 1) |
+| `grass` | How much of a [grass](#grass) field on the mesh grows over it: 1 as its maps say, 0 none (1) |
+
+| Material field | Meaning (default) |
+| --- | --- |
+| `splatMap` | The splat map ("": the first layer only). Read as data, sampled smoothly, clamped at its edges |
+| `blendSharpness` | 0 a soft cross-fade between layers; toward 1 a crisp edge where the higher layer pokes through (0.5) |
+| `antiTiling` | Break repeats up (true) |
+| `variation` | How much the brightness drifts over tens of metres (0.15) |
+
+How it draws (`meshTerrainSurface.wgsl`): each layer's textures lie over the
+world's XY from above, `tileSize` across, so ground of any size keeps its
+texel size (a mesh's own UVs place only the splat map). With anti-tiling, each
+layer is sampled at three randomly shifted and turned copies on a hexagonal
+grid and blended, sharpened toward the nearest (Mikkelsen's hex-tiling, after
+Heitz and Neyret), with its normals turned to match, so a 200 m field shows
+no repeats; and a gentle brightness drift (value noise over 8 to 25 m) keeps
+it from looking uniform. Layers with no weight at a point aren't sampled
+(explicit-gradient sampling keeps that legal). The vertex colour isn't used.
+
+The layers go up as two texture arrays (colours with heights; normals with
+roughness), every layer resized to the largest (at most 2048), shared by
+terrain materials with the same textures; with the splat map that's three
+textures, however many layers, well inside WebGPU's limits. Texture arrays
+are core WebGPU, so it's the same on every backend and in browsers (on
+wgpu's OpenGL fallback an array always has at least two layers, which it
+needs).
+
+**Painting it.** The editor's terrain brush (T) paints the splat map on the
+mesh drawn with it, in place: `paintSplat()` changes the `TextureData`, and
+`IRenderer::updateTexture()` sends the changed rectangle up (the splat map is
+uploaded without mipmaps so it can be). A game can do the same.
+
+**Grass on it.** `GrassModule` grows grass on a terrain (the mesh's first
+material, as drawn now, so a style's variant counts) only as much as its
+layers' `grass` lets it, x its own maps: painting dirt makes it bare there. The
+maps a game reads and wears aren't changed by that; `GrassModule::terrainPainted()`
+grows it again after the splat map changes.
+
 ### Materials from code
 
 `MeshLibrary::setMaterial(name, material)` makes (or, called again, updates in
@@ -223,8 +296,18 @@ isometric or 3D game:
 | `sun.direction` | Points toward the sun. Z <= 0 means the sun has set, and shadows switch off. |
 | `sun.color` | Sunlight tint |
 | `sun.diffuseStrength` | How much sun-facing surfaces brighten over ambient |
+| `moon.direction` | Points toward the moon (3D only). Z <= 0 means it's below the horizon (the default: no moon). |
+| `moon.phase` | How much of its face is lit: 0 new, 0.5 half, 1 full |
+| `moon.color`, `moon.diffuseStrength` | Its light's tint and strength under a flat sky (a physical sky works them out) |
 | `ambient` | Base brightness. |
 | `skyColor` | Background clear colour |
+| `cloudCover` | How overcast it is (0..1): dims the sun's and the moon's light, hides the stars and the moon's disk. The clouds themselves aren't drawn yet. |
+
+Once the sun has set, the moon takes over as the light that shines and casts
+shadows. It fades in as the sun sinks to about 6 degrees below the horizon,
+and it's brighter the fuller and higher it is (`moonlight()` in `lighting.h`
+gives its share). A physical sky also draws its disk, lit to its phase, and
+glows brighter under it.
 
 The shading:
 
@@ -234,8 +317,18 @@ The shading:
 - Point lights brighten what the sun doesn't reach: the shade by day,
   everything at night. They blend with a brightness cap, so overlapping lamps
   don't blow out.
-- Cast shadows come from a sun shadow map and, for some point lights, cube
-  shadow maps (see [Shadows](#shadows)).
+- Cast shadows come from a sun shadow map (or cascades of them) and, for
+  some point lights, cube shadow maps (see [Shadows](#shadows)).
+
+That's the **flat** sky, the default. A 3D scene can have a **physical** sky
+instead (`setSkySettings()`, or a visual style's `"sky"`): an atmosphere the
+sun lights, behind everything, whose light then lights the scene physically
+(the sun's colour through the air, the sky's diffuse light and reflections);
+only the sun's and moon's directions, the moon's phase and the cloud cover
+are taken from `SceneLighting` then. Its diffuse light is worked out again on a
+worker thread as the sun moves, the frame keeping the last until it's ready.
+See
+[Physical sky and image-based lighting](../visual-styles/index.md#physical-sky-and-image-based-lighting).
 
 ### Point lights
 
@@ -323,7 +416,9 @@ mirror beside a lava pool reflects the lava's glow, not specks of light.
 
 ### Bloom
 
-Lit surfaces never go brighter than white, but emission can. A material whose
+Lit surfaces never go brighter than white (unless a
+[tone mapper](../visual-styles/index.md#tone-mapping-and-grading) is on),
+but emission can. A material whose
 emission goes above 1 glows past its edges onto what's around it, as bright
 lights do through a real lens. Ordinary surfaces don't bloom at all.
 
@@ -355,7 +450,12 @@ The scene draws into an HDR texture, and beside it the light that blooms (its
 colour x each material's Bloom). Bloom then takes the part of that above the
 threshold and halves it down a chain of textures, up to six. It adds each one
 back onto the next size up, which spreads the glow wide and soft. Finally the
-scene and the glow are added together, clamped, and written to the target.
+scene and the glow are added together and
+[graded](../visual-styles/index.md#tone-mapping-and-grading) (by default only
+clamped at white) into the target.
+
+A [visual style](../visual-styles/index.md) can replace the camera's bloom
+with its own while it's on.
 
 ### Depth of field
 
@@ -399,6 +499,18 @@ things stop being drawn, such as grass's draw distance. It's off by default.
 
 It's applied as each surface is lit, so hazed things glow (bloom) less too.
 
+### Height fog and ambient occlusion
+
+`setFogSettings(FogSettings)` turns on exponential height fog (mist thicker low
+down, coloured by the sky and glowing toward the sun), which takes haze's
+place while it's on; `setAmbientOcclusionSettings(AmbientOcclusionSettings)`
+turns on screen-space ambient occlusion (the light from all around kept out of
+creases and the foot of walls; never the sun's or point lights'). Both are off
+by default, saved with the scene when they're not, shown in Scene Settings
+under **Occlusion & Fog**, and a visual style can replace either. See
+[Visual styles](../visual-styles/index.md#ambient-occlusion) for their fields
+and how they work. They're a 3D scene's: a 2D scene has neither.
+
 ### Shadows
 
 `setShadowSettings(ShadowSettings)` configures the sun's shadow map and the
@@ -412,9 +524,38 @@ point lights':
 | `softness` | Filter radius in shadow-map texels (0 = hard edges) |
 | `pointLights` | How many point lights cast shadows at once (16; 0 for none, at most 32) |
 | `pointResolution` | Each point light's shadow map's face size, in texels (256) |
+| `cascades` | 1: one map over `distance` around the camera target (the default); 2 to 4: [cascades](#cascaded-shadows) along the view instead |
+| `cascadeDistance` | How far from the camera cascaded shadows reach (200) |
+| `cascadeSplit` | Where the view is split between cascades: 1 small near the camera, 0 even (0.75) |
 
 The shadow region follows the camera target in whole-texel steps, so shadow
 edges stay still while the camera pans.
+
+### Cascaded shadows
+
+With `cascades` of 2 to 4 (a 3D scene's), the sun's shadow covers the view
+from the camera out to `cascadeDistance` in slices, each with a map of its
+own (the same size as the one map, side by side in one atlas): small and
+sharp near the camera, bigger farther away. The slices split the view by the
+practical split scheme (`cascadeSplit` between logarithmic and even);
+`cascadeSplits()`, `fitSunCascades()` (`engine/core/rendering/sunShadow.h`)
+work them out.
+
+- **Stable**: each cascade covers the sphere around its slice, whose size
+  depends only on the view's shape, so it keeps its size as the camera turns;
+  and it moves in whole texels, so shadow edges don't shimmer as the camera
+  moves.
+- **Blended**: a point is shadowed by the finest cascade that holds it,
+  blending into the next over the outer tenth of each, and shadows fade out
+  over the last fifth of the distance.
+- Each cascade's depth bias and normal offset scale with its texel size, and
+  `softness` is in each cascade's own texels (the same look, wider far away).
+- Things beyond a cascade toward the sun (a tree up the hill at sunset) still
+  cast into it, and each cascade draws only the casters that reach into it.
+
+A cascaded atlas is twice the map's size across (a 2048 map: 4096 x 4096 for
+3 or 4 cascades). A device that can't make a texture that big (some WebGL-class
+OpenGL drivers) gets the one map instead. A 2D game always has the one map.
 
 ### Point-light shadows
 

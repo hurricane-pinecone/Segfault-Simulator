@@ -10,6 +10,7 @@
 #include "glm/glm/ext/vector_uint4.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/gtc/constants.hpp"
+#include "glm/glm/gtc/packing.hpp"
 #include "glm/glm/matrix.hpp"
 #include "glm/glm/trigonometric.hpp"
 
@@ -41,9 +42,21 @@ constexpr int kBloomLevels = 6;
 constexpr int kBloomSmallest = 8;
 
 // Each point-shadow face's uniforms sit at a multiple of kFaceStride in one
-// buffer (a dynamic offset's alignment).
+// buffer (a dynamic offset's alignment); so do the sun's cascades'.
 constexpr uint64_t kFaceStride = 256;
 static_assert(sizeof(FaceUniforms) <= kFaceStride);
+
+// A physical sky's textures: the sky (octahedral, the whole sphere), its
+// reflections (mip 0 sharp, each next rougher, to roughness 1 at the last)
+// and the BRDF table; all half floats.
+constexpr WGPUTextureFormat kSkyFormat = WGPUTextureFormat_RGBA16Float;
+constexpr uint32_t kSkySize = 256;
+constexpr uint32_t kSkyReflectionSize = 128;
+constexpr uint32_t kSkyReflectionMips = 5;
+constexpr int kBrdfTableSize = 32;
+// Samples each reflection mip's texels take of the sky (rougher: more).
+constexpr std::array<float, kSkyReflectionMips> kSkyReflectionSamples =
+    {1.0f, 64.0f, 128.0f, 256.0f, 256.0f};
 
 static_assert(sizeof(MeshVertex) == 44,
               "vertex layout below assumes 11 floats");
@@ -289,9 +302,18 @@ bool WebGpuRenderer::initialize()
   m_sampleCount = m_context.onOpenGL() ? 1 : kSceneSamplesMost;
   m_capabilities.antiAliasing = m_sampleCount > 1;
   m_capabilities.pointLightShadows = !m_context.onOpenGL();
+  // Cascades share one atlas, twice the map's size across: only where the
+  // device can make one that big (else the one map, as ever).
+  m_capabilities.sunShadowCascades =
+      m_shadowResolution * 2 <= m_context.maxTextureSize() ? kMaxShadowCascades
+                                                           : 1;
   m_frameUniforms =
       makeBuffer(m_context.device(),
                  sizeof(FrameUniforms),
+                 WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_cascadeUniforms =
+      makeBuffer(m_context.device(),
+                 kFaceStride * kMaxShadowCascades,
                  WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
   createShadowMap();
 
@@ -716,9 +738,7 @@ WGPURenderPipeline WebGpuRenderer::grassPipeline(const Surface& surface,
 
   const wgpu::ShaderModule module(wgpu::makeShader(
       device,
-      shaders::meshPass(surface.wgsl,
-                        std::string(shaders::meshLitWgsl) +
-                            std::string(shaders::meshGrassWgsl))
+      shaders::meshPass(surface.wgsl, shaders::litPass(shaders::meshGrassWgsl))
           .c_str()));
   const std::array<WGPUBindGroupLayout, 3> groups = {
       m_litLayout.get(), surface.materialLayout.get(), m_grassLayout.get()};
@@ -963,6 +983,10 @@ void WebGpuRenderer::endFrame()
   if (!m_plan.shadowedLights().empty())
     ensurePointShadowMaps(
         static_cast<uint32_t>(m_plan.shadowedLights().size()), pointResolution);
+  if (m_plan.frame().shadows.enabled)
+    ensureShadowAtlas(m_plan.shadowCascades());
+  encodeSky();
+  m_occluded = prepareOcclusion();
   uploadFrame();
   uploadLights();
 
@@ -970,6 +994,8 @@ void WebGpuRenderer::endFrame()
     encodeShadowPass();
   encodePointShadows();
   growGrass();
+  if (m_occluded)
+    encodeOcclusion();
   encodeLitPass();
   m_focused = encodeDepthOfField();
   if (m_plan.frame().bloom.enabled && !m_bloom.empty())
@@ -978,15 +1004,24 @@ void WebGpuRenderer::endFrame()
   encodeUi();
 }
 
-void WebGpuRenderer::createShadowMap()
+void WebGpuRenderer::ensureShadowAtlas(uint32_t cascades)
 {
-  const glm::ivec2 size{static_cast<int>(m_shadowResolution),
-                        static_cast<int>(m_shadowResolution)};
+  const glm::uvec2 size = shadowAtlasSize(
+      std::min(cascades, m_capabilities.sunShadowCascades), m_shadowResolution);
+  if (m_shadowMap && size == m_shadowMapSize)
+    return;
   m_shadowView = makeDepthTexture(
       m_context.device(),
-      size,
+      glm::ivec2(size),
       WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
       m_shadowMap);
+  m_shadowMapSize = size;
+  rebuildLitBindings();
+}
+
+void WebGpuRenderer::createShadowMap()
+{
+  ensureShadowAtlas(1);
 
   // Comparison sampling with linear filtering: each tap is a hardware 2x2
   // percentage-closer filter.
@@ -1034,11 +1069,28 @@ bool WebGpuRenderer::createTextureResources()
   white->rgba = {255, 255, 255, 255};
   m_white = uploadTexture(white);
   m_textures.clear();
-  return m_linearSampler && m_nearestSampler && m_white;
+
+  // What the lit pass binds for ambient occlusion while there's none (never
+  // read then).
+  {
+    WGPUTextureDescriptor desc = {};
+    desc.usage = WGPUTextureUsage_TextureBinding;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = {1, 1, 1};
+    desc.format = kSceneFormat;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    m_noOcclusion.reset(wgpuDeviceCreateTexture(device, &desc));
+    if (m_noOcclusion)
+      m_noOcclusionView.reset(
+          wgpuTextureCreateView(m_noOcclusion.get(), nullptr));
+  }
+  return m_linearSampler && m_nearestSampler && m_white && m_noOcclusionView;
 }
 
 std::shared_ptr<WebGpuRenderer::GpuTexture>
-WebGpuRenderer::uploadTexture(const std::shared_ptr<const TextureData>& texture)
+WebGpuRenderer::uploadTexture(const std::shared_ptr<const TextureData>& texture,
+                              bool mipmaps)
 {
   if (!texture || texture->empty() ||
       texture->rgba.size() < std::size_t(texture->width) * texture->height * 4)
@@ -1072,7 +1124,7 @@ WebGpuRenderer::uploadTexture(const std::shared_ptr<const TextureData>& texture)
   }
 
   const WGPUDevice device = m_context.device();
-  const uint32_t levels = mipLevels(width, height);
+  const uint32_t levels = mipmaps ? mipLevels(width, height) : 1;
   WGPUTextureDescriptor desc = {};
   desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
   desc.dimension = WGPUTextureDimension_2D;
@@ -1085,6 +1137,8 @@ WebGpuRenderer::uploadTexture(const std::shared_ptr<const TextureData>& texture)
 
   auto gpu = std::make_shared<GpuTexture>();
   gpu->nearest = texture->nearest;
+  gpu->levels = levels;
+  gpu->size = {width, height};
   gpu->texture.reset(wgpuDeviceCreateTexture(device, &desc));
   if (!gpu->texture)
     return nullptr;
@@ -1139,6 +1193,12 @@ WebGpuRenderer::solidTexture(const glm::vec4& value)
 std::optional<WebGpuRenderer::GpuMaterial>
 WebGpuRenderer::makeMaterial(const MeshMaterial& material)
 {
+  if (material.terrain)
+  {
+    if (std::optional<GpuMaterial> gpu = makeTerrainMaterial(material))
+      return gpu;
+    return makeStandardMaterial(brokenMaterial());
+  }
   if (!material.shader)
     return makeStandardMaterial(material);
   if (std::optional<GpuMaterial> gpu = makeGraphMaterial(material))
@@ -1250,6 +1310,338 @@ WebGpuRenderer::makeGraphMaterial(const MeshMaterial& material)
   return gpu;
 }
 
+namespace
+{
+
+// An RGBA8 image resized (bilinearly) to `width` x `height`.
+std::vector<uint8_t>
+resized(const TextureData& image, uint32_t width, uint32_t height)
+{
+  std::vector<uint8_t> out(std::size_t(width) * height * 4);
+  if (image.width == width && image.height == height)
+  {
+    std::copy_n(image.rgba.begin(), out.size(), out.begin());
+    return out;
+  }
+  const float sx = static_cast<float>(image.width) / static_cast<float>(width);
+  const float sy =
+      static_cast<float>(image.height) / static_cast<float>(height);
+  for (uint32_t y = 0; y < height; ++y)
+    for (uint32_t x = 0; x < width; ++x)
+    {
+      // Repeating at the edges, as the textures tile.
+      const float fx = (static_cast<float>(x) + 0.5f) * sx - 0.5f;
+      const float fy = (static_cast<float>(y) + 0.5f) * sy - 0.5f;
+      const auto x0 = static_cast<int>(std::floor(fx));
+      const auto y0 = static_cast<int>(std::floor(fy));
+      const float tx = fx - static_cast<float>(x0);
+      const float ty = fy - static_cast<float>(y0);
+      const auto wrap = [](int v, uint32_t n)
+      {
+        const int m = static_cast<int>(n);
+        return static_cast<uint32_t>(((v % m) + m) % m);
+      };
+      const auto at = [&](int px, int py, int c)
+      {
+        return static_cast<float>(
+            image.rgba[(std::size_t(wrap(py, image.height)) * image.width +
+                        wrap(px, image.width)) *
+                           4 +
+                       c]);
+      };
+      for (int c = 0; c < 4; ++c)
+      {
+        const float top = at(x0, y0, c) * (1.0f - tx) + at(x0 + 1, y0, c) * tx;
+        const float bottom =
+            at(x0, y0 + 1, c) * (1.0f - tx) + at(x0 + 1, y0 + 1, c) * tx;
+        out[(std::size_t(y) * width + x) * 4 + c] =
+            static_cast<uint8_t>(std::lround(
+                std::clamp(top * (1.0f - ty) + bottom * ty, 0.0f, 255.0f)));
+      }
+    }
+  return out;
+}
+
+bool usableImage(const std::shared_ptr<const TextureData>& image)
+{
+  return image && !image->empty() &&
+         image->rgba.size() >= std::size_t(image->width) * image->height * 4;
+}
+
+} // namespace
+
+std::shared_ptr<WebGpuRenderer::GpuTexture>
+WebGpuRenderer::terrainLayers(const TerrainMaterial& terrain, bool detail)
+{
+  const std::size_t count = std::clamp<std::size_t>(
+      terrain.layers.size(), 1, std::size_t{kMaxTerrainLayers});
+  // Each layer's images: its colour; or its normal map and roughness.
+  std::vector<std::shared_ptr<const TextureData>> sources;
+  for (std::size_t i = 0; i < count; ++i)
+  {
+    const TerrainLayer layer =
+        i < terrain.layers.size() ? terrain.layers[i] : TerrainLayer{};
+    if (detail)
+    {
+      sources.push_back(layer.normalTexture);
+      sources.push_back(layer.roughnessTexture);
+    }
+    else
+      sources.push_back(layer.baseTexture);
+  }
+  std::string key = detail ? "detail" : "color";
+  for (const auto& source : sources)
+    key += ":" + std::to_string(reinterpret_cast<std::uintptr_t>(source.get()));
+  if (const auto it = m_layerArrays.find(key); it != m_layerArrays.end())
+  {
+    bool same = it->second.sources.size() == sources.size();
+    for (std::size_t i = 0; same && i < sources.size(); ++i)
+      same = it->second.sources[i].lock() == sources[i];
+    if (same)
+      if (std::shared_ptr<GpuTexture> live = it->second.gpu.lock())
+        return live;
+    m_layerArrays.erase(it);
+  }
+
+  // Every layer the size of the largest (within what the device allows).
+  uint32_t width = 4, height = 4;
+  for (const auto& source : sources)
+    if (usableImage(source))
+    {
+      width = std::max(width, source->width);
+      height = std::max(height, source->height);
+    }
+  const uint32_t most = std::min(m_context.maxTextureSize(), 2048u);
+  while (width > most || height > most)
+  {
+    width = std::max(width / 2, 1u);
+    height = std::max(height / 2, 1u);
+  }
+  // At least two layers: wgpu's OpenGL backend makes a one-layer array a
+  // plain 2D texture, which an array binding can't take.
+  const auto layers = static_cast<uint32_t>(std::max<std::size_t>(count, 2));
+  const uint32_t levels = mipLevels(width, height);
+
+  const WGPUDevice device = m_context.device();
+  WGPUTextureDescriptor desc = {};
+  desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+  desc.dimension = WGPUTextureDimension_2D;
+  desc.size = {width, height, layers};
+  desc.format =
+      detail ? WGPUTextureFormat_RGBA8Unorm : WGPUTextureFormat_RGBA8UnormSrgb;
+  desc.mipLevelCount = levels;
+  desc.sampleCount = 1;
+  auto gpu = std::make_shared<GpuTexture>();
+  gpu->levels = levels;
+  gpu->size = {width, height};
+  gpu->texture.reset(wgpuDeviceCreateTexture(device, &desc));
+  if (!gpu->texture)
+    return nullptr;
+
+  for (uint32_t layer = 0; layer < layers; ++layer)
+  {
+    const std::size_t i = std::min<std::size_t>(layer, count - 1);
+    std::vector<uint8_t> pixels(std::size_t(width) * height * 4, 255);
+    if (detail)
+    {
+      // Normal xy (flat without a map), roughness (green of its map; white
+      // without one), opaque.
+      const std::shared_ptr<const TextureData>& normal = sources[2 * i];
+      const std::shared_ptr<const TextureData>& rough = sources[2 * i + 1];
+      const std::vector<uint8_t> normals = usableImage(normal)
+                                               ? resized(*normal, width, height)
+                                               : std::vector<uint8_t>();
+      const std::vector<uint8_t> roughness =
+          usableImage(rough) ? resized(*rough, width, height)
+                             : std::vector<uint8_t>();
+      for (std::size_t p = 0; p < std::size_t(width) * height; ++p)
+      {
+        pixels[p * 4 + 0] = normals.empty() ? 128 : normals[p * 4 + 0];
+        pixels[p * 4 + 1] = normals.empty() ? 128 : normals[p * 4 + 1];
+        pixels[p * 4 + 2] = roughness.empty() ? 255 : roughness[p * 4 + 1];
+        pixels[p * 4 + 3] = 255;
+      }
+    }
+    else if (usableImage(sources[i]))
+      pixels = resized(*sources[i], width, height);
+
+    uint32_t levelWidth = width, levelHeight = height;
+    std::vector<uint8_t> level = std::move(pixels);
+    for (uint32_t mip = 0; mip < levels; ++mip)
+    {
+      if (mip > 0)
+      {
+        uint32_t nextWidth = 0, nextHeight = 0;
+        level = halve(level, levelWidth, levelHeight, nextWidth, nextHeight);
+        levelWidth = nextWidth;
+        levelHeight = nextHeight;
+      }
+      WGPUTexelCopyTextureInfo destination = {};
+      destination.texture = gpu->texture.get();
+      destination.mipLevel = mip;
+      destination.origin = {0, 0, layer};
+      destination.aspect = WGPUTextureAspect_All;
+      WGPUTexelCopyBufferLayout layout = {};
+      layout.bytesPerRow = levelWidth * 4;
+      layout.rowsPerImage = levelHeight;
+      const WGPUExtent3D extent = {levelWidth, levelHeight, 1};
+      wgpuQueueWriteTexture(m_context.queue(),
+                            &destination,
+                            level.data(),
+                            level.size(),
+                            &layout,
+                            &extent);
+    }
+  }
+
+  WGPUTextureViewDescriptor view = {};
+  view.format = desc.format;
+  view.dimension = WGPUTextureViewDimension_2DArray;
+  view.baseMipLevel = 0;
+  view.mipLevelCount = levels;
+  view.baseArrayLayer = 0;
+  view.arrayLayerCount = layers;
+  view.aspect = WGPUTextureAspect_All;
+  gpu->view.reset(wgpuTextureCreateView(gpu->texture.get(), &view));
+  if (!gpu->view)
+    return nullptr;
+
+  std::erase_if(m_layerArrays,
+                [](const auto& entry) { return entry.second.gpu.expired(); });
+  CachedLayers& cached = m_layerArrays[key];
+  cached.sources.assign(sources.begin(), sources.end());
+  cached.gpu = gpu;
+  return gpu;
+}
+
+std::optional<WebGpuRenderer::GpuMaterial>
+WebGpuRenderer::makeTerrainMaterial(const MeshMaterial& material)
+{
+  const WGPUDevice device = m_context.device();
+  // Its surface, the first time: group 1 its parameters, the splat map and
+  // its sampler, the layers' arrays and theirs.
+  if (!m_terrain && !m_terrainBroken)
+  {
+    std::array<WGPUBindGroupLayoutEntry, 7> entries{};
+    entries[0] = wgpu::storageEntry(
+        0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+    for (const uint32_t binding : {1u, 3u, 4u, 6u})
+    {
+      entries[binding].binding = binding;
+      entries[binding].visibility = WGPUShaderStage_Fragment;
+      entries[binding].texture.sampleType = WGPUTextureSampleType_Float;
+      entries[binding].texture.viewDimension =
+          binding == 1 || binding == 6 ? WGPUTextureViewDimension_2D
+                                       : WGPUTextureViewDimension_2DArray;
+    }
+    for (const uint32_t binding : {2u, 5u})
+    {
+      entries[binding].binding = binding;
+      entries[binding].visibility = WGPUShaderStage_Fragment;
+      entries[binding].sampler.type = WGPUSamplerBindingType_Filtering;
+    }
+    WGPUBindGroupLayoutDescriptor layout = {};
+    layout.entryCount = entries.size();
+    layout.entries = entries.data();
+    m_terrain =
+        buildSurface(std::string(shaders::meshTerrainSurfaceWgsl),
+                     wgpu::BindGroupLayout(
+                         wgpuDeviceCreateBindGroupLayout(device, &layout)));
+    if (!m_terrain)
+    {
+      LOG_ERROR("Terrain materials don't build: they draw magenta");
+      m_terrainBroken = true;
+    }
+  }
+  if (!m_terrain)
+    return std::nullopt;
+
+  const TerrainMaterial& terrain = *material.terrain;
+  GpuMaterial gpu;
+  gpu.alphaMode = AlphaMode::Opaque;
+  gpu.surface = m_terrain;
+  // The splat map without mipmaps, so painting it can update it in place.
+  std::shared_ptr<GpuTexture> splat = uploadTexture(terrain.splat, false);
+  if (!splat)
+    splat = solidTexture(glm::vec4(0.0f));
+  std::shared_ptr<GpuTexture> tint = uploadTexture(terrain.tint);
+  if (!tint)
+    tint = m_white;
+  std::shared_ptr<GpuTexture> colors = terrainLayers(terrain, false);
+  std::shared_ptr<GpuTexture> details = terrainLayers(terrain, true);
+  if (!colors || !details)
+    return std::nullopt;
+
+  const TerrainUniforms uniforms = terrainMaterialUniforms(terrain);
+  gpu.uniforms = makeBuffer(device,
+                            sizeof(uniforms),
+                            WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  if (!gpu.uniforms)
+    return std::nullopt;
+  wgpuQueueWriteBuffer(
+      m_context.queue(), gpu.uniforms.get(), 0, &uniforms, sizeof(uniforms));
+
+  std::array<WGPUBindGroupEntry, 7> entries{};
+  entries[0].binding = 0;
+  entries[0].buffer = gpu.uniforms.get();
+  entries[0].size = sizeof(TerrainUniforms);
+  entries[6].binding = 6;
+  entries[6].textureView = tint->view.get();
+  entries[1].binding = 1;
+  entries[1].textureView = splat->view.get();
+  entries[2].binding = 2;
+  entries[2].sampler = m_clampSampler.get();
+  entries[3].binding = 3;
+  entries[3].textureView = colors->view.get();
+  entries[4].binding = 4;
+  entries[4].textureView = details->view.get();
+  entries[5].binding = 5;
+  entries[5].sampler = m_linearSampler.get();
+  WGPUBindGroupDescriptor desc = {};
+  desc.layout = gpu.surface->materialLayout.get();
+  desc.entryCount = entries.size();
+  desc.entries = entries.data();
+  gpu.bindings.reset(wgpuDeviceCreateBindGroup(device, &desc));
+  if (!gpu.bindings)
+    return std::nullopt;
+  gpu.textures = {
+      std::move(splat), std::move(colors), std::move(details), std::move(tint)};
+  return gpu;
+}
+
+void WebGpuRenderer::updateTexture(
+    const std::shared_ptr<const TextureData>& texture,
+    glm::ivec2 from,
+    glm::ivec2 to)
+{
+  if (!usableImage(texture))
+    return;
+  const auto it = m_textures.find(texture.get());
+  if (it == m_textures.end() || it->second.source.lock() != texture)
+    return;
+  const std::shared_ptr<GpuTexture> gpu = it->second.gpu.lock();
+  // Only a texture with one level, at its own size (a splat map).
+  if (!gpu || gpu->levels != 1 || gpu->size.x != texture->width ||
+      gpu->size.y != texture->height)
+    return;
+  from = glm::clamp(from, glm::ivec2(0), glm::ivec2(gpu->size));
+  to = glm::clamp(to, glm::ivec2(0), glm::ivec2(gpu->size));
+  if (to.x <= from.x || to.y <= from.y)
+    return;
+  const glm::ivec2 size = to - from;
+  std::vector<uint8_t> rows(std::size_t(size.x) * size.y * 4);
+  for (int y = 0; y < size.y; ++y)
+    std::copy_n(
+        texture->rgba.begin() +
+            static_cast<std::ptrdiff_t>(
+                (std::size_t(from.y + y) * texture->width + from.x) * 4),
+        std::size_t(size.x) * 4,
+        rows.begin() +
+            static_cast<std::ptrdiff_t>(std::size_t(y) * size.x * 4));
+  writeTexture(
+      m_context.queue(), gpu->texture.get(), from, size, rows.data(), 4);
+}
+
 const WebGpuRenderer::GpuMaterial&
 WebGpuRenderer::materialFor(const GpuMesh& mesh,
                             std::size_t index,
@@ -1276,16 +1668,27 @@ bool WebGpuRenderer::createPipelines()
                          WGPUBufferBindingType_Uniform);
 
   {
+    // And the map (cascade) being drawn's view-projection, at a dynamic
+    // offset.
+    std::array<WGPUBindGroupLayoutEntry, 2> entries{};
+    entries[0] = uniformEntry;
+    entries[1] = wgpu::storageEntry(
+        1, WGPUShaderStage_Vertex, WGPUBufferBindingType_Uniform);
+    entries[1].buffer.hasDynamicOffset = true;
+    entries[1].buffer.minBindingSize = sizeof(glm::mat4);
     WGPUBindGroupLayoutDescriptor desc = {};
-    desc.entryCount = 1;
-    desc.entries = &uniformEntry;
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
     m_shadowLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
   }
   {
     // Then the point lights, each cluster's range of light indices, and the
     // indices.
     // And the point lights' cube shadow maps.
-    std::array<WGPUBindGroupLayoutEntry, 7> entries{};
+    // And a physical sky's: its reflections, their sampler, the sky, and the
+    // BRDF table.
+    // And ambient occlusion's map (read texel by texel).
+    std::array<WGPUBindGroupLayoutEntry, 12> entries{};
     entries[0] = uniformEntry;
     entries[1].binding = 1;
     entries[1].visibility = WGPUShaderStage_Fragment;
@@ -1303,6 +1706,20 @@ bool WebGpuRenderer::createPipelines()
           wgpu::storageEntry(binding,
                              WGPUShaderStage_Fragment,
                              WGPUBufferBindingType_ReadOnlyStorage);
+    for (const uint32_t binding : {7u, 9u, 10u})
+    {
+      entries[binding].binding = binding;
+      entries[binding].visibility = WGPUShaderStage_Fragment;
+      entries[binding].texture.sampleType = WGPUTextureSampleType_Float;
+      entries[binding].texture.viewDimension = WGPUTextureViewDimension_2D;
+    }
+    entries[8].binding = 8;
+    entries[8].visibility = WGPUShaderStage_Fragment;
+    entries[8].sampler.type = WGPUSamplerBindingType_Filtering;
+    entries[11].binding = 11;
+    entries[11].visibility = WGPUShaderStage_Fragment;
+    entries[11].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+    entries[11].texture.viewDimension = WGPUTextureViewDimension_2D;
 
     WGPUBindGroupLayoutDescriptor desc = {};
     desc.entryCount = entries.size();
@@ -1314,15 +1731,18 @@ bool WebGpuRenderer::createPipelines()
   // uniform buffer never changes); the lit pass's is rebuilt when the light
   // buffers grow.
   {
-    WGPUBindGroupEntry entry = {};
-    entry.binding = 0;
-    entry.buffer = m_frameUniforms.get();
-    entry.size = sizeof(FrameUniforms);
+    std::array<WGPUBindGroupEntry, 2> entries{};
+    entries[0].binding = 0;
+    entries[0].buffer = m_frameUniforms.get();
+    entries[0].size = sizeof(FrameUniforms);
+    entries[1].binding = 1;
+    entries[1].buffer = m_cascadeUniforms.get();
+    entries[1].size = sizeof(glm::mat4);
 
     WGPUBindGroupDescriptor desc = {};
     desc.layout = m_shadowLayout.get();
-    desc.entryCount = 1;
-    desc.entries = &entry;
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
     m_shadowBindings.reset(wgpuDeviceCreateBindGroup(device, &desc));
   }
   // The point-shadow pass's group 0: the frame, and the face being drawn (at
@@ -1418,6 +1838,11 @@ bool WebGpuRenderer::createPipelines()
       m_grassGrowPipeline.reset();
     }
   }
+  // A physical sky's (failing, logged: its flat colour behind, its diffuse
+  // light for reflections).
+  if (!createSkyResources())
+    LOG_ERROR("A physical sky's passes don't build: it draws without its "
+              "reflections");
   ensurePointShadowMaps(1, 16); // until a light needs more
   ensureLightBuffers(1, 1, 1);
   if (!createPostPipelines() || !createUiPipeline())
@@ -1552,9 +1977,8 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
   {
     const wgpu::ShaderModule module(wgpu::makeShader(
         device,
-        shaders::meshPass(surfaceWgsl,
-                          std::string(shaders::meshLitWgsl) +
-                              std::string(shaders::meshLitVertexWgsl))
+        shaders::meshPass(
+            surfaceWgsl, shaders::litPass(shaders::meshLitVertexWgsl))
             .c_str()));
     const wgpu::PipelineLayout layout = pipelineLayout(m_litLayout.get());
 
@@ -1853,9 +2277,10 @@ void WebGpuRenderer::rebuildLitBindings()
 {
   // Not until the light buffers and shadow maps are all there.
   if (!m_lightBuffer || !m_clusterRangeBuffer || !m_clusterIndexBuffer ||
-      !m_pointShadowCubes)
+      !m_pointShadowCubes || !m_skyReflections.view || !m_brdfTableView ||
+      !m_noOcclusionView)
     return;
-  std::array<WGPUBindGroupEntry, 7> entries{};
+  std::array<WGPUBindGroupEntry, 12> entries{};
   entries[0].binding = 0;
   entries[0].buffer = m_frameUniforms.get();
   entries[0].size = sizeof(FrameUniforms);
@@ -1874,6 +2299,18 @@ void WebGpuRenderer::rebuildLitBindings()
   entries[5].size = m_clusterIndexCapacity * sizeof(uint32_t);
   entries[6].binding = 6;
   entries[6].textureView = m_pointShadowCubes.get();
+  entries[7].binding = 7;
+  entries[7].textureView = m_skyReflections.view.get();
+  entries[8].binding = 8;
+  entries[8].sampler = m_skySampler.get();
+  entries[9].binding = 9;
+  entries[9].textureView = m_skyRadiance.view.get();
+  entries[10].binding = 10;
+  entries[10].textureView = m_brdfTableView.get();
+  entries[11].binding = 11;
+  entries[11].textureView = m_occlusion.occlusionView
+                                ? m_occlusion.occlusionView.get()
+                                : m_noOcclusionView.get();
 
   WGPUBindGroupDescriptor desc = {};
   desc.layout = m_litLayout.get();
@@ -2213,7 +2650,7 @@ void WebGpuRenderer::encodeBloom()
 void WebGpuRenderer::encodeComposite()
 {
   // The scene plus the glow (none when bloom is off), into the target.
-  const PostUniforms uniforms = m_plan.compositeUniforms();
+  const PostUniforms uniforms = m_plan.compositeUniforms(m_viewport);
   wgpuQueueWriteBuffer(m_context.queue(),
                        m_compositeParams.get(),
                        0,
@@ -2224,6 +2661,281 @@ void WebGpuRenderer::encodeComposite()
       m_compositePipeline.get(),
       m_focused ? m_compositeFocusBindings.get() : m_compositeBindings.get(),
       false);
+}
+
+bool WebGpuRenderer::createSkyResources()
+{
+  const WGPUDevice device = m_context.device();
+  const WGPUQueue queue = m_context.queue();
+
+  // The textures first: the lit pass binds them, physical sky or not.
+  const auto target = [&](uint32_t size, uint32_t mips, SkyTarget& out)
+  {
+    WGPUTextureDescriptor desc = {};
+    desc.usage =
+        WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = {size, size, 1};
+    desc.format = kSkyFormat;
+    desc.mipLevelCount = mips;
+    desc.sampleCount = 1;
+    out.texture.reset(wgpuDeviceCreateTexture(device, &desc));
+    out.view.reset(wgpuTextureCreateView(out.texture.get(), nullptr));
+    out.mips.clear();
+    for (uint32_t mip = 0; mip < mips; ++mip)
+    {
+      WGPUTextureViewDescriptor view = {};
+      view.format = kSkyFormat;
+      view.dimension = WGPUTextureViewDimension_2D;
+      view.baseMipLevel = mip;
+      view.mipLevelCount = 1;
+      view.arrayLayerCount = 1;
+      view.aspect = WGPUTextureAspect_All;
+      out.mips.emplace_back(wgpuTextureCreateView(out.texture.get(), &view));
+    }
+  };
+  target(kSkySize, 1, m_skyRadiance);
+  target(kSkyReflectionSize, kSkyReflectionMips, m_skyReflections);
+
+  const auto halfTexture =
+      [&](glm::ivec2 size, wgpu::Texture& texture, wgpu::TextureView& view)
+  {
+    WGPUTextureDescriptor desc = {};
+    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = {
+        static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1};
+    desc.format = kSkyFormat;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    texture.reset(wgpuDeviceCreateTexture(device, &desc));
+    view.reset(wgpuTextureCreateView(texture.get(), nullptr));
+  };
+  halfTexture(
+      {PhysicalSky::kTransmittanceAngles, PhysicalSky::kTransmittanceHeights},
+      m_skyTable,
+      m_skyTableView);
+  halfTexture({kBrdfTableSize, kBrdfTableSize}, m_brdfTable, m_brdfTableView);
+  {
+    const std::vector<glm::vec2> brdf = brdfTable(kBrdfTableSize);
+    std::vector<uint64_t> texels(brdf.size());
+    for (std::size_t i = 0; i < brdf.size(); ++i)
+      texels[i] = glm::packHalf4x16(glm::vec4(brdf[i], 0.0f, 1.0f));
+    writeTexture(queue,
+                 m_brdfTable.get(),
+                 {0, 0},
+                 {kBrdfTableSize, kBrdfTableSize},
+                 texels.data(),
+                 sizeof(uint64_t));
+  }
+
+  WGPUSamplerDescriptor sampler = {};
+  sampler.addressModeU = WGPUAddressMode_ClampToEdge;
+  sampler.addressModeV = WGPUAddressMode_ClampToEdge;
+  sampler.addressModeW = WGPUAddressMode_ClampToEdge;
+  sampler.magFilter = WGPUFilterMode_Linear;
+  sampler.minFilter = WGPUFilterMode_Linear;
+  sampler.mipmapFilter = WGPUMipmapFilterMode_Linear;
+  sampler.lodMinClamp = 0.0f;
+  sampler.lodMaxClamp = 32.0f;
+  sampler.maxAnisotropy = 1;
+  m_skySampler.reset(wgpuDeviceCreateSampler(device, &sampler));
+  if (!m_skyRadiance.view || !m_skyReflections.view || !m_skyTableView ||
+      !m_brdfTableView || !m_skySampler)
+    return false;
+
+  // The passes' group 0: the atmosphere, a source (the transmittance table,
+  // or the sky), its sampler, and the pass's own parameters.
+  std::array<WGPUBindGroupLayoutEntry, 4> entries{};
+  entries[0] = wgpu::storageEntry(
+      0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+  entries[1].binding = 1;
+  entries[1].visibility = WGPUShaderStage_Fragment;
+  entries[1].texture.sampleType = WGPUTextureSampleType_Float;
+  entries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+  entries[2].binding = 2;
+  entries[2].visibility = WGPUShaderStage_Fragment;
+  entries[2].sampler.type = WGPUSamplerBindingType_Filtering;
+  entries[3] = wgpu::storageEntry(
+      3, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+  WGPUBindGroupLayoutDescriptor layoutDesc = {};
+  layoutDesc.entryCount = entries.size();
+  layoutDesc.entries = entries.data();
+  m_skyLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &layoutDesc));
+
+  m_skyUniforms = makeBuffer(device,
+                             sizeof(SkyUniforms),
+                             WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  m_skyPassUniforms.clear();
+  m_skyPassBindings.clear();
+  for (uint32_t pass = 0; pass <= kSkyReflectionMips; ++pass)
+  {
+    // Pass 0 renders the sky; pass 1 + k, reflection mip k.
+    SkyPassUniforms params{};
+    if (pass > 0)
+      params.params =
+          glm::vec4(static_cast<float>(pass - 1) / (kSkyReflectionMips - 1),
+                    static_cast<float>(kSkySize),
+                    kSkyReflectionSamples[pass - 1],
+                    0.0f);
+    wgpu::Buffer& buffer = m_skyPassUniforms.emplace_back(
+        makeBuffer(device,
+                   sizeof(SkyPassUniforms),
+                   WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst));
+    wgpuQueueWriteBuffer(queue, buffer.get(), 0, &params, sizeof(params));
+
+    std::array<WGPUBindGroupEntry, 4> bindings{};
+    bindings[0].binding = 0;
+    bindings[0].buffer = m_skyUniforms.get();
+    bindings[0].size = sizeof(SkyUniforms);
+    bindings[1].binding = 1;
+    bindings[1].textureView =
+        pass == 0 ? m_skyTableView.get() : m_skyRadiance.view.get();
+    bindings[2].binding = 2;
+    bindings[2].sampler = m_skySampler.get();
+    bindings[3].binding = 3;
+    bindings[3].buffer = buffer.get();
+    bindings[3].size = sizeof(SkyPassUniforms);
+    WGPUBindGroupDescriptor desc = {};
+    desc.layout = m_skyLayout.get();
+    desc.entryCount = bindings.size();
+    desc.entries = bindings.data();
+    m_skyPassBindings.emplace_back(wgpuDeviceCreateBindGroup(device, &desc));
+  }
+
+  ValidationScope scope(device);
+  {
+    const WGPUBindGroupLayout groups[] = {m_skyLayout.get()};
+    WGPUPipelineLayoutDescriptor pipelineLayout = {};
+    pipelineLayout.bindGroupLayoutCount = 1;
+    pipelineLayout.bindGroupLayouts = groups;
+    const wgpu::PipelineLayout layout(
+        wgpuDeviceCreatePipelineLayout(device, &pipelineLayout));
+    const wgpu::ShaderModule module(
+        wgpu::makeShader(device, shaders::skyPasses().c_str()));
+    const auto build = [&](const char* entry)
+    {
+      WGPUColorTargetState color = {};
+      color.format = kSkyFormat;
+      color.writeMask = WGPUColorWriteMask_All;
+      WGPUFragmentState fragment = {};
+      fragment.module = module.get();
+      fragment.entryPoint = wgpu::sv(entry);
+      fragment.targetCount = 1;
+      fragment.targets = &color;
+      WGPURenderPipelineDescriptor desc = {};
+      desc.layout = layout.get();
+      desc.vertex.module = module.get();
+      desc.vertex.entryPoint = wgpu::sv("vs_main");
+      desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+      desc.primitive.cullMode = WGPUCullMode_None;
+      desc.multisample.count = 1;
+      desc.multisample.mask = 0xFFFFFFFFu;
+      desc.fragment = &fragment;
+      return wgpu::RenderPipeline(
+          wgpuDeviceCreateRenderPipeline(device, &desc));
+    };
+    m_skyRadiancePipeline = build("fs_radiance");
+    m_skyPrefilterPipeline = build("fs_prefilter");
+  }
+  // The background: in the lit pass, at the far plane, behind everything.
+  {
+    const WGPUBindGroupLayout groups[] = {m_litLayout.get()};
+    WGPUPipelineLayoutDescriptor pipelineLayout = {};
+    pipelineLayout.bindGroupLayoutCount = 1;
+    pipelineLayout.bindGroupLayouts = groups;
+    const wgpu::PipelineLayout layout(
+        wgpuDeviceCreatePipelineLayout(device, &pipelineLayout));
+    const wgpu::ShaderModule module(
+        wgpu::makeShader(device, shaders::skyBackground().c_str()));
+    std::array<WGPUColorTargetState, 2> colors{};
+    for (WGPUColorTargetState& color : colors)
+    {
+      color.format = kSceneFormat;
+      color.writeMask = WGPUColorWriteMask_All;
+    }
+    WGPUFragmentState fragment = {};
+    fragment.module = module.get();
+    fragment.entryPoint = wgpu::sv("fs_main");
+    fragment.targetCount = colors.size();
+    fragment.targets = colors.data();
+    const WGPUDepthStencilState depth =
+        depthState(false, WGPUCompareFunction_LessEqual);
+    WGPURenderPipelineDescriptor desc = {};
+    desc.layout = layout.get();
+    desc.vertex.module = module.get();
+    desc.vertex.entryPoint = wgpu::sv("vs_main");
+    desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    desc.primitive.cullMode = WGPUCullMode_None;
+    desc.depthStencil = &depth;
+    desc.multisample.count = m_sampleCount;
+    desc.multisample.mask = 0xFFFFFFFFu;
+    desc.fragment = &fragment;
+    m_skyBackgroundPipeline.reset(
+        wgpuDeviceCreateRenderPipeline(device, &desc));
+  }
+  if (const std::optional<std::string> error = scope.end())
+  {
+    LOG_ERROR("A physical sky's shaders don't build: " + *error);
+    m_skyRadiancePipeline.reset();
+    m_skyPrefilterPipeline.reset();
+    m_skyBackgroundPipeline.reset();
+    return false;
+  }
+  return m_skyLayout && m_skyRadiancePipeline && m_skyPrefilterPipeline &&
+         m_skyBackgroundPipeline;
+}
+
+void WebGpuRenderer::encodeSky()
+{
+  const FrameSky& sky = m_plan.frame().sky;
+  if (!sky.physical || !m_skyRadiancePipeline || !m_skyPrefilterPipeline)
+    return;
+
+  // A new atmosphere (its settings changed): its transmittance table.
+  if (sky.physical != m_skyModel)
+  {
+    const std::vector<glm::vec4>& table = sky.physical->transmittanceTable();
+    std::vector<uint64_t> texels(table.size());
+    for (std::size_t i = 0; i < table.size(); ++i)
+      texels[i] = glm::packHalf4x16(table[i]);
+    writeTexture(
+        m_context.queue(),
+        m_skyTable.get(),
+        {0, 0},
+        {PhysicalSky::kTransmittanceAngles, PhysicalSky::kTransmittanceHeights},
+        texels.data(),
+        sizeof(uint64_t));
+    m_skyModel = sky.physical;
+    m_skyReady = false;
+  }
+  if (m_skyReady && sky.revision == m_skyRevision)
+    return;
+
+  // The sky, then each mip of its reflections from it.
+  const SkyUniforms uniforms = m_plan.skyUniforms();
+  wgpuQueueWriteBuffer(
+      m_context.queue(), m_skyUniforms.get(), 0, &uniforms, sizeof(uniforms));
+  drawFullscreen(m_skyRadiance.mips[0].get(),
+                 m_skyRadiancePipeline.get(),
+                 m_skyPassBindings[0].get(),
+                 false);
+  for (uint32_t mip = 0; mip < kSkyReflectionMips; ++mip)
+    drawFullscreen(m_skyReflections.mips[mip].get(),
+                   m_skyPrefilterPipeline.get(),
+                   m_skyPassBindings[mip + 1].get(),
+                   false);
+  m_skyRevision = sky.revision;
+  m_skyReady = true;
+}
+
+void WebGpuRenderer::encodeSkyBackground(WGPURenderPassEncoder pass)
+{
+  if (!m_plan.frame().sky.physical || !m_skyReady || !m_skyBackgroundPipeline)
+    return;
+  wgpuRenderPassEncoderSetPipeline(pass, m_skyBackgroundPipeline.get());
+  m_boundPipeline = m_skyBackgroundPipeline.get();
+  wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
 }
 
 void WebGpuRenderer::drawUi(const UiDrawList& list) { m_plan.addUi(list); }
@@ -2481,7 +3193,16 @@ void WebGpuRenderer::ensureInstanceCapacity(std::size_t instanceCount)
 
 void WebGpuRenderer::uploadFrame()
 {
-  const FrameUniforms& uniforms = m_plan.frameUniforms();
+  FrameUniforms uniforms = m_plan.frameUniforms();
+  // A physical sky's reflections, once they're rendered.
+  if (m_plan.frame().sky.physical && m_skyReady)
+  {
+    uniforms.skyMode.y = 1.0f;
+    uniforms.skyMode.z = static_cast<float>(kSkyReflectionMips - 1);
+  }
+  // Ambient occlusion, if its passes run this frame.
+  if (!m_occluded)
+    uniforms.ambientOcclusion.x = 0.0f;
   wgpuQueueWriteBuffer(
       m_context.queue(), m_frameUniforms.get(), 0, &uniforms, sizeof(uniforms));
 
@@ -2498,6 +3219,24 @@ void WebGpuRenderer::uploadFrame()
 
 void WebGpuRenderer::encodeShadowPass()
 {
+  // Each map's view-projection: the one map's, or each cascade's.
+  const FrameParams& frame = m_plan.frame();
+  const uint32_t cascades =
+      std::min(m_plan.shadowCascades(), m_capabilities.sunShadowCascades);
+  std::vector<uint8_t> matrices(kFaceStride * cascades);
+  for (uint32_t c = 0; c < cascades; ++c)
+  {
+    const glm::mat4& matrix = cascades > 1
+                                  ? frame.cascades.cascades[c].viewProjection
+                                  : frame.lightViewProjection;
+    std::memcpy(matrices.data() + kFaceStride * c, &matrix, sizeof(matrix));
+  }
+  wgpuQueueWriteBuffer(m_context.queue(),
+                       m_cascadeUniforms.get(),
+                       0,
+                       matrices.data(),
+                       matrices.size());
+
   WGPURenderPassDepthStencilAttachment depth = {};
   depth.view = m_shadowView.get();
   depth.depthLoadOp = WGPULoadOp_Clear;
@@ -2510,13 +3249,31 @@ void WebGpuRenderer::encodeShadowPass()
   WGPURenderPassEncoder pass =
       wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
   m_boundPipeline = nullptr;
-  wgpuRenderPassEncoderSetBindGroup(
-      pass, 0, m_shadowBindings.get(), 0, nullptr);
-  if (!m_plan.shadowDraws().empty())
+  if (!m_plan.instances().empty())
     wgpuRenderPassEncoderSetVertexBuffer(
         pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
-  for (const Draw& draw : m_plan.shadowDraws())
-    encodeDraw(pass, draw, Sections::All);
+  for (uint32_t c = 0; c < cascades; ++c)
+  {
+    // Cascades each draw into their tile of the atlas.
+    if (cascades > 1)
+    {
+      const auto tile = static_cast<float>(m_shadowResolution);
+      const float x = static_cast<float>(c % 2) * tile;
+      const float y = static_cast<float>(c / 2) * tile;
+      wgpuRenderPassEncoderSetViewport(pass, x, y, tile, tile, 0.0f, 1.0f);
+      wgpuRenderPassEncoderSetScissorRect(pass,
+                                          static_cast<uint32_t>(x),
+                                          static_cast<uint32_t>(y),
+                                          m_shadowResolution,
+                                          m_shadowResolution);
+    }
+    const auto offset = static_cast<uint32_t>(kFaceStride * c);
+    wgpuRenderPassEncoderSetBindGroup(
+        pass, 0, m_shadowBindings.get(), 1, &offset);
+    for (const Draw& draw :
+         cascades > 1 ? m_plan.cascadeDraws(c) : m_plan.shadowDraws())
+      encodeDraw(pass, draw, Sections::All);
+  }
   endPass(pass);
 }
 
@@ -2577,6 +3334,7 @@ void WebGpuRenderer::encodeLitPass()
   for (const Draw& draw : m_plan.litDraws())
     encodeDraw(pass, draw, Sections::Opaque);
   encodeGrass(pass);
+  encodeSkyBackground(pass);
 
   // The see-through pipelines differ from the opaque ones.
   m_boundPipeline = nullptr;
@@ -2604,11 +3362,17 @@ void WebGpuRenderer::encodeDraw(WGPURenderPassEncoder pass,
     const GpuSection& section = mesh->sections[i];
     const GpuMaterial& material = materialFor(*mesh, i, draw);
     const bool blend = isSeeThrough(material.alphaMode);
-    if (section.indexCount == 0 || (which == Sections::Opaque && blend) ||
+    const bool opaque =
+        which == Sections::Opaque || which == Sections::DepthNormals;
+    if (section.indexCount == 0 || (opaque && blend) ||
         (which == Sections::SeeThrough && !blend && !draw.allSections))
       continue;
     const WGPURenderPipeline pipeline =
-        pipelineFor(*material.surface, which, material.alphaMode);
+        which == Sections::DepthNormals
+            ? depthNormalsPipeline(*material.surface)
+            : pipelineFor(*material.surface, which, material.alphaMode);
+    if (!pipeline)
+      continue;
     if (pipeline != m_boundPipeline)
     {
       m_boundPipeline = pipeline;
@@ -2638,10 +3402,242 @@ WGPURenderPipeline WebGpuRenderer::pipelineFor(const Surface& surface,
                                        : surface.blend.get();
   case Sections::LightShadow:
     return surface.pointShadow.get();
+  case Sections::DepthNormals: // (see depthNormalsPipeline())
   case Sections::Opaque:
     break;
   }
   return surface.lit.get();
+}
+
+bool WebGpuRenderer::prepareOcclusion()
+{
+  if (!m_plan.frame().ambientOcclusion.enabled || m_occlusionBroken)
+    return false;
+  const WGPUDevice device = m_context.device();
+
+  // The full-screen passes: the occlusion and its blur, reading a texture
+  // texel by texel, with their parameters.
+  if (!m_occlusionPipeline)
+  {
+    ValidationScope scope(device);
+    std::array<WGPUBindGroupLayoutEntry, 2> entries{};
+    entries[0] = wgpu::storageEntry(
+        0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+    entries[1].binding = 1;
+    entries[1].visibility = WGPUShaderStage_Fragment;
+    entries[1].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
+    entries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+    WGPUBindGroupLayoutDescriptor layoutDesc = {};
+    layoutDesc.entryCount = entries.size();
+    layoutDesc.entries = entries.data();
+    m_occlusionLayout.reset(
+        wgpuDeviceCreateBindGroupLayout(device, &layoutDesc));
+    const WGPUBindGroupLayout groups[] = {m_occlusionLayout.get()};
+    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = groups;
+    const wgpu::PipelineLayout layout(
+        wgpuDeviceCreatePipelineLayout(device, &pipelineLayoutDesc));
+    const wgpu::ShaderModule module(
+        wgpu::makeShader(device, shaders::occlusionPasses().c_str()));
+    const auto build = [&](const char* entry)
+    {
+      WGPUColorTargetState color = {};
+      color.format = kSceneFormat;
+      color.writeMask = WGPUColorWriteMask_All;
+      WGPUFragmentState fragment = {};
+      fragment.module = module.get();
+      fragment.entryPoint = wgpu::sv(entry);
+      fragment.targetCount = 1;
+      fragment.targets = &color;
+      WGPURenderPipelineDescriptor desc = {};
+      desc.layout = layout.get();
+      desc.vertex.module = module.get();
+      desc.vertex.entryPoint = wgpu::sv("vs_main");
+      desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+      desc.primitive.cullMode = WGPUCullMode_None;
+      desc.multisample.count = 1;
+      desc.multisample.mask = 0xFFFFFFFFu;
+      desc.fragment = &fragment;
+      return wgpu::RenderPipeline(
+          wgpuDeviceCreateRenderPipeline(device, &desc));
+    };
+    m_occlusionPipeline = build("fs_occlusion");
+    m_occlusionBlurPipeline = build("fs_blur");
+    const std::optional<std::string> error = scope.end();
+    if (error || !m_occlusionPipeline || !m_occlusionBlurPipeline)
+    {
+      LOG_ERROR("Ambient occlusion's passes don't build" +
+                (error ? ": " + *error : std::string()));
+      m_occlusionPipeline.reset();
+      m_occlusionBlurPipeline.reset();
+      m_occlusionBroken = true;
+      return false;
+    }
+  }
+
+  // Its targets at half the viewport's size (rounded up), and each pass's
+  // bindings: the occlusion reads the normals, the blur across reads the
+  // occlusion, the blur down what that blurred.
+  const glm::ivec2 size = glm::max((m_viewport + 1) / 2, glm::ivec2(1));
+  if (m_occlusion.size == size && m_occlusion.occlusionView)
+    return true;
+  const auto target = [&](wgpu::Texture& texture)
+  {
+    WGPUTextureDescriptor desc = {};
+    desc.usage =
+        WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = {
+        static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1};
+    desc.format = kSceneFormat;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    texture.reset(wgpuDeviceCreateTexture(device, &desc));
+    return wgpu::TextureView(wgpuTextureCreateView(texture.get(), nullptr));
+  };
+  OcclusionTargets& targets = m_occlusion;
+  targets.normalsView = target(targets.normals);
+  targets.occlusionView = target(targets.occlusion);
+  targets.blurredView = target(targets.blurred);
+  targets.depthView = makeDepthTexture(
+      device, size, WGPUTextureUsage_RenderAttachment, targets.depth);
+  const std::array<WGPUTextureView, 3> sources = {targets.normalsView.get(),
+                                                  targets.occlusionView.get(),
+                                                  targets.blurredView.get()};
+  for (std::size_t i = 0; i < sources.size(); ++i)
+  {
+    targets.params[i] =
+        makeBuffer(device,
+                   sizeof(OcclusionUniforms),
+                   WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+    std::array<WGPUBindGroupEntry, 2> entries{};
+    entries[0].binding = 0;
+    entries[0].buffer = targets.params[i].get();
+    entries[0].size = sizeof(OcclusionUniforms);
+    entries[1].binding = 1;
+    entries[1].textureView = sources[i];
+    WGPUBindGroupDescriptor desc = {};
+    desc.layout = m_occlusionLayout.get();
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    targets.bindings[i].reset(wgpuDeviceCreateBindGroup(device, &desc));
+  }
+  targets.size = size;
+  rebuildLitBindings();
+  return true;
+}
+
+void WebGpuRenderer::encodeOcclusion()
+{
+  const glm::ivec2 size = m_occlusion.size;
+  const std::array<glm::ivec2, 3> steps = {
+      glm::ivec2(0, 0), glm::ivec2(1, 0), glm::ivec2(0, 1)};
+  for (std::size_t i = 0; i < steps.size(); ++i)
+  {
+    const OcclusionUniforms uniforms = m_plan.occlusionUniforms(size, steps[i]);
+    wgpuQueueWriteBuffer(m_context.queue(),
+                         m_occlusion.params[i].get(),
+                         0,
+                         &uniforms,
+                         sizeof(uniforms));
+  }
+
+  // What's drawn opaque: its normals and depth (0 where nothing is).
+  WGPURenderPassColorAttachment color = {};
+  color.view = m_occlusion.normalsView.get();
+  color.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+  color.loadOp = WGPULoadOp_Clear;
+  color.storeOp = WGPUStoreOp_Store;
+  color.clearValue = WGPUColor{0.0, 0.0, 0.0, 0.0};
+  WGPURenderPassDepthStencilAttachment depth = {};
+  depth.view = m_occlusion.depthView.get();
+  depth.depthLoadOp = WGPULoadOp_Clear;
+  depth.depthStoreOp = WGPUStoreOp_Discard;
+  depth.depthClearValue = 1.0f;
+  WGPURenderPassDescriptor desc = {};
+  desc.colorAttachmentCount = 1;
+  desc.colorAttachments = &color;
+  desc.depthStencilAttachment = &depth;
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
+  if (!m_plan.instances().empty())
+    wgpuRenderPassEncoderSetVertexBuffer(
+        pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
+  const uint32_t offset = 0;
+  wgpuRenderPassEncoderSetBindGroup(
+      pass, 0, m_shadowBindings.get(), 1, &offset);
+  m_boundPipeline = nullptr;
+  for (const Draw& draw : m_plan.litDraws())
+    encodeDraw(pass, draw, Sections::DepthNormals);
+  endPass(pass);
+
+  // The occlusion, then blurred across and back down.
+  drawFullscreen(m_occlusion.occlusionView.get(),
+                 m_occlusionPipeline.get(),
+                 m_occlusion.bindings[0].get(),
+                 false);
+  drawFullscreen(m_occlusion.blurredView.get(),
+                 m_occlusionBlurPipeline.get(),
+                 m_occlusion.bindings[1].get(),
+                 false);
+  drawFullscreen(m_occlusion.occlusionView.get(),
+                 m_occlusionBlurPipeline.get(),
+                 m_occlusion.bindings[2].get(),
+                 false);
+}
+
+WGPURenderPipeline WebGpuRenderer::depthNormalsPipeline(const Surface& surface)
+{
+  if (surface.depthNormals || surface.depthNormalsBroken)
+    return surface.depthNormals.get();
+  const WGPUDevice device = m_context.device();
+  ValidationScope scope(device);
+  const wgpu::ShaderModule module(wgpu::makeShader(
+      device,
+      shaders::meshPass(surface.wgsl, shaders::meshDepthNormalsWgsl).c_str()));
+  const std::array<WGPUBindGroupLayout, 2> groups = {
+      m_shadowLayout.get(), surface.materialLayout.get()};
+  WGPUPipelineLayoutDescriptor layoutDesc = {};
+  layoutDesc.bindGroupLayoutCount = groups.size();
+  layoutDesc.bindGroupLayouts = groups.data();
+  const wgpu::PipelineLayout layout(
+      wgpuDeviceCreatePipelineLayout(device, &layoutDesc));
+
+  const MeshVertexLayouts layouts;
+  const WGPUDepthStencilState depth =
+      depthState(true, WGPUCompareFunction_Less);
+  WGPUColorTargetState color = {};
+  color.format = kSceneFormat;
+  color.writeMask = WGPUColorWriteMask_All;
+  WGPUFragmentState fragment = {};
+  fragment.module = module.get();
+  fragment.entryPoint = wgpu::sv("fs_main");
+  fragment.targetCount = 1;
+  fragment.targets = &color;
+  WGPURenderPipelineDescriptor desc = {};
+  desc.layout = layout.get();
+  desc.vertex.module = module.get();
+  desc.vertex.entryPoint = wgpu::sv("vs_main");
+  desc.vertex.bufferCount = layouts.buffers.size();
+  desc.vertex.buffers = layouts.buffers.data();
+  desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+  desc.primitive.frontFace = WGPUFrontFace_CCW;
+  desc.primitive.cullMode = WGPUCullMode_Back;
+  desc.depthStencil = &depth;
+  desc.multisample.count = 1;
+  desc.multisample.mask = 0xFFFFFFFFu;
+  desc.fragment = &fragment;
+  surface.depthNormals.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+  const std::optional<std::string> error = scope.end();
+  if (error || !surface.depthNormals)
+  {
+    LOG_ERROR("A material's depth for ambient occlusion doesn't build" +
+              (error ? ": " + *error : std::string()));
+    surface.depthNormals.reset();
+    surface.depthNormalsBroken = true;
+  }
+  return surface.depthNormals.get();
 }
 
 const WebGpuRenderer::GpuMesh* WebGpuRenderer::findMesh(MeshHandle mesh) const

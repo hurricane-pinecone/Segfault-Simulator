@@ -76,7 +76,7 @@ of one.
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name and components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
-| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
+| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), the game camera, sun, sky colour (hidden under a physical sky, which works it out), ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
@@ -164,6 +164,7 @@ Everything under `assets/` and `prefabs/` is managed by the project's
 | Drop files from Explorer onto the editor window | Imports copies into the open folder (or `assets/` itself) |
 | Right-click a folder, or empty space → New Material | A material asset to edit in the Inspector |
 | Right-click a folder, or empty space → New Material Graph | A material built from nodes; double-click it to edit them |
+| Right-click a folder, or empty space → New Visual Style | A [visual style](#visual-styles) to edit in the Inspector |
 
 This works the same in every folder, scripts and scenes too. The project's own
 folders (`scenes/`, `scripts/`, `prefabs/`, `assets/`) can't be renamed, moved
@@ -208,7 +209,9 @@ sprite (0 leaves it to the scene). They're saved in its `.meta` and show straigh
 Selecting a material asset (`.mat`) edits it in the Inspector: base colour,
 texture, tiling and offset (how often the texture repeats, and where it
 starts), metal, roughness, a normal map (bumps the light catches; the bluish
-image that comes with many textures) with its strength, and transparency. Every change is saved and shows in
+image that comes with many textures) with its strength, and transparency, and
+its **Variants**: other materials to draw instead under a
+[visual style](#visual-styles)'s tag. Every change is saved and shows in
 the scene straight away.
 
 For a look those settings can't make (patterns, masks, glows, textures blended
@@ -489,15 +492,48 @@ Export replaces the folder's contents, so it only writes into an empty folder
 or a previous export (one with a `game.json`). It never overwrites anything
 else.
 
+**Development build** makes an export for trying the game out rather than
+shipping it: its development keys work (**F8** / **Shift+F8** switch between
+the project's [visual styles](#visual-styles)), as in Play. Its `game.json`
+says `"development": true`; leave it off for a game you hand out.
+
 Exports can also be made without opening the editor, e.g. from a script or CI:
 
 ```
-SfsEditor --export <project-folder> [output-folder]
+SfsEditor --export [--development] <project-folder> [output-folder]
 ```
 
 A Windows editor exports Windows games. A Linux export is the game plus the
 engine's libraries; system libraries (SDL and the rest) must be installed where
 it runs.
+
+## Visual styles
+
+A visual style (a `.style` asset) is a whole look for a scene: tone mapping
+and colour grading, how strong and what colour the sun and the ambient light
+are against the scene's own, bloom, haze, shadow softness and cascades, the
+sky (e.g. a physical one, with image-based lighting), and which material
+variants draw. Keep several (say *Cozy* and *Realistic*) and switch between
+them to compare. See
+[Visual styles & grading](../runtime/rendering/visual-styles/index.md) for
+what each setting does.
+
+- **Make one**: right-click a folder in Assets → **New Visual Style**.
+- **Use one**: Scene Settings → **Look** → **Visual Style** (one undo step,
+  saved with the scene). **None** means the scene's own look, whose tone
+  mapping and grading are edited right there.
+- **Edit one**: select it in Assets (or **Edit Style** in Scene Settings). The
+  Inspector shows every field; each change is saved, and shows in the scene
+  at once if the scene uses that style (**Use in Scene** otherwise). Under
+  **Replaces The Scene's**, each of Bloom, Haze, Shadow Softness, **Shadow
+  Cascades** (with their distance and split) and **Sky** is ticked on to
+  stand in for the scene's own.
+- **Material variants**: a selected material's **Variants** section maps a
+  style's tag (its **Material Variant**, e.g. `realistic`) to another material
+  to draw instead while that style is on. Works for grass materials too.
+- **While playing**: **F8** switches to the next style in the project,
+  **Shift+F8** the one before (also in debug players and development
+  builds).
 
 ## Grass
 
@@ -548,6 +584,32 @@ paints. **Fill** sets all of it back to unpainted: full, full-length grass.
 stroke is one undo step, and what's painted saves with the scene. A game can
 change the same maps as it plays (see
 [Meshes, materials & lighting: Grass](../runtime/rendering/meshes-and-lighting/index.md#grass)).
+
+## Terrain
+
+A material can be a **terrain**: select a material and click **Convert to
+Terrain** in the Inspector. Its **layers** (up to five: e.g. grass, dirt, a
+path) each have a colour texture (its alpha is the layer's height), a normal
+map, a roughness map, a tint, a **Tile Size** in metres and how much **Grass**
+grows on it. **New Splat Map** makes the map that says where each layer is.
+See [Terrain materials](../runtime/rendering/meshes-and-lighting/index.md#terrain-materials).
+
+**The terrain brush:** select something drawn with a terrain material (with
+the scene's visual style on, if the terrain is a style's variant) and press
+**T** or click **Terrain** in the viewport toolbar, pick a layer, and drag over
+it. Hold **Shift** to paint the first layer (an eraser). **Size**, **Strength**
+and **Softness** set the brush. Each stroke is saved into the splat map's
+image as it ends. Painting isn't undoable yet: paint the first layer back
+instead. Grass on the mesh follows as you paint.
+
+## Ambient occlusion and fog
+
+Scene Settings > **Occlusion & Fog** turns on **Ambient Occlusion** (radius,
+intensity, samples) and **Height Fog** (density, height falloff, base height,
+start distance, max opacity, sun glow), each showing its settings only while
+on. A visual style can carry its own of each (Inspector > Replaces The
+Scene's), and its **Material Overrides** draw any material, a game's own
+included, as another while it's on.
 
 ## Built-in meshes
 

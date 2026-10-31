@@ -33,6 +33,10 @@ struct GameManifest
   // At most this many frames a second ("maxFrameRate"); 0: no cap (beyond
   // vsync's).
   double maxFrameRate = 0.0;
+  // A development build ("development"): the development keys work in it
+  // (Game::setDevKeys; e.g. F8 switches visual styles). Off for a game to
+  // ship.
+  bool development = false;
 
   /** Read `folder/game.json`; nothing (logged) if missing or invalid. */
   static std::optional<GameManifest> read(const std::filesystem::path& folder);

@@ -1,5 +1,12 @@
-// Sun shadow-map pass: depth only, from the light's view-projection.
+// Sun shadow-map pass: depth only, from the light's view-projection: the one
+// map's, or the cascade being drawn's (each its own tile of the atlas).
 // (meshCommon, meshSurface and the material's surface are prefixed.)
+
+struct SunCascade {
+  viewProjection: mat4x4f,
+}
+
+@group(0) @binding(1) var<uniform> sunCascade: SunCascade;
 
 struct ShadowOut {
   @builtin(position) clip: vec4f,
@@ -15,7 +22,7 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> ShadowOut {
   let model = instanceModel(instance);
   let world = model * vec4f(vertex.position, 1.0);
   var out: ShadowOut;
-  out.clip = frame.lightViewProjection * world;
+  out.clip = sunCascade.viewProjection * world;
   out.uv = instanceUv(vertex, instance);
   out.tintAlpha = instance.tint.a;
   out.worldPosition = world.xyz;

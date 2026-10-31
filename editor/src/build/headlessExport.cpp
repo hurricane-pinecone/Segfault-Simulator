@@ -34,7 +34,7 @@ fs::path startScene(const Project& project)
 }
 } // namespace
 
-int exportHeadless(const fs::path& projectFolder, const fs::path& outputFolder)
+int exportHeadless(const fs::path& projectFolder, const fs::path& outputFolder, bool development)
 {
   const std::optional<Project> project = Project::open(projectFolder);
   if (!project)
@@ -55,6 +55,7 @@ int exportHeadless(const fs::path& projectFolder, const fs::path& outputFolder)
                                         : outputFolder;
   options.startScene = startScene(*project);
   options.module = builder.modulePath(*project);
+  options.development = development;
 
   const char* base = SDL_GetBasePath();
   const GameExporter exporter(base ? fs::path(base) : fs::current_path());

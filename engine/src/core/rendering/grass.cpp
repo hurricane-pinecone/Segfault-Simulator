@@ -162,8 +162,10 @@ GrassGrid::over(glm::vec2 min, glm::vec2 max, float texel, int maxTexels)
 
 GrassGround GrassGround::build(std::span<const glm::vec3> positions,
                                std::span<const uint32_t> indices,
-                               const glm::mat4& model)
+                               const glm::mat4& model,
+                               std::span<const glm::vec2> uvs)
 {
+  const bool withUvs = !uvs.empty() && uvs.size() == positions.size();
   GrassGround ground;
 
   // The triangles grass grows on: facing up enough once placed.
@@ -171,6 +173,7 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
   {
     glm::vec3 local[3];
     glm::vec3 normal; // its own space's, turned as the placed one faces
+    glm::vec2 uv[3]{};
   };
   std::vector<Triangle> triangles;
   // A mirroring placement turns faces over: so their own normals too.
@@ -187,6 +190,8 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
     for (int k = 0; k < 3; ++k)
     {
       triangle.local[k] = positions[indices[t + k]];
+      if (withUvs)
+        triangle.uv[k] = uvs[indices[t + k]];
       world[k] = glm::vec3(model * glm::vec4(triangle.local[k], 1.0f));
     }
     const glm::vec3 up = glm::cross(world[1] - world[0], world[2] - world[0]);
@@ -216,16 +221,21 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
   ground.m_grid = GrassGrid::over(low, high, kGrassTexel / scale);
   const GrassGrid& grid = ground.m_grid;
   ground.m_texels.assign(grid.count(), glm::vec4(0.0f));
+  if (withUvs)
+    ground.m_uvs.assign(grid.count(), glm::vec2(0.0f));
   std::vector<float> heights(
       grid.count(), std::numeric_limits<float>::lowest());
 
-  const auto put = [&](int x, int y, float height, const glm::vec3& normal)
+  const auto put =
+      [&](int x, int y, float height, const glm::vec3& normal, glm::vec2 uv)
   {
     const std::size_t i = std::size_t(y) * grid.size.x + x;
     if (height <= heights[i])
       return;
     heights[i] = height;
     ground.m_texels[i] = glm::vec4(normal, height);
+    if (withUvs)
+      ground.m_uvs[i] = uv;
   };
 
   // Each triangle onto the texels whose centres it covers (from above), the
@@ -258,7 +268,9 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
             y,
             w->x * triangle.local[0].z + w->y * triangle.local[1].z +
                 w->z * triangle.local[2].z,
-            triangle.normal);
+            triangle.normal,
+            w->x * triangle.uv[0] + w->y * triangle.uv[1] +
+                w->z * triangle.uv[2]);
       }
     if (!covered)
     {
@@ -268,7 +280,11 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
           glm::clamp(glm::ivec2(glm::floor(grid.toTexels(glm::vec2(middle)))),
                      glm::ivec2(0),
                      grid.size - 1);
-      put(at.x, at.y, middle.z, triangle.normal);
+      put(at.x,
+          at.y,
+          middle.z,
+          triangle.normal,
+          (triangle.uv[0] + triangle.uv[1] + triangle.uv[2]) / 3.0f);
     }
   }
   return ground;

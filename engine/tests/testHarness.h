@@ -22,6 +22,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <type_traits>
 
@@ -242,14 +244,19 @@ inline void check(bool passed, const char* expr, const char* file, int line)
 class TestScope
 {
 public:
+  // SFS_TEST_FILTER, if set, runs only the tests whose names contain it.
   explicit TestScope(const char* name) : m_name(name), m_start(detail::g_total)
   {
     ++detail::g_testDepth;
+    const char* filter = std::getenv("SFS_TEST_FILTER");
+    m_skipped = filter && *filter && !std::strstr(name, filter);
   }
 
   ~TestScope()
   {
     --detail::g_testDepth;
+    if (m_skipped)
+      return;
     const int passed = detail::g_total.passed - m_start.passed;
     const int failed = detail::g_total.failed - m_start.failed;
     const bool ok = failed == 0;
@@ -271,13 +278,14 @@ public:
   {
     const bool first = !m_done;
     m_done = true;
-    return first;
+    return first && !m_skipped;
   }
 
 private:
   const char* m_name;
   Stats m_start;
   bool m_done = false;
+  bool m_skipped = false;
 };
 
 inline int report(const char* program)

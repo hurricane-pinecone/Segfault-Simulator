@@ -1,6 +1,7 @@
 #include "assets/materialFiles.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/terrain.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/core/util/atomicFile.h"
 
@@ -77,6 +78,19 @@ std::optional<sfs::AssetId> create(sfs::AssetDatabase& assets,
   if (const sfs::AssetRecord* record = assets.findByPath(relative))
     return record->id;
   return std::nullopt;
+}
+
+std::string createSplatMap(sfs::AssetDatabase& assets,
+                           const fs::path& folder,
+                           const std::string& name,
+                           int size)
+{
+  std::error_code error;
+  fs::create_directories(assets.root() / folder, error);
+  const std::string saved = saveTexture(assets, folder, sfs::blankSplat(size), safeName(name));
+  if (saved.empty())
+    LOG_ERROR("Can't write a splat map in " + folder.generic_string());
+  return saved;
 }
 
 std::optional<sfs::MaterialAsset> read(const sfs::AssetDatabase& assets,

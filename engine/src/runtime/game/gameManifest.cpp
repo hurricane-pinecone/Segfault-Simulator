@@ -34,6 +34,9 @@ GameManifest::read(const std::filesystem::path& folder)
   if (const auto vsync = json->find("vsync");
       vsync != json->end() && vsync->is_boolean())
     manifest.vsync = vsync->get<bool>();
+  if (const auto development = json->find("development");
+      development != json->end() && development->is_boolean())
+    manifest.development = development->get<bool>();
   if (const auto rate = json->find("maxFrameRate");
       rate != json->end() && rate->is_number() && rate->get<double>() > 0.0)
     manifest.maxFrameRate = rate->get<double>();
@@ -61,6 +64,8 @@ bool GameManifest::write(const std::filesystem::path& folder) const
     json["backend"] = backend;
   if (maxFrameRate > 0.0)
     json["maxFrameRate"] = maxFrameRate;
+  if (development)
+    json["development"] = true;
   return SceneSerializer::writeJsonFile(json, folder / kFileName);
 }
 

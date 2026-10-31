@@ -23,6 +23,9 @@ Scene       │
   system hosts, and writing your own.
 - **[Meshes, materials & lighting](./meshes-and-lighting/index.md)**: meshes,
   materials, the camera, lights, shadows, bloom, depth of field, haze and grass.
+- **[Visual styles & grading](./visual-styles/index.md)**: tone mapping and
+  colour grading, `.style` assets (a whole look a scene can switch to while
+  it runs), material variants, and the F8 development key.
 - **[Render backends](./backends/index.md)**: `IRenderBackend`, the WebGPU
   backend, what each graphics API can do, and writing a backend of your own.
 

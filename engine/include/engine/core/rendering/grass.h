@@ -86,11 +86,13 @@ public:
   /**
    * The ground of a mesh's triangles (`positions` indexed by `indices`, its
    * own space), placed by `model`, on a grid over its XY with texels about
-   * kGrassTexel world units across.
+   * kGrassTexel world units across. With `uvs` (one a position), each texel
+   * keeps the mesh's texture coordinates there too (uv()).
    */
   static GrassGround build(std::span<const glm::vec3> positions,
                            std::span<const uint32_t> indices,
-                           const glm::mat4& model);
+                           const glm::mat4& model,
+                           std::span<const glm::vec2> uvs = {});
 
   const GrassGrid& grid() const { return m_grid; }
   bool empty() const { return m_texels.empty(); }
@@ -113,9 +115,21 @@ public:
   /** How many texels have ground. */
   std::size_t groundTexels() const;
 
+  /**
+   * The mesh's texture coordinates at texel (x, y)'s ground (built with the
+   * mesh's UVs; else none): where a terrain's splat map is there.
+   */
+  bool hasUvs() const { return !m_uvs.empty(); }
+  glm::vec2 uv(int x, int y) const
+  {
+    return m_uvs.empty() ? glm::vec2(0.0f)
+                         : m_uvs[std::size_t(y) * m_grid.size.x + x];
+  }
+
 private:
   GrassGrid m_grid;
   std::vector<glm::vec4> m_texels; // xyz normal, w height
+  std::vector<glm::vec2> m_uvs;    // per texel, if built with UVs
 };
 
 /**

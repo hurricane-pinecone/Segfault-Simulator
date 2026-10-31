@@ -175,6 +175,16 @@ renderSystem.meshes().setMaterial("my-material", material);
 say). Both load the textures and read data textures linearly. A graph that
 doesn't compile draws magenta, with its errors logged.
 
+**How many textures.** WebGPU lets a shader stage read 16 textures, and the
+lit pass's frame takes 6 of them (the sun's shadow map, point lights' shadow
+maps, a physical sky's three textures and ambient occlusion's map). So a graph
+can read at most **10** textures (Texture, Normal Map and Triplanar nodes count
+one each), and a graph drawn as **grass** at most **8** (grass binds two more
+of its own). A graph past that doesn't build on the GPU and draws magenta. For
+big ground with several layers, a
+[terrain material](../../../runtime/rendering/meshes-and-lighting/index.md#terrain-materials)
+reads any five layers in three textures.
+
 The WebGPU renderer composes each pass's shader from the shared declarations,
 the surface interface (`meshSurface.wgsl`), the material's surface and the
 pass itself. The standard material is just another surface

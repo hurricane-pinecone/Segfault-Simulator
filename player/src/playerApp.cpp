@@ -177,6 +177,9 @@ int PlayerApp::play()
     return 1;
   }
   setMaxFrameRate(m_manifest.maxFrameRate);
+  // A development build has the development keys (a debug player always).
+  if (m_manifest.development)
+    setDevKeys(true);
   // The start scene's scripts run as it starts: a throw there ends the game
   // like one in a frame (run() then only tears down).
   try

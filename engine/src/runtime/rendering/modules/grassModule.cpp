@@ -10,12 +10,14 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/terrain.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/matrix.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace sfs
@@ -212,8 +214,11 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   if (rebuild)
   {
     m_renderer.destroyGrass(patch.gpu);
-    patch.ground = GrassGround::build(
-        m_meshes->positions(mesh), m_meshes->indices(mesh), model);
+    patch.ground = GrassGround::build(m_meshes->positions(mesh),
+                                      m_meshes->indices(mesh),
+                                      model,
+                                      m_meshes->uvs(mesh));
+    patch.coverGrid = {};
     patch.gpu = m_renderer.createGrass(patch.ground);
     patch.mesh = mesh.id;
     patch.turn = turn;
@@ -232,6 +237,39 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   {
     patch.paint = grass.paint;
     patch.maps = GrassMaps::fromJson(grass.paint);
+    patch.sendMaps = true;
+    patch.coverMadeMaps = false;
+  }
+
+  // A terrain under it (or none any more): how much it lets grow, again.
+  std::shared_ptr<const TerrainMaterial> terrain = terrainUnder(entity);
+  // (By what decides the grass, not which object: a terrain standing in for
+  // a game's painted material is made again whenever it's painted.)
+  const bool sameCover =
+      terrain == patch.terrain ||
+      (terrain && patch.terrain && terrain->splat == patch.terrain->splat &&
+       terrain->layers == patch.terrain->layers);
+  if (sameCover)
+    patch.terrain = std::move(terrain);
+  else
+  {
+    patch.terrain = std::move(terrain);
+    patch.coverGrid = {};
+    patch.sendMaps = true;
+    // Maps made only for the terrain's sake go again with it.
+    if (!patch.terrain && patch.coverMadeMaps &&
+        patch.maps == GrassMaps(patch.maps.grid()))
+      patch.maps = GrassMaps();
+    patch.coverMadeMaps = false;
+  }
+  if (patch.terrain && patch.maps.empty() && !patch.ground.empty())
+  {
+    patch.maps = GrassMaps(patch.ground.grid());
+    patch.coverMadeMaps = true;
+  }
+  if (patch.terrain && patch.coverGrid != patch.maps.grid())
+  {
+    workOutCover(patch);
     patch.sendMaps = true;
   }
   uploadMaps(patch);
@@ -252,6 +290,22 @@ void GrassModule::uploadMaps(Patch& patch)
     return;
   std::vector<uint8_t> shape, data;
   patch.maps.pixels(from, to, shape, data);
+  // Less where the terrain under it keeps grass off.
+  if (patch.terrain && patch.coverGrid == patch.maps.grid())
+  {
+    const int width = to.x - from.x;
+    for (int y = from.y; y < to.y; ++y)
+      for (int x = from.x; x < to.x; ++x)
+      {
+        uint8_t& coverage =
+            shape[(std::size_t(y - from.y) * width + (x - from.x)) * 4];
+        coverage = static_cast<uint8_t>(
+            (coverage *
+                 patch.cover[std::size_t(y) * patch.coverGrid.size.x + x] +
+             127) /
+            255);
+      }
+  }
   m_renderer.updateGrassMaps(
       patch.gpu, GrassMapsImage{patch.maps.grid(), from, to, shape, data});
   patch.uploadedGrid = patch.maps.grid();
@@ -300,6 +354,52 @@ void GrassModule::computeCommands(const RenderContext& context)
     }
     else
       ++it;
+}
+
+std::shared_ptr<const TerrainMaterial>
+GrassModule::terrainUnder(const Entity& entity)
+{
+  const auto& meshRenderer = entity.getComponent<MeshRendererComponent>();
+  if (!m_meshes || meshRenderer.materials.empty())
+    return nullptr;
+  const MeshMaterial* drawn =
+      m_meshes->materialData(m_meshes->material(meshRenderer.materials[0]));
+
+  return drawn && drawn->terrain && terrainLimitsGrass(*drawn->terrain)
+             ? drawn->terrain
+             : nullptr;
+}
+
+void GrassModule::workOutCover(Patch& patch)
+{
+  // Each of the maps' texels at the ground's texel under it, by the
+  // terrain's layers there.
+  const GrassGrid& grid = patch.maps.grid();
+  const GrassGrid& groundGrid = patch.ground.grid();
+  patch.cover.assign(grid.count(), 255);
+  patch.coverGrid = grid;
+  if (!patch.ground.hasUvs() || groundGrid.empty())
+    return;
+  for (int y = 0; y < grid.size.y; ++y)
+    for (int x = 0; x < grid.size.x; ++x)
+    {
+      const glm::ivec2 at = glm::clamp(
+          glm::ivec2(glm::floor(groundGrid.toTexels(grid.center(x, y)))),
+          glm::ivec2(0),
+          groundGrid.size - 1);
+      const float grows =
+          terrainGrass(*patch.terrain, patch.ground.uv(at.x, at.y));
+      patch.cover[std::size_t(y) * grid.size.x + x] = static_cast<uint8_t>(
+          std::lround(std::clamp(grows, 0.0f, 1.0f) * 255.0f));
+    }
+}
+
+void GrassModule::terrainPainted(const Entity& entity)
+{
+  const auto it = m_patches.find(keyOf(entity));
+  if (it == m_patches.end() || !it->second.terrain)
+    return;
+  it->second.coverGrid = {}; // worked out again next frame
 }
 
 const GrassModule::Patch* GrassModule::find(const Entity& entity) const

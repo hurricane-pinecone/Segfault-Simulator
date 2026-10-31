@@ -152,6 +152,142 @@ int main()
           Camera::Projection::Orthographic);
   }
 
+  TEST("grading and the visual style should round-trip; old files load with "
+       "no tone mapping and no style")
+  {
+    World source;
+    ColorGrading grading;
+    grading.toneMapper = ToneMapper::Aces;
+    grading.exposure = 0.75f;
+    grading.saturation = 0.9f;
+    grading.lift = {0.01f, 0.02f, 0.03f};
+    source.render.setColorGrading(grading);
+    // No style source: the name is kept (saved) though nothing loads.
+    source.render.setVisualStyle("asset:0123456789abcdef0123456789abcdef");
+
+    World target;
+    std::vector<std::string> asked;
+    target.render.setStyleSource(
+        [&asked](std::string_view name) -> std::optional<VisualStyle>
+        {
+          asked.emplace_back(name);
+          VisualStyle style;
+          style.materialVariant = "realistic";
+          return style;
+        });
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["render"]["grading"]["toneMapper"] == "aces");
+    target.serializer().load(saved, target.scene);
+    CHECK(target.render.colorGrading() == grading);
+    CHECK(target.render.visualStyleName() ==
+          "asset:0123456789abcdef0123456789abcdef");
+    CHECK(asked.size() == 1);
+    CHECK(target.render.visualStyle() != nullptr);
+    CHECK(target.render.meshes().materialVariant() == "realistic");
+
+    // A file from before grading and styles loads with neither.
+    nlohmann::json old = saved;
+    old["render"].erase("grading");
+    old["render"].erase("visualStyle");
+    World fresh;
+    fresh.serializer().load(old, fresh.scene);
+    CHECK(fresh.render.colorGrading().toneMapper == ToneMapper::None);
+    CHECK(fresh.render.colorGrading().neutral());
+    CHECK(fresh.render.visualStyleName().empty());
+    CHECK(fresh.render.visualStyle() == nullptr);
+
+    // A scene saved with no style says so ("" clears one loaded over).
+    World none;
+    target.serializer().load(none.serializer().save(none.scene), target.scene);
+    CHECK(target.render.visualStyleName().empty());
+    CHECK(target.render.meshes().materialVariant().empty());
+  }
+
+  TEST("the sky and shadow cascades should round-trip; a scene without them "
+       "saves as before they existed")
+  {
+    // Neither: the render settings have no sky and no cascade keys.
+    World plain;
+    const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
+    CHECK(!plainSaved["render"].contains("sky"));
+    CHECK(!plainSaved["render"]["shadows"].contains("cascades"));
+    CHECK(!plainSaved["render"]["shadows"].contains("cascadeDistance"));
+    CHECK(!plainSaved["render"]["shadows"].contains("cascadeSplit"));
+    World reloaded;
+    reloaded.serializer().load(plainSaved, reloaded.scene);
+    CHECK(reloaded.serializer().save(reloaded.scene) == plainSaved);
+    CHECK(reloaded.render.skySettings() == SkySettings{});
+    CHECK(reloaded.render.shadowSettings().cascades == 1u);
+
+    World source;
+    SkySettings sky;
+    sky.model = SkyModel::Physical;
+    sky.turbidity = 3.0f;
+    sky.sunSize = 1.5f;
+    source.render.setSkySettings(sky);
+    ShadowSettings shadows = source.render.shadowSettings();
+    shadows.cascades = 4;
+    shadows.cascadeDistance = 180.0f;
+    shadows.cascadeSplit = 0.6f;
+    source.render.setShadowSettings(shadows);
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["render"]["sky"]["model"] == "physical");
+    World target;
+    target.serializer().load(saved, target.scene);
+    CHECK(target.render.skySettings() == sky);
+    CHECK(target.render.shadowSettings() == shadows);
+
+    // Too many cascades in a file: the most there can be.
+    nlohmann::json many = saved;
+    many["render"]["shadows"]["cascades"] = 12;
+    World clamped;
+    clamped.serializer().load(many, clamped.scene);
+    CHECK(clamped.render.shadowSettings().cascades == 4u);
+  }
+
+  TEST("ambient occlusion and fog should round-trip; a scene without them "
+       "saves as before they existed")
+  {
+    World plain;
+    const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
+    CHECK(!plainSaved["render"].contains("ambientOcclusion"));
+    CHECK(!plainSaved["render"].contains("fog"));
+    World reloaded;
+    reloaded.serializer().load(plainSaved, reloaded.scene);
+    CHECK(reloaded.render.ambientOcclusionSettings() ==
+          AmbientOcclusionSettings{});
+    CHECK(reloaded.render.fogSettings() == FogSettings{});
+    CHECK(reloaded.serializer().save(reloaded.scene) == plainSaved);
+
+    World source;
+    source.render.setAmbientOcclusionSettings(
+        {.enabled = true, .radius = 2.0f, .intensity = 1.5f, .samples = 8});
+    FogSettings fog;
+    fog.enabled = true;
+    fog.density = 0.01f;
+    fog.baseHeight = 1.5f;
+    fog.maxOpacity = 0.75f;
+    source.render.setFogSettings(fog);
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["render"]["fog"]["enabled"] == true);
+    CHECK(saved["render"]["ambientOcclusion"]["samples"] == 8);
+    World target;
+    target.serializer().load(saved, target.scene);
+    CHECK(target.render.ambientOcclusionSettings() ==
+          source.render.ambientOcclusionSettings());
+    CHECK(target.render.fogSettings() == fog);
+
+    // A style's stand in for the scene's while it's set; a 2D scene has
+    // neither.
+    VisualStyle style;
+    style.fog = FogSettings{.enabled = false};
+    target.render.setVisualStyle("test", style);
+    CHECK(!target.render.effectiveFog().enabled);
+    CHECK(target.render.effectiveAmbientOcclusion().enabled); // the scene's
+    target.render.setVisualStyle("");
+    CHECK(target.render.effectiveFog() == fog);
+  }
+
   TEST("a scene's style should round-trip, and old files load as 3D")
   {
     World source;

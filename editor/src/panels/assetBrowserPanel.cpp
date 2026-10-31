@@ -1480,6 +1480,27 @@ void AssetBrowserPanel::drawFolderMenu(EditorContext& context,
     }
     ImGui::SetItemTooltip("A material whose look you build from nodes "
                           "(double-click it to edit them)");
+    if (ImGui::MenuItem("New Visual Style"))
+    {
+      // A style that changes nothing yet: edited in the Inspector.
+      fs::path relative = assetRelative(folder) / "New Visual Style.style";
+      std::error_code error;
+      for (int n = 2; fs::exists(context.assets->root() / relative, error); ++n)
+        relative = assetRelative(folder) /
+                   ("New Visual Style " + std::to_string(n) + ".style");
+      if (sfs::writeFileAtomically(context.assets->root() / relative,
+                                   sfs::VisualStyle{}.toJson().dump(2) + "\n"))
+      {
+        context.assets->refresh();
+        const sfs::AssetRecord* record = context.assets->findByPath(relative);
+        made(record ? std::optional<sfs::AssetId>(record->id) : std::nullopt);
+      }
+      else
+        LOG_ERROR("Can't write " + relative.generic_string());
+    }
+    ImGui::SetItemTooltip("A whole look for a scene (grading, light, bloom, "
+                          "material variants),\nchosen in Scene Settings > "
+                          "Look; F8 switches between them while playing");
     // One of the scripts' scriptable object types (sfs::ScriptableObject).
     if (ImGui::BeginMenu("New Scriptable Object"))
     {

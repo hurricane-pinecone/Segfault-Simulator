@@ -5,6 +5,7 @@
 #include "engine/runtime/rendering/modules/uiModule.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/rendering/standardScene.h"
+#include "engine/runtime/rendering/visualStyles.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 
 #include "SDL.h"
@@ -422,6 +423,9 @@ void Game::processInput()
     m_backend->imguiProcessEvent(sdlEvent);
     onEvent(sdlEvent);
 
+    if (handleDevKey(sdlEvent))
+      continue;
+
     if (sdlEvent.type == SDL_QUIT && onCloseRequested())
     {
       isRunning = false;
@@ -515,6 +519,21 @@ void Game::processInput()
       onProcessInput(input);
     }
   }
+}
+
+bool Game::handleDevKey(const SDL_Event& event)
+{
+  if (!m_devKeys || event.type != SDL_KEYDOWN || event.key.repeat ||
+      event.key.keysym.sym != SDLK_F8 || !sceneReceivesInput() || !sceneManager)
+    return false;
+  Scene& scene = *sceneManager.current();
+  RenderSystem* render = scene.tryGetSystem<RenderSystem>();
+  const AssetDatabase* assets = scene.assetStore().database();
+  if (!render || !assets)
+    return false;
+  const bool back = (event.key.keysym.mod & KMOD_SHIFT) != 0;
+  cycleVisualStyle(*render, *assets, back ? -1 : 1);
+  return true;
 }
 
 void Game::update(double deltaTime)

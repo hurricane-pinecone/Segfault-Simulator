@@ -4,7 +4,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
+#include <string>
 
 using namespace sfs;
 namespace fs = std::filesystem;
@@ -23,6 +25,27 @@ int main()
     CHECK(manifest.has_value());
     CHECK(manifest && manifest->vsync);
     CHECK(manifest && manifest->maxFrameRate == 0.0);
+    CHECK(manifest && !manifest->development); // shipped: no dev keys
+  }
+
+  TEST("a development build should say so, and a release one not at all")
+  {
+    GameManifest written;
+    written.name = "Game";
+    written.startScene = "scenes/main.scene";
+    CHECK(written.write(folder));
+    {
+      // Closed before the next write: Windows can't replace an open file.
+      std::ifstream plain(folder / GameManifest::kFileName);
+      const std::string text((std::istreambuf_iterator<char>(plain)),
+                             std::istreambuf_iterator<char>());
+      CHECK(text.find("development") == std::string::npos);
+    }
+
+    written.development = true;
+    CHECK(written.write(folder));
+    const std::optional<GameManifest> read = GameManifest::read(folder);
+    CHECK(read && read->development);
   }
 
   TEST("vsync and the frame cap should be written and read back")

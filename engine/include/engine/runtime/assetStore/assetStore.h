@@ -22,6 +22,7 @@ namespace sfs
 
 class WorkerPool;
 struct MaterialAsset;
+struct VisualStyle;
 
 using SurfacePtr = std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)>;
 using FontPtr = std::unique_ptr<TTF_Font, decltype(&TTF_CloseFont)>;
@@ -120,6 +121,12 @@ public:
    */
   std::shared_ptr<const TextureData> dataTexture(const AssetId& id);
 
+  /**
+   * The texture asset a loaded texture (texture()'s or dataTexture()'s) was
+   * read from; nothing for any other (e.g. a model's own).
+   */
+  std::optional<AssetId> textureId(const TextureData* texture) const;
+
   /** Read a texture asset again next time (its file or settings changed). */
   void forgetTexture(const AssetId& id);
 
@@ -152,6 +159,14 @@ public:
 
   /** Forget a loaded prefab, so the next prefab() reads its file again. */
   void forgetPrefab(const AssetId& id);
+
+  /**
+   * A visual style asset (.style; see VisualStyle), read from its file each
+   * time (styles are small, and asked for only when a scene switches to
+   * one), so an edited file shows the next time. Nothing (logged) if the id
+   * isn't a style in the database or its file can't be read.
+   */
+  std::optional<VisualStyle> visualStyle(const AssetId& id) const;
 
   // --- letting go of what's no longer used
   // ------------------------------------

@@ -1,5 +1,7 @@
 #include "engine/runtime/rendering/meshLibrary.h"
 
+#include "engine/core/rendering/terrain.h"
+
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/rendering/iRenderer.h"
 
@@ -19,8 +21,13 @@ MeshLibrary::~MeshLibrary()
   for (const auto& [id, entry] : m_meshes)
     if (entry.gpu.valid())
       m_renderer.destroyMesh(entry.gpu);
-  for (const auto& [name, material] : m_materials)
-    m_renderer.destroyMaterial(material);
+  for (const auto& [name, slot] : m_materials)
+  {
+    if (slot.own.valid())
+      m_renderer.destroyMaterial(slot.own);
+    if (slot.standIn.valid())
+      m_renderer.destroyMaterial(slot.standIn);
+  }
 }
 
 namespace
@@ -76,8 +83,13 @@ bool MeshLibrary::fill(Entry& entry, const MeshData& mesh)
   entry.indices = mesh.indices;
   entry.positions.clear();
   entry.positions.reserve(mesh.vertices.size());
+  entry.uvs.clear();
+  entry.uvs.reserve(mesh.vertices.size());
   for (const MeshVertex& vertex : mesh.vertices)
+  {
     entry.positions.push_back(vertex.position);
+    entry.uvs.push_back(vertex.uv);
+  }
   if (g_keepVertices)
     entry.vertices = mesh.vertices;
 
@@ -257,6 +269,13 @@ std::span<const glm::vec3> MeshLibrary::positions(MeshHandle mesh) const
                               : std::span<const glm::vec3>();
 }
 
+std::span<const glm::vec2> MeshLibrary::uvs(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end() ? std::span<const glm::vec2>(it->second.uvs)
+                              : std::span<const glm::vec2>();
+}
+
 std::span<const uint32_t> MeshLibrary::indices(MeshHandle mesh) const
 {
   const auto it = m_meshes.find(mesh.id);
@@ -346,6 +365,32 @@ std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
     {
       best = RayHit{distance, 0};
       bestIndex = i;
+      if (entry.uvs.size() == entry.positions.size())
+      {
+        const glm::vec2& ua = entry.uvs[entry.indices[i]];
+        const glm::vec2& ub = entry.uvs[entry.indices[i + 1]];
+        const glm::vec2& uc = entry.uvs[entry.indices[i + 2]];
+        best->uv = ua * (1.0f - u - v) + ub * u + uc * v;
+        // The texture's run across the triangle as placed: how much UV each
+        // way per world unit (the UV box over the world size it spans).
+        const glm::vec3 worldA(world * glm::vec4(a, 1.0f));
+        const glm::vec3 worldB(world * glm::vec4(a + edge1, 1.0f));
+        const glm::vec3 worldC(world * glm::vec4(a + edge2, 1.0f));
+        const float worldArea =
+            glm::length(glm::cross(worldB - worldA, worldC - worldA));
+        const glm::vec2 du = ub - ua;
+        const glm::vec2 dv = uc - ua;
+        const float uvArea = std::abs(du.x * dv.y - du.y * dv.x);
+        if (worldArea > 1e-12f && uvArea > 1e-12f)
+        {
+          // Each axis's share of the UV area, by how far it runs.
+          const glm::vec2 span =
+              glm::max(glm::abs(du), glm::abs(dv)) + glm::vec2(1e-12f);
+          const float scale = std::sqrt(uvArea / worldArea);
+          const float aspect = std::sqrt(span.x / span.y);
+          best->uvPerUnit = glm::vec2(scale * aspect, scale / aspect);
+        }
+      }
     }
   }
   if (best)
@@ -357,21 +402,124 @@ std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
   return best;
 }
 
+MaterialHandle MeshLibrary::loadMaterial(std::string_view name)
+{
+  if (const auto it = m_materials.find(name); it != m_materials.end())
+    return it->second.own;
+  const std::shared_ptr<const MeshMaterial> data =
+      m_provider.loadMaterial ? m_provider.loadMaterial(name) : nullptr;
+  const MaterialHandle handle =
+      data ? m_renderer.createMaterial(*data) : MaterialHandle{};
+  m_materials.emplace(std::string(name), MaterialSlot{handle, handle, {}});
+  if (handle.valid())
+    m_materialData[handle.id] = data;
+  return handle;
+}
+
+MaterialHandle MeshLibrary::variantOf(MaterialHandle own)
+{
+  const MeshMaterial* data = m_variant.empty() ? nullptr : materialData(own);
+  if (!data)
+    return own;
+  for (const auto& [tag, name] : data->variants)
+    if (tag == m_variant)
+    {
+      // Variants of variants aren't followed: the variant as itself.
+      const MaterialHandle variant = loadMaterial(name);
+      return variant.valid() ? variant : own;
+    }
+  return own;
+}
+
+void MeshLibrary::resolveVariants()
+{
+  // Resolving may load variants (new slots), so by name, not iterator.
+  std::vector<std::string> names;
+  names.reserve(m_materials.size());
+  for (const auto& [name, slot] : m_materials)
+    names.push_back(name);
+  for (const std::string& name : names)
+  {
+    const MaterialHandle drawn = drawnFor(name);
+    m_materials.at(name).drawn = drawn;
+  }
+}
+
 MaterialHandle MeshLibrary::material(std::string_view name)
 {
   if (name.empty())
     return {};
   if (const auto it = m_materials.find(name); it != m_materials.end())
-    return it->second;
+    return it->second.drawn;
+  loadMaterial(name);
   const std::string key(name);
-  const std::shared_ptr<const MeshMaterial> data =
-      m_provider.loadMaterial ? m_provider.loadMaterial(name) : nullptr;
-  const MaterialHandle handle =
-      data ? m_renderer.createMaterial(*data) : MaterialHandle{};
-  m_materials.emplace(key, handle);
-  if (handle.valid())
-    m_materialData[handle.id] = data;
-  return handle;
+  const MaterialHandle drawn = drawnFor(key);
+  m_materials.at(key).drawn = drawn; // loading variants may rehash
+  return drawn;
+}
+
+void MeshLibrary::setMaterialOverrides(
+    const std::map<std::string, std::string>& overrides)
+{
+  if (overrides == m_overrides)
+    return;
+  m_overrides = overrides;
+  resolveVariants();
+}
+
+MaterialHandle MeshLibrary::drawnFor(const std::string& name)
+{
+  const MaterialHandle own = m_materials.at(name).own;
+  MaterialHandle drawn = own;
+  if (const auto it = m_overrides.find(name); it != m_overrides.end())
+  {
+    const MaterialHandle stand = loadMaterial(it->second);
+    if (stand.valid())
+      drawn = stand;
+  }
+  else
+    drawn = variantOf(own);
+
+  // A terrain standing in for a textured material: drawn tinted by that
+  // texture (a copy of it, kept in the slot), so what a game paints on its
+  // ground still shows.
+  MaterialSlot& slot = m_materials.at(name); // loading may have rehashed
+  const MeshMaterial* ownData = materialData(own);
+  const MeshMaterial* drawnData = drawn != own ? materialData(drawn) : nullptr;
+  if (drawnData && drawnData->terrain && ownData && ownData->baseTexture)
+  {
+    MeshMaterial standIn = *drawnData;
+    auto terrain = std::make_shared<TerrainMaterial>(*drawnData->terrain);
+    terrain->tint = ownData->baseTexture;
+    standIn.terrain = std::move(terrain);
+    standIn.variants.clear();
+    if (slot.standIn.valid())
+      m_renderer.updateMaterial(slot.standIn, standIn);
+    else
+      slot.standIn = m_renderer.createMaterial(standIn);
+    if (slot.standIn.valid())
+    {
+      m_materialData[slot.standIn.id] =
+          std::make_shared<const MeshMaterial>(std::move(standIn));
+      return slot.standIn;
+    }
+    return drawn;
+  }
+  if (slot.standIn.valid())
+  {
+    m_renderer.destroyMaterial(slot.standIn);
+    m_materialData.erase(slot.standIn.id);
+    slot.standIn = {};
+  }
+  return drawn;
+}
+
+void MeshLibrary::setMaterialVariant(std::string_view tag)
+{
+  if (tag == m_variant)
+    return;
+  m_variant = std::string(tag);
+  resolveVariants();
 }
 
 MaterialHandle MeshLibrary::setMaterial(std::string_view name,
@@ -379,17 +527,26 @@ MaterialHandle MeshLibrary::setMaterial(std::string_view name,
 {
   const std::string key(name);
   if (const auto it = m_materials.find(key);
-      it != m_materials.end() && it->second.valid())
+      it != m_materials.end() && it->second.own.valid())
   {
-    m_renderer.updateMaterial(it->second, material);
-    m_materialData[it->second.id] =
-        std::make_shared<const MeshMaterial>(material);
-    return it->second;
+    const MaterialHandle own = it->second.own;
+    m_renderer.updateMaterial(own, material);
+    m_materialData[own.id] = std::make_shared<const MeshMaterial>(material);
+    // Updated in place (games may do it every frame): only what draws for it
+    // can have changed; materials drawing it as theirs keep its handle.
+    if (!m_variant.empty() || !m_overrides.empty())
+    {
+      const MaterialHandle drawn = drawnFor(key);
+      m_materials.at(key).drawn = drawn; // drawnFor may rehash
+    }
+    return own;
   }
   const MaterialHandle handle = m_renderer.createMaterial(material);
-  m_materials[key] = handle;
+  m_materials[key] = MaterialSlot{handle, handle, {}};
   if (handle.valid())
     m_materialData[handle.id] = std::make_shared<const MeshMaterial>(material);
+  if (!m_variant.empty() || !m_overrides.empty())
+    resolveVariants();
   return handle;
 }
 
@@ -400,18 +557,27 @@ void MeshLibrary::reloadMaterial(std::string_view name)
     return;
   const std::shared_ptr<const MeshMaterial> data =
       m_provider.loadMaterial ? m_provider.loadMaterial(name) : nullptr;
-  if (it->second.valid() && data)
+  const MaterialHandle own = it->second.own;
+  if (own.valid() && data)
   {
-    m_renderer.updateMaterial(it->second, *data);
-    m_materialData[it->second.id] = data;
+    m_renderer.updateMaterial(own, *data);
+    m_materialData[own.id] = data;
   }
   else
   {
     // Gone, or only now readable: ask afresh next time.
-    m_materialData.erase(it->second.id);
-    m_renderer.destroyMaterial(it->second);
+    m_materialData.erase(own.id);
+    if (own.valid())
+      m_renderer.destroyMaterial(own);
+    if (it->second.standIn.valid())
+    {
+      m_materialData.erase(it->second.standIn.id);
+      m_renderer.destroyMaterial(it->second.standIn);
+    }
     m_materials.erase(it);
   }
+  // Its variants may have changed, or others may have drawn it as theirs.
+  resolveVariants();
 }
 
 std::vector<std::pair<std::string, std::string>>

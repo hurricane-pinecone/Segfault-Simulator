@@ -92,6 +92,7 @@ nav:
           - Sprites & sprite sheets: runtime/rendering/sprites/index.md
           - Render modules: runtime/rendering/render-modules/index.md
           - Meshes, materials & lighting: runtime/rendering/meshes-and-lighting/index.md
+          - Visual styles & grading: runtime/rendering/visual-styles/index.md
           - Render backends: runtime/rendering/backends/index.md
       - Runtime systems:
           - runtime/systems/index.md

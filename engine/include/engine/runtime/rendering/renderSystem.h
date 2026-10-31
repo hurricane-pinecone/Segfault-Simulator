@@ -3,6 +3,8 @@
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/core/rendering/camera.h"
 #include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/visualStyle.h"
 #include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
@@ -11,13 +13,19 @@
 
 #include <cstddef>
 #include <functional>
+#include <future>
+#include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
 
 namespace sfs
 {
+
+class WorkerPool;
 
 class IRenderer;
 
@@ -50,6 +58,7 @@ class RenderSystem : public System, public RenderModuleHost<RenderContext>
 {
 public:
   explicit RenderSystem(IRenderer& renderer);
+  ~RenderSystem() override;
 
   RenderSystem(const RenderSystem&) = delete;
   RenderSystem& operator=(const RenderSystem&) = delete;
@@ -113,6 +122,20 @@ public:
   }
   const ShadowSettings& shadowSettings() const { return m_shadows; }
 
+  /**
+   * The scene's sky (see SkySettings): flat (its sky colour, the classic
+   * lighting; the default) or physical (an atmosphere that lights the scene).
+   * A 3D scene's only: a 2D game's sky is always flat.
+   */
+  void setSkySettings(const SkySettings& settings) { m_sky = settings; }
+  const SkySettings& skySettings() const { return m_sky; }
+
+  /**
+   * Wait for a physical sky's diffuse light being worked out in the
+   * background (as the sun moves), so the next frame has it. For tests.
+   */
+  void finishSkyWork();
+
   /** The scene's wind (what grass sways in). */
   void setWindSettings(const WindSettings& settings) { m_wind = settings; }
   const WindSettings& windSettings() const { return m_wind; }
@@ -122,6 +145,22 @@ public:
   const HazeSettings& hazeSettings() const { return m_haze; }
 
   /**
+   * The scene's height fog (see FogSettings; on, it takes haze's place) and
+   * ambient occlusion (see AmbientOcclusionSettings); both off by default, and
+   * a 3D scene's only.
+   */
+  void setFogSettings(const FogSettings& settings) { m_fog = settings; }
+  const FogSettings& fogSettings() const { return m_fog; }
+  void setAmbientOcclusionSettings(const AmbientOcclusionSettings& settings)
+  {
+    m_ambientOcclusion = settings;
+  }
+  const AmbientOcclusionSettings& ambientOcclusionSettings() const
+  {
+    return m_ambientOcclusion;
+  }
+
+  /**
    * Bloom (see BloomSettings) is the scene camera's (sceneCamera(), its
    * CameraComponent's settings), even while not following it, so the
    * editor shows what the game camera sees. These are for a scene without a
@@ -129,6 +168,64 @@ public:
    */
   void setBloomSettings(const BloomSettings& settings) { m_bloom = settings; }
   const BloomSettings& bloomSettings() const { return m_bloom; }
+
+  /**
+   * The scene's own colour grading and tone mapping (see ColorGrading): the
+   * look's last step, while no visual style is active. None by default: the
+   * picture as the engine always drew it.
+   */
+  void setColorGrading(const ColorGrading& grading) { m_grading = grading; }
+  const ColorGrading& colorGrading() const { return m_grading; }
+
+  // --- visual style ----------------------------------------------------------
+
+  /**
+   * Where visual styles come from by name ("asset:<id>" of a .style asset):
+   * a StandardScene reads them from its asset store.
+   */
+  using StyleSource =
+      std::function<std::optional<VisualStyle>(std::string_view name)>;
+  void setStyleSource(StyleSource source) { m_styleSource = std::move(source); }
+
+  /**
+   * Make the scene look as a visual style says (see VisualStyle for what it
+   * overrides and what it multiplies); "" for none: the scene's own settings.
+   * Live: the next frame draws with it (materials switch to its variants).
+   * The name is kept (and saved with the scene) even if the style can't be
+   * loaded; the scene then looks as with none.
+   *
+   * @return whether the style is active (true for "")
+   */
+  bool setVisualStyle(std::string_view name);
+
+  /**
+   * Use `style` as the visual style `name` without loading it (e.g. one being
+   * edited, not saved yet).
+   */
+  void setVisualStyle(std::string_view name, const VisualStyle& style);
+
+  /** Load the current style again (its file changed). */
+  void reloadVisualStyle() { setVisualStyle(std::string(m_styleName)); }
+
+  /** The visual style's name ("" for none) and, if loaded, the style. */
+  const std::string& visualStyleName() const { return m_styleName; }
+  const VisualStyle* visualStyle() const
+  {
+    return m_style ? &*m_style : nullptr;
+  }
+
+  /**
+   * What the scene looks like this frame: the scene's own settings with the
+   * visual style (if any) applied. Bloom is the scene camera's, as the frame
+   * uses it.
+   */
+  ColorGrading effectiveGrading() const;
+  BloomSettings effectiveBloom() const;
+  HazeSettings effectiveHaze() const;
+  ShadowSettings effectiveShadows() const;
+  SkySettings effectiveSky() const;
+  FogSettings effectiveFog() const;
+  AmbientOcclusionSettings effectiveAmbientOcclusion() const;
 
   const RenderStats& stats() const { return m_stats; }
 
@@ -149,6 +246,9 @@ public:
    * while editing).
    */
   void setAnimating(bool animating) { m_animating = animating; }
+
+  /** The renderer it draws through (e.g. to update a texture being painted). */
+  IRenderer& renderer() { return m_renderer; }
   bool animating() const { return m_animating; }
 
 protected:
@@ -165,6 +265,15 @@ protected:
 private:
   // Fill m_context for a viewport; false if there is nothing to draw into.
   bool buildContext(const glm::ivec2& viewport);
+
+  // Fit the sun's shadow (its one map, or its cascades) for this frame.
+  void fitShadows(const ShadowSettings& shadows, float aspect);
+
+  // Bring m_frameSky up to date: a physical sky's model (rebuilt when its
+  // settings change), its sun's (or moon's) light, and its diffuse light
+  // (worked out again, in the background, when the sun has moved or the
+  // moon's glow changed far enough to show).
+  void updateSky();
 
   // Rebuild m_pointLights from PointLightComponent entities and glowing
   // meshes (gatherEmissionLights), keeping the kMaxPointLights nearest the
@@ -195,6 +304,13 @@ private:
   BloomSettings m_bloom;
   WindSettings m_wind;
   HazeSettings m_haze;
+  FogSettings m_fog;
+  AmbientOcclusionSettings m_ambientOcclusion;
+  SkySettings m_sky;
+  ColorGrading m_grading;
+  StyleSource m_styleSource;
+  std::string m_styleName;
+  std::optional<VisualStyle> m_style;
 
   // Emission per surface sample, for one frame: per (samples, material) for
   // materials whose emission doesn't depend on where the object is (shared
@@ -219,6 +335,30 @@ private:
 
   RenderContext m_context;
   glm::mat4 m_lightViewProjection{1.0f};
+  SunCascades m_cascades;
+  // A physical sky: its model (for the settings it was built from), the sun
+  // its diffuse light was worked out for, and what the frame gets.
+  std::shared_ptr<const PhysicalSky> m_physicalSky;
+  SkySettings m_physicalSkySettings;
+  glm::vec3 m_skySun{0.0f};
+  float m_skyNight = 1.0f; // the night glow's scale it was worked out for
+  FrameSky m_frameSky;
+  // This frame's real sun (m_worldLighting's is the moon's once it takes
+  // over), and the moon's share of the light (moonlight()).
+  glm::vec3 m_toSun{0.0f, 0.0f, 1.0f};
+  float m_moonShare = 0.0f;
+  bool m_moonLit = false; // the moon is the frame's directional light
+  // The sky's diffuse light for a sun and night glow, worked out on
+  // m_skyWorker.
+  struct SkyLight
+  {
+    std::shared_ptr<const PhysicalSky> model;
+    glm::vec3 toSun{0.0f};
+    float night = 1.0f;
+    SkyIrradiance irradiance;
+    glm::vec3 groundLight{0.0f};
+  };
+  std::future<SkyLight> m_skyJob;
   std::vector<PointLight> m_pointLights;
   std::vector<PointLight> m_shadowedLights; // those casting shadows
   std::vector<std::size_t> m_shadowCandidates;
@@ -226,6 +366,7 @@ private:
   double m_time = 0.0; // seconds of update() (while animating)
   bool m_animating = true;
   RenderStats m_stats;
+  std::unique_ptr<WorkerPool> m_skyWorker; // last: stopped before the rest goes
 };
 
 } // namespace sfs

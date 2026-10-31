@@ -1,13 +1,20 @@
 #pragma once
 
+#include "engine/core/rendering/ambientOcclusion.h"
+#include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/sunShadow.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <span>
 
 namespace sfs
@@ -35,6 +42,36 @@ struct MeshInstance
 };
 
 /**
+ * A frame's sky. Flat (no `physical` model): SceneLighting's sky colour and
+ * the engine's classic lighting. Physical: the background is `physical`'s
+ * atmosphere seen from the ground, lit by a sun toward `toSun`, and it lights
+ * the scene: `sunLight` (in place of the scene's sun colour and strength),
+ * `irradiance` (its diffuse light, in place of the ambient level) and its
+ * reflections (the backend renders those from the model whenever `revision`
+ * changes). Once the sun has set and the moon is up, the frame's lighting's
+ * sun is the moon, and `sunLight` its light; `toSun` is still the sun.
+ */
+struct FrameSky
+{
+  std::shared_ptr<const PhysicalSky> physical;
+  glm::vec3 toSun{0.0f, 0.0f, 1.0f}; // unit
+  glm::vec3 sunLight{0.0f};
+  SkyIrradiance irradiance;
+  glm::vec3 groundLight{0.0f}; // PhysicalSky::groundRadiance()
+  glm::vec3 scale{1.0f};       // a visual style's on the sky (its skyScale())
+  float adaptation = 1.0f;     // eyes adapted: x the sky's light (see
+                               // PhysicalSky::adaptation)
+  float night = 1.0f;          // x its night glow (the moon brightens it)
+  // The moon's disk: toward it (unit; below the horizon, not drawn), how
+  // much of it is lit (0 new .. 1 full), and how overcast it is (0..1).
+  glm::vec3 toMoon{0.0f, 0.0f, -1.0f};
+  float moonPhase = 1.0f;
+  float cloudCover = 0.0f;
+  bool moonLit = false; // the moon is the frame's light (see above)
+  uint64_t revision = 0;
+};
+
+/**
  * Everything a renderer needs for a frame besides the draws themselves:
  * camera matrices, lighting and the sun's shadow projection. Built by
  * RenderSystem; spans point into storage it keeps alive until endFrame().
@@ -54,6 +91,8 @@ struct FrameParams
 
   ShadowSettings shadows;
   glm::mat4 lightViewProjection{1.0f};
+  // The sun's shadow cascades (none: the one map, lightViewProjection).
+  SunCascades cascades;
 
   float time = 0.0f; // seconds the scene has run (animated materials)
 
@@ -62,6 +101,16 @@ struct FrameParams
   float focusDistance = 20.0f; // the view's (where depth of field is sharp)
   WindSettings wind;
   HazeSettings haze;
+  // Height fog (on: in haze's place) and ambient occlusion (both off: none).
+  FogSettings fog;
+  AmbientOcclusionSettings ambientOcclusion;
+
+  // The last pass's tone mapping and grading; and the scene's light
+  // re-balanced by a visual style (see VisualStyle).
+  ColorGrading grading;
+  LightBalance lightBalance;
+
+  FrameSky sky;
 };
 
 /** A grass field the renderer holds (IRenderer::createGrass). */

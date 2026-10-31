@@ -98,6 +98,9 @@ public:
   void updateMaterial(MaterialHandle handle,
                       const MeshMaterial& material) override;
   void destroyMaterial(MaterialHandle material) override;
+  void updateTexture(const std::shared_ptr<const TextureData>& texture,
+                     glm::ivec2 from,
+                     glm::ivec2 to) override;
   RendererCapabilities capabilities() const override { return m_capabilities; }
   glm::ivec2 viewportSize() const override { return m_viewport; }
   uint32_t shadowMapResolution() const override { return m_shadowResolution; }
@@ -119,6 +122,8 @@ private:
     wgpu::Texture texture;
     wgpu::TextureView view;
     bool nearest = false;
+    uint32_t levels = 1;   // mip levels
+    glm::uvec2 size{0, 0}; // as uploaded (smaller if it had to be)
   };
 
   // A surface's pipelines: the standard surface's, or a material graph's.
@@ -138,6 +143,10 @@ private:
     mutable bool grassBroken = false;
     mutable wgpu::RenderPipeline grassGround; // the ground under grass
     mutable bool grassGroundBroken = false;
+    // Its depth and normals, for ambient occlusion: built the first time a
+    // frame has it.
+    mutable wgpu::RenderPipeline depthNormals;
+    mutable bool depthNormalsBroken = false;
   };
 
   // A texture and its view.
@@ -219,8 +228,11 @@ private:
   // Bloom's and the composite's (post.wgsl).
   bool createPostPipelines();
   bool createTextureResources();
+  // Without `mipmaps`, one level (a splat map, which updateTexture() can
+  // change); the first upload of a texture decides.
   std::shared_ptr<GpuTexture>
-  uploadTexture(const std::shared_ptr<const TextureData>& texture);
+  uploadTexture(const std::shared_ptr<const TextureData>& texture,
+                bool mipmaps = true);
   // A 1x1 texture of one value (read as data), kept for reuse: what a graph's
   // texture reads without an image.
   std::shared_ptr<GpuTexture> solidTexture(const glm::vec4& value);
@@ -235,10 +247,25 @@ private:
   std::optional<GpuMaterial> makeMaterial(const MeshMaterial& material);
   std::optional<GpuMaterial> makeStandardMaterial(const MeshMaterial& material);
   std::optional<GpuMaterial> makeGraphMaterial(const MeshMaterial& material);
+  std::optional<GpuMaterial> makeTerrainMaterial(const MeshMaterial& material);
+  // A terrain's layers as one texture array: their colours (sRGB, height in
+  // alpha), or their detail (normal xy, roughness), each layer resized to the
+  // largest; shared by terrains with the same textures.
+  std::shared_ptr<GpuTexture> terrainLayers(const TerrainMaterial& terrain,
+                                            bool detail);
   // The material a draw uses for its mesh's section `index`.
   const GpuMaterial&
   materialFor(const GpuMesh& mesh, std::size_t index, const Draw& draw) const;
   void createShadowMap();
+  // The sun's shadow map sized for `cascades` (1: the one map; more: an
+  // atlas of them), remade (and the lit bindings with it) when that changes.
+  void ensureShadowAtlas(uint32_t cascades);
+  // A physical sky's resources: its transmittance table, the sky and its
+  // reflections, the BRDF table, and the passes that render them.
+  bool createSkyResources();
+  // Render a physical sky's reflections again if it changed (its revision).
+  void encodeSky();
+  void encodeSkyBackground(WGPURenderPassEncoder pass);
   // The depth, HDR scene and bloom textures, sized to the viewport.
   void ensureTargets();
   // Room in the light and cluster buffers (rebuilding the lit bindings when
@@ -278,6 +305,12 @@ private:
                            const void* pixels,
                            uint32_t bytesPerPixel);
   WGPURenderPipeline grassPipeline(const Surface& surface, bool ground);
+  // Ambient occlusion: whether this frame has it (its passes and targets
+  // made, the lit bindings pointed at its map), the passes working it out,
+  // and a surface's depth-and-normals pipeline (null if it doesn't build).
+  bool prepareOcclusion();
+  void encodeOcclusion();
+  WGPURenderPipeline depthNormalsPipeline(const Surface& surface);
   void growGrass();
   void encodeGrass(WGPURenderPassEncoder pass);
   void encodeComposite();
@@ -301,7 +334,8 @@ private:
     All, // the sun's shadow map
     Opaque,
     SeeThrough,
-    LightShadow, // a point light's shadow map (every section)
+    LightShadow,  // a point light's shadow map (every section)
+    DepthNormals, // ambient occlusion's first pass (as Opaque)
   };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
   // The pipeline a surface draws with in a pass (see Sections).
@@ -351,6 +385,39 @@ private:
   wgpu::Texture m_shadowMap;
   wgpu::TextureView m_shadowView;
   wgpu::Sampler m_shadowSampler;
+  glm::uvec2 m_shadowMapSize{0, 0}; // the atlas's, with cascades
+  // Each sun shadow map's (cascade's) view-projection, 256 bytes apart (a
+  // dynamic offset's alignment), for the shadow pass.
+  wgpu::Buffer m_cascadeUniforms;
+
+  // A physical sky (sky.wgsl): its transmittance table (from the CPU's
+  // PhysicalSky), the sky rendered octahedrally (the background and haze
+  // read it), its reflections (mip 0 sharp to the last, roughest), and the
+  // split-sum BRDF table. Always there (small), so the lit pass's bindings
+  // are the same with a flat sky.
+  struct SkyTarget
+  {
+    wgpu::Texture texture;
+    wgpu::TextureView view;              // every mip
+    std::vector<wgpu::TextureView> mips; // each to draw into
+  };
+  wgpu::Texture m_skyTable;
+  wgpu::TextureView m_skyTableView;
+  SkyTarget m_skyRadiance;
+  SkyTarget m_skyReflections;
+  wgpu::Texture m_brdfTable;
+  wgpu::TextureView m_brdfTableView;
+  wgpu::Sampler m_skySampler;
+  wgpu::BindGroupLayout m_skyLayout;
+  wgpu::Buffer m_skyUniforms;
+  std::vector<wgpu::Buffer> m_skyPassUniforms; // the radiance's, each mip's
+  std::vector<wgpu::BindGroup> m_skyPassBindings;
+  wgpu::RenderPipeline m_skyRadiancePipeline;
+  wgpu::RenderPipeline m_skyPrefilterPipeline;
+  wgpu::RenderPipeline m_skyBackgroundPipeline;
+  std::shared_ptr<const PhysicalSky> m_skyModel; // whose table is uploaded
+  uint64_t m_skyRevision = 0;                    // what the reflections show
+  bool m_skyReady = false;
 
   wgpu::Texture m_depth;
   wgpu::TextureView m_depthView;
@@ -433,6 +500,36 @@ private:
   wgpu::RenderPipeline m_focusCombinePipeline;
   bool m_focused = false; // this frame went through depth of field
 
+  // Ambient occlusion (meshDepthNormals.wgsl, ambientOcclusion.wgsl), at half
+  // the viewport's size: what's drawn opaque (normals and depth, and a depth
+  // buffer for it), the occlusion worked out from it, and that blurred across
+  // (into `blurred`) and back down (into `occlusion`, which the lit pass
+  // reads); each pass's parameters and bindings (the occlusion's, across,
+  // down). Made the first time a frame has it; until then the lit pass binds
+  // a 1x1 stand-in.
+  struct OcclusionTargets
+  {
+    glm::ivec2 size{0, 0};
+    wgpu::Texture normals;
+    wgpu::TextureView normalsView;
+    wgpu::Texture depth;
+    wgpu::TextureView depthView;
+    wgpu::Texture occlusion;
+    wgpu::TextureView occlusionView;
+    wgpu::Texture blurred;
+    wgpu::TextureView blurredView;
+    std::array<wgpu::Buffer, 3> params;
+    std::array<wgpu::BindGroup, 3> bindings;
+  };
+  OcclusionTargets m_occlusion;
+  wgpu::Texture m_noOcclusion;
+  wgpu::TextureView m_noOcclusionView;
+  wgpu::BindGroupLayout m_occlusionLayout;
+  wgpu::RenderPipeline m_occlusionPipeline;
+  wgpu::RenderPipeline m_occlusionBlurPipeline;
+  bool m_occlusionBroken = false; // its passes didn't build (logged)
+  bool m_occluded = false;        // this frame's lit pass reads it
+
   // Point lights and their clusters, on the GPU (capacities in elements).
   wgpu::Buffer m_lightBuffer;
   wgpu::Buffer m_clusterRangeBuffer;
@@ -464,6 +561,16 @@ private:
   wgpu::BindGroup m_shadowBindings;
   wgpu::BindGroup m_litBindings;
   std::shared_ptr<const Surface> m_standard;
+  // Terrain materials' surface (meshTerrainSurface.wgsl), built the first
+  // time one is made; and their layers' texture arrays, by their textures.
+  std::shared_ptr<const Surface> m_terrain;
+  bool m_terrainBroken = false;
+  struct CachedLayers
+  {
+    std::vector<std::weak_ptr<const TextureData>> sources;
+    std::weak_ptr<GpuTexture> gpu;
+  };
+  std::unordered_map<std::string, CachedLayers> m_layerArrays;
   // Material graph surfaces by WGSL and alpha mode, while materials use them.
   std::unordered_map<std::string, std::weak_ptr<const Surface>> m_surfaces;
   // Ones that didn't build (already logged), so they aren't tried again.

@@ -6,6 +6,8 @@
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/jobs/workerPool.h"
+#include "engine/core/logger/logger.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
 #include "engine/runtime/rendering/iRenderer.h"
@@ -15,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <tuple>
@@ -28,9 +31,79 @@ RenderSystem::RenderSystem(IRenderer& renderer)
 {
 }
 
+RenderSystem::~RenderSystem() = default;
+
 Entity RenderSystem::sceneCamera() const
 {
   return registry ? findActiveCamera(*registry) : Entity{};
+}
+
+bool RenderSystem::setVisualStyle(std::string_view name)
+{
+  std::string chosen(name); // `name` may be m_styleName itself
+  m_style.reset();
+  if (!chosen.empty())
+  {
+    if (m_styleSource)
+      m_style = m_styleSource(chosen);
+    else
+      LOG_ERROR("No visual styles to load '" + chosen + "' from");
+  }
+  m_styleName = std::move(chosen);
+  m_meshes.setMaterialVariant(m_style ? m_style->materialVariant : "");
+  m_meshes.setMaterialOverrides(m_style ? m_style->materials
+                                        : std::map<std::string, std::string>{});
+  return m_styleName.empty() || m_style.has_value();
+}
+
+void RenderSystem::setVisualStyle(std::string_view name,
+                                  const VisualStyle& style)
+{
+  m_styleName = std::string(name);
+  m_style = style;
+  m_meshes.setMaterialVariant(style.materialVariant);
+  m_meshes.setMaterialOverrides(style.materials);
+}
+
+ColorGrading RenderSystem::effectiveGrading() const
+{
+  return m_style ? m_style->grading : m_grading;
+}
+
+BloomSettings RenderSystem::effectiveBloom() const
+{
+  if (m_style && m_style->bloom)
+    return *m_style->bloom;
+  const Entity camera = sceneCamera();
+  return camera.isValid()
+             ? camera.getComponent<CameraComponent>().bloomSettings()
+             : m_bloom;
+}
+
+HazeSettings RenderSystem::effectiveHaze() const
+{
+  return m_style && m_style->haze ? *m_style->haze : m_haze;
+}
+
+ShadowSettings RenderSystem::effectiveShadows() const
+{
+  return m_style ? m_style->shadows(m_shadows) : m_shadows;
+}
+
+SkySettings RenderSystem::effectiveSky() const
+{
+  return m_style && m_style->sky ? *m_style->sky : m_sky;
+}
+
+FogSettings RenderSystem::effectiveFog() const
+{
+  return m_style && m_style->fog ? *m_style->fog : m_fog;
+}
+
+AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
+{
+  return m_style && m_style->ambientOcclusion ? *m_style->ambientOcclusion
+                                              : m_ambientOcclusion;
 }
 
 Ray RenderSystem::screenRay(const glm::vec2& pixel) const
@@ -142,14 +215,23 @@ void RenderSystem::render()
   frame.nearPlane = m_camera.nearPlane;
   frame.farPlane = m_camera.farPlane;
   const Entity camera = sceneCamera();
-  frame.bloom = camera.isValid()
-                    ? camera.getComponent<CameraComponent>().bloomSettings()
-                    : m_bloom;
+  // The look: the scene's own, or its visual style's.
+  frame.bloom = effectiveBloom();
+  frame.grading = effectiveGrading();
+  if (m_style)
+    frame.lightBalance = m_style->lightBalance();
   frame.lighting = m_worldLighting;
   frame.wind = m_wind;
   // Haze is distance from the camera, which in a 2D game is the same for
   // everything on its plane: there it would only fog the whole picture.
-  frame.haze = m_space2D ? HazeSettings{0.0f, m_haze.distance} : m_haze;
+  const HazeSettings haze = effectiveHaze();
+  frame.haze = m_space2D ? HazeSettings{0.0f, haze.distance} : haze;
+  // So are height fog and ambient occlusion: a 3D world's.
+  if (!m_space2D)
+  {
+    frame.fog = effectiveFog();
+    frame.ambientOcclusion = effectiveAmbientOcclusion();
+  }
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
   if (camera.isValid())
@@ -157,10 +239,12 @@ void RenderSystem::render()
         camera.getComponent<CameraComponent>().depthOfFieldSettings();
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
-  frame.shadows = m_shadows;
+  frame.shadows = effectiveShadows();
   frame.shadows.enabled = m_context.shadowsEnabled;
   frame.lightViewProjection = m_lightViewProjection;
+  frame.cascades = m_cascades;
   frame.time = static_cast<float>(m_time);
+  frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
   for (const AnyRenderCommand& command : m_commands)
@@ -187,25 +271,42 @@ bool RenderSystem::buildContext(const glm::ivec2& viewport)
   // A 2D game's sun shines from a direction of its own space (its plane's x
   // and y, and z up from it): into the world's.
   m_worldLighting = m_lighting;
+  // A visual style tints the sky (its sun and ambient light are re-balanced
+  // as they light each surface: FrameParams::lightBalance).
+  if (m_style)
+    m_worldLighting.skyColor *= m_style->skyScale();
   if (m_space2D)
   {
     const glm::vec3 sun = m_space2D->direction(m_lighting.sun.direction);
     if (glm::dot(sun, sun) > 0.0f)
       m_worldLighting.sun.direction = glm::normalize(sun);
   }
+  const glm::vec3 sun = m_worldLighting.sun.direction;
+  m_toSun = glm::dot(sun, sun) > 1e-12f ? glm::normalize(sun)
+                                        : glm::vec3(0.0f, 0.0f, 1.0f);
 
-  // A sun below the horizon casts nothing, so skip the shadow pass entirely.
+  // Clouds dim the sun. Once it has set, the moon (a 3D world's) is the
+  // light that shines and casts shadows, fading in through twilight.
+  const float clear = clearSky(m_worldLighting.cloudCover);
+  m_worldLighting.sun.diffuseStrength *= clear;
+  m_moonShare = m_space2D ? 0.0f : moonlight(m_worldLighting);
+  m_moonLit = m_moonShare > 0.0f && m_toSun.z <= 0.0f;
+  if (m_moonLit)
+  {
+    const MoonLight& moon = m_worldLighting.moon;
+    m_worldLighting.sun.direction = glm::normalize(moon.direction);
+    m_worldLighting.sun.color = moon.color;
+    m_worldLighting.sun.diffuseStrength = moon.diffuseStrength * m_moonShare;
+  }
+
+  // A sun (or moon) below the horizon casts nothing, so skip the shadow pass
+  // entirely.
   m_context.shadowsEnabled =
       m_shadows.enabled && m_worldLighting.sun.direction.z > 0.0f;
+  m_cascades = {};
   if (m_context.shadowsEnabled)
-  {
-    m_lightViewProjection = fitSunShadow(m_worldLighting.sun.direction,
-                                         m_camera.target,
-                                         m_shadows.distance,
-                                         m_renderer.shadowMapResolution());
-    m_context.shadowFrustum =
-        Frustum::fromViewProjection(m_lightViewProjection);
-  }
+    fitShadows(effectiveShadows(), aspect);
+  updateSky();
 
   gatherPointLights();
   m_context.lighting = &m_worldLighting;
@@ -213,6 +314,151 @@ bool RenderSystem::buildContext(const glm::ivec2& viewport)
   m_context.shadowedLights = &m_shadowedLights;
   m_context.meshes = &m_meshes;
   return true;
+}
+
+void RenderSystem::fitShadows(const ShadowSettings& shadows, float aspect)
+{
+  const uint32_t resolution = m_renderer.shadowMapResolution();
+  // Cascades are a 3D world's, and only as many as the renderer can hold.
+  const uint32_t cascades =
+      m_space2D ? 1u
+                : std::min({shadows.cascades,
+                            m_renderer.capabilities().sunShadowCascades,
+                            kMaxShadowCascades});
+  if (cascades <= 1)
+  {
+    m_lightViewProjection = fitSunShadow(m_worldLighting.sun.direction,
+                                         m_camera.target,
+                                         shadows.distance,
+                                         resolution);
+    m_context.shadowFrustum =
+        Frustum::fromViewProjection(m_lightViewProjection);
+    return;
+  }
+
+  CascadeView view;
+  view.position = m_camera.position();
+  view.forward = m_camera.viewDirection();
+  view.perspective = m_camera.projection == Camera::Projection::Perspective;
+  if (view.perspective)
+  {
+    const float up = std::tan(m_camera.fieldOfView * 0.5f);
+    view.halfExtent = {up * aspect, up};
+  }
+  else
+    view.halfExtent = glm::vec2(aspect, 1.0f) * (m_camera.orthoHeight * 0.5f);
+  view.nearPlane = m_camera.nearPlane;
+  view.farPlane = m_camera.farPlane;
+  m_cascades = fitSunCascades(m_worldLighting.sun.direction,
+                              view,
+                              cascades,
+                              shadows.cascadeDistance,
+                              shadows.cascadeSplit,
+                              resolution);
+  m_lightViewProjection = m_cascades.cascades[0].viewProjection;
+  m_context.shadowFrustum = Frustum::fromViewProjection(
+      cascadeBounds(m_worldLighting.sun.direction, m_cascades));
+}
+
+void RenderSystem::updateSky()
+{
+  const SkySettings settings = effectiveSky();
+  if (!settings.physical() || m_space2D)
+  {
+    m_frameSky.physical.reset();
+    return;
+  }
+
+  const bool rebuilt = !m_physicalSky || settings != m_physicalSkySettings;
+  if (rebuilt)
+  {
+    m_physicalSky = std::make_shared<const PhysicalSky>(settings);
+    m_physicalSkySettings = settings;
+  }
+  const glm::vec3 toSun = m_toSun;
+  const float night = PhysicalSky::nightScale(m_moonShare);
+
+  // The sky's diffuse light and reflections change slowly with the sun (and
+  // the moon's glow): work them out again once it's moved a quarter of a
+  // degree (a day/night cycle moves it every frame) or the glow changed a
+  // few percent. That takes a couple of milliseconds, so it's done in the
+  // background, the frame keeping the last until it's ready; but a new sky
+  // has none to keep.
+  auto workOut =
+      [](std::shared_ptr<const PhysicalSky> model, glm::vec3 sun, float glow)
+  {
+    SkyLight light;
+    light.irradiance = model->irradiance(sun, glow);
+    light.groundLight = model->groundRadiance(sun, glow);
+    light.model = std::move(model);
+    light.toSun = sun;
+    light.night = glow;
+    return light;
+  };
+  auto use = [this](const SkyLight& light)
+  {
+    m_skySun = light.toSun;
+    m_skyNight = light.night;
+    m_frameSky.toSun = light.toSun;
+    m_frameSky.irradiance = light.irradiance;
+    m_frameSky.groundLight = light.groundLight;
+    m_frameSky.night = light.night;
+    ++m_frameSky.revision;
+  };
+  if (m_skyJob.valid() &&
+      m_skyJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+  {
+    const SkyLight light = m_skyJob.get();
+    // (Unless the sky it was for has gone since.)
+    if (light.model == m_physicalSky)
+      use(light);
+  }
+  if (rebuilt || !m_frameSky.physical)
+    use(workOut(m_physicalSky, toSun, night));
+  else
+  {
+    constexpr float kResky = 0.99999048f; // cos(0.25 degrees)
+    const bool moved = glm::dot(toSun, m_skySun) < kResky ||
+                       std::abs(night - m_skyNight) > 0.03f * m_skyNight;
+    if (moved && !m_skyJob.valid())
+    {
+      if (!m_skyWorker)
+        m_skyWorker = std::make_unique<WorkerPool>(1);
+      auto job = std::make_shared<std::packaged_task<SkyLight()>>(
+          [workOut, model = m_physicalSky, toSun, night]
+          { return workOut(model, toSun, night); });
+      m_skyJob = job->get_future();
+      m_skyWorker->submit([job] { (*job)(); });
+    }
+  }
+  m_frameSky.physical = m_physicalSky;
+  // The sun itself, every frame (it's cheap), so it sets smoothly; once it
+  // has, the moon. Then what eyes adapt to.
+  const float clear = clearSky(m_worldLighting.cloudCover);
+  const glm::vec3 toLight =
+      m_moonLit ? glm::normalize(m_worldLighting.sun.direction) : toSun;
+  m_frameSky.sunLight = m_moonLit
+                            ? m_physicalSky->moonLight(toLight, m_moonShare)
+                            : m_physicalSky->sunLight(toSun) * clear;
+  m_frameSky.adaptation = m_physicalSky->adaptation(
+      toLight,
+      m_frameSky.sunLight,
+      m_frameSky.irradiance.at(glm::vec3(0.0f, 0.0f, 1.0f)));
+  m_frameSky.scale = m_style ? m_style->skyScale() : glm::vec3(1.0f);
+  // The moon's disk, unless it's below the horizon or behind clouds.
+  const MoonLight& moon = m_worldLighting.moon;
+  m_frameSky.toMoon = glm::dot(moon.direction, moon.direction) > 1e-12f
+                          ? glm::normalize(moon.direction)
+                          : glm::vec3(0.0f, 0.0f, -1.0f);
+  m_frameSky.moonPhase = std::clamp(moon.phase, 0.0f, 1.0f);
+  m_frameSky.cloudCover = std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f);
+  m_frameSky.moonLit = m_moonLit;
+}
+
+void RenderSystem::finishSkyWork()
+{
+  if (m_skyJob.valid())
+    m_skyJob.wait();
 }
 
 namespace
@@ -603,16 +849,28 @@ std::vector<ModuleSetting> RenderSystem::settings()
           1.0f,
           [this] { return m_lighting.sun.diffuseStrength; },
           [this](float v) { m_lighting.sun.diffuseStrength = v; }),
+      settings::floatRange(
+          "Moon phase",
+          0.0f,
+          1.0f,
+          [this] { return m_lighting.moon.phase; },
+          [this](float v) { m_lighting.moon.phase = v; }),
+      settings::floatRange(
+          "Moon strength",
+          0.0f,
+          1.0f,
+          [this] { return m_lighting.moon.diffuseStrength; },
+          [this](float v) { m_lighting.moon.diffuseStrength = v; }),
+      settings::floatRange(
+          "Cloud cover",
+          0.0f,
+          1.0f,
+          [this] { return m_lighting.cloudCover; },
+          [this](float v) { m_lighting.cloudCover = v; }),
       settings::boolean(
           "Sun shadows",
           [this] { return m_shadows.enabled; },
           [this](bool v) { m_shadows.enabled = v; }),
-      settings::floatRange(
-          "Shadow distance",
-          5.0f,
-          200.0f,
-          [this] { return m_shadows.distance; },
-          [this](float v) { m_shadows.distance = v; }),
       settings::floatRange(
           "Shadow softness",
           0.0f,
@@ -640,6 +898,16 @@ std::vector<ModuleSetting> RenderSystem::settings()
           [this](int v)
           { m_shadows.pointResolution = kPointShadowResolutions[v]; }),
   };
+  // One shadow map covers a distance around what the camera looks at;
+  // cascades (Scene Settings' Sky & Shadows) reach along the view instead.
+  if (m_shadows.cascades <= 1 || m_space2D)
+    out.insert(out.begin() + 3,
+               settings::floatRange(
+                   "Shadow distance",
+                   5.0f,
+                   200.0f,
+                   [this] { return m_shadows.distance; },
+                   [this](float v) { m_shadows.distance = v; }));
   // Wind (what grass sways in) and haze are a 3D world's.
   if (!m_space2D)
     out.insert(out.end(),

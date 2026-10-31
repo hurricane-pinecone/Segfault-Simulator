@@ -12,6 +12,9 @@ function(add_runtime_test name source)
     # doesn't hijack main (Linux). The tests run headless and never SDL_Init, so
     # nothing needs the wrapper.
     target_compile_definitions(${name} PRIVATE SDL_MAIN_HANDLED)
+    if(WIN32)
+        target_sources(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdlMainStub.cpp)
+    endif()
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES LABELS runtime)
 endfunction()
@@ -67,6 +70,8 @@ target_link_libraries(moduleHostStaleModule PRIVATE engine)
 foreach(fixture moduleHostCurrentModule moduleHostStaleModule)
     set_target_properties(${fixture} PROPERTIES
         PREFIX ""
+        # Not in bin/ (see ../CMakeLists.txt): exports copy the DLLs there.
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
 endforeach()

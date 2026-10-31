@@ -1,7 +1,12 @@
 #include "../../testHarness.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/assets/assetDatabase.h>
+#include <engine/core/rendering/visualStyle.h>
 #include <engine/runtime/assetStore/assetStore.h>
+#include <engine/runtime/rendering/renderSystem.h>
+#include <engine/runtime/rendering/visualStyles.h>
+#include <engine/runtime/sceneManager/scene.h>
 
 #include <filesystem>
 #include <fstream>
@@ -61,6 +66,77 @@ int main()
         CHECK(store.prefab(b->id).has_value()); // kept: not read again
       }
     }
+  }
+
+  TEST("a visual style asset should load by id, edits showing next time, and "
+       "the project's styles list by path")
+  {
+    const Project project;
+    fs::create_directories(project.folder / "assets" / "styles");
+    const fs::path cozy = project.folder / "assets" / "styles" / "Cozy.style";
+    const fs::path real =
+        project.folder / "assets" / "styles" / "Realistic.style";
+    std::ofstream(cozy) << VisualStyle{}.toJson().dump();
+    VisualStyle realistic;
+    realistic.grading.toneMapper = ToneMapper::AgX;
+    realistic.materialVariant = "realistic";
+    std::ofstream(real) << realistic.toJson().dump();
+
+    const AssetDatabase database(project.folder,
+                                 AssetDatabase::Mode::ReadWrite,
+                                 AssetDatabase::projectFolders());
+    const AssetRecord* record =
+        database.findByPath("assets/styles/Realistic.style");
+    CHECK(record && record->kind == AssetKind::VisualStyle);
+    AssetStore store;
+    store.setDatabase(&database);
+    if (record)
+    {
+      const std::optional<VisualStyle> loaded = store.visualStyle(record->id);
+      CHECK(loaded && *loaded == realistic);
+      realistic.grading.exposure = 1.0f;
+      std::ofstream(real) << realistic.toJson().dump();
+      const std::optional<VisualStyle> again = store.visualStyle(record->id);
+      CHECK(again && again->grading.exposure == 1.0f);
+    }
+    // Not a style: nothing.
+    const AssetRecord* prefab = database.findByPath("prefabs/a.prefab");
+    CHECK(prefab && !store.visualStyle(prefab->id).has_value());
+
+    const auto styles = visualStyleAssets(database);
+    CHECK(styles.size() == 2u);
+    if (styles.size() == 2u)
+    {
+      CHECK(styles[0].second == "assets/styles/Cozy.style");
+      CHECK(styles[1].second == "assets/styles/Realistic.style");
+    }
+
+    // The development key's cycle: from none the first, then on, wrapping;
+    // back the other way. Each switch takes the variant tag with it.
+    testing3d::MockRenderer renderer;
+    Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+    RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
+    render.setStyleSource(
+        [&store, &database](std::string_view name) -> std::optional<VisualStyle>
+        {
+          for (const AssetRecord& candidate : database.records())
+            if ("asset:" + candidate.id.toString() == name)
+              return store.visualStyle(candidate.id);
+          return std::nullopt;
+        });
+    CHECK(cycleVisualStyle(render, database) == "assets/styles/Cozy.style");
+    CHECK(render.meshes().materialVariant().empty());
+    CHECK(cycleVisualStyle(render, database) ==
+          "assets/styles/Realistic.style");
+    CHECK(render.meshes().materialVariant() == "realistic");
+    CHECK(render.visualStyle() &&
+          render.visualStyle()->grading.toneMapper == ToneMapper::AgX);
+    CHECK(cycleVisualStyle(render, database) == "assets/styles/Cozy.style");
+    CHECK(cycleVisualStyle(render, database, -1) ==
+          "assets/styles/Realistic.style");
+    render.setVisualStyle("");
+    CHECK(cycleVisualStyle(render, database, -1) ==
+          "assets/styles/Realistic.style");
   }
 
   return testing::report("assetStoreTests");

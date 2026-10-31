@@ -17,6 +17,32 @@ struct Frame {
   clusterDepth: vec4f,  // x near, y far, z slices per log(depth / near), w tile size (pixels)
   wind: vec4f,          // xy which way it blows (unit), z strength, w gustiness
   haze: vec4f,          // x strength, y 1 / the distance it's half that
+  sunBalance: vec4f,    // rgb the sun's share of a surface's light x this, w 1 if re-balanced (a visual style)
+  ambientBalance: vec4f, // rgb ambient's share x this, w the brightest light gets (1 unless tone mapped)
+  inverseViewProjection: mat4x4f, // clip space back to the world (the background's view rays)
+  // The sun's shadow cascades (cascadeInfo.x > 1; else lightViewProjection's one map).
+  cascades: array<mat4x4f, 4>,
+  cascadeRects: array<vec4f, 4>,  // where each is in the shadow atlas (uv): xy corner, zw size
+  cascadeParams: array<vec4f, 4>, // x world size of a texel, y depth bias, zw filter spread (atlas uv)
+  cascadeInfo: vec4f,  // x how many, y the blend band (of a cascade's half size), z where shadows
+                       // start fading out, w where they're gone (along the view)
+  skyMode: vec4f,      // x physical (0/1), y its reflections ready (0/1), z their roughest mip,
+                       // w the night glow's strength (stars)
+  sunLight: vec4f,     // rgb a physical sky's sun on a surface facing it, w its disk's radius (radians)
+  skyScale: vec4f,     // rgb a visual style's scale on the sky, w the sun disk's brightness
+  skyIrradiance: array<vec4f, 9>, // a physical sky's diffuse light: SH9 (rgb), convolved, / pi
+  skyLight: vec4f,     // x what eyes adapted to a dim sky scale its light by (its reflections: the
+                       // rest is already scaled), y how much of the sun's light clears the horizon
+                       // (sunLight is faded by it; its disk isn't)
+  ambientOcclusion: vec4f, // x on (0/1: its map is read), y how near in depth (of a pixel's) the
+                           // map's must be to count
+  fog: vec4f,          // height fog: x density, y height falloff, z base height, w start distance
+  fogLight: vec4f,     // x the most it hides, y its glow toward the sun, z on (0/1), w how far
+                       // away the background is
+  moon: vec4f,         // a physical sky's moon: xyz toward it, w its disk's radius (0: none drawn)
+  moonSun: vec4f,      // xyz toward the sun (the moon's lit side), w how much of it is lit (0..1)
+  moonLight: vec4f,    // rgb its disk's light (not adapted), w 1 if it's the frame's light (in the
+                       // sun's place: sunDirection, sunLight)
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;

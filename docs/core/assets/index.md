@@ -182,7 +182,15 @@ and transparency. Meshes are only shape; materials are separate.
 `offset` shifts them, in texture widths; a model's base colour texture
 transform (glTF's `KHR_texture_transform`, scale and offset) imports as these.
 `alphaMode` is `opaque`, `mask` or `blend`, as in glTF. `AssetStore::material(id)`
-loads one, with its textures.
+loads one, with its textures. Either kind of material may also have
+`"variants": {"<tag>": "asset:<id>"}`: materials to draw instead while the
+scene's visual style has that tag (see
+[Visual styles](../../runtime/rendering/visual-styles/index.md#material-variants)).
+
+- A **visual style** (`.style`, JSON; see `VisualStyle`) is a whole look for a
+  scene: tone mapping and grading, light balance, bloom, haze, shadow
+  softness and a material variant tag. `AssetStore::visualStyle(id)` reads
+  one. See [Visual styles](../../runtime/rendering/visual-styles/index.md).
 
 The built-in cube and plane map a texture once onto each face.
 

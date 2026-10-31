@@ -3,12 +3,14 @@
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lightClusters.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/terrain.h"
 #include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/uiDraw.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 #include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/ext/vector_int4.hpp"
+#include "glm/glm/ext/vector_uint2.hpp"
 #include "glm/glm/ext/vector_uint4.hpp"
 
 #include <array>
@@ -40,15 +42,79 @@ struct FrameUniforms
   glm::vec4 sunColor;
   glm::vec4 shadow;
   glm::vec4 sky;
-  glm::vec4 time;          // x seconds
-  glm::vec4 cameraForward; // xyz
-  glm::uvec4 clusterSize;  // tiles across, down, slices; lights
-  glm::vec4 clusterDepth;  // near, far, slices per log(depth / near), tile px
-  glm::vec4 wind;          // which way it blows (unit xy), strength, gustiness
-  glm::vec4 haze;          // strength, 1 / its half distance
+  glm::vec4 time;           // x seconds
+  glm::vec4 cameraForward;  // xyz
+  glm::uvec4 clusterSize;   // tiles across, down, slices; lights
+  glm::vec4 clusterDepth;   // near, far, slices per log(depth / near), tile px
+  glm::vec4 wind;           // which way it blows (unit xy), strength, gustiness
+  glm::vec4 haze;           // strength, 1 / its half distance
+  glm::vec4 sunBalance;     // the sun's share x rgb; w 1 if re-balanced
+  glm::vec4 ambientBalance; // ambient's share x rgb; w the brightest light
+                            // gets (1 unless tone mapped)
+  glm::mat4 inverseViewProjection; // the background's view rays
+  // The sun's shadow cascades (cascadeInfo.x > 1; else the one map above).
+  std::array<glm::mat4, kMaxShadowCascades> cascades;
+  std::array<glm::vec4, kMaxShadowCascades> cascadeRects;  // in the atlas (uv):
+                                                           // corner, size
+  std::array<glm::vec4, kMaxShadowCascades> cascadeParams; // world texel, depth
+                                                           // bias, spread (uv)
+  glm::vec4 cascadeInfo; // how many, the blend band (of a half-size), where
+                         // the last starts fading out (of its reach)
+  glm::vec4 skyMode;     // physical (0/1), reflections ready (0/1), their
+                         // roughest mip, the night glow's strength
+  glm::vec4 sunLight;    // rgb the physical sun's light; w its disk's radius
+  glm::vec4 skyScale; // rgb a style's scale on the sky; w the disk's brightness
+  std::array<glm::vec4, 9> skyIrradiance; // SH9 (SkyIrradiance)
+  glm::vec4 skyLight; // x what eyes adapted to dusk and night scale the sky's
+                      // light by (its reflections'; the rest is scaled), y
+                      // how much of the sun's light clears the horizon
+  // Ambient occlusion: x on (0/1; its map is read), y how near in depth (of
+  // a pixel's) the map's must be to count.
+  glm::vec4 ambientOcclusion;
+  glm::vec4 fog;      // height fog: density, height falloff, base height,
+                      // start distance
+  glm::vec4 fogLight; // x the most it hides, y its glow toward the sun, z on
+                      // (0/1), w how far away the background is
+  // A physical sky's moon: xyz toward it, w its disk's radius (0: none
+  // drawn); xyz toward the sun (its lit side), w how much of it is lit;
+  // rgb its disk's light (not adapted), w 1 if it's the frame's light (in
+  // the sun's place: sunDirection, sunLight).
+  glm::vec4 moon;
+  glm::vec4 moonSun;
+  glm::vec4 moonLight;
 };
-static_assert(sizeof(FrameUniforms) == 64 * 2 + 16 * 11,
+static_assert(sizeof(FrameUniforms) ==
+                  64 * 2 + 16 * 13 + 64 * (1 + kMaxShadowCascades) +
+                      16 * (2 * kMaxShadowCascades + 4 + 9 + 1 + 3 + 3),
               "FrameUniforms must match the WGSL Frame layout");
+
+/**
+ * `Sky` in sky.wgsl: a physical sky's atmosphere (PhysicalSky), for the
+ * passes rendering its reflections.
+ */
+struct SkyUniforms
+{
+  glm::vec4 toSun;    // xyz; w the solar irradiance
+  glm::vec4 rayleigh; // rgb scattering per km; w its scale height
+  glm::vec4 mie;      // scattering, extinction, scale height, g
+  glm::vec4 ozone;    // rgb absorption per km
+  glm::vec4 ground;   // rgb what the ground reflects
+  glm::vec4 night;    // rgb the night glow at the zenith (the moon's in it)
+  glm::vec4 planet;   // ground radius, top radius, viewer altitude, multiple
+                      // scattering's share
+};
+
+/** `SkyPass` in sky.wgsl: one reflection mip's. */
+struct SkyPassUniforms
+{
+  glm::vec4 params; // roughness, the source's size (texels), samples
+};
+
+/** The size of a sun shadow atlas holding `cascades` maps of `tile` texels. */
+inline glm::uvec2 shadowAtlasSize(uint32_t cascades, uint32_t tile)
+{
+  return {cascades > 1 ? tile * 2 : tile, cascades > 2 ? tile * 2 : tile};
+}
 
 /** `PointLight` in meshLit.wgsl (a storage buffer's elements). */
 struct GpuPointLight
@@ -109,6 +175,21 @@ struct UiInstance
   glm::vec4 shape; // radius, softness, border, kind
 };
 
+/** `Occlusion` in ambientOcclusion.wgsl: ambient occlusion's passes'. */
+struct OcclusionUniforms
+{
+  glm::mat4 inverseViewProjection;
+  glm::vec4 camera;  // xyz position, w 1 if a perspective view
+  glm::vec4 forward; // xyz view direction
+  glm::vec4 params;  // radius (world), intensity, samples, pixels a world unit
+                     // spans at depth 1 (orthographic: at any)
+  glm::vec4 size;    // the pass's size (texels), 1 / that
+  glm::vec4 blur;    // a blur's step (texels); where it fades with distance
+                     // from, and where it's gone
+};
+static_assert(sizeof(OcclusionUniforms) == 64 + 16 * 5,
+              "OcclusionUniforms must match ambientOcclusion.wgsl");
+
 /** `Focus` in postFocus.wgsl. */
 struct FocusUniforms
 {
@@ -122,7 +203,18 @@ struct PostUniforms
 {
   glm::vec4 texel; // xy the source's texel size
   glm::vec4 bloom; // threshold, softness, radius, intensity
+  // The composite's grading (see ColorGrading):
+  glm::vec4 tone;  // tone mapper (ToneMapper), exposure (x), contrast,
+                   // saturation
+  glm::vec4 grade; // graded (0: only clamped, as ever), vignette, its
+                   // softness, the aspect (width / height)
+  std::array<glm::vec4, 3> balance; // white balance (columns of a 3x3)
+  glm::vec4 lift;
+  glm::vec4 gamma; // 1 / gamma
+  glm::vec4 gain;
 };
+static_assert(sizeof(PostUniforms) == 16 * 10,
+              "PostUniforms must match the WGSL Post layout");
 
 /** `Material` in meshCommon.wgsl: the standard surface's parameters. */
 struct MaterialUniforms
@@ -135,6 +227,19 @@ struct MaterialUniforms
 
 /** A standard-surface material's uniforms. */
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material);
+
+/** `Terrain` in meshTerrainSurface.wgsl: a terrain material's parameters. */
+struct TerrainUniforms
+{
+  std::array<glm::vec4, kMaxTerrainLayers> layers; // rgb tint, 1 / tile size
+  std::array<glm::vec4, kMaxTerrainLayers> detail; // roughness, normal scale
+  glm::vec4 params; // layers, blend sharpness, anti-tiling (0/1), variation
+};
+static_assert(sizeof(TerrainUniforms) == 16 * (2 * kMaxTerrainLayers + 1),
+              "TerrainUniforms must match meshTerrainSurface.wgsl");
+
+/** A terrain material's uniforms. */
+TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain);
 
 /**
  * A material graph's parameters, in its shader's order (at least one; missing
@@ -232,6 +337,19 @@ public:
   /** Farthest first (after finish()). */
   const std::vector<Draw>& blendDraws() const { return m_blendOrder; }
   const std::vector<Draw>& shadowDraws() const { return m_shadowDraws; }
+  /**
+   * With cascades (frame().cascades.count > 1): each cascade's casters, those
+   * of shadowDraws() that reach into it. Else empty.
+   */
+  const std::vector<Draw>& cascadeDraws(std::size_t cascade) const
+  {
+    return m_cascadeDraws[cascade];
+  }
+  /** The sun's shadow maps this frame: 1 (the one map) or its cascades. */
+  uint32_t shadowCascades() const
+  {
+    return m_frame.cascades.count > 1 ? m_frame.cascades.count : 1;
+  }
   const std::vector<ShadowedLight>& shadowedLights() const
   {
     return m_shadowedLights;
@@ -250,8 +368,19 @@ public:
 
   /** Bloom's uniforms for a pass reading a source of this size. */
   PostUniforms bloomUniforms(glm::ivec2 sourceSize) const;
-  /** The composite's: the glow added in (none when bloom is off). */
-  PostUniforms compositeUniforms() const;
+  /**
+   * The composite's: the glow added in (none when bloom is off), and the
+   * frame's grading, for a target `viewport` big.
+   */
+  PostUniforms compositeUniforms(glm::ivec2 viewport) const;
+  /** A physical sky's atmosphere, for its reflections' passes. */
+  SkyUniforms skyUniforms() const;
+  /**
+   * Ambient occlusion's passes', at `size` (half the viewport's), a blur
+   * stepping `blurStep` texels (zero for the occlusion pass itself).
+   */
+  OcclusionUniforms occlusionUniforms(glm::ivec2 size,
+                                      glm::ivec2 blurStep = {0, 0}) const;
   /** Depth of field's, if the frame has it. */
   std::optional<FocusUniforms> focusUniforms(glm::ivec2 viewport) const;
 
@@ -270,6 +399,7 @@ private:
   std::vector<BlendDraw> m_blendDraws;
   std::vector<Draw> m_blendOrder;
   std::vector<Draw> m_shadowDraws;
+  std::array<std::vector<Draw>, kMaxShadowCascades> m_cascadeDraws;
   struct CasterBatch
   {
     Draw base;

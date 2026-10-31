@@ -5,6 +5,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/material.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
+#include "engine/core/rendering/visualStyle.h"
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/serialization/legacyComponentNames.h"
@@ -242,6 +243,29 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
 
   auto material = std::make_shared<MeshMaterial>();
   material->alphaMode = asset.alphaMode;
+  material->variants.assign(asset.variants.begin(), asset.variants.end());
+  if (asset.terrain)
+  {
+    // Colour as colour; normals, roughness and the splat map as data.
+    auto terrain = std::make_shared<TerrainMaterial>();
+    terrain->splat = texture(asset.terrain->splatMap, true);
+    terrain->blendSharpness = asset.terrain->blendSharpness;
+    terrain->antiTiling = asset.terrain->antiTiling;
+    terrain->variation = asset.terrain->variation;
+    for (const TerrainLayerAsset& layer : asset.terrain->layers)
+      terrain->layers.push_back({layer.name,
+                                 texture(layer.baseTexture),
+                                 texture(layer.normalTexture, true),
+                                 texture(layer.roughnessTexture, true),
+                                 layer.tint,
+                                 layer.tileSize,
+                                 layer.roughness,
+                                 layer.normalScale,
+                                 layer.grass});
+    material->alphaMode = AlphaMode::Opaque;
+    material->terrain = std::move(terrain);
+    return material;
+  }
   if (asset.graph)
   {
     const materialGraph::CompiledGraph compiled =
@@ -277,6 +301,17 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
 }
 
 void AssetStore::forgetMaterial(const AssetId& id) { m_materials.erase(id); }
+
+std::optional<AssetId> AssetStore::textureId(const TextureData* texture) const
+{
+  if (!texture)
+    return std::nullopt;
+  for (const auto* textures : {&m_textures, &m_dataTextures})
+    for (const auto& [id, loaded] : *textures)
+      if (loaded.get() == texture)
+        return id;
+  return std::nullopt;
+}
 
 void AssetStore::forgetTexture(const AssetId& id)
 {
@@ -325,6 +360,27 @@ std::optional<nlohmann::json> AssetStore::prefab(const AssetId& id)
 
 void AssetStore::forgetPrefab(const AssetId& id) { m_prefabs.erase(id); }
 
+std::optional<VisualStyle> AssetStore::visualStyle(const AssetId& id) const
+{
+  const AssetRecord* record = m_database ? m_database->find(id) : nullptr;
+  if (!record)
+  {
+    LOG_ERROR("No visual style asset with id " + id.toString());
+    return std::nullopt;
+  }
+  if (record->kind != AssetKind::VisualStyle)
+  {
+    LOG_ERROR(record->path.generic_string() + " isn't a visual style");
+    return std::nullopt;
+  }
+  std::ifstream in(m_database->absolutePath(*record));
+  const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+  std::optional<VisualStyle> style = VisualStyle::fromJson(json);
+  if (!style)
+    LOG_ERROR("Can't read the visual style " + record->path.generic_string());
+  return style;
+}
+
 void AssetStore::beginUseTracking() { ++m_useEpoch; }
 
 std::size_t AssetStore::collectUnused()
@@ -355,6 +411,16 @@ std::size_t AssetStore::collectUnused()
       kept.insert(material->normalTexture.get());
       for (const auto& texture : material->shaderTextures)
         kept.insert(texture.get());
+      if (material->terrain)
+      {
+        kept.insert(material->terrain->splat.get());
+        for (const TerrainLayer& layer : material->terrain->layers)
+        {
+          kept.insert(layer.baseTexture.get());
+          kept.insert(layer.normalTexture.get());
+          kept.insert(layer.roughnessTexture.get());
+        }
+      }
     }
   const auto dropTextures = [&](auto& textures)
   {

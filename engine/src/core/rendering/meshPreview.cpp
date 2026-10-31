@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/materialNodes.h"
+#include "engine/core/rendering/terrain.h"
 
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
@@ -66,6 +67,32 @@ sfs::materialGraph::SurfaceValues
 surfaceAt(const sfs::MeshMaterial& material,
           const sfs::materialGraph::SurfacePoint& point)
 {
+  if (material.terrain)
+  {
+    // A terrain: its layers by the splat map at the point (each texture
+    // tiling over the preview's UVs, about twice), without their heights.
+    const sfs::TerrainMaterial& terrain = *material.terrain;
+    const std::array<float, sfs::kMaxTerrainLayers> weights =
+        sfs::terrainWeights(usable(terrain.splat)
+                                ? sfs::sampleSplat(*terrain.splat, point.uv)
+                                : glm::vec4(0.0f));
+    sfs::materialGraph::SurfaceValues surface;
+    surface.baseColor = glm::vec3(0.0f);
+    surface.roughness = 0.0f;
+    for (std::size_t i = 0; i < weights.size() && !terrain.layers.empty(); ++i)
+    {
+      const sfs::TerrainLayer& layer =
+          terrain.layers[i < terrain.layers.size() ? i : 0];
+      glm::vec3 color = layer.tint;
+      if (usable(layer.baseTexture))
+        color *= glm::vec3(sample(*layer.baseTexture, point.uv * 2.0f));
+      surface.baseColor += color * weights[i];
+      surface.roughness += layer.roughness * weights[i];
+    }
+    if (terrain.layers.empty())
+      surface.baseColor = glm::vec3(1.0f);
+    return surface;
+  }
   if (material.shader)
   {
     // Textures the preview can't read (still loading) read white.

@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -122,6 +123,8 @@ public:
    */
   std::span<const glm::vec3> positions(MeshHandle mesh) const;
   std::span<const uint32_t> indices(MeshHandle mesh) const;
+  /** Each vertex's texture coordinates (as positions()); empty if not ours. */
+  std::span<const glm::vec2> uvs(MeshHandle mesh) const;
 
   /** Section `section`'s own material (as sections() has it), or null. */
   const MeshMaterial* sectionMaterial(MeshHandle mesh,
@@ -139,6 +142,10 @@ public:
   {
     float distance = 0.0f;   // along the ray, in its direction's units
     std::size_t section = 0; // which section (material slot) the triangle is in
+    glm::vec2 uv{0.0f};      // the texture coordinates there
+    // How far the texture coordinates run per world unit, across and up the
+    // hit triangle as placed (e.g. 1/140 on a 140 m plane UV'd once).
+    glm::vec2 uvPerUnit{0.0f};
   };
 
   /**
@@ -153,8 +160,39 @@ public:
    * uploaded through the provider the first time it's asked for and kept.
    * Invalid if the name is empty or the provider has no such material (asked
    * only once).
+   *
+   * What it gives is what draws: the material's variant for the library's
+   * variant tag (setMaterialVariant), when it has one. Worked out when the tag
+   * or a material changes, so asking every frame costs one lookup.
    */
   MaterialHandle material(std::string_view name);
+
+  /**
+   * Draw materials as their variants for `tag` (a visual style's
+   * materialVariant; see MeshMaterial::variants), loading the variants as
+   * needed; "" for none (every material as itself). Takes effect from the
+   * next material() call, so a live switch shows on the next frame.
+   */
+  void setMaterialVariant(std::string_view tag);
+  const std::string& materialVariant() const { return m_variant; }
+
+  /**
+   * Draw materials by name as others (name -> material name), whatever their
+   * variants say: a visual style's `materials` (VisualStyle::materials),
+   * which can name materials a game makes in code (setMaterial()). Empty:
+   * none. Takes effect from the next material() call.
+   *
+   * A terrain material (MeshMaterial::terrain) drawn in place of a material
+   * with a base texture, by an override or a variant, is drawn tinted by that
+   * texture (TerrainMaterial::tint): what a game paints on its ground keeps
+   * showing. Changing the material (setMaterial()) changes the tint.
+   */
+  void
+  setMaterialOverrides(const std::map<std::string, std::string>& overrides);
+  const std::map<std::string, std::string>& materialOverrides() const
+  {
+    return m_overrides;
+  }
 
   /**
    * Make (or change) a named material from game code, e.g. one whose texture
@@ -242,6 +280,7 @@ private:
     std::vector<MeshSection> sections; // the material slots
     // The triangles, kept for raycasts (e.g. picking where something drops).
     std::vector<glm::vec3> positions;
+    std::vector<glm::vec2> uvs;
     std::vector<uint32_t> indices;
     std::vector<MeshVertex> vertices; // only with setKeepVertices
     std::vector<std::vector<SurfaceSample>> samples; // per section
@@ -270,8 +309,29 @@ private:
       return std::hash<std::string_view>()(name);
     }
   };
-  std::unordered_map<std::string, MaterialHandle, NameHash, std::equal_to<>>
-      m_materials; // invalid: not found
+  // A named material: its own handle (invalid: not found) and the one drawn
+  // for it (its variant under m_variant, or itself).
+  struct MaterialSlot
+  {
+    MaterialHandle own;
+    MaterialHandle drawn;
+    MaterialHandle standIn; // a tinted terrain of ours drawn for it, if any
+  };
+  std::unordered_map<std::string, MaterialSlot, NameHash, std::equal_to<>>
+      m_materials;
+  std::string m_variant;                          // see setMaterialVariant()
+  std::map<std::string, std::string> m_overrides; // see setMaterialOverrides()
+  // What draws for a named material (its slot loaded): its override, else
+  // its variant, else itself; a terrain stand-in made (or let go) as needed.
+  MaterialHandle drawnFor(const std::string& name);
+
+  // The slot's own material, loading it (without its variant) if new.
+  MaterialHandle loadMaterial(std::string_view name);
+  // What draws for a material of ours: its variant under m_variant, or itself.
+  MaterialHandle variantOf(MaterialHandle own);
+  // Work out every slot's drawn material again (the tag or a material
+  // changed).
+  void resolveVariants();
   // What each of m_materials is, by handle id.
   std::unordered_map<uint32_t, std::shared_ptr<const MeshMaterial>>
       m_materialData;

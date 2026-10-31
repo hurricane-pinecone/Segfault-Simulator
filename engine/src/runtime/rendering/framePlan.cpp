@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/frustum.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
+#include "glm/glm/common.hpp"
 #include "glm/glm/ext/matrix_clip_space.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/gtc/constants.hpp"
@@ -29,6 +30,9 @@ constexpr double kGrassMostBlades = 4.0e6;
 constexpr int kGrassMostCells = 2048;
 // How much grass's colour covers the ground it grows on, where it's full.
 constexpr float kGrassGroundTint = 0.9f;
+// How much brighter a physical sky's moon's disk is than its light on a
+// surface facing it.
+constexpr float kMoonDiskGlow = 120.0f;
 } // namespace
 
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
@@ -43,6 +47,29 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
                      material.unlit ? 1u : 0u,
                      0,
                      0)};
+}
+
+TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain)
+{
+  TerrainUniforms out{};
+  const std::size_t count =
+      std::min(terrain.layers.size(), std::size_t{kMaxTerrainLayers});
+  for (std::size_t i = 0; i < kMaxTerrainLayers; ++i)
+  {
+    // A layer it doesn't have: as the first (or plain white).
+    const TerrainLayer layer =
+        i < count ? terrain.layers[i]
+                  : (count > 0 ? terrain.layers[0] : TerrainLayer{});
+    out.layers[i] = glm::vec4(glm::max(layer.tint, glm::vec3(0.0f)),
+                              1.0f / std::max(layer.tileSize, 0.01f));
+    out.detail[i] = glm::vec4(
+        std::clamp(layer.roughness, 0.0f, 1.0f), layer.normalScale, 0.0f, 0.0f);
+  }
+  out.params = glm::vec4(static_cast<float>(std::max<std::size_t>(count, 1)),
+                         std::clamp(terrain.blendSharpness, 0.0f, 1.0f),
+                         terrain.antiTiling ? 1.0f : 0.0f,
+                         std::clamp(terrain.variation, 0.0f, 1.0f));
+  return out;
 }
 
 std::vector<glm::vec4> graphMaterialParameters(const MeshMaterial& material)
@@ -100,6 +127,8 @@ void FramePlan::begin(const FrameParams& frame)
   m_blendDraws.clear();
   m_blendOrder.clear();
   m_shadowDraws.clear();
+  for (std::vector<Draw>& draws : m_cascadeDraws)
+    draws.clear();
   m_casterBatches.clear();
   m_casters.clear();
   m_shadowedLights.clear();
@@ -290,6 +319,46 @@ void FramePlan::finish(
     }
   }
 
+  // Each sun shadow cascade's casters: those whose bounding sphere, placed,
+  // reaches into its box (or beyond it toward the sun, within its depth).
+  const SunCascades& cascades = m_frame.cascades;
+  if (m_frame.shadows.enabled && cascades.count > 1)
+    for (uint32_t c = 0; c < cascades.count && c < kMaxShadowCascades; ++c)
+    {
+      const SunCascade& cascade = cascades.cascades[c];
+      const float toClip = 1.0f / std::max(cascade.radius, 1e-4f);
+      const float toDepth = 1.0f / std::max(cascade.depthRange, 1e-4f);
+      for (const Draw& shadow : m_shadowDraws)
+      {
+        const PlannedMesh* mesh = meshes(shadow.meshSlot);
+        if (!mesh)
+          continue;
+        Draw draw = shadow;
+        draw.firstInstance = static_cast<uint32_t>(m_instances.size());
+        draw.instanceCount = 0;
+        for (uint32_t k = 0; k < shadow.instanceCount; ++k)
+        {
+          const MeshInstance instance = m_instances[shadow.firstInstance + k];
+          const glm::vec4 center = cascade.viewProjection * instance.model *
+                                   glm::vec4(mesh->boundsCenter, 1.0f);
+          const float scale =
+              std::max({glm::length(glm::vec3(instance.model[0])),
+                        glm::length(glm::vec3(instance.model[1])),
+                        glm::length(glm::vec3(instance.model[2]))});
+          const float radius = mesh->boundsRadius * scale;
+          const float across = 1.0f + radius * toClip;
+          const float deep = radius * toDepth;
+          if (std::abs(center.x) > across || std::abs(center.y) > across ||
+              center.z < -deep || center.z > 1.0f + deep)
+            continue;
+          m_instances.push_back(instance);
+          ++draw.instanceCount;
+        }
+        if (draw.instanceCount > 0)
+          m_cascadeDraws[c].push_back(draw);
+      }
+    }
+
   // Each shadowed light's cube faces.
   m_faces.clear();
   for (const ShadowedLight& shadowed : m_shadowedLights)
@@ -335,6 +404,111 @@ void FramePlan::finish(
                               1.0f / std::max(m_frame.haze.distance, 1e-3f),
                               0.0f,
                               0.0f);
+  // Height fog, which (on) takes haze's place.
+  const FogSettings& fog = m_frame.fog;
+  if (fog.enabled)
+  {
+    m_uniforms.haze.x = 0.0f;
+    m_uniforms.fog = glm::vec4(std::max(fog.density, 0.0f),
+                               std::max(fog.heightFalloff, 0.0f),
+                               fog.baseHeight,
+                               std::max(fog.startDistance, 0.0f));
+    m_uniforms.fogLight = glm::vec4(std::clamp(fog.maxOpacity, 0.0f, 1.0f),
+                                    std::max(fog.sunGlow, 0.0f),
+                                    1.0f,
+                                    m_frame.farPlane);
+  }
+  // Ambient occlusion: its map counts where it's within a twentieth of a
+  // pixel's depth (else, e.g. grass blades, which it doesn't hold, go
+  // without).
+  if (m_frame.ambientOcclusion.enabled)
+    m_uniforms.ambientOcclusion = glm::vec4(1.0f, 0.05f, 0.0f, 0.0f);
+  // A visual style's balance of sun and ambient light; and, tone mapped,
+  // light may go past white (the curve rolls it off), else it stops there.
+  const LightBalance& balance = m_frame.lightBalance;
+  m_uniforms.sunBalance = glm::vec4(
+      glm::max(balance.sun, glm::vec3(0.0f)), balance.neutral() ? 0.0f : 1.0f);
+  m_uniforms.ambientBalance =
+      glm::vec4(glm::max(balance.ambient, glm::vec3(0.0f)),
+                m_frame.grading.toneMapper == ToneMapper::None ? 1.0f : 64.0f);
+  m_uniforms.inverseViewProjection = glm::inverse(m_frame.viewProjection);
+
+  // The cascades: each a tile of the shadow atlas (2 side by side, 3 or 4 in
+  // a square), its texel's world size, its depth bias (the scene's, kept the
+  // same in world units relative to its size as the one map's), and its
+  // filter's spread across the atlas.
+  m_uniforms.cascadeInfo = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
+  if (cascades.count > 1)
+  {
+    const uint32_t count = std::min(cascades.count, kMaxShadowCascades);
+    const glm::vec2 atlas(shadowAtlasSize(count, shadowMapResolution));
+    const glm::vec2 tile = glm::vec2(resolution) / atlas;
+    for (uint32_t c = 0; c < count; ++c)
+    {
+      const SunCascade& cascade = cascades.cascades[c];
+      m_uniforms.cascades[c] = cascade.viewProjection;
+      m_uniforms.cascadeRects[c] = glm::vec4(
+          glm::vec2(static_cast<float>(c % 2), static_cast<float>(c / 2)) *
+              tile,
+          tile);
+      const float texel = 2.0f * cascade.radius / resolution;
+      const float bias = shadows.depthBias * 4.0f * cascade.radius /
+                         std::max(cascade.depthRange, 1e-4f);
+      m_uniforms.cascadeParams[c] =
+          glm::vec4(texel, bias, glm::vec2(shadows.softness) / atlas);
+    }
+    // Blend over the outer tenth of each; the last fades out over the final
+    // fifth of the distance it reaches.
+    const SunCascade& last = cascades.cascades[count - 1];
+    m_uniforms.cascadeInfo =
+        glm::vec4(static_cast<float>(count),
+                  0.1f,
+                  last.splitNear + (last.splitFar - last.splitNear) * 0.8f,
+                  last.splitFar);
+  }
+
+  // A physical sky: its sun, its diffuse light, its reflections (once the
+  // backend has rendered them: skyMode.y), the disk.
+  const FrameSky& sky = m_frame.sky;
+  if (sky.physical)
+  {
+    const SkySettings& settings = sky.physical->settings();
+    // Eyes adapted to a dim sky see its light brighter: the sun's, its
+    // diffuse light and the background here, its reflections in the shader.
+    const float adapted = std::max(sky.adaptation, 0.0f);
+    // (Clouds hide the stars.)
+    m_uniforms.skyMode = glm::vec4(
+        1.0f, 0.0f, 0.0f, settings.nightBrightness * (1.0f - sky.cloudCover));
+    // (The sun's light is faded as it rises clear of the horizon; its disk
+    // isn't.)
+    m_uniforms.skyLight =
+        glm::vec4(adapted,
+                  sky.moonLit ? 1.0f : PhysicalSky::clearOfHorizon(sky.toSun),
+                  0.0f,
+                  0.0f);
+    m_uniforms.sunLight =
+        glm::vec4(sky.sunLight * adapted,
+                  PhysicalSky::kSunRadius * std::max(settings.sunSize, 0.0f));
+    m_uniforms.skyScale =
+        glm::vec4(glm::max(sky.scale, glm::vec3(0.0f)) * adapted,
+                  settings.sunSize > 0.0f ? 40.0f : 0.0f);
+    for (std::size_t i = 0; i < 9; ++i)
+      m_uniforms.skyIrradiance[i] =
+          glm::vec4(sky.irradiance.coefficients[i] * adapted, 0.0f);
+    // The moon's disk, bigger than the sun's (as it looks), its light the
+    // sky's own through the air, behind whatever clouds.
+    const float moonRadius =
+        2.5f * PhysicalSky::kSunRadius * std::max(settings.sunSize, 0.0f);
+    m_uniforms.moon =
+        glm::vec4(sky.toMoon, sky.toMoon.z > -0.02f ? moonRadius : 0.0f);
+    m_uniforms.moonSun = glm::vec4(sky.toSun, sky.moonPhase);
+    m_uniforms.moonLight =
+        glm::vec4(sky.physical->moonLight(sky.toMoon, 1.0f) *
+                      (kMoonDiskGlow * (1.0f - sky.cloudCover)),
+                  sky.moonLit ? 1.0f : 0.0f);
+  }
+  else
+    m_uniforms.skyScale = glm::vec4(1.0f);
 
   // The lights (nearest the camera's target first, as the render system
   // keeps them), and the clusters each reaches.
@@ -402,14 +576,85 @@ PostUniforms FramePlan::bloomUniforms(glm::ivec2 sourceSize) const
                     std::max(bloom.intensity, 0.0f))};
 }
 
-PostUniforms FramePlan::compositeUniforms() const
+PostUniforms FramePlan::compositeUniforms(glm::ivec2 viewport) const
 {
   const BloomSettings& bloom = m_frame.bloom;
-  return {glm::vec4(0.0f),
-          glm::vec4(0.0f,
-                    0.0f,
-                    0.0f,
-                    bloom.enabled ? std::max(bloom.intensity, 0.0f) : 0.0f)};
+  const ColorGrading& grading = m_frame.grading;
+  PostUniforms out{};
+  out.texel = glm::vec4(
+      1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))), 0.0f, 0.0f);
+  out.bloom = glm::vec4(
+      0.0f, 0.0f, 0.0f, bloom.enabled ? std::max(bloom.intensity, 0.0f) : 0.0f);
+  out.tone = glm::vec4(static_cast<float>(grading.toneMapper),
+                       std::exp2(grading.exposure),
+                       std::max(grading.contrast, 0.0f),
+                       std::max(grading.saturation, 0.0f));
+  out.grade = glm::vec4(grading.neutral() ? 0.0f : 1.0f,
+                        std::clamp(grading.vignette, 0.0f, 1.0f),
+                        std::clamp(grading.vignetteSoftness, 0.0f, 1.0f),
+                        static_cast<float>(std::max(viewport.x, 1)) /
+                            static_cast<float>(std::max(viewport.y, 1)));
+  const glm::mat3 balance =
+      whiteBalanceMatrix(grading.temperature, grading.tint);
+  for (int column = 0; column < 3; ++column)
+    out.balance[column] = glm::vec4(balance[column], 0.0f);
+  out.lift = glm::vec4(grading.lift, 0.0f);
+  out.gamma = glm::vec4(1.0f / glm::max(grading.gamma, glm::vec3(0.01f)), 0.0f);
+  out.gain = glm::vec4(grading.gain, 0.0f);
+  return out;
+}
+
+SkyUniforms FramePlan::skyUniforms() const
+{
+  SkyUniforms out{};
+  const FrameSky& sky = m_frame.sky;
+  if (!sky.physical)
+    return out;
+  const PhysicalSky& model = *sky.physical;
+  out.toSun = glm::vec4(sky.toSun, model.solarIrradiance().x);
+  out.rayleigh =
+      glm::vec4(model.rayleighScattering(), PhysicalSky::kRayleighHeight);
+  out.mie = glm::vec4(model.mieScattering(),
+                      model.mieExtinction(),
+                      PhysicalSky::kMieHeight,
+                      PhysicalSky::kMieG);
+  out.ozone = glm::vec4(model.ozoneAbsorption(), 0.0f);
+  out.ground = glm::vec4(sky.groundLight, 0.0f);
+  out.night =
+      glm::vec4(model.nightGlow(glm::vec3(0.0f, 0.0f, 1.0f), sky.night), 0.0f);
+  out.planet = glm::vec4(PhysicalSky::kGroundRadius,
+                         PhysicalSky::kTopRadius,
+                         PhysicalSky::kViewerAltitude,
+                         PhysicalSky::kMultipleScattering);
+  return out;
+}
+
+OcclusionUniforms FramePlan::occlusionUniforms(glm::ivec2 size,
+                                               glm::ivec2 blurStep) const
+{
+  const AmbientOcclusionSettings& settings = m_frame.ambientOcclusion;
+  const glm::vec2 texels(std::max(size.x, 1), std::max(size.y, 1));
+  // A perspective projection's w grows with depth; an orthographic one's
+  // doesn't.
+  const bool perspective = m_frame.projection[2][3] != 0.0f;
+  OcclusionUniforms out{};
+  out.inverseViewProjection = glm::inverse(m_frame.viewProjection);
+  out.camera = glm::vec4(m_frame.cameraPosition, perspective ? 1.0f : 0.0f);
+  out.forward = glm::vec4(m_frame.cameraForward, 0.0f);
+  // Half the pass's height spans 1 / projection[1][1] world units at depth 1
+  // (orthographic: at any depth).
+  out.params = glm::vec4(
+      std::max(settings.radius, 0.01f),
+      std::max(settings.intensity, 0.0f),
+      static_cast<float>(std::clamp(
+          settings.samples, kMinOcclusionSamples, kMaxOcclusionSamples)),
+      0.5f * texels.y * std::abs(m_frame.projection[1][1]));
+  out.size = glm::vec4(texels, 1.0f / texels);
+  // Fading out from 60% of the far plane (or 120 m) to 90% of it (180 m), so
+  // far-off detail (which depth holds less finely) doesn't speckle.
+  const float reach = std::min(m_frame.farPlane, 200.0f);
+  out.blur = glm::vec4(glm::vec2(blurStep), reach * 0.6f, reach * 0.9f);
+  return out;
 }
 
 std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
