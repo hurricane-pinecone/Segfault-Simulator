@@ -289,7 +289,8 @@ mixed in. The result replaces the scene for bloom, depth of field and the
 composite. Not on OpenGL (it reads the lit pass's depth samples, as depth of
 field does), nor in 2D. Things that move on their own (swaying grass, a
 driving tractor) are reprojected as if still, so the clamp is what keeps them
-from ghosting.
+from ghosting. The development key **F9** turns it on or off to compare (see
+[Switching](#switching)).
 
 ### Height fog
 
@@ -372,9 +373,11 @@ one with right-click in Assets > **New Visual Style**. A material's
 **While playing**, the development key **F8** switches to the project's next
 visual style (**Shift+F8**, the one before), wrapping around, in path order
 (`cycleVisualStyle()`, `engine/runtime/rendering/visualStyles.h`); the log
-says which. It's built into `Game`, so every game has it, and isn't something
-a game's scripts see (games can't bind F-keys; the dev console is the
-backtick). The development keys are on:
+says which. **F9** turns [temporal anti-aliasing](#temporal-anti-aliasing) on
+or off, over the scene's and its style's own setting, to compare the two; the
+window title and the log say which. Both are built into `Game`, so every
+game has them, and aren't something a game's scripts see (games can't bind
+F-keys; the dev console is the backtick). The development keys are on:
 
 - in the editor's Play, always;
 - in a debug build of the player;

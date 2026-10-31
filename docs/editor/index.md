@@ -526,8 +526,8 @@ what each setting does.
   Inspector shows every field; each change is saved, and shows in the scene
   at once if the scene uses that style (**Use in Scene** otherwise). Under
   **Replaces The Scene's**, each of Bloom, Haze, Shadow Softness, **Shadow
-  Cascades** (with their distance and split) and **Sky** is ticked on to
-  stand in for the scene's own.
+  Cascades** (with their distance and split), **Sky** and **Temporal
+  Anti-Aliasing** is ticked on to stand in for the scene's own.
 - **Material variants**: a selected material's **Variants** section maps a
   style's tag (its **Material Variant**, e.g. `realistic`) to another material
   to draw instead while that style is on. Works for grass materials too.
@@ -612,8 +612,8 @@ the scene's visual style on, if the terrain is a style's variant) and press
 **T** or click **Terrain** in the viewport toolbar, pick a layer, and drag over
 it. Hold **Shift** to paint the first layer (an eraser). **Size**, **Strength**
 and **Softness** set the brush. Each stroke is saved into the splat map's
-image as it ends. Painting isn't undoable yet: paint the first layer back
-instead. Grass on the mesh follows as you paint.
+image as it ends, and is undoable like any other edit, in its turn among the
+scene's. Grass on the mesh follows as you paint.
 
 ## Ambient occlusion and fog
 
