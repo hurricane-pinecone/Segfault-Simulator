@@ -127,6 +127,12 @@ wgpu's OpenGL fallback, these are off:
 - depth of field (`depthOfField`)
 - point-light shadows (`pointLightShadows`)
 
+`sunShadowCascades` caps how many [cascades](../meshes-and-lighting/index.md#cascaded-shadows)
+the sun's shadow may have (4 on Vulkan, Direct3D 12, Metal and the browser's
+WebGPU); a cascaded atlas is twice the shadow map's size across, so a device
+that can't make a texture that big (some WebGL-class OpenGL drivers) is capped
+at 1, the one map as ever.
+
 ## The renderer contract
 
 `IRenderer` (`engine/runtime/rendering/iRenderer.h`) is what `RenderSystem`
@@ -136,6 +142,7 @@ draws through, for flat, isometric and 3D games alike:
 | --- | --- |
 | `createMesh` / `destroyMesh` | Upload or free a mesh (`MeshHandle`) |
 | `createMaterial` / `updateMaterial` / `destroyMaterial` | Upload, change or free a material and its textures (`MaterialHandle`) |
+| `updateTexture` | A texture's pixels changed in a rectangle (a terrain's splat map, painted): show them on every material using it. Only textures uploaded without mipmaps take this; others wait for their material to be made again. |
 | `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps |
 | `beginFrame(FrameParams)` | Start a frame: camera, lighting, shadows, wind, time |
 | `drawMesh(MeshBatch)` | Queue one mesh's instances (lit, shadow-casting) |
