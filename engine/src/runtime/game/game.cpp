@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <memory>
 #include <string>
@@ -209,11 +210,14 @@ void Game::onFatalError(const std::string& message)
 {
   LOG_ERROR(message);
 #ifndef __EMSCRIPTEN__
-  // Works without a window too (e.g. before one opens).
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
-                           "Error",
-                           (message + "\n\nThe log has the details.").c_str(),
-                           ownsWindow() ? window : nullptr);
+  // Works without a window too (e.g. before one opens). Unless nobody's there
+  // to click it (an automated run sets SFS_NO_ERROR_DIALOG): then the log
+  // says it, and the game ends rather than waiting on a dialog.
+  if (!std::getenv("SFS_NO_ERROR_DIALOG"))
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                             "Error",
+                             (message + "\n\nThe log has the details.").c_str(),
+                             ownsWindow() ? window : nullptr);
 #endif
   isRunning = false;
 }

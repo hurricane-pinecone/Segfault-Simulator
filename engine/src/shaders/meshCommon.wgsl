@@ -33,7 +33,8 @@ struct Frame {
   skyIrradiance: array<vec4f, 9>, // a physical sky's diffuse light: SH9 (rgb), convolved, / pi
   skyLight: vec4f,     // x what eyes adapted to a dim sky scale its light by (its reflections: the
                        // rest is already scaled), y how much of the sun's light clears the horizon
-                       // (sunLight is faded by it; its disk isn't)
+                       // (sunLight is faded by it; its disk isn't), z what they scale lamps by
+                       // (point lights, emission: lit for eyes adapted to the night)
   ambientOcclusion: vec4f, // x on (0/1: its map is read), y how near in depth (of a pixel's) the
                            // map's must be to count
   fog: vec4f,          // height fog: x density, y height falloff, z base height, w start distance

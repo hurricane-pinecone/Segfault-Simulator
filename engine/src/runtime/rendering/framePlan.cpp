@@ -30,6 +30,9 @@ constexpr double kGrassMostBlades = 4.0e6;
 constexpr int kGrassMostCells = 2048;
 // How much grass's colour covers the ground it grows on, where it's full.
 constexpr float kGrassGroundTint = 0.9f;
+// How much wider a blade's shadow is than the blade: a little, so a field's
+// shadows hold together at the shadow map's resolution rather than flicker.
+constexpr float kGrassShadowWidth = 1.6f;
 // How much brighter a physical sky's moon's disk is than its light on a
 // surface facing it.
 constexpr float kMoonDiskGlow = 120.0f;
@@ -52,6 +55,7 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
 TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain)
 {
   TerrainUniforms out{};
+  const float sharpness = std::clamp(terrain.triplanarSharpness, 0.0f, 1.0f);
   const std::size_t count =
       std::min(terrain.layers.size(), std::size_t{kMaxTerrainLayers});
   for (std::size_t i = 0; i < kMaxTerrainLayers; ++i)
@@ -62,8 +66,12 @@ TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain)
                   : (count > 0 ? terrain.layers[0] : TerrainLayer{});
     out.layers[i] = glm::vec4(glm::max(layer.tint, glm::vec3(0.0f)),
                               1.0f / std::max(layer.tileSize, 0.01f));
-    out.detail[i] = glm::vec4(
-        std::clamp(layer.roughness, 0.0f, 1.0f), layer.normalScale, 0.0f, 0.0f);
+    out.detail[i] = glm::vec4(std::clamp(layer.roughness, 0.0f, 1.0f),
+                              layer.normalScale,
+                              std::clamp(layer.meadow, 0.0f, 1.0f),
+                              // Its side projections' blend: the normal's
+                              // weights raised to this (0: from above only).
+                              layer.triplanar ? 1.0f + 3.0f * sharpness : 0.0f);
   }
   out.params = glm::vec4(static_cast<float>(std::max<std::size_t>(count, 1)),
                          std::clamp(terrain.blendSharpness, 0.0f, 1.0f),
@@ -418,11 +426,12 @@ void FramePlan::finish(
                                     1.0f,
                                     m_frame.farPlane);
   }
-  // Ambient occlusion: its map counts where it's within a twentieth of a
-  // pixel's depth (else, e.g. grass blades, which it doesn't hold, go
-  // without).
-  if (m_frame.ambientOcclusion.enabled)
-    m_uniforms.ambientOcclusion = glm::vec4(1.0f, 0.05f, 0.0f, 0.0f);
+  // Ambient occlusion and contact shadows: their map counts where it's
+  // within a twentieth of a pixel's depth (else, e.g. grass blades, which it
+  // doesn't hold, go without).
+  if (screenOcclusionOn())
+    m_uniforms.ambientOcclusion =
+        glm::vec4(1.0f, 0.05f, contactShadowsOn() ? 1.0f : 0.0f, 0.0f);
   // A visual style's balance of sun and ambient light; and, tone mapped,
   // light may go past white (the curve rolls it off), else it stops there.
   const LightBalance& balance = m_frame.lightBalance;
@@ -484,7 +493,7 @@ void FramePlan::finish(
     m_uniforms.skyLight =
         glm::vec4(adapted,
                   sky.moonLit ? 1.0f : PhysicalSky::clearOfHorizon(sky.toSun),
-                  0.0f,
+                  std::clamp(sky.lampScale, 0.0f, 1.0f),
                   0.0f);
     m_uniforms.sunLight =
         glm::vec4(sky.sunLight * adapted,
@@ -654,7 +663,29 @@ OcclusionUniforms FramePlan::occlusionUniforms(glm::ivec2 size,
   // far-off detail (which depth holds less finely) doesn't speckle.
   const float reach = std::min(m_frame.farPlane, 200.0f);
   out.blur = glm::vec4(glm::vec2(blurStep), reach * 0.6f, reach * 0.9f);
+
+  // Contact shadows toward the frame's light (the moon's, when it's in the
+  // sun's place), gone by half that reach (100 m at most): past it a texel's
+  // too coarse for them, and the shadow maps hold what they would.
+  out.viewProjection = m_frame.viewProjection;
+  out.light = glm::vec4(
+      glm::vec3(m_uniforms.sunDirection), settings.enabled ? 1.0f : 0.0f);
+  if (contactShadowsOn())
+  {
+    const ContactShadowSettings& contact = m_frame.contactShadows;
+    out.contact = glm::vec4(std::max(contact.length, 0.01f),
+                            std::max(contact.thickness, 0.01f),
+                            std::clamp(contact.strength, 0.0f, 1.0f),
+                            reach * 0.5f);
+  }
   return out;
+}
+
+bool FramePlan::contactShadowsOn() const
+{
+  const ContactShadowSettings& settings = m_frame.contactShadows;
+  return settings.enabled && settings.strength > 0.0f &&
+         settings.length > 0.0f && m_frame.sky.physical != nullptr;
 }
 
 std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
@@ -676,6 +707,22 @@ std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
                 settings.blur * 8.0f * static_cast<float>(viewport.y) / 1080.0f,
                 0.0f),
       glm::vec4(1.0f / glm::vec2(half), 0.0f, 0.0f)};
+}
+
+float grassShadowReach(const GrassBatch& batch, const FrameParams& frame)
+{
+  if (!batch.castsShadows || !frame.shadows.enabled)
+    return 0.0f;
+  const float reach =
+      frame.cascades.count > 1
+          ? std::min(frame.cascades
+                         .cascades[std::min(frame.cascades.count,
+                                            kGrassShadowCascades) -
+                                   1]
+                         .splitFar,
+                     kGrassShadowMostReach)
+          : kGrassShadowOneMapReach;
+  return std::clamp(reach, 0.0f, std::max(batch.drawDistance, 0.0f));
 }
 
 std::optional<GrassPlan> planGrass(const GrassBatch& batch,
@@ -703,14 +750,21 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
           : glm::vec4(field.mapsGrid.min,
                       1.0f / (field.mapsGrid.max - field.mapsGrid.min));
 
+  const float shadowReach = grassShadowReach(batch, frame);
+
   GrassPlan plan;
-  // How it's drawn (its ground, even with no blades in reach).
+  // How it's drawn (its ground, even with no blades in reach), and its
+  // blades' shadows.
   plan.draw = {field.trampleBounds,
                glm::vec4(std::clamp(batch.stiffness, 0.0f, 1.0f),
                          distance,
                          kGrassGroundTint,
                          shape.height),
                maps,
+               glm::vec4(std::clamp(batch.selfShadow, 0.0f, 1.0f),
+                         shadowReach,
+                         kGrassShadowWidth,
+                         0.0f),
                model,
                normalMatrix,
                glm::inverse(model)};
@@ -726,10 +780,13 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
   uniforms.maps = maps;
   uniforms.shape =
       glm::vec4(shape.height, shape.heightVariation, shape.width, cell);
-  uniforms.detail = glm::vec4(
-      distance * kGrassFineDetail, distance * kGrassMidDetail, 0.0f, 0.0f);
+  uniforms.detail = glm::vec4(distance * kGrassFineDetail,
+                              distance * kGrassMidDetail,
+                              shadowReach,
+                              0.0f);
 
-  // Each lattice's cells within its reach of the camera, on the ground.
+  // Each lattice's cells within its reach of the camera, on the ground (from
+  // its own origin: see meshGrassGrow.wgsl).
   const glm::vec2 camera(glm::inverse(model) *
                          glm::vec4(frame.cameraPosition, 1.0f));
   glm::ivec2 most(0);
@@ -741,16 +798,14 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
     const float own = reach / least;
     const glm::vec2 low = glm::max(camera - own, ground.min);
     const glm::vec2 high = glm::min(camera + own, ground.max);
-    glm::ivec2 first(glm::floor((low - ground.min) / size));
+    glm::ivec2 first(glm::floor(low / size));
     glm::ivec2 count =
-        glm::max(glm::ivec2(glm::ceil((high - ground.min) / size)) - first,
-                 glm::ivec2(0));
+        glm::max(glm::ivec2(glm::ceil(high / size)) - first, glm::ivec2(0));
     // Too many: those nearest the camera.
     for (int axis = 0; axis < 2; ++axis)
       if (count[axis] > kGrassMostCells)
       {
-        first[axis] = static_cast<int>(std::floor(
-                          (camera[axis] - ground.min[axis]) / size)) -
+        first[axis] = static_cast<int>(std::floor(camera[axis] / size)) -
                       kGrassMostCells / 2;
         count[axis] = kGrassMostCells;
       }
@@ -758,6 +813,7 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
     most = glm::max(most, count);
   }
   plan.capacity = field.capacity;
+  plan.shadowCapacity = field.shadowCapacity;
   if (most.x <= 0 || most.y <= 0)
     return plan;
 
@@ -794,6 +850,11 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
     needed[list] *= fit;
     grow = grow || needed[list] > field.capacity[list];
   }
+  // The shadow casters: those within its reach, whichever list they're in.
+  const double casting =
+      shadowReach > 0.0f
+          ? std::min(within(shadowReach), whole) * fit * 1.15 + 256.0
+          : 0.0;
   if (grow)
     // Room to spare, so it isn't made again as the camera moves a little; a
     // multiple of 8 blades a list, for the lists' bindings' offsets.
@@ -805,8 +866,16 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
           (static_cast<uint64_t>(std::min(room, kGrassMostBlades)) + 7) / 8 *
           8);
     }
-  uniforms.capacity =
-      glm::uvec4(plan.capacity[0], plan.capacity[1], plan.capacity[2], 0);
+  // Theirs likewise (a multiple of 64, as it's cheap).
+  if (casting > field.shadowCapacity)
+    plan.shadowCapacity = static_cast<uint32_t>(
+        (static_cast<uint64_t>(std::min(casting * 1.25, kGrassMostBlades)) +
+         63) /
+        64 * 64);
+  uniforms.capacity = glm::uvec4(plan.capacity[0],
+                                 plan.capacity[1],
+                                 plan.capacity[2],
+                                 plan.shadowCapacity);
   plan.workgroups = glm::uvec3(static_cast<uint32_t>(most.x + 7) / 8,
                                static_cast<uint32_t>(most.y + 7) / 8,
                                4);

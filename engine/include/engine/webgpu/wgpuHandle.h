@@ -72,6 +72,7 @@ SFS_WGPU_HANDLE(RenderPipeline, WGPURenderPipeline, wgpuRenderPipelineRelease)
 SFS_WGPU_HANDLE(ComputePipeline,
                 WGPUComputePipeline,
                 wgpuComputePipelineRelease)
+SFS_WGPU_HANDLE(QuerySet, WGPUQuerySet, wgpuQuerySetRelease)
 
 #undef SFS_WGPU_HANDLE
 

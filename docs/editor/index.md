@@ -550,15 +550,25 @@ They sway in the scene's wind, and flatten where things move through them.
 | Stiffness | How little they sway in the wind |
 | Recovery | Seconds flattened grass takes to stand back up |
 | Draw Distance | How far away grass is drawn. It's densest near the camera and thins out toward this distance. |
+| Casts Shadows | Whether blades near the camera cast the sun's shadow (on by default). Only the two nearest shadow cascades get them, up to about 30 units, where a blade's shadow is big enough to see. With one shadow map, the first 8. |
+| Self Shadow | How much darker the grass gets down toward its roots, where the blades around shut out the sky and some of the sun. It makes a field look deep at any distance, well past where blades cast shadows. 0 turns it off (0.5) |
 
 **Wind** is the scene's, in Scene Settings: its direction (degrees), strength
 and gustiness. Gusts roll across the grass the way the wind blows. Long grass
 waves in it, and grass mown short (painted with **Length**) hardly moves.
 
 The grass's colour also tints the ground under it, so the gaps between blades
-look like grass. To hide where grass stops being drawn, add **Haze** in Scene
-Settings to fade the distance into the sky. You can also turn on the camera's
-**Depth Of Field** to soften what's far away.
+look like grass. Toward the draw distance the blades thin out, grow wider so
+the field still looks full, and shrink down into the ground, so there's no
+line where they end. Past it, the ground's own material shows: on a terrain,
+raise its grassy layers' **Meadow** so they look like grass from afar (patchy
+colour, a sheen at low angles, and bands rolling with the wind). **Haze** in
+Scene Settings fades the distance into the sky.
+
+Grass on a big mesh, like land out to the horizon, grows only around the
+camera, in a window that follows it, so it costs no more than a small field.
+Set a field into a hole in the land (with its edge on a whole number of
+quarter units) and give both the same grass, and they meet with no seam.
 
 **What flattens grass:** anything with a Rigid Body, sized by its colliders,
 unless its **Bends Grass** is off. A **Grass Bender** component does the same
@@ -590,8 +600,11 @@ change the same maps as it plays (see
 A material can be a **terrain**: select a material and click **Convert to
 Terrain** in the Inspector. Its **layers** (up to five: e.g. grass, dirt, a
 path) each have a colour texture (its alpha is the layer's height), a normal
-map, a roughness map, a tint, a **Tile Size** in metres and how much **Grass**
-grows on it. **New Splat Map** makes the map that says where each layer is.
+map, a roughness map, a tint, a **Tile Size** in metres, how much **Grass**
+grows on it, and how much it looks like a **Meadow** from afar (for grassy
+layers, past where blades are drawn). Tick **Triplanar** on rock and other
+layers on steep ground so they don't stretch down cliffs (**Triplanar
+Sharpness** sets how they blend). **New Splat Map** makes the map that says where each layer is.
 See [Terrain materials](../runtime/rendering/meshes-and-lighting/index.md#terrain-materials).
 
 **The terrain brush:** select something drawn with a terrain material (with
@@ -605,9 +618,9 @@ instead. Grass on the mesh follows as you paint.
 ## Ambient occlusion and fog
 
 Scene Settings > **Occlusion & Fog** turns on **Ambient Occlusion** (radius,
-intensity, samples) and **Height Fog** (density, height falloff, base height,
-start distance, max opacity, sun glow), each showing its settings only while
-on. A visual style can carry its own of each (Inspector > Replaces The
+intensity, samples), **Contact Shadows** (length, thickness, strength) and
+**Height Fog** (density, height falloff, base height, start distance, max
+opacity, sun glow), each showing its settings only while on. A visual style can carry its own of each (Inspector > Replaces The
 Scene's), and its **Material Overrides** draw any material, a game's own
 included, as another while it's on.
 

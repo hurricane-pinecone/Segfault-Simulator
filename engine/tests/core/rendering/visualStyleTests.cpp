@@ -2,6 +2,7 @@
 
 #include <engine/core/rendering/ambientOcclusion.h>
 #include <engine/core/rendering/colorGrading.h>
+#include <engine/core/rendering/contactShadows.h>
 #include <engine/core/rendering/fog.h>
 #include <engine/core/rendering/visualStyle.h>
 
@@ -173,6 +174,22 @@ int main()
     CHECK(partial->ambientOcclusion->samples == kMaxOcclusionSamples);
     CHECK(testing::approx(partial->ambientOcclusion->radius, 1.0f));
     CHECK(!partial->fog->enabled); // as the default
+
+    // Contact shadows, the same way.
+    CHECK(!none.toJson().contains("contactShadows"));
+    CHECK(!plain->contactShadows);
+    VisualStyle contact;
+    contact.contactShadows = ContactShadowSettings{
+        .enabled = true, .length = 0.7f, .thickness = 0.4f, .strength = 0.5f};
+    const std::optional<VisualStyle> reloaded =
+        VisualStyle::fromJson(contact.toJson());
+    CHECK(reloaded && *reloaded == contact);
+    const std::optional<VisualStyle> partialContact =
+        VisualStyle::fromJson({{"contactShadows", {{"enabled", true}}}});
+    CHECK(partialContact && partialContact->contactShadows);
+    CHECK(partialContact->contactShadows->enabled);
+    CHECK(testing::approx(partialContact->contactShadows->length,
+                          ContactShadowSettings{}.length));
 
     // Material overrides, by name, only when there are some.
     CHECK(!none.toJson().contains("materials"));

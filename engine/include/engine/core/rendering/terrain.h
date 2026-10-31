@@ -41,6 +41,11 @@ inline constexpr std::size_t kMaxTerrainLayers = 5;
  * @param tileSize         world units across one repeat of its textures
  * @param grass            how much of a grass field on the mesh grows over it
  *                         (1: as its maps say; 0: none, bare dirt)
+ * @param meadow           how much it reads as a grass meadow from afar, past
+ *                         where grass blades are drawn (0 to 1): its colour
+ *                         breaks up in patches, a soft sheen at low angles,
+ *                         and light and dark bands roll across it with the
+ *                         wind, as they do over the blades
  */
 struct TerrainLayer
 {
@@ -53,6 +58,8 @@ struct TerrainLayer
   float roughness = 1.0f;
   float normalScale = 1.0f;
   float grass = 1.0f;
+  float meadow = 0.0f;
+  bool triplanar = false;
 
   bool operator==(const TerrainLayer&) const = default;
 };
@@ -72,6 +79,12 @@ struct TerrainLayer
  * (`variation`). Layers blend by height (`blendSharpness`): at 0 a smooth
  * cross-fade, toward 1 a crisp edge where the higher layer pokes through.
  *
+ * From above, a layer stretches down steep slopes. A `triplanar` layer is
+ * also laid from the sides where the ground is steeper than about 35
+ * degrees: from the two axes the surface faces most (biplanar mapping),
+ * blended by its normal, toward a crisp switch at `triplanarSharpness` 1.
+ * Gentler ground keeps the one projection from above (and its cost).
+ *
  * Grass on the mesh (GrassComponent) grows where its layers' `grass` says,
  * x its own maps. A vertex colour isn't used.
  */
@@ -88,6 +101,7 @@ struct TerrainMaterial
   float blendSharpness = 0.5f;
   bool antiTiling = true;
   float variation = 0.15f;
+  float triplanarSharpness = 0.5f;
 
   bool operator==(const TerrainMaterial&) const = default;
 };
@@ -141,6 +155,8 @@ struct TerrainLayerAsset
   float roughness = 1.0f;
   float normalScale = 1.0f;
   float grass = 1.0f;
+  float meadow = 0.0f;
+  bool triplanar = false;
 
   bool operator==(const TerrainLayerAsset&) const = default;
 };
@@ -151,10 +167,12 @@ struct TerrainLayerAsset
  *   "terrain": {
  *     "splatMap": "asset:<id>",
  *     "blendSharpness": 0.5, "antiTiling": true, "variation": 0.15,
+ *     "triplanarSharpness": 0.5,
  *     "layers": [{"name": "Grass", "baseTexture": "asset:<id>",
  *                 "normalTexture": "", "roughnessTexture": "",
  *                 "tint": [1, 1, 1], "tileSize": 4, "roughness": 1,
- *                 "normalScale": 1, "grass": 1}, ...]
+ *                 "normalScale": 1, "grass": 1, "meadow": 0,
+ *                 "triplanar": false}, ...]
  *   }
  */
 struct TerrainAsset
@@ -164,6 +182,7 @@ struct TerrainAsset
   float blendSharpness = 0.5f;
   bool antiTiling = true;
   float variation = 0.15f;
+  float triplanarSharpness = 0.5f;
 
   nlohmann::json toJson() const;
   /** Missing keys keep their defaults (at most kMaxTerrainLayers layers). */

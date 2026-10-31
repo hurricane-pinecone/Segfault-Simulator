@@ -410,7 +410,28 @@ float PhysicalSky::adaptation(const glm::vec3& toSun,
   const float noon = 0.9f * std::max(m_settings.intensity, 1e-3f);
   const float stops =
       std::log2(noon / std::max(light, 1e-6f)) * m_settings.adaptation;
-  return std::exp2(std::clamp(stops, 0.0f, 3.0f));
+  return std::exp2(std::clamp(stops, 0.0f, std::log2(kMostAdaptation)));
+}
+
+float PhysicalSky::mostAdaptation() const
+{
+  // Adapted to (next to) no light at all.
+  return adaptation(
+      glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f), glm::vec3(0.0f));
+}
+
+float PhysicalSky::lampScale(float adapted) const
+{
+  return std::clamp(adapted / mostAdaptation(), 0.0f, 1.0f);
+}
+
+float PhysicalSky::lampShadow(float intensity, float lampScale)
+{
+  const float t = std::clamp((intensity * lampScale - kLampShadowFrom) /
+                                 (kLampShadowFull - kLampShadowFrom),
+                             0.0f,
+                             1.0f);
+  return t * t * (3.0f - 2.0f * t);
 }
 
 SkyIrradiance PhysicalSky::irradiance(const glm::vec3& toSun, float night) const

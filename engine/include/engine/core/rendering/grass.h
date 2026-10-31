@@ -74,6 +74,22 @@ struct GrassGrid
 };
 
 /**
+ * A window of a big mesh's ground for grass to grow in (see GrassModule): a
+ * square `half` either side of `center`, cut to the mesh's `min`..`max` (all
+ * the mesh's own XY). Its texels are `texel` across, or twice, four times...
+ * that, so it has at most kGrassMaxTexels a side; and they sit on multiples
+ * of `texel` from the mesh's origin, wherever the window is. So a window's
+ * ground meets another mesh's on the same lattice texel for texel (a hole in
+ * one where the other is), and the same texels come back as it moves.
+ * Empty if the square misses the mesh.
+ */
+GrassGrid grassWindow(glm::vec2 min,
+                      glm::vec2 max,
+                      glm::vec2 center,
+                      float half,
+                      float texel);
+
+/**
  * The ground grass grows on: a mesh seen from above, as a grid. Each texel
  * has the height (the mesh's own Z) and normal of the highest surface there
  * that faces up enough (when placed by the entity's transform), or nothing.
@@ -87,12 +103,14 @@ public:
    * The ground of a mesh's triangles (`positions` indexed by `indices`, its
    * own space), placed by `model`, on a grid over its XY with texels about
    * kGrassTexel world units across. With `uvs` (one a position), each texel
-   * keeps the mesh's texture coordinates there too (uv()).
+   * keeps the mesh's texture coordinates there too (uv()). With `window`,
+   * only the ground on that grid (e.g. a grassWindow()), and on it.
    */
   static GrassGround build(std::span<const glm::vec3> positions,
                            std::span<const uint32_t> indices,
                            const glm::mat4& model,
-                           std::span<const glm::vec2> uvs = {});
+                           std::span<const glm::vec2> uvs = {},
+                           const GrassGrid* window = nullptr);
 
   const GrassGrid& grid() const { return m_grid; }
   bool empty() const { return m_texels.empty(); }

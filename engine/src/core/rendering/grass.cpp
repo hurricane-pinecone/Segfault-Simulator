@@ -158,12 +158,43 @@ GrassGrid::over(glm::vec2 min, glm::vec2 max, float texel, int maxTexels)
   return grid;
 }
 
+GrassGrid grassWindow(glm::vec2 min,
+                      glm::vec2 max,
+                      glm::vec2 center,
+                      float half,
+                      float texel)
+{
+  GrassGrid grid;
+  texel = std::max(texel, 1e-4f);
+  const glm::vec2 low = glm::max(center - half, min);
+  const glm::vec2 high = glm::min(center + half, max);
+  if (!(high.x > low.x) || !(high.y > low.y))
+    return grid;
+  // Coarser, by twos, until it fits; on the lattice of multiples of `texel`
+  // either way.
+  float side = texel;
+  glm::ivec2 first, last;
+  for (;;)
+  {
+    first = glm::ivec2(glm::floor(low / side));
+    last = glm::ivec2(glm::ceil(high / side));
+    if (std::max(last.x - first.x, last.y - first.y) <= kGrassMaxTexels)
+      break;
+    side *= 2.0f;
+  }
+  grid.min = glm::vec2(first) * side;
+  grid.size = glm::max(last - first, glm::ivec2(1));
+  grid.max = grid.min + glm::vec2(grid.size) * side;
+  return grid;
+}
+
 // --- GrassGround -------------------------------------------------------------
 
 GrassGround GrassGround::build(std::span<const glm::vec3> positions,
                                std::span<const uint32_t> indices,
                                const glm::mat4& model,
-                               std::span<const glm::vec2> uvs)
+                               std::span<const glm::vec2> uvs,
+                               const GrassGrid* window)
 {
   const bool withUvs = !uvs.empty() && uvs.size() == positions.size();
   GrassGround ground;
@@ -203,22 +234,30 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
     if (glm::length(own) <= 1e-12f)
       continue;
     triangle.normal = glm::normalize(own) * facing;
+    glm::vec2 from(triangle.local[0]), to(triangle.local[0]);
     for (const glm::vec3& corner : triangle.local)
     {
-      low = glm::min(low, glm::vec2(corner));
-      high = glm::max(high, glm::vec2(corner));
+      from = glm::min(from, glm::vec2(corner));
+      to = glm::max(to, glm::vec2(corner));
     }
+    // Off the window: none of its ground.
+    if (window && (to.x < window->min.x || to.y < window->min.y ||
+                   from.x > window->max.x || from.y > window->max.y))
+      continue;
+    low = glm::min(low, from);
+    high = glm::max(high, to);
     triangles.push_back(triangle);
   }
-  if (triangles.empty())
+  if (triangles.empty() || (window && window->empty()))
     return ground;
 
   // Texels about kGrassTexel across in the world, by the placement's
-  // sideways scale.
+  // sideways scale (or the window's).
   const float scale = std::max({glm::length(glm::vec3(model[0])),
                                 glm::length(glm::vec3(model[1])),
                                 1e-6f});
-  ground.m_grid = GrassGrid::over(low, high, kGrassTexel / scale);
+  ground.m_grid =
+      window ? *window : GrassGrid::over(low, high, kGrassTexel / scale);
   const GrassGrid& grid = ground.m_grid;
   ground.m_texels.assign(grid.count(), glm::vec4(0.0f));
   if (withUvs)
@@ -540,37 +579,30 @@ GrassTrample::GrassTrample(const GrassGround& ground,
   const GrassGrid& grid = ground.grid();
 
   // The ground in the world: points across each texel with ground, a few to
-  // a trample texel, so every texel under grass gets its height.
+  // a trample texel, so every texel under grass gets its height. First where
+  // they reach (from the texels' corners), then the heights.
   const glm::vec2 texel = grid.texelSize();
-  const float worldTexel = std::max(glm::length(glm::vec3(model[0])) * texel.x,
-                                    glm::length(glm::vec3(model[1])) * texel.y);
-  const int steps =
-      std::clamp(int(std::ceil(worldTexel * kTexelsPerUnit)) + 1, 1, 8);
-  std::vector<glm::vec3> points;
+  glm::vec2 low(std::numeric_limits<float>::max());
+  glm::vec2 high(std::numeric_limits<float>::lowest());
   for (int y = 0; y < grid.size.y; ++y)
     for (int x = 0; x < grid.size.x; ++x)
     {
       if (!ground.has(x, y))
         continue;
-      const float height = ground.texel(x, y).w;
-      for (int sy = 0; sy < steps; ++sy)
-        for (int sx = 0; sx < steps; ++sx)
-        {
-          const glm::vec2 local =
-              grid.min +
-              (glm::vec2(x, y) + (glm::vec2(sx, sy) + 0.5f) / float(steps)) *
-                  texel;
-          points.emplace_back(model * glm::vec4(local, height, 1.0f));
-        }
+      for (int corner = 0; corner < 4; ++corner)
+      {
+        const glm::vec2 local =
+            grid.min + (glm::vec2(x, y) +
+                        glm::vec2(float(corner & 1), float(corner >> 1))) *
+                           texel;
+        const glm::vec2 world(model *
+                              glm::vec4(local, ground.texel(x, y).w, 1.0f));
+        low = glm::min(low, world);
+        high = glm::max(high, world);
+      }
     }
-  if (points.empty())
+  if (!(high.x >= low.x))
     return;
-  glm::vec2 low(points[0]), high(points[0]);
-  for (const glm::vec3& point : points)
-  {
-    low = glm::min(low, glm::vec2(point));
-    high = glm::max(high, glm::vec2(point));
-  }
 
   const glm::vec2 extent =
       glm::max(high - low, glm::vec2(1.0f / kTexelsPerUnit));
@@ -587,9 +619,27 @@ GrassTrample::GrassTrample(const GrassGround& ground,
   m_ground.assign(count, -std::numeric_limits<float>::infinity());
   m_amount.assign(count, 0.0f);
   m_direction.assign(count, glm::vec2(0.0f));
-  for (const glm::vec3& point : points)
-    if (const int i = indexOf(glm::vec2(point)); i >= 0)
-      m_ground[i] = std::max(m_ground[i], point.z);
+  const float worldTexel = std::max(glm::length(glm::vec3(model[0])) * texel.x,
+                                    glm::length(glm::vec3(model[1])) * texel.y);
+  const int steps = std::clamp(int(std::ceil(worldTexel / side)) + 1, 1, 8);
+  for (int y = 0; y < grid.size.y; ++y)
+    for (int x = 0; x < grid.size.x; ++x)
+    {
+      if (!ground.has(x, y))
+        continue;
+      const float height = ground.texel(x, y).w;
+      for (int sy = 0; sy < steps; ++sy)
+        for (int sx = 0; sx < steps; ++sx)
+        {
+          const glm::vec2 local =
+              grid.min +
+              (glm::vec2(x, y) + (glm::vec2(sx, sy) + 0.5f) / float(steps)) *
+                  texel;
+          const glm::vec3 point(model * glm::vec4(local, height, 1.0f));
+          if (const int i = indexOf(glm::vec2(point)); i >= 0)
+            m_ground[i] = std::max(m_ground[i], point.z);
+        }
+    }
 
   // Fill gaps a texel or two wide from their neighbours.
   for (int pass = 0; pass < 2; ++pass)

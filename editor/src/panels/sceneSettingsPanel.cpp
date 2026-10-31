@@ -279,8 +279,8 @@ void sceneSkyAndShadows(sfs::RenderSystem& render, EditorHistory& history)
   ImGui::PopID();
 }
 
-// Ambient occlusion and height fog (a 3D scene's). A visual style with its
-// own stands in for each while it's chosen.
+// Ambient occlusion, contact shadows and height fog (a 3D scene's). A visual
+// style with its own stands in for each while it's chosen.
 void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
 {
   if (render.space2D() ||
@@ -296,6 +296,14 @@ void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
   if (style && style->ambientOcclusion)
     ImGui::TextDisabled(
         "The visual style's ambient occlusion stands in for this");
+  ImGui::PopID();
+
+  ImGui::PushID("contact");
+  sfs::ContactShadowSettings contact = render.contactShadowSettings();
+  if (lookWidgets::contactShadows(&history, contact))
+    render.setContactShadowSettings(contact);
+  if (style && style->contactShadows)
+    ImGui::TextDisabled("The visual style's contact shadows stand in for this");
   ImGui::PopID();
 
   ImGui::PushID("fog");

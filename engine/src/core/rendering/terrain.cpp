@@ -175,7 +175,8 @@ nlohmann::json TerrainAsset::toJson() const
   nlohmann::json out = {{"splatMap", splatMap},
                         {"blendSharpness", blendSharpness},
                         {"antiTiling", antiTiling},
-                        {"variation", variation}};
+                        {"variation", variation},
+                        {"triplanarSharpness", triplanarSharpness}};
   nlohmann::json saved = nlohmann::json::array();
   for (const TerrainLayerAsset& layer : layers)
     saved.push_back({{"name", layer.name},
@@ -186,7 +187,9 @@ nlohmann::json TerrainAsset::toJson() const
                      {"tileSize", layer.tileSize},
                      {"roughness", layer.roughness},
                      {"normalScale", layer.normalScale},
-                     {"grass", layer.grass}});
+                     {"grass", layer.grass},
+                     {"meadow", layer.meadow},
+                     {"triplanar", layer.triplanar}});
   out["layers"] = std::move(saved);
   return out;
 }
@@ -199,6 +202,7 @@ TerrainAsset TerrainAsset::fromJson(const nlohmann::json& json)
   read(json, "splatMap", out.splatMap);
   read(json, "blendSharpness", out.blendSharpness);
   read(json, "variation", out.variation);
+  read(json, "triplanarSharpness", out.triplanarSharpness);
   if (const auto it = json.find("antiTiling");
       it != json.end() && it->is_boolean())
     out.antiTiling = it->get<bool>();
@@ -221,6 +225,10 @@ TerrainAsset TerrainAsset::fromJson(const nlohmann::json& json)
       read(item, "roughness", layer.roughness);
       read(item, "normalScale", layer.normalScale);
       read(item, "grass", layer.grass);
+      read(item, "meadow", layer.meadow);
+      if (const auto triplanar = item.find("triplanar");
+          triplanar != item.end() && triplanar->is_boolean())
+        layer.triplanar = triplanar->get<bool>();
       out.layers.push_back(std::move(layer));
     }
   return out;

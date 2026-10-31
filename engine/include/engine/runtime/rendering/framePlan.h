@@ -67,9 +67,12 @@ struct FrameUniforms
   std::array<glm::vec4, 9> skyIrradiance; // SH9 (SkyIrradiance)
   glm::vec4 skyLight; // x what eyes adapted to dusk and night scale the sky's
                       // light by (its reflections'; the rest is scaled), y
-                      // how much of the sun's light clears the horizon
-  // Ambient occlusion: x on (0/1; its map is read), y how near in depth (of
-  // a pixel's) the map's must be to count.
+                      // how much of the sun's light clears the horizon, z
+                      // what they scale lamps by (point lights, emission:
+                      // PhysicalSky::lampScale)
+  // Ambient occlusion: x on (0/1; its map is read, for it or contact
+  // shadows), y how near in depth (of a pixel's) the map's must be to count,
+  // z contact shadows on (0/1; the map's b holds them).
   glm::vec4 ambientOcclusion;
   glm::vec4 fog;      // height fog: density, height falloff, base height,
                       // start distance
@@ -138,6 +141,8 @@ struct GrassUniforms
   glm::vec4 blade;   // stiffness, draw distance, how much the ground's tinted,
                      // full height
   glm::vec4 maps;    // the maps' grid min, 1 / its size (0: unpainted)
+  glm::vec4 shadow;  // self-shadow strength, how far blades cast the sun's
+                     // shadow (0: none), how much wider than a blade, 0
   glm::mat4 model;
   glm::mat4 normalMatrix;
   glm::mat4 inverseModel;
@@ -152,11 +157,11 @@ struct GrassGrowUniforms
   glm::vec4 camera; // xyz, draw distance
   glm::vec4 ground; // the ground grid's min, texel size
   glm::ivec4 groundSize;
-  glm::vec4 maps;                     // the maps' grid min, 1 / its size
-  glm::vec4 shape;                    // height, variation, width, finest cell
-  glm::vec4 reach;                    // each lattice's
-  glm::vec4 detail;                   // 5 segments to, 2 to
-  glm::uvec4 capacity;                // each list's
+  glm::vec4 maps;      // the maps' grid min, 1 / its size
+  glm::vec4 shape;     // height, variation, width, finest cell
+  glm::vec4 reach;     // each lattice's
+  glm::vec4 detail;    // 5 segments to, 2 to, casting shadows to (0: none)
+  glm::uvec4 capacity; // each list's, and the shadow casters'
   std::array<glm::ivec4, 4> lattices; // first cell, count
 };
 static_assert(sizeof(GrassGrowUniforms) == 416,
@@ -175,19 +180,27 @@ struct UiInstance
   glm::vec4 shape; // radius, softness, border, kind
 };
 
-/** `Occlusion` in ambientOcclusion.wgsl: ambient occlusion's passes'. */
+/**
+ * `Occlusion` in ambientOcclusion.wgsl: ambient occlusion's passes' (which
+ * work out contact shadows too).
+ */
 struct OcclusionUniforms
 {
   glm::mat4 inverseViewProjection;
-  glm::vec4 camera;  // xyz position, w 1 if a perspective view
-  glm::vec4 forward; // xyz view direction
+  glm::mat4 viewProjection; // contact shadows' rays onto the screen
+  glm::vec4 camera;         // xyz position, w 1 if a perspective view
+  glm::vec4 forward;        // xyz view direction
   glm::vec4 params;  // radius (world), intensity, samples, pixels a world unit
                      // spans at depth 1 (orthographic: at any)
   glm::vec4 size;    // the pass's size (texels), 1 / that
   glm::vec4 blur;    // a blur's step (texels); where it fades with distance
                      // from, and where it's gone
+  glm::vec4 light;   // xyz toward the frame's light (the sun's or the moon's);
+                     // w ambient occlusion on (0/1)
+  glm::vec4 contact; // contact shadows: length, thickness (world), strength
+                     // (0: none), where they've faded out with distance
 };
-static_assert(sizeof(OcclusionUniforms) == 64 + 16 * 5,
+static_assert(sizeof(OcclusionUniforms) == 64 * 2 + 16 * 7,
               "OcclusionUniforms must match ambientOcclusion.wgsl");
 
 /** `Focus` in postFocus.wgsl. */
@@ -232,7 +245,8 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material);
 struct TerrainUniforms
 {
   std::array<glm::vec4, kMaxTerrainLayers> layers; // rgb tint, 1 / tile size
-  std::array<glm::vec4, kMaxTerrainLayers> detail; // roughness, normal scale
+  std::array<glm::vec4, kMaxTerrainLayers>
+      detail;       // roughness, normal scale, meadow, triplanar exponent
   glm::vec4 params; // layers, blend sharpness, anti-tiling (0/1), variation
 };
 static_assert(sizeof(TerrainUniforms) == 16 * (2 * kMaxTerrainLayers + 1),
@@ -381,6 +395,19 @@ public:
    */
   OcclusionUniforms occlusionUniforms(glm::ivec2 size,
                                       glm::ivec2 blurStep = {0, 0}) const;
+  /**
+   * Whether the frame has contact shadows: on, and lit by a physical sky
+   * (they shade only its light).
+   */
+  bool contactShadowsOn() const;
+  /**
+   * Whether ambient occlusion's passes run: for ambient occlusion, contact
+   * shadows or both.
+   */
+  bool screenOcclusionOn() const
+  {
+    return m_frame.ambientOcclusion.enabled || contactShadowsOn();
+  }
   /** Depth of field's, if the frame has it. */
   std::optional<FocusUniforms> focusUniforms(glm::ivec2 viewport) const;
 
@@ -429,6 +456,7 @@ struct GrassFieldState
   GrassGrid mapsGrid;      // empty: unpainted
   glm::vec4 trampleBounds{0.0f, 0.0f, 1.0f, 1.0f}; // min xy, 1 / size
   std::array<uint32_t, 3> capacity{0, 0, 0};       // blades a list
+  uint32_t shadowCapacity = 0; // blades that can cast the sun's shadow
 };
 
 /** How a grass field grows and draws this frame (see planGrass). */
@@ -441,8 +469,26 @@ struct GrassPlan
   // Blades each list should have room for; more than the field's capacity
   // means making its blade buffer again (grow.capacity is set from it).
   std::array<uint32_t, 3> capacity{0, 0, 0};
+  // And for the blades casting the sun's shadow (their indices); likewise.
+  uint32_t shadowCapacity = 0;
   glm::uvec3 workgroups{0, 0, 0};
 };
+
+/**
+ * How far from the camera a grass field's blades cast the sun's shadow this
+ * frame (0: they don't): the reach of the nearest kGrassShadowCascades
+ * cascades (at most kGrassShadowMostReach), or with one shadow map,
+ * kGrassShadowOneMapReach. Further out, a blade's shadow is less than a texel
+ * of its map.
+ */
+float grassShadowReach(const GrassBatch& batch, const FrameParams& frame);
+
+/** How many of the sun's nearest cascades grass casts its shadow into. */
+inline constexpr uint32_t kGrassShadowCascades = 2;
+/** The furthest grass casts the sun's shadow, with cascades. */
+inline constexpr float kGrassShadowMostReach = 32.0f;
+/** How far grass casts the sun's shadow with one shadow map. */
+inline constexpr float kGrassShadowOneMapReach = 8.0f;
 
 /**
  * Plan a grass field's frame: its draw's uniforms, and (if any blades are in

@@ -94,6 +94,8 @@ nlohmann::json VisualStyle::toJson() const
     out["sky"] = sky->toJson();
   if (ambientOcclusion)
     out["ambientOcclusion"] = ambientOcclusion->toJson();
+  if (contactShadows)
+    out["contactShadows"] = contactShadows->toJson();
   if (fog)
     out["fog"] = fog->toJson();
   if (!materials.empty())
@@ -163,6 +165,9 @@ std::optional<VisualStyle> VisualStyle::fromJson(const nlohmann::json& json)
   if (const auto it = json.find("ambientOcclusion");
       it != json.end() && it->is_object())
     style.ambientOcclusion = AmbientOcclusionSettings::fromJson(*it);
+  if (const auto it = json.find("contactShadows");
+      it != json.end() && it->is_object())
+    style.contactShadows = ContactShadowSettings::fromJson(*it);
   if (const auto it = json.find("fog"); it != json.end() && it->is_object())
     style.fog = FogSettings::fromJson(*it);
   if (const auto it = json.find("materials");

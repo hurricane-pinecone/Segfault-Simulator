@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/ambientOcclusion.h"
 #include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lighting.h"
@@ -61,6 +62,8 @@ struct FrameSky
   glm::vec3 scale{1.0f};       // a visual style's on the sky (its skyScale())
   float adaptation = 1.0f;     // eyes adapted: x the sky's light (see
                                // PhysicalSky::adaptation)
+  float lampScale = 1.0f;      // what lamps (point lights, emission) look
+                               // like to those eyes (PhysicalSky::lampScale)
   float night = 1.0f;          // x its night glow (the moon brightens it)
   // The moon's disk: toward it (unit; below the horizon, not drawn), how
   // much of it is lit (0 new .. 1 full), and how overcast it is (0..1).
@@ -101,9 +104,11 @@ struct FrameParams
   float focusDistance = 20.0f; // the view's (where depth of field is sharp)
   WindSettings wind;
   HazeSettings haze;
-  // Height fog (on: in haze's place) and ambient occlusion (both off: none).
+  // Height fog (on: in haze's place), ambient occlusion and contact shadows
+  // (all off: none).
   FogSettings fog;
   AmbientOcclusionSettings ambientOcclusion;
+  ContactShadowSettings contactShadows;
 
   // The last pass's tone mapping and grading; and the scene's light
   // re-balanced by a visual style (see VisualStyle).
@@ -166,6 +171,9 @@ struct GrassBatch
   GrassShape shape;
   float stiffness = 0.4f; // how little it sways (GrassComponent::stiffness)
   float drawDistance = 40.0f;
+  // Blades near the camera cast the sun's shadow (GrassComponent).
+  bool castsShadows = true;
+  float selfShadow = 0.5f; // darker down toward the roots (GrassComponent)
 };
 
 /**

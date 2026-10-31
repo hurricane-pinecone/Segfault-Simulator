@@ -222,6 +222,33 @@ int main()
     CHECK(adapted(PhysicalSky(fixed), -20.0f) == 1.0f);
   }
 
+  TEST("lamps should look as bright as they are at night, and dimmer as eyes "
+       "adapt to daylight; their shadows only once they show")
+  {
+    const auto lamps = [](const PhysicalSky& model, float degrees)
+    {
+      const glm::vec3 sun = sunAt(degrees);
+      return model.lampScale(model.adaptation(
+          sun, model.sunLight(sun), model.irradiance(sun).at({0, 0, 1})));
+    };
+    CHECK(testing::approx(sky.mostAdaptation(), PhysicalSky::kMostAdaptation));
+    CHECK(testing::approx(sky.lampScale(PhysicalSky::kMostAdaptation), 1.0f));
+    CHECK(testing::approx(lamps(sky, 60.0f), 0.125f, 0.01f));
+    CHECK(lamps(sky, 4.0f) > lamps(sky, 60.0f));
+    CHECK(lamps(sky, -20.0f) > lamps(sky, 4.0f));
+    // Eyes that don't adapt see lamps as they are, day and night.
+    SkySettings fixed;
+    fixed.adaptation = 0.0f;
+    const PhysicalSky still(fixed);
+    CHECK(still.mostAdaptation() == 1.0f);
+    CHECK(lamps(still, 60.0f) == 1.0f);
+
+    CHECK(PhysicalSky::lampShadow(1.0f, 0.125f) == 0.0f);
+    CHECK(PhysicalSky::lampShadow(1.0f, 1.0f) == 1.0f);
+    const float fading = PhysicalSky::lampShadow(1.0f, 0.3f);
+    CHECK(fading > 0.0f && fading < 1.0f);
+  }
+
   TEST("the BRDF table should reflect everything face-on when smooth, and "
        "less when rough")
   {

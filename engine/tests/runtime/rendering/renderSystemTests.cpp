@@ -17,6 +17,7 @@
 #include <engine/core/rendering/terrain.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/input/input.h>
+#include <engine/runtime/rendering/framePlan.h>
 #include <engine/runtime/rendering/iRenderer.h>
 #include <engine/runtime/rendering/meshLibrary.h>
 #include <engine/runtime/rendering/modules/grassModule.h>
@@ -26,6 +27,10 @@
 #include <engine/runtime/rendering/visualStyles.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/ui/layer.h>
+
+#include "glm/glm/ext/matrix_clip_space.hpp"
+#include "glm/glm/ext/matrix_transform.hpp"
+#include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -626,6 +631,46 @@ int main()
                        { return light.castsShadow; }));
   }
 
+  TEST("under a physical sky, only lamps bright enough to see by day should "
+       "cast shadows, and all of them at night")
+  {
+    const auto shadowedAt = [](const glm::vec3& toSun)
+    {
+      Harness h;
+      ShadowSettings shadows;
+      shadows.pointLights = 4;
+      h.system.setShadowSettings(shadows);
+      SkySettings physical;
+      physical.model = SkyModel::Physical;
+      h.system.setSkySettings(physical);
+      SceneLighting lighting;
+      lighting.sun.direction = toSun;
+      h.system.setLighting(lighting);
+      // A dim lamp (x = 0) and a strong one (x = 3).
+      for (int i = 0; i < 2; ++i)
+      {
+        Entity lamp = h.scene.createEntity();
+        lamp.addComponent<TransformComponent>(
+            TransformComponent{{static_cast<float>(i) * 3.0f, 0.0f, 0.0f}});
+        lamp.addComponent<PointLightComponent>(
+            PointLightComponent{glm::vec3(1.0f), i == 0 ? 1.0f : 4.0f, 2.0f});
+      }
+      h.frame();
+      std::vector<float> shadowed;
+      for (const PointLight& light : h.renderer.lights)
+        if (light.castsShadow)
+          shadowed.push_back(light.position.x);
+      std::sort(shadowed.begin(), shadowed.end());
+      return std::make_pair(shadowed, h.renderer.frame.sky.lampScale);
+    };
+    const auto [day, dayLamps] = shadowedAt({0.3f, 0.2f, 0.9f});
+    CHECK(dayLamps < 0.2f);
+    CHECK(day == std::vector<float>({3.0f}));
+    const auto [night, nightLamps] = shadowedAt({0.3f, 0.2f, -0.5f});
+    CHECK(nightLamps > dayLamps);
+    CHECK(night == std::vector<float>({0.0f, 3.0f}));
+  }
+
   TEST("grass's ground should be built once, and again only when its mesh is "
        "turned or scaled; its maps sent up as they change")
   {
@@ -716,6 +761,139 @@ int main()
     CHECK(h.renderer.liveGrass.empty());
     CHECK(h.renderer.grassDrawn.empty());
     CHECK(grassModule.maps(lawn) == nullptr);
+  }
+
+  TEST("grass near the camera should cast the sun's shadow into its nearest "
+       "cascade only, as its component says, and list room for its casters")
+  {
+    Harness h;
+    h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle plane = h.system.meshes().add(meshes::plane({4.0f, 4.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(
+        GrassComponent{.density = 20.0f, .selfShadow = 0.7f});
+    h.frame();
+    CHECK(!h.renderer.grassDrawn.empty() &&
+          h.renderer.grassDrawn[0].castsShadows &&
+          h.renderer.grassDrawn[0].selfShadow == 0.7f);
+    lawn.getComponent<GrassComponent>().castsShadows = false;
+    h.frame();
+    CHECK(!h.renderer.grassDrawn.empty() &&
+          !h.renderer.grassDrawn[0].castsShadows);
+
+    GrassBatch batch;
+    batch.shape = {.density = 100.0f, .height = 0.3f};
+    batch.drawDistance = 60.0f;
+    FrameParams frame;
+    frame.shadows.enabled = true;
+    // One map: just the first few metres.
+    CHECK(grassShadowReach(batch, frame) == kGrassShadowOneMapReach);
+    // Cascades: the reach of the nearest it casts into, at most
+    // kGrassShadowMostReach.
+    frame.cascades.count = 4;
+    const uint32_t last = kGrassShadowCascades - 1;
+    frame.cascades.cascades[last].splitFar = 12.0f;
+    CHECK(grassShadowReach(batch, frame) == 12.0f);
+    frame.cascades.cascades[last].splitFar = 50.0f;
+    CHECK(grassShadowReach(batch, frame) == kGrassShadowMostReach);
+    // Never past where grass is drawn; none with it off, or without shadows.
+    batch.drawDistance = 10.0f;
+    CHECK(grassShadowReach(batch, frame) == 10.0f);
+    batch.castsShadows = false;
+    CHECK(grassShadowReach(batch, frame) == 0.0f);
+    batch.castsShadows = true;
+    frame.shadows.enabled = false;
+    CHECK(grassShadowReach(batch, frame) == 0.0f);
+
+    // Planned: the reach for growing and drawing, room for its casters, and
+    // the self-shadow strength.
+    frame.shadows.enabled = true;
+    frame.cascades.cascades[last].splitFar = 12.0f;
+    batch.drawDistance = 60.0f;
+    batch.selfShadow = 0.4f;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 200.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid = GrassGrid::over({-50.0f, -50.0f}, {50.0f, 50.0f}, 0.25f);
+    field.groundArea = 100.0f * 100.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan && plan->grows);
+    CHECK(plan && plan->grow.detail.z == 12.0f && plan->draw.shadow.y == 12.0f);
+    CHECK(plan && plan->draw.shadow.x == 0.4f && plan->draw.shadow.z > 1.0f);
+    // About the blades within 12 of the camera, all round: some, but far
+    // fewer than all the field grows.
+    CHECK(plan && plan->shadowCapacity > 100.0f * 3.14f * 144.0f * 0.75f &&
+          plan->shadowCapacity == plan->grow.capacity.w &&
+          plan->shadowCapacity <
+              plan->capacity[0] + plan->capacity[1] + plan->capacity[2]);
+    batch.castsShadows = false;
+    const std::optional<GrassPlan> unshadowed = planGrass(batch, field, frame);
+    CHECK(unshadowed && unshadowed->grow.detail.z == 0.0f &&
+          unshadowed->shadowCapacity == 0u);
+  }
+
+  TEST("grass on a big mesh should grow in a window around the camera, built "
+       "again as the camera moves on")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle land =
+        h.system.meshes().add(meshes::plane({2000.0f, 2000.0f}));
+    Entity field = h.spawn(land, {0.0f, 0.0f, 0.0f});
+    field.addComponent<GrassComponent>(
+        GrassComponent{.density = 20.0f, .drawDistance = 40.0f});
+    h.frame();
+    CHECK(grassModule.windowed(field));
+    const GrassGround* ground = grassModule.ground(field);
+    const float reach = GrassModule::windowReach(40.0f);
+    const glm::vec2 camera(h.system.camera().position());
+    CHECK(ground && ground->grid().texelSize().x <= 0.5f);
+    CHECK(ground && ground->grid().min.x <= camera.x - reach + 0.5f &&
+          ground->grid().max.x >= camera.x + reach - 0.5f);
+    CHECK(!h.renderer.grassDrawn.empty());
+
+    // Moved a little: the same window. Moved on: a new one, built in the
+    // background, then grown on.
+    h.system.camera().target = {1.0f, 0.0f, 0.0f};
+    h.frame();
+    grassModule.finishWindows();
+    CHECK(h.renderer.groundUpdates.empty());
+    h.system.camera().target = {300.0f, 0.0f, 0.0f};
+    h.frame();
+    grassModule.finishWindows();
+    h.frame();
+    CHECK(h.renderer.groundUpdates.size() == 1u);
+    const glm::vec2 moved(h.system.camera().position());
+    ground = grassModule.ground(field);
+    CHECK(ground && ground->grid().min.x <= moved.x - reach + 0.5f &&
+          ground->grid().max.x >= moved.x + reach - 0.5f);
+
+    // A small mesh: all of it, as ever.
+    const MeshHandle lawn = h.system.meshes().add(meshes::plane({4.0f, 4.0f}));
+    Entity small = h.spawn(lawn, {0.0f, 0.0f, 0.0f});
+    small.addComponent<GrassComponent>(GrassComponent{.density = 20.0f});
+    h.frame();
+    CHECK(!grassModule.windowed(small));
+  }
+
+  TEST("a terrain's triplanar layers should get a side-projection exponent "
+       "from its sharpness; the others none")
+  {
+    TerrainMaterial terrain;
+    terrain.triplanarSharpness = 0.5f;
+    terrain.layers.push_back({.name = "Grass"});
+    terrain.layers.push_back({.name = "Rock", .triplanar = true});
+    const TerrainUniforms uniforms = terrainMaterialUniforms(terrain);
+    CHECK(uniforms.detail[0].w == 0.0f);
+    CHECK(uniforms.detail[1].w == 2.5f);
+    // Missing layers stand in as the first: not triplanar.
+    CHECK(uniforms.detail[4].w == 0.0f);
+    terrain.triplanarSharpness = 2.0f;
+    CHECK(terrainMaterialUniforms(terrain).detail[1].w == 4.0f);
   }
 
   TEST("grass on a terrain should grow only where its layers let it, as the "
@@ -1450,6 +1628,35 @@ int main()
     h.system.setSpace2D(Space2D{});
     h.frame();
     CHECK(h.renderer.frame.cascades.count == 0);
+  }
+
+  TEST("contact shadows should be the scene's or its style's, a 3D scene's "
+       "only")
+  {
+    Harness h;
+    h.frame();
+    CHECK(!h.renderer.frame.contactShadows.enabled); // off by default
+
+    h.system.setContactShadowSettings({.enabled = true, .length = 0.4f});
+    h.frame();
+    CHECK(h.renderer.frame.contactShadows.enabled);
+    CHECK(h.renderer.frame.contactShadows.length == 0.4f);
+
+    // A style's stand in for the scene's while it's set.
+    VisualStyle style;
+    style.contactShadows = ContactShadowSettings{
+        .enabled = true, .length = 0.9f, .thickness = 0.5f, .strength = 0.6f};
+    h.system.setVisualStyle("asset:contact", style);
+    h.frame();
+    CHECK(h.renderer.frame.contactShadows == *style.contactShadows);
+    h.system.setVisualStyle("");
+    h.frame();
+    CHECK(h.renderer.frame.contactShadows.length == 0.4f);
+
+    // A 2D game has none.
+    h.system.setSpace2D(Space2D{});
+    h.frame();
+    CHECK(!h.renderer.frame.contactShadows.enabled);
   }
 
   TEST("materials should draw as their variants for the visual style's tag, "

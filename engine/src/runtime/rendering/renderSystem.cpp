@@ -106,6 +106,12 @@ AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
                                               : m_ambientOcclusion;
 }
 
+ContactShadowSettings RenderSystem::effectiveContactShadows() const
+{
+  return m_style && m_style->contactShadows ? *m_style->contactShadows
+                                            : m_contactShadows;
+}
+
 Ray RenderSystem::screenRay(const glm::vec2& pixel) const
 {
   // The size the scene was last drawn at: between frames a backend may report
@@ -226,11 +232,12 @@ void RenderSystem::render()
   // everything on its plane: there it would only fog the whole picture.
   const HazeSettings haze = effectiveHaze();
   frame.haze = m_space2D ? HazeSettings{0.0f, haze.distance} : haze;
-  // So are height fog and ambient occlusion: a 3D world's.
+  // So are height fog, ambient occlusion and contact shadows: a 3D world's.
   if (!m_space2D)
   {
     frame.fog = effectiveFog();
     frame.ambientOcclusion = effectiveAmbientOcclusion();
+    frame.contactShadows = effectiveContactShadows();
   }
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
@@ -444,6 +451,7 @@ void RenderSystem::updateSky()
       toLight,
       m_frameSky.sunLight,
       m_frameSky.irradiance.at(glm::vec3(0.0f, 0.0f, 1.0f)));
+  m_frameSky.lampScale = m_physicalSky->lampScale(m_frameSky.adaptation);
   m_frameSky.scale = m_style ? m_style->skyScale() : glm::vec3(1.0f);
   // The moon's disk, unless it's below the horizon or behind clouds.
   const MoonLight& moon = m_worldLighting.moon;
@@ -760,6 +768,14 @@ void RenderSystem::chooseShadowedLights()
     PointLight& light = m_pointLights[i];
     if (!light.castsShadow)
       continue;
+    // By day, under a physical sky, a lamp too dim to see casts nothing
+    // either.
+    if (m_frameSky.physical &&
+        PhysicalSky::lampShadow(light.intensity, m_frameSky.lampScale) <= 0.0f)
+    {
+      light.castsShadow = false;
+      continue;
+    }
     const glm::vec3 reach(light.radius);
     if (!m_context.frustum.intersects(
             Aabb{light.position - reach, light.position + reach}))
@@ -809,7 +825,9 @@ void RenderSystem::submit(const GrassDrawCommand& command)
                                   command.model,
                                   command.shape,
                                   command.stiffness,
-                                  command.drawDistance});
+                                  command.drawDistance,
+                                  command.castsShadows,
+                                  command.selfShadow});
   m_stats.grassFields += 1;
 }
 

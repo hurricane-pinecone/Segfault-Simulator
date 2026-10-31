@@ -93,6 +93,15 @@ public:
   virtual GrassHandle createGrass(const GrassGround& ground) = 0;
 
   /**
+   * The field grows on another ground now (a big mesh's grass, as its window
+   * moves with the camera): its maps and trample map are kept until updated
+   * (over the new grid), and so is its room for blades. An empty ground is
+   * ignored.
+   */
+  virtual void updateGrassGround(GrassHandle grass,
+                                 const GrassGround& ground) = 0;
+
+  /**
    * Part of the field's maps changed (or all of them, over a new grid: then
    * `image` covers all of it).
    */

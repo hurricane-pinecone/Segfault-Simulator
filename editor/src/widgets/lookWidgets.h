@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/ambientOcclusion.h"
 #include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/sky.h"
@@ -31,6 +32,11 @@ bool shadowCascades(EditorHistory* history, sfs::ShadowSettings& shadows);
 // samples.
 bool ambientOcclusion(EditorHistory* history,
                       sfs::AmbientOcclusionSettings& occlusion);
+
+// Contact shadows: on or off, and (only when on) their length, thickness and
+// strength.
+bool contactShadows(EditorHistory* history,
+                    sfs::ContactShadowSettings& contact);
 
 // Height fog: on or off, and (only when on) how thick, where, and its glow.
 bool fog(EditorHistory* history, sfs::FogSettings& fog);

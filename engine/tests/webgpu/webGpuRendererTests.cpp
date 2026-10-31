@@ -1891,8 +1891,10 @@ int main()
   crateBatch.mesh = crate;
   crateBatch.instances = crates;
   glm::mat4 cornerView(1.0f);
-  const auto corner =
-      [&](const AmbientOcclusionSettings& occlusion, bool physical)
+  const auto corner = [&](const AmbientOcclusionSettings& occlusion,
+                          bool physical,
+                          const ContactShadowSettings& contact = {},
+                          float sunHeight = 10.0f)
   {
     const MeshBatch batches[] = {crateBatch};
     return drawPlane(
@@ -1903,9 +1905,9 @@ int main()
         [&](FrameParams& frame)
         {
           if (physical)
-            physicalSky(frame, sunAt(10.0f, 200.0f));
+            physicalSky(frame, sunAt(sunHeight, 200.0f));
           frame.bloom.enabled = false;
-          frame.lighting.sun.direction = sunAt(10.0f, 200.0f);
+          frame.lighting.sun.direction = sunAt(sunHeight, 200.0f);
           frame.lighting.sun.diffuseStrength = 0.15f;
           frame.lighting.ambient = 0.8f;
           frame.cameraPosition = {2.2f, -2.2f, 2.0f};
@@ -1919,6 +1921,7 @@ int main()
           frame.nearPlane = 0.1f;
           frame.farPlane = 50.0f;
           frame.ambientOcclusion = occlusion;
+          frame.contactShadows = contact;
           cornerView = frame.viewProjection;
         },
         {},
@@ -1969,6 +1972,35 @@ int main()
     const std::vector<uint8_t> before = corner({}, false);
     corner(occlusion, false);
     CHECK(corner({}, false) == before);
+    CHECK(reportErrors());
+  }
+
+  TEST("contact shadows should darken the ground at the foot of a box on its "
+       "side away from the sun, under a physical sky only")
+  {
+    const ContactShadowSettings contact{
+        .enabled = true, .length = 0.5f, .thickness = 0.5f, .strength = 1.0f};
+    const std::vector<uint8_t> open = corner({}, true, {}, 35.0f);
+    const std::vector<uint8_t> shaded = corner({}, true, contact, 35.0f);
+    // Just outside the box's +X face (the sun's from -X), on the ground; and
+    // far from it.
+    const glm::ivec2 foot = pixelOf({0.29f, -0.05f, 0.0f});
+    const glm::ivec2 away = pixelOf({0.85f, -0.85f, 0.0f});
+    const glm::ivec3 footOpen = pixelAt(open, foot.x, foot.y);
+    const glm::ivec3 footShaded = pixelAt(shaded, foot.x, foot.y);
+    const glm::ivec3 awayOpen = pixelAt(open, away.x, away.y);
+    const glm::ivec3 awayShaded = pixelAt(shaded, away.x, away.y);
+    CHECK(footShaded.g < footOpen.g - 10);
+    CHECK(std::abs(awayShaded.g - awayOpen.g) <= 3);
+    if (footShaded.g >= footOpen.g - 10 ||
+        std::abs(awayShaded.g - awayOpen.g) > 3)
+      std::printf("    (foot %d -> %d, away %d -> %d)\n",
+                  footOpen.g,
+                  footShaded.g,
+                  awayOpen.g,
+                  awayShaded.g);
+    // Under a flat sky they're not drawn: exactly as without them.
+    CHECK(corner({}, false, contact, 35.0f) == corner({}, false, {}, 35.0f));
     CHECK(reportErrors());
   }
   harness.renderer.destroyMesh(crate);

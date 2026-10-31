@@ -1782,6 +1782,12 @@ bool InspectorPanel::drawTerrain(EditorContext& context,
                         "grid (a little more costly)");
   changed |= ImGui::SliderFloat(row("Variation").c_str(), &terrain.variation, 0.0f, 0.5f);
   ImGui::SetItemTooltip("How much the brightness drifts over tens of metres, so a field isn't uniform");
+  if (std::any_of(terrain.layers.begin(), terrain.layers.end(), [](const auto& layer) { return layer.triplanar; }))
+  {
+    changed |= ImGui::SliderFloat(row("Triplanar Sharpness").c_str(), &terrain.triplanarSharpness, 0.0f, 1.0f);
+    ImGui::SetItemTooltip("How triplanar layers switch between their side and top projections on steep ground: 0 a "
+                          "wide blend, toward 1 a crisp switch");
+  }
 
   std::optional<std::size_t> removed;
   for (std::size_t i = 0; i < terrain.layers.size(); ++i)
@@ -1810,6 +1816,12 @@ bool InspectorPanel::drawTerrain(EditorContext& context,
       changed |= ImGui::SliderFloat(row("Roughness").c_str(), &layer.roughness, 0.0f, 1.0f);
       changed |= ImGui::SliderFloat(row("Grass").c_str(), &layer.grass, 0.0f, 1.0f);
       ImGui::SetItemTooltip("How much of a grass field on the mesh grows over it (0: bare)");
+      changed |= ImGui::SliderFloat(row("Meadow").c_str(), &layer.meadow, 0.0f, 1.0f);
+      ImGui::SetItemTooltip("How much it reads as grass from afar, past the blades: patchy colour, a soft "
+                            "sheen and bands rolling with the wind");
+      changed |= widgets::propertyCheckbox("Triplanar", &layer.triplanar);
+      ImGui::SetItemTooltip("Also lay its textures from the sides where the ground is steep (cliffs, rock), so they "
+                            "don't stretch down the slope (costs a second set of samples there)");
       if (terrain.layers.size() > 1)
       {
         widgets::propertyLabel("");

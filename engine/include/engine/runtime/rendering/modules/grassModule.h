@@ -8,7 +8,9 @@
 #include "nlohmann/json.hpp"
 
 #include <cstdint>
+#include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -17,9 +19,11 @@ namespace sfs
 {
 
 class IRenderer;
+struct GrassComponent;
 struct TerrainMaterial;
 class MeshLibrary;
 class Registry;
+class WorkerPool;
 
 /**
  * Render module that grows grass (GrassComponent) on entities' meshes
@@ -31,6 +35,17 @@ class Registry;
  * nothing. Each update, its trample map springs back and is pressed by the
  * frame's benders: rigid bodies that bend grass (sized by their colliders) and
  * GrassBenderComponent entities.
+ *
+ * A big mesh (much wider than twice its grass's draw distance: the land out
+ * to the horizon, say) grows grass only in a window around the camera, a
+ * little wider than twice the draw distance: its ground and maps are over
+ * that window alone, kept small. As the camera moves on, the window is built
+ * again around it in the background and swapped in when ready, so there's no
+ * hitch; its blades stay where they were (they're placed from the mesh's own
+ * origin, not the window's). Its maps start from `paint` in each new window;
+ * a game's changes to them (stamp() and the rest) last only as long as the
+ * window does. Where two meshes meet (a field set into a hole in the land),
+ * their windows' texels line up, so the two grasses meet without a seam.
  *
  * On a terrain (the mesh's first material, as drawn: a visual style's variant
  * may be one) whose layers keep grass off (TerrainLayer::grass), it grows
@@ -110,7 +125,45 @@ public:
   /** How flattened an entity's grass is at a world XY point, 0 to 1. */
   float flattened(const Entity& entity, glm::vec2 point) const;
 
+  /**
+   * How far a big mesh's grass window reaches either side of the camera
+   * (world units), for grass drawn to `drawDistance`: past it, where the
+   * ground's tint fades out, and by windowSlack() more.
+   */
+  static float windowReach(float drawDistance);
+  /** How far the camera moves from the window's middle before it's built
+   * again around it (world units). */
+  static float windowSlack(float drawDistance);
+
+  /** Whether an entity's grass grows in a window around the camera. */
+  bool windowed(const Entity& entity) const;
+
+  /** Wait for any window being built in the background, and use it. */
+  void finishWindows();
+
 private:
+  // A big mesh's triangles, kept to build its windows from in the
+  // background.
+  struct Source
+  {
+    std::vector<glm::vec3> positions;
+    std::vector<uint32_t> indices;
+    std::vector<glm::vec2> uvs;
+    glm::vec2 min{0.0f}, max{0.0f}; // its own XY
+  };
+  // A window of it, built.
+  struct Window
+  {
+    glm::vec2 center{0.0f}; // its own XY
+    float half = 0.0f;
+    glm::mat4 model{1.0f};
+    float trampleHeight = 0.0f;
+    GrassGround ground;
+    GrassTrample trample;
+    GrassMaps maps;
+    std::vector<uint8_t> cover; // with a terrain under it
+  };
+
   struct Patch
   {
     uint32_t mesh = 0;
@@ -134,6 +187,16 @@ private:
     bool coverMadeMaps = false; // the maps were made (full) for it
     float recovery = 3.0f;
     bool seen = false; // this frame
+
+    // A big mesh's grass: in a window around the camera (its middle and
+    // reach, the mesh's own XY), built again as the camera moves on.
+    bool windowed = false;
+    bool windowStale = false; // its paint, terrain or placement changed
+    glm::vec2 windowCenter{0.0f};
+    float windowHalf = 0.0f; // 0: none built yet
+    std::shared_ptr<const Source> source;
+    std::shared_ptr<const GrassMaps> painted; // `paint`, over all of it
+    std::future<Window> nextWindow;           // being built
   };
 
   static uint64_t keyOf(const Entity& entity);
@@ -146,6 +209,21 @@ private:
   // it lets grow over the maps' grid.
   std::shared_ptr<const TerrainMaterial> terrainUnder(const Entity& entity);
   static void workOutCover(Patch& patch);
+  static std::vector<uint8_t> coverOf(const GrassGround& ground,
+                                      const GrassGrid& grid,
+                                      const TerrainMaterial& terrain);
+  // A window of a big mesh's ground (any thread).
+  static Window buildWindow(const Source& source,
+                            const glm::mat4& model,
+                            glm::vec2 center,
+                            float half,
+                            float trampleHeight,
+                            const GrassMaps* painted,
+                            const TerrainMaterial* terrain);
+  // A windowed patch's window: built around the camera if it's moved on (in
+  // the background, but for the first), and put in place once it's ready.
+  void windowAround(Patch& patch, const GrassComponent& grass);
+  void useWindow(Patch& patch, Window window);
   const Patch* find(const Entity& entity) const;
 
   IRenderer& m_renderer;
@@ -156,6 +234,10 @@ private:
 
   std::vector<GrassBender> m_benders;
   std::unordered_map<uint64_t, glm::vec3> m_lastPositions; // for velocities
+  std::optional<glm::vec3> m_camera; // the last frame's, for windows
+
+  // Builds windows (last: stopped before the rest goes).
+  std::unique_ptr<WorkerPool> m_worker;
 };
 
 } // namespace sfs

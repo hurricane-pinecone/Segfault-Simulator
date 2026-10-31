@@ -1,15 +1,22 @@
 // Grows a grass field's blades for a frame (a compute pass before the lit
 // pass), from its ground and maps: only those in view, nearest first in
 // detail, into three lists (a blade's detail: 5, 2 or 1 segments) that the lit
-// pass draws indirectly (meshGrass.wgsl).
+// pass draws indirectly (meshGrass.wgsl). Those near enough to cast the sun's
+// shadow are listed again (by index) for the shadow pass
+// (meshGrassShadow.wgsl).
 //
 // Blades are spread over the ground's own XY on four lattices, each twice as
 // coarse as the one before and reaching twice-ish as far. Each lattice cell
 // has one blade, at a random place in it (from a hash of the cell, so it's
-// there every frame). A cell whose coordinates are both even is left to the
-// next lattice's, so they add up to one blade per finest cell near the
-// camera, thinning to a quarter, a sixteenth... farther out, each blade
-// shrinking away as its lattice's reach ends rather than popping.
+// there every frame). The lattices start at the ground's own origin, not its
+// grid's corner, so a blade stays put when a big mesh's window of ground
+// moves (see GrassModule), and two fields on the same mesh space line up. A
+// cell whose coordinates are both even is left to the next lattice's, so they
+// add up to one blade per finest cell near the camera, thinning to a quarter,
+// a sixteenth... farther out, each blade shrinking away as its lattice's
+// reach ends rather than popping. Where they've thinned, blades are wider, so
+// the field still reads full; and over the last stretch of the draw distance
+// the last of them shrink down into the ground.
 
 struct Grow {
   model: mat4x4f,         // the ground's own space to the world
@@ -21,8 +28,9 @@ struct Grow {
   maps: vec4f,            // xy the maps' grid min, zw 1 / its size (0: unpainted)
   shape: vec4f,           // height, height variation, width, finest cell
   reach: vec4f,           // each lattice's reach (world units)
-  detail: vec4f,          // x 5 segments to here, y 2 to here (world units)
-  capacity: vec4u,        // each list's room (blades), and w: 0
+  detail: vec4f,          // x 5 segments to here, y 2 to here, z casting shadows
+                          // to here (world units; 0: none)
+  capacity: vec4u,        // each list's room (blades), and w the shadow casters'
   lattices: array<vec4i, 4>, // each one's first cell (xy) and how many (zw)
 }
 
@@ -42,9 +50,11 @@ struct GrownBlade {
 @group(0) @binding(2) var shapeMap: texture_2d<f32>;  // r coverage, g length
 @group(0) @binding(3) var mapSampler: sampler;
 @group(0) @binding(4) var<storage, read_write> blades: array<GrownBlade>;
-// Three indirect draws (vertex count, instance count, first vertex, first
-// instance), each list's.
-@group(0) @binding(5) var<storage, read_write> draws: array<atomic<u32>, 12>;
+// Four indirect draws (vertex count, instance count, first vertex, first
+// instance): each list's, then the shadow casters'.
+@group(0) @binding(5) var<storage, read_write> draws: array<atomic<u32>, 16>;
+// The shadow casters: their blades' indices.
+@group(0) @binding(6) var<storage, read_write> casters: array<u32>;
 
 fn pcg(value: u32) -> u32 {
   let state = value * 747796405u + 2891336453u;
@@ -100,7 +110,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
   }
   var seed = pcg(bitcast<u32>(cell.x) ^ pcg(bitcast<u32>(cell.y) ^ pcg(lattice + 40503u)));
   let size = grow.shape.w * f32(1u << lattice);
-  let local = grow.ground.xy + (vec2f(cell) + vec2f(random(&seed), random(&seed))) * size;
+  let local = (vec2f(cell) + vec2f(random(&seed), random(&seed))) * size;
 
   // The ground under it.
   let at = (local - grow.ground.xy) / grow.ground.zw;
@@ -128,7 +138,10 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
     return;
   }
   var height = grow.shape.x * max(1.0 + grow.shape.y * (tall * 2.0 - 1.0) * 0.5, 0.05) * maps.g;
-  height *= 1.0 - smoothstep(reach * 0.7, reach, away); // shrinking away
+  // Shrinking away; the last lattice's over a longer stretch, down into the
+  // ground at the draw distance rather than ending at a line.
+  let fade = 1.0 - smoothstep(reach * select(0.7, 0.55, lattice == 3u), reach, away);
+  height *= fade;
   if (height < 0.004) {
     return;
   }
@@ -161,8 +174,15 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
     first += grow.capacity[l];
   }
 
-  // Coarser lattices' blades are wider, so a thinner field still reads full.
-  let width = grow.shape.z * (1.0 + 0.45 * f32(lattice));
+  // Wider where the field has thinned (fewer lattices reach), so it still
+  // reads full: by how many blades are left of those near the camera, each
+  // lattice's share (as it shrinks away) of the finest cells.
+  var left = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let share = select(0.75 / f32(1u << u32(2 * k)), 1.0 / 64.0, k == 3);
+    left += share * (1.0 - smoothstep(grow.reach[k] * 0.7, grow.reach[k], away));
+  }
+  let width = grow.shape.z * min(pow(max(left, 1.0 / 64.0), -0.4), 4.0);
   let normal = normalize((grow.normalMatrix * vec4f(ground.xyz, 0.0)).xyz);
   let facing = random(&seed);
   let lean = random(&seed);
@@ -174,4 +194,14 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
             pack2x16float(vec2f(width, f32(select(select(1u, 2u, list == 1u), 5u, list == 0u)))),
             pack4x8unorm(vec4f(facing, lean, blade, tone)),
             pack2x16unorm(clamp(uv, vec2f(0.0), vec2f(1.0)))));
+
+  // Near enough that its shadow shows: listed for the shadow pass too.
+  if (away < grow.detail.z) {
+    let caster = atomicAdd(&draws[13], 1u);
+    if (caster < grow.capacity.w) {
+      casters[caster] = first + index;
+    } else {
+      atomicSub(&draws[13], 1u);
+    }
+  }
 }

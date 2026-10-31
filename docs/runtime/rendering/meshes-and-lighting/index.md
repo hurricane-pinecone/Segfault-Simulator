@@ -151,12 +151,15 @@ and the map's red, green, blue and alpha paint the second to fifth over it
   "terrain": {
     "splatMap": "asset:<id>",
     "blendSharpness": 0.65, "antiTiling": true, "variation": 0.18,
+    "triplanarSharpness": 0.5,
     "layers": [
       {"name": "Grass", "baseTexture": "asset:<id>", "normalTexture": "asset:<id>",
        "roughnessTexture": "", "tint": [1, 1, 1], "tileSize": 3,
        "roughness": 0.95, "normalScale": 0.8, "grass": 1},
       {"name": "Dirt", "baseTexture": "asset:<id>", "normalTexture": "asset:<id>",
-       "tileSize": 2.5, "roughness": 0.92, "grass": 0}
+       "tileSize": 2.5, "roughness": 0.92, "grass": 0},
+      {"name": "Rock", "baseTexture": "asset:<id>", "normalTexture": "asset:<id>",
+       "tileSize": 9, "grass": 0, "triplanar": true}
     ]
   }
 }
@@ -171,6 +174,8 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `tileSize` | World units across one repeat of its textures (4) |
 | `roughness`, `normalScale` | As a standard material's (1, 1) |
 | `grass` | How much of a [grass](#grass) field on the mesh grows over it: 1 as its maps say, 0 none (1) |
+| `meadow` | How much it looks like grass seen from afar, past where blades are drawn (0): its colour breaks up in patches, a soft sheen shows at low angles, and light and dark bands roll across it with the wind, as over the blades |
+| `triplanar` | Also lay its textures from the sides where the ground is steep (cliffs, rock, a gorge's walls), so they don't stretch down the slope (false) |
 
 | Material field | Meaning (default) |
 | --- | --- |
@@ -178,6 +183,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `blendSharpness` | 0 a soft cross-fade between layers; toward 1 a crisp edge where the higher layer pokes through (0.5) |
 | `antiTiling` | Break repeats up (true) |
 | `variation` | How much the brightness drifts over tens of metres (0.15) |
+| `triplanarSharpness` | How `triplanar` layers switch between their side and top projections: 0 a wide blend, toward 1 a crisp switch (0.5) |
 
 How it draws (`meshTerrainSurface.wgsl`): each layer's textures lie over the
 world's XY from above, `tileSize` across, so ground of any size keeps its
@@ -186,7 +192,14 @@ layer is sampled at three randomly shifted and turned copies on a hexagonal
 grid and blended, sharpened toward the nearest (Mikkelsen's hex-tiling, after
 Heitz and Neyret), with its normals turned to match, so a 200 m field shows
 no repeats; and a gentle brightness drift (value noise over 8 to 25 m) keeps
-it from looking uniform. Layers with no weight at a point aren't sampled
+it from looking uniform. From above, a layer stretches down steep slopes: a
+`triplanar` layer is also laid from the sides there, biplanar (after Quilez):
+from the two axes the surface faces most, blended by its normal, each
+projection hex-tiled and its normal map's tilt turned back into the world's
+axes before it's laid onto the surface. The second projection's weight is
+remapped so it's gone below about 35 degrees of slope, where the texture is
+sampled from above only, as without it; so it costs a second set of samples
+only on steep ground. Layers with no weight at a point aren't sampled
 (explicit-gradient sampling keeps that legal). The vertex colour isn't used.
 
 The layers go up as two texture arrays (colours with heights; normals with
@@ -499,17 +512,20 @@ things stop being drawn, such as grass's draw distance. It's off by default.
 
 It's applied as each surface is lit, so hazed things glow (bloom) less too.
 
-### Height fog and ambient occlusion
+### Height fog, ambient occlusion and contact shadows
 
 `setFogSettings(FogSettings)` turns on exponential height fog (mist thicker low
 down, coloured by the sky and glowing toward the sun), which takes haze's
 place while it's on; `setAmbientOcclusionSettings(AmbientOcclusionSettings)`
 turns on screen-space ambient occlusion (the light from all around kept out of
-creases and the foot of walls; never the sun's or point lights'). Both are off
-by default, saved with the scene when they're not, shown in Scene Settings
-under **Occlusion & Fog**, and a visual style can replace either. See
+creases and the foot of walls; never the sun's or point lights');
+`setContactShadowSettings(ContactShadowSettings)` turns on screen-space contact
+shadows (small, sharp sun shadows where things meet the ground, finer than the
+shadow maps; under a physical sky). All are off by default, saved with the
+scene when they're not, shown in Scene Settings under **Occlusion & Fog**, and
+a visual style can replace each. See
 [Visual styles](../visual-styles/index.md#ambient-occlusion) for their fields
-and how they work. They're a 3D scene's: a 2D scene has neither.
+and how they work. They're a 3D scene's: a 2D scene has none.
 
 ### Shadows
 
@@ -564,7 +580,9 @@ cost a draw of everything near the light six times over, so only some lights
 get them each frame. Of the lights with `castsShadow` whose reach is in view,
 up to `pointLights` of them get shadows, the ones nearest what the camera
 looks at (counting how far they reach). The rest light without shadows that
-frame. On wgpu's OpenGL fallback there are no point-light shadows (see
+frame. Under a physical sky by day, a light too dim to see against daylight
+(its intensity x what eyes adapted to the day see lamps by, under 0.2) gets
+none at all, and its shadow fades in as dusk falls (full by 0.4). On wgpu's OpenGL fallback there are no point-light shadows (see
 [Render backends](../backends/index.md#what-each-graphics-api-can-do)).
 
 Each shadowed light gets a cube shadow map: six faces, each holding how far
@@ -590,6 +608,20 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   the highest triangle facing up within 60 degrees there. It's built again
   only when the mesh, or how it's turned or scaled, changes. Moving the
   entity, or changing its grass's settings, costs nothing.
+- **Big meshes:** a mesh more than 2.5 times as wide as
+  `GrassModule::windowReach()` (1.2 times the draw distance, plus
+  `windowSlack()`: 0.15 of it, at least 8) grows grass only in a window that
+  far either side of the camera (`grassWindow()`), so its ground, maps and
+  trample map stay small however big the land is. Once the camera is
+  `windowSlack()` from the window's middle, a worker thread builds the next
+  window around it, and the module swaps it in when it's ready
+  (`IRenderer::updateGrassGround`), so there's no hitch. A window's texels sit
+  on multiples of `kGrassTexel` from the mesh's origin, and blades are placed
+  from the origin too, so they don't move when the window does. A field set
+  into a hole in the land (farmland in a landscape, say) meets the land's
+  grass with no seam, as long as their edge lies on that lattice. Each window's
+  maps start from `paint`; a game's changes to them last as long as the
+  window.
 - **Maps:** `GrassMaps` holds six channels over a grid: `Coverage` (how much
   grows), `Length` (how tall it is), and `Data0` to `Data3`, which the engine
   gives no meaning to, for a material to read. Values run from 0 to 1. A
@@ -612,8 +644,11 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
     Each lattice cell holds one blade at a hashed spot, so the grass is the
     same every frame.
   - Grass is at full density near the camera, thinning to a quarter, then a
-    sixteenth, further out, with coarser blades drawn wider. Each blade
-    shrinks away before its lattice's reach ends rather than popping.
+    sixteenth, further out. Where it has thinned, blades are drawn wider (by
+    how many are left, up to 4 times), so the field still reads full. Each
+    blade shrinks away before its lattice's reach ends rather than popping,
+    and the last lattice's shrink down into the ground over the last 45% of
+    the draw distance, so there's no line where the grass ends.
   - The pass drops blades out of view or where the maps leave none. The rest
     go into three lists by distance, with 5, 2 or 1 segments, and each list is
     one indirect draw. Short grass (under 0.22 tall, then under 0.1) gets
@@ -621,9 +656,11 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
     follows what's on screen, not how big the field is.
 - **The ground:** before its blades, the grass draws its mesh again in the
   grass material's colour (shaded as low down in the grass), blended over the
-  ground by `Coverage`. The gaps between blades, and the field past the draw
-  distance, then look like grass, while a bare path shows the ground's own
-  material.
+  ground by `Coverage`, fading out between 1 and 1.15 times the draw
+  distance. The gaps between blades then look like grass, while a bare path
+  shows the ground's own material. Past it, the ground's own material carries
+  on: give a terrain's grassy layers `meadow` so it looks like grass from
+  afar.
 - **Drawing:** each blade is a triangle strip built in the vertex shader
   (`meshGrass.wgsl`): a curve from its root, tapering to a point, bent over
   by its own lean, the wind (`FrameParams::wind`) and trampling. How far
@@ -641,13 +678,36 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   `GrassBenderComponent`s). When the map changes, it sends it to the renderer
   as an image (`IRenderer::updateGrassTrample`).
 
-Grass receives shadows but doesn't cast them.
+- **Shadows:** grass grows before the sun's shadow pass. Blades within
+  `grassShadowReach()` of the camera cast into the nearest
+  `kGrassShadowCascades` (2) cascades: to the second's reach, at most
+  `kGrassShadowMostReach` (32), or `kGrassShadowOneMapReach` (8) with one
+  shadow map. Further out, a blade's shadow would be less than a texel.
+  The grow pass lists those blades' indices as it grows them, so no second
+  pass grows them. The shadow pass draws them depth-only, with one indirect
+  draw (`meshGrassShadow.wgsl`). Each is two segments along the same curve
+  the lit pass draws (`grassBlade.wgsl`), so its shadow sways and flattens
+  with it. It's turned square to the sun and drawn 1.6 times wider, so it
+  doesn't vanish edge-on or flicker at the map's resolution. It's pushed back
+  from the sun by about its width, so a blade isn't shadowed by itself, and it
+  thins out toward the end of the reach. `GrassComponent::castsShadows` turns
+  it off.
+- **Self-shadowing:** the blades are darker toward their roots, where the
+  grass around them shuts out the sky's light and half the sun's. This uses
+  `SurfaceIn::grass.w`, 0 on anything else, which takes from ambient
+  occlusion and the sun's visibility in the lit pass. The ground drawn under
+  the blades counts as deep in the grass, a little less so far away. So a
+  field reads as deep at any distance, past the reach of its shadows.
+  `GrassComponent::selfShadow` sets how strong it is.
 
 ## Debug settings
 
 `RenderSystem::settings()` exposes ambient, sun strength, shadow, wind and
 projection controls as `ModuleSetting`s, so the debug panel shows them like any
-other system's settings. `stats()` reports the last frame's draw calls,
+other system's settings. Set the `SFS_GPU_TIMING` environment variable to have the
+WebGPU renderer time its sun shadow, grass growth and lit passes with GPU
+timestamp queries, where the device has them, and log their averages in
+milliseconds every few seconds. `stats()` reports the last frame's draw calls,
 instances, shadow instances, point lights, and how many of those came from
 emission and cast shadows.
 

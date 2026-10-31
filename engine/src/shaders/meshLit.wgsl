@@ -29,7 +29,7 @@ struct VertexOut {
   @location(2) vertexColor: vec3f,
   @location(3) uv: vec2f,
   @location(4) tint: vec4f,
-  @location(5) grass: vec4f,     // see SurfaceIn (others: 1, 0, 0, 0)
+  @location(5) grass: vec4f,     // see SurfaceIn, and w how shut in by grass (others: 1, 0, 0, 0)
   @location(6) grassData: vec4f, // see SurfaceIn
 }
 
@@ -42,19 +42,21 @@ struct VertexOut {
 @group(0) @binding(9) var skyRadiance: texture_2d<f32>;
 @group(0) @binding(10) var brdfTable: texture_2d<f32>;
 
-// Ambient occlusion (see ambientOcclusion.wgsl), at half the screen's size:
-// r how open each point is (1: fully), g its depth along the view. A 1x1
-// stand-in while it's off.
+// Ambient occlusion and contact shadows (see ambientOcclusion.wgsl), at half
+// the screen's size: r how open each point is (1: fully), g its depth along
+// the view, b how much of the sun's light reaches it past what's just in
+// front of it. A 1x1 stand-in while both are off.
 @group(0) @binding(11) var occlusionMap: texture_2d<f32>;
 
 // How open a point drawn at `pixel` (framebuffer) is to the light from all
-// around: the occlusion map's four texels around it, weighted by how near
-// each is (bilinearly) and how near in depth to the point (so it doesn't
-// bleed across edges). 1 when ambient occlusion is off, or none of them is
-// at its depth (things it doesn't hold: grass blades, see-through things).
-fn ambientOcclusionAt(pixel: vec2f, worldPosition: vec3f) -> f32 {
+// around (x), and how much of the sun's light its contact shadows leave it
+// (y): the occlusion map's four texels around it, weighted by how near each
+// is (bilinearly) and how near in depth to the point (so they don't bleed
+// across edges). 1 when they're off, or none of them is at its depth (things
+// it doesn't hold: grass blades, see-through things).
+fn screenOcclusionAt(pixel: vec2f, worldPosition: vec3f) -> vec2f {
   if (frame.ambientOcclusion.x < 0.5) {
-    return 1.0;
+    return vec2f(1.0);
   }
   let depth = dot(worldPosition - frame.cameraPosition.xyz, frame.cameraForward.xyz);
   let size = vec2i(textureDimensions(occlusionMap));
@@ -62,7 +64,7 @@ fn ambientOcclusionAt(pixel: vec2f, worldPosition: vec3f) -> f32 {
   let base = vec2i(floor(at));
   let f = at - floor(at);
   let tolerance = max(depth * frame.ambientOcclusion.y, 0.02);
-  var sum = 0.0;
+  var sum = vec2f(0.0);
   var total = 0.0;
   for (var i = 0; i < 4; i++) {
     let corner = vec2i(i & 1, i >> 1u);
@@ -70,11 +72,11 @@ fn ambientOcclusionAt(pixel: vec2f, worldPosition: vec3f) -> f32 {
     let across = select(1.0 - f.x, f.x, corner.x == 1);
     let down = select(1.0 - f.y, f.y, corner.y == 1);
     let weight = (across * down + 0.01) * max(1.0 - abs(texel.g - depth) / tolerance, 0.0);
-    sum += texel.r * weight;
+    sum += texel.rb * weight;
     total += weight;
   }
   if (total < 1e-4) {
-    return 1.0;
+    return vec2f(1.0);
   }
   return sum / total;
 }
@@ -194,6 +196,12 @@ fn pointShadow(light: PointLight, worldPosition: vec3f, geometryNormal: vec3f) -
   if (layer < 0) {
     return 1.0;
   }
+  // Under a physical sky, a lamp's shadow fades out as daylight drowns the
+  // lamp out (PhysicalSky::lampShadow), until it's no longer drawn.
+  var shows = 1.0;
+  if (frame.skyMode.x > 0.5) {
+    shows = smoothstep(0.2, 0.4, light.colorIntensity.w * frame.skyLight.z);
+  }
   let center = light.positionRadius.xyz;
   // A texel there is about this wide (a face spans 90 degrees): step off the
   // surface by a little more, so it doesn't shadow itself.
@@ -211,7 +219,7 @@ fn pointShadow(light: PointLight, worldPosition: vec3f, geometryNormal: vec3f) -
   lit += textureSampleCompareLevel(pointShadowMaps, shadowSampler, direction - across, layer, reference);
   lit += textureSampleCompareLevel(pointShadowMaps, shadowSampler, direction + up, layer, reference);
   lit += textureSampleCompareLevel(pointShadowMaps, shadowSampler, direction - up, layer, reference);
-  return lit / 5.0;
+  return mix(1.0, lit / 5.0, shows);
 }
 
 // The cluster a pixel (framebuffer position) at a world position is in.
@@ -388,13 +396,15 @@ fn hazeSky(worldPosition: vec3f) -> vec3f {
 // A surface lit by a physical sky: the sun's light (through the air; none
 // once it's set) as Lambert diffuse and a GGX glint, the sky's diffuse light
 // (its SH9) and its reflections (prefiltered, split sum), and point lights
-// as under a flat sky. A visual style scales the sun's light and the sky's
-// (diffuse and reflected) by its balance.
+// as under a flat sky, which with emission eyes adapted to daylight see
+// dimmer (frame.skyLight.z). A visual style scales the sun's light and the sky's
+// (diffuse and reflected) by its balance. Contact shadows (`contact`, the
+// sun's light they leave) take only the sun's, as its shadow maps do.
 fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f, albedo: vec3f,
-                 metallic: f32, roughness: f32, alpha: f32, occlusion: f32) -> LitOut {
+                 metallic: f32, roughness: f32, alpha: f32, occlusion: f32, contact: f32) -> LitOut {
   let toSun = frame.sunDirection.xyz;
   let toView = normalize(frame.cameraPosition.xyz - in.worldPosition);
-  let visibility = sunVisibility(in.worldPosition, geometryNormal);
+  let visibility = sunVisibility(in.worldPosition, geometryNormal) * contact;
   let sun = frame.sunLight.rgb * frame.sunBalance.rgb;
   let ambient = frame.ambientBalance.rgb;
   let f0 = mix(vec3f(0.04), albedo, metallic);
@@ -402,13 +412,13 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
   let direct = sun * (max(dot(normal, toSun), 0.0) * visibility);
   let skyLight = skyIrradianceAt(normal) * ambient * occlusion;
 
-  // Point lights brighten what daylight hasn't, as under a flat sky.
-  let daylight = smoothstep(0.20, 0.75, frame.sunColor.w);
+  // Point lights and emission are as bright as they are, lit for eyes
+  // adapted to the night: by day those eyes see them dimmer (x lamp), and
+  // daylight drowns all but strong ones out.
+  let lamp = frame.skyLight.z;
   let pointLit = pointLighting(in.clip.xy, in.worldPosition, normal, geometryNormal,
                                Shine(toView, f0, roughness, 1.0));
-  let level = direct + skyLight;
-  let shadowRoom = mix(1.0, 1.0 - smoothstep(0.65, 1.0, max(max(level.r, level.g), level.b)), daylight);
-  let diffuse = min(level + pointLit.diffuse * (2.0 * shadowRoom), vec3f(frame.ambientBalance.w));
+  let diffuse = min(direct + skyLight + pointLit.diffuse * (2.0 * lamp), vec3f(frame.ambientBalance.w));
 
   // The sky's reflection, hidden where it would come from below the
   // surface's own horizon, and the sun's glint.
@@ -419,10 +429,10 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
   let reflection = skyReflection(reflected, roughness) * ambient * (f0 * brdf.x + brdf.y) * (horizon * horizon) *
                    occlusion;
   let glint = min(ggxSpecular(normal, toView, toSun, f0, roughness), vec3f(8.0)) * sun * (PI * visibility) +
-              pointLit.specular * shadowRoom;
+              pointLit.specular * lamp;
 
   let lightColor = albedo * (1.0 - metallic) * diffuse + reflection + glint +
-                   max(s.emission, vec3f(0.0)) * in.tint.rgb;
+                   max(s.emission, vec3f(0.0)) * (in.tint.rgb * lamp);
   let haze = hazeAt(in.worldPosition);
   var color = mix(lightColor, hazeSky(in.worldPosition), haze);
   var clearness = 1.0 - haze;
@@ -489,10 +499,17 @@ fn shade(in: VertexOut) -> LitOut {
   let albedo = s.baseColor * in.tint.rgb;
   let metallic = clamp(s.metallic, 0.0, 1.0);
   let roughness = clamp(s.roughness, 0.04, 1.0);
-  // How open it is to the light from all around (ambient occlusion).
-  let occlusion = ambientOcclusionAt(in.clip.xy, in.worldPosition);
+  // How open it is to the light from all around (ambient occlusion), and
+  // how much of the sun's its contact shadows leave it.
+  // Down in grass, the blades around a point shut out the sky's light, and
+  // some of the sun's (in.grass.w, see meshGrass.wgsl; 0 elsewhere).
+  let screen = screenOcclusionAt(in.clip.xy, in.worldPosition);
+  let shut = clamp(in.grass.w, 0.0, 1.0);
+  let occlusion = screen.x * (1.0 - shut);
+  let sunShut = 1.0 - shut * 0.5;
   if (frame.skyMode.x > 0.5) {
-    return shadePhysical(in, s, normal, geometryNormal, albedo, metallic, roughness, alpha, occlusion);
+    return shadePhysical(in, s, normal, geometryNormal, albedo, metallic, roughness, alpha, occlusion,
+                         screen.y * sunShut);
   }
 
   let toSun = frame.sunDirection.xyz;
@@ -516,7 +533,7 @@ fn shade(in: VertexOut) -> LitOut {
 
   // Cast shadows keep ambient but lose the direct sun.
   // The shadow lookup follows the mesh's own surface, not its bumps.
-  let visibility = sunVisibility(in.worldPosition, geometryNormal);
+  let visibility = sunVisibility(in.worldPosition, geometryNormal) * sunShut;
   lit = mix(shadedLevel, lit, visibility);
 
   var sunlight = max(vec3f(lit) * frame.sunColor.rgb, vec3f(0.03));

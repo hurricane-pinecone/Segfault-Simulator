@@ -32,6 +32,12 @@ namespace sfs
  * @param float recovery - seconds flattened grass takes to stand back up
  * @param float drawDistance - how far from the camera grass is drawn; it
  *        thins out towards it
+ * @param bool castsShadows - whether blades near the camera cast the sun's
+ *        shadow (into its nearest cascade, where a blade's shadow is more
+ *        than a speck; with one shadow map, the first few metres)
+ * @param float selfShadow - how much darker the grass is down toward its
+ *        roots, where the blades around it shut out the sky (and some of the
+ *        sun): what makes a field look deep at any distance (0: none)
  * @param nlohmann::json paint - the painted maps (GrassMaps::toJson());
  *        edited by the brush, not shown
  */
@@ -45,6 +51,8 @@ struct GrassComponent
   [[sfs::range(0, 1)]] float stiffness = 0.4f;
   [[sfs::range(0.1, 20)]] float recovery = 3.0f;
   [[sfs::range(5, 200)]] float drawDistance = 40.0f;
+  bool castsShadows = true;
+  [[sfs::range(0, 1)]] float selfShadow = 0.5f;
   nlohmann::json paint = nlohmann::json::object();
 };
 

@@ -78,6 +78,61 @@ int main()
     CHECK(GrassGround().groundTexels() == 0u);
   }
 
+  TEST("a window should sit on the mesh's texel lattice around its middle, "
+       "coarser if it must, cut to the mesh")
+  {
+    const GrassGrid window = grassWindow(
+        {-100.0f, -100.0f}, {100.0f, 100.0f}, {3.1f, 0.0f}, 10.0f, 0.25f);
+    CHECK(near(window.texelSize().x, 0.25f));
+    // Its corner on a multiple of the texel, the square around the middle
+    // inside it.
+    CHECK(near(window.min.x / 0.25f, std::round(window.min.x / 0.25f)));
+    CHECK(window.min.x <= -6.9f && window.max.x >= 13.1f);
+    CHECK(window.min.y <= -10.0f && window.max.y >= 10.0f);
+    CHECK(window.size.x <= 84 && window.size.y <= 84);
+
+    // Moved on, the texels it shares with the last are the same.
+    const GrassGrid moved = grassWindow(
+        {-100.0f, -100.0f}, {100.0f, 100.0f}, {7.3f, 2.0f}, 10.0f, 0.25f);
+    const glm::vec2 shift = (moved.min - window.min) / 0.25f;
+    CHECK(near(shift.x, std::round(shift.x)) &&
+          near(shift.y, std::round(shift.y)));
+
+    // Too wide for kGrassMaxTexels at that texel: twice (or four times...) as
+    // coarse, still on the lattice.
+    const GrassGrid wide = grassWindow(
+        {-1000.0f, -1000.0f}, {1000.0f, 1000.0f}, {0.0f, 0.0f}, 200.0f, 0.25f);
+    CHECK(wide.size.x <= kGrassMaxTexels && near(wide.texelSize().x, 0.5f));
+    CHECK(near(wide.min.x, -200.0f));
+
+    // Cut to the mesh; nothing off it.
+    const GrassGrid edge = grassWindow(
+        {-100.0f, -100.0f}, {100.0f, 100.0f}, {95.0f, 0.0f}, 10.0f, 0.25f);
+    CHECK(near(edge.max.x, 100.0f));
+    CHECK(
+        grassWindow(
+            {-100.0f, -100.0f}, {100.0f, 100.0f}, {500.0f, 0.0f}, 10.0f, 0.25f)
+            .empty());
+  }
+
+  TEST("a window's ground should be just the mesh's on it")
+  {
+    const MeshData mesh = meshes::plane({40.0f, 40.0f});
+    std::vector<glm::vec3> positions;
+    for (const MeshVertex& vertex : mesh.vertices)
+      positions.push_back(vertex.position);
+    const GrassGrid window = grassWindow(
+        {-20.0f, -20.0f}, {20.0f, 20.0f}, {4.0f, 4.0f}, 2.0f, 0.25f);
+    const GrassGround ground = GrassGround::build(
+        positions, mesh.indices, glm::mat4(1.0f), {}, &window);
+    CHECK(ground.grid() == window);
+    CHECK(ground.groundTexels() == window.count());
+    // A window off the mesh: none.
+    const GrassGrid off{{50.0f, 50.0f}, {52.0f, 52.0f}, {8, 8}};
+    CHECK(GrassGround::build(positions, mesh.indices, glm::mat4(1.0f), {}, &off)
+              .empty());
+  }
+
   TEST("maps should start full, and change by stamps, sets and fills")
   {
     GrassMaps maps(GrassGrid::over({-5.0f, -5.0f}, {5.0f, 5.0f}, 0.25f));

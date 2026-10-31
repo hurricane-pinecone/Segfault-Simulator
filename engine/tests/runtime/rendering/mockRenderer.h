@@ -54,6 +54,15 @@ public:
     return handle;
   }
 
+  void updateGrassGround(GrassHandle grass, const GrassGround& ground) override
+  {
+    if (liveGrass.contains(grass.id) && !ground.empty())
+    {
+      liveGrass[grass.id] = ground.groundTexels();
+      groundUpdates.push_back({grass, ground.grid()});
+    }
+  }
+
   void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override
   {
     if (liveGrass.contains(grass.id))
@@ -148,6 +157,12 @@ public:
     glm::ivec2 size;
   };
   std::vector<TrampleUpdate> trampleUpdates; // all of them
+  struct GroundUpdate
+  {
+    GrassHandle grass;
+    GrassGrid grid;
+  };
+  std::vector<GroundUpdate> groundUpdates; // all of them
 };
 
 } // namespace sfs::testing3d

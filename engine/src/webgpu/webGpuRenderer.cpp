@@ -20,6 +20,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <string>
@@ -292,7 +294,12 @@ WebGpuRenderer::WebGpuRenderer(WebGpuContext& context,
 {
 }
 
-WebGpuRenderer::~WebGpuRenderer() = default;
+WebGpuRenderer::~WebGpuRenderer()
+{
+  // A readback still mapping calls back into its timing later: left be.
+  if (m_timing && m_timing->state == GpuTiming::Readback::Mapping)
+    static_cast<void>(m_timing.release());
+}
 
 bool WebGpuRenderer::initialize()
 {
@@ -322,7 +329,145 @@ bool WebGpuRenderer::initialize()
     LOG_ERROR("WebGpuRenderer: failed to build render pipelines");
     return false;
   }
+
+  // Timing the passes, if asked to (and the device can).
+  if (std::getenv("SFS_GPU_TIMING") && m_context.hasTimestamps())
+  {
+    auto timing = std::make_unique<GpuTiming>();
+    WGPUQuerySetDescriptor queries = {};
+    queries.type = WGPUQueryType_Timestamp;
+    queries.count = 2 * kTimedPasses;
+    timing->queries.reset(
+        wgpuDeviceCreateQuerySet(m_context.device(), &queries));
+    const uint64_t bytes = 2 * kTimedPasses * sizeof(uint64_t);
+    timing->resolved =
+        makeBuffer(m_context.device(),
+                   bytes,
+                   WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc);
+    timing->readback =
+        makeBuffer(m_context.device(),
+                   bytes,
+                   WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+    if (timing->queries && timing->resolved && timing->readback)
+    {
+      m_timing = std::move(timing);
+      LOG_INFO("Timing the GPU's passes (SFS_GPU_TIMING)");
+    }
+  }
   return true;
+}
+
+const WGPURenderPassTimestampWrites*
+WebGpuRenderer::timedRenderPass(TimedPass pass)
+{
+  if (!m_timing)
+    return nullptr;
+  m_timing->ran[pass] = true;
+  m_timing->renderWrites = {m_timing->queries.get(), 2 * pass, 2 * pass + 1};
+  return &m_timing->renderWrites;
+}
+
+const WGPUComputePassTimestampWrites*
+WebGpuRenderer::timedComputePass(TimedPass pass)
+{
+  if (!m_timing)
+    return nullptr;
+  m_timing->ran[pass] = true;
+  m_timing->computeWrites = {m_timing->queries.get(), 2 * pass, 2 * pass + 1};
+  return &m_timing->computeWrites;
+}
+
+void WebGpuRenderer::readTiming()
+{
+  if (!m_timing)
+    return;
+  GpuTiming& timing = *m_timing;
+  timing.ran = {};
+  using Readback = GpuTiming::Readback;
+  if (timing.state == Readback::Copied)
+  {
+    // Submitted with the last frame by now: read it back when it's done.
+    timing.state = Readback::Mapping;
+    WGPUBufferMapCallbackInfo callback = {};
+    callback.mode = WGPUCallbackMode_AllowProcessEvents;
+    callback.callback =
+        [](WGPUMapAsyncStatus status, WGPUStringView, void* state, void*)
+    {
+      *static_cast<Readback*>(state) = status == WGPUMapAsyncStatus_Success
+                                           ? Readback::Mapped
+                                           : Readback::Idle;
+    };
+    callback.userdata1 = &timing.state;
+    wgpuBufferMapAsync(timing.readback.get(),
+                       WGPUMapMode_Read,
+                       0,
+                       2 * kTimedPasses * sizeof(uint64_t),
+                       callback);
+    return;
+  }
+  if (timing.state != Readback::Mapped)
+    return;
+  const auto* stamps =
+      static_cast<const uint64_t*>(wgpuBufferGetConstMappedRange(
+          timing.readback.get(), 0, 2 * kTimedPasses * sizeof(uint64_t)));
+  for (uint32_t pass = 0; stamps && pass < kTimedPasses; ++pass)
+    if (timing.copied[pass] && stamps[2 * pass + 1] > stamps[2 * pass])
+    {
+      timing.total[pass] +=
+          double(stamps[2 * pass + 1] - stamps[2 * pass]) * 1e-6;
+      timing.samples[pass] += 1;
+    }
+  wgpuBufferUnmap(timing.readback.get());
+  timing.state = Readback::Idle;
+
+  // Every so often, the averages (milliseconds).
+  if (++timing.readbacks >= 100)
+  {
+    static constexpr const char* kNames[kTimedPasses] = {
+        "sun shadows", "grass growth", "lit pass"};
+    std::string line = "GPU ms:";
+    for (uint32_t pass = 0; pass < kTimedPasses; ++pass)
+    {
+      char part[64];
+      std::snprintf(part,
+                    sizeof(part),
+                    " %s %.3f",
+                    kNames[pass],
+                    timing.samples[pass] > 0
+                        ? timing.total[pass] / timing.samples[pass]
+                        : 0.0);
+      line += part;
+    }
+    LOG_INFO(line);
+    timing.total = {};
+    timing.samples = {};
+    timing.readbacks = 0;
+  }
+}
+
+void WebGpuRenderer::copyTiming()
+{
+  if (!m_timing || !m_encoder)
+    return;
+  GpuTiming& timing = *m_timing;
+  if (timing.state != GpuTiming::Readback::Idle)
+    return;
+  bool any = false;
+  for (const bool ran : timing.ran)
+    any = any || ran;
+  if (!any)
+    return;
+  const uint64_t bytes = 2 * kTimedPasses * sizeof(uint64_t);
+  wgpuCommandEncoderResolveQuerySet(m_encoder,
+                                    timing.queries.get(),
+                                    0,
+                                    2 * kTimedPasses,
+                                    timing.resolved.get(),
+                                    0);
+  wgpuCommandEncoderCopyBufferToBuffer(
+      m_encoder, timing.resolved.get(), 0, timing.readback.get(), 0, bytes);
+  timing.copied = timing.ran;
+  timing.state = GpuTiming::Readback::Copied;
 }
 
 void WebGpuRenderer::setTarget(WGPUCommandEncoder encoder,
@@ -557,15 +702,18 @@ GrassHandle WebGpuRenderer::createGrass(const GrassGround& ground)
                  sizeof(GrassUniforms),
                  WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
   grass.draws = makeBuffer(device,
-                           12 * sizeof(uint32_t),
+                           16 * sizeof(uint32_t),
                            WGPUBufferUsage_Storage | WGPUBufferUsage_Indirect |
                                WGPUBufferUsage_CopyDst);
   // Room for a few blades until the first frame says how many it needs.
   grass.state.capacity = {64, 64, 64};
   grass.blades =
       makeBuffer(device, 3 * 64 * kGrownBladeBytes, WGPUBufferUsage_Storage);
+  grass.state.shadowCapacity = 64;
+  grass.casters =
+      makeBuffer(device, 64 * sizeof(uint32_t), WGPUBufferUsage_Storage);
   if (!grass.ground.texture || !grass.growUniforms || !grass.drawUniforms ||
-      !grass.draws || !grass.blades)
+      !grass.draws || !grass.blades || !grass.casters)
     return {};
   rebuildGrassBindings(grass);
 
@@ -588,7 +736,7 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
 {
   const WGPUDevice device = m_context.device();
   {
-    std::array<WGPUBindGroupEntry, 6> entries{};
+    std::array<WGPUBindGroupEntry, 7> entries{};
     entries[0].binding = 0;
     entries[0].buffer = grass.growUniforms.get();
     entries[0].size = sizeof(GrassGrowUniforms);
@@ -604,6 +752,9 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
     entries[5].binding = 5;
     entries[5].buffer = grass.draws.get();
     entries[5].size = WGPU_WHOLE_SIZE;
+    entries[6].binding = 6;
+    entries[6].buffer = grass.casters.get();
+    entries[6].size = WGPU_WHOLE_SIZE;
     WGPUBindGroupDescriptor desc = {};
     desc.layout = m_grassGrowLayout.get();
     desc.entryCount = entries.size();
@@ -636,6 +787,60 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
     grass.drawBindings[list].reset(wgpuDeviceCreateBindGroup(device, &desc));
     first += grass.state.capacity[list];
   }
+  // Its shadow's: every blade, those casting, its settings and where it's
+  // flattened.
+  if (m_grassShadowLayout)
+  {
+    std::array<WGPUBindGroupEntry, 5> entries{};
+    entries[0].binding = 0;
+    entries[0].buffer = grass.blades.get();
+    entries[0].size = WGPU_WHOLE_SIZE;
+    entries[1].binding = 1;
+    entries[1].buffer = grass.casters.get();
+    entries[1].size = WGPU_WHOLE_SIZE;
+    entries[2].binding = 2;
+    entries[2].buffer = grass.drawUniforms.get();
+    entries[2].size = sizeof(GrassUniforms);
+    entries[3].binding = 3;
+    entries[3].textureView = grass.trample.view.get();
+    entries[4].binding = 4;
+    entries[4].sampler = m_clampSampler.get();
+    WGPUBindGroupDescriptor desc = {};
+    desc.layout = m_grassShadowLayout.get();
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    grass.shadowBindings.reset(wgpuDeviceCreateBindGroup(device, &desc));
+  }
+}
+
+void WebGpuRenderer::updateGrassGround(GrassHandle handle,
+                                       const GrassGround& ground)
+{
+  if (!handle.valid() || handle.id > m_grass.size() ||
+      !m_grass[handle.id - 1] || ground.empty())
+    return;
+  GpuGrass& grass = *m_grass[handle.id - 1];
+  const glm::ivec2 size = ground.grid().size;
+  // A new texture only if it's another size (bound anew); else written over.
+  if (grass.ground.size != size)
+  {
+    GpuImage image =
+        makeImage(m_context.device(), size, WGPUTextureFormat_RGBA32Float);
+    if (!image.texture)
+      return;
+    grass.ground = std::move(image);
+    rebuildGrassBindings(grass);
+  }
+  writeImage(m_context.queue(),
+             grass.ground,
+             {0, 0},
+             size,
+             ground.texels().data(),
+             sizeof(glm::vec4));
+  grass.state.groundGrid = ground.grid();
+  const glm::vec2 texel = ground.grid().texelSize();
+  grass.state.groundArea =
+      static_cast<float>(ground.groundTexels()) * texel.x * texel.y;
 }
 
 void WebGpuRenderer::updateGrassMaps(GrassHandle handle,
@@ -738,7 +943,7 @@ WGPURenderPipeline WebGpuRenderer::grassPipeline(const Surface& surface,
 
   const wgpu::ShaderModule module(wgpu::makeShader(
       device,
-      shaders::meshPass(surface.wgsl, shaders::litPass(shaders::meshGrassWgsl))
+      shaders::meshPass(surface.wgsl, shaders::litPass(shaders::grassPass()))
           .c_str()));
   const std::array<WGPUBindGroupLayout, 3> groups = {
       m_litLayout.get(), surface.materialLayout.get(), m_grassLayout.get()};
@@ -812,12 +1017,16 @@ void WebGpuRenderer::growGrass()
 {
   for (std::optional<GpuGrass>& grass : m_grass)
     if (grass)
-      grass->grown = grass->placed = false;
+    {
+      grass->grown = grass->placed = grass->casts = false;
+      grass->castInto = 0;
+    }
   if (m_plan.grassDraws().empty() || !m_grassGrowPipeline)
     return;
   const WGPUQueue queue = m_context.queue();
 
   WGPUComputePassDescriptor passDesc = {};
+  passDesc.timestampWrites = timedComputePass(TimedGrassGrowth);
   const WGPUComputePassEncoder pass =
       wgpuCommandEncoderBeginComputePass(m_encoder, &passDesc);
   wgpuComputePassEncoderSetPipeline(pass, m_grassGrowPipeline.get());
@@ -838,24 +1047,36 @@ void WebGpuRenderer::growGrass()
     if (!plan->grows)
       continue;
 
-    if (plan->capacity != grass.state.capacity)
+    if (plan->capacity != grass.state.capacity ||
+        plan->shadowCapacity != grass.state.shadowCapacity)
     {
-      grass.state.capacity = plan->capacity;
-      uint64_t blades = 0;
-      for (const uint32_t capacity : plan->capacity)
-        blades += capacity;
-      grass.blades = makeBuffer(m_context.device(),
-                                blades * kGrownBladeBytes,
-                                WGPUBufferUsage_Storage);
-      if (!grass.blades)
+      if (plan->capacity != grass.state.capacity)
+      {
+        grass.state.capacity = plan->capacity;
+        uint64_t blades = 0;
+        for (const uint32_t capacity : plan->capacity)
+          blades += capacity;
+        grass.blades = makeBuffer(m_context.device(),
+                                  blades * kGrownBladeBytes,
+                                  WGPUBufferUsage_Storage);
+      }
+      if (plan->shadowCapacity != grass.state.shadowCapacity)
+      {
+        grass.state.shadowCapacity = plan->shadowCapacity;
+        grass.casters =
+            makeBuffer(m_context.device(),
+                       uint64_t(plan->shadowCapacity) * sizeof(uint32_t),
+                       WGPUBufferUsage_Storage);
+      }
+      if (!grass.blades || !grass.casters)
         continue;
       rebuildGrassBindings(grass);
     }
 
     // Each list's draw: its blades' strip (2 vertices a segment, and the tip),
-    // as many as grow.
-    const std::array<uint32_t, 12> draws = {
-        11, 0, 0, 0, 5, 0, 0, 0, 3, 0, 0, 0};
+    // as many as grow; then the shadow casters' (2 segments).
+    const std::array<uint32_t, 16> draws = {
+        11, 0, 0, 0, 5, 0, 0, 0, 3, 0, 0, 0, 5, 0, 0, 0};
     wgpuQueueWriteBuffer(
         queue, grass.draws.get(), 0, draws.data(), sizeof(draws));
     wgpuQueueWriteBuffer(
@@ -866,6 +1087,7 @@ void WebGpuRenderer::growGrass()
     wgpuComputePassEncoderDispatchWorkgroups(
         pass, plan->workgroups.x, plan->workgroups.y, plan->workgroups.z);
     grass.grown = true;
+    grass.casts = plan->draw.shadow.y > 0.0f;
   }
   wgpuComputePassEncoderEnd(pass);
   wgpuComputePassEncoderRelease(pass);
@@ -926,6 +1148,35 @@ void WebGpuRenderer::encodeGrass(WGPURenderPassEncoder pass)
   }
 }
 
+void WebGpuRenderer::encodeGrassShadows(WGPURenderPassEncoder pass,
+                                        uint32_t offset,
+                                        uint32_t cascade)
+{
+  if (!m_grassShadowPipeline)
+    return;
+  bool bound = false;
+  for (const GrassBatch& batch : m_plan.grassDraws())
+  {
+    GpuGrass& grass = *m_grass[batch.grass.id - 1];
+    if (!grass.grown || !grass.casts || !grass.shadowBindings ||
+        (grass.castInto & (1u << cascade)))
+      continue;
+    grass.castInto |= 1u << cascade; // drawn once, though queued twice
+    if (!bound)
+    {
+      wgpuRenderPassEncoderSetPipeline(pass, m_grassShadowPipeline.get());
+      wgpuRenderPassEncoderSetBindGroup(
+          pass, 0, m_shadowBindings.get(), 1, &offset);
+      m_boundPipeline = nullptr; // the mesh pipelines need setting again after
+      bound = true;
+    }
+    wgpuRenderPassEncoderSetBindGroup(
+        pass, 1, grass.shadowBindings.get(), 0, nullptr);
+    wgpuRenderPassEncoderDrawIndirect(
+        pass, grass.draws.get(), 12 * sizeof(uint32_t));
+  }
+}
+
 void WebGpuRenderer::beginFrame(const FrameParams& frame)
 {
   if (m_capabilities.pointLightShadows)
@@ -962,6 +1213,7 @@ void WebGpuRenderer::endFrame()
 {
   if (!m_plan.open())
     return;
+  readTiming();
 
   const uint32_t pointResolution = m_plan.frame().shadows.pointResolution;
   m_plan.finish(m_viewport,
@@ -990,10 +1242,11 @@ void WebGpuRenderer::endFrame()
   uploadFrame();
   uploadLights();
 
+  // Grass grows first: its nearest blades cast into the sun's shadow.
+  growGrass();
   if (m_plan.frame().shadows.enabled)
     encodeShadowPass();
   encodePointShadows();
-  growGrass();
   if (m_occluded)
     encodeOcclusion();
   encodeLitPass();
@@ -1002,6 +1255,7 @@ void WebGpuRenderer::endFrame()
     encodeBloom();
   encodeComposite();
   encodeUi();
+  copyTiming();
 }
 
 void WebGpuRenderer::ensureShadowAtlas(uint32_t cascades)
@@ -1794,7 +2048,7 @@ bool WebGpuRenderer::createPipelines()
   // Growing grass: its settings, ground and maps in, its blades and their
   // draws out.
   {
-    std::array<WGPUBindGroupLayoutEntry, 6> entries{};
+    std::array<WGPUBindGroupLayoutEntry, 7> entries{};
     entries[0] = wgpu::storageEntry(
         0, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform);
     entries[1].binding = 1;
@@ -1812,6 +2066,8 @@ bool WebGpuRenderer::createPipelines()
         4, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
     entries[5] = wgpu::storageEntry(
         5, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
+    entries[6] = wgpu::storageEntry(
+        6, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
     WGPUBindGroupLayoutDescriptor desc = {};
     desc.entryCount = entries.size();
     desc.entries = entries.data();
@@ -1836,6 +2092,61 @@ bool WebGpuRenderer::createPipelines()
     {
       LOG_ERROR("Grass's grow pass doesn't build: " + *error);
       m_grassGrowPipeline.reset();
+    }
+  }
+  // Grass into the sun's shadow: group 1 its blades, those casting, its
+  // settings and where it's flattened. Depth only (no fragment stage), biased
+  // as meshes are.
+  {
+    std::array<WGPUBindGroupLayoutEntry, 5> entries{};
+    for (uint32_t binding = 0; binding <= 1; ++binding)
+      entries[binding] =
+          wgpu::storageEntry(binding,
+                             WGPUShaderStage_Vertex,
+                             WGPUBufferBindingType_ReadOnlyStorage);
+    entries[2] = wgpu::storageEntry(
+        2, WGPUShaderStage_Vertex, WGPUBufferBindingType_Uniform);
+    entries[3].binding = 3;
+    entries[3].visibility = WGPUShaderStage_Vertex;
+    entries[3].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[3].texture.viewDimension = WGPUTextureViewDimension_2D;
+    entries[4].binding = 4;
+    entries[4].visibility = WGPUShaderStage_Vertex;
+    entries[4].sampler.type = WGPUSamplerBindingType_Filtering;
+    WGPUBindGroupLayoutDescriptor desc = {};
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    m_grassShadowLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
+
+    ValidationScope scope(device);
+    const wgpu::ShaderModule module(
+        wgpu::makeShader(device, shaders::grassShadowPass().c_str()));
+    const std::array<WGPUBindGroupLayout, 2> groups = {
+        m_shadowLayout.get(), m_grassShadowLayout.get()};
+    WGPUPipelineLayoutDescriptor layoutDesc = {};
+    layoutDesc.bindGroupLayoutCount = groups.size();
+    layoutDesc.bindGroupLayouts = groups.data();
+    const wgpu::PipelineLayout layout(
+        wgpuDeviceCreatePipelineLayout(device, &layoutDesc));
+    WGPUDepthStencilState depth = depthState(true, WGPUCompareFunction_Less);
+    depth.depthBias = 2;
+    depth.depthBiasSlopeScale = 2.0f;
+    WGPURenderPipelineDescriptor pipeline = {};
+    pipeline.layout = layout.get();
+    pipeline.vertex.module = module.get();
+    pipeline.vertex.entryPoint = wgpu::sv("vs_main");
+    pipeline.primitive.topology = WGPUPrimitiveTopology_TriangleStrip;
+    pipeline.primitive.frontFace = WGPUFrontFace_CCW;
+    pipeline.primitive.cullMode = WGPUCullMode_None;
+    pipeline.depthStencil = &depth;
+    pipeline.multisample.count = 1;
+    pipeline.multisample.mask = 0xFFFFFFFFu;
+    m_grassShadowPipeline.reset(
+        wgpuDeviceCreateRenderPipeline(device, &pipeline));
+    if (const std::optional<std::string> error = scope.end())
+    {
+      LOG_ERROR("Grass's shadow pass doesn't build: " + *error);
+      m_grassShadowPipeline.reset();
     }
   }
   // A physical sky's (failing, logged: its flat colour behind, its diffuse
@@ -3200,7 +3511,7 @@ void WebGpuRenderer::uploadFrame()
     uniforms.skyMode.y = 1.0f;
     uniforms.skyMode.z = static_cast<float>(kSkyReflectionMips - 1);
   }
-  // Ambient occlusion, if its passes run this frame.
+  // Ambient occlusion and contact shadows, if their passes run this frame.
   if (!m_occluded)
     uniforms.ambientOcclusion.x = 0.0f;
   wgpuQueueWriteBuffer(
@@ -3245,6 +3556,7 @@ void WebGpuRenderer::encodeShadowPass()
 
   WGPURenderPassDescriptor desc = {};
   desc.depthStencilAttachment = &depth;
+  desc.timestampWrites = timedRenderPass(TimedSunShadows);
 
   WGPURenderPassEncoder pass =
       wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
@@ -3273,6 +3585,10 @@ void WebGpuRenderer::encodeShadowPass()
     for (const Draw& draw :
          cascades > 1 ? m_plan.cascadeDraws(c) : m_plan.shadowDraws())
       encodeDraw(pass, draw, Sections::All);
+    // Grass only into the nearest: further out, a blade's shadow is less than
+    // a texel.
+    if (c < kGrassShadowCascades)
+      encodeGrassShadows(pass, offset, c);
   }
   endPass(pass);
 }
@@ -3320,6 +3636,7 @@ void WebGpuRenderer::encodeLitPass()
   desc.colorAttachmentCount = colors.size();
   desc.colorAttachments = colors.data();
   desc.depthStencilAttachment = &depth;
+  desc.timestampWrites = timedRenderPass(TimedLit);
 
   WGPURenderPassEncoder pass =
       wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
@@ -3411,7 +3728,7 @@ WGPURenderPipeline WebGpuRenderer::pipelineFor(const Surface& surface,
 
 bool WebGpuRenderer::prepareOcclusion()
 {
-  if (!m_plan.frame().ambientOcclusion.enabled || m_occlusionBroken)
+  if (!m_plan.screenOcclusionOn() || m_occlusionBroken)
     return false;
   const WGPUDevice device = m_context.device();
 

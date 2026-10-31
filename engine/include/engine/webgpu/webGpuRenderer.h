@@ -108,6 +108,7 @@ public:
   void drawMesh(const MeshBatch& batch) override;
 
   GrassHandle createGrass(const GrassGround& ground) override;
+  void updateGrassGround(GrassHandle grass, const GrassGround& ground) override;
   void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override;
   void updateGrassTrample(GrassHandle grass,
                           const GrassTrampleImage& image) override;
@@ -158,9 +159,10 @@ private:
   };
 
   // A grass field on the GPU: its ground and maps, where it's flattened, the
-  // blades grown each frame (three lists, by detail) with their indirect
-  // draws, the grow pass's bindings and group 2 of the grass pipelines (one a
-  // list).
+  // blades grown each frame (three lists, by detail, and the indices of those
+  // casting the sun's shadow) with their indirect draws, the grow pass's
+  // bindings, group 2 of the grass pipelines (one a list) and group 1 of its
+  // shadow's.
   struct GpuGrass
   {
     GrassFieldState state; // its grids, trample bounds and blade capacity
@@ -173,10 +175,14 @@ private:
     wgpu::Buffer draws;
     wgpu::Buffer growUniforms;
     wgpu::Buffer drawUniforms;
+    wgpu::Buffer casters;
     wgpu::BindGroup growBindings;
     std::array<wgpu::BindGroup, 3> drawBindings;
-    bool grown = false;  // this frame: its blades
-    bool placed = false; // this frame: its draw's uniforms (for its ground)
+    wgpu::BindGroup shadowBindings;
+    bool grown = false;    // this frame: its blades
+    bool placed = false;   // this frame: its draw's uniforms (for its ground)
+    bool casts = false;    // this frame: its blades into the sun's shadow
+    uint32_t castInto = 0; // the cascades they're drawn into so far (bits)
   };
 
   // A material on the GPU: its surface, its parameters, and the bind group
@@ -305,14 +311,20 @@ private:
                            const void* pixels,
                            uint32_t bytesPerPixel);
   WGPURenderPipeline grassPipeline(const Surface& surface, bool ground);
-  // Ambient occlusion: whether this frame has it (its passes and targets
-  // made, the lit bindings pointed at its map), the passes working it out,
-  // and a surface's depth-and-normals pipeline (null if it doesn't build).
+  // Ambient occlusion (and contact shadows, worked out with it): whether this
+  // frame has it (its passes and targets made, the lit bindings pointed at
+  // its map), the passes working it out, and a surface's depth-and-normals
+  // pipeline (null if it doesn't build).
   bool prepareOcclusion();
   void encodeOcclusion();
   WGPURenderPipeline depthNormalsPipeline(const Surface& surface);
   void growGrass();
   void encodeGrass(WGPURenderPassEncoder pass);
+  // The frame's grass into the sun's shadow map being drawn (group 0 bound at
+  // `offset`, the map's).
+  void encodeGrassShadows(WGPURenderPassEncoder pass,
+                          uint32_t offset,
+                          uint32_t cascade);
   void encodeComposite();
   // UI (drawUi), over the target after the composite.
   bool createUiPipeline();
@@ -377,6 +389,48 @@ private:
   wgpu::BindGroupLayout m_grassLayout;
   wgpu::BindGroupLayout m_grassGrowLayout;
   wgpu::ComputePipeline m_grassGrowPipeline;
+  wgpu::BindGroupLayout m_grassShadowLayout;
+  wgpu::RenderPipeline m_grassShadowPipeline;
+
+  // Timing the frame's main passes on the GPU, for measuring what they cost:
+  // with SFS_GPU_TIMING set, on a device with timestamp queries, their
+  // averages are logged every few seconds. Each pass writes a timestamp as it
+  // begins and ends; every few frames they're copied out and read back.
+  enum TimedPass : uint32_t
+  {
+    TimedSunShadows,
+    TimedGrassGrowth,
+    TimedLit,
+    kTimedPasses,
+  };
+  struct GpuTiming
+  {
+    enum class Readback
+    {
+      Idle,
+      Copied,  // this frame's copied out, to map once it's submitted
+      Mapping, // waiting on the map
+      Mapped,
+    };
+    wgpu::QuerySet queries;
+    wgpu::Buffer resolved;
+    wgpu::Buffer readback;
+    Readback state = Readback::Idle;
+    std::array<bool, kTimedPasses> ran{};     // this frame
+    std::array<bool, kTimedPasses> copied{};  // the frame read back
+    std::array<double, kTimedPasses> total{}; // milliseconds
+    std::array<uint32_t, kTimedPasses> samples{};
+    uint32_t readbacks = 0;
+    WGPURenderPassTimestampWrites renderWrites{};
+    WGPUComputePassTimestampWrites computeWrites{};
+  };
+  std::unique_ptr<GpuTiming> m_timing;
+  // A pass's timestamp writes (null when not timing); the frame's read back
+  // (at its start), and copied out (at its end).
+  const WGPURenderPassTimestampWrites* timedRenderPass(TimedPass pass);
+  const WGPUComputePassTimestampWrites* timedComputePass(TimedPass pass);
+  void readTiming();
+  void copyTiming();
 
   wgpu::Buffer m_frameUniforms;
   wgpu::Buffer m_instanceBuffer;
@@ -502,11 +556,11 @@ private:
 
   // Ambient occlusion (meshDepthNormals.wgsl, ambientOcclusion.wgsl), at half
   // the viewport's size: what's drawn opaque (normals and depth, and a depth
-  // buffer for it), the occlusion worked out from it, and that blurred across
-  // (into `blurred`) and back down (into `occlusion`, which the lit pass
-  // reads); each pass's parameters and bindings (the occlusion's, across,
-  // down). Made the first time a frame has it; until then the lit pass binds
-  // a 1x1 stand-in.
+  // buffer for it), the occlusion (and contact shadows) worked out from it,
+  // and that blurred across (into `blurred`) and back down (into
+  // `occlusion`, which the lit pass reads); each pass's parameters and
+  // bindings (the occlusion's, across, down). Made the first time a frame has
+  // it; until then the lit pass binds a 1x1 stand-in.
   struct OcclusionTargets
   {
     glm::ivec2 size{0, 0};

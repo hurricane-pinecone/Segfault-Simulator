@@ -104,13 +104,17 @@ int main()
     terrain.blendSharpness = 0.7f;
     terrain.antiTiling = false;
     terrain.variation = 0.2f;
+    terrain.triplanarSharpness = 0.8f;
     terrain.layers.push_back({.name = "Grass",
                               .baseTexture = "asset:1",
                               .tint = {0.9f, 1.0f, 0.8f},
                               .tileSize = 3.0f,
-                              .roughness = 0.9f});
-    terrain.layers.push_back(
-        {.name = "Dirt", .normalTexture = "asset:2", .grass = 0.0f});
+                              .roughness = 0.9f,
+                              .meadow = 0.8f});
+    terrain.layers.push_back({.name = "Dirt",
+                              .normalTexture = "asset:2",
+                              .grass = 0.0f,
+                              .triplanar = true});
     material.terrain = terrain;
     material.variants["realistic"] = "asset:3";
     const nlohmann::json saved = material.toJson();
@@ -118,6 +122,11 @@ int main()
     const auto loaded = MaterialAsset::fromJson(saved);
     CHECK(loaded && *loaded == material);
     CHECK(loaded && loaded->terrain->layers[1].name == "Dirt");
+    CHECK(loaded && loaded->terrain->layers[0].meadow == 0.8f &&
+          loaded->terrain->layers[1].meadow == 0.0f);
+    CHECK(loaded && !loaded->terrain->layers[0].triplanar &&
+          loaded->terrain->layers[1].triplanar &&
+          loaded->terrain->triplanarSharpness == 0.8f);
 
     // More layers than there can be: the first five.
     nlohmann::json many = saved;

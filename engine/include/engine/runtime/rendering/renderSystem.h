@@ -146,8 +146,8 @@ public:
 
   /**
    * The scene's height fog (see FogSettings; on, it takes haze's place) and
-   * ambient occlusion (see AmbientOcclusionSettings); both off by default, and
-   * a 3D scene's only.
+   * ambient occlusion (see AmbientOcclusionSettings) and contact shadows (see
+   * ContactShadowSettings); all off by default, and a 3D scene's only.
    */
   void setFogSettings(const FogSettings& settings) { m_fog = settings; }
   const FogSettings& fogSettings() const { return m_fog; }
@@ -158,6 +158,14 @@ public:
   const AmbientOcclusionSettings& ambientOcclusionSettings() const
   {
     return m_ambientOcclusion;
+  }
+  void setContactShadowSettings(const ContactShadowSettings& settings)
+  {
+    m_contactShadows = settings;
+  }
+  const ContactShadowSettings& contactShadowSettings() const
+  {
+    return m_contactShadows;
   }
 
   /**
@@ -226,6 +234,7 @@ public:
   SkySettings effectiveSky() const;
   FogSettings effectiveFog() const;
   AmbientOcclusionSettings effectiveAmbientOcclusion() const;
+  ContactShadowSettings effectiveContactShadows() const;
 
   const RenderStats& stats() const { return m_stats; }
 
@@ -306,6 +315,7 @@ private:
   HazeSettings m_haze;
   FogSettings m_fog;
   AmbientOcclusionSettings m_ambientOcclusion;
+  ContactShadowSettings m_contactShadows;
   SkySettings m_sky;
   ColorGrading m_grading;
   StyleSource m_styleSource;

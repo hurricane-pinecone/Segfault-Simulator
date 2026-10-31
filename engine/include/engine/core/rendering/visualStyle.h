@@ -2,6 +2,7 @@
 
 #include "engine/core/rendering/ambientOcclusion.h"
 #include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/sky.h"
@@ -25,8 +26,8 @@ namespace sfs
  * While a style is active:
  * - what it sets replaces the scene's own: its colour grading and tone
  *   mapping always; bloom (the camera's), haze, the sky, each shadow
- *   setting, ambient occlusion and fog only when the style has them (each
- *   optional: left out, the scene's stays);
+ *   setting, ambient occlusion, contact shadows and fog only when the style has
+ * them (each optional: left out, the scene's stays);
  * - the scene's light is re-balanced, not replaced, so a day/night cycle
  *   that sets the lighting every frame keeps working: the sun's and the
  *   ambient light's shares and the sky colour are multiplied (intensity x
@@ -52,6 +53,7 @@ namespace sfs
  *                 "cascadeSplit": 0.75},
  *     "sky": { ...SkySettings::toJson()... },
  *     "ambientOcclusion": { ...AmbientOcclusionSettings::toJson()... },
+ *     "contactShadows": { ...ContactShadowSettings::toJson()... },
  *     "fog": { ...FogSettings::toJson()... },
  *     "materialVariant": "realistic",
  *     "materials": {"farm:ground-paint": "asset:<id>"}
@@ -83,8 +85,10 @@ struct VisualStyle
   std::optional<float> shadowCascadeSplit;
   // The sky (e.g. a physical one, with its image-based lighting).
   std::optional<SkySettings> sky;
-  // Ambient occlusion and height fog (which, on, takes haze's place).
+  // Ambient occlusion, contact shadows and height fog (which, on, takes
+  // haze's place).
   std::optional<AmbientOcclusionSettings> ambientOcclusion;
+  std::optional<ContactShadowSettings> contactShadows;
   std::optional<FogSettings> fog;
 
   // Materials with a variant under this tag draw as it ("": none do).

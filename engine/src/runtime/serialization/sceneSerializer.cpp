@@ -382,6 +382,8 @@ json renderToJson(const RenderSystem& render)
   if (render.ambientOcclusionSettings() != AmbientOcclusionSettings{})
     out["ambientOcclusion"] =
         cleaned(render.ambientOcclusionSettings().toJson());
+  if (render.contactShadowSettings() != ContactShadowSettings{})
+    out["contactShadows"] = cleaned(render.contactShadowSettings().toJson());
   if (render.fogSettings() != FogSettings{})
     out["fog"] = cleaned(render.fogSettings().toJson());
   return out;
@@ -435,11 +437,15 @@ void renderFromJson(const json& value, RenderSystem& render)
   if (const json& in = value.value("sky", json::object()); in.is_object())
     render.setSkySettings(SkySettings::fromJson(in, render.skySettings()));
 
-  // Older files have neither: no ambient occlusion, no fog.
+  // Older files have none: no ambient occlusion, contact shadows or fog.
   if (const json& in = value.value("ambientOcclusion", json::object());
       in.is_object())
     render.setAmbientOcclusionSettings(AmbientOcclusionSettings::fromJson(
         in, render.ambientOcclusionSettings()));
+  if (const json& in = value.value("contactShadows", json::object());
+      in.is_object())
+    render.setContactShadowSettings(
+        ContactShadowSettings::fromJson(in, render.contactShadowSettings()));
   if (const json& in = value.value("fog", json::object()); in.is_object())
     render.setFogSettings(FogSettings::fromJson(in, render.fogSettings()));
 

@@ -51,6 +51,19 @@ inline std::string litPass(std::string_view vertex)
   return std::string(meshLitWgsl) + std::string(fogWgsl) + std::string(vertex);
 }
 
+/** Grass's lit vertex stage (for litPass()): its blades, and its ground. */
+inline std::string grassPass()
+{
+  return std::string(grassBladeWgsl) + std::string(meshGrassWgsl);
+}
+
+/** Grass's blades into the sun's shadow map (no surface: depth only). */
+inline std::string grassShadowPass()
+{
+  return std::string(meshCommonWgsl) + std::string(grassBladeWgsl) +
+         std::string(meshGrassShadowWgsl);
+}
+
 /**
  * The passes working out ambient occlusion (ambientOcclusion.wgsl): the
  * depth and normals of what's drawn (a mesh pass), then the occlusion and

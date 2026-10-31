@@ -128,6 +128,12 @@ public:
   // How high the sun climbs (radians: 5 degrees) before nothing near the
   // horizon (low haze, hills, trees) holds its light back.
   static constexpr float kHorizonHaze = 0.0873f;
+  // The most eyes adapt to the dark (3 stops): x8 the light they see.
+  static constexpr float kMostAdaptation = 8.0f;
+  // A point light's strength (as the eye sees it: x lampScale()) below which
+  // its shadow doesn't show (none is drawn), and above which it shows whole.
+  static constexpr float kLampShadowFrom = 0.2f;
+  static constexpr float kLampShadowFull = 0.4f;
   // The transmittance table: altitude x the cosine of the zenith angle.
   static constexpr int kTransmittanceHeights = 32;
   static constexpr int kTransmittanceAngles = 128;
@@ -211,6 +217,28 @@ public:
   float adaptation(const glm::vec3& toSun,
                    const glm::vec3& sunLight,
                    const glm::vec3& skyLight) const;
+
+  /**
+   * The adaptation() eyes reach in the deepest dark, by the settings: 1 if
+   * they don't adapt, up to kMostAdaptation.
+   */
+  float mostAdaptation() const;
+
+  /**
+   * What lamps (point lights, and emission: their brightness is fixed, set to
+   * look right to eyes adapted to the night) look like to eyes `adapted`
+   * (adaptation()): x their share of mostAdaptation(), so 1 at night and down
+   * to an eighth at noon, where daylight drowns all but strong ones out.
+   */
+  float lampScale(float adapted) const;
+
+  /**
+   * How much of a point light of `intensity` its shadow shows (0..1) to eyes
+   * seeing lamps x `lampScale`: none (it needn't be drawn) when the light is
+   * too dim to see, faded in (kLampShadowFrom to kLampShadowFull) as it
+   * brightens. (meshLit.wgsl's pointShadow() fades it as this does.)
+   */
+  static float lampShadow(float intensity, float lampScale);
 
   /**
    * The transmittance table, rgba (a unused), row per altitude:

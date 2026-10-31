@@ -322,6 +322,43 @@ bool ambientOcclusion(EditorHistory* history,
   return changed;
 }
 
+bool contactShadows(EditorHistory* history, sfs::ContactShadowSettings& contact)
+{
+  bool changed = widgets::undoable(
+      history,
+      contact.enabled,
+      [&](bool& on)
+      { return ImGui::Checkbox(row("Contact Shadows").c_str(), &on); });
+  ImGui::SetItemTooltip(
+      "Small, sharp shadows where things meet the ground and in fine\n"
+      "crevices, finer than the sun's shadow maps hold. Worked out on screen\n"
+      "with ambient occlusion; take only the sun's (or moon's) light, under a\n"
+      "physical sky. Grass blades don't cast them.");
+  if (!contact.enabled)
+    return changed;
+  changed |= slider(history,
+                    "Length",
+                    contact.length,
+                    0.05f,
+                    2.0f,
+                    "How far toward the sun it looks for what blocks it, "
+                    "world units");
+  changed |= slider(history,
+                    "Thickness",
+                    contact.thickness,
+                    0.02f,
+                    2.0f,
+                    "How thick what's drawn is taken to be behind its front, "
+                    "world units (more: thin things cast more broadly)");
+  changed |= slider(history,
+                    "Strength",
+                    contact.strength,
+                    0.0f,
+                    1.0f,
+                    "How dark they get (1: none of the sun's light)");
+  return changed;
+}
+
 bool fog(EditorHistory* history, sfs::FogSettings& fog)
 {
   bool changed = widgets::undoable(
@@ -501,6 +538,24 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::Indent();
     ImGui::PushID("occlusion");
     changed |= ambientOcclusion(nullptr, *style.ambientOcclusion);
+    ImGui::PopID();
+    ImGui::Unindent();
+  }
+  if (optional("Contact Shadows",
+               style.contactShadows.has_value(),
+               "On: these contact shadows instead of the scene's"))
+  {
+    style.contactShadows =
+        style.contactShadows ? std::nullopt
+                             : std::optional<sfs::ContactShadowSettings>(
+                                   sfs::ContactShadowSettings{.enabled = true});
+    changed = true;
+  }
+  if (style.contactShadows)
+  {
+    ImGui::Indent();
+    ImGui::PushID("contact");
+    changed |= contactShadows(nullptr, *style.contactShadows);
     ImGui::PopID();
     ImGui::Unindent();
   }
