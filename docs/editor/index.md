@@ -615,7 +615,7 @@ and **Softness** set the brush. Each stroke is saved into the splat map's
 image as it ends. Painting isn't undoable yet: paint the first layer back
 instead. Grass on the mesh follows as you paint.
 
-## Ambient occlusion and fog
+## Ambient occlusion, contact shadows and fog
 
 Scene Settings > **Occlusion & Fog** turns on **Ambient Occlusion** (radius,
 intensity, samples), **Contact Shadows** (length, thickness, strength) and

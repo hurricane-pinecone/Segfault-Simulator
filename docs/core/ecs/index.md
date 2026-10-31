@@ -123,8 +123,11 @@ if (DriftSystem* opt = scene.tryGetSystem<DriftSystem>())
 `getSystem<T>()` asserts the system was registered. Calling it for an absent
 system is a programming error: a fatal error (`sfs::fatalError`, which logs
 it and throws `sfs::FatalError`) naming the missing type. The game loop
-catches it, tells the player in a message box and ends the game. Use
-`tryGetSystem<T>()` when a system may or may not be present.
+catches it, tells the player in a message box and ends the game (set the
+`SFS_NO_ERROR_DIALOG` environment variable to skip the message box, for an
+automated run with nobody there to close it: the log gets the message instead,
+and the game still ends). Use `tryGetSystem<T>()` when a system may or may
+not be present.
 
 `scene.view<A, B>()` makes a list; `registry->each<A, B>(fn)` (in a system)
 calls `fn(entity, a, b)` for each match without one, for code that runs every
