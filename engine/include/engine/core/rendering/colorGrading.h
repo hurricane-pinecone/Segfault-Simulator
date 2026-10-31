@@ -60,6 +60,15 @@ std::optional<ToneMapper> toneMapperFromName(std::string_view name);
  * @param vignette    how much the corners darken (0: not at all)
  * @param vignetteSoftness how far in from the corners it starts (0: only the
  *                    corners, sharply; 1: from the middle, gently)
+ * @param autoExposure whether the exposure follows what's on screen, as eyes
+ *                    (or a camera) do: brightening a dim view and darkening a
+ *                    bright one toward `exposureTarget`, by at most
+ *                    `exposureBrighten` / `exposureDarken` stops, easing there
+ *                    at about `exposureSpeed` stops a second. On top of a
+ *                    physical sky's own adaptation to dusk and night (keep
+ *                    exposureBrighten small to keep nights dark)
+ * @param exposureTarget the average brightness it aims for, in stops from
+ *                    mid-grey (0.18)
  */
 struct ColorGrading
 {
@@ -74,6 +83,11 @@ struct ColorGrading
   glm::vec3 gain{1.0f};
   float vignette = 0.0f;
   float vignetteSoftness = 0.5f;
+  bool autoExposure = false;
+  float exposureTarget = 0.0f;
+  float exposureDarken = 1.5f;
+  float exposureBrighten = 0.5f;
+  float exposureSpeed = 1.5f;
 
   /** Whether it changes nothing: the picture exactly as with no grading. */
   bool neutral() const;

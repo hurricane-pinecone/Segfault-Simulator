@@ -54,6 +54,7 @@ namespace sfs
  *     "sky": { ...SkySettings::toJson()... },
  *     "ambientOcclusion": { ...AmbientOcclusionSettings::toJson()... },
  *     "contactShadows": { ...ContactShadowSettings::toJson()... },
+ *     "temporalAntiAliasing": true,
  *     "fog": { ...FogSettings::toJson()... },
  *     "materialVariant": "realistic",
  *     "materials": {"farm:ground-paint": "asset:<id>"}
@@ -90,6 +91,8 @@ struct VisualStyle
   std::optional<AmbientOcclusionSettings> ambientOcclusion;
   std::optional<ContactShadowSettings> contactShadows;
   std::optional<FogSettings> fog;
+  // Temporal anti-aliasing (see RenderSystem::setTemporalAntiAliasing).
+  std::optional<bool> temporalAntiAliasing;
 
   // Materials with a variant under this tag draw as it ("": none do).
   std::string materialVariant;

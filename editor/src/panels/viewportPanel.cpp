@@ -34,6 +34,7 @@
 #include "imguizmo/ImGuizmo.h"
 
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <cmath>
 
@@ -868,6 +869,9 @@ bool ViewportPanel::paintTerrain(EditorContext& context, const View& view, bool 
   {
     m_terrainSplat = terrain->splat;
     m_terrainSinceGrass = 0.0f;
+    m_terrainBefore = terrain->splat->rgba;
+    m_terrainFrom = glm::ivec2(std::numeric_limits<int>::max());
+    m_terrainTo = glm::ivec2(std::numeric_limits<int>::min());
   }
   if (!m_terrainSplat || !down || hit->uvPerUnit.x <= 0.0f)
     return true;
@@ -885,7 +889,11 @@ bool ViewportPanel::paintTerrain(EditorContext& context, const View& view, bool 
                                           std::min(m_terrainStrength * 10.0f * dt, 1.0f),
                                           m_terrainSoftness);
   if (to.x > from.x && to.y > from.y)
+  {
     context.render->renderer().updateTexture(m_terrainSplat, from, to);
+    m_terrainFrom = glm::min(m_terrainFrom, from);
+    m_terrainTo = glm::max(m_terrainTo, to);
+  }
   m_terrainSinceGrass += dt;
   if (m_terrainSinceGrass > 0.2f)
   {
@@ -902,20 +910,64 @@ void ViewportPanel::endTerrainStroke(EditorContext& context)
     return;
   const std::shared_ptr<const sfs::TextureData> splat = std::move(m_terrainSplat);
   m_terrainSplat.reset();
+  const sfs::Entity ground = context.selection;
   if (context.render)
     if (auto* grassModule = context.render->module<sfs::GrassModule>())
-      grassModule->terrainPainted(context.selection);
+      grassModule->terrainPainted(ground);
+  saveSplat(context, *splat);
+
+  // Undoable: the texels it changed, as they were and as they are.
+  const glm::ivec2 from = m_terrainFrom;
+  const glm::ivec2 to = m_terrainTo;
+  std::vector<uint8_t> before = std::move(m_terrainBefore);
+  m_terrainBefore.clear();
+  if (!context.history || to.x <= from.x || to.y <= from.y || before.size() != splat->rgba.size())
+    return;
+  const auto region = [&](const std::vector<uint8_t>& rgba)
+  {
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<std::size_t>(to.x - from.x) * static_cast<std::size_t>(to.y - from.y) * 4);
+    for (int y = from.y; y < to.y; ++y)
+    {
+      const auto row = rgba.begin() + (static_cast<std::ptrdiff_t>(y) * splat->width + from.x) * 4;
+      out.insert(out.end(), row, row + (to.x - from.x) * 4);
+    }
+    return out;
+  };
+  auto was = std::make_shared<const std::vector<uint8_t>>(region(before));
+  auto now = std::make_shared<const std::vector<uint8_t>>(region(splat->rgba));
+  EditorContext* ctx = &context;
+  const auto put = [ctx, splat, ground, from, to](const std::vector<uint8_t>& texels)
+  {
+    auto& map = const_cast<sfs::TextureData&>(*splat); // painted in place, as the brush does
+    for (int y = from.y; y < to.y; ++y)
+      std::copy_n(texels.begin() + static_cast<std::ptrdiff_t>(y - from.y) * (to.x - from.x) * 4,
+                  (to.x - from.x) * 4,
+                  map.rgba.begin() + (static_cast<std::ptrdiff_t>(y) * map.width + from.x) * 4);
+    if (ctx->render)
+    {
+      ctx->render->renderer().updateTexture(splat, from, to);
+      if (auto* grassModule = ctx->render->module<sfs::GrassModule>(); grassModule && ground.isValid())
+        grassModule->terrainPainted(ground);
+    }
+    saveSplat(*ctx, map);
+  };
+  context.history->pushAssetEdit([put, was] { put(*was); }, [put, now] { put(*now); }, was->size() + now->size());
+}
+
+void ViewportPanel::saveSplat(EditorContext& context, const sfs::TextureData& splat)
+{
   // Saved to the texture asset it was read from.
   if (!context.scene || !context.assets)
     return;
-  const std::optional<sfs::AssetId> id = context.scene->assetStore().textureId(splat.get());
+  const std::optional<sfs::AssetId> id = context.scene->assetStore().textureId(&splat);
   const sfs::AssetRecord* record = id ? context.assets->find(*id) : nullptr;
   if (!record)
   {
     LOG_ERROR("The terrain's splat map isn't a texture asset: its painting isn't saved");
     return;
   }
-  if (!sfs::saveTexturePng(*splat, context.assets->absolutePath(*record)))
+  if (!sfs::saveTexturePng(splat, context.assets->absolutePath(*record)))
     LOG_ERROR("Can't save the splat map " + record->path.generic_string());
 }
 

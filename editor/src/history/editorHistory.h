@@ -51,6 +51,14 @@ public:
    */
   void amendLast();
 
+  /**
+   * Record an edit outside the scene, already made (see
+   * HistorySteps::AssetEdit): Undo calls `undo`, Redo `redo`.
+   */
+  void pushAssetEdit(std::function<void()> undo,
+                     std::function<void()> redo,
+                     std::size_t bytes);
+
   /** Counts edits, undos and redos: unchanged means the scene is as it was. */
   uint64_t revision() const { return m_revision; }
 

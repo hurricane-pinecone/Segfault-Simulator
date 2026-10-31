@@ -32,6 +32,11 @@ int main()
     grading.gain = {1.0f, 0.95f, 0.9f};
     grading.vignette = 0.3f;
     grading.vignetteSoftness = 0.7f;
+    grading.autoExposure = true;
+    grading.exposureTarget = 0.25f;
+    grading.exposureDarken = 2.0f;
+    grading.exposureBrighten = 0.0f;
+    grading.exposureSpeed = 3.0f;
     CHECK(!grading.neutral());
     CHECK(ColorGrading::fromJson(grading.toJson()) == grading);
     CHECK(grading.toJson()["toneMapper"] == "agx");
@@ -162,6 +167,7 @@ int main()
                             .startDistance = 10.0f,
                             .maxOpacity = 0.7f,
                             .sunGlow = 0.4f};
+    style.temporalAntiAliasing = true;
     const std::optional<VisualStyle> loaded =
         VisualStyle::fromJson(style.toJson());
     CHECK(loaded && *loaded == style);

@@ -114,5 +114,31 @@ int main()
     CHECK(steps.redo()->snapshot == expected);
   }
 
+  TEST("an asset edit should undo and redo in its turn among the scene's")
+  {
+    HistorySteps steps;
+    int painted = 0;
+    steps.push(scene(0), scene(1), std::nullopt, std::nullopt);
+    steps.pushAssetEdit(std::make_shared<const HistorySteps::AssetEdit>(
+                            HistorySteps::AssetEdit{[&] { painted = 0; }, [&] { painted = 1; }, 64}),
+                        2u);
+    painted = 1;
+    steps.push(scene(1), scene(2), std::nullopt, std::nullopt);
+
+    CHECK(steps.undo()->snapshot == scene(1));
+    auto restore = steps.undo();
+    CHECK(restore->asset != nullptr);
+    restore->asset->undo();
+    CHECK(painted == 0);
+    CHECK(steps.undo()->snapshot == scene(0));
+    CHECK(steps.redo()->snapshot == scene(1));
+    restore = steps.redo();
+    CHECK(restore->asset != nullptr);
+    restore->asset->redo();
+    CHECK(painted == 1);
+    CHECK(steps.redo()->snapshot == scene(2));
+    CHECK(steps.bytes() >= 64u);
+  }
+
   return testing::report("historyStepsTests");
 }

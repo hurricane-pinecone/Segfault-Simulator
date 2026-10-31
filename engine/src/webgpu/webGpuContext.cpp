@@ -169,7 +169,9 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
     auto* device = static_cast<WebGpuDeviceState*>(state);
     // Released on purpose (shutting down): not a loss.
     if (reason == WGPUDeviceLostReason_Destroyed ||
+#ifndef __EMSCRIPTEN__ // (the web's header has no such reason)
         reason == WGPUDeviceLostReason_InstanceDropped ||
+#endif
         (device && device->releasing.load()))
       return;
     logStr("The WebGPU device was lost", message);

@@ -48,6 +48,10 @@ grades it, all in one full-screen pass:
 | `saturation` | 0 grey, 1 as is, above more colourful (1) |
 | `lift`, `gamma`, `gain` | Per channel: added to the shadows (0), bends the midtones (1; above brighter), multiplies the highlights (1) |
 | `vignette`, `vignetteSoftness` | How much the corners darken (0), and how far in it starts (0.5) |
+| `autoExposure` | The exposure follows what's on screen, as eyes do: a view brighter than the target darkens, a dimmer one brightens, easing there over a second or so (false) |
+| `exposureTarget` | The average brightness auto exposure aims for, in stops from mid-grey (0) |
+| `exposureDarken`, `exposureBrighten` | The most it darkens a bright view and brightens a dim one, in stops (1.5, 0.5). On top of a physical sky's own adaptation to dusk and night: 0 brightening keeps nights as dark as the sky makes them |
+| `exposureSpeed` | How fast it adapts, about stops a second (1.5) |
 
 The tone mappers:
 
@@ -269,6 +273,23 @@ A narrower blur than ambient occlusion's keeps them sharp, and the lit pass
 reads them as it does the occlusion, multiplying them into the sun's shadow.
 Grass blades aren't in the depth, so they don't cast them (no darkened lawn);
 the ground under them takes them from what stands on it.
+
+### Temporal anti-aliasing
+
+`RenderSystem::setTemporalAntiAliasing()` (saved as `"temporalAntiAliasing"`
+when on; a style's `"temporalAntiAliasing"` replaces it; Scene Settings and
+the style inspector have it) smooths edges and the shimmer of fine detail,
+grass and fences above all, as the camera moves. Each frame the camera is
+moved a fraction of a pixel (the next point of a Halton 2, 3 sequence) and the
+lit scene is blended with what came before (`taa.wgsl`): each pixel's history
+is found where its point in the world was last frame (through the depth
+buffer and last frame's camera), clamped to the colours around the pixel now
+so what moved or came into view doesn't smear, and a tenth of the new frame is
+mixed in. The result replaces the scene for bloom, depth of field and the
+composite. Not on OpenGL (it reads the lit pass's depth samples, as depth of
+field does), nor in 2D. Things that move on their own (swaying grass, a
+driving tractor) are reprojected as if still, so the clamp is what keeps them
+from ghosting.
 
 ### Height fog
 

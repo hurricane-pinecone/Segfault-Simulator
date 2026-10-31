@@ -166,6 +166,42 @@ bool grading(EditorHistory* history, sfs::ColorGrading& grading)
                       0.0f,
                       1.0f,
                       "How far in from the corners it starts");
+  changed |= widgets::undoable(
+      history,
+      grading.autoExposure,
+      [&](bool& on)
+      { return ImGui::Checkbox(row("Auto Exposure").c_str(), &on); });
+  ImGui::SetItemTooltip(
+      "The exposure follows what's on screen, as eyes do: a bright view\n"
+      "darkens toward the target, a dim one brightens, within the limits,\n"
+      "easing there over a second or so. On top of a physical sky's own\n"
+      "adaptation to dusk and night: keep Brighten small for dark nights.");
+  if (!grading.autoExposure)
+    return changed;
+  changed |= slider(history,
+                    "Exposure Target",
+                    grading.exposureTarget,
+                    -3.0f,
+                    3.0f,
+                    "The average brightness it aims for, in stops from mid-grey");
+  changed |= slider(history,
+                    "Darken",
+                    grading.exposureDarken,
+                    0.0f,
+                    4.0f,
+                    "The most it darkens a bright view, in stops");
+  changed |= slider(history,
+                    "Brighten",
+                    grading.exposureBrighten,
+                    0.0f,
+                    4.0f,
+                    "The most it brightens a dim view, in stops");
+  changed |= slider(history,
+                    "Speed",
+                    grading.exposureSpeed,
+                    0.1f,
+                    10.0f,
+                    "How fast it adapts, about stops a second");
   return changed;
 }
 
@@ -557,6 +593,25 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PushID("contact");
     changed |= contactShadows(nullptr, *style.contactShadows);
     ImGui::PopID();
+    ImGui::Unindent();
+  }
+  if (optional("Temporal Anti-Aliasing",
+               style.temporalAntiAliasing.has_value(),
+               "On: this instead of the scene's setting"))
+  {
+    style.temporalAntiAliasing =
+        style.temporalAntiAliasing ? std::nullopt : std::optional<bool>(true);
+    changed = true;
+  }
+  if (style.temporalAntiAliasing)
+  {
+    ImGui::Indent();
+    bool on = *style.temporalAntiAliasing;
+    if (ImGui::Checkbox(row("Smooth Edges Over Frames").c_str(), &on))
+    {
+      style.temporalAntiAliasing = on;
+      changed = true;
+    }
     ImGui::Unindent();
   }
   if (optional("Fog",

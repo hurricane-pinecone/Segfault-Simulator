@@ -31,6 +31,17 @@ void EditorHistory::endChange()
   m_pendingBefore.reset();
 }
 
+void EditorHistory::pushAssetEdit(std::function<void()> undo, std::function<void()> redo, std::size_t bytes)
+{
+  if (!m_enabled)
+    return;
+  m_steps.pushAssetEdit(
+      std::make_shared<const HistorySteps::AssetEdit>(
+          HistorySteps::AssetEdit{std::move(undo), std::move(redo), bytes}),
+      currentSelection());
+  ++m_revision;
+}
+
 void EditorHistory::amendLast()
 {
   if (m_pendingBefore || !m_steps.canUndo() || !m_context.document)
@@ -43,7 +54,12 @@ void EditorHistory::undo()
   if (!canUndo() || m_pendingBefore)
     return;
   if (const std::optional<HistorySteps::Restore> restore = m_steps.undo())
-    apply(restore->snapshot, restore->selection);
+  {
+    if (restore->asset)
+      restore->asset->undo();
+    else
+      apply(restore->snapshot, restore->selection);
+  }
   ++m_revision;
 }
 
@@ -52,7 +68,12 @@ void EditorHistory::redo()
   if (!canRedo() || m_pendingBefore)
     return;
   if (const std::optional<HistorySteps::Restore> restore = m_steps.redo())
-    apply(restore->snapshot, restore->selection);
+  {
+    if (restore->asset)
+      restore->asset->redo();
+    else
+      apply(restore->snapshot, restore->selection);
+  }
   ++m_revision;
 }
 

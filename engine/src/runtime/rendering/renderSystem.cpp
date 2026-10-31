@@ -106,6 +106,15 @@ AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
                                               : m_ambientOcclusion;
 }
 
+bool RenderSystem::effectiveTemporalAntiAliasing() const
+{
+  if (m_forcedTemporalAntiAliasing)
+    return *m_forcedTemporalAntiAliasing;
+  return m_style && m_style->temporalAntiAliasing
+             ? *m_style->temporalAntiAliasing
+             : m_temporalAntiAliasing;
+}
+
 ContactShadowSettings RenderSystem::effectiveContactShadows() const
 {
   return m_style && m_style->contactShadows ? *m_style->contactShadows
@@ -238,6 +247,7 @@ void RenderSystem::render()
     frame.fog = effectiveFog();
     frame.ambientOcclusion = effectiveAmbientOcclusion();
     frame.contactShadows = effectiveContactShadows();
+    frame.temporalAntiAliasing = effectiveTemporalAntiAliasing();
   }
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
@@ -889,6 +899,10 @@ std::vector<ModuleSetting> RenderSystem::settings()
           "Sun shadows",
           [this] { return m_shadows.enabled; },
           [this](bool v) { m_shadows.enabled = v; }),
+      settings::boolean(
+          "Temporal anti-aliasing",
+          [this] { return m_temporalAntiAliasing; },
+          [this](bool v) { m_temporalAntiAliasing = v; }),
       settings::floatRange(
           "Shadow softness",
           0.0f,

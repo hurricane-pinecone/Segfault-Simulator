@@ -159,6 +159,21 @@ public:
   {
     return m_ambientOcclusion;
   }
+  /**
+   * Temporal anti-aliasing (a 3D scene's; off by default): the camera moves
+   * a fraction of a pixel each frame and the frames are blended, smoothing
+   * edges and the shimmer of fine detail (grass, fences) as it moves.
+   */
+  void setTemporalAntiAliasing(bool on) { m_temporalAntiAliasing = on; }
+  bool temporalAntiAliasing() const { return m_temporalAntiAliasing; }
+  /** The scene's, or its visual style's (or what's forced). */
+  bool effectiveTemporalAntiAliasing() const;
+  /** Over the scene's and its style's, to compare (a development key). */
+  void forceTemporalAntiAliasing(std::optional<bool> on)
+  {
+    m_forcedTemporalAntiAliasing = on;
+  }
+
   void setContactShadowSettings(const ContactShadowSettings& settings)
   {
     m_contactShadows = settings;
@@ -316,6 +331,8 @@ private:
   FogSettings m_fog;
   AmbientOcclusionSettings m_ambientOcclusion;
   ContactShadowSettings m_contactShadows;
+  bool m_temporalAntiAliasing = false;
+  std::optional<bool> m_forcedTemporalAntiAliasing;
   SkySettings m_sky;
   ColorGrading m_grading;
   StyleSource m_styleSource;

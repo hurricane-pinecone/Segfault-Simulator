@@ -386,6 +386,8 @@ json renderToJson(const RenderSystem& render)
     out["contactShadows"] = cleaned(render.contactShadowSettings().toJson());
   if (render.fogSettings() != FogSettings{})
     out["fog"] = cleaned(render.fogSettings().toJson());
+  if (render.temporalAntiAliasing())
+    out["temporalAntiAliasing"] = true;
   return out;
 }
 
@@ -448,6 +450,8 @@ void renderFromJson(const json& value, RenderSystem& render)
         ContactShadowSettings::fromJson(in, render.contactShadowSettings()));
   if (const json& in = value.value("fog", json::object()); in.is_object())
     render.setFogSettings(FogSettings::fromJson(in, render.fogSettings()));
+  render.setTemporalAntiAliasing(
+      value.value("temporalAntiAliasing", render.temporalAntiAliasing()));
 
   if (const json& in = value.value("wind", json::object()); in.is_object())
   {

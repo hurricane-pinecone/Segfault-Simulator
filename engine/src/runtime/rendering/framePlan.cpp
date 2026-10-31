@@ -613,6 +613,23 @@ PostUniforms FramePlan::compositeUniforms(glm::ivec2 viewport) const
   return out;
 }
 
+ExposureUniforms FramePlan::exposureUniforms(glm::ivec2 viewport,
+                                             float seconds) const
+{
+  const ColorGrading& grading = m_frame.grading;
+  ExposureUniforms out{};
+  out.params =
+      glm::vec4(std::log2(0.18f) + grading.exposureTarget,
+                std::max(grading.exposureDarken, 0.0f),
+                std::max(grading.exposureBrighten, 0.0f),
+                1.0f - std::exp(-std::max(seconds, 0.0f) *
+                                std::max(grading.exposureSpeed, 0.0f)));
+  out.source = glm::vec4(glm::vec2(glm::max(viewport, glm::ivec2(1))),
+                         grading.autoExposure ? 1.0f : 0.0f,
+                         0.0f);
+  return out;
+}
+
 SkyUniforms FramePlan::skyUniforms() const
 {
   SkyUniforms out{};

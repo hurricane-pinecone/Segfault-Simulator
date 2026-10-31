@@ -357,23 +357,29 @@ bool WebGpuRenderer::initialize()
   return true;
 }
 
-const WGPURenderPassTimestampWrites*
-WebGpuRenderer::timedRenderPass(TimedPass pass)
+const RenderTimestamps* WebGpuRenderer::timedRenderPass(TimedPass pass)
 {
   if (!m_timing)
     return nullptr;
   m_timing->ran[pass] = true;
-  m_timing->renderWrites = {m_timing->queries.get(), 2 * pass, 2 * pass + 1};
+  // (By name: the web's type has a field before them.)
+  m_timing->renderWrites = {};
+  m_timing->renderWrites.querySet = m_timing->queries.get();
+  m_timing->renderWrites.beginningOfPassWriteIndex = 2 * pass;
+  m_timing->renderWrites.endOfPassWriteIndex = 2 * pass + 1;
   return &m_timing->renderWrites;
 }
 
-const WGPUComputePassTimestampWrites*
-WebGpuRenderer::timedComputePass(TimedPass pass)
+const ComputeTimestamps* WebGpuRenderer::timedComputePass(TimedPass pass)
 {
   if (!m_timing)
     return nullptr;
   m_timing->ran[pass] = true;
-  m_timing->computeWrites = {m_timing->queries.get(), 2 * pass, 2 * pass + 1};
+  // (By name: the web's type has a field before them.)
+  m_timing->computeWrites = {};
+  m_timing->computeWrites.querySet = m_timing->queries.get();
+  m_timing->computeWrites.beginningOfPassWriteIndex = 2 * pass;
+  m_timing->computeWrites.endOfPassWriteIndex = 2 * pass + 1;
   return &m_timing->computeWrites;
 }
 
@@ -1250,9 +1256,11 @@ void WebGpuRenderer::endFrame()
   if (m_occluded)
     encodeOcclusion();
   encodeLitPass();
+  encodeTaa();
   m_focused = encodeDepthOfField();
   if (m_plan.frame().bloom.enabled && !m_bloom.empty())
     encodeBloom();
+  encodeExposure();
   encodeComposite();
   encodeUi();
   copyTiming();
@@ -2409,8 +2417,10 @@ void WebGpuRenderer::ensureTargets()
   const auto colorTexture = [&](glm::ivec2 size, wgpu::Texture& texture)
   {
     WGPUTextureDescriptor desc = {};
-    desc.usage =
-        WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    // (Copied between: temporal anti-aliasing's blend back over the scene.)
+    desc.usage = WGPUTextureUsage_RenderAttachment |
+                 WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc |
+                 WGPUTextureUsage_CopyDst;
     desc.dimension = WGPUTextureDimension_2D;
     desc.size = {
         static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1};
@@ -2463,7 +2473,7 @@ void WebGpuRenderer::ensureTargets()
     params = makeBuffer(device,
                         sizeof(PostUniforms),
                         WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
-    std::array<WGPUBindGroupEntry, 4> entries{};
+    std::array<WGPUBindGroupEntry, 5> entries{};
     entries[0].binding = 0;
     entries[0].textureView = source;
     entries[1].binding = 1;
@@ -2473,6 +2483,8 @@ void WebGpuRenderer::ensureTargets()
     entries[2].size = sizeof(PostUniforms);
     entries[3].binding = 3;
     entries[3].textureView = glow;
+    entries[4].binding = 4;
+    entries[4].textureView = m_exposureView[0].get();
     WGPUBindGroupDescriptor desc = {};
     desc.layout = m_postLayout.get();
     desc.entryCount = entries.size();
@@ -2535,7 +2547,9 @@ void WebGpuRenderer::ensureTargets()
   }
   // The composite of the scene through it: as the plain one, from its output.
   {
-    std::array<WGPUBindGroupEntry, 4> entries{};
+    std::array<WGPUBindGroupEntry, 5> entries{};
+    entries[4].binding = 4;
+    entries[4].textureView = m_exposureView[0].get();
     entries[0].binding = 0;
     entries[0].textureView = m_focusOut.view.get();
     entries[1].binding = 1;
@@ -2552,6 +2566,51 @@ void WebGpuRenderer::ensureTargets()
     desc.entries = entries.data();
     m_compositeFocusBindings.reset(wgpuDeviceCreateBindGroup(device, &desc));
   }
+  // Auto exposure's metering: the scene, and last frame's correction.
+  {
+    std::array<WGPUBindGroupEntry, 3> entries{};
+    entries[0].binding = 0;
+    entries[0].textureView = m_sceneView.get();
+    entries[1].binding = 1;
+    entries[1].textureView = m_exposureView[1].get();
+    entries[2].binding = 2;
+    entries[2].buffer = m_exposureParams.get();
+    entries[2].size = sizeof(ExposureUniforms);
+    WGPUBindGroupDescriptor desc = {};
+    desc.layout = m_exposureLayout.get();
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    m_exposureBindings.reset(wgpuDeviceCreateBindGroup(device, &desc));
+  }
+  // Temporal anti-aliasing: two blends, each reading the other as its
+  // history; none yet at this size.
+  m_taaPrevious.reset();
+  if (m_taaPipeline)
+    for (std::size_t i = 0; i < m_taa.size(); ++i)
+    {
+      m_taaView[i] = colorTexture(m_viewport, m_taa[i]);
+    }
+  if (m_taaPipeline)
+    for (std::size_t i = 0; i < m_taa.size(); ++i)
+    {
+      std::array<WGPUBindGroupEntry, 5> entries{};
+      entries[0].binding = 0;
+      entries[0].textureView = m_sceneView.get();
+      entries[1].binding = 1;
+      entries[1].textureView = m_taaView[1 - i].get();
+      entries[2].binding = 2;
+      entries[2].textureView = m_depthView.get();
+      entries[3].binding = 3;
+      entries[3].sampler = m_clampSampler.get();
+      entries[4].binding = 4;
+      entries[4].buffer = m_taaParams.get();
+      entries[4].size = sizeof(TaaUniforms);
+      WGPUBindGroupDescriptor desc = {};
+      desc.layout = m_taaLayout.get();
+      desc.entryCount = entries.size();
+      desc.entries = entries.data();
+      m_taaBindings[i].reset(wgpuDeviceCreateBindGroup(device, &desc));
+    }
 }
 
 void WebGpuRenderer::ensureLightBuffers(std::size_t lights,
@@ -2779,7 +2838,7 @@ bool WebGpuRenderer::createPostPipelines()
   sampler.maxAnisotropy = 1;
   m_clampSampler.reset(wgpuDeviceCreateSampler(device, &sampler));
 
-  std::array<WGPUBindGroupLayoutEntry, 4> entries{};
+  std::array<WGPUBindGroupLayoutEntry, 5> entries{};
   entries[0].binding = 0;
   entries[0].visibility = WGPUShaderStage_Fragment;
   entries[0].texture.sampleType = WGPUTextureSampleType_Float;
@@ -2793,6 +2852,9 @@ bool WebGpuRenderer::createPostPipelines()
   entries[3].visibility = WGPUShaderStage_Fragment;
   entries[3].texture.sampleType = WGPUTextureSampleType_Float;
   entries[3].texture.viewDimension = WGPUTextureViewDimension_2D;
+  // Auto exposure's correction (the composite's; the others bind it too).
+  entries[4] = entries[3];
+  entries[4].binding = 4;
   WGPUBindGroupLayoutDescriptor layoutDesc = {};
   layoutDesc.entryCount = entries.size();
   layoutDesc.entries = entries.data();
@@ -2841,6 +2903,125 @@ bool WebGpuRenderer::createPostPipelines()
   m_downsamplePipeline = build("fs_downsample", kSceneFormat, false);
   m_upsamplePipeline = build("fs_upsample", kSceneFormat, true);
   m_compositePipeline = build("fs_composite", m_context.format(), false);
+
+  // Auto exposure: its two pixels (cleared to no correction), and the pass
+  // metering into the first from the scene and the second.
+  for (std::size_t i = 0; i < m_exposure.size(); ++i)
+  {
+    WGPUTextureDescriptor desc = {};
+    desc.usage = WGPUTextureUsage_RenderAttachment |
+                 WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc |
+                 WGPUTextureUsage_CopyDst;
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = {1, 1, 1};
+    desc.format = kSceneFormat;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    m_exposure[i].reset(wgpuDeviceCreateTexture(device, &desc));
+    m_exposureView[i].reset(
+        wgpuTextureCreateView(m_exposure[i].get(), nullptr));
+  }
+  {
+    std::array<WGPUBindGroupLayoutEntry, 3> meter{};
+    meter[0].binding = 0;
+    meter[0].visibility = WGPUShaderStage_Fragment;
+    meter[0].texture.sampleType = WGPUTextureSampleType_Float;
+    meter[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+    meter[1] = meter[0];
+    meter[1].binding = 1;
+    meter[2] = wgpu::storageEntry(
+        2, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+    WGPUBindGroupLayoutDescriptor meterDesc = {};
+    meterDesc.entryCount = meter.size();
+    meterDesc.entries = meter.data();
+    m_exposureLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &meterDesc));
+    const WGPUBindGroupLayout meterGroups[] = {m_exposureLayout.get()};
+    WGPUPipelineLayoutDescriptor meterLayoutDesc = {};
+    meterLayoutDesc.bindGroupLayoutCount = 1;
+    meterLayoutDesc.bindGroupLayouts = meterGroups;
+    const wgpu::PipelineLayout meterLayout(
+        wgpuDeviceCreatePipelineLayout(device, &meterLayoutDesc));
+    const wgpu::ShaderModule meterModule(
+        wgpu::makeShader(device, std::string(shaders::exposureWgsl).c_str()));
+    WGPUColorTargetState color = {};
+    color.format = kSceneFormat;
+    color.writeMask = WGPUColorWriteMask_All;
+    WGPUFragmentState fragment = {};
+    fragment.module = meterModule.get();
+    fragment.entryPoint = wgpu::sv("fs_meter");
+    fragment.targetCount = 1;
+    fragment.targets = &color;
+    WGPURenderPipelineDescriptor desc = {};
+    desc.layout = meterLayout.get();
+    desc.vertex.module = meterModule.get();
+    desc.vertex.entryPoint = wgpu::sv("vs_main");
+    desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    desc.primitive.cullMode = WGPUCullMode_None;
+    desc.multisample.count = 1;
+    desc.multisample.mask = 0xFFFFFFFFu;
+    desc.fragment = &fragment;
+    m_exposurePipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+    m_exposureParams =
+        makeBuffer(device,
+                   sizeof(ExposureUniforms),
+                   WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  }
+
+  // Temporal anti-aliasing's resolve: it reads the lit pass's depth samples,
+  // as depth of field does, so not on OpenGL (nor without multisampling).
+  if (!m_context.onOpenGL() && m_sampleCount > 1)
+  {
+    std::array<WGPUBindGroupLayoutEntry, 5> resolve{};
+    resolve[0].binding = 0;
+    resolve[0].visibility = WGPUShaderStage_Fragment;
+    resolve[0].texture.sampleType = WGPUTextureSampleType_Float;
+    resolve[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+    resolve[1] = resolve[0];
+    resolve[1].binding = 1;
+    resolve[2].binding = 2;
+    resolve[2].visibility = WGPUShaderStage_Fragment;
+    resolve[2].texture.sampleType = WGPUTextureSampleType_Depth;
+    resolve[2].texture.viewDimension = WGPUTextureViewDimension_2D;
+    resolve[2].texture.multisampled = true;
+    resolve[3].binding = 3;
+    resolve[3].visibility = WGPUShaderStage_Fragment;
+    resolve[3].sampler.type = WGPUSamplerBindingType_Filtering;
+    resolve[4] = wgpu::storageEntry(
+        4, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+    WGPUBindGroupLayoutDescriptor resolveDesc = {};
+    resolveDesc.entryCount = resolve.size();
+    resolveDesc.entries = resolve.data();
+    m_taaLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &resolveDesc));
+    const WGPUBindGroupLayout resolveGroups[] = {m_taaLayout.get()};
+    WGPUPipelineLayoutDescriptor resolveLayoutDesc = {};
+    resolveLayoutDesc.bindGroupLayoutCount = 1;
+    resolveLayoutDesc.bindGroupLayouts = resolveGroups;
+    const wgpu::PipelineLayout resolveLayout(
+        wgpuDeviceCreatePipelineLayout(device, &resolveLayoutDesc));
+    const wgpu::ShaderModule resolveModule(
+        wgpu::makeShader(device, std::string(shaders::taaWgsl).c_str()));
+    WGPUColorTargetState color = {};
+    color.format = kSceneFormat;
+    color.writeMask = WGPUColorWriteMask_All;
+    WGPUFragmentState fragment = {};
+    fragment.module = resolveModule.get();
+    fragment.entryPoint = wgpu::sv("fs_resolve");
+    fragment.targetCount = 1;
+    fragment.targets = &color;
+    WGPURenderPipelineDescriptor desc = {};
+    desc.layout = resolveLayout.get();
+    desc.vertex.module = resolveModule.get();
+    desc.vertex.entryPoint = wgpu::sv("vs_main");
+    desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    desc.primitive.cullMode = WGPUCullMode_None;
+    desc.multisample.count = 1;
+    desc.multisample.mask = 0xFFFFFFFFu;
+    desc.fragment = &fragment;
+    m_taaPipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+    m_taaParams = makeBuffer(device,
+                             sizeof(TaaUniforms),
+                             WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  }
 
   // Depth of field's passes: as bloom's, with the depth buffer and the blur
   // to mix in. Not on OpenGL, whose shaders can't read a depth buffer's
@@ -2900,6 +3081,7 @@ bool WebGpuRenderer::createPostPipelines()
   }
   return m_clampSampler && m_postLayout && m_prefilterPipeline &&
          m_downsamplePipeline && m_upsamplePipeline && m_compositePipeline &&
+         m_exposurePipeline &&
          (!m_capabilities.depthOfField ||
           (m_focusLayout && m_focusPreparePipeline && m_focusBlurPipeline &&
            m_focusCombinePipeline));
@@ -2956,6 +3138,78 @@ void WebGpuRenderer::encodeBloom()
                    m_bloom[i].up.get(),
                    true);
   }
+}
+
+bool WebGpuRenderer::temporalAntiAliasing() const
+{
+  return m_plan.frame().temporalAntiAliasing && m_taaPipeline;
+}
+
+void WebGpuRenderer::encodeTaa()
+{
+  const FrameParams& frame = m_plan.frame();
+  if (!temporalAntiAliasing())
+  {
+    m_taaPrevious.reset();
+    return;
+  }
+  TaaUniforms uniforms{};
+  // Not jittered, on either side: a still camera finds each pixel's history
+  // just where it is (resampling it there, off by the jitter, would blur it
+  // more every frame).
+  uniforms.inverseViewProjection = glm::inverse(frame.viewProjection);
+  uniforms.previousViewProjection =
+      m_taaPrevious.value_or(frame.viewProjection);
+  uniforms.params =
+      glm::vec4(1.0f / glm::vec2(glm::max(m_viewport, glm::ivec2(1))),
+                m_taaPrevious ? 1.0f : 0.0f,
+                0.1f);
+  wgpuQueueWriteBuffer(
+      m_context.queue(), m_taaParams.get(), 0, &uniforms, sizeof(uniforms));
+  drawFullscreen(m_taaView[m_taaIndex].get(),
+                 m_taaPipeline.get(),
+                 m_taaBindings[m_taaIndex].get(),
+                 false);
+  WGPUTexelCopyTextureInfo from = {};
+  from.texture = m_taa[m_taaIndex].get();
+  WGPUTexelCopyTextureInfo to = {};
+  to.texture = m_scene.get();
+  const WGPUExtent3D size = {static_cast<uint32_t>(m_viewport.x),
+                             static_cast<uint32_t>(m_viewport.y),
+                             1};
+  wgpuCommandEncoderCopyTextureToTexture(m_encoder, &from, &to, &size);
+  m_taaIndex = 1 - m_taaIndex;
+  m_taaPrevious = frame.viewProjection;
+}
+
+void WebGpuRenderer::encodeExposure()
+{
+  // How long since the last frame's, for how far it eases (none the first).
+  const auto now = std::chrono::steady_clock::now();
+  const float seconds =
+      m_exposureTime
+          ? std::min(
+                std::chrono::duration<float>(now - *m_exposureTime).count(),
+                0.25f)
+          : 1.0e3f;
+  m_exposureTime = now;
+  const ExposureUniforms uniforms =
+      m_plan.exposureUniforms(m_viewport, seconds);
+  wgpuQueueWriteBuffer(m_context.queue(),
+                       m_exposureParams.get(),
+                       0,
+                       &uniforms,
+                       sizeof(uniforms));
+  drawFullscreen(m_exposureView[0].get(),
+                 m_exposurePipeline.get(),
+                 m_exposureBindings.get(),
+                 false);
+  WGPUTexelCopyTextureInfo from = {};
+  from.texture = m_exposure[0].get();
+  WGPUTexelCopyTextureInfo to = {};
+  to.texture = m_exposure[1].get();
+  const WGPUExtent3D one = {1, 1, 1};
+  wgpuCommandEncoderCopyTextureToTexture(m_encoder, &from, &to, &one);
 }
 
 void WebGpuRenderer::encodeComposite()
@@ -3505,6 +3759,35 @@ void WebGpuRenderer::ensureInstanceCapacity(std::size_t instanceCount)
 void WebGpuRenderer::uploadFrame()
 {
   FrameUniforms uniforms = m_plan.frameUniforms();
+  // Anti-aliased over time: the camera a fraction of a pixel off, by the next
+  // of a Halton (2, 3) sequence's points, so the frames blended cover each
+  // pixel's area.
+  m_jitteredViewProjection = uniforms.viewProjection;
+  if (temporalAntiAliasing())
+  {
+    const auto halton = [](uint32_t i, uint32_t base)
+    {
+      float f = 1.0f;
+      float r = 0.0f;
+      for (; i > 0; i /= base)
+      {
+        f /= static_cast<float>(base);
+        r += f * static_cast<float>(i % base);
+      }
+      return r;
+    };
+    m_taaFrame = m_taaFrame % 8 + 1;
+    const glm::vec2 offset(
+        halton(m_taaFrame, 2) - 0.5f, halton(m_taaFrame, 3) - 0.5f);
+    glm::mat4 jitter(1.0f);
+    jitter[3] = glm::vec4(
+        offset * 2.0f / glm::vec2(glm::max(m_viewport, glm::ivec2(1))),
+        0.0f,
+        1.0f);
+    m_jitteredViewProjection = jitter * uniforms.viewProjection;
+    uniforms.viewProjection = m_jitteredViewProjection;
+    uniforms.inverseViewProjection = glm::inverse(m_jitteredViewProjection);
+  }
   // A physical sky's reflections, once they're rendered.
   if (m_plan.frame().sky.physical && m_skyReady)
   {

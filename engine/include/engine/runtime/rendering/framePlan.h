@@ -107,6 +107,24 @@ struct SkyUniforms
                       // scattering's share
 };
 
+/** `Exposure` in exposure.wgsl: auto exposure's metering and easing. */
+struct ExposureUniforms
+{
+  glm::vec4 params; // the target (log2 of the average brightness it aims
+                    // for), the most it darkens and brightens (stops), how
+                    // far toward what it wants it eases this frame (0..1)
+  glm::vec4 source; // the scene's size (texels), on (0/1)
+};
+
+/** `Taa` in taa.wgsl: temporal anti-aliasing's resolve. */
+struct TaaUniforms
+{
+  glm::mat4 inverseViewProjection;  // this frame's, not jittered
+  glm::mat4 previousViewProjection; // last frame's, not jittered
+  glm::vec4 params; // 1 / the size (texels), history valid (0/1), how much
+                    // of this frame goes in
+};
+
 /** `SkyPass` in sky.wgsl: one reflection mip's. */
 struct SkyPassUniforms
 {
@@ -389,6 +407,11 @@ public:
   PostUniforms compositeUniforms(glm::ivec2 viewport) const;
   /** A physical sky's atmosphere, for its reflections' passes. */
   SkyUniforms skyUniforms() const;
+  /**
+   * Auto exposure's (ColorGrading::autoExposure), metering the scene at
+   * `viewport`, `seconds` after the last frame's.
+   */
+  ExposureUniforms exposureUniforms(glm::ivec2 viewport, float seconds) const;
   /**
    * Ambient occlusion's passes', at `size` (half the viewport's), a blur
    * stepping `blurStep` texels (zero for the occlusion pass itself).

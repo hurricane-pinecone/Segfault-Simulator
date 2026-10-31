@@ -7,6 +7,7 @@
 #include <webgpu/webgpu.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -17,6 +18,16 @@
 
 namespace sfs
 {
+
+// A pass's timestamp writes: wgpu-native has a type for each kind of pass,
+// the web's header one for both.
+#ifdef __EMSCRIPTEN__
+using RenderTimestamps = WGPUPassTimestampWrites;
+using ComputeTimestamps = WGPUPassTimestampWrites;
+#else
+using RenderTimestamps = WGPURenderPassTimestampWrites;
+using ComputeTimestamps = WGPUComputePassTimestampWrites;
+#endif
 
 class WebGpuContext;
 
@@ -326,6 +337,9 @@ private:
                           uint32_t offset,
                           uint32_t cascade);
   void encodeComposite();
+  // Auto exposure's metering into m_exposure[0] (exposure.wgsl), and that
+  // copied into m_exposure[1] for the next frame's.
+  void encodeExposure();
   // UI (drawUi), over the target after the composite.
   bool createUiPipeline();
   void encodeUi();
@@ -339,6 +353,11 @@ private:
   void uploadFrame();
   void encodeShadowPass();
   void encodeLitPass();
+  // Temporal anti-aliasing's resolve (taa.wgsl) of the lit scene with its
+  // history, into m_taa[m_taaIndex], copied back over the scene.
+  void encodeTaa();
+  // Whether this frame is anti-aliased over time (and so jittered).
+  bool temporalAntiAliasing() const;
   // Which of a draw's sections to draw: All (the shadow pass), Opaque (all but
   // Blend ones) or SeeThrough (Blend ones, or all for an allSections draw).
   enum class Sections
@@ -421,14 +440,14 @@ private:
     std::array<double, kTimedPasses> total{}; // milliseconds
     std::array<uint32_t, kTimedPasses> samples{};
     uint32_t readbacks = 0;
-    WGPURenderPassTimestampWrites renderWrites{};
-    WGPUComputePassTimestampWrites computeWrites{};
+    RenderTimestamps renderWrites{};
+    ComputeTimestamps computeWrites{};
   };
   std::unique_ptr<GpuTiming> m_timing;
   // A pass's timestamp writes (null when not timing); the frame's read back
   // (at its start), and copied out (at its end).
-  const WGPURenderPassTimestampWrites* timedRenderPass(TimedPass pass);
-  const WGPUComputePassTimestampWrites* timedComputePass(TimedPass pass);
+  const RenderTimestamps* timedRenderPass(TimedPass pass);
+  const ComputeTimestamps* timedComputePass(TimedPass pass);
   void readTiming();
   void copyTiming();
 
@@ -548,6 +567,28 @@ private:
   wgpu::BindGroup m_focusBlurBindings;
   wgpu::BindGroup m_focusCombineBindings;
   wgpu::BindGroup m_compositeFocusBindings;
+  // Auto exposure: its correction (one pixel, what the composite reads), and
+  // last frame's (what metering eases from).
+  std::array<wgpu::Texture, 2> m_exposure;
+  std::array<wgpu::TextureView, 2> m_exposureView;
+  wgpu::BindGroupLayout m_exposureLayout;
+  wgpu::RenderPipeline m_exposurePipeline;
+  wgpu::Buffer m_exposureParams;
+  wgpu::BindGroup m_exposureBindings;
+  std::optional<std::chrono::steady_clock::time_point> m_exposureTime;
+  // Temporal anti-aliasing: this frame's blend and the last (ping-ponged),
+  // the camera as last frame saw (unset: no history), and this frame's
+  // jittered one.
+  std::array<wgpu::Texture, 2> m_taa;
+  std::array<wgpu::TextureView, 2> m_taaView;
+  std::array<wgpu::BindGroup, 2> m_taaBindings;
+  wgpu::BindGroupLayout m_taaLayout;
+  wgpu::RenderPipeline m_taaPipeline;
+  wgpu::Buffer m_taaParams;
+  std::size_t m_taaIndex = 0;
+  uint32_t m_taaFrame = 0;
+  std::optional<glm::mat4> m_taaPrevious;
+  glm::mat4 m_jitteredViewProjection{1.0f};
   wgpu::BindGroupLayout m_focusLayout;
   wgpu::RenderPipeline m_focusPreparePipeline;
   wgpu::RenderPipeline m_focusBlurPipeline;

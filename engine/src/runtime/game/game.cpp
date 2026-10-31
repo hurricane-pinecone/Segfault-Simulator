@@ -528,10 +528,26 @@ void Game::processInput()
 bool Game::handleDevKey(const SDL_Event& event)
 {
   if (!m_devKeys || event.type != SDL_KEYDOWN || event.key.repeat ||
-      event.key.keysym.sym != SDLK_F8 || !sceneReceivesInput() || !sceneManager)
+      (event.key.keysym.sym != SDLK_F8 && event.key.keysym.sym != SDLK_F9) ||
+      !sceneReceivesInput() || !sceneManager)
     return false;
   Scene& scene = *sceneManager.current();
   RenderSystem* render = scene.tryGetSystem<RenderSystem>();
+  // F9: temporal anti-aliasing on or off (to compare), shown in the title.
+  if (render && event.key.keysym.sym == SDLK_F9)
+  {
+    const bool on = !render->effectiveTemporalAntiAliasing();
+    render->forceTemporalAntiAliasing(on);
+    LOG_INFO(std::string("Temporal anti-aliasing ") + (on ? "on" : "off"));
+    if (window && ownsWindow())
+    {
+      std::string title = SDL_GetWindowTitle(window);
+      title = title.substr(0, title.find(" [TAA"));
+      SDL_SetWindowTitle(
+          window, (title + (on ? " [TAA on]" : " [TAA off]")).c_str());
+    }
+    return true;
+  }
   const AssetDatabase* assets = scene.assetStore().database();
   if (!render || !assets)
     return false;

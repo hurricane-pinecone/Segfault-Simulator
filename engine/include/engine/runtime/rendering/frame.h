@@ -109,6 +109,9 @@ struct FrameParams
   FogSettings fog;
   AmbientOcclusionSettings ambientOcclusion;
   ContactShadowSettings contactShadows;
+  // Temporal anti-aliasing: the camera jittered a fraction of a pixel each
+  // frame, and the frames blended (3D only).
+  bool temporalAntiAliasing = false;
 
   // The last pass's tone mapping and grading; and the scene's light
   // re-balanced by a visual style (see VisualStyle).
