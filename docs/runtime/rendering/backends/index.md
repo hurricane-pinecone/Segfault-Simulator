@@ -136,7 +136,7 @@ draws through, for flat, isometric and 3D games alike:
 | --- | --- |
 | `createMesh` / `destroyMesh` | Upload or free a mesh (`MeshHandle`) |
 | `createMaterial` / `updateMaterial` / `destroyMaterial` | Upload, change or free a material and its textures (`MaterialHandle`) |
-| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps |
+| `createGrass`, `updateGrassGround`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps |
 | `beginFrame(FrameParams)` | Start a frame: camera, lighting, shadows, wind, time |
 | `drawMesh(MeshBatch)` | Queue one mesh's instances (lit, shadow-casting) |
 | `drawGrass(GrassBatch)` | Queue a grass field |
