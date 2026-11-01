@@ -1,7 +1,8 @@
 // A physical sky's background, in the lit pass after the opaque things (after
 // meshCommon.wgsl and skyCommon.wgsl): one full-screen triangle at the far
 // plane, so it only fills what nothing covered. The sky as sky.wgsl's
-// fs_radiance rendered it, the sun's and the moon's disks, and stars at night; scaled by a
+// fs_radiance rendered it, the sun's and the moon's disks, and stars at night, its clouds
+// over them (drawn here per pixel, as they drift); scaled by a
 // visual style's sky balance; into height fog toward the horizon. It writes
 // the light that blooms too (all of it: the sun's disk is what's bright
 // enough).
@@ -115,15 +116,28 @@ fn fs_main(in: BackgroundOut) -> SkyOut {
     }
   }
 
+  // The clouds over all of it (hiding the disks and the stars where they're
+  // thick), the clear sky between them paler.
+  if (frame.cloudBase.w > 0.0 && direction.z > 0.0) {
+    let layer = frameClouds();
+    let clouds = cloudsToward(direction, layer);
+    color = mix(cloudySky(color, layer.cover), clouds.rgb, clouds.a);
+  }
+
   color *= frame.skyScale.rgb;
+
+  // Lightning lighting the cloud base up from inside (already adapted).
+  color += lightningCloudsToward(frame.cameraPosition.xyz, direction) *
+           select(0.25, 1.0, frame.cloudBase.w > 0.0);
 
   // Height fog (fog.wgsl), as far off as the far plane: toward the horizon,
   // the fog's colour (the sky's there, glowing toward the sun).
   if (frame.fogLight.z > 0.5) {
     let fogged = fogAt(frame.cameraPosition.xyz + direction * frame.fogLight.w);
     let horizon = normalize(vec3f(direction.xy, max(direction.z, 0.0) + 0.05 * length(direction.xy) + 1e-4));
-    let fog = textureSampleLevel(skyRadiance, skySampler, octEncode(horizon), 0.0).rgb * frame.skyScale.rgb +
-              fogSunGlow(direction);
+    let fog = overcastHaze(textureSampleLevel(skyRadiance, skySampler, octEncode(horizon), 0.0).rgb) *
+                  frame.skyScale.rgb +
+              fogSunGlow(direction) + lightningGlowAt(frame.cameraPosition.xyz + direction * 500.0) * 0.3;
     color = mix(color, fog, fogged);
   }
   return SkyOut(vec4f(color, 1.0), vec4f(color, 1.0));

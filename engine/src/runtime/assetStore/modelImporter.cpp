@@ -225,6 +225,7 @@ readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
   else if (source->alpha_mode == cgltf_alpha_mode_blend)
     material.alphaMode = AlphaMode::Blend;
   material.alphaCutoff = source->alpha_cutoff;
+  material.doubleSided = source->double_sided;
   return material;
 }
 

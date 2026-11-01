@@ -1,5 +1,7 @@
 #include "engine/core/rendering/sky.h"
 
+#include "engine/core/rendering/lighting.h"
+
 #include "glm/glm/common.hpp"
 #include "glm/glm/exponential.hpp"
 #include "glm/glm/ext/scalar_constants.hpp"
@@ -96,6 +98,14 @@ std::array<float, 9> shBasis(const glm::vec3& d)
           0.315392f * (3.0f * d.z * d.z - 1.0f),
           1.092548f * d.x * d.z,
           0.546274f * (d.x * d.x - d.y * d.y)};
+}
+
+// The clear sky between clouds, paler the cloudier it is (haze and thin
+// cloud whiten it): skyCommon.wgsl's cloudySky.
+glm::vec3 cloudySky(const glm::vec3& sky, float cover)
+{
+  const float grey = 0.2126f * sky.r + 0.7152f * sky.g + 0.0722f * sky.b;
+  return glm::mix(sky, glm::vec3(grey), 0.6f * cover);
 }
 
 } // namespace
@@ -371,9 +381,9 @@ glm::vec3 PhysicalSky::radiance(const glm::vec3& direction,
   return skyRadiance(direction, toSun, groundRadiance(toSun, night), night);
 }
 
-glm::vec3 PhysicalSky::groundRadiance(const glm::vec3& toSun, float night) const
+glm::vec3 PhysicalSky::skyLightAbove(const glm::vec3& toSun, float night) const
 {
-  // The sky's light on the ground: its upper half, cosine-weighted (/ pi).
+  // Its upper half, cosine-weighted (/ pi).
   const glm::vec3 sun = glm::normalize(toSun);
   constexpr int kRings = 4;
   constexpr int kSegments = 8;
@@ -392,9 +402,81 @@ glm::vec3 PhysicalSky::groundRadiance(const glm::vec3& toSun, float night) const
       sky += skyRadiance(dir, sun, glm::vec3(0.0f), night) * weight;
     }
   }
-  sky /= kPi;
-  const glm::vec3 direct = sunLight(sun) * std::max(sun.z, 0.0f);
+  return sky / kPi;
+}
+
+glm::vec3 PhysicalSky::groundRadiance(const glm::vec3& toSun,
+                                      float night,
+                                      const SkyClouds& clouds) const
+{
+  // The sun's light on the ground (what of it the clouds let through, on
+  // average) and the sky's: where it's clouded, the clouds' undersides.
+  const glm::vec3 sun = glm::normalize(toSun);
+  const glm::vec3 above = skyLightAbove(sun, night);
+  glm::vec3 sky = above;
+  if (clouds.cover > 0.0f)
+  {
+    const glm::vec3 light = cloudSunLight(sun);
+    const glm::vec3 base = cloudBase(light, sun, above, clouds) +
+                           light * (0.5f * cloudSides(clouds.cover, sun.z));
+    sky = glm::mix(above, base, std::clamp(clouds.cover, 0.0f, 1.0f));
+  }
+  const glm::vec3 direct =
+      sunLight(sun) * (std::max(sun.z, 0.0f) * clearSky(clouds.cover));
   return m_settings.groundAlbedo * (direct + sky);
+}
+
+glm::vec3 PhysicalSky::cloudSunLight(const glm::vec3& toSun) const
+{
+  // Through the air from the layer's height; hidden by the ground's edge as
+  // it sets for the clouds too (about a degree and a quarter below the
+  // ground's horizon).
+  const glm::vec3 sun = glm::normalize(toSun);
+  return glm::vec3(kSunLight * m_settings.intensity) *
+         transmittance(kCloudAltitude, sun.z) *
+         glm::smoothstep(-0.03f, 0.0f, sun.z);
+}
+
+namespace
+{
+
+// The cloud layer's optical thickness: thin fair-weather cloud to a thick
+// deck, thicker again for rain cloud (skyCommon.wgsl's cloudThickness).
+float cloudThickness(const SkyClouds& clouds)
+{
+  const float cover = std::clamp(clouds.cover, 0.0f, 1.0f);
+  const float darkness = std::clamp(clouds.darkness, 0.0f, 1.0f);
+  return (2.0f + 7.0f * cover) * (1.0f + 2.0f * darkness);
+}
+
+} // namespace
+
+glm::vec3 PhysicalSky::cloudBase(const glm::vec3& light,
+                                 const glm::vec3& toLight,
+                                 const glm::vec3& skyAbove,
+                                 const SkyClouds& clouds)
+{
+  // The share of the light on their tops that diffuses through (a two-stream
+  // estimate for cloud's strongly forward scattering).
+  const float through = 1.0f / (1.0f + 0.25f * cloudThickness(clouds));
+  const float up = glm::length(toLight) > 1e-6f
+                       ? std::max(glm::normalize(toLight).z, 0.0f)
+                       : 0.0f;
+  return (light * up + skyAbove) * through;
+}
+
+float PhysicalSky::cloudSides(float cover, float lightUp)
+{
+  const float low = 1.0f - glm::smoothstep(0.0f, 0.35f, lightUp);
+  return (1.0f - 0.8f * std::clamp(cover, 0.0f, 1.0f)) * (0.25f + 0.5f * low);
+}
+
+float PhysicalSky::apparentCover(float up, float cover)
+{
+  // Toward the horizon, the line of sight crosses more of the layer.
+  const float c = std::clamp(cover, 0.0f, 1.0f);
+  const float across = 1.0f - std::clamp(up, 0.0f, 1.0f);
+  return 1.0f - std::pow(1.0f - c, 1.0f + 2.0f * across * across * across);
 }
 
 float PhysicalSky::adaptation(const glm::vec3& toSun,
@@ -434,10 +516,22 @@ float PhysicalSky::lampShadow(float intensity, float lampScale)
   return t * t * (3.0f - 2.0f * t);
 }
 
-SkyIrradiance PhysicalSky::irradiance(const glm::vec3& toSun, float night) const
+SkyIrradiance PhysicalSky::irradiance(const glm::vec3& toSun,
+                                      float night,
+                                      const SkyClouds& clouds) const
 {
   const glm::vec3 sun = glm::normalize(toSun);
-  const glm::vec3 ground = groundRadiance(sun, night);
+  const glm::vec3 ground = groundRadiance(sun, night, clouds);
+  // Clouds, on average: their undersides over as much of each direction as
+  // they cover, the sky between them paler.
+  const float cover = std::clamp(clouds.cover, 0.0f, 1.0f);
+  glm::vec3 cloud(0.0f);
+  if (cover > 0.0f)
+  {
+    const glm::vec3 light = cloudSunLight(sun);
+    cloud = cloudBase(light, sun, skyLightAbove(sun, night), clouds) +
+            light * (0.5f * cloudSides(cover, sun.z));
+  }
   // The light from all around, projected onto the harmonics.
   constexpr int kRings = 10;
   constexpr int kSegments = 16;
@@ -453,7 +547,10 @@ SkyIrradiance PhysicalSky::irradiance(const glm::vec3& toSun, float night) const
       const glm::vec3 dir(std::sin(theta) * std::cos(phi),
                           std::sin(theta) * std::sin(phi),
                           std::cos(theta));
-      const glm::vec3 radiance = skyRadiance(dir, sun, ground, night);
+      glm::vec3 radiance = skyRadiance(dir, sun, ground, night);
+      if (cover > 0.0f && dir.z > 0.0f)
+        radiance = glm::mix(
+            cloudySky(radiance, cover), cloud, apparentCover(dir.z, cover));
       const std::array<float, 9> basis = shBasis(dir);
       for (std::size_t k = 0; k < basis.size(); ++k)
         light[k] += radiance * (basis[k] * weight);

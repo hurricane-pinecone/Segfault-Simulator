@@ -74,6 +74,9 @@ public:
   /** The project script being edited last (an editor path), if any. */
   const std::filesystem::path& focusedScript() const { return m_focusedScript; }
 
+  /** The project scripts open in Neovim (listed buffers), as editor paths. */
+  const std::vector<std::filesystem::path>& openScripts() const { return m_openScripts; }
+
 private:
   // Fire-and-forget: Neovim's replies are only checked for errors.
   void request(const std::string& method, const msgpack::Array& params);
@@ -85,6 +88,7 @@ private:
   NvimScreen m_screen;
   bool m_scriptSaved = false;
   std::filesystem::path m_focusedScript;
+  std::vector<std::filesystem::path> m_openScripts;
   int m_columns = 0;
   int m_rows = 0;
   uint32_t m_nextRequestId = 1;

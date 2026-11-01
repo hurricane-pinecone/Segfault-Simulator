@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <vector>
 
 class BuildEnvironment;
 
@@ -36,6 +37,9 @@ public:
 
   /** The project script being edited last (empty: none yet). */
   const std::filesystem::path& focusedScript() const { return m_nvim.focusedScript(); }
+
+  /** The project scripts open in the panel (its buffers). */
+  const std::vector<std::filesystem::path>& openScripts() const { return m_nvim.openScripts(); }
 
   void update(EditorContext& context) override;
 

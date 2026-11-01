@@ -176,6 +176,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `grass` | How much of a [grass](#grass) field on the mesh grows over it: 1 as its maps say, 0 none (1) |
 | `meadow` | How much it looks like grass seen from afar, past where blades are drawn (0): its colour breaks up in patches, a soft sheen shows at low angles, and light and dark bands roll across it with the wind, as over the blades |
 | `triplanar` | Also lay its textures from the sides where the ground is steep (cliffs, rock, a gorge's walls), so they don't stretch down the slope (false) |
+| `puddles` | How readily water pools on it, 0 to 1: its share of the micro relief's dips, and how full its low spots get. Dirt and paths 1, a meadow hardly (1) |
 
 | Material field | Meaning (default) |
 | --- | --- |
@@ -184,6 +185,11 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `antiTiling` | Break repeats up (true) |
 | `variation` | How much the brightness drifts over tens of metres (0.15) |
 | `triplanarSharpness` | How `triplanar` layers switch between their side and top projections: 0 a wide blend, toward 1 a crisp switch (0.5) |
+| `puddles` | Rain water collects in the mesh's low spots as the weather's `puddles` rise (false). See [Puddles](#puddles) |
+| `puddleDepth` | How deep water stands in a low spot at full, in metres above its lowest point (or to its brim, if shallower) (0.05) |
+| `microRelief` | Shallow dips this deep (metres) scattered over the ground, drawn only, so flat ground has low spots too (0) |
+| `microReliefSize` | About how wide those dips are, in metres (3) |
+| `deformable` | Pressed in where things go over it: tyre tracks, furrows, footprints (false). See [Deformation](#deformation) |
 
 How it draws (`meshTerrainSurface.wgsl`): each layer's textures lie over the
 world's XY from above, `tileSize` across, so ground of any size keeps its
@@ -220,6 +226,158 @@ material, as drawn now, so a style's variant counts) only as much as its
 layers' `grass` lets it, x its own maps: painting dirt makes it bare there. The
 maps a game reads and wears aren't changed by that; `GrassModule::terrainPainted()`
 grows it again after the splat map changes.
+
+#### Puddles
+
+With `puddles` on, `PuddleModule` (one of a standard scene's render modules)
+has the renderer work out where water collects on each mesh drawn with the
+terrain (as its first material, as drawn now). It's found on the GPU, as a
+**puddle map** over a 128 m window of the world's XY (12.5 cm texels), ahead
+of the camera: centred where the view meets the ground, at most 40 m out.
+Beyond the window water stands nowhere (the ground's only wet).
+
+1. The ground's height at each texel: the mesh's surface (laid onto a 0.5 m
+   grid on the CPU, in the background, each time the window moves 16 m on),
+   less the terrain's micro relief (value-noise hollows, scaled by the
+   layers' `puddles` through the splat map), plus how far the ground's
+   pressed in (a [deformable](#deformation) terrain's window: the lowest of
+   it under each texel, so a rut narrower than a texel still counts).
+2. Its hollows are found by a morphological closing: each texel's highest
+   neighbour within 2.5 m, then that's lowest within 2.5 m again, is the
+   brim water fills a hollow narrower than that to. The lowest within 2.5 m
+   is the hollow's bottom.
+3. Each hollow holds up to `puddleDepth` above its bottom, or to its brim if
+   shallower, less where the brim slopes (water runs off a rut down a hill),
+   none in one shallower than 4 mm.
+
+It's found again when the window moves, the ground's pressed in (at most
+every 0.5 s while something drives over it), the deformation's window moves,
+or the terrain's puddle settings change; not every frame. Each time costs
+the GPU a fraction of a millisecond (timed as `puddles` with
+`SFS_GPU_TIMING`). The water is drawn only: nothing on the CPU knows where it
+stands (a game reads the deformation map, `DeformationModule::offsetAt()`,
+for its ruts and hollows).
+
+The map holds, per texel, how far up its hollow's water line it is (0 its
+bottom, 1 the line) and how deep the hollow's water is there. The
+terrain shader puts water where the line, risen to the weather's `puddles` x
+the layers' `puddles` there, is above it. So as `puddles` goes from 0 to 1,
+water spreads out from each hollow's bottom to its line. Water stays
+when the rain stops: drying it is the game's job, by lowering `puddles`.
+
+**Fill rate.** `PuddleModule::setFillRate(ground, texture)` says how fast
+water rises in the puddles over the mesh's UVs (read as data, red 0 to 1;
+null, the default, is 1 everywhere): the line there is risen to `puddles` x
+that too, so where it's low water only stands in the deepest part of a
+hollow, if at all. A game's soil, say: loose tilled earth soaks rain up (0.1),
+packed tracks pond at once (1). Setting it finds the puddles again, so set it
+when it changes (every few seconds at most), not every frame. The map keeps
+it per texel (its blue).
+
+A puddle is flat water, drawn through the lit pass's wet surfaces (Surface's
+`water`): its own normal flat, very smooth, the ground under it darkened as
+soaked. Under a physical sky it reflects the sky and clouds (its reflection
+textures) by Fresnel, and catches the sun's glint. Rain's ripples ring it. The
+ground shows through browner and murkier the deeper the water is, and a band
+just above the water line is soaked darker (Surface's `soak`). Grass blades
+aren't kept out of puddles: give the layers grass grows on a low `puddles`
+(the farm's dirt and paths have no grass anyway).
+
+The renderer gets each window with `IRenderer::setTerrainPuddles(material,
+TerrainPuddles)` (the ground under it and the settings), kept with the
+material through its updates. One map per material, so give each puddled
+mesh its own terrain material. The CPU side is in
+`engine/core/rendering/puddles.h`, the passes in
+`engine/src/shaders/puddles.wgsl`.
+
+#### Deformation
+
+A `deformable` terrain is pressed in where things go over it, and stays so:
+tyre tracks with their lugs in them, an implement's furrows, footprints.
+`DeformationModule` (one of a standard scene's render modules) keeps a
+**deformation map** for each such entity (`engine/core/rendering/deformation.h`):
+how far its ground is pressed in (negative) or pushed up, 3 cm a texel, in
+world space. It's sparse, in tiles of 64 x 64 texels (1.9 m, 16 KB) made only
+where something has touched the ground, so a big field costs nothing until
+it's driven over; it's plain data on the CPU.
+
+**Deformers.** A `DeformerComponent` presses in wherever its meshes touch the
+ground: the entity's own and, with `children`, its children's (put one on a
+tractor prefab's root and its wheels and implement all deform; its body never
+reaches the ground). Each frame one of its meshes moves, the mesh's
+underside (what's seen of it from below, near the ground: lugs, tines, a
+roller), looked at sixteen times a texel so edges slope rather than step,
+presses the ground down to `sinkDepth` below it. The soil pressed out rises
+in a low ridge to the sides (`ridge`: the share of it; the rest compacts),
+and walls steeper than soil stands slump. Nothing goes deeper than 0.5 m.
+Rest vehicles on the ground as it is: lowering one by its sink only presses
+it further each pass.
+
+| DeformerComponent | Meaning (default) |
+| --- | --- |
+| `enabled` | Whether it deforms now, e.g. off while an implement's raised (true) |
+| `sinkDepth` | How far it sinks into the softest ground, metres: about its weight on its footprint (0.05) |
+| `softnessResponse` | How much the soil's softness changes that: 0 always `sinkDepth`, 1 `sinkDepth` x the softness (0.8) |
+| `ridge` | The share of the soil it presses out that's pushed up alongside (0.5) |
+| `children` | Whether its children's meshes deform too (true) |
+| `tread` | For smooth tyres: an image whose red is a pattern pressed in under it, laid along its +x ("": none; modelled lugs press in by themselves) |
+| `treadDepth`, `treadSize` | How deep the tread presses (0.02 m), and how far it spans before it repeats (0.5 m) |
+
+**Soil.** `setSoftness(ground, softness)` sets how soft the ground is, 0
+(hard: deformers barely mark it) to 1 (the default, the softest), everywhere
+or as a function of the world XY, asked for each texel a deformer presses
+(e.g. a game's soil moisture: wet mud deep, dry ground shallow).
+
+**From a game.** Through `render.module<sfs::DeformationModule>()`:
+
+- `stamp(ground, center, heading, size, depth, shape)` presses a shape in (a
+  footprint, a hoof): `shape` an image asset whose red is the imprint, from
+  above, its top along `heading` (empty: a rounded oval), `size` metres
+  along and across it, `depth` deep from the ground where it lands.
+- `relax(ground, smooth, fade)` weathers the tracks: edges round off and
+  ridges slump into ruts by `smooth`, and `fade` of what's left goes (call it
+  after rain, or once a day).
+- `clearRegion(ground, polygon)` (or a rectangle) flattens it, e.g. where a
+  field's been tilled.
+- `offsetAt(ground, point)` and `heightAt(ground, point)` read it (the
+  latter the surface's height, pressed in: to settle a vehicle into its ruts).
+- `save(ground)` packs the map small (millimetres, runs of flat ground and
+  small steps between neighbours in few bytes) to keep with a saved game;
+  `load(ground, bytes)` takes it back. It isn't saved with the scene.
+- `map(ground)` is the `DeformationMap` itself, to read or change directly.
+
+```cpp
+auto* deformation = render.module<sfs::DeformationModule>();
+deformation->setSoftness(ground, [&](glm::vec2 at) { return soil.wetness(at); });
+deformation->clearRegion(ground, field.outline); // tilled
+```
+
+**Drawing.** Near the camera it's real geometry: a patch of fine rings (4 cm
+between vertices at its middle, twice that each ring out, 20 m either side)
+around where the view meets the ground (at most 24 m from the camera),
+displaced on the GPU and drawn with a copy of the terrain's material, and
+the terrain's own mesh is cut away under it. Its rings meet without cracks,
+each vertex smoothed over its spacing (finer detail is in its per-pixel
+normals), and it casts and takes shadows, so ruts shade themselves. Out to
+about 30 m from the patch's middle, the ground is parallax-mapped from the
+same map, cross-fading with the patch over a band inside its edge, so there's
+no line; beyond, it's flat. The GPU holds a window of the map, 2048 texels
+square (61 m, 8 MB of half floats), that wraps, so as the camera moves only
+the tiles coming into it are uploaded. With nothing pressed in near the
+camera, nothing more is drawn.
+
+Grass growing on a deformable terrain is worn away where it's pressed in
+(its Coverage, through `GrassModule`), and its [puddles](#puddles) fill the
+ruts. `setWearsGrass(ground, false)` turns that off, for a game with its own
+rules for what traffic does to grass. `setContacts(ground, callback)` tells
+a game where each deformer touches the ground as it moves (a `Contact`: the
+deformer's entity and the mesh that touched, the underside's world XY
+rectangle, how far it moved since it last pressed, its `sinkDepth`, and how
+much it pressed in, 0 on ground too hard to mark), e.g. to pack its soil or
+wear paths. The callback is called from inside the module, so it notes what
+it needs and doesn't call the module back. The renderer takes the window with `IRenderer::setTerrainDeformation()`
+and `writeTerrainDeformation()`; a surface places a mesh's vertices itself with
+an optional `surfaceVertex()` (see `meshSurface.wgsl`).
 
 ### Materials from code
 
@@ -314,7 +472,7 @@ isometric or 3D game:
 | `moon.color`, `moon.diffuseStrength` | Its light's tint and strength under a flat sky (a physical sky works them out) |
 | `ambient` | Base brightness. |
 | `skyColor` | Background clear colour |
-| `cloudCover` | How overcast it is (0..1): dims the sun's and the moon's light, hides the stars and the moon's disk. The clouds themselves aren't drawn yet. |
+| `cloudCover` | How overcast it is (0..1): dims the sun's and the moon's light. A physical sky draws the clouds (see [Weather](#weather)). |
 
 Once the sun has set, the moon takes over as the light that shines and casts
 shadows. It fades in as the sun sinks to about 6 degrees below the horizon,
@@ -527,6 +685,189 @@ a visual style can replace each. See
 [Visual styles](../visual-styles/index.md#ambient-occlusion) for their fields
 and how they work. They're a 3D scene's: a 2D scene has none.
 
+### Weather
+
+`setWeather(SceneWeather)` sets the weather, which a game usually drives each
+frame, as it does the lighting. How cloudy it is stays the lighting's
+`cloudCover`. Scene Settings shows both under **Weather**, and the weather is
+saved with the scene when it isn't the default. It's a 3D scene's.
+
+| Field | Meaning |
+| --- | --- |
+| `rain` | How hard it's raining now (0..1) |
+| `wetness` | How wet surfaces are (0..1). It lags the rain as things wet and dry. |
+| `puddles` | How full the low spots are (0..1): water standing in a terrain's low spots (see [Puddles](#puddles)) |
+| `wind` | The wind the clouds drift on, in metres a second along world X and Y |
+| `cloudDarkness` | How heavy the clouds are: white fair-weather cloud (0) to dark rain cloud (1) |
+
+Under a physical sky the clouds are a layer 1.5 km up, made of drifting noise.
+At low cover they're scattered cumulus, in the middle broken cloud, and near 1
+a grey deck. The sun or moon lights them: tops are white at noon, sides and
+undersides glow at sunset, and they stay lit a little after the sun has set
+for the ground. At night they're dark. Thick cloud hides the sun, the moon and
+the stars. The more overcast it is, the flatter the light gets:
+
+- The sun's light dims, its shadows soften (up to 3x their softness), and
+  only clouds' moving shadows take it where they pass.
+- The sky's light turns grey and even, and the blue between clouds pales.
+- Haze and fog take on the clouds' grey.
+- Eyes don't adapt to it the way they adapt to dusk (see the sky's
+  `adaptation`), so an overcast noon stays dull and a cloudy night stays
+  darker than a clear one.
+
+The background draws the clouds per pixel each frame as they drift. The sky's
+reflection textures redraw them each time they've drifted (or the camera's
+moved) 30 m, and when the sun moves; the sky's diffuse light accounts for them
+on average (in the background, as it does for the sun's moves).
+
+The shaders get the weather as the `Frame` uniform's `weather` (rain,
+wetness, puddles, cloud cover) and `weatherWind` (the wind, then how far the
+clouds have drifted in km).
+
+#### Rain
+
+While `rain` is above 0:
+
+- **Streaks** fall through the air around the camera: about 40,000 in a
+  downpour (many fewer in a drizzle: about 5,000 at rain 0.3), half in a box around the camera and half in a bigger one reaching
+  ahead. They fall at about 8 m/s, slanted by the weather's wind, and each is
+  drawn as long as its blur while it falls. They drift as far as the wind has
+  carried them (the render system keeps that, `RainDrift`, in the `Frame`'s
+  `rainDrift`), and the wind they see is eased over about a second, so a gust
+  or a change of direction turns them smoothly instead of sliding the whole
+  field of drops sideways. Each is at least a pixel wide
+  (thinner ones are drawn fainter). The sky lights them (brightest looking
+  toward the sun), and so do the point lights around them. At night they're as
+  dark as the night is. They fade out about 40 m away and go into the haze, fog
+  and veil like any surface.
+- **Splashes**: drops land on the ground ahead of the camera (more near it).
+  Each throws up a small crown of droplets and a spreading ring, and lasts a
+  third of a second. They only land on things that face up.
+- **Ripples**: rings spread wherever water stands (puddles, a soaked flat
+  stone) and on smooth, flat, up-facing surfaces like a river or a pond.
+- **Drips**: in heavy rain (from about 0.4), water runs off the edges of
+  roofs, eaves, awnings and tree canopies. Drops gather under the edge, fall
+  to the ground and splash there; in a downpour they string out into broken
+  trickles. The edges are found on the overhead map (below), not authored:
+  wherever what's drawn steps down more than 0.6 m to open ground, and water
+  runs to the edge (a roof sloping toward it, a flat one, or something thin;
+  not a gable's sloping side). About 4,000 places around the camera each
+  look along a line for one, and the ones that find an edge drip from it a
+  few times before looking elsewhere. After the rain stops, soaked edges keep
+  dripping for a while, a quarter as many and slowly. The ground along the
+  drip line, just outside an edge, is soaked and has water standing on it.
+  Drips are lit as streaks are, and fade out about 25 m away.
+- **The veil**: the falling rain greys the distance, the same at every height,
+  toward the fog's colour (the overcast sky at the horizon). A downpour hides
+  about half of what's 150 m away, and light rain hardly any.
+
+Nothing falls, splashes or ripples under a roof or a tree. Rain's
+*overhead map* says where the sky is open. It's a depth map looking straight
+down over a 128 m square ahead of the camera (6 cm a texel), drawn each
+rainy frame from the sun's shadow casters (grass left out) and the opaque
+things in view that don't cast a shadow (often the ground). It needs the
+sun's shadows to be on. Without them, rain falls everywhere and nothing
+splashes. Things past the map's edge count as open.
+
+How rain looks is `setRainSettings(RainSettings)`, which a visual style can
+replace (its `"rain"` section). It's saved with the scene when it isn't the
+default, and it's under **Weather** in Scene Settings.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | true | Whether rain is drawn at all (wet surfaces still are) |
+| `density` | 1 | How many streaks fall (1: about 40,000 in a downpour, an eighth of that in a drizzle; up to 2) |
+| `length` | 0.5 | How long a streak is, in metres |
+| `width` | 2 | How wide a streak is, in millimetres |
+| `brightness` | 1 | How bright streaks and splashes are (1: as the sky and lamps light them) |
+| `splashes` | 1 | How many drops splash (1: about 8,000 at once in a downpour; 0: none) |
+| `ripples` | 1 | How strongly drops ring standing water (0: none) |
+| `veil` | 1 | How thick the distant veil is (0: none) |
+| `drips` | 1 | How much water drips off edges in heavy rain and after it, and how wet the drip line is (0: none; up to 2) |
+
+Streaks and splashes leave their coverage in the scene's alpha, and temporal
+anti-aliasing takes more of the current frame there. Streaks move too fast for
+its history, which would otherwise smear them away.
+
+#### Lightning
+
+`strikeLightning(LightningStrike)` sets off a strike (a 3D scene's). A game
+does it during storms (CozyFarm's weather does, more at a storm's height).
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `position` | 0, 0, 0 | Where it hits the ground (world). An in-cloud strike flashes in the cloud base above it. |
+| `intensity` | 1 | How bright it is (1: a typical strike; 0.5 to 2 for variety) |
+| `inCloud` | false | In the cloud only: no channel to the ground |
+| `seed` | 0 | Shapes its channel and strokes. Give each strike its own. |
+
+A strike flickers through its strokes (`lightningBrightness()`). A
+cloud-to-ground one has 2 to 5 return strokes over 0.15 to 0.5 s, each a flash
+dying away in tens of milliseconds, sometimes one held by a continuing
+current. An in-cloud one has 3 to 7 softer pulses. Up to 4 strikes flash at
+once; the oldest gives way.
+
+Under a physical sky a strike really emits light:
+
+- **The channel** is a line of light from the cloud base (1.5 km up, leaning a
+  little) to the ground. Each surface takes its light from where along the
+  line it comes from on average, so it's as bright as a line light: about 1 /
+  the distance near it, and 1 / the distance squared far off. At a kilometre,
+  a typical stroke lights what faces it about as brightly as the sun at noon.
+  It gives Lambert diffuse light and a GGX glint, so wet ground and puddles
+  catch sharp highlights from it. Within 1.2 km of what the camera looks at,
+  it casts a shadow: a point light at that average point, its cube map taking
+  one of the point-light shadow slots first, lighting nothing itself (it's
+  kept out of the light clusters).
+- **The cloud base** glows around the strike (about 1.8 km across, or 2.5 km
+  for one in the cloud), even when the strike itself is out of view. The
+  background draws the glow on the clouds, mottled by their pattern. Surfaces
+  reflect it where their reflection meets the cloud layer, cheaply (the
+  reflection textures aren't redrawn), so puddles flash too. It lights the land
+  softly from above, the veil of rain and the haze, so distant strikes still
+  flicker the landscape. Rain streaks catch both lights.
+- **Auto exposure holds** while any strike is going, so a flash brightens the
+  scene and the dark between strikes stays as dark as it was.
+
+The channel is drawn too, under any sky. It's a jagged, branching path,
+regenerated per strike from its seed (`lightningChannel()`), drawn as
+additive ribbons facing the camera, a few pixels wide however far off. They're
+far brighter than the scene, so bloom picks them up. The main channel follows
+every stroke. Branches are lit by the first stroke and then fade. After each
+stroke a faint afterimage fades over about half a second.
+
+`holdLightning(seconds)` holds every strike that long after it began (0: the
+first stroke's peak), for screenshots and tests. `frameLightning()` is what the
+frame got. The shaders get it as the `Frame` uniform's `lightningLow`,
+`lightningHigh`, `lightningLight` and `lightningGlow`. `meshCommon.wgsl` has
+`lightningGlowAt(p)` (the glowing clouds' light at a point) and
+`lightningCloudsToward(origin, direction)` (the glow seen along a ray), and
+`meshLit.wgsl` has `lightningLighting()`.
+
+#### Wet surfaces
+
+`wetness` wets every lit surface the rain reaches: meshes, terrain, grass and
+its ground. It follows Lagarde's physically based wet surfaces. Porous things
+(rough and not metal, like soil, wood, stone and cloth) soak the water up and
+darken, down to half their albedo when soaked. Everything gets glossier: its
+roughness drops by 30% to 45%, less on porous things. The lower roughness
+gives stronger, sharper reflections of a physical sky through its reflection
+textures, and stronger sun and lamp highlights. Up-facing surfaces get all of
+the wetness, walls about a third (rain driven against them), and down-facing
+ones none. Sheltered spots stay dry, using the same overhead map as the rain.
+Soaked flat ground holds a thin film of water, which is smoother still and
+picks up ripples.
+
+For shader authors: `meshCommon.wgsl` has `rainRipples(p: vec2f, time: f32,
+rain: f32) -> vec2f`. It returns the slope (d height / dx, dy) of rain's
+ripples at a world XY point. Tilt an up-facing normal with
+`normalize(n - vec3f(slope * strength, 0.0))`. `meshLit.wgsl` has
+`surfaceWetness()` (how wet a point is: weather, facing and shelter),
+`standingWater()` (how much water stands on it; a terrain's puddles add
+theirs through Surface's `water`, and their soaked rims through `soak`),
+`wetMaterial()` (the wet albedo, roughness and normal, rippled where water
+stands) and `rainExposure()` (0 sheltered to 1 open sky).
+
 ### Shadows
 
 `setShadowSettings(ShadowSettings)` configures the sun's shadow map and the
@@ -705,9 +1046,10 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
 `RenderSystem::settings()` exposes ambient, sun strength, shadow, wind and
 projection controls as `ModuleSetting`s, so the debug panel shows them like any
 other system's settings. Set the `SFS_GPU_TIMING` environment variable to have the
-WebGPU renderer time its sun shadow, grass growth and lit passes with GPU
-timestamp queries, where the device has them, and log their averages in
-milliseconds every few seconds. `stats()` reports the last frame's draw calls,
+WebGPU renderer time its sun shadow, grass growth, puddle and lit passes with
+GPU timestamp queries, where the device has them, and log their averages in
+milliseconds every few seconds (the puddles' over the frames they ran in;
+0 when they didn't). `stats()` reports the last frame's draw calls,
 instances, shadow instances, point lights, and how many of those came from
 emission and cast shadows.
 

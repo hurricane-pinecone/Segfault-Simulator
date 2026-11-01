@@ -4,6 +4,7 @@
 #include "panels/codePanel.h"
 #include "scene/editorScene.h"
 #include "widgets/theme.h"
+#include "widgets/widgets.h"
 
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/logger/logger.h"
@@ -176,11 +177,19 @@ void UiPreviewPanel::beforeBegin()
       ImGui::SetNextWindowDockID(console->DockId);
   }
   // A UI file opened: its tab to the front, without taking the keyboard
-  // from the Code panel.
+  // from the Code panel, remembering the tab it covers (the Inspector,
+  // usually) to go back to.
   if (std::exchange(m_bringForward, false))
-    if (ImGuiWindow* window = ImGui::FindWindowByName(title()))
-      if (window->DockNode && window->DockNode->TabBar)
-        window->DockNode->TabBar->NextSelectedTabId = window->TabId;
+  {
+    const std::string shown = widgets::shownTab(title());
+    if (!m_tabBefore && !shown.empty() && shown != title())
+    {
+      m_tabBefore = shown;
+      m_seenInFront = false;
+      m_uiSeenOpen = false;
+    }
+    widgets::showTab(title());
+  }
 }
 
 void UiPreviewPanel::update(EditorContext&)
@@ -188,6 +197,37 @@ void UiPreviewPanel::update(EditorContext&)
   // Every frame, shown or not: a UI file opened brings the tab forward.
   if (m_follow && open())
     followCode();
+  returnTab();
+}
+
+void UiPreviewPanel::returnTab()
+{
+  if (!m_tabBefore || m_bringForward)
+    return;
+  // Another tab picked since this one came forward: it stays.
+  if (widgets::shownTab(title()) == title())
+    m_seenInFront = true;
+  else if (m_seenInFront)
+  {
+    m_tabBefore.reset();
+    return;
+  }
+  const bool uiOpen = std::ranges::any_of(
+      m_code.openScripts(),
+      [&](const std::filesystem::path& file)
+      {
+        const std::string name = file.filename().string();
+        return name.ends_with(".ui.h") || name.ends_with(".ui.cpp") ||
+               m_uiUnits.contains(unitOf(file));
+      });
+  // Neovim tells which files are open a moment after which is focused: the
+  // UI file's to have been seen open first.
+  m_uiSeenOpen |= uiOpen;
+  if (m_seenInFront && m_uiSeenOpen && !uiOpen)
+  {
+    widgets::showTab(*m_tabBefore);
+    m_tabBefore.reset();
+  }
 }
 
 void UiPreviewPanel::followCode()
@@ -212,6 +252,7 @@ void UiPreviewPanel::followCode()
   const bool isLayer = std::ranges::find(layers, nameOf(unit)) != layers.end();
   if (!previewed && !isLayer)
     return; // not UI: keep showing what was
+  m_uiUnits.insert(unit);
   if (newFile || unit != m_unit)
     m_bringForward = true;
   m_unit = unit;

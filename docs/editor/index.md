@@ -80,6 +80,20 @@ of one.
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
+| UI Preview | The game UI in the file open in the Code panel, as you write it (see [the UI docs](../runtime/ui/index.md#views-of-your-own-and-the-ui-preview)). Opening a UI file brings its tab to the front (without taking the keyboard from Code); closing the last one goes back to the tab it covered, unless you picked another meanwhile. |
+
+The **Window** menu shows or hides each panel; **Window → Reset Layout** puts
+them all back where a new editor has them: the Hierarchy on the left, the
+Inspector and UI Preview on the right, the Viewport, Scene Settings and Code
+in the middle, and the Console and Assets under them.
+
+The layout, which panels are open, the panels' own settings and the editor
+window's size, place and maximised state are kept between sessions, per user,
+in `imgui.ini` in `%APPDATA%\SegfaultSimulator\SfsEditor` on Windows
+(`~/.local/share/SegfaultSimulator/SfsEditor` on Linux). Delete it to start
+from the default layout. A window that was on a display no longer there opens
+on the main one. Set `SFS_EDITOR_SETTINGS_DIR` to keep them in another folder
+instead (to try the editor out without changing yours).
 
 ## Styles: 2D and 3D
 

@@ -172,6 +172,50 @@ int main()
     CHECK(moonlight(lighting) == 0.0f);
   }
 
+  TEST("clouds should grey and dim the sky's light, and light their "
+       "undersides after the sun has set")
+  {
+    const PhysicalSky sky;
+    const glm::vec3 noon = sunAt(60.0f);
+    const glm::vec3 up(0.0f, 0.0f, 1.0f);
+    const glm::vec3 clear = sky.irradiance(noon).at(up);
+    const glm::vec3 overcast =
+        sky.irradiance(noon, 1.0f, SkyClouds{1.0f, 0.0f}).at(up);
+    // Greyer: far less blue over red than the clear sky's.
+    CHECK(overcast.b / overcast.r < 0.8f * (clear.b / clear.r));
+    // The ground: lit less, the sun's light mostly taken.
+    const glm::vec3 clearGround = sky.groundRadiance(noon);
+    const glm::vec3 overcastGround =
+        sky.groundRadiance(noon, 1.0f, SkyClouds{1.0f, 0.0f});
+    CHECK(luminance(overcastGround) < 0.6f * luminance(clearGround));
+    // Rain cloud: darker again.
+    const glm::vec3 light = sky.cloudSunLight(noon);
+    const glm::vec3 above = sky.skyLightAbove(noon);
+    const glm::vec3 white =
+        PhysicalSky::cloudBase(light, noon, above, SkyClouds{1.0f, 0.0f});
+    const glm::vec3 dark =
+        PhysicalSky::cloudBase(light, noon, above, SkyClouds{1.0f, 1.0f});
+    CHECK(luminance(dark) < 0.6f * luminance(white));
+    CHECK(luminance(white) > 0.0f);
+    // No clouds: as without them.
+    CHECK(sky.irradiance(noon, 1.0f, SkyClouds{}) == sky.irradiance(noon));
+
+    // Higher up, the clouds keep the sun a little after it has set for the
+    // ground; well set, it's gone for them too.
+    CHECK(sky.sunLight(sunAt(-0.5f)) == glm::vec3(0.0f));
+    CHECK(luminance(sky.cloudSunLight(sunAt(-0.5f))) > 0.0f);
+    CHECK(luminance(sky.cloudSunLight(sunAt(-4.0f))) < 1e-6f);
+    // Their sides catch more of a low sun, and less as they close in.
+    CHECK(PhysicalSky::cloudSides(0.3f, 0.05f) >
+          PhysicalSky::cloudSides(0.3f, 0.9f));
+    CHECK(PhysicalSky::cloudSides(1.0f, 0.05f) <
+          PhysicalSky::cloudSides(0.3f, 0.05f));
+    // Toward the horizon more of the sky is cloud.
+    CHECK(std::abs(PhysicalSky::apparentCover(1.0f, 0.3f) - 0.3f) < 1e-5f);
+    CHECK(PhysicalSky::apparentCover(0.05f, 0.3f) > 0.5f);
+    CHECK(PhysicalSky::apparentCover(0.05f, 0.0f) == 0.0f);
+  }
+
   TEST("hazier air should pale the sky and dim the sun")
   {
     SkySettings hazy;

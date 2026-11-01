@@ -89,6 +89,9 @@ struct Hit
   std::function<void()> action; // a button's (empty: none)
   bool enabled = true;
   std::string help;
+  // A slider's: called with the pointer's position (pixels) as it's pressed
+  // on it, and on each frame it's held down after, wherever it goes.
+  std::function<void(glm::vec2)> drag;
 };
 
 /** Where a view went (for tools: the editor's UI preview outlines them). */
@@ -109,7 +112,7 @@ struct Pointer
 {
   glm::vec2 position{-1.0e9f};
   std::string hovered; // a Hit's id
-  std::string pressed; // a button held down
+  std::string pressed; // a button (or slider) held down
 };
 
 /**

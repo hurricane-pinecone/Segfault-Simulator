@@ -60,6 +60,22 @@ float terrainGrass(const TerrainMaterial& terrain, glm::vec2 uv)
   return grass;
 }
 
+float terrainPuddles(const TerrainMaterial& terrain, glm::vec2 uv)
+{
+  if (terrain.layers.empty())
+    return 1.0f;
+  const std::array<float, kMaxTerrainLayers> weights = terrainWeights(
+      terrain.splat ? sampleSplat(*terrain.splat, uv) : glm::vec4(0.0f));
+  float puddles = 0.0f;
+  for (std::size_t i = 0; i < weights.size(); ++i)
+  {
+    const TerrainLayer& layer =
+        terrain.layers[i < terrain.layers.size() ? i : 0];
+    puddles += weights[i] * std::clamp(layer.puddles, 0.0f, 1.0f);
+  }
+  return puddles;
+}
+
 bool terrainLimitsGrass(const TerrainMaterial& terrain)
 {
   return std::any_of(terrain.layers.begin(),
@@ -176,7 +192,12 @@ nlohmann::json TerrainAsset::toJson() const
                         {"blendSharpness", blendSharpness},
                         {"antiTiling", antiTiling},
                         {"variation", variation},
-                        {"triplanarSharpness", triplanarSharpness}};
+                        {"triplanarSharpness", triplanarSharpness},
+                        {"puddles", puddles},
+                        {"puddleDepth", puddleDepth},
+                        {"microRelief", microRelief},
+                        {"microReliefSize", microReliefSize},
+                        {"deformable", deformable}};
   nlohmann::json saved = nlohmann::json::array();
   for (const TerrainLayerAsset& layer : layers)
     saved.push_back({{"name", layer.name},
@@ -189,7 +210,8 @@ nlohmann::json TerrainAsset::toJson() const
                      {"normalScale", layer.normalScale},
                      {"grass", layer.grass},
                      {"meadow", layer.meadow},
-                     {"triplanar", layer.triplanar}});
+                     {"triplanar", layer.triplanar},
+                     {"puddles", layer.puddles}});
   out["layers"] = std::move(saved);
   return out;
 }
@@ -203,9 +225,18 @@ TerrainAsset TerrainAsset::fromJson(const nlohmann::json& json)
   read(json, "blendSharpness", out.blendSharpness);
   read(json, "variation", out.variation);
   read(json, "triplanarSharpness", out.triplanarSharpness);
+  read(json, "puddleDepth", out.puddleDepth);
+  read(json, "microRelief", out.microRelief);
+  read(json, "microReliefSize", out.microReliefSize);
   if (const auto it = json.find("antiTiling");
       it != json.end() && it->is_boolean())
     out.antiTiling = it->get<bool>();
+  if (const auto it = json.find("puddles");
+      it != json.end() && it->is_boolean())
+    out.puddles = it->get<bool>();
+  if (const auto it = json.find("deformable");
+      it != json.end() && it->is_boolean())
+    out.deformable = it->get<bool>();
   if (const auto it = json.find("layers"); it != json.end() && it->is_array())
     for (const nlohmann::json& item : *it)
     {
@@ -229,6 +260,7 @@ TerrainAsset TerrainAsset::fromJson(const nlohmann::json& json)
       if (const auto triplanar = item.find("triplanar");
           triplanar != item.end() && triplanar->is_boolean())
         layer.triplanar = triplanar->get<bool>();
+      read(item, "puddles", layer.puddles);
       out.layers.push_back(std::move(layer));
     }
   return out;

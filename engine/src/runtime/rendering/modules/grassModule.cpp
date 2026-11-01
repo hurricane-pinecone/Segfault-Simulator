@@ -12,6 +12,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/jobs/workerPool.h"
 #include "engine/core/rendering/terrain.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "glm/glm/geometric.hpp"
@@ -178,18 +179,29 @@ void GrassModule::gatherBenders(float seconds)
 void GrassModule::update(double deltaTime)
 {
   const float seconds = static_cast<float>(deltaTime);
-  gatherBenders(seconds);
+  {
+    SFS_CPU_SCOPE("grass/benders");
+    gatherBenders(seconds);
+  }
   for (auto& [key, patch] : m_patches)
-    if (patch.gpu.valid() &&
-        patch.trample.update(seconds, m_benders, patch.recovery))
+  {
+    if (!patch.gpu.valid())
+      continue;
+    bool changed = false;
     {
-      const std::vector<uint8_t> pixels = patch.trample.image();
-      m_renderer.updateGrassTrample(patch.gpu,
-                                    GrassTrampleImage{patch.trample.min(),
-                                                      patch.trample.max(),
-                                                      patch.trample.size(),
-                                                      pixels});
+      SFS_CPU_SCOPE("grass/trample");
+      changed = patch.trample.update(seconds, m_benders, patch.recovery);
     }
+    if (!changed)
+      continue;
+    SFS_CPU_SCOPE("grass/trample upload");
+    const std::vector<uint8_t> pixels = patch.trample.image();
+    m_renderer.updateGrassTrample(patch.gpu,
+                                  GrassTrampleImage{patch.trample.min(),
+                                                    patch.trample.max(),
+                                                    patch.trample.size(),
+                                                    pixels});
+  }
 }
 
 float GrassModule::windowReach(float drawDistance)

@@ -52,7 +52,10 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
                      0)};
 }
 
-TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain)
+TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain,
+                                        const TerrainPuddles* puddles,
+                                        const TerrainDeformation* deformation,
+                                        bool patch)
 {
   TerrainUniforms out{};
   const float sharpness = std::clamp(terrain.triplanarSharpness, 0.0f, 1.0f);
@@ -77,6 +80,36 @@ TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain)
                          std::clamp(terrain.blendSharpness, 0.0f, 1.0f),
                          terrain.antiTiling ? 1.0f : 0.0f,
                          std::clamp(terrain.variation, 0.0f, 1.0f));
+  for (std::size_t i = 0; i < kMaxTerrainLayers; ++i)
+  {
+    const TerrainLayer layer =
+        i < count ? terrain.layers[i]
+                  : (count > 0 ? terrain.layers[0] : TerrainLayer{});
+    out.puddleLayers[i / 4][static_cast<int>(i % 4)] =
+        std::clamp(layer.puddles, 0.0f, 1.0f);
+  }
+  const bool mapped =
+      terrain.puddles && puddles && !puddles->empty() && puddles->texel > 0.0f;
+  if (mapped)
+    out.puddleMap = glm::vec4(puddles->origin, 1.0f / puddles->extent());
+  out.puddleParams = glm::vec4(mapped ? 1.0f : 0.0f, kPuddleDepthRange, 0, 0);
+  if (terrain.deformable && deformation && !deformation->empty())
+  {
+    const float window =
+        deformation->texel * static_cast<float>(deformation->size);
+    out.deformMap = glm::vec4(patch ? 2.0f : 1.0f,
+                              deformation->texel,
+                              1.0f / window,
+                              std::min(deformation->deepest, 0.0f));
+    out.deformWindow = glm::vec4(
+        glm::vec2(deformation->from) * deformation->texel, window, window);
+    out.deformPatch = glm::vec4(deformation->patchCenter,
+                                deformation->patchHalf,
+                                std::max(deformation->patchBand, 1e-3f));
+    out.deformGround = glm::vec4(deformation->groundOrigin,
+                                 std::max(deformation->groundTexel, 1e-3f),
+                                 0.0f);
+  }
   return out;
 }
 
@@ -135,6 +168,7 @@ void FramePlan::begin(const FrameParams& frame)
   m_blendDraws.clear();
   m_blendOrder.clear();
   m_shadowDraws.clear();
+  m_unshadowedDraws.clear();
   for (std::vector<Draw>& draws : m_cascadeDraws)
     draws.clear();
   m_casterBatches.clear();
@@ -234,6 +268,8 @@ void FramePlan::addMesh(const MeshBatch& batch,
       }
     if (opaque.instanceCount > 0)
       m_litDraws.push_back(opaque);
+    if (opaque.instanceCount > 0 && batch.shadowInstances.empty())
+      m_unshadowedDraws.push_back(opaque);
     for (const uint32_t index : faded)
       seeThrough(index, true);
   }
@@ -294,8 +330,18 @@ void FramePlan::finish(
   const std::size_t count = std::min(m_pointLights.size(), kMaxPointLights);
   const std::size_t budget = std::min<std::size_t>(
       m_frame.shadows.pointLights, kMaxShadowedPointLights);
+  // (A lightning strike's first: it's what the scene's lit by while it
+  // flashes.)
+  const int strikeShadow = m_frame.lightning.shadowLight;
+  const bool strikeShadowed =
+      strikeShadow >= 0 && static_cast<std::size_t>(strikeShadow) < count &&
+      budget > 0 &&
+      m_pointLights[static_cast<std::size_t>(strikeShadow)].castsShadow;
+  if (strikeShadowed)
+    m_shadowedLights.push_back({static_cast<std::size_t>(strikeShadow), {}});
   for (std::size_t i = 0; i < count && m_shadowedLights.size() < budget; ++i)
-    if (m_pointLights[i].castsShadow)
+    if (m_pointLights[i].castsShadow &&
+        (!strikeShadowed || i != static_cast<std::size_t>(strikeShadow)))
       m_shadowedLights.push_back({i, {}});
   for (ShadowedLight& shadowed : m_shadowedLights)
   {
@@ -396,9 +442,14 @@ void FramePlan::finish(
   m_uniforms.cameraPosition = glm::vec4(m_frame.cameraPosition, 1.0f);
   m_uniforms.sunDirection = glm::vec4(toSun, lighting.sun.diffuseStrength);
   m_uniforms.sunColor = glm::vec4(lighting.sun.color, lighting.ambient);
+  // Under cloud the sun's light comes from more of the sky around it: its
+  // shadows soften (up to x3 overcast).
+  const float softness =
+      shadows.softness *
+      (1.0f + 2.0f * std::clamp(lighting.cloudCover, 0.0f, 1.0f));
   m_uniforms.shadow = glm::vec4(shadows.enabled ? 1.0f : 0.0f,
                                 shadows.depthBias,
-                                shadows.softness / resolution,
+                                softness / resolution,
                                 2.0f * shadows.distance / resolution);
   m_uniforms.sky = glm::vec4(lighting.skyColor, 1.0f);
   m_uniforms.time = glm::vec4(m_frame.time, 0.0f, 0.0f, 0.0f);
@@ -464,7 +515,7 @@ void FramePlan::finish(
       const float bias = shadows.depthBias * 4.0f * cascade.radius /
                          std::max(cascade.depthRange, 1e-4f);
       m_uniforms.cascadeParams[c] =
-          glm::vec4(texel, bias, glm::vec2(shadows.softness) / atlas);
+          glm::vec4(texel, bias, glm::vec2(softness) / atlas);
     }
     // Blend over the outer tenth of each; the last fades out over the final
     // fifth of the distance it reaches.
@@ -519,6 +570,67 @@ void FramePlan::finish(
   else
     m_uniforms.skyScale = glm::vec4(1.0f);
 
+  // The weather; and a physical sky's clouds, where there are any.
+  const SceneWeather& weather = m_frame.weather;
+  m_uniforms.weather = glm::vec4(weather.rain,
+                                 weather.wetness,
+                                 weather.puddles,
+                                 std::clamp(lighting.cloudCover, 0.0f, 1.0f));
+  m_uniforms.weatherWind = glm::vec4(weather.wind, m_frame.cloudDrift);
+  if (sky.physical && sky.cloudCover > 0.0f)
+  {
+    m_uniforms.cloudLight = glm::vec4(sky.cloudLight, sky.cloudDarkness);
+    m_uniforms.cloudBase =
+        glm::vec4(sky.cloudBase, 1.0f / clearSky(sky.cloudCover));
+  }
+
+  // Rain: its overhead map (where the sky is open), the streaks and splashes
+  // falling, how they look, and its veil.
+  const RainSettings& rain = m_frame.rain;
+  m_rainMap = rainMapFor(m_frame.cameraPosition, m_frame.cameraForward);
+  m_uniforms.rainView = m_rainMap.viewProjection;
+  m_uniforms.rainMap = glm::vec4(
+      m_rainMap.center, m_rainMap.halfSize, rainMapOn() ? 1.0f : 0.0f);
+  m_uniforms.rainDepth =
+      glm::vec4(m_rainMap.top,
+                m_rainMap.depthRange,
+                static_cast<float>(rainStreaks(rain, weather.rain)),
+                static_cast<float>(rainSplashes(rain, weather.rain)));
+  m_uniforms.rainStreaks =
+      glm::vec4(std::max(rain.length, 0.0f),
+                std::max(rain.width, 0.0f) * 0.001f,
+                std::max(rain.brightness, 0.0f),
+                rain.enabled ? std::max(rain.ripples, 0.0f) : 0.0f);
+  m_uniforms.rainVeil = glm::vec4(rainVeilDensity(rain, weather.rain),
+                                  static_cast<float>(viewport.x),
+                                  static_cast<float>(viewport.y),
+                                  0.0f);
+  m_uniforms.rainDrift = glm::vec4(m_frame.rainDrift, m_frame.rainWind);
+  // Drips off edges: they're found on the overhead map, so none without it.
+  if (rainMapOn())
+  {
+    const RainDrips drips = rainDrips(rain, weather.rain, weather.wetness);
+    m_uniforms.rainDrips = glm::vec4(
+        static_cast<float>(drips.count), drips.rate, drips.trickle, drips.line);
+  }
+
+  // Lightning, under a physical sky, adapted as the sky's light is.
+  const FrameLightning& lightning = m_frame.lightning;
+  if (sky.physical && lightning.active)
+  {
+    const float adapted = std::max(sky.adaptation, 0.0f);
+    m_uniforms.lightningLow =
+        glm::vec4(lightning.low,
+                  strikeShadowed ? static_cast<float>(strikeShadow) : -1.0f);
+    m_uniforms.lightningHigh =
+        glm::vec4(lightning.high, lightning.channel ? 1.0f : 0.0f);
+    m_uniforms.lightningLight = glm::vec4(
+        lightning.channelLight * adapted, std::max(lightning.glowRadius, 1.0f));
+    m_uniforms.lightningGlow = glm::vec4(lightning.cloudGlow * adapted, 1.0f);
+  }
+  else
+    m_uniforms.lightningLow.w = -1.0f;
+
   // The lights (nearest the camera's target first, as the render system
   // keeps them), and the clusters each reaches.
   m_grid = ClusterGrid::forViewport(
@@ -533,12 +645,18 @@ void FramePlan::finish(
                 m_grid.tilePixels);
 
   const std::span<const PointLight> lights(m_pointLights.data(), count);
+  // (A lightning strike's shadow light lights nothing itself: it's kept out
+  // of the clusters. It's always the last.)
+  const std::size_t clustered =
+      strikeShadow >= 0 && static_cast<std::size_t>(strikeShadow) + 1 == count
+          ? count - 1
+          : count;
   ClusterView view;
   view.viewProjection = m_frame.viewProjection;
   view.viewport = glm::vec2(viewport);
   view.cameraPosition = m_frame.cameraPosition;
   view.forward = m_frame.cameraForward;
-  assignLights(m_grid, view, lights, m_clusters);
+  assignLights(m_grid, view, lights.first(clustered), m_clusters);
 
   const float texel =
       1.0f / static_cast<float>(std::max(pointShadowResolution, 1u));
@@ -624,6 +742,10 @@ ExposureUniforms FramePlan::exposureUniforms(glm::ivec2 viewport,
                 std::max(grading.exposureBrighten, 0.0f),
                 1.0f - std::exp(-std::max(seconds, 0.0f) *
                                 std::max(grading.exposureSpeed, 0.0f)));
+  // While lightning flashes it holds: the flash brightens the scene, and the
+  // dark between strikes stays as dark as it was.
+  if (m_frame.lightning.active)
+    out.params.w = 0.0f;
   out.source = glm::vec4(glm::vec2(glm::max(viewport, glm::ivec2(1))),
                          grading.autoExposure ? 1.0f : 0.0f,
                          0.0f);
@@ -652,6 +774,17 @@ SkyUniforms FramePlan::skyUniforms() const
                          PhysicalSky::kTopRadius,
                          PhysicalSky::kViewerAltitude,
                          PhysicalSky::kMultipleScattering);
+  // The clouds as they are where the camera is (its place in their pattern).
+  const glm::vec2 origin =
+      glm::vec2(m_frame.cameraPosition) * 0.001f + m_frame.cloudDrift;
+  out.clouds = glm::vec4(origin, sky.cloudCover, sky.cloudDarkness);
+  out.cloudLight = glm::vec4(sky.cloudLight, PhysicalSky::kCloudAltitude);
+  out.cloudBase = glm::vec4(sky.cloudBase, 0.0f);
+  const float lightLength = glm::length(m_frame.lighting.sun.direction);
+  out.cloudToLight = glm::vec4(
+      lightLength > 1e-6f ? m_frame.lighting.sun.direction / lightLength
+                          : glm::vec3(0.0f, 0.0f, 1.0f),
+      0.0f);
   return out;
 }
 
@@ -703,6 +836,14 @@ bool FramePlan::contactShadowsOn() const
   const ContactShadowSettings& settings = m_frame.contactShadows;
   return settings.enabled && settings.strength > 0.0f &&
          settings.length > 0.0f && m_frame.sky.physical != nullptr;
+}
+
+bool FramePlan::rainMapOn() const
+{
+  const SceneWeather& weather = m_frame.weather;
+  return m_frame.shadows.enabled &&
+         (weather.rain > 0.0f || weather.wetness > 0.0f ||
+          weather.puddles > 0.0f);
 }
 
 std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const

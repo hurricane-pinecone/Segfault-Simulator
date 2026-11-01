@@ -1481,6 +1481,136 @@ int main()
     CHECK(testing::approx(h.renderer.frame.grading.exposure, 0.5f));
   }
 
+  TEST("the weather should reach the frame, its clouds drifting on its "
+       "wind while the clock runs")
+  {
+    Harness h;
+    SceneWeather weather;
+    weather.rain = 1.5f; // clamped
+    weather.wetness = 0.5f;
+    weather.wind = {10.0f, 0.0f};
+    weather.cloudDarkness = 0.25f;
+    h.system.setWeather(weather);
+    h.frame();
+    CHECK(h.renderer.frame.weather.rain == 1.0f);
+    CHECK(h.renderer.frame.weather.wetness == 0.5f);
+    CHECK(h.renderer.frame.weather.wind == weather.wind);
+
+    // 100 s at 10 m/s: a kilometre; not while it's stopped.
+    const glm::vec2 before = h.renderer.frame.cloudDrift;
+    h.scene.update(100.0);
+    h.scene.render();
+    CHECK(std::abs(h.renderer.frame.cloudDrift.x - before.x - 1.0f) < 1e-3f);
+    h.system.setAnimating(false);
+    h.scene.update(100.0);
+    h.scene.render();
+    CHECK(std::abs(h.renderer.frame.cloudDrift.x - before.x - 1.0f) < 1e-3f);
+
+    // Under a physical sky, clouds have their light; overcast, eyes don't
+    // adapt to the dull day (the clouds' dimming isn't made up).
+    SceneLighting lighting;
+    lighting.sun.direction = {0.5f, -0.2f, 0.8f};
+    h.system.setLighting(lighting);
+    SkySettings physical;
+    physical.model = SkyModel::Physical;
+    physical.adaptation = 1.0f;
+    h.system.setSkySettings(physical);
+    h.frame();
+    const FrameSky clear = h.renderer.frame.sky;
+    CHECK(clear.cloudCover == 0.0f);
+    lighting.cloudCover = 1.0f;
+    h.system.setLighting(lighting);
+    h.frame();
+    h.system.finishSkyWork();
+    h.frame();
+    const FrameSky overcast = h.renderer.frame.sky;
+    CHECK(overcast.cloudCover == 1.0f);
+    CHECK(overcast.cloudDarkness == 0.25f);
+    CHECK(overcast.cloudLight.r > 0.5f);
+    CHECK(overcast.cloudBase.r > 0.0f);
+    CHECK(overcast.cloudBase.r < overcast.cloudLight.r);
+    CHECK(overcast.sunLight.r < clear.sunLight.r * 0.5f);
+    CHECK(overcast.irradiance.at({0, 0, 1}).b <
+          clear.irradiance.at({0, 0, 1}).b);
+    CHECK(testing::approx(overcast.adaptation, clear.adaptation));
+  }
+
+  TEST("rain should drift on the wind it's had, its slant eased toward "
+       "a gust")
+  {
+    Harness h;
+    SceneWeather weather;
+    weather.wind = {5.0f, 0.0f};
+    h.system.setWeather(weather);
+    h.scene.update(10.0);
+    h.scene.render();
+    // 10 s at 0.8 x 5 m/s.
+    CHECK(std::abs(h.renderer.frame.rainDrift.x - 40.0f) < 1e-2f);
+    CHECK(h.renderer.frame.rainWind == weather.wind);
+    // A sudden gust turns the drops over a second or so, not at once.
+    weather.wind = {-15.0f, 5.0f};
+    h.system.setWeather(weather);
+    h.scene.update(0.1);
+    h.scene.render();
+    CHECK(h.renderer.frame.rainWind.x > -2.0f);
+    CHECK(h.renderer.frame.rainWind.x < 5.0f);
+    CHECK(h.renderer.frame.rainDrift.x > 40.0f - 1.0f);
+  }
+
+  TEST("lightning should flash in the frame, cast a near strike's shadow, "
+       "and be gone once it has faded")
+  {
+    Harness h;
+    SceneLighting lighting;
+    lighting.sun.direction = {0.3f, 0.2f, -0.5f}; // night
+    lighting.cloudCover = 1.0f;
+    h.system.setLighting(lighting);
+    SkySettings physical;
+    physical.model = SkyModel::Physical;
+    h.system.setSkySettings(physical);
+    h.frame();
+    CHECK(!h.renderer.frame.lightning.active);
+
+    LightningStrike strike;
+    strike.position = {200.0f, 100.0f, 0.0f};
+    strike.seed = 7;
+    h.system.strikeLightning(strike);
+    CHECK(h.system.lightningStrikes() == 1);
+    h.system.holdLightning(0.0f); // the first stroke's peak
+    h.frame();
+    const FrameLightning& flash = h.renderer.frame.lightning;
+    CHECK(flash.active);
+    CHECK(flash.channel);
+    CHECK(flash.low == strike.position);
+    CHECK(flash.high.z > 1000.0f);
+    CHECK(flash.channelLight.b > 0.0f);
+    CHECK(flash.cloudGlow.b > 0.0f);
+    // Its shadow's light: the frame's last, casting a shadow.
+    CHECK(flash.shadowLight >= 0);
+    CHECK(static_cast<std::size_t>(flash.shadowLight) + 1 ==
+          h.renderer.frame.pointLights.size());
+    CHECK(h.renderer.frame.pointLights.back().castsShadow);
+
+    // Held, it stays; let go, it fades and is gone.
+    h.scene.update(5.0);
+    h.scene.render();
+    CHECK(h.system.lightningStrikes() == 1);
+    h.system.holdLightning(std::nullopt);
+    h.scene.update(lightningDuration(strike) + 0.1);
+    h.scene.render();
+    CHECK(h.system.lightningStrikes() == 0);
+    CHECK(!h.renderer.frame.lightning.active);
+    CHECK(h.renderer.frame.lightning.shadowLight == -1);
+
+    // An in-cloud strike only lights the clouds.
+    strike.inCloud = true;
+    h.system.strikeLightning(strike);
+    h.frame();
+    CHECK(h.renderer.frame.lightning.active);
+    CHECK(!h.renderer.frame.lightning.channel);
+    CHECK(h.renderer.frame.lightning.shadowLight == -1);
+  }
+
   TEST("a physical sky should light the frame from the sun's direction, "
        "working its diffuse light out again only when the sun has moved")
   {

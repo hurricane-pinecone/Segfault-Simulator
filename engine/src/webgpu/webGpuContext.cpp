@@ -109,6 +109,7 @@ WGPUAdapter requestAdapterSync(WGPUInstance instance, WGPUSurface surface)
 
 WGPUDevice requestDeviceSync(WGPUAdapter adapter,
                              bool* hasTimestamps,
+                             bool* hasPassTimestamps,
                              WebGpuDeviceState* deviceState)
 {
   struct Out
@@ -137,13 +138,26 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
   desc.requiredLimits = &limits;
   // Enable GPU timestamp queries when the adapter supports them (benchmark
   // HUD).
-  WGPUFeatureName feats[1] = {WGPUFeatureName_TimestampQuery};
+  WGPUFeatureName feats[2] = {WGPUFeatureName_TimestampQuery};
   *hasTimestamps =
       wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery);
+  *hasPassTimestamps = false;
   if (*hasTimestamps)
   {
     desc.requiredFeatureCount = 1;
     desc.requiredFeatures = feats;
+#ifndef __EMSCRIPTEN__
+    // Timing draws inside a pass too, when timing the GPU (SFS_GPU_TIMING):
+    // a native extension.
+    const auto inside = static_cast<WGPUFeatureName>(
+        WGPUNativeFeature_TimestampQueryInsidePasses);
+    if (std::getenv("SFS_GPU_TIMING") && wgpuAdapterHasFeature(adapter, inside))
+    {
+      feats[1] = inside;
+      desc.requiredFeatureCount = 2;
+      *hasPassTimestamps = true;
+    }
+#endif
   }
   desc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const*,
                                                  WGPUErrorType type,
@@ -258,7 +272,8 @@ bool WebGpuContext::init(SDL_Window* window)
   }
 
   m_deviceState = new WebGpuDeviceState; // kept: see m_deviceState
-  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps, m_deviceState);
+  m_device = requestDeviceSync(
+      m_adapter, &m_hasTimestamps, &m_hasPassTimestamps, m_deviceState);
   if (!m_device)
   {
     LOG_ERROR("Failed to acquire WebGPU device");
@@ -341,7 +356,8 @@ bool WebGpuContext::initHeadless(WGPUTextureFormat format)
     return false;
   }
   m_deviceState = new WebGpuDeviceState; // kept: see m_deviceState
-  m_device = requestDeviceSync(m_adapter, &m_hasTimestamps, m_deviceState);
+  m_device = requestDeviceSync(
+      m_adapter, &m_hasTimestamps, &m_hasPassTimestamps, m_deviceState);
   if (!m_device)
   {
     LOG_ERROR("Failed to acquire WebGPU device");

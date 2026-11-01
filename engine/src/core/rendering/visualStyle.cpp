@@ -98,6 +98,8 @@ nlohmann::json VisualStyle::toJson() const
     out["contactShadows"] = contactShadows->toJson();
   if (fog)
     out["fog"] = fog->toJson();
+  if (rain)
+    out["rain"] = rain->toJson();
   if (temporalAntiAliasing)
     out["temporalAntiAliasing"] = *temporalAntiAliasing;
   if (!materials.empty())
@@ -172,6 +174,8 @@ std::optional<VisualStyle> VisualStyle::fromJson(const nlohmann::json& json)
     style.contactShadows = ContactShadowSettings::fromJson(*it);
   if (const auto it = json.find("fog"); it != json.end() && it->is_object())
     style.fog = FogSettings::fromJson(*it);
+  if (const auto it = json.find("rain"); it != json.end() && it->is_object())
+    style.rain = RainSettings::fromJson(*it);
   if (const auto it = json.find("temporalAntiAliasing");
       it != json.end() && it->is_boolean())
     style.temporalAntiAliasing = it->get<bool>();

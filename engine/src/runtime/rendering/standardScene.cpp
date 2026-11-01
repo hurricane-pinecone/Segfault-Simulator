@@ -7,9 +7,11 @@
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/rendering/modules/decalModule.h"
+#include "engine/runtime/rendering/modules/deformationModule.h"
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/modules/meshModule.h"
 #include "engine/runtime/rendering/modules/particleModule.h"
+#include "engine/runtime/rendering/modules/puddleModule.h"
 #include "engine/runtime/rendering/modules/spriteModule.h"
 #include "engine/runtime/rendering/modules/uiModule.h"
 #include "engine/runtime/rendering/renderSystem.h"
@@ -98,10 +100,14 @@ void StandardScene::filterInput(Input& input)
 void StandardScene::onInit()
 {
   m_render = &addSystem<RenderSystem>(renderer());
-  // What any style draws: meshes and grass, sprites (flat in a 2D game,
-  // upright in 3D), particles and the marks they leave, and UI.
+  // What any style draws: meshes and grass (and the puddles and tracks on
+  // terrains), sprites (flat in a 2D game, upright in 3D), particles and the
+  // marks they leave, and UI.
   m_render->withModule<MeshModule>();
   m_render->withModule<GrassModule>(renderer());
+  m_render->withModule<PuddleModule>(renderer());
+  // After the puddles, which bake with its tracks.
+  m_render->withModule<DeformationModule>(renderer());
   m_render->withModule<SpriteModule>(assetStore());
   auto& decals = m_render->withModule<DecalModule>(assetStore());
   m_render->withModule<ParticleModule>(assetStore()).enableStains(decals);

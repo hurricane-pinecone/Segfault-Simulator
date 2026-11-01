@@ -1,8 +1,10 @@
 #pragma once
 
+#include "engine/core/rendering/deformation.h"
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lightClusters.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/puddles.h"
 #include "engine/core/rendering/terrain.h"
 #include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/uiDraw.h"
@@ -85,10 +87,49 @@ struct FrameUniforms
   glm::vec4 moon;
   glm::vec4 moonSun;
   glm::vec4 moonLight;
+  // The weather (SceneWeather): rain, wetness, puddles, cloud cover (each
+  // 0..1); the wind (xy, m/s) and how far the clouds have drifted (zw, km).
+  glm::vec4 weather;
+  glm::vec4 weatherWind;
+  // A physical sky's clouds (none drawn while cloudBase.w is 0): rgb the
+  // light on their tops (the sun's at their height, or the moon's), w how
+  // dark they are; rgb their undersides lit through (both not adapted), w
+  // 1 / the share of the sun's light they let through on average (sunLight
+  // is dimmed by it; their shadows put it back where they aren't).
+  glm::vec4 cloudLight;
+  glm::vec4 cloudBase;
+  // Rain (RainSettings, while the weather has it): the overhead map's
+  // view-projection (rainMapFor()); its centre (xy), half size, w 1 if it's
+  // drawn this frame; its top, depth range, and the streaks and splashes
+  // drawn (counts); a streak's length (m), width (m) and brightness, how
+  // strongly drops ring water; the veil's density, the viewport (pixels).
+  glm::mat4 rainView;
+  glm::vec4 rainMap;
+  glm::vec4 rainDepth;
+  glm::vec4 rainStreaks;
+  glm::vec4 rainVeil;
+  // How far rain's drops have drifted (xy, m; FrameParams::rainDrift) and
+  // the wind they slant in (zw, m/s; eased).
+  glm::vec4 rainDrift;
+  // Water dripping off edges (rainDrips()): how many places it's looked
+  // for (x, a count), the share that drip each round (y), how much they trickle
+  // (z), how wet the drip line is (w).
+  glm::vec4 rainDrips;
+  // Lightning (FrameLightning; none while lightningGlow.w is 0): its
+  // channel's bottom (xyz), w the point light casting its shadow (-1:
+  // none); its top, where the cloud base glows (xyz), w 1 if the channel
+  // lights; rgb a metre of the channel's light, w how wide the glow is (m);
+  // rgb the cloud base's glow at its middle, w 1 while it flashes. Its light
+  // adapted, as the sky's.
+  glm::vec4 lightningLow;
+  glm::vec4 lightningHigh;
+  glm::vec4 lightningLight;
+  glm::vec4 lightningGlow;
 };
-static_assert(sizeof(FrameUniforms) ==
-                  64 * 2 + 16 * 13 + 64 * (1 + kMaxShadowCascades) +
-                      16 * (2 * kMaxShadowCascades + 4 + 9 + 1 + 3 + 3),
+static_assert(sizeof(FrameUniforms) == 64 * 2 + 16 * 13 +
+                                           64 * (2 + kMaxShadowCascades) +
+                                           16 * (2 * kMaxShadowCascades + 4 +
+                                                 9 + 1 + 3 + 3 + 4 + 4 + 6),
               "FrameUniforms must match the WGSL Frame layout");
 
 /**
@@ -105,6 +146,14 @@ struct SkyUniforms
   glm::vec4 night;    // rgb the night glow at the zenith (the moon's in it)
   glm::vec4 planet;   // ground radius, top radius, viewer altitude, multiple
                       // scattering's share
+  // Its clouds (as FrameUniforms' cloudLight and cloudBase): the camera's
+  // place in their pattern (xy, km), cover, darkness; the light on their
+  // tops (rgb; w the layer's altitude, km); their undersides; toward that
+  // light (xyz).
+  glm::vec4 clouds;
+  glm::vec4 cloudLight;
+  glm::vec4 cloudBase;
+  glm::vec4 cloudToLight;
 };
 
 /** `Exposure` in exposure.wgsl: auto exposure's metering and easing. */
@@ -266,12 +315,36 @@ struct TerrainUniforms
   std::array<glm::vec4, kMaxTerrainLayers>
       detail;       // roughness, normal scale, meadow, triplanar exponent
   glm::vec4 params; // layers, blend sharpness, anti-tiling (0/1), variation
+  // Its puddle map (found on the GPU, see puddles.h): xy the world XY of its
+  // corner, zw 1 / the size it covers (0: none); then whether it has puddles
+  // (0/1) and the deepest water the map holds (kPuddleDepthRange); and each
+  // layer's puddles (the first four, then the fifth).
+  glm::vec4 puddleMap{0.0f};
+  glm::vec4 puddleParams{0.0f};
+  std::array<glm::vec4, 2> puddleLayers{};
+  // Its deformation (setTerrainDeformation()): x 0 none, 1 the ground, 2
+  // its patch; y the map's texel, z 1 / the window's size (m), w the map's
+  // deepest. Then the window's valid corner (xy, world) and size (zw); the
+  // patch's centre (xy), half size and band; the ground under it: its
+  // corner (xy) and texel (z).
+  glm::vec4 deformMap{0.0f};
+  glm::vec4 deformWindow{0.0f};
+  glm::vec4 deformPatch{0.0f};
+  glm::vec4 deformGround{0.0f};
 };
-static_assert(sizeof(TerrainUniforms) == 16 * (2 * kMaxTerrainLayers + 1),
+static_assert(sizeof(TerrainUniforms) == 16 * (2 * kMaxTerrainLayers + 9),
               "TerrainUniforms must match meshTerrainSurface.wgsl");
 
-/** A terrain material's uniforms. */
-TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain);
+/**
+ * A terrain material's uniforms, with its puddle map (setTerrainPuddles())
+ * and its deformation (setTerrainDeformation(); as its patch draws it with
+ * `patch`) where it has them.
+ */
+TerrainUniforms
+terrainMaterialUniforms(const TerrainMaterial& terrain,
+                        const TerrainPuddles* puddles = nullptr,
+                        const TerrainDeformation* deformation = nullptr,
+                        bool patch = false);
 
 /**
  * A material graph's parameters, in its shader's order (at least one; missing
@@ -370,6 +443,12 @@ public:
   const std::vector<Draw>& blendDraws() const { return m_blendOrder; }
   const std::vector<Draw>& shadowDraws() const { return m_shadowDraws; }
   /**
+   * The opaque draws the camera sees that don't cast the sun's shadow (often
+   * the ground): rain's overhead map draws them as well as shadowDraws(), so
+   * rain lands on them too.
+   */
+  const std::vector<Draw>& unshadowedDraws() const { return m_unshadowedDraws; }
+  /**
    * With cascades (frame().cascades.count > 1): each cascade's casters, those
    * of shadowDraws() that reach into it. Else empty.
    */
@@ -431,6 +510,24 @@ public:
   {
     return m_frame.ambientOcclusion.enabled || contactShadowsOn();
   }
+  /**
+   * Whether rain's overhead map is drawn this frame (rainMap(), from
+   * shadowDraws()): while the weather has rain, wet or puddles, with the sun's
+   * shadows on.
+   */
+  bool rainMapOn() const;
+  /** Rain's overhead map this frame (after finish()). */
+  const RainMap& rainMap() const { return m_rainMap; }
+  /**
+   * Rain's streaks, splashes and drips drawn this frame (after finish()).
+   */
+  uint32_t rainDrops() const
+  {
+    return static_cast<uint32_t>(m_uniforms.rainDepth.z +
+                                 m_uniforms.rainDepth.w +
+                                 m_uniforms.rainDrips.x);
+  }
+
   /** Depth of field's, if the frame has it. */
   std::optional<FocusUniforms> focusUniforms(glm::ivec2 viewport) const;
 
@@ -449,6 +546,7 @@ private:
   std::vector<BlendDraw> m_blendDraws;
   std::vector<Draw> m_blendOrder;
   std::vector<Draw> m_shadowDraws;
+  std::vector<Draw> m_unshadowedDraws;
   std::array<std::vector<Draw>, kMaxShadowCascades> m_cascadeDraws;
   struct CasterBatch
   {
@@ -463,6 +561,7 @@ private:
   std::vector<UiQuad> m_uiQuads;
 
   FrameUniforms m_uniforms{};
+  RainMap m_rainMap;
   std::vector<GpuPointLight> m_gpuLights;
   ClusterGrid m_grid;
   ClusterLights m_clusters;

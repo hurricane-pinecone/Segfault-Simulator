@@ -48,6 +48,142 @@ struct VertexOut {
 // front of it. A 1x1 stand-in while both are off.
 @group(0) @binding(11) var occlusionMap: texture_2d<f32>;
 
+// Rain's overhead map (see RainMap): depth looking straight down over the
+// ground ahead of the camera (0 at frame.rainDepth.x, 1 that far below), of
+// the sun's shadow casters (and the opaque things in view that don't cast:
+// the ground), so whatever has something drawn above it is
+// sheltered from the rain. Read only while frame.rainMap.w is 1 (else a 1x1
+// stand-in).
+@group(0) @binding(12) var rainMap: texture_depth_2d;
+
+// Where a world XY is on rain's overhead map (uv; outside 0..1: off it).
+fn rainMapUv(p: vec2f) -> vec2f {
+  let local = (p - frame.rainMap.xy) / frame.rainMap.z;
+  return vec2f(0.5 + 0.5 * local.x, 0.5 - 0.5 * local.y);
+}
+
+// The top of what's drawn at a world XY, from the overhead map (very low:
+// nothing there, off the map, or no map).
+fn rainSurfaceHeight(p: vec2f) -> f32 {
+  let uv = rainMapUv(p);
+  if (frame.rainMap.w < 0.5 || any(uv <= vec2f(0.0)) || any(uv >= vec2f(1.0))) {
+    return -1e9;
+  }
+  let size = vec2i(textureDimensions(rainMap));
+  let depth = textureLoad(rainMap, clamp(vec2i(uv * vec2f(size)), vec2i(0), size - vec2i(1)), 0);
+  if (depth >= 1.0) {
+    return -1e9;
+  }
+  return frame.rainDepth.x - depth * frame.rainDepth.y;
+}
+
+// How open to the rain a point is (0: sheltered, under a roof or a tree; 1:
+// open to the sky): whether anything on the overhead map is above it,
+// looked for a little off the surface (so a wall looks beside itself, not at
+// its own top) and softened over a few texels. Open off the map, or while
+// it isn't drawn.
+fn rainExposure(worldPosition: vec3f, geometryNormal: vec3f) -> f32 {
+  if (frame.rainMap.w < 0.5) {
+    return 1.0;
+  }
+  let p = worldPosition + geometryNormal * 0.12 + vec3f(0.0, 0.0, 0.05);
+  let uv = rainMapUv(p.xy);
+  if (any(uv <= vec2f(0.0)) || any(uv >= vec2f(1.0))) {
+    return 1.0;
+  }
+  let depth = (frame.rainDepth.x - p.z) / frame.rainDepth.y;
+  let texel = 1.5 / f32(textureDimensions(rainMap).x);
+  var open = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let corner = vec2f(f32(i & 1), f32(i >> 1u)) * 2.0 - vec2f(1.0);
+    open += textureSampleCompareLevel(rainMap, shadowSampler, uv + corner * texel, depth);
+  }
+  // Toward the map's edges, open (as off it).
+  let edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+  return mix(1.0, open * 0.25, smoothstep(0.0, 0.05, edge));
+}
+
+// How wet a surface is (0..1): the weather's wetness where the rain reaches
+// it: all of it facing up, about a third on walls (rain driven against
+// them), none facing down or sheltered.
+fn surfaceWetness(worldPosition: vec3f, geometryNormal: vec3f) -> f32 {
+  let wetness = frame.weather.y;
+  if (wetness <= 0.0) {
+    return 0.0;
+  }
+  let up = geometryNormal.z;
+  let facing = 0.35 * smoothstep(-0.5, 0.0, up) + 0.65 * max(up, 0.0);
+  return wetness * facing * rainExposure(worldPosition, geometryNormal);
+}
+
+// How wet the ground is along a drip line (0..1, frame.rainDrips.w): open
+// to the rain itself, but within a quarter of a metre of an edge standing
+// well above it (an eave, a canopy's rim) that water drips off: soaked, with
+// water standing on it (half as much again). None while there are no drips.
+fn dripLineWetness(worldPosition: vec3f, geometryNormal: vec3f) -> f32 {
+  if (frame.rainDrips.w <= 0.0 || frame.rainMap.w < 0.5 || geometryNormal.z < 0.7) {
+    return 0.0;
+  }
+  if (rainSurfaceHeight(worldPosition.xy) > worldPosition.z + 0.1) {
+    return 0.0;
+  }
+  var under = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let a = f32(i) * 1.5707963;
+    let h = rainSurfaceHeight(worldPosition.xy + vec2f(cos(a), sin(a)) * 0.25);
+    under += smoothstep(0.6, 1.0, h - worldPosition.z);
+  }
+  return frame.rainDrips.w * min(under, 1.0);
+}
+
+// How much water stands on a surface (0..1), as wetMaterial() takes it: a
+// film on soaked flat ground. (A terrain's puddles add theirs, Surface's
+// water, in shade().)
+fn standingWater(worldPosition: vec3f, geometryNormal: vec3f, wet: f32) -> f32 {
+  let level = smoothstep(0.92, 0.99, geometryNormal.z);
+  return 0.35 * level * smoothstep(0.6, 1.0, wet);
+}
+
+// A surface's material, wet: what shade() lights.
+struct WetMaterial {
+  albedo: vec3f,
+  roughness: f32,
+  normal: vec3f,
+}
+
+// A surface `wet` (0..1, surfaceWetness()) with `water` standing on it
+// (0..1, standingWater()), after Lagarde's physically based wet surfaces:
+// porous things (rough, not metal: soil, wood, stone, cloth) soak the water
+// up and darken (light is trapped in their wet pores, to half the albedo),
+// and all of them get glossier, less so the more porous; standing water is a
+// smooth layer over it (its normal the geometry's), rings spreading on it
+// where drops land (rainRipples()). Smooth, flat, up-facing dielectrics
+// (water: a river, a pond) ring in the rain as standing water does, wet or
+// not.
+fn wetMaterial(albedo: vec3f, metallic: f32, roughness: f32, normal: vec3f, geometryNormal: vec3f,
+               worldPosition: vec3f, wet: f32, water: f32) -> WetMaterial {
+  var out = WetMaterial(albedo, roughness, normal);
+  let level = smoothstep(0.92, 0.99, geometryNormal.z);
+  let waterLike = level * (1.0 - metallic) * (1.0 - smoothstep(0.08, 0.2, roughness));
+  if (wet <= 0.0 && water <= 0.0 && (waterLike <= 0.0 || frame.weather.x <= 0.0)) {
+    return out;
+  }
+  let porosity = clamp((roughness - 0.35) / 0.45, 0.0, 1.0) * (1.0 - metallic);
+  let soaked = mix(1.0, 0.5, porosity);
+  out.albedo = albedo * mix(1.0, soaked, max(wet, water));
+  out.roughness = roughness * mix(1.0, mix(0.7, 0.55, porosity), wet);
+  out.roughness = mix(out.roughness, 0.05, water);
+  out.normal = normalize(mix(normal, geometryNormal, water));
+
+  let ringing = max(water, waterLike) * frame.rainStreaks.w;
+  if (frame.weather.x > 0.0 && ringing > 0.0) {
+    let slope = rainRipples(worldPosition.xy, frame.time.x, frame.weather.x) * ringing *
+                rainExposure(worldPosition, geometryNormal);
+    out.normal = normalize(out.normal - vec3f(slope, 0.0));
+  }
+  return out;
+}
+
 // How open a point drawn at `pixel` (framebuffer) is to the light from all
 // around (x), and how much of the sun's light its contact shadows leave it
 // (y): the occlusion map's four texels around it, weighted by how near each
@@ -390,7 +526,77 @@ fn hazeSky(worldPosition: vec3f) -> vec3f {
   if (frame.skyMode.y < 0.5) {
     return skyIrradianceAt(level) * frame.skyScale.rgb;
   }
-  return textureSampleLevel(skyRadiance, skySampler, octEncode(level), 0.0).rgb * frame.skyScale.rgb;
+  return overcastHaze(textureSampleLevel(skyRadiance, skySampler, octEncode(level), 0.0).rgb) * frame.skyScale.rgb;
+}
+
+// How much of the sun's (or the moon's) light a physical sky's clouds let
+// reach a point, x frame.cloudBase.w (sunLight is dimmed by their average:
+// this puts it back where they aren't, and takes it where they are): their
+// layer where the light's line to the point crosses it. 1 without clouds.
+fn cloudShadowAt(worldPosition: vec3f) -> f32 {
+  if (frame.cloudBase.w <= 0.0) {
+    return 1.0;
+  }
+  let toLight = frame.sunDirection.xyz;
+  let rise = CLOUD_ALTITUDE * 1000.0 - worldPosition.z;
+  let slant = toLight.xy / max(toLight.z, 0.08);
+  let p = (worldPosition.xy + slant * rise) * 0.001 + frame.weatherWind.zw;
+  // A closing deck has no gaps left to let the sun through (as clearSky()).
+  let deck = smoothstep(0.75, 1.0, frame.weather.w);
+  let density = mix(cloudDensityAt(p, frame.weather.w, 4), 1.0, deck);
+  let blocked = (0.85 + 0.12 * frame.cloudLight.w) * density;
+  return (1.0 - blocked) * (1.0 - 0.9 * deck) * frame.cloudBase.w;
+}
+
+// A lightning strike's light on a surface (under a physical sky; see
+// LightningStrike): its channel's, a line of light from the ground to the
+// cloud base (the inverse square summed along it: about 1 / the distance
+// near it, 1 / its square far off), from where along it its light comes
+// from on average, as Lambert diffuse and a GGX glint (wet ground's sharp),
+// shadowed by its point light's cube where it has one; and the glowing cloud
+// base's, from above, softly.
+struct StrikeLit {
+  diffuse: vec3f,
+  specular: vec3f,
+}
+
+fn lightningLighting(worldPosition: vec3f, normal: vec3f, geometryNormal: vec3f, toView: vec3f, f0: vec3f,
+                     roughness: f32, occlusion: f32) -> StrikeLit {
+  var result: StrikeLit;
+  if (frame.lightningGlow.w <= 0.0) {
+    return result;
+  }
+  let glow = lightningGlowAt(worldPosition);
+  result.diffuse = glow * ((0.2 + 0.4 * max(normal.z, 0.0)) * occlusion);
+  if (frame.lightningHigh.w < 0.5) {
+    return result;
+  }
+  let low = frame.lightningLow.xyz;
+  let line = frame.lightningHigh.xyz - low;
+  let span = max(sqrt(dot(line, line)), 1e-3);
+  let up = line / span;
+  let to = worldPosition - low;
+  let s = dot(to, up);
+  let h = max(sqrt(max(dot(to, to) - s * s, 0.0)), 1.0);
+  let a = -s;
+  let b = span - s;
+  let weight = (atan(b / h) - atan(a / h)) / h;
+  let moment = 0.5 * log((h * h + b * b) / (h * h + a * a));
+  let centre = low + up * clamp(s + moment / max(weight, 1e-12), 0.0, span);
+  let toLight = normalize(centre - worldPosition);
+  var visible = 1.0;
+  let index = i32(frame.lightningLow.w);
+  if (index >= 0) {
+    let caster = pointLights[u32(index)];
+    // Within its cube's reach (past it, unshadowed).
+    if (distance(worldPosition, caster.positionRadius.xyz) < caster.positionRadius.w * 0.98) {
+      visible = pointShadow(caster, worldPosition, geometryNormal);
+    }
+  }
+  let light = frame.lightningLight.rgb * (weight * visible);
+  result.diffuse += light * max(dot(normal, toLight), 0.0);
+  result.specular = min(ggxSpecular(normal, toView, toLight, f0, roughness), vec3f(8.0)) * light * PI;
+  return result;
 }
 
 // A surface lit by a physical sky: the sun's light (through the air; none
@@ -399,12 +605,13 @@ fn hazeSky(worldPosition: vec3f) -> vec3f {
 // as under a flat sky, which with emission eyes adapted to daylight see
 // dimmer (frame.skyLight.z). A visual style scales the sun's light and the sky's
 // (diffuse and reflected) by its balance. Contact shadows (`contact`, the
-// sun's light they leave) take only the sun's, as its shadow maps do.
+// sun's light they leave) take only the sun's, as its shadow maps and the
+// clouds' shadows do.
 fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f, albedo: vec3f,
                  metallic: f32, roughness: f32, alpha: f32, occlusion: f32, contact: f32) -> LitOut {
   let toSun = frame.sunDirection.xyz;
   let toView = normalize(frame.cameraPosition.xyz - in.worldPosition);
-  let visibility = sunVisibility(in.worldPosition, geometryNormal) * contact;
+  let visibility = sunVisibility(in.worldPosition, geometryNormal) * contact * cloudShadowAt(in.worldPosition);
   let sun = frame.sunLight.rgb * frame.sunBalance.rgb;
   let ambient = frame.ambientBalance.rgb;
   let f0 = mix(vec3f(0.04), albedo, metallic);
@@ -418,7 +625,9 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
   let lamp = frame.skyLight.z;
   let pointLit = pointLighting(in.clip.xy, in.worldPosition, normal, geometryNormal,
                                Shine(toView, f0, roughness, 1.0));
-  let diffuse = min(direct + skyLight + pointLit.diffuse * (2.0 * lamp), vec3f(frame.ambientBalance.w));
+  let strike = lightningLighting(in.worldPosition, normal, geometryNormal, toView, f0, roughness, occlusion);
+  let diffuse = min(direct + skyLight + pointLit.diffuse * (2.0 * lamp) + strike.diffuse,
+                    vec3f(frame.ambientBalance.w));
 
   // The sky's reflection, hidden where it would come from below the
   // surface's own horizon, and the sun's glint.
@@ -426,10 +635,13 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
   let brdf = textureSampleLevel(brdfTable, skySampler, vec2f(ndotv, roughness), 0.0).rg;
   let reflected = reflect(-toView, normal);
   let horizon = clamp(1.0 + dot(reflected, geometryNormal), 0.0, 1.0);
-  let reflection = skyReflection(reflected, roughness) * ambient * (f0 * brdf.x + brdf.y) * (horizon * horizon) *
-                   occlusion;
+  // (The cloud base flashing shows in it too, as the sky's reflections
+  // can't keep up with: cheaply, where the reflection meets the clouds.)
+  let flash = lightningCloudsToward(in.worldPosition, normalize(mix(reflected, normal, roughness * roughness)));
+  let reflection = (skyReflection(reflected, roughness) * ambient + flash) * (f0 * brdf.x + brdf.y) *
+                   (horizon * horizon) * occlusion;
   let glint = min(ggxSpecular(normal, toView, toSun, f0, roughness), vec3f(8.0)) * sun * (PI * visibility) +
-              pointLit.specular * lamp;
+              pointLit.specular * lamp + strike.specular;
 
   let lightColor = albedo * (1.0 - metallic) * diffuse + reflection + glint +
                    max(s.emission, vec3f(0.0)) * (in.tint.rgb * lamp);
@@ -441,6 +653,9 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
     color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), fogged);
     clearness *= 1.0 - fogged;
   }
+  let veiled = rainVeilAt(in.worldPosition);
+  color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), veiled);
+  clearness *= 1.0 - veiled;
   return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * clearness, alpha));
 }
 
@@ -452,7 +667,10 @@ fn fogColor(away: vec3f) -> vec3f {
     return frame.sky.rgb;
   }
   let direction = normalize(away);
-  return hazeSky(frame.cameraPosition.xyz + away) + fogSunGlow(direction);
+  // (Lit up by lightning's glowing clouds, as the air is: the veil of rain,
+  // the haze toward the horizon.)
+  return hazeSky(frame.cameraPosition.xyz + away) + fogSunGlow(direction) +
+         lightningGlowAt(frame.cameraPosition.xyz + away * 0.5) * 0.3;
 }
 
 // The lit colour, and the light of it that blooms: the same, x the
@@ -469,8 +687,11 @@ fn hazeAt(worldPosition: vec3f) -> f32 {
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> LitOut {
-  return shade(in);
+fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> LitOut {
+  // A back face (drawn only for a double-sided material) is lit as seen.
+  var seen = in;
+  seen.normal = select(-in.normal, in.normal, front);
+  return shade(seen);
 }
 
 // A surface lit, as the lit pass's fragment stage (others build on it, as
@@ -484,7 +705,7 @@ fn shade(in: VertexOut) -> LitOut {
   here.grassData = in.grassData;
   let s = surface(here);
   // The surface's (tangent-space) normal, along the point's tangent frame.
-  let normal = normalize(here.tangent * s.normal.x + here.bitangent * s.normal.y + geometryNormal * s.normal.z);
+  let bumped = normalize(here.tangent * s.normal.x + here.bitangent * s.normal.y + geometryNormal * s.normal.z);
 
   // Opaque things take only the object's tint alpha.
   let mode = surfaceAlphaMode();
@@ -496,9 +717,20 @@ fn shade(in: VertexOut) -> LitOut {
     alpha = in.tint.a; // what's left is solid
   }
 
-  let albedo = s.baseColor * in.tint.rgb;
   let metallic = clamp(s.metallic, 0.0, 1.0);
-  let roughness = clamp(s.roughness, 0.04, 1.0);
+  // Wet from the rain: darker, glossier, and where water stands on it
+  // smooth and rippled.
+  // A terrain's puddles: water standing in its low spots, soaked ground
+  // around them.
+  // Under an edge's drips, soaked and puddled.
+  let dripped = dripLineWetness(in.worldPosition, geometryNormal);
+  let wet = max(max(surfaceWetness(in.worldPosition, geometryNormal), s.soak), dripped);
+  let water = max(max(standingWater(in.worldPosition, geometryNormal, wet), s.water), dripped * 0.5);
+  let wetted = wetMaterial(s.baseColor * in.tint.rgb, metallic, clamp(s.roughness, 0.04, 1.0), bumped,
+                           geometryNormal, in.worldPosition, wet, water);
+  let albedo = wetted.albedo;
+  let roughness = clamp(wetted.roughness, 0.04, 1.0);
+  let normal = wetted.normal;
   // How open it is to the light from all around (ambient occlusion), and
   // how much of the sun's its contact shadows leave it.
   // Down in grass, the blades around a point shut out the sky's light, and
@@ -589,5 +821,9 @@ fn shade(in: VertexOut) -> LitOut {
     color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), fogged);
     clearness *= 1.0 - fogged;
   }
+  // Behind rain's veil.
+  let veiled = rainVeilAt(in.worldPosition);
+  color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), veiled);
+  clearness *= 1.0 - veiled;
   return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * clearness, alpha));
 }

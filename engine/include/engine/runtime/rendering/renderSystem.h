@@ -3,8 +3,11 @@
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/core/rendering/camera.h"
 #include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/lightning.h"
+#include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/visualStyle.h"
+#include "engine/core/rendering/weather.h"
 #include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
@@ -116,6 +119,44 @@ public:
   void setLighting(const SceneLighting& lighting) { m_lighting = lighting; }
   const SceneLighting& lighting() const { return m_lighting; }
 
+  /**
+   * The weather (see SceneWeather; e.g. driven by a game's weather each
+   * frame, like the lighting). How cloudy it is is the lighting's
+   * cloudCover. A 3D scene's: a physical sky draws its clouds, which drift on
+   * its wind while the clock runs (see setAnimating()).
+   */
+  void setWeather(const SceneWeather& weather) { m_weather = weather; }
+  const SceneWeather& weather() const { return m_weather; }
+
+  /**
+   * How far the clouds have drifted on the wind (km in the world's XY,
+   * within kCloudPeriod), as the next frame draws them.
+   */
+  const glm::vec2& cloudDrift() const { return m_cloudDrift; }
+
+  /**
+   * Set off a lightning strike (see LightningStrike; a 3D scene's): it
+   * flashes from now, its strokes flickering over the next half second or
+   * so, then fades. Its light needs a physical sky (its channel is drawn
+   * under any). A few can flash at once (the oldest gives way to a new one).
+   */
+  void strikeLightning(const LightningStrike& strike);
+
+  /** The strikes still flashing (or fading). */
+  std::size_t lightningStrikes() const { return m_strikes.size(); }
+
+  /**
+   * Hold every strike `seconds` after it began (e.g. 0: the first stroke's
+   * peak), for screenshots and tests; none: they run (the default).
+   */
+  void holdLightning(std::optional<float> seconds)
+  {
+    m_lightningHold = seconds;
+  }
+
+  /** This frame's lightning, as the renderer is given it (for tests). */
+  const FrameLightning& frameLightning() const { return m_lightning; }
+
   void setShadowSettings(const ShadowSettings& settings)
   {
     m_shadows = settings;
@@ -184,6 +225,13 @@ public:
   }
 
   /**
+   * How rain looks while the weather has it (see RainSettings; a 3D scene's
+   * only). How hard it rains is the weather's (setWeather()).
+   */
+  void setRainSettings(const RainSettings& settings) { m_rain = settings; }
+  const RainSettings& rainSettings() const { return m_rain; }
+
+  /**
    * Bloom (see BloomSettings) is the scene camera's (sceneCamera(), its
    * CameraComponent's settings), even while not following it, so the
    * editor shows what the game camera sees. These are for a scene without a
@@ -250,6 +298,7 @@ public:
   FogSettings effectiveFog() const;
   AmbientOcclusionSettings effectiveAmbientOcclusion() const;
   ContactShadowSettings effectiveContactShadows() const;
+  RainSettings effectiveRain() const;
 
   const RenderStats& stats() const { return m_stats; }
 
@@ -279,7 +328,15 @@ protected:
   void update(double deltaTime) override
   {
     if (m_animating)
+    {
       m_time += deltaTime;
+      m_cloudDrift = driftClouds(m_cloudDrift,
+                                 m_weather.clamped().wind,
+                                 static_cast<float>(deltaTime));
+      m_rainDrift.advance(
+          m_weather.clamped().wind, static_cast<float>(deltaTime));
+      advanceLightning(static_cast<float>(deltaTime));
+    }
     updateModules(deltaTime);
   }
   void render() override;
@@ -287,6 +344,17 @@ protected:
   ModuleInit moduleInit() override { return {registry, nullptr}; }
 
 private:
+  // Age the strikes, dropping (and freeing) those that have faded.
+  void advanceLightning(float seconds);
+
+  // Work out this frame's lightning (m_lightning) from the strikes: its
+  // brightest's light, before the lights are gathered (its shadow's light
+  // is one of them).
+  void placeLightning();
+
+  // The strikes' channels, glowing as they flicker.
+  void emitLightning();
+
   // Fill m_context for a viewport; false if there is nothing to draw into.
   bool buildContext(const glm::ivec2& viewport);
 
@@ -328,9 +396,30 @@ private:
   BloomSettings m_bloom;
   WindSettings m_wind;
   HazeSettings m_haze;
+  SceneWeather m_weather;
+  glm::vec2 m_cloudDrift{0.0f}; // km (driftClouds())
+  RainDrift m_rainDrift;
+  // Lightning strikes still going: each its age (s), where its channel
+  // leaves the cloud, and its channel's meshes (main and branches; none for
+  // one in the cloud).
+  struct ActiveStrike
+  {
+    LightningStrike strike;
+    float age = 0.0f;
+    float duration = 0.0f;
+    glm::vec3 top{0.0f};
+    float width = 1.0f;
+    MeshHandle channel;
+    MeshHandle branches;
+  };
+  std::vector<ActiveStrike> m_strikes;
+  std::optional<float> m_lightningHold;
+  FrameLightning m_lightning;
+  float m_lightningLight = 0.0f; // the brightest strike's, this frame
   FogSettings m_fog;
   AmbientOcclusionSettings m_ambientOcclusion;
   ContactShadowSettings m_contactShadows;
+  RainSettings m_rain;
   bool m_temporalAntiAliasing = false;
   std::optional<bool> m_forcedTemporalAntiAliasing;
   SkySettings m_sky;
@@ -369,6 +458,12 @@ private:
   SkySettings m_physicalSkySettings;
   glm::vec3 m_skySun{0.0f};
   float m_skyNight = 1.0f; // the night glow's scale it was worked out for
+  SkyClouds m_skyClouds;   // the clouds it was worked out under
+  glm::vec3 m_clearSkyLight{0.0f}; // its light from above, without them
+  // Where the clouds were (the camera's place in their pattern, km) when the
+  // sky's textures last drew them: they're drawn again once that has moved
+  // far enough to show in reflections.
+  glm::vec2 m_skyCloudOrigin{0.0f};
   FrameSky m_frameSky;
   // This frame's real sun (m_worldLighting's is the moon's once it takes
   // over), and the moon's share of the light (moonlight()).
@@ -382,8 +477,12 @@ private:
     std::shared_ptr<const PhysicalSky> model;
     glm::vec3 toSun{0.0f};
     float night = 1.0f;
+    SkyClouds clouds;
     SkyIrradiance irradiance;
     glm::vec3 groundLight{0.0f};
+    // The light on the ground from the sky above, and on the clouds' tops
+    // from it, clear of clouds.
+    glm::vec3 clearSkyLight{0.0f};
   };
   std::future<SkyLight> m_skyJob;
   std::vector<PointLight> m_pointLights;

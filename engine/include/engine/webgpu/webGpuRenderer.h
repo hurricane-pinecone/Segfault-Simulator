@@ -109,6 +109,13 @@ public:
   void updateMaterial(MaterialHandle handle,
                       const MeshMaterial& material) override;
   void destroyMaterial(MaterialHandle material) override;
+  void setTerrainPuddles(MaterialHandle material,
+                         const TerrainPuddles& puddles) override;
+  void setTerrainDeformation(MaterialHandle material,
+                             const TerrainDeformation& deformation) override;
+  void writeTerrainDeformation(MaterialHandle material,
+                               glm::ivec2 from,
+                               std::span<const uint16_t> halves) override;
   void updateTexture(const std::shared_ptr<const TextureData>& texture,
                      glm::ivec2 from,
                      glm::ivec2 to) override;
@@ -148,6 +155,10 @@ private:
     wgpu::RenderPipeline blend;       // see-through
     wgpu::RenderPipeline additive;    // light added to what's behind
     wgpu::RenderPipeline pointShadow; // a point light's shadow map's face
+    // The lit ones again, with back faces drawn too (double-sided materials).
+    wgpu::RenderPipeline litTwoSided;
+    wgpu::RenderPipeline blendTwoSided;
+    wgpu::RenderPipeline additiveTwoSided;
     // Grass with this surface's look: built the first time grass uses it
     // (most surfaces never are), from its WGSL.
     std::string wgsl;
@@ -158,6 +169,7 @@ private:
     // Its depth and normals, for ambient occlusion: built the first time a
     // frame has it.
     mutable wgpu::RenderPipeline depthNormals;
+    mutable wgpu::RenderPipeline depthNormalsTwoSided;
     mutable bool depthNormalsBroken = false;
   };
 
@@ -201,10 +213,36 @@ private:
   struct GpuMaterial
   {
     AlphaMode alphaMode = AlphaMode::Opaque;
+    bool doubleSided = false; // back faces drawn too
     std::shared_ptr<const Surface> surface;
     wgpu::Buffer uniforms;
     std::vector<std::shared_ptr<GpuTexture>> textures; // the bind group's
     wgpu::BindGroup bindings;
+    // A terrain's, kept to make it again with new puddles.
+    std::shared_ptr<const TerrainMaterial> terrain;
+  };
+
+  // A terrain material's deformation on the GPU: as set, its window of the
+  // map (half floats, wrapping) and the ground under its patch (as given).
+  struct GpuDeformation
+  {
+    TerrainDeformation settings;
+    std::shared_ptr<GpuTexture> map;
+    std::shared_ptr<GpuTexture> ground;
+  };
+
+  // A terrain material's puddles on the GPU: as set, the ground under their
+  // window (as given), their map (found by findPuddles()) and its pass's
+  // uniforms.
+  struct GpuPuddles
+  {
+    TerrainPuddles settings;
+    std::shared_ptr<GpuTexture> ground;
+    std::shared_ptr<GpuTexture> map;
+    std::shared_ptr<GpuTexture> fillRate; // its settings' (null: none)
+    wgpu::Buffer uniforms;
+    glm::ivec2 deformFrom{0}; // its deformation's window, when last found
+    bool stale = true;        // to be found again this frame
   };
 
   struct GpuSection
@@ -264,7 +302,19 @@ private:
   std::optional<GpuMaterial> makeMaterial(const MeshMaterial& material);
   std::optional<GpuMaterial> makeStandardMaterial(const MeshMaterial& material);
   std::optional<GpuMaterial> makeGraphMaterial(const MeshMaterial& material);
-  std::optional<GpuMaterial> makeTerrainMaterial(const MeshMaterial& material);
+  // `id`: the material slot's (0: a new one), for its puddle map
+  // (setTerrainPuddles()) and deformation (setTerrainDeformation(); a
+  // patch's are its ground's), if any.
+  std::optional<GpuMaterial> makeTerrainMaterial(const MeshMaterial& material,
+                                                 uint32_t id = 0);
+  // A terrain material made again around its puddles and deformation (its
+  // terrain as it is).
+  void rebuildTerrain(uint32_t id);
+  // A terrain material's uniforms written again (its puddles' or
+  // deformation's windows moved), and its patch's.
+  void writeTerrainUniforms(uint32_t ground);
+  // A deformed terrain's (or its patch's) deformation, if it has one.
+  const GpuDeformation* deformationOf(uint32_t id) const;
   // A terrain's layers as one texture array: their colours (sRGB, height in
   // alpha), or their detail (normal xy, roughness), each layer resized to the
   // largest; shared by terrains with the same textures.
@@ -308,7 +358,11 @@ private:
   // An RGBA texture to sample (and fill from the CPU); pixels into a
   // rectangle of one, from `origin`, `size` of them.
   static GpuImage
-  makeImage(WGPUDevice device, glm::ivec2 size, WGPUTextureFormat format);
+  makeImage(WGPUDevice device,
+            glm::ivec2 size,
+            WGPUTextureFormat format,
+            WGPUTextureUsage usage = WGPUTextureUsage_TextureBinding |
+                                     WGPUTextureUsage_CopyDst);
   static void writeImage(WGPUQueue queue,
                          const GpuImage& image,
                          glm::ivec2 origin,
@@ -328,8 +382,12 @@ private:
   // pipeline (null if it doesn't build).
   bool prepareOcclusion();
   void encodeOcclusion();
-  WGPURenderPipeline depthNormalsPipeline(const Surface& surface);
+  WGPURenderPipeline depthNormalsPipeline(const Surface& surface,
+                                          bool twoSided);
   void growGrass();
+  // Find the puddles of terrains whose ground, deformation or settings
+  // changed (puddles.h), before they're drawn.
+  void findPuddles();
   void encodeGrass(WGPURenderPassEncoder pass);
   // The frame's grass into the sun's shadow map being drawn (group 0 bound at
   // `offset`, the map's).
@@ -352,6 +410,13 @@ private:
   void ensureInstanceCapacity(std::size_t instanceCount);
   void uploadFrame();
   void encodeShadowPass();
+  // Rain: its overhead map (made full size the first time it's needed), drawn
+  // from the sun's shadow casters; and its streaks and splashes, in the lit
+  // pass (their pipeline built the first time).
+  bool ensureRainMap();
+  void encodeRainMap();
+  WGPURenderPipeline rainPipeline();
+  void encodeRain(WGPURenderPassEncoder pass);
   void encodeLitPass();
   // Temporal anti-aliasing's resolve (taa.wgsl) of the lit scene with its
   // history, into m_taa[m_taaIndex], copied back over the scene.
@@ -370,8 +435,10 @@ private:
   };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
   // The pipeline a surface draws with in a pass (see Sections).
-  static WGPURenderPipeline
-  pipelineFor(const Surface& surface, Sections which, AlphaMode mode);
+  static WGPURenderPipeline pipelineFor(const Surface& surface,
+                                        Sections which,
+                                        AlphaMode mode,
+                                        bool twoSided);
 
   const GpuMesh* findMesh(MeshHandle mesh) const;
 
@@ -402,6 +469,16 @@ private:
 
   // Objects' own materials (createMaterial), in slots like meshes.
   std::vector<std::optional<GpuMaterial>> m_materials;
+  // Terrain materials' puddles, by material id (setTerrainPuddles()), and
+  // what finds them: its passes (puddles.wgsl) and their two work textures.
+  std::unordered_map<uint32_t, GpuPuddles> m_puddles;
+  wgpu::BindGroupLayout m_puddleLayout;
+  std::array<wgpu::ComputePipeline, 6> m_puddlePipelines;
+  std::array<GpuImage, 2> m_puddleWork;
+  // Deformed terrain materials' deformation (setTerrainDeformation()), by
+  // material id, and their patches' materials' ground's id.
+  std::unordered_map<uint32_t, GpuDeformation> m_deformations;
+  std::unordered_map<uint32_t, uint32_t> m_patches;
   std::vector<uint32_t> m_freeMaterialSlots;
   std::vector<std::optional<GpuGrass>> m_grass;
   std::vector<uint32_t> m_freeGrassSlots;
@@ -411,17 +488,12 @@ private:
   wgpu::BindGroupLayout m_grassShadowLayout;
   wgpu::RenderPipeline m_grassShadowPipeline;
 
-  // Timing the frame's main passes on the GPU, for measuring what they cost:
-  // with SFS_GPU_TIMING set, on a device with timestamp queries, their
-  // averages are logged every few seconds. Each pass writes a timestamp as it
-  // begins and ends; every few frames they're copied out and read back.
-  enum TimedPass : uint32_t
-  {
-    TimedSunShadows,
-    TimedGrassGrowth,
-    TimedLit,
-    kTimedPasses,
-  };
+  // Timing the frame's passes on the GPU, for measuring what they cost: with
+  // SFS_GPU_TIMING set, on a device with timestamp queries, their averages
+  // are logged every few seconds. Each pass writes a timestamp as it begins
+  // and ends, under the label of what's encoding it (m_passLabel; passes of
+  // one label add up); every few frames they're copied out and read back.
+  static constexpr uint32_t kTimedPasses = 128; // the most timed in a frame
   struct GpuTiming
   {
     enum class Readback
@@ -431,23 +503,41 @@ private:
       Mapping, // waiting on the map
       Mapped,
     };
+    struct Row
+    {
+      std::string label;
+      double total = 0.0;  // milliseconds, over the frames read back
+      uint32_t frames = 0; // the frames it ran in
+      bool nested = false; // a span inside a pass (counted in the pass's)
+    };
     wgpu::QuerySet queries;
     wgpu::Buffer resolved;
     wgpu::Buffer readback;
     Readback state = Readback::Idle;
-    std::array<bool, kTimedPasses> ran{};     // this frame
-    std::array<bool, kTimedPasses> copied{};  // the frame read back
-    std::array<double, kTimedPasses> total{}; // milliseconds
-    std::array<uint32_t, kTimedPasses> samples{};
+    std::array<const char*, kTimedPasses> labels{}; // this frame's passes
+    std::array<bool, kTimedPasses> nested{};
+    uint32_t used = 0;
+    std::array<const char*, kTimedPasses> copiedLabels{}; // the frame read back
+    std::array<bool, kTimedPasses> copiedNested{};
+    uint32_t copied = 0;
+    int openSpan = -1;     // the span inside a pass begun, not yet ended
+    std::vector<Row> rows; // in the order first seen
+    double span = 0.0;     // first pass's start to last's end, summed
     uint32_t readbacks = 0;
     RenderTimestamps renderWrites{};
     ComputeTimestamps computeWrites{};
   };
   std::unique_ptr<GpuTiming> m_timing;
-  // A pass's timestamp writes (null when not timing); the frame's read back
-  // (at its start), and copied out (at its end).
-  const RenderTimestamps* timedRenderPass(TimedPass pass);
-  const ComputeTimestamps* timedComputePass(TimedPass pass);
+  const char* m_passLabel = "other";
+  // A pass's timestamp writes (null when not timing), under m_passLabel; the
+  // frame's read back (at its start), and copied out (at its end).
+  const RenderTimestamps* timedRenderPass();
+  const ComputeTimestamps* timedComputePass();
+  bool nextTimedPass();
+  // A span of draws inside a pass, timed under `label` (where the device can
+  // time inside passes); ended by the next span, or endTimedSpan().
+  void beginTimedSpan(WGPURenderPassEncoder pass, const char* label);
+  void endTimedSpan(WGPURenderPassEncoder pass);
   void readTiming();
   void copyTiming();
 
@@ -460,12 +550,25 @@ private:
   wgpu::Sampler m_shadowSampler;
   glm::uvec2 m_shadowMapSize{0, 0}; // the atlas's, with cascades
   // Each sun shadow map's (cascade's) view-projection, 256 bytes apart (a
-  // dynamic offset's alignment), for the shadow pass.
+  // dynamic offset's alignment), for the shadow pass; then rain's overhead
+  // map's.
   wgpu::Buffer m_cascadeUniforms;
+
+  // Rain's overhead map (RainMap: depth looking straight down), while the
+  // weather has rain (until then a 1x1 stand-in, never read); whether it's
+  // the real one, and drawn this frame. Rain's streaks and splashes'
+  // pipeline (rain.wgsl), and whether it failed to build (logged).
+  wgpu::Texture m_rainMap;
+  wgpu::TextureView m_rainMapView;
+  bool m_rainMapFull = false;
+  bool m_rained = false;
+  wgpu::RenderPipeline m_rainPipeline;
+  bool m_rainBroken = false;
 
   // A physical sky (sky.wgsl): its transmittance table (from the CPU's
   // PhysicalSky), the sky rendered octahedrally (the background and haze
-  // read it), its reflections (mip 0 sharp to the last, roughest), and the
+  // read it), the same with its clouds (what its reflections are blurred
+  // from), its reflections (mip 0 sharp to the last, roughest), and the
   // split-sum BRDF table. Always there (small), so the lit pass's bindings
   // are the same with a flat sky.
   struct SkyTarget
@@ -477,15 +580,18 @@ private:
   wgpu::Texture m_skyTable;
   wgpu::TextureView m_skyTableView;
   SkyTarget m_skyRadiance;
+  SkyTarget m_skyCloudy;
   SkyTarget m_skyReflections;
   wgpu::Texture m_brdfTable;
   wgpu::TextureView m_brdfTableView;
   wgpu::Sampler m_skySampler;
   wgpu::BindGroupLayout m_skyLayout;
   wgpu::Buffer m_skyUniforms;
-  std::vector<wgpu::Buffer> m_skyPassUniforms; // the radiance's, each mip's
+  // The radiance's, each mip's, the clouds'.
+  std::vector<wgpu::Buffer> m_skyPassUniforms;
   std::vector<wgpu::BindGroup> m_skyPassBindings;
   wgpu::RenderPipeline m_skyRadiancePipeline;
+  wgpu::RenderPipeline m_skyCloudsPipeline;
   wgpu::RenderPipeline m_skyPrefilterPipeline;
   wgpu::RenderPipeline m_skyBackgroundPipeline;
   std::shared_ptr<const PhysicalSky> m_skyModel; // whose table is uploaded

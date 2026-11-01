@@ -3,6 +3,7 @@
 #include "build/gameExporter.h"
 #include "build/moduleBuilder.h"
 #include "editorContext.h"
+#include "editorSettings.h"
 #include "engine/runtime/scripting/moduleHost.h"
 #include "history/editorHistory.h"
 #include "panels/panel.h"
@@ -75,6 +76,9 @@ private:
   void drawStatusBar();
   void drawProjectDialogs();
   void buildDefaultLayout(unsigned int dockspaceId);
+  // After buildDefaultLayout: bring its first tabs forward (Inspector,
+  // Viewport, Console), over a few frames as the tabs appear.
+  void showDefaultTabs();
 
   void drawSceneMenu();
   void drawEditMenu();
@@ -296,6 +300,11 @@ private:
   void play();
   void stop();
   /**
+   * Bring the Console's tab to the front for Play's build, remembering the
+   * tab that was showing there so Stop can go back to it.
+   */
+  void showConsoleForPlay();
+  /**
    * Destroy every scene, freeing everything the loaded module created
    * (component storage, objects, systems) while its code is still loaded.
    */
@@ -322,11 +331,18 @@ private:
   Mode m_mode = Mode::Edit;
   bool m_playAfterBuild = false;
   nlohmann::json m_editSnapshot; // the scene as it was before Play
+  // The tab showing in the Console's dock node before Play (empty: the
+  // Console itself, or not docked), until Stop shows it again.
+  std::optional<std::string> m_tabBeforePlay;
   std::vector<std::unique_ptr<Panel>> m_panels;
   CodePanel* m_codePanel = nullptr; // in m_panels
   UiPreviewPanel* m_uiPreview = nullptr;
   std::filesystem::path m_startupProject;
   bool m_layoutChecked = false;
+  bool m_resetLayout = false; // Window > Reset Layout, done next frame
+  int m_defaultTabsFrames = 0; // frames showDefaultTabs() has left
+  int m_startFrames = 3;       // the first frames, while windows appear
+  EditorSettings m_settings;   // the layout and window, kept between sessions
   bool m_appFocused = false; // one of the editor's windows has the keyboard
 
   // Open/New project dialogs.

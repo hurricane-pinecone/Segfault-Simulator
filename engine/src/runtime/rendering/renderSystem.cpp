@@ -10,8 +10,10 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
+#include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/matrix.hpp"
 
@@ -22,6 +24,21 @@
 #include <limits>
 #include <tuple>
 #include <variant>
+
+namespace
+{
+
+// Lightning (see placeLightning()): a strike's channel's light per metre
+// (x its brightness), its cloud glow's, how bright its drawn channel is, how
+// far from what the camera looks at a strike casts a shadow, and the most
+// strikes flashing at once.
+constexpr float kLightningChannelLight = 60.0f;
+constexpr float kLightningCloudGlow = 0.18f;
+constexpr float kLightningChannelGlow = 40.0f;
+constexpr float kLightningShadowReach = 1200.0f;
+constexpr std::size_t kMostLightningStrikes = 4;
+
+} // namespace
 
 namespace sfs
 {
@@ -121,6 +138,11 @@ ContactShadowSettings RenderSystem::effectiveContactShadows() const
                                             : m_contactShadows;
 }
 
+RainSettings RenderSystem::effectiveRain() const
+{
+  return m_style && m_style->rain ? *m_style->rain : m_rain;
+}
+
 Ray RenderSystem::screenRay(const glm::vec2& pixel) const
 {
   // The size the scene was last drawn at: between frames a backend may report
@@ -199,7 +221,13 @@ void RenderSystem::render()
 
   m_commands.clear();
   for (auto& [type, module] : m_modules)
+  {
+    const cpuTiming::Scope timed(
+        cpuTiming::enabled() ? cpuTiming::label("render/emit ", typeid(*module))
+                             : nullptr);
     module->emit(m_context, m_commands);
+  }
+  emitLightning();
 
   // Opaque before transparent; within a pass, group by mesh so a backend can
   // keep its bindings between neighbouring draws.
@@ -214,10 +242,13 @@ void RenderSystem::render()
     // UI last (it's drawn over the finished frame anyway).
     return std::tuple(std::numeric_limits<int>::max(), 0, 0u);
   };
-  std::stable_sort(m_commands.begin(),
-                   m_commands.end(),
-                   [&](const AnyRenderCommand& a, const AnyRenderCommand& b)
-                   { return order(a) < order(b); });
+  {
+    SFS_CPU_SCOPE("render/sort commands");
+    std::stable_sort(m_commands.begin(),
+                     m_commands.end(),
+                     [&](const AnyRenderCommand& a, const AnyRenderCommand& b)
+                     { return order(a) < order(b); });
+  }
 
   FrameParams frame;
   frame.view = m_camera.viewMatrix();
@@ -237,16 +268,24 @@ void RenderSystem::render()
     frame.lightBalance = m_style->lightBalance();
   frame.lighting = m_worldLighting;
   frame.wind = m_wind;
+  frame.weather = m_weather.clamped();
+  frame.cloudDrift = m_cloudDrift;
+  frame.rainDrift = m_rainDrift.drift;
+  frame.rainWind = m_rainDrift.started ? m_rainDrift.wind : frame.weather.wind;
+  frame.lightning = m_lightning;
   // Haze is distance from the camera, which in a 2D game is the same for
   // everything on its plane: there it would only fog the whole picture.
   const HazeSettings haze = effectiveHaze();
   frame.haze = m_space2D ? HazeSettings{0.0f, haze.distance} : haze;
-  // So are height fog, ambient occlusion and contact shadows: a 3D world's.
+  // So are height fog, ambient occlusion, contact shadows and rain: a 3D
+  // world's.
+  frame.rain.enabled = false;
   if (!m_space2D)
   {
     frame.fog = effectiveFog();
     frame.ambientOcclusion = effectiveAmbientOcclusion();
     frame.contactShadows = effectiveContactShadows();
+    frame.rain = effectiveRain();
     frame.temporalAntiAliasing = effectiveTemporalAntiAliasing();
   }
   // Depth of field, like bloom, is the scene camera's; focused where the view
@@ -264,9 +303,15 @@ void RenderSystem::render()
   frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
-  for (const AnyRenderCommand& command : m_commands)
-    std::visit([this](const auto& concrete) { submit(concrete); }, command);
-  m_renderer.endFrame();
+  {
+    SFS_CPU_SCOPE("render/submit commands");
+    for (const AnyRenderCommand& command : m_commands)
+      std::visit([this](const auto& concrete) { submit(concrete); }, command);
+  }
+  {
+    SFS_CPU_SCOPE("render/renderer end frame");
+    m_renderer.endFrame();
+  }
 
   m_stats.pointLights = m_pointLights.size();
 }
@@ -325,6 +370,7 @@ bool RenderSystem::buildContext(const glm::ivec2& viewport)
     fitShadows(effectiveShadows(), aspect);
   updateSky();
 
+  placeLightning();
   gatherPointLights();
   m_context.lighting = &m_worldLighting;
   m_context.pointLights = &m_pointLights;
@@ -394,28 +440,40 @@ void RenderSystem::updateSky()
   }
   const glm::vec3 toSun = m_toSun;
   const float night = PhysicalSky::nightScale(m_moonShare);
+  const SkyClouds clouds{std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f),
+                         m_weather.clamped().cloudDarkness};
 
   // The sky's diffuse light and reflections change slowly with the sun (and
-  // the moon's glow): work them out again once it's moved a quarter of a
-  // degree (a day/night cycle moves it every frame) or the glow changed a
-  // few percent. That takes a couple of milliseconds, so it's done in the
-  // background, the frame keeping the last until it's ready; but a new sky
-  // has none to keep.
-  auto workOut =
-      [](std::shared_ptr<const PhysicalSky> model, glm::vec3 sun, float glow)
+  // the moon's glow, and the clouds): work them out again once it's moved a
+  // quarter of a degree (a day/night cycle moves it every frame), the glow
+  // changed a few percent or the clouds a little. That takes a couple of
+  // milliseconds (twice that under clouds), so it's done in the background,
+  // the frame keeping the last until it's ready; but a new sky has none to
+  // keep.
+  auto workOut = [](std::shared_ptr<const PhysicalSky> model,
+                    glm::vec3 sun,
+                    float glow,
+                    SkyClouds clouds)
   {
     SkyLight light;
-    light.irradiance = model->irradiance(sun, glow);
-    light.groundLight = model->groundRadiance(sun, glow);
+    light.irradiance = model->irradiance(sun, glow, clouds);
+    light.groundLight = model->groundRadiance(sun, glow, clouds);
+    const glm::vec3 up(0.0f, 0.0f, 1.0f);
+    light.clearSkyLight = clouds.cover > 0.0f
+                              ? model->irradiance(sun, glow).at(up)
+                              : light.irradiance.at(up);
     light.model = std::move(model);
     light.toSun = sun;
     light.night = glow;
+    light.clouds = clouds;
     return light;
   };
   auto use = [this](const SkyLight& light)
   {
     m_skySun = light.toSun;
     m_skyNight = light.night;
+    m_skyClouds = light.clouds;
+    m_clearSkyLight = light.clearSkyLight;
     m_frameSky.toSun = light.toSun;
     m_frameSky.irradiance = light.irradiance;
     m_frameSky.groundLight = light.groundLight;
@@ -431,26 +489,30 @@ void RenderSystem::updateSky()
       use(light);
   }
   if (rebuilt || !m_frameSky.physical)
-    use(workOut(m_physicalSky, toSun, night));
+    use(workOut(m_physicalSky, toSun, night, clouds));
   else
   {
     constexpr float kResky = 0.99999048f; // cos(0.25 degrees)
     const bool moved = glm::dot(toSun, m_skySun) < kResky ||
-                       std::abs(night - m_skyNight) > 0.03f * m_skyNight;
+                       std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
+                       std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
+                       std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
     if (moved && !m_skyJob.valid())
     {
       if (!m_skyWorker)
         m_skyWorker = std::make_unique<WorkerPool>(1);
       auto job = std::make_shared<std::packaged_task<SkyLight()>>(
-          [workOut, model = m_physicalSky, toSun, night]
-          { return workOut(model, toSun, night); });
+          [workOut, model = m_physicalSky, toSun, night, clouds]
+          { return workOut(model, toSun, night, clouds); });
       m_skyJob = job->get_future();
       m_skyWorker->submit([job] { (*job)(); });
     }
   }
   m_frameSky.physical = m_physicalSky;
   // The sun itself, every frame (it's cheap), so it sets smoothly; once it
-  // has, the moon. Then what eyes adapt to.
+  // has, the moon. Then what eyes adapt to: the light as it would be without
+  // the clouds (eyes adapt to the dusk, not the weather: an overcast day
+  // stays dull, a cloudy night darker than a clear one).
   const float clear = clearSky(m_worldLighting.cloudCover);
   const glm::vec3 toLight =
       m_moonLit ? glm::normalize(m_worldLighting.sun.direction) : toSun;
@@ -458,9 +520,7 @@ void RenderSystem::updateSky()
                             ? m_physicalSky->moonLight(toLight, m_moonShare)
                             : m_physicalSky->sunLight(toSun) * clear;
   m_frameSky.adaptation = m_physicalSky->adaptation(
-      toLight,
-      m_frameSky.sunLight,
-      m_frameSky.irradiance.at(glm::vec3(0.0f, 0.0f, 1.0f)));
+      toLight, m_frameSky.sunLight / clear, m_clearSkyLight);
   m_frameSky.lampScale = m_physicalSky->lampScale(m_frameSky.adaptation);
   m_frameSky.scale = m_style ? m_style->skyScale() : glm::vec3(1.0f);
   // The moon's disk, unless it's below the horizon or behind clouds.
@@ -469,8 +529,30 @@ void RenderSystem::updateSky()
                           ? glm::normalize(moon.direction)
                           : glm::vec3(0.0f, 0.0f, -1.0f);
   m_frameSky.moonPhase = std::clamp(moon.phase, 0.0f, 1.0f);
-  m_frameSky.cloudCover = std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f);
+  m_frameSky.cloudCover = clouds.cover;
   m_frameSky.moonLit = m_moonLit;
+
+  // The clouds' light: the sun's at their height (it lights them a little
+  // after it has set), or once the moon has taken over, the moon's (above
+  // them: not dimmed by them).
+  m_frameSky.cloudDarkness = clouds.darkness;
+  m_frameSky.cloudLight =
+      m_moonLit ? m_physicalSky->moonLight(toLight, m_moonShare / clear)
+                : m_physicalSky->cloudSunLight(toSun);
+  m_frameSky.cloudBase = PhysicalSky::cloudBase(
+      m_frameSky.cloudLight, toLight, m_clearSkyLight, clouds);
+  // The sky's textures draw the clouds as they are where the camera is: again
+  // once they've drifted (or it's moved) 30 m.
+  if (clouds.cover > 0.0f)
+  {
+    const glm::vec2 origin =
+        glm::vec2(m_camera.position()) * 0.001f + m_cloudDrift;
+    if (glm::length(origin - m_skyCloudOrigin) > 0.03f)
+    {
+      m_skyCloudOrigin = origin;
+      ++m_frameSky.revision;
+    }
+  }
 }
 
 void RenderSystem::finishSkyWork()
@@ -762,7 +844,37 @@ void RenderSystem::gatherPointLights()
                       nearer);
     m_pointLights.resize(kMaxPointLights);
   }
+
+  // A near strike's shadow: a light (lighting nothing itself: the lit
+  // shader lights by the channel) where its channel's light comes from, as
+  // seen from what the camera looks at, reaching a little past it. Last, so
+  // the frame keeps it out of the clusters.
+  if (m_lightning.channel && m_frameSky.physical && m_lightningLight > 0.02f)
+  {
+    const glm::vec3 focus = m_camera.target;
+    const glm::vec3 centre =
+        lightningLightCentre(m_lightning.low, m_lightning.high, focus);
+    const float away = glm::distance(centre, focus);
+    if (away < kLightningShadowReach)
+    {
+      if (m_pointLights.size() >= kMaxPointLights)
+        m_pointLights.resize(kMaxPointLights - 1);
+      PointLight light;
+      light.position = centre;
+      light.color = glm::vec3(1.0f);
+      light.intensity = 1000.0f; // (its shadow always shows)
+      light.radius = away + 250.0f;
+      light.castsShadow = true;
+      light.shadowNear = 2.0f;
+      m_lightning.shadowLight = static_cast<int>(m_pointLights.size());
+      m_pointLights.push_back(light);
+    }
+  }
   chooseShadowedLights();
+  if (m_lightning.shadowLight >= 0 &&
+      !m_pointLights[static_cast<std::size_t>(m_lightning.shadowLight)]
+           .castsShadow)
+    m_lightning.shadowLight = -1;
 }
 
 void RenderSystem::chooseShadowedLights()
@@ -817,6 +929,156 @@ void RenderSystem::chooseShadowedLights()
   for (const std::size_t i : candidates)
     m_shadowedLights.push_back(m_pointLights[i]);
   m_stats.shadowedLights = m_shadowedLights.size();
+}
+
+void RenderSystem::strikeLightning(const LightningStrike& strike)
+{
+  if (m_space2D)
+    return;
+  ActiveStrike active;
+  active.strike = strike;
+  active.duration = lightningDuration(strike);
+  const float cloudBase = PhysicalSky::kCloudAltitude * 1000.0f;
+  active.top = strike.inCloud ? glm::vec3(glm::vec2(strike.position), cloudBase)
+                              : lightningTop(strike, cloudBase);
+  if (!strike.inCloud)
+  {
+    // Its ribbons face the camera (where it was last drawn from: a strike's
+    // over before it can move far), a few pixels wide however far off.
+    const glm::vec3 eye = m_camera.position();
+    const glm::vec3 nearest =
+        lightningLightCentre(strike.position, active.top, eye);
+    active.width = std::max(0.8f, glm::distance(eye, nearest) * 0.0013f);
+    const std::vector<LightningSegment> segments =
+        lightningChannel(strike, active.top);
+    const MeshData channel = lightningMesh(segments, eye, active.width, false);
+    const MeshData branches = lightningMesh(segments, eye, active.width, true);
+    if (!channel.empty())
+      active.channel = m_meshes.add(channel);
+    if (!branches.empty())
+      active.branches = m_meshes.add(branches);
+  }
+  // A few at once: the oldest gives way.
+  if (m_strikes.size() >= kMostLightningStrikes)
+  {
+    const auto oldest =
+        std::max_element(m_strikes.begin(),
+                         m_strikes.end(),
+                         [](const ActiveStrike& a, const ActiveStrike& b)
+                         { return a.age < b.age; });
+    for (const MeshHandle mesh : {oldest->channel, oldest->branches})
+      if (mesh.valid())
+        m_meshes.remove(mesh);
+    m_strikes.erase(oldest);
+  }
+  m_strikes.push_back(active);
+}
+
+void RenderSystem::advanceLightning(float seconds)
+{
+  for (auto it = m_strikes.begin(); it != m_strikes.end();)
+  {
+    if (!m_lightningHold)
+      it->age += seconds;
+    if (it->age <= it->duration)
+    {
+      ++it;
+      continue;
+    }
+    for (const MeshHandle mesh : {it->channel, it->branches})
+      if (mesh.valid())
+        m_meshes.remove(mesh);
+    it = m_strikes.erase(it);
+  }
+}
+
+void RenderSystem::placeLightning()
+{
+  m_lightning = {};
+  m_lightningLight = 0.0f;
+  if (m_space2D || m_strikes.empty())
+    return;
+  m_lightning.active = true;
+
+  // The brightest strike now lights the scene (they rarely overlap).
+  const ActiveStrike* brightest = nullptr;
+  for (const ActiveStrike& active : m_strikes)
+  {
+    const float age = m_lightningHold.value_or(active.age);
+    const float light = lightningBrightness(active.strike, age) *
+                        std::max(active.strike.intensity, 0.0f);
+    if (light > m_lightningLight)
+    {
+      m_lightningLight = light;
+      brightest = &active;
+    }
+  }
+  if (!brightest)
+    return;
+
+  // A strike's light, bluish white: its channel's, a metre of it (about
+  // the sun's light at noon on what faces it from a kilometre off), and the
+  // cloud base glowing around it (dimmer the less cloud there is to light).
+  const glm::vec3 color(0.82f, 0.86f, 1.0f);
+  const LightningStrike& strike = brightest->strike;
+  const float cloud =
+      0.15f + 0.85f * std::clamp(m_worldLighting.cloudCover, 0.0f, 1.0f);
+  m_lightning.channel = !strike.inCloud;
+  m_lightning.low = strike.position;
+  m_lightning.high = brightest->top;
+  if (m_lightning.channel)
+    m_lightning.channelLight =
+        color * (kLightningChannelLight * m_lightningLight);
+  m_lightning.cloudGlow = color * (kLightningCloudGlow * m_lightningLight *
+                                   cloud * (strike.inCloud ? 0.8f : 1.0f));
+  m_lightning.glowRadius = strike.inCloud ? 2500.0f : 1800.0f;
+}
+
+void RenderSystem::emitLightning()
+{
+  // As bright to the eye by day as at night (emission is drawn x the
+  // lamps' scale): far brighter than anything else in view, so it blooms.
+  const float lamp =
+      m_frameSky.physical ? std::max(m_frameSky.lampScale, 0.1f) : 1.0f;
+  for (const ActiveStrike& active : m_strikes)
+  {
+    const float age = m_lightningHold.value_or(active.age);
+    const float light = lightningChannelBrightness(active.strike, age) *
+                        std::max(active.strike.intensity, 0.0f) *
+                        (kLightningChannelGlow / lamp);
+    if (light <= 0.0f)
+      continue;
+    // One striking further off than the camera sees is drawn nearer,
+    // smaller: the same on the screen (over everything nearer than it, as
+    // it would be). (A near one's top may reach past it, into the cloud.)
+    glm::mat4 model(1.0f);
+    const glm::vec3 eye = m_camera.position();
+    const float within = m_camera.farPlane * 0.8f;
+    const float farthest = glm::distance(eye, active.strike.position);
+    if (farthest > within)
+    {
+      const float shrink = within / farthest;
+      model = glm::translate(glm::mat4(1.0f), eye) *
+              glm::scale(glm::mat4(1.0f), glm::vec3(shrink)) *
+              glm::translate(glm::mat4(1.0f), -eye);
+    }
+    // Branches are lit by the first stroke; the later ones mostly follow
+    // the main channel.
+    const float branches =
+        light * (1.0f - 0.8f * std::clamp((age - 0.03f) / 0.07f, 0.0f, 1.0f));
+    for (const auto& [mesh, glow] : {std::pair(active.channel, light),
+                                     std::pair(active.branches, branches)})
+    {
+      if (!mesh.valid())
+        continue;
+      MeshDrawCommand command;
+      command.pass = RenderPass::Transparent;
+      command.mesh = mesh;
+      command.instances.push_back(
+          MeshInstance{model, glm::vec4(glm::vec3(glow), 1.0f)});
+      m_commands.push_back(std::move(command));
+    }
+  }
 }
 
 void RenderSystem::submit(const UiDrawCommand& command)
@@ -889,12 +1151,6 @@ std::vector<ModuleSetting> RenderSystem::settings()
           1.0f,
           [this] { return m_lighting.moon.diffuseStrength; },
           [this](float v) { m_lighting.moon.diffuseStrength = v; }),
-      settings::floatRange(
-          "Cloud cover",
-          0.0f,
-          1.0f,
-          [this] { return m_lighting.cloudCover; },
-          [this](float v) { m_lighting.cloudCover = v; }),
       settings::boolean(
           "Sun shadows",
           [this] { return m_shadows.enabled; },

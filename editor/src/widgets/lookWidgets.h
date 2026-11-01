@@ -7,6 +7,7 @@
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/visualStyle.h"
+#include "engine/core/rendering/weather.h"
 
 class EditorHistory;
 
@@ -40,6 +41,17 @@ bool contactShadows(EditorHistory* history,
 
 // Height fog: on or off, and (only when on) how thick, where, and its glow.
 bool fog(EditorHistory* history, sfs::FogSettings& fog);
+
+// The weather: how cloudy (the lighting's cloud cover) and how heavy the
+// clouds are, the wind they drift on, and the rain and how wet it's left
+// things.
+bool weather(EditorHistory* history,
+             sfs::SceneWeather& weather,
+             float& cloudCover);
+
+// How rain looks: on or off, and (only when on) its streaks, splashes,
+// ripples and veil.
+bool rain(EditorHistory* history, sfs::RainSettings& rain);
 
 bool visualStyle(sfs::VisualStyle& style);
 

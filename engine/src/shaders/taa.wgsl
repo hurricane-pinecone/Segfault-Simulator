@@ -107,7 +107,11 @@ fn fs_resolve(in: Varyings) -> @location(0) vec4f {
   }
 
   let past = clamp(historyAt(beforeUv), low, high);
-  let share = taa.params.w;
+  // Rain's streaks and splashes (rain.wgsl) leave how much of a pixel they
+  // cover in its alpha (1 - that): they move too fast for the history to
+  // hold, so this frame counts for more there.
+  let reactive = 1.0 - textureLoad(current, pixel, 0).a;
+  let share = max(taa.params.w, min(reactive * 2.5, 0.9));
   let a = (1.0 - share) * weightOf(past);
   let b = share * weightOf(now);
   let blended = (past * a + now * b) / (a + b);

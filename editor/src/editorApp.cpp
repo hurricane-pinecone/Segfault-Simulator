@@ -173,6 +173,14 @@ void EditorApp::onSetup()
   // After the Console and Assets, to join their dock node.
   m_panels.push_back(std::move(uiPreview));
 
+  // The layout and window as the user left them, now the panels have added
+  // their settings handlers. Which panels are open is kept for these (a
+  // prefab's or material's tab is opened again as it's needed).
+  std::vector<Panel*> panels;
+  for (const auto& panel : m_panels)
+    panels.push_back(panel.get());
+  m_settings.load(backend.window(), std::move(panels));
+
   // The Assets panel draws prefab previews from the scene's meshes, so keep
   // their vertices (before any scene makes meshes).
   sfs::MeshLibrary::setKeepVertices(true);
@@ -393,7 +401,8 @@ void EditorApp::onRender()
   const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
 
   // With no saved layout (first run, or imgui.ini deleted) the dockspace starts
-  // empty: arrange the panels like a typical engine, once.
+  // empty: arrange the panels like a typical engine, once. Window > Reset
+  // Layout arranges them so again.
   if (!m_layoutChecked)
   {
     m_layoutChecked = true;
@@ -401,6 +410,21 @@ void EditorApp::onRender()
     if (!root || (root->IsLeafNode() && root->Windows.empty()))
       buildDefaultLayout(dockspace);
   }
+  if (std::exchange(m_resetLayout, false))
+  {
+    m_settings.openAllPanels();
+    buildDefaultLayout(dockspace);
+  }
+  // A dock node shows the focused window's tab, and a window takes the focus
+  // as it first appears (the last panel made, the UI Preview): none has it at
+  // first, so each node shows the tab it did last time.
+  if (m_startFrames > 0)
+  {
+    --m_startFrames;
+    ImGui::SetWindowFocus(nullptr);
+  }
+  showDefaultTabs();
+  m_settings.update();
 
   handleShortcuts();
 
@@ -427,25 +451,57 @@ void EditorApp::buildDefaultLayout(unsigned int dockspaceId)
   ImGui::DockBuilderSetNodeSize(
       dockspaceId, ImGui::GetMainViewport()->WorkSize);
 
+  // The Hierarchy on the left; the Inspector (with the UI Preview) on the
+  // right; the Viewport in the middle, the Console and Assets under it.
   ImGuiID center = dockspaceId;
   const ImGuiID left = ImGui::DockBuilderSplitNode(
       center, ImGuiDir_Left, 0.18f, nullptr, &center);
   const ImGuiID right = ImGui::DockBuilderSplitNode(
-      center, ImGuiDir_Right, 0.25f, nullptr, &center);
+      center, ImGuiDir_Right, 0.26f / 0.82f, nullptr, &center);
   const ImGuiID bottom = ImGui::DockBuilderSplitNode(
-      center, ImGuiDir_Down, 0.25f, nullptr, &center);
-  ImGuiID rightBottom = 0;
-  const ImGuiID rightTop = ImGui::DockBuilderSplitNode(
-      right, ImGuiDir_Up, 0.6f, nullptr, &rightBottom);
+      center, ImGuiDir_Down, 0.335f, nullptr, &center);
 
-  ImGui::DockBuilderDockWindow("Hierarchy", left);
-  ImGui::DockBuilderDockWindow("Inspector", rightTop);
-  ImGui::DockBuilderDockWindow("Scene Settings", rightBottom);
-  ImGui::DockBuilderDockWindow("Console", bottom);
-  ImGui::DockBuilderDockWindow("Assets", bottom); // tabbed with the console
-  ImGui::DockBuilderDockWindow("Viewport", center);
-  ImGui::DockBuilderDockWindow("Code", center); // tabbed with the viewport
+  const std::pair<const char*, ImGuiID> places[] = {
+      {"Hierarchy", left},
+      {"Inspector", right},
+      {"UI Preview", right},
+      {"Viewport", center},
+      {"Scene Settings", center},
+      {"Code", center},
+      {"Console", bottom},
+      {"Assets", bottom},
+  };
+  for (const auto& [window, node] : places)
+    ImGui::DockBuilderDockWindow(window, node);
+  // Prefabs' and materials' tabs (when the layout's reset) with the Viewport.
+  for (const auto& panel : m_panels)
+    if (std::ranges::none_of(
+            places,
+            [&](const auto& place)
+            { return std::string_view(place.first) == panel->title(); }))
+      ImGui::DockBuilderDockWindow(panel->title(), center);
+
   ImGui::DockBuilderFinish(dockspaceId);
+  // The tab of each that shows first. ImGui shows the last tab added to a
+  // node, so they're brought forward once their nodes have tab bars.
+  m_defaultTabsFrames = 3;
+}
+
+void EditorApp::showDefaultTabs()
+{
+  if (m_defaultTabsFrames == 0)
+    return;
+  // Not the focused window's (see onRender).
+  ImGui::SetWindowFocus(nullptr);
+  bool docked = true;
+  for (const char* tab : {"Inspector", "Viewport", "Console"})
+  {
+    const ImGuiWindow* window = ImGui::FindWindowByName(tab);
+    docked &= window && window->DockNode && window->DockNode->TabBar;
+    widgets::showTab(tab);
+  }
+  if (docked)
+    --m_defaultTabsFrames;
 }
 
 void EditorApp::drawMenuBar()
@@ -480,6 +536,9 @@ void EditorApp::drawMenuBar()
   {
     for (const auto& panel : m_panels)
       ImGui::MenuItem(panel->title(), nullptr, &panel->open());
+    ImGui::Separator();
+    if (ImGui::MenuItem("Reset Layout"))
+      m_resetLayout = true;
     ImGui::EndMenu();
   }
 
@@ -1540,10 +1599,25 @@ void EditorApp::updateWindowTitle()
   SDL_SetWindowTitle(window, title.c_str());
 }
 
+void EditorApp::showConsoleForPlay()
+{
+  // Remembered once: a Play whose build failed left the Console showing, and
+  // the next Play shouldn't take it for the tab to go back to.
+  if (!m_tabBeforePlay)
+    m_tabBeforePlay = widgets::shownTab("Console");
+  for (const auto& panel : m_panels)
+    if (std::string_view(panel->title()) == "Console")
+      panel->open() = true;
+  widgets::showTab("Console");
+}
+
 void EditorApp::requestBuild(bool thenPlay)
 {
   if (!m_context.project)
     return;
+  // Play's build shows in the Console.
+  if (thenPlay && m_mode == Mode::Edit)
+    showConsoleForPlay();
   if (m_builder.busy())
   {
     // Already building (e.g. after a script was saved): Play once it's done.
@@ -2355,6 +2429,10 @@ void EditorApp::stop()
   m_history.setEnabled(true);
   LOG_INFO("Stopped");
   updateWindowTitle();
+  // Back to the tab that was showing beside the Console before Play.
+  if (m_tabBeforePlay && !m_tabBeforePlay->empty())
+    widgets::showTab(*m_tabBeforePlay);
+  m_tabBeforePlay.reset();
 }
 
 void EditorApp::drawExportDialog()

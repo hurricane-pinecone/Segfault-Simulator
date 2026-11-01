@@ -386,6 +386,15 @@ json renderToJson(const RenderSystem& render)
     out["contactShadows"] = cleaned(render.contactShadowSettings().toJson());
   if (render.fogSettings() != FogSettings{})
     out["fog"] = cleaned(render.fogSettings().toJson());
+  if (render.rainSettings() != RainSettings{})
+    out["rain"] = cleaned(render.rainSettings().toJson());
+  if (render.weather() != SceneWeather{})
+  {
+    json weather = cleaned(render.weather().toJson());
+    for (json& item : weather["wind"])
+      item = cleanFloat(item.get<float>());
+    out["weather"] = std::move(weather);
+  }
   if (render.temporalAntiAliasing())
     out["temporalAntiAliasing"] = true;
   return out;
@@ -450,6 +459,10 @@ void renderFromJson(const json& value, RenderSystem& render)
         ContactShadowSettings::fromJson(in, render.contactShadowSettings()));
   if (const json& in = value.value("fog", json::object()); in.is_object())
     render.setFogSettings(FogSettings::fromJson(in, render.fogSettings()));
+  if (const json& in = value.value("rain", json::object()); in.is_object())
+    render.setRainSettings(RainSettings::fromJson(in, render.rainSettings()));
+  if (const json& in = value.value("weather", json::object()); in.is_object())
+    render.setWeather(SceneWeather::fromJson(in, render.weather()));
   render.setTemporalAntiAliasing(
       value.value("temporalAntiAliasing", render.temporalAntiAliasing()));
 

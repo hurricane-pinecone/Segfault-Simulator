@@ -3,6 +3,7 @@
 #include "engine/runtime/rendering/backend/renderBackends.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 
 #include "engine/runtime/assetStore/assetStore.h"
@@ -229,7 +230,10 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
     return;
   }
 
-  wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
+  {
+    SFS_CPU_SCOPE("backend/acquire");
+    wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
+  }
   if (m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
       m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
   {
@@ -277,8 +281,12 @@ void WebGpuRenderBackend::endFrame()
   if (m_encoder)
   {
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(m_encoder, nullptr);
-    wgpuQueueSubmit(m_context.queue(), 1, &cmd);
+    {
+      SFS_CPU_SCOPE("backend/submit");
+      wgpuQueueSubmit(m_context.queue(), 1, &cmd);
+    }
 #ifndef __EMSCRIPTEN__ // the browser shows the canvas itself
+    SFS_CPU_SCOPE("backend/present");
     wgpuSurfacePresent(m_context.surface());
 #endif
     wgpuCommandBufferRelease(cmd);
@@ -317,6 +325,7 @@ void WebGpuRenderBackend::endFrame()
 #endif
 
   // Fire any pending async callbacks (e.g. timestamp readback).
+  SFS_CPU_SCOPE("backend/poll");
   m_context.poll();
 }
 

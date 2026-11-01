@@ -253,6 +253,11 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
     terrain->antiTiling = asset.terrain->antiTiling;
     terrain->variation = asset.terrain->variation;
     terrain->triplanarSharpness = asset.terrain->triplanarSharpness;
+    terrain->puddles = asset.terrain->puddles;
+    terrain->puddleDepth = asset.terrain->puddleDepth;
+    terrain->microRelief = asset.terrain->microRelief;
+    terrain->microReliefSize = asset.terrain->microReliefSize;
+    terrain->deformable = asset.terrain->deformable;
     for (const TerrainLayerAsset& layer : asset.terrain->layers)
       terrain->layers.push_back({layer.name,
                                  texture(layer.baseTexture),
@@ -264,7 +269,8 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
                                  layer.normalScale,
                                  layer.grass,
                                  layer.meadow,
-                                 layer.triplanar});
+                                 layer.triplanar,
+                                 layer.puddles});
     material->alphaMode = AlphaMode::Opaque;
     material->terrain = std::move(terrain);
     return material;

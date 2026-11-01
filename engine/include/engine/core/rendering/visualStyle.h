@@ -5,6 +5,7 @@
 #include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "nlohmann/json.hpp"
@@ -56,6 +57,7 @@ namespace sfs
  *     "contactShadows": { ...ContactShadowSettings::toJson()... },
  *     "temporalAntiAliasing": true,
  *     "fog": { ...FogSettings::toJson()... },
+ *     "rain": { ...RainSettings::toJson()... },
  *     "materialVariant": "realistic",
  *     "materials": {"farm:ground-paint": "asset:<id>"}
  *   }
@@ -91,6 +93,8 @@ struct VisualStyle
   std::optional<AmbientOcclusionSettings> ambientOcclusion;
   std::optional<ContactShadowSettings> contactShadows;
   std::optional<FogSettings> fog;
+  // How rain looks (its streaks, splashes, ripples and veil).
+  std::optional<RainSettings> rain;
   // Temporal anti-aliasing (see RenderSystem::setTemporalAntiAliasing).
   std::optional<bool> temporalAntiAliasing;
 

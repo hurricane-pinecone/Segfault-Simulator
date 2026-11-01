@@ -7,8 +7,10 @@
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/sunShadow.h"
+#include "engine/core/rendering/weather.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
@@ -71,7 +73,38 @@ struct FrameSky
   float moonPhase = 1.0f;
   float cloudCover = 0.0f;
   bool moonLit = false; // the moon is the frame's light (see above)
+  // The clouds' light (none drawn while cloudCover is 0): what lights their
+  // tops (the sun's at their height, or the moon's) and their undersides
+  // lit through (PhysicalSky::cloudBase), neither adapted; and how heavy
+  // they are (SceneWeather::cloudDarkness).
+  glm::vec3 cloudLight{0.0f};
+  glm::vec3 cloudBase{0.0f};
+  float cloudDarkness = 0.0f;
   uint64_t revision = 0;
+};
+
+/**
+ * A frame's lightning (see LightningStrike): its brightest strike's light,
+ * as it flashes now (not adapted: the backend adapts it as the sky's), under
+ * a physical sky. `active` while any strike is still going (afterimages
+ * too): auto exposure holds while it is, so a flash brightens the scene.
+ */
+struct FrameLightning
+{
+  bool active = false;
+  // A cloud-to-ground strike's channel, a line of light from `low` (the
+  // ground) to `high` (the cloud base), `channelLight` a metre of it
+  // (rgb; none for an in-cloud strike); and the point light in the frame's
+  // that casts its shadow (-1: none).
+  bool channel = false;
+  glm::vec3 low{0.0f};
+  glm::vec3 high{0.0f};
+  glm::vec3 channelLight{0.0f};
+  int shadowLight = -1;
+  // The cloud base glowing around `high` (in it), `glowRadius` metres
+  // across: its light (rgb, at the middle; 0: none).
+  glm::vec3 cloudGlow{0.0f};
+  float glowRadius = 1.0f;
 };
 
 /**
@@ -104,6 +137,18 @@ struct FrameParams
   float focusDistance = 20.0f; // the view's (where depth of field is sharp)
   WindSettings wind;
   HazeSettings haze;
+  // The weather (clamped), and how far the clouds have drifted (km, within
+  // kCloudPeriod).
+  SceneWeather weather;
+  glm::vec2 cloudDrift{0.0f};
+  // How rain looks (a 3D scene's; while the weather has it); how far its
+  // drops have drifted on the wind (m, in the world's XY, within
+  // kRainDriftPeriod), and the wind they slant in (eased: gusts don't flick
+  // them).
+  RainSettings rain;
+  glm::vec2 rainDrift{0.0f};
+  glm::vec2 rainWind{0.0f};
+  FrameLightning lightning;
   // Height fog (on: in haze's place), ambient occlusion and contact shadows
   // (all off: none).
   FogSettings fog;

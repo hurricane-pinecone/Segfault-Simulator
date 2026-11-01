@@ -14,6 +14,7 @@
 
 #include <engine/core/logger/logger.h>
 #include <engine/core/util/allocationMetrics.h>
+#include <engine/core/util/cpuTiming.h>
 #include <engine/core/util/profiling.h>
 
 #include <algorithm>
@@ -165,7 +166,11 @@ void Game::run()
 
     const Uint64 frameStart = SDL_GetPerformanceCounter();
     frame();
-    capFrameRate(frameStart);
+    {
+      SFS_CPU_SCOPE("frame cap");
+      capFrameRate(frameStart);
+    }
+    cpuTiming::endFrame();
   }
 
   destroy();
@@ -186,9 +191,19 @@ void Game::frame()
   // end the program with no word of why: say what it was, and stop.
   try
   {
-    processInput();
-    update(deltaTime);
-    render();
+    SFS_CPU_SCOPE("frame");
+    {
+      SFS_CPU_SCOPE("input");
+      processInput();
+    }
+    {
+      SFS_CPU_SCOPE("update");
+      update(deltaTime);
+    }
+    {
+      SFS_CPU_SCOPE("render");
+      render();
+    }
     if (std::exchange(m_collectUnusedAssets, false) && m_services)
       m_services->assetStore.collectUnused();
     if (m_backend && m_backend->deviceLost())
@@ -564,6 +579,7 @@ void Game::update(double deltaTime)
   if (sceneManager)
   {
     sceneManager.current()->update(deltaTime);
+    SFS_CPU_SCOPE("update/game");
     onUpdate(deltaTime);
   }
   // After every script has run, so none is destroyed mid-update.
@@ -575,7 +591,10 @@ void Game::render()
   ZoneScopedN("Game::render");
 
   // In pixels (the window's size on most screens).
-  m_backend->beginFrame(m_pixelWidth, m_pixelHeight);
+  {
+    SFS_CPU_SCOPE("render/begin frame (acquire)");
+    m_backend->beginFrame(m_pixelWidth, m_pixelHeight);
+  }
 
   // Without a scene the frame still ends (and shows), empty.
   if (sceneManager)
@@ -599,7 +618,10 @@ void Game::render()
     renderDebugUI(*m_backend, sceneManager.current(), [this] { onDebugUI(); });
 #endif
 
-  m_backend->endFrame();
+  {
+    SFS_CPU_SCOPE("render/end frame (submit, present)");
+    m_backend->endFrame();
+  }
 }
 
 void Game::destroy()
