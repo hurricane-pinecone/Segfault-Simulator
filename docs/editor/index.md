@@ -130,8 +130,8 @@ In a 2D scene:
   Sphere...) and the grass brush are a 3D scene's, so they're hidden.
 - A **Box Collider 2D** added to a sprite fits itself to the sprite (flat
   scenes); **Fit to Sprite** fits it again.
-- Scene Settings hides what only a 3D world has (wind, haze, the grass count),
-  and the sun's direction is in the game's own space (see
+- Scene Settings hides what only a 3D world has (wind, haze, the grass count,
+  weather), and the sun's direction is in the game's own space (see
   [Styles](../runtime/rendering/styles/index.md#lighting-in-2d)).
 
 ## Viewport
@@ -621,6 +621,16 @@ layers on steep ground so they don't stretch down cliffs (**Triplanar
 Sharpness** sets how they blend). **New Splat Map** makes the map that says where each layer is.
 See [Terrain materials](../runtime/rendering/meshes-and-lighting/index.md#terrain-materials).
 
+Tick **Puddles** for the mesh to pool rain water in its low spots: **Puddle
+Depth** sets how deep it stands when full, and **Micro Relief** (with **Dip
+Size**, once it's above zero) scatters shallow dips over flat ground so it has
+low spots to puddle in too. Each layer's own **Puddles** slider sets how
+readily it pools water there, a packed dirt yard more than a mossy lawn. Tick
+**Deformable** so tyre tracks, furrows and footprints from a **Deformer**
+press into the ground and stay. See
+[Puddles](../runtime/rendering/meshes-and-lighting/index.md#puddles) and
+[Deformation](../runtime/rendering/meshes-and-lighting/index.md#deformation).
+
 **The terrain brush:** select something drawn with a terrain material (with
 the scene's visual style on, if the terrain is a style's variant) and press
 **T** or click **Terrain** in the viewport toolbar, pick a layer, and drag over
@@ -637,6 +647,19 @@ intensity, samples), **Contact Shadows** (length, thickness, strength) and
 opacity, sun glow), each showing its settings only while on. A visual style can carry its own of each (Inspector > Replaces The
 Scene's), and its **Material Overrides** draw any material, a game's own
 included, as another while it's on.
+
+## Weather
+
+Scene Settings > **Weather** sets the weather a 3D scene starts with, or
+keeps if a game drives it itself each frame: **Cloud Cover** and **Cloud
+Darkness**, **Wind** (how fast, and which way, the clouds drift), **Rain**,
+**Wetness** and **Puddles**. Below it, **Rain** has its own settings for how
+it falls and looks: **Density**, **Streak Length**, **Streak Width**,
+**Brightness**, **Splashes**, **Ripples**, **Veil** and **Drips**. A visual
+style can carry its own **Rain** to stand in for the scene's. See
+[Weather](../runtime/rendering/meshes-and-lighting/index.md#weather) and
+[Rain](../runtime/rendering/meshes-and-lighting/index.md#rain) for what each
+setting does.
 
 ## Built-in meshes
 
