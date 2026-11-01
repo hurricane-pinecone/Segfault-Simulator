@@ -192,16 +192,33 @@ void GrassModule::update(double deltaTime)
       SFS_CPU_SCOPE("grass/trample");
       changed = patch.trample.update(seconds, m_benders, patch.recovery);
     }
-    if (!changed)
+    if (!changed && patch.trample.size() == patch.uploadedTrample)
       continue;
     SFS_CPU_SCOPE("grass/trample upload");
-    const std::vector<uint8_t> pixels = patch.trample.image();
-    m_renderer.updateGrassTrample(patch.gpu,
-                                  GrassTrampleImage{patch.trample.min(),
-                                                    patch.trample.max(),
-                                                    patch.trample.size(),
-                                                    pixels});
+    uploadTrample(patch);
   }
+}
+
+void GrassModule::uploadTrample(Patch& patch)
+{
+  if (!patch.gpu.valid())
+    return;
+  // All of it for a new map; else just what changed.
+  if (patch.trample.size() != patch.uploadedTrample)
+    patch.trample.markAllChanged();
+  const auto [from, to] = patch.trample.takeChanged();
+  if (to.x <= from.x || to.y <= from.y)
+    return;
+  std::vector<uint8_t> pixels;
+  patch.trample.pixels(from, to, pixels);
+  m_renderer.updateGrassTrample(patch.gpu,
+                                GrassTrampleImage{patch.trample.min(),
+                                                  patch.trample.max(),
+                                                  patch.trample.size(),
+                                                  pixels,
+                                                  from,
+                                                  to});
+  patch.uploadedTrample = patch.trample.size();
 }
 
 float GrassModule::windowReach(float drawDistance)
@@ -274,6 +291,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
                                         model,
                                         m_meshes->uvs(mesh));
       patch.gpu = m_renderer.createGrass(patch.ground);
+      patch.uploadedTrample = glm::ivec2(0);
     }
     patch.coverGrid = {};
     patch.mesh = mesh.id;
@@ -486,15 +504,8 @@ void GrassModule::useWindow(Patch& patch, Window window)
   patch.cover = std::move(window.cover);
   patch.coverGrid = patch.cover.empty() ? GrassGrid() : patch.maps.grid();
   patch.coverMadeMaps = true;
-  if (patch.gpu.valid())
-  {
-    const std::vector<uint8_t> pixels = patch.trample.image();
-    m_renderer.updateGrassTrample(patch.gpu,
-                                  GrassTrampleImage{patch.trample.min(),
-                                                    patch.trample.max(),
-                                                    patch.trample.size(),
-                                                    pixels});
-  }
+  patch.trample.markAllChanged();
+  uploadTrample(patch);
 }
 
 void GrassModule::finishWindows()

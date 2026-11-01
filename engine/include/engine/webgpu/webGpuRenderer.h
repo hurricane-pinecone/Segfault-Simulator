@@ -162,6 +162,9 @@ private:
     // Grass with this surface's look: built the first time grass uses it
     // (most surfaces never are), from its WGSL.
     std::string wgsl;
+    // Whether its WGSL reads the time (a graph's may cut its see-through
+    // parts out by it: their shadows change every frame).
+    bool timed = false;
     mutable wgpu::RenderPipeline grass;
     mutable bool grassBroken = false;
     mutable wgpu::RenderPipeline grassGround; // the ground under grass
@@ -218,6 +221,7 @@ private:
     wgpu::Buffer uniforms;
     std::vector<std::shared_ptr<GpuTexture>> textures; // the bind group's
     wgpu::BindGroup bindings;
+    uint64_t version = 0; // new each time it's made (nextVersion())
     // A terrain's, kept to make it again with new puddles.
     std::shared_ptr<const TerrainMaterial> terrain;
   };
@@ -261,6 +265,7 @@ private:
     // A sphere around its vertices (for which point lights' reach it's in).
     glm::vec3 boundsCenter{0.0f};
     float boundsRadius = 0.0f;
+    uint64_t version = 0; // new each time one's made (nextVersion())
   };
 
   // An uploaded texture, keyed by its TextureData's address. `source` tells a
@@ -407,6 +412,12 @@ private:
   // lights get them this frame and their casters, and drawing them.
   void ensurePointShadowMaps(uint32_t lights, uint32_t resolution);
   void encodePointShadows();
+  // A point light's shadow casters' mesh and materials (a draw's) as they
+  // are now, the same while they are (each caster's is this and its
+  // instance); 0 if they change every frame (cut out by the time).
+  uint64_t casterKey(const Draw& draw) const;
+  // A mesh's or material's version: new each time.
+  uint64_t nextVersion() { return ++m_versions; }
   void ensureInstanceCapacity(std::size_t instanceCount);
   void uploadFrame();
   void encodeShadowPass();
@@ -750,6 +761,30 @@ private:
   wgpu::BindGroupLayout m_pointShadowLayout;
   wgpu::Buffer m_faceUniforms;
   wgpu::BindGroup m_pointShadowBindings;
+  // Each cube's still casters (those unchanged a while), drawn into a cube
+  // of their own (m_pointShadowStillFaces) and kept while they're as they
+  // were: each frame it's copied into the cube the lit pass reads (when
+  // anything's changed) and only casters on the move drawn over it.
+  // And what's changed that the plan's casters don't show: the ground moved
+  // over world XY rectangles (min, max), and anything else at all
+  // (m_shadowsEpoch, e.g. a terrain's window moving; m_shadowTextures,
+  // textures a see-through caster may cut out by).
+  struct StillShadows
+  {
+    uint64_t light = 0; // what it was drawn for (where, its reach...); 0: none
+    std::unordered_set<uint64_t> kept; // the casters in it (by key)
+    // Each of the light's casters (by key): how many frames it's been as it
+    // is.
+    std::unordered_map<uint64_t, uint32_t> still;
+    bool copied = false; // the lit pass's cube is it, with nothing over it
+  };
+  wgpu::Texture m_pointShadowStill;
+  std::vector<wgpu::TextureView> m_pointShadowStillFaces;
+  std::vector<StillShadows> m_stillShadows;
+  std::vector<glm::vec4> m_shadowGroundMoved;
+  uint64_t m_shadowsEpoch = 0;
+  uint64_t m_shadowTextures = 0;
+  uint64_t m_versions = 0;
 
   wgpu::BindGroupLayout m_shadowLayout;
   wgpu::BindGroupLayout m_litLayout;

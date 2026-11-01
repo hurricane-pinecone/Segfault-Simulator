@@ -177,9 +177,11 @@ struct GrassHandle
 };
 
 /**
- * Where a grass field is flattened (GrassTrample::image()): RGBA8 pixels,
- * `size` of them, rows from `min`'s y, over the world XY rectangle `min` to
- * `max`.
+ * Where a grass field is flattened (GrassTrample::image()): a map `size`
+ * texels, rows from `min`'s y, over the world XY rectangle `min` to `max`.
+ * `pixels` (RGBA8) are those of texels `from` to `to` (exclusive), rows from
+ * its min y: just what changed; all of them if `to` is left empty, as they must
+ * be when the map's size changes.
  */
 struct GrassTrampleImage
 {
@@ -187,6 +189,8 @@ struct GrassTrampleImage
   glm::vec2 max{0.0f};
   glm::ivec2 size{0, 0};
   std::span<const uint8_t> pixels;
+  glm::ivec2 from{0, 0};
+  glm::ivec2 to{0, 0};
 };
 
 /**

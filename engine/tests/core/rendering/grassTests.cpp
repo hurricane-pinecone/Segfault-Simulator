@@ -320,6 +320,39 @@ int main()
     CHECK(*std::max_element(image.begin(), image.end()) == 255);
   }
 
+  TEST("a still bender should change grass's trample map only once")
+  {
+    const GrassGround ground = groundOf(meshes::plane({10.0f, 10.0f}));
+    GrassTrample trample(ground, glm::mat4(1.0f), 0.35f);
+    const auto [allFrom, allTo] = trample.takeChanged();
+    CHECK(allFrom == glm::ivec2(0));
+    CHECK(allTo == trample.size()); // a new map: all of it
+
+    const GrassBender standing{{0.0f, 0.0f, 0.5f}, 0.5f, {}};
+    CHECK(trample.update(0.016f, {&standing, 1}, 3.0f));
+    const auto [from, to] = trample.takeChanged();
+    CHECK(to.x > from.x);
+    CHECK(to.y > from.y);
+    // Just around it: about its width (1.15 its diameter, 8 texels a unit).
+    CHECK(to.x - from.x <= 12);
+    CHECK(to.y - from.y <= 12);
+    std::vector<uint8_t> part;
+    trample.pixels(from, to, part);
+    CHECK(part.size() == std::size_t(to.x - from.x) * (to.y - from.y) * 4);
+
+    // Still there: pressed back just as it was, nothing to send.
+    for (int frame = 0; frame < 10; ++frame)
+      CHECK(!trample.update(0.016f, {&standing, 1}, 3.0f));
+    const auto [stillFrom, stillTo] = trample.takeChanged();
+    CHECK(stillTo.x <= stillFrom.x);
+
+    // Gone: springing back, only where it was.
+    CHECK(trample.update(0.5f, {}, 3.0f));
+    const auto [upFrom, upTo] = trample.takeChanged();
+    CHECK(upFrom.x >= from.x);
+    CHECK(upTo.x <= to.x);
+  }
+
   TEST("no ground should press nothing")
   {
     GrassTrample trample(GrassGround{}, glm::mat4(1.0f), 0.3f);

@@ -617,6 +617,7 @@ MeshHandle WebGpuRenderer::createMesh(const MeshData& mesh)
   wgpuQueueWriteBuffer(
       m_context.queue(), gpu.indices.get(), 0, mesh.indices.data(), indexBytes);
   gpu.indexCount = static_cast<uint32_t>(mesh.indices.size());
+  gpu.version = nextVersion();
   const Aabb bounds = mesh.bounds();
   gpu.boundsCenter = bounds.center();
   for (const MeshVertex& vertex : mesh.vertices)
@@ -681,6 +682,7 @@ MaterialHandle WebGpuRenderer::createMaterial(const MeshMaterial& material)
   std::optional<GpuMaterial> gpu = makeMaterial(material);
   if (!gpu)
     return {};
+  gpu->version = nextVersion();
 
   uint32_t slot = 0;
   if (!m_freeMaterialSlots.empty())
@@ -708,8 +710,10 @@ void WebGpuRenderer::updateMaterial(MaterialHandle handle,
                        : makeMaterial(material);
   if (material.terrain && !gpu)
     gpu = makeStandardMaterial(brokenMaterial());
-  if (gpu)
-    m_materials[handle.id - 1] = std::move(gpu);
+  if (!gpu)
+    return;
+  gpu->version = nextVersion();
+  m_materials[handle.id - 1] = std::move(gpu);
 }
 
 void WebGpuRenderer::rebuildTerrain(uint32_t id)
@@ -723,7 +727,10 @@ void WebGpuRenderer::rebuildTerrain(uint32_t id)
   MeshMaterial material;
   material.terrain = terrain;
   if (std::optional<GpuMaterial> gpu = makeTerrainMaterial(material, id))
+  {
+    gpu->version = nextVersion();
     m_materials[id - 1] = std::move(gpu);
+  }
 }
 
 const WebGpuRenderer::GpuDeformation*
@@ -819,7 +826,19 @@ void WebGpuRenderer::setTerrainDeformation(
     rebuildTerrain(deformation.patch.id);
     return;
   }
-  // Only its uniforms change (the patch following the camera).
+  // Only its uniforms change (the patch following the camera): point lights'
+  // shadows of the ground it leaves and comes to are drawn again, and all of
+  // them if the window moved (where it's flat changed).
+  if (was.from != deformation.from || was.size != deformation.size)
+    ++m_shadowsEpoch;
+  else if (was.patchCenter != deformation.patchCenter ||
+           was.patchHalf != deformation.patchHalf)
+    for (const TerrainDeformation* patch : {&was, &deformation})
+    {
+      const glm::vec2 reach(patch->patchHalf + patch->texel * 4.0f);
+      m_shadowGroundMoved.emplace_back(
+          patch->patchCenter - reach, patch->patchCenter + reach);
+    }
   writeTerrainUniforms(handle.id);
 }
 
@@ -871,6 +890,11 @@ void WebGpuRenderer::writeTerrainDeformation(MaterialHandle handle,
                glm::ivec2(kTile),
                halves.data(),
                sizeof(uint16_t));
+  // Point lights' shadows of the ground there drawn again (a few texels more,
+  // as it's smoothed).
+  const float texel = it->second.settings.texel;
+  m_shadowGroundMoved.emplace_back(
+      glm::vec2(from - 4) * texel, glm::vec2(from + kTile + 4) * texel);
 }
 
 void WebGpuRenderer::setTerrainPuddles(MaterialHandle handle,
@@ -1260,24 +1284,34 @@ void WebGpuRenderer::updateGrassTrample(GrassHandle handle,
 {
   if (!handle.valid() || handle.id > m_grass.size() || !m_grass[handle.id - 1])
     return;
-  if (image.size.x <= 0 || image.size.y <= 0 ||
-      image.pixels.size() < std::size_t(image.size.x) * image.size.y * 4)
+  if (image.size.x <= 0 || image.size.y <= 0)
+    return;
+  const bool all = image.to.x <= image.from.x || image.to.y <= image.from.y;
+  const glm::ivec2 from =
+      all ? glm::ivec2(0) : glm::clamp(image.from, glm::ivec2(0), image.size);
+  const glm::ivec2 to =
+      all ? image.size : glm::clamp(image.to, from, image.size);
+  if (image.pixels.size() < std::size_t(to.x - from.x) * (to.y - from.y) * 4)
     return;
   GpuGrass& grass = *m_grass[handle.id - 1];
 
-  // A texture of the map's size (made again when that changes).
+  // A texture of the map's size (made again when that changes, from all of
+  // it).
   if (grass.trample.size != image.size)
   {
+    if (from != glm::ivec2(0) || to != image.size)
+      return;
     grass.trample =
         makeImage(m_context.device(), image.size, WGPUTextureFormat_RGBA8Unorm);
     rebuildGrassBindings(grass);
   }
-  writeImage(m_context.queue(),
-             grass.trample,
-             {0, 0},
-             image.size,
-             image.pixels.data(),
-             4);
+  if (to.x > from.x && to.y > from.y)
+    writeImage(m_context.queue(),
+               grass.trample,
+               from,
+               to - from,
+               image.pixels.data(),
+               4);
   const glm::vec2 size = glm::max(image.max - image.min, glm::vec2(1e-4f));
   grass.state.trampleBounds = glm::vec4(image.min, 1.0f / size);
 }
@@ -2457,6 +2491,7 @@ void WebGpuRenderer::updateTexture(
             static_cast<std::ptrdiff_t>(std::size_t(y) * size.x * 4));
   writeTexture(
       m_context.queue(), gpu->texture.get(), from, size, rows.data(), 4);
+  ++m_shadowTextures; // a see-through caster may be cut out by it
 }
 
 const WebGpuRenderer::GpuMaterial&
@@ -2514,7 +2549,8 @@ bool WebGpuRenderer::createPipelines()
     entries[1].texture.sampleType = WGPUTextureSampleType_Depth;
     entries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
     entries[2].binding = 2;
-    entries[2].visibility = WGPUShaderStage_Fragment;
+    // (Grass blades' vertices read the rain's overhead map with it too.)
+    entries[2].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
     entries[2].sampler.type = WGPUSamplerBindingType_Comparison;
     entries[6].binding = 6;
     entries[6].visibility = WGPUShaderStage_Fragment;
@@ -2848,6 +2884,7 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
 
   auto surface = std::make_shared<Surface>();
   surface->wgsl = surfaceWgsl;
+  surface->timed = surfaceWgsl.find("time") != std::string::npos;
 
   // Shadow pipeline: depth only, with a fragment stage that cuts out where a
   // masked or see-through material isn't solid. No culling, so open meshes
@@ -3337,14 +3374,17 @@ void WebGpuRenderer::ensurePointShadowMaps(uint32_t lights, uint32_t resolution)
   const WGPUDevice device = m_context.device();
 
   WGPUTextureDescriptor texture = {};
-  texture.usage =
-      WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+  texture.usage = WGPUTextureUsage_RenderAttachment |
+                  WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
   texture.dimension = WGPUTextureDimension_2D;
   texture.size = {resolution, resolution, capacity * 6};
   texture.format = kDepthFormat;
   texture.mipLevelCount = 1;
   texture.sampleCount = 1;
   m_pointShadowMap.reset(wgpuDeviceCreateTexture(device, &texture));
+  // The still casters' cubes, copied into those.
+  texture.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+  m_pointShadowStill.reset(wgpuDeviceCreateTexture(device, &texture));
 
   WGPUTextureViewDescriptor cubes = {};
   cubes.format = kDepthFormat;
@@ -3355,6 +3395,7 @@ void WebGpuRenderer::ensurePointShadowMaps(uint32_t lights, uint32_t resolution)
   m_pointShadowCubes.reset(
       wgpuTextureCreateView(m_pointShadowMap.get(), &cubes));
   m_pointShadowFaces.clear();
+  m_pointShadowStillFaces.clear();
   for (uint32_t layer = 0; layer < capacity * 6; ++layer)
   {
     WGPUTextureViewDescriptor face = {};
@@ -3366,9 +3407,12 @@ void WebGpuRenderer::ensurePointShadowMaps(uint32_t lights, uint32_t resolution)
     face.aspect = WGPUTextureAspect_DepthOnly;
     m_pointShadowFaces.emplace_back(
         wgpuTextureCreateView(m_pointShadowMap.get(), &face));
+    m_pointShadowStillFaces.emplace_back(
+        wgpuTextureCreateView(m_pointShadowStill.get(), &face));
   }
   m_pointShadowCapacity = capacity;
   m_pointShadowResolution = resolution;
+  m_stillShadows.assign(capacity, {}); // all drawn again
 
   m_faceUniforms =
       makeBuffer(device,
@@ -3390,10 +3434,174 @@ void WebGpuRenderer::ensurePointShadowMaps(uint32_t lights, uint32_t resolution)
   rebuildLitBindings();
 }
 
+namespace
+{
+// FNV-1a-like, a 32-bit word at a time, over a value (a whole number of
+// words) onto `hash`.
+template <typename T>
+void hashInto(uint64_t& hash, const T& value)
+{
+  static_assert(sizeof(T) % 4 == 0);
+  std::array<uint32_t, sizeof(T) / 4> words;
+  std::memcpy(words.data(), &value, sizeof(T));
+  for (const uint32_t word : words)
+  {
+    hash ^= word;
+    hash *= 1099511628211ull;
+  }
+}
+
+// How many frames a point light's shadow caster stays as it is before it's
+// drawn into its light's still cube (so one that's only paused, a farm hand
+// between steps, isn't).
+constexpr uint32_t kStillFrames = 30;
+} // namespace
+
+uint64_t WebGpuRenderer::casterKey(const Draw& draw) const
+{
+  const std::optional<GpuMesh>& mesh = m_meshes[draw.meshSlot];
+  if (!mesh)
+    return 0;
+  uint64_t key = 14695981039346656037ull;
+  hashInto(key, mesh->version);
+  for (std::size_t i = 0; i < mesh->sections.size(); ++i)
+  {
+    const GpuMaterial& material = materialFor(*mesh, i, draw);
+    hashInto(key, material.version);
+    if (material.alphaMode == AlphaMode::Opaque)
+      continue;
+    if (material.surface && material.surface->timed)
+      return 0;
+    hashInto(key, m_shadowTextures);
+  }
+  return key == 0 ? 1 : key;
+}
+
 void WebGpuRenderer::encodePointShadows()
 {
   const auto& shadowed = m_plan.shadowedLights();
-  if (shadowed.empty())
+  std::vector<glm::vec4> groundMoved;
+  groundMoved.swap(m_shadowGroundMoved);
+  if (m_stillShadows.size() < m_pointShadowCapacity)
+    m_stillShadows.resize(m_pointShadowCapacity);
+  for (std::size_t i = shadowed.size(); i < m_stillShadows.size(); ++i)
+    m_stillShadows[i] = {}; // unused: not kept
+
+  // Each light's casters, still and moving, as runs of the plan's instances;
+  // and which cubes are drawn how.
+  struct Cube
+  {
+    std::size_t index = 0;
+    glm::vec3 light{0.0f};
+    bool redraw = false; // its still cube
+    bool copy = false;   // that into the lit pass's
+    std::vector<Draw> kept;
+    std::vector<Draw> moving;
+  };
+  std::vector<Cube> cubes;
+  std::vector<uint64_t> keys;
+  for (std::size_t i = 0; i < shadowed.size(); ++i)
+  {
+    StillShadows& still = m_stillShadows[i];
+    const PointLight& light = m_plan.frame().pointLights[shadowed[i].light];
+
+    // What it's drawn for: where the light is, how far it reaches, the
+    // map's detail and anything that changes all of them; drawn again, too,
+    // if the ground moved within its reach.
+    uint64_t lightKey = 14695981039346656037ull;
+    hashInto(lightKey, light.position);
+    hashInto(lightKey, light.radius);
+    hashInto(lightKey, light.shadowNear);
+    hashInto(lightKey, m_pointShadowResolution);
+    hashInto(lightKey, m_shadowsEpoch);
+    lightKey = lightKey == 0 ? 1 : lightKey;
+    bool redraw = still.light != lightKey;
+    for (const glm::vec4& moved : groundMoved)
+    {
+      const glm::vec2 at(light.position);
+      const glm::vec2 nearest =
+          glm::clamp(at, glm::vec2(moved), glm::vec2(moved.z, moved.w));
+      redraw = redraw || glm::distance(nearest, at) <= light.radius;
+    }
+
+    // Its casters now, and how long each has been as it is.
+    keys.clear();
+    std::unordered_map<uint64_t, uint32_t> frames;
+    frames.reserve(still.still.size());
+    for (const Draw& draw : shadowed[i].draws)
+    {
+      const uint64_t drawKey = casterKey(draw);
+      for (uint32_t k = 0; k < draw.instanceCount; ++k)
+      {
+        uint64_t key = drawKey;
+        if (key != 0)
+        {
+          hashInto(key, m_plan.instances()[draw.firstInstance + k]);
+          key = key == 0 ? 1 : key;
+        }
+        keys.push_back(key);
+        if (key == 0)
+          continue;
+        const auto was = still.still.find(key);
+        frames[key] = was != still.still.end()
+                          ? std::min(was->second + 1, kStillFrames)
+                          : 1;
+      }
+    }
+    // Its still cube's drawn again if one of its casters moved (or went), or
+    // one that was moving has been still a while.
+    for (auto it = still.kept.begin(); !redraw && it != still.kept.end(); ++it)
+      redraw = !frames.contains(*it);
+    for (auto it = frames.begin(); !redraw && it != frames.end(); ++it)
+      redraw = it->second >= kStillFrames && !still.kept.contains(it->first);
+    if (redraw)
+    {
+      still.kept.clear();
+      for (const auto& [key, count] : frames)
+        if (count >= kStillFrames)
+          still.kept.insert(key);
+    }
+    still.still = std::move(frames);
+    still.light = lightKey;
+
+    Cube cube;
+    cube.index = i;
+    cube.light = light.position;
+    cube.redraw = redraw;
+    // Runs of instances, still or moving, each a draw of its own.
+    std::size_t at = 0;
+    for (const Draw& draw : shadowed[i].draws)
+    {
+      Draw run = draw;
+      run.instanceCount = 0;
+      bool keptRun = false;
+      const auto flush = [&]
+      {
+        if (run.instanceCount > 0)
+          (keptRun ? cube.kept : cube.moving).push_back(run);
+      };
+      for (uint32_t k = 0; k < draw.instanceCount; ++k, ++at)
+      {
+        const bool kept = keys[at] != 0 && still.kept.contains(keys[at]);
+        if (run.instanceCount > 0 && kept != keptRun)
+        {
+          flush();
+          run.firstInstance = draw.firstInstance + k;
+          run.instanceCount = 0;
+        }
+        if (run.instanceCount == 0)
+          run.firstInstance = draw.firstInstance + k;
+        keptRun = kept;
+        ++run.instanceCount;
+      }
+      flush();
+    }
+    cube.copy = redraw || !cube.moving.empty() || !still.copied;
+    still.copied = cube.moving.empty();
+    if (cube.copy)
+      cubes.push_back(std::move(cube));
+  }
+  if (cubes.empty())
     return;
 
   // Every face's view, in one write.
@@ -3404,12 +3612,53 @@ void WebGpuRenderer::encodePointShadows()
   wgpuQueueWriteBuffer(
       m_context.queue(), m_faceUniforms.get(), 0, faces.data(), faces.size());
 
-  for (std::size_t i = 0; i < shadowed.size(); ++i)
+  // Whether any of a draw's casters reaches into a cube's face (+x, -x, +y,
+  // -y, +z, -z), its bounding sphere inside the four planes around it.
+  const auto reaches = [&](const Draw& draw, glm::vec3 light, int face)
+  {
+    const std::optional<GpuMesh>& mesh = m_meshes[draw.meshSlot];
+    if (!mesh)
+      return false;
+    const int axis = face / 2;
+    const float sign = face % 2 == 0 ? 1.0f : -1.0f;
+    for (uint32_t k = 0; k < draw.instanceCount; ++k)
+    {
+      const glm::mat4& model = m_plan.instances()[draw.firstInstance + k].model;
+      const glm::vec3 offset =
+          glm::vec3(model * glm::vec4(mesh->boundsCenter, 1.0f)) - light;
+      const float reach = mesh->boundsRadius * 1.4143f *
+                          std::max({glm::length(glm::vec3(model[0])),
+                                    glm::length(glm::vec3(model[1])),
+                                    glm::length(glm::vec3(model[2]))});
+      const float along = sign * offset[axis];
+      const float a = offset[(axis + 1) % 3], b = offset[(axis + 2) % 3];
+      if (along - std::abs(a) >= -reach && along - std::abs(b) >= -reach)
+        return true;
+    }
+    return false;
+  };
+
+  // A cube's six faces, cleared or drawn over, with those of some of its
+  // casters that reach into each (a face nothing reaches into and that
+  // isn't cleared isn't drawn).
+  std::vector<Draw> inFace;
+  const auto drawFaces = [&](const std::vector<wgpu::TextureView>& into,
+                             const Cube& cube,
+                             bool clear,
+                             const std::vector<Draw>& draws)
+  {
+    const std::size_t i = cube.index;
     for (std::size_t face = 0; face < 6; ++face)
     {
+      inFace.clear();
+      for (const Draw& draw : draws)
+        if (reaches(draw, cube.light, static_cast<int>(face)))
+          inFace.push_back(draw);
+      if (inFace.empty() && !clear)
+        continue;
       WGPURenderPassDepthStencilAttachment depth = {};
-      depth.view = m_pointShadowFaces[i * 6 + face].get();
-      depth.depthLoadOp = WGPULoadOp_Clear;
+      depth.view = into[i * 6 + face].get();
+      depth.depthLoadOp = clear ? WGPULoadOp_Clear : WGPULoadOp_Load;
       depth.depthStoreOp = WGPUStoreOp_Store;
       depth.depthClearValue = 1.0f; // nothing in the way: all its reach
       WGPURenderPassDescriptor desc = {};
@@ -3422,13 +3671,33 @@ void WebGpuRenderer::encodePointShadows()
       const auto offset = static_cast<uint32_t>(kFaceStride * (i * 6 + face));
       wgpuRenderPassEncoderSetBindGroup(
           pass, 0, m_pointShadowBindings.get(), 1, &offset);
-      if (!shadowed[i].draws.empty())
+      if (!inFace.empty())
         wgpuRenderPassEncoderSetVertexBuffer(
             pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
-      for (const Draw& draw : shadowed[i].draws)
+      for (const Draw& draw : inFace)
         encodeDraw(pass, draw, Sections::LightShadow);
       endPass(pass);
     }
+  };
+
+  for (const Cube& cube : cubes)
+  {
+    // Its still casters (when they've changed), into the lit pass's cube,
+    // then those on the move over them.
+    if (cube.redraw)
+      drawFaces(m_pointShadowStillFaces, cube, true, cube.kept);
+    WGPUTexelCopyTextureInfo from = {};
+    from.texture = m_pointShadowStill.get();
+    from.origin = {0, 0, static_cast<uint32_t>(cube.index * 6)};
+    from.aspect = WGPUTextureAspect_All;
+    WGPUTexelCopyTextureInfo to = from;
+    to.texture = m_pointShadowMap.get();
+    const WGPUExtent3D size = {
+        m_pointShadowResolution, m_pointShadowResolution, 6};
+    wgpuCommandEncoderCopyTextureToTexture(m_encoder, &from, &to, &size);
+    if (!cube.moving.empty())
+      drawFaces(m_pointShadowFaces, cube, false, cube.moving);
+  }
 }
 
 void WebGpuRenderer::uploadLights()

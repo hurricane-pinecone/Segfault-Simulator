@@ -74,6 +74,8 @@ fn vs_main(@builtin(vertex_index) index: u32, @builtin(instance_index) instance:
   // random number, and the maps' data where it grows.
   out.grass = vec4f(height / max(grass.blade.w, 1e-4), t, shape.z, deepIn(height, t));
   out.grassData = textureSampleLevel(dataMap, trampleSampler, unpack2x16unorm(grown.look.w), 0.0);
+  // How wet it is in the rain, here rather than at each of its points.
+  out.rain = vec2f(surfaceWetness(position, normal), dripLineWetness(position, normal));
   return out;
 }
 
@@ -91,6 +93,7 @@ fn vs_ground(in: VertexIn) -> VertexOut {
   out.tint = vec4f(1.0);
   out.grass = vec4f(1.0, 0.05, 0.5, 0.0); // fs_ground's, per point
   out.grassData = vec4f(0.0);
+  out.rain = vec2f(-1.0, 0.0);
   return out;
 }
 

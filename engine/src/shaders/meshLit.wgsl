@@ -31,6 +31,10 @@ struct VertexOut {
   @location(4) tint: vec4f,
   @location(5) grass: vec4f,     // see SurfaceIn, and w how shut in by grass (others: 1, 0, 0, 0)
   @location(6) grassData: vec4f, // see SurfaceIn
+  // Grass blades: how wet (x, surfaceWetness()) and dripped on (y,
+  // dripLineWetness()), found per vertex, as they're thin and drawn over each
+  // other (others: x below 0, found at each point).
+  @location(7) rain: vec2f,
 }
 
 // A physical sky's (see skyCommon.wgsl and sky.wgsl): its reflections, sharp
@@ -157,11 +161,11 @@ struct WetMaterial {
 // up and darken (light is trapped in their wet pores, to half the albedo),
 // and all of them get glossier, less so the more porous; standing water is a
 // smooth layer over it (its normal the geometry's), rings spreading on it
-// where drops land (rainRipples()). Smooth, flat, up-facing dielectrics
-// (water: a river, a pond) ring in the rain as standing water does, wet or
-// not.
+// where drops land (rainRipples()), if `rings`. Smooth, flat, up-facing
+// dielectrics (water: a river, a pond) ring in the rain as standing water
+// does, wet or not.
 fn wetMaterial(albedo: vec3f, metallic: f32, roughness: f32, normal: vec3f, geometryNormal: vec3f,
-               worldPosition: vec3f, wet: f32, water: f32) -> WetMaterial {
+               worldPosition: vec3f, wet: f32, water: f32, rings: bool) -> WetMaterial {
   var out = WetMaterial(albedo, roughness, normal);
   let level = smoothstep(0.92, 0.99, geometryNormal.z);
   let waterLike = level * (1.0 - metallic) * (1.0 - smoothstep(0.08, 0.2, roughness));
@@ -176,7 +180,7 @@ fn wetMaterial(albedo: vec3f, metallic: f32, roughness: f32, normal: vec3f, geom
   out.normal = normalize(mix(normal, geometryNormal, water));
 
   let ringing = max(water, waterLike) * frame.rainStreaks.w;
-  if (frame.weather.x > 0.0 && ringing > 0.0) {
+  if (rings && frame.weather.x > 0.0 && ringing > 0.0) {
     let slope = rainRipples(worldPosition.xy, frame.time.x, frame.weather.x) * ringing *
                 rainExposure(worldPosition, geometryNormal);
     out.normal = normalize(out.normal - vec3f(slope, 0.0));
@@ -723,11 +727,18 @@ fn shade(in: VertexOut) -> LitOut {
   // A terrain's puddles: water standing in its low spots, soaked ground
   // around them.
   // Under an edge's drips, soaked and puddled.
-  let dripped = dripLineWetness(in.worldPosition, geometryNormal);
-  let wet = max(max(surfaceWetness(in.worldPosition, geometryNormal), s.soak), dripped);
+  // (A grass blade's found per vertex, and too thin to show rings.)
+  let perPoint = in.rain.x < 0.0;
+  var dripped = in.rain.y;
+  var weathered = in.rain.x;
+  if (perPoint) {
+    dripped = dripLineWetness(in.worldPosition, geometryNormal);
+    weathered = surfaceWetness(in.worldPosition, geometryNormal);
+  }
+  let wet = max(max(weathered, s.soak), dripped);
   let water = max(max(standingWater(in.worldPosition, geometryNormal, wet), s.water), dripped * 0.5);
   let wetted = wetMaterial(s.baseColor * in.tint.rgb, metallic, clamp(s.roughness, 0.04, 1.0), bumped,
-                           geometryNormal, in.worldPosition, wet, water);
+                           geometryNormal, in.worldPosition, wet, water, perPoint);
   let albedo = wetted.albedo;
   let roughness = clamp(wetted.roughness, 0.04, 1.0);
   let normal = wetted.normal;

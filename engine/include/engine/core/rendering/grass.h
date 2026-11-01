@@ -310,7 +310,10 @@ public:
    * its edge. A moving one lays it down the way it's going (fanning out a
    * little at its sides), all along its path; a still one presses it outward.
    *
-   * @return whether the map changed (it needs uploading again)
+   * Only grass that's down, or that a bender reaches, is worked on: a still
+   * bender, after it's first pressed its grass, changes nothing.
+   *
+   * @return whether its image() changed (where: takeChanged())
    */
   bool
   update(float seconds, std::span<const GrassBender> benders, float recovery);
@@ -324,7 +327,18 @@ public:
    * RGBA8, rows from the map's min y: rg the direction (x 0.5 + 0.5), b how
    * flattened, a 255.
    */
-  std::vector<uint8_t> image() const;
+  std::vector<uint8_t> image() const { return m_pixels; }
+  /** image() of a rectangle of texels (rows from its min y). */
+  void pixels(glm::ivec2 from, glm::ivec2 to, std::vector<uint8_t>& out) const;
+
+  /**
+   * The texels whose image() changed since the last call, as a rectangle (min
+   * inclusive, max exclusive; empty if none), then forgets them. A new map's
+   * are all of it.
+   */
+  std::pair<glm::ivec2, glm::ivec2> takeChanged();
+  /** Mark everything changed (e.g. for a fresh upload). */
+  void markAllChanged();
 
   glm::ivec2 size() const { return m_size; }
   glm::vec2 min() const { return m_min; }
@@ -332,6 +346,16 @@ public:
 
 private:
   int indexOf(glm::vec2 point) const; // -1 off the map
+  int tileOf(int x, int y) const { return (y / kTile) * m_tiles.x + x / kTile; }
+
+  // Square tiles of texels, each marked if any of its grass is down (and, in
+  // an update, if it's to be looked at for changes).
+  static constexpr int kTile = 16;
+  enum TileFlags : uint8_t
+  {
+    kDown = 1,
+    kTouched = 2,
+  };
 
   glm::vec2 m_min{0.0f};
   glm::vec2 m_max{0.0f};
@@ -340,6 +364,11 @@ private:
   std::vector<float> m_ground; // per texel: the ground's world height, or none
   std::vector<float> m_amount;
   std::vector<glm::vec2> m_direction;
+  std::vector<uint8_t> m_pixels; // image(), kept up to date
+  glm::ivec2 m_tiles{0, 0};
+  std::vector<uint8_t> m_tileFlags;
+  glm::ivec2 m_changedMin{0, 0};
+  glm::ivec2 m_changedMax{0, 0};
 };
 
 } // namespace sfs

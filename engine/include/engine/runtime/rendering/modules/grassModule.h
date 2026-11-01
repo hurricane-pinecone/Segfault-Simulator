@@ -178,6 +178,7 @@ private:
     bool sendMaps = true;   // all of them, next upload
 
     GrassTrample trample;
+    glm::ivec2 uploadedTrample{0, 0}; // the size of the map the GPU has
     float trampleHeight = 0.0f; // what `trample` was made for, with `model`
     // A terrain under it keeping grass off some layers: how much grows on
     // each of the maps' texels (255 all), worked out for `coverGrid`.
@@ -205,6 +206,8 @@ private:
   // one); and its maps sent up if they changed.
   Patch* refresh(const Entity& entity);
   void uploadMaps(Patch& patch);
+  // What changed of its trample map sent up (all of it, for a new one).
+  void uploadTrample(Patch& patch);
   // The terrain under a patch (null if none keeps grass off), and how much
   // it lets grow over the maps' grid.
   std::shared_ptr<const TerrainMaterial> terrainUnder(const Entity& entity);
