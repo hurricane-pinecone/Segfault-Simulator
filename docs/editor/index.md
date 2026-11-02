@@ -138,7 +138,7 @@ In a 2D scene:
 
 | Input | Action |
 | --- | --- |
-| Left-click | Select the entity under the cursor (nothing, if empty space) |
+| Left-click | Select the entity under the cursor (nothing, if empty space); the first click on a prefab instance selects the whole thing, and a second click reaches into the part actually under the cursor (see [Prefabs](#prefabs)) |
 | Gizmos (toolbar) | Show or hide the overlays below and the gizmo; on while editing, off during Play by default |
 | Animate (toolbar, while editing) | Untick it to hold animated materials and grass's wind still while you edit; Play always animates |
 | W / E / R | Move / rotate / scale gizmo (also in the viewport toolbar) |
@@ -276,6 +276,12 @@ stronger, the X axis red and Y green). The tab you last clicked is the one being
 edited: the Hierarchy, Inspector and undo follow it, and each tab keeps its own
 selection, undo history and Hierarchy scroll. Unapplied changes put a dot on the
 tab; closing it then asks whether to apply them. Play always plays the scene.
+
+Clicking a copy in the viewport selects the whole instance, its outermost
+root, even if the part under the cursor is deep inside it (a mesh nested in a
+prefab within a prefab): that's the thing you placed. Clicking again, once
+it (or a part of it) is already selected, reaches in and selects the actual
+part under the cursor, so a second click gets at what's inside.
 
 Copies show in sage in the Hierarchy (their parts a little softer). Changing a
 copy (moving it, a tint, a material, a script value, adding or deleting
