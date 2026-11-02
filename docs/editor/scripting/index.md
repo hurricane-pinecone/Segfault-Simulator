@@ -175,6 +175,7 @@ void Menu::onProcessInput(const sfs::Input& input)
 | `scene().findEntity("Barn")` | The first entity with that name, parents before children; invalid if none |
 | `scene().findEntity("Farm/Barn/Door")` | Follows names down from a root entity |
 | `scene().findEntities("Lantern")` | Every entity with that name |
+| `scene().view<A, B>()` | Every entity carrying all of the given components, for an ad-hoc query (a system tracks its own membership this way automatically) |
 | `scene().destroyBranch(entity)` | Destroys an entity and everything below it. `destroyEntity` destroys only the entity; its children become roots. |
 
 ### The mouse
