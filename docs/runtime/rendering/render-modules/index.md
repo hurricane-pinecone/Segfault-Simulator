@@ -1,9 +1,10 @@
 # Render modules
 
 A `RenderSystem` composes its features as **render modules** rather than
-baking them in. Sprites, meshes, particles, decals, voxel terrain, grass and
-UI are all modules, and they work in every [style](../styles/index.md). This
-is how a game turns the built-in features on and how it adds its own.
+baking them in. Sprites, meshes, particles, decals, voxel terrain, grass,
+puddles, deformation and UI are all modules, and they work in every
+[style](../styles/index.md). This is how a game turns the built-in features on
+and how it adds its own.
 
 ## The model
 
