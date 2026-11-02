@@ -3,6 +3,7 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/core/util/fatalError.h"
 #include "engine/runtime/input/input.h"
 #include <engine/core/ecs/registry.h>
@@ -131,8 +132,12 @@ void Scene::updateObjects(double deltaTime)
     m_registry.forEachSystem(
         [deltaTime](System& system)
         {
-          if (system.enabled())
-            system.update(deltaTime);
+          if (!system.enabled())
+            return;
+          const cpuTiming::Scope timed(
+              cpuTiming::enabled() ? cpuTiming::label("update/", typeid(system))
+                                   : nullptr);
+          system.update(deltaTime);
         });
   }
 
@@ -141,10 +146,15 @@ void Scene::updateObjects(double deltaTime)
   for (std::size_t i = 0, count = m_gameObjects.size(); i < count; ++i)
   {
     GameObject& object = *m_gameObjects[i];
-    if (!object.m_destroyed)
-      object.onUpdate(deltaTime);
+    if (object.m_destroyed)
+      continue;
+    const cpuTiming::Scope timed(
+        cpuTiming::enabled() ? cpuTiming::label("update/", typeid(object))
+                             : nullptr);
+    object.onUpdate(deltaTime);
   }
 
+  SFS_CPU_SCOPE("update/scene");
   onUpdate(deltaTime);
 }
 
@@ -194,8 +204,12 @@ void Scene::render()
   m_registry.forEachSystem(
       [](System& system)
       {
-        if (system.enabled())
-          system.render();
+        if (!system.enabled())
+          return;
+        const cpuTiming::Scope timed(
+            cpuTiming::enabled() ? cpuTiming::label("render/", typeid(system))
+                                 : nullptr);
+        system.render();
       });
 
   onRender();

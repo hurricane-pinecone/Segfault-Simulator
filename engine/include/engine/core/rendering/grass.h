@@ -20,8 +20,9 @@ namespace sfs
 
 // Grass: the ground it grows on (GrassGround), the maps that say how it
 // grows there (GrassMaps), and where it's flattened (GrassTrample). The GPU
-// grows the blades themselves each frame, from these (see GrassModule and
-// meshGrassGrow.wgsl): none are stored.
+// grows the blades themselves from these (see GrassModule and
+// meshGrassGrow.wgsl), keeping them in tiles until what they grow from
+// changes (GrassTileCache).
 
 /** About how wide a grass grid's texel is, in world units. */
 inline constexpr float kGrassTexel = 0.25f;
@@ -74,6 +75,52 @@ struct GrassGrid
 };
 
 /**
+ * A window of a big mesh's ground for grass to grow in (see GrassModule): a
+ * square `half` either side of `center`, cut to the mesh's `min`..`max` (all
+ * the mesh's own XY). Its texels are `texel` across, or twice, four times...
+ * that, so it has at most kGrassMaxTexels a side; and they sit on multiples
+ * of `texel` from the mesh's origin, wherever the window is. So a window's
+ * ground meets another mesh's on the same lattice texel for texel (a hole in
+ * one where the other is), and the same texels come back as it moves.
+ * Empty if the square misses the mesh.
+ */
+GrassGrid grassWindow(glm::vec2 min,
+                      glm::vec2 max,
+                      glm::vec2 center,
+                      float half,
+                      float texel);
+
+/**
+ * How high a grass ground is (GrassGround), in blocks of its texels: the
+ * lowest and highest ground in each, so the range under any rectangle is
+ * quick to find (and small to keep).
+ */
+class GrassHeights
+{
+public:
+  /** Texels a side of a block. */
+  static constexpr int kBlock = 8;
+
+  GrassHeights() = default;
+  /** Of `texels` (xyz normal, zero where there's no ground; w height) over
+   * `grid`. */
+  GrassHeights(const GrassGrid& grid, std::span<const glm::vec4> texels);
+
+  const GrassGrid& grid() const { return m_grid; }
+  /**
+   * The lowest and highest ground (the mesh's own Z) over texels `from` to
+   * `to` (exclusive, clamped to the grid), near enough: over the blocks they
+   * touch. Low above high if there's none.
+   */
+  glm::vec2 range(glm::ivec2 from, glm::ivec2 to) const;
+
+private:
+  GrassGrid m_grid;
+  glm::ivec2 m_blocks{0, 0};
+  std::vector<glm::vec2> m_ranges; // each block's (low above high: none)
+};
+
+/**
  * The ground grass grows on: a mesh seen from above, as a grid. Each texel
  * has the height (the mesh's own Z) and normal of the highest surface there
  * that faces up enough (when placed by the entity's transform), or nothing.
@@ -87,12 +134,14 @@ public:
    * The ground of a mesh's triangles (`positions` indexed by `indices`, its
    * own space), placed by `model`, on a grid over its XY with texels about
    * kGrassTexel world units across. With `uvs` (one a position), each texel
-   * keeps the mesh's texture coordinates there too (uv()).
+   * keeps the mesh's texture coordinates there too (uv()). With `window`,
+   * only the ground on that grid (e.g. a grassWindow()), and on it.
    */
   static GrassGround build(std::span<const glm::vec3> positions,
                            std::span<const uint32_t> indices,
                            const glm::mat4& model,
-                           std::span<const glm::vec2> uvs = {});
+                           std::span<const glm::vec2> uvs = {},
+                           const GrassGrid* window = nullptr);
 
   const GrassGrid& grid() const { return m_grid; }
   bool empty() const { return m_texels.empty(); }
@@ -115,6 +164,9 @@ public:
   /** How many texels have ground. */
   std::size_t groundTexels() const;
 
+  /** How high its ground is, roughly, for finding it quickly. */
+  const GrassHeights& heights() const { return m_heights; }
+
   /**
    * The mesh's texture coordinates at texel (x, y)'s ground (built with the
    * mesh's UVs; else none): where a terrain's splat map is there.
@@ -130,6 +182,7 @@ private:
   GrassGrid m_grid;
   std::vector<glm::vec4> m_texels; // xyz normal, w height
   std::vector<glm::vec2> m_uvs;    // per texel, if built with UVs
+  GrassHeights m_heights;
 };
 
 /**
@@ -211,6 +264,15 @@ public:
   std::pair<glm::ivec2, glm::ivec2> takeChanged();
   /** Mark everything changed (e.g. for a fresh upload). */
   void markAllChanged();
+  /** Texels a side of the blocks takeGrownChanged() tells of. */
+  static constexpr int kGrownBlock = 16;
+  /**
+   * Where Coverage or Length (what the blades are grown from) changed since
+   * the last call, as rectangles of texels (xy min, zw max exclusive): the
+   * kGrownBlock blocks with a change, run together along their rows. Then
+   * forgets them. A change to a data channel isn't one of them.
+   */
+  std::vector<glm::ivec4> takeGrownChanged();
 
   /**
    * The GPU's two RGBA8 images of a rectangle of texels (rows from its min y):
@@ -240,12 +302,18 @@ private:
   {
     return std::size_t(y) * m_grid.size.x + x;
   }
-  void touch(int x, int y);
+  void touch(Channel channel, int x, int y);
+  void markAllGrown();
 
   GrassGrid m_grid;
   std::array<std::vector<uint8_t>, kChannels> m_values;
   glm::ivec2 m_changedMin{0, 0};
   glm::ivec2 m_changedMax{0, 0};
+  // Each kGrownBlock block: whether its Coverage or Length changed (all of
+  // them, with m_allGrown).
+  std::vector<uint8_t> m_grownBlocks;
+  bool m_anyGrown = false;
+  bool m_allGrown = false;
 };
 
 /** What blades grow like (GrassComponent's settings for them). */
@@ -292,7 +360,10 @@ public:
    * its edge. A moving one lays it down the way it's going (fanning out a
    * little at its sides), all along its path; a still one presses it outward.
    *
-   * @return whether the map changed (it needs uploading again)
+   * Only grass that's down, or that a bender reaches, is worked on: a still
+   * bender, after it's first pressed its grass, changes nothing.
+   *
+   * @return whether its image() changed (where: takeChanged())
    */
   bool
   update(float seconds, std::span<const GrassBender> benders, float recovery);
@@ -306,7 +377,18 @@ public:
    * RGBA8, rows from the map's min y: rg the direction (x 0.5 + 0.5), b how
    * flattened, a 255.
    */
-  std::vector<uint8_t> image() const;
+  std::vector<uint8_t> image() const { return m_pixels; }
+  /** image() of a rectangle of texels (rows from its min y). */
+  void pixels(glm::ivec2 from, glm::ivec2 to, std::vector<uint8_t>& out) const;
+
+  /**
+   * The texels whose image() changed since the last call, as a rectangle (min
+   * inclusive, max exclusive; empty if none), then forgets them. A new map's
+   * are all of it.
+   */
+  std::pair<glm::ivec2, glm::ivec2> takeChanged();
+  /** Mark everything changed (e.g. for a fresh upload). */
+  void markAllChanged();
 
   glm::ivec2 size() const { return m_size; }
   glm::vec2 min() const { return m_min; }
@@ -314,6 +396,16 @@ public:
 
 private:
   int indexOf(glm::vec2 point) const; // -1 off the map
+  int tileOf(int x, int y) const { return (y / kTile) * m_tiles.x + x / kTile; }
+
+  // Square tiles of texels, each marked if any of its grass is down (and, in
+  // an update, if it's to be looked at for changes).
+  static constexpr int kTile = 16;
+  enum TileFlags : uint8_t
+  {
+    kDown = 1,
+    kTouched = 2,
+  };
 
   glm::vec2 m_min{0.0f};
   glm::vec2 m_max{0.0f};
@@ -322,6 +414,11 @@ private:
   std::vector<float> m_ground; // per texel: the ground's world height, or none
   std::vector<float> m_amount;
   std::vector<glm::vec2> m_direction;
+  std::vector<uint8_t> m_pixels; // image(), kept up to date
+  glm::ivec2 m_tiles{0, 0};
+  std::vector<uint8_t> m_tileFlags;
+  glm::ivec2 m_changedMin{0, 0};
+  glm::ivec2 m_changedMax{0, 0};
 };
 
 } // namespace sfs

@@ -27,6 +27,18 @@ void HistorySteps::push(const nlohmann::json& before,
   trim();
 }
 
+void HistorySteps::pushAssetEdit(std::shared_ptr<const AssetEdit> edit, Selection selection)
+{
+  for (const Step& step : m_redo)
+    m_bytes -= step.bytes();
+  m_redo.clear();
+  // No scene of its own: an empty one, shared.
+  static const Text none = text(nullptr);
+  m_undo.push_back({none, none, selection, selection, std::move(edit)});
+  m_bytes += m_undo.back().bytes();
+  trim();
+}
+
 void HistorySteps::amendLast(const nlohmann::json& after, Selection selectionAfter)
 {
   if (m_undo.empty())
@@ -45,7 +57,9 @@ std::optional<HistorySteps::Restore> HistorySteps::undo()
     return std::nullopt;
   Step step = std::move(m_undo.back());
   m_undo.pop_back();
-  Restore restore{nlohmann::json::parse(*step.before), step.selectionBefore};
+  Restore restore{step.asset ? nlohmann::json() : nlohmann::json::parse(*step.before),
+                  step.selectionBefore,
+                  step.asset};
   m_redo.push_back(std::move(step));
   return restore;
 }
@@ -56,7 +70,9 @@ std::optional<HistorySteps::Restore> HistorySteps::redo()
     return std::nullopt;
   Step step = std::move(m_redo.back());
   m_redo.pop_back();
-  Restore restore{nlohmann::json::parse(*step.after), step.selectionAfter};
+  Restore restore{step.asset ? nlohmann::json() : nlohmann::json::parse(*step.after),
+                  step.selectionAfter,
+                  step.asset};
   m_undo.push_back(std::move(step));
   return restore;
 }
@@ -87,6 +103,11 @@ void HistorySteps::rewrite(const std::function<void(nlohmann::json&)>& edit)
   for (std::deque<Step>* steps : {&m_undo, &m_redo})
     for (Step& step : *steps)
     {
+      if (step.asset)
+      {
+        m_bytes += step.bytes();
+        continue;
+      }
       rewrite(step.before);
       rewrite(step.after);
       m_bytes += step.bytes();

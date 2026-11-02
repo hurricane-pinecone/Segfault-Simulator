@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <span>
 #include <string>
@@ -1242,6 +1243,111 @@ int main()
     CHECK(reportErrors());
   }
 
+  TEST("grass hidden behind what's drawn opaque should be left out, the "
+       "picture just as it is with it all grown")
+  {
+    // A 20 x 20 lawn seen low down, all but its near end behind a wall, with
+    // ambient occlusion (whose depth shows what's hidden); drawn as ever,
+    // and by a renderer that grows hidden grass too (SFS_GRASS_UNCULLED).
+    const MeshData lawn = meshes::plane({20.0f, 20.0f});
+    std::vector<glm::vec3> positions;
+    for (const MeshVertex& vertex : lawn.vertices)
+      positions.push_back(vertex.position);
+    const GrassGround ground =
+        GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
+    MeshMaterial green;
+    green.baseColor = {0.3f, 0.7f, 0.2f, 1.0f};
+    MeshInstance wallAt;
+    wallAt.model = glm::translate(glm::mat4(1.0f), {0.0f, -2.0f, 0.0f});
+    const auto picture = [&](Harness& on)
+    {
+      const GrassHandle grass = on.renderer.createGrass(ground);
+      const MeshHandle plane = on.renderer.createMesh(lawn);
+      const MeshHandle wall =
+          on.renderer.createMesh(meshes::box({20.0f, 0.5f, 4.0f}));
+      const MaterialHandle look = on.renderer.createMaterial(green);
+      const MaterialHandle looks[] = {look};
+      MeshBatch wallBatch;
+      wallBatch.mesh = wall;
+      wallBatch.materials = looks;
+      wallBatch.instances = {&wallAt, 1};
+      const GrassBatch batch{grass,
+                             look,
+                             plane,
+                             glm::mat4(1.0f),
+                             {.density = 100.0f, .height = 0.3f},
+                             0.0f,
+                             40.0f};
+      std::vector<uint8_t> pixels;
+      // (A few frames, as a game would draw them.)
+      for (int drawn = 0; drawn < 3; ++drawn)
+        pixels = drawPlane(
+            on,
+            plane,
+            look,
+            1.0f,
+            [&](FrameParams& frame)
+            {
+              frame.cameraPosition = {0.0f, -12.0f, 1.0f};
+              frame.cameraForward =
+                  glm::normalize(glm::vec3(0.0f, 10.0f, -0.6f));
+              frame.view = glm::lookAt(frame.cameraPosition,
+                                       glm::vec3(0.0f, -2.0f, 0.4f),
+                                       glm::vec3(0.0f, 0.0f, 1.0f));
+              frame.projection = glm::perspectiveRH_ZO(0.9f, 1.0f, 0.1f, 50.0f);
+              frame.viewProjection = frame.projection * frame.view;
+              frame.nearPlane = 0.1f;
+              frame.farPlane = 50.0f;
+              frame.bloom.enabled = false;
+              frame.ambientOcclusion.enabled = true;
+            },
+            {},
+            {&wallBatch, 1},
+            {&batch, 1});
+      on.renderer.destroyGrass(grass);
+      on.renderer.destroyMaterial(look);
+      return pixels;
+    };
+    const std::vector<uint8_t> culled = picture(harness);
+    const auto setUnculled = [](bool on)
+    {
+#ifdef _WIN32
+      _putenv_s("SFS_GRASS_UNCULLED", on ? "1" : "");
+#else
+      if (on)
+        setenv("SFS_GRASS_UNCULLED", "1", 1);
+      else
+        unsetenv("SFS_GRASS_UNCULLED");
+#endif
+    };
+    setUnculled(true);
+    Harness all(context);
+    const bool made = all.initialize();
+    setUnculled(false);
+    CHECK(made);
+    const std::vector<uint8_t> grown = made ? picture(all) : culled;
+    CHECK(!culled.empty() && culled.size() == grown.size());
+    if (!culled.empty() && culled.size() == grown.size())
+    {
+      // Grass in front of the wall (low in the view, green), and the same
+      // picture, but for the odd pixel where blades level with each other
+      // were drawn in another order.
+      const uint8_t* front =
+          &culled[(std::size_t(kSize.y - 4) * kSize.x + kSize.x / 2) * 4];
+      CHECK(front[1] > front[0] + 20);
+      std::size_t differ = 0;
+      for (std::size_t i = 0; i < culled.size(); i += 4)
+        for (std::size_t c = 0; c < 3; ++c)
+          if (std::abs(int(culled[i + c]) - int(grown[i + c])) > 8)
+          {
+            ++differ;
+            break;
+          }
+      CHECK(differ * 200 < culled.size() / 4);
+    }
+    CHECK(reportErrors());
+  }
+
   TEST("a grass material should see its maps' data, on the blades and the "
        "ground")
   {
@@ -1891,8 +1997,10 @@ int main()
   crateBatch.mesh = crate;
   crateBatch.instances = crates;
   glm::mat4 cornerView(1.0f);
-  const auto corner =
-      [&](const AmbientOcclusionSettings& occlusion, bool physical)
+  const auto corner = [&](const AmbientOcclusionSettings& occlusion,
+                          bool physical,
+                          const ContactShadowSettings& contact = {},
+                          float sunHeight = 10.0f)
   {
     const MeshBatch batches[] = {crateBatch};
     return drawPlane(
@@ -1903,9 +2011,9 @@ int main()
         [&](FrameParams& frame)
         {
           if (physical)
-            physicalSky(frame, sunAt(10.0f, 200.0f));
+            physicalSky(frame, sunAt(sunHeight, 200.0f));
           frame.bloom.enabled = false;
-          frame.lighting.sun.direction = sunAt(10.0f, 200.0f);
+          frame.lighting.sun.direction = sunAt(sunHeight, 200.0f);
           frame.lighting.sun.diffuseStrength = 0.15f;
           frame.lighting.ambient = 0.8f;
           frame.cameraPosition = {2.2f, -2.2f, 2.0f};
@@ -1919,6 +2027,7 @@ int main()
           frame.nearPlane = 0.1f;
           frame.farPlane = 50.0f;
           frame.ambientOcclusion = occlusion;
+          frame.contactShadows = contact;
           cornerView = frame.viewProjection;
         },
         {},
@@ -1969,6 +2078,35 @@ int main()
     const std::vector<uint8_t> before = corner({}, false);
     corner(occlusion, false);
     CHECK(corner({}, false) == before);
+    CHECK(reportErrors());
+  }
+
+  TEST("contact shadows should darken the ground at the foot of a box on its "
+       "side away from the sun, under a physical sky only")
+  {
+    const ContactShadowSettings contact{
+        .enabled = true, .length = 0.5f, .thickness = 0.5f, .strength = 1.0f};
+    const std::vector<uint8_t> open = corner({}, true, {}, 35.0f);
+    const std::vector<uint8_t> shaded = corner({}, true, contact, 35.0f);
+    // Just outside the box's +X face (the sun's from -X), on the ground; and
+    // far from it.
+    const glm::ivec2 foot = pixelOf({0.29f, -0.05f, 0.0f});
+    const glm::ivec2 away = pixelOf({0.85f, -0.85f, 0.0f});
+    const glm::ivec3 footOpen = pixelAt(open, foot.x, foot.y);
+    const glm::ivec3 footShaded = pixelAt(shaded, foot.x, foot.y);
+    const glm::ivec3 awayOpen = pixelAt(open, away.x, away.y);
+    const glm::ivec3 awayShaded = pixelAt(shaded, away.x, away.y);
+    CHECK(footShaded.g < footOpen.g - 10);
+    CHECK(std::abs(awayShaded.g - awayOpen.g) <= 3);
+    if (footShaded.g >= footOpen.g - 10 ||
+        std::abs(awayShaded.g - awayOpen.g) > 3)
+      std::printf("    (foot %d -> %d, away %d -> %d)\n",
+                  footOpen.g,
+                  footShaded.g,
+                  awayOpen.g,
+                  awayShaded.g);
+    // Under a flat sky they're not drawn: exactly as without them.
+    CHECK(corner({}, false, contact, 35.0f) == corner({}, false, {}, 35.0f));
     CHECK(reportErrors());
   }
   harness.renderer.destroyMesh(crate);
@@ -2081,6 +2219,81 @@ int main()
                   behind.r,
                   behind.g,
                   behind.b);
+    CHECK(reportErrors());
+  }
+
+  TEST("rain should wet the open ground and not the ground under a roof, and "
+       "its overhead map, streaks, splashes and drips should build")
+  {
+    // A roof over the plane's left half, above the camera (out of view): on
+    // rain's overhead map, but not in the picture.
+    const MeshHandle roof =
+        harness.renderer.createMesh(meshes::box({1.2f, 3.0f, 0.2f}));
+    MeshInstance roofAt;
+    roofAt.model =
+        glm::translate(glm::mat4(1.0f), glm::vec3(-0.6f, 0.0f, 6.0f));
+    const MeshInstance roofs[] = {roofAt};
+    const MaterialHandle materials[] = {matteMaterial};
+    MeshBatch roofBatch;
+    roofBatch.mesh = roof;
+    roofBatch.materials = materials;
+    roofBatch.instances = roofs;
+    roofBatch.shadowInstances = roofs;
+    const MeshBatch batches[] = {roofBatch};
+    const auto draw = [&](float rain, float wetness)
+    {
+      return drawPlane(
+          harness,
+          skyPlane,
+          matteMaterial,
+          1.0f,
+          [&](FrameParams& frame)
+          {
+            frame.bloom.enabled = false;
+            frame.lighting.ambient = 1.0f;
+            // The sun straight down, its shadow map well below the roof.
+            frame.lighting.sun.direction = {0.0f, 0.0f, 1.0f};
+            frame.shadows.enabled = true;
+            frame.lightViewProjection =
+                glm::orthoRH_ZO(-5.0f, 5.0f, -5.0f, 5.0f, 0.1f, 4.0f) *
+                glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f),
+                            glm::vec3(0.0f),
+                            glm::vec3(0.0f, 1.0f, 0.0f));
+            frame.weather.rain = rain;
+            frame.weather.wetness = wetness;
+          },
+          {},
+          batches);
+    };
+    // A column's median green (drips may fall across a few of its pixels).
+    const auto column = [&](const std::vector<uint8_t>& pixels, int x)
+    {
+      std::vector<int> greens;
+      for (int y = 8; y < kSize.y - 8; ++y)
+        greens.push_back(pixelAt(pixels, x, y).g);
+      std::nth_element(
+          greens.begin(), greens.begin() + greens.size() / 2, greens.end());
+      return greens[greens.size() / 2];
+    };
+    const std::vector<uint8_t> dry = draw(0.0f, 0.0f);
+    const std::vector<uint8_t> wet = draw(0.0f, 1.0f);
+    // Under the roof (x -0.5) and in the open (x 0.6).
+    const int shelteredDry = column(dry, 16);
+    const int shelteredWet = column(wet, 16);
+    const int openDry = column(dry, 51);
+    const int openWet = column(wet, 51);
+    CHECK(openDry > 40);
+    CHECK(std::abs(shelteredWet - shelteredDry) <= 3);
+    CHECK(openWet < openDry - 10);
+    if (!(std::abs(shelteredWet - shelteredDry) <= 3 && openWet < openDry - 10))
+      std::printf("    (sheltered %d -> %d, open %d -> %d)\n",
+                  shelteredDry,
+                  shelteredWet,
+                  openDry,
+                  openWet);
+    // A downpour: every part of the rain drawn.
+    CHECK(!draw(1.0f, 1.0f).empty());
+    harness.renderer.destroyMesh(roof);
     CHECK(reportErrors());
   }
 

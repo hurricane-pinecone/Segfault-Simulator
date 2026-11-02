@@ -2,6 +2,7 @@
 
 #include <engine/core/rendering/ambientOcclusion.h>
 #include <engine/core/rendering/colorGrading.h>
+#include <engine/core/rendering/contactShadows.h>
 #include <engine/core/rendering/fog.h>
 #include <engine/core/rendering/visualStyle.h>
 
@@ -31,6 +32,11 @@ int main()
     grading.gain = {1.0f, 0.95f, 0.9f};
     grading.vignette = 0.3f;
     grading.vignetteSoftness = 0.7f;
+    grading.autoExposure = true;
+    grading.exposureTarget = 0.25f;
+    grading.exposureDarken = 2.0f;
+    grading.exposureBrighten = 0.0f;
+    grading.exposureSpeed = 3.0f;
     CHECK(!grading.neutral());
     CHECK(ColorGrading::fromJson(grading.toJson()) == grading);
     CHECK(grading.toJson()["toneMapper"] == "agx");
@@ -161,6 +167,7 @@ int main()
                             .startDistance = 10.0f,
                             .maxOpacity = 0.7f,
                             .sunGlow = 0.4f};
+    style.temporalAntiAliasing = true;
     const std::optional<VisualStyle> loaded =
         VisualStyle::fromJson(style.toJson());
     CHECK(loaded && *loaded == style);
@@ -173,6 +180,22 @@ int main()
     CHECK(partial->ambientOcclusion->samples == kMaxOcclusionSamples);
     CHECK(testing::approx(partial->ambientOcclusion->radius, 1.0f));
     CHECK(!partial->fog->enabled); // as the default
+
+    // Contact shadows, the same way.
+    CHECK(!none.toJson().contains("contactShadows"));
+    CHECK(!plain->contactShadows);
+    VisualStyle contact;
+    contact.contactShadows = ContactShadowSettings{
+        .enabled = true, .length = 0.7f, .thickness = 0.4f, .strength = 0.5f};
+    const std::optional<VisualStyle> reloaded =
+        VisualStyle::fromJson(contact.toJson());
+    CHECK(reloaded && *reloaded == contact);
+    const std::optional<VisualStyle> partialContact =
+        VisualStyle::fromJson({{"contactShadows", {{"enabled", true}}}});
+    CHECK(partialContact && partialContact->contactShadows);
+    CHECK(partialContact->contactShadows->enabled);
+    CHECK(testing::approx(partialContact->contactShadows->length,
+                          ContactShadowSettings{}.length));
 
     // Material overrides, by name, only when there are some.
     CHECK(!none.toJson().contains("materials"));

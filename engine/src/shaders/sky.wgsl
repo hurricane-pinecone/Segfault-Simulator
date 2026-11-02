@@ -1,8 +1,9 @@
 // A physical sky's reflections (after skyCommon.wgsl): fs_radiance renders
 // the sky, seen from the ground, into an octahedral texture (the background
-// and the lit pass's haze read it); fs_prefilter blurs that into each mip of
-// the reflections the lit pass reads, sharp to rough (GGX, importance
-// sampled). Each draws one full-screen triangle.
+// and the lit pass's haze read it); fs_clouds draws its clouds over it into
+// another; fs_prefilter blurs that into each mip of the reflections the lit
+// pass reads, sharp to rough (GGX, importance sampled). Each draws one
+// full-screen triangle.
 //
 // The atmosphere is PhysicalSky's (sky.cpp), worked out the same way, so what
 // the CPU's diffuse light and sun see is what's drawn: single scattering by
@@ -18,6 +19,10 @@ struct Sky {
   ground: vec4f,   // rgb what the ground reflects
   night: vec4f,    // rgb the night glow at the zenith
   planet: vec4f,   // x ground radius, y top of the air, z the viewer's altitude, w multiple scattering's share
+  clouds: vec4f,       // xy the viewer's place in the clouds' pattern (km), z cover, w darkness
+  cloudLight: vec4f,   // rgb the light on their tops, w their altitude (km)
+  cloudBase: vec4f,    // rgb their undersides, lit through
+  cloudToLight: vec4f, // xyz toward that light
 }
 
 struct SkyPass {
@@ -133,6 +138,26 @@ fn skyRadiance(direction: vec3f) -> vec3f {
 @fragment
 fn fs_radiance(in: Varyings) -> @location(0) vec4f {
   return vec4f(skyRadiance(octDecode(in.uv)), 1.0);
+}
+
+// The sky with its clouds (from fs_radiance's, the source), as the
+// background draws them.
+@fragment
+fn fs_clouds(in: Varyings) -> @location(0) vec4f {
+  let direction = octDecode(in.uv);
+  let clear = textureSampleLevel(source, linearClamp, in.uv, 0.0).rgb;
+  if (sky.clouds.z <= 0.0) {
+    return vec4f(clear, 1.0);
+  }
+  let layer = CloudLayer(sky.clouds.xy, sky.clouds.z, sky.clouds.w, sky.cloudLight.rgb, sky.cloudBase.rgb,
+                         sky.cloudToLight.xyz);
+  var color = clear;
+  if (direction.z > 0.0) {
+    color = cloudySky(clear, layer.cover);
+    let clouds = cloudsToward(direction, layer);
+    color = mix(color, clouds.rgb, clouds.a);
+  }
+  return vec4f(color, 1.0);
 }
 
 // The i-th of n points spread evenly over the unit square (Hammersley).

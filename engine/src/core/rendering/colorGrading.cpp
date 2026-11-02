@@ -82,6 +82,11 @@ nlohmann::json ColorGrading::toJson() const
       {"gain", vec3Json(gain)},
       {"vignette", vignette},
       {"vignetteSoftness", vignetteSoftness},
+      {"autoExposure", autoExposure},
+      {"exposureTarget", exposureTarget},
+      {"exposureDarken", exposureDarken},
+      {"exposureBrighten", exposureBrighten},
+      {"exposureSpeed", exposureSpeed},
   };
 }
 
@@ -110,6 +115,13 @@ ColorGrading ColorGrading::fromJson(const nlohmann::json& json,
   readVec3(json, "gain", out.gain);
   read(json, "vignette", out.vignette);
   read(json, "vignetteSoftness", out.vignetteSoftness);
+  if (const auto it = json.find("autoExposure");
+      it != json.end() && it->is_boolean())
+    out.autoExposure = it->get<bool>();
+  read(json, "exposureTarget", out.exposureTarget);
+  read(json, "exposureDarken", out.exposureDarken);
+  read(json, "exposureBrighten", out.exposureBrighten);
+  read(json, "exposureSpeed", out.exposureSpeed);
   return out;
 }
 

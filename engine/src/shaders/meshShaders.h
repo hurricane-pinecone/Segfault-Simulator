@@ -25,6 +25,15 @@ inline std::string meshPass(std::string_view surface, std::string_view pass)
   source += skyCommonWgsl;
   source += meshSurfaceWgsl;
   source += surface;
+  // Vertices where they are, unless the surface places them itself; how
+  // solid it is from the surface, unless it says more cheaply.
+  if (surface.find("fn surfaceVertex(") == std::string_view::npos)
+    source += "\nfn surfaceVertex(v: SurfaceVertex) -> SurfaceVertex {\n"
+              "  return v;\n}\n";
+  if (surface.find("fn surfaceAlpha(") == std::string_view::npos)
+    source += "\nfn surfaceAlpha(in: SurfaceIn) -> vec2f {\n"
+              "  let s = surface(in);\n"
+              "  return vec2f(s.alpha, s.alphaClip);\n}\n";
   source += pass;
   return source;
 }
@@ -51,6 +60,22 @@ inline std::string litPass(std::string_view vertex)
   return std::string(meshLitWgsl) + std::string(fogWgsl) + std::string(vertex);
 }
 
+/** Grass's lit vertex stage (for litPass()): its blades, and its ground. */
+inline std::string grassPass()
+{
+  return std::string(grassBladeWgsl) + std::string(meshGrassWgsl);
+}
+
+/**
+ * Grass's blades into the sun's shadow map (no surface: depth only; the
+ * sky's helpers, which the shared declarations use).
+ */
+inline std::string grassShadowPass()
+{
+  return std::string(meshCommonWgsl) + std::string(skyCommonWgsl) +
+         std::string(grassBladeWgsl) + std::string(meshGrassShadowWgsl);
+}
+
 /**
  * The passes working out ambient occlusion (ambientOcclusion.wgsl): the
  * depth and normals of what's drawn (a mesh pass), then the occlusion and
@@ -59,6 +84,16 @@ inline std::string litPass(std::string_view vertex)
 inline std::string occlusionPasses()
 {
   return std::string(ambientOcclusionWgsl);
+}
+
+/**
+ * Rain's streaks, splashes and drips (rain.wgsl), drawn in the lit pass and lit
+ * as its surfaces are: the lit pass's lighting with the standard surface (its
+ * fragment stage unused), then rain's own stages.
+ */
+inline std::string rainPass()
+{
+  return meshPass(meshStandardSurfaceWgsl, litPass(rainWgsl));
 }
 
 /** The standard surface's WGSL (for materials without a graph). */

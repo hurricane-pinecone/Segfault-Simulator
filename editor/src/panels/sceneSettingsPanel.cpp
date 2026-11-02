@@ -279,8 +279,8 @@ void sceneSkyAndShadows(sfs::RenderSystem& render, EditorHistory& history)
   ImGui::PopID();
 }
 
-// Ambient occlusion and height fog (a 3D scene's). A visual style with its
-// own stands in for each while it's chosen.
+// Ambient occlusion, contact shadows and height fog (a 3D scene's). A visual
+// style with its own stands in for each while it's chosen.
 void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
 {
   if (render.space2D() ||
@@ -298,12 +298,48 @@ void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
         "The visual style's ambient occlusion stands in for this");
   ImGui::PopID();
 
+  ImGui::PushID("contact");
+  sfs::ContactShadowSettings contact = render.contactShadowSettings();
+  if (lookWidgets::contactShadows(&history, contact))
+    render.setContactShadowSettings(contact);
+  if (style && style->contactShadows)
+    ImGui::TextDisabled("The visual style's contact shadows stand in for this");
+  ImGui::PopID();
+
   ImGui::PushID("fog");
   sfs::FogSettings fog = render.fogSettings();
   if (lookWidgets::fog(&history, fog))
     render.setFogSettings(fog);
   if (style && style->fog)
     ImGui::TextDisabled("The visual style's fog stands in for this");
+  ImGui::PopID();
+}
+
+// The weather (a 3D scene's): clouds, wind, rain. A game usually drives it
+// each frame; set here, it's what the scene starts with (or keeps, if the
+// game leaves it).
+void sceneWeather(sfs::RenderSystem& render, EditorHistory& history)
+{
+  if (render.space2D() ||
+      !ImGui::CollapsingHeader("Weather", ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+  ImGui::PushID("weather");
+  sfs::SceneWeather weather = render.weather();
+  sfs::SceneLighting lighting = render.lighting();
+  if (lookWidgets::weather(&history, weather, lighting.cloudCover))
+  {
+    render.setWeather(weather);
+    render.setLighting(lighting);
+  }
+  ImGui::PopID();
+
+  ImGui::PushID("rain");
+  sfs::RainSettings rain = render.rainSettings();
+  if (lookWidgets::rain(&history, rain))
+    render.setRainSettings(rain);
+  if (const sfs::VisualStyle* style = render.visualStyle();
+      style && style->rain)
+    ImGui::TextDisabled("The visual style's rain stands in for this");
   ImGui::PopID();
 }
 } // namespace
@@ -320,6 +356,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   sceneLook(context, render, history);
   sceneSkyAndShadows(render, history);
   sceneAtmosphere(render, history);
+  sceneWeather(render, history);
   ImGui::Separator();
 
   // Which view the game starts from.

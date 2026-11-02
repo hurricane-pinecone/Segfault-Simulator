@@ -29,6 +29,8 @@ struct Post {
 @group(0) @binding(1) var linearClamp: sampler;
 @group(0) @binding(2) var<uniform> post: Post;
 @group(0) @binding(3) var glow: texture_2d<f32>; // the composite's bloom
+// Auto exposure's correction, in stops (r; exposure.wgsl): 0 when it's off.
+@group(0) @binding(4) var exposureMap: texture_2d<f32>;
 
 struct Varyings {
   @builtin(position) position: vec4f,
@@ -206,5 +208,6 @@ fn fs_composite(in: Varyings) -> @location(0) vec4f {
   if (post.grade.x < 0.5) {
     return vec4f(min(scene + bloom, vec3f(1.0)), 1.0);
   }
-  return vec4f(grade(scene + bloom, in.uv), 1.0);
+  let corrected = exp2(textureLoad(exposureMap, vec2i(0), 0).r);
+  return vec4f(grade((scene + bloom) * corrected, in.uv), 1.0);
 }

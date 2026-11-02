@@ -277,6 +277,32 @@ View ProgressBar(float fraction)
   return View(node);
 }
 
+View Slider(float value,
+            std::function<void(float)> change,
+            float low,
+            float high,
+            float step)
+{
+  auto node = make(Node::Kind::Slider);
+  node->value = value;
+  node->change = std::move(change);
+  node->low = low;
+  node->high = high;
+  node->step = step;
+  return View(node);
+}
+
+View Toggle(std::string label, bool on, std::function<void(bool)> change)
+{
+  auto node = make(Node::Kind::Toggle);
+  node->children.push_back(Text(std::move(label)));
+  node->value = on ? 1.0f : 0.0f;
+  if (change)
+    node->change = [change = std::move(change)](float to)
+    { change(to > 0.5f); };
+  return View(node);
+}
+
 View Spacer(float minLength)
 {
   auto node = make(Node::Kind::Spacer);

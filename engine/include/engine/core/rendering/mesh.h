@@ -98,6 +98,10 @@ struct MeshMaterial
   // Shows its colour as it is, whatever light falls on it (particles, glows,
   // vivid marks): drawn as emission.
   bool unlit = false;
+  // Both its sides drawn (glTF's doubleSided: thin sheets, and models made
+  // with their faces turned either way), a back face lit as seen from
+  // behind. Otherwise only its front faces are.
+  bool doubleSided = false;
 
   // A material graph's shader (see materialGraphCompiler.h), and the values
   // and textures it reads, in its order (a null texture reads white). Null:

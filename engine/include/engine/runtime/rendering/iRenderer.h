@@ -1,6 +1,8 @@
 #pragma once
 
+#include "engine/core/rendering/deformation.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/puddles.h"
 #include "engine/runtime/rendering/frame.h"
 #include "engine/runtime/rendering/uiDraw.h"
 #include "glm/glm/ext/vector_int2.hpp"
@@ -85,12 +87,66 @@ public:
   }
 
   /**
+   * Where water stands on the ground drawn with a terrain material (see
+   * PuddleModule and puddles.h): the window to find it in, the ground under
+   * it and its settings, kept with the material through its updates until
+   * set again (empty: none). The renderer finds the puddles again (on the
+   * GPU) when they change, or the material's deformation window moves.
+   * Ignored for other materials.
+   */
+  virtual void setTerrainPuddles(MaterialHandle material,
+                                 const TerrainPuddles& puddles)
+  {
+    (void)material;
+    (void)puddles;
+  }
+
+  /**
+   * How the ground drawn with a terrain material is deformed (see
+   * DeformationModule): its window of the map, its patch's material (drawn
+   * displaced near the camera; the material itself is cut away under it and
+   * parallax-mapped beyond) and the ground under the patch, kept with the
+   * material through its updates until set again (empty: none). The
+   * window's texels are written with writeTerrainDeformation(); they start
+   * flat. Ignored for other materials.
+   */
+  virtual void setTerrainDeformation(MaterialHandle material,
+                                     const TerrainDeformation& deformation)
+  {
+    (void)material;
+    (void)deformation;
+  }
+
+  /**
+   * One tile of a terrain material's deformation window (setTerrainDeformation
+   * first): DeformationMap::kTile square from world texel `from` (a multiple
+   * of the tile), as half floats (DeformationMap::halves()).
+   */
+  virtual void writeTerrainDeformation(MaterialHandle material,
+                                       glm::ivec2 from,
+                                       std::span<const uint16_t> halves)
+  {
+    (void)material;
+    (void)from;
+    (void)halves;
+  }
+
+  /**
    * Upload the ground a grass field grows on (see grass.h), to draw with
    * drawGrass(). Its maps start unpainted, and nothing's flattened.
    * @return a handle, or an invalid one if the ground is empty or the upload
    * failed.
    */
   virtual GrassHandle createGrass(const GrassGround& ground) = 0;
+
+  /**
+   * The field grows on another ground now (a big mesh's grass, as its window
+   * moves with the camera): its maps and trample map are kept until updated
+   * (over the new grid), and so is its room for blades. An empty ground is
+   * ignored.
+   */
+  virtual void updateGrassGround(GrassHandle grass,
+                                 const GrassGround& ground) = 0;
 
   /**
    * Part of the field's maps changed (or all of them, over a new grid: then

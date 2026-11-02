@@ -288,6 +288,47 @@ int main()
     CHECK(target.render.effectiveFog() == fog);
   }
 
+  TEST("the weather should round-trip; a scene without any saves as before "
+       "it existed")
+  {
+    World plain;
+    const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
+    CHECK(!plainSaved["render"].contains("weather"));
+
+    World source;
+    SceneWeather weather;
+    weather.rain = 0.5f;
+    weather.wetness = 0.75f;
+    weather.puddles = 0.25f;
+    weather.wind = {-2.0f, 6.0f};
+    weather.cloudDarkness = 0.5f;
+    source.render.setWeather(weather);
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["render"]["weather"]["rain"] == 0.5);
+    World target;
+    target.serializer().load(saved, target.scene);
+    CHECK(target.render.weather() == weather);
+    CHECK(target.serializer().save(target.scene) == saved);
+  }
+
+  TEST("contact shadows should round-trip; a scene without them saves as "
+       "before they existed")
+  {
+    World plain;
+    const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
+    CHECK(!plainSaved["render"].contains("contactShadows"));
+
+    World source;
+    const ContactShadowSettings contact{
+        .enabled = true, .length = 0.75f, .thickness = 0.25f, .strength = 0.5f};
+    source.render.setContactShadowSettings(contact);
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["render"]["contactShadows"]["enabled"] == true);
+    World target;
+    target.serializer().load(saved, target.scene);
+    CHECK(target.render.contactShadowSettings() == contact);
+  }
+
   TEST("a scene's style should round-trip, and old files load as 3D")
   {
     World source;

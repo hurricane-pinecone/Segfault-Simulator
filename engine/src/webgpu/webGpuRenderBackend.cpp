@@ -3,10 +3,12 @@
 #include "engine/runtime/rendering/backend/renderBackends.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 
 #include "engine/runtime/assetStore/assetStore.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 #include "SDL.h"
@@ -61,6 +63,10 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
     m_screenshotPath = path;
     if (const char* frame = std::getenv("SFS_SCREENSHOT_FRAME"))
       m_screenshotFrame = std::max(std::atoi(frame), 1);
+    if (const char* every = std::getenv("SFS_SCREENSHOT_EVERY"))
+      m_screenshotEvery = std::max(std::atoi(every), 0);
+    if (const char* count = std::getenv("SFS_SCREENSHOT_COUNT"))
+      m_screenshotCount = std::max(std::atoi(count), 1);
     m_screenshotTarget = std::make_unique<WebGpuRenderTarget>(m_context);
   }
 
@@ -229,7 +235,10 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
     return;
   }
 
-  wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
+  {
+    SFS_CPU_SCOPE("backend/acquire");
+    wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
+  }
   if (m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
       m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
   {
@@ -250,7 +259,7 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
   // The screenshot's frame draws offscreen, to be read back; every other
   // frame still shows in the window.
   WebGpuRenderTarget* target = m_sceneTarget;
-  if (m_screenshotTarget && m_frame + 1 == m_screenshotFrame)
+  if (m_screenshotTarget && screenshotDue(m_frame + 1))
   {
     m_screenshotTarget->resize({width, height});
     target = m_screenshotTarget.get();
@@ -277,15 +286,19 @@ void WebGpuRenderBackend::endFrame()
   if (m_encoder)
   {
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(m_encoder, nullptr);
-    wgpuQueueSubmit(m_context.queue(), 1, &cmd);
+    {
+      SFS_CPU_SCOPE("backend/submit");
+      wgpuQueueSubmit(m_context.queue(), 1, &cmd);
+    }
 #ifndef __EMSCRIPTEN__ // the browser shows the canvas itself
+    SFS_CPU_SCOPE("backend/present");
     wgpuSurfacePresent(m_context.surface());
 #endif
     wgpuCommandBufferRelease(cmd);
     wgpuCommandEncoderRelease(m_encoder);
     m_encoder = nullptr;
   }
-  if (m_screenshotTarget && ++m_frame == m_screenshotFrame)
+  if (m_screenshotTarget && screenshotDue(++m_frame))
     saveScreenshot();
   if (m_view)
   {
@@ -317,6 +330,7 @@ void WebGpuRenderBackend::endFrame()
 #endif
 
   // Fire any pending async callbacks (e.g. timestamp readback).
+  SFS_CPU_SCOPE("backend/poll");
   m_context.poll();
 }
 
@@ -436,6 +450,17 @@ void registerWebGpuBackend()
       "webgpu", [] { return std::make_unique<WebGpuRenderBackend>(); });
 }
 
+bool WebGpuRenderBackend::screenshotDue(int frame) const
+{
+  const int after = frame - m_screenshotFrame;
+  if (after < 0)
+    return false;
+  if (m_screenshotEvery <= 0 || m_screenshotCount <= 1)
+    return after == 0;
+  return after % m_screenshotEvery == 0 &&
+         after / m_screenshotEvery < m_screenshotCount;
+}
+
 void WebGpuRenderBackend::saveScreenshot()
 {
   const glm::ivec2 size = m_screenshotTarget->size();
@@ -501,8 +526,20 @@ void WebGpuRenderBackend::saveScreenshot()
       to[3] = 255;
     }
   wgpuBufferUnmap(readback.get());
-  if (saveTexturePng(image, m_screenshotPath))
-    LOG_INFO("Screenshot saved to " + m_screenshotPath);
+  // One of a sequence: numbered.
+  std::string path = m_screenshotPath;
+  if (m_screenshotEvery > 0 && m_screenshotCount > 1)
+  {
+    char number[8];
+    std::snprintf(number,
+                  sizeof(number),
+                  "_%02d",
+                  (m_frame - m_screenshotFrame) / m_screenshotEvery);
+    const std::size_t dot = path.rfind('.');
+    path.insert(dot == std::string::npos ? path.size() : dot, number);
+  }
+  if (saveTexturePng(image, path))
+    LOG_INFO("Screenshot saved to " + path);
 }
 
 } // namespace sfs

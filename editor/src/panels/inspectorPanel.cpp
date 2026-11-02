@@ -1782,6 +1782,42 @@ bool InspectorPanel::drawTerrain(EditorContext& context,
                         "grid (a little more costly)");
   changed |= ImGui::SliderFloat(row("Variation").c_str(), &terrain.variation, 0.0f, 0.5f);
   ImGui::SetItemTooltip("How much the brightness drifts over tens of metres, so a field isn't uniform");
+  if (std::any_of(terrain.layers.begin(), terrain.layers.end(), [](const auto& layer) { return layer.triplanar; }))
+  {
+    changed |= ImGui::SliderFloat(row("Triplanar Sharpness").c_str(), &terrain.triplanarSharpness, 0.0f, 1.0f);
+    ImGui::SetItemTooltip("How triplanar layers switch between their side and top projections on steep ground: 0 a "
+                          "wide blend, toward 1 a crisp switch");
+  }
+  changed |= widgets::propertyCheckbox("Puddles", &terrain.puddles);
+  ImGui::SetItemTooltip("Rain water collects in the mesh's low spots as the weather's puddles rise (worked out from "
+                        "its heights in the background)");
+  if (terrain.puddles)
+  {
+    float depth = terrain.puddleDepth * 100.0f;
+    if (ImGui::SliderFloat(row("Puddle Depth").c_str(), &depth, 0.5f, 25.0f, "%.1f cm"))
+    {
+      terrain.puddleDepth = depth / 100.0f;
+      changed = true;
+    }
+    ImGui::SetItemTooltip("How deep water stands in a low spot when the puddles are full, above its lowest point (or "
+                          "to its brim, if shallower): a big basin holds a puddle, not a lake");
+    float relief = terrain.microRelief * 100.0f;
+    if (ImGui::SliderFloat(row("Micro Relief").c_str(), &relief, 0.0f, 15.0f, "%.1f cm"))
+    {
+      terrain.microRelief = relief / 100.0f;
+      changed = true;
+    }
+    ImGui::SetItemTooltip("Shallow dips this deep scattered over the ground (drawn only, not geometry), so flat "
+                          "ground has low spots for puddles too; by each layer's Puddles");
+    if (terrain.microRelief > 0.0f)
+    {
+      changed |= ImGui::DragFloat(row("Dip Size").c_str(), &terrain.microReliefSize, 0.05f, 0.5f, 20.0f, "%.2f m");
+      ImGui::SetItemTooltip("About how wide the micro relief's dips are");
+    }
+  }
+  changed |= widgets::propertyCheckbox("Deformable", &terrain.deformable);
+  ImGui::SetItemTooltip("Pressed in where things with a Deformer go over it (tyre tracks, furrows, footprints): real "
+                        "geometry near the camera, parallax further off");
 
   std::optional<std::size_t> removed;
   for (std::size_t i = 0; i < terrain.layers.size(); ++i)
@@ -1810,6 +1846,18 @@ bool InspectorPanel::drawTerrain(EditorContext& context,
       changed |= ImGui::SliderFloat(row("Roughness").c_str(), &layer.roughness, 0.0f, 1.0f);
       changed |= ImGui::SliderFloat(row("Grass").c_str(), &layer.grass, 0.0f, 1.0f);
       ImGui::SetItemTooltip("How much of a grass field on the mesh grows over it (0: bare)");
+      changed |= ImGui::SliderFloat(row("Meadow").c_str(), &layer.meadow, 0.0f, 1.0f);
+      ImGui::SetItemTooltip("How much it reads as grass from afar, past the blades: patchy colour, a soft "
+                            "sheen and bands rolling with the wind");
+      changed |= widgets::propertyCheckbox("Triplanar", &layer.triplanar);
+      ImGui::SetItemTooltip("Also lay its textures from the sides where the ground is steep (cliffs, rock), so they "
+                            "don't stretch down the slope (costs a second set of samples there)");
+      if (terrain.puddles)
+      {
+        changed |= ImGui::SliderFloat(row("Puddles").c_str(), &layer.puddles, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("How readily water pools on it: its share of the micro relief, and how full its low "
+                              "spots get (dirt and paths 1, a meadow hardly)");
+      }
       if (terrain.layers.size() > 1)
       {
         widgets::propertyLabel("");

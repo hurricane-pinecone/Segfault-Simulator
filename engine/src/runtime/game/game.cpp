@@ -14,10 +14,12 @@
 
 #include <engine/core/logger/logger.h>
 #include <engine/core/util/allocationMetrics.h>
+#include <engine/core/util/cpuTiming.h>
 #include <engine/core/util/profiling.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <memory>
 #include <string>
@@ -164,7 +166,11 @@ void Game::run()
 
     const Uint64 frameStart = SDL_GetPerformanceCounter();
     frame();
-    capFrameRate(frameStart);
+    {
+      SFS_CPU_SCOPE("frame cap");
+      capFrameRate(frameStart);
+    }
+    cpuTiming::endFrame();
   }
 
   destroy();
@@ -185,9 +191,19 @@ void Game::frame()
   // end the program with no word of why: say what it was, and stop.
   try
   {
-    processInput();
-    update(deltaTime);
-    render();
+    SFS_CPU_SCOPE("frame");
+    {
+      SFS_CPU_SCOPE("input");
+      processInput();
+    }
+    {
+      SFS_CPU_SCOPE("update");
+      update(deltaTime);
+    }
+    {
+      SFS_CPU_SCOPE("render");
+      render();
+    }
     if (std::exchange(m_collectUnusedAssets, false) && m_services)
       m_services->assetStore.collectUnused();
     if (m_backend && m_backend->deviceLost())
@@ -209,11 +225,14 @@ void Game::onFatalError(const std::string& message)
 {
   LOG_ERROR(message);
 #ifndef __EMSCRIPTEN__
-  // Works without a window too (e.g. before one opens).
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
-                           "Error",
-                           (message + "\n\nThe log has the details.").c_str(),
-                           ownsWindow() ? window : nullptr);
+  // Works without a window too (e.g. before one opens). Unless nobody's there
+  // to click it (an automated run sets SFS_NO_ERROR_DIALOG): then the log
+  // says it, and the game ends rather than waiting on a dialog.
+  if (!std::getenv("SFS_NO_ERROR_DIALOG"))
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                             "Error",
+                             (message + "\n\nThe log has the details.").c_str(),
+                             ownsWindow() ? window : nullptr);
 #endif
   isRunning = false;
 }
@@ -524,10 +543,26 @@ void Game::processInput()
 bool Game::handleDevKey(const SDL_Event& event)
 {
   if (!m_devKeys || event.type != SDL_KEYDOWN || event.key.repeat ||
-      event.key.keysym.sym != SDLK_F8 || !sceneReceivesInput() || !sceneManager)
+      (event.key.keysym.sym != SDLK_F8 && event.key.keysym.sym != SDLK_F9) ||
+      !sceneReceivesInput() || !sceneManager)
     return false;
   Scene& scene = *sceneManager.current();
   RenderSystem* render = scene.tryGetSystem<RenderSystem>();
+  // F9: temporal anti-aliasing on or off (to compare), shown in the title.
+  if (render && event.key.keysym.sym == SDLK_F9)
+  {
+    const bool on = !render->effectiveTemporalAntiAliasing();
+    render->forceTemporalAntiAliasing(on);
+    LOG_INFO(std::string("Temporal anti-aliasing ") + (on ? "on" : "off"));
+    if (window && ownsWindow())
+    {
+      std::string title = SDL_GetWindowTitle(window);
+      title = title.substr(0, title.find(" [TAA"));
+      SDL_SetWindowTitle(
+          window, (title + (on ? " [TAA on]" : " [TAA off]")).c_str());
+    }
+    return true;
+  }
   const AssetDatabase* assets = scene.assetStore().database();
   if (!render || !assets)
     return false;
@@ -544,6 +579,7 @@ void Game::update(double deltaTime)
   if (sceneManager)
   {
     sceneManager.current()->update(deltaTime);
+    SFS_CPU_SCOPE("update/game");
     onUpdate(deltaTime);
   }
   // After every script has run, so none is destroyed mid-update.
@@ -555,7 +591,10 @@ void Game::render()
   ZoneScopedN("Game::render");
 
   // In pixels (the window's size on most screens).
-  m_backend->beginFrame(m_pixelWidth, m_pixelHeight);
+  {
+    SFS_CPU_SCOPE("render/begin frame (acquire)");
+    m_backend->beginFrame(m_pixelWidth, m_pixelHeight);
+  }
 
   // Without a scene the frame still ends (and shows), empty.
   if (sceneManager)
@@ -579,7 +618,10 @@ void Game::render()
     renderDebugUI(*m_backend, sceneManager.current(), [this] { onDebugUI(); });
 #endif
 
-  m_backend->endFrame();
+  {
+    SFS_CPU_SCOPE("render/end frame (submit, present)");
+    m_backend->endFrame();
+  }
 }
 
 void Game::destroy()

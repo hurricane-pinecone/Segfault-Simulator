@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include <memory>
 #include <typeindex>
@@ -118,7 +119,12 @@ protected:
   void updateModules(double deltaTime)
   {
     for (auto& [type, module] : m_modules)
+    {
+      const cpuTiming::Scope timed(
+          cpuTiming::enabled() ? cpuTiming::label("update/", typeid(*module))
+                               : nullptr);
       module->update(deltaTime);
+    }
   }
 
   // Registered modules, owned by the host and kept in registration order.

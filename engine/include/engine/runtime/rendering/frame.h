@@ -2,19 +2,24 @@
 
 #include "engine/core/rendering/ambientOcclusion.h"
 #include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/mesh.h"
+#include "engine/core/rendering/rain.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/sunShadow.h"
+#include "engine/core/rendering/weather.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include "glm/glm/ext/vector_int4.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace sfs
@@ -61,6 +66,8 @@ struct FrameSky
   glm::vec3 scale{1.0f};       // a visual style's on the sky (its skyScale())
   float adaptation = 1.0f;     // eyes adapted: x the sky's light (see
                                // PhysicalSky::adaptation)
+  float lampScale = 1.0f;      // what lamps (point lights, emission) look
+                               // like to those eyes (PhysicalSky::lampScale)
   float night = 1.0f;          // x its night glow (the moon brightens it)
   // The moon's disk: toward it (unit; below the horizon, not drawn), how
   // much of it is lit (0 new .. 1 full), and how overcast it is (0..1).
@@ -68,7 +75,38 @@ struct FrameSky
   float moonPhase = 1.0f;
   float cloudCover = 0.0f;
   bool moonLit = false; // the moon is the frame's light (see above)
+  // The clouds' light (none drawn while cloudCover is 0): what lights their
+  // tops (the sun's at their height, or the moon's) and their undersides
+  // lit through (PhysicalSky::cloudBase), neither adapted; and how heavy
+  // they are (SceneWeather::cloudDarkness).
+  glm::vec3 cloudLight{0.0f};
+  glm::vec3 cloudBase{0.0f};
+  float cloudDarkness = 0.0f;
   uint64_t revision = 0;
+};
+
+/**
+ * A frame's lightning (see LightningStrike): its brightest strike's light,
+ * as it flashes now (not adapted: the backend adapts it as the sky's), under
+ * a physical sky. `active` while any strike is still going (afterimages
+ * too): auto exposure holds while it is, so a flash brightens the scene.
+ */
+struct FrameLightning
+{
+  bool active = false;
+  // A cloud-to-ground strike's channel, a line of light from `low` (the
+  // ground) to `high` (the cloud base), `channelLight` a metre of it
+  // (rgb; none for an in-cloud strike); and the point light in the frame's
+  // that casts its shadow (-1: none).
+  bool channel = false;
+  glm::vec3 low{0.0f};
+  glm::vec3 high{0.0f};
+  glm::vec3 channelLight{0.0f};
+  int shadowLight = -1;
+  // The cloud base glowing around `high` (in it), `glowRadius` metres
+  // across: its light (rgb, at the middle; 0: none).
+  glm::vec3 cloudGlow{0.0f};
+  float glowRadius = 1.0f;
 };
 
 /**
@@ -82,6 +120,10 @@ struct FrameParams
   glm::mat4 projection{1.0f};
   glm::mat4 viewProjection{1.0f};
   glm::vec3 cameraPosition{0.0f};
+  // Where grass is grown and thinned from, past the camera (for checking
+  // how it changes as the camera moves, with the view held still:
+  // SFS_CAMERA_STEP, see RenderSystem).
+  glm::vec3 grassCameraOffset{0.0f};
   glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit view direction
   float nearPlane = 0.1f;                     // the camera's depth range
   float farPlane = 500.0f;
@@ -101,9 +143,26 @@ struct FrameParams
   float focusDistance = 20.0f; // the view's (where depth of field is sharp)
   WindSettings wind;
   HazeSettings haze;
-  // Height fog (on: in haze's place) and ambient occlusion (both off: none).
+  // The weather (clamped), and how far the clouds have drifted (km, within
+  // kCloudPeriod).
+  SceneWeather weather;
+  glm::vec2 cloudDrift{0.0f};
+  // How rain looks (a 3D scene's; while the weather has it); how far its
+  // drops have drifted on the wind (m, in the world's XY, within
+  // kRainDriftPeriod), and the wind they slant in (eased: gusts don't flick
+  // them).
+  RainSettings rain;
+  glm::vec2 rainDrift{0.0f};
+  glm::vec2 rainWind{0.0f};
+  FrameLightning lightning;
+  // Height fog (on: in haze's place), ambient occlusion and contact shadows
+  // (all off: none).
   FogSettings fog;
   AmbientOcclusionSettings ambientOcclusion;
+  ContactShadowSettings contactShadows;
+  // Temporal anti-aliasing: the camera jittered a fraction of a pixel each
+  // frame, and the frames blended (3D only).
+  bool temporalAntiAliasing = false;
 
   // The last pass's tone mapping and grading; and the scene's light
   // re-balanced by a visual style (see VisualStyle).
@@ -124,9 +183,11 @@ struct GrassHandle
 };
 
 /**
- * Where a grass field is flattened (GrassTrample::image()): RGBA8 pixels,
- * `size` of them, rows from `min`'s y, over the world XY rectangle `min` to
- * `max`.
+ * Where a grass field is flattened (GrassTrample::image()): a map `size`
+ * texels, rows from `min`'s y, over the world XY rectangle `min` to `max`.
+ * `pixels` (RGBA8) are those of texels `from` to `to` (exclusive), rows from
+ * its min y: just what changed; all of them if `to` is left empty, as they must
+ * be when the map's size changes.
  */
 struct GrassTrampleImage
 {
@@ -134,6 +195,8 @@ struct GrassTrampleImage
   glm::vec2 max{0.0f};
   glm::ivec2 size{0, 0};
   std::span<const uint8_t> pixels;
+  glm::ivec2 from{0, 0};
+  glm::ivec2 to{0, 0};
 };
 
 /**
@@ -141,6 +204,11 @@ struct GrassTrampleImage
  * `data` RGBA8 pixels from texel `from` to `to` (exclusive), rows from its min
  * y, of maps over `grid`. An empty grid: unpainted maps (full, full-length
  * grass), no pixels.
+ *
+ * The renderer keeps the blades it grows from them, and grows them again
+ * only where `regrow` says coverage or length changed (rectangles of texels:
+ * xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without it, all
+ * of `from` to `to`.
  */
 struct GrassMapsImage
 {
@@ -149,6 +217,7 @@ struct GrassMapsImage
   glm::ivec2 to{0, 0};
   std::span<const uint8_t> shape;
   std::span<const uint8_t> data;
+  std::optional<std::span<const glm::ivec4>> regrow;
 };
 
 /**
@@ -166,6 +235,12 @@ struct GrassBatch
   GrassShape shape;
   float stiffness = 0.4f; // how little it sways (GrassComponent::stiffness)
   float drawDistance = 40.0f;
+  // Blades near the camera cast the sun's shadow (GrassComponent).
+  bool castsShadows = true;
+  float selfShadow = 0.5f; // darker down toward the roots (GrassComponent)
+  // Its ground's own material: a terrain's meadow layers carry its ground's
+  // look on past its maps (see grassFarGround()).
+  MaterialHandle ground;
 };
 
 /**

@@ -41,6 +41,11 @@ inline constexpr std::size_t kMaxTerrainLayers = 5;
  * @param tileSize         world units across one repeat of its textures
  * @param grass            how much of a grass field on the mesh grows over it
  *                         (1: as its maps say; 0: none, bare dirt)
+ * @param meadow           how much it reads as a grass meadow from afar, past
+ *                         where grass blades are drawn (0 to 1): its colour
+ *                         breaks up in patches, a soft sheen at low angles,
+ *                         and light and dark bands roll across it with the
+ *                         wind, as they do over the blades
  */
 struct TerrainLayer
 {
@@ -53,6 +58,9 @@ struct TerrainLayer
   float roughness = 1.0f;
   float normalScale = 1.0f;
   float grass = 1.0f;
+  float meadow = 0.0f;
+  bool triplanar = false;
+  float puddles = 1.0f;
 
   bool operator==(const TerrainLayer&) const = default;
 };
@@ -72,8 +80,28 @@ struct TerrainLayer
  * (`variation`). Layers blend by height (`blendSharpness`): at 0 a smooth
  * cross-fade, toward 1 a crisp edge where the higher layer pokes through.
  *
+ * From above, a layer stretches down steep slopes. A `triplanar` layer is
+ * also laid from the sides where the ground is steeper than about 35
+ * degrees: from the two axes the surface faces most (biplanar mapping),
+ * blended by its normal, toward a crisp switch at `triplanarSharpness` 1.
+ * Gentler ground keeps the one projection from above (and its cost).
+ *
  * Grass on the mesh (GrassComponent) grows where its layers' `grass` says,
  * x its own maps. A vertex colour isn't used.
+ *
+ * With `puddles`, rain water collects in the mesh's low spots as the
+ * weather's puddles rise (SceneWeather::puddles; see PuddleModule, which
+ * has the GPU find them near the camera from the mesh's heights and its
+ * deformation). Up to `puddleDepth` of water
+ * stands in a low spot at full, above its lowest point (or to its brim, if
+ * shallower), so a big basin holds a puddle in its bottom, not a lake.
+ * Flat ground has no low spots of its own: `microRelief` adds shallow dips
+ * that deep (drawn only, not geometry), `microReliefSize` across, scattered
+ * over it where its layers' `puddles` let them.
+ *
+ * A `deformable` terrain is pressed in where things go over it (tyre tracks,
+ * furrows, footprints; see DeformerComponent and DeformationModule): near
+ * the camera as real geometry, further off parallax-mapped.
  */
 struct TerrainMaterial
 {
@@ -88,6 +116,12 @@ struct TerrainMaterial
   float blendSharpness = 0.5f;
   bool antiTiling = true;
   float variation = 0.15f;
+  float triplanarSharpness = 0.5f;
+  bool puddles = false;
+  float puddleDepth = 0.05f;    // metres
+  float microRelief = 0.0f;     // metres deep
+  float microReliefSize = 3.0f; // metres across
+  bool deformable = false;
 
   bool operator==(const TerrainMaterial&) const = default;
 };
@@ -106,6 +140,12 @@ glm::vec4 sampleSplat(const TextureData& splat, glm::vec2 uv);
  * weight there): 1 with no splat map or layers.
  */
 float terrainGrass(const TerrainMaterial& terrain, glm::vec2 uv);
+
+/**
+ * How readily water pools at `uv` on a terrain (its layers' `puddles` by
+ * their weight there): 1 with no layers.
+ */
+float terrainPuddles(const TerrainMaterial& terrain, glm::vec2 uv);
 
 /** Whether any of a terrain's layers keeps grass from growing. */
 bool terrainLimitsGrass(const TerrainMaterial& terrain);
@@ -141,6 +181,9 @@ struct TerrainLayerAsset
   float roughness = 1.0f;
   float normalScale = 1.0f;
   float grass = 1.0f;
+  float meadow = 0.0f;
+  bool triplanar = false;
+  float puddles = 1.0f;
 
   bool operator==(const TerrainLayerAsset&) const = default;
 };
@@ -151,10 +194,14 @@ struct TerrainLayerAsset
  *   "terrain": {
  *     "splatMap": "asset:<id>",
  *     "blendSharpness": 0.5, "antiTiling": true, "variation": 0.15,
+ *     "triplanarSharpness": 0.5,
+ *     "puddles": false, "puddleDepth": 0.05, "microRelief": 0,
+ *     "microReliefSize": 3, "deformable": false,
  *     "layers": [{"name": "Grass", "baseTexture": "asset:<id>",
  *                 "normalTexture": "", "roughnessTexture": "",
  *                 "tint": [1, 1, 1], "tileSize": 4, "roughness": 1,
- *                 "normalScale": 1, "grass": 1}, ...]
+ *                 "normalScale": 1, "grass": 1, "meadow": 0,
+ *                 "triplanar": false, "puddles": 1}, ...]
  *   }
  */
 struct TerrainAsset
@@ -164,6 +211,12 @@ struct TerrainAsset
   float blendSharpness = 0.5f;
   bool antiTiling = true;
   float variation = 0.15f;
+  float triplanarSharpness = 0.5f;
+  bool puddles = false;
+  float puddleDepth = 0.05f;
+  float microRelief = 0.0f;
+  float microReliefSize = 3.0f;
+  bool deformable = false;
 
   nlohmann::json toJson() const;
   /** Missing keys keep their defaults (at most kMaxTerrainLayers layers). */

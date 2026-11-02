@@ -8,8 +8,12 @@ namespace sfs
 
 float clearSky(float cloudCover)
 {
-  // Even an overcast sky lets a little through.
-  return 1.0f - 0.85f * glm::clamp(cloudCover, 0.0f, 1.0f);
+  // Broken cloud lets the sun through its gaps; a closed deck (the last
+  // quarter of the cover) hardly any: an overcast day casts no shadows.
+  // (meshLit.wgsl's cloudShadowAt closes the deck the same way.)
+  const float cover = glm::clamp(cloudCover, 0.0f, 1.0f);
+  const float deck = glm::smoothstep(0.75f, 1.0f, cover);
+  return (1.0f - 0.85f * cover) * (1.0f - 0.9f * deck);
 }
 
 float moonlight(const SceneLighting& lighting)

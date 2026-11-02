@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -35,6 +36,19 @@ public:
   void
   push(const nlohmann::json& before, const nlohmann::json& after, Selection selectionBefore, Selection selectionAfter);
 
+  /**
+   * An edit to something outside the scene (painting a texture asset, say),
+   * already made: undone and redone by its own hands, in its turn among the
+   * scene's edits. `bytes`: about how much it holds.
+   */
+  struct AssetEdit
+  {
+    std::function<void()> undo;
+    std::function<void()> redo;
+    std::size_t bytes = 0;
+  };
+  void pushAssetEdit(std::shared_ptr<const AssetEdit> edit, Selection selection);
+
   /** Replace the last step's "after" (an edit folded into it). */
   void amendLast(const nlohmann::json& after, Selection selectionAfter);
 
@@ -43,6 +57,8 @@ public:
   {
     nlohmann::json snapshot;
     Selection selection;
+    // An asset edit to undo or redo instead (the scene stays as it is).
+    std::shared_ptr<const AssetEdit> asset;
   };
 
   bool canUndo() const { return !m_undo.empty(); }
@@ -71,8 +87,12 @@ private:
     Text after;
     Selection selectionBefore;
     Selection selectionAfter;
+    std::shared_ptr<const AssetEdit> asset; // or the scene's, before and after
 
-    std::size_t bytes() const { return before->size() + after->size(); }
+    std::size_t bytes() const
+    {
+      return before->size() + after->size() + (asset ? asset->bytes : 0);
+    }
   };
 
   static Text text(const nlohmann::json& snapshot);

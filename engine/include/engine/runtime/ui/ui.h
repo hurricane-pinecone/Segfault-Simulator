@@ -249,6 +249,21 @@ public:
 /** A bar filled `fraction` (0 to 1) of the way, 120 points wide by default. */
 View ProgressBar(float fraction);
 
+/**
+ * A slider: a knob along a track, from `low` to `high`, at `value`. Dragging
+ * the knob (or pressing anywhere on the track) calls `change` with the value
+ * under the pointer, in steps of `step` (0: any). 160 points wide by default.
+ */
+View Slider(float value,
+            std::function<void(float)> change,
+            float low = 0.0f,
+            float high = 1.0f,
+            float step = 0.0f);
+
+/** A switch, on or off, with `label` beside it: a click calls `change` with
+ * the other. */
+View Toggle(std::string label, bool on, std::function<void(bool)> change);
+
 /** Takes up whatever room its stack has spare, pushing the rest apart. */
 View Spacer(float minLength = 0.0f);
 
@@ -310,6 +325,8 @@ struct Node
     Image,
     Button,
     Progress,
+    Slider,
+    Toggle,
     Spacer,
     VStack,
     HStack,
@@ -327,7 +344,10 @@ struct Node
   bool meshIcon = false;        // Image's: `text` is a mesh's name
   bool placeholder = false;     // Image's: a stand-in box (Image::placeholder)
   std::function<void()> action; // Button's
-  float value = 0.0f;           // ProgressBar's fraction, Spacer's minimum
+  float value = 0.0f; // ProgressBar's fraction, Spacer's minimum, Slider's
+                      // value, Toggle's 1 (on) or 0
+  float low = 0.0f, high = 1.0f, step = 0.0f; // Slider's range and steps
+  std::function<void(float)> change; // Slider's (its new value), Toggle's
 
   float spacing = 8.0f;                         // stacks'
   Alignment stackAlignment = Alignment::Center; // stacks' line-up

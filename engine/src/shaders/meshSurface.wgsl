@@ -8,11 +8,36 @@
 //
 // The passes call surface() before anything else, while control flow is still
 // uniform, so it may sample textures. Must match AlphaMode.
+//
+// A surface may also place its mesh's vertices itself (a deformed terrain's
+// patch does), with
+//
+//   fn surfaceVertex(v: SurfaceVertex) -> SurfaceVertex
+//
+// which every pass's vertex stage calls with each vertex as placed; without
+// one (shaders::meshPass() adds it), they stay where they are. And it may say
+// how solid it is more cheaply than surface() would, for the passes that need
+// nothing else (shadows, ambient occlusion's depth), with
+//
+//   fn surfaceAlpha(in: SurfaceIn) -> vec2f // x alpha, y the cut-out threshold
+//
+// (without one, surface()'s alpha and alphaClip).
 
 const ALPHA_OPAQUE: u32 = 0u;
 const ALPHA_MASK: u32 = 1u;
 const ALPHA_BLEND: u32 = 2u;
 const ALPHA_ADDITIVE: u32 = 3u; // light added to what's behind
+
+// A vertex as placed in the world, for surfaceVertex(): it may move it, turn
+// its normal, give it other texture coordinates, or drop it (`keep` 0: the
+// triangles it's in are cut out where it's dropped, as a masked surface's
+// are).
+struct SurfaceVertex {
+  position: vec3f, // world space
+  normal: vec3f,   // world space
+  uv: vec2f,
+  keep: f32,       // 1 normally
+}
 
 // The point being drawn.
 struct SurfaceIn {
@@ -38,6 +63,8 @@ struct Surface {
   emission: vec3f,  // light given off, added after lighting
   alphaClip: f32,   // ALPHA_MASK: cut out below this alpha
   bloom: f32,       // how much of its light blooms (1 normally; 0 none)
+  water: f32,       // water standing on it, 0 to 1 (a terrain's puddles; 0 normally)
+  soak: f32,        // how soaked it is besides the weather's wetness (a puddle's edge)
 }
 
 // A point's tangent frame, as the CPU's tangentFrame() builds it: tangent along

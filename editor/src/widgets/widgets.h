@@ -57,6 +57,18 @@ void drawPencil(ImDrawList* draw, ImVec2 centre, float size, ImU32 color);
 void drawTarget(ImDrawList* draw, ImVec2 centre, float size, ImU32 color);
 
 /**
+ * The title of the tab showing where `window` is docked (empty if it isn't
+ * docked, or not drawn yet).
+ */
+std::string shownTab(const char* window);
+
+/**
+ * Bring a docked window's tab to the front of its node without focusing it
+ * (whatever has the keyboard keeps it).
+ */
+void showTab(const std::string& window);
+
+/**
  * Run an editing widget on a copy of `value`, recording the edit for undo.
  * The scene is snapshotted when the interaction starts and before the copy is
  * written back, so even a widget that changes the value on its first frame

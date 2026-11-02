@@ -18,6 +18,7 @@ shadows are, and which version of each material is drawn. This page covers:
   the camera.
 - **Ambient occlusion**: the sky's light kept out of creases and the foot of
   walls.
+- **Contact shadows**: small, sharp sun shadows where things meet the ground.
 - **Height fog**: mist lying low, coloured by the sky and glowing toward the
   sun.
 - **Terrain materials**: big ground textured with several layers (grass,
@@ -47,6 +48,10 @@ grades it, all in one full-screen pass:
 | `saturation` | 0 grey, 1 as is, above more colourful (1) |
 | `lift`, `gamma`, `gain` | Per channel: added to the shadows (0), bends the midtones (1; above brighter), multiplies the highlights (1) |
 | `vignette`, `vignetteSoftness` | How much the corners darken (0), and how far in it starts (0.5) |
+| `autoExposure` | The exposure follows what's on screen, as eyes do: a view brighter than the target darkens, a dimmer one brightens, easing there over a second or so (false) |
+| `exposureTarget` | The average brightness auto exposure aims for, in stops from mid-grey (0) |
+| `exposureDarken`, `exposureBrighten` | The most it darkens a bright view and brightens a dim one, in stops (1.5, 0.5). On top of a physical sky's own adaptation to dusk and night: 0 brightening keeps nights as dark as the sky makes them |
+| `exposureSpeed` | How fast it adapts, about stops a second (1.5) |
 
 The tone mappers:
 
@@ -89,6 +94,7 @@ A visual style is a `.style` asset (JSON, with a `.meta` like every asset;
   "sky": {"model": "physical", "turbidity": 2.5, "groundAlbedo": 0.25, "sunSize": 1.5,
           "intensity": 1, "nightBrightness": 1},
   "ambientOcclusion": {"enabled": true, "radius": 1.2, "intensity": 1, "samples": 12},
+  "contactShadows": {"enabled": true, "length": 0.5, "thickness": 0.3, "strength": 0.8},
   "fog": {"enabled": true, "density": 0.006, "heightFalloff": 0.12, "baseHeight": 0,
           "startDistance": 15, "maxOpacity": 0.85, "sunGlow": 0.6},
   "materialVariant": "realistic"
@@ -104,7 +110,7 @@ While a style is on (precedence, simply):
 
 | | |
 | --- | --- |
-| **Replaces** | The scene's grading and tone mapping, always. Bloom (the scene camera's), haze, the sky, each shadow setting (`softness`, `cascades`, `cascadeDistance`, `cascadeSplit`), ambient occlusion and fog, only when the style has them (`bloom`, `haze`, `sky`, `ambientOcclusion`, `fog`, and each key of `shadows`, are optional; left out, the scene's stay). A style's section with `"enabled": false` turns the scene's off while it's on. |
+| **Replaces** | The scene's grading and tone mapping, always. Bloom (the scene camera's), haze, the sky, each shadow setting (`softness`, `cascades`, `cascadeDistance`, `cascadeSplit`), ambient occlusion, contact shadows, fog and rain, only when the style has them (`bloom`, `haze`, `sky`, `ambientOcclusion`, `contactShadows`, `fog`, `rain` (see [Rain](../meshes-and-lighting/index.md#rain)), and each key of `shadows`, are optional; left out, the scene's stay). A style's section with `"enabled": false` turns the scene's off while it's on. |
 | **Multiplies** | The scene's light: the sun's share of each surface's light (what shadow and turning away take) by `sunIntensity` x `sunTint`; the ambient rest by `ambientIntensity` x `ambientTint`; the sky colour (background, haze, reflections) by `skyIntensity` x `skyTint`. A day/night cycle that sets the lighting every frame keeps working underneath. Under a [physical sky](#physical-sky-and-image-based-lighting): the sun's light by the sun balance, the sky's diffuse light and reflections by the ambient balance, the background and haze by the sky balance. |
 | **Switches** | Materials with a variant for its `materialVariant` tag draw as it (below); and any material named in its `"materials"` (name -> material) draws as that one, including materials a game makes in code, which have no variants (e.g. `{"farm:field-paint": "asset:<terrain>"}`). A terrain standing in for a material with a base texture is tinted by that texture, so what the game paints there still shows. |
 
@@ -168,7 +174,7 @@ diffuse light, split-sum specular reflections and GGX sun glints. Point lights
 | `sunSize` | The sun's disk, x the real sun's size; 0 draws none (1) |
 | `intensity` | How bright the sun and sky are, x (1) |
 | `nightBrightness` | The night sky's glow and its stars, x; 0 a black night (1) |
-| `adaptation` | How much eyes adapt as the sky dims (dusk, night): 0 a fixed exposure (physically dark evenings), 1 fully, up to 3 stops (0.5). It brightens the sky's own light (the sun's, the sky's, its reflections, the background), not point lights or glowing things, which keep the brightness they were tuned to |
+| `adaptation` | How much eyes adapt as the sky dims (dusk, night): 0 a fixed exposure (physically dark evenings), 1 fully, up to 3 stops (0.5). It brightens the sky's own light (the sun's, the sky's, its reflections, the background). Point lights and glowing things keep the brightness they were tuned to for night eyes, so by day they look dimmer by as much (an eighth at noon, adapted fully): daylight drowns them out unless they're strong, and point lights too dim to see cast no shadows (none are drawn) |
 
 Its light is scaled so a sunlit mid-grey shows as mid-grey with no exposure
 (the noon sun is about 1 on a surface facing it); the sun's disk goes far
@@ -234,6 +240,56 @@ Grass blades don't occlude: drawn into it they'd darken whole fields. The
 ground under them does, so blades near a wall share the ground's shade there
 (a blade counts what's behind it only when it's at the same depth; others go
 without).
+
+### Contact shadows
+
+`ContactShadowSettings` (`engine/core/rendering/contactShadows.h`;
+`RenderSystem::setContactShadowSettings()`, saved as `"contactShadows"` once
+it's not the default; a style's `"contactShadows"` replaces it) adds the
+small, sharp shadows where things meet the ground and in fine crevices (a
+fence post's foot, under a crate or a wheel, around feet), which the sun's
+shadow maps are too coarse to hold. They take only the frame's direct light
+(the sun's, or the moon's while it's in the sun's place): never the sky's,
+the ambient level or point lights'. Under a physical sky only; off by
+default, when they cost nothing.
+
+| Field | Meaning (default) |
+| --- | --- |
+| `enabled` | Whether at all (false) |
+| `length` | How far toward the light each ray goes, world units (0.5) |
+| `thickness` | How thick what's drawn is taken to be behind its front, world units: the ray passing farther behind something than this isn't blocked by it (0.3) |
+| `strength` | How dark they get: 0 none, 1 none of the sun's light (0.8) |
+
+How: they're worked out in ambient occlusion's half-size pass, from the same
+depth and normals (which run when either is on), into the map's third
+channel. From each pixel, a little off its surface, a ray of 12 steps (its
+start jittered per pixel) goes toward the light over the screen; it's blocked
+where it passes behind what's drawn by less than the thickness. How far
+behind is measured from that texel's surface plane (by its normal) where the
+ray crosses it, not from the texel's middle, so flat ground at a low sun
+doesn't shade itself. They fade toward the ray's end, at the screen's edges,
+and with distance (gone by half of ambient occlusion's reach, 100 m at most).
+A narrower blur than ambient occlusion's keeps them sharp, and the lit pass
+reads them as it does the occlusion, multiplying them into the sun's shadow.
+Grass blades aren't in the depth, so they don't cast them (no darkened lawn);
+the ground under them takes them from what stands on it.
+
+### Temporal anti-aliasing
+
+`RenderSystem::setTemporalAntiAliasing()` (saved as `"temporalAntiAliasing"`
+when on; a style's `"temporalAntiAliasing"` replaces it; Scene Settings and
+the style inspector have it) smooths edges and the shimmer of fine detail,
+grass and fences above all, as the camera moves. Each frame the camera is
+moved a fraction of a pixel (the next point of a Halton 2, 3 sequence) and the
+lit scene is blended with what came before (`taa.wgsl`): each pixel's history
+is found where its point in the world was last frame (through the depth
+buffer and last frame's camera), clamped to the colours around the pixel now
+so what moved or came into view doesn't smear, and a tenth of the new frame is
+mixed in. The result replaces the scene for bloom, depth of field and the
+composite. Not on OpenGL (it reads the lit pass's depth samples, as depth of
+field does), nor in 2D. Things that move on their own (swaying grass, a
+driving tractor) are reprojected as if still, so the clamp is what keeps them
+from ghosting.
 
 ### Height fog
 
@@ -343,7 +399,10 @@ dirt yard is bare in that style and grassed in the other.
 
 Ambient occlusion adds a half-size pass drawing every opaque object again
 (depth and normals only) and three half-size full-screen passes; off, it adds
-nothing. Height fog adds a few instructions a pixel and no passes. A terrain
+nothing. Contact shadows share those passes (12 more texture reads a
+half-size pixel when they're on; with ambient occlusion off they bring the
+passes in themselves). Height fog adds a few instructions a pixel and no passes. A terrain
 material samples, per layer present at a pixel, its two arrays three times
 (with anti-tiling), so ground where two layers meet costs about twelve
-texture reads.
+texture reads; a `triplanar` layer twice that, but only on ground steeper than
+about 35 degrees.

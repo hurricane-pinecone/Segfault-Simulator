@@ -81,6 +81,19 @@ struct SkySettings
 };
 
 /**
+ * A physical sky's cloud layer, as far as its light goes: how much of the sky
+ * it covers (SceneLighting::cloudCover) and how heavy it is
+ * (SceneWeather::cloudDarkness), each 0..1.
+ */
+struct SkyClouds
+{
+  float cover = 0.0f;
+  float darkness = 0.0f;
+
+  bool operator==(const SkyClouds&) const = default;
+};
+
+/**
  * Diffuse light from all around, as 9 spherical-harmonic coefficients (rgb):
  * at(normal) is the light a surface facing `normal` receives, already
  * convolved with the cosine lobe and divided by pi (so albedo x at(n) is its
@@ -128,11 +141,19 @@ public:
   // How high the sun climbs (radians: 5 degrees) before nothing near the
   // horizon (low haze, hills, trees) holds its light back.
   static constexpr float kHorizonHaze = 0.0873f;
+  // The most eyes adapt to the dark (3 stops): x8 the light they see.
+  static constexpr float kMostAdaptation = 8.0f;
+  // A point light's strength (as the eye sees it: x lampScale()) below which
+  // its shadow doesn't show (none is drawn), and above which it shows whole.
+  static constexpr float kLampShadowFrom = 0.2f;
+  static constexpr float kLampShadowFull = 0.4f;
   // The transmittance table: altitude x the cosine of the zenith angle.
   static constexpr int kTransmittanceHeights = 32;
   static constexpr int kTransmittanceAngles = 128;
   // Samples along a view ray (the GPU takes as many).
   static constexpr int kViewSamples = 24;
+  // The cloud layer's height above the ground (km).
+  static constexpr float kCloudAltitude = 1.5f;
 
   explicit PhysicalSky(const SkySettings& settings = SkySettings());
 
@@ -184,9 +205,51 @@ public:
 
   /**
    * The light the ground reflects (what's below the horizon): its albedo x
-   * the sun's and the sky's light on it.
+   * the sun's and the sky's light on it, under `clouds`.
    */
-  glm::vec3 groundRadiance(const glm::vec3& toSun, float night = 1.0f) const;
+  glm::vec3 groundRadiance(const glm::vec3& toSun,
+                           float night = 1.0f,
+                           const SkyClouds& clouds = {}) const;
+
+  /**
+   * The sky's light on an upward-facing surface, clear of clouds (its upper
+   * half, cosine-weighted, / pi: x albedo is its colour).
+   */
+  glm::vec3 skyLightAbove(const glm::vec3& toSun, float night = 1.0f) const;
+
+  /**
+   * The sun's light on the cloud layer (kCloudAltitude up, a surface facing
+   * it): through less air than the ground's, so it reddens later and lights
+   * the clouds' undersides a little after it has set for the ground.
+   */
+  glm::vec3 cloudSunLight(const glm::vec3& toSun) const;
+
+  /**
+   * What the clouds' undersides look like from below (the light they give
+   * off, as the sky's radiance), lit through: the light on their tops (`light`
+   * from `toLight`: the sun's, cloudSunLight(), or the moon's; and
+   * `skyAbove`, skyLightAbove()), the share of it that diffuses through them
+   * (less, the thicker and darker they are). The lit shader's clouds work
+   * them out the same way (skyCommon.wgsl's cloudsToward).
+   */
+  static glm::vec3 cloudBase(const glm::vec3& light,
+                             const glm::vec3& toLight,
+                             const glm::vec3& skyAbove,
+                             const SkyClouds& clouds);
+
+  /**
+   * How much of the light (x the light, where it reaches) broken clouds'
+   * sides catch toward the viewer: most when they're scattered and the light
+   * is low (a sunset's lit undersides), little from a full deck.
+   */
+  static float cloudSides(float cover, float lightUp);
+
+  /**
+   * How much of the sky toward a direction `up` (its z) the clouds cover,
+   * on average: `cover` overhead, more toward the horizon (looking through
+   * more of the layer).
+   */
+  static float apparentCover(float up, float cover);
 
   /**
    * The night sky's glow from `direction` (what's left without the sun), x
@@ -200,8 +263,13 @@ public:
    */
   static float nightScale(float moonShare);
 
-  /** The sky's (and the ground's) diffuse light, all around. */
-  SkyIrradiance irradiance(const glm::vec3& toSun, float night = 1.0f) const;
+  /**
+   * The sky's (and the ground's) diffuse light, all around, under `clouds`
+   * (their average: cloudBase() over apparentCover() of each direction).
+   */
+  SkyIrradiance irradiance(const glm::vec3& toSun,
+                           float night = 1.0f,
+                           const SkyClouds& clouds = {}) const;
 
   /**
    * How much brighter eyes adapted to the light the ground gets (the sun's,
@@ -211,6 +279,28 @@ public:
   float adaptation(const glm::vec3& toSun,
                    const glm::vec3& sunLight,
                    const glm::vec3& skyLight) const;
+
+  /**
+   * The adaptation() eyes reach in the deepest dark, by the settings: 1 if
+   * they don't adapt, up to kMostAdaptation.
+   */
+  float mostAdaptation() const;
+
+  /**
+   * What lamps (point lights, and emission: their brightness is fixed, set to
+   * look right to eyes adapted to the night) look like to eyes `adapted`
+   * (adaptation()): x their share of mostAdaptation(), so 1 at night and down
+   * to an eighth at noon, where daylight drowns all but strong ones out.
+   */
+  float lampScale(float adapted) const;
+
+  /**
+   * How much of a point light of `intensity` its shadow shows (0..1) to eyes
+   * seeing lamps x `lampScale`: none (it needn't be drawn) when the light is
+   * too dim to see, faded in (kLampShadowFrom to kLampShadowFull) as it
+   * brightens. (meshLit.wgsl's pointShadow() fades it as this does.)
+   */
+  static float lampShadow(float intensity, float lampScale);
 
   /**
    * The transmittance table, rgba (a unused), row per altitude:

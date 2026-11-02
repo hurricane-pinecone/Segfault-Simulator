@@ -64,6 +64,8 @@ public:
 
   // Whether the device was created with GPU timestamp queries (benchmark HUD).
   bool hasTimestamps() const { return m_hasTimestamps; }
+  // And inside passes (natively, when timing the GPU: SFS_GPU_TIMING).
+  bool hasPassTimestamps() const { return m_hasPassTimestamps; }
 
   // Whether the device has been lost (a driver crash or update, the GPU
   // removed, out of memory): nothing more can be drawn with it.
@@ -88,6 +90,7 @@ private:
   WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo; // the fastest available
   bool m_vsync = false;
   bool m_hasTimestamps = false;
+  bool m_hasPassTimestamps = false;
   int m_width = 0; // the main surface's configured size (0: not yet)
   int m_height = 0;
   uint32_t m_maxTextureSize = 8192;

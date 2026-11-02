@@ -2,10 +2,12 @@
 
 #include "engine/core/rendering/ambientOcclusion.h"
 #include "engine/core/rendering/colorGrading.h"
+#include "engine/core/rendering/contactShadows.h"
 #include "engine/core/rendering/fog.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/sky.h"
 #include "engine/core/rendering/visualStyle.h"
+#include "engine/core/rendering/weather.h"
 
 class EditorHistory;
 
@@ -32,8 +34,24 @@ bool shadowCascades(EditorHistory* history, sfs::ShadowSettings& shadows);
 bool ambientOcclusion(EditorHistory* history,
                       sfs::AmbientOcclusionSettings& occlusion);
 
+// Contact shadows: on or off, and (only when on) their length, thickness and
+// strength.
+bool contactShadows(EditorHistory* history,
+                    sfs::ContactShadowSettings& contact);
+
 // Height fog: on or off, and (only when on) how thick, where, and its glow.
 bool fog(EditorHistory* history, sfs::FogSettings& fog);
+
+// The weather: how cloudy (the lighting's cloud cover) and how heavy the
+// clouds are, the wind they drift on, and the rain and how wet it's left
+// things.
+bool weather(EditorHistory* history,
+             sfs::SceneWeather& weather,
+             float& cloudCover);
+
+// How rain looks: on or off, and (only when on) its streaks, splashes,
+// ripples and veil.
+bool rain(EditorHistory* history, sfs::RainSettings& rain);
 
 bool visualStyle(sfs::VisualStyle& style);
 

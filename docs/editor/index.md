@@ -80,6 +80,20 @@ of one.
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
+| UI Preview | The game UI in the file open in the Code panel, as you write it (see [the UI docs](../runtime/ui/index.md#views-of-your-own-and-the-ui-preview)). Opening a UI file brings its tab to the front (without taking the keyboard from Code); closing the last one goes back to the tab it covered, unless you picked another meanwhile. |
+
+The **Window** menu shows or hides each panel; **Window → Reset Layout** puts
+them all back where a new editor has them: the Hierarchy on the left, the
+Inspector and UI Preview on the right, the Viewport, Scene Settings and Code
+in the middle, and the Console and Assets under them.
+
+The layout, which panels are open, the panels' own settings and the editor
+window's size, place and maximised state are kept between sessions, per user,
+in `imgui.ini` in `%APPDATA%\SegfaultSimulator\SfsEditor` on Windows
+(`~/.local/share/SegfaultSimulator/SfsEditor` on Linux). Delete it to start
+from the default layout. A window that was on a display no longer there opens
+on the main one. Set `SFS_EDITOR_SETTINGS_DIR` to keep them in another folder
+instead (to try the editor out without changing yours).
 
 ## Styles: 2D and 3D
 
@@ -549,16 +563,31 @@ They sway in the scene's wind, and flatten where things move through them.
 | Height, Height Variation, Width | The blades' size, and how much heights vary |
 | Stiffness | How little they sway in the wind |
 | Recovery | Seconds flattened grass takes to stand back up |
-| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out toward this distance. |
+| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out smoothly, the same blades wherever the camera is, to none at this distance. |
+| Casts Shadows | Whether blades near the camera cast the sun's shadow (on by default). Only the two nearest shadow cascades get them, up to about 30 units, where a blade's shadow is big enough to see. With one shadow map, the first 8. |
+| Self Shadow | How much darker the grass gets down toward its roots, where the blades around shut out the sky and some of the sun. It makes a field look deep at any distance, well past where blades cast shadows. 0 turns it off (0.5) |
 
 **Wind** is the scene's, in Scene Settings: its direction (degrees), strength
 and gustiness. Gusts roll across the grass the way the wind blows. Long grass
 waves in it, and grass mown short (painted with **Length**) hardly moves.
 
 The grass's colour also tints the ground under it, so the gaps between blades
-look like grass. To hide where grass stops being drawn, add **Haze** in Scene
-Settings to fade the distance into the sky. You can also turn on the camera's
-**Depth Of Field** to soften what's far away.
+look like grass. Toward the draw distance the blades thin out, grow wider so
+the field still looks full, and shrink down into the ground, so there's no
+line where they end. As they thin out to none, the tinted ground takes on how
+they look from afar (as bright, turned to the camera as they are, a fine grain
+of them, and gusts rolling over it in time with theirs), and carries on so past
+the draw distance, out to the horizon, in the grass material's colour: so far
+grass changes with the season, dryness and the weather just as the blades do.
+On a terrain it carries on over the layers marked **Meadow**, past where the
+grass's maps reach (a big mesh has them only around the camera); without a
+terrain, the ground's own material shows past them. **Haze** in
+Scene Settings fades the distance into the sky.
+
+Grass on a big mesh, like land out to the horizon, grows only around the
+camera, in a window that follows it, so it costs no more than a small field.
+Set a field into a hole in the land (with its edge on a whole number of
+quarter units) and give both the same grass, and they meet with no seam.
 
 **What flattens grass:** anything with a Rigid Body, sized by its colliders,
 unless its **Bends Grass** is off. A **Grass Bender** component does the same
@@ -590,8 +619,11 @@ change the same maps as it plays (see
 A material can be a **terrain**: select a material and click **Convert to
 Terrain** in the Inspector. Its **layers** (up to five: e.g. grass, dirt, a
 path) each have a colour texture (its alpha is the layer's height), a normal
-map, a roughness map, a tint, a **Tile Size** in metres and how much **Grass**
-grows on it. **New Splat Map** makes the map that says where each layer is.
+map, a roughness map, a tint, a **Tile Size** in metres, how much **Grass**
+grows on it, and how much it looks like a **Meadow** from afar (for grassy
+layers, past where blades are drawn). Tick **Triplanar** on rock and other
+layers on steep ground so they don't stretch down cliffs (**Triplanar
+Sharpness** sets how they blend). **New Splat Map** makes the map that says where each layer is.
 See [Terrain materials](../runtime/rendering/meshes-and-lighting/index.md#terrain-materials).
 
 **The terrain brush:** select something drawn with a terrain material (with
@@ -605,9 +637,9 @@ instead. Grass on the mesh follows as you paint.
 ## Ambient occlusion and fog
 
 Scene Settings > **Occlusion & Fog** turns on **Ambient Occlusion** (radius,
-intensity, samples) and **Height Fog** (density, height falloff, base height,
-start distance, max opacity, sun glow), each showing its settings only while
-on. A visual style can carry its own of each (Inspector > Replaces The
+intensity, samples), **Contact Shadows** (length, thickness, strength) and
+**Height Fog** (density, height falloff, base height, start distance, max
+opacity, sun glow), each showing its settings only while on. A visual style can carry its own of each (Inspector > Replaces The
 Scene's), and its **Material Overrides** draw any material, a game's own
 included, as another while it's on.
 

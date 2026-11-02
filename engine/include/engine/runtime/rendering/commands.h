@@ -48,6 +48,9 @@ struct GrassDrawCommand
   GrassShape shape;
   float stiffness = 0.4f;
   float drawDistance = 40.0f;
+  bool castsShadows = true;
+  float selfShadow = 0.5f;
+  MaterialHandle ground; // its mesh's own material (GrassBatch::ground)
 };
 
 /** A frame's UI (see UiModule), drawn over everything else. */

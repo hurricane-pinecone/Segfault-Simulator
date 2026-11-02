@@ -166,6 +166,42 @@ bool grading(EditorHistory* history, sfs::ColorGrading& grading)
                       0.0f,
                       1.0f,
                       "How far in from the corners it starts");
+  changed |= widgets::undoable(
+      history,
+      grading.autoExposure,
+      [&](bool& on)
+      { return ImGui::Checkbox(row("Auto Exposure").c_str(), &on); });
+  ImGui::SetItemTooltip(
+      "The exposure follows what's on screen, as eyes do: a bright view\n"
+      "darkens toward the target, a dim one brightens, within the limits,\n"
+      "easing there over a second or so. On top of a physical sky's own\n"
+      "adaptation to dusk and night: keep Brighten small for dark nights.");
+  if (!grading.autoExposure)
+    return changed;
+  changed |= slider(history,
+                    "Exposure Target",
+                    grading.exposureTarget,
+                    -3.0f,
+                    3.0f,
+                    "The average brightness it aims for, in stops from mid-grey");
+  changed |= slider(history,
+                    "Darken",
+                    grading.exposureDarken,
+                    0.0f,
+                    4.0f,
+                    "The most it darkens a bright view, in stops");
+  changed |= slider(history,
+                    "Brighten",
+                    grading.exposureBrighten,
+                    0.0f,
+                    4.0f,
+                    "The most it brightens a dim view, in stops");
+  changed |= slider(history,
+                    "Speed",
+                    grading.exposureSpeed,
+                    0.1f,
+                    10.0f,
+                    "How fast it adapts, about stops a second");
   return changed;
 }
 
@@ -322,6 +358,112 @@ bool ambientOcclusion(EditorHistory* history,
   return changed;
 }
 
+bool contactShadows(EditorHistory* history, sfs::ContactShadowSettings& contact)
+{
+  bool changed = widgets::undoable(
+      history,
+      contact.enabled,
+      [&](bool& on)
+      { return ImGui::Checkbox(row("Contact Shadows").c_str(), &on); });
+  ImGui::SetItemTooltip(
+      "Small, sharp shadows where things meet the ground and in fine\n"
+      "crevices, finer than the sun's shadow maps hold. Worked out on screen\n"
+      "with ambient occlusion; take only the sun's (or moon's) light, under a\n"
+      "physical sky. Grass blades don't cast them.");
+  if (!contact.enabled)
+    return changed;
+  changed |= slider(history,
+                    "Length",
+                    contact.length,
+                    0.05f,
+                    2.0f,
+                    "How far toward the sun it looks for what blocks it, "
+                    "world units");
+  changed |= slider(history,
+                    "Thickness",
+                    contact.thickness,
+                    0.02f,
+                    2.0f,
+                    "How thick what's drawn is taken to be behind its front, "
+                    "world units (more: thin things cast more broadly)");
+  changed |= slider(history,
+                    "Strength",
+                    contact.strength,
+                    0.0f,
+                    1.0f,
+                    "How dark they get (1: none of the sun's light)");
+  return changed;
+}
+
+bool rain(EditorHistory* history, sfs::RainSettings& rain)
+{
+  bool changed = widgets::undoable(
+      history,
+      rain.enabled,
+      [&](bool& on) { return ImGui::Checkbox(row("Rain").c_str(), &on); });
+  ImGui::SetItemTooltip(
+      "While the weather has rain: streaks falling around the camera, drops\n"
+      "splashing and ringing water, and a grey veil over the distance.\n"
+      "Nothing falls under a roof (with the sun's shadows on). Wet surfaces\n"
+      "are drawn either way.");
+  if (!rain.enabled)
+    return changed;
+  changed |= slider(history,
+                    "Density",
+                    rain.density,
+                    0.0f,
+                    2.0f,
+                    "How many streaks fall (1: about 40,000 in a downpour)");
+  changed |= slider(history,
+                    "Streak Length",
+                    rain.length,
+                    0.05f,
+                    2.0f,
+                    "How long a streak is, metres (its blur as it falls)");
+  changed |= slider(history,
+                    "Streak Width",
+                    rain.width,
+                    0.5f,
+                    6.0f,
+                    "How wide a streak is, millimetres (at least a pixel is "
+                    "drawn, fainter)");
+  changed |= slider(history,
+                    "Brightness",
+                    rain.brightness,
+                    0.0f,
+                    3.0f,
+                    "How bright the streaks and splashes are (1: as the sky "
+                    "and lamps light them)");
+  changed |= slider(history,
+                    "Splashes",
+                    rain.splashes,
+                    0.0f,
+                    2.0f,
+                    "How many drops splash where they land (0: none)");
+  changed |= slider(history,
+                    "Ripples",
+                    rain.ripples,
+                    0.0f,
+                    2.0f,
+                    "How strongly drops ring standing water (0: none)");
+  changed |= slider(history,
+                    "Veil",
+                    rain.veil,
+                    0.0f,
+                    3.0f,
+                    "How thick the distant rain's grey veil is (1: a "
+                    "downpour hides half of what's 150 m away)");
+  changed |= slider(history,
+                    "Drips",
+                    rain.drips,
+                    0.0f,
+                    2.0f,
+                    "How much water drips off the edges of roofs, eaves and "
+                    "trees in heavy rain\n(and for a while after), and how "
+                    "wet the ground is under them (0: none)");
+  return changed;
+}
+
 bool fog(EditorHistory* history, sfs::FogSettings& fog)
 {
   bool changed = widgets::undoable(
@@ -376,6 +518,56 @@ bool fog(EditorHistory* history, sfs::FogSettings& fog)
                     0.0f,
                     2.0f,
                     "How much it glows toward the sun (a physical sky's)");
+  return changed;
+}
+
+bool weather(EditorHistory* history,
+             sfs::SceneWeather& weather,
+             float& cloudCover)
+{
+  bool changed = slider(history,
+                        "Cloud Cover",
+                        cloudCover,
+                        0.0f,
+                        1.0f,
+                        "How overcast it is: scattered cumulus at low cover, "
+                        "broken cloud, a grey deck near 1 (a physical sky "
+                        "draws them)");
+  changed |= slider(history,
+                    "Cloud Darkness",
+                    weather.cloudDarkness,
+                    0.0f,
+                    1.0f,
+                    "How heavy the clouds are: white fair-weather cloud (0) "
+                    "to dark rain cloud (1)");
+  changed |= widgets::undoable(
+      history,
+      weather.wind,
+      [](glm::vec2& v)
+      {
+        return ImGui::DragFloat2(
+            row("Wind").c_str(), &v.x, 0.1f, -40.0f, 40.0f, "%.1f");
+      });
+  ImGui::SetItemTooltip(
+      "The wind the clouds drift on, metres a second along world X and Y");
+  changed |= slider(history,
+                    "Rain",
+                    weather.rain,
+                    0.0f,
+                    1.0f,
+                    "How hard it's raining (0: not; 1: a downpour)");
+  changed |= slider(history,
+                    "Wetness",
+                    weather.wetness,
+                    0.0f,
+                    1.0f,
+                    "How wet surfaces are (0: dry; 1: soaked)");
+  changed |= slider(history,
+                    "Puddles",
+                    weather.puddles,
+                    0.0f,
+                    1.0f,
+                    "How full the low spots are (0: dry; 1: full)");
   return changed;
 }
 
@@ -504,6 +696,43 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::PopID();
     ImGui::Unindent();
   }
+  if (optional("Contact Shadows",
+               style.contactShadows.has_value(),
+               "On: these contact shadows instead of the scene's"))
+  {
+    style.contactShadows =
+        style.contactShadows ? std::nullopt
+                             : std::optional<sfs::ContactShadowSettings>(
+                                   sfs::ContactShadowSettings{.enabled = true});
+    changed = true;
+  }
+  if (style.contactShadows)
+  {
+    ImGui::Indent();
+    ImGui::PushID("contact");
+    changed |= contactShadows(nullptr, *style.contactShadows);
+    ImGui::PopID();
+    ImGui::Unindent();
+  }
+  if (optional("Temporal Anti-Aliasing",
+               style.temporalAntiAliasing.has_value(),
+               "On: this instead of the scene's setting"))
+  {
+    style.temporalAntiAliasing =
+        style.temporalAntiAliasing ? std::nullopt : std::optional<bool>(true);
+    changed = true;
+  }
+  if (style.temporalAntiAliasing)
+  {
+    ImGui::Indent();
+    bool on = *style.temporalAntiAliasing;
+    if (ImGui::Checkbox(row("Smooth Edges Over Frames").c_str(), &on))
+    {
+      style.temporalAntiAliasing = on;
+      changed = true;
+    }
+    ImGui::Unindent();
+  }
   if (optional("Fog",
                style.fog.has_value(),
                "On: this height fog instead of the scene's (it takes haze's "
@@ -519,6 +748,23 @@ bool visualStyle(sfs::VisualStyle& style)
     ImGui::Indent();
     ImGui::PushID("fog");
     changed |= fog(nullptr, *style.fog);
+    ImGui::PopID();
+    ImGui::Unindent();
+  }
+  if (optional("Rain",
+               style.rain.has_value(),
+               "On: rain looking like this instead of the scene's"))
+  {
+    style.rain = style.rain ? std::nullopt
+                            : std::optional<sfs::RainSettings>(
+                                  sfs::RainSettings{});
+    changed = true;
+  }
+  if (style.rain)
+  {
+    ImGui::Indent();
+    ImGui::PushID("rain");
+    changed |= rain(nullptr, *style.rain);
     ImGui::PopID();
     ImGui::Unindent();
   }

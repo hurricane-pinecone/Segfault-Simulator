@@ -35,3 +35,15 @@ fn fogSunGlow(direction: vec3f) -> vec3f {
   let phase = (1.0 - g * g) / (4.0 * 3.14159265 * d * sqrt(d));
   return frame.sunLight.rgb * (phase * frame.fogLight.y);
 }
+
+// How much of a point rain's veil hides (0 to 0.9): the falling rain's own
+// grey, as thick at every height (to the clouds), past the nearest few
+// metres the streaks themselves fill. Mixed toward the fog's colour.
+fn rainVeilAt(worldPosition: vec3f) -> f32 {
+  let density = frame.rainVeil.x;
+  if (density <= 0.0) {
+    return 0.0;
+  }
+  let reach = max(distance(worldPosition, frame.cameraPosition.xyz) - 5.0, 0.0);
+  return 0.9 * (1.0 - exp(-density * reach));
+}

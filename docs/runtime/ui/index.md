@@ -48,6 +48,8 @@ always shows the game as it is, with nothing to keep in sync.
 | `Image("file.png")`, `Image::mesh("farm:wheat")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit |
 | `Image::placeholder()` | A soft box where a picture will be |
 | `ProgressBar(fraction)` | A bar filled part way (0 to 1) |
+| `Slider(value, change, low, high, step)` | A knob along a track (160 points wide), from `low` to `high` (0 to 1 by default); dragging it, or pressing the track, calls `change` with the new value, in steps of `step` (0: any) |
+| `Toggle("label", on, change)` | A switch with a label beside it; a click calls `change` with the other state |
 | `Spacer(min)` | Takes up whatever room its stack has spare, pushing the rest apart |
 | `VStack{…}`, `VStack(Alignment::Leading, {…})` | Children one below another |
 | `HStack{…}`, `HStack(Alignment::Top, {…})` | Children side by side |
@@ -160,7 +162,12 @@ Layers get the mouse before the game does. A click on a button calls its
 action, and while the mouse is over UI (or a press started on it), the game's
 scripts see no clicks or scrolling: `MouseInput::blocked()` says so, for
 example to hide a cursor marker under the UI. A drag the game started carries
-on across UI.
+on across UI. A slider pressed on keeps following the pointer until the
+button's let go, even off the slider.
+
+Like buttons, a slider's and a toggle's state is the game's: they show the
+value they're given and call `change` with a new one, and the next frame's
+`body()` shows it. `.disabled()` stops them too.
 
 Layers draw in order (`Layer::order`, higher on top) and can be hidden
 (`Layer::visible`).
