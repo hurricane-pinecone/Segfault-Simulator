@@ -28,7 +28,8 @@ replace a scene's contents, destroy its entities and call
   children are listed under its `"children"` key, beside its components. A
   component can't be called `children`.
 - **The scene's render settings**, when it has a `RenderSystem`: its
-  [style](#the-style), lighting, shadows, wind, haze and the camera. In an editor scene, that camera is the viewport's
+  [style](#the-style), lighting, shadows, wind, haze, rain and weather, and
+  the camera. In an editor scene, that camera is the viewport's
   view. The game sees through a camera entity, which is saved like any other
   entity.
 - **The scene's systems** (the `System` scripts it runs when it plays, and

@@ -12,7 +12,7 @@ Game
             ▲
 Scene       │
   └─ RenderSystem       camera, lighting, the style (Space2D), builds each frame
-       └─ render modules    sprites, meshes, particles, decals, voxels, grass, UI
+       └─ render modules    sprites, meshes, particles, decals, voxels, grass, puddles, deformation, UI
 ```
 
 - **[Styles](./styles/index.md)**: how a flat, isometric or 3D game is set up,
@@ -46,8 +46,9 @@ Backends are pluggable: see [Render backends](./backends/index.md).
 ## Setting up a scene's rendering
 
 A scene file (one made in the editor) is played by `StandardScene`, which sets
-all of this up for you: a `RenderSystem` with the mesh, grass, sprite, decal,
-particle and UI modules, in the style the file names.
+all of this up for you: a `RenderSystem` with the mesh, grass, puddle,
+deformation, sprite, decal, particle and UI modules, in the style the file
+names.
 
 A scene written in code adds a `RenderSystem` itself, with the backend's
 renderer, and registers the modules it wants:

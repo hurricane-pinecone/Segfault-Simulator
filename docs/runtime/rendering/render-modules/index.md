@@ -1,9 +1,10 @@
 # Render modules
 
 A `RenderSystem` composes its features as **render modules** rather than
-baking them in. Sprites, meshes, particles, decals, voxel terrain, grass and
-UI are all modules, and they work in every [style](../styles/index.md). This
-is how a game turns the built-in features on and how it adds its own.
+baking them in. Sprites, meshes, particles, decals, voxel terrain, grass,
+puddles, deformation and UI are all modules, and they work in every
+[style](../styles/index.md). This is how a game turns the built-in features on
+and how it adds its own.
 
 ## The model
 
@@ -50,7 +51,8 @@ game can add its own module without touching the others.
 ## Built-in modules
 
 All in `engine/runtime/rendering/modules/`. `StandardScene` (the scene a scene
-file describes) registers mesh, grass, sprite, decal, particle and UI modules.
+file describes) registers mesh, grass, puddle, deformation, sprite, decal,
+particle and UI modules.
 
 | Module | Draws | Construct with |
 | --- | --- | --- |
@@ -60,6 +62,8 @@ file describes) registers mesh, grass, sprite, decal, particle and UI modules.
 | `DecalModule` | Marks left where particles land: splashes, scorches, paint | the asset store |
 | `VoxelModule` | A `VoxelWorld`'s block faces and water (see [Voxel world](../../voxel/index.md)) | the asset store, the world, its block registry |
 | `GrassModule` | `GrassComponent` grass on mesh entities (see [Grass](../meshes-and-lighting/index.md#grass)) | the renderer |
+| `PuddleModule` | Nothing itself; works out where rain water stands on a `puddles` terrain, for the terrain's own material to draw (see [Puddles](../meshes-and-lighting/index.md#puddles)) | the renderer |
+| `DeformationModule` | A patch of ground pressed in by `DeformerComponent` meshes on a `deformable` terrain, with a copy of the terrain's material (see [Deformation](../meshes-and-lighting/index.md#deformation)) | the renderer |
 | `UiModule` | The scene's `ui::Layer`s, over the finished frame (see [Game UI](../../ui/index.md)) | the scene |
 
 ### DecalModule
