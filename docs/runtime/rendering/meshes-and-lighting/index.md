@@ -174,7 +174,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `tileSize` | World units across one repeat of its textures (4) |
 | `roughness`, `normalScale` | As a standard material's (1, 1) |
 | `grass` | How much of a [grass](#grass) field on the mesh grows over it: 1 as its maps say, 0 none (1) |
-| `meadow` | How much it looks like grass seen from afar, past where blades are drawn (0): its colour breaks up in patches, a soft sheen shows at low angles, and light and dark bands roll across it with the wind, as over the blades |
+| `meadow` | How much it looks like grass seen from afar, past where blades are drawn (0): grass growing on the terrain carries its ground's look over it out to the horizon (see Grass, The ground); on its own, its colour breaks up in patches, a soft sheen shows at low angles, and light and dark bands roll across it with the wind, as over the blades |
 | `triplanar` | Also lay its textures from the sides where the ground is steep (cliffs, rock, a gorge's walls), so they don't stretch down the slope (false) |
 | `puddles` | How readily water pools on it, 0 to 1: its share of the micro relief's dips, and how full its low spots get. Dirt and paths 1, a meadow hardly (1) |
 
@@ -948,7 +948,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   quarter of a world unit) across. Each texel keeps the height and normal of
   the highest triangle facing up within 60 degrees there. It's built again
   only when the mesh, or how it's turned or scaled, changes. Moving the
-  entity, or changing its grass's settings, costs nothing.
+  entity, or changing its blades' density, height or variation, grows the
+  blades in view again once (see Growing blades); other settings cost nothing.
 - **Big meshes:** a mesh more than 2.5 times as wide as
   `GrassModule::windowReach()` (1.2 times the draw distance, plus
   `windowSlack()`: 0.15 of it, at least 8) grows grass only in a window that
@@ -977,38 +978,130 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   wants them kept. Setting the component's `paint` starts the maps over from
   it. For example, a game might lower `Coverage` a little wherever wheels go,
   to wear a path, or write moisture into `Data0` for its grass material to
-  turn dry grass yellow.
-- **Growing blades:** nothing is stored per blade. Every frame a compute pass
-  (`meshGrassGrow.wgsl`) grows the blades around the camera:
+  turn dry grass yellow. **Write grass only through `maps()`, `stamp()`,
+  `fill()` (and `terrainPainted()` after painting the terrain under it):
+  anything else won't be seen**, since the blades grown from the maps are kept
+  until the module says where they changed.
+- **Growing blades:** blades are grown on the GPU (`meshGrassGrow.wgsl`), in
+  tiles kept from frame to frame (`GrassTileCache`, `grassTiles.h`). The
+  ground is split into fixed tiles, 64 by 64 cells of each lattice (below), so
+  3.2 by 3.2 units for the finest at 400 blades a unit. A tile is built
+  (`cs_build`) the first time it's in view and near enough: every cell's
+  blade worked out from the ground and maps, all that doesn't depend on the
+  camera (where it is, its height from the ground, how tall `Length` lets it
+  grow, whether `Coverage` lets it grow at all, its ground's slope), and kept
+  in 16 bytes. Each frame, the tiles in view and in reach are found on the
+  CPU (by box: nearest distance, frustum) and only the camera's part is done
+  over their kept blades (`cs_grow`): how many are kept at their distance,
+  growing in, width, in view, detail. Wind, trampling and the Data channels
+  are applied as they're drawn, so they never build a tile. A tile coming
+  into view is built that frame, from the same ground and maps, so it looks
+  just as it would have.
+  - A tile keeps only the blades ranked low enough to be drawn nearest the
+    camera, and a step more: it's built again with more as the camera nears,
+    and with fewer once the camera's well away (a few a frame).
+  - It's built again where what it's grown from changes. `GrassMaps` notes
+    the 16-texel blocks whose `Coverage` or `Length` changed
+    (`takeGrownChanged()`), the module passes them on with the maps
+    (`GrassMapsImage::regrow`), and only the tiles over them are built again:
+    two edits far apart don't build what's between. Painting the terrain
+    under it does the same where its cover changed. A new ground (a big
+    mesh's window moving on), new maps, moving the entity, or changing the
+    blades' density, height or variation builds them all again.
+  - Their blades live in one buffer a field, given out in 64-blade chunks: it
+    grows as needed, and tiles not used for 180 frames (or, past 32 MB, the
+    least lately used) are let go, up to 128 MB at most.
+  - Blades are listed front to back, so the lit pass's depth test hides
+    more of the farther ones behind those drawn first rather than shading
+    them. The tiles in view come nearest first (by their middles), and their
+    blades are listed tile by tile in that order: `cs_count` finds which of
+    each tile's blades are drawn and in which list, and counts them;
+    `cs_order` adds up the counts in the tiles' order, for where each tile's
+    blades go; `cs_grow` grows them into their places, each tile's rows from
+    the end nearer the camera. The three lists sit one after the other, each
+    as long as it needs (the draws read where each starts), so short grass
+    always gets its coarser list.
+  - Tiles hidden behind what's drawn opaque (buildings, hills, trees) are
+    left out, when the frame has ambient occlusion: its depth pass (at half
+    size) runs before the grass grows, and `grassCulling.wgsl` takes the
+    farthest of its depths over blocks of the screen, in levels each with
+    blocks twice the size. `cs_count` tests each tile's box (its ground's
+    height range, with room for its blades to stand, lean and cast their
+    shadows) against the blocks it covers, at the finest level where they're
+    few: hidden only if it's nearer nowhere than the farthest of what's over
+    it. It's this frame's depth, so turning the camera never leaves holes.
+    (Being at half size, a gap between opaque things narrower than about two
+    pixels can go unseen in it: grass seen only through such gaps, all over
+    a tile, could be left out.)
+    Not for a tile that reaches behind the camera, nor, with the sun under
+    `kGrassLowestCulledSun`, for one near enough to cast shadows (they'd fall
+    too far to allow for). `SFS_GRASS_UNCULLED` turns it off, for comparing.
+  - `SFS_GRASS_UNCACHED` grows every blade every frame, as before, for
+    comparing. `SFS_GRASS_TILES` tints tiles for a moment as they're built:
+    blue as they come into view (or need more blades), magenta when built
+    again for an edit, so a missed update is easy to see.
+
+  What's grown each frame:
   - Blades are spread over four lattices, each twice as coarse as the one
-    before and reaching further (0.2, 0.4, 0.65 and 1 of the draw distance).
-    Each lattice cell holds one blade at a hashed spot, so the grass is the
-    same every frame.
-  - Grass is at full density near the camera, thinning to a quarter, then a
-    sixteenth, further out. Where it has thinned, blades are drawn wider (by
-    how many are left, up to 4 times), so the field still reads full. Each
-    blade shrinks away before its lattice's reach ends rather than popping,
-    and the last lattice's shrink down into the ground over the last 45% of
-    the draw distance, so there's no line where the grass ends.
+    before. Each lattice cell holds one blade at a hashed spot, so the grass is
+    the same every frame.
+  - Grass is at full density near the camera, then fewer blades are kept
+    farther out: the share kept falls smoothly with distance (`grassKeptShare()`;
+    all of them out to 770 times the finest cells' spacing, at most 0.3 of the
+    draw distance, then by a power of 2.3 of the distance), down to none at
+    the draw distance (from 0.6 of it on). Each blade has its own fixed rank
+    from its cell's hash (the coarser its lattice, the lower), and is kept
+    where its rank is below that share. So the blades kept are the same ones
+    wherever the camera is: a patch thins out evenly, blade by blade, as the
+    camera draws away, with no ring where it changes. A blade near its cut-off
+    grows in over a short stretch rather than popping, and where fewer are
+    kept blades are drawn wider (up to 4 times), so the field still reads
+    full. Each lattice is grown only as far as any of its blades are kept,
+    and only over the part of its reach in view (seen from above).
+    `SFS_GRASS_LEGACY_THINNING` thins the old way, for comparing: each
+    lattice reaching a set share of the draw distance, its blades shrinking
+    away at its end.
   - The pass drops blades out of view or where the maps leave none. The rest
-    go into three lists by distance, with 5, 2 or 1 segments, and each list is
-    one indirect draw. Short grass (under 0.22 tall, then under 0.1) gets
-    fewer segments near the camera too, since it barely curves. The cost
-    follows what's on screen, not how big the field is.
+    go into three lists by distance, with 4, 2 or 1 segments, and each list is
+    one indirect draw. Short grass (under about 0.22 tall, then under 0.1)
+    gets fewer segments near the camera too, since it barely curves. Over the
+    stretch before each step in detail a blade takes on the coarser blade's
+    shape (its vertices slide onto the coarser strip's), so the step doesn't
+    show. The cost follows what's on screen, not how big the field is.
 - **The ground:** before its blades, the grass draws its mesh again in the
   grass material's colour (shaded as low down in the grass), blended over the
-  ground by `Coverage`, fading out between 1 and 1.15 times the draw
-  distance. The gaps between blades then look like grass, while a bare path
-  shows the ground's own material. Past it, the ground's own material carries
-  on: give a terrain's grassy layers `meadow` so it looks like grass from
-  afar.
+  ground by `Coverage`, so the gaps between blades look like grass while a
+  bare path shows the ground's own material. As the blades thin out to none
+  (from `kGrassFadeFrom` of the draw distance to it), it takes on how they
+  look from afar instead (`fs_ground` in `meshGrass.wgsl`): their tone on
+  average, its normal turned toward the camera as theirs are, a grain fixed to
+  the world about two pixels fine, and the wind's gusts in step with theirs.
+  It carries on so out to the horizon, with no draw distance of its own, so
+  far grass takes the same material, maps data, season, wetness and light as
+  the blades. Past the maps (a big mesh's window of them) it covers its
+  terrain's layers as much as each is `meadow` (`grassFarGround()`: the
+  terrain's splat map is bound with the grass), with the maps' data as they
+  hold it on average, handing over over their last 4%. `SFS_GRASS_GROUND_ONLY`
+  draws the ground without the blades, to compare the two.
 - **Drawing:** each blade is a triangle strip built in the vertex shader
   (`meshGrass.wgsl`): a curve from its root, tapering to a point, bent over
   by its own lean, the wind (`FrameParams::wind`) and trampling. How far
   the wind bends a blade grows with its length: grass 0.35 tall or more sways
   fully, and mown grass hardly moves. It's lit
   by the same fragment stage as everything else, so materials, point lights,
-  shadows and bloom all work on grass. A material graph's Grass node reads
+  shadows and bloom all work on grass. There are so many blades, each a few
+  pixels across, that what a vertex hands on to its fragments costs as much
+  as their lighting: a blade's vertex hands on little (where it is, its
+  normal, how far up and across the blade, how shut in and how wet), and its
+  fragments read what's the same all over the blade from the blade itself.
+  What barely changes along a blade is found at its vertices where that
+  pays: on the nearest list's blades (big on the screen) what the air does
+  and the clouds' shadow; on the rest the clouds' shadow, and past
+  `GrassUniforms::vertexSun` (30 m, or the nearest list's end or the blades'
+  shadows' reach if farther) the sun's shadows too, a blade at a time over
+  the 10 m past it (by a number of its own, so it doesn't swim). Out there
+  neither the blades' shadows nor anything else's change much along one.
+  A material graph's Grass node reads
   the blade's length, how far up it the point is, a random number, and the
   Data channels where it grows (`SurfaceIn::grass` and `grassData`; the
   defaults on anything else).
@@ -1040,6 +1133,15 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   the blades counts as deep in the grass, a little less so far away. So a
   field reads as deep at any distance, past the reach of its shadows.
   `GrassComponent::selfShadow` sets how strong it is.
+
+- **Measuring:** with `SFS_GRASS_STATS` set (natively), the grow pass counts
+  its blades at each step (looked at, kept by distance, covered, in view,
+  each list, shadow casters) and the device counts the vertices, triangles
+  and fragments the blades' draws shade; the averages are logged every 60
+  frames read back, with the tiles' (grown from, built, kept, hidden, and
+  their blades' buffer in use and in all). `SFS_GRASS_STATS=2` also counts the fragments drawn at
+  each pixel (overdraw; it keeps the GPU from skipping hidden ones early, so
+  it's slower).
 
 ## Debug settings
 

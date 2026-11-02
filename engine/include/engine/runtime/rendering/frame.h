@@ -14,10 +14,12 @@
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include "glm/glm/ext/vector_int4.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace sfs
@@ -118,6 +120,10 @@ struct FrameParams
   glm::mat4 projection{1.0f};
   glm::mat4 viewProjection{1.0f};
   glm::vec3 cameraPosition{0.0f};
+  // Where grass is grown and thinned from, past the camera (for checking
+  // how it changes as the camera moves, with the view held still:
+  // SFS_CAMERA_STEP, see RenderSystem).
+  glm::vec3 grassCameraOffset{0.0f};
   glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit view direction
   float nearPlane = 0.1f;                     // the camera's depth range
   float farPlane = 500.0f;
@@ -177,9 +183,11 @@ struct GrassHandle
 };
 
 /**
- * Where a grass field is flattened (GrassTrample::image()): RGBA8 pixels,
- * `size` of them, rows from `min`'s y, over the world XY rectangle `min` to
- * `max`.
+ * Where a grass field is flattened (GrassTrample::image()): a map `size`
+ * texels, rows from `min`'s y, over the world XY rectangle `min` to `max`.
+ * `pixels` (RGBA8) are those of texels `from` to `to` (exclusive), rows from
+ * its min y: just what changed; all of them if `to` is left empty, as they must
+ * be when the map's size changes.
  */
 struct GrassTrampleImage
 {
@@ -187,6 +195,8 @@ struct GrassTrampleImage
   glm::vec2 max{0.0f};
   glm::ivec2 size{0, 0};
   std::span<const uint8_t> pixels;
+  glm::ivec2 from{0, 0};
+  glm::ivec2 to{0, 0};
 };
 
 /**
@@ -194,6 +204,11 @@ struct GrassTrampleImage
  * `data` RGBA8 pixels from texel `from` to `to` (exclusive), rows from its min
  * y, of maps over `grid`. An empty grid: unpainted maps (full, full-length
  * grass), no pixels.
+ *
+ * The renderer keeps the blades it grows from them, and grows them again
+ * only where `regrow` says coverage or length changed (rectangles of texels:
+ * xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without it, all
+ * of `from` to `to`.
  */
 struct GrassMapsImage
 {
@@ -202,6 +217,7 @@ struct GrassMapsImage
   glm::ivec2 to{0, 0};
   std::span<const uint8_t> shape;
   std::span<const uint8_t> data;
+  std::optional<std::span<const glm::ivec4>> regrow;
 };
 
 /**
@@ -222,6 +238,9 @@ struct GrassBatch
   // Blades near the camera cast the sun's shadow (GrassComponent).
   bool castsShadows = true;
   float selfShadow = 0.5f; // darker down toward the roots (GrassComponent)
+  // Its ground's own material: a terrain's meadow layers carry its ground's
+  // look on past its maps (see grassFarGround()).
+  MaterialHandle ground;
 };
 
 /**

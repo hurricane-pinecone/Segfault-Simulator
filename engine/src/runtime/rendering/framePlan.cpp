@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <span>
 
 namespace sfs
@@ -19,15 +20,34 @@ namespace sfs
 namespace
 {
 // How a grass field's grown, by distance (fractions of its draw distance):
-// each lattice's reach (see meshGrassGrow.wgsl), and to where blades have
-// 5 segments, then 2 (then 1).
+// to where blades have 4 segments, then 2 (then 1); and, thinned the old way
+// (grassLegacyThinning()), each lattice's reach.
 constexpr std::array<float, 4> kGrassReach = {0.2f, 0.4f, 0.65f, 1.0f};
 constexpr float kGrassFineDetail = 0.12f;
 constexpr float kGrassMidDetail = 0.35f;
+// Past here (m), where a blade is a few pixels across (and past the nearest
+// list's blades, and the reach of their shadows), the sun's shadow on it is
+// found at its vertices, a blade at a time over the band past it (see
+// meshGrass.wgsl).
+constexpr float kGrassVertexSunFrom = 30.0f;
+constexpr float kGrassVertexSunBand = 10.0f;
+// How many blades are kept by distance (see grassKeptShare()): all of them
+// out to this many times the spacing of the finest lattice's cells (so
+// denser grass thins out sooner, about where its blades crowd as much on
+// screen), but no further than this share of the draw distance; past it,
+// fewer by this power of the distance; and from this share of the draw
+// distance, fewer still, to none at it.
+constexpr float kGrassFullCells = 770.0f;
+constexpr float kGrassMostFull = 0.3f;
+constexpr float kGrassThinning = 2.3f;
+constexpr float kGrassFadeFrom = 0.6f;
+// Over how much of its rank a blade grows in (meshGrassGrow.wgsl's
+// kGrowIn): the most of a lattice's blades that can be part grown.
+constexpr float kGrassGrowIn = 0.2f;
 // Most blades a field grows a frame (its lists all together), and the most
 // cells a side of a lattice.
 constexpr double kGrassMostBlades = 4.0e6;
-constexpr int kGrassMostCells = 2048;
+constexpr int kGrassMostCells = 3072;
 // How much grass's colour covers the ground it grows on, where it's full.
 constexpr float kGrassGroundTint = 0.9f;
 // How much wider a blade's shadow is than the blade: a little, so a field's
@@ -36,6 +56,40 @@ constexpr float kGrassShadowWidth = 1.6f;
 // How much brighter a physical sky's moon's disk is than its light on a
 // surface facing it.
 constexpr float kMoonDiskGlow = 120.0f;
+
+// The bearings (radians, in a ground's own XY, `toOwn` from the world) the
+// view spans seen from above, from its corners' (the first no more than the
+// second, and less than a half turn apart); nothing if it looks too steeply
+// down or up for them to say, or spans too much.
+std::optional<glm::vec2> viewBearings(const FrameParams& frame,
+                                      const glm::mat4& toOwn)
+{
+  const glm::mat4 toWorld = glm::inverse(frame.viewProjection);
+  const glm::mat3 turn(toOwn);
+  const glm::vec3 ahead = turn * frame.cameraForward;
+  if (glm::length(glm::vec2(ahead)) < 0.2f * glm::length(ahead))
+    return std::nullopt;
+  const float middle = std::atan2(ahead.y, ahead.x);
+  glm::vec2 span(0.0f);
+  for (int corner = 0; corner < 4; ++corner)
+  {
+    const glm::vec4 clip(
+        corner & 1 ? 1.0f : -1.0f, corner & 2 ? 1.0f : -1.0f, 0.5f, 1.0f);
+    const glm::vec4 point = toWorld * clip;
+    const glm::vec3 ray =
+        turn * (glm::vec3(point) / point.w - frame.cameraPosition);
+    if (glm::length(glm::vec2(ray)) < 0.2f * glm::length(ray))
+      return std::nullopt;
+    float off = std::atan2(ray.y, ray.x) - middle;
+    off = std::remainder(off, glm::two_pi<float>());
+    span = glm::vec2(std::min(span.x, off), std::max(span.y, off));
+  }
+  // (A little more, for blades leaning in from either side.)
+  span += glm::vec2(-0.1f, 0.1f);
+  if (span.y - span.x >= glm::pi<float>())
+    return std::nullopt;
+  return span + middle;
+}
 } // namespace
 
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
@@ -867,6 +921,23 @@ std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
       glm::vec4(1.0f / glm::vec2(half), 0.0f, 0.0f)};
 }
 
+float grassKeptShare(const GrassGrowUniforms& uniforms, float distance)
+{
+  const glm::vec4& thinning = uniforms.thinning;
+  const float full = std::min(
+      std::pow(thinning.x / std::max(distance, 1e-3f), thinning.y), 1.0f);
+  const float far = uniforms.camera.w;
+  const float t = std::clamp(
+      (distance - thinning.z) / std::max(far - thinning.z, 1e-3f), 0.0f, 1.0f);
+  return full * (1.0f - t * t * (3.0f - 2.0f * t));
+}
+
+bool grassLegacyThinning()
+{
+  static const bool legacy = std::getenv("SFS_GRASS_LEGACY_THINNING");
+  return legacy;
+}
+
 float grassShadowReach(const GrassBatch& batch, const FrameParams& frame)
 {
   if (!batch.castsShadows || !frame.shadows.enabled)
@@ -881,6 +952,27 @@ float grassShadowReach(const GrassBatch& batch, const FrameParams& frame)
                      kGrassShadowMostReach)
           : kGrassShadowOneMapReach;
   return std::clamp(reach, 0.0f, std::max(batch.drawDistance, 0.0f));
+}
+
+void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain)
+{
+  uniforms.far.x = uniforms.far.y = 0.0f;
+  uniforms.farMeadow = glm::vec4(0.0f);
+  if (!terrain || terrain->layers.empty())
+    return;
+  const auto meadow = [&](std::size_t layer)
+  {
+    // (A channel with no layer of its own: the first's, as the terrain
+    // draws it.)
+    return std::clamp(
+        terrain->layers[layer < terrain->layers.size() ? layer : 0].meadow,
+        0.0f,
+        1.0f);
+  };
+  uniforms.far.x = meadow(0);
+  uniforms.far.y = 1.0f;
+  for (int channel = 0; channel < 4; ++channel)
+    uniforms.farMeadow[channel] = meadow(std::size_t(channel) + 1);
 }
 
 std::optional<GrassPlan> planGrass(const GrassBatch& batch,
@@ -925,13 +1017,34 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                          0.0f),
                model,
                normalMatrix,
-               glm::inverse(model)};
+               glm::inverse(model),
+               glm::vec4(std::max({kGrassVertexSunFrom,
+                                   distance * kGrassFineDetail,
+                                   shadowReach}),
+                         kGrassVertexSunBand,
+                         0.0f,
+                         0.0f)};
+  plan.draw.far.z = kGrassFadeFrom * distance;
 
   GrassGrowUniforms& uniforms = plan.grow;
   uniforms.model = model;
   uniforms.normalMatrix = normalMatrix;
   uniforms.planes = Frustum::fromViewProjection(frame.viewProjection).planes();
-  uniforms.camera = glm::vec4(frame.cameraPosition, distance);
+  const glm::vec3 grassCamera = frame.cameraPosition + frame.grassCameraOffset;
+  uniforms.camera = glm::vec4(grassCamera, distance);
+  uniforms.viewProjection = frame.viewProjection;
+  uniforms.eye = glm::vec4(frame.cameraPosition, 1.0f);
+  // How far a blade's shadow falls from it, for its height (none: the sun
+  // so low they'd fall too far to tell, see meshGrassGrow.wgsl's
+  // hiddenTile()).
+  const float sunLength = glm::length(frame.lighting.sun.direction);
+  const float sunUp =
+      sunLength > 1e-4f ? frame.lighting.sun.direction.z / sunLength : 0.0f;
+  uniforms.forward =
+      glm::vec4(frame.cameraForward,
+                sunUp > kGrassLowestCulledSun
+                    ? std::sqrt(std::max(1.0f - sunUp * sunUp, 0.0f)) / sunUp
+                    : -1.0f);
   const GrassGrid& ground = field.groundGrid;
   uniforms.ground = glm::vec4(ground.min, ground.texelSize());
   uniforms.groundSize = glm::ivec4(ground.size, 0, 0);
@@ -942,20 +1055,66 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                               distance * kGrassMidDetail,
                               shadowReach,
                               0.0f);
+  const bool legacy = grassLegacyThinning();
+  uniforms.thinning = glm::vec4(
+      std::min(kGrassFullCells / std::sqrt(density), kGrassMostFull * distance),
+      kGrassThinning,
+      kGrassFadeFrom * distance,
+      legacy ? 0.0f : 1.0f);
 
   // Each lattice's cells within its reach of the camera, on the ground (from
   // its own origin: see meshGrassGrow.wgsl).
-  const glm::vec2 camera(glm::inverse(model) *
-                         glm::vec4(frame.cameraPosition, 1.0f));
+  // Only those in the view's bearings (seen from above), when it says.
+  const glm::mat4 toOwn = glm::inverse(model);
+  const glm::vec2 camera(toOwn * glm::vec4(grassCamera, 1.0f));
+  const glm::vec2 eye(toOwn * glm::vec4(frame.cameraPosition, 1.0f));
+  const std::optional<glm::vec2> bearings = viewBearings(frame, toOwn);
   glm::ivec2 most(0);
   for (int k = 0; k < 4; ++k)
   {
-    const float reach = distance * kGrassReach[k];
+    // As far as any of its blades are kept: a lattice's blades rank below
+    // a quarter of the next finer's (see meshGrassGrow.wgsl), and the
+    // coarsest's all the way down.
+    const float lowest = std::pow(0.25f, static_cast<float>(k + 1));
+    const float reach =
+        legacy  ? distance * kGrassReach[k]
+        : k < 3 ? std::min(uniforms.thinning.x *
+                               std::pow((1.0f + kGrassGrowIn) / lowest,
+                                        1.0f / kGrassThinning),
+                           distance)
+                : distance;
     uniforms.reach[k] = reach;
     const float size = cell * static_cast<float>(1 << k);
     const float own = reach / least;
-    const glm::vec2 low = glm::max(camera - own, ground.min);
-    const glm::vec2 high = glm::min(camera + own, ground.max);
+    glm::vec2 low = camera - own, high = camera + own;
+    if (bearings)
+    {
+      // The box round the sector from the eye, out to the reach (from the
+      // camera grass grows from: the eye's, but when checking), with room
+      // for a cell and a blade's lean.
+      const float out = own + glm::length(camera - eye);
+      glm::vec2 near = eye, far = eye;
+      const auto take = [&](float bearing)
+      {
+        const glm::vec2 at =
+            eye + out * glm::vec2(std::cos(bearing), std::sin(bearing));
+        near = glm::min(near, at);
+        far = glm::max(far, at);
+      };
+      take(bearings->x);
+      take(bearings->y);
+      for (int quarter = -4; quarter <= 4; ++quarter)
+      {
+        const float bearing = quarter * glm::half_pi<float>();
+        if (bearing > bearings->x && bearing < bearings->y)
+          take(bearing);
+      }
+      const float room = size * 2.0f + 1.5f / least;
+      low = glm::max(low, near - room);
+      high = glm::min(high, far + room);
+    }
+    low = glm::max(low, ground.min);
+    high = glm::min(high, ground.max);
     glm::ivec2 first(glm::floor(low / size));
     glm::ivec2 count =
         glm::max(glm::ivec2(glm::ceil(high / size)) - first, glm::ivec2(0));
@@ -980,11 +1139,27 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
   const auto within = [&](float radius)
   {
     double count = 0.0;
-    for (int k = 0; k < 4; ++k)
+    if (legacy)
+      for (int k = 0; k < 4; ++k)
+      {
+        const double reach = std::min(radius, uniforms.reach[k]);
+        count += density * (k < 3 ? 0.75 : 1.0) / double(1 << (2 * k)) *
+                 glm::pi<double>() * reach * reach;
+      }
+    else
     {
-      const double reach = std::min(radius, uniforms.reach[k]);
-      count += density * (k < 3 ? 0.75 : 1.0) / double(1 << (2 * k)) *
-               glm::pi<double>() * reach * reach;
+      // Those kept in each ring (with those growing in).
+      constexpr int kRings = 128;
+      const double step = std::min(radius, distance) / kRings;
+      for (int ring = 0; ring < kRings; ++ring)
+      {
+        const double middle = (ring + 0.5) * step;
+        const double kept =
+            std::min(grassKeptShare(uniforms, static_cast<float>(middle)) *
+                         (1.0 + kGrassGrowIn),
+                     1.0);
+        count += density * kept * 2.0 * glm::pi<double>() * middle * step;
+      }
     }
     return count;
   };

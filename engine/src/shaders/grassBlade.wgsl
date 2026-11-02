@@ -21,6 +21,13 @@ struct Grass {
   model: mat4x4f, // the ground's own space to the world
   normalMatrix: mat4x4f,
   inverseModel: mat4x4f,
+  vertexSun: vec4f, // x where blades start finding the sun's shadow at their vertices, y over
+                    // how far (see meshGrass.wgsl)
+  // Its ground past the maps (see meshGrass.wgsl's fs_ground): x how much its
+  // terrain's first layer is meadow, y 1 with a terrain (0: no grass past
+  // them), z where the blades start thinning out to none (world units)
+  far: vec4f,
+  farMeadow: vec4f, // how much each of the splat map's channels' layers is
 }
 
 struct Blade {
@@ -29,6 +36,8 @@ struct Blade {
   ground: vec3f, // its ground's normal
   width: f32,
   segments: u32,
+  morph: f32,    // how far it's taken on the shape of one with half its segments
+  built: f32,    // its tile built lately: 1, or 2 for an edit (debug view; else 0)
   shape: vec4f,  // facing, lean, random, tone
   across: vec3f, // across its face
   up: vec3f,     // mostly up, a little off the ground's slope
@@ -43,9 +52,13 @@ fn bladeAt(blade: GrownBlade, stiffness: f32, pressed: vec4f) -> Blade {
   b.height = blade.root.w;
   let tilt = unpack2x16snorm(blade.look.x);
   b.ground = vec3f(tilt, sqrt(max(1.0 - dot(tilt, tilt), 0.0)));
-  let sizes = unpack2x16float(blade.look.y);
+  // (Their signs: its tile built lately, for an edit; see meshGrassGrow.wgsl.)
+  let stored = unpack2x16float(blade.look.y);
+  let sizes = abs(stored);
   b.width = sizes.x;
   b.segments = u32(sizes.y);
+  b.morph = fract(sizes.y);
+  b.built = select(0.0, select(1.0, 2.0, stored.y < 0.0), stored.x < 0.0);
   b.shape = unpack4x8unorm(blade.look.z);
 
   // Which way it faces, and across it.

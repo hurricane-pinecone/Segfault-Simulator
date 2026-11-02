@@ -326,7 +326,49 @@ GrassGround GrassGround::build(std::span<const glm::vec3> positions,
           (triangle.uv[0] + triangle.uv[1] + triangle.uv[2]) / 3.0f);
     }
   }
+
+  ground.m_heights = GrassHeights(grid, ground.m_texels);
   return ground;
+}
+
+GrassHeights::GrassHeights(const GrassGrid& grid,
+                           std::span<const glm::vec4> texels)
+    : m_grid(grid), m_blocks((grid.size + kBlock - 1) / kBlock)
+{
+  m_ranges.assign(grid.count() > 0 ? std::size_t(m_blocks.x) * m_blocks.y : 0,
+                  glm::vec2(std::numeric_limits<float>::max(),
+                            std::numeric_limits<float>::lowest()));
+  if (texels.size() < grid.count())
+    return;
+  for (int y = 0; y < grid.size.y; ++y)
+    for (int x = 0; x < grid.size.x; ++x)
+    {
+      const glm::vec4& texel = texels[std::size_t(y) * grid.size.x + x];
+      if (texel.x == 0.0f && texel.y == 0.0f && texel.z == 0.0f)
+        continue;
+      glm::vec2& range =
+          m_ranges[std::size_t(y / kBlock) * m_blocks.x + x / kBlock];
+      range = glm::vec2(std::min(range.x, texel.w), std::max(range.y, texel.w));
+    }
+}
+
+glm::vec2 GrassHeights::range(glm::ivec2 from, glm::ivec2 to) const
+{
+  glm::vec2 range(
+      std::numeric_limits<float>::max(), std::numeric_limits<float>::lowest());
+  from = glm::clamp(from, glm::ivec2(0), m_grid.size);
+  to = glm::clamp(to, from, m_grid.size);
+  if (to.x <= from.x || to.y <= from.y || m_ranges.empty())
+    return range;
+  const glm::ivec2 first = from / kBlock;
+  const glm::ivec2 last = (to - 1) / kBlock;
+  for (int y = first.y; y <= last.y; ++y)
+    for (int x = first.x; x <= last.x; ++x)
+    {
+      const glm::vec2& block = m_ranges[std::size_t(y) * m_blocks.x + x];
+      range = glm::vec2(std::min(range.x, block.x), std::max(range.y, block.y));
+    }
+  return range;
 }
 
 std::size_t GrassGround::groundTexels() const
@@ -385,7 +427,7 @@ void GrassMaps::set(Channel channel, int x, int y, float value)
   if (stored == next)
     return;
   stored = next;
-  touch(x, y);
+  touch(channel, x, y);
 }
 
 void GrassMaps::stamp(Channel channel,
@@ -443,7 +485,7 @@ void GrassMaps::stamp(Channel channel,
       if (stored != current)
       {
         m_values[channel][index(x, y)] = stored;
-        touch(x, y);
+        touch(channel, x, y);
       }
     }
 }
@@ -453,11 +495,25 @@ void GrassMaps::fill(Channel channel, float value)
   if (empty())
     return;
   std::fill(m_values[channel].begin(), m_values[channel].end(), toByte(value));
-  markAllChanged();
+  m_changedMin = glm::ivec2(0);
+  m_changedMax = m_grid.size;
+  if (channel <= Length)
+    markAllGrown();
 }
 
-void GrassMaps::touch(int x, int y)
+void GrassMaps::touch(Channel channel, int x, int y)
 {
+  if (channel <= Length && !m_allGrown)
+  {
+    const int blocks = (m_grid.size.x + kGrownBlock - 1) / kGrownBlock;
+    if (m_grownBlocks.empty())
+      m_grownBlocks.assign(
+          std::size_t(blocks) *
+              ((m_grid.size.y + kGrownBlock - 1) / kGrownBlock),
+          0);
+    m_grownBlocks[std::size_t(y / kGrownBlock) * blocks + x / kGrownBlock] = 1;
+    m_anyGrown = true;
+  }
   if (m_changedMin.x >= m_changedMax.x || m_changedMin.y >= m_changedMax.y)
   {
     m_changedMin = {x, y};
@@ -479,6 +535,38 @@ void GrassMaps::markAllChanged()
 {
   m_changedMin = glm::ivec2(0);
   m_changedMax = m_grid.size;
+  markAllGrown();
+}
+
+void GrassMaps::markAllGrown() { m_allGrown = m_anyGrown = !empty(); }
+
+std::vector<glm::ivec4> GrassMaps::takeGrownChanged()
+{
+  std::vector<glm::ivec4> changed;
+  if (m_allGrown)
+    changed.emplace_back(0, 0, m_grid.size.x, m_grid.size.y);
+  else if (m_anyGrown)
+  {
+    // Each row's changed blocks, those side by side as one.
+    const glm::ivec2 blocks = (m_grid.size + kGrownBlock - 1) / kGrownBlock;
+    for (int y = 0; y < blocks.y; ++y)
+      for (int x = 0; x < blocks.x; ++x)
+      {
+        if (!m_grownBlocks[std::size_t(y) * blocks.x + x])
+          continue;
+        int end = x + 1;
+        while (end < blocks.x && m_grownBlocks[std::size_t(y) * blocks.x + end])
+          ++end;
+        changed.emplace_back(x * kGrownBlock,
+                             y * kGrownBlock,
+                             std::min(end * kGrownBlock, m_grid.size.x),
+                             std::min((y + 1) * kGrownBlock, m_grid.size.y));
+        x = end;
+      }
+  }
+  m_allGrown = m_anyGrown = false;
+  std::fill(m_grownBlocks.begin(), m_grownBlocks.end(), uint8_t(0));
+  return changed;
 }
 
 void GrassMaps::pixels(glm::ivec2 from,
@@ -660,6 +748,18 @@ GrassTrample::GrassTrample(const GrassGround& ground,
           }
       }
   }
+
+  // Nothing pressed yet.
+  m_pixels.resize(count * 4);
+  for (std::size_t i = 0; i < count; ++i)
+  {
+    m_pixels[i * 4 + 0] = m_pixels[i * 4 + 1] = toByte(0.5f);
+    m_pixels[i * 4 + 2] = 0;
+    m_pixels[i * 4 + 3] = 255;
+  }
+  m_tiles = (m_size + kTile - 1) / kTile;
+  m_tileFlags.assign(std::size_t(m_tiles.x) * m_tiles.y, 0);
+  markAllChanged();
 }
 
 int GrassTrample::indexOf(glm::vec2 point) const
@@ -679,17 +779,30 @@ bool GrassTrample::update(float seconds,
 {
   if (m_size.x <= 0)
     return false;
-  bool changed = false;
 
-  // Standing back up.
+  // Standing back up, where it's down.
   const float rise = recovery > 0.0f ? seconds / recovery : 1.0f;
-  if (rise > 0.0f)
-    for (float& amount : m_amount)
-      if (amount > 0.0f)
-      {
-        amount = std::max(amount - rise, 0.0f);
-        changed = true;
-      }
+  for (int ty = 0; ty < m_tiles.y; ++ty)
+    for (int tx = 0; tx < m_tiles.x; ++tx)
+    {
+      uint8_t& flags = m_tileFlags[std::size_t(ty) * m_tiles.x + tx];
+      if (!(flags & kDown) || rise <= 0.0f)
+        continue;
+      flags |= kTouched;
+      bool down = false;
+      const glm::ivec2 to =
+          glm::min(glm::ivec2(tx + 1, ty + 1) * kTile, m_size);
+      for (int y = ty * kTile; y < to.y; ++y)
+        for (int x = tx * kTile; x < to.x; ++x)
+        {
+          float& amount = m_amount[std::size_t(y) * m_size.x + x];
+          if (amount > 0.0f)
+            amount = std::max(amount - rise, 0.0f);
+          down = down || amount > 0.0f;
+        }
+      if (!down)
+        flags &= ~kDown;
+    }
 
   const glm::vec2 texel = (m_max - m_min) / glm::vec2(m_size);
   for (const GrassBender& bender : benders)
@@ -762,9 +875,48 @@ bool GrassTrample::update(float seconds,
         m_direction[i] =
             length > 1e-4f ? direction / length : glm::vec2(1.0f, 0.0f);
         m_amount[i] = std::max(m_amount[i], pressed);
-        changed = true;
+        m_tileFlags[tileOf(x, y)] |= kDown | kTouched;
       }
   }
+
+  // What that did to its image (pressed back just as it was: nothing).
+  bool changed = false;
+  for (int ty = 0; ty < m_tiles.y; ++ty)
+    for (int tx = 0; tx < m_tiles.x; ++tx)
+    {
+      uint8_t& flags = m_tileFlags[std::size_t(ty) * m_tiles.x + tx];
+      if (!(flags & kTouched))
+        continue;
+      flags &= ~kTouched;
+      const glm::ivec2 to =
+          glm::min(glm::ivec2(tx + 1, ty + 1) * kTile, m_size);
+      for (int y = ty * kTile; y < to.y; ++y)
+        for (int x = tx * kTile; x < to.x; ++x)
+        {
+          const std::size_t i = std::size_t(y) * m_size.x + x;
+          const glm::vec2 direction = m_direction[i] * 0.5f + 0.5f;
+          const uint8_t pixel[3] = {
+              toByte(direction.x), toByte(direction.y), toByte(m_amount[i])};
+          uint8_t* at = &m_pixels[i * 4];
+          if (at[0] == pixel[0] && at[1] == pixel[1] && at[2] == pixel[2])
+            continue;
+          at[0] = pixel[0];
+          at[1] = pixel[1];
+          at[2] = pixel[2];
+          if (m_changedMin.x >= m_changedMax.x ||
+              m_changedMin.y >= m_changedMax.y)
+          {
+            m_changedMin = {x, y};
+            m_changedMax = {x + 1, y + 1};
+          }
+          else
+          {
+            m_changedMin = glm::min(m_changedMin, glm::ivec2(x, y));
+            m_changedMax = glm::max(m_changedMax, glm::ivec2(x + 1, y + 1));
+          }
+          changed = true;
+        }
+    }
   return changed;
 }
 
@@ -780,18 +932,31 @@ glm::vec2 GrassTrample::direction(glm::vec2 point) const
   return i >= 0 && m_amount[i] > 0.0f ? m_direction[i] : glm::vec2(0.0f);
 }
 
-std::vector<uint8_t> GrassTrample::image() const
+void GrassTrample::pixels(glm::ivec2 from,
+                          glm::ivec2 to,
+                          std::vector<uint8_t>& out) const
 {
-  std::vector<uint8_t> pixels(m_amount.size() * 4);
-  for (std::size_t i = 0; i < m_amount.size(); ++i)
-  {
-    const glm::vec2 direction = m_direction[i] * 0.5f + 0.5f;
-    pixels[i * 4 + 0] = toByte(direction.x);
-    pixels[i * 4 + 1] = toByte(direction.y);
-    pixels[i * 4 + 2] = toByte(m_amount[i]);
-    pixels[i * 4 + 3] = 255;
-  }
-  return pixels;
+  from = glm::clamp(from, glm::ivec2(0), m_size);
+  to = glm::clamp(to, from, m_size);
+  const std::size_t row = std::size_t(to.x - from.x) * 4;
+  out.resize(row * (to.y - from.y));
+  for (int y = from.y; y < to.y; ++y)
+    std::copy_n(m_pixels.begin() + (std::size_t(y) * m_size.x + from.x) * 4,
+                row,
+                out.begin() + std::size_t(y - from.y) * row);
+}
+
+std::pair<glm::ivec2, glm::ivec2> GrassTrample::takeChanged()
+{
+  const std::pair<glm::ivec2, glm::ivec2> changed{m_changedMin, m_changedMax};
+  m_changedMin = m_changedMax = glm::ivec2(0);
+  return changed;
+}
+
+void GrassTrample::markAllChanged()
+{
+  m_changedMin = glm::ivec2(0);
+  m_changedMax = m_size;
 }
 
 } // namespace sfs

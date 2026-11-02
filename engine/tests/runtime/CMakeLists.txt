@@ -49,6 +49,7 @@ add_runtime_test(gameManifestTests game/gameManifestTests.cpp)
 
 # rendering/
 add_runtime_test(renderSystemTests rendering/renderSystemTests.cpp)
+add_runtime_test(grassTilesTests rendering/grassTilesTests.cpp)
 add_runtime_test(scene2DTests rendering/scene2DTests.cpp)
 add_runtime_test(uiLayoutTests ui/uiLayoutTests.cpp)
 add_runtime_test(pickingTests rendering/pickingTests.cpp)

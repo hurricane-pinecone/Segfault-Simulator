@@ -388,6 +388,11 @@ private:
   MeshLibrary m_meshes;
 
   Camera m_camera;
+  // Stepping the view for a screenshot sequence (SFS_CAMERA_STEP, see
+  // stepCamera(); it gives how far grass's camera is past the view's): the
+  // frames rendered so far.
+  glm::vec3 stepCamera();
+  int m_renderedFrames = 0;
   std::optional<Space2D> m_space2D;
   bool m_followSceneCamera = true;
   SceneLighting m_lighting;
