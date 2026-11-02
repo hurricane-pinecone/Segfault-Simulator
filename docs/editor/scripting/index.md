@@ -194,8 +194,10 @@ if (const auto hit = sfs::pickEntity(scene(), render.meshes(), ray))
 ```
 
 `screenRay` uses the size the scene was last drawn at, so it matches the view
-the player is looking at. To hit what the player sees by physics shape instead of
-bounding box, use `PhysicsSystem3D::raycast` with the same ray; see
+the player is looking at. `pickEntity` hits a mesh where the ray meets its
+triangles, so it already follows what the player sees; to hit by physics
+shape instead (a collider bigger or smaller than the mesh), use
+`PhysicsSystem3D::raycast` with the same ray; see
 [3D physics](../../runtime/physics-3d/index.md), which also covers collision
 callbacks.
 
