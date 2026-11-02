@@ -7,8 +7,7 @@
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/cameraSystem.h"
-#include "engine/runtime/systems/collisionSystem.h"
-#include "engine/runtime/systems/movementSystem.h"
+#include "engine/runtime/systems/physicsSystem2D.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 
 #include <algorithm>
@@ -54,22 +53,19 @@ void registerEngineSystems(ScriptRegistry& registry)
                           .kind = ScriptType::Kind::System,
                           .addSystem = [](Scene& scene) -> System&
                           { return scene.addSystem<CameraSystem>(); }});
-  registry.add(ScriptType{.name = "MovementSystem",
+  registry.add(ScriptType{.name = "PhysicsSystem2D",
                           .module = "engine",
                           .kind = ScriptType::Kind::System,
-                          .addSystem = [](Scene& scene) -> System&
-                          { return scene.addSystem<MovementSystem>(); }});
-  registry.add(ScriptType{.name = "CollisionSystem",
-                          .module = "engine",
-                          .kind = ScriptType::Kind::System,
-                          .addSystem = [](Scene& scene) -> System&
-                          { return scene.addSystem<CollisionSystem>(); }});
+                          .addSystem = [](Scene& scene) -> System& {
+                            return scene.addSystem<PhysicsSystem2D>(&scene);
+                          }});
 #ifdef SFS_HAS_PHYSICS
   registry.add(ScriptType{.name = "PhysicsSystem3D",
                           .module = "engine",
                           .kind = ScriptType::Kind::System,
-                          .addSystem = [](Scene& scene) -> System&
-                          { return scene.addSystem<PhysicsSystem3D>(); }});
+                          .addSystem = [](Scene& scene) -> System& {
+                            return scene.addSystem<PhysicsSystem3D>(&scene);
+                          }});
 #endif
 }
 } // namespace
@@ -89,8 +85,6 @@ void startScripts(Scene& scene,
                   const std::vector<std::string>& systems,
                   MeshLibrary* meshes)
 {
-  const SceneSerializer serializer(reflect::types(), meshes);
-
   for (const std::string& name : systems)
   {
     const ScriptType* type = scripts().find(name);
@@ -100,15 +94,27 @@ void startScripts(Scene& scene,
       LOG_ERROR("Play: no game system named '" + name + "'");
   }
 
+  startObjects(scene, scene.entities(), meshes);
+}
+
+void startObjects(Scene& scene,
+                  const std::vector<Entity>& entities,
+                  MeshLibrary* meshes)
+{
+  const SceneSerializer serializer(reflect::types(), meshes);
+
   // Entities first, then attach: onCreate may create more entities.
   std::vector<Entity> scripted;
-  for (const Entity& entity : scene.entities())
+  for (const Entity& entity : entities)
     if (entity.hasComponent<ScriptComponent>() &&
         !entity.getComponent<ScriptComponent>().script.empty())
       scripted.push_back(entity);
 
   for (const Entity& entity : scripted)
   {
+    // An earlier onCreate may have destroyed it.
+    if (!entity.isAlive())
+      continue;
     const ScriptComponent& component = entity.getComponent<ScriptComponent>();
     const ScriptType* type = scripts().find(component.script);
     if (!type || type->kind != ScriptType::Kind::GameObject ||

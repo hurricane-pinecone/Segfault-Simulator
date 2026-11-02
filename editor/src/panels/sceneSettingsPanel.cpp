@@ -3,15 +3,18 @@
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
+#include "widgets/lookWidgets.h"
 #include "widgets/widgets.h"
 
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/runtime/rendering/debug/ui.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/visualStyles.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "imgui.h"
 
@@ -167,6 +170,178 @@ void sceneStyle(sfs::RenderSystem& render, EditorHistory& history)
   if (changed)
     render.setSpace2D(space);
 }
+// The scene's look: a visual style (a .style asset) or, with none, its own
+// colour grading. A style's look replaces the scene's own while it's chosen.
+void sceneLook(EditorContext& context,
+               sfs::RenderSystem& render,
+               EditorHistory& history)
+{
+  if (!ImGui::CollapsingHeader("Look", ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+
+  const std::vector<std::pair<std::string, std::string>> styles =
+      context.assets ? sfs::visualStyleAssets(*context.assets)
+                     : std::vector<std::pair<std::string, std::string>>{};
+  const std::string& current = render.visualStyleName();
+  // A style shows by its file's name.
+  const auto label = [](const std::string& path)
+  { return std::filesystem::path(path).stem().string(); };
+  std::string preview = "None (the scene's own)";
+  for (const auto& [name, path] : styles)
+    if (name == current)
+      preview = label(path);
+  if (!current.empty() && preview.rfind("None", 0) == 0)
+    preview = "Missing (" + current + ")";
+
+  widgets::propertyLabel("Visual Style");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (ImGui::BeginCombo("##visualStyle", preview.c_str()))
+  {
+    const auto choose = [&](const std::string& name)
+    { history.change([&] { render.setVisualStyle(name); }); };
+    if (ImGui::Selectable("None (the scene's own)", current.empty()))
+      choose("");
+    for (const auto& [name, path] : styles)
+    {
+      ImGui::PushID(name.c_str());
+      if (ImGui::Selectable(label(path).c_str(), name == current))
+        choose(name);
+      ImGui::SetItemTooltip("%s", path.c_str());
+      ImGui::PopID();
+    }
+    if (styles.empty())
+      ImGui::TextDisabled(
+          "No styles yet: right-click in Assets > New Visual Style");
+    ImGui::EndCombo();
+  }
+  ImGui::SetItemTooltip(
+      "A whole look, from a .style asset: its grading, bloom, haze, fog, "
+      "ambient\nocclusion and shadows replace the scene's own, its light "
+      "multiplies the "
+      "scene's, and\nmaterials draw as their variants for its tag. Switch "
+      "while playing with F8.");
+
+  if (!current.empty())
+  {
+    if (render.visualStyle())
+    {
+      const std::optional<sfs::AssetId> id =
+          current.rfind("asset:", 0) == 0
+              ? sfs::AssetId::parse(std::string_view(current).substr(6))
+              : std::nullopt;
+      if (id && ImGui::Button("Edit Style"))
+      {
+        context.selection = {};
+        context.selectedAsset = *id;
+        context.revealAsset = *id;
+      }
+      ImGui::SameLine();
+      ImGui::TextDisabled("Its look stands in for the scene's own");
+    }
+    else
+      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                         "Can't load this style: the scene looks as with none");
+    return;
+  }
+
+  ImGui::PushID("grading");
+  sfs::ColorGrading grading = render.colorGrading();
+  if (lookWidgets::grading(&history, grading))
+    render.setColorGrading(grading);
+  if (!render.colorGrading().neutral() && ImGui::Button("Reset Grading"))
+    history.change([&] { render.setColorGrading({}); });
+  ImGui::PopID();
+}
+
+// The sky and the sun's shadow cascades (a 3D scene's). A visual style with
+// its own stands in for these while it's chosen.
+void sceneSkyAndShadows(sfs::RenderSystem& render, EditorHistory& history)
+{
+  if (render.space2D() ||
+      !ImGui::CollapsingHeader("Sky & Shadows", ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+  const sfs::VisualStyle* style = render.visualStyle();
+
+  ImGui::PushID("sky");
+  sfs::SkySettings sky = render.skySettings();
+  if (lookWidgets::sky(&history, sky))
+    render.setSkySettings(sky);
+  if (style && style->sky)
+    ImGui::TextDisabled("The visual style's sky stands in for this");
+  ImGui::PopID();
+
+  ImGui::PushID("cascades");
+  sfs::ShadowSettings shadows = render.shadowSettings();
+  if (lookWidgets::shadowCascades(&history, shadows))
+    render.setShadowSettings(shadows);
+  if (style && style->shadowCascades)
+    ImGui::TextDisabled("The visual style's cascades stand in for these");
+  ImGui::PopID();
+}
+
+// Ambient occlusion, contact shadows and height fog (a 3D scene's). A visual
+// style with its own stands in for each while it's chosen.
+void sceneAtmosphere(sfs::RenderSystem& render, EditorHistory& history)
+{
+  if (render.space2D() ||
+      !ImGui::CollapsingHeader("Occlusion & Fog",
+                               ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+  const sfs::VisualStyle* style = render.visualStyle();
+
+  ImGui::PushID("occlusion");
+  sfs::AmbientOcclusionSettings occlusion = render.ambientOcclusionSettings();
+  if (lookWidgets::ambientOcclusion(&history, occlusion))
+    render.setAmbientOcclusionSettings(occlusion);
+  if (style && style->ambientOcclusion)
+    ImGui::TextDisabled(
+        "The visual style's ambient occlusion stands in for this");
+  ImGui::PopID();
+
+  ImGui::PushID("contact");
+  sfs::ContactShadowSettings contact = render.contactShadowSettings();
+  if (lookWidgets::contactShadows(&history, contact))
+    render.setContactShadowSettings(contact);
+  if (style && style->contactShadows)
+    ImGui::TextDisabled("The visual style's contact shadows stand in for this");
+  ImGui::PopID();
+
+  ImGui::PushID("fog");
+  sfs::FogSettings fog = render.fogSettings();
+  if (lookWidgets::fog(&history, fog))
+    render.setFogSettings(fog);
+  if (style && style->fog)
+    ImGui::TextDisabled("The visual style's fog stands in for this");
+  ImGui::PopID();
+}
+
+// The weather (a 3D scene's): clouds, wind, rain. A game usually drives it
+// each frame; set here, it's what the scene starts with (or keeps, if the
+// game leaves it).
+void sceneWeather(sfs::RenderSystem& render, EditorHistory& history)
+{
+  if (render.space2D() ||
+      !ImGui::CollapsingHeader("Weather", ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+  ImGui::PushID("weather");
+  sfs::SceneWeather weather = render.weather();
+  sfs::SceneLighting lighting = render.lighting();
+  if (lookWidgets::weather(&history, weather, lighting.cloudCover))
+  {
+    render.setWeather(weather);
+    render.setLighting(lighting);
+  }
+  ImGui::PopID();
+
+  ImGui::PushID("rain");
+  sfs::RainSettings rain = render.rainSettings();
+  if (lookWidgets::rain(&history, rain))
+    render.setRainSettings(rain);
+  if (const sfs::VisualStyle* style = render.visualStyle();
+      style && style->rain)
+    ImGui::TextDisabled("The visual style's rain stands in for this");
+  ImGui::PopID();
+}
 } // namespace
 
 void SceneSettingsPanel::drawContents(EditorContext& context)
@@ -178,6 +353,10 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   gameSystems(*context.scene, history);
   sfs::RenderSystem& render = *context.render;
   sceneStyle(render, history);
+  sceneLook(context, render, history);
+  sceneSkyAndShadows(render, history);
+  sceneAtmosphere(render, history);
+  sceneWeather(render, history);
   ImGui::Separator();
 
   // Which view the game starts from.
@@ -206,14 +385,37 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
       lighting.sun.direction,
       [](glm::vec3& v)
       { return ImGui::DragFloat3("Sun Direction", &v.x, 0.01f); });
-  lightingChanged |= widgets::undoable(
-      &history,
-      lighting.sun.color,
-      [](glm::vec3& v) { return widgets::colorEdit3("Sun Color", &v.x); });
-  lightingChanged |= widgets::undoable(
-      &history,
-      lighting.skyColor,
-      [](glm::vec3& v) { return widgets::colorEdit3("Sky Color", &v.x); });
+  if (render.space2D())
+    ImGui::SetItemTooltip("Where the sun shines from, in the game's space: x and y across\n"
+                          "its plane, z up from it (toward the viewer, in a flat game)");
+  // The moon is a 3D world's.
+  if (!render.space2D())
+  {
+    lightingChanged |= widgets::undoable(
+        &history,
+        lighting.moon.direction,
+        [](glm::vec3& v)
+        { return ImGui::DragFloat3("Moon Direction", &v.x, 0.01f); });
+    ImGui::SetItemTooltip("Where the moon is (z up). Once the sun has set, it lights the\n"
+                          "scene and casts shadows; z below 0: no moon");
+  }
+  // A physical sky works the sun's colour and the sky's out itself.
+  if (!render.effectiveSky().physical() || render.space2D())
+  {
+    lightingChanged |= widgets::undoable(
+        &history,
+        lighting.sun.color,
+        [](glm::vec3& v) { return widgets::colorEdit3("Sun Color", &v.x); });
+    if (!render.space2D())
+      lightingChanged |= widgets::undoable(
+          &history,
+          lighting.moon.color,
+          [](glm::vec3& v) { return widgets::colorEdit3("Moon Color", &v.x); });
+    lightingChanged |= widgets::undoable(
+        &history,
+        lighting.skyColor,
+        [](glm::vec3& v) { return widgets::colorEdit3("Sky Color", &v.x); });
+  }
   if (lightingChanged)
     render.setLighting(lighting);
 
@@ -251,5 +453,6 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
               stats.pointLights,
               stats.emissionLights,
               stats.shadowedLights);
-  ImGui::Text("Grass fields: %zu", stats.grassFields);
+  if (!render.space2D())
+    ImGui::Text("Grass fields: %zu", stats.grassFields);
 }

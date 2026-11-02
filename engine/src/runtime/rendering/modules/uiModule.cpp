@@ -150,6 +150,7 @@ void UiModule::update(double deltaTime)
 void UiModule::computeCommands(const RenderContext& context)
 {
   flush();
+  m_fonts.beginFrame(); // last frame's text is drawn by now
   m_meshes = context.meshes;
   m_screen = glm::vec2(context.viewportSize);
   m_scale = m_fixedScale > 0.0f
@@ -177,12 +178,24 @@ void UiModule::computeCommands(const RenderContext& context)
   for (std::size_t i = 0; i < layers.size(); ++i)
   {
     const std::size_t firstHit = m_hits.size();
+    // The pointer as this layer's ids have it (without its number in front).
+    const std::string prefix = std::to_string(i);
+    const auto own = [&](const std::string& id)
+    {
+      return id.starts_with(prefix) &&
+                     (id.size() == prefix.size() || id[prefix.size()] == '/')
+                 ? id.substr(prefix.size())
+                 : std::string("-");
+    };
+    ui::Pointer pointer = m_pointer;
+    pointer.hovered = own(m_pointer.hovered);
+    pointer.pressed = own(m_pointer.pressed);
     ui::layout(layers[i]->body(),
                m_screen,
                m_scale,
                m_theme,
                m_fonts,
-               m_pointer,
+               pointer,
                list->quads,
                m_hits,
                this,
@@ -266,8 +279,18 @@ bool UiModule::pointer(glm::vec2 position,
   if (pressed && over)
   {
     m_captured = true;
-    m_pointer.pressed = hit->action && hit->enabled ? hit->id : std::string();
+    m_pointer.pressed =
+        (hit->action || hit->drag) && hit->enabled ? hit->id : std::string();
   }
+  // A slider held down follows the pointer, wherever it goes.
+  if (!m_pointer.pressed.empty() && (pressed || held))
+    for (const ui::Hit& each : m_hits)
+      if (each.id == m_pointer.pressed && each.drag)
+      {
+        const std::function<void(glm::vec2)> drag = each.drag;
+        drag(m_pointer.position);
+        break;
+      }
   if (released && !m_pointer.pressed.empty())
   {
     // A click: let go over the button pressed.

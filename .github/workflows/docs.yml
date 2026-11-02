@@ -21,8 +21,8 @@ on:
     branches: [master]
     paths:
       - engine/**
-      - sampleGame/**
-      - samplePlatformer/**
+      - editor/**
+      - samples/**
   workflow_dispatch:
     inputs:
       base:
@@ -77,7 +77,7 @@ jobs:
              || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
           fi
-          files="$(git diff --name-only "$base" HEAD -- engine sampleGame samplePlatformer | grep -vE '\.md$' || true)"
+          files="$(git diff --name-only "$base" HEAD -- engine editor samples | grep -vE '\.md$' || true)"
           if [ -z "$files" ]; then
             echo "empty=true" >> "$GITHUB_OUTPUT"
           else
@@ -85,7 +85,7 @@ jobs:
             { echo "files<<EOF"; echo "$files"; echo "EOF"; } >> "$GITHUB_OUTPUT"
             # The actual before->after diff Claude reviews (kept out of the PR by
             # the add-paths allowlist; lives at the repo root so Claude can Read it).
-            git diff "$base" HEAD -- engine sampleGame samplePlatformer > source.diff
+            git diff "$base" HEAD -- engine editor samples > source.diff
           fi
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

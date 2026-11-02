@@ -56,9 +56,14 @@ public:
   virtual void imguiRenderDrawData() {}
   virtual bool imguiAvailable() const { return false; }
 
-  // Wait for the display when presenting (vsync), e.g. for a tool that needn't
-  // redraw faster than the screen. Set before init().
+  // Wait for the display when presenting (vsync): no tearing, and no faster
+  // than the screen shows. Before init() or any time after (it takes effect
+  // from the next frame).
   virtual void setVsync(bool) {}
+
+  // Whether the GPU device was lost (a driver crash or update, the GPU
+  // removed): nothing more can be drawn. Game checks after each frame.
+  virtual bool deviceLost() const { return false; }
 
   // --- For tools (the editor). A backend without them returns null, and the
   // tool shows less (no viewport panel, previews or thumbnails).

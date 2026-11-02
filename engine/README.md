@@ -17,7 +17,7 @@ engine in your own game, see the [root README](../README.md).
 - [Clean Build](#clean-build)
 - [LSP / clangd Setup](#lsp--clangd-setup)
 - [Assets](#assets)
-- [Running the Game](#running-the-game)
+- [Running the Editor](#running-the-editor)
 - [Optional Aliases (zsh)](#optional-aliases-zsh)
 - [Tooling](#tooling)
   - [Code Formatting](#code-formatting)
@@ -36,12 +36,13 @@ engine/src/shaders → the WGSL shaders, embedded into engine-webgpu
 engine/docs/       → contributor docs (internal engine design)
 editor/            → SfsEditor, the editor
 player/            → SfsPlayer, which plays an exported game
-sampleGame/        → the isometric sample game
-samplePlatformer/  → the flat 2D sample game
+samples/           → the sample projects, made in the editor (showcase3d,
+                     platformer2d)
 ```
 
-The workspace build below compiles the engine, the editor and the samples
-together in one tree, which is the fast path for iterating on engine code.
+The workspace build below compiles the engine, the editor and the player
+together in one tree, which is the fast path for iterating on engine code. The
+samples are editor projects: open one in SfsEditor to build and play it.
 
 ## Documentation
 
@@ -76,8 +77,11 @@ cmake --build --preset debug
 
 ## Run
 
+The editor, from its directory (see [Running the Editor](#running-the-editor)):
+
 ```bash
-cmake --build --preset debug --target run
+cd build/Debug/bin
+./SfsEditor
 ```
 
 ## Release Build
@@ -86,7 +90,6 @@ cmake --build --preset debug --target run
 conan install . --build=missing -s build_type=Release
 cmake --preset release
 cmake --build --preset release
-cmake --build --preset release --target run
 ```
 
 ## Web Build
@@ -102,21 +105,23 @@ rm -rf build-web
 emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
 cmake --build build-web
 cd build-web/bin
-python3 server.py
+python3 -m http.server
 ```
 
-Or, with the [`crun-web`](#optional-aliases-zsh) alias (configures, builds, and
-serves in one step):
+Or, with the [`crun-web`](#optional-aliases-zsh) alias (configures and builds
+in one step):
 
 ```bash
 crun-web
 ```
 
-The web build emits both samples into the Pages artifact (`build-web/bin`): the
-isometric sample at the root (`index.html`) and the platformer under
+The web build emits both sample projects into the Pages artifact
+(`build-web/bin`): Glowfall Isle (`samples/showcase3d`) at the root
+(`index.html`) and Neon Sprint (`samples/platformer2d`) under
 `samplePlatformer/`. The `deploy-web` workflow publishes that directory, so they
-land at the site root and `<site>/samplePlatformer` respectively. Serve the
-platformer locally with `python3 build-web/bin/samplePlatformer/server.py`.
+land at the site root and `<site>/samplePlatformer` respectively. It needs a
+host `sfs-codegen` for their scene files (`-DSFS_CODEGEN_EXECUTABLE=<native
+build>/bin/sfs-codegen`).
 
 ## Testing
 
@@ -205,7 +210,7 @@ stricter about includes than the macOS toolchain. See
 ```bash
 conan install . --build=missing -s build_type=Debug
 cmake --preset debug
-cmake --build --preset debug --target run
+cmake --build --preset debug
 ```
 
 ### Normal rebuild
@@ -254,11 +259,11 @@ Restart your editor after this.
 
 ## Assets
 
-The build copies assets next to the executable:
+The build copies the engine's assets next to the executables:
 
 ```text
 build/Debug/bin/
-  sampleGame
+  SfsEditor
   assets/
 ```
 
@@ -268,25 +273,19 @@ Game code loads them relative to the working directory:
 const std::string ASSET_ROOT = "./assets/";
 ```
 
-## Running the Game
+## Running the Editor
 
 Run from the executable's directory so the relative asset paths resolve:
 
 ```bash
-cmake --build --preset debug --target run
-```
-
-or:
-
-```bash
 cd build/Debug/bin
-./sampleGame
+./SfsEditor
 ```
 
 Running from the repo root breaks asset paths:
 
 ```bash
-./build/Debug/bin/sampleGame   # don't
+./build/Debug/bin/SfsEditor   # don't
 ```
 
 ## Optional Aliases (zsh)
@@ -294,12 +293,11 @@ Running from the repo root breaks asset paths:
 Add these to your shell config (`~/.zshrc`):
 
 ```bash
-alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug --target run'
-alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release --target run'
-alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo --target run'
+alias crun='conan install . --build=missing -s build_type=Debug && cmake --preset debug && cmake --build --preset debug && (cd build/Debug/bin && ./SfsEditor)'
+alias crun-release='conan install . --build=missing -s build_type=Release && cmake --preset release && cmake --build --preset release && (cd build/Release/bin && ./SfsEditor)'
+alias crun-profile='conan install . --build=missing -s build_type=RelWithDebInfo && cmake --preset conan-relwithdebinfo && cmake --build --preset conan-relwithdebinfo'
 alias crun-tests='cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build-core && ctest --test-dir build-core --output-on-failure'
-alias crun-web='emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && cmake --build build-web --target run'
-alias crun-sample-pkg='conan create . -s build_type=Release --build=missing && (cd sampleGame && conan install . --build=missing -s build_type=Release && cmake --preset conan-release && cmake --build --preset conan-release --target run)'
+alias crun-web='emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && cmake --build build-web'
 ```
 
 Reload your shell:
@@ -311,12 +309,11 @@ source ~/.zshrc
 Then, from the project root:
 
 ```bash
-crun            # debug build + run
-crun-release    # release build + run
-crun-profile    # RelWithDebInfo build + run (Tracy enabled)
+crun            # debug build + run the editor
+crun-release    # release build + run the editor
+crun-profile    # RelWithDebInfo build (Tracy enabled)
 crun-tests      # build + run tests (CTest)
-crun-web        # wasm build + serve (requires emsdk on PATH)
-crun-sample-pkg # release: publish the engine package, build + run the sample against it
+crun-web        # wasm build of the samples (requires emsdk on PATH)
 ```
 
 ## Tooling
@@ -349,7 +346,7 @@ git config core.hooksPath .githooks
 nothing unformatted reaches a commit. To format the whole tree by hand:
 
 ```bash
-find engine/src engine/include engine/tests sampleGame/src samplePlatformer/src \
+find engine/src engine/include engine/tests \
   \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.inl' \) \
   ! -path '*/engine/lib/*' -print0 | xargs -0 clang-format -i
 ```

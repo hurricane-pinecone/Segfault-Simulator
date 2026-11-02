@@ -142,6 +142,7 @@ fs::path GameExporter::run(const Project& project, const Options& options) const
   manifest.startScene = options.startScene;
   manifest.windowWidth = options.windowWidth;
   manifest.windowHeight = options.windowHeight;
+  manifest.development = options.development;
   if (!manifest.write(options.output))
     return {};
 

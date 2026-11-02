@@ -57,15 +57,16 @@ file describes) registers mesh, grass, sprite, decal, particle and UI modules.
 | `MeshModule` | `MeshRendererComponent` entities, instanced per mesh and culled for the lit and shadow passes (see [Meshes, materials & lighting](../meshes-and-lighting/index.md)) | nothing |
 | `SpriteModule` | `SpriteComponent` entities (see [Sprites & sprite sheets](../sprites/index.md)) | the asset store, optionally a `Facing` |
 | `ParticleModule` | Particle effects, simulated in the game's own space (see [Particles in your game](../../particles/index.md)) | the asset store |
-| `DecalModule` | Marks left on a 2D game's surfaces: blood, scorches, paint | the asset store |
-| `VoxelModule` | A `VoxelWorld`'s block faces and water, in a 2D game (see [Voxel world](../../voxel/index.md)) | the asset store, the world, its block registry |
+| `DecalModule` | Marks left where particles land: splashes, scorches, paint | the asset store |
+| `VoxelModule` | A `VoxelWorld`'s block faces and water (see [Voxel world](../../voxel/index.md)) | the asset store, the world, its block registry |
 | `GrassModule` | `GrassComponent` grass on mesh entities (see [Grass](../meshes-and-lighting/index.md#grass)) | the renderer |
 | `UiModule` | The scene's `ui::Layer`s, over the finished frame (see [Game UI](../../ui/index.md)) | the scene |
 
 ### DecalModule
 
-Marks lie flat on the game's plane where they landed, placed by its `Space2D`,
-each a tinted image drawn see-through. A mark can fade away, run down (a
+Marks lie flat on the game's plane where they landed, placed by its `Space2D`
+(in a 3D world, on the ground, a hair above what they landed on), each a
+tinted image drawn see-through. A mark can fade away, run down (a
 drip), and be cut to the surface it landed on. Particles that stain stamp them
 (`ParticleModule::enableStains`), and anything can call `addDecal()`.
 
@@ -78,9 +79,10 @@ drip), and be cut to the surface it landed on. Particles that stain stamp them
 
 ### VoxelModule
 
-Draws a `VoxelWorld` in a 2D game: each chunk's visible block faces, cut from
-its block types' sprites and placed by the game's `Space2D`, meshed when a
-chunk streams in or changes and kept until then. Water draws as see-through
+Draws a `VoxelWorld`: each chunk's visible block faces, cut from its block
+types' sprites, meshed when a chunk streams in or changes and kept until then.
+In a 2D game they're placed by its `Space2D`; in 3D the grid is the world's, a
+block a unit, its levels up +Z. Water draws as see-through
 surfaces at each column's level (`setWaterColor` sets its colour and
 opacity).
 

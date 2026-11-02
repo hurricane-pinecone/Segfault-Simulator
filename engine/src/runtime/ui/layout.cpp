@@ -13,6 +13,9 @@ namespace
 
 using Kind = Node::Kind;
 
+// A toggle's switch, in points.
+constexpr glm::vec2 kSwitch{36.0f, 20.0f};
+
 // What a node inherits from those around it.
 struct Env
 {
@@ -166,6 +169,19 @@ public:
     }
     case Kind::Progress:
       return {std::min(120.0f * s, offer.x), 10.0f * s};
+    case Kind::Slider:
+      return {std::min(160.0f * s, offer.x), 22.0f * s};
+    case Kind::Toggle:
+    {
+      // The switch, a gap, and its label.
+      const float lead = (kSwitch.x + 8.0f) * s;
+      const glm::vec2 label =
+          node.children.empty()
+              ? glm::vec2(0.0f)
+              : measure(
+                    *node.children[0].node(), {offer.x - lead, offer.y}, env);
+      return {lead + label.x, std::max(label.y, 24.0f * s)};
+    }
     case Kind::Spacer:
       return glm::vec2(node.value * s);
     case Kind::VStack:
@@ -440,6 +456,12 @@ private:
     case Kind::Button:
       placeButton(node, rect, env, path);
       break;
+    case Kind::Slider:
+      placeSlider(node, rect, env, path);
+      break;
+    case Kind::Toggle:
+      placeToggle(node, rect, env, path);
+      break;
     case Kind::Progress:
     {
       const float radius = rect.height * 0.5f;
@@ -624,6 +646,118 @@ private:
     place(child, labelRect, label, path + "/l");
   }
 
+  // A slider's and a switch's track: the theme's, made out a little on a dark
+  // panel by the text's colour.
+  Color trackColor() const
+  {
+    const Color text = m_theme.text;
+    return {text.r, text.g, text.b, std::max(m_theme.track.a * 0.6f, 0.2f)};
+  }
+
+  void placeSlider(const Node& node,
+                   Rect rect,
+                   const Env& env,
+                   const std::string& path)
+  {
+    const float s = m_scale;
+    const bool enabled = !env.disabled && node.change;
+    // The knob's centre runs from one end of the track to the other, a knob's
+    // radius in from the slider's edges.
+    const float knob = 16.0f * s;
+    const float start = rect.x + knob * 0.5f;
+    const float end = std::max(rect.x + rect.width - knob * 0.5f, start);
+    const float span = node.high - node.low;
+    const float fraction =
+        span != 0.0f ? std::clamp((node.value - node.low) / span, 0.0f, 1.0f)
+                     : 0.0f;
+
+    Hit hit{path, rect, {}, enabled, node.help};
+    if (enabled)
+      hit.drag = [change = node.change,
+                  low = node.low,
+                  high = node.high,
+                  step = node.step,
+                  start,
+                  end](glm::vec2 at)
+      {
+        const float t =
+            end > start ? std::clamp((at.x - start) / (end - start), 0.0f, 1.0f)
+                        : 0.0f;
+        float value = low + t * (high - low);
+        if (step > 0.0f)
+          value = low + std::round((value - low) / step) * step;
+        change(std::clamp(value, std::min(low, high), std::max(low, high)));
+      };
+    m_hits.push_back(std::move(hit));
+    const bool pressed = enabled && m_pointer.pressed == path;
+    const bool hovered = enabled && (pressed || m_pointer.hovered == path);
+    const float opacity = env.opacity * (enabled ? 1.0f : 0.45f);
+
+    // The track, filled up to the knob.
+    const float middle = rect.y + rect.height * 0.5f;
+    const Rect track{start, middle - 3.0f * s, end - start, 6.0f * s};
+    box(track, toVec(trackColor(), opacity), 3.0f * s);
+    const float at = start + (end - start) * fraction;
+    if (at - start > 0.5f)
+      box({start, track.y, at - start, track.height},
+          toVec(m_theme.accent, opacity),
+          3.0f * s);
+    const Rect handle{at - knob * 0.5f, middle - knob * 0.5f, knob, knob};
+    shadow(handle, knob * 0.5f, 3.0f * s, opacity * 0.5f);
+    const Color fill = pressed   ? m_theme.buttonPressed
+                       : hovered ? m_theme.buttonHovered
+                                 : m_theme.button;
+    box(handle, toVec(fill, opacity), knob * 0.5f);
+  }
+
+  void placeToggle(const Node& node,
+                   Rect rect,
+                   const Env& env,
+                   const std::string& path)
+  {
+    const float s = m_scale;
+    const bool enabled = !env.disabled && node.change;
+    const bool on = node.value > 0.5f;
+    std::function<void()> action;
+    if (enabled)
+      action = [change = node.change, on] { change(on ? 0.0f : 1.0f); };
+    m_hits.push_back({path, rect, std::move(action), enabled, node.help});
+    const bool hovered = enabled && m_pointer.hovered == path;
+    const float opacity = env.opacity * (enabled ? 1.0f : 0.45f);
+
+    // The switch: a pill, the accent's colour while on, its knob at that end.
+    const glm::vec2 size = kSwitch * s;
+    const Rect pill{
+        rect.x, rect.y + (rect.height - size.y) * 0.5f, size.x, size.y};
+    box(pill,
+        toVec(on ? m_theme.accent : trackColor(), opacity),
+        size.y * 0.5f);
+    const float knob = size.y - 4.0f * s;
+    const Rect handle{
+        on ? pill.x + pill.width - 2.0f * s - knob : pill.x + 2.0f * s,
+        pill.y + 2.0f * s,
+        knob,
+        knob};
+    box(handle,
+        toVec(hovered ? m_theme.buttonHovered : m_theme.button, opacity),
+        knob * 0.5f);
+
+    if (node.children.empty())
+      return;
+    Env label = env;
+    label.opacity = opacity;
+    const Node& child = *node.children[0].node();
+    const float lead = (kSwitch.x + 8.0f) * s;
+    const Rect room{
+        rect.x + lead, rect.y, std::max(rect.width - lead, 0.0f), rect.height};
+    const glm::vec2 labelSize =
+        measure(child, {room.width, room.height}, label);
+    place(child,
+          aligned(room, labelSize, Alignment::Leading),
+          label,
+          path + "/l");
+  }
+
   // --- drawing
   // ----------------------------------------------------------------
 
@@ -748,6 +882,10 @@ const char* kindName(Node::Kind kind)
     return "Button";
   case Node::Kind::Progress:
     return "ProgressBar";
+  case Node::Kind::Slider:
+    return "Slider";
+  case Node::Kind::Toggle:
+    return "Toggle";
   case Node::Kind::Spacer:
     return "Spacer";
   case Node::Kind::VStack:

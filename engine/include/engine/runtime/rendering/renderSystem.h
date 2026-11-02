@@ -3,6 +3,11 @@
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/core/rendering/camera.h"
 #include "engine/core/rendering/lighting.h"
+#include "engine/core/rendering/lightning.h"
+#include "engine/core/rendering/rain.h"
+#include "engine/core/rendering/sky.h"
+#include "engine/core/rendering/visualStyle.h"
+#include "engine/core/rendering/weather.h"
 #include "engine/runtime/rendering/commands.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
@@ -11,13 +16,19 @@
 
 #include <cstddef>
 #include <functional>
+#include <future>
+#include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
 
 namespace sfs
 {
+
+class WorkerPool;
 
 class IRenderer;
 
@@ -50,6 +61,7 @@ class RenderSystem : public System, public RenderModuleHost<RenderContext>
 {
 public:
   explicit RenderSystem(IRenderer& renderer);
+  ~RenderSystem() override;
 
   RenderSystem(const RenderSystem&) = delete;
   RenderSystem& operator=(const RenderSystem&) = delete;
@@ -99,9 +111,51 @@ public:
   void clearSpace2D() { m_space2D.reset(); }
   const std::optional<Space2D>& space2D() const { return m_space2D; }
 
-  /** Sun, ambient and sky (e.g. driven by a day/night cycle). */
+  /**
+   * Sun, ambient and sky (e.g. driven by a day/night cycle). A 2D game's sun
+   * direction is in its own space: x and y across its plane (y down the
+   * screen if it runs down), z up from it (toward the viewer, in a flat game).
+   */
   void setLighting(const SceneLighting& lighting) { m_lighting = lighting; }
   const SceneLighting& lighting() const { return m_lighting; }
+
+  /**
+   * The weather (see SceneWeather; e.g. driven by a game's weather each
+   * frame, like the lighting). How cloudy it is is the lighting's
+   * cloudCover. A 3D scene's: a physical sky draws its clouds, which drift on
+   * its wind while the clock runs (see setAnimating()).
+   */
+  void setWeather(const SceneWeather& weather) { m_weather = weather; }
+  const SceneWeather& weather() const { return m_weather; }
+
+  /**
+   * How far the clouds have drifted on the wind (km in the world's XY,
+   * within kCloudPeriod), as the next frame draws them.
+   */
+  const glm::vec2& cloudDrift() const { return m_cloudDrift; }
+
+  /**
+   * Set off a lightning strike (see LightningStrike; a 3D scene's): it
+   * flashes from now, its strokes flickering over the next half second or
+   * so, then fades. Its light needs a physical sky (its channel is drawn
+   * under any). A few can flash at once (the oldest gives way to a new one).
+   */
+  void strikeLightning(const LightningStrike& strike);
+
+  /** The strikes still flashing (or fading). */
+  std::size_t lightningStrikes() const { return m_strikes.size(); }
+
+  /**
+   * Hold every strike `seconds` after it began (e.g. 0: the first stroke's
+   * peak), for screenshots and tests; none: they run (the default).
+   */
+  void holdLightning(std::optional<float> seconds)
+  {
+    m_lightningHold = seconds;
+  }
+
+  /** This frame's lightning, as the renderer is given it (for tests). */
+  const FrameLightning& frameLightning() const { return m_lightning; }
 
   void setShadowSettings(const ShadowSettings& settings)
   {
@@ -109,13 +163,73 @@ public:
   }
   const ShadowSettings& shadowSettings() const { return m_shadows; }
 
+  /**
+   * The scene's sky (see SkySettings): flat (its sky colour, the classic
+   * lighting; the default) or physical (an atmosphere that lights the scene).
+   * A 3D scene's only: a 2D game's sky is always flat.
+   */
+  void setSkySettings(const SkySettings& settings) { m_sky = settings; }
+  const SkySettings& skySettings() const { return m_sky; }
+
+  /**
+   * Wait for a physical sky's diffuse light being worked out in the
+   * background (as the sun moves), so the next frame has it. For tests.
+   */
+  void finishSkyWork();
+
   /** The scene's wind (what grass sways in). */
   void setWindSettings(const WindSettings& settings) { m_wind = settings; }
   const WindSettings& windSettings() const { return m_wind; }
 
-  /** The scene's haze (see HazeSettings). */
+  /** The scene's haze (see HazeSettings); a 3D scene's only. */
   void setHazeSettings(const HazeSettings& settings) { m_haze = settings; }
   const HazeSettings& hazeSettings() const { return m_haze; }
+
+  /**
+   * The scene's height fog (see FogSettings; on, it takes haze's place) and
+   * ambient occlusion (see AmbientOcclusionSettings) and contact shadows (see
+   * ContactShadowSettings); all off by default, and a 3D scene's only.
+   */
+  void setFogSettings(const FogSettings& settings) { m_fog = settings; }
+  const FogSettings& fogSettings() const { return m_fog; }
+  void setAmbientOcclusionSettings(const AmbientOcclusionSettings& settings)
+  {
+    m_ambientOcclusion = settings;
+  }
+  const AmbientOcclusionSettings& ambientOcclusionSettings() const
+  {
+    return m_ambientOcclusion;
+  }
+  /**
+   * Temporal anti-aliasing (a 3D scene's; off by default): the camera moves
+   * a fraction of a pixel each frame and the frames are blended, smoothing
+   * edges and the shimmer of fine detail (grass, fences) as it moves.
+   */
+  void setTemporalAntiAliasing(bool on) { m_temporalAntiAliasing = on; }
+  bool temporalAntiAliasing() const { return m_temporalAntiAliasing; }
+  /** The scene's, or its visual style's (or what's forced). */
+  bool effectiveTemporalAntiAliasing() const;
+  /** Over the scene's and its style's, to compare (a development key). */
+  void forceTemporalAntiAliasing(std::optional<bool> on)
+  {
+    m_forcedTemporalAntiAliasing = on;
+  }
+
+  void setContactShadowSettings(const ContactShadowSettings& settings)
+  {
+    m_contactShadows = settings;
+  }
+  const ContactShadowSettings& contactShadowSettings() const
+  {
+    return m_contactShadows;
+  }
+
+  /**
+   * How rain looks while the weather has it (see RainSettings; a 3D scene's
+   * only). How hard it rains is the weather's (setWeather()).
+   */
+  void setRainSettings(const RainSettings& settings) { m_rain = settings; }
+  const RainSettings& rainSettings() const { return m_rain; }
 
   /**
    * Bloom (see BloomSettings) is the scene camera's (sceneCamera(), its
@@ -125,6 +239,66 @@ public:
    */
   void setBloomSettings(const BloomSettings& settings) { m_bloom = settings; }
   const BloomSettings& bloomSettings() const { return m_bloom; }
+
+  /**
+   * The scene's own colour grading and tone mapping (see ColorGrading): the
+   * look's last step, while no visual style is active. None by default: the
+   * picture as the engine always drew it.
+   */
+  void setColorGrading(const ColorGrading& grading) { m_grading = grading; }
+  const ColorGrading& colorGrading() const { return m_grading; }
+
+  // --- visual style ----------------------------------------------------------
+
+  /**
+   * Where visual styles come from by name ("asset:<id>" of a .style asset):
+   * a StandardScene reads them from its asset store.
+   */
+  using StyleSource =
+      std::function<std::optional<VisualStyle>(std::string_view name)>;
+  void setStyleSource(StyleSource source) { m_styleSource = std::move(source); }
+
+  /**
+   * Make the scene look as a visual style says (see VisualStyle for what it
+   * overrides and what it multiplies); "" for none: the scene's own settings.
+   * Live: the next frame draws with it (materials switch to its variants).
+   * The name is kept (and saved with the scene) even if the style can't be
+   * loaded; the scene then looks as with none.
+   *
+   * @return whether the style is active (true for "")
+   */
+  bool setVisualStyle(std::string_view name);
+
+  /**
+   * Use `style` as the visual style `name` without loading it (e.g. one being
+   * edited, not saved yet).
+   */
+  void setVisualStyle(std::string_view name, const VisualStyle& style);
+
+  /** Load the current style again (its file changed). */
+  void reloadVisualStyle() { setVisualStyle(std::string(m_styleName)); }
+
+  /** The visual style's name ("" for none) and, if loaded, the style. */
+  const std::string& visualStyleName() const { return m_styleName; }
+  const VisualStyle* visualStyle() const
+  {
+    return m_style ? &*m_style : nullptr;
+  }
+
+  /**
+   * What the scene looks like this frame: the scene's own settings with the
+   * visual style (if any) applied. Bloom is the scene camera's, as the frame
+   * uses it.
+   */
+  ColorGrading effectiveGrading() const;
+  BloomSettings effectiveBloom() const;
+  HazeSettings effectiveHaze() const;
+  ShadowSettings effectiveShadows() const;
+  SkySettings effectiveSky() const;
+  FogSettings effectiveFog() const;
+  AmbientOcclusionSettings effectiveAmbientOcclusion() const;
+  ContactShadowSettings effectiveContactShadows() const;
+  RainSettings effectiveRain() const;
 
   const RenderStats& stats() const { return m_stats; }
 
@@ -145,13 +319,24 @@ public:
    * while editing).
    */
   void setAnimating(bool animating) { m_animating = animating; }
+
+  /** The renderer it draws through (e.g. to update a texture being painted). */
+  IRenderer& renderer() { return m_renderer; }
   bool animating() const { return m_animating; }
 
 protected:
   void update(double deltaTime) override
   {
     if (m_animating)
+    {
       m_time += deltaTime;
+      m_cloudDrift = driftClouds(m_cloudDrift,
+                                 m_weather.clamped().wind,
+                                 static_cast<float>(deltaTime));
+      m_rainDrift.advance(
+          m_weather.clamped().wind, static_cast<float>(deltaTime));
+      advanceLightning(static_cast<float>(deltaTime));
+    }
     updateModules(deltaTime);
   }
   void render() override;
@@ -159,8 +344,28 @@ protected:
   ModuleInit moduleInit() override { return {registry, nullptr}; }
 
 private:
+  // Age the strikes, dropping (and freeing) those that have faded.
+  void advanceLightning(float seconds);
+
+  // Work out this frame's lightning (m_lightning) from the strikes: its
+  // brightest's light, before the lights are gathered (its shadow's light
+  // is one of them).
+  void placeLightning();
+
+  // The strikes' channels, glowing as they flicker.
+  void emitLightning();
+
   // Fill m_context for a viewport; false if there is nothing to draw into.
   bool buildContext(const glm::ivec2& viewport);
+
+  // Fit the sun's shadow (its one map, or its cascades) for this frame.
+  void fitShadows(const ShadowSettings& shadows, float aspect);
+
+  // Bring m_frameSky up to date: a physical sky's model (rebuilt when its
+  // settings change), its sun's (or moon's) light, and its diffuse light
+  // (worked out again, in the background, when the sun has moved or the
+  // moon's glow changed far enough to show).
+  void updateSky();
 
   // Rebuild m_pointLights from PointLightComponent entities and glowing
   // meshes (gatherEmissionLights), keeping the kMaxPointLights nearest the
@@ -183,13 +388,50 @@ private:
   MeshLibrary m_meshes;
 
   Camera m_camera;
+  // Stepping the view for a screenshot sequence (SFS_CAMERA_STEP, see
+  // stepCamera(); it gives how far grass's camera is past the view's): the
+  // frames rendered so far.
+  glm::vec3 stepCamera();
+  int m_renderedFrames = 0;
   std::optional<Space2D> m_space2D;
   bool m_followSceneCamera = true;
   SceneLighting m_lighting;
+  SceneLighting m_worldLighting; // this frame's: the sun in the world's space
   ShadowSettings m_shadows;
   BloomSettings m_bloom;
   WindSettings m_wind;
   HazeSettings m_haze;
+  SceneWeather m_weather;
+  glm::vec2 m_cloudDrift{0.0f}; // km (driftClouds())
+  RainDrift m_rainDrift;
+  // Lightning strikes still going: each its age (s), where its channel
+  // leaves the cloud, and its channel's meshes (main and branches; none for
+  // one in the cloud).
+  struct ActiveStrike
+  {
+    LightningStrike strike;
+    float age = 0.0f;
+    float duration = 0.0f;
+    glm::vec3 top{0.0f};
+    float width = 1.0f;
+    MeshHandle channel;
+    MeshHandle branches;
+  };
+  std::vector<ActiveStrike> m_strikes;
+  std::optional<float> m_lightningHold;
+  FrameLightning m_lightning;
+  float m_lightningLight = 0.0f; // the brightest strike's, this frame
+  FogSettings m_fog;
+  AmbientOcclusionSettings m_ambientOcclusion;
+  ContactShadowSettings m_contactShadows;
+  RainSettings m_rain;
+  bool m_temporalAntiAliasing = false;
+  std::optional<bool> m_forcedTemporalAntiAliasing;
+  SkySettings m_sky;
+  ColorGrading m_grading;
+  StyleSource m_styleSource;
+  std::string m_styleName;
+  std::optional<VisualStyle> m_style;
 
   // Emission per surface sample, for one frame: per (samples, material) for
   // materials whose emission doesn't depend on where the object is (shared
@@ -214,6 +456,40 @@ private:
 
   RenderContext m_context;
   glm::mat4 m_lightViewProjection{1.0f};
+  SunCascades m_cascades;
+  // A physical sky: its model (for the settings it was built from), the sun
+  // its diffuse light was worked out for, and what the frame gets.
+  std::shared_ptr<const PhysicalSky> m_physicalSky;
+  SkySettings m_physicalSkySettings;
+  glm::vec3 m_skySun{0.0f};
+  float m_skyNight = 1.0f; // the night glow's scale it was worked out for
+  SkyClouds m_skyClouds;   // the clouds it was worked out under
+  glm::vec3 m_clearSkyLight{0.0f}; // its light from above, without them
+  // Where the clouds were (the camera's place in their pattern, km) when the
+  // sky's textures last drew them: they're drawn again once that has moved
+  // far enough to show in reflections.
+  glm::vec2 m_skyCloudOrigin{0.0f};
+  FrameSky m_frameSky;
+  // This frame's real sun (m_worldLighting's is the moon's once it takes
+  // over), and the moon's share of the light (moonlight()).
+  glm::vec3 m_toSun{0.0f, 0.0f, 1.0f};
+  float m_moonShare = 0.0f;
+  bool m_moonLit = false; // the moon is the frame's directional light
+  // The sky's diffuse light for a sun and night glow, worked out on
+  // m_skyWorker.
+  struct SkyLight
+  {
+    std::shared_ptr<const PhysicalSky> model;
+    glm::vec3 toSun{0.0f};
+    float night = 1.0f;
+    SkyClouds clouds;
+    SkyIrradiance irradiance;
+    glm::vec3 groundLight{0.0f};
+    // The light on the ground from the sky above, and on the clouds' tops
+    // from it, clear of clouds.
+    glm::vec3 clearSkyLight{0.0f};
+  };
+  std::future<SkyLight> m_skyJob;
   std::vector<PointLight> m_pointLights;
   std::vector<PointLight> m_shadowedLights; // those casting shadows
   std::vector<std::size_t> m_shadowCandidates;
@@ -221,6 +497,7 @@ private:
   double m_time = 0.0; // seconds of update() (while animating)
   bool m_animating = true;
   RenderStats m_stats;
+  std::unique_ptr<WorkerPool> m_skyWorker; // last: stopped before the rest goes
 };
 
 } // namespace sfs

@@ -8,16 +8,13 @@ live Lua scripting API.
 
 <p align="center">
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
-    <strong>▶ Play the dogshit isometric sample</strong>
+    <strong>▶ Play Glowfall Isle (3D)</strong>
   </a>
   &nbsp;·&nbsp;
   <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/samplePlatformer" target="_blank" rel="noopener noreferrer">
-    <strong>▶ Play the sample platformer</strong>
+    <strong>▶ Play Neon Sprint (flat 2D)</strong>
   </a>
 </p>
-
-![ECS Diagram](./docs/images/ecs.png)
-![High Level Ownership](./docs/images/high-level-ownership.png)
 
 ## Table of Contents
 
@@ -158,28 +155,16 @@ add_custom_command(TARGET myGame POST_BUILD
 
 ## The Samples
 
-Two complete games built on SFS, one per 2D style, both playable in the
-browser (links above):
+Two games made in SfsEditor, both playable in the browser (links above):
 
-- `sampleGame/` is the isometric sample: voxel terrain with water, lamps,
-  day and night, blood and embers.
-- `samplePlatformer/` is the flat 2D sample: a dark platformer lit by torches
-  and gunfire.
+- `samples/showcase3d/` is **Glowfall Isle**, the 3D sample: an island with
+  models, material graphs, grass, physics and a day that passes.
+- `samples/platformer2d/` is **Neon Sprint**, the flat 2D sample: a neon
+  runner with sprites, point lights and particles.
 
-`sampleGame/` is also the worked example of everything above: it consumes the
-engine through `find_package(engine)` and `sfs::engine-webgpu`, exactly as
-your game does. Build and run it against the package:
-
-```bash
-conan create .
-cd sampleGame
-conan install . --build=missing -s build_type=Release
-cmake --preset conan-release
-cmake --build --preset conan-release --target run
-```
-
-The [`crun-sample-pkg`](./engine/README.md#optional-aliases-zsh) alias chains
-these steps into one command.
+Each is an editor project (`project.sfsproj`): open its folder in SfsEditor
+to play it, change it, or export it as a game. The web build publishes them as
+the site's root and `samplePlatformer/` page.
 
 For building the engine itself, the bundled workspace build, and tooling, see
 [engine development](./engine/README.md).

@@ -1,13 +1,18 @@
 #include "../../testHarness.h"
+#include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/scriptComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/reflection/reflection.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
+#include <engine/runtime/rendering/standardScene.h>
 #include <engine/runtime/sceneManager/scene.h>
+#include <engine/runtime/sceneManager/sceneManager.h>
 #include <engine/runtime/scripting/scriptRegistry.h>
 
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 using namespace sfs;
@@ -189,6 +194,68 @@ int main()
     registry.removeModule("game");
     CHECK(registry.find("A") == nullptr);
     CHECK(registry.find("B") != nullptr);
+  }
+
+  TEST("startObjects should start only the entities it's given")
+  {
+    World world;
+    Entity first = world.scene.createEntity();
+    first.addComponent<TransformComponent>();
+    first.addComponent<ScriptComponent>("Mover");
+    world.scene.flushEntities();
+    startScripts(world.scene, {});
+
+    // Made while the game runs.
+    Entity later = world.scene.createEntity();
+    later.addComponent<TransformComponent>();
+    later.addComponent<ScriptComponent>("Mover");
+    Mover::created = 0;
+    startObjects(world.scene, {later});
+    CHECK(Mover::created == 1);
+    CHECK(world.scene.findObjects<Mover>().size() == 2u);
+    CHECK(world.scene.findObjects<Mover>()[1]->entity() == later);
+  }
+
+  TEST("StandardScene::instantiate should start the instance's scripts")
+  {
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() / "sfs_instantiate_test";
+    fs::remove_all(folder);
+    fs::create_directories(folder / "prefabs");
+    std::ofstream(folder / "prefabs" / "mover.prefab") << R"({
+      "formatVersion": 1,
+      "root": {
+        "NameComponent": {"name": "Spawned"},
+        "TransformComponent": {},
+        "ScriptComponent": {"script": "Mover"},
+        "children": [{"$id": 1, "TransformComponent": {},
+                      "ScriptComponent": {"script": "Mover"}}]}})";
+    {
+      const AssetDatabase database(folder,
+                                   AssetDatabase::Mode::ReadWrite,
+                                   AssetDatabase::projectFolders());
+      const AssetRecord* record =
+          database.findByPath(fs::path("prefabs") / "mover.prefab");
+      CHECK(record != nullptr);
+
+      AssetStore store;
+      store.setDatabase(&database);
+      testing3d::MockRenderer renderer;
+      SceneServices services{.assetStore = store, .renderer = &renderer};
+      SceneManager manager;
+      manager.setSceneServices(&services);
+      StandardScene& scene = *manager.createScene<StandardScene>();
+
+      Mover::created = 0;
+      const Entity root =
+          record ? scene.instantiate("asset:" + record->id.toString())
+                 : Entity();
+      CHECK(root.isValid());
+      CHECK(Mover::created == 2);
+      CHECK(scene.findObjects<Mover>().size() == 2u);
+      manager.destroyAll();
+    }
+    fs::remove_all(folder);
   }
 
   return testing::report("scriptRegistryTests");

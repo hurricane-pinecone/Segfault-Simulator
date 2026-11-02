@@ -35,6 +35,7 @@
 #include "widgets/theme.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/atomicFile.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder (default layout)
@@ -56,6 +57,11 @@ constexpr const char* kSaveSceneDialog = "Save Scene As";
 constexpr const char* kNewScriptDialog = "New Script";
 constexpr const char* kExportDialog = "Export Game";
 constexpr const char* kClosePrefabDialog = "Close Prefab";
+constexpr const char* kUnsavedDialog = "Unsaved Changes";
+constexpr const char* kRecoverDialog = "Recover Autosave";
+
+// How often the scene is autosaved (when it has unsaved changes).
+constexpr std::chrono::seconds kAutosaveInterval{60};
 
 // The project's scene files, sorted by name.
 std::vector<std::filesystem::path> sceneFiles(const Project& project)
@@ -108,6 +114,9 @@ void EditorApp::onSetup()
 {
   // The editor draws its own UI; the engine's debug overlay would duplicate it.
   setDebugUiVisible(false);
+  // Play is for trying things out: its development keys work (F8 visual
+  // styles), in any build of the editor.
+  setDevKeys(true);
   m_context.history = &m_history;
 
   sfs::IRenderBackend& backend = *renderBackend();
@@ -135,7 +144,7 @@ void EditorApp::onSetup()
   auto assetPanel = std::make_unique<AssetBrowserPanel>(
       AssetBrowserPanel::Actions{
           .openScene = [this](const std::filesystem::path& path)
-          { openScene(path); },
+          { guarded({Pending::OpenScene, path}); },
           .openText = [this](const std::filesystem::path& path)
           { m_codePanel->openFile(path); },
           .openPrefab =
@@ -163,6 +172,14 @@ void EditorApp::onSetup()
   m_panels.push_back(std::move(assetPanel));
   // After the Console and Assets, to join their dock node.
   m_panels.push_back(std::move(uiPreview));
+
+  // The layout and window as the user left them, now the panels have added
+  // their settings handlers. Which panels are open is kept for these (a
+  // prefab's or material's tab is opened again as it's needed).
+  std::vector<Panel*> panels;
+  for (const auto& panel : m_panels)
+    panels.push_back(panel.get());
+  m_settings.load(backend.window(), std::move(panels));
 
   // The Assets panel draws prefab previews from the scene's meshes, so keep
   // their vertices (before any scene makes meshes).
@@ -315,9 +332,10 @@ void EditorApp::onUpdate(double)
     if (workspace->viewport->takeActivationRequest() && m_mode == Mode::Edit)
       activate(*workspace);
   for (const auto& workspace : m_workspaces)
-    workspace->viewport->setUnsaved(workspace->prefab.valid() &&
-                                    workspace->history->revision() !=
-                                        workspace->appliedRevision);
+    workspace->viewport->setUnsaved(unsaved(*workspace));
+  if (m_active && unsaved(*m_active) != m_titleUnsaved)
+    updateWindowTitle();
+  autosave();
 
   // Build results are acted on here, at the start of a frame, never while the
   // UI is mid-draw: a module swap replaces the scene.
@@ -383,7 +401,8 @@ void EditorApp::onRender()
   const ImGuiID dockspace = ImGui::DockSpaceOverViewport();
 
   // With no saved layout (first run, or imgui.ini deleted) the dockspace starts
-  // empty: arrange the panels like a typical engine, once.
+  // empty: arrange the panels like a typical engine, once. Window > Reset
+  // Layout arranges them so again.
   if (!m_layoutChecked)
   {
     m_layoutChecked = true;
@@ -391,6 +410,21 @@ void EditorApp::onRender()
     if (!root || (root->IsLeafNode() && root->Windows.empty()))
       buildDefaultLayout(dockspace);
   }
+  if (std::exchange(m_resetLayout, false))
+  {
+    m_settings.openAllPanels();
+    buildDefaultLayout(dockspace);
+  }
+  // A dock node shows the focused window's tab, and a window takes the focus
+  // as it first appears (the last panel made, the UI Preview): none has it at
+  // first, so each node shows the tab it did last time.
+  if (m_startFrames > 0)
+  {
+    --m_startFrames;
+    ImGui::SetWindowFocus(nullptr);
+  }
+  showDefaultTabs();
+  m_settings.update();
 
   handleShortcuts();
 
@@ -417,25 +451,57 @@ void EditorApp::buildDefaultLayout(unsigned int dockspaceId)
   ImGui::DockBuilderSetNodeSize(
       dockspaceId, ImGui::GetMainViewport()->WorkSize);
 
+  // The Hierarchy on the left; the Inspector (with the UI Preview) on the
+  // right; the Viewport in the middle, the Console and Assets under it.
   ImGuiID center = dockspaceId;
   const ImGuiID left = ImGui::DockBuilderSplitNode(
       center, ImGuiDir_Left, 0.18f, nullptr, &center);
   const ImGuiID right = ImGui::DockBuilderSplitNode(
-      center, ImGuiDir_Right, 0.25f, nullptr, &center);
+      center, ImGuiDir_Right, 0.26f / 0.82f, nullptr, &center);
   const ImGuiID bottom = ImGui::DockBuilderSplitNode(
-      center, ImGuiDir_Down, 0.25f, nullptr, &center);
-  ImGuiID rightBottom = 0;
-  const ImGuiID rightTop = ImGui::DockBuilderSplitNode(
-      right, ImGuiDir_Up, 0.6f, nullptr, &rightBottom);
+      center, ImGuiDir_Down, 0.335f, nullptr, &center);
 
-  ImGui::DockBuilderDockWindow("Hierarchy", left);
-  ImGui::DockBuilderDockWindow("Inspector", rightTop);
-  ImGui::DockBuilderDockWindow("Scene Settings", rightBottom);
-  ImGui::DockBuilderDockWindow("Console", bottom);
-  ImGui::DockBuilderDockWindow("Assets", bottom); // tabbed with the console
-  ImGui::DockBuilderDockWindow("Viewport", center);
-  ImGui::DockBuilderDockWindow("Code", center); // tabbed with the viewport
+  const std::pair<const char*, ImGuiID> places[] = {
+      {"Hierarchy", left},
+      {"Inspector", right},
+      {"UI Preview", right},
+      {"Viewport", center},
+      {"Scene Settings", center},
+      {"Code", center},
+      {"Console", bottom},
+      {"Assets", bottom},
+  };
+  for (const auto& [window, node] : places)
+    ImGui::DockBuilderDockWindow(window, node);
+  // Prefabs' and materials' tabs (when the layout's reset) with the Viewport.
+  for (const auto& panel : m_panels)
+    if (std::ranges::none_of(
+            places,
+            [&](const auto& place)
+            { return std::string_view(place.first) == panel->title(); }))
+      ImGui::DockBuilderDockWindow(panel->title(), center);
+
   ImGui::DockBuilderFinish(dockspaceId);
+  // The tab of each that shows first. ImGui shows the last tab added to a
+  // node, so they're brought forward once their nodes have tab bars.
+  m_defaultTabsFrames = 3;
+}
+
+void EditorApp::showDefaultTabs()
+{
+  if (m_defaultTabsFrames == 0)
+    return;
+  // Not the focused window's (see onRender).
+  ImGui::SetWindowFocus(nullptr);
+  bool docked = true;
+  for (const char* tab : {"Inspector", "Viewport", "Console"})
+  {
+    const ImGuiWindow* window = ImGui::FindWindowByName(tab);
+    docked &= window && window->DockNode && window->DockNode->TabBar;
+    widgets::showTab(tab);
+  }
+  if (docked)
+    --m_defaultTabsFrames;
 }
 
 void EditorApp::drawMenuBar()
@@ -459,7 +525,7 @@ void EditorApp::drawMenuBar()
       m_requestedDialog = Dialog::Export;
     ImGui::Separator();
     if (ImGui::MenuItem("Exit"))
-      isRunning = false;
+      guarded({Pending::Quit});
     ImGui::EndMenu();
   }
 
@@ -470,6 +536,9 @@ void EditorApp::drawMenuBar()
   {
     for (const auto& panel : m_panels)
       ImGui::MenuItem(panel->title(), nullptr, &panel->open());
+    ImGui::Separator();
+    if (ImGui::MenuItem("Reset Layout"))
+      m_resetLayout = true;
     ImGui::EndMenu();
   }
 
@@ -629,13 +698,20 @@ void EditorApp::drawSceneMenu()
   // Scenes live in the project's scenes folder, so they need a project.
   const bool haveProject = m_context.project.has_value();
 
-  if (ImGui::MenuItem("New Scene", nullptr, false, m_mode == Mode::Edit))
+  // A new scene in a style: 3D, or a 2D game's (flat or isometric), once
+  // whatever it would replace is saved (or let go).
+  if (ImGui::BeginMenu("New Scene", m_mode == Mode::Edit))
   {
-    activate(sceneWorkspace());
-    m_document->newScene();
-    m_history.clear();
-    m_context.selection = {};
-    updateWindowTitle();
+    std::optional<EditorScene::Style> style;
+    if (ImGui::MenuItem("3D"))
+      style = EditorScene::Style::ThreeD;
+    if (ImGui::MenuItem("2D Flat"))
+      style = EditorScene::Style::Flat;
+    if (ImGui::MenuItem("2D Isometric"))
+      style = EditorScene::Style::Isometric;
+    ImGui::EndMenu();
+    if (style)
+      guarded({Pending::NewScene, {}, *style});
   }
 
   if (ImGui::BeginMenu("Open Scene", haveProject))
@@ -646,7 +722,7 @@ void EditorApp::drawSceneMenu()
       if (ImGui::MenuItem(file.stem().string().c_str(),
                           nullptr,
                           file == m_document->path()))
-        openScene(file);
+        guarded({Pending::OpenScene, file});
     if (files.empty())
       ImGui::TextDisabled("No scenes in %s",
                           m_context.project->scenesFolder().string().c_str());
@@ -931,8 +1007,14 @@ void EditorApp::drawProjectDialogs()
   }
   else if (m_requestedDialog == Dialog::ClosePrefab)
     ImGui::OpenPopup(kClosePrefabDialog);
+  else if (m_requestedDialog == Dialog::Unsaved)
+    ImGui::OpenPopup(kUnsavedDialog);
+  else if (m_requestedDialog == Dialog::Recover)
+    ImGui::OpenPopup(kRecoverDialog);
   m_requestedDialog = Dialog::None;
   drawClosePrefabDialog();
+  drawUnsavedDialog();
+  drawRecoverDialog();
 
   if (ImGui::BeginPopupModal(
           kNewScriptDialog, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -986,9 +1068,8 @@ void EditorApp::drawProjectDialogs()
       std::filesystem::path path =
           m_context.project->scenesFolder() / m_dialogSceneName;
       path.replace_extension(SceneDocument::kExtension);
-      m_document->saveAs(path);
+      saveSceneFile(path);
       m_assetPanel->requestRefresh();
-      updateWindowTitle();
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -1005,7 +1086,7 @@ void EditorApp::drawProjectDialogs()
     widgets::inputText("##path", m_dialogPath);
     if (ImGui::Button("Open"))
     {
-      openProject(m_dialogPath);
+      guarded({Pending::OpenProject, m_dialogPath});
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -1082,7 +1163,7 @@ void EditorApp::createProject(const std::filesystem::path& folder,
                               const std::string& name)
 {
   if (Project::create(folder, name))
-    openProject(folder);
+    guarded({Pending::OpenProject, folder});
 }
 
 void EditorApp::finishOpeningProject()
@@ -1128,8 +1209,14 @@ void EditorApp::finishOpeningProject()
     m_document->newScene();
     m_history.clear();
     m_context.selection = {};
+    markSceneSaved();
   }
   updateWindowTitle();
+
+  // Unsaved work a crash left behind.
+  findAutosaves();
+  if (!m_autosaves.empty())
+    m_requestedDialog = Dialog::Recover;
 }
 
 void EditorApp::openScene(const std::filesystem::path& path)
@@ -1140,6 +1227,7 @@ void EditorApp::openScene(const std::filesystem::path& path)
   m_document->beginOpen(path); // its entities come in over the next frames
   m_history.clear();
   m_context.selection = {};
+  markSceneSaved();
   updateWindowTitle();
 }
 
@@ -1153,14 +1241,350 @@ void EditorApp::saveScene()
     return;
   }
   if (m_document->hasPath())
-    m_document->save();
+    saveSceneFile();
   else
     m_requestedDialog = Dialog::SaveSceneAs; // first save picks a name
+}
+
+bool EditorApp::saveSceneFile(const std::filesystem::path& as)
+{
+  const std::filesystem::path before = m_document->path();
+  if (!(as.empty() ? m_document->save() : m_document->saveAs(as)))
+    return false;
+  markSceneSaved();
+  // Its autosave (under the name it had, and the one it has) is out of date.
+  discardAutosave(before);
+  discardAutosave(m_document->path());
+  updateWindowTitle();
+  return true;
+}
+
+bool EditorApp::unsaved(const Workspace& workspace) const
+{
+  // Without a project there's nowhere to save a scene to, nor anything to lose.
+  if (!workspace.prefab.valid() && !m_context.project)
+    return false;
+  return workspace.history->revision() != workspace.appliedRevision;
+}
+
+void EditorApp::markSceneSaved()
+{
+  sceneWorkspace().appliedRevision = m_history.revision();
+  m_autosavedRevision = m_history.revision();
+}
+
+bool EditorApp::losesChanges(Pending kind) const
+{
+  if (unsaved(sceneWorkspace()))
+    return true;
+  if (kind != Pending::Quit)
+    return false; // opening a project applies prefabs and saves materials itself
+  for (const auto& workspace : m_workspaces)
+    if (unsaved(*workspace))
+      return true;
+  for (const MaterialEditorPanel* panel : m_materialPanels)
+    if (panel->unsaved())
+      return true;
+  return false;
+}
+
+void EditorApp::guarded(PendingAction action)
+{
+  if (!losesChanges(action.kind))
+  {
+    perform(action);
+    return;
+  }
+  m_pendingAction = std::move(action);
+  m_unsavedError.clear();
+  m_dialogSceneName.clear();
+  m_requestedDialog = Dialog::Unsaved;
+}
+
+void EditorApp::perform(const PendingAction& action)
+{
+  switch (action.kind)
+  {
+  case Pending::None:
+    break;
+  case Pending::Quit:
+    isRunning = false;
+    break;
+  case Pending::NewScene:
+    if (m_mode == Mode::Playing)
+      stop();
+    activate(sceneWorkspace());
+    m_document->newScene(action.style);
+    m_history.clear();
+    m_context.selection = {};
+    markSceneSaved();
+    updateWindowTitle();
+    break;
+  case Pending::OpenScene:
+    openScene(action.path);
+    break;
+  case Pending::OpenProject:
+    openProject(action.path);
+    break;
+  }
+}
+
+bool EditorApp::onCloseRequested()
+{
+  if (!losesChanges(Pending::Quit))
+    return true;
+  if (m_pendingAction.kind != Pending::Quit)
+    guarded({Pending::Quit});
+  return false;
+}
+
+bool EditorApp::saveBefore(Pending kind)
+{
+  m_unsavedError.clear();
+  // What's saved is the scene being edited, not what Play made of it.
+  if (m_mode == Mode::Playing)
+    stop();
+  if (unsaved(sceneWorkspace()))
+  {
+    if (m_document->hasPath())
+    {
+      if (!saveSceneFile())
+        m_unsavedError = "The scene couldn't be saved (see the Console).";
+    }
+    else if (m_dialogSceneName.empty())
+      m_unsavedError = "Name the scene to save it.";
+    else
+    {
+      std::filesystem::path path = m_context.project->scenesFolder() / m_dialogSceneName;
+      path.replace_extension(SceneDocument::kExtension);
+      if (saveSceneFile(path))
+      {
+        if (m_assetPanel)
+          m_assetPanel->requestRefresh();
+      }
+      else
+        m_unsavedError = "The scene couldn't be saved (see the Console).";
+    }
+  }
+  if (kind == Pending::Quit)
+  {
+    for (const auto& workspace : m_workspaces)
+      if (workspace->prefab.valid() && unsaved(*workspace) && !applyPrefab(*workspace))
+        m_unsavedError = "A prefab couldn't be applied (see the Console).";
+    for (MaterialEditorPanel* panel : m_materialPanels)
+      if (panel->unsaved() && !panel->save(m_context))
+        m_unsavedError = "A material couldn't be saved (see the Console).";
+  }
+  return m_unsavedError.empty();
+}
+
+void EditorApp::drawUnsavedDialog()
+{
+  if (!ImGui::BeginPopupModal(kUnsavedDialog, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    return;
+  const Pending kind = m_pendingAction.kind;
+  if (kind == Pending::None)
+  {
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    return;
+  }
+
+  // What has changes, and what's about to happen to them.
+  const bool sceneChanged = unsaved(sceneWorkspace());
+  if (sceneChanged)
+    ImGui::Text("The scene %s has unsaved changes.",
+                m_document->hasPath() ? m_document->path().filename().string().c_str() : "(new, never saved)");
+  if (kind == Pending::Quit)
+  {
+    for (const auto& workspace : m_workspaces)
+      if (workspace->prefab.valid() && unsaved(*workspace))
+        if (const sfs::AssetRecord* record = m_assets ? m_assets->find(workspace->prefab) : nullptr)
+          ImGui::Text("The prefab %s has changes not applied.", record->path.filename().string().c_str());
+    for (const MaterialEditorPanel* panel : m_materialPanels)
+      if (panel->unsaved())
+        if (const sfs::AssetRecord* record = m_assets ? m_assets->find(panel->material()) : nullptr)
+          ImGui::Text("The material %s has unsaved changes.", record->path.filename().string().c_str());
+  }
+  ImGui::TextDisabled(kind == Pending::Quit ? "Save before closing the editor?" : "Save before going on?");
+  if (sceneChanged && !m_document->hasPath())
+  {
+    ImGui::TextUnformatted("Scene name (saved in the project's scenes folder):");
+    ImGui::SetNextItemWidth(320.0f);
+    widgets::inputText("##unsavedSceneName", m_dialogSceneName);
+  }
+  if (!m_unsavedError.empty())
+    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.40f, 1.0f), "%s", m_unsavedError.c_str());
+  ImGui::Spacing();
+
+  if (ImGui::Button("Save"))
+  {
+    if (saveBefore(kind))
+    {
+      ImGui::CloseCurrentPopup();
+      perform(std::exchange(m_pendingAction, {}));
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Don't Save"))
+  {
+    // Chosen: its autosave goes too, so it isn't offered back later.
+    if (sceneChanged)
+      discardAutosave(m_document->path());
+    ImGui::CloseCurrentPopup();
+    perform(std::exchange(m_pendingAction, {}));
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+  {
+    m_pendingAction = {};
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
+std::filesystem::path EditorApp::autosavePath(const std::filesystem::path& scene) const
+{
+  const std::filesystem::path folder = m_context.project->root() / ".sfs" / "autosave";
+  if (scene.empty())
+    return folder / (std::string("Untitled") + SceneDocument::kExtension);
+  // Where it is in the project, else (a scene from elsewhere) by its name.
+  if (const std::optional<std::string> relative = paths::relative(scene, m_context.project->root()))
+    return folder / *relative;
+  return folder / scene.filename();
+}
+
+void EditorApp::autosave()
+{
+  const auto now = std::chrono::steady_clock::now();
+  if (now - m_lastAutosave < kAutosaveInterval)
+    return;
+  m_lastAutosave = now;
+  if (!m_context.project || !m_document || m_mode != Mode::Edit || m_openingProject || m_document->opening() ||
+      !unsaved(sceneWorkspace()) || m_history.revision() == m_autosavedRevision)
+    return;
+  const std::filesystem::path file = autosavePath(m_document->path());
+  std::error_code error;
+  std::filesystem::create_directories(file.parent_path(), error);
+  if (sfs::SceneSerializer::writeJsonFile(m_document->snapshot(), file))
+    m_autosavedRevision = m_history.revision();
+}
+
+void EditorApp::discardAutosave(const std::filesystem::path& scene)
+{
+  if (!m_context.project)
+    return;
+  std::error_code error;
+  std::filesystem::remove(autosavePath(scene), error);
+}
+
+void EditorApp::findAutosaves()
+{
+  m_autosaves.clear();
+  if (!m_context.project)
+    return;
+  const std::filesystem::path folder = m_context.project->root() / ".sfs" / "autosave";
+  const std::filesystem::path untitled = autosavePath({});
+  std::vector<std::filesystem::path> stale; // the scene's been saved since
+  std::error_code error;
+  for (auto it = std::filesystem::recursive_directory_iterator(folder, error);
+       !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error))
+  {
+    std::error_code unknown;
+    if (!it->is_regular_file(unknown) || it->path().extension() != SceneDocument::kExtension)
+      continue;
+    Autosave autosave{it->path(), {}, it->last_write_time(unknown)};
+    if (it->path() != untitled)
+    {
+      autosave.scene = m_context.project->root() / it->path().lexically_relative(folder);
+      std::error_code missing;
+      const auto saved = std::filesystem::last_write_time(autosave.scene, missing);
+      if (!missing && saved >= autosave.written)
+      {
+        stale.push_back(it->path());
+        continue;
+      }
+    }
+    m_autosaves.push_back(std::move(autosave));
+  }
+  for (const std::filesystem::path& file : stale)
+    std::filesystem::remove(file, error);
+}
+
+void EditorApp::drawRecoverDialog()
+{
+  if (!ImGui::BeginPopupModal(kRecoverDialog, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    return;
+  if (m_autosaves.empty() || !m_context.project)
+  {
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    return;
+  }
+  ImGui::TextUnformatted("The editor closed with unsaved changes (it crashed?). Autosaved:");
+  ImGui::Spacing();
+  std::optional<std::size_t> recover;
+  std::optional<std::size_t> discard;
+  for (std::size_t i = 0; i < m_autosaves.size(); ++i)
+  {
+    const Autosave& autosave = m_autosaves[i];
+    ImGui::PushID(static_cast<int>(i));
+    const std::string name =
+        autosave.scene.empty()
+            ? std::string("A new scene, never saved")
+            : paths::relative(autosave.scene, m_context.project->root()).value_or(autosave.scene.string());
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(name.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Recover"))
+      recover = i;
+    ImGui::SetItemTooltip("Open it with the autosaved changes (they're saved once you save it)");
+    ImGui::SameLine();
+    if (ImGui::Button("Discard"))
+      discard = i;
+    ImGui::PopID();
+  }
+  ImGui::Spacing();
+  if (ImGui::Button("Later"))
+    ImGui::CloseCurrentPopup();
+  ImGui::SetItemTooltip("Keep them, to be offered again when the project's next opened");
+
+  if (discard)
+  {
+    std::error_code error;
+    std::filesystem::remove(m_autosaves[*discard].file, error);
+    m_autosaves.erase(m_autosaves.begin() + static_cast<std::ptrdiff_t>(*discard));
+  }
+  else if (recover)
+  {
+    const Autosave autosave = m_autosaves[*recover];
+    m_autosaves.erase(m_autosaves.begin() + static_cast<std::ptrdiff_t>(*recover));
+    if (const std::optional<nlohmann::json> snapshot = sfs::SceneSerializer::readJsonFile(autosave.file))
+    {
+      if (m_mode == Mode::Playing)
+        stop();
+      activate(sceneWorkspace());
+      m_document->restore(*snapshot);
+      m_document->setPath(autosave.scene);
+      m_history.clear();
+      m_context.selection = {};
+      // It isn't what's in the scene's file (nor, until it's saved, anywhere
+      // but its autosave, which stays until then).
+      sceneWorkspace().appliedRevision = kNeverSaved;
+      m_autosavedRevision = m_history.revision();
+      updateWindowTitle();
+      LOG_INFO("Recovered the autosave of " + (autosave.scene.empty() ? std::string("a new scene")
+                                                                       : autosave.scene.filename().string()));
+    }
+    ImGui::CloseCurrentPopup(); // one scene is open at a time: the rest wait
+  }
+  ImGui::EndPopup();
 }
 
 void EditorApp::updateWindowTitle()
 {
   std::string title = "SfsEditor";
+  m_titleUnsaved = m_active && unsaved(*m_active);
   if (m_context.project)
   {
     std::string scene =
@@ -1170,15 +1594,30 @@ void EditorApp::updateWindowTitle()
               m_assets ? m_assets->find(m_active->prefab) : nullptr)
         scene = "Prefab " + record->path.filename().string();
     title = m_context.project->name() + " - " + scene +
-            (m_mode == Mode::Playing ? " [Playing]" : "") + " - SfsEditor";
+            (m_titleUnsaved ? "*" : "") + (m_mode == Mode::Playing ? " [Playing]" : "") + " - SfsEditor";
   }
   SDL_SetWindowTitle(window, title.c_str());
+}
+
+void EditorApp::showConsoleForPlay()
+{
+  // Remembered once: a Play whose build failed left the Console showing, and
+  // the next Play shouldn't take it for the tab to go back to.
+  if (!m_tabBeforePlay)
+    m_tabBeforePlay = widgets::shownTab("Console");
+  for (const auto& panel : m_panels)
+    if (std::string_view(panel->title()) == "Console")
+      panel->open() = true;
+  widgets::showTab("Console");
 }
 
 void EditorApp::requestBuild(bool thenPlay)
 {
   if (!m_context.project)
     return;
+  // Play's build shows in the Console.
+  if (thenPlay && m_mode == Mode::Edit)
+    showConsoleForPlay();
   if (m_builder.busy())
   {
     // Already building (e.g. after a script was saved): Play once it's done.
@@ -1834,8 +2273,8 @@ std::string engineBuildStamp()
 void EditorApp::stampModule()
 {
   const std::filesystem::path module = m_builder.modulePath(*m_context.project);
-  std::ofstream(stampPath(module)) << m_engineStamp.get();
-  std::ofstream(scriptsStampPath(module)) << m_buildScriptsStamp;
+  sfs::writeFileAtomically(stampPath(module), m_engineStamp.get());
+  sfs::writeFileAtomically(scriptsStampPath(module), m_buildScriptsStamp);
 }
 
 void EditorApp::loadExistingModule()
@@ -1965,6 +2404,16 @@ sfs::StandardScene& EditorApp::replaceScene()
   return *m_context.scene;
 }
 
+void EditorApp::onFatalError(const std::string& message)
+{
+  LOG_ERROR(message);
+  if (m_mode != Mode::Edit)
+  {
+    LOG_ERROR("Play stopped because of the error above");
+    stop();
+  }
+}
+
 void EditorApp::stop()
 {
   if (m_mode != Mode::Playing)
@@ -1980,6 +2429,10 @@ void EditorApp::stop()
   m_history.setEnabled(true);
   LOG_INFO("Stopped");
   updateWindowTitle();
+  // Back to the tab that was showing beside the Console before Play.
+  if (m_tabBeforePlay && !m_tabBeforePlay->empty())
+    widgets::showTab(*m_tabBeforePlay);
+  m_tabBeforePlay.reset();
 }
 
 void EditorApp::drawExportDialog()
@@ -2039,6 +2492,13 @@ void EditorApp::drawExportDialog()
   ImGui::InputInt2("Window size", m_exportWindowSize);
   m_exportWindowSize[0] = std::clamp(m_exportWindowSize[0], 320, 7680);
   m_exportWindowSize[1] = std::clamp(m_exportWindowSize[1], 240, 4320);
+  if (!m_exportWeb)
+  {
+    ImGui::Checkbox("Development build", &m_exportDevelopment);
+    ImGui::SetItemTooltip(
+        "For trying the game out, not for shipping: its development keys "
+        "work\n(F8 / Shift+F8 switch between the project's visual styles).");
+  }
 
   ImGui::Spacing();
   ImGui::BeginDisabled(m_exportStartScene.empty() || m_exportFolder.empty());
@@ -2053,7 +2513,7 @@ void EditorApp::drawExportDialog()
             workspace->history->revision() != workspace->appliedRevision)
           applyPrefab(*workspace);
       if (m_document->hasPath())
-        m_document->save();
+        saveSceneFile();
     }
     m_context.project->setStartScene(m_exportStartScene);
     m_lastExportFolder = m_exportFolder;
@@ -2092,6 +2552,7 @@ void EditorApp::exportGame()
   options.module = m_builder.modulePath(*m_context.project);
   options.windowWidth = m_exportWindowSize[0];
   options.windowHeight = m_exportWindowSize[1];
+  options.development = m_exportDevelopment;
 
   if (!exporter.run(*m_context.project, options).empty())
     shell::openExternally(options.output);

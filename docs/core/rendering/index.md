@@ -16,7 +16,8 @@ terrain are meshes and materials too, just placed on its plane.
 - **Camera:** `Camera` and `Ray` (`camera.h`): an orbit camera for a Z-up
   world, with perspective or orthographic projection, and the ray through a
   pixel for picking.
-- **Lighting:** `SceneLighting` (the sun, ambient light and sky colour),
+- **Lighting:** `SceneLighting` (the sun, the moon, ambient light, sky colour
+  and cloud cover),
   `PointLight`, and the settings for shadows, bloom, depth of field, haze and
   wind (`lighting.h`).
 - **Grass:** the ground grass grows on, its painted maps and trampling

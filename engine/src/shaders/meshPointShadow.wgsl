@@ -24,12 +24,14 @@ struct PointShadowOut {
 fn vs_main(vertex: VertexIn, instance: InstanceIn) -> PointShadowOut {
   let model = instanceModel(instance);
   let world = model * vec4f(vertex.position, 1.0);
+  let placed = surfaceVertex(SurfaceVertex(world.xyz, normalMatrix(model) * vertex.normal,
+                                            instanceUv(vertex, instance), 1.0));
   var out: PointShadowOut;
-  out.clip = face.viewProjection * world;
-  out.uv = instanceUv(vertex, instance);
-  out.tintAlpha = instance.tint.a;
-  out.worldPosition = world.xyz;
-  out.normal = normalMatrix(model) * vertex.normal;
+  out.clip = face.viewProjection * vec4f(placed.position, 1.0);
+  out.uv = placed.uv;
+  out.tintAlpha = instance.tint.a * placed.keep;
+  out.worldPosition = placed.position;
+  out.normal = placed.normal;
   out.vertexColor = vertex.color;
   return out;
 }
@@ -38,13 +40,18 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> PointShadowOut {
 // as in the sun's shadow pass.
 @fragment
 fn fs_main(in: PointShadowOut) -> @builtin(frag_depth) f32 {
-  let s = surface(surfaceInput(in.uv, in.worldPosition, normalize(in.normal), in.vertexColor));
   let mode = surfaceAlphaMode();
   if (mode == ALPHA_ADDITIVE) {
     discard; // light, not a thing: it casts no shadow
   }
-  let alpha = select(s.alpha * in.tintAlpha, in.tintAlpha, mode == ALPHA_OPAQUE);
-  let cutoff = select(0.5, s.alphaClip, mode == ALPHA_MASK);
+  // An opaque surface needn't be asked: only a faded object's tint cuts it.
+  var alpha = in.tintAlpha;
+  var cutoff = 0.5;
+  if (mode != ALPHA_OPAQUE) {
+    let solid = surfaceAlpha(surfaceInput(in.uv, in.worldPosition, normalize(in.normal), in.vertexColor));
+    alpha = solid.x * in.tintAlpha;
+    cutoff = select(0.5, solid.y, mode == ALPHA_MASK);
+  }
   let cutsOut = mode != ALPHA_OPAQUE || in.tintAlpha < 1.0;
   if (cutsOut && alpha < cutoff) {
     discard;

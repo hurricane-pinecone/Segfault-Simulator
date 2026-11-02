@@ -1,13 +1,17 @@
 #include "engine/runtime/rendering/standardScene.h"
 
+#include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/rendering/modules/decalModule.h"
+#include "engine/runtime/rendering/modules/deformationModule.h"
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/modules/meshModule.h"
 #include "engine/runtime/rendering/modules/particleModule.h"
+#include "engine/runtime/rendering/modules/puddleModule.h"
 #include "engine/runtime/rendering/modules/spriteModule.h"
 #include "engine/runtime/rendering/modules/uiModule.h"
 #include "engine/runtime/rendering/renderSystem.h"
@@ -45,19 +49,6 @@ void StandardScene::onUpdate(double)
     if (m_render)
       m_render->meshes().fulfilPending();
   }
-
-#ifdef SFS_HAS_PHYSICS
-  PhysicsSystem3D* physics = physicsSystem();
-  if (!physics || !physics->enabled())
-    return;
-  // Copied: a handler may destroy entities or switch scenes.
-  const std::vector<Contact3D> begun = physics->contactsBegun();
-  const std::vector<Contact3D> ended = physics->contactsEnded();
-  for (const Contact3D& contact : begun)
-    notifyContact(contact, true);
-  for (const Contact3D& contact : ended)
-    notifyContact(contact, false);
-#endif
 }
 
 SceneSerializer StandardScene::serializer()
@@ -90,6 +81,16 @@ bool StandardScene::play(const std::filesystem::path& file)
   return true;
 }
 
+Entity StandardScene::instantiate(std::string_view prefab, const Entity& parent)
+{
+  const Entity root = serializer().instantiate(prefab, *this, parent);
+  if (root.isValid())
+    startObjects(*this,
+                 hierarchy::EntityTree(entities()).subtree(root),
+                 &m_render->meshes());
+  return root;
+}
+
 void StandardScene::filterInput(Input& input)
 {
   if (UiModule* ui = m_render ? m_render->module<UiModule>() : nullptr)
@@ -99,10 +100,14 @@ void StandardScene::filterInput(Input& input)
 void StandardScene::onInit()
 {
   m_render = &addSystem<RenderSystem>(renderer());
-  // What any style draws: meshes and grass, sprites (flat in a 2D game,
-  // upright in 3D), particles and the marks they leave, and UI.
+  // What any style draws: meshes and grass (and the puddles and tracks on
+  // terrains), sprites (flat in a 2D game, upright in 3D), particles and the
+  // marks they leave, and UI.
   m_render->withModule<MeshModule>();
   m_render->withModule<GrassModule>(renderer());
+  m_render->withModule<PuddleModule>(renderer());
+  // After the puddles, which bake with its tracks.
+  m_render->withModule<DeformationModule>(renderer());
   m_render->withModule<SpriteModule>(assetStore());
   auto& decals = m_render->withModule<DecalModule>(assetStore());
   m_render->withModule<ParticleModule>(assetStore()).enableStains(decals);
@@ -125,6 +130,20 @@ void StandardScene::onInit()
       script.buildMeshes(library);
 
   library.setProvider(modelMeshes());
+
+  // Visual styles: .style assets, by "asset:<id>".
+  AssetStore& store = assetStore();
+  m_render->setStyleSource(
+      [&store](std::string_view name) -> std::optional<VisualStyle>
+      {
+        const std::optional<AssetMeshName> asset = parseAssetMeshName(name);
+        if (!asset || !asset->part.empty())
+        {
+          LOG_ERROR("Not a visual style asset: '" + std::string(name) + "'");
+          return std::nullopt;
+        }
+        return store.visualStyle(asset->model);
+      });
 }
 
 MeshLibrary::Provider StandardScene::modelMeshes()

@@ -27,5 +27,19 @@ int main()
     CHECK(!mouse.inView());
   }
 
+  TEST("a button past those tracked (a many-button mouse) should be ignored")
+  {
+    MouseInput mouse;
+    const auto extra = static_cast<MouseButton>(200);
+    mouse.beginFrame();
+    mouse.pressButton(extra);
+    mouse.update();
+    CHECK(!mouse.mouseHeld(extra));
+    CHECK(!mouse.mousePressed(extra));
+    mouse.releaseButton(extra);
+    CHECK(!mouse.mouseReleased(extra));
+    CHECK(!mouse.mouseHeld(static_cast<MouseButton>(-1)));
+  }
+
   return testing::report("mouseInputTests");
 }

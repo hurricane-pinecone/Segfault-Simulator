@@ -33,10 +33,13 @@ void ConsolePanel::drawContents(EditorContext&)
     const std::lock_guard lock(m_mutex);
     for (const Entry& entry : m_entries)
     {
-      if (entry.level == sfs::Logger::Level::ERROR)
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.40f, 1.0f));
+      const bool error = entry.level == sfs::Logger::Level::ERROR;
+      const bool warning = entry.level == sfs::Logger::Level::WARN;
+      if (error || warning)
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              error ? ImVec4(1.0f, 0.45f, 0.40f, 1.0f) : ImVec4(1.0f, 0.80f, 0.35f, 1.0f));
       ImGui::TextUnformatted(entry.text.c_str());
-      if (entry.level == sfs::Logger::Level::ERROR)
+      if (error || warning)
         ImGui::PopStyleColor();
     }
   }

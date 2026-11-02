@@ -1,6 +1,10 @@
 #include "engine/core/jobs/workerPool.h"
 
+#include "engine/core/logger/logger.h"
+
 #include <algorithm>
+#include <exception>
+#include <string>
 
 namespace sfs
 {
@@ -52,7 +56,20 @@ void WorkerPool::run()
       m_queue.pop_front();
       ++m_running;
     }
-    job();
+    // A job that throws mustn't end the program (an exception leaving a
+    // thread does) or the pool: it's logged, and the next job runs.
+    try
+    {
+      job();
+    }
+    catch (const std::exception& error)
+    {
+      LOG_ERROR(std::string("A background job failed: ") + error.what());
+    }
+    catch (...)
+    {
+      LOG_ERROR("A background job failed (unknown error)");
+    }
     const std::lock_guard lock(m_mutex);
     --m_running;
   }

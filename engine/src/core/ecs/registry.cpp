@@ -1,6 +1,9 @@
 #include <engine/core/ecs/entity.h>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/logger/logger.h>
+#include <engine/core/util/fatalError.h>
+
+#include <string>
 
 namespace sfs
 {
@@ -84,11 +87,60 @@ void Registry::addEntityToSystems(const Entity& entity)
 
 void Registry::removeEntityFromSystems(const Entity& entity)
 {
+  // Only the systems it could be in: those its components match.
+  const Signature& entitySignature = entityComponentSignatures[entity.getId()];
   for (auto& system : systems)
   {
-    system->removeEntity(entity);
+    const Signature& systemSignature = system->getComponentSignature();
+    if ((entitySignature & systemSignature) == systemSignature)
+      system->removeEntity(entity);
   }
 }
+
+void Registry::componentsChanged(const Entity& entity, const Signature& before)
+{
+  // Not in any system yet: it joins them, as it is then, at the next flush.
+  if (entitiesToBeAdded.contains(entity))
+    return;
+
+  const Signature& after = entityComponentSignatures[entity.getId()];
+  for (auto& system : systems)
+  {
+    const Signature& wanted = system->getComponentSignature();
+    const bool was = (before & wanted) == wanted;
+    const bool is = (after & wanted) == wanted;
+    if (was && !is)
+      system->removeEntity(entity);
+    else if (is && !was)
+      system->addEntity(entity);
+  }
+}
+
+void Registry::badComponentAccess(const Entity& entity,
+                                  const char* action,
+                                  std::string_view type) const
+{
+  const std::string what = std::string(action) + "<" +
+                           detail::readableTypeName(type) + ">: entity " +
+                           std::to_string(entity.getId());
+  const auto id = entity.getId();
+  if (!entity.isValid())
+    fatalError(what + " isn't an entity (a default-made Entity)");
+  if (id >= entityAlive.size() || !entityAlive[id])
+    fatalError(what + " was destroyed");
+  if (generations[id] != entity.getGeneration())
+    fatalError(what + " was destroyed (its id now belongs to another entity)");
+  fatalError(what + " has no such component");
+}
+
+namespace detail
+{
+void invalidEntity(const char* action)
+{
+  fatalError(std::string(action) +
+             " on an Entity that isn't one (default-made, or reset)");
+}
+} // namespace detail
 
 void Registry::flushEntities()
 {
@@ -99,7 +151,9 @@ void Registry::flushEntities()
 
     const auto id = entity.getId();
 
-    removeEntityFromSystems(entity);
+    // Still pending its first flush: in no system yet.
+    if (!entitiesToBeAdded.contains(entity))
+      removeEntityFromSystems(entity);
 
     if (id < entityComponentSignatures.size())
       entityComponentSignatures[id].reset();

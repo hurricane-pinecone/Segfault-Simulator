@@ -45,6 +45,7 @@ public:
   void imguiRenderDrawData() override;
   bool imguiAvailable() const override { return m_imguiReady; }
   void setVsync(bool vsync) override { m_context.setVsync(vsync); }
+  bool deviceLost() const override { return m_context.deviceLost(); }
 
   std::unique_ptr<IRenderTarget> createRenderTarget() override;
   /** The target must be one of createRenderTarget()'s, and outlive its use. */
@@ -83,11 +84,17 @@ private:
 
   // SFS_SCREENSHOT=<file.png>: the scene draws offscreen, and frame
   // SFS_SCREENSHOT_FRAME (60 by default) is saved there (for checking how a
-  // game looks without seeing its window).
+  // game looks without seeing its window). With SFS_SCREENSHOT_COUNT=<n> and
+  // SFS_SCREENSHOT_EVERY=<frames>, n of them that many frames apart, each
+  // numbered (<file>_00.png...): a sequence, as the camera steps (see
+  // RenderSystem's SFS_CAMERA_STEP).
+  bool screenshotDue(int frame) const;
   void saveScreenshot();
   std::unique_ptr<WebGpuRenderTarget> m_screenshotTarget;
   std::string m_screenshotPath;
   int m_screenshotFrame = 60;
+  int m_screenshotEvery = 0;
+  int m_screenshotCount = 1;
   int m_frame = 0;
 
   bool m_imguiReady = false;

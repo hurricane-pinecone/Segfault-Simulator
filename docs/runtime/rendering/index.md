@@ -23,6 +23,9 @@ Scene       │
   system hosts, and writing your own.
 - **[Meshes, materials & lighting](./meshes-and-lighting/index.md)**: meshes,
   materials, the camera, lights, shadows, bloom, depth of field, haze and grass.
+- **[Visual styles & grading](./visual-styles/index.md)**: tone mapping and
+  colour grading, `.style` assets (a whole look a scene can switch to while
+  it runs), material variants, and the F8 development key.
 - **[Render backends](./backends/index.md)**: `IRenderBackend`, the WebGPU
   backend, what each graphics API can do, and writing a backend of your own.
 
@@ -74,7 +77,7 @@ A scene reaches the backend's renderer and the asset store through the
 
 | Accessor | Returns |
 | --- | --- |
-| `renderer()` | The renderer. Logs and aborts if the backend has none. |
+| `renderer()` | The renderer. A fatal error if the backend has none. |
 | `tryRenderer()` | The renderer, or null (for code that also runs headless). |
 | `assetStore()` | The asset store: images, sprites, fonts, models, materials |
 

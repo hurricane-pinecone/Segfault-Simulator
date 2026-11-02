@@ -50,8 +50,12 @@ t        = 1 - exp(-smoothing * dt)
 position = position + (desired - position) * t
 ```
 
-`desired` is the target's position plus `offset`. At `smoothing = 8` and
-`dt = 0.016` (60 fps), roughly 12 % of the remaining gap closes per frame.
+`desired` is the target's world position plus `offset`. At `smoothing = 8`
+and `dt = 0.016` (60 fps), roughly 12 % of the remaining gap closes per frame.
+
+Positions are world positions: a target that's a child of another entity is
+followed where it is in the world, and a camera that's a child (on a rig, say)
+is moved so its world position eases toward it.
 
 ## Screen shake
 
@@ -78,16 +82,21 @@ never call `updateShake()` yourself.
 
 ## Querying the active camera
 
-`CameraSystem::activeCamera()` (or `findActiveCamera(registry)`) returns an
-`ActiveCamera`: pointers to the scene's first active camera's
-`CameraComponent`, `TransformComponent` and, if it has one,
-`CameraFollowComponent`. They're null when the scene has no camera.
-
-`ActiveCamera::getCameraPosition()` is the point on the ground plane the
-camera centres on: its position, plus the follow's offset and the current
-shake. `zoom()` is its magnification.
+`CameraSystem::activeCamera()` (or `findActiveCamera(registry)`) returns the
+scene's first active camera entity (`CameraComponent` +
+`TransformComponent`, in id order), or an invalid entity when there's none.
+It's the camera the render system draws through.
 
 ```cpp
-const sfs::ActiveCamera active = getSystem<sfs::CameraSystem>().activeCamera();
-const glm::vec2 viewCentre = active.getCameraPosition();
+const sfs::Entity camera = getSystem<sfs::CameraSystem>().activeCamera();
+if (camera.isValid())
+{
+  const glm::vec2 centre =
+      sfs::hierarchy::worldTransform(camera).position2D(); // on the plane
+  const float zoom = camera.getComponent<sfs::CameraComponent>().zoom;
+}
 ```
+
+Its transform already includes the follow's `offset` (the system moved it
+there); the shake (`CameraFollowComponent::shakeOffset()`) is added only to
+the view.

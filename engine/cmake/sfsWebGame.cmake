@@ -13,6 +13,18 @@
 # index.data, and the service worker that lets it use threads on hosts that
 # don't send cross-origin isolation headers (GitHub Pages).
 
+# The JSON string (quoted, escaped) for the text in the variable `var`: a name
+# may hold quotes, backslashes or any other character.
+function(_sfs_json_string out var)
+    set(value "${${var}}")
+    string(REPLACE "\\" "\\\\" value "${value}")
+    string(REPLACE "\"" "\\\"" value "${value}")
+    string(REPLACE "\n" "\\n" value "${value}")
+    string(REPLACE "\r" "\\r" value "${value}")
+    string(REPLACE "\t" "\\t" value "${value}")
+    set(${out} "\"${value}\"" PARENT_SCOPE)
+endfunction()
+
 function(sfs_add_web_game target)
     # The engine's folder (this file's parent), wherever the call is from.
     set(SFS_WEB_GAME_ENGINE_DIR "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
@@ -70,9 +82,12 @@ function(sfs_add_web_game target)
     # game.json, as an export writes it (no module: it's compiled in).
     set(staging "${CMAKE_CURRENT_BINARY_DIR}/${target}-web")
     file(MAKE_DIRECTORY "${staging}")
+    _sfs_json_string(name_json name)
+    _sfs_json_string(module_json module)
+    _sfs_json_string(start_scene_json start_scene)
     file(WRITE "${staging}/game.json"
-        "{\n  \"formatVersion\": 1,\n  \"name\": \"${name}\",\n"
-        "  \"moduleName\": \"${module}\",\n  \"startScene\": \"${start_scene}\",\n"
+        "{\n  \"formatVersion\": 1,\n  \"name\": ${name_json},\n"
+        "  \"moduleName\": ${module_json},\n  \"startScene\": ${start_scene_json},\n"
         "  \"windowWidth\": ${ARG_WIDTH},\n  \"windowHeight\": ${ARG_HEIGHT}\n}\n")
 
     # The page: the engine's shell, filled in for this game.

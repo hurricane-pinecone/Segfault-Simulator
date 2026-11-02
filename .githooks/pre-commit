@@ -12,7 +12,7 @@ set -euo pipefail
 # differently, and CI would still fail.
 VERSION="17.0.6"
 # The folders CI checks (and engine/lib, which it doesn't: vendored code).
-INCLUDE='^(engine/src|engine/include|engine/tests|sampleGame/src|samplePlatformer/src)/.*\.(cpp|h|hpp|inl)$'
+INCLUDE='^(engine/src|engine/include|engine/tests)/.*\.(cpp|h|hpp|inl)$'
 EXCLUDE='^engine/lib/'
 
 files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E "$INCLUDE" | grep -vE "$EXCLUDE" || true)"

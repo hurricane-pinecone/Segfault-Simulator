@@ -8,21 +8,27 @@
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
 #include "scripting/scriptFiles.h"
+#include "widgets/lookWidgets.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
+#include "engine/core/components/spriteComponent.h"
+#include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/emissionLights.h"
+#include "engine/core/util/atomicFile.h"
+#include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/game/gameObject.h"
@@ -296,6 +302,77 @@ struct MaterialActions
   std::function<void(const sfs::AssetRecord& material)> edit;
   std::function<void(const sfs::AssetRecord& material)> reveal;
 };
+
+// A material's variants: another material to draw instead while the scene's
+// visual style has the tag (see sfs::MaterialAsset::variants). Each row a tag
+// and its material; the last row adds one. True if they changed.
+bool materialVariants(sfs::MaterialAsset& material,
+                      sfs::MeshLibrary& meshes,
+                      std::string& newTag)
+{
+  ImGui::SeparatorText("Variants");
+  ImGui::TextDisabled("Drawn instead while a visual style has the tag");
+  bool changed = false;
+  const auto materials = meshes.availableMaterials();
+  const auto labelOf = [&](const std::string& name)
+  {
+    for (const auto& [candidate, label] : materials)
+      if (candidate == name)
+        return std::filesystem::path(label).stem().string();
+    return name;
+  };
+  std::optional<std::string> removed;
+  for (auto& [tag, name] : material.variants)
+  {
+    ImGui::PushID(tag.c_str());
+    widgets::propertyLabel(tag.c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN - ImGui::GetFrameHeight() -
+                            ImGui::GetStyle().ItemSpacing.x);
+    if (ImGui::BeginCombo("##variant", labelOf(name).c_str()))
+    {
+      for (const auto& [candidate, label] : materials)
+        if (ImGui::Selectable(label.c_str(), candidate == name))
+        {
+          name = candidate;
+          changed = true;
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+      removed = tag;
+    ImGui::SetItemTooltip("Remove this variant");
+    ImGui::PopID();
+  }
+  if (removed)
+  {
+    material.variants.erase(*removed);
+    changed = true;
+  }
+
+  // A new tag, and the material for it.
+  widgets::propertyLabel("Add Variant");
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+  widgets::inputText("##newTag", newTag);
+  ImGui::SetItemTooltip("The visual style's Material Variant tag, e.g. "
+                        "realistic");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::BeginDisabled(newTag.empty() || material.variants.contains(newTag));
+  if (ImGui::BeginCombo("##newMaterial", "Material..."))
+  {
+    for (const auto& [candidate, label] : materials)
+      if (ImGui::Selectable(label.c_str()))
+      {
+        material.variants[newTag] = candidate;
+        newTag.clear();
+        changed = true;
+      }
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+  return changed;
+}
 
 // The material asset a slot's material name ("asset:<id>") is, if it is one.
 const sfs::AssetRecord* materialAsset(const std::string& name,
@@ -876,13 +953,43 @@ bool materialsCanGlow(const TypeInfo& type,
   return false;
 }
 
-// What a collider is fitted to: the meshes in the scene.
+// What a collider is fitted to: the meshes in the scene (or, in a 2D game,
+// the sprites).
 struct MeshScene
 {
   const sfs::MeshLibrary* meshes = nullptr;
   const sfs::hierarchy::EntityTree* tree = nullptr;
   sfs::AssetDatabase* assets = nullptr; // where Extract writes materials
+  const sfs::RenderSystem* render = nullptr;
+  sfs::AssetStore* store = nullptr; // sprites' images
 };
+
+// A 2D game's sprite's box on its plane, about the entity (its pixels over the
+// pixels per unit, scaled, off its anchor), for a BoxCollider2D to fit. Empty
+// unless the game is flat and the sprite's image is there.
+std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& entity, const MeshScene& scene)
+{
+  if (!scene.render || !scene.store || !entity.hasComponent<sfs::SpriteComponent>() ||
+      !entity.hasComponent<sfs::TransformComponent>())
+    return std::nullopt;
+  const std::optional<sfs::Space2D>& space = scene.render->space2D();
+  if (!space || space->projection != sfs::Space2D::Projection::Flat)
+    return std::nullopt;
+  const auto& sprite = entity.getComponent<sfs::SpriteComponent>();
+  const std::optional<sfs::AssetStore::SpriteFrame> frame =
+      sprite.image.empty() ? std::nullopt : scene.store->spriteFrame(sprite.image, sprite.frame);
+  if (!frame)
+    return std::nullopt;
+  const float pixelsPerUnit = frame->pixelsPerUnit > 0.0f ? frame->pixelsPerUnit : space->pixelsPerUnit;
+  const glm::vec2 size =
+      frame->pixels * glm::abs(entity.getComponent<sfs::TransformComponent>().scale2D()) / pixelsPerUnit;
+  // As SpriteModule draws it: its centre off the anchor (image y down), on
+  // the game's plane (its y down too, if the game's runs down).
+  const glm::vec2 pivot(sprite.anchor.x - 0.5f, 0.5f - sprite.anchor.y);
+  const glm::vec2 centre =
+      -pivot * size + glm::vec2(sprite.renderOffset.x, -sprite.renderOffset.y) / pixelsPerUnit;
+  return std::pair(size * 0.5f, glm::vec2(centre.x, centre.y * space->ySign()));
+}
 
 // The bounds, in the entity's local space, of its mesh and its descendants'
 // (a collider on a group covers the group). Empty if there are none (or only
@@ -911,7 +1018,7 @@ sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene)
 
 bool isCollider(const TypeInfo& type)
 {
-  return type.name == "BoxCollider3DComponent" ||
+  return type.name == "BoxCollider2D" || type.name == "BoxCollider3DComponent" ||
          type.name == "SphereCollider3DComponent" ||
          type.name == "CapsuleCollider3DComponent";
 }
@@ -922,6 +1029,16 @@ void fitCollider(const TypeInfo& type,
                  const sfs::Entity& entity,
                  const MeshScene& scene)
 {
+  if (type.name == "BoxCollider2D")
+  {
+    if (const auto box = spriteBox(entity, scene))
+    {
+      auto& collider = *static_cast<sfs::BoxCollider2D*>(type.component.get(entity));
+      collider.half = box->first;
+      collider.offset = box->second;
+    }
+    return;
+  }
   const sfs::Aabb bounds =
       isCollider(type) ? meshBounds(entity, scene) : sfs::Aabb();
   if (bounds.empty())
@@ -956,6 +1073,102 @@ void fitCollider(const TypeInfo& type,
     capsule.height = std::max(half.z * 2.0f, capsule.radius * 2.0f);
     capsule.offset = bounds.center();
   }
+}
+
+// One edit of the 2D transform widgets below: `edit` changes a copy, `apply`
+// copies the part it edited onto another (so several selected keep the rest
+// of theirs). One undo step, as widgets::undoable.
+template <typename Edit, typename Apply>
+void planarEdit(EditorHistory* history, const std::vector<sfs::TransformComponent*>& all, Edit&& edit, Apply&& apply)
+{
+  sfs::TransformComponent copy = *all.front();
+  const bool changed = edit(copy);
+  if (history && (ImGui::IsItemActivated() || changed))
+    history->beginChange();
+  if (changed)
+    for (sfs::TransformComponent* transform : all)
+      apply(copy, *transform);
+  if (history && (ImGui::IsItemDeactivated() || (changed && !ImGui::IsItemActive())))
+    history->endChange();
+}
+
+// A 2D game's TransformComponent: where it is on the plane, its height above
+// it, how far it's turned (a flat game's; an isometric sprite always faces
+// the view) and its size.
+void planarTransform(const sfs::Entity& entity,
+                     std::span<const sfs::Entity> others,
+                     EditorHistory* history,
+                     bool isometric)
+{
+  std::vector<sfs::TransformComponent*> all{&entity.getComponent<sfs::TransformComponent>()};
+  for (const sfs::Entity& other : others)
+    if (other.hasComponent<sfs::TransformComponent>())
+      all.push_back(&other.getComponent<sfs::TransformComponent>());
+
+  widgets::propertyLabel("Position");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  planarEdit(
+      history,
+      all,
+      [](sfs::TransformComponent& t)
+      {
+        glm::vec2 xy = t.position2D();
+        if (!ImGui::DragFloat2("##position", &xy.x, 0.05f))
+          return false;
+        t.setPosition2D(xy);
+        return true;
+      },
+      [](const sfs::TransformComponent& from, sfs::TransformComponent& to) { to.setPosition2D(from.position2D()); });
+  ImGui::SetItemTooltip("Where it is on the game's plane");
+
+  widgets::propertyLabel("Height");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  planarEdit(
+      history,
+      all,
+      [](sfs::TransformComponent& t) { return ImGui::DragFloat("##height", &t.position.z, 0.05f); },
+      [](const sfs::TransformComponent& from, sfs::TransformComponent& to) { to.position.z = from.position.z; });
+  ImGui::SetItemTooltip(isometric ? "How high above the ground (levels)"
+                                  : "How high up the screen it's lifted");
+
+  if (!isometric)
+  {
+    widgets::propertyLabel("Rotation");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    planarEdit(
+        history,
+        all,
+        [](sfs::TransformComponent& t)
+        {
+          float degrees = glm::degrees(t.yaw());
+          if (!ImGui::DragFloat("##rotation", &degrees, 0.5f, 0.0f, 0.0f, "%.1f deg"))
+            return false;
+          t.setYaw(glm::radians(degrees));
+          return true;
+        },
+        [](const sfs::TransformComponent& from, sfs::TransformComponent& to) { to.rotation = from.rotation; });
+  }
+
+  widgets::propertyLabel("Scale");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  planarEdit(
+      history,
+      all,
+      [](sfs::TransformComponent& t)
+      {
+        glm::vec2 scale = t.scale2D();
+        if (!ImGui::DragFloat2("##scale", &scale.x, 0.01f))
+          return false;
+        t.scale.x = scale.x;
+        t.scale.y = scale.y;
+        return true;
+      },
+      [](const sfs::TransformComponent& from, sfs::TransformComponent& to)
+      {
+        to.scale.x = from.scale.x;
+        to.scale.y = from.scale.y;
+      });
+  ImGui::SetItemTooltip("Negative mirrors it");
 }
 
 // A collapsible section for one component, with Remove in its context menu.
@@ -1009,7 +1222,15 @@ void componentSection(
                   : "(unnamed)");
       }
     const bool glows = materialsCanGlow(type, object, meshes);
-    for (const FieldInfo& field : type.fields)
+    // A 2D game's transform is edited as it's used: on the plane.
+    const bool planar = type.name == "TransformComponent" && scene.render && scene.render->space2D();
+    if (planar)
+      planarTransform(entity,
+                      others,
+                      history,
+                      scene.render->space2D()->projection == sfs::Space2D::Projection::Isometric);
+    static const std::vector<FieldInfo> kNoFields;
+    for (const FieldInfo& field : planar ? kNoFields : type.fields)
     {
       if (field.attributes.emissionLight && !glows)
         continue; // nothing of it glows: no light to set
@@ -1081,8 +1302,16 @@ void componentSection(
     }
     if (type.fields.empty())
       ImGui::TextDisabled("No editable fields");
-    if (isCollider(type) && !meshBounds(entity, scene).empty() &&
-        ImGui::Button("Fit to Mesh"))
+    if (type.name == "BoxCollider2D" && spriteBox(entity, scene) && ImGui::Button("Fit to Sprite"))
+      history->change(
+          [&]
+          {
+            fitCollider(type, entity, scene);
+            for (const sfs::Entity& other : others)
+              fitCollider(type, other, scene);
+          });
+    else if (isCollider(type) && type.name != "BoxCollider2D" && !meshBounds(entity, scene).empty() &&
+             ImGui::Button("Fit to Mesh"))
       history->change(
           [&]
           {
@@ -1238,7 +1467,8 @@ void assetDetails(const sfs::AssetDatabase& assets,
   // Opened in another app; materials and scriptable objects are edited right
   // here.
   if (record.kind != sfs::AssetKind::Material &&
-      record.kind != sfs::AssetKind::ScriptableObject)
+      record.kind != sfs::AssetKind::ScriptableObject &&
+      record.kind != sfs::AssetKind::VisualStyle)
   {
     if (ImGui::Button("Open"))
       shell::openExternally(file);
@@ -1302,6 +1532,21 @@ void textureSettings(EditorContext& context, const sfs::AssetRecord& record)
       changed = true;
     }
   }
+
+  // Its size as a sprite: 0 leaves it to the scene (a 2D game's Space2D).
+  float pixelsPerUnit = current.pixelsPerUnit;
+  widgets::propertyLabel("Pixels Per Unit");
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (ImGui::DragFloat("##pixelsPerUnit", &pixelsPerUnit, 0.5f, 0.0f, 4096.0f, pixelsPerUnit > 0.0f ? "%.1f" : "Scene's"))
+  {
+    if (pixelsPerUnit > 0.0f)
+      settings["pixelsPerUnit"] = pixelsPerUnit;
+    else
+      settings.erase("pixelsPerUnit");
+    changed = true;
+  }
+  ImGui::SetItemTooltip("Drawn as a sprite: how many of its pixels make one world unit\n"
+                        "(0: the scene's, a 2D game's pixels per unit)");
 
   if (changed && context.assets->setSettings(record.id, settings))
   {
@@ -1396,6 +1641,245 @@ void InspectorPanel::drawScriptableObject(EditorContext& context,
   }
 }
 
+void InspectorPanel::drawVisualStyle(EditorContext& context,
+                                     const sfs::AssetRecord& record)
+{
+  // Read once per selection; every edit saves the file and, if the scene
+  // uses the style, shows in it at once.
+  if (m_styleId != record.id)
+  {
+    m_styleId = record.id;
+    m_style = context.scene ? context.scene->assetStore().visualStyle(record.id)
+                            : std::nullopt;
+  }
+  ImGui::SeparatorText("Visual Style");
+  if (!m_style || !context.render)
+  {
+    ImGui::TextDisabled(m_style ? "Open a scene to edit visual styles"
+                                : "Can't read this visual style");
+    return;
+  }
+
+  sfs::RenderSystem& render = *context.render;
+  const std::string name = "asset:" + record.id.toString();
+  const bool inUse = render.visualStyleName() == name;
+  if (inUse)
+    ImGui::TextDisabled("The scene's look: edits show at once");
+  else if (ImGui::Button("Use in Scene"))
+    context.history->change([&] { render.setVisualStyle(name); });
+  if (!inUse)
+    ImGui::SetItemTooltip("Make it the scene's visual style (Scene Settings > "
+                          "Look), to see edits as they're made");
+
+  bool changed = lookWidgets::visualStyle(*m_style);
+
+  // Materials drawn as others while it's on, by name: also those a game makes
+  // in code (its painted ground, say), which have no variants of their own.
+  ImGui::SeparatorText("Material Overrides");
+  ImGui::TextDisabled("Draw a material (by name, a game's own too) as another");
+  sfs::MeshLibrary& meshes = render.meshes();
+  const auto materials = meshes.availableMaterials();
+  std::optional<std::string> removed;
+  for (auto& [from, to] : m_style->materials)
+  {
+    ImGui::PushID(from.c_str());
+    widgets::propertyLabel(from.c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+    std::string preview = to;
+    for (const auto& [candidate, label] : materials)
+      if (candidate == to)
+        preview = label;
+    if (ImGui::BeginCombo("##override", preview.c_str()))
+    {
+      for (const auto& [candidate, label] : materials)
+        if (ImGui::Selectable(label.c_str(), candidate == to))
+        {
+          to = candidate;
+          changed = true;
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+      removed = from;
+    ImGui::PopID();
+  }
+  if (removed)
+  {
+    m_style->materials.erase(*removed);
+    changed = true;
+  }
+  widgets::propertyLabel("Add Override");
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+  widgets::inputText("##overrideName", m_newOverrideName);
+  ImGui::SetItemTooltip("The material's name, as an entity's material slot has it (e.g. asset:..., or a game's "
+                        "own such as farm:field-paint)");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::BeginDisabled(m_newOverrideName.empty() || m_style->materials.contains(m_newOverrideName));
+  if (ImGui::BeginCombo("##overrideMaterial", "Material..."))
+  {
+    for (const auto& [candidate, label] : materials)
+      if (ImGui::Selectable(label.c_str()))
+      {
+        m_style->materials[m_newOverrideName] = candidate;
+        m_newOverrideName.clear();
+        changed = true;
+      }
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+
+  if (changed)
+  {
+    const std::filesystem::path file = context.assets->absolutePath(record);
+    if (!sfs::writeFileAtomically(file, m_style->toJson().dump(2) + "\n"))
+      LOG_ERROR("Can't write the visual style " + record.path.generic_string());
+    if (render.visualStyleName() == name)
+      render.setVisualStyle(name, *m_style);
+  }
+}
+
+bool InspectorPanel::drawTerrain(EditorContext& context,
+                                 const sfs::AssetRecord& record,
+                                 sfs::TerrainAsset& terrain)
+{
+  sfs::MeshLibrary& meshes = context.render->meshes();
+  bool changed = false;
+  const auto row = [](const char* label)
+  {
+    widgets::propertyLabel(label);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    return std::string("##") + label;
+  };
+  ImGui::TextWrapped("A terrain: ground layers laid over the world from above, blended by a splat map. Paint it with "
+                     "the Terrain brush (T) on a mesh drawn with it.");
+
+  changed |= textureCombo("Splat Map", terrain.splatMap, meshes);
+  ImGui::SetItemTooltip("Where each layer is, over the mesh's UVs: red, green, blue and alpha paint layers 2-5 over "
+                        "the first");
+  if (terrain.splatMap.empty())
+  {
+    widgets::propertyLabel("");
+    if (ImGui::Button("New Splat Map"))
+    {
+      const std::string made = materialFiles::createSplatMap(
+          *context.assets, record.path.parent_path(), record.path.stem().string() + " Splat");
+      if (!made.empty())
+      {
+        terrain.splatMap = made;
+        changed = true;
+        context.assetFilesChanged = true;
+      }
+    }
+    ImGui::SetItemTooltip("A blank 1024 x 1024 map beside the material: all the first layer, to paint over");
+  }
+  changed |= ImGui::SliderFloat(row("Blend Sharpness").c_str(), &terrain.blendSharpness, 0.0f, 1.0f);
+  ImGui::SetItemTooltip("How layers meet: 0 a soft cross-fade, toward 1 a crisp edge where the higher layer (its "
+                        "texture's alpha) pokes through");
+  changed |= widgets::propertyCheckbox("Anti-Tiling", &terrain.antiTiling);
+  ImGui::SetItemTooltip("Break each layer's repeats up: three randomly shifted and turned copies, blended on a hex "
+                        "grid (a little more costly)");
+  changed |= ImGui::SliderFloat(row("Variation").c_str(), &terrain.variation, 0.0f, 0.5f);
+  ImGui::SetItemTooltip("How much the brightness drifts over tens of metres, so a field isn't uniform");
+  if (std::any_of(terrain.layers.begin(), terrain.layers.end(), [](const auto& layer) { return layer.triplanar; }))
+  {
+    changed |= ImGui::SliderFloat(row("Triplanar Sharpness").c_str(), &terrain.triplanarSharpness, 0.0f, 1.0f);
+    ImGui::SetItemTooltip("How triplanar layers switch between their side and top projections on steep ground: 0 a "
+                          "wide blend, toward 1 a crisp switch");
+  }
+  changed |= widgets::propertyCheckbox("Puddles", &terrain.puddles);
+  ImGui::SetItemTooltip("Rain water collects in the mesh's low spots as the weather's puddles rise (worked out from "
+                        "its heights in the background)");
+  if (terrain.puddles)
+  {
+    float depth = terrain.puddleDepth * 100.0f;
+    if (ImGui::SliderFloat(row("Puddle Depth").c_str(), &depth, 0.5f, 25.0f, "%.1f cm"))
+    {
+      terrain.puddleDepth = depth / 100.0f;
+      changed = true;
+    }
+    ImGui::SetItemTooltip("How deep water stands in a low spot when the puddles are full, above its lowest point (or "
+                          "to its brim, if shallower): a big basin holds a puddle, not a lake");
+    float relief = terrain.microRelief * 100.0f;
+    if (ImGui::SliderFloat(row("Micro Relief").c_str(), &relief, 0.0f, 15.0f, "%.1f cm"))
+    {
+      terrain.microRelief = relief / 100.0f;
+      changed = true;
+    }
+    ImGui::SetItemTooltip("Shallow dips this deep scattered over the ground (drawn only, not geometry), so flat "
+                          "ground has low spots for puddles too; by each layer's Puddles");
+    if (terrain.microRelief > 0.0f)
+    {
+      changed |= ImGui::DragFloat(row("Dip Size").c_str(), &terrain.microReliefSize, 0.05f, 0.5f, 20.0f, "%.2f m");
+      ImGui::SetItemTooltip("About how wide the micro relief's dips are");
+    }
+  }
+  changed |= widgets::propertyCheckbox("Deformable", &terrain.deformable);
+  ImGui::SetItemTooltip("Pressed in where things with a Deformer go over it (tyre tracks, furrows, footprints): real "
+                        "geometry near the camera, parallax further off");
+
+  std::optional<std::size_t> removed;
+  for (std::size_t i = 0; i < terrain.layers.size(); ++i)
+  {
+    sfs::TerrainLayerAsset& layer = terrain.layers[i];
+    ImGui::PushID(static_cast<int>(i));
+    static constexpr const char* kChannels[] = {"everywhere", "red", "green", "blue", "alpha"};
+    const std::string title = std::to_string(i + 1) + ": " + (layer.name.empty() ? "Layer" : layer.name) + " (" +
+                              kChannels[std::min<std::size_t>(i, 4)] + ")###layer";
+    if (ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      widgets::propertyLabel("Name");
+      ImGui::SetNextItemWidth(-FLT_MIN);
+      changed |= widgets::inputText("##name", layer.name);
+      changed |= textureCombo("Colour", layer.baseTexture, meshes);
+      ImGui::SetItemTooltip("Its colour; the alpha is its height, which layers blend by (opaque: flat)");
+      changed |= textureCombo("Normal Map", layer.normalTexture, meshes);
+      if (!layer.normalTexture.empty())
+        changed |= ImGui::SliderFloat(row("Bump Strength").c_str(), &layer.normalScale, 0.0f, 3.0f);
+      changed |= textureCombo("Roughness Map", layer.roughnessTexture, meshes);
+      ImGui::SetItemTooltip("Green x Roughness (none: Roughness all over)");
+      changed |= widgets::colorEdit3(row("Tint").c_str(), &layer.tint.x);
+      changed |=
+          ImGui::DragFloat(row("Tile Size").c_str(), &layer.tileSize, 0.05f, 0.1f, 100.0f, "%.2f m");
+      ImGui::SetItemTooltip("World units across one repeat of its textures");
+      changed |= ImGui::SliderFloat(row("Roughness").c_str(), &layer.roughness, 0.0f, 1.0f);
+      changed |= ImGui::SliderFloat(row("Grass").c_str(), &layer.grass, 0.0f, 1.0f);
+      ImGui::SetItemTooltip("How much of a grass field on the mesh grows over it (0: bare)");
+      changed |= ImGui::SliderFloat(row("Meadow").c_str(), &layer.meadow, 0.0f, 1.0f);
+      ImGui::SetItemTooltip("How much it reads as grass from afar, past the blades: patchy colour, a soft "
+                            "sheen and bands rolling with the wind");
+      changed |= widgets::propertyCheckbox("Triplanar", &layer.triplanar);
+      ImGui::SetItemTooltip("Also lay its textures from the sides where the ground is steep (cliffs, rock), so they "
+                            "don't stretch down the slope (costs a second set of samples there)");
+      if (terrain.puddles)
+      {
+        changed |= ImGui::SliderFloat(row("Puddles").c_str(), &layer.puddles, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("How readily water pools on it: its share of the micro relief, and how full its low "
+                              "spots get (dirt and paths 1, a meadow hardly)");
+      }
+      if (terrain.layers.size() > 1)
+      {
+        widgets::propertyLabel("");
+        if (ImGui::Button("Remove Layer"))
+          removed = i;
+      }
+    }
+    ImGui::PopID();
+  }
+  if (removed)
+  {
+    terrain.layers.erase(terrain.layers.begin() + static_cast<std::ptrdiff_t>(*removed));
+    changed = true;
+  }
+  if (terrain.layers.size() < sfs::kMaxTerrainLayers && ImGui::Button("Add Layer"))
+  {
+    terrain.layers.push_back({.name = "Layer " + std::to_string(terrain.layers.size() + 1)});
+    changed = true;
+  }
+  return changed;
+}
+
 void InspectorPanel::drawMaterial(EditorContext& context,
                                   const sfs::AssetRecord& record)
 {
@@ -1425,6 +1909,12 @@ void InspectorPanel::drawMaterial(EditorContext& context,
       context.openMaterial = record.id;
     ImGui::SetItemTooltip("Open the graph in its own tab (or double-click the "
                           "material in Assets)");
+    if (materialVariants(material, meshes, m_newVariantTag) &&
+        materialFiles::write(*context.assets, record, material))
+    {
+      context.scene->assetStore().forgetMaterial(record.id);
+      meshes.reloadMaterial("asset:" + record.id.toString());
+    }
     return;
   }
 
@@ -1435,6 +1925,21 @@ void InspectorPanel::drawMaterial(EditorContext& context,
     widgets::propertyLabel(label);
     return std::string("##") + label;
   };
+
+  // A terrain material: its layers and splat map.
+  if (material.terrain)
+  {
+    changed |= drawTerrain(context, record, *material.terrain);
+    changed |= materialVariants(material, meshes, m_newVariantTag);
+    if (changed && materialFiles::write(*context.assets, record, material))
+    {
+      context.assetFilesChanged = true;
+      context.scene->assetStore().forgetMaterial(record.id);
+      meshes.reloadMaterial("asset:" + record.id.toString());
+    }
+    return;
+  }
+
   changed |=
       widgets::colorEdit4(row("Base Colour").c_str(), &material.baseColor.x);
   changed |= textureCombo("Texture", material.baseTexture, meshes);
@@ -1500,6 +2005,30 @@ void InspectorPanel::drawMaterial(EditorContext& context,
       "Make this material a node graph, to build its look from nodes (noise, "
       "masks,\n"
       "glow, ...). It looks the same until you change the graph.");
+  ImGui::SameLine();
+  if (ImGui::Button("Convert to Terrain"))
+  {
+    // Its texture as the first layer, tiled about every 4 m.
+    sfs::TerrainAsset terrain;
+    sfs::TerrainLayerAsset first;
+    first.name = "Ground";
+    first.baseTexture = material.baseTexture;
+    first.normalTexture = material.normalTexture;
+    first.tint = glm::vec3(material.baseColor);
+    first.roughness = material.roughness;
+    first.normalScale = material.normalScale;
+    terrain.layers.push_back(first);
+    material.terrain = terrain;
+    material.alphaMode = sfs::AlphaMode::Opaque;
+    changed = true;
+  }
+  ImGui::SetItemTooltip(
+      "Make this a terrain material: ground layers (grass, dirt, a path, "
+      "rock) laid\nover the world from above without repeating, blended by "
+      "a splat map you\npaint with the Terrain brush (T) on a mesh drawn "
+      "with it.");
+
+  changed |= materialVariants(material, meshes, m_newVariantTag);
 
   if (changed && materialFiles::write(*context.assets, record, material))
   {
@@ -1530,6 +2059,8 @@ void InspectorPanel::drawContents(EditorContext& context)
         drawMaterial(context, *asset);
       if (asset->kind == sfs::AssetKind::ScriptableObject)
         drawScriptableObject(context, *asset);
+      if (asset->kind == sfs::AssetKind::VisualStyle)
+        drawVisualStyle(context, *asset);
       if (asset->kind == sfs::AssetKind::Prefab && ImGui::Button("Edit Prefab"))
         context.openPrefab = asset->id;
     }
@@ -1543,7 +2074,7 @@ void InspectorPanel::drawContents(EditorContext& context)
   sfs::MeshLibrary* meshes =
       context.render ? &context.render->meshes() : nullptr;
   const sfs::hierarchy::EntityTree tree(context.scene->entities());
-  const MeshScene scene{meshes, &tree, context.assets};
+  const MeshScene scene{meshes, &tree, context.assets, context.render, context.scene ? &context.scene->assetStore() : nullptr};
 
   EditorHistory* history = context.history;
 

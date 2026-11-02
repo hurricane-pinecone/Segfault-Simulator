@@ -8,6 +8,8 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -84,6 +86,8 @@ private:
   // The UI module laying the UI out (made if need be), in the game's look.
   sfs::UiModule& uiModule(EditorContext& context);
   void followCode();
+  // Show the tab covered again once the last UI file's closed in Code.
+  void returnTab();
   void drawToolbar();
   // Lay `shown` out at `pixelsPerPoint` on a screen `screen` pixels big (or
   // as big as it is, if zero), with `room` pixels round it, and draw it and
@@ -123,6 +127,12 @@ private:
   std::filesystem::path m_followed;
   std::size_t m_codeSeen = 0; // the module's scripts and previews when followed
   bool m_bringForward = false; // show this tab (a UI file was opened)
+  // The tab this one was brought in front of, shown again once no UI file is
+  // open in the Code panel (unless another tab was picked meanwhile).
+  std::optional<std::string> m_tabBefore;
+  bool m_seenInFront = false; // brought forward (so a tab picked since counts)
+  bool m_uiSeenOpen = false;  // a UI file's been open in Code since
+  std::set<std::string> m_uiUnits; // the files found to be UI (their units)
   bool m_dockChecked = false;
   bool m_outlines = true;
   std::string m_error; // a view threw

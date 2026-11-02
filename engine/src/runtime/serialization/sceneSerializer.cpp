@@ -4,6 +4,8 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/core/rendering/sunShadow.h"
+#include "engine/core/util/atomicFile.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
@@ -292,20 +294,38 @@ void styleFromJson(const json& in, RenderSystem& render)
   render.setSpace2D(space);
 }
 
+// A scene's grading, its floats cleaned like the rest of the file.
+json gradingToJson(const ColorGrading& grading)
+{
+  json out = grading.toJson();
+  for (auto& [key, value] : out.items())
+    if (value.is_number_float())
+      value = cleanFloat(value.get<float>());
+    else if (value.is_array())
+      for (json& item : value)
+        item = cleanFloat(item.get<float>());
+  return out;
+}
+
 json renderToJson(const RenderSystem& render)
 {
   const SceneLighting& lighting = render.lighting();
   const ShadowSettings& shadows = render.shadowSettings();
   const Camera& camera = render.camera();
 
-  return {
+  json out = {
       {"style", styleToJson(render.space2D())},
       {"lighting",
        {{"sunDirection", toJson(lighting.sun.direction)},
         {"sunColor", toJson(lighting.sun.color)},
         {"sunStrength", cleanFloat(lighting.sun.diffuseStrength)},
         {"ambient", cleanFloat(lighting.ambient)},
-        {"skyColor", toJson(lighting.skyColor)}}},
+        {"skyColor", toJson(lighting.skyColor)},
+        {"moonDirection", toJson(lighting.moon.direction)},
+        {"moonPhase", cleanFloat(lighting.moon.phase)},
+        {"moonColor", toJson(lighting.moon.color)},
+        {"moonStrength", cleanFloat(lighting.moon.diffuseStrength)},
+        {"cloudCover", cleanFloat(lighting.cloudCover)}}},
       {"shadows",
        {{"enabled", shadows.enabled},
         {"distance", cleanFloat(shadows.distance)},
@@ -320,6 +340,10 @@ json renderToJson(const RenderSystem& render)
       {"haze",
        {{"strength", cleanFloat(render.hazeSettings().strength)},
         {"distance", cleanFloat(render.hazeSettings().distance)}}},
+      {"grading", gradingToJson(render.colorGrading())},
+      // The visual style ("asset:<id>"; "" none): while it's set, its look
+      // stands in for the scene's own (see VisualStyle).
+      {"visualStyle", render.visualStyleName()},
       {"camera",
        {{"target", toJson(camera.target)},
         {"yaw", cleanFloat(camera.yaw)},
@@ -329,6 +353,51 @@ json renderToJson(const RenderSystem& render)
         {"fieldOfView", cleanFloat(camera.fieldOfView)},
         {"orthoHeight", cleanFloat(camera.orthoHeight)}}},
   };
+  // Newer settings only when they're not their defaults, so a scene that
+  // doesn't use them saves exactly as before they existed.
+  const ShadowSettings defaults;
+  json& savedShadows = out["shadows"];
+  if (shadows.cascades != defaults.cascades)
+    savedShadows["cascades"] = shadows.cascades;
+  if (shadows.cascadeDistance != defaults.cascadeDistance)
+    savedShadows["cascadeDistance"] = cleanFloat(shadows.cascadeDistance);
+  if (shadows.cascadeSplit != defaults.cascadeSplit)
+    savedShadows["cascadeSplit"] = cleanFloat(shadows.cascadeSplit);
+  if (render.skySettings() != SkySettings{})
+  {
+    json sky = render.skySettings().toJson();
+    for (auto& [key, value] : sky.items())
+      if (value.is_number_float())
+        value = cleanFloat(value.get<float>());
+    out["sky"] = std::move(sky);
+  }
+  // Each written whole once any of it isn't its default.
+  const auto cleaned = [](json settings)
+  {
+    for (auto& [key, value] : settings.items())
+      if (value.is_number_float())
+        value = cleanFloat(value.get<float>());
+    return settings;
+  };
+  if (render.ambientOcclusionSettings() != AmbientOcclusionSettings{})
+    out["ambientOcclusion"] =
+        cleaned(render.ambientOcclusionSettings().toJson());
+  if (render.contactShadowSettings() != ContactShadowSettings{})
+    out["contactShadows"] = cleaned(render.contactShadowSettings().toJson());
+  if (render.fogSettings() != FogSettings{})
+    out["fog"] = cleaned(render.fogSettings().toJson());
+  if (render.rainSettings() != RainSettings{})
+    out["rain"] = cleaned(render.rainSettings().toJson());
+  if (render.weather() != SceneWeather{})
+  {
+    json weather = cleaned(render.weather().toJson());
+    for (json& item : weather["wind"])
+      item = cleanFloat(item.get<float>());
+    out["weather"] = std::move(weather);
+  }
+  if (render.temporalAntiAliasing())
+    out["temporalAntiAliasing"] = true;
+  return out;
 }
 
 // Missing keys keep their current values, so older files load (as 3D: the
@@ -347,6 +416,13 @@ void renderFromJson(const json& value, RenderSystem& render)
         valueOr(in, "sunStrength", lighting.sun.diffuseStrength);
     lighting.ambient = valueOr(in, "ambient", lighting.ambient);
     lighting.skyColor = vec3Or(in, "skyColor", lighting.skyColor);
+    lighting.moon.direction =
+        vec3Or(in, "moonDirection", lighting.moon.direction);
+    lighting.moon.phase = valueOr(in, "moonPhase", lighting.moon.phase);
+    lighting.moon.color = vec3Or(in, "moonColor", lighting.moon.color);
+    lighting.moon.diffuseStrength =
+        valueOr(in, "moonStrength", lighting.moon.diffuseStrength);
+    lighting.cloudCover = valueOr(in, "cloudCover", lighting.cloudCover);
     render.setLighting(lighting);
   }
 
@@ -360,8 +436,35 @@ void renderFromJson(const json& value, RenderSystem& render)
     shadows.pointLights = valueOr(in, "pointLights", shadows.pointLights);
     shadows.pointResolution =
         valueOr(in, "pointResolution", shadows.pointResolution);
+    shadows.cascades = std::clamp(
+        valueOr(in, "cascades", shadows.cascades), 1u, kMaxShadowCascades);
+    shadows.cascadeDistance =
+        valueOr(in, "cascadeDistance", shadows.cascadeDistance);
+    shadows.cascadeSplit = valueOr(in, "cascadeSplit", shadows.cascadeSplit);
     render.setShadowSettings(shadows);
   }
+
+  // Older files have none: a flat sky.
+  if (const json& in = value.value("sky", json::object()); in.is_object())
+    render.setSkySettings(SkySettings::fromJson(in, render.skySettings()));
+
+  // Older files have none: no ambient occlusion, contact shadows or fog.
+  if (const json& in = value.value("ambientOcclusion", json::object());
+      in.is_object())
+    render.setAmbientOcclusionSettings(AmbientOcclusionSettings::fromJson(
+        in, render.ambientOcclusionSettings()));
+  if (const json& in = value.value("contactShadows", json::object());
+      in.is_object())
+    render.setContactShadowSettings(
+        ContactShadowSettings::fromJson(in, render.contactShadowSettings()));
+  if (const json& in = value.value("fog", json::object()); in.is_object())
+    render.setFogSettings(FogSettings::fromJson(in, render.fogSettings()));
+  if (const json& in = value.value("rain", json::object()); in.is_object())
+    render.setRainSettings(RainSettings::fromJson(in, render.rainSettings()));
+  if (const json& in = value.value("weather", json::object()); in.is_object())
+    render.setWeather(SceneWeather::fromJson(in, render.weather()));
+  render.setTemporalAntiAliasing(
+      value.value("temporalAntiAliasing", render.temporalAntiAliasing()));
 
   if (const json& in = value.value("wind", json::object()); in.is_object())
   {
@@ -379,6 +482,13 @@ void renderFromJson(const json& value, RenderSystem& render)
     haze.distance = valueOr(in, "distance", haze.distance);
     render.setHazeSettings(haze);
   }
+
+  // Older files have neither: no grading (tone mapping None), no style.
+  if (const json& in = value.value("grading", json::object()); in.is_object())
+    render.setColorGrading(ColorGrading::fromJson(in, render.colorGrading()));
+  if (const auto style = value.find("visualStyle");
+      style != value.end() && style->is_string())
+    render.setVisualStyle(style->get<std::string>());
 
   if (const json& in = value.value("camera", json::object()); in.is_object())
   {
@@ -679,14 +789,9 @@ bool SceneSerializer::writeJsonFile(const json& data,
 {
   std::string text;
   writePretty(text, data, 0);
-  std::ofstream out(path, std::ios::binary);
-  out << text << '\n';
-  if (!out)
-  {
-    LOG_ERROR("Can't write " + path.string());
-    return false;
-  }
-  return true;
+  text += '\n';
+  // Never half a scene on disk, whatever happens while it's written.
+  return writeFileAtomically(path, text);
 }
 
 std::optional<json>

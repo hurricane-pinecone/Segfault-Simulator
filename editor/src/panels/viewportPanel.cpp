@@ -6,6 +6,7 @@
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
 
+#include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
@@ -17,7 +18,10 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/logger/logger.h"
 #include "engine/core/rendering/grass.h"
+#include "engine/core/rendering/terrain.h"
+#include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/picking.h"
@@ -30,6 +34,7 @@
 #include "imguizmo/ImGuizmo.h"
 
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <cmath>
 
@@ -45,6 +50,21 @@ bool hasGrass(const sfs::Entity& entity)
   return entity.isValid() && entity.isAlive() &&
          entity.hasComponent<sfs::GrassComponent>() &&
          entity.hasComponent<sfs::MeshRendererComponent>();
+}
+
+// The terrain an entity is drawn with (its first material slot's, as drawn
+// now: a visual style's variant may be one); null if it isn't one.
+std::shared_ptr<const sfs::TerrainMaterial> terrainOf(const EditorContext& context, const sfs::Entity& entity)
+{
+  if (!context.render || !entity.isValid() || !entity.isAlive() ||
+      !entity.hasComponent<sfs::MeshRendererComponent>())
+    return nullptr;
+  const auto& meshRenderer = entity.getComponent<sfs::MeshRendererComponent>();
+  if (meshRenderer.materials.empty() || meshRenderer.materials[0].empty())
+    return nullptr;
+  sfs::MeshLibrary& meshes = context.render->meshes();
+  const sfs::MeshMaterial* drawn = meshes.materialData(meshes.material(meshRenderer.materials[0]));
+  return drawn ? drawn->terrain : nullptr;
 }
 
 constexpr ImU32 kSelectionColor = IM_COL32(255, 170, 40, 255);
@@ -206,6 +226,8 @@ void ViewportPanel::drawContents(EditorContext& context)
   // A stroke ends with its tool (or when Play starts).
   if (m_tool != Tool::GrassBrush || context.playing || !gizmosVisible(context))
     endGrassStroke(context);
+  if (m_tool != Tool::TerrainBrush || context.playing || !gizmosVisible(context))
+    endTerrainStroke(context);
   if (gizmosVisible(context))
   {
     // Kept inside the image: an icon near its edge mustn't spill onto the
@@ -216,9 +238,12 @@ void ViewportPanel::drawContents(EditorContext& context)
     drawCameraIcons(context, view);
     drawSelectionOutline(context, view);
     drawColliders(context, view);
-    gizmoActive = m_tool == Tool::GrassBrush && !context.playing
-                      ? paintGrass(context, view, imageHovered)
-                      : drawGizmo(context, view);
+    if (m_tool == Tool::GrassBrush && !context.playing)
+      gizmoActive = paintGrass(context, view, imageHovered);
+    else if (m_tool == Tool::TerrainBrush && !context.playing)
+      gizmoActive = paintTerrain(context, view, imageHovered);
+    else
+      gizmoActive = drawGizmo(context, view);
     ImGui::PopClipRect();
   }
 
@@ -327,13 +352,61 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
   toolButton("Move", Tool::Move, "Move (W)");
   toolButton("Rotate", Tool::Rotate, "Rotate (E)");
   toolButton("Scale", Tool::Scale, "Scale (R)");
-  // The grass brush, for grass (only then).
-  if (hasGrass(context.selection))
+  // The grass brush, for grass (only then: a 3D scene's).
+  if (hasGrass(context.selection) && !context.render->space2D())
     toolButton("Grass",
                Tool::GrassBrush,
                "Paint where the grass grows (B): drag over it, Shift to erase");
   else if (m_tool == Tool::GrassBrush)
     m_tool = Tool::Move;
+  // The terrain brush, for a terrain material (its splat map).
+  const std::shared_ptr<const sfs::TerrainMaterial> terrain = terrainOf(context, context.selection);
+  if (terrain && !context.render->space2D())
+    toolButton("Terrain", Tool::TerrainBrush, "Paint the terrain's layers (T): drag over it, Shift for the first layer");
+  else if (m_tool == Tool::TerrainBrush)
+    m_tool = Tool::Move;
+  if (m_tool == Tool::TerrainBrush && terrain)
+  {
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::SliderFloat("Size", &m_terrainSize, 0.25f, 40.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SetItemTooltip("How wide the brush is, in world units");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderFloat("Strength", &m_terrainStrength, 0.05f, 1.0f, "%.2f");
+    ImGui::SetItemTooltip("How quickly it paints");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderFloat("Softness", &m_terrainSoftness, 0.0f, 1.0f, "%.2f");
+    ImGui::SetItemTooltip("How gently its edge fades (0: a hard edge)");
+    ImGui::SameLine();
+    // Which layer: named as the material names them.
+    const int count = std::max(static_cast<int>(terrain->layers.size()), 1);
+    m_terrainLayer = std::clamp(m_terrainLayer, 0, count - 1);
+    std::vector<std::string> names;
+    names.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i)
+    {
+      const std::string own = i < static_cast<int>(terrain->layers.size())
+                                  ? terrain->layers[static_cast<std::size_t>(i)].name
+                                  : std::string();
+      names.push_back(std::to_string(i + 1) + ": " + (own.empty() ? "Layer" : own));
+    }
+    ImGui::SetNextItemWidth(110.0f);
+    if (ImGui::BeginCombo("##terrainLayer", names[static_cast<std::size_t>(m_terrainLayer)].c_str()))
+    {
+      for (int i = 0; i < count; ++i)
+        if (ImGui::Selectable(names[static_cast<std::size_t>(i)].c_str(), i == m_terrainLayer))
+          m_terrainLayer = i;
+      ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Which layer it paints (Shift: the first, as an eraser)");
+    if (!terrain->splat)
+    {
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No splat map: make one in the material");
+    }
+    return;
+  }
   if (m_tool == Tool::GrassBrush)
   {
     ImGui::SetNextItemWidth(110.0f);
@@ -410,8 +483,10 @@ void ViewportPanel::handleShortcuts(EditorContext& context)
     m_tool = Tool::Rotate;
   if (ImGui::IsKeyPressed(ImGuiKey_R, false))
     m_tool = Tool::Scale;
-  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection))
+  if (ImGui::IsKeyPressed(ImGuiKey_B, false) && hasGrass(context.selection) && !context.render->space2D())
     m_tool = Tool::GrassBrush;
+  if (ImGui::IsKeyPressed(ImGuiKey_T, false) && terrainOf(context, context.selection) && !context.render->space2D())
+    m_tool = Tool::TerrainBrush;
 
   if (ImGui::IsKeyPressed(ImGuiKey_F, false) && context.hasSelection())
     context.focusRequest = context.selection;
@@ -476,16 +551,40 @@ bool ViewportPanel::drawGizmo(EditorContext& context, const View& view)
 
 bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bool snapping)
 {
-  // The selection where its plane puts it; the handles move it across the
-  // plane (an isometric sprite always faces the view, so it doesn't turn).
+  // The selection where its plane puts it (several: their middle, turned as
+  // the one selected last); the handles move them across the plane, each by
+  // as much (an isometric sprite always faces the view, so they don't turn).
+  // It works on world transforms, so a child moves where it's seen.
   const sfs::Space2D& space = *context.render->space2D();
   const bool isometric = space.projection == sfs::Space2D::Projection::Isometric;
-  sfs::TransformComponent& transform = context.selection.getComponent<sfs::TransformComponent>();
-  const glm::vec3 placed = space.place(transform.position2D(), transform.position.z);
-  const float turn = isometric ? 0.0f : transform.yaw() * space.ySign();
-  glm::mat4 model = glm::translate(glm::mat4(1.0f), placed) *
-                    glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 0.0f, 1.0f)) *
-                    glm::scale(glm::mat4(1.0f), glm::vec3(transform.scale2D(), 1.0f));
+  const std::vector<sfs::Entity> group = movableSelection(context);
+  if (group.empty())
+    return false;
+
+  const bool wasUsing = ImGuizmo::IsUsing();
+  if (!wasUsing)
+  {
+    // The handles, and where everything is as a drag starts: each frame's
+    // drag is applied to that, so nothing drifts or sticks while snapping.
+    m_planarStart.clear();
+    glm::vec3 middle(0.0f);
+    for (const sfs::Entity& entity : group)
+    {
+      const sfs::TransformComponent world = sfs::hierarchy::worldTransform(entity);
+      m_planarStart.emplace_back(entity, world);
+      middle += space.place(world.position2D(), world.position.z);
+    }
+    middle /= static_cast<float>(group.size());
+    const sfs::TransformComponent primary = sfs::hierarchy::worldTransform(
+        context.selection.hasComponent<sfs::TransformComponent>() ? context.selection : group.front());
+    const float turn = isometric ? 0.0f : primary.yaw() * space.ySign();
+    // A mirrored (negative) scale stays the entity's: the handles get its size.
+    const glm::vec2 size = group.size() == 1 ? glm::abs(primary.scale2D()) : glm::vec2(1.0f);
+    m_groupHandles = glm::translate(glm::mat4(1.0f), middle) *
+                     glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 0.0f, 1.0f)) *
+                     glm::scale(glm::mat4(1.0f), glm::vec3(size, 1.0f));
+    m_planarHandles = m_groupHandles;
+  }
 
   ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE_X | ImGuizmo::TRANSLATE_Y;
   if (m_tool == Tool::Rotate && !isometric)
@@ -499,12 +598,11 @@ bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bo
                       : m_tool == Tool::Scale           ? scaleSnap.data()
                                                         : nullptr; // moves snap below
 
-  const bool wasUsing = ImGuizmo::IsUsing();
   const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view.view),
                                             glm::value_ptr(view.projection),
                                             operation,
                                             ImGuizmo::LOCAL,
-                                            glm::value_ptr(model),
+                                            glm::value_ptr(m_planarHandles),
                                             nullptr,
                                             snap);
   const bool usingNow = ImGuizmo::IsUsing();
@@ -512,24 +610,35 @@ bool ViewportPanel::drawPlanarGizmo(EditorContext& context, const View& view, bo
     context.history->beginChange();
   if (changed)
   {
-    std::array<float, 3> moved{};
-    std::array<float, 3> turned{};
-    std::array<float, 3> scaled{};
-    ImGuizmo::DecomposeMatrixToComponents(
-        glm::value_ptr(model), moved.data(), turned.data(), scaled.data());
-    // Back onto the game's plane, at the same height: whole pixels (flat) or
-    // half tiles (isometric) when snapping.
-    glm::vec2 position = space.unplace(glm::vec2(moved[0], moved[1]), transform.position.z);
-    if (snapping && m_tool == Tool::Move)
+    // The drag so far: how far the handles moved, turned and scaled.
+    const auto axes = [](const glm::mat4& m)
+    { return glm::vec2(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1]))); };
+    const auto turnOf = [](const glm::mat4& m) { return std::atan2(m[0][1], m[0][0]); };
+    const glm::vec3 moved = glm::vec3(m_planarHandles[3]) - glm::vec3(m_groupHandles[3]);
+    const float turned = (turnOf(m_planarHandles) - turnOf(m_groupHandles)) * space.ySign();
+    const glm::vec2 scaled = axes(m_planarHandles) / glm::max(axes(m_groupHandles), glm::vec2(1.0e-6f));
+    for (const auto& [entity, start] : m_planarStart)
     {
-      const float step = isometric ? 0.5f : 1.0f;
-      position = glm::round(position / step) * step;
+      if (!entity.isAlive())
+        continue;
+      sfs::TransformComponent world = start;
+      // Back onto the game's plane, at the same height: whole pixels (flat)
+      // or half tiles (isometric) when snapping.
+      const float height = start.position.z;
+      glm::vec2 position =
+          space.unplace(glm::vec2(space.place(start.position2D(), height) + moved), height);
+      if (snapping && m_tool == Tool::Move)
+      {
+        const float step = isometric ? 0.5f : 1.0f;
+        position = glm::round(position / step) * step;
+      }
+      world.setPosition2D(position);
+      if (!isometric)
+        world.rotation = glm::angleAxis(turned, glm::vec3(0.0f, 0.0f, 1.0f)) * start.rotation;
+      world.scale.x = start.scale.x * scaled.x;
+      world.scale.y = start.scale.y * scaled.y;
+      sfs::hierarchy::setWorldTransform(entity, world);
     }
-    transform.setPosition2D(position);
-    if (!isometric)
-      transform.setYaw(glm::radians(turned[2]) * space.ySign());
-    transform.scale.x = scaled[0];
-    transform.scale.y = scaled[1];
   }
   if (wasUsing && !usingNow)
     context.history->endChange();
@@ -711,6 +820,157 @@ void ViewportPanel::endGrassStroke(EditorContext& context)
   context.history->endChange();
 }
 
+bool ViewportPanel::paintTerrain(EditorContext& context, const View& view, bool hovered)
+{
+  const sfs::Entity ground = context.selection;
+  const std::shared_ptr<const sfs::TerrainMaterial> terrain = terrainOf(context, ground);
+  if (!terrain || !terrain->splat || terrain->splat->empty())
+  {
+    endTerrainStroke(context);
+    return false;
+  }
+  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  if (m_terrainSplat && (!down || m_terrainSplat != terrain->splat))
+    endTerrainStroke(context);
+  if (!hovered && !m_terrainSplat)
+    return false;
+
+  // Where the cursor meets the mesh, and its texture coordinates there.
+  const sfs::MeshHandle mesh = ground.getComponent<sfs::MeshRendererComponent>().mesh;
+  const glm::mat4 world = sfs::hierarchy::worldMatrix(ground);
+  const ImVec2 mouse = ImGui::GetMousePos();
+  const sfs::Ray ray = context.render->camera().screenRay({mouse.x - view.origin.x, mouse.y - view.origin.y},
+                                                          {view.size.x, view.size.y});
+  const std::optional<sfs::MeshLibrary::RayHit> hit = context.render->meshes().raycast(mesh, world, ray);
+  if (!hit)
+    return hovered;
+  const glm::vec3 point = ray.origin + ray.direction * hit->distance;
+  const int layer = ImGui::GetIO().KeyShift ? 0 : m_terrainLayer;
+
+  // Its ring, flat on the ground, and its soft edge's start inside it.
+  const float radius = m_terrainSize * 0.5f;
+  const ImU32 color = layer == 0 ? IM_COL32(235, 180, 90, 230) : IM_COL32(120, 200, 255, 230);
+  for (const float scale : {1.0f, 1.0f - m_terrainSoftness})
+  {
+    if (scale <= 0.02f || (scale < 1.0f && m_terrainSoftness <= 0.02f))
+      continue;
+    std::array<ImVec2, 48> ring;
+    int count = 0;
+    for (int i = 0; i < static_cast<int>(ring.size()); ++i)
+    {
+      const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(ring.size());
+      if (const auto at = toScreen(view, point + glm::vec3(std::cos(angle), std::sin(angle), 0.0f) * radius * scale))
+        ring[count++] = *at;
+    }
+    ImGui::GetWindowDrawList()->AddPolyline(ring.data(), count, color, ImDrawFlags_Closed, scale < 1.0f ? 1.0f : 2.0f);
+  }
+
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+  {
+    m_terrainSplat = terrain->splat;
+    m_terrainSinceGrass = 0.0f;
+    m_terrainBefore = terrain->splat->rgba;
+    m_terrainFrom = glm::ivec2(std::numeric_limits<int>::max());
+    m_terrainTo = glm::ivec2(std::numeric_limits<int>::min());
+  }
+  if (!m_terrainSplat || !down || hit->uvPerUnit.x <= 0.0f)
+    return true;
+
+  // Into the splat map as it is, in place (every material using it shows the
+  // change), and up to the GPU; the grass on it grows to match every so
+  // often. At full strength a stroke paints fully in about a tenth of a
+  // second.
+  auto& splat = const_cast<sfs::TextureData&>(*m_terrainSplat); // painted in place, as intended
+  const float dt = ImGui::GetIO().DeltaTime;
+  const auto [from, to] = sfs::paintSplat(splat,
+                                          hit->uv,
+                                          hit->uvPerUnit * radius,
+                                          layer,
+                                          std::min(m_terrainStrength * 10.0f * dt, 1.0f),
+                                          m_terrainSoftness);
+  if (to.x > from.x && to.y > from.y)
+  {
+    context.render->renderer().updateTexture(m_terrainSplat, from, to);
+    m_terrainFrom = glm::min(m_terrainFrom, from);
+    m_terrainTo = glm::max(m_terrainTo, to);
+  }
+  m_terrainSinceGrass += dt;
+  if (m_terrainSinceGrass > 0.2f)
+  {
+    m_terrainSinceGrass = 0.0f;
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->terrainPainted(ground);
+  }
+  return true;
+}
+
+void ViewportPanel::endTerrainStroke(EditorContext& context)
+{
+  if (!m_terrainSplat)
+    return;
+  const std::shared_ptr<const sfs::TextureData> splat = std::move(m_terrainSplat);
+  m_terrainSplat.reset();
+  const sfs::Entity ground = context.selection;
+  if (context.render)
+    if (auto* grassModule = context.render->module<sfs::GrassModule>())
+      grassModule->terrainPainted(ground);
+  saveSplat(context, *splat);
+
+  // Undoable: the texels it changed, as they were and as they are.
+  const glm::ivec2 from = m_terrainFrom;
+  const glm::ivec2 to = m_terrainTo;
+  std::vector<uint8_t> before = std::move(m_terrainBefore);
+  m_terrainBefore.clear();
+  if (!context.history || to.x <= from.x || to.y <= from.y || before.size() != splat->rgba.size())
+    return;
+  const auto region = [&](const std::vector<uint8_t>& rgba)
+  {
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<std::size_t>(to.x - from.x) * static_cast<std::size_t>(to.y - from.y) * 4);
+    for (int y = from.y; y < to.y; ++y)
+    {
+      const auto row = rgba.begin() + (static_cast<std::ptrdiff_t>(y) * splat->width + from.x) * 4;
+      out.insert(out.end(), row, row + (to.x - from.x) * 4);
+    }
+    return out;
+  };
+  auto was = std::make_shared<const std::vector<uint8_t>>(region(before));
+  auto now = std::make_shared<const std::vector<uint8_t>>(region(splat->rgba));
+  EditorContext* ctx = &context;
+  const auto put = [ctx, splat, ground, from, to](const std::vector<uint8_t>& texels)
+  {
+    auto& map = const_cast<sfs::TextureData&>(*splat); // painted in place, as the brush does
+    for (int y = from.y; y < to.y; ++y)
+      std::copy_n(texels.begin() + static_cast<std::ptrdiff_t>(y - from.y) * (to.x - from.x) * 4,
+                  (to.x - from.x) * 4,
+                  map.rgba.begin() + (static_cast<std::ptrdiff_t>(y) * map.width + from.x) * 4);
+    if (ctx->render)
+    {
+      ctx->render->renderer().updateTexture(splat, from, to);
+      if (auto* grassModule = ctx->render->module<sfs::GrassModule>(); grassModule && ground.isValid())
+        grassModule->terrainPainted(ground);
+    }
+    saveSplat(*ctx, map);
+  };
+  context.history->pushAssetEdit([put, was] { put(*was); }, [put, now] { put(*now); }, was->size() + now->size());
+}
+
+void ViewportPanel::saveSplat(EditorContext& context, const sfs::TextureData& splat)
+{
+  // Saved to the texture asset it was read from.
+  if (!context.scene || !context.assets)
+    return;
+  const std::optional<sfs::AssetId> id = context.scene->assetStore().textureId(&splat);
+  const sfs::AssetRecord* record = id ? context.assets->find(*id) : nullptr;
+  if (!record)
+  {
+    LOG_ERROR("The terrain's splat map isn't a texture asset: its painting isn't saved");
+    return;
+  }
+  if (!sfs::saveTexturePng(splat, context.assets->absolutePath(*record)))
+    LOG_ERROR("Can't save the splat map " + record->path.generic_string());
+}
+
 void ViewportPanel::pick(EditorContext& context, const View& view)
 {
   const ImVec2 mouse = ImGui::GetMousePos();
@@ -750,9 +1010,14 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
     const ImVec2 mouse = ImGui::GetMousePos();
     const sfs::Ray ray = context.render->camera().screenRay(
         {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
+    // A 2D game's: on its plane, where it's drawn.
+    const std::optional<sfs::Space2D>& space = context.render->space2D();
     std::optional<glm::vec3> point;
     float distance = 0.0f;
-    if (const auto hit = sfs::pickSurface(*context.scene, context.render->meshes(), ray))
+    std::optional<sfs::SurfaceHit> hit;
+    if (!space)
+      hit = sfs::pickSurface(*context.scene, context.render->meshes(), ray);
+    if (hit)
       point = ray.at(hit->distance);
     else if (ray.intersectPlaneZ(0.0f, distance))
       point = ray.at(distance);
@@ -771,7 +1036,10 @@ void ViewportPanel::dropAsset(EditorContext& context, const View& view)
         draw->AddCircleFilled(*at, 3.0f, kDropColor);
       }
       if (payload->IsDelivery())
-        prefabs::place(context, prefabs::nameOf(dragged->id), {}, point);
+        prefabs::place(context,
+                       prefabs::nameOf(dragged->id),
+                       {},
+                       space ? glm::vec3(space->unplace(glm::vec2(*point)), 0.0f) : *point);
     }
   }
   else if (dragged && assetDrop::fitsMaterialSlot(*dragged))
@@ -1046,6 +1314,29 @@ void ViewportPanel::drawColliders(const EditorContext& context, const View& view
     }
   };
   const glm::vec3 x{1, 0, 0}, y{0, 1, 0}, z{0, 0, 1};
+
+  // A 2D game's box: on its plane, where PhysicsSystem2D has it (unturned,
+  // unscaled), drawn where the plane puts it.
+  const std::optional<sfs::Space2D>& space = context.render->space2D();
+  if (space && entity.hasComponent<sfs::BoxCollider2D>())
+  {
+    const auto& box = entity.getComponent<sfs::BoxCollider2D>();
+    color = box.trigger ? kTriggerColor : kColliderColor;
+    const sfs::TransformComponent placed = sfs::hierarchy::worldTransform(entity);
+    const glm::vec2 centre = placed.position2D() + box.offset;
+    const glm::vec2 half = glm::abs(box.half);
+    const glm::vec2 corners[] = {centre - half,
+                                 {centre.x + half.x, centre.y - half.y},
+                                 centre + half,
+                                 {centre.x - half.x, centre.y + half.y}};
+    for (int i = 0; i < 4; ++i)
+    {
+      const auto from = toScreen(view, space->place(corners[i], placed.position.z));
+      const auto to = toScreen(view, space->place(corners[(i + 1) % 4], placed.position.z));
+      if (from && to)
+        drawList->AddLine(*from, *to, color, 1.5f);
+    }
+  }
 
   if (entity.hasComponent<sfs::BoxCollider3DComponent>())
   {

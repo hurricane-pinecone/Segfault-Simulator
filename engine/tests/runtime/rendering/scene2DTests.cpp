@@ -5,6 +5,7 @@
 #include <engine/core/components/pointLightComponent.h>
 #include <engine/core/components/spriteComponent.h>
 #include <engine/core/components/transformComponent.h>
+#include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/particles/decal.h>
 #include <engine/core/particles/particleEffect.h>
 #include <engine/runtime/assetStore/assetStore.h>
@@ -80,10 +81,10 @@ int main()
   {
     Harness h;
     h.system.withModule<SpriteModule>(h.store);
-    const SpriteId sprite =
-        h.store.addSprite("white_pixel", "dot", SDL_Rect{0, 0, 1, 1});
+    SpriteComponent sprite;
+    sprite.image = "white_pixel";
     Entity e = h.scene.createEntity();
-    e.addComponent<SpriteComponent>(sprite, glm::vec2{0.5f, 0.5f});
+    e.addComponent<SpriteComponent>(sprite);
     e.addComponent<TransformComponent>(
         TransformComponent{glm::vec2{10.0f, 20.0f}, glm::vec2{4.0f, 2.0f}});
     h.frame();
@@ -136,11 +137,61 @@ int main()
     CHECK(testing::approx(quad.uvRect.x, 0.0f));
     CHECK(testing::approx(quad.uvRect.w, 1.0f));
 
-    // No image and no registered sprite: nothing to draw.
+    // No image: nothing to draw.
     e.getComponent<SpriteComponent>().image.clear();
     h.renderer.drawn.clear();
     h.frame();
     CHECK(h.renderer.drawn.empty());
+  }
+
+  TEST("a sprite should be tinted, and cast shadows if it says so")
+  {
+    Harness h;
+    h.system.withModule<SpriteModule>(h.store);
+    SpriteComponent sprite;
+    sprite.image = "white_pixel";
+    sprite.tint = glm::vec4(0.5f, 1.0f, 1.0f, 0.25f);
+    Entity e = h.scene.createEntity();
+    e.addComponent<SpriteComponent>(sprite);
+    e.addComponent<TransformComponent>(TransformComponent{glm::vec2{0.0f}});
+    h.frame();
+
+    CHECK(h.renderer.drawn.size() == 1u);
+    CHECK(testing::approx(h.renderer.drawn.front().tint.x, 0.5f));
+    CHECK(testing::approx(h.renderer.drawn.front().tint.w, 0.25f));
+    const auto* sprites = h.system.module<SpriteModule>();
+    CHECK(!sprites->commands().empty() &&
+          sprites->commands().front().shadowInstances.empty());
+
+    e.getComponent<SpriteComponent>().castsShadow = true;
+    h.frame();
+    CHECK(sprites->commands().front().shadowInstances.size() == 1u);
+  }
+
+  TEST("a child sprite should be drawn where its parent puts it")
+  {
+    Harness h;
+    h.system.withModule<SpriteModule>(h.store);
+    Entity parent = h.scene.createEntity();
+    // Moved, turned a quarter (the plane's y runs down: so the other way on
+    // screen) and doubled.
+    parent.addComponent<TransformComponent>(TransformComponent{
+        glm::vec2{100.0f, 50.0f}, glm::vec2{2.0f}, glm::radians(90.0f)});
+    SpriteComponent sprite;
+    sprite.image = "white_pixel";
+    Entity child = h.scene.createEntity();
+    child.addComponent<SpriteComponent>(sprite);
+    child.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2{10.0f, 0.0f}});
+    hierarchy::setParent(child, parent);
+    h.frame();
+
+    CHECK(h.renderer.drawn.size() == 1u);
+    const MeshInstance& quad = h.renderer.drawn.front();
+    // 10 along the parent's x: 20 down its turned (game) y.
+    CHECK(testing::approx(quad.model[3].x, 100.0f));
+    CHECK(testing::approx(quad.model[3].y, -70.0f));
+    CHECK(testing::approx(glm::length(glm::vec3(quad.model[0])), 2.0f));
   }
 
   TEST("a click should pick a sprite where it's drawn, and a light's marker")
@@ -238,6 +289,28 @@ int main()
 
     h.frame(0.6);
     CHECK(decals.count() == 0u);
+  }
+
+  TEST("in 3D a mark should lie on the ground, a hair above it")
+  {
+    Harness h;
+    h.system.clearSpace2D();
+    DecalModule& decals = h.system.withModule<DecalModule>(h.store);
+    DecalSpawn spawn;
+    spawn.worldPos = {2.0f, 3.0f};
+    spawn.elevation = 1.0f;
+    spawn.size = {0.5f, 0.25f};
+    spawn.color = glm::vec4(1.0f);
+    decals.addDecal(spawn);
+    h.frame();
+
+    CHECK(decals.commands().size() == 1u);
+    const MeshInstance& mark = decals.commands().front().instances.front();
+    CHECK(testing::approx(mark.model[3].x, 2.0f));
+    CHECK(testing::approx(mark.model[3].y, 3.0f));
+    CHECK(mark.model[3].z > 1.0f && mark.model[3].z < 1.05f);
+    CHECK(testing::approx(mark.model[0].x, 0.5f)); // flat on the ground
+    CHECK(testing::approx(mark.model[1].y, 0.25f));
   }
 
   TEST("particles should draw together, glowing ones additively")

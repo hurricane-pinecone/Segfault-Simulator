@@ -51,7 +51,6 @@ struct ParticleSpriteBatch
 {
   const std::string* textureId = nullptr;
   BlendMode blend = BlendMode::Alpha;
-  bool screenSpace = false;
   std::vector<ParticleSprite> sprites;
 };
 
@@ -90,12 +89,6 @@ public:
                   glm::vec2 worldPos,
                   float elevation = 0.0f,
                   const ParticleSpawnParams& spawn = {});
-
-  // Fire a one-shot burst of a SimulationSpace::Screen effect at a screen
-  // pixel.
-  bool spawnScreenBurst(const std::string& effect,
-                        glm::vec2 screenPos,
-                        const ParticleSpawnParams& spawn = {});
 
   // Optional decal sink. When set, particles whose effect has leavesDecal stamp
   // a persistent mark on the surface they hit.
@@ -139,10 +132,8 @@ private:
   struct EmitterInstance
   {
     EffectId effect = -1;
-    bool screenSpace = false;
 
-    // Origin: world tiles + ground elevation level, or screen pixels if
-    // screenSpace.
+    // Origin: a point of the plane + its ground (height) level.
     glm::vec2 origin{0.0f, 0.0f};
     float groundLevel = 0.0f;
     float spawnHeightBias = 0.0f; // emitter height offset added to startHeight

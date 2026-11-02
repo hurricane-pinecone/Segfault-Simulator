@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/entity.h"
 
+#include <string>
 #include <string_view>
 
 namespace sfs
@@ -25,10 +26,19 @@ constexpr std::string_view componentTypeKey()
 }
 
 /**
+ * The type a type key names, for people ("Health", "farm::Seed"); the whole
+ * key if it can't be picked out.
+ */
+std::string readableTypeName(std::string_view typeKey);
+
+/**
  * The component id for a type key, assigning the next free id on first use.
  * Defined once, in engine-core, so the engine, an editor and a game module
  * loaded at runtime all agree on every component's id; a per-module counter
  * would number the same type differently in each.
+ *
+ * A type past MAX_COMPONENTS (there's no bit for it in a Signature) is a fatal
+ * error (see fatalError()), raised every time it's asked for.
  */
 int componentTypeId(std::string_view typeKey);
 

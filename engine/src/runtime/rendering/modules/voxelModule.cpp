@@ -40,7 +40,9 @@ void VoxelModule::forget(const glm::ivec3& chunk, MeshLibrary& meshes)
 void VoxelModule::remesh(const glm::ivec3& chunk, const RenderContext& context)
 {
   MeshLibrary& meshes = *context.meshes;
-  const Space2D& space = *context.space2D;
+  // In 3D the grid is the world's ground (one block a unit), as is.
+  const Space2D space = context.space2D ? *context.space2D : Space2D{};
+  const bool placed = context.space2D != nullptr;
   forget(chunk, meshes);
   std::vector<ChunkMesh>& parts = m_chunks[chunk];
   for (const VoxelMeshSlice& slice : meshChunk(chunk, m_world, m_blocks))
@@ -54,12 +56,14 @@ void VoxelModule::remesh(const glm::ivec3& chunk, const RenderContext& context)
     for (const GeometryVertex& vertex : slice.vertices)
     {
       MeshVertex out;
-      out.position = space.place(vertex.worldPos, vertex.ground);
-      out.normal = glm::normalize(space.direction(vertex.normal));
+      out.position = placed ? space.place(vertex.worldPos, vertex.ground)
+                            : glm::vec3(vertex.worldPos, vertex.ground);
+      out.normal = glm::normalize(placed ? space.direction(vertex.normal)
+                                         : vertex.normal);
       out.uv = vertex.uv;
       mesh.vertices.push_back(out);
     }
-    const bool flip = space.mirrored();
+    const bool flip = placed && space.mirrored();
     for (uint32_t i = 0; i + 2 < mesh.vertices.size(); i += 3)
       mesh.indices.insert(
           mesh.indices.end(), {i, flip ? i + 2 : i + 1, flip ? i + 1 : i + 2});
@@ -72,9 +76,10 @@ void VoxelModule::remesh(const glm::ivec3& chunk, const RenderContext& context)
 void VoxelModule::computeCommands(const RenderContext& context)
 {
   flush();
-  if (!context.meshes || !context.space2D)
+  if (!context.meshes)
     return;
   MeshLibrary& meshes = *context.meshes;
+  const bool flat = context.space2D != nullptr;
 
   // Chunks streamed out go; those that changed (or streamed in) are made
   // again; the rest are kept as they were.
@@ -109,7 +114,6 @@ void VoxelModule::computeCommands(const RenderContext& context)
     m_water = meshes.setMaterial(
         "voxel:water",
         imageMaterial(m_assets, "white_pixel", {}, AlphaMode::Blend));
-  const Space2D& space = *context.space2D;
   MeshDrawCommand water;
   water.pass = RenderPass::Transparent;
   water.mesh = m_quad;
@@ -117,12 +121,15 @@ void VoxelModule::computeCommands(const RenderContext& context)
   for (const WaterColumn& column : columns)
   {
     const glm::vec2 corner(column.tile);
-    const glm::vec3 origin = space.place(corner, column.surfaceLevel);
+    const auto place = [&](glm::vec2 point)
+    {
+      return flat ? context.space2D->place(point, column.surfaceLevel)
+                  : glm::vec3(point, column.surfaceLevel);
+    };
+    const glm::vec3 origin = place(corner);
     MeshInstance surface;
-    const glm::vec3 along =
-        space.place(corner + glm::vec2(1, 0), column.surfaceLevel) - origin;
-    const glm::vec3 across =
-        space.place(corner + glm::vec2(0, 1), column.surfaceLevel) - origin;
+    const glm::vec3 along = place(corner + glm::vec2(1, 0)) - origin;
+    const glm::vec3 across = place(corner + glm::vec2(0, 1)) - origin;
     surface.model[0] = glm::vec4(along, 0.0f);
     surface.model[1] = glm::vec4(across, 0.0f);
     surface.model[2] = glm::vec4(0.0f, 0.0f, 1.0f, 0.0f);

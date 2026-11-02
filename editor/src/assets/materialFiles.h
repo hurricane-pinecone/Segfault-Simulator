@@ -25,6 +25,17 @@ std::optional<sfs::AssetId> create(sfs::AssetDatabase& assets,
                                    const std::string& name,
                                    const sfs::MaterialAsset& material = {});
 
+/**
+ * A blank splat map (all the first layer) for a terrain material: a `size`
+ * square PNG texture asset in `folder`, named `name`.
+ *
+ * @return its name ("asset:<id>"), or empty (logged) if it can't be written
+ */
+std::string createSplatMap(sfs::AssetDatabase& assets,
+                           const std::filesystem::path& folder,
+                           const std::string& name,
+                           int size = 1024);
+
 /** A material asset's contents; nothing (logged) if it can't be read. */
 std::optional<sfs::MaterialAsset> read(const sfs::AssetDatabase& assets, const sfs::AssetRecord& record);
 

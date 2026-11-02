@@ -4,6 +4,7 @@
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/parentComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/util/fatalError.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
 #include <engine/runtime/rendering/standardScene.h>
@@ -14,6 +15,7 @@
 #include <fstream>
 
 #include <string>
+#include <utility>
 
 using namespace sfs;
 
@@ -41,6 +43,35 @@ public:
 
 protected:
   void onCreate(Scene&) override { seen = &scene(); }
+};
+
+// Counts its calls; does what its fields say as it updates.
+class Actor : public GameObject
+{
+public:
+  int* updates = nullptr;
+  int* destroys = nullptr;
+  int spawn = 0;                // objects to make on each update
+  bool destroySelf = false;     // destroy itself on its next update
+  GameObject* victim = nullptr; // destroy this on its next update
+
+protected:
+  void onUpdate(double) override
+  {
+    if (updates)
+      ++*updates;
+    for (int i = 0; i < spawn; ++i)
+      scene().createObject<Actor>().updates = updates;
+    if (victim)
+      scene().destroyObject(std::exchange(victim, nullptr));
+    if (destroySelf)
+      scene().destroyObject(this);
+  }
+  void onDestroy() override
+  {
+    if (destroys)
+      ++*destroys;
+  }
 };
 } // namespace
 
@@ -143,6 +174,111 @@ int main()
     CHECK(scene.entities().size() == 2u);
     CHECK(!scene.play(file.string() + ".missing"));
     std::filesystem::remove(file);
+  }
+
+  TEST("objects made during an update should be kept, and start next frame")
+  {
+    World world;
+    int updates = 0;
+    Actor& spawner = world.scene.createObject<Actor>();
+    spawner.updates = &updates;
+    spawner.spawn = 50; // grows the list well past its capacity mid-loop
+    world.scene.update(0.016);
+    CHECK(updates == 1); // only the spawner ran this frame
+    CHECK(world.scene.findObjects<Actor>().size() == 51u);
+    spawner.spawn = 0;
+    world.scene.update(0.016);
+    CHECK(updates == 1 + 51);
+  }
+
+  TEST("an object destroyed during an update should be deleted after it, its "
+       "onDestroy run once")
+  {
+    World world;
+    int updates = 0, destroys = 0;
+    Actor& killer = world.scene.createObject<Actor>();
+    Actor& victim = world.scene.attachObject<Actor>(world.named("Victim"));
+    victim.updates = &updates;
+    victim.destroys = &destroys;
+    killer.victim = &victim;
+    Actor& suicidal = world.scene.createObject<Actor>();
+    suicidal.destroys = &destroys;
+    suicidal.destroySelf = true;
+
+    world.scene.update(0.016); // the victim comes after its killer
+    CHECK(updates == 0);       // destroyed before its turn: not called
+    CHECK(destroys == 2);
+    CHECK(world.scene.findObjects<Actor>().size() == 1u);
+    CHECK(world.scene.findEntity("Victim").isValid()); // gone at next flush
+    world.scene.flushEntities();
+    CHECK(!world.scene.findEntity("Victim").isValid());
+  }
+
+  TEST("destroying an object without an entity, or twice, should be safe")
+  {
+    World world;
+    int destroys = 0;
+    Actor& loose = world.scene.createObject<Actor>();
+    loose.destroys = &destroys;
+    world.scene.destroyObject(&loose); // outside an update: deleted at once
+    CHECK(destroys == 1);
+    CHECK(world.scene.findObjects<Actor>().empty());
+    world.scene.destroyObject(nullptr);
+  }
+
+  TEST("destroying an entity should destroy its game object")
+  {
+    World world;
+    int updates = 0, destroys = 0;
+    Entity entity = world.named("Thing");
+    Actor& actor = world.scene.attachObject<Actor>(entity);
+    actor.updates = &updates;
+    actor.destroys = &destroys;
+    world.scene.flushEntities();
+
+    world.scene.destroyEntity(entity);
+    world.scene.update(0.016); // the flush at its start takes the entity
+    CHECK(destroys == 1);
+    CHECK(updates == 0);
+    CHECK(world.scene.findObjects<Actor>().empty());
+  }
+
+  TEST("a scene's objects should get onDestroy as the scene manager ends it")
+  {
+    AssetStore store;
+    SceneServices services{.assetStore = store};
+    SceneManager manager;
+    manager.setSceneServices(&services);
+    Scene& scene = *manager.createScene<Scene>();
+    int destroys = 0;
+    scene.createObject<Actor>().destroys = &destroys;
+    scene.createObject<Actor>().destroys = &destroys;
+    manager.destroyAll();
+    CHECK(destroys == 2);
+  }
+
+  TEST("renderer() and game() without them should be fatal errors, not aborts")
+  {
+    World world;
+    bool renderer = false, game = false;
+    try
+    {
+      (void)world.scene.renderer();
+    }
+    catch (const FatalError&)
+    {
+      renderer = true;
+    }
+    try
+    {
+      (void)world.scene.game();
+    }
+    catch (const FatalError&)
+    {
+      game = true;
+    }
+    CHECK(renderer);
+    CHECK(game);
   }
 
   return testing::report("sceneTests");

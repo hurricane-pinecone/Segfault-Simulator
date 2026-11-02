@@ -1,5 +1,7 @@
 #include "engine/runtime/systems/physicsSystem3D.h"
 
+#include "engine/runtime/sceneManager/scene.h"
+
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
@@ -626,7 +628,10 @@ struct PhysicsSystem3D::Impl
   }
 };
 
-PhysicsSystem3D::PhysicsSystem3D() : m(std::make_unique<Impl>()) {}
+PhysicsSystem3D::PhysicsSystem3D(Scene* scene)
+    : m(std::make_unique<Impl>()), m_scene(scene)
+{
+}
 
 PhysicsSystem3D::~PhysicsSystem3D() = default;
 
@@ -663,6 +668,16 @@ void PhysicsSystem3D::update(double deltaTime)
 
   if (steps > 0)
     m->writeBack();
+
+  if (!m_scene)
+    return;
+  // Copied: a handler may destroy entities or switch scenes.
+  const std::vector<Contact3D> begun = m->begun;
+  const std::vector<Contact3D> ended = m->ended;
+  for (const Contact3D& contact : begun)
+    m_scene->notifyContact(contact, true);
+  for (const Contact3D& contact : ended)
+    m_scene->notifyContact(contact, false);
 }
 
 std::optional<RaycastHit3D> PhysicsSystem3D::raycast(const Ray& ray,

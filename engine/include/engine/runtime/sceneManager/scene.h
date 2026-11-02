@@ -97,12 +97,13 @@ public:
 
   // Apply pending entity creation/destruction now instead of at the start of
   // the next update (e.g. after an editor replaces the scene's contents).
-  void flushEntities() { m_registry.flushEntities(); }
+  // Game objects on entities it destroys are destroyed too.
+  void flushEntities();
 
   AssetStore& assetStore() const { return m_assetStore; }
   // The backend's renderer. Asking for it where there's none (a tool without
-  // a GPU) is a setup bug, so it logs and aborts, like getSystem;
-  // tryRenderer() returns null instead.
+  // a GPU) is a setup bug, so it's a fatal error (see fatalError()), like
+  // getSystem; tryRenderer() returns null instead.
   IRenderer& renderer() const;
   // The game this scene runs in: quit, switch scenes, change the window. Like
   // the renderer, game() assumes there is one (there always is when a game or
@@ -128,16 +129,30 @@ public:
   template <typename TObject>
   TObject* tryFindObject() const;
 
-  // Every object of a type (or derived from it), in the order made.
+  // Every object of a type (or derived from it), in the order made. Objects
+  // destroyed this frame aren't found.
   template <typename TObject>
   std::vector<TObject*> findObjects() const;
 
+  /**
+   * Destroy a game object and its entity (if it has one). It gets no more
+   * calls; once the frame's updates, input or contacts are done (at once,
+   * outside them) its onDestroy runs and it's deleted. Null, or an object
+   * already destroyed, is ignored.
+   */
   void destroyObject(GameObject* object);
+
+  /**
+   * Destroy every game object (their onDestroy runs), e.g. as the scene
+   * ends; SceneManager does this before deleting a scene.
+   */
+  void destroyObjects();
 
   // Tell the game objects on both entities that a physics contact began or
   // ended (their onCollision/onTrigger Enter/Exit). Called by the scene's
   // physics, not by game code.
   void notifyContact(const Contact3D& contact, bool begun);
+  void notifyContact(const Contact2D& contact, bool begun);
 
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
@@ -151,7 +166,8 @@ public:
   template <typename TSystem>
   TSystem& getSystem() const;
 
-  // Null when the system isn't registered (getSystem aborts instead).
+  // Null when the system isn't registered (for getSystem that's a fatal
+  // error).
   template <typename TSystem>
   TSystem* tryGetSystem() const;
 
@@ -192,7 +208,26 @@ private:
   std::string m_name = "";
   Registry m_registry;
 
+  // While game objects are being called (an update, input, contacts):
+  // objects destroyed meanwhile are only marked, and deleted after.
+  struct ObjectCalls
+  {
+    explicit ObjectCalls(Scene& scene) : scene(scene) { ++scene.m_objectCalls; }
+    ~ObjectCalls() { --scene.m_objectCalls; }
+    Scene& scene;
+  };
+
+  // update()'s systems, objects and onUpdate.
+  void updateObjects(double deltaTime);
+  // Mark the objects whose entities have been destroyed (and flushed).
+  void destroyObjectsOfDeadEntities();
+  // Run the destroyed objects' onDestroy and delete them, if no object calls
+  // are under way.
+  void deleteDestroyedObjects();
+
   std::vector<std::unique_ptr<GameObject>> m_gameObjects;
+  int m_objectCalls = 0;
+  bool m_objectsDestroyed = false; // some in m_gameObjects are destroyed
 };
 
 template <typename TObject, typename... TArgs>
@@ -204,7 +239,9 @@ TObject& Scene::createObject(TArgs&&... args)
   static_cast<GameObject&>(ref).m_scene = this;
   m_gameObjects.push_back(std::move(object));
   // Through the base, where Scene is a friend: scripts override onCreate as
-  // protected, which would otherwise be inaccessible here.
+  // protected, which would otherwise be inaccessible here. As a call to the
+  // object, so it isn't deleted under itself (destroying itself, say).
+  const ObjectCalls calls(*this);
   static_cast<GameObject&>(ref).onCreate(*this);
 
   return ref;
@@ -220,7 +257,9 @@ TObject& Scene::attachObject(const Entity& entity)
 
   m_gameObjects.push_back(std::move(object));
   // Through the base, where Scene is a friend: scripts override onCreate as
-  // protected, which would otherwise be inaccessible here.
+  // protected, which would otherwise be inaccessible here. As a call to the
+  // object, so it isn't deleted under itself (destroying itself, say).
+  const ObjectCalls calls(*this);
   static_cast<GameObject&>(ref).onCreate(*this);
 
   return ref;
@@ -231,7 +270,8 @@ std::vector<TObject*> Scene::findObjects() const
 {
   std::vector<TObject*> found;
   for (auto& object : m_gameObjects)
-    if (auto casted = dynamic_cast<TObject*>(object.get()))
+    if (auto casted = dynamic_cast<TObject*>(object.get());
+        casted && !object->destroyed())
       found.push_back(casted);
   return found;
 }
@@ -241,7 +281,8 @@ TObject* Scene::tryFindObject() const
 {
   for (auto& object : m_gameObjects)
   {
-    if (auto casted = dynamic_cast<TObject*>(object.get()))
+    if (auto casted = dynamic_cast<TObject*>(object.get());
+        casted && !object->destroyed())
       return casted;
   }
 

@@ -22,6 +22,7 @@
 
 #include <memory>
 #include <set>
+#include <string_view>
 #include <vector>
 
 namespace sfs
@@ -73,11 +74,33 @@ public:
   template <typename... TComponents>
   std::vector<Entity> view();
 
+  /**
+   * Call `fn(entity, components&...)` for every living entity with all these
+   * components, in id order: view() without making a list. `fn` mustn't add
+   * or remove these component types (creating and destroying entities is
+   * fine: that waits for the next flush).
+   */
+  template <typename... TComponents, typename Fn>
+  void each(Fn&& fn);
+
   template <typename Fn>
   void forEachSystem(Fn&& fn);
 
 private:
   void addEntityToSystems(const Entity& entity);
+
+  // An entity's components changed from `before`: it joins or leaves the
+  // systems that now match it (one waiting for a flush joins them then).
+  void componentsChanged(const Entity& entity, const Signature& before);
+
+  // A component accessor used on an entity it can't be: fatal (see
+  // fatalError()), naming what was asked for and why.
+  [[noreturn]] void badComponentAccess(const Entity& entity,
+                                       const char* action,
+                                       std::string_view type) const;
+
+  template <typename TComponent>
+  Pool<TComponent>* poolOf();
 
   // Give a newly added system the living entities that already match it
   // (entities still pending a flush join it at that flush instead).

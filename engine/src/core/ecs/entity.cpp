@@ -4,5 +4,8 @@
 namespace sfs
 {
 
-bool Entity::isAlive() const { return registry->isAlive(*this); }
+bool Entity::isAlive() const
+{
+  return registry != nullptr && registry->isAlive(*this);
+}
 } // namespace sfs

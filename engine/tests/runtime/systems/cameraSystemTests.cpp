@@ -4,6 +4,7 @@
 #include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
+#include <engine/core/hierarchy/hierarchy.h>
 #include <engine/runtime/systems/cameraSystem.h>
 
 #include <cmath>
@@ -96,16 +97,13 @@ int main()
   {
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
-    CHECK(sys.activeCamera().camera == nullptr); // none registered yet
+    CHECK(!sys.activeCamera().isValid()); // none registered yet
 
     CameraFollowComponent cam;
     Entity camera = addCamera(reg, {1.0f, 2.0f}, cam);
     reg.flushEntities();
 
-    const ActiveCamera active = sys.activeCamera();
-    CHECK(active.camera != nullptr);
-    CHECK(active.transform != nullptr);
-    CHECK(testing::approx(active.transform->position.x, 1.0f));
+    CHECK(sys.activeCamera() == camera);
   }
 
   TEST("activeCamera should skip inactive cameras, and need no follow")
@@ -126,10 +124,7 @@ int main()
     on.getComponent<CameraComponent>().zoom = 2.0f;
     reg.flushEntities();
 
-    const ActiveCamera active = sys.activeCamera();
-    CHECK(active.follow == nullptr);
-    CHECK(testing::approx(active.getCameraPosition().x, 4.0f));
-    CHECK(testing::approx(active.zoom(), 2.0f));
+    CHECK(sys.activeCamera() == on);
   }
 
   TEST("a 3D camera should follow its target in all three axes")
@@ -223,24 +218,35 @@ int main()
     CHECK(std::abs(c.shakeOffset().y) <= 1.0f + 1e-4f);
   }
 
-  TEST("the active camera position includes the shake offset")
+  TEST("a parented camera should follow its target in the world")
   {
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
+    Entity target = reg.createEntity();
+    target.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2{10.0f, 4.0f}});
+
+    // The camera hangs off a rig moved 6 along x: its own position is
+    // relative to that.
+    Entity rig = reg.createEntity();
+    rig.addComponent<TransformComponent>(
+        TransformComponent{glm::vec2{6.0f, 0.0f}});
     CameraFollowComponent cam;
-    cam.target = 9999;
-    cam.shakeMaxOffset = 1.0f;
-    Entity camera = addCamera(reg, {2.0f, 3.0f}, cam);
+    cam.target = target.getId();
+    cam.offset = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.smoothing = 1000.0f; // snaps
+    Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
+    hierarchy::setParent(camera, rig);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraFollowComponent>();
-    c.shake(1.0f, 1.0f);
     sys.update(0.1);
 
-    const glm::vec2 pos = sys.activeCamera().getCameraPosition();
-    CHECK(testing::approx(pos.x, 2.0f + c.shakeOffset().x));
-    CHECK(testing::approx(pos.y, 3.0f + c.shakeOffset().y));
+    const glm::vec3 world = hierarchy::worldPosition(camera);
+    CHECK(testing::approx(world.x, 10.0f));
+    CHECK(testing::approx(world.y, 5.0f));
+    CHECK(testing::approx(
+        camera.getComponent<TransformComponent>().position.x, 4.0f));
   }
 
   return testing::report("cameraSystemTests");

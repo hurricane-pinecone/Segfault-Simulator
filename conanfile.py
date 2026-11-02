@@ -58,9 +58,9 @@ class SfsEngineConan(ConanFile):
         "imgui/*:shared": True,
     }
 
-    # Everything the package build needs; the sample game and its assets are not
+    # Everything the package build needs; the samples and their assets are not
     # part of the engine package (the recipe configures with ENGINE_BUILD_SAMPLE
-    # OFF, so the sampleGame subdirectory is never added).
+    # OFF, so they're never added).
     exports_sources = (
         "CMakeLists.txt",
         "engine/CMakeLists.txt",

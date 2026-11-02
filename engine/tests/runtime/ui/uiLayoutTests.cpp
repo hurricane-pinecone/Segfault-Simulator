@@ -504,6 +504,31 @@ int main()
           bigger[0].texture != quads[0].texture);
   }
 
+  TEST("a font atlas should let go of faces unused through a frame, past its "
+       "limit, keeping the ones in use")
+  {
+    const std::filesystem::path font =
+        std::filesystem::path(__FILE__).parent_path() /
+        "../../../include/assets/fonts/m6x11.ttf";
+    FontAtlas atlas(
+        [&](const std::string&) { return font.string(); }, "fallback.ttf");
+    // UI scaled smoothly: a new size every frame.
+    std::vector<UiQuad> quads;
+    for (int size = 10; size < 10 + 3 * int(FontAtlas::kMostFaces); ++size)
+    {
+      atlas.beginFrame();
+      quads.clear();
+      atlas.draw(
+          "m6x11", float(size), "a", {0.0f, 0.0f}, glm::vec4(1.0f), quads);
+    }
+    CHECK(atlas.faceCount() <= FontAtlas::kMostFaces + 1);
+    // This frame's text is still drawable: its texture wasn't dropped.
+    CHECK(quads.size() == 1u && quads[0].texture != nullptr &&
+          !quads[0].texture->pixels.empty());
+    atlas.beginFrame();
+    CHECK(quads[0].texture->size.x > 0);
+  }
+
   TEST("UTF-8 should come apart into its codepoints")
   {
     std::u32string out;
@@ -570,6 +595,61 @@ int main()
         Image::placeholder().frame(40.0f, 20.0f).align(Alignment::TopLeading));
     CHECK(laid.quads.size() == 1u && near(laid.quads[0].rect.z, 20.0f) &&
           near(laid.quads[0].rect.w, 20.0f));
+  }
+
+  TEST("a slider should follow a drag along its track, in its range and "
+       "steps, and a toggle flip when clicked")
+  {
+    float value = 5.0f;
+    bool on = false;
+    const View ui =
+        VStack(Alignment::Leading,
+               {
+                   Slider(
+                       value, [&](float to) { value = to; }, 0.0f, 10.0f, 1.0f),
+                   Toggle("rain", on, [&](bool to) { on = to; }),
+               })
+            .align(Alignment::TopLeading);
+    Laid laid = lay(ui);
+    const Hit* slider = nullptr;
+    const Hit* toggle = nullptr;
+    for (const Hit& hit : laid.hits)
+    {
+      if (hit.drag)
+        slider = &hit;
+      if (hit.action)
+        toggle = &hit;
+    }
+    CHECK(slider && toggle);
+    if (slider && toggle)
+    {
+      CHECK(near(slider->rect.width, 160.0f) &&
+            near(slider->rect.height, 22.0f));
+      // The knob's centre runs 8 points in from either end: at the far end,
+      // the top of the range; beyond it, still the top; near a third of the
+      // way, the nearest step.
+      const float middle = slider->rect.y + 11.0f;
+      slider->drag({slider->rect.x + 152.0f, middle});
+      CHECK(near(value, 10.0f));
+      slider->drag({slider->rect.x + 400.0f, middle});
+      CHECK(near(value, 10.0f));
+      slider->drag({slider->rect.x + 8.0f + 144.0f * 0.33f, middle});
+      CHECK(near(value, 3.0f));
+      slider->drag({slider->rect.x - 50.0f, middle});
+      CHECK(near(value, 0.0f));
+
+      // The toggle: its switch and label, clicked on.
+      CHECK(toggle->rect.y >= slider->rect.y + slider->rect.height);
+      CHECK(near(toggle->rect.width, 44.0f + 40.0f));
+      toggle->action();
+      CHECK(on);
+      CHECK(laid.text.drawn.size() == 1u && laid.text.drawn[0] == "rain");
+    }
+
+    // Disabled: neither does anything.
+    Laid off = lay(ui.disabled());
+    for (const Hit& hit : off.hits)
+      CHECK(!hit.drag && !hit.action);
   }
 
   return testing::report("uiLayoutTests");

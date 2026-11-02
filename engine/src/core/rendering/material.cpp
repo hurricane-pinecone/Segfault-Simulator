@@ -142,26 +142,38 @@ materialGraph::Graph MaterialAsset::toGraph() const
 
 nlohmann::json MaterialAsset::toJson() const
 {
-  if (graph)
-    return {
+  nlohmann::json out;
+  if (terrain)
+    out = {
+        {"formatVersion", kFormatVersion},
+        {"alphaMode", alphaModeName(alphaMode)},
+        {"terrain", terrain->toJson()},
+    };
+  else if (graph)
+    out = {
         {"formatVersion", kFormatVersion},
         {"alphaMode", alphaModeName(alphaMode)},
         {"graph", graph->toJson()},
     };
-  return {
-      {"formatVersion", kFormatVersion},
-      {"baseColor", {baseColor.r, baseColor.g, baseColor.b, baseColor.a}},
-      {"baseTexture", baseTexture},
-      {"metallicRoughnessTexture", metallicRoughnessTexture},
-      {"normalTexture", normalTexture},
-      {"normalScale", normalScale},
-      {"tiling", {tiling.x, tiling.y}},
-      {"offset", {offset.x, offset.y}},
-      {"metallic", metallic},
-      {"roughness", roughness},
-      {"alphaMode", alphaModeName(alphaMode)},
-      {"alphaCutoff", alphaCutoff},
-  };
+  else
+    out = {
+        {"formatVersion", kFormatVersion},
+        {"baseColor", {baseColor.r, baseColor.g, baseColor.b, baseColor.a}},
+        {"baseTexture", baseTexture},
+        {"metallicRoughnessTexture", metallicRoughnessTexture},
+        {"normalTexture", normalTexture},
+        {"normalScale", normalScale},
+        {"tiling", {tiling.x, tiling.y}},
+        {"offset", {offset.x, offset.y}},
+        {"metallic", metallic},
+        {"roughness", roughness},
+        {"alphaMode", alphaModeName(alphaMode)},
+        {"alphaCutoff", alphaCutoff},
+    };
+  // Only when it has some, so files without stay as they were.
+  if (!variants.empty())
+    out["variants"] = variants;
+  return out;
 }
 
 std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
@@ -198,6 +210,13 @@ std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
         alphaModeFromName(it->get<std::string>()).value_or(AlphaMode::Opaque);
   if (const auto it = json.find("graph"); it != json.end())
     material.graph = materialGraph::Graph::fromJson(*it);
+  if (const auto it = json.find("terrain"); it != json.end() && it->is_object())
+    material.terrain = TerrainAsset::fromJson(*it);
+  if (const auto it = json.find("variants");
+      it != json.end() && it->is_object())
+    for (const auto& [tag, name] : it->items())
+      if (name.is_string() && !tag.empty() && !name.get<std::string>().empty())
+        material.variants[tag] = name.get<std::string>();
   return material;
 }
 

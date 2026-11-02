@@ -16,6 +16,12 @@ A 2D game's entities stay in the game's own space: `TransformComponent`'s
 above it. A `Space2D` turns those into world positions when things are drawn.
 A 3D game has no `Space2D`; its transforms are world positions.
 
+Either way a child entity's transform is relative to its parent's. Sprites,
+point lights, the camera, particle emitters, camera following, 2D physics,
+picking and the editor's gizmo all use an entity's world transform
+(`hierarchy::worldTransform`, see [Hierarchy](../../../core/hierarchy/index.md)),
+so a sprite parented to a moving, turned or mirrored entity goes with it.
+
 ## Space2D
 
 `Space2D` (`engine/runtime/rendering/space2D.h`) says where a 2D game's plane
@@ -25,7 +31,7 @@ decals, voxel terrain, point lights and camera are all placed through it:
 | Field | Style | Meaning |
 | --- | --- | --- |
 | `projection` | both | `Space2D::Projection::Flat` or `Isometric` |
-| `pixelsPerUnit` | both | Sprite pixels per world unit. A flat game in pixels keeps it at 1. |
+| `pixelsPerUnit` | both | Sprite pixels per world unit, for images that don't set their own (a texture's `pixelsPerUnit` import setting). A flat game in pixels keeps it at 1. |
 | `yDown` | flat | The game's y runs down the screen, as screen pixels do |
 | `ySort` | flat | Things lower on the plane draw in front (a top-down game) |
 | `tilePixels` | isometric | A tile's diamond, in sprite pixels (e.g. 32 x 16) |
@@ -91,9 +97,10 @@ void MyScene::onInit()
 }
 ```
 
-`samplePlatformer` is a complete flat game set up this way. Movement and
-collision on the plane come from `MovementSystem` and `CollisionSystem`
-([Runtime systems](../../systems/index.md)) or your own systems.
+Movement and collision on the plane come from `PhysicsSystem2D`
+([Runtime systems](../../systems/index.md)) or your own systems. The
+`samples/platformer2d` project (Neon Sprint) is a complete flat game made in
+the editor.
 
 ## An isometric 2D game
 
@@ -111,8 +118,7 @@ render.setSpace2D(space);
 Sprites stand upright on the grid, leaning back as a real one would so their
 tops are in front of what's behind them. Voxel terrain (`VoxelModule`, see
 [Voxel world](../../voxel/index.md)), particles and decals are placed on the
-grid the same way. `sampleGame` is the isometric sample: voxel terrain, lamps,
-blood and embers.
+grid the same way.
 
 ## A 3D game
 
@@ -134,8 +140,11 @@ createEntity()
 ```
 
 In a 3D world, sprites stand upright and turn to face the camera
-(`SpriteModule::Facing`), and particles simulate on the ground plane (XY) with
-their height up Z.
+(`SpriteModule::Facing`), sized by their image's `pixelsPerUnit` import setting
+(else `SpriteModule::setPixelsPerUnit`, default 1). Particles simulate on the
+ground plane (XY) with their height up Z, and the marks they leave (decals)
+lie on the ground, a hair above what they landed on. A `VoxelModule` draws a
+voxel world on the world's own grid, a block a unit.
 
 **3D isometric** is a 3D game seen through an orthographic camera at
 `views::isometric()`: real meshes, lit and shadowed, from a fixed isometric
@@ -172,6 +181,15 @@ exported game draw it the same way:
 ```
 
 `"kind"` is `"3d"`, `"flat"` or `"isometric"`; the other keys are the
-`Space2D` fields. A file without `"style"` loads as 3D. In the editor, pick
+`Space2D` fields. A file without `"style"` loads as 3D.
+
+## Lighting in 2D
+
+A 2D game's sun direction is in the game's own space: x and y across its plane
+(y down the screen if the plane's y runs down), z up from it (toward the
+viewer, in a flat game). The render system turns it into the world's. Haze is
+a 3D world's: it fades things by their distance from the camera, which in a 2D
+game is the same for everything on the plane, so a 2D game draws none. Wind
+(what grass sways in) is a 3D world's too. In the editor, pick
 the style in Scene Settings → **Style** (see the
 [editor](../../../editor/index.md#styles-2d-and-3d)).

@@ -4,9 +4,9 @@ namespace sfs
 {
 
 /**
- * Tag: marks an entity as a static, immovable solid that other bodies collide
- * with (paired with a collider -- WorldCollider for solid-vs-solid on the iso
- * ground plane, BoxCollider2D for the flat path's platforms).
+ * Tag: a static solid (with a BoxCollider2D) that particles bounce off and
+ * stain (see ColliderParticleCollision). PhysicsSystem2D stops bodies against
+ * any static BoxCollider2D, tagged or not.
  */
 struct SolidObject
 {

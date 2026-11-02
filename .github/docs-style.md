@@ -29,6 +29,6 @@ feedback once instead of repeating it on each PR.
 
 ## Snippets
 
-- Keep examples game-agnostic. Never reference the sample projects (`sampleGame`,
-  `samplePlatformer`, `SampleGame`, `GameScene`, `getSystem<TerrainGeneratorSystem>`,
-  and so on). Use neutral placeholders.
+- Keep examples game-agnostic. Never reference the sample projects' code
+  (`samples/showcase3d`, `samples/platformer2d`, their scripts and scenes) in
+  snippets. Use neutral placeholders.

@@ -17,10 +17,12 @@ class IBlockRegistry;
 class VoxelWorld;
 
 /**
- * Draws a VoxelWorld in a 2D game: each chunk's visible block faces (cut from
- * its block types' sprites, see voxelMesher.h) as meshes placed by the game's
- * Space2D, made when a chunk streams in or changes and kept until then; and
- * its water as see-through surfaces at each column's level.
+ * Draws a VoxelWorld: each chunk's visible block faces (cut from its block
+ * types' sprites, see voxelMesher.h) as meshes, made when a chunk streams in
+ * or changes and kept until then; and its water as see-through surfaces at
+ * each column's level. In a 2D game the blocks are placed by its Space2D (an
+ * isometric game's terrain); in 3D the grid is the world's, a block a unit
+ * (its levels up +Z).
  */
 class VoxelModule : public CommandModule<RenderContext, MeshDrawCommand>
 {

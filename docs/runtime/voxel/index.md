@@ -57,13 +57,14 @@ simulated until they settle. A fully settled region costs no CPU.
 
 ## Wiring to rendering
 
-`VoxelModule` draws the world in a 2D game, placed through its `Space2D`
-(an isometric game's grid, in the sample). Register it with the asset store,
-the world and the block registry:
+`VoxelModule` draws the world in any style. In a 2D game it's placed through
+the game's `Space2D` (an isometric game's grid, say); in 3D the grid is the
+world's own, a block a unit, its levels up +Z. Register it with the asset
+store, the world and the block registry:
 
 ```cpp
 auto& render = addSystem<sfs::RenderSystem>(renderer());
-render.setSpace2D(isometricSpace); // see Styles
+render.setSpace2D(isometricSpace); // see Styles; leave it out for 3D
 render.withModule<sfs::VoxelModule>(assetStore(), world, myBlockRegistry);
 ```
 
@@ -79,7 +80,6 @@ blocks.
 `VoxelWorld` implements `ITerrainSurfaceSource`, `ITerrainHeightSource`, and
 `IWaterSurfaceSource`, so other parts of a game can use it as their terrain:
 
-- `MovementSystem::setTerrainHeightSource(&world)` stops bodies at cliffs.
 - `ParticleModule::enableStains(decals, &world)` lands particles on its
   ground, walls and water.
 - `VoxelModule` reads its water columns to draw the water.
@@ -89,4 +89,4 @@ blocks.
 - [Core voxel layer](../../core/voxel/index.md) — block types, chunk layout,
   the mesher, and the water simulation.
 - [Render modules](../rendering/render-modules/index.md#voxelmodule): `VoxelModule`.
-- [Styles](../rendering/styles/index.md): setting up an isometric game.
+- [Styles](../rendering/styles/index.md): setting up an isometric or 3D game.

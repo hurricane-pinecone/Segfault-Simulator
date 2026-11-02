@@ -26,6 +26,29 @@ add_executable(SfsPlayer
 
 target_link_libraries(SfsPlayer PRIVATE sfs::engine-webgpu)
 
+# On Windows a game opens no console window beside its own (its log is in its
+# folder under %APPDATA%, and goes to the terminal it's started from, if
+# any; see PlayerApp::load). The executable carries version information, and
+# an icon when the build is given one.
+if(WIN32)
+    set_target_properties(SfsPlayer PROPERTIES WIN32_EXECUTABLE ON)
+    if(MSVC)
+        # A GUI program's entry point is WinMain; the player's is main.
+        target_link_options(SfsPlayer PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+    set(SFS_PLAYER_ICON "" CACHE FILEPATH "An .ico for the player (and so for exported games); empty for none")
+    set(SFS_PLAYER_VERSION "0.1.0")
+    string(REPLACE "." "," SFS_PLAYER_VERSION_COMMAS "${SFS_PLAYER_VERSION},0")
+    if(SFS_PLAYER_ICON)
+        file(TO_CMAKE_PATH "${SFS_PLAYER_ICON}" icon)
+        set(SFS_PLAYER_ICON_RESOURCE "1 ICON \"${icon}\"")
+    else()
+        set(SFS_PLAYER_ICON_RESOURCE "")
+    endif()
+    configure_file(src/player.rc.in "${CMAKE_CURRENT_BINARY_DIR}/player.rc" @ONLY)
+    target_sources(SfsPlayer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/player.rc")
+endif()
+
 target_compile_options(SfsPlayer PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall>
 )

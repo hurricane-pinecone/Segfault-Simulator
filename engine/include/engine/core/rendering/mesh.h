@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sfs
@@ -17,6 +18,7 @@ namespace materialGraph
 {
 class MaterialShader;
 }
+struct TerrainMaterial;
 
 /**
  * One vertex of a 3D mesh. Colour is per-vertex albedo (linear RGB), so
@@ -72,7 +74,7 @@ inline bool isSeeThrough(AlphaMode mode)
  *
  * Or, with a `shader` (a compiled material graph), whatever the graph works
  * out from its parameters and textures; then only alphaMode is read from the
- * rest.
+ * rest. Or, with a `terrain`, its layers (and nothing else).
  */
 struct MeshMaterial
 {
@@ -96,6 +98,10 @@ struct MeshMaterial
   // Shows its colour as it is, whatever light falls on it (particles, glows,
   // vivid marks): drawn as emission.
   bool unlit = false;
+  // Both its sides drawn (glTF's doubleSided: thin sheets, and models made
+  // with their faces turned either way), a back face lit as seen from
+  // behind. Otherwise only its front faces are.
+  bool doubleSided = false;
 
   // A material graph's shader (see materialGraphCompiler.h), and the values
   // and textures it reads, in its order (a null texture reads white). Null:
@@ -103,6 +109,14 @@ struct MeshMaterial
   std::shared_ptr<const materialGraph::MaterialShader> shader;
   std::vector<glm::vec4> shaderParameters;
   std::vector<std::shared_ptr<const TextureData>> shaderTextures;
+  // A terrain's layers and splat map (see TerrainMaterial), drawn in place of
+  // the standard surface (and of a shader). Null: none.
+  std::shared_ptr<const TerrainMaterial> terrain;
+
+  // Materials (by name, e.g. "asset:<id>") to draw instead while a visual
+  // style with the tag is active: (tag, material) pairs (see
+  // MaterialAsset::variants, MeshLibrary::setMaterialVariant).
+  std::vector<std::pair<std::string, std::string>> variants;
 
   bool operator==(const MeshMaterial&) const = default;
 };

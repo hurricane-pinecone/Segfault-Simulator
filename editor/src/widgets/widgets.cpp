@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "imgui.h"
+#include "imgui_internal.h" // dock nodes' tab bars
 
 namespace widgets
 {
@@ -209,6 +210,25 @@ bool searchInput(const char* id,
   }
   ImGui::PopID();
   return changed;
+}
+
+std::string shownTab(const char* window)
+{
+  const ImGuiWindow* found = ImGui::FindWindowByName(window);
+  const ImGuiDockNode* node = found ? found->DockNode : nullptr;
+  if (!node || !node->TabBar)
+    return {};
+  for (const ImGuiWindow* tab : node->Windows)
+    if (tab->TabId == node->TabBar->SelectedTabId)
+      return tab->Name;
+  return {};
+}
+
+void showTab(const std::string& window)
+{
+  ImGuiWindow* found = ImGui::FindWindowByName(window.c_str());
+  if (found && found->DockNode && found->DockNode->TabBar)
+    found->DockNode->TabBar->NextSelectedTabId = found->TabId;
 }
 
 } // namespace widgets

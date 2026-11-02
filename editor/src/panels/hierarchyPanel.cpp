@@ -499,15 +499,19 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
   if (ImGui::MenuItem("Empty"))
     create([&] { return scene.createEmpty("Empty"); });
   ImGui::Separator();
-  if (ImGui::MenuItem("Cube"))
-    create([&] { return scene.createPrimitive(Primitive::Cube, "Cube"); });
-  if (ImGui::MenuItem("Sphere"))
-    create([&] { return scene.createPrimitive(Primitive::Sphere, "Sphere"); });
-  if (ImGui::MenuItem("Cylinder"))
-    create([&] { return scene.createPrimitive(Primitive::Cylinder, "Cylinder"); });
-  if (ImGui::MenuItem("Plane"))
-    create([&] { return scene.createPrimitive(Primitive::Plane, "Plane"); });
-  ImGui::Separator();
+  // Primitives are meshes: a 3D scene's (a 2D game draws sprites).
+  if (!context.render->space2D())
+  {
+    if (ImGui::MenuItem("Cube"))
+      create([&] { return scene.createPrimitive(Primitive::Cube, "Cube"); });
+    if (ImGui::MenuItem("Sphere"))
+      create([&] { return scene.createPrimitive(Primitive::Sphere, "Sphere"); });
+    if (ImGui::MenuItem("Cylinder"))
+      create([&] { return scene.createPrimitive(Primitive::Cylinder, "Cylinder"); });
+    if (ImGui::MenuItem("Plane"))
+      create([&] { return scene.createPrimitive(Primitive::Plane, "Plane"); });
+    ImGui::Separator();
+  }
   if (ImGui::MenuItem("Sprite"))
     create([&] { return scene.createSprite("Sprite"); });
   ImGui::SetItemTooltip("Pick its image (a texture) in the Inspector");

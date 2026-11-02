@@ -5,6 +5,8 @@
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/rendering/material.h"
+#include "engine/core/rendering/terrain.h"
+#include "engine/core/rendering/visualStyle.h"
 
 #include "nlohmann/json.hpp"
 
@@ -27,7 +29,12 @@ protected:
 private:
   // A selected material asset's editor.
   void drawMaterial(EditorContext& context, const sfs::AssetRecord& record);
+  // A terrain material's layers and splat map (in drawMaterial()): true if
+  // they changed.
+  bool drawTerrain(EditorContext& context, const sfs::AssetRecord& record, sfs::TerrainAsset& terrain);
   void drawScriptableObject(EditorContext& context, const sfs::AssetRecord& record);
+  // A selected visual style's editor (every edit saved and shown live).
+  void drawVisualStyle(EditorContext& context, const sfs::AssetRecord& record);
   // For an entity in a prefab instance: which prefab, and Apply / Revert.
   void drawPrefabHeader(EditorContext& context, const sfs::Entity& entity);
 
@@ -36,6 +43,10 @@ private:
   std::optional<sfs::MaterialAsset> m_material;
   sfs::AssetId m_scriptableId;                   // the scriptable object being edited, as last read
   std::optional<nlohmann::json> m_data;    // its file's contents
+  sfs::AssetId m_styleId;                  // the visual style being edited, as last read
+  std::optional<sfs::VisualStyle> m_style;
+  std::string m_newOverrideName; // the style's Material Overrides' Add row
+  std::string m_newVariantTag;             // the material Variants' Add row
 
   // Prefab actions asked for while drawing, done once the panel is drawn.
   enum class InstanceAction { Apply, Revert };

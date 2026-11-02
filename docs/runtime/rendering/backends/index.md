@@ -57,7 +57,8 @@ interface every backend implements:
 | `onResize(w, h)` | Called when the window changes size |
 | `sceneServices()` | The renderer and asset store scenes are constructed with |
 | `beginFrame(w, h)` / `endFrame()` | Acquire and clear the backbuffer; submit and present |
-| `setVsync(on)` | Wait for the display when presenting. Set before `init()`. |
+| `setVsync(on)` | Wait for the display when presenting, before `init()` or any time after. |
+| `deviceLost()` | Whether the GPU device was lost; `Game` ends the game (with a message) if so. |
 | `shutdown()` | Destroy all GPU resources while the device is still valid |
 
 ImGui integration is optional: `imguiProcessEvent`, `imguiNewFrame`,
@@ -103,13 +104,25 @@ window opens hidden and shows once the first frame is drawn, so it never sits
 black while the GPU is set up.
 
 By default it presents without waiting for the display (Mailbox, else
-Immediate), so frame timings show what the GPU can do. `setVsync(true)`
-before `init()` caps the frame rate at the display's refresh rate, as the
-editor does.
+Immediate), so frame timings show what the GPU can do. `setVsync(true)` caps
+the frame rate at the display's refresh rate, as the editor and an exported
+game (unless its `game.json` says `"vsync": false`) do; `Game::setVsync`
+changes it while the game runs, and `Game::setMaxFrameRate` (`"maxFrameRate"`
+in `game.json`) caps it further. The surface is sized in pixels, which on a
+high-DPI screen is more than the window's size in points; mouse positions are
+given in the same pixels.
 
 `SFS_SCREENSHOT=<file.png>` draws the scene offscreen and saves frame
 `SFS_SCREENSHOT_FRAME` (60 by default) there, for checking how a game looks
 without seeing its window.
+`SFS_SCREENSHOT_COUNT=<n>` and `SFS_SCREENSHOT_EVERY=<frames>` save a
+sequence of n, that many frames apart (`<file>_00.png`...). For checking how
+a view changes as the camera moves, `SFS_CAMERA_STEP="forward,right,up,pan,orbit"`
+steps a 3D view that far again for each shot (metres along the ground, and
+degrees turning in place or round what it looks at), half way between shots;
+a sixth value of 1 moves only the camera grass is grown and thinned from,
+the view held still. `SFS_HOLD_TIME=<seconds>` holds the scene's time for
+the renderer (the wind stays still), so shots compare.
 
 ### What each graphics API can do
 
@@ -131,7 +144,7 @@ draws through, for flat, isometric and 3D games alike:
 | --- | --- |
 | `createMesh` / `destroyMesh` | Upload or free a mesh (`MeshHandle`) |
 | `createMaterial` / `updateMaterial` / `destroyMaterial` | Upload, change or free a material and its textures (`MaterialHandle`) |
-| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps |
+| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps (a backend may keep the blades it grows from them, and grow them again only where `GrassMapsImage::regrow` says they changed) |
 | `beginFrame(FrameParams)` | Start a frame: camera, lighting, shadows, wind, time |
 | `drawMesh(MeshBatch)` | Queue one mesh's instances (lit, shadow-casting) |
 | `drawGrass(GrassBatch)` | Queue a grass field |

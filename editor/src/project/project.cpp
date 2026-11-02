@@ -1,6 +1,7 @@
 #include "project/project.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/atomicFile.h"
 #include "nlohmann/json.hpp"
 
 #include <cctype>
@@ -81,13 +82,8 @@ bool Project::setStartScene(const fs::path& scene)
   json["name"] = m_name;
   json["startScene"] = relative.generic_string();
 
-  std::ofstream out(file, std::ios::binary | std::ios::trunc);
-  out << json.dump(2) << '\n';
-  if (!out)
-  {
-    LOG_ERROR("Can't write " + file.string());
+  if (!sfs::writeFileAtomically(file, json.dump(2) + '\n'))
     return false;
-  }
   m_startScene = relative;
   LOG_INFO("Start scene: " + relative.generic_string());
   return true;
@@ -109,13 +105,8 @@ bool writeIfMissing(const fs::path& path, const std::string& contents)
 {
   if (fs::exists(path))
     return true;
-  std::ofstream out(path, std::ios::binary);
-  out << contents;
-  if (!out)
-  {
-    LOG_ERROR("Can't write " + path.string());
+  if (!sfs::writeFileAtomically(path, contents))
     return false;
-  }
   LOG_INFO("Created " + path.filename().string());
   return true;
 }
@@ -183,14 +174,9 @@ std::optional<Project> Project::create(const fs::path& folder,
     }
   }
 
-  std::ofstream out(file);
-  out << nlohmann::json{{"formatVersion", kFormatVersion}, {"name", name}}.dump(2)
-      << '\n';
-  if (!out)
-  {
-    LOG_ERROR("Can't write " + file.string());
+  if (!sfs::writeFileAtomically(
+          file, nlohmann::json{{"formatVersion", kFormatVersion}, {"name", name}}.dump(2) + '\n'))
     return std::nullopt;
-  }
   if (!project.ensureBuildFiles())
     return std::nullopt;
 

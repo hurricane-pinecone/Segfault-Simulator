@@ -24,19 +24,59 @@ struct SunLight
 };
 
 /**
- * Scene-wide lighting: the sun plus the ambient level and sky colour.
+ * The moon. Once the sun has set it takes over as the light that casts
+ * shadows, as bright as moonlight() says; a physical sky draws its disk and
+ * glows brighter under it.
  *
- * @param ambient  base brightness everything receives (0 = black night,
- *                 1 = fully lit); also gates point lights, which fade in as
- *                 ambient drops
- * @param skyColor linear RGB background clear colour
+ * @param direction       vector pointing toward the moon (need not be unit
+ *                        length); Z <= 0: below the horizon (the default: no
+ *                        moon)
+ * @param phase           how much of its face is lit: 0 new, 0.5 a half
+ *                        moon, 1 full
+ * @param color           linear RGB tint of its light, under a flat sky
+ * @param diffuseStrength how much a surface facing a full moon high in a
+ *                        clear sky brightens over ambient, under a flat sky
+ *                        (a physical sky works its light out itself)
+ */
+struct MoonLight
+{
+  glm::vec3 direction{0.0f, 0.0f, -1.0f};
+  float phase = 1.0f;
+  glm::vec3 color{0.62f, 0.72f, 1.0f};
+  float diffuseStrength = 0.12f;
+};
+
+/**
+ * Scene-wide lighting: the sun and moon, plus the ambient level and sky
+ * colour.
+ *
+ * @param ambient    base brightness everything receives (0 = black night,
+ *                   1 = fully lit); also gates point lights, which fade in as
+ *                   ambient drops
+ * @param skyColor   linear RGB background clear colour
+ * @param cloudCover how overcast it is (0 clear .. 1 overcast): dims the sun's
+ *                   and the moon's light and hides the stars and the moon's
+ *                   disk (the clouds themselves aren't drawn yet)
  */
 struct SceneLighting
 {
   SunLight sun;
+  MoonLight moon;
   float ambient = 0.55f;
   glm::vec3 skyColor{0.55f, 0.72f, 0.90f};
+  float cloudCover = 0.0f;
 };
+
+/** How much of the sun's or moon's light gets through `cloudCover` (0..1). */
+float clearSky(float cloudCover);
+
+/**
+ * How strongly the moon lights the scene, 0..1 (1: a full moon high in a
+ * clear sky, the sun well set): brighter the fuller it is, fading as it
+ * nears the horizon, and in as the sun sinks through twilight (from its
+ * setting to about 6 degrees below), behind clouds.
+ */
+float moonlight(const SceneLighting& lighting);
 
 /**
  * One point light, resolved to world space for a frame.
@@ -77,6 +117,15 @@ struct PointLight
  *                   cast shadows at once: the ones nearest what the camera
  *                   looks at, of those whose reach is in view (0: none)
  * @param pointResolution each point light's shadow map's face size, in texels
+ * @param cascades   1: one shadow map over `distance` around what the camera
+ *                   looks at (the default); 2 to 4: cascaded shadow maps along
+ *                   the view instead, each covering a farther slice of it at
+ *                   less detail, out to `cascadeDistance` (3D games)
+ * @param cascadeDistance how far from the camera cascaded shadows reach,
+ *                   world units (they fade out over the last stretch)
+ * @param cascadeSplit where the view is split between cascades: 1 keeps them
+ *                   small near the camera (detail close by), 0 spreads them
+ *                   evenly (between, a blend)
  */
 struct ShadowSettings
 {
@@ -86,6 +135,11 @@ struct ShadowSettings
   float softness = 1.5f;
   uint32_t pointLights = 16;
   uint32_t pointResolution = 256;
+  uint32_t cascades = 1;
+  float cascadeDistance = 200.0f;
+  float cascadeSplit = 0.75f;
+
+  bool operator==(const ShadowSettings&) const = default;
 };
 
 /**
@@ -124,6 +178,8 @@ struct BloomSettings
   float threshold = 1.0f;
   float softness = 0.5f;
   float radius = 1.0f;
+
+  bool operator==(const BloomSettings&) const = default;
 };
 
 /**
@@ -155,6 +211,8 @@ struct HazeSettings
 {
   float strength = 0.0f;
   float distance = 120.0f;
+
+  bool operator==(const HazeSettings&) const = default;
 };
 
 } // namespace sfs

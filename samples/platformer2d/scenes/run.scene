@@ -318,18 +318,16 @@
     "renderOffset": [
      0.0,
      0.0
+    ],
+    "tint": [
+     0.8,
+     0.85,
+     1.0,
+     1.0
     ]
    },
    "RenderLayerComponent": {
     "layer": -10
-   },
-   "SpriteTint": {
-    "color": [
-     0.8,
-     0.85,
-     1.0
-    ],
-    "alpha": 1.0
    },
    "ScriptComponent": {
     "script": "Parallax",

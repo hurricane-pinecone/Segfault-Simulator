@@ -8,14 +8,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Build only engine-core (+ tests): skips the render library, the sample game,
+# Build only engine-core (+ tests): skips the render library, the samples,
 # and everything that needs SDL/WebGPU/Conan. Lets the test pipeline configure
 # and build with no third-party dependencies.
 option(ENGINE_CORE_ONLY "Build only engine-core and its tests" OFF)
 
-# Build the bundled sample games. Off when packaging the engine on its own (the
-# Conan recipe sets this) so the engine libs can be built/installed standalone,
-# and off by default when a game pulls the engine in with add_subdirectory.
+# Build the bundled sample games for the web (samples/, as web pages). Off when
+# packaging the engine on its own (the Conan recipe sets this), and off by
+# default when a game pulls the engine in with add_subdirectory.
 option(ENGINE_BUILD_SAMPLE "Build the bundled sample games" ${PROJECT_IS_TOP_LEVEL})
 
 # Build the engine's test suite. Off by default when a game pulls the engine in
@@ -62,9 +62,7 @@ if(NOT ENGINE_CORE_ONLY AND ENGINE_BUILD_SAMPLE)
         else()
             message(WARNING "No SFS_CODEGEN_EXECUTABLE: the sample games aren't built for the web")
         endif()
-    else()
-        # Code-built samples (the editor-made ones build in the editor).
-        add_subdirectory(sampleGame)
-        add_subdirectory(samplePlatformer)
     endif()
+    # On the desktop the sample projects (samples/) are opened and built in
+    # the editor.
 endif()

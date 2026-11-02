@@ -4,6 +4,7 @@
 
 #include <SDL_image.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -26,6 +27,10 @@ TextureImportSettings::fromJson(const nlohmann::json& settings)
         cell[1].is_number_integer())
       result.spriteCell = {cell[0].get<int>(), cell[1].get<int>()};
   }
+  if (settings.is_object() && settings.contains("pixelsPerUnit") &&
+      settings["pixelsPerUnit"].is_number())
+    result.pixelsPerUnit =
+        std::max(settings["pixelsPerUnit"].get<float>(), 0.0f);
   return result;
 }
 

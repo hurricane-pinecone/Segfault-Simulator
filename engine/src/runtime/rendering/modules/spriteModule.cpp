@@ -1,13 +1,11 @@
 #include "engine/runtime/rendering/modules/spriteModule.h"
 
 #include "engine/core/components/renderLayerComponent.h"
-#include "engine/core/components/shadowCasterComponent.h"
 #include "engine/core/components/spriteComponent.h"
-#include "engine/core/components/spriteTint.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/assetStore/assetStore.h"
-#include "engine/runtime/assetStore/sprite.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/imageQuads.h"
 #include "glm/glm/geometric.hpp"
@@ -70,7 +68,7 @@ void SpriteModule::computeCommands(const RenderContext& context)
   const bool flat =
       m_facing == Facing::Flat || (m_facing == Facing::Auto && context.space2D);
   const Space2D space = context.space2D ? *context.space2D : Space2D{};
-  const float pixelsPerUnit =
+  const float defaultPixels =
       context.space2D ? space.pixelsPerUnit : m_pixelsPerUnit;
   MeshLibrary& meshes = *context.meshes;
   if (!m_quad.valid())
@@ -86,45 +84,21 @@ void SpriteModule::computeCommands(const RenderContext& context)
        m_registry->view<SpriteComponent, TransformComponent>())
   {
     const auto& sprite = entity.getComponent<SpriteComponent>();
-    // A registered sprite, or a frame of an image.
-    std::string sheetName;
-    AssetStore::SpriteFrame frame;
-    if (sprite.spriteId != SpriteComponent::kNoSprite)
-    {
-      const Sprite* registered = m_assets.getSprite(sprite.spriteId);
-      if (!registered)
-        continue;
-      sheetName = registered->textureId;
-      frame.sheet = m_assets.imageTexture(sheetName);
-      if (!frame.sheet || frame.sheet->empty())
-        continue;
-      const glm::vec2 texels(frame.sheet->width, frame.sheet->height);
-      const SDL_Rect& rect = registered->srcRect;
-      frame.uvRect = glm::vec4(rect.x / texels.x,
-                               rect.y / texels.y,
-                               rect.w / texels.x,
-                               rect.h / texels.y);
-      frame.pixels = glm::vec2(rect.w, rect.h);
-    }
-    else if (!sprite.image.empty())
-    {
-      std::optional<AssetStore::SpriteFrame> found =
-          m_assets.spriteFrame(sprite.image, sprite.frame);
-      if (!found)
-        continue;
-      sheetName = sprite.image;
-      frame = std::move(*found);
-    }
-    else
+    if (sprite.image.empty())
       continue;
-    std::string normalSheet;
-    if (entity.hasComponent<NormalMapComponent>())
-      if (const Sprite* normal = m_assets.getSprite(
-              entity.getComponent<NormalMapComponent>().spriteId))
-        normalSheet = normal->textureId;
-    const MaterialHandle look = material(meshes, sheetName, normalSheet);
+    std::optional<AssetStore::SpriteFrame> found =
+        m_assets.spriteFrame(sprite.image, sprite.frame);
+    if (!found)
+      continue;
+    const AssetStore::SpriteFrame& frame = *found;
+    const MaterialHandle look =
+        material(meshes, sprite.image, sprite.normalMap);
+    // Its image's own scale, else the game's.
+    const float pixelsPerUnit =
+        frame.pixelsPerUnit > 0.0f ? frame.pixelsPerUnit : defaultPixels;
 
-    const auto& transform = entity.getComponent<TransformComponent>();
+    // Where it is in the world: its parents' moves, turns and scales too.
+    const TransformComponent transform = hierarchy::worldTransform(entity);
     // Its size in the world, and where its pivot sits on it (from its centre,
     // image y down).
     const glm::vec2 size = frame.pixels * transform.scale2D() / pixelsPerUnit;
@@ -168,11 +142,7 @@ void SpriteModule::computeCommands(const RenderContext& context)
       instance.model[3] = glm::vec4(
           transform.position + across * centre.x + up * centre.y, 1.0f);
     }
-    if (entity.hasComponent<SpriteTint>())
-    {
-      const auto& tint = entity.getComponent<SpriteTint>();
-      instance.tint = glm::vec4(tint.color, tint.alpha);
-    }
+    instance.tint = sprite.tint;
     instance.uvRect = frame.uvRect;
     if (size.x < 0.0f)
       instance.uvRect = {instance.uvRect.x + instance.uvRect.z,
@@ -198,7 +168,7 @@ void SpriteModule::computeCommands(const RenderContext& context)
     }
     MeshDrawCommand& command = m_commands[at->second];
     command.instances.push_back(instance);
-    if (entity.hasComponent<ShadowCasterComponent>())
+    if (sprite.castsShadow)
     {
       command.shadowInstances.push_back(instance);
       command.lightShadowInstances.push_back(instance);

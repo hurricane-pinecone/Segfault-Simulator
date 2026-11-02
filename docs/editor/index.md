@@ -38,13 +38,36 @@ has no `main.scene`.
 
 | Command | Effect |
 | --- | --- |
-| File → New Scene | A fresh scene (ground, cube, light), not yet saved |
+| File → New Scene → 3D / 2D Flat / 2D Isometric | A fresh scene in that style, not yet saved: 3D starts with a ground, a cube and a light; 2D with a camera over the plane and a sprite |
 | File → Open Scene | Pick from the project's `scenes/` folder |
 | File → Save Scene (Ctrl+S) | Save to the current file; a new scene asks for a name |
 | File → Save Scene As | Save under a new name in `scenes/` |
 
 Scene files are plain JSON and diff cleanly. See
 [Scene files](../runtime/serialization/index.md).
+
+### Unsaved changes, autosave and recovery
+
+A scene with unsaved changes shows a `*` after its name in the window title,
+and a dot on its viewport tab (as a prefab tab with changes not yet applied
+does). Closing the editor (**File → Exit** or the window's close button),
+opening another scene or project, or **New Scene** asks first: **Save**,
+**Don't Save** or **Cancel**. A scene that was never saved is named in the same
+prompt. Closing the editor also asks about prefab tabs and material tabs with
+changes.
+
+Every minute, a scene with unsaved changes is autosaved to
+`.sfs/autosave/` in the project (never over its own file). Saving it, or
+choosing **Don't Save**, removes the autosave. If the editor stops without
+either (a crash, a power cut), opening the project again offers each autosave
+newer than its scene's file: **Recover** opens the scene with the autosaved
+changes (still unsaved: save to keep them), **Discard** deletes the autosave,
+and **Later** keeps them to be offered next time.
+
+Every file the editor writes (scenes, prefabs, materials, `.meta` files, the
+project file, scripts) is written to a temporary file beside it first and then
+swapped in, so a crash mid-save leaves the old file or the new one, never half
+of one.
 
 ## Panels
 
@@ -53,10 +76,24 @@ Scene files are plain JSON and diff cleanly. See
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
 | Inspector | The selected entity's name and components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
-| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), the game camera, sun, sky, ambient light, shadows, the viewport's projection and render stats. |
+| Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), the game camera, sun, sky colour (hidden under a physical sky, which works it out), ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
 | Console | The engine log; errors are highlighted. |
+| UI Preview | The game UI in the file open in the Code panel, as you write it (see [the UI docs](../runtime/ui/index.md#views-of-your-own-and-the-ui-preview)). Opening a UI file brings its tab to the front (without taking the keyboard from Code); closing the last one goes back to the tab it covered, unless you picked another meanwhile. |
+
+The **Window** menu shows or hides each panel; **Window → Reset Layout** puts
+them all back where a new editor has them: the Hierarchy on the left, the
+Inspector and UI Preview on the right, the Viewport, Scene Settings and Code
+in the middle, and the Console and Assets under them.
+
+The layout, which panels are open, the panels' own settings and the editor
+window's size, place and maximised state are kept between sessions, per user,
+in `imgui.ini` in `%APPDATA%\SegfaultSimulator\SfsEditor` on Windows
+(`~/.local/share/SegfaultSimulator/SfsEditor` on Linux). Delete it to start
+from the default layout. A window that was on a display no longer there opens
+on the main one. Set `SFS_EDITOR_SETTINGS_DIR` to keep them in another folder
+instead (to try the editor out without changing yours).
 
 ## Styles: 2D and 3D
 
@@ -79,11 +116,23 @@ In a 2D scene:
 - The gizmo moves things across the plane (and, in a flat scene, turns them
   around it); a moved thing keeps its height. With snapping on, moves snap to
   whole pixels (flat) or half tiles (isometric). An isometric sprite always
-  faces the view, so it doesn't turn.
-- Clicking a sprite selects it.
+  faces the view, so it doesn't turn. It works on world transforms, so a
+  child moves where it's seen, and with several selected it sits in their
+  middle and moves, turns and scales them all.
+- The Inspector edits a Transform as the game uses it: **Position** on the
+  plane, **Height** above it, **Rotation** (flat only) and **Scale** (negative
+  mirrors).
+- Clicking a sprite selects it, and a prefab dragged into the viewport lands on
+  the plane under the pointer.
 - **+ → Sprite** adds an entity with a Sprite component. Pick its **Image**
   (a texture) and **Frame** in the Inspector. A texture's import settings make
-  it a sprite sheet (see [Assets](#assets)).
+  it a sprite sheet (see [Assets](#assets)). The mesh primitives (Cube,
+  Sphere...) and the grass brush are a 3D scene's, so they're hidden.
+- A **Box Collider 2D** added to a sprite fits itself to the sprite (flat
+  scenes); **Fit to Sprite** fits it again.
+- Scene Settings hides what only a 3D world has (wind, haze, the grass count),
+  and the sun's direction is in the game's own space (see
+  [Styles](../runtime/rendering/styles/index.md#lighting-in-2d)).
 
 ## Viewport
 
@@ -129,6 +178,7 @@ Everything under `assets/` and `prefabs/` is managed by the project's
 | Drop files from Explorer onto the editor window | Imports copies into the open folder (or `assets/` itself) |
 | Right-click a folder, or empty space → New Material | A material asset to edit in the Inspector |
 | Right-click a folder, or empty space → New Material Graph | A material built from nodes; double-click it to edit them |
+| Right-click a folder, or empty space → New Visual Style | A [visual style](#visual-styles) to edit in the Inspector |
 
 This works the same in every folder, scripts and scenes too. The project's own
 folders (`scenes/`, `scripts/`, `prefabs/`, `assets/`) can't be renamed, moved
@@ -164,15 +214,18 @@ Models (`.glb`, `.gltf`) appear in a Mesh Renderer's **Mesh** list, under
 attached when the file is moved or renamed.
 
 Selecting a texture shows its import settings in the Inspector: **Filter**
-(Smooth, or Pixel Art for crisp texels) and **Sprite Sheet**, with its
+(Smooth, or Pixel Art for crisp texels), **Sprite Sheet**, with its
 **Frame Size**, to use it as a grid of sprite frames, numbered across then
-down from the top left. They're saved in its `.meta` and show straight away
+down from the top left, and **Pixels Per Unit**: how big it is drawn as a
+sprite (0 leaves it to the scene). They're saved in its `.meta` and show straight away
 (see [Sprites & sprite sheets](../runtime/rendering/sprites/index.md)).
 
 Selecting a material asset (`.mat`) edits it in the Inspector: base colour,
 texture, tiling and offset (how often the texture repeats, and where it
 starts), metal, roughness, a normal map (bumps the light catches; the bluish
-image that comes with many textures) with its strength, and transparency. Every change is saved and shows in
+image that comes with many textures) with its strength, and transparency, and
+its **Variants**: other materials to draw instead under a
+[visual style](#visual-styles)'s tag. Every change is saved and shows in
 the scene straight away.
 
 For a look those settings can't make (patterns, masks, glows, textures blended
@@ -213,7 +266,7 @@ scene places copies of it, and editing the prefab updates every copy.
 | Action | Result |
 | --- | --- |
 | Drag an object from the Hierarchy into the Assets panel, or right-click it → Create Prefab | Saves it, and everything under it, as a `.prefab`; the object becomes a copy of it |
-| Drag a prefab (or a model) into the viewport | Places a copy where the pointer meets a surface or the ground |
+| Drag a prefab (or a model) into the viewport | Places a copy where the pointer meets a surface or the ground (in a 2D scene, the plane) |
 | Drag a prefab onto a Hierarchy row, or below the list | Places a copy under that object, or at the top |
 | Double-click a prefab, or Edit in the Inspector | Opens the prefab in its own viewport tab, named after it |
 | **Apply** on a prefab's tab (or Ctrl+S there) | Writes the prefab; every copy updates, except where a copy changed something itself |
@@ -318,7 +371,9 @@ restores the selection.
 While the Assets panel was the last panel used, the Edit menu and these keys
 work on its file operations instead (see [Assets](#assets)). History is cleared
 when another scene is opened. Edits made while playing aren't
-recorded, because Stop discards them anyway.
+recorded, because Stop discards them anyway. The history keeps up to 200
+steps, and fewer for a big scene: the oldest steps go once their snapshots
+pass 256 MB.
 
 The inspector is generated from [reflection](../core/reflection/index.md). Every
 reflected component gets an editor built from its fields and attributes, so a
@@ -428,22 +483,38 @@ builds/windows/
   MyGame.dll          the game module (your scripts)
   scenes/  assets/    the project's content
   game.json           what to load: module, start scene, window size
-  log.txt             written when the game runs
 ```
 
 The exported game plays the start scene exactly as **Play** does: same scene
 setup, same scripts and game systems, with no editor UI. It sees through the
 scene's [game camera](#the-game-camera). If it can't start (a missing file, a module
-that fails to load), it says so in a message box, with details in `log.txt`.
+that fails to load), it says so in a message box, naming its log file.
+
+The game writes its log to `log.txt` in its own folder for user files, named
+after the game: `%APPDATA%\SegfaultSimulator\<game>\` on Windows,
+`~/.local/share/SegfaultSimulator/<game>/` on Linux (the game's own folder may
+not be writable, e.g. under Program Files). The previous run's log is kept as
+`log.prev.txt`. On Windows the game opens no console window; started from a
+terminal, it logs there too. Release builds log from INFO up, debug builds
+everything; a message repeated many times in a row is written once with a
+count.
+
+On x86-64 the engine's 3D physics is built for AVX2 (a CPU from about 2013 on):
+on an older processor the game says so in a message box instead of crashing.
 
 Export replaces the folder's contents, so it only writes into an empty folder
 or a previous export (one with a `game.json`). It never overwrites anything
 else.
 
+**Development build** makes an export for trying the game out rather than
+shipping it: its development keys work (**F8** / **Shift+F8** switch between
+the project's [visual styles](#visual-styles)), as in Play. Its `game.json`
+says `"development": true`; leave it off for a game you hand out.
+
 Exports can also be made without opening the editor, e.g. from a script or CI:
 
 ```
-SfsEditor --export <project-folder> [output-folder]
+SfsEditor --export [--development] <project-folder> [output-folder]
 ```
 
 A Windows editor exports Windows games. A Linux export is the game plus the
@@ -485,6 +556,34 @@ crash the page (an exception escaping a frame) stops the game and logs what
 it was to the browser console instead of leaving the page frozen with no clue
 why.
 
+## Visual styles
+
+A visual style (a `.style` asset) is a whole look for a scene: tone mapping
+and colour grading, how strong and what colour the sun and the ambient light
+are against the scene's own, bloom, haze, shadow softness and cascades, the
+sky (e.g. a physical one, with image-based lighting), and which material
+variants draw. Keep several (say *Cozy* and *Realistic*) and switch between
+them to compare. See
+[Visual styles & grading](../runtime/rendering/visual-styles/index.md) for
+what each setting does.
+
+- **Make one**: right-click a folder in Assets → **New Visual Style**.
+- **Use one**: Scene Settings → **Look** → **Visual Style** (one undo step,
+  saved with the scene). **None** means the scene's own look, whose tone
+  mapping and grading are edited right there.
+- **Edit one**: select it in Assets (or **Edit Style** in Scene Settings). The
+  Inspector shows every field; each change is saved, and shows in the scene
+  at once if the scene uses that style (**Use in Scene** otherwise). Under
+  **Replaces The Scene's**, each of Bloom, Haze, Shadow Softness, **Shadow
+  Cascades** (with their distance and split) and **Sky** is ticked on to
+  stand in for the scene's own.
+- **Material variants**: a selected material's **Variants** section maps a
+  style's tag (its **Material Variant**, e.g. `realistic`) to another material
+  to draw instead while that style is on. Works for grass materials too.
+- **While playing**: **F8** switches to the next style in the project,
+  **Shift+F8** the one before (also in debug players and development
+  builds).
+
 ## Grass
 
 Add a **Grass** component to anything with a Mesh Renderer, such as a plane, a
@@ -499,16 +598,31 @@ They sway in the scene's wind, and flatten where things move through them.
 | Height, Height Variation, Width | The blades' size, and how much heights vary |
 | Stiffness | How little they sway in the wind |
 | Recovery | Seconds flattened grass takes to stand back up |
-| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out toward this distance. |
+| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out smoothly, the same blades wherever the camera is, to none at this distance. |
+| Casts Shadows | Whether blades near the camera cast the sun's shadow (on by default). Only the two nearest shadow cascades get them, up to about 30 units, where a blade's shadow is big enough to see. With one shadow map, the first 8. |
+| Self Shadow | How much darker the grass gets down toward its roots, where the blades around shut out the sky and some of the sun. It makes a field look deep at any distance, well past where blades cast shadows. 0 turns it off (0.5) |
 
 **Wind** is the scene's, in Scene Settings: its direction (degrees), strength
 and gustiness. Gusts roll across the grass the way the wind blows. Long grass
 waves in it, and grass mown short (painted with **Length**) hardly moves.
 
 The grass's colour also tints the ground under it, so the gaps between blades
-look like grass. To hide where grass stops being drawn, add **Haze** in Scene
-Settings to fade the distance into the sky. You can also turn on the camera's
-**Depth Of Field** to soften what's far away.
+look like grass. Toward the draw distance the blades thin out, grow wider so
+the field still looks full, and shrink down into the ground, so there's no
+line where they end. As they thin out to none, the tinted ground takes on how
+they look from afar (as bright, turned to the camera as they are, a fine grain
+of them, and gusts rolling over it in time with theirs), and carries on so past
+the draw distance, out to the horizon, in the grass material's colour: so far
+grass changes with the season, dryness and the weather just as the blades do.
+On a terrain it carries on over the layers marked **Meadow**, past where the
+grass's maps reach (a big mesh has them only around the camera); without a
+terrain, the ground's own material shows past them. **Haze** in
+Scene Settings fades the distance into the sky.
+
+Grass on a big mesh, like land out to the horizon, grows only around the
+camera, in a window that follows it, so it costs no more than a small field.
+Set a field into a hole in the land (with its edge on a whole number of
+quarter units) and give both the same grass, and they meet with no seam.
 
 **What flattens grass:** anything with a Rigid Body, sized by its colliders,
 unless its **Bends Grass** is off. A **Grass Bender** component does the same
@@ -534,6 +648,35 @@ paints. **Fill** sets all of it back to unpainted: full, full-length grass.
 stroke is one undo step, and what's painted saves with the scene. A game can
 change the same maps as it plays (see
 [Meshes, materials & lighting: Grass](../runtime/rendering/meshes-and-lighting/index.md#grass)).
+
+## Terrain
+
+A material can be a **terrain**: select a material and click **Convert to
+Terrain** in the Inspector. Its **layers** (up to five: e.g. grass, dirt, a
+path) each have a colour texture (its alpha is the layer's height), a normal
+map, a roughness map, a tint, a **Tile Size** in metres, how much **Grass**
+grows on it, and how much it looks like a **Meadow** from afar (for grassy
+layers, past where blades are drawn). Tick **Triplanar** on rock and other
+layers on steep ground so they don't stretch down cliffs (**Triplanar
+Sharpness** sets how they blend). **New Splat Map** makes the map that says where each layer is.
+See [Terrain materials](../runtime/rendering/meshes-and-lighting/index.md#terrain-materials).
+
+**The terrain brush:** select something drawn with a terrain material (with
+the scene's visual style on, if the terrain is a style's variant) and press
+**T** or click **Terrain** in the viewport toolbar, pick a layer, and drag over
+it. Hold **Shift** to paint the first layer (an eraser). **Size**, **Strength**
+and **Softness** set the brush. Each stroke is saved into the splat map's
+image as it ends. Painting isn't undoable yet: paint the first layer back
+instead. Grass on the mesh follows as you paint.
+
+## Ambient occlusion and fog
+
+Scene Settings > **Occlusion & Fog** turns on **Ambient Occlusion** (radius,
+intensity, samples), **Contact Shadows** (length, thickness, strength) and
+**Height Fog** (density, height falloff, base height, start distance, max
+opacity, sun glow), each showing its settings only while on. A visual style can carry its own of each (Inspector > Replaces The
+Scene's), and its **Material Overrides** draw any material, a game's own
+included, as another while it's on.
 
 ## Built-in meshes
 

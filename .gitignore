@@ -5,7 +5,6 @@
 /build-core/
 /bin/
 # Standalone consumer build of the sample (built against the engine package)
-/sampleGame/build/
 
 # CMake
 CMakeCache.txt
@@ -33,3 +32,6 @@ build/**/conanrun.*
 
 # Local files
 imgui.ini
+
+# Claude Code agents' scratch checkouts (git worktrees)
+.claude/worktrees/

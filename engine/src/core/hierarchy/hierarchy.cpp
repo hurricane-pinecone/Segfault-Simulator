@@ -109,6 +109,22 @@ void setWorldMatrix(Entity entity, const glm::mat4& world)
       glm::inverse(parentWorldMatrix(entity)) * world);
 }
 
+TransformComponent worldTransform(const Entity& entity)
+{
+  const auto& local = entity.getComponent<TransformComponent>();
+  if (!parentOf(entity).isValid())
+    return local;
+  return TransformComponent::fromMatrix(worldMatrix(entity));
+}
+
+void setWorldTransform(Entity entity, const TransformComponent& world)
+{
+  if (!parentOf(entity).isValid())
+    entity.getComponent<TransformComponent>() = world;
+  else
+    setWorldMatrix(entity, world.matrix());
+}
+
 EntityTree::EntityTree(const std::vector<Entity>& entities)
 {
   std::unordered_set<Entity::EntityId> listed;

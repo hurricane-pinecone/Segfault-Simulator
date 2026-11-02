@@ -57,6 +57,7 @@ void NvimClient::stop()
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   m_process.reset(); // kills it if it's still running, and joins the readers
+  m_openScripts.clear();
 }
 
 bool NvimClient::start(const LaunchOptions& options, int columns, int rows)
@@ -182,6 +183,13 @@ void NvimClient::handle(const Value& message)
     else if (parts[1].asString() == "sfs_script_focused" && parts.size() >= 3 &&
              !parts[2].asArray().empty())
       m_focusedScript = m_environment.toEditorPath(parts[2].asArray()[0].asString());
+    else if (parts[1].asString() == "sfs_scripts_open" && parts.size() >= 3 && !parts[2].asArray().empty())
+    {
+      m_openScripts.clear();
+      if (parts[2].asArray()[0].isArray())
+        for (const Value& file : parts[2].asArray()[0].asArray())
+          m_openScripts.push_back(m_environment.toEditorPath(file.asString()));
+    }
     break;
   case kResponse: // [1, id, error, result]
     if (parts.size() >= 3 && !parts[2].isNil())

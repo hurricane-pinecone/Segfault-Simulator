@@ -115,6 +115,40 @@ std::filesystem::path writeModel(const std::string& name,
   return file;
 }
 
+// A one-triangle .gltf whose indices are these, and whose positions accessor
+// claims `count` vertices (3 are in the buffer).
+std::filesystem::path writeBrokenModel(const std::string& name,
+                                       std::vector<uint16_t> indices,
+                                       int count)
+{
+  const std::filesystem::path folder =
+      std::filesystem::temp_directory_path() / "sfsModelImporterTests";
+  std::filesystem::create_directories(folder);
+  std::vector<uint8_t> buffer;
+  append(buffer, std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}); // 36 bytes
+  indices.resize(4);                                             // 8 bytes
+  append(buffer, indices);
+  const std::string gltf = R"({
+    "asset": {"version": "2.0"},
+    "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+    "nodes": [{"mesh": 0}],
+    "accessors": [
+      {"bufferView": 0, "componentType": 5126, "count": )" +
+                           std::to_string(count) + R"(, "type": "VEC3"},
+      {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+    ],
+    "bufferViews": [
+      {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+      {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+    ],
+    "buffers": [{"byteLength": 44, "uri": "data:application/octet-stream;base64,)" +
+                           base64(buffer) + R"("}]
+  })";
+  const std::filesystem::path file = folder / name;
+  std::ofstream(file) << gltf;
+  return file;
+}
+
 std::vector<uint8_t> readFile(const std::filesystem::path& file)
 {
   std::ifstream in(file, std::ios::binary);
@@ -298,6 +332,24 @@ int main()
       CHECK(model->whole.sections[0].material.metallicRoughnessTexture ==
             nullptr);
     }
+  }
+
+  TEST("a well-formed one-triangle model should import (the broken ones' "
+       "control)")
+  {
+    const auto model = importModel(writeBrokenModel("fine.gltf", {0, 1, 2}, 3));
+    CHECK(model.has_value());
+  }
+
+  TEST("indices past the vertices should be refused, not read")
+  {
+    CHECK(!importModel(writeBrokenModel("indices.gltf", {0, 1, 7}, 3)));
+  }
+
+  TEST("an accessor longer than its data should be refused, not read")
+  {
+    CHECK(!importModel(writeBrokenModel("accessor.gltf", {0, 1, 2}, 1000)));
+    CHECK(!importModelNodes(writeBrokenModel("nodes.gltf", {0, 1, 2}, 1000)));
   }
 
   std::filesystem::remove_all(std::filesystem::temp_directory_path() /

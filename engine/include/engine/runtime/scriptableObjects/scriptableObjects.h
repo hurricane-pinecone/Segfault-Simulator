@@ -106,6 +106,11 @@ public:
   void forget(std::string_view asset);
   /** Forget every loaded asset (e.g. before a game module is unloaded). */
   void clear();
+  /**
+   * Forget the loaded assets of a module's types (ModuleHost does, before it
+   * unloads the module: their destructors are its code).
+   */
+  void clearModule(std::string_view module);
 
   /** An .asset file's contents for `fields` of `type`. */
   static nlohmann::json fileContents(const std::string& type,

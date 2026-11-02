@@ -39,15 +39,6 @@ enum class EmissionShape : uint8_t
   Cone,   // origin; coneAngleDegrees narrows the launch direction spread
 };
 
-// World = simulates in tile/elevation space and is occluded by terrain.
-// Screen = simulates in screen pixels and draws as a flat overlay (no
-// occlusion).
-enum class SimulationSpace : uint8_t
-{
-  World,
-  Screen,
-};
-
 // What happens when a world particle's height reaches the ground (height <= 0).
 enum class GroundBehavior : uint8_t
 {
@@ -162,15 +153,13 @@ struct ParticleEffectDesc
 
   // --- rendering / simulation ---
   BlendMode blend = BlendMode::Alpha;
-  SimulationSpace space = SimulationSpace::World;
   GroundBehavior ground = GroundBehavior::None;
   float stickDuration =
       0.0f; // Stick: extra seconds a grounded particle lingers
 
   // --- persistent decals ---
   // When true (and a decal sink + terrain source are wired), a particle leaves
-  // a permanent mark on the surface it collides with. Ignored for Screen
-  // effects.
+  // a permanent mark on the surface it collides with.
   bool leavesDecal = false;
   DecalSpec decal;
 

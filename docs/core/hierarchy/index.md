@@ -37,9 +37,23 @@ All are in `sfs::hierarchy`.
 | `worldPosition(entity)` | The world position of the entity's origin |
 | `parentWorldMatrix(entity)` | The parent's world matrix (identity for a root) |
 | `setWorldMatrix(entity, m)` | Sets the local transform so the world matrix becomes `m` |
+| `worldTransform(entity)` | The entity's transform in the world, as a `TransformComponent`: its own for a root, else its world matrix taken apart. 2D code reads a world `position2D()`, height (`position.z`), `yaw()` and `scale2D()` from it |
+| `setWorldTransform(entity, t)` | Sets the local transform so the world transform becomes `t` (exactly, for a root) |
 
 World matrices are worked out when asked for, by walking up the parents, so they
-are never out of date. The renderer, point lights and picking all use them.
+are never out of date. Everything that places an entity uses them, in every
+style: meshes, sprites, point lights, the camera, particle emitters, camera
+following, physics, picking and the editor's gizmo.
+
+```cpp
+// A 2D game: where a child is on the plane, wherever its parent has gone.
+const sfs::TransformComponent world = sfs::hierarchy::worldTransform(child);
+world.position2D(); // on the plane
+world.yaw();        // turned, with its parents
+```
+
+A mirrored transform (a negative scale, as a sprite flipped to face the other
+way) stays mirrored: taken apart, a mirrored matrix gives a negative x scale.
 
 A parent doesn't need a `TransformComponent`. Without one it only groups its
 children, which then sit in world space.

@@ -3,6 +3,7 @@
 #include "platform/paths.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/atomicFile.h"
 
 #include <algorithm>
 #include <cctype>
@@ -79,9 +80,7 @@ std::string readText(const fs::path& file)
 
 bool writeText(const fs::path& file, const std::string& text)
 {
-  std::ofstream out(file, std::ios::binary);
-  out << text;
-  return static_cast<bool>(out);
+  return sfs::writeFileAtomically(file, text);
 }
 
 

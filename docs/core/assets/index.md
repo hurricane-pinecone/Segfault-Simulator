@@ -46,8 +46,17 @@ the `.meta` along.
 `refresh()` rescans the folder. Read-write, it also:
 
 - writes a `.meta` with a new id for each file that has none
-- gives a copy its own id: when two files claim one id, the first by path keeps
-  it
+- gives a copy its own id: when two files claim one id, the one that had it in
+  the catalogue before keeps it (else the first by path), so `a - Copy.png`
+  never takes `a.png`'s id, however the names sort
+
+A `.meta` that can't be read (a merge conflict left in it, a bad hand edit) is
+never overwritten, since that would lose the id everything refers to the asset
+by: an error is logged, the file is listed without an id, and it gets its id
+back once the `.meta` is fixed (or a new one, if the `.meta` is deleted). An
+empty `.meta` has no id to keep and gets a new one. `.meta` files are written
+atomically (a temporary file swapped in), so a crash can't leave one half
+written.
 
 Hidden files and folders (names starting with `.`) are skipped. `records()`
 lists every asset sorted by path, and `folders()` lists the folders.
@@ -173,7 +182,15 @@ and transparency. Meshes are only shape; materials are separate.
 `offset` shifts them, in texture widths; a model's base colour texture
 transform (glTF's `KHR_texture_transform`, scale and offset) imports as these.
 `alphaMode` is `opaque`, `mask` or `blend`, as in glTF. `AssetStore::material(id)`
-loads one, with its textures.
+loads one, with its textures. Either kind of material may also have
+`"variants": {"<tag>": "asset:<id>"}`: materials to draw instead while the
+scene's visual style has that tag (see
+[Visual styles](../../runtime/rendering/visual-styles/index.md#material-variants)).
+
+- A **visual style** (`.style`, JSON; see `VisualStyle`) is a whole look for a
+  scene: tone mapping and grading, light balance, bloom, haze, shadow
+  softness and a material variant tag. `AssetStore::visualStyle(id)` reads
+  one. See [Visual styles](../../runtime/rendering/visual-styles/index.md).
 
 The built-in cube and plane map a texture once onto each face.
 

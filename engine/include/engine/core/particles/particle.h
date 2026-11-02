@@ -10,7 +10,7 @@ namespace sfs
 // here.
 struct Particle
 {
-  // World tile position (or screen pixels when SimulationSpace::Screen).
+  // Position on the plane (a 2D game's units; in 3D, the ground's x, y).
   glm::vec2 pos{0.0f, 0.0f};
   float height = 0.0f; // height above ground in world elevation units
 

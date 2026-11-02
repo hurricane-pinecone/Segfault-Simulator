@@ -14,18 +14,26 @@
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/materialGraphCompiler.h>
 #include <engine/core/rendering/meshPrimitives.h>
+#include <engine/core/rendering/terrain.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/input/input.h>
+#include <engine/runtime/rendering/framePlan.h>
 #include <engine/runtime/rendering/iRenderer.h>
 #include <engine/runtime/rendering/meshLibrary.h>
 #include <engine/runtime/rendering/modules/grassModule.h>
 #include <engine/runtime/rendering/modules/meshModule.h>
 #include <engine/runtime/rendering/modules/uiModule.h>
 #include <engine/runtime/rendering/renderSystem.h>
+#include <engine/runtime/rendering/visualStyles.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/ui/layer.h>
 
+#include "glm/glm/ext/matrix_clip_space.hpp"
+#include "glm/glm/ext/matrix_transform.hpp"
+#include "glm/glm/trigonometric.hpp"
+
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 using namespace sfs;
@@ -624,6 +632,46 @@ int main()
                        { return light.castsShadow; }));
   }
 
+  TEST("under a physical sky, only lamps bright enough to see by day should "
+       "cast shadows, and all of them at night")
+  {
+    const auto shadowedAt = [](const glm::vec3& toSun)
+    {
+      Harness h;
+      ShadowSettings shadows;
+      shadows.pointLights = 4;
+      h.system.setShadowSettings(shadows);
+      SkySettings physical;
+      physical.model = SkyModel::Physical;
+      h.system.setSkySettings(physical);
+      SceneLighting lighting;
+      lighting.sun.direction = toSun;
+      h.system.setLighting(lighting);
+      // A dim lamp (x = 0) and a strong one (x = 3).
+      for (int i = 0; i < 2; ++i)
+      {
+        Entity lamp = h.scene.createEntity();
+        lamp.addComponent<TransformComponent>(
+            TransformComponent{{static_cast<float>(i) * 3.0f, 0.0f, 0.0f}});
+        lamp.addComponent<PointLightComponent>(
+            PointLightComponent{glm::vec3(1.0f), i == 0 ? 1.0f : 4.0f, 2.0f});
+      }
+      h.frame();
+      std::vector<float> shadowed;
+      for (const PointLight& light : h.renderer.lights)
+        if (light.castsShadow)
+          shadowed.push_back(light.position.x);
+      std::sort(shadowed.begin(), shadowed.end());
+      return std::make_pair(shadowed, h.renderer.frame.sky.lampScale);
+    };
+    const auto [day, dayLamps] = shadowedAt({0.3f, 0.2f, 0.9f});
+    CHECK(dayLamps < 0.2f);
+    CHECK(day == std::vector<float>({3.0f}));
+    const auto [night, nightLamps] = shadowedAt({0.3f, 0.2f, -0.5f});
+    CHECK(nightLamps > dayLamps);
+    CHECK(night == std::vector<float>({0.0f, 3.0f}));
+  }
+
   TEST("grass's ground should be built once, and again only when its mesh is "
        "turned or scaled; its maps sent up as they change")
   {
@@ -714,6 +762,299 @@ int main()
     CHECK(h.renderer.liveGrass.empty());
     CHECK(h.renderer.grassDrawn.empty());
     CHECK(grassModule.maps(lawn) == nullptr);
+  }
+
+  TEST("grass near the camera should cast the sun's shadow into its nearest "
+       "cascade only, as its component says, and list room for its casters")
+  {
+    Harness h;
+    h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle plane = h.system.meshes().add(meshes::plane({4.0f, 4.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(
+        GrassComponent{.density = 20.0f, .selfShadow = 0.7f});
+    h.frame();
+    CHECK(!h.renderer.grassDrawn.empty() &&
+          h.renderer.grassDrawn[0].castsShadows &&
+          h.renderer.grassDrawn[0].selfShadow == 0.7f);
+    lawn.getComponent<GrassComponent>().castsShadows = false;
+    h.frame();
+    CHECK(!h.renderer.grassDrawn.empty() &&
+          !h.renderer.grassDrawn[0].castsShadows);
+
+    GrassBatch batch;
+    batch.shape = {.density = 100.0f, .height = 0.3f};
+    batch.drawDistance = 60.0f;
+    FrameParams frame;
+    frame.shadows.enabled = true;
+    // One map: just the first few metres.
+    CHECK(grassShadowReach(batch, frame) == kGrassShadowOneMapReach);
+    // Cascades: the reach of the nearest it casts into, at most
+    // kGrassShadowMostReach.
+    frame.cascades.count = 4;
+    const uint32_t last = kGrassShadowCascades - 1;
+    frame.cascades.cascades[last].splitFar = 12.0f;
+    CHECK(grassShadowReach(batch, frame) == 12.0f);
+    frame.cascades.cascades[last].splitFar = 50.0f;
+    CHECK(grassShadowReach(batch, frame) == kGrassShadowMostReach);
+    // Never past where grass is drawn; none with it off, or without shadows.
+    batch.drawDistance = 10.0f;
+    CHECK(grassShadowReach(batch, frame) == 10.0f);
+    batch.castsShadows = false;
+    CHECK(grassShadowReach(batch, frame) == 0.0f);
+    batch.castsShadows = true;
+    frame.shadows.enabled = false;
+    CHECK(grassShadowReach(batch, frame) == 0.0f);
+
+    // Planned: the reach for growing and drawing, room for its casters, and
+    // the self-shadow strength.
+    frame.shadows.enabled = true;
+    frame.cascades.cascades[last].splitFar = 12.0f;
+    batch.drawDistance = 60.0f;
+    batch.selfShadow = 0.4f;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 200.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid = GrassGrid::over({-50.0f, -50.0f}, {50.0f, 50.0f}, 0.25f);
+    field.groundArea = 100.0f * 100.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan && plan->grows);
+    CHECK(plan && plan->grow.detail.z == 12.0f && plan->draw.shadow.y == 12.0f);
+    CHECK(plan && plan->draw.shadow.x == 0.4f && plan->draw.shadow.z > 1.0f);
+    // About the blades within 12 of the camera, all round: some, but far
+    // fewer than all the field grows.
+    CHECK(plan && plan->shadowCapacity > 100.0f * 3.14f * 144.0f * 0.75f &&
+          plan->shadowCapacity == plan->grow.capacity.w &&
+          plan->shadowCapacity <
+              plan->capacity[0] + plan->capacity[1] + plan->capacity[2]);
+    batch.castsShadows = false;
+    const std::optional<GrassPlan> unshadowed = planGrass(batch, field, frame);
+    CHECK(unshadowed && unshadowed->grow.detail.z == 0.0f &&
+          unshadowed->shadowCapacity == 0u);
+  }
+
+  TEST("grass should keep fewer blades farther away, smoothly, to none at its "
+       "draw distance")
+  {
+    GrassBatch batch;
+    batch.shape.density = 400.0f;
+    batch.drawDistance = 200.0f;
+    FrameParams frame;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 500.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid =
+        GrassGrid::over({-300.0f, -300.0f}, {300.0f, 300.0f}, 1.0f);
+    field.groundArea = 600.0f * 600.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan && plan->grows);
+    if (!plan || grassLegacyThinning())
+      break;
+    const GrassGrowUniforms& grow = plan->grow;
+    // All kept near the camera (out to 770 cells of 0.05), then fewer, with
+    // no step anywhere, and none at the draw distance.
+    CHECK(grow.thinning.w == 1.0f && std::abs(grow.thinning.x - 38.5f) < 0.01f);
+    CHECK(grassKeptShare(grow, 0.0f) == 1.0f);
+    CHECK(grassKeptShare(grow, 38.0f) == 1.0f);
+    float last = 1.0f;
+    for (float away = 38.5f; away <= 200.0f; away += 0.5f)
+    {
+      const float share = grassKeptShare(grow, away);
+      CHECK(share <= last);
+      CHECK(last - share < 0.05f);
+      last = share;
+    }
+    CHECK(grassKeptShare(grow, 200.0f) == 0.0f);
+    // Each lattice grown as far as any of its blades are kept, the coarsest
+    // to the draw distance.
+    for (int k = 0; k < 3; ++k)
+    {
+      CHECK(grow.reach[k] <= grow.reach[k + 1]);
+      const float lowest = std::pow(0.25f, static_cast<float>(k + 1));
+      CHECK(grassKeptShare(grow, grow.reach[k]) * 1.2f <= lowest * 1.001f);
+    }
+    CHECK(grow.reach[3] == 200.0f);
+
+    // Its tiles hidden behind what's drawn opaque can be left out: from the
+    // camera's own view, allowing for its blades' shadows (a blade's as long
+    // as it's tall with the sun at 45 degrees), unless the sun's too low.
+    CHECK(grow.viewProjection == frame.viewProjection);
+    CHECK(glm::vec3(grow.eye) == frame.cameraPosition);
+    frame.lighting.sun.direction = glm::vec3(1.0f, 0.0f, 1.0f);
+    const std::optional<GrassPlan> high = planGrass(batch, field, frame);
+    CHECK(high && std::abs(high->grow.forward.w - 1.0f) < 1e-4f);
+    frame.lighting.sun.direction = glm::vec3(1.0f, 0.0f, 0.1f);
+    const std::optional<GrassPlan> low = planGrass(batch, field, frame);
+    CHECK(low && low->grow.forward.w < 0.0f);
+  }
+
+  TEST("grass's ground should carry on past its maps over its terrain's "
+       "meadow layers, taking over as its blades thin out")
+  {
+    GrassBatch batch;
+    batch.shape.density = 400.0f;
+    batch.drawDistance = 120.0f;
+    FrameParams frame;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 500.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid =
+        GrassGrid::over({-300.0f, -300.0f}, {300.0f, 300.0f}, 1.0f);
+    field.groundArea = 600.0f * 600.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan.has_value());
+    if (!plan)
+      break;
+    // Where the blades start thinning out to none: the ground's look hands
+    // over to theirs from afar from there.
+    CHECK(plan->draw.far.z == plan->grow.thinning.z);
+    CHECK(plan->draw.far.z > 0.0f && plan->draw.far.z < 120.0f);
+
+    // Without a terrain, none past the maps.
+    GrassUniforms draw = plan->draw;
+    grassFarGround(draw, nullptr);
+    CHECK(draw.far.y == 0.0f && draw.far.x == 0.0f &&
+          draw.farMeadow == glm::vec4(0.0f));
+    // With one, as much as each of its splat map's channels' layers is
+    // meadow (a channel with no layer: the first's, as the terrain draws).
+    TerrainMaterial terrain;
+    terrain.layers.resize(3);
+    terrain.layers[0].meadow = 1.0f;
+    terrain.layers[1].meadow = 0.0f;
+    terrain.layers[2].meadow = 0.5f;
+    grassFarGround(draw, &terrain);
+    CHECK(draw.far.y == 1.0f && draw.far.x == 1.0f);
+    CHECK(draw.farMeadow == glm::vec4(0.0f, 0.5f, 1.0f, 1.0f));
+    CHECK(draw.far.z == plan->draw.far.z);
+  }
+
+  TEST("grass on a big mesh should grow in a window around the camera, built "
+       "again as the camera moves on")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle land =
+        h.system.meshes().add(meshes::plane({2000.0f, 2000.0f}));
+    Entity field = h.spawn(land, {0.0f, 0.0f, 0.0f});
+    field.addComponent<GrassComponent>(
+        GrassComponent{.density = 20.0f, .drawDistance = 40.0f});
+    h.frame();
+    CHECK(grassModule.windowed(field));
+    const GrassGround* ground = grassModule.ground(field);
+    const float reach = GrassModule::windowReach(40.0f);
+    const glm::vec2 camera(h.system.camera().position());
+    CHECK(ground && ground->grid().texelSize().x <= 0.5f);
+    CHECK(ground && ground->grid().min.x <= camera.x - reach + 0.5f &&
+          ground->grid().max.x >= camera.x + reach - 0.5f);
+    CHECK(!h.renderer.grassDrawn.empty());
+
+    // Moved a little: the same window. Moved on: a new one, built in the
+    // background, then grown on.
+    h.system.camera().target = {1.0f, 0.0f, 0.0f};
+    h.frame();
+    grassModule.finishWindows();
+    CHECK(h.renderer.groundUpdates.empty());
+    h.system.camera().target = {300.0f, 0.0f, 0.0f};
+    h.frame();
+    grassModule.finishWindows();
+    h.frame();
+    CHECK(h.renderer.groundUpdates.size() == 1u);
+    const glm::vec2 moved(h.system.camera().position());
+    ground = grassModule.ground(field);
+    CHECK(ground && ground->grid().min.x <= moved.x - reach + 0.5f &&
+          ground->grid().max.x >= moved.x + reach - 0.5f);
+
+    // A small mesh: all of it, as ever.
+    const MeshHandle lawn = h.system.meshes().add(meshes::plane({4.0f, 4.0f}));
+    Entity small = h.spawn(lawn, {0.0f, 0.0f, 0.0f});
+    small.addComponent<GrassComponent>(GrassComponent{.density = 20.0f});
+    h.frame();
+    CHECK(!grassModule.windowed(small));
+  }
+
+  TEST("a terrain's triplanar layers should get a side-projection exponent "
+       "from its sharpness; the others none")
+  {
+    TerrainMaterial terrain;
+    terrain.triplanarSharpness = 0.5f;
+    terrain.layers.push_back({.name = "Grass"});
+    terrain.layers.push_back({.name = "Rock", .triplanar = true});
+    const TerrainUniforms uniforms = terrainMaterialUniforms(terrain);
+    CHECK(uniforms.detail[0].w == 0.0f);
+    CHECK(uniforms.detail[1].w == 2.5f);
+    // Missing layers stand in as the first: not triplanar.
+    CHECK(uniforms.detail[4].w == 0.0f);
+    terrain.triplanarSharpness = 2.0f;
+    CHECK(terrainMaterialUniforms(terrain).detail[1].w == 4.0f);
+  }
+
+  TEST("grass on a terrain should grow only where its layers let it, as the "
+       "material drawn says")
+  {
+    Harness h;
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    const MeshHandle plane =
+        h.system.meshes().add(meshes::plane({10.0f, 10.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(GrassComponent{.density = 20.0f});
+    // Dirt (no grass) painted over the left half (u below 0.5: x below 0).
+    auto terrain = std::make_shared<TerrainMaterial>();
+    auto splat = blankSplat(8);
+    for (int y = 0; y < 8; ++y)
+      for (int x = 0; x < 4; ++x)
+        splat->rgba[(std::size_t(y) * 8 + x) * 4] = 255;
+    terrain->splat = splat;
+    terrain->layers = {TerrainLayer{}, TerrainLayer{.grass = 0.0f}};
+    MeshMaterial ground;
+    ground.terrain = terrain;
+    h.system.meshes().setMaterial("ground", ground);
+    lawn.getComponent<MeshRendererComponent>().materials = {"ground"};
+
+    h.frame();
+    CHECK(!h.renderer.mapUpdates.empty());
+    const auto coverageAt = [&](float x)
+    {
+      const auto& update = h.renderer.mapUpdates.back();
+      const glm::ivec2 texel(
+          glm::floor(update.grid.toTexels(glm::vec2(x, 0.0f))));
+      const int width = update.to.x - update.from.x;
+      return update.shape[(std::size_t(texel.y - update.from.y) * width +
+                           (texel.x - update.from.x)) *
+                          4];
+    };
+    CHECK(!h.renderer.mapUpdates.back().grid.empty());
+    CHECK(coverageAt(-3.0f) < 10);
+    CHECK(coverageAt(3.0f) == 255);
+    // The maps themselves keep it all (the game's to read and wear).
+    CHECK(grassModule.maps(lawn) &&
+          testing::approx(grassModule.sample(
+                              lawn, GrassMaps::Coverage, {-3.0f, 0.0f, 0.0f}),
+                          1.0f));
+
+    // Painted: grown again once told.
+    paintSplat(*splat, {0.75f, 0.5f}, {0.3f, 0.6f}, 1, 1.0f, 0.0f);
+    grassModule.terrainPainted(lawn);
+    h.frame();
+    CHECK(coverageAt(3.0f) < 10);
+
+    // A plain material again: full grass, as unpainted grass is.
+    h.system.meshes().setMaterial("ground", MeshMaterial{});
+    h.renderer.mapUpdates.clear();
+    h.frame();
+    CHECK(!h.renderer.mapUpdates.empty() &&
+          h.renderer.mapUpdates.back().grid.empty());
   }
 
   TEST("rigid bodies and grass benders should flatten grass, unless they opt "
@@ -1155,6 +1496,560 @@ int main()
     CHECK(h.renderer.materialUpdates == 1);
     h.system.meshes().reloadMaterial("never loaded"); // ignored
     CHECK(h.renderer.materialUpdates == 1);
+  }
+
+  TEST("a visual style should stand in for the scene's look while it's on, "
+       "and re-balance its light")
+  {
+    Harness h;
+    std::vector<std::string> asked;
+    VisualStyle style;
+    style.grading.toneMapper = ToneMapper::Aces;
+    style.grading.exposure = 0.5f;
+    style.sunIntensity = 2.0f;
+    style.ambientTint = {0.5f, 1.0f, 1.0f};
+    style.skyIntensity = 0.5f;
+    style.bloom = BloomSettings{.intensity = 0.1f, .threshold = 2.0f};
+    style.shadowSoftness = 3.0f;
+    h.system.setStyleSource(
+        [&](std::string_view name) -> std::optional<VisualStyle>
+        {
+          asked.emplace_back(name);
+          if (name == "asset:real")
+            return style;
+          return std::nullopt;
+        });
+
+    SceneLighting lighting;
+    lighting.skyColor = {0.4f, 0.6f, 0.8f};
+    h.system.setLighting(lighting);
+    h.system.setHazeSettings({.strength = 0.3f, .distance = 90.0f});
+    ColorGrading own;
+    own.saturation = 1.5f;
+    h.system.setColorGrading(own);
+
+    // No style: the scene's own look, its light as it is.
+    h.frame();
+    CHECK(h.renderer.frame.grading == own);
+    CHECK(h.renderer.frame.lightBalance.neutral());
+    CHECK(testing::approx(h.renderer.frame.lighting.skyColor.g, 0.6f));
+    CHECK(testing::approx(h.renderer.frame.bloom.intensity, 0.6f));
+
+    // On: its grading, bloom and shadow softness; the haze it leaves alone
+    // stays the scene's; the sun doubled, ambient tinted, the sky halved.
+    CHECK(h.system.setVisualStyle("asset:real"));
+    CHECK(h.system.visualStyle() != nullptr);
+    h.frame();
+    CHECK(h.renderer.frame.grading == style.grading);
+    CHECK(testing::approx(h.renderer.frame.bloom.threshold, 2.0f));
+    CHECK(testing::approx(h.renderer.frame.shadows.softness, 3.0f));
+    CHECK(testing::approx(h.renderer.frame.haze.strength, 0.3f));
+    CHECK(h.renderer.frame.lightBalance.sun == glm::vec3(2.0f));
+    CHECK(h.renderer.frame.lightBalance.ambient == style.ambientTint);
+    CHECK(testing::approx(h.renderer.frame.lighting.skyColor.g, 0.3f));
+    // The scene's own settings are untouched: they come back with it off.
+    CHECK(h.system.colorGrading() == own);
+    CHECK(testing::approx(h.system.lighting().skyColor.g, 0.6f));
+
+    // A day/night cycle setting the lighting each frame stays re-balanced.
+    lighting.skyColor = {1.0f, 1.0f, 1.0f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.lighting.skyColor.r, 0.5f));
+
+    // One it can't load: the name kept, the scene's own look.
+    CHECK(!h.system.setVisualStyle("asset:gone"));
+    CHECK(h.system.visualStyleName() == "asset:gone");
+    h.frame();
+    CHECK(h.renderer.frame.grading == own);
+
+    // Off.
+    CHECK(h.system.setVisualStyle(""));
+    h.frame();
+    CHECK(h.renderer.frame.grading == own);
+    CHECK(h.renderer.frame.lightBalance.neutral());
+    CHECK(testing::approx(
+        h.renderer.frame.shadows.softness, ShadowSettings{}.softness));
+
+    // Given as is (an edit being previewed), not loaded.
+    const std::size_t asks = asked.size();
+    VisualStyle edited = style;
+    edited.grading.exposure = -1.0f;
+    h.system.setVisualStyle("asset:real", edited);
+    h.frame();
+    CHECK(asked.size() == asks);
+    CHECK(testing::approx(h.renderer.frame.grading.exposure, -1.0f));
+    // Reloading reads it again (the saved one).
+    h.system.reloadVisualStyle();
+    h.frame();
+    CHECK(testing::approx(h.renderer.frame.grading.exposure, 0.5f));
+  }
+
+  TEST("the weather should reach the frame, its clouds drifting on its "
+       "wind while the clock runs")
+  {
+    Harness h;
+    SceneWeather weather;
+    weather.rain = 1.5f; // clamped
+    weather.wetness = 0.5f;
+    weather.wind = {10.0f, 0.0f};
+    weather.cloudDarkness = 0.25f;
+    h.system.setWeather(weather);
+    h.frame();
+    CHECK(h.renderer.frame.weather.rain == 1.0f);
+    CHECK(h.renderer.frame.weather.wetness == 0.5f);
+    CHECK(h.renderer.frame.weather.wind == weather.wind);
+
+    // 100 s at 10 m/s: a kilometre; not while it's stopped.
+    const glm::vec2 before = h.renderer.frame.cloudDrift;
+    h.scene.update(100.0);
+    h.scene.render();
+    CHECK(std::abs(h.renderer.frame.cloudDrift.x - before.x - 1.0f) < 1e-3f);
+    h.system.setAnimating(false);
+    h.scene.update(100.0);
+    h.scene.render();
+    CHECK(std::abs(h.renderer.frame.cloudDrift.x - before.x - 1.0f) < 1e-3f);
+
+    // Under a physical sky, clouds have their light; overcast, eyes don't
+    // adapt to the dull day (the clouds' dimming isn't made up).
+    SceneLighting lighting;
+    lighting.sun.direction = {0.5f, -0.2f, 0.8f};
+    h.system.setLighting(lighting);
+    SkySettings physical;
+    physical.model = SkyModel::Physical;
+    physical.adaptation = 1.0f;
+    h.system.setSkySettings(physical);
+    h.frame();
+    const FrameSky clear = h.renderer.frame.sky;
+    CHECK(clear.cloudCover == 0.0f);
+    lighting.cloudCover = 1.0f;
+    h.system.setLighting(lighting);
+    h.frame();
+    h.system.finishSkyWork();
+    h.frame();
+    const FrameSky overcast = h.renderer.frame.sky;
+    CHECK(overcast.cloudCover == 1.0f);
+    CHECK(overcast.cloudDarkness == 0.25f);
+    CHECK(overcast.cloudLight.r > 0.5f);
+    CHECK(overcast.cloudBase.r > 0.0f);
+    CHECK(overcast.cloudBase.r < overcast.cloudLight.r);
+    CHECK(overcast.sunLight.r < clear.sunLight.r * 0.5f);
+    // The sky's light greyer (a cloud deck can be as bright overhead as a
+    // clear blue sky, but not as blue).
+    const glm::vec3 overcastSky = overcast.irradiance.at({0, 0, 1});
+    const glm::vec3 clearSky = clear.irradiance.at({0, 0, 1});
+    CHECK(overcastSky.b / overcastSky.r < clearSky.b / clearSky.r);
+    CHECK(testing::approx(overcast.adaptation, clear.adaptation));
+  }
+
+  TEST("rain should drift on the wind it's had, its slant eased toward "
+       "a gust")
+  {
+    Harness h;
+    SceneWeather weather;
+    weather.wind = {5.0f, 0.0f};
+    h.system.setWeather(weather);
+    h.scene.update(10.0);
+    h.scene.render();
+    // 10 s at 0.8 x 5 m/s.
+    CHECK(std::abs(h.renderer.frame.rainDrift.x - 40.0f) < 1e-2f);
+    CHECK(h.renderer.frame.rainWind == weather.wind);
+    // A sudden gust turns the drops over a second or so, not at once.
+    weather.wind = {-15.0f, 5.0f};
+    h.system.setWeather(weather);
+    h.scene.update(0.1);
+    h.scene.render();
+    CHECK(h.renderer.frame.rainWind.x > -2.0f);
+    CHECK(h.renderer.frame.rainWind.x < 5.0f);
+    CHECK(h.renderer.frame.rainDrift.x > 40.0f - 1.0f);
+  }
+
+  TEST("lightning should flash in the frame, cast a near strike's shadow, "
+       "and be gone once it has faded")
+  {
+    Harness h;
+    SceneLighting lighting;
+    lighting.sun.direction = {0.3f, 0.2f, -0.5f}; // night
+    lighting.cloudCover = 1.0f;
+    h.system.setLighting(lighting);
+    SkySettings physical;
+    physical.model = SkyModel::Physical;
+    h.system.setSkySettings(physical);
+    h.frame();
+    CHECK(!h.renderer.frame.lightning.active);
+
+    LightningStrike strike;
+    strike.position = {200.0f, 100.0f, 0.0f};
+    strike.seed = 7;
+    h.system.strikeLightning(strike);
+    CHECK(h.system.lightningStrikes() == 1);
+    h.system.holdLightning(0.0f); // the first stroke's peak
+    h.frame();
+    const FrameLightning& flash = h.renderer.frame.lightning;
+    CHECK(flash.active);
+    CHECK(flash.channel);
+    CHECK(flash.low == strike.position);
+    CHECK(flash.high.z > 1000.0f);
+    CHECK(flash.channelLight.b > 0.0f);
+    CHECK(flash.cloudGlow.b > 0.0f);
+    // Its shadow's light: the frame's last, casting a shadow.
+    CHECK(flash.shadowLight >= 0);
+    CHECK(static_cast<std::size_t>(flash.shadowLight) + 1 ==
+          h.renderer.frame.pointLights.size());
+    CHECK(h.renderer.frame.pointLights.back().castsShadow);
+
+    // Held, it stays; let go, it fades and is gone.
+    h.scene.update(5.0);
+    h.scene.render();
+    CHECK(h.system.lightningStrikes() == 1);
+    h.system.holdLightning(std::nullopt);
+    h.scene.update(lightningDuration(strike) + 0.1);
+    h.scene.render();
+    CHECK(h.system.lightningStrikes() == 0);
+    CHECK(!h.renderer.frame.lightning.active);
+    CHECK(h.renderer.frame.lightning.shadowLight == -1);
+
+    // An in-cloud strike only lights the clouds.
+    strike.inCloud = true;
+    h.system.strikeLightning(strike);
+    h.frame();
+    CHECK(h.renderer.frame.lightning.active);
+    CHECK(!h.renderer.frame.lightning.channel);
+    CHECK(h.renderer.frame.lightning.shadowLight == -1);
+  }
+
+  TEST("a physical sky should light the frame from the sun's direction, "
+       "working its diffuse light out again only when the sun has moved")
+  {
+    Harness h;
+    SceneLighting lighting;
+    lighting.sun.direction = {0.5f, -0.2f, 0.8f};
+    h.system.setLighting(lighting);
+
+    // Flat (the default): no model.
+    h.frame();
+    CHECK(!h.renderer.frame.sky.physical);
+
+    SkySettings physical;
+    physical.model = SkyModel::Physical;
+    h.system.setSkySettings(physical);
+    h.frame();
+    const FrameSky first = h.renderer.frame.sky;
+    CHECK(first.physical != nullptr);
+    CHECK(first.sunLight.r > 0.5f);
+    CHECK(first.irradiance.at({0, 0, 1}).b > 0.05f);
+    CHECK(glm::length(first.toSun - glm::normalize(lighting.sun.direction)) <
+          1e-5f);
+
+    // The same sun: nothing worked out again; the same model kept.
+    h.frame();
+    CHECK(h.renderer.frame.sky.revision == first.revision);
+    CHECK(h.renderer.frame.sky.physical == first.physical);
+    // A hair's move: still not; a degree: again.
+    lighting.sun.direction = {0.5f, -0.2001f, 0.8f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.revision == first.revision);
+    // (In the background: the frame keeps the old until it's ready.)
+    lighting.sun.direction = {0.5f, -0.2f, 0.75f};
+    h.system.setLighting(lighting);
+    h.frame();
+    h.system.finishSkyWork();
+    h.frame();
+    CHECK(h.renderer.frame.sky.revision != first.revision);
+    CHECK(glm::length(h.renderer.frame.sky.toSun -
+                      glm::normalize(lighting.sun.direction)) < 1e-5f);
+
+    // Set: no sun, no shadows.
+    lighting.sun.direction = {0.5f, -0.2f, -0.3f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.sunLight == glm::vec3(0.0f));
+    CHECK(!h.renderer.frame.shadows.enabled);
+
+    // A full moon up: it lights the frame in the sun's place, casting
+    // shadows, and the night sky glows brighter under it.
+    lighting.moon.direction = {-0.3f, -0.2f, 0.8f};
+    lighting.moon.phase = 1.0f;
+    h.system.setLighting(lighting);
+    // (Twice: the setting sun's may still have been being worked out.)
+    for (int i = 0; i < 2; ++i)
+    {
+      h.frame();
+      h.system.finishSkyWork();
+    }
+    h.frame();
+    const FrameSky moonlit = h.renderer.frame.sky;
+    CHECK(moonlit.moonLit);
+    CHECK(moonlit.sunLight.b > 0.002f);
+    CHECK(moonlit.night > 1.05f);
+    CHECK(h.renderer.frame.shadows.enabled);
+    CHECK(glm::length(h.renderer.frame.lighting.sun.direction -
+                      glm::normalize(lighting.moon.direction)) < 1e-5f);
+    CHECK(glm::length(moonlit.toSun -
+                      glm::normalize(glm::vec3(0.5f, -0.2f, -0.3f))) < 1e-5f);
+    // A half moon gives less; clouds less again.
+    lighting.moon.phase = 0.5f;
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.sunLight.b < moonlit.sunLight.b * 0.5f);
+    lighting.moon.phase = 1.0f;
+    lighting.cloudCover = 1.0f;
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(h.renderer.frame.sky.sunLight.b < moonlit.sunLight.b * 0.5f);
+    CHECK(h.renderer.frame.sky.cloudCover == 1.0f);
+    // Set too: nothing shines.
+    lighting.cloudCover = 0.0f;
+    lighting.moon.direction = {-0.3f, -0.2f, -0.5f};
+    h.system.setLighting(lighting);
+    h.frame();
+    CHECK(!h.renderer.frame.sky.moonLit);
+    CHECK(!h.renderer.frame.shadows.enabled);
+
+    // A style's sky replaces the scene's; its sky balance scales it.
+    VisualStyle style;
+    style.sky = SkySettings{};
+    h.system.setVisualStyle("asset:flat", style);
+    h.frame();
+    CHECK(!h.renderer.frame.sky.physical);
+    style.sky = physical;
+    style.skyIntensity = 0.5f;
+    h.system.setVisualStyle("asset:physical", style);
+    h.system.setSkySettings({});
+    h.frame();
+    CHECK(h.renderer.frame.sky.physical != nullptr);
+    CHECK(h.renderer.frame.sky.scale == glm::vec3(0.5f));
+
+    // A 2D game's sky is always flat.
+    h.system.setSpace2D(Space2D{});
+    h.frame();
+    CHECK(!h.renderer.frame.sky.physical);
+  }
+
+  TEST("shadow cascades should reach along the view when asked for, and the "
+       "one map stay as ever otherwise")
+  {
+    Harness h;
+    SceneLighting lighting;
+    lighting.sun.direction = {0.4f, -0.3f, 0.8f};
+    h.system.setLighting(lighting);
+
+    h.frame();
+    CHECK(h.renderer.frame.shadows.enabled);
+    CHECK(h.renderer.frame.cascades.count == 0);
+    const glm::mat4 single = h.renderer.frame.lightViewProjection;
+
+    VisualStyle style;
+    style.shadowCascades = 4;
+    style.shadowCascadeDistance = 150.0f;
+    h.system.setVisualStyle("asset:far", style);
+    h.frame();
+    const SunCascades& cascades = h.renderer.frame.cascades;
+    CHECK(cascades.count == 4);
+    CHECK(cascades.cascades[3].splitFar <= 150.0f + 1e-3f);
+    CHECK(h.renderer.frame.shadows.cascades == 4u);
+
+    // Off again: the one map, exactly as before.
+    h.system.setVisualStyle("");
+    h.frame();
+    CHECK(h.renderer.frame.cascades.count == 0);
+    CHECK(h.renderer.frame.lightViewProjection == single);
+
+    // A 2D game: the one map.
+    ShadowSettings shadows = h.system.shadowSettings();
+    shadows.cascades = 3;
+    h.system.setShadowSettings(shadows);
+    h.frame();
+    CHECK(h.renderer.frame.cascades.count == 3);
+    h.system.setSpace2D(Space2D{});
+    h.frame();
+    CHECK(h.renderer.frame.cascades.count == 0);
+  }
+
+  TEST("contact shadows should be the scene's or its style's, a 3D scene's "
+       "only")
+  {
+    Harness h;
+    h.frame();
+    CHECK(!h.renderer.frame.contactShadows.enabled); // off by default
+
+    h.system.setContactShadowSettings({.enabled = true, .length = 0.4f});
+    h.frame();
+    CHECK(h.renderer.frame.contactShadows.enabled);
+    CHECK(h.renderer.frame.contactShadows.length == 0.4f);
+
+    // A style's stand in for the scene's while it's set.
+    VisualStyle style;
+    style.contactShadows = ContactShadowSettings{
+        .enabled = true, .length = 0.9f, .thickness = 0.5f, .strength = 0.6f};
+    h.system.setVisualStyle("asset:contact", style);
+    h.frame();
+    CHECK(h.renderer.frame.contactShadows == *style.contactShadows);
+    h.system.setVisualStyle("");
+    h.frame();
+    CHECK(h.renderer.frame.contactShadows.length == 0.4f);
+
+    // A 2D game has none.
+    h.system.setSpace2D(Space2D{});
+    h.frame();
+    CHECK(!h.renderer.frame.contactShadows.enabled);
+  }
+
+  TEST("materials should draw as their variants for the visual style's tag, "
+       "switching live, without loading anything more per frame")
+  {
+    Harness h;
+    MeshLibrary& library = h.system.meshes();
+    MeshLibrary::Provider provider;
+    int loads = 0;
+    provider.loadMaterial =
+        [&loads](std::string_view name) -> std::shared_ptr<const MeshMaterial>
+    {
+      ++loads;
+      auto material = std::make_shared<MeshMaterial>();
+      if (name == "turf")
+        material->variants = {
+            {"realistic", "turf real"}, {"painted", "turf painted"}};
+      if (name == "turf real" || name == "turf painted")
+        material->roughness = 0.5f;
+      if (name == "turf real") // not followed (a variant's own variant)
+        material->variants = {{"realistic", "turf painted"}};
+      return name == "nothing" ? nullptr : material;
+    };
+    library.setProvider(provider);
+
+    const MeshHandle box = library.add(meshes::box({1, 1, 1}));
+    h.spawn(box, {0.0f, 0.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"turf"};
+    h.spawn(box, {0.0f, 2.0f, 0.0f})
+        .getComponent<MeshRendererComponent>()
+        .materials = {"stone"};
+    GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
+    (void)grassModule;
+    const MeshHandle plane = library.add(meshes::plane({4.0f, 4.0f}));
+    Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
+    lawn.addComponent<GrassComponent>(
+        GrassComponent{.material = "turf", .density = 20.0f});
+
+    const auto drawnMaterials = [&]
+    {
+      std::vector<MaterialHandle> out;
+      for (const auto& batch : h.renderer.batches)
+        out.insert(out.end(), batch.materials.begin(), batch.materials.end());
+      return out;
+    };
+    const auto has =
+        [](const std::vector<MaterialHandle>& list, MaterialHandle material)
+    { return std::find(list.begin(), list.end(), material) != list.end(); };
+
+    h.frame();
+    const MaterialHandle turf = library.material("turf");
+    const MaterialHandle stone = library.material("stone");
+    CHECK(has(drawnMaterials(), turf) && has(drawnMaterials(), stone));
+    CHECK(h.renderer.grassDrawn.size() == 1u &&
+          h.renderer.grassDrawn[0].material == turf);
+    CHECK(loads == 2); // no variant loaded while none is asked for
+
+    // The style's tag: turf draws as its variant (grass too), stone as itself.
+    VisualStyle realistic;
+    realistic.materialVariant = "realistic";
+    h.system.setVisualStyle("asset:realistic", realistic);
+    CHECK(library.materialVariant() == "realistic");
+    h.frame();
+    const MaterialHandle real = library.material("turf");
+    CHECK(real.valid() && real != turf);
+    CHECK(library.materialData(real)->roughness == 0.5f);
+    CHECK(has(drawnMaterials(), real) && !has(drawnMaterials(), turf));
+    CHECK(has(drawnMaterials(), stone));
+    CHECK(h.renderer.grassDrawn.size() == 1u &&
+          h.renderer.grassDrawn[0].material == real);
+    // The variant asked as itself doesn't follow its own variant.
+    CHECK(library.material("turf real") == real);
+    const int loaded = loads;
+    for (int i = 0; i < 3; ++i)
+      h.frame();
+    CHECK(loads == loaded); // nothing more loads frame to frame
+
+    // Another tag, then none: back to the material itself, live.
+    VisualStyle painted;
+    painted.materialVariant = "painted";
+    h.system.setVisualStyle("asset:painted", painted);
+    h.frame();
+    const MaterialHandle paint = library.material("turf");
+    CHECK(paint != real && paint != turf);
+    CHECK(has(drawnMaterials(), paint));
+    h.system.setVisualStyle("");
+    h.frame();
+    CHECK(library.material("turf") == turf);
+    CHECK(has(drawnMaterials(), turf) && !has(drawnMaterials(), paint));
+
+    // A tag none has, and a variant that can't load: themselves.
+    library.setMaterialVariant("unknown");
+    CHECK(library.material("turf") == turf);
+    MeshMaterial broken;
+    broken.variants = {{"realistic", "nothing"}};
+    const MaterialHandle game = library.setMaterial("game:broken", broken);
+    library.setMaterialVariant("realistic");
+    CHECK(library.material("game:broken") == game);
+
+    // Materials loaded after the tag is set resolve straight away.
+    CHECK(library.material("turf") == real);
+
+    // Every material (variants included) is freed with the library.
+    const std::size_t live = h.renderer.liveMaterials.size();
+    CHECK(live >= 5u);
+  }
+
+  TEST("a style's material overrides should draw a game's own material as "
+       "another, and a terrain standing in for a painted one keep its paint")
+  {
+    Harness h;
+    MeshLibrary& library = h.system.meshes();
+    const auto image = [](uint8_t value)
+    {
+      auto texture = std::make_shared<TextureData>();
+      texture->width = texture->height = 1;
+      texture->rgba = {value, value, value, 255};
+      return texture;
+    };
+    // A game paints its ground in code; a terrain to stand in for it.
+    MeshMaterial painted;
+    painted.baseTexture = image(200);
+    const MaterialHandle ground = library.setMaterial("game:ground", painted);
+    MeshMaterial plain;
+    const MaterialHandle other = library.setMaterial("game:plain", plain);
+    MeshMaterial terrain;
+    auto layers = std::make_shared<TerrainMaterial>();
+    layers->layers.push_back({.name = "Grass"});
+    terrain.terrain = layers;
+    const MaterialHandle field = library.setMaterial("terrain", terrain);
+    CHECK(library.material("game:ground") == ground);
+    const std::size_t live = h.renderer.liveMaterials.size();
+
+    VisualStyle style;
+    style.materials = {{"game:ground", "terrain"}, {"game:plain", "missing"}};
+    h.system.setVisualStyle("asset:style", style);
+    const MaterialHandle drawn = library.material("game:ground");
+    CHECK(drawn.valid() && drawn != ground && drawn != field);
+    const MeshMaterial* standIn = library.materialData(drawn);
+    CHECK(standIn && standIn->terrain &&
+          standIn->terrain->tint == painted.baseTexture);
+    CHECK(standIn && standIn->terrain->layers.size() == 1u);
+    // An override that can't load: itself.
+    CHECK(library.material("game:plain") == other);
+
+    // Painted again: the same stand-in, its tint the new paint.
+    painted.baseTexture = image(90);
+    library.setMaterial("game:ground", painted);
+    CHECK(library.material("game:ground") == drawn);
+    CHECK(library.materialData(drawn)->terrain->tint == painted.baseTexture);
+
+    // No style: itself again, the stand-in let go.
+    h.system.setVisualStyle("");
+    CHECK(library.material("game:ground") == ground);
+    CHECK(h.renderer.liveMaterials.size() == live);
   }
 
   TEST("a mesh's sections should be its material slots")
