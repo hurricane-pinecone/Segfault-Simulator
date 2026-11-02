@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/runtime/rendering/framePlan.h"
+#include "engine/runtime/rendering/grassTiles.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/webgpu/wgpuHandle.h"
 
@@ -165,15 +166,18 @@ private:
     // Whether its WGSL reads the time (a graph's may cut its see-through
     // parts out by it: their shadows change every frame).
     bool timed = false;
-    mutable wgpu::RenderPipeline grass;
-    mutable bool grassBroken = false;
-    mutable wgpu::RenderPipeline grassGround; // the ground under grass
-    mutable bool grassGroundBroken = false;
+    // (One for each GrassDraw.)
+    mutable std::array<wgpu::RenderPipeline, 3> grass;
+    mutable std::array<bool, 3> grassBroken{};
     // Its depth and normals, for ambient occlusion: built the first time a
     // frame has it.
     mutable wgpu::RenderPipeline depthNormals;
     mutable wgpu::RenderPipeline depthNormalsTwoSided;
     mutable bool depthNormalsBroken = false;
+    // As its shadow, writing heights too, for rain's overhead map: built the
+    // first time it rains.
+    mutable wgpu::RenderPipeline rainMap;
+    mutable bool rainMapBroken = false;
   };
 
   // A texture and its view.
@@ -188,7 +192,9 @@ private:
   // blades grown each frame (three lists, by detail, and the indices of those
   // casting the sun's shadow) with their indirect draws, the grow pass's
   // bindings, group 2 of the grass pipelines (one a list) and group 1 of its
-  // shadow's.
+  // shadow's. And its blades kept in tiles (GrassTileCache): the tiles, their
+  // blades, how many each has, and a frame's tiles (to build, to grow from),
+  // with the tile passes' bindings.
   struct GpuGrass
   {
     GrassFieldState state; // its grids, trample bounds and blade capacity
@@ -196,6 +202,9 @@ private:
     GpuImage shape;
     GpuImage data;
     GpuImage trample;
+    // Its ground's terrain's splat map, for its ground past the maps (null:
+    // none, a stand-in bound).
+    std::shared_ptr<GpuTexture> farSplat;
 
     wgpu::Buffer blades;
     wgpu::Buffer draws;
@@ -205,6 +214,22 @@ private:
     wgpu::BindGroup growBindings;
     std::array<wgpu::BindGroup, 3> drawBindings;
     wgpu::BindGroup shadowBindings;
+    std::unique_ptr<GrassTileCache> tiles;
+    wgpu::Buffer kept;
+    uint32_t keptChunks = 0; // room for them
+    wgpu::Buffer tileState;  // by slot: its blades, and this frame's listed
+    wgpu::Buffer tileList;
+    uint32_t tileListRoom = 0; // entries
+    wgpu::Buffer listedIn;     // this frame's blades' lists
+    uint32_t listedRoom = 0;   // chunks
+    wgpu::BindGroup tileBindings;
+    // This frame: grown from its tiles (those to build, and those to grow
+    // from), or all of it (cs_main's workgroups).
+    bool fromTiles = false;
+    uint32_t builds = 0;
+    uint32_t tilesDrawn = 0;
+    glm::uvec3 workgroups{0, 0, 0};
+
     bool grown = false;    // this frame: its blades
     bool placed = false;   // this frame: its draw's uniforms (for its ground)
     bool casts = false;    // this frame: its blades into the sun's shadow
@@ -380,7 +405,16 @@ private:
                            glm::ivec2 size,
                            const void* pixels,
                            uint32_t bytesPerPixel);
-  WGPURenderPipeline grassPipeline(const Surface& surface, bool ground);
+  // What a grass pipeline draws: the ground under it, its nearest list of
+  // blades (which find the air at their vertices, see meshGrass.wgsl), or
+  // the others.
+  enum class GrassDraw
+  {
+    Ground,
+    NearBlades,
+    Blades,
+  };
+  WGPURenderPipeline grassPipeline(const Surface& surface, GrassDraw draw);
   // Ambient occlusion (and contact shadows, worked out with it): whether this
   // frame has it (its passes and targets made, the lit bindings pointed at
   // its map), the passes working it out, and a surface's depth-and-normals
@@ -389,6 +423,12 @@ private:
   void encodeOcclusion();
   WGPURenderPipeline depthNormalsPipeline(const Surface& surface,
                                           bool twoSided);
+  // Grass tiles hidden behind what's drawn opaque left out: from ambient
+  // occlusion's depth (when the frame has it), the farthest depth over the
+  // screen's blocks (grassCulling.wgsl), its levels made for its size, and
+  // worked out.
+  void ensureGrassCulling();
+  void encodeGrassCulling();
   void growGrass();
   // Find the puddles of terrains whose ground, deformation or settings
   // changed (puddles.h), before they're drawn.
@@ -422,10 +462,12 @@ private:
   void uploadFrame();
   void encodeShadowPass();
   // Rain: its overhead map (made full size the first time it's needed), drawn
-  // from the sun's shadow casters; and its streaks and splashes, in the lit
-  // pass (their pipeline built the first time).
+  // from the sun's shadow casters (with a surface's pipeline for it, null if
+  // it doesn't build); and its streaks and splashes, in the lit pass (their
+  // pipeline built the first time).
   bool ensureRainMap();
   void encodeRainMap();
+  WGPURenderPipeline rainMapPipeline(const Surface& surface);
   WGPURenderPipeline rainPipeline();
   void encodeRain(WGPURenderPassEncoder pass);
   void encodeLitPass();
@@ -443,6 +485,7 @@ private:
     SeeThrough,
     LightShadow,  // a point light's shadow map (every section)
     DepthNormals, // ambient occlusion's first pass (as Opaque)
+    RainMap,      // rain's overhead map (as All)
   };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
   // The pipeline a surface draws with in a pass (see Sections).
@@ -496,8 +539,70 @@ private:
   wgpu::BindGroupLayout m_grassLayout;
   wgpu::BindGroupLayout m_grassGrowLayout;
   wgpu::ComputePipeline m_grassGrowPipeline;
+  // Growing from tiles kept built (meshGrassGrow.wgsl's cs_build, then
+  // cs_count, cs_order and cs_grow, listing them front to back); or not
+  // (SFS_GRASS_UNCACHED: all of them every frame, as cs_main). With
+  // SFS_GRASS_TILES, tiles built lately are tinted.
+  wgpu::BindGroupLayout m_grassTileLayout;
+  wgpu::ComputePipeline m_grassBuildPipeline;
+  wgpu::ComputePipeline m_grassCountPipeline;
+  wgpu::ComputePipeline m_grassOrderPipeline;
+  wgpu::ComputePipeline m_grassTilePipeline;
+  bool m_grassUncached = false;
+  bool m_grassTilesShown = false;
+  uint64_t m_grassFrame = 0;
   wgpu::BindGroupLayout m_grassShadowLayout;
   wgpu::RenderPipeline m_grassShadowPipeline;
+
+  // Counting grass's work, for measuring it (SFS_GRASS_STATS, natively): the
+  // grow pass counts its blades at each of its steps, all fields together,
+  // into m_grassCounters (see meshGrassGrow.wgsl), and the device how many
+  // vertices and fragments its blades' draws shade (where it can count
+  // them); with SFS_GRASS_STATS=2, the blades' pass also counts the
+  // fragments it draws at each pixel (which keeps the GPU from skipping
+  // hidden ones early, so it's slower). Now and then they're read back, and
+  // their averages logged.
+  static constexpr uint32_t kGrassCounters = 20;
+  static constexpr uint32_t kGrassQueries = 8;    // fields counted a frame
+  static constexpr uint32_t kGrassStatistics = 3; // each one's numbers
+  struct GrassStats
+  {
+    bool pixels = false;    // counting each pixel's fragments
+    wgpu::QuerySet queries; // the device's counts, each field's blades
+    wgpu::Buffer resolved;
+    uint32_t queried = 0; // this frame's fields
+    uint32_t copiedQueries = 0;
+    std::array<double, kGrassStatistics> statistics{};
+    enum class Readback
+    {
+      Idle,
+      Copied,
+      Mapping,
+      Mapped,
+    };
+    wgpu::Buffer fragments; // a count a pixel, the lit pass's size
+    glm::ivec2 size{0};
+    wgpu::Buffer readback; // the counters, then the fragments
+    glm::ivec2 copiedSize{0};
+    Readback state = Readback::Idle;
+    uint32_t readbacks = 0; // since the last log
+    std::array<double, kGrassCounters> counters{};
+    double fragmentsShaded = 0.0;
+    double pixelsCovered = 0.0;
+    double screenPixels = 0.0;
+    std::array<double, 6> overdraw{}; // pixels shaded 1, 2-3, 4-7, 8-15,
+                                      // 16-31, 32+ times
+    // Kept tiles, all fields' a frame, summed since the last log: grown
+    // from, built, kept, no room for, and their blades' room in use and in
+    // all (bytes).
+    std::array<double, 6> tiles{};
+    uint32_t tileFrames = 0;
+  };
+  std::unique_ptr<GrassStats> m_grassStats;
+  wgpu::Buffer m_grassCounters; // bound to the grow pass, counting or not
+  void beginGrassStats();
+  void copyGrassStats();
+  void readGrassStats();
 
   // Timing the frame's passes on the GPU, for measuring what they cost: with
   // SFS_GPU_TIMING set, on a device with timestamp queries, their averages
@@ -565,12 +670,16 @@ private:
   // map's.
   wgpu::Buffer m_cascadeUniforms;
 
-  // Rain's overhead map (RainMap: depth looking straight down), while the
-  // weather has rain (until then a 1x1 stand-in, never read); whether it's
-  // the real one, and drawn this frame. Rain's streaks and splashes'
-  // pipeline (rain.wgsl), and whether it failed to build (logged).
+  // Rain's overhead map (RainMap: depth looking straight down), and its
+  // heights (a float's bits: OpenGL can only compare against a depth
+  // texture, not read it), while the weather has rain (until then 1x1
+  // stand-ins, never read); whether they're the real ones, and drawn this
+  // frame. Rain's streaks and splashes' pipeline (rain.wgsl), and whether it
+  // failed to build (logged).
   wgpu::Texture m_rainMap;
   wgpu::TextureView m_rainMapView;
+  wgpu::Texture m_rainHeights;
+  wgpu::TextureView m_rainHeightsView;
   bool m_rainMapFull = false;
   bool m_rained = false;
   wgpu::RenderPipeline m_rainPipeline;
@@ -734,6 +843,31 @@ private:
     std::array<wgpu::BindGroup, 3> bindings;
   };
   OcclusionTargets m_occlusion;
+  // The farthest depths over the screen's blocks, for grass (see
+  // ensureGrassCulling()): its levels (one 1 x 1 till there's ambient
+  // occlusion's depth), the passes working each out (the first reading that
+  // depth, each next the level before) and their settings; whether this
+  // frame has them; or never (SFS_GRASS_UNCULLED).
+  struct GrassCulling
+  {
+    glm::ivec2 size{0, 0}; // its finest level's
+    glm::ivec2 from{0, 0}; // the depths' it was made for
+    wgpu::Texture texture;
+    wgpu::TextureView all;
+    std::vector<wgpu::TextureView> levels;
+    std::vector<wgpu::BindGroup> bindings;
+    wgpu::Buffer params;
+    wgpu::Texture none; // a 1 x 1 stand-in
+    wgpu::TextureView noneView;
+  };
+  GrassCulling m_grassCulling;
+  wgpu::BindGroupLayout m_grassCullingLayout;
+  wgpu::RenderPipeline m_grassCullingPipeline;
+  bool m_grassCulled = false;
+  bool m_grassUnculled = false;
+  // Grass's ground drawn without its blades (SFS_GRASS_GROUND_ONLY), to
+  // compare the two.
+  bool m_grassGroundOnly = false;
   wgpu::Texture m_noOcclusion;
   wgpu::TextureView m_noOcclusionView;
   wgpu::BindGroupLayout m_occlusionLayout;

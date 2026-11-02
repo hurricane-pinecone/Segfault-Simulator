@@ -199,7 +199,9 @@ fn terrainLayerAt(layer: i32, world: vec3f, dx: vec3f, dy: vec3f, projections: P
   return out;
 }
 
-// Grass seen from afar, past where its blades are drawn (a layer's meadow):
+// Grass seen from afar, past where its blades are drawn (a layer's meadow;
+// where grass grows on the terrain, its ground carries the grass's own look
+// over these layers instead, see meshGrass.wgsl's fs_ground):
 // its colour broken up in patches, a little yellower or bluer, lighter or
 // darker; light and dark bands rolling across it with the wind, as its gusts
 // roll over the blades (grassBlade.wgsl), showing more or less of their paler

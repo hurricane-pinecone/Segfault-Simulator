@@ -213,6 +213,14 @@ struct GrassUniforms
   glm::mat4 model;
   glm::mat4 normalMatrix;
   glm::mat4 inverseModel;
+  glm::vec4 vertexSun; // where blades start finding the sun's shadow at their
+                       // vertices, over how far (see meshGrass.wgsl), 0, 0
+  // Its ground past the maps (grassFarGround()): how much its terrain's
+  // first layer is meadow, 1 with a terrain, where the blades start thinning
+  // out to none (world units), 0; and how much each of the terrain's splat
+  // map's channels' layers is.
+  glm::vec4 far{0.0f};
+  glm::vec4 farMeadow{0.0f};
 };
 
 /** `Grow` in meshGrassGrow.wgsl. */
@@ -227,11 +235,26 @@ struct GrassGrowUniforms
   glm::vec4 maps;      // the maps' grid min, 1 / its size
   glm::vec4 shape;     // height, variation, width, finest cell
   glm::vec4 reach;     // each lattice's
-  glm::vec4 detail;    // 5 segments to, 2 to, casting shadows to (0: none)
+  glm::vec4 detail;    // 4 segments to, 2 to, casting shadows to (0: none),
+                       // counting (1)
+  glm::vec4 thinning;  // all kept to, how fast fewer past it, fewer still
+                       // from (none at the draw distance), 1 (0: the old
+                       // way, by lattice)
   glm::uvec4 capacity; // each list's, and the shadow casters'
   std::array<glm::ivec4, 4> lattices; // first cell, count
+  // Grown from tiles kept built (GrassTileCache): the tiles to build, where
+  // those drawn from start, how many of those, and their chunks.
+  glm::uvec4 tiles;
+  // Tiles hidden (behind what's drawn opaque) left out: the view, where it's
+  // from and which way it looks (the camera's own, not grass's), and the
+  // farthest depths over the screen's blocks: their finest level's size
+  // (texels) and how many levels (0: none, nothing's left out).
+  glm::mat4 viewProjection{1.0f};
+  glm::vec4 eye{0.0f};
+  glm::vec4 forward{0.0f};
+  glm::vec4 hidden{0.0f};
 };
-static_assert(sizeof(GrassGrowUniforms) == 416,
+static_assert(sizeof(GrassGrowUniforms) == 560,
               "GrassGrowUniforms must match meshGrassGrow.wgsl's Grow");
 
 /** A grown blade (meshGrassGrow.wgsl's `GrownBlade`), in bytes. */
@@ -605,12 +628,44 @@ struct GrassPlan
  */
 float grassShadowReach(const GrassBatch& batch, const FrameParams& frame);
 
+/**
+ * The share of a grass field's blades kept at `distance` from the camera, as
+ * its grow pass keeps them (`grassKept` in meshGrassGrow.wgsl, by
+ * `uniforms.thinning` and the draw distance): 1 near the camera, falling
+ * smoothly with distance, to 0 at the draw distance. Each blade has its own
+ * rank, the same every frame (0..1, the coarser its lattice the lower), and
+ * is kept where it's below this: so the blades that are kept are always the
+ * same ones, wherever the camera is.
+ */
+float grassKeptShare(const GrassGrowUniforms& uniforms, float distance);
+
+/**
+ * Whether grass is thinned the old way (SFS_GRASS_LEGACY_THINNING set): each
+ * of its lattices reaching so far from the camera, its blades shrinking away
+ * at its end (for comparing).
+ */
+bool grassLegacyThinning();
+
 /** How many of the sun's nearest cascades grass casts its shadow into. */
 inline constexpr uint32_t kGrassShadowCascades = 2;
 /** The furthest grass casts the sun's shadow, with cascades. */
 inline constexpr float kGrassShadowMostReach = 32.0f;
 /** How far grass casts the sun's shadow with one shadow map. */
 inline constexpr float kGrassShadowOneMapReach = 8.0f;
+/**
+ * The lowest the sun (its direction's Z) can be for grass tiles that cast
+ * shadows to be left out when hidden (their shadows, falling up to about 6
+ * times their height away, allowed for).
+ */
+inline constexpr float kGrassLowestCulledSun = 0.16f;
+
+/**
+ * Where grass's ground carries on past its maps (meshGrass.wgsl's
+ * fs_ground; a big mesh's grass has them only in a window around the
+ * camera): over its terrain's (`terrain`, its ground's material) layers as
+ * much as each is `meadow`, out to the horizon; none without one.
+ */
+void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain);
 
 /**
  * Plan a grass field's frame: its draw's uniforms, and (if any blades are in

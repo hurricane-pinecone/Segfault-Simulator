@@ -31,10 +31,10 @@ class WorkerPool;
  *
  * Each entity's ground (GrassGround) is built from its mesh and how it's
  * turned and scaled, and uploaded once; the renderer grows the blades on it
- * every frame, so moving the entity, or changing its grass's settings, costs
- * nothing. Each update, its trample map springs back and is pressed by the
- * frame's benders: rigid bodies that bend grass (sized by their colliders) and
- * GrassBenderComponent entities.
+ * (keeping them in tiles until what they grow from changes: see
+ * GrassTileCache). Each update, its trample map springs back and is pressed
+ * by the frame's benders: rigid bodies that bend grass (sized by their
+ * colliders) and GrassBenderComponent entities.
  *
  * A big mesh (much wider than twice its grass's draw distance: the land out
  * to the horizon, say) grows grass only in a window around the camera, a
@@ -55,9 +55,11 @@ class WorkerPool;
  * Its maps (GrassMaps: where it grows, how long, and data for its material)
  * start as the component's `paint`, and a game changes them as it plays
  * through maps(), stamp() and the rest, in world space: only what changed goes
- * up to the GPU. Those changes aren't saved in the scene (it holds where grass
- * starts): a game saves them itself (GrassMaps::toJson()) if it wants them
- * kept. Setting the component's `paint` starts them over from it.
+ * up to the GPU, and only the blades over where coverage or length changed
+ * are grown again. Change grass only through these (and terrainPainted()):
+ * anything else isn't seen. Those changes aren't saved in the scene (it holds
+ * where grass starts): a game saves them itself (GrassMaps::toJson()) if it
+ * wants them kept. Setting the component's `paint` starts them over from it.
  */
 class GrassModule : public CommandModule<RenderContext, GrassDrawCommand>
 {
@@ -127,8 +129,9 @@ public:
 
   /**
    * How far a big mesh's grass window reaches either side of the camera
-   * (world units), for grass drawn to `drawDistance`: past it, where the
-   * ground's tint fades out, and by windowSlack() more.
+   * (world units), for grass drawn to `drawDistance`: a little past it, and
+   * by windowSlack() more. (Past the window, the grass's ground carries on
+   * over its terrain's meadow layers, see grassFarGround().)
    */
   static float windowReach(float drawDistance);
   /** How far the camera moves from the window's middle before it's built
@@ -186,6 +189,11 @@ private:
     std::vector<uint8_t> cover;
     GrassGrid coverGrid;
     bool coverMadeMaps = false; // the maps were made (full) for it
+    bool coverStale = false;    // its terrain was painted: worked out again
+    // Where it changed since the maps were last sent up (texels), and the
+    // blades to grow again for it.
+    glm::ivec2 coverFrom{0, 0}, coverTo{0, 0};
+    std::vector<glm::ivec4> coverRegrow;
     float recovery = 3.0f;
     bool seen = false; // this frame
 
@@ -212,6 +220,9 @@ private:
   // it lets grow over the maps' grid.
   std::shared_ptr<const TerrainMaterial> terrainUnder(const Entity& entity);
   static void workOutCover(Patch& patch);
+  // Again, after its terrain was painted: only where it changed is sent up,
+  // and its blades grown again.
+  static void coverRepainted(Patch& patch);
   static std::vector<uint8_t> coverOf(const GrassGround& ground,
                                       const GrassGrid& grid,
                                       const TerrainMaterial& terrain);

@@ -33,6 +33,7 @@
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 using namespace sfs;
@@ -836,6 +837,109 @@ int main()
           unshadowed->shadowCapacity == 0u);
   }
 
+  TEST("grass should keep fewer blades farther away, smoothly, to none at its "
+       "draw distance")
+  {
+    GrassBatch batch;
+    batch.shape.density = 400.0f;
+    batch.drawDistance = 200.0f;
+    FrameParams frame;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 500.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid =
+        GrassGrid::over({-300.0f, -300.0f}, {300.0f, 300.0f}, 1.0f);
+    field.groundArea = 600.0f * 600.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan && plan->grows);
+    if (!plan || grassLegacyThinning())
+      break;
+    const GrassGrowUniforms& grow = plan->grow;
+    // All kept near the camera (out to 770 cells of 0.05), then fewer, with
+    // no step anywhere, and none at the draw distance.
+    CHECK(grow.thinning.w == 1.0f && std::abs(grow.thinning.x - 38.5f) < 0.01f);
+    CHECK(grassKeptShare(grow, 0.0f) == 1.0f);
+    CHECK(grassKeptShare(grow, 38.0f) == 1.0f);
+    float last = 1.0f;
+    for (float away = 38.5f; away <= 200.0f; away += 0.5f)
+    {
+      const float share = grassKeptShare(grow, away);
+      CHECK(share <= last);
+      CHECK(last - share < 0.05f);
+      last = share;
+    }
+    CHECK(grassKeptShare(grow, 200.0f) == 0.0f);
+    // Each lattice grown as far as any of its blades are kept, the coarsest
+    // to the draw distance.
+    for (int k = 0; k < 3; ++k)
+    {
+      CHECK(grow.reach[k] <= grow.reach[k + 1]);
+      const float lowest = std::pow(0.25f, static_cast<float>(k + 1));
+      CHECK(grassKeptShare(grow, grow.reach[k]) * 1.2f <= lowest * 1.001f);
+    }
+    CHECK(grow.reach[3] == 200.0f);
+
+    // Its tiles hidden behind what's drawn opaque can be left out: from the
+    // camera's own view, allowing for its blades' shadows (a blade's as long
+    // as it's tall with the sun at 45 degrees), unless the sun's too low.
+    CHECK(grow.viewProjection == frame.viewProjection);
+    CHECK(glm::vec3(grow.eye) == frame.cameraPosition);
+    frame.lighting.sun.direction = glm::vec3(1.0f, 0.0f, 1.0f);
+    const std::optional<GrassPlan> high = planGrass(batch, field, frame);
+    CHECK(high && std::abs(high->grow.forward.w - 1.0f) < 1e-4f);
+    frame.lighting.sun.direction = glm::vec3(1.0f, 0.0f, 0.1f);
+    const std::optional<GrassPlan> low = planGrass(batch, field, frame);
+    CHECK(low && low->grow.forward.w < 0.0f);
+  }
+
+  TEST("grass's ground should carry on past its maps over its terrain's "
+       "meadow layers, taking over as its blades thin out")
+  {
+    GrassBatch batch;
+    batch.shape.density = 400.0f;
+    batch.drawDistance = 120.0f;
+    FrameParams frame;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 500.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid =
+        GrassGrid::over({-300.0f, -300.0f}, {300.0f, 300.0f}, 1.0f);
+    field.groundArea = 600.0f * 600.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan.has_value());
+    if (!plan)
+      break;
+    // Where the blades start thinning out to none: the ground's look hands
+    // over to theirs from afar from there.
+    CHECK(plan->draw.far.z == plan->grow.thinning.z);
+    CHECK(plan->draw.far.z > 0.0f && plan->draw.far.z < 120.0f);
+
+    // Without a terrain, none past the maps.
+    GrassUniforms draw = plan->draw;
+    grassFarGround(draw, nullptr);
+    CHECK(draw.far.y == 0.0f && draw.far.x == 0.0f &&
+          draw.farMeadow == glm::vec4(0.0f));
+    // With one, as much as each of its splat map's channels' layers is
+    // meadow (a channel with no layer: the first's, as the terrain draws).
+    TerrainMaterial terrain;
+    terrain.layers.resize(3);
+    terrain.layers[0].meadow = 1.0f;
+    terrain.layers[1].meadow = 0.0f;
+    terrain.layers[2].meadow = 0.5f;
+    grassFarGround(draw, &terrain);
+    CHECK(draw.far.y == 1.0f && draw.far.x == 1.0f);
+    CHECK(draw.farMeadow == glm::vec4(0.0f, 0.5f, 1.0f, 1.0f));
+    CHECK(draw.far.z == plan->draw.far.z);
+  }
+
   TEST("grass on a big mesh should grow in a window around the camera, built "
        "again as the camera moves on")
   {
@@ -1530,8 +1634,11 @@ int main()
     CHECK(overcast.cloudBase.r > 0.0f);
     CHECK(overcast.cloudBase.r < overcast.cloudLight.r);
     CHECK(overcast.sunLight.r < clear.sunLight.r * 0.5f);
-    CHECK(overcast.irradiance.at({0, 0, 1}).b <
-          clear.irradiance.at({0, 0, 1}).b);
+    // The sky's light greyer (a cloud deck can be as bright overhead as a
+    // clear blue sky, but not as blue).
+    const glm::vec3 overcastSky = overcast.irradiance.at({0, 0, 1});
+    const glm::vec3 clearSky = clear.irradiance.at({0, 0, 1});
+    CHECK(overcastSky.b / overcastSky.r < clearSky.b / clearSky.r);
     CHECK(testing::approx(overcast.adaptation, clear.adaptation));
   }
 

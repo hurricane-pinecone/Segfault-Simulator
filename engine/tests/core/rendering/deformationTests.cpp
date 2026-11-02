@@ -101,6 +101,7 @@ int main()
     map.set({1, 0}, -0.2f); // deeper already
     PressSettings flat;
     flat.ridge = 0.0f;
+    flat.steepest = 100.0f; // no slumping: pressing alone
     const float pressed = map.press(footprintOf({0, 0}, {3, 1}, -0.05f), flat);
     CHECK(near(map.at({0, 0}), -0.05f));
     CHECK(near(map.at({1, 0}), -0.2f)); // not raised back
@@ -124,6 +125,7 @@ int main()
     settings.ridge = 0.5f;
     settings.ridgeWidth = 0.09f; // three texels
     settings.ridgeMost = 1.0f;   // no cap
+    settings.steepest = 100.0f;  // no slumping: the ridge alone
     map.press(footprintOf({0, 0}, {10, 10}, -0.05f), settings);
     // What rose (outside it) is half of what was pressed out.
     const float down = sumOver(map, {0, 0}, {9, 9});
@@ -150,6 +152,7 @@ int main()
     map.set({-1, 0}, -0.04f); // a rut beside it
     PressSettings settings;
     settings.ridgeMost = 1.0f;
+    settings.steepest = 100.0f; // no slumping: the ridge alone
     Footprint footprint = footprintOf({0, 0}, {4, 1}, -0.05f);
     footprint.size = {5, 1};
     footprint.target.push_back(0.0f); // under it, but no lower than the ground
@@ -281,9 +284,10 @@ int main()
 
   TEST("an underside should be a mesh's lowest points, below the height only")
   {
-    // A square 0.1 above the ground, and another far above it.
-    Square low = square(0.15f, 0.1f);
-    Square high = square(0.15f, 5.0f);
+    // A square 0.1 above the ground, and another far above it (their edges
+    // off texel boundaries, where rounding could take in a texel either way).
+    Square low = square(0.145f, 0.1f);
+    Square high = square(0.145f, 5.0f);
     const Underside under =
         underside(low.positions, low.indices, glm::mat4(1.0f), 0.5f, 0.03f);
     CHECK(!under.empty());

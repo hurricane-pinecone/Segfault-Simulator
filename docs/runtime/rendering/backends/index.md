@@ -115,6 +115,14 @@ given in the same pixels.
 `SFS_SCREENSHOT=<file.png>` draws the scene offscreen and saves frame
 `SFS_SCREENSHOT_FRAME` (60 by default) there, for checking how a game looks
 without seeing its window.
+`SFS_SCREENSHOT_COUNT=<n>` and `SFS_SCREENSHOT_EVERY=<frames>` save a
+sequence of n, that many frames apart (`<file>_00.png`...). For checking how
+a view changes as the camera moves, `SFS_CAMERA_STEP="forward,right,up,pan,orbit"`
+steps a 3D view that far again for each shot (metres along the ground, and
+degrees turning in place or round what it looks at), half way between shots;
+a sixth value of 1 moves only the camera grass is grown and thinned from,
+the view held still. `SFS_HOLD_TIME=<seconds>` holds the scene's time for
+the renderer (the wind stays still), so shots compare.
 
 ### What each graphics API can do
 
@@ -136,7 +144,7 @@ draws through, for flat, isometric and 3D games alike:
 | --- | --- |
 | `createMesh` / `destroyMesh` | Upload or free a mesh (`MeshHandle`) |
 | `createMaterial` / `updateMaterial` / `destroyMaterial` | Upload, change or free a material and its textures (`MaterialHandle`) |
-| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps |
+| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps (a backend may keep the blades it grows from them, and grow them again only where `GrassMapsImage::regrow` says they changed) |
 | `beginFrame(FrameParams)` | Start a frame: camera, lighting, shadows, wind, time |
 | `drawMesh(MeshBatch)` | Queue one mesh's instances (lit, shadow-casting) |
 | `drawGrass(GrassBatch)` | Queue a grass field |

@@ -138,7 +138,7 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
   desc.requiredLimits = &limits;
   // Enable GPU timestamp queries when the adapter supports them (benchmark
   // HUD).
-  WGPUFeatureName feats[2] = {WGPUFeatureName_TimestampQuery};
+  WGPUFeatureName feats[3] = {WGPUFeatureName_TimestampQuery};
   *hasTimestamps =
       wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery);
   *hasPassTimestamps = false;
@@ -159,6 +159,19 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
     }
 #endif
   }
+#ifndef __EMSCRIPTEN__
+  // Counting what grass's blades cost to draw (SFS_GRASS_STATS): how many
+  // vertices and fragments they shade, a native extension.
+  const auto statistics =
+      static_cast<WGPUFeatureName>(WGPUNativeFeature_PipelineStatisticsQuery);
+  if (std::getenv("SFS_GRASS_STATS") &&
+      wgpuAdapterHasFeature(adapter, statistics))
+  {
+    feats[desc.requiredFeatureCount] = statistics;
+    desc.requiredFeatureCount += 1;
+    desc.requiredFeatures = feats;
+  }
+#endif
   desc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const*,
                                                  WGPUErrorType type,
                                                  WGPUStringView message,

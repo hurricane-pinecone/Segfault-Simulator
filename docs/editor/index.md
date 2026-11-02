@@ -563,7 +563,7 @@ They sway in the scene's wind, and flatten where things move through them.
 | Height, Height Variation, Width | The blades' size, and how much heights vary |
 | Stiffness | How little they sway in the wind |
 | Recovery | Seconds flattened grass takes to stand back up |
-| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out toward this distance. |
+| Draw Distance | How far away grass is drawn. It's densest near the camera and thins out smoothly, the same blades wherever the camera is, to none at this distance. |
 | Casts Shadows | Whether blades near the camera cast the sun's shadow (on by default). Only the two nearest shadow cascades get them, up to about 30 units, where a blade's shadow is big enough to see. With one shadow map, the first 8. |
 | Self Shadow | How much darker the grass gets down toward its roots, where the blades around shut out the sky and some of the sun. It makes a field look deep at any distance, well past where blades cast shadows. 0 turns it off (0.5) |
 
@@ -574,9 +574,14 @@ waves in it, and grass mown short (painted with **Length**) hardly moves.
 The grass's colour also tints the ground under it, so the gaps between blades
 look like grass. Toward the draw distance the blades thin out, grow wider so
 the field still looks full, and shrink down into the ground, so there's no
-line where they end. Past it, the ground's own material shows: on a terrain,
-raise its grassy layers' **Meadow** so they look like grass from afar (patchy
-colour, a sheen at low angles, and bands rolling with the wind). **Haze** in
+line where they end. As they thin out to none, the tinted ground takes on how
+they look from afar (as bright, turned to the camera as they are, a fine grain
+of them, and gusts rolling over it in time with theirs), and carries on so past
+the draw distance, out to the horizon, in the grass material's colour: so far
+grass changes with the season, dryness and the weather just as the blades do.
+On a terrain it carries on over the layers marked **Meadow**, past where the
+grass's maps reach (a big mesh has them only around the camera); without a
+terrain, the ground's own material shows past them. **Haze** in
 Scene Settings fades the distance into the sky.
 
 Grass on a big mesh, like land out to the horizon, grows only around the

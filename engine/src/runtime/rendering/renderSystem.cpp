@@ -21,6 +21,8 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <tuple>
 #include <variant>
@@ -53,6 +55,56 @@ RenderSystem::~RenderSystem() = default;
 Entity RenderSystem::sceneCamera() const
 {
   return registry ? findActiveCamera(*registry) : Entity{};
+}
+
+glm::vec3 RenderSystem::stepCamera()
+{
+  // For checking how a view changes as the camera moves (a 3D one): with
+  // SFS_CAMERA_STEP="forward,right,up,pan,orbit" (metres along the ground,
+  // and degrees: turning where it stands, or round what it looks at), the
+  // view steps that far again for each of a screenshot sequence's shots
+  // (SFS_SCREENSHOT_FRAME, _EVERY, _COUNT; see WebGpuRenderBackend), half
+  // way between them, so it's settled by each. With a sixth value of 1,
+  // only grass's camera moves (where it's grown and thinned from), the view
+  // held still: what changes is only how grass changes as the camera moves.
+  static const char* const kStep = std::getenv("SFS_CAMERA_STEP");
+  ++m_renderedFrames;
+  if (!kStep || m_space2D)
+    return glm::vec3(0.0f);
+  static const auto setting = [](const char* name, int fallback)
+  {
+    const char* value = std::getenv(name);
+    return value ? std::atoi(value) : fallback;
+  };
+  static const int first = setting("SFS_SCREENSHOT_FRAME", 60);
+  static const int every = std::max(setting("SFS_SCREENSHOT_EVERY", 0), 1);
+  static const int count = std::max(setting("SFS_SCREENSHOT_COUNT", 1), 1);
+  float step[6] = {};
+  std::sscanf(kStep,
+              "%f,%f,%f,%f,%f,%f",
+              &step[0],
+              &step[1],
+              &step[2],
+              &step[3],
+              &step[4],
+              &step[5]);
+  const Camera held = m_camera;
+  const int steps =
+      std::clamp((m_renderedFrames - first + every / 2) / every, 0, count - 1);
+  const float n = static_cast<float>(steps);
+  // Moved, then orbited round what it looks at, then turned where it stands.
+  m_camera.target += m_camera.groundForward() * (step[0] * n) +
+                     m_camera.groundRight() * (step[1] * n) +
+                     glm::vec3(0.0f, 0.0f, step[2] * n);
+  m_camera.yaw += glm::radians(step[4] * n);
+  const glm::vec3 eye = m_camera.position();
+  m_camera.yaw += glm::radians(step[3] * n);
+  m_camera.target = eye + m_camera.viewDirection() * m_camera.distance;
+  if (step[5] != 1.0f)
+    return glm::vec3(0.0f);
+  const glm::vec3 offset = m_camera.position() - held.position();
+  m_camera = held;
+  return offset;
 }
 
 bool RenderSystem::setVisualStyle(std::string_view name)
@@ -215,6 +267,7 @@ void RenderSystem::render()
         m_camera.target += right * shake.x + up * shake.y;
       }
     }
+  const glm::vec3 grassCameraOffset = stepCamera();
 
   if (!buildContext(m_renderer.viewportSize()))
     return;
@@ -257,6 +310,7 @@ void RenderSystem::render()
                                 static_cast<float>(m_context.viewportSize.y));
   frame.viewProjection = m_context.viewProjection;
   frame.cameraPosition = m_camera.position();
+  frame.grassCameraOffset = grassCameraOffset;
   frame.cameraForward = m_camera.viewDirection();
   frame.nearPlane = m_camera.nearPlane;
   frame.farPlane = m_camera.farPlane;
@@ -300,6 +354,11 @@ void RenderSystem::render()
   frame.lightViewProjection = m_lightViewProjection;
   frame.cascades = m_cascades;
   frame.time = static_cast<float>(m_time);
+  // Held at a moment (SFS_HOLD_TIME=<seconds>), so the wind's still from
+  // frame to frame: for comparing screenshots.
+  static const char* const kHoldTime = std::getenv("SFS_HOLD_TIME");
+  if (kHoldTime)
+    frame.time = static_cast<float>(std::atof(kHoldTime));
   frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
@@ -1099,7 +1158,8 @@ void RenderSystem::submit(const GrassDrawCommand& command)
                                   command.stiffness,
                                   command.drawDistance,
                                   command.castsShadows,
-                                  command.selfShadow});
+                                  command.selfShadow,
+                                  command.ground});
   m_stats.grassFields += 1;
 }
 
