@@ -32,6 +32,19 @@ void MeshModule::addEntity(const RenderContext& context,
   const Aabb* localBounds = context.meshes->bounds(renderer.mesh);
   if (!localBounds)
     return; // invalid handle, or a mesh from another library
+  // A skinned mesh an animator poses: its own deformed copy, culled as posed.
+  MeshHandle drawn = renderer.mesh;
+  const MeshLibrary::SkinPose* skin =
+      context.meshes->hasSkinPoses()
+          ? context.meshes->skinPose(renderer.mesh, entity.getId())
+          : nullptr;
+  if (skin)
+  {
+    if (skin->gpu.valid())
+      drawn = skin->gpu;
+    if (!skin->bounds.empty())
+      localBounds = &skin->bounds;
+  }
 
   const glm::mat4 model = hierarchy::worldMatrix(entity);
   const Aabb worldBounds = localBounds->transformed(model);
@@ -42,13 +55,18 @@ void MeshModule::addEntity(const RenderContext& context,
   bool castsLightShadow = false;
   if (renderer.castsShadow && context.shadowedLights)
     for (const PointLight& light : *context.shadowedLights)
-      if (worldBounds.intersectsSphere(light.position, light.radius))
+    {
+      const glm::vec4 reach = lightBounds(light); // a spot's: round its cone
+      if (worldBounds.intersectsSphere(glm::vec3(reach), reach.w))
       {
         castsLightShadow = true;
         break;
       }
+    }
   if (!visible && !castsShadow && !castsLightShadow)
     return;
+  if (skin)
+    context.meshes->markSkinDrawn(renderer.mesh, entity.getId());
 
   // One command per mesh and set of materials: those draw as one instanced
   // batch.
@@ -57,11 +75,11 @@ void MeshModule::addEntity(const RenderContext& context,
     m_materials.push_back(context.meshes->material(name));
   while (!m_materials.empty() && !m_materials.back().valid())
     m_materials.pop_back(); // trailing "own material" slots change nothing
-  std::size_t key = std::hash<uint32_t>()(renderer.mesh.id);
+  std::size_t key = std::hash<uint32_t>()(drawn.id);
   for (const MaterialHandle material : m_materials)
     key = key * 1000003u ^ material.id;
   const auto matches = [&](const MeshDrawCommand& command)
-  { return command.mesh == renderer.mesh && command.materials == m_materials; };
+  { return command.mesh == drawn && command.materials == m_materials; };
 
   auto [first, last] = m_commandIndex.equal_range(key);
   while (first != last && !matches(m_commands[first->second]))
@@ -71,11 +89,13 @@ void MeshModule::addEntity(const RenderContext& context,
   {
     m_commandIndex.emplace(key, index);
     m_commands.push_back(
-        MeshDrawCommand{.mesh = renderer.mesh, .materials = m_materials});
+        MeshDrawCommand{.mesh = drawn, .materials = m_materials});
   }
 
   MeshDrawCommand& command = m_commands[index];
-  const MeshInstance instance{model, renderer.tint};
+  MeshInstance instance{model, renderer.tint};
+  instance.emission =
+      glm::vec4(renderer.emissionColor * renderer.emission, 0.0f);
   if (visible)
     command.instances.push_back(instance);
   if (castsShadow)

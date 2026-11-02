@@ -168,8 +168,9 @@ struct VertexIn {
   @location(8) uv: vec2f,  // after the instance locations (3-7)
 }
 
-// Per-instance data (buffer 1): model matrix columns, tint, and the rectangle
-// of its textures it shows (xy corner, zw size; a sprite sheet's frame).
+// Per-instance data (buffer 1): model matrix columns, tint, the rectangle
+// of its textures it shows (xy corner, zw size; a sprite sheet's frame) and
+// its own emission.
 struct InstanceIn {
   @location(3) model0: vec4f,
   @location(4) model1: vec4f,
@@ -177,6 +178,7 @@ struct InstanceIn {
   @location(6) model3: vec4f,
   @location(7) tint: vec4f,
   @location(9) uvRect: vec4f,
+  @location(10) emission: vec4f, // rgb: light it gives off over its materials'
 }
 
 fn instanceModel(instance: InstanceIn) -> mat4x4f {

@@ -29,8 +29,8 @@ std::optional<Aabb> entityBounds(const Entity& entity,
   const glm::mat4 world = hierarchy::worldMatrix(entity);
 
   if (entity.hasComponent<MeshRendererComponent>())
-    if (const Aabb* local =
-            meshes.bounds(entity.getComponent<MeshRendererComponent>().mesh))
+    if (const Aabb* local = meshes.posedBounds(
+            entity.getComponent<MeshRendererComponent>().mesh, entity.getId()))
       return local->transformed(world);
 
   // A sprite's quad, where it was drawn (a hair thick, so a ray along it
@@ -72,14 +72,29 @@ std::optional<PickHit> pickEntity(Scene& scene,
   std::optional<PickHit> best;
   float bestVolume = 0.0f;
 
+  constexpr float kTie = 1.0e-4f;
   for (const Entity& entity : scene.entities())
   {
     const std::optional<Aabb> bounds = entityBounds(entity, meshes, drawnBy);
     float distance = 0.0f;
-    if (!bounds || !ray.intersectAabb(*bounds, distance))
+    if (!bounds || !ray.intersectAabb(*bounds, distance) ||
+        (best && distance > best->distance + kTie))
       continue;
+    // A mesh by where the ray meets its triangles: its bounds only say it
+    // might be hit (a ray from inside a landscape's bounds enters them at
+    // once, wherever it really meets the ground).
+    if (entity.hasComponent<MeshRendererComponent>())
+    {
+      const auto hit =
+          meshes.raycast(entity.getComponent<MeshRendererComponent>().mesh,
+                         hierarchy::worldMatrix(entity),
+                         ray,
+                         entity.getId());
+      if (!hit)
+        continue;
+      distance = hit->distance;
+    }
 
-    constexpr float kTie = 1.0e-4f;
     const float size = volume(*bounds);
     const bool nearer = !best || distance < best->distance - kTie;
     const bool tiedButSmaller =
@@ -103,7 +118,7 @@ pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
         !entity.hasComponent<TransformComponent>())
       continue;
     const MeshHandle mesh = entity.getComponent<MeshRendererComponent>().mesh;
-    const Aabb* local = meshes.bounds(mesh);
+    const Aabb* local = meshes.posedBounds(mesh, entity.getId());
     if (!local)
       continue;
     // Bounds first: most entities are nowhere near the ray.
@@ -112,7 +127,7 @@ pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
     if (!ray.intersectAabb(local->transformed(world), entry) ||
         (best && entry > best->distance))
       continue;
-    if (const auto hit = meshes.raycast(mesh, world, ray);
+    if (const auto hit = meshes.raycast(mesh, world, ray, entity.getId());
         hit && (!best || hit->distance < best->distance))
       best = SurfaceHit{entity, hit->section, hit->distance};
   }

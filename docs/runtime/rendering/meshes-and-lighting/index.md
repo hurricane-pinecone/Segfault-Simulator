@@ -110,6 +110,7 @@ onto visible ground.
 | `lightStrength` | How brightly its emission lights things (1: as bright as it glows) |
 | `lightRange` | How far its emission lights things (1: as far as that much glow reaches) |
 | `lightCastsShadows` | Whether things block its emission's light |
+| `emissionColor`, `emission` | A glow of its own, all over it, on top of its materials' emission (0: none; above 1 blooms). For a lamp switched on and off from a script, without a material for each state. It lights nothing round it: give the lamp a light for that. |
 
 Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
@@ -436,7 +437,7 @@ eye.addComponent<sfs::CameraComponent>();
 | `nearPlane`, `farPlane` | The visible depth range |
 | `focusDistance` | How far ahead the camera's attention is. The sun's shadows are sharpest there, and when there are too many point lights, the ones nearest it are kept. |
 | `bloom` and `bloomIntensity`, `bloomThreshold`, `bloomSoftness`, `bloomRadius` | The camera's [bloom](#bloom) |
-| `depthOfField` and `focusRange`, `focusBlur` | The camera's [depth of field](#depth-of-field) |
+| `depthOfField` and `focusRange`, `focusBlur`, `focusHyperfocal` | The camera's [depth of field](#depth-of-field) |
 
 Roll is ignored, so the view stays level.
 
@@ -541,6 +542,41 @@ cluster's list. What a light costs depends on how much of the screen it covers,
 not on how many lights the scene has. A cluster lists at most 256 lights; past
 that, the ones nearest the camera target win.
 
+### Spot lights
+
+A spot light is a point light that shines only in a cone: a headlamp, a
+torch, a stage light. Turn on `spot` on a `PointLightComponent` (or add
+**Spot Light** from the Hierarchy's menu). It shines along its entity's +x,
+so turn the entity to aim it; a child of a moving thing (a vehicle's lamp
+part) is carried and turned with it.
+
+| Field | Meaning |
+| --- | --- |
+| `spot` | Shine in a cone, not all round |
+| `innerAngle` | Its full-strength core, degrees from its axis |
+| `outerAngle` | Where its light has faded out, degrees from its axis (it fades smoothly between the two) |
+| `radius` | How far along the beam it reaches |
+
+```cpp
+sfs::PointLightComponent headlight{{1.0f, 0.88f, 0.72f}, 4.0f, 50.0f};
+headlight.spot = true;
+headlight.innerAngle = 13.0f;
+headlight.outerAngle = 24.0f;
+lamp.addComponent<sfs::PointLightComponent>(headlight);
+```
+
+Everything else is a point light's: its colour and intensity, its fall-off
+along its reach, its highlights, the daytime dimming under a physical sky, and
+shadows. A spot is clustered by the sphere round its cone (`lightBounds()` in
+`lighting.h`), much smaller than its reach for a narrow beam, so it's listed in
+fewer clusters than a point light reaching as far. Shading it costs one more
+dot product per pixel it might reach, and pixels outside its cone skip it; plain
+point lights cost what they did. Its shadows use the point lights' cube shadow
+maps and budget, but only objects in its cone are drawn into them, and only into
+the faces its cone looks through (a 50 metre headlight usually draws into one or
+two of the six). Spots are for 3D scenes: in a 2D game the light shines all
+round.
+
 ### Emission lights
 
 A material's emission lights the things around it, not just itself: a lava
@@ -593,6 +629,14 @@ but emission can. A material whose
 emission goes above 1 glows past its edges onto what's around it, as bright
 lights do through a real lens. Ordinary surfaces don't bloom at all.
 
+A single very bright pixel (a glint on something thinner than a pixel)
+counts for less as bloom is gathered (Karis's average over its first
+halving), so it can't flash a blob of glow around itself; broad bright light
+blooms as before. `SFS_FIREFLIES=<light>` marks, for finding such pixels,
+each one more than four times as bright as those around it and brighter than
+`<light>` magenta (its brightness in green: log2 x 8 + 64), and any that
+isn't a number cyan.
+
 Bloom belongs to the camera: the scene camera's `CameraComponent` sets it,
 and the editor viewport shows the game camera's even while you look around
 freely. A scene without a camera entity uses `setBloomSettings(BloomSettings)`.
@@ -642,10 +686,20 @@ entity has none.
 | `depthOfField` | Whether to blur at all |
 | `focusRange` | How deep the sharp part around the focus is, in world units (10) |
 | `focusBlur` | How blurred the farthest and nearest things get (1) |
+| `focusHyperfocal` | The lens's hyperfocal distance, in world units: focused this far or farther, everything beyond the focus is sharp (80; 0: only `focusRange`) |
 
 Depth of field is off on wgpu's OpenGL fallback. Blur grows with distance
-beyond the sharp range. It's full a whole focus
-distance past it, and grows by as much toward the camera.
+beyond the sharp range. It's full one and a half focus
+distances past it, and grows by as much toward the camera.
+
+The sharp part also deepens as the focus moves off, as through a real lens.
+A thin lens's blur at distance `d`, focused at `s`, goes as
+`aperture × |d − s| / d`, which is `focusHyperfocal × |1/s − 1/d|` in shares
+of the most that still looks sharp. Each pixel takes the lesser of that blur
+and the sharp range's. Close up, where a real lens keeps very little sharp,
+`focusRange` still is. Zoomed out to an overview, most of the landscape is
+sharp; focused `focusHyperfocal` away or farther, all of it is out to the
+horizon. Raise `focusHyperfocal` to keep far views softer for longer.
 
 It runs between the lit pass and bloom (`postFocus.wgsl`), reading the depth
 buffer:
@@ -1075,7 +1129,14 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   (from `kGrassFadeFrom` of the draw distance to it), it takes on how they
   look from afar instead (`fs_ground` in `meshGrass.wgsl`): their tone on
   average, its normal turned toward the camera as theirs are, a grain fixed to
-  the world about two pixels fine, and the wind's gusts in step with theirs.
+  the world about a pixel fine, and the wind's gusts in step with theirs.
+  The grain fades out as pixels grow past 7 to 25 cm and the camera rises
+  past 35 to 110 m. From high or far off it would look like paint run toward
+  the camera. There the field is smooth colour, with gentle lighter, darker,
+  yellower and bluer patches tens of metres across. The ground is drawn at
+  exactly its mesh's depth: both vertex stages' positions are `@invariant`,
+  with no depth bias. A bias would pull the far ground over the trees and
+  streams standing on it, since depth's steps are metres apart a kilometre off.
   It carries on so out to the horizon, with no draw distance of its own, so
   far grass takes the same material, maps data, season, wetness and light as
   the blades. Past the maps (a big mesh's window of them) it covers its
@@ -1094,6 +1155,10 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   as their lighting: a blade's vertex hands on little (where it is, its
   normal, how far up and across the blade, how shut in and how wet), and its
   fragments read what's the same all over the blade from the blade itself.
+  It hands them on taken where the blade covers the pixel (centroid), not at
+  the pixel's middle: a far blade is a sliver that often covers some of a
+  pixel's samples but not its middle, and its values carried out to there
+  could be anything, which showed as single pixels flashing bright.
   What barely changes along a blade is found at its vertices where that
   pays: on the nearest list's blades (big on the screen) what the air does
   and the clouds' shadow; on the rest the clouds' shadow, and past

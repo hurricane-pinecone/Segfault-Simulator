@@ -25,6 +25,14 @@ struct ModelImportSettings
  * image files beside a .gltf), metal, roughness and alpha mode. Normal,
  * occlusion and emissive maps are ignored.
  *
+ * Skins and animations come in too: a skinned mesh's part carries its skin
+ * (MeshData::skin: its joints by node name, their inverse bind matrices) and
+ * its vertices' first four joints and weights (JOINTS_0/WEIGHTS_0,
+ * normalised); the file's animations become ModelData::animations, their
+ * translation, rotation and scale channels (linear, step or cubic spline)
+ * moved into the engine's axes. Morph targets (and their weight channels)
+ * aren't read.
+ *
  * @return nothing (logged) if the file can't be read or has no triangles
  */
 std::optional<ModelData> importModel(const std::filesystem::path& file,

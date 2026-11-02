@@ -149,6 +149,74 @@ std::filesystem::path writeBrokenModel(const std::string& name,
   return file;
 }
 
+// A one-mesh .gltf skinned to two joints (a rig's "hip" and its "knee"),
+// with a clip moving them: the hip up one (glTF's +y), linearly, and the knee
+// a quarter turn about +y, in steps.
+std::filesystem::path writeSkinnedModel(const std::string& name)
+{
+  const std::filesystem::path folder =
+      std::filesystem::temp_directory_path() / "sfsModelImporterTests";
+  std::filesystem::create_directories(folder);
+  std::vector<uint8_t> buffer;
+  append(buffer, std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}); // 36 bytes
+  append(
+      buffer, std::vector<uint8_t>{0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0}); // 12
+  append(buffer,
+         std::vector<float>{1, 0, 0, 0, 2, 2, 0, 0, 1, 0, 0, 0}); // 48 bytes
+  append(buffer, std::vector<uint16_t>{0, 1, 2, 0});              // 8 bytes
+  append(buffer,
+         std::vector<float>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1,
+                            1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0,  0, 1});
+  append(buffer, std::vector<float>{0, 1});             // times: 8 bytes
+  append(buffer, std::vector<float>{0, 0, 0, 0, 1, 0}); // 24 bytes
+  append(buffer,
+         std::vector<float>{0, 0, 0, 1, 0, 0.70710678f, 0, 0.70710678f}); // 32
+  const std::string gltf = R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0]}],
+    "nodes": [
+      {"name": "Rig", "children": [1, 3]},
+      {"name": "hip", "translation": [0, 1, 0], "children": [2]},
+      {"name": "knee"},
+      {"name": "Body", "mesh": 0, "skin": 0}
+    ],
+    "meshes": [{"name": "Body", "primitives": [{"attributes":
+      {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+    "skins": [{"joints": [1, 2], "inverseBindMatrices": 4}],
+    "animations": [{"name": "Walk",
+      "channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}},
+                   {"sampler": 1, "target": {"node": 2, "path": "rotation"}}],
+      "samplers": [{"input": 5, "output": 6},
+                   {"input": 5, "output": 7, "interpolation": "STEP"}]}],
+    "accessors": [
+      {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+      {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+      {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+      {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"},
+      {"bufferView": 4, "componentType": 5126, "count": 2, "type": "MAT4"},
+      {"bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]},
+      {"bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC3"},
+      {"bufferView": 7, "componentType": 5126, "count": 2, "type": "VEC4"}
+    ],
+    "bufferViews": [
+      {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+      {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+      {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+      {"buffer": 0, "byteOffset": 96, "byteLength": 6},
+      {"buffer": 0, "byteOffset": 104, "byteLength": 128},
+      {"buffer": 0, "byteOffset": 232, "byteLength": 8},
+      {"buffer": 0, "byteOffset": 240, "byteLength": 24},
+      {"buffer": 0, "byteOffset": 264, "byteLength": 32}
+    ],
+    "buffers": [{"byteLength": 296, "uri": "data:application/octet-stream;base64,)" +
+                           base64(buffer) + R"("}]
+  })";
+  const std::filesystem::path file = folder / name;
+  std::ofstream(file) << gltf;
+  return file;
+}
+
 std::vector<uint8_t> readFile(const std::filesystem::path& file)
 {
   std::ifstream in(file, std::ios::binary);
@@ -350,6 +418,58 @@ int main()
   {
     CHECK(!importModel(writeBrokenModel("accessor.gltf", {0, 1, 2}, 1000)));
     CHECK(!importModelNodes(writeBrokenModel("nodes.gltf", {0, 1, 2}, 1000)));
+  }
+
+  TEST("a skin and its clips should come in, in the engine's axes")
+  {
+    const std::filesystem::path file = writeSkinnedModel("skinned.gltf");
+    const auto model = importModel(file);
+    CHECK(model.has_value());
+    if (model)
+    {
+      // Even one mesh is a part, placed in the node tree with its joints.
+      CHECK(model->parts.size() == 1u);
+      CHECK(model->nodes.size() == 4u);
+      const MeshData& body = model->parts.front().mesh;
+      CHECK(body.skinned());
+      if (body.skinned())
+      {
+        CHECK(body.skin->joints == std::vector<std::string>{"hip", "knee"});
+        // The hip's inverse bind: down one along glTF's y, the engine's z.
+        const glm::vec4 moved =
+            body.skin->inverseBind[0] * glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+        CHECK(testing::approx(moved.z, 0.0f));
+        CHECK(testing::approx(moved.y, 0.0f));
+        // Weights normalised; joints in order.
+        CHECK(testing::approx(body.skinWeights[1].weights.x, 0.5f));
+        CHECK(testing::approx(body.skinWeights[1].weights.y, 0.5f));
+        CHECK(body.skinWeights[1].joints[1] == 1);
+        CHECK(body.skinWeights[2].joints[0] == 1);
+        CHECK(!body.skin->jointBounds[1].empty());
+      }
+      CHECK(model->animations != nullptr);
+      const AnimationClip* walk =
+          model->animations ? model->animations->find("Walk") : nullptr;
+      CHECK(walk != nullptr);
+      if (walk)
+      {
+        CHECK(testing::approx(walk->duration, 1.0f));
+        CHECK(walk->channels.size() == 2u);
+        // Up glTF's y: up the engine's z.
+        const glm::vec4 up = sampleChannel(walk->channels[0], 1.0f);
+        CHECK(testing::approx(up.z, 1.0f));
+        CHECK(testing::approx(up.y, 0.0f));
+        CHECK(walk->channels[0].node == "hip");
+        // A turn about glTF's y: about the engine's z, held until its key.
+        CHECK(walk->channels[1].interpolation == AnimationInterpolation::Step);
+        const glm::vec4 turn = sampleChannel(walk->channels[1], 1.0f);
+        CHECK(testing::approx(turn.z, 0.70710678f));
+        CHECK(testing::approx(turn.y, 0.0f));
+        CHECK(testing::approx(sampleChannel(walk->channels[1], 0.5f).w, 1.0f));
+      }
+    }
+    const auto nodes = importModelNodes(file);
+    CHECK(nodes.has_value() && nodes->size() == 4u);
   }
 
   std::filesystem::remove_all(std::filesystem::temp_directory_path() /

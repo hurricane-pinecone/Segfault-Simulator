@@ -1,5 +1,6 @@
 #include "../testHarness.h"
 
+#include <engine/core/animation/animation.h>
 #include <engine/core/logger/logger.h>
 #include <engine/core/rendering/materialGraphCompiler.h>
 #include <engine/core/rendering/meshPrimitives.h>
@@ -2367,6 +2368,92 @@ int main()
       harness.renderer.destroyMaterial(material);
     }
     harness.renderer.destroyMesh(plane);
+    CHECK(reportErrors());
+  }
+
+  TEST("a skinned mesh should draw deformed by its pose, its copy's own")
+  {
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial black;
+    black.baseColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    const MaterialHandle ground = harness.renderer.createMaterial(black);
+
+    // A white square 0.5 across over the middle, every vertex on one joint
+    // bound where the mesh is.
+    MeshData square = meshes::plane({0.5f, 0.5f});
+    for (MeshVertex& vertex : square.vertices)
+      vertex.position.z = 0.1f;
+    MeshMaterial white;
+    white.unlit = true;
+    square.sections = {
+        {0, static_cast<uint32_t>(square.indices.size()), white, ""}};
+    auto skin = std::make_shared<MeshSkin>();
+    skin->joints = {"bone"};
+    skin->inverseBind = {glm::mat4(1.0f)};
+    square.skinWeights.resize(square.vertices.size());
+    for (SkinWeights& weights : square.skinWeights)
+      weights.weights = {1.0f, 0.0f, 0.0f, 0.0f};
+    computeJointBounds(*skin, square.vertices, square.skinWeights);
+    square.skin = skin;
+    const MeshHandle base = harness.renderer.createMesh(square);
+    const MeshHandle copy = harness.renderer.createSkinnedMesh(base);
+    CHECK(base.valid());
+    CHECK(copy.valid());
+    // Only a skinned mesh has copies.
+    CHECK(!harness.renderer.createSkinnedMesh(plane).valid());
+
+    const auto draw = [&]
+    {
+      const MeshInstance instance;
+      MeshBatch batch;
+      batch.mesh = copy;
+      batch.instances = {&instance, 1};
+      return drawPlane(harness,
+                       plane,
+                       ground,
+                       0.0f,
+                       [](FrameParams& frame) { frame.bloom.enabled = false; },
+                       {},
+                       {&batch, 1});
+    };
+    const auto bright = [](const std::vector<uint8_t>& pixels, int x, int y)
+    {
+      const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+      return pixels[i] + pixels[i + 1] + pixels[i + 2];
+    };
+
+    // As bound until posed: in the middle.
+    const std::vector<uint8_t> bound = draw();
+    CHECK(!bound.empty());
+    // Posed: its joint half a unit along +x (a quarter of the view), the
+    // square with it. (+x is to the right in this top-down view.)
+    const glm::mat4 moved =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, 0.0f, 0.0f));
+    Aabb posedBounds =
+        skinnedBounds(*skin, std::span<const glm::mat4>(&moved, 1));
+    harness.renderer.setSkinPose(copy, {&moved, 1}, posedBounds);
+    const std::vector<uint8_t> posed = draw();
+    CHECK(!posed.empty());
+    if (!bound.empty() && !posed.empty())
+    {
+      const int middle = kSize.x / 2;
+      const int right = kSize.x / 2 + kSize.x / 4;
+      CHECK(bright(bound, middle, kSize.y / 2) > 300);
+      CHECK(bright(bound, right + 4, kSize.y / 2) < 100);
+      CHECK(bright(posed, right, kSize.y / 2) > 300);
+      CHECK(bright(posed, middle - 6, kSize.y / 2) < 100);
+      if (bright(posed, right, kSize.y / 2) <= 300)
+        std::printf("    (posed: middle %d, right %d)\n",
+                    bright(posed, middle, kSize.y / 2),
+                    bright(posed, right, kSize.y / 2));
+    }
+    // The original is still as bound, and its copy goes with it.
+    harness.renderer.destroyMesh(base);
+    CHECK(!harness.renderer.hasMesh(copy));
+    harness.renderer.destroyMesh(copy); // ignored: already gone
+    harness.renderer.destroyMesh(plane);
+    harness.renderer.destroyMaterial(ground);
     CHECK(reportErrors());
   }
 

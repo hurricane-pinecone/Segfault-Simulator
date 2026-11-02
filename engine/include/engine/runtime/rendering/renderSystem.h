@@ -173,7 +173,8 @@ public:
 
   /**
    * Wait for a physical sky's diffuse light being worked out in the
-   * background (as the sun moves), so the next frame has it. For tests.
+   * background (as the sun moves), so the next frame has it (not easing
+   * toward it). For tests.
    */
   void finishSkyWork();
 
@@ -488,8 +489,24 @@ private:
     // The light on the ground from the sky above, and on the clouds' tops
     // from it, clear of clouds.
     glm::vec3 clearSkyLight{0.0f};
+    double asked = 0.0; // when it was asked for (seconds, see m_skyCame)
   };
   std::future<SkyLight> m_skyJob;
+  // What the frame shows of it: eased from what it showed to the latest
+  // worked out (m_skyTo) over about as long as the sun took to get from the
+  // last's to its (so it keeps up without a step as each comes), from when
+  // it came (seconds of a steady clock).
+  SkyLight m_skyFrom;
+  SkyLight m_skyTo;
+  double m_skyCame = 0.0;
+  double m_skyEasing = 0.0;
+  bool m_skyFinished = false; // finishSkyWork(): the next frame shows it all
+  // What the sky's textures were last drawn for: drawn again as the sun
+  // moves a little, or the light they hold changes a little.
+  glm::vec3 m_skyDrawnSun{0.0f};
+  float m_skyDrawnGround = 0.0f;
+  float m_skyDrawnNight = 1.0f;
+  float m_skyDrawnCover = 0.0f;
   std::vector<PointLight> m_pointLights;
   std::vector<PointLight> m_shadowedLights; // those casting shadows
   std::vector<std::size_t> m_shadowCandidates;

@@ -104,6 +104,13 @@ public:
 
   MeshHandle createMesh(const MeshData& mesh) override;
   void destroyMesh(MeshHandle mesh) override;
+  // Skinned copies: their own vertex buffer, deformed by a compute pass
+  // (skinning.wgsl) before the frame's first pass in frames they're drawn
+  // in after a new pose; drawn as any mesh after that, in every pass.
+  MeshHandle createSkinnedMesh(MeshHandle mesh) override;
+  void setSkinPose(MeshHandle skinned,
+                   std::span<const glm::mat4> palette,
+                   const Aabb& bounds) override;
   // Whether a handle is one of its meshes now (not destroyed, nor stale).
   bool hasMesh(MeshHandle mesh) const { return findMesh(mesh) != nullptr; }
   MaterialHandle createMaterial(const MeshMaterial& material) override;
@@ -281,16 +288,37 @@ private:
     GpuMaterial material; // the mesh's own
   };
 
+  // A skinned copy's (createSkinnedMesh()): the original's vertices and
+  // weights it's deformed from (references to its buffers), the bind group
+  // its compute pass reads them and writes its vertices with, and its pose.
+  struct GpuSkin
+  {
+    wgpu::Buffer source;
+    wgpu::Buffer weights;
+    wgpu::BindGroup bindings;
+    uint32_t vertexCount = 0;
+    uint32_t sourceSlot = 0; // the original's (destroyed with it)
+    std::vector<glm::mat4> palette;
+    bool dirty = false; // posed since its vertices were last deformed
+  };
+
   struct GpuMesh
   {
     wgpu::Buffer vertices;
     wgpu::Buffer indices;
     uint32_t indexCount = 0;
-    std::vector<GpuSection> sections;
+    // Shared with its skinned copies (which draw with its materials).
+    std::shared_ptr<std::vector<GpuSection>> sections;
     // A sphere around its vertices (for which point lights' reach it's in).
     glm::vec3 boundsCenter{0.0f};
     float boundsRadius = 0.0f;
     uint64_t version = 0; // new each time one's made (nextVersion())
+    // A skinned mesh's: its vertices' weights (SkinWeights) and joints; and,
+    // for a skinned copy, its skin.
+    wgpu::Buffer skinWeights;
+    uint32_t vertexCount = 0;
+    uint32_t joints = 0;
+    std::unique_ptr<GpuSkin> skin;
   };
 
   // An uploaded texture, keyed by its TextureData's address. `source` tells a
@@ -306,10 +334,15 @@ private:
   // What the plan needs of a mesh.
   static PlannedMesh plannedMesh(const GpuMesh& mesh)
   {
-    return {mesh.sections.size(), mesh.boundsCenter, mesh.boundsRadius};
+    return {mesh.sections->size(), mesh.boundsCenter, mesh.boundsRadius};
   }
 
   bool createPipelines();
+  // Skinning's compute pass (skinning.wgsl); without it (logged), skinned
+  // meshes draw as bound.
+  void createSkinningPipeline();
+  // Deform the skinned copies drawn this frame that were posed since.
+  void encodeSkinning();
   // Bloom's and the composite's (post.wgsl).
   bool createPostPipelines();
   bool createTextureResources();
@@ -515,6 +548,20 @@ private:
   // Samples a pixel the lit pass draws with (multisampled anti-aliasing),
   // resolved into the scene's textures after it.
   uint32_t m_sampleCount = 4;
+
+  // Skinning: its pipeline, its shared bind group (every copy's palette, one
+  // after another, and each dispatch's uniforms at a dynamic offset) and
+  // the copies' (their source, weights and vertices); the buffers, grown as
+  // needed; and the copies drawn this frame (by slot).
+  wgpu::BindGroupLayout m_skinningSharedLayout;
+  wgpu::BindGroupLayout m_skinningLayout;
+  wgpu::ComputePipeline m_skinningPipeline;
+  wgpu::Buffer m_skinPalettes;
+  uint64_t m_skinPaletteCapacity = 0; // matrices
+  wgpu::Buffer m_skinUniforms;
+  uint64_t m_skinUniformCapacity = 0; // dispatches
+  wgpu::BindGroup m_skinningShared;
+  std::vector<uint32_t> m_skinsDrawn;
 
   // Mesh slots; a handle's id is its slot index + 1 (0 stays the null handle).
   std::vector<std::optional<GpuMesh>> m_meshes;

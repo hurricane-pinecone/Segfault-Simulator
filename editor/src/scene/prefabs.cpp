@@ -5,12 +5,15 @@
 #include "scene/editorScene.h"
 #include "scene/sceneDocument.h"
 
+#include "engine/core/animation/animation.h"
+#include "engine/core/components/animatorComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
@@ -75,6 +78,21 @@ const sfs::AssetRecord* recordOf(const EditorContext& context, const std::string
   return id ? context.assets->find(*id) : nullptr;
 }
 
+// The clip a newly placed animated model starts on: its "idle" (any case), or
+// else its first; empty if it has none.
+std::string startingClip(const sfs::AnimationSet& animations)
+{
+  for (const sfs::AnimationClip& clip : animations.clips)
+  {
+    std::string lower = clip.name;
+    for (char& c : lower)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "idle")
+      return clip.name;
+  }
+  return animations.clips.empty() ? std::string() : animations.clips.front().name;
+}
+
 std::string label(const EditorContext& context, const std::string& name)
 {
   const sfs::AssetRecord* record = recordOf(context, name);
@@ -131,6 +149,18 @@ sfs::Entity place(EditorContext& context,
       {
         root = context.scene->serializer().instantiate(prefab, *context.scene, parent);
         context.scene->flushEntities();
+        // An animated model comes with an Animator, playing its idle (or first)
+        // clip, as a model with clips is placed to be animated.
+        if (const sfs::AssetRecord* record = recordOf(context, prefab);
+            root.isValid() && record && record->kind == sfs::AssetKind::Model &&
+            !root.hasComponent<sfs::AnimatorComponent>())
+          if (const sfs::ModelData* model = context.scene->assetStore().model(record->id);
+              model && model->animations && !model->animations->clips.empty())
+          {
+            sfs::AnimatorComponent animator;
+            animator.clip = startingClip(*model->animations);
+            root.addComponent<sfs::AnimatorComponent>(animator);
+          }
         if (!root.isValid() || !position)
           return;
         if (!root.hasComponent<sfs::TransformComponent>())

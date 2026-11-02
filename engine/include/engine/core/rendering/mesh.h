@@ -1,10 +1,12 @@
 #pragma once
 
 #include "engine/core/rendering/aabb.h"
+#include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -134,6 +136,31 @@ struct MeshSection
 };
 
 /**
+ * One vertex's skin (see MeshSkin): up to four joints, by their place in the
+ * skin's joints, and how much each moves it (summing to 1; all 0: it stays
+ * as it is).
+ */
+struct SkinWeights
+{
+  std::array<uint16_t, 4> joints{0, 0, 0, 0};
+  glm::vec4 weights{0.0f};
+};
+
+/**
+ * What a skinned mesh (a character's body) moves with: its joints, the nodes
+ * of its model (entities, by name) that deform it, each with its inverse
+ * bind matrix (from the mesh's own space to the joint's, as the mesh was
+ * bound to it) and the box around the vertices it moves (in the mesh's own
+ * space, for bounds that hold whatever the pose; see skinnedBounds()).
+ */
+struct MeshSkin
+{
+  std::vector<std::string> joints;
+  std::vector<glm::mat4> inverseBind;
+  std::vector<Aabb> jointBounds;
+};
+
+/**
  * CPU-side mesh: an indexed triangle list (counter-clockwise front faces,
  * Z up). Plain data, so it can be built, combined and tested without a GPU;
  * a renderer uploads it once and hands back a MeshHandle.
@@ -147,8 +174,17 @@ struct MeshData
   std::vector<MeshVertex> vertices;
   std::vector<uint32_t> indices;
   std::vector<MeshSection> sections;
+  // A skinned mesh's skeleton, and each vertex's weights (as many as
+  // vertices); null and empty for a mesh that doesn't deform.
+  std::shared_ptr<const MeshSkin> skin;
+  std::vector<SkinWeights> skinWeights;
 
   bool empty() const { return indices.empty(); }
+  bool skinned() const
+  {
+    return skin && !skin->joints.empty() &&
+           skinWeights.size() == vertices.size();
+  }
 
   /** Bounds of every vertex position. */
   Aabb bounds() const;

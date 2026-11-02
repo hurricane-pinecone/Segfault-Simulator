@@ -3,7 +3,8 @@
 //
 // Bloom: the prefilter keeps what of the light that blooms (the scene x each
 // material's Bloom, which the lit pass writes beside it) is brighter than the
-// threshold, while halving it; downsamples halve it again and again (a 13-tap
+// threshold, while halving it (a lone bright pixel counted for less, see
+// karis()); downsamples halve it again and again (a 13-tap
 // filter, so the result doesn't shimmer); upsamples then add each level onto the one above
 // it, spread by a tent filter, back up to the first. The composite adds that
 // glow to the scene, then grades it (ColorGrading): exposure, white balance,
@@ -13,7 +14,7 @@
 // picture is as it always was.
 
 struct Post {
-  texel: vec4f,    // xy the source's texel size
+  texel: vec4f,    // xy the source's texel size; the composite's z, w: SFS_FIREFLIES
   bloom: vec4f,    // x threshold, y softness, z radius (texels), w intensity
   tone: vec4f,     // x tone mapper (0 none, 1 ACES, 2 AgX, 3 neutral), y exposure (x), z contrast, w saturation
   grade: vec4f,    // x graded (0: only clamp), y vignette, z its softness, w aspect (width / height)
@@ -71,9 +72,49 @@ fn downsample(uv: vec2f) -> vec3f {
   return e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
 }
 
+// A 2x2 box's weight in the prefilter: less the brighter it is (Karis's
+// average), so a lone very bright pixel (a glint on something thinner than
+// it) can't flash a blob of bloom around itself; broad bright light blooms
+// as before.
+fn karis(c: vec3f) -> f32 {
+  return 1.0 / (1.0 + max(max(c.r, c.g), c.b));
+}
+
+// The 13 taps of downsample() as its five 2x2 boxes, each weighted by
+// karis() (its weight's share kept).
+fn downsampleSteady(uv: vec2f) -> vec3f {
+  let t = post.texel.xy;
+  let a = tap(uv + t * vec2f(-2.0, -2.0));
+  let b = tap(uv + t * vec2f(0.0, -2.0));
+  let c = tap(uv + t * vec2f(2.0, -2.0));
+  let d = tap(uv + t * vec2f(-2.0, 0.0));
+  let e = tap(uv);
+  let f = tap(uv + t * vec2f(2.0, 0.0));
+  let g = tap(uv + t * vec2f(-2.0, 2.0));
+  let h = tap(uv + t * vec2f(0.0, 2.0));
+  let i = tap(uv + t * vec2f(2.0, 2.0));
+  let j = tap(uv + t * vec2f(-1.0, -1.0));
+  let k = tap(uv + t * vec2f(1.0, -1.0));
+  let l = tap(uv + t * vec2f(-1.0, 1.0));
+  let m = tap(uv + t * vec2f(1.0, 1.0));
+  let inner = (j + k + l + m) * 0.25;
+  let topLeft = (a + b + d + e) * 0.25;
+  let topRight = (b + c + e + f) * 0.25;
+  let bottomLeft = (d + e + g + h) * 0.25;
+  let bottomRight = (e + f + h + i) * 0.25;
+  let wInner = 0.5 * karis(inner);
+  let wTopLeft = 0.125 * karis(topLeft);
+  let wTopRight = 0.125 * karis(topRight);
+  let wBottomLeft = 0.125 * karis(bottomLeft);
+  let wBottomRight = 0.125 * karis(bottomRight);
+  let sum = inner * wInner + topLeft * wTopLeft + topRight * wTopRight + bottomLeft * wBottomLeft +
+            bottomRight * wBottomRight;
+  return sum / max(wInner + wTopLeft + wTopRight + wBottomLeft + wBottomRight, 1e-6);
+}
+
 @fragment
 fn fs_prefilter(in: Varyings) -> @location(0) vec4f {
-  let color = downsample(in.uv);
+  let color = downsampleSteady(in.uv);
   // Only light above the threshold, eased in: the part above it, x itself /
   // (itself + softness), so it starts gently and nothing at or below the
   // threshold blooms at all.
@@ -203,6 +244,26 @@ fn grade(light: vec3f, uv: vec2f) -> vec3f {
 @fragment
 fn fs_composite(in: Varyings) -> @location(0) vec4f {
   let scene = textureLoad(source, vec2i(in.position.xy), 0).rgb;
+  // (SFS_FIREFLIES: a pixel far brighter than those around it, magenta;
+  // one not a number or infinite, cyan.)
+  if (post.texel.z > 0.5) {
+    let here = luminance(scene);
+    let bits = bitcast<u32>(here) & 0x7f800000u;
+    if (bits == 0x7f800000u) {
+      return vec4f(0.0, 1.0, 1.0, 1.0);
+    }
+    var around = 0.0;
+    for (var y = -1; y <= 1; y++) {
+      for (var x = -1; x <= 1; x++) {
+        if (x != 0 || y != 0) {
+          around += luminance(textureLoad(source, vec2i(in.position.xy) + vec2i(x, y), 0).rgb);
+        }
+      }
+    }
+    if (here > 4.0 * (around / 8.0) + post.texel.w) {
+      return vec4f(1.0, clamp(log2(here) * 8.0 + 64.0, 0.0, 200.0) / 255.0, 1.0, 1.0);
+    }
+  }
   let bloom = textureSampleLevel(glow, linearClamp, in.uv, 0.0).rgb * post.bloom.w;
   // The target's alpha stays 1 (the editor shows the viewport as an image).
   if (post.grade.x < 0.5) {

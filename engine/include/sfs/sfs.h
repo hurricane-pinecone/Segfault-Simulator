@@ -4,6 +4,7 @@
 // include. Scripts written from the editor's templates start with
 // `#include <sfs/sfs.h>`.
 
+#include "engine/core/components/animatorComponent.h"
 #include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/cameraComponent.h"
@@ -27,6 +28,7 @@
 #include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/game/game.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"

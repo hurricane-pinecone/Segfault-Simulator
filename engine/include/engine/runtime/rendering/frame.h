@@ -38,12 +38,15 @@ inline constexpr std::size_t kMaxPointLights = 4096;
  * its textures it shows. `uvRect` maps the mesh's UVs into a rectangle (x, y:
  * its corner; z, w: its size): the whole texture by default, or one frame of a
  * sprite sheet, so a sprite is a quad mesh whose instances pick their frames.
+ * `emission` (rgb, linear) is light it gives off on top of its materials'
+ * (MeshRendererComponent::emission): a lamp switched on.
  */
 struct MeshInstance
 {
   glm::mat4 model{1.0f};
   glm::vec4 tint{1.0f};
   glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f};
+  glm::vec4 emission{0.0f};
 };
 
 /**

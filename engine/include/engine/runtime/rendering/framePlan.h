@@ -191,7 +191,9 @@ struct GpuPointLight
 {
   glm::vec4 positionRadius;
   glm::vec4 colorIntensity;
-  glm::vec4 shadow; // its cube's layer (-1: none), 1 / its face size, its size
+  glm::vec4 shadow; // its cube's layer (-1: none), 1 / its face size, its
+                    // size, a spot's 1 / (cos inner - cos outer) (0: none)
+  glm::vec4 spot;   // a spot's axis, cos of its outer angle
 };
 
 /** `ShadowFace` in meshPointShadow.wgsl. */
@@ -297,7 +299,8 @@ static_assert(sizeof(OcclusionUniforms) == 64 * 2 + 16 * 7,
 struct FocusUniforms
 {
   glm::vec4 depth; // projection[2][2], projection[3][2], perspective (1/0)
-  glm::vec4 focus; // distance, half the sharp range, blur radius (texels)
+  glm::vec4 focus; // distance, half the sharp range, blur radius (texels),
+                   // the lens's hyperfocal distance (0: none)
   glm::vec4 texel; // a half-size texel (uv)
 };
 

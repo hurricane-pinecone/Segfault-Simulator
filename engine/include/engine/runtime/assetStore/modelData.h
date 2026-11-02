@@ -1,9 +1,11 @@
 #pragma once
 
+#include "engine/core/animation/animation.h"
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/rendering/mesh.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -37,13 +39,19 @@ struct ModelNode
  * counter-clockwise, linear colours): the whole model as its file places it,
  * plus each of its meshes on its own when it has more than one, and then its
  * node tree (parents before children), so it can be placed as a tree of
- * entities (e.g. to turn one part, like a windmill's sails).
+ * entities (e.g. to turn one part, like a windmill's sails). A model with
+ * skins always has its parts and node tree, so its joints are entities an
+ * AnimatorComponent can move.
  */
 struct ModelData
 {
   MeshData whole;
   std::vector<ModelPart> parts;
   std::vector<ModelNode> nodes; // only with parts
+  // Its animation clips (each moving some of its nodes, by name, in the
+  // engine's axes); null if it has none. A skinned part's mesh has its skin
+  // (MeshData::skin), whose joints are nodes too.
+  std::shared_ptr<const AnimationSet> animations;
 };
 
 /**

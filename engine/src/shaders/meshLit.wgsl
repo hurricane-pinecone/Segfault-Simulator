@@ -23,7 +23,9 @@
 const PI: f32 = 3.14159265;
 
 struct VertexOut {
-  @builtin(position) clip: vec4f,
+  // Invariant: grass's ground (meshGrass.wgsl's vs_ground) is the same mesh
+  // drawn again over it, and must land on exactly the same depth.
+  @builtin(position) @invariant clip: vec4f,
   @location(0) worldPosition: vec3f,
   @location(1) normal: vec3f,
   @location(2) vertexColor: vec3f,
@@ -35,6 +37,9 @@ struct VertexOut {
   // dripLineWetness()), found per vertex, as they're thin and drawn over each
   // other (others: x below 0, found at each point).
   @location(7) rain: vec2f,
+  // Light it gives off on top of its material's emission (an instance's:
+  // MeshInstance::emission; others zero).
+  @location(8) emission: vec3f,
 }
 
 // A physical sky's (see skyCommon.wgsl and sky.wgsl): its reflections, sharp
@@ -322,7 +327,9 @@ struct PointLight {
   positionRadius: vec4f, // xyz world position, w reach
   colorIntensity: vec4f, // rgb tint, w intensity
   shadow: vec4f,         // x its shadow map's layer (-1: none), y 1 / its face size,
-                         // z how big it is (its source's radius)
+                         // z how big it is (its source's radius), w a spot's
+                         // 1 / (cos inner - cos outer) (0: not a spot)
+  spot: vec4f,           // a spot's: xyz its axis, w the cosine of its outer angle
 }
 
 @group(0) @binding(3) var<storage, read> pointLights: array<PointLight>;
@@ -423,9 +430,20 @@ fn pointLighting(pixel: vec2f, worldPosition: vec3f, normal: vec3f, geometryNorm
       continue;
     }
 
-    let reach = clamp(1.0 - dist / radius, 0.0, 1.0);
-    let attenuation = reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0);
     let direction = toLight / max(dist, 1e-4);
+    // A spot lights only its cone, fading out between its inner and outer
+    // angles (a point light's w is 0: all round).
+    var cone = 1.0;
+    if (light.shadow.w > 0.0) {
+      cone = clamp((dot(-direction, light.spot.xyz) - light.spot.w) * light.shadow.w, 0.0, 1.0);
+      if (cone <= 0.0) {
+        continue;
+      }
+      cone = cone * cone * (3.0 - 2.0 * cone);
+    }
+
+    let reach = clamp(1.0 - dist / radius, 0.0, 1.0);
+    let attenuation = reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0) * cone;
     let ndotl = max(dot(normal, direction), 0.0);
     let diffuse = mix(0.12, 1.0, pow(ndotl, 0.8));
     let strength = light.colorIntensity.w * attenuation * pointShadow(light, worldPosition, geometryNormal);
@@ -769,7 +787,8 @@ fn shadeSeen(in: VertexOut, found: Found) -> LitOut {
   var here = surfaceInput(in.uv, in.worldPosition, normalize(in.normal), in.vertexColor);
   here.grass = in.grass;
   here.grassData = in.grassData;
-  let s = surface(here);
+  var s = surface(here);
+  s.emission += in.emission; // the instance's own (a lamp switched on)
   let geometryNormal = here.normal;
   // The surface's (tangent-space) normal, along the point's tangent frame.
   let bumped = normalize(here.tangent * s.normal.x + here.bitangent * s.normal.y + geometryNormal * s.normal.z);

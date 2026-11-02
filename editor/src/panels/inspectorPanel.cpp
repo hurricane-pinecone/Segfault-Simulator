@@ -12,6 +12,7 @@
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
+#include "engine/core/components/animatorComponent.h"
 #include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
@@ -30,6 +31,7 @@
 #include "engine/core/util/atomicFile.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/rendering/meshLibrary.h"
@@ -52,6 +54,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -962,7 +965,130 @@ struct MeshScene
   sfs::AssetDatabase* assets = nullptr; // where Extract writes materials
   const sfs::RenderSystem* render = nullptr;
   sfs::AssetStore* store = nullptr; // sprites' images
+  sfs::AnimationSystem* animation = nullptr; // animators' previews
 };
+
+// An AnimatorComponent's clip: none (its model as bound), or one of its
+// model's clips (listed once it has loaded).
+void animatorClipField(const FieldInfo& field,
+                       void* object,
+                       EditorHistory* history)
+{
+  const auto& animator = *static_cast<sfs::AnimatorComponent*>(object);
+  const std::vector<std::string> clips = animator.clipNames();
+  widgets::propertyLabel(field.displayName.c_str());
+  widgets::undoable(history,
+                    field.in<std::string>(object),
+                    [&](std::string& clip)
+                    {
+                      bool changed = false;
+                      if (ImGui::BeginCombo(
+                              "##value", clip.empty() ? "(none)" : clip.c_str()))
+                      {
+                        if (ImGui::Selectable("(none)", clip.empty()))
+                        {
+                          clip.clear();
+                          changed = true;
+                        }
+                        for (const std::string& name : clips)
+                          if (ImGui::Selectable(name.c_str(), name == clip))
+                          {
+                            clip = name;
+                            changed = true;
+                          }
+                        if (clips.empty())
+                          ImGui::TextDisabled("No clips (yet): its model "
+                                              "has none, or is loading");
+                        ImGui::EndCombo();
+                      }
+                      return changed;
+                    });
+  if (const float length = animator.length(); length > 0.0f)
+    ImGui::SetItemTooltip("%.2f s", length);
+}
+
+// An AnimatorComponent's source: its skinned meshes' own model (empty), or
+// another model asset whose clips it plays (one with its joints' names).
+void animatorSourceField(const FieldInfo& field,
+                         void* object,
+                         const MeshScene& scene,
+                         EditorHistory* history)
+{
+  widgets::propertyLabel(field.displayName.c_str());
+  const sfs::AssetDatabase* assets = scene.assets;
+  widgets::undoable(
+      history,
+      field.in<std::string>(object),
+      [&](std::string& source)
+      {
+        const sfs::AssetRecord* picked = nullptr;
+        if (const std::optional<sfs::AssetMeshName> named =
+                sfs::parseAssetMeshName(source);
+            named && assets)
+          picked = assets->find(named->model);
+        const std::string shown =
+            source.empty() ? "(its own model)"
+            : picked       ? picked->path.filename().string()
+                           : source;
+        bool changed = false;
+        if (ImGui::BeginCombo("##value", shown.c_str()))
+        {
+          if (ImGui::Selectable("(its own model)", source.empty()))
+          {
+            source.clear();
+            changed = true;
+          }
+          if (assets)
+            for (const sfs::AssetRecord& record : assets->records())
+            {
+              if (record.kind != sfs::AssetKind::Model)
+                continue;
+              const std::string name = sfs::assetMeshName(record.id);
+              if (ImGui::Selectable(record.path.generic_string().c_str(),
+                                    name == source))
+              {
+                source = name;
+                changed = true;
+              }
+            }
+          ImGui::EndCombo();
+        }
+        return changed;
+      });
+}
+
+// While editing: play an animator's clip in the viewport (its time runs
+// without entering Play), and put its time back when stopped.
+void animatorPreview(const sfs::Entity& entity,
+                     void* object,
+                     const MeshScene& scene)
+{
+  auto& animator = *static_cast<sfs::AnimatorComponent*>(object);
+  if (!scene.animation || scene.animation->live())
+    return;
+  static std::unordered_map<sfs::Entity::EntityId, float> startedAt;
+  const bool previewing = scene.animation->previewing(entity);
+  widgets::propertyLabel("Preview");
+  ImGui::BeginDisabled(animator.clip.empty());
+  if (ImGui::Button(previewing ? "Stop##preview" : "Play##preview",
+                    ImVec2(-FLT_MIN, 0.0f)))
+  {
+    scene.animation->setPreview(entity, !previewing);
+    if (!previewing)
+      startedAt[entity.getId()] = animator.time;
+    else if (const auto it = startedAt.find(entity.getId());
+             it != startedAt.end())
+    {
+      animator.time = it->second;
+      startedAt.erase(it);
+    }
+  }
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip(
+      previewing ? "Stop, back where it started"
+                 : "Play the clip in the viewport without entering Play "
+                   "(drag Time to scrub it)");
+}
 
 // A 2D game's sprite's box on its plane, about the entity (its pixels over the
 // pixels per unit, scaled, off its anchor), for a BoxCollider2D to fit. Empty
@@ -1253,7 +1379,11 @@ void componentSection(
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             ImGui::GetStyle().Alpha * 0.55f);
       ImGui::BeginGroup();
-      if (field.attributes.materials && field.kind == FieldKind::StringList)
+      if (type.name == "AnimatorComponent" && field.name == "clip")
+        animatorClipField(field, object, history);
+      else if (type.name == "AnimatorComponent" && field.name == "source")
+        animatorSourceField(field, object, scene, history);
+      else if (field.attributes.materials && field.kind == FieldKind::StringList)
         materialsField(type,
                        field,
                        object,
@@ -1302,6 +1432,8 @@ void componentSection(
     }
     if (type.fields.empty())
       ImGui::TextDisabled("No editable fields");
+    if (type.name == "AnimatorComponent")
+      animatorPreview(entity, object, scene);
     if (type.name == "BoxCollider2D" && spriteBox(entity, scene) && ImGui::Button("Fit to Sprite"))
       history->change(
           [&]
@@ -1485,6 +1617,67 @@ void assetDetails(const sfs::AssetDatabase& assets,
     ImGui::TextDisabled("None");
   else
     ImGui::TextUnformatted(record.settings.dump(2).c_str());
+}
+
+// A model's animation clips (an AnimatorComponent plays them by name) and
+// skins, once it has loaded.
+void modelAnimations(EditorContext& context, const sfs::AssetRecord& record)
+{
+  if (!context.scene)
+    return;
+  ImGui::SeparatorText("Animations");
+  const sfs::ModelData* model = nullptr;
+  switch (context.scene->assetStore().requestModel(record.id, &model))
+  {
+  case sfs::AssetStore::LoadState::Loading:
+    ImGui::TextDisabled("Loading...");
+    return;
+  case sfs::AssetStore::LoadState::Failed:
+    ImGui::TextDisabled("It didn't load (see the Console)");
+    return;
+  case sfs::AssetStore::LoadState::Loaded:
+    break;
+  }
+  std::size_t skinned = 0;
+  std::size_t joints = 0;
+  for (const sfs::ModelPart& part : model->parts)
+    if (part.mesh.skinned())
+    {
+      ++skinned;
+      joints = std::max(joints, part.mesh.skin->joints.size());
+    }
+  if (skinned > 0)
+    ImGui::TextDisabled("%zu skinned mesh%s, %zu joints",
+                        skinned,
+                        skinned == 1 ? "" : "es",
+                        joints);
+  if (!model->animations || model->animations->clips.empty())
+  {
+    ImGui::TextDisabled("No clips");
+    return;
+  }
+  if (ImGui::BeginTable("Clips",
+                        3,
+                        ImGuiTableFlags_SizingStretchProp |
+                            ImGuiTableFlags_RowBg))
+  {
+    ImGui::TableSetupColumn("Clip");
+    ImGui::TableSetupColumn("Length");
+    ImGui::TableSetupColumn("Channels");
+    ImGui::TableHeadersRow();
+    for (const sfs::AnimationClip& clip : model->animations->clips)
+    {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(clip.name.c_str());
+      ImGui::TableNextColumn();
+      ImGui::Text("%.2f s", clip.duration);
+      ImGui::TableNextColumn();
+      ImGui::Text("%zu", clip.channels.size());
+    }
+    ImGui::EndTable();
+  }
+  ImGui::TextDisabled("Play them with an Animator on the model's root");
 }
 
 // How a texture is brought in: smooth or pixel art, and whether it's a sprite
@@ -2063,6 +2256,8 @@ void InspectorPanel::drawContents(EditorContext& context)
         drawVisualStyle(context, *asset);
       if (asset->kind == sfs::AssetKind::Prefab && ImGui::Button("Edit Prefab"))
         context.openPrefab = asset->id;
+      if (asset->kind == sfs::AssetKind::Model)
+        modelAnimations(context, *asset);
     }
     else
       ImGui::TextDisabled("Nothing selected");
@@ -2074,7 +2269,12 @@ void InspectorPanel::drawContents(EditorContext& context)
   sfs::MeshLibrary* meshes =
       context.render ? &context.render->meshes() : nullptr;
   const sfs::hierarchy::EntityTree tree(context.scene->entities());
-  const MeshScene scene{meshes, &tree, context.assets, context.render, context.scene ? &context.scene->assetStore() : nullptr};
+  const MeshScene scene{meshes,
+                        &tree,
+                        context.assets,
+                        context.render,
+                        context.scene ? &context.scene->assetStore() : nullptr,
+                        context.scene ? context.scene->tryGetSystem<sfs::AnimationSystem>() : nullptr};
 
   EditorHistory* history = context.history;
 

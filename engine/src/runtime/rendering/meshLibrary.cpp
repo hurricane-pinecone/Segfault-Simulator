@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/meshLibrary.h"
 
+#include "engine/core/animation/animation.h"
 #include "engine/core/rendering/terrain.h"
 
 #include "engine/core/logger/logger.h"
@@ -18,6 +19,9 @@ MeshLibrary::MeshLibrary(IRenderer& renderer) : m_renderer(renderer) {}
 
 MeshLibrary::~MeshLibrary()
 {
+  for (const auto& [key, skin] : m_skins)
+    if (skin.pose.gpu.valid())
+      m_renderer.destroyMesh(skin.pose.gpu);
   for (const auto& [id, entry] : m_meshes)
     if (entry.gpu.valid())
       m_renderer.destroyMesh(entry.gpu);
@@ -92,6 +96,9 @@ bool MeshLibrary::fill(Entry& entry, const MeshData& mesh)
   }
   if (g_keepVertices)
     entry.vertices = mesh.vertices;
+  entry.skin = mesh.skinned() ? mesh.skin : nullptr;
+  entry.skinWeights =
+      entry.skin ? mesh.skinWeights : std::vector<SkinWeights>();
 
   // Each section's surface samples (all the indices for a mesh without
   // sections, which draws as one).
@@ -169,9 +176,131 @@ void MeshLibrary::remove(MeshHandle mesh)
   if (it == m_meshes.end())
     return;
   const MeshHandle gpu = it->second.gpu;
+  removeSkins(mesh);
   m_meshes.erase(it);
   if (gpu.valid())
     m_renderer.destroyMesh(gpu);
+}
+
+void MeshLibrary::removeSkins(MeshHandle mesh)
+{
+  for (auto it = m_skins.begin(); it != m_skins.end();)
+    if ((it->first >> 32) == mesh.id)
+    {
+      if (it->second.pose.gpu.valid())
+        m_renderer.destroyMesh(it->second.pose.gpu);
+      it = m_skins.erase(it);
+    }
+    else
+      ++it;
+}
+
+const MeshSkin* MeshLibrary::skin(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end() ? it->second.skin.get() : nullptr;
+}
+
+std::span<const SkinWeights> MeshLibrary::skinWeights(MeshHandle mesh) const
+{
+  const auto it = m_meshes.find(mesh.id);
+  return it != m_meshes.end()
+             ? std::span<const SkinWeights>(it->second.skinWeights)
+             : std::span<const SkinWeights>();
+}
+
+void MeshLibrary::setSkinPose(MeshHandle mesh,
+                              uint32_t owner,
+                              std::span<const glm::mat4> palette,
+                              const Aabb& bounds)
+{
+  const auto entry = m_meshes.find(mesh.id);
+  if (entry == m_meshes.end() || !entry->second.skin ||
+      !entry->second.gpu.valid())
+    return;
+  auto [it, made] = m_skins.try_emplace(skinKey(mesh, owner));
+  Skin& skin = it->second;
+  skin.used = true;
+  if (made)
+    skin.pose.gpu = m_renderer.createSkinnedMesh(entry->second.gpu);
+  else if (std::equal(palette.begin(),
+                      palette.end(),
+                      skin.pose.palette.begin(),
+                      skin.pose.palette.end()))
+    return; // as it was
+  skin.pose.palette.assign(palette.begin(), palette.end());
+  skin.pose.bounds = bounds;
+  skin.pose.drawn = false;
+  ++skin.pose.version;
+  if (skin.pose.gpu.valid())
+    m_renderer.setSkinPose(skin.pose.gpu, palette, bounds);
+}
+
+void MeshLibrary::keepSkin(MeshHandle mesh, uint32_t owner)
+{
+  if (const auto it = m_skins.find(skinKey(mesh, owner)); it != m_skins.end())
+    it->second.used = true;
+}
+
+const MeshLibrary::SkinPose* MeshLibrary::skinPose(MeshHandle mesh,
+                                                   uint32_t owner) const
+{
+  if (m_skins.empty())
+    return nullptr;
+  const auto it = m_skins.find(skinKey(mesh, owner));
+  return it != m_skins.end() ? &it->second.pose : nullptr;
+}
+
+void MeshLibrary::markSkinDrawn(MeshHandle mesh, uint32_t owner)
+{
+  if (const auto it = m_skins.find(skinKey(mesh, owner)); it != m_skins.end())
+    it->second.pose.drawn = true;
+}
+
+void MeshLibrary::releaseUnusedSkins()
+{
+  for (auto it = m_skins.begin(); it != m_skins.end();)
+  {
+    if (it->second.used)
+    {
+      it->second.used = false;
+      ++it;
+      continue;
+    }
+    if (it->second.pose.gpu.valid())
+      m_renderer.destroyMesh(it->second.pose.gpu);
+    it = m_skins.erase(it);
+  }
+}
+
+const Aabb* MeshLibrary::posedBounds(MeshHandle mesh, uint32_t owner) const
+{
+  if (const SkinPose* pose = skinPose(mesh, owner);
+      pose && !pose->bounds.empty())
+    return &pose->bounds;
+  return bounds(mesh);
+}
+
+std::span<const glm::vec3> MeshLibrary::posedPositions(MeshHandle mesh,
+                                                       uint32_t owner) const
+{
+  const auto entry = m_meshes.find(mesh.id);
+  if (entry == m_meshes.end())
+    return {};
+  const auto it =
+      m_skins.empty() ? m_skins.end() : m_skins.find(skinKey(mesh, owner));
+  if (it == m_skins.end() || it->second.pose.palette.empty())
+    return entry->second.positions;
+  const Skin& skin = it->second;
+  if (skin.positionsVersion != skin.pose.version || skin.positions.empty())
+  {
+    skinPositions(entry->second.positions,
+                  entry->second.skinWeights,
+                  skin.pose.palette,
+                  skin.positions);
+    skin.positionsVersion = skin.pose.version;
+  }
+  return skin.positions;
 }
 
 MeshHandle MeshLibrary::missing(std::string_view name)
@@ -322,12 +451,17 @@ const MeshMaterial* MeshLibrary::materialData(MaterialHandle material) const
 
 std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
                                                         const glm::mat4& world,
-                                                        const Ray& ray) const
+                                                        const Ray& ray,
+                                                        uint32_t owner) const
 {
   const auto it = m_meshes.find(mesh.id);
   if (it == m_meshes.end())
     return std::nullopt;
   const Entry& entry = it->second;
+  // As its owner's copy is posed, if it has one.
+  const std::span<const glm::vec3> positions =
+      owner != kNoOwner ? posedPositions(mesh, owner)
+                        : std::span<const glm::vec3>(entry.positions);
 
   // Into the mesh's space; the direction isn't renormalised, so distances
   // along it stay the world ray's.
@@ -339,14 +473,14 @@ std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
   std::size_t bestIndex = 0;
   for (std::size_t i = 0; i + 2 < entry.indices.size(); i += 3)
   {
-    if (entry.indices[i + 2] >= entry.positions.size() ||
-        entry.indices[i] >= entry.positions.size() ||
-        entry.indices[i + 1] >= entry.positions.size())
+    if (entry.indices[i + 2] >= positions.size() ||
+        entry.indices[i] >= positions.size() ||
+        entry.indices[i + 1] >= positions.size())
       continue;
     // Moller-Trumbore.
-    const glm::vec3& a = entry.positions[entry.indices[i]];
-    const glm::vec3 edge1 = entry.positions[entry.indices[i + 1]] - a;
-    const glm::vec3 edge2 = entry.positions[entry.indices[i + 2]] - a;
+    const glm::vec3& a = positions[entry.indices[i]];
+    const glm::vec3 edge1 = positions[entry.indices[i + 1]] - a;
+    const glm::vec3 edge2 = positions[entry.indices[i + 2]] - a;
     const glm::vec3 p = glm::cross(direction, edge2);
     const float determinant = glm::dot(edge1, p);
     if (std::abs(determinant) < 1.0e-12f)
@@ -365,7 +499,7 @@ std::optional<MeshLibrary::RayHit> MeshLibrary::raycast(MeshHandle mesh,
     {
       best = RayHit{distance, 0};
       bestIndex = i;
-      if (entry.uvs.size() == entry.positions.size())
+      if (entry.uvs.size() == positions.size())
       {
         const glm::vec2& ua = entry.uvs[entry.indices[i]];
         const glm::vec2& ub = entry.uvs[entry.indices[i + 1]];

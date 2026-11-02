@@ -140,6 +140,7 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/grassComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassBenderComponent.h"
             "${ENGINE_COMPONENT_DIR}/deformerComponent.h"
+            "${ENGINE_COMPONENT_DIR}/animatorComponent.h"
             "${ENGINE_COMPONENT_DIR}/scriptComponent.h"
             "${ENGINE_COMPONENT_DIR}/cameraFollowComponent.h"
             "${ENGINE_COMPONENT_DIR}/rigidBody2DComponent.h"

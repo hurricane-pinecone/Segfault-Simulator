@@ -3,6 +3,7 @@
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
@@ -85,6 +86,10 @@ void startScripts(Scene& scene,
                   const std::vector<std::string>& systems,
                   MeshLibrary* meshes)
 {
+  // Playing now: animators move their joints, their time running.
+  if (AnimationSystem* animation = scene.tryGetSystem<AnimationSystem>())
+    animation->setLive(true);
+
   for (const std::string& name : systems)
   {
     const ScriptType* type = scripts().find(name);

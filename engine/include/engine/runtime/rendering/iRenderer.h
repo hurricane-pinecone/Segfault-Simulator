@@ -55,6 +55,37 @@ public:
   virtual void destroyMesh(MeshHandle mesh) = 0;
 
   /**
+   * A copy of a skinned mesh (one made from MeshData with a skin) that
+   * deforms by its own pose (setSkinPose()): one per character drawing it.
+   * It draws like any mesh, with the original's sections and materials, in
+   * every pass; destroyMesh() frees it. Until it's posed it draws as bound
+   * (the original's vertices).
+   *
+   * @return its handle, or an invalid one if `mesh` isn't skinned or the
+   * backend can't skin (it then draws the original, undeformed)
+   */
+  virtual MeshHandle createSkinnedMesh(MeshHandle mesh)
+  {
+    (void)mesh;
+    return {};
+  }
+
+  /**
+   * A skinned copy's pose: its palette (a matrix a joint of its skin, see
+   * skinPalette()) and the bounds it has posed (its own space), shown from
+   * the next frame it's drawn in. Its vertices are deformed only in frames
+   * it's drawn in after a new pose.
+   */
+  virtual void setSkinPose(MeshHandle skinned,
+                           std::span<const glm::mat4> palette,
+                           const Aabb& bounds)
+  {
+    (void)skinned;
+    (void)palette;
+    (void)bounds;
+  }
+
+  /**
    * Upload a material (and its textures) for objects to use in place of a
    * mesh section's own (see MeshBatch::materials).
    *

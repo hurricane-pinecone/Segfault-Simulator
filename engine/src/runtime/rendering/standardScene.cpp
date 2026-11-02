@@ -4,6 +4,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/meshPrimitives.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/rendering/modules/decalModule.h"
@@ -112,6 +113,8 @@ void StandardScene::onInit()
   auto& decals = m_render->withModule<DecalModule>(assetStore());
   m_render->withModule<ParticleModule>(assetStore()).enableStains(decals);
   m_render->withModule<UiModule>(*this);
+  // Animators pose their joints and skinned meshes (drawn by MeshModule).
+  addSystem<AnimationSystem>(m_render->meshes(), assetStore());
 
   MeshLibrary& library = m_render->meshes();
   // Named, so scenes that use them save and load.

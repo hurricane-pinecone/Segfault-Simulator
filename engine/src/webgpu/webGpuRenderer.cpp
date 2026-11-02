@@ -79,8 +79,33 @@ constexpr std::array<float, kSkyReflectionMips> kSkyReflectionSamples =
 
 static_assert(sizeof(MeshVertex) == 44,
               "vertex layout below assumes 11 floats");
-static_assert(sizeof(MeshInstance) == 96,
-              "instance layout below assumes mat4 + vec4 + vec4");
+static_assert(sizeof(MeshInstance) == 112,
+              "instance layout below assumes mat4 + vec4 + vec4 + vec4");
+static_assert(sizeof(SkinWeights) == 24,
+              "skinning.wgsl reads a vertex's weights as 6 words");
+
+// Skinning's dispatches: each one's uniforms at a multiple of this (a dynamic
+// offset's alignment), a vertex a thread, this many a workgroup.
+constexpr uint64_t kSkinUniformStride = 256;
+constexpr uint32_t kSkinWorkgroup = 64;
+
+// `Skinning` in skinning.wgsl.
+struct SkinningUniforms
+{
+  uint32_t vertexCount = 0;
+  uint32_t paletteOffset = 0; // its first matrix among the palettes
+  uint32_t joints = 0;
+  uint32_t pad = 0;
+};
+
+// Another reference to a buffer (released with it): a skinned copy shares its
+// original's.
+wgpu::Buffer sharedBuffer(const wgpu::Buffer& buffer)
+{
+  if (buffer)
+    wgpuBufferAddRef(buffer.get());
+  return wgpu::Buffer(buffer.get());
+}
 
 // Errors raised between a ValidationScope's construction and end(): how
 // WebGPU reports a shader or pipeline that doesn't build.
@@ -184,7 +209,7 @@ static_assert(sizeof(PuddleUniforms) == 80,
               "PuddleUniforms must match puddles.wgsl");
 
 // The two vertex buffers every mesh pipeline reads: per-vertex mesh data and
-// per-instance model matrix, tint and UV rectangle.
+// per-instance model matrix, tint, UV rectangle and emission.
 struct MeshVertexLayouts
 {
   std::array<WGPUVertexAttribute, 4> vertexAttributes{
@@ -193,7 +218,7 @@ struct MeshVertexLayouts
       attribute(WGPUVertexFormat_Float32x3, offsetof(MeshVertex, color), 2),
       attribute(WGPUVertexFormat_Float32x2, offsetof(MeshVertex, uv), 8),
   };
-  std::array<WGPUVertexAttribute, 6> instanceAttributes{
+  std::array<WGPUVertexAttribute, 7> instanceAttributes{
       attribute(WGPUVertexFormat_Float32x4,
                 offsetof(MeshInstance, model) + 0,
                 3),
@@ -208,6 +233,9 @@ struct MeshVertexLayouts
                 6),
       attribute(WGPUVertexFormat_Float32x4, offsetof(MeshInstance, tint), 7),
       attribute(WGPUVertexFormat_Float32x4, offsetof(MeshInstance, uvRect), 9),
+      attribute(WGPUVertexFormat_Float32x4,
+                offsetof(MeshInstance, emission),
+                10),
   };
   std::array<WGPUVertexBufferLayout, 2> buffers{};
 
@@ -447,6 +475,7 @@ bool WebGpuRenderer::initialize()
     LOG_ERROR("WebGpuRenderer: failed to build render pipelines");
     return false;
   }
+  createSkinningPipeline();
 
   // Timing the passes, if asked to (and the device can).
   if (std::getenv("SFS_GPU_TIMING") && m_context.hasTimestamps())
@@ -925,10 +954,15 @@ MeshHandle WebGpuRenderer::createMesh(const MeshData& mesh)
   const WGPUDevice device = m_context.device();
   const uint64_t vertexBytes = mesh.vertices.size() * sizeof(MeshVertex);
   const uint64_t indexBytes = mesh.indices.size() * sizeof(uint32_t);
+  // A skinned mesh's vertices are read by skinning's compute pass too.
+  const bool skinned = mesh.skinned() && m_skinningPipeline;
 
   GpuMesh gpu;
   gpu.vertices = makeBuffer(
-      device, vertexBytes, WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
+      device,
+      vertexBytes,
+      WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst |
+          (skinned ? WGPUBufferUsage_Storage : WGPUBufferUsage_None));
   gpu.indices = makeBuffer(
       device, indexBytes, WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst);
   if (!gpu.vertices || !gpu.indices)
@@ -942,7 +976,24 @@ MeshHandle WebGpuRenderer::createMesh(const MeshData& mesh)
   wgpuQueueWriteBuffer(
       m_context.queue(), gpu.indices.get(), 0, mesh.indices.data(), indexBytes);
   gpu.indexCount = static_cast<uint32_t>(mesh.indices.size());
+  gpu.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
   gpu.version = nextVersion();
+  if (skinned)
+  {
+    const uint64_t weightBytes = mesh.skinWeights.size() * sizeof(SkinWeights);
+    gpu.skinWeights = makeBuffer(
+        device, weightBytes, WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+    if (gpu.skinWeights)
+    {
+      wgpuQueueWriteBuffer(m_context.queue(),
+                           gpu.skinWeights.get(),
+                           0,
+                           mesh.skinWeights.data(),
+                           weightBytes);
+      gpu.joints = static_cast<uint32_t>(mesh.skin->joints.size());
+    }
+  }
+  gpu.sections = std::make_shared<std::vector<GpuSection>>();
   const Aabb bounds = mesh.bounds();
   gpu.boundsCenter = bounds.center();
   for (const MeshVertex& vertex : mesh.vertices)
@@ -959,13 +1010,13 @@ MeshHandle WebGpuRenderer::createMesh(const MeshData& mesh)
     std::optional<GpuMaterial> gpuMaterial = makeMaterial(material);
     // Even an empty section keeps its place, so slot numbers stay the mesh's.
     if (gpuMaterial)
-      gpu.sections.push_back({first, count, std::move(*gpuMaterial)});
+      gpu.sections->push_back({first, count, std::move(*gpuMaterial)});
   };
   if (mesh.sections.empty())
     addSection(0, gpu.indexCount, MeshMaterial{});
   for (const MeshSection& section : mesh.sections)
     addSection(section.firstIndex, section.indexCount, section.material);
-  if (gpu.sections.size() != std::max<std::size_t>(mesh.sections.size(), 1))
+  if (gpu.sections->size() != std::max<std::size_t>(mesh.sections.size(), 1))
     return {};
 
   uint32_t slot = 0;
@@ -996,10 +1047,115 @@ void WebGpuRenderer::destroyMesh(MeshHandle mesh)
     return;
 
   const uint32_t slot = meshSlotOf(mesh);
+  // Its skinned copies go with it (their handles then find nothing).
+  if (!m_meshes[slot]->skin)
+    for (uint32_t other = 0; other < m_meshes.size(); ++other)
+      if (m_meshes[other] && m_meshes[other]->skin &&
+          m_meshes[other]->skin->sourceSlot == slot)
+        destroyMesh(MeshHandle{(other + 1) |
+                               (m_meshGenerations[other] << kMeshSlotBits)});
   m_meshes[slot].reset();
   // Handles to it no longer match the slot.
   m_meshGenerations[slot] = (m_meshGenerations[slot] + 1) % kMeshGenerations;
   m_freeSlots.push_back(slot);
+}
+
+MeshHandle WebGpuRenderer::createSkinnedMesh(MeshHandle mesh)
+{
+  const GpuMesh* source = findMesh(mesh);
+  if (!source || source->skin || !source->skinWeights || !m_skinningPipeline ||
+      source->vertexCount == 0)
+    return {};
+
+  // Its own vertices, starting as the original's (as bound); the original's
+  // indices and sections.
+  const uint64_t vertexBytes =
+      uint64_t(source->vertexCount) * sizeof(MeshVertex);
+  GpuMesh gpu;
+  gpu.vertices = makeBuffer(m_context.device(),
+                            vertexBytes,
+                            WGPUBufferUsage_Vertex | WGPUBufferUsage_Storage |
+                                WGPUBufferUsage_CopyDst);
+  if (!gpu.vertices)
+    return {};
+  gpu.indices = sharedBuffer(source->indices);
+  gpu.indexCount = source->indexCount;
+  gpu.vertexCount = source->vertexCount;
+  gpu.joints = source->joints;
+  gpu.sections = source->sections;
+  gpu.boundsCenter = source->boundsCenter;
+  gpu.boundsRadius = source->boundsRadius;
+  gpu.version = nextVersion();
+  gpu.skin = std::make_unique<GpuSkin>();
+  GpuSkin& skin = *gpu.skin;
+  skin.source = sharedBuffer(source->vertices);
+  skin.weights = sharedBuffer(source->skinWeights);
+  skin.vertexCount = source->vertexCount;
+  skin.sourceSlot = meshSlotOf(mesh);
+
+  std::array<WGPUBindGroupEntry, 3> entries{};
+  entries[0].binding = 0;
+  entries[0].buffer = skin.source.get();
+  entries[0].size = vertexBytes;
+  entries[1].binding = 1;
+  entries[1].buffer = skin.weights.get();
+  entries[1].size = uint64_t(source->vertexCount) * sizeof(SkinWeights);
+  entries[2].binding = 2;
+  entries[2].buffer = gpu.vertices.get();
+  entries[2].size = vertexBytes;
+  WGPUBindGroupDescriptor desc = {};
+  desc.layout = m_skinningLayout.get();
+  desc.entryCount = entries.size();
+  desc.entries = entries.data();
+  skin.bindings.reset(wgpuDeviceCreateBindGroup(m_context.device(), &desc));
+  if (!skin.bindings)
+    return {};
+  // As bound until it's posed: the identity for every joint.
+  skin.palette.assign(gpu.joints, glm::mat4(1.0f));
+  skin.dirty = true;
+
+  uint32_t slot = 0;
+  if (!m_freeSlots.empty())
+  {
+    slot = m_freeSlots.back();
+    m_freeSlots.pop_back();
+    m_meshes[slot] = std::move(gpu);
+  }
+  else
+  {
+    slot = static_cast<uint32_t>(m_meshes.size());
+    if (slot >= kMeshSlotMask)
+    {
+      LOG_ERROR("Too many meshes (" + std::to_string(slot) + ")");
+      return {};
+    }
+    m_meshes.emplace_back(std::move(gpu));
+    m_meshGenerations.push_back(0);
+  }
+  return MeshHandle{(slot + 1) | (m_meshGenerations[slot] << kMeshSlotBits)};
+}
+
+void WebGpuRenderer::setSkinPose(MeshHandle skinned,
+                                 std::span<const glm::mat4> palette,
+                                 const Aabb& bounds)
+{
+  if (!findMesh(skinned))
+    return;
+  GpuMesh& mesh = *m_meshes[meshSlotOf(skinned)];
+  if (!mesh.skin)
+    return;
+  GpuSkin& skin = *mesh.skin;
+  // A joint the palette lacks stays as bound.
+  skin.palette.assign(mesh.joints, glm::mat4(1.0f));
+  std::copy_n(palette.begin(),
+              std::min<std::size_t>(palette.size(), mesh.joints),
+              skin.palette.begin());
+  skin.dirty = true;
+  if (!bounds.empty())
+  {
+    mesh.boundsCenter = bounds.center();
+    mesh.boundsRadius = glm::length(bounds.extents());
+  }
 }
 
 MaterialHandle WebGpuRenderer::createMaterial(const MeshMaterial& material)
@@ -1773,16 +1929,12 @@ WGPURenderPipeline WebGpuRenderer::grassPipeline(const Surface& surface,
 
   // Blades: as the opaque lit pipeline, but they come from storage (no
   // vertex buffers), as strips, seen from both sides. The ground: its mesh
-  // again, blended over itself (pulled a little toward the camera, so it
-  // wins where they're level).
-  WGPUDepthStencilState depth =
+  // again, blended over itself, at its very depth (both invariant: see
+  // vs_ground). No depth bias: its steps grow with distance, so a far ground
+  // pulled toward the camera covered the trees and streams on it.
+  const WGPUDepthStencilState depth =
       ground ? depthState(false, WGPUCompareFunction_LessEqual)
              : depthState(true, WGPUCompareFunction_Less);
-  if (ground)
-  {
-    depth.depthBias = -8;
-    depth.depthBiasSlopeScale = -1.0f;
-  }
   WGPUBlendState blending = {};
   blending.color = {WGPUBlendOperation_Add,
                     WGPUBlendFactor_SrcAlpha,
@@ -2349,6 +2501,7 @@ void WebGpuRenderer::encodeGrassShadows(WGPURenderPassEncoder pass,
 
 void WebGpuRenderer::beginFrame(const FrameParams& frame)
 {
+  m_skinsDrawn.clear();
   if (m_capabilities.pointLightShadows)
   {
     m_plan.begin(frame);
@@ -2365,15 +2518,19 @@ void WebGpuRenderer::drawMesh(const MeshBatch& batch)
   if (!mesh)
     return;
 
+  // A skinned copy is deformed before the frame's passes, if it's been posed.
+  if (mesh->skin && mesh->skin->dirty)
+    m_skinsDrawn.push_back(meshSlotOf(batch.mesh));
+
   // Whether any section draws see-through with the batch's materials.
   bool hasBlend = false;
-  for (std::size_t i = 0; i < mesh->sections.size(); ++i)
+  for (std::size_t i = 0; i < mesh->sections->size(); ++i)
   {
     const uint32_t id = i < batch.materials.size() ? batch.materials[i].id : 0;
     const GpuMaterial& material =
         id > 0 && id <= m_materials.size() && m_materials[id - 1]
             ? *m_materials[id - 1]
-            : mesh->sections[i].material;
+            : (*mesh->sections)[i].material;
     hasBlend = hasBlend || isSeeThrough(material.alphaMode);
   }
   m_plan.addMesh(batch, meshSlotOf(batch.mesh), plannedMesh(*mesh), hasBlend);
@@ -2432,6 +2589,9 @@ void WebGpuRenderer::endFrame()
     uploadFrame();
     uploadLights();
   }
+  // Skinned meshes deformed first: every pass draws them.
+  if (!m_skinsDrawn.empty())
+    step("gpu/skinning", [&] { encodeSkinning(); });
 
   // Puddles found where they've changed, and grass grown, first: its nearest
   // blades cast into the sun's shadow. Ambient occlusion before it: its depth
@@ -3176,7 +3336,7 @@ WebGpuRenderer::materialFor(const GpuMesh& mesh,
     if (id > 0 && id <= m_materials.size() && m_materials[id - 1])
       return *m_materials[id - 1];
   }
-  return mesh.sections[index].material;
+  return (*mesh.sections)[index].material;
 }
 
 bool WebGpuRenderer::createPipelines()
@@ -4284,9 +4444,12 @@ uint64_t WebGpuRenderer::casterKey(const Draw& draw) const
   const std::optional<GpuMesh>& mesh = m_meshes[draw.meshSlot];
   if (!mesh)
     return 0;
+  // A skinned copy moves without its instance moving: never still.
+  if (mesh->skin)
+    return 0;
   uint64_t key = 14695981039346656037ull;
   hashInto(key, mesh->version);
-  for (std::size_t i = 0; i < mesh->sections.size(); ++i)
+  for (std::size_t i = 0; i < mesh->sections->size(); ++i)
   {
     const GpuMaterial& material = materialFor(*mesh, i, draw);
     hashInto(key, material.version);
@@ -4315,6 +4478,7 @@ void WebGpuRenderer::encodePointShadows()
   {
     std::size_t index = 0;
     glm::vec3 light{0.0f};
+    std::array<bool, 6> faces{true, true, true, true, true, true}; // in reach
     bool redraw = false; // its still cube
     bool copy = false;   // that into the lit pass's
     std::vector<Draw> kept;
@@ -4334,6 +4498,8 @@ void WebGpuRenderer::encodePointShadows()
     hashInto(lightKey, light.position);
     hashInto(lightKey, light.radius);
     hashInto(lightKey, light.shadowNear);
+    hashInto(lightKey, light.spotDirection);
+    hashInto(lightKey, light.spotCosOuter);
     hashInto(lightKey, m_pointShadowResolution);
     hashInto(lightKey, m_shadowsEpoch);
     lightKey = lightKey == 0 ? 1 : lightKey;
@@ -4389,6 +4555,10 @@ void WebGpuRenderer::encodePointShadows()
     Cube cube;
     cube.index = i;
     cube.light = light.position;
+    // A spot's only lights some of its faces: nothing's drawn into the rest.
+    for (int face = 0; face < 6; ++face)
+      cube.faces[static_cast<std::size_t>(face)] =
+          lightReachesFace(light, face);
     cube.redraw = redraw;
     // Runs of instances, still or moving, each a draw of its own.
     std::size_t at = 0;
@@ -4474,7 +4644,8 @@ void WebGpuRenderer::encodePointShadows()
     {
       inFace.clear();
       for (const Draw& draw : draws)
-        if (reaches(draw, cube.light, static_cast<int>(face)))
+        if (cube.faces[face] &&
+            reaches(draw, cube.light, static_cast<int>(face)))
           inFace.push_back(draw);
       if (inFace.empty() && !clear)
         continue;
@@ -5495,6 +5666,167 @@ void WebGpuRenderer::ensureInstanceCapacity(std::size_t instanceCount)
                  WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
 }
 
+void WebGpuRenderer::createSkinningPipeline()
+{
+  const WGPUDevice device = m_context.device();
+  // Group 0: every copy's palette, and the dispatch's uniforms (at a dynamic
+  // offset). Group 1: a copy's source vertices and weights, and its own.
+  {
+    std::array<WGPUBindGroupLayoutEntry, 2> entries{};
+    entries[0] = wgpu::storageEntry(
+        0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage);
+    entries[1] = wgpu::storageEntry(
+        1, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform);
+    entries[1].buffer.hasDynamicOffset = true;
+    entries[1].buffer.minBindingSize = sizeof(SkinningUniforms);
+    WGPUBindGroupLayoutDescriptor desc = {};
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    m_skinningSharedLayout.reset(
+        wgpuDeviceCreateBindGroupLayout(device, &desc));
+  }
+  {
+    std::array<WGPUBindGroupLayoutEntry, 3> entries{};
+    entries[0] = wgpu::storageEntry(
+        0, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage);
+    entries[1] = wgpu::storageEntry(
+        1, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage);
+    entries[2] = wgpu::storageEntry(
+        2, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
+    WGPUBindGroupLayoutDescriptor desc = {};
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    m_skinningLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
+  }
+
+  ValidationScope scope(device);
+  const wgpu::ShaderModule module(
+      wgpu::makeShader(device, std::string(shaders::skinningWgsl).c_str()));
+  const WGPUBindGroupLayout groups[] = {
+      m_skinningSharedLayout.get(), m_skinningLayout.get()};
+  WGPUPipelineLayoutDescriptor layoutDesc = {};
+  layoutDesc.bindGroupLayoutCount = 2;
+  layoutDesc.bindGroupLayouts = groups;
+  const wgpu::PipelineLayout layout(
+      wgpuDeviceCreatePipelineLayout(device, &layoutDesc));
+  WGPUComputePipelineDescriptor pipeline = {};
+  pipeline.layout = layout.get();
+  pipeline.compute.module = module.get();
+  pipeline.compute.entryPoint = wgpu::sv("cs_main");
+  m_skinningPipeline.reset(wgpuDeviceCreateComputePipeline(device, &pipeline));
+  if (const std::optional<std::string> error = scope.end())
+  {
+    LOG_ERROR("Skinning's compute pass doesn't build (skinned meshes draw as "
+              "bound): " +
+              *error);
+    m_skinningPipeline.reset();
+  }
+}
+
+void WebGpuRenderer::encodeSkinning()
+{
+  // Each copy drawn this frame that's been posed, once.
+  std::vector<uint32_t> slots;
+  slots.swap(m_skinsDrawn);
+  std::sort(slots.begin(), slots.end());
+  slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+  std::erase_if(slots,
+                [&](uint32_t slot)
+                {
+                  return slot >= m_meshes.size() || !m_meshes[slot] ||
+                         !m_meshes[slot]->skin || !m_meshes[slot]->skin->dirty;
+                });
+  if (slots.empty() || !m_skinningPipeline)
+    return;
+
+  // Their palettes one after another, and each dispatch's uniforms, in a
+  // write each.
+  std::vector<glm::mat4> palettes;
+  std::vector<uint8_t> uniforms(slots.size() * kSkinUniformStride, 0);
+  for (std::size_t i = 0; i < slots.size(); ++i)
+  {
+    const GpuSkin& skin = *m_meshes[slots[i]]->skin;
+    SkinningUniforms u;
+    u.vertexCount = skin.vertexCount;
+    u.paletteOffset = static_cast<uint32_t>(palettes.size());
+    u.joints = static_cast<uint32_t>(skin.palette.size());
+    std::memcpy(uniforms.data() + i * kSkinUniformStride, &u, sizeof(u));
+    palettes.insert(palettes.end(), skin.palette.begin(), skin.palette.end());
+  }
+  if (palettes.empty())
+    palettes.emplace_back(1.0f);
+
+  bool rebind = !m_skinningShared;
+  if (palettes.size() > m_skinPaletteCapacity)
+  {
+    m_skinPaletteCapacity =
+        std::max<uint64_t>({palettes.size(), m_skinPaletteCapacity * 2, 256});
+    m_skinPalettes =
+        makeBuffer(m_context.device(),
+                   m_skinPaletteCapacity * sizeof(glm::mat4),
+                   WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+    rebind = true;
+  }
+  if (slots.size() > m_skinUniformCapacity)
+  {
+    m_skinUniformCapacity =
+        std::max<uint64_t>({slots.size(), m_skinUniformCapacity * 2, 16});
+    m_skinUniforms =
+        makeBuffer(m_context.device(),
+                   m_skinUniformCapacity * kSkinUniformStride,
+                   WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+    rebind = true;
+  }
+  if (!m_skinPalettes || !m_skinUniforms)
+    return;
+  if (rebind)
+  {
+    std::array<WGPUBindGroupEntry, 2> entries{};
+    entries[0].binding = 0;
+    entries[0].buffer = m_skinPalettes.get();
+    entries[0].size = m_skinPaletteCapacity * sizeof(glm::mat4);
+    entries[1].binding = 1;
+    entries[1].buffer = m_skinUniforms.get();
+    entries[1].size = sizeof(SkinningUniforms);
+    WGPUBindGroupDescriptor desc = {};
+    desc.layout = m_skinningSharedLayout.get();
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    m_skinningShared.reset(
+        wgpuDeviceCreateBindGroup(m_context.device(), &desc));
+  }
+  wgpuQueueWriteBuffer(m_context.queue(),
+                       m_skinPalettes.get(),
+                       0,
+                       palettes.data(),
+                       palettes.size() * sizeof(glm::mat4));
+  wgpuQueueWriteBuffer(m_context.queue(),
+                       m_skinUniforms.get(),
+                       0,
+                       uniforms.data(),
+                       uniforms.size());
+
+  WGPUComputePassDescriptor passDesc = {};
+  passDesc.timestampWrites = timedComputePass();
+  const WGPUComputePassEncoder pass =
+      wgpuCommandEncoderBeginComputePass(m_encoder, &passDesc);
+  wgpuComputePassEncoderSetPipeline(pass, m_skinningPipeline.get());
+  for (std::size_t i = 0; i < slots.size(); ++i)
+  {
+    GpuSkin& skin = *m_meshes[slots[i]]->skin;
+    const auto offset = static_cast<uint32_t>(i * kSkinUniformStride);
+    wgpuComputePassEncoderSetBindGroup(
+        pass, 0, m_skinningShared.get(), 1, &offset);
+    wgpuComputePassEncoderSetBindGroup(
+        pass, 1, skin.bindings.get(), 0, nullptr);
+    wgpuComputePassEncoderDispatchWorkgroups(
+        pass, (skin.vertexCount + kSkinWorkgroup - 1) / kSkinWorkgroup, 1, 1);
+    skin.dirty = false;
+  }
+  wgpuComputePassEncoderEnd(pass);
+  wgpuComputePassEncoderRelease(pass);
+}
+
 void WebGpuRenderer::uploadFrame()
 {
   FrameUniforms uniforms = m_plan.frameUniforms();
@@ -5880,9 +6212,9 @@ void WebGpuRenderer::encodeDraw(WGPURenderPassEncoder pass,
   wgpuRenderPassEncoderSetIndexBuffer(
       pass, mesh->indices.get(), WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
 
-  for (std::size_t i = 0; i < mesh->sections.size(); ++i)
+  for (std::size_t i = 0; i < mesh->sections->size(); ++i)
   {
-    const GpuSection& section = mesh->sections[i];
+    const GpuSection& section = (*mesh->sections)[i];
     const GpuMaterial& material = materialFor(*mesh, i, draw);
     const bool blend = isSeeThrough(material.alphaMode);
     const bool opaque =

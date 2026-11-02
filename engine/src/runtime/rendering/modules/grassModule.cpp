@@ -152,8 +152,9 @@ void GrassModule::gatherBenders(float seconds)
     const Aabb* bounds =
         bender.fitMesh && m_meshes &&
                 entity.hasComponent<MeshRendererComponent>()
-            ? m_meshes->bounds(
-                  entity.getComponent<MeshRendererComponent>().mesh)
+            ? m_meshes->posedBounds(
+                  entity.getComponent<MeshRendererComponent>().mesh,
+                  entity.getId())
             : nullptr;
     if (bounds && !bounds->empty())
     {

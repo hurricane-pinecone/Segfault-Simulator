@@ -393,7 +393,8 @@ void DeformationModule::pressMesh(const Entity& mesh,
                                   glm::vec2 motion)
 {
   const MeshHandle handle = mesh.getComponent<MeshRendererComponent>().mesh;
-  const Aabb* bounds = m_meshes->bounds(handle);
+  // A skinned mesh as an animator poses it (a foot down where it steps).
+  const Aabb* bounds = m_meshes->posedBounds(handle, mesh.getId());
   if (!bounds || bounds->empty())
     return;
   const Aabb world = bounds->transformed(model);
@@ -423,11 +424,12 @@ void DeformationModule::pressMesh(const Entity& mesh,
     const float below = ground->height + kAboveGround;
     if (world.min.z > below)
       continue;
-    const Underside bottom = underside(m_meshes->positions(handle),
-                                       m_meshes->indices(handle),
-                                       model,
-                                       below,
-                                       field.map.texel());
+    const Underside bottom =
+        underside(m_meshes->posedPositions(handle, mesh.getId()),
+                  m_meshes->indices(handle),
+                  model,
+                  below,
+                  field.map.texel());
     if (bottom.empty())
       continue;
 

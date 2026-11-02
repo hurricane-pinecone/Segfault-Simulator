@@ -18,5 +18,6 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> VertexOut {
   out.grass = vec4f(1.0, 0.0, 0.0, 0.0);
   out.grassData = vec4f(0.0);
   out.rain = vec2f(-1.0, 0.0);
+  out.emission = instance.emission.rgb;
   return out;
 }

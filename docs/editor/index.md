@@ -290,6 +290,18 @@ its own node tree (so a part can be animated or given a script), but can't be
 changed itself: make a prefab containing it (as with `Windmill.prefab` in the
 sample farm) to keep changes.
 
+## Animated characters
+
+A rigged model (a `.glb` with a skin and animations, from Blender or Mixamo)
+comes in with its joints as entities, and the Inspector lists its clips when
+the model is selected in the Assets panel. To animate a placed copy, add an
+**Animator** to its root (Add Component → Animator) and pick a **Clip**. While
+editing, the viewport shows the clip's pose at **Time** (drag it to scrub) and
+**Play** beside *Preview* plays it without entering Play mode; Stop puts the
+time back. Nothing is changed on the joints until the game plays, so scrubbing
+doesn't mark the copy as changed from its prefab. See
+[Skeletal animation](../runtime/animation/index.md).
+
 ## Parents and children
 
 Any entity can be the child of another, and moves, turns and scales with it

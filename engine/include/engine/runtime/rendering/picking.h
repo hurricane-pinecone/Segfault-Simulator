@@ -38,9 +38,11 @@ struct PickHit
 
 /**
  * The entity under a ray (e.g. a mouse click through Camera::screenRay): the
- * nearest whose bounds (entityBounds()) the ray enters. When several are
- * entered at the same distance (the ray starts inside them), the smallest wins,
- * so an object standing on a large floor is picked over the floor.
+ * nearest hit. A mesh is hit where the ray meets its triangles (its bounds
+ * only rule it out), so a camera inside a landscape's bounds still picks what
+ * stands on it; anything else where the ray enters its bounds
+ * (entityBounds()). When several are hit at the same distance, the smallest
+ * wins, so an object standing on a large floor is picked over the floor.
  */
 std::optional<PickHit> pickEntity(Scene& scene,
                                   const MeshLibrary& meshes,

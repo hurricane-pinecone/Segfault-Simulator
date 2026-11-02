@@ -26,6 +26,7 @@
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
 #include "glm/glm/gtc/matrix_transform.hpp"
 #include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/gtc/type_ptr.hpp"
@@ -79,6 +80,23 @@ constexpr ImU32 kTriggerColor = IM_COL32(255, 150, 60, 255);
 // How far ahead a camera's outline reaches, as a fraction of its distance from
 // the viewer, so it stays about the same size on screen.
 constexpr float kCameraIconScale = 0.08f;
+
+// What a click on `hit` selects: the outermost prefab instance it's part of
+// (the thing placed, not a mesh deep in its model); or, once that instance or
+// something in it is selected, the part itself, so a second click reaches in.
+sfs::Entity clickTarget(const sfs::Entity& hit, const sfs::Entity& selected)
+{
+  sfs::Entity root = sfs::SceneSerializer::instanceRootOf(hit);
+  if (!root.isValid())
+    return hit;
+  for (sfs::Entity above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)); above.isValid();
+       above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)))
+    root = above;
+  for (sfs::Entity in = selected; in.isValid(); in = sfs::hierarchy::parentOf(in))
+    if (in == root)
+      return hit;
+  return root;
+}
 } // namespace
 
 ViewportPanel::ViewportPanel(sfs::IRenderBackend& backend, std::string title)
@@ -977,8 +995,10 @@ void ViewportPanel::pick(EditorContext& context, const View& view)
   const sfs::Ray ray = context.render->camera().screenRay(
       {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
 
-  const std::optional<sfs::PickHit> hit =
+  std::optional<sfs::PickHit> hit =
       sfs::pickEntity(*context.scene, context.render->meshes(), ray, context.render);
+  if (hit)
+    hit->entity = clickTarget(hit->entity, context.selection);
   // Ctrl: add what's clicked to the selection, or take it out.
   if (ImGui::GetIO().KeyCtrl && hit)
   {
@@ -1190,6 +1210,15 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
                            glm::vec4(light.offset, 1.0f)));
     if (!at)
       continue;
+
+    // A spot: a line a metre along its axis, the way it shines.
+    if (light.spot)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+      const glm::vec3 from(world * glm::vec4(light.offset, 1.0f));
+      if (const std::optional<ImVec2> ahead = toScreen(view, from + glm::normalize(glm::vec3(world[0]))))
+        drawList->AddLine(*at, *ahead, kLightColor, 2.0f);
+    }
 
     // A small sun: a disc with rays.
     drawList->AddCircleFilled(*at, 5.0f, kLightColor);

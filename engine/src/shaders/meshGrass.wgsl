@@ -47,20 +47,26 @@ fn deepIn(height: f32, t: f32) -> f32 {
 
 // A blade's vertex, for its fragments: as little as can be (what's the same
 // all over the blade they take from the blade, see bladeVertexOut()).
+//
+// Its values are taken at the middle of what of a pixel the blade covers
+// (centroid), not at the pixel's middle: a far blade is a sliver, often
+// covering a few of a pixel's samples (MSAA) but not its middle, and its
+// values carried on past the triangle out to there can be anything (a
+// blade tens of times too bright: a flash).
 struct BladeOut {
   @builtin(position) clip: vec4f,
-  @location(0) worldPosition: vec3f,
-  @location(1) normal: vec3f,
+  @location(0) @interpolate(perspective, centroid) worldPosition: vec3f,
+  @location(1) @interpolate(perspective, centroid) normal: vec3f,
   // x how far up it (0 root, 1 tip), y across it (its uv.x), z how shut in by
   // the blades around (deepIn()), w how wet (surfaceWetness())
-  @location(2) along: vec4f,
-  @location(3) dripped: f32, // dripLineWetness()
+  @location(2) @interpolate(perspective, centroid) along: vec4f,
+  @location(3) @interpolate(perspective, centroid) dripped: f32, // dripLineWetness()
   @location(4) @interpolate(flat) blade: u32, // which, in `blades`
   // What it found at its vertices (GRASS_AT_VERTICES; sun below 0 where
   // it's found at each point).
-  @location(5) air: vec4f,
-  @location(6) clouds: f32,
-  @location(7) sun: f32,
+  @location(5) @interpolate(perspective, centroid) air: vec4f,
+  @location(6) @interpolate(perspective, centroid) clouds: f32,
+  @location(7) @interpolate(perspective, centroid) sun: f32,
 }
 
 @group(2) @binding(0) var<storage, read> blades: array<GrownBlade>;
@@ -195,7 +201,11 @@ fn bladeVertexOut(in: BladeOut) -> VertexOut {
 // over its UVs) and, where it's past the maps (a big mesh's window of them),
 // what their data hold on average there, as the blades' material takes it.
 struct GroundOut {
-  @builtin(position) clip: vec4f,
+  // Exactly where the ground's own lit pass put it (VertexOut's, also
+  // invariant), so it's drawn over it at its very depth, with no pull toward
+  // the camera: depth's steps grow with distance (metres apart, a kilometre
+  // off), and any pull would grow with them, over what stands on the ground.
+  @builtin(position) @invariant clip: vec4f,
   @location(0) worldPosition: vec3f,
   @location(1) normal: vec3f,
   @location(2) uv: vec2f,
@@ -244,9 +254,16 @@ const kGroundMapsEdge = 0.04;
 const kFarTone = 0.37;
 const kFarUp = 0.3;
 const kFarLean = 1.67;
-const kFarGrain = 1.3;
+const kFarGrain = 2.8;
 const kFarFinestGrain = 0.02;
 const kFarGusts = 0.15;
+// Where the grain fades out: over how many metres a pixel spans (x to y),
+// and how high the camera is above the ground (x to y, metres); and, as it
+// does, how much lighter or darker (x) and yellower or bluer (y) the field
+// gets in patches tens of metres across instead.
+const kFarGrainPixels = vec2f(0.07, 0.25);
+const kFarGrainHeights = vec2f(35.0, 110.0);
+const kFarPatches = vec2f(0.14, 0.08);
 
 // A hash of a lattice point, 0..1 (grass's ground's own).
 fn groundHash(p: vec2f) -> f32 {
@@ -285,12 +302,14 @@ fn groundStreaks(p: vec2f, along: vec2f, across: f32, seed: f32) -> f32 {
 const kStreak = 6.0;
 
 // The grain of blades too far off to tell apart, -0.5..0.5: streaks fixed to
-// the world, about two pixels (`pixel` m) across, running toward the camera
-// (`toward`, over the ground), so they stand up on screen as blades do. (The
-// world's, along four directions, the two nearest the camera's blended: so
-// they don't turn as it moves.)
+// the world, about a pixel (`pixel` m) across, as fine as the blades it
+// stands in for (any coarser and it looks smeared: out of focus beside
+// what stands on it, and so like depth of field gone wrong), running toward
+// the camera (`toward`, over the ground), so they stand up on screen as
+// blades do. (The world's, along four directions, the two nearest the
+// camera's blended: so they don't turn as it moves.)
 fn groundGrain(p: vec2f, toward: vec2f, pixel: f32, finest: f32) -> f32 {
-  let across = max(pixel * 2.0, finest);
+  let across = max(pixel, finest);
   let angle = atan2(toward.y, toward.x);
   let turn = fract(angle / 3.14159265) * 4.0;
   let k = floor(turn);
@@ -384,9 +403,24 @@ fn fs_ground(in: GroundOut) -> LitOut {
     let gusts = mix(0.75, 0.3 + wave * 1.1, wind.w);
     let give = (1.0 - clamp(grass.blade.x, 0.0, 1.0) * 0.85) * smoothstep(0.03, 0.35, tall * grass.blade.w);
     let swayed = 1.0 + (gusts - 0.75) * clamp(wind.z, 0.0, 1.5) * give * kFarGusts;
-    let grain = groundGrain(in.worldPosition.xy, toward.xy, pixel, kFarFinestGrain);
-    let farTone = kFarTone * (1.0 + grain * kFarGrain) * swayed;
-    tone = mix(tone, vec3f(farTone), gone);
+    // The grain only as near and low as it reads as blades: from high up or
+    // far off its streaks, all pointing back at the camera, look like paint
+    // run down the screen; there the field is smooth instead, but for gentle
+    // patches tens of metres across (as a field looks from a plane).
+    let height = frame.cameraPosition.z - in.worldPosition.z;
+    let fine = (1.0 - smoothstep(kFarGrainPixels.x, kFarGrainPixels.y, pixel)) *
+               (1.0 - smoothstep(kFarGrainHeights.x, kFarGrainHeights.y, height));
+    var grain = 0.0;
+    if (fine > 0.0) {
+      grain = groundGrain(in.worldPosition.xy, toward.xy, pixel, kFarFinestGrain) * fine;
+    }
+    let patches = (groundNoise(in.worldPosition.xy / 23.0 + 5.3) - 0.5) +
+                  (groundNoise(in.worldPosition.xy / 61.0 - 11.7) - 0.5);
+    let hue = (groundNoise(in.worldPosition.xy / 47.0 + 31.1) - 0.5) * kFarPatches.y;
+    let farTone = kFarTone * max(1.0 + grain * kFarGrain, 0.1) * swayed *
+                  (1.0 + patches * kFarPatches.x * (1.0 - fine));
+    let farColour = vec3f(farTone) * mix(vec3f(1.0), vec3f(1.0 + hue, 1.0, 1.0 - hue), 1.0 - fine);
+    tone = mix(tone, farColour, gone);
     deep = mix(deep, deepIn(tall * grass.blade.w, kFarUp), gone);
     facing = normalize(mix(normal, bladeFacing, gone));
   }

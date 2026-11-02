@@ -504,11 +504,12 @@ void RenderSystem::updateSky()
 
   // The sky's diffuse light and reflections change slowly with the sun (and
   // the moon's glow, and the clouds): work them out again once it's moved a
-  // quarter of a degree (a day/night cycle moves it every frame), the glow
-  // changed a few percent or the clouds a little. That takes a couple of
-  // milliseconds (twice that under clouds), so it's done in the background,
-  // the frame keeping the last until it's ready; but a new sky has none to
-  // keep.
+  // quarter of a degree (a tenth near the horizon, where the light changes
+  // fastest; a day/night cycle moves it every frame), the glow changed a few
+  // percent or the clouds a little. That takes a couple of milliseconds
+  // (twice that under clouds), so it's done in the background, the frame
+  // easing toward each as it comes (see m_skyFrom); but a new sky has none
+  // to ease from.
   auto workOut = [](std::shared_ptr<const PhysicalSky> model,
                     glm::vec3 sun,
                     float glow,
@@ -527,17 +528,50 @@ void RenderSystem::updateSky()
     light.clouds = clouds;
     return light;
   };
-  auto use = [this](const SkyLight& light)
+  const double now = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+  // What's shown now: between the two, as far as the easing's got.
+  auto shown = [this](double at)
+  {
+    const float t = m_skyEasing > 0.0
+                        ? static_cast<float>(std::clamp(
+                              (at - m_skyCame) / m_skyEasing, 0.0, 1.0))
+                        : 1.0f;
+    SkyLight light = m_skyTo;
+    for (std::size_t i = 0; i < light.irradiance.coefficients.size(); ++i)
+      light.irradiance.coefficients[i] =
+          glm::mix(m_skyFrom.irradiance.coefficients[i],
+                   m_skyTo.irradiance.coefficients[i],
+                   t);
+    light.groundLight = glm::mix(m_skyFrom.groundLight, m_skyTo.groundLight, t);
+    light.clearSkyLight =
+        glm::mix(m_skyFrom.clearSkyLight, m_skyTo.clearSkyLight, t);
+    light.night = glm::mix(m_skyFrom.night, m_skyTo.night, t);
+    return light;
+  };
+  auto use = [&](const SkyLight& light, bool ease)
   {
     m_skySun = light.toSun;
     m_skyNight = light.night;
     m_skyClouds = light.clouds;
-    m_clearSkyLight = light.clearSkyLight;
-    m_frameSky.toSun = light.toSun;
-    m_frameSky.irradiance = light.irradiance;
-    m_frameSky.groundLight = light.groundLight;
-    m_frameSky.night = light.night;
-    ++m_frameSky.revision;
+    if (ease)
+    {
+      // Over a little longer than it was since the last was asked for (the
+      // sun moved as far as it did over that), so it's still easing when
+      // the next comes (at most half a second: a sudden change, e.g. the
+      // weather forced, goes quickly).
+      m_skyFrom = shown(now);
+      m_skyEasing =
+          std::clamp(1.25 * (light.asked - m_skyTo.asked), 1.0 / 120.0, 0.5);
+    }
+    else
+    {
+      m_skyFrom = light;
+      m_skyEasing = 0.0;
+    }
+    m_skyTo = light;
+    m_skyCame = now;
   };
   if (m_skyJob.valid() &&
       m_skyJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -545,27 +579,70 @@ void RenderSystem::updateSky()
     const SkyLight light = m_skyJob.get();
     // (Unless the sky it was for has gone since.)
     if (light.model == m_physicalSky)
-      use(light);
+      use(light, m_frameSky.physical != nullptr);
   }
-  if (rebuilt || !m_frameSky.physical)
-    use(workOut(m_physicalSky, toSun, night, clouds));
+  // (Waited for: shown at once.)
+  if (m_skyFinished)
+  {
+    m_skyFrom = m_skyTo;
+    m_skyEasing = 0.0;
+    m_skyFinished = false;
+  }
+  const bool fresh = rebuilt || !m_frameSky.physical;
+  if (fresh)
+  {
+    SkyLight light = workOut(m_physicalSky, toSun, night, clouds);
+    light.asked = now;
+    use(light, false);
+  }
   else
   {
-    constexpr float kResky = 0.99999048f; // cos(0.25 degrees)
-    const bool moved = glm::dot(toSun, m_skySun) < kResky ||
-                       std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
-                       std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
-                       std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
+    constexpr float kResky = 0.99999048f;     // cos(0.25 degrees)
+    constexpr float kResskyLow = 0.99999848f; // cos(0.1 degrees)
+    const bool low = std::min(std::abs(toSun.z), std::abs(m_skySun.z)) < 0.17f;
+    const bool moved =
+        glm::dot(toSun, m_skySun) < (low ? kResskyLow : kResky) ||
+        std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
+        std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
+        std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
     if (moved && !m_skyJob.valid())
     {
       if (!m_skyWorker)
         m_skyWorker = std::make_unique<WorkerPool>(1);
       auto job = std::make_shared<std::packaged_task<SkyLight()>>(
-          [workOut, model = m_physicalSky, toSun, night, clouds]
-          { return workOut(model, toSun, night, clouds); });
+          [workOut, model = m_physicalSky, toSun, night, clouds, now]
+          {
+            SkyLight light = workOut(model, toSun, night, clouds);
+            light.asked = now;
+            return light;
+          });
       m_skyJob = job->get_future();
       m_skyWorker->submit([job] { (*job)(); });
     }
+  }
+  const SkyLight light = shown(now);
+  m_clearSkyLight = light.clearSkyLight;
+  m_frameSky.toSun = toSun;
+  m_frameSky.irradiance = light.irradiance;
+  m_frameSky.groundLight = light.groundLight;
+  m_frameSky.night = light.night;
+  // The sky's textures, drawn again (on the GPU: a fraction of a
+  // millisecond) once the sun's moved a twentieth of a degree, or their
+  // light or the clouds changed a little: often enough not to step.
+  constexpr float kRedraw = 0.99999962f; // cos(0.05 degrees)
+  auto luminance = [](glm::vec3 c)
+  { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; };
+  const float ground = luminance(light.groundLight);
+  if (fresh || glm::dot(toSun, m_skyDrawnSun) < kRedraw ||
+      std::abs(ground - m_skyDrawnGround) > 0.02f * m_skyDrawnGround ||
+      std::abs(light.night - m_skyDrawnNight) > 0.01f * m_skyDrawnNight ||
+      std::abs(clouds.cover - m_skyDrawnCover) > 0.005f)
+  {
+    m_skyDrawnSun = toSun;
+    m_skyDrawnGround = ground;
+    m_skyDrawnNight = light.night;
+    m_skyDrawnCover = clouds.cover;
+    ++m_frameSky.revision;
   }
   m_frameSky.physical = m_physicalSky;
   // The sun itself, every frame (it's cheap), so it sets smoothly; once it
@@ -595,11 +672,24 @@ void RenderSystem::updateSky()
   // after it has set), or once the moon has taken over, the moon's (above
   // them: not dimmed by them).
   m_frameSky.cloudDarkness = clouds.darkness;
-  m_frameSky.cloudLight =
-      m_moonLit ? m_physicalSky->moonLight(toLight, m_moonShare / clear)
-                : m_physicalSky->cloudSunLight(toSun);
-  m_frameSky.cloudBase = PhysicalSky::cloudBase(
-      m_frameSky.cloudLight, toLight, m_clearSkyLight, clouds);
+  // (The sun's lights them still for a moment after the moon takes over,
+  // from where it is: they don't go dark at once.)
+  const glm::vec3 cloudSun = m_physicalSky->cloudSunLight(toSun);
+  if (m_moonLit)
+  {
+    const glm::vec3 cloudMoon =
+        m_physicalSky->moonLight(toLight, m_moonShare / clear);
+    m_frameSky.cloudLight = cloudMoon + cloudSun;
+    m_frameSky.cloudBase =
+        PhysicalSky::cloudBase(cloudMoon, toLight, m_clearSkyLight, clouds) +
+        PhysicalSky::cloudBase(cloudSun, toSun, glm::vec3(0.0f), clouds);
+  }
+  else
+  {
+    m_frameSky.cloudLight = cloudSun;
+    m_frameSky.cloudBase =
+        PhysicalSky::cloudBase(cloudSun, toSun, m_clearSkyLight, clouds);
+  }
   // The sky's textures draw the clouds as they are where the camera is: again
   // once they've drifted (or it's moved) 30 m.
   if (clouds.cover > 0.0f)
@@ -618,6 +708,7 @@ void RenderSystem::finishSkyWork()
 {
   if (m_skyJob.valid())
     m_skyJob.wait();
+  m_skyFinished = true;
 }
 
 namespace
@@ -870,10 +961,16 @@ void RenderSystem::gatherPointLights()
         position.z += std::max(light.offset.z, radius * 0.25f);
       }
     }
-    else
-      position = glm::vec3(hierarchy::worldMatrix(entity) *
-                           glm::vec4(light.offset, 1.0f));
-    m_pointLights.push_back(PointLight{
+    // A 3D game's spots shine along their entity's +x.
+    glm::vec3 spotDirection(0.0f);
+    if (!m_space2D)
+    {
+      const glm::mat4 world = hierarchy::worldMatrix(entity);
+      position = glm::vec3(world * glm::vec4(light.offset, 1.0f));
+      if (light.spot)
+        spotDirection = glm::vec3(world[0]);
+    }
+    PointLight gathered{
         position,
         light.color,
         light.intensity,
@@ -881,7 +978,10 @@ void RenderSystem::gatherPointLights()
         light.castsShadow,
         PointLight{}.shadowNear,
         light.sourceRadius,
-    });
+    };
+    if (light.spot)
+      setSpot(gathered, spotDirection, light.innerAngle, light.outerAngle);
+    m_pointLights.push_back(gathered);
   }
   const std::size_t placed = m_pointLights.size();
   gatherEmissionLights();
@@ -957,9 +1057,10 @@ void RenderSystem::chooseShadowedLights()
       light.castsShadow = false;
       continue;
     }
-    const glm::vec3 reach(light.radius);
+    const glm::vec4 bounds = lightBounds(light);
+    const glm::vec3 reach(bounds.w);
     if (!m_context.frustum.intersects(
-            Aabb{light.position - reach, light.position + reach}))
+            Aabb{glm::vec3(bounds) - reach, glm::vec3(bounds) + reach}))
     {
       light.castsShadow = false;
       continue;

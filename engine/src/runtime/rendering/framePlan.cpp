@@ -416,8 +416,8 @@ void FramePlan::finish(
             std::max({glm::length(glm::vec3(instance.model[0])),
                       glm::length(glm::vec3(instance.model[1])),
                       glm::length(glm::vec3(instance.model[2]))});
-        if (glm::distance(center, light.position) >
-            light.radius + mesh->boundsRadius * scale)
+        // (A spot's: those in its cone.)
+        if (!lightReaches(light, center, mesh->boundsRadius * scale))
           continue;
         m_instances.push_back(instance);
         ++draw.instanceCount;
@@ -716,9 +716,19 @@ void FramePlan::finish(
       1.0f / static_cast<float>(std::max(pointShadowResolution, 1u));
   m_gpuLights.resize(count);
   for (std::size_t i = 0; i < count; ++i)
-    m_gpuLights[i] = {glm::vec4(lights[i].position, lights[i].radius),
-                      glm::vec4(lights[i].color, lights[i].intensity),
-                      glm::vec4(-1.0f, texel, lights[i].sourceRadius, 0.0f)};
+  {
+    // A spot: its axis and how its cone fades out (shadow.w, 0 for a point
+    // light, 1 / the cosines' span).
+    const PointLight& light = lights[i];
+    const float fade =
+        light.spot()
+            ? 1.0f / std::max(light.spotCosInner - light.spotCosOuter, 1e-4f)
+            : 0.0f;
+    m_gpuLights[i] = {glm::vec4(light.position, light.radius),
+                      glm::vec4(light.color, light.intensity),
+                      glm::vec4(-1.0f, texel, light.sourceRadius, fade),
+                      glm::vec4(light.spotDirection, light.spotCosOuter)};
+  }
   for (std::size_t i = 0; i < m_shadowedLights.size(); ++i)
     m_gpuLights[m_shadowedLights[i].light].shadow.x = static_cast<float>(i);
 
@@ -762,8 +772,13 @@ PostUniforms FramePlan::compositeUniforms(glm::ivec2 viewport) const
   const BloomSettings& bloom = m_frame.bloom;
   const ColorGrading& grading = m_frame.grading;
   PostUniforms out{};
-  out.texel = glm::vec4(
-      1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))), 0.0f, 0.0f);
+  // (SFS_FIREFLIES=<least light>: marks the pixels far brighter than
+  // those around them, and above that, magenta.)
+  static const char* const kFireflies = std::getenv("SFS_FIREFLIES");
+  out.texel =
+      glm::vec4(1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))),
+                kFireflies ? 1.0f : 0.0f,
+                kFireflies ? std::max(std::atof(kFireflies), 0.0) : 0.0);
   out.bloom = glm::vec4(
       0.0f, 0.0f, 0.0f, bloom.enabled ? std::max(bloom.intensity, 0.0f) : 0.0f);
   out.tone = glm::vec4(static_cast<float>(grading.toneMapper),
@@ -917,7 +932,7 @@ std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
       glm::vec4(std::max(m_frame.focusDistance, 0.01f),
                 std::max(settings.range, 0.0f) * 0.5f,
                 settings.blur * 8.0f * static_cast<float>(viewport.y) / 1080.0f,
-                0.0f),
+                std::max(settings.hyperfocal, 0.0f)),
       glm::vec4(1.0f / glm::vec2(half), 0.0f, 0.0f)};
 }
 
