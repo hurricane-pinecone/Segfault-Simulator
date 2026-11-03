@@ -618,6 +618,9 @@ paints:
 - **Length** grows it full length; erasing mows it short.
 - **Data 0** to **Data 3** are numbers for the grass's material to read, such
   as moisture for a game to colour.
+- **Bounds** marks where grass may grow at all, to a crisp edge rather than a
+  thinning band: erasing keeps it off there (a road, a wall), painting lets
+  it grow again.
 
 **Size** sets the brush's width in world units and **Strength** how fast it
 paints. **Fill** sets all of it back to unpainted: full, full-length grass.
