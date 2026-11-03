@@ -86,6 +86,28 @@ public:
   template <typename Fn>
   void forEachSystem(Fn&& fn);
 
+  /**
+   * Game time: how fast the systems' time runs against real time (2: twice
+   * as fast, 0: stopped; see System::TimeStep). Scene::update() reads it once
+   * a frame, so a change made during one takes effect from the next.
+   */
+  void setTimeScale(double scale) { m_timeScale = scale > 0.0 ? scale : 0.0; }
+  double timeScale() const { return m_timeScale; }
+
+  /**
+   * The longest step a Stepped system takes (0, the default: a frame's game
+   * time in one step), and the most steps a frame: past that many the game
+   * falls behind (runs slower than its time scale) rather than take longer
+   * steps, so a slow frame can't make the next one slower still.
+   */
+  void setMaxTimeStep(double seconds, int mostSteps = 16)
+  {
+    m_maxTimeStep = seconds > 0.0 ? seconds : 0.0;
+    m_mostTimeSteps = mostSteps > 1 ? mostSteps : 1;
+  }
+  double maxTimeStep() const { return m_maxTimeStep; }
+  int mostTimeSteps() const { return m_mostTimeSteps; }
+
 private:
   void addEntityToSystems(const Entity& entity);
 
@@ -130,6 +152,10 @@ private:
   std::vector<Signature> entityComponentSignatures;
 
   std::vector<std::unique_ptr<System>> systems;
+
+  double m_timeScale = 1.0;
+  double m_maxTimeStep = 0.0;
+  int m_mostTimeSteps = 16;
 };
 
 } // namespace sfs

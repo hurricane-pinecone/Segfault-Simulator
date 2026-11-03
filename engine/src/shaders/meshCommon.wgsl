@@ -66,6 +66,8 @@ struct Frame {
   lightningHigh: vec4f,  // xyz its top, where the cloud base glows, w 1 if the channel lights
   lightningLight: vec4f, // rgb a metre of the channel's light, w how wide the glow is (m)
   lightningGlow: vec4f,  // rgb the cloud base's glow at its middle, w 1 while it flashes
+  cameraTarget: vec4f,   // xyz what the camera looks at, w how far round the line of sight to it what
+                         // clears the view fades (0: none; see cameraFaded() in meshSurface.wgsl)
 }
 
 // A physical sky's cloud layer this frame (skyCommon.wgsl's CloudLayer), as

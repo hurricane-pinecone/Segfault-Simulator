@@ -35,11 +35,15 @@ struct TerrainMaterial;
  * is pressed in or pushed up, a few centimetres a texel, in world space.
  * What changes it:
  *
- * - DeformerComponent entities (with their children's meshes): each frame one
- *   moves, its meshes' undersides near the ground (what's seen of them from
- *   below, lugs, tines and all) press it down to their sink depth below
+ * - DeformerComponent entities (with their children's meshes): as one
+ *   moves, each few centimetres (not each frame, so a fast frame rate costs
+ *   no more), its meshes' undersides near the ground (what's seen of them
+ *   from below, lugs, tines and all) press it down to their sink depth below
  *   them, deeper on softer soil (setSoftness()), and the soil they push out
- *   rises alongside.
+ *   rises alongside. One sliding rather than rolling (a tine's point) is
+ *   pressed all along the way it went since it last pressed, so its
+ *   furrow's unbroken; so is one rolling that went further in a frame than
+ *   it presses at (the game going fast: Registry::timeScale()).
  * - stamp(): a footprint, a hoof, a dropped crate's corner.
  * - relax() and clearRegion(): weather softening tracks, tilling wiping them.
  *
@@ -127,7 +131,9 @@ public:
    * How soft `ground`'s soil is, 0 (hard: deformers barely mark it) to 1
    * (the softest: they sink their full depth): everywhere, or by a function
    * of the world XY (e.g. a game's soil moisture: wet mud soft, dry ground
-   * hard), asked for each texel a deformer presses. 1 until set.
+   * hard), asked where a deformer presses: at the corners of blocks of 4 x 4
+   * texels (12 cm), and between them blended (so a step in it, e.g. at the
+   * edge of a game's grid cell, slopes over a block). 1 until set.
    */
   using Softness = std::function<float(glm::vec2 point)>;
   void setSoftness(const Entity& ground, float softness);
@@ -143,8 +149,12 @@ public:
   /**
    * Where a deformer's mesh touched the ground as it moved, this frame: its
    * underside's rectangle (world XY), how far it moved since it last
-   * pressed (world XY; zero the first time), and how much it pressed in
-   * (press()'s; 0 on ground too hard to mark, though it still went over it).
+   * pressed (world XY; zero the first time), how much it pressed in
+   * (press()'s; 0 on ground too hard to mark, though it still went over it),
+   * how deep it pressed the ground (its deepest, metres below the ground's
+   * own surface: as deep as it's sat down, plus its sink), and how soft the
+   * ground under it is on average (setSoftness()'s): e.g. for a game to
+   * tell a wheel bogging down in mud.
    */
   struct Contact
   {
@@ -154,6 +164,8 @@ public:
     glm::vec2 motion{0.0f};
     float sinkDepth = 0.0f; // the deformer's
     float pressed = 0.0f;
+    float depth = 0.0f;
+    float softness = 0.0f;
   };
   /**
    * Called for each Contact with `ground`, as deformers press it (during the
@@ -229,7 +241,19 @@ private:
                  const glm::mat4& model,
                  const Entity& owner,
                  const DeformerComponent& deformer,
-                 glm::vec2 motion);
+                 glm::vec2 motion,
+                 bool rolled,
+                 float stride,
+                 float farthest);
+  // The ground's height and softness under each texel of `bottom`
+  // (m_groundHeight, NaN off it; m_groundSoftness).
+  void groundUnder(const Field& field, const Underside& bottom);
+  // A deformer mesh's underside as placed.
+  Underside undersideOf(const Entity& mesh,
+                        MeshHandle handle,
+                        const glm::mat4& model,
+                        float below,
+                        float texel);
   void upload(Field& field, glm::ivec2 tile);
   // Where the patch goes this frame (world XY), from the camera.
   static glm::vec2 patchCenterFor(const Camera& camera, float ground);
@@ -241,8 +265,45 @@ private:
   RenderModuleHost<RenderContext>* m_host = nullptr;
   MeshLibrary* m_meshes = nullptr; // the frame's
   std::unordered_map<uint64_t, Field> m_fields;
-  // Each deformer mesh's world matrix when it last pressed.
-  std::unordered_map<uint64_t, glm::mat4> m_placed;
+  // Each deformer mesh's world matrix when it last pressed, and whether it
+  // rolled there (and this frame's, made as they're looked at).
+  struct Placed
+  {
+    glm::mat4 model{1.0f};
+    bool rolled = false;
+  };
+  std::unordered_map<uint64_t, Placed> m_placed;
+  std::unordered_map<uint64_t, Placed> m_stillPlaced;
+  float m_frameSeconds = 0.0f; // the frame's (real time)
+  // Each deformer mesh made ready to find its underside (by its mesh id),
+  // and what from (made again if that changes).
+  struct Ready
+  {
+    std::unique_ptr<const UndersideMesh> mesh;
+    const glm::vec3* positions = nullptr;
+    std::size_t vertices = 0;
+    const uint32_t* indices = nullptr;
+    std::size_t corners = 0;
+  };
+  std::unordered_map<uint32_t, Ready> m_ready;
+  // Scratch: a press's underside, all of it along the way it went, a
+  // press's share of that, the places along it (texels back), and the
+  // footprint.
+  Underside m_bottom;
+  Underside m_swept;
+  Underside m_piece;
+  std::vector<glm::ivec2> m_shifts;
+  Footprint m_footprint;
+  struct Corner
+  {
+    bool asked = false;
+    bool on = false;
+    uint32_t triangle = 0;
+    float softness = 0.0f;
+  };
+  std::vector<Corner> m_corners;
+  std::vector<float> m_groundHeight;
+  std::vector<float> m_groundSoftness;
   MeshHandle m_patchMesh;
   std::vector<uint16_t> m_halves; // scratch: a tile's
 };

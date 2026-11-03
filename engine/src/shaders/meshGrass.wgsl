@@ -6,6 +6,9 @@
 // from the root, then the tip, along its curve (grassBlade.wgsl), tapering
 // to a point. Near where its detail drops, it takes on the shape it'll have
 // with half the segments (its morph), so it doesn't change when it does.
+// With the depth pre-pass (off by default, see WebGpuRenderer), their depth
+// is drawn first (vs_depth) and they're lit where it's equal: each pixel
+// shades only the nearest blade, not the many behind it.
 //
 // Before the blades, the ground they grow on is drawn again in their colour
 // (vs_ground, fs_ground), as much as they cover it: so the gaps between
@@ -53,8 +56,11 @@ fn deepIn(height: f32, t: f32) -> f32 {
 // covering a few of a pixel's samples (MSAA) but not its middle, and its
 // values carried on past the triangle out to there can be anything (a
 // blade tens of times too bright: a flash).
+//
+// Its position is invariant: the depth pre-pass (vs_depth) places it with
+// the same sums, so the lit pass finds its depth there exactly (equal).
 struct BladeOut {
-  @builtin(position) clip: vec4f,
+  @builtin(position) @invariant clip: vec4f,
   @location(0) @interpolate(perspective, centroid) worldPosition: vec3f,
   @location(1) @interpolate(perspective, centroid) normal: vec3f,
   // x how far up it (0 root, 1 tip), y across it (its uv.x), z how shut in by
@@ -84,17 +90,25 @@ struct BladeOut {
 // for its ground past the maps (see fs_ground; a stand-in without one).
 @group(2) @binding(8) var farSplat: texture_2d<f32>;
 
-@vertex
-fn vs_main(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32) -> BladeOut {
+// A blade's vertex as placed (bladePoint()): the blade, how far up it, which
+// side, where, which way along it, and how shut in.
+struct BladePoint {
+  b: Blade,
+  t: f32,
+  side: f32,
+  position: vec3f,
+  along: vec3f,
+  deep: f32,
+}
+
+// Where a blade's vertex is: vs_main's and vs_depth's, the same sums.
+fn bladePoint(index: u32, instance: u32) -> BladePoint {
   let grown = blades[grassList.x + instance];
   let pressed = textureSampleLevel(trampleMap, trampleSampler,
                                    (grown.root.xy - grass.trample.xy) * grass.trample.zw, 0.0);
   let b = bladeAt(grown, grass.blade.x, pressed);
   let height = b.height;
-  let shape = b.shape;
   let segments = b.segments;
-  let across = b.across;
-  let ground = b.ground;
 
   // Where up the blade this vertex is: a row's left or right, or the tip.
   let row = min(index / 2u, segments);
@@ -119,7 +133,30 @@ fn vs_main(@builtin(vertex_index) index: u32, @builtin(instance_index) instance:
     half = mix(half, b.width * 0.5 * narrows, b.morph);
     deep = mix(deep, mix(deepIn(height, low), deepIn(height, high), s), b.morph);
   }
-  let position = center + across * (side * half);
+  return BladePoint(b, t, side, center + b.across * (side * half), along, deep);
+}
+
+// The depth pre-pass: a blade's vertex, its position only (as vs_main's), so
+// the lit pass shades only the nearest blade at each pixel (testing for
+// equal depth), however many lie behind it.
+@vertex
+fn vs_depth(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32)
+    -> @builtin(position) @invariant vec4f {
+  return frame.viewProjection * vec4f(bladePoint(index, instance).position, 1.0);
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32) -> BladeOut {
+  let point = bladePoint(index, instance);
+  let b = point.b;
+  let shape = b.shape;
+  let across = b.across;
+  let ground = b.ground;
+  let t = point.t;
+  let side = point.side;
+  let along = point.along;
+  let deep = point.deep;
+  let position = point.position;
 
   // Its face, turned to the camera (blades show both sides), rounded across
   // its width and softened toward the ground's, so a field shades smoothly.
@@ -349,6 +386,27 @@ fn bladesFacing(ground: vec3f, toward: vec3f, lean: f32) -> vec3f {
   return normalize(ground * cos(tilt) + normalize(level) * sin(tilt));
 }
 
+// The shape maps at `uv` as the ground under the blades takes them: r how
+// much grass covers it, g how long it is, b where it may grow at all (cut
+// at a half, see GrassMaps::boundsValue()). As meshGrassGrow.wgsl's
+// grassShape() grows blades to them, but for coverage their density on
+// average there (thinning over the band where coverage falls), not their
+// clumps, and green only where that's nearly full (kGroundFrom up): smooth,
+// so it doesn't shimmer as the camera moves, and never green on part-worn
+// ground where blades are few (it's the ground's own there: a game paints
+// it as worn soil). Keep the band as theirs.
+const kGroundFrom = 0.75;
+
+fn grassShape(uv: vec2f) -> vec4f {
+  let maps = textureSampleLevel(shapeMap, trampleSampler, uv, 0.0);
+  if (min(maps.r, maps.b) >= 0.999) {
+    return vec4f(1.0, maps.g, maps.a, 0.0);
+  }
+  let edge = smoothstep(0.25, 1.0, maps.b / max(maps.r, 1e-3));
+  let density = maps.r * edge;
+  return vec4f(smoothstep(kGroundFrom, 1.0, density), maps.g * mix(0.45, 1.0, edge), maps.a, 0.0);
+}
+
 @fragment
 fn fs_ground(in: GroundOut) -> LitOut {
   // How many metres a pixel spans here (in uniform control flow).
@@ -357,8 +415,10 @@ fn fs_ground(in: GroundOut) -> LitOut {
   // blades see them) how long it is and its data.
   let local = (grass.inverseModel * vec4f(in.worldPosition, 1.0)).xy;
   let onMaps = groundOnMaps(local);
-  let maps = textureSampleLevel(shapeMap, trampleSampler, onMaps.xy, 0.0);
-  var coverage = maps.r;
+  let maps = grassShape(onMaps.xy);
+  // To the blade at the maps' bounds: cut at a half, smoothed over a pixel.
+  let cut = max(fwidth(maps.b), 1e-4) * 0.5;
+  var coverage = maps.r * smoothstep(0.5 - cut, 0.5 + cut, maps.b);
   var tall = maps.g;
   var data = textureSampleLevel(dataMap, trampleSampler, onMaps.xy, 0.0);
   // Past them, grass where its terrain's layers are meadow, long, with the
@@ -445,6 +505,10 @@ fn fs_ground(in: GroundOut) -> LitOut {
   let amount = coverage * up * mix(grass.blade.z, 1.0, gone);
   return LitOut(vec4f(lit.color.rgb, amount), vec4f(lit.glow.rgb, amount));
 }
+
+// The depth pre-pass's fragments (vs_depth): depth only, nothing written.
+@fragment
+fn fs_depth() {}
 
 // The blades' fragments (shadeBlade(): see meshGrassVertexLit.wgsl).
 @fragment

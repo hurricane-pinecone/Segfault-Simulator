@@ -40,6 +40,8 @@ struct VertexOut {
   // Light it gives off on top of its material's emission (an instance's:
   // MeshInstance::emission; others zero).
   @location(8) emission: vec3f,
+  // Its instance's dithered fade (MeshInstance::emission.w; see SurfaceIn).
+  @location(9) fade: f32,
 }
 
 // A physical sky's (see skyCommon.wgsl and sky.wgsl): its reflections, sharp
@@ -647,8 +649,19 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
   let ambient = frame.ambientBalance.rgb;
   let f0 = mix(vec3f(0.04), albedo, metallic);
 
-  let direct = sun * (max(dot(normal, toSun), 0.0) * visibility);
-  let skyLight = skyIrradianceAt(normal) * ambient * occlusion;
+  // (A translucent surface's light wraps round past its edge: a leafy crown
+  // with normals bent out from its middle is lit softly all over.)
+  let wrap = clamp(s.translucency, 0.0, 1.0) * 0.5;
+  let facing = max((dot(normal, toSun) + wrap) / (1.0 + wrap), 0.0);
+  let direct = sun * (facing * visibility) + sun * (translucentLight(s, normal, toView) * visibility);
+  // A translucent surface (a leaf) lets the sky's light through from behind
+  // too, and screen-space occlusion overstates how shut in it is (the gaps
+  // between leaf cards read as creases): a crown seen from below isn't black.
+  let open = mix(occlusion, 1.0, clamp(s.translucency, 0.0, 1.0) * 0.5);
+  var skyLight = skyIrradianceAt(normal) * ambient * open;
+  if (s.translucency > 0.0) {
+    skyLight += skyIrradianceAt(-normal) * ambient * (open * s.translucency * 0.8);
+  }
 
   // Point lights and emission are as bright as they are, lit for eyes
   // adapted to the night: by day those eyes see them dimmer (x lamp), and
@@ -691,6 +704,21 @@ fn fogColor(away: vec3f) -> vec3f {
   // the haze toward the horizon.)
   return hazeSky(frame.cameraPosition.xyz + away) + fogSunGlow(direction) +
          lightningGlowAt(frame.cameraPosition.xyz + away * 0.5) * 0.3;
+}
+
+// How much of the sun's light a translucent surface (a leaf) lets through to
+// the eye from behind, as a share of what lighting it head-on gives: diffused
+// through it where the sun is behind its face (wrapped round past its edge, as
+// a crown's bent normals are soft), and brightest looking toward the sun
+// through it.
+fn translucentLight(s: Surface, normal: vec3f, toView: vec3f) -> f32 {
+  if (s.translucency <= 0.0) {
+    return 0.0;
+  }
+  let toSun = frame.sunDirection.xyz;
+  let behind = clamp((dot(-normal, toSun) + 0.35) / 1.35, 0.0, 1.0);
+  let towardSun = pow(clamp(dot(-toView, toSun), 0.0, 1.0), 6.0);
+  return s.translucency * (0.45 * behind + 1.6 * towardSun);
 }
 
 // The lit colour, and the light of it that blooms: the same, x the
@@ -750,8 +778,9 @@ fn seenThrough(lit: Lit, air: vec4f) -> LitOut {
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> LitOut {
   // A back face (drawn only for a double-sided material) is lit as seen.
+  // (Unless the surface's normals mean the same from either side.)
   var seen = in;
-  seen.normal = select(-in.normal, in.normal, front);
+  seen.normal = select(-in.normal, in.normal, front || !surfaceFlipsBackFaces());
   return shade(seen);
 }
 
@@ -787,6 +816,8 @@ fn shadeSeen(in: VertexOut, found: Found) -> LitOut {
   var here = surfaceInput(in.uv, in.worldPosition, normalize(in.normal), in.vertexColor);
   here.grass = in.grass;
   here.grassData = in.grassData;
+  here.fade = in.fade;
+  here.pixel = in.clip.xy;
   var s = surface(here);
   s.emission += in.emission; // the instance's own (a lamp switched on)
   let geometryNormal = here.normal;
@@ -865,6 +896,10 @@ fn shadeSeen(in: VertexOut, found: Found) -> LitOut {
   // The shadow lookup follows the mesh's own surface, not its bumps.
   let visibility = sunAt(in.worldPosition, geometryNormal, found) * sunShut;
   lit = mix(shadedLevel, lit, visibility);
+
+  // Light through a translucent surface from behind (leaves).
+  let toEye = normalize(frame.cameraPosition.xyz - in.worldPosition);
+  lit += translucentLight(s, normal, toEye) * diffuseStrength * visibility;
 
   var sunlight = max(vec3f(lit) * frame.sunColor.rgb, vec3f(0.03));
   // A visual style re-balances the light: the sun's own share (what shadow

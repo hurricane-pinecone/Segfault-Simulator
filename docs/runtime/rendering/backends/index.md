@@ -108,7 +108,24 @@ Immediate), so frame timings show what the GPU can do. `setVsync(true)` caps
 the frame rate at the display's refresh rate, as the editor and an exported
 game (unless its `game.json` says `"vsync": false`) do; `Game::setVsync`
 changes it while the game runs, and `Game::setMaxFrameRate` (`"maxFrameRate"`
-in `game.json`) caps it further. The surface is sized in pixels, which on a
+in `game.json`) caps it further. A window's Mailbox may still present no
+faster than the display (Windows does: 144 Hz on a 144 Hz monitor), so for
+measuring, `SFS_PRESENT_MODE=immediate` (or `mailbox`, `fifo`) forces that
+present mode over both, where the window has it (it tears).
+
+Each frame waits for the window's next picture (`wgpuSurfaceGetCurrentTexture`)
+at its start. `SFS_LATE_ACQUIRE=1` waits as late as it can instead: the
+renderer records its offscreen passes (skinning, occlusion, grass, shadows,
+the lit pass into the HDR picture, TAA, depth of field, bloom, exposure) into
+the frame's first command buffer, which is submitted before the wait
+(`WebGpuRenderer::setLateTarget`); only the composite, the game's UI and ImGui
+go into a second, after it (CPU timing: `backend/acquire (late)`). Everything
+the CPU hands the GPU goes through queue writes (`wgpuQueueWriteBuffer`,
+`wgpuQueueWriteTexture`), which are ordered with submits, so nothing needs
+double-buffering for it. It's off by default because on Windows (RTX 3070,
+DX12) it measured no faster: the GPU's idle time each frame in a window comes
+from Mailbox's presenting, not from the order the CPU records in. With
+`SFS_PRESENT_MODE=immediate` the GPU is busy ~98% of the frame either way. The surface is sized in pixels, which on a
 high-DPI screen is more than the window's size in points; mouse positions are
 given in the same pixels.
 

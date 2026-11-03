@@ -204,6 +204,53 @@ fn heightAt(at: vec2f, fallback: f32) -> f32 {
   return select(fallback, total / weight, weight > 1e-5);
 }
 
+// A hash of a lattice point, 0..1, and smooth value noise from it (the
+// maps' own, for grassShape()).
+fn shapeHash(p: vec2f) -> f32 {
+  let q = fract(p * vec2f(0.1031, 0.1030));
+  let r = q + dot(q, q.yx + 33.33);
+  return fract((r.x + r.y) * r.x);
+}
+
+fn shapeNoise(p: vec2f) -> f32 {
+  let cell = floor(p);
+  let f = p - cell;
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = shapeHash(cell);
+  let b = shapeHash(cell + vec2f(1.0, 0.0));
+  let c = shapeHash(cell + vec2f(0.0, 1.0));
+  let d = shapeHash(cell + vec2f(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// The shape maps at `uv` as grass grows to them: r how much grows, g how
+// long, and b where it may grow at all (their bounds, read between texels:
+// it grows where they're at least a half, to the blade, see
+// GrassMaps::boundsValue()). Where coverage falls (worn or worked ground) it
+// gives out over a band (the maps' b, grassEdgeBand(): how far in from the
+// fall a point is), thinner and shorter toward it, and where it's part
+// covered, in clumps with gaps between (a worn way's surviving tufts) rather
+// than evenly sparse; the clumps' noise is fixed to the maps (so to the
+// ground: it holds still as the camera moves) and wanders a clump's edge
+// across the band, so the maps' texels never show as squares nor an edge as
+// a straight line. Deep in full grass (most of it) none of that's needed.
+// meshGrass.wgsl's (the ground under the blades) takes their density on
+// average instead of the clumps: keep its band as this.
+fn grassShape(uv: vec2f) -> vec4f {
+  let maps = textureSampleLevel(shapeMap, mapSampler, uv, 0.0);
+  if (min(maps.r, maps.b) >= 0.999) {
+    return vec4f(1.0, maps.g, maps.a, 0.0);
+  }
+  let t = uv * vec2f(textureDimensions(shapeMap));
+  // (The band's against the grass here: part-covered ground as a whole is
+  // in clumps, not given out.)
+  let edge = smoothstep(0.25, 1.0, maps.b / max(maps.r, 1e-3));
+  let noise = shapeNoise(t * 0.8 + 71.0) * 0.6 + shapeNoise(t * 0.3 + 3.1) * 0.4;
+  let clump = mix(0.1, 0.9, noise);
+  let cover = clamp((maps.r * edge - clump) / 0.5 + 0.5, 0.0, 1.0);
+  return vec4f(cover, maps.g * mix(0.45, 1.0, edge), maps.a, 0.0);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_main(@builtin(global_invocation_id) id: vec3u) {
   let lattice = id.z;
@@ -259,10 +306,10 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
 
   // As its maps say: whether it grows here, and how long.
   let uv = (local - grow.maps.xy) * grow.maps.zw;
-  let maps = textureSampleLevel(shapeMap, mapSampler, uv, 0.0);
+  let maps = grassShape(uv);
   let keep = random(&seed);
   let tall = random(&seed);
-  if (keep >= maps.r) {
+  if (keep >= maps.r * step(0.5, maps.b)) {
     return;
   }
   count(2u);
@@ -445,10 +492,10 @@ fn buildCell(tile: TileEntry, i: u32) {
   }
   let height = heightAt(at, ground.w);
   let uv = (local - grow.maps.xy) * grow.maps.zw;
-  let maps = textureSampleLevel(shapeMap, mapSampler, uv, 0.0);
+  let maps = grassShape(uv);
   let keep = random(&seed);
   let tall = random(&seed);
-  if (keep >= maps.r) {
+  if (keep >= maps.r * step(0.5, maps.b)) {
     return;
   }
   let full = grow.shape.x * max(1.0 + grow.shape.y * (tall * 2.0 - 1.0) * 0.5, 0.05) * maps.g;

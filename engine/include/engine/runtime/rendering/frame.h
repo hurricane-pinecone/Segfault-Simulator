@@ -128,7 +128,12 @@ struct FrameParams
   // SFS_CAMERA_STEP, see RenderSystem).
   glm::vec3 grassCameraOffset{0.0f};
   glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit view direction
-  float nearPlane = 0.1f;                     // the camera's depth range
+  // What the camera looks at, and how far round the line of sight to it
+  // things that clear the view fade away (MeshMaterial::fadeNearCamera; 0:
+  // none, the default: what's in front of what's looked at stays).
+  glm::vec3 cameraTarget{0.0f};
+  float lineOfSight = 0.0f;
+  float nearPlane = 0.1f; // the camera's depth range
   float farPlane = 500.0f;
 
   SceneLighting lighting;
@@ -209,9 +214,9 @@ struct GrassTrampleImage
  * grass), no pixels.
  *
  * The renderer keeps the blades it grows from them, and grows them again
- * only where `regrow` says coverage or length changed (rectangles of texels:
- * xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without it, all
- * of `from` to `to`.
+ * only where `regrow` says coverage, length or bounds changed (rectangles of
+ * texels: xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without
+ * it, all of `from` to `to`.
  */
 struct GrassMapsImage
 {

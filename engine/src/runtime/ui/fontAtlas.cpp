@@ -58,7 +58,21 @@ void FontAtlas::beginFrame()
     if (idle[i]->second->font)
       TTF_CloseFont(idle[i]->second->font);
     m_faces.erase(idle[i]);
+    ++m_generation;
+    // (Widths are kept by face: another may come where it was.)
+    m_widths.clear();
+    m_olderWidths.clear();
   }
+}
+
+void FontAtlas::keep(const UiTexture* texture)
+{
+  for (auto& [key, face] : m_faces)
+    if (&face->texture == texture)
+    {
+      face->lastUsed = m_frame;
+      return;
+    }
 }
 
 FontAtlas::Face* FontAtlas::face(const std::string& font, float pixels)
@@ -146,6 +160,7 @@ const FontAtlas::Glyph& FontAtlas::glyph(Face& face, char32_t codepoint)
   {
     texture.size.y *= 2;
     texture.pixels.resize(std::size_t(texture.size.x) * texture.size.y * 4, 0);
+    ++m_generation; // its glyphs' coordinates have moved
   }
   if (face.shelf.y + rgba->h + 1 <= texture.size.y &&
       rgba->w + 2 <= texture.size.x)
@@ -180,6 +195,23 @@ float FontAtlas::width(const std::string& font,
                        std::string_view line)
 {
   Face& f = *face(font, pixels);
+  // Kept: by the face and the text.
+  const uint64_t key =
+      std::hash<std::string_view>()(line) * 0x9E3779B97F4A7C15ull ^
+      reinterpret_cast<uintptr_t>(&f);
+  if (const auto found = m_widths.find(key); found != m_widths.end())
+    return found->second;
+  if (const auto found = m_olderWidths.find(key); found != m_olderWidths.end())
+  {
+    const float kept = found->second;
+    m_widths.emplace(key, kept);
+    return kept;
+  }
+  if (m_widths.size() >= kMostWidths)
+  {
+    m_olderWidths = std::move(m_widths);
+    m_widths.clear();
+  }
   float pen = 0.0f;
   char32_t previous = 0;
   forEachCodepoint(line,
@@ -193,6 +225,7 @@ float FontAtlas::width(const std::string& font,
                      pen += glyph(f, codepoint).advance;
                      previous = codepoint;
                    });
+  m_widths.emplace(key, pen);
   return pen;
 }
 

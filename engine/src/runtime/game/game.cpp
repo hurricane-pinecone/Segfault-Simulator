@@ -592,7 +592,7 @@ void Game::render()
 
   // In pixels (the window's size on most screens).
   {
-    SFS_CPU_SCOPE("render/begin frame (acquire)");
+    SFS_CPU_SCOPE("render/begin frame");
     m_backend->beginFrame(m_pixelWidth, m_pixelHeight);
   }
 

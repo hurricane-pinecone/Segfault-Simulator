@@ -73,7 +73,7 @@ Field groups, in brief:
 | Forces | `gravity`, `gravityZ`, `drag` |
 | Over life | `sizeOverLife`, `colorOverLife`, `alphaOverLife` |
 | Look | `look`, `texture`, `frameCols`/`frameRows`/`frameFps`/`frameOverLife` (sprite-sheet animation) |
-| Render / sim | `blend`, `space`, `ground`, `stickDuration` |
+| Render / sim | `blend`, `lit`, `ground`, `stickDuration`, `landsOnPlane` |
 | Decals | `leavesDecal`, `decal` |
 | Budget | `maxParticles` |
 

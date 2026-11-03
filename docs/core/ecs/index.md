@@ -135,6 +135,28 @@ a fatal error when it's first used.
 
 `setEnabled(false)` skips a system's update/render (handy for debug toggles).
 
+### Game time
+
+Systems run in **game time**, which can go faster or slower than real time:
+`registry->setTimeScale(4.0)` (from a system) makes every system's `dt` four
+times the frame's, for a fast-forward. A big `dt` can make what steers or
+follows a path overshoot, so a scene can split a frame's game time into steps:
+after `registry->setMaxTimeStep(1.0 / 30.0)`, a system is updated as many
+times a frame as it takes for no step to be longer than that (at most 16 by
+default; past that the game falls behind rather than take longer steps, so a
+slow frame can't make the next one slower). Each system picks how it takes
+the time with `setTimeStep()`:
+
+| `System::TimeStep` | `update(dt)` gets |
+| --- | --- |
+| `Stepped` (default) | game time, in those steps: the same at any speed |
+| `Frame` | the frame's game time in one step (counting time, or costly work) |
+| `Real` | real time, whatever the scale (`RenderSystem`, `CameraSystem`) |
+
+`AnimationSystem` is `Frame`. Game objects' `onUpdate()` and the scene's own
+get real time: they're the player's (input, cameras). Particles keep game time
+with their own `ParticleModule::setTimeScale()`.
+
 ## GameObjects — the OOP layer
 
 For a single scripted actor (a player, a boss) the ECS-only style is verbose. A

@@ -1,10 +1,18 @@
 #include "engine/runtime/rendering/modules/meshModule.h"
 
+#include "engine/core/components/meshLodComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering/meshLibrary.h"
+#include "glm/glm/ext/matrix_transform.hpp"
+#include "glm/glm/ext/scalar_constants.hpp"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
 
 namespace sfs
 {
@@ -13,6 +21,11 @@ void MeshModule::computeCommands(const RenderContext& context)
 {
   flush();
   m_commandIndex.clear();
+  ++m_frame;
+  m_now = std::chrono::duration<double>(
+              std::chrono::steady_clock::now().time_since_epoch())
+              .count();
+  forgetLevels();
 
   if (!m_registry || !context.meshes)
     return;
@@ -75,11 +88,40 @@ void MeshModule::addEntity(const RenderContext& context,
     m_materials.push_back(context.meshes->material(name));
   while (!m_materials.empty() && !m_materials.back().valid())
     m_materials.pop_back(); // trailing "own material" slots change nothing
-  std::size_t key = std::hash<uint32_t>()(drawn.id);
+
+  MeshInstance instance{model, renderer.tint};
+  instance.emission =
+      glm::vec4(renderer.emissionColor * renderer.emission, 0.0f);
+  if (!skin && context.camera && entity.hasComponent<MeshLodComponent>())
+  {
+    addLevels(context,
+              entity.getId(),
+              entity.getComponent<MeshLodComponent>(),
+              drawn,
+              model,
+              instance,
+              visible,
+              castsShadow,
+              castsLightShadow);
+    return;
+  }
+  addInstance(drawn,
+              instance,
+              (visible ? Lit : 0) | (castsShadow ? SunShadow : 0) |
+                  (castsLightShadow ? LightShadow : 0));
+}
+
+void MeshModule::addInstance(MeshHandle mesh,
+                             const MeshInstance& instance,
+                             uint8_t passes)
+{
+  if (!mesh.valid() || passes == 0)
+    return;
+  std::size_t key = std::hash<uint32_t>()(mesh.id);
   for (const MaterialHandle material : m_materials)
     key = key * 1000003u ^ material.id;
   const auto matches = [&](const MeshDrawCommand& command)
-  { return command.mesh == drawn && command.materials == m_materials; };
+  { return command.mesh == mesh && command.materials == m_materials; };
 
   auto [first, last] = m_commandIndex.equal_range(key);
   while (first != last && !matches(m_commands[first->second]))
@@ -89,19 +131,162 @@ void MeshModule::addEntity(const RenderContext& context,
   {
     m_commandIndex.emplace(key, index);
     m_commands.push_back(
-        MeshDrawCommand{.mesh = drawn, .materials = m_materials});
+        MeshDrawCommand{.mesh = mesh, .materials = m_materials});
   }
 
   MeshDrawCommand& command = m_commands[index];
-  MeshInstance instance{model, renderer.tint};
-  instance.emission =
-      glm::vec4(renderer.emissionColor * renderer.emission, 0.0f);
-  if (visible)
+  if (passes & Lit)
     command.instances.push_back(instance);
-  if (castsShadow)
-    command.shadowInstances.push_back(instance);
-  if (castsLightShadow)
-    command.lightShadowInstances.push_back(instance);
+  // Shadows don't fade: whichever level casts, casts whole.
+  MeshInstance solid = instance;
+  solid.emission.w = 0.0f;
+  if (passes & SunShadow)
+    command.shadowInstances.push_back(solid);
+  if (passes & LightShadow)
+    command.lightShadowInstances.push_back(solid);
+}
+
+void MeshModule::addLevels(const RenderContext& context,
+                           uint32_t id,
+                           const MeshLodComponent& lod,
+                           MeshHandle mesh,
+                           const glm::mat4& model,
+                           const MeshInstance& instance,
+                           bool visible,
+                           bool castsShadow,
+                           bool castsLightShadow)
+{
+  // The levels it has, in order (the mesh's own first), each with where it
+  // takes over; the impostor, if it has one, is the level after them.
+  struct Level
+  {
+    MeshHandle mesh;
+    float from = 0.0f;
+  };
+  std::array<Level, 5> levels{};
+  std::size_t count = 0;
+  levels[count++] = {mesh, 0.0f};
+  for (const auto& [handle, from] : {std::pair{lod.lod1, lod.lod1Distance},
+                                     std::pair{lod.lod2, lod.lod2Distance},
+                                     std::pair{lod.lod3, lod.lod3Distance}})
+    if (handle.valid() && from > levels[count - 1].from)
+      levels[count++] = {handle, from};
+  const std::size_t meshLevels = count;
+  if (lod.impostor.valid() && lod.impostorDistance > levels[count - 1].from)
+    levels[count++] = {lod.impostor, lod.impostorDistance};
+
+  // How far, in the model's own size.
+  const glm::vec3 origin(model[3]);
+  const glm::vec3 eye = context.camera->position();
+  const float scale = std::max({glm::length(glm::vec3(model[0])),
+                                glm::length(glm::vec3(model[1])),
+                                glm::length(glm::vec3(model[2])),
+                                1e-4f});
+  const float distance = glm::distance(eye, origin) / scale;
+  if (lod.cullDistance > 0.0f && distance > lod.cullDistance)
+    return;
+
+  // Its level: the one for its distance, but the one it's at stays until
+  // the distance is `hysteresis` past either of its ends (so it doesn't flick
+  // back and forth on a boundary). A change cross-fades over `fadeSeconds`.
+  std::size_t wanted = 0;
+  while (wanted + 1 < count && distance >= levels[wanted + 1].from)
+    ++wanted;
+  LodState& state = m_lods[id];
+  state.seen = m_frame;
+  if (!state.started)
+  {
+    state = {static_cast<uint8_t>(wanted), static_cast<uint8_t>(wanted)};
+    state.started = true;
+    state.seen = m_frame;
+  }
+  const std::size_t at = std::min<std::size_t>(state.level, count - 1);
+  const float margin = std::max(lod.hysteresis, 0.0f);
+  const bool beyondNear = at > 0 && distance < levels[at].from - margin;
+  const bool beyondFar =
+      at + 1 < count && distance >= levels[at + 1].from + margin;
+  if (wanted != at && (beyondNear || beyondFar || state.level >= count))
+  {
+    state.previous = static_cast<uint8_t>(at);
+    state.level = static_cast<uint8_t>(wanted);
+    state.since = m_now;
+  }
+  const std::size_t level = std::min<std::size_t>(state.level, count - 1);
+  const std::size_t previous = std::min<std::size_t>(state.previous, count - 1);
+  float fade = 1.0f; // how far in it's faded (1: done)
+  if (previous != level && lod.fadeSeconds > 0.0f)
+    fade = std::clamp(
+        static_cast<float>(m_now - state.since) / lod.fadeSeconds, 0.0f, 1.0f);
+  if (fade >= 1.0f)
+    state.previous = state.level;
+
+  // Shadows from the coarser of its level and the shadow level (none from
+  // impostors, unless asked for: then the last mesh level's).
+  const bool impostor = level >= meshLevels;
+  const uint8_t shadowPasses = static_cast<uint8_t>(
+      (castsShadow ? SunShadow : 0) | (castsLightShadow ? LightShadow : 0));
+  if (shadowPasses != 0 && (!impostor || lod.impostorShadows))
+  {
+    const std::size_t caster = std::min(
+        std::max(level, static_cast<std::size_t>(std::max(lod.shadowLevel, 0))),
+        meshLevels - 1);
+    addInstance(levels[caster].mesh, instance, shadowPasses);
+  }
+  if (!visible)
+    return;
+
+  // A level drawn, dithered by `dither` (MeshInstance::emission.w) while it
+  // crosses over. The impostor is turned about the model's up axis to face
+  // the camera, showing the view round it nearest the camera's direction (in
+  // the model's own frame).
+  const auto draw = [&](std::size_t which, float dither)
+  {
+    MeshInstance shown = instance;
+    shown.emission.w = dither;
+    if (which < meshLevels)
+    {
+      addInstance(levels[which].mesh, shown, Lit);
+      return;
+    }
+    const glm::vec3 up = glm::normalize(glm::vec3(model[2]));
+    glm::vec3 toEye = eye - origin;
+    toEye -= up * glm::dot(toEye, up);
+    if (glm::dot(toEye, toEye) < 1e-8f)
+      toEye = glm::vec3(model[0]);
+    const glm::vec3 facing = glm::normalize(toEye);
+    const glm::vec3 side = glm::cross(up, facing);
+    shown.model[0] = glm::vec4(facing * scale, 0.0f);
+    shown.model[1] = glm::vec4(side * scale, 0.0f);
+    shown.model[2] = glm::vec4(up * scale, 0.0f);
+    const glm::vec3 forward = glm::normalize(glm::vec3(model[0]));
+    const glm::vec3 left = glm::cross(up, forward);
+    const float frames = static_cast<float>(std::max(lod.impostorFrames, 1));
+    float view = std::atan2(glm::dot(facing, left), glm::dot(facing, forward)) /
+                     glm::two_pi<float>() * frames +
+                 0.5f;
+    view -= std::floor(view / frames) * frames; // 0 .. frames
+    shown.uvRect =
+        glm::vec4(std::floor(view) / frames, 0.0f, 1.0f / frames, 1.0f);
+    addInstance(lod.impostor, shown, Lit);
+  };
+  if (fade >= 1.0f)
+  {
+    draw(level, 0.0f);
+    return;
+  }
+  // Crossing over: the old level giving way to the new, pixel for pixel.
+  draw(previous, fade);
+  draw(level, -fade);
+}
+
+void MeshModule::forgetLevels()
+{
+  // Entities not drawn with levels lately (gone, or out of range a while).
+  if (m_frame % 256 != 0)
+    return;
+  std::erase_if(m_lods,
+                [&](const auto& entry)
+                { return m_frame - entry.second.seen > 256; });
 }
 
 } // namespace sfs

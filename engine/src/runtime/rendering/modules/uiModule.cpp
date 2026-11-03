@@ -3,6 +3,7 @@
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/rendering/meshPreview.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/sceneManager/scene.h"
@@ -25,6 +26,7 @@ namespace
 {
 constexpr double kHelpDelay =
     0.5; // seconds over something before its help shows
+constexpr float kWheelStep = 60.0f; // points a scroll view goes a notch
 } // namespace
 
 UiModule::UiModule(Scene& scene)
@@ -157,12 +159,32 @@ void UiModule::computeCommands(const RenderContext& context)
                 ? m_fixedScale
                 : std::clamp(m_screen.y / 1080.0f, 0.5f, 4.0f) * m_userScale;
 
+  // How long since the last layout, for easing (real time: it eases while
+  // the game's paused too).
+  const auto now = std::chrono::steady_clock::now();
+  const float deltaTime =
+      m_lastLayout == std::chrono::steady_clock::time_point{}
+          ? 0.0f
+          : std::clamp(std::chrono::duration<float>(now - m_lastLayout).count(),
+                       0.0f,
+                       0.1f);
+  m_lastLayout = now;
+
   // The scene's layers (or the ones given), back to front.
+  std::vector<ui::Layer*> all =
+      m_layerSource ? m_layerSource() : m_scene.findObjects<ui::Layer>();
+  if (m_overlay)
+    all.push_back(m_overlay);
   std::vector<ui::Layer*> layers;
-  for (ui::Layer* layer :
-       m_layerSource ? m_layerSource() : m_scene.findObjects<ui::Layer>())
-    if (layer && layer->visible)
+  for (ui::Layer* layer : all)
+    if (layer && layer->visible && layer != m_overlay)
       layers.push_back(layer);
+  // (Hidden layers keep what they had; gone ones don't.)
+  m_drawn.clear();
+  std::erase_if(
+      m_layers,
+      [&](const auto& entry)
+      { return std::find(all.begin(), all.end(), entry.first) == all.end(); });
   std::stable_sort(layers.begin(),
                    layers.end(),
                    [](const ui::Layer* a, const ui::Layer* b)
@@ -170,54 +192,81 @@ void UiModule::computeCommands(const RenderContext& context)
   if (m_overlay && m_overlay->visible)
     layers.push_back(m_overlay);
 
-  m_hits.clear();
   m_placed.clear();
   if (layers.empty() || m_screen.x <= 0.0f || m_screen.y <= 0.0f)
     return;
   auto list = std::make_shared<UiDrawList>();
-  for (std::size_t i = 0; i < layers.size(); ++i)
+  for (ui::Layer* layer : layers)
   {
-    const std::size_t firstHit = m_hits.size();
-    // The pointer as this layer's ids have it (without its number in front).
-    const std::string prefix = std::to_string(i);
-    const auto own = [&](const std::string& id)
+    LayerUi& kept = m_layers[layer];
+    // Its body: made again unless it says what it shows is as it was.
+    const uint64_t inputs = layer->inputs();
+    if (!kept.made || inputs == 0 || inputs != kept.inputs)
     {
-      return id.starts_with(prefix) &&
-                     (id.size() == prefix.size() || id[prefix.size()] == '/')
-                 ? id.substr(prefix.size())
-                 : std::string("-");
-    };
-    ui::Pointer pointer = m_pointer;
-    pointer.hovered = own(m_pointer.hovered);
-    pointer.pressed = own(m_pointer.pressed);
-    ui::layout(layers[i]->body(),
-               m_screen,
-               m_scale,
-               m_theme,
-               m_fonts,
-               pointer,
-               list->quads,
-               m_hits,
-               this,
-               m_recordPlaced ? &m_placed : nullptr);
-    // Ids from different layers mustn't meet.
-    for (std::size_t h = firstHit; h < m_hits.size(); ++h)
-      m_hits[h].id = std::to_string(i) + m_hits[h].id;
+      const cpuTiming::Scope timed(
+          cpuTiming::enabled() ? cpuTiming::label("ui/body ", typeid(*layer))
+                               : nullptr);
+      kept.tree = layer->body();
+      kept.inputs = inputs;
+      kept.made = true;
+    }
+    {
+      const cpuTiming::Scope timed(
+          cpuTiming::enabled() ? cpuTiming::label("ui/layout ", typeid(*layer))
+                               : nullptr);
+      kept.state.advance(deltaTime);
+      // (For measuring what keeping saves: SFS_UI_NO_CACHE lays every layer
+      // out in full each frame.)
+      static const bool uncached = std::getenv("SFS_UI_NO_CACHE") != nullptr;
+      if (uncached)
+        kept.cache.clear();
+      ui::layout(kept.tree,
+                 m_screen,
+                 m_scale,
+                 m_theme,
+                 m_fonts,
+                 pointerFor(layer),
+                 kept.state,
+                 kept.cache,
+                 this,
+                 m_recordPlaced ? &m_placed : nullptr);
+    }
+    m_drawn.emplace_back(layer, &kept);
+    if (!kept.cache.quads()->empty())
+      list->parts.push_back(kept.cache.quads());
   }
 
   // Help for what the pointer's been over a moment.
-  if (const ui::Hit* help = helpAt(m_pointer.position);
-      help && m_hoveredFor >= kHelpDelay && m_pointer.pressed.empty())
-    ui::tooltip(help->help,
-                m_pointer.position,
+  if (const Found help = helpAt(m_position);
+      help.hit && m_hoveredFor >= kHelpDelay && m_pressed == 0)
+    ui::tooltip(help.hit->help,
+                m_position,
                 m_screen,
                 m_scale,
                 m_theme,
                 m_fonts,
                 list->quads);
 
-  if (!list->quads.empty())
+  if (!list->quads.empty() || !list->parts.empty())
     m_commands.push_back(UiDrawCommand{std::move(list)});
+}
+
+const std::vector<ui::Hit>& UiModule::hits()
+{
+  m_allHits.clear();
+  for (const auto& [layer, kept] : m_drawn)
+    m_allHits.insert(
+        m_allHits.end(), kept->cache.hits().begin(), kept->cache.hits().end());
+  return m_allHits;
+}
+
+ui::Pointer UiModule::pointerFor(const ui::Layer* layer) const
+{
+  ui::Pointer pointer;
+  pointer.position = m_position;
+  pointer.hovered = m_hoveredLayer == layer ? m_hovered : 0;
+  pointer.pressed = m_pressedLayer == layer ? m_pressed : 0;
+  return pointer;
 }
 
 glm::vec2 UiModule::fit(const ui::View& view, glm::vec2 offer)
@@ -226,24 +275,38 @@ glm::vec2 UiModule::fit(const ui::View& view, glm::vec2 offer)
   return ui::fit(view, offer, scale, m_theme, m_fonts, this);
 }
 
-const ui::Hit* UiModule::hitAt(glm::vec2 point) const
+UiModule::Found UiModule::hitAt(glm::vec2 point) const
 {
   // The front one: the last laid out there.
-  const ui::Hit* found = nullptr;
-  for (const ui::Hit& hit : m_hits)
-    if (hit.rect.contains(point))
-      found = &hit;
-  return found;
+  for (auto layer = m_drawn.rbegin(); layer != m_drawn.rend(); ++layer)
+  {
+    const std::vector<ui::Hit>& hits = layer->second->cache.hits();
+    for (auto hit = hits.rbegin(); hit != hits.rend(); ++hit)
+      if (hit->rect.contains(point))
+        return {layer->first, &*hit};
+  }
+  return {};
 }
 
-const ui::Hit* UiModule::helpAt(glm::vec2 point) const
+UiModule::Found UiModule::helpAt(glm::vec2 point) const
 {
   // The front one with help: a button's, or a view's it's inside.
-  const ui::Hit* found = nullptr;
-  for (const ui::Hit& hit : m_hits)
-    if (!hit.help.empty() && hit.rect.contains(point))
-      found = &hit;
-  return found;
+  for (auto layer = m_drawn.rbegin(); layer != m_drawn.rend(); ++layer)
+  {
+    const std::vector<ui::Hit>& hits = layer->second->cache.hits();
+    for (auto hit = hits.rbegin(); hit != hits.rend(); ++hit)
+      if (!hit->help.empty() && hit->rect.contains(point))
+        return {layer->first, &*hit};
+  }
+  return {};
+}
+
+const ui::Node* UiModule::sourceOf(const Found& found) const
+{
+  const auto kept = m_layers.find(found.layer);
+  if (!found.hit || kept == m_layers.end())
+    return nullptr;
+  return ui::nodeAt(*kept->second.tree.node(), found.hit->source);
 }
 
 void UiModule::handleInput(Input& input)
@@ -258,48 +321,90 @@ void UiModule::handleInput(Input& input)
               mouse.inView(),
               mouse.mousePressed(MouseButton::Left),
               mouse.mouseReleased(MouseButton::Left),
-              held))
-    mouse.block();
+              held,
+              glm::vec2(static_cast<float>(mouse.getScrollX()),
+                        static_cast<float>(mouse.getScrollY()))))
+    mouse.block(); // (the wheel too: a scroll view's, or nothing's)
 }
 
 bool UiModule::pointer(glm::vec2 position,
                        bool inView,
                        bool pressed,
                        bool released,
-                       bool held)
+                       bool held,
+                       glm::vec2 wheel)
 {
-  m_pointer.position = position;
-  const ui::Hit* hit = inView ? hitAt(m_pointer.position) : nullptr;
-  m_pointer.hovered = hit ? hit->id : std::string();
+  m_position = position;
+  const Found hit = inView ? hitAt(m_position) : Found{};
+  m_hoveredLayer = hit.layer;
+  m_hovered = hit.hit ? hit.hit->id : 0;
   // What's under the pointer for its help (timed in update()).
-  const ui::Hit* help = inView ? helpAt(m_pointer.position) : nullptr;
-  m_helpId = help ? help->id : std::string();
+  const Found help = inView ? helpAt(m_position) : Found{};
+  m_helpId =
+      help.hit ? help.hit->id ^ reinterpret_cast<uintptr_t>(help.layer) : 0;
 
-  const bool over = hit != nullptr;
+  const bool over = hit.hit != nullptr;
   if (pressed && over)
   {
     m_captured = true;
-    m_pointer.pressed =
-        (hit->action || hit->drag) && hit->enabled ? hit->id : std::string();
+    const bool holds = (hit.hit->action || hit.hit->drag) && hit.hit->enabled;
+    m_pressedLayer = holds ? hit.layer : nullptr;
+    m_pressed = holds ? hit.hit->id : 0;
+    if (hit.hit->press && hit.hit->enabled)
+    {
+      const std::function<void(glm::vec2)> press = hit.hit->press;
+      press(m_position);
+    }
+  }
+  // The wheel: the innermost scroll view under the pointer that can still go
+  // that way.
+  if (inView && (wheel.x != 0.0f || wheel.y != 0.0f))
+  {
+    const glm::vec2 delta = glm::vec2(wheel.x, -wheel.y) * kWheelStep * m_scale;
+    bool done = false;
+    for (auto layer = m_drawn.rbegin(); layer != m_drawn.rend() && !done;
+         ++layer)
+    {
+      const std::vector<ui::Hit>& hits = layer->second->cache.hits();
+      for (auto each = hits.rbegin(); each != hits.rend(); ++each)
+        if (each->scroll && each->rect.contains(m_position))
+        {
+          const std::function<bool(glm::vec2)> scroll = each->scroll;
+          if (scroll(delta))
+          {
+            done = true;
+            break;
+          }
+        }
+    }
   }
   // A slider held down follows the pointer, wherever it goes.
-  if (!m_pointer.pressed.empty() && (pressed || held))
-    for (const ui::Hit& each : m_hits)
-      if (each.id == m_pointer.pressed && each.drag)
-      {
-        const std::function<void(glm::vec2)> drag = each.drag;
-        drag(m_pointer.position);
-        break;
-      }
-  if (released && !m_pointer.pressed.empty())
+  if (m_pressed != 0 && (pressed || held))
+    for (const auto& [layer, kept] : m_drawn)
+      if (layer == m_pressedLayer)
+        for (const ui::Hit& each : kept->cache.hits())
+          if (each.id == m_pressed && each.drag)
+          {
+            // (Copied: it may change the game, and with it the UI.)
+            const std::function<void(const ui::Node&, glm::vec2)> drag =
+                each.drag;
+            const ui::Node* source = sourceOf({layer, &each});
+            if (source)
+              drag(*source, m_position);
+            break;
+          }
+  if (released && m_pressed != 0)
   {
     // A click: let go over the button pressed.
-    if (hit && hit->id == m_pointer.pressed && hit->action && hit->enabled)
+    if (hit.hit && hit.layer == m_pressedLayer && hit.hit->id == m_pressed &&
+        hit.hit->action && hit.hit->enabled)
     {
-      const std::function<void()> action = hit->action;
-      action();
+      const std::function<void(const ui::Node&)> action = hit.hit->action;
+      if (const ui::Node* source = sourceOf(hit))
+        action(*source);
     }
-    m_pointer.pressed.clear();
+    m_pressedLayer = nullptr;
+    m_pressed = 0;
   }
 
   const bool theUis = m_captured || (over && !held);

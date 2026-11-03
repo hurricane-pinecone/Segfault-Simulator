@@ -13,9 +13,11 @@
 #include <vector>
 
 // A game's UI, described the way SwiftUI does: a tree of small values (text,
-// buttons, stacks) changed by modifiers, rebuilt every frame from the game's
-// state by a ui::Layer's body(). The engine lays it out, draws it over the
-// scene, and calls buttons' actions when they're clicked.
+// buttons, stacks) changed by modifiers, made from the game's state by a
+// ui::Layer's body(). The engine lays it out, draws it over the scene, and
+// calls buttons' actions when they're clicked. It's retained: what a layer
+// drew is kept, and only what's changed since (by the tree's hash) is laid
+// out and drawn again (ui::Cache).
 //
 //   return VStack{
 //     Text("Day 3").font(Font::title()),
@@ -175,9 +177,11 @@ public:
   View maxHeight(float points) const;
   View minHeight(float points) const;
   /** Where it sits in a ZStack (or on the screen, a layer's body). */
-  View align(Alignment alignment) const;
+  View align(Alignment alignment) const&;
+  View align(Alignment alignment) &&;
   /** A stack's gap between its children. */
-  View spacing(float points) const;
+  View spacing(float points) const&;
+  View spacing(float points) &&;
 
   // --- look -----------------------------------------------------------------
 
@@ -189,22 +193,46 @@ public:
   /** A line round its background. */
   View border(Color color, float width = 1.0f) const;
   /** Text and icons inside it. */
-  View color(Color color) const;
-  View font(Font font) const;
+  View color(Color color) const&;
+  View color(Color color) &&;
+  View font(Font font) const&;
+  View font(Font font) &&;
   /** How see-through it, and everything in it, is (1: solid). */
-  View opacity(float alpha) const;
+  View opacity(float alpha) const&;
+  View opacity(float alpha) &&;
 
   // --- behaviour ------------------------------------------------------------
 
   /** Buttons in it can't be pressed (and look it). */
-  View disabled(bool disabled = true) const;
+  View disabled(bool disabled = true) const&;
+  View disabled(bool disabled = true) &&;
   /** Shown when hovered for a moment. */
-  View help(std::string text) const;
+  View help(std::string text) const&;
+  View help(std::string text) &&;
   /**
    * What tells it apart from frame to frame, in place of where it is in the
    * tree: give one to a button in a list that changes, so it stays itself.
    */
-  View id(std::string id) const;
+  View id(std::string id) const&;
+  View id(std::string id) &&;
+
+  // --- scroll views and disclosure groups -----------------------------------
+
+  /**
+   * Where a ScrollView's scrolled to the first frame it's shown: points down
+   * (along, if it only scrolls sideways); after that, where it's scrolled.
+   */
+  View scrollOffset(float points) const&;
+  View scrollOffset(float points) &&;
+  /** A DisclosureGroup's header: `view` at its far end (e.g. a button). */
+  View accessory(View view) const&;
+  View accessory(View view) &&;
+  /**
+   * A DisclosureGroup in an accordion: opening it closes the others in the
+   * layer with the same `group` (not ones bound to the game's own state).
+   */
+  View accordion(std::string group) const&;
+  View accordion(std::string group) &&;
 
   const std::shared_ptr<const Node>& node() const { return m_node; }
 
@@ -212,6 +240,10 @@ public:
   static View group(std::vector<View> views);
 
 private:
+  // Its node to change: itself while nothing else holds it (a view being
+  // built: Text(...).font(...) changes one node in place), else a copy.
+  std::shared_ptr<Node> owned() &&;
+
   std::shared_ptr<const Node> m_node;
 };
 
@@ -263,6 +295,49 @@ View Slider(float value,
 /** A switch, on or off, with `label` beside it: a click calls `change` with
  * the other. */
 View Toggle(std::string label, bool on, std::function<void(bool)> change);
+
+/** Which ways a ScrollView scrolls. */
+enum class Axis : uint8_t
+{
+  Vertical = 1,
+  Horizontal = 2,
+  Both = 3,
+};
+
+/**
+ * Its content, scrolled: as big as the content up to the room it's offered,
+ * and when the content's bigger, it shows part of it and scrolls (the mouse
+ * wheel or a touchpad over it, eased; a thin bar down its edge to drag, or
+ * click above or below the bar's thumb to page). What's outside it isn't
+ * drawn, laid out or clickable. Where it's scrolled to is kept frame to frame
+ * by where it is in the tree (or its id()). In a stack short of room it
+ * gives up its room first (a panel's fixed header, then a scroll view: it fits
+ * the screen). Inside another scroll view going the same way, give it a
+ * frame() or maxHeight() to scroll in. The wheel goes to the innermost
+ * scroll view under the pointer that can still go that way.
+ *
+ *   ScrollView(VStack{...}).maxHeight(600).scrollOffset(0)
+ */
+View ScrollView(View content, Axis axes = Axis::Vertical);
+
+/**
+ * A section that opens and closes: a header row (a chevron, `title`, and its
+ * accessory() at the far end) and `content` below it while it's open. A
+ * click on the header opens or closes it, its height eased over a moment.
+ * It starts open with `open`, and remembers frame to frame by where it is in
+ * the tree (or its id()); accordion() closes the others in a group. Closed,
+ * its content isn't laid out at all. It's as wide as it's given.
+ *
+ *   DisclosureGroup("WEATHER", VStack{...}, true).accessory(Button(...))
+ */
+View DisclosureGroup(std::string title, View content, bool open = false);
+View DisclosureGroup(View label, View content, bool open = false);
+/** One open while the game says so: `change` called with the other when its
+ * header's clicked. */
+View DisclosureGroup(std::string title,
+                     bool open,
+                     std::function<void(bool)> change,
+                     View content);
 
 /** Takes up whatever room its stack has spare, pushing the rest apart. */
 View Spacer(float minLength = 0.0f);
@@ -335,6 +410,8 @@ struct Node
     Padding,
     Frame,
     Background,
+    Scroll,     // ScrollView: children[0] the content
+    Disclosure, // DisclosureGroup: children label, content, accessory
   };
 
   Kind kind = Kind::Empty;
@@ -345,9 +422,11 @@ struct Node
   bool placeholder = false;     // Image's: a stand-in box (Image::placeholder)
   std::function<void()> action; // Button's
   float value = 0.0f; // ProgressBar's fraction, Spacer's minimum, Slider's
-                      // value, Toggle's 1 (on) or 0
+                      // value, Toggle's 1 (on) or 0, DisclosureGroup's
+                      // 1 (open, or open at first) or 0
   float low = 0.0f, high = 1.0f, step = 0.0f; // Slider's range and steps
-  std::function<void(float)> change; // Slider's (its new value), Toggle's
+  std::function<void(float)> change; // Slider's (its new value), Toggle's,
+                                     // a bound DisclosureGroup's
 
   float spacing = 8.0f;                         // stacks'
   Alignment stackAlignment = Alignment::Center; // stacks' line-up
@@ -356,6 +435,11 @@ struct Node
   float minWidth = 0.0f, maxWidth = 0.0f;       // Frame's, 0: unset
   float minHeight = 0.0f, maxHeight = 0.0f;
   Fill fill; // Background's
+
+  Axis axes = Axis::Vertical; // ScrollView's
+  float scrollOffset = -1.0f; // ScrollView's first offset, points (<0: 0)
+  bool bound = false;         // DisclosureGroup's open is `value`, the game's
+  std::string group;          // DisclosureGroup's accordion
 
   // Inherited by everything inside, unless set again there.
   std::optional<Font> font;
@@ -366,6 +450,25 @@ struct Node
   Alignment alignment = Alignment::Center; // within a ZStack, or the screen
   std::string id;                          // see View::id()
   std::string help;
+
+  /**
+   * What it is, as a number: a hash of every field but the functions (only
+   * whether each is set) and of its children's. Trees that draw the same have
+   * the same hash, so a layer whose tree hashes as last frame's isn't laid
+   * out again (ui::Cache). Worked out once, when first asked (a node doesn't
+   * change once it's in a View).
+   */
+  uint64_t hash() const;
+  /** How many nodes there are in it, itself too (a hit's Hit::source). */
+  uint32_t count() const;
+  /** Whether it, or anything in it, keeps State (a scroll view, a section). */
+  bool keepsState() const;
+
+  // Worked out by hash() (0: not yet), and the layout's notes on it.
+  mutable uint64_t m_hash = 0;
+  mutable uint32_t m_count = 0;
+  mutable bool m_keepsState = false;
+  mutable uint8_t m_layoutBits = 0;
 };
 
 } // namespace sfs::ui

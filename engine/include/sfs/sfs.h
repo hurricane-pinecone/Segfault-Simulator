@@ -13,6 +13,7 @@
 #include "engine/core/components/deformerComponent.h"
 #include "engine/core/components/grassBenderComponent.h"
 #include "engine/core/components/grassComponent.h"
+#include "engine/core/components/meshLodComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/particleEmitterComponent.h"

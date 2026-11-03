@@ -28,6 +28,8 @@ public:
   {
     registerComponent<TransformComponent>();
     registerComponent<CameraFollowComponent>();
+    // The player's view: real time, however fast the game's going.
+    setTimeStep(TimeStep::Real);
   }
 
   void update(double deltaTime) override

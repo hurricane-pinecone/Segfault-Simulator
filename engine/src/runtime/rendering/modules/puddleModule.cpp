@@ -149,6 +149,7 @@ void PuddleModule::refresh(const Entity& entity, Field& field)
   // place as it's read).
   auto terrain = std::make_shared<TerrainMaterial>(*field.terrain);
   terrain->tint.reset();
+  terrain->paint.reset(); // (changed in place by the game as it's read)
   if (terrain->splat)
     terrain->splat = std::make_shared<const TextureData>(*terrain->splat);
   if (!m_worker)

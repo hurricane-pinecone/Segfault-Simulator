@@ -26,8 +26,9 @@ struct UiTexture
 
 /**
  * One rectangle of UI, in pixels from the target's top left: a rounded box
- * (its colour, corners, edge softness) or part of a texture (text, an image)
- * tinted by its colour.
+ * (its colour, corners, edge softness), part of a texture (text, an image)
+ * tinted by its colour, or a chevron. Only what's inside its clip is drawn
+ * (a scroll view's content).
  */
 struct UiQuad
 {
@@ -36,6 +37,9 @@ struct UiQuad
     Box = 0,   // rounded rectangle
     Glyph = 1, // the texture's alpha, as coverage, in its colour
     Image = 2, // the texture's colours, tinted
+    // A '>' in its colour, its stroke `border` wide, turned `radius` radians
+    // clockwise (a quarter turn: pointing down).
+    Chevron = 3,
   };
 
   glm::vec4 rect{0.0f};        // x, y, width, height
@@ -47,12 +51,31 @@ struct UiQuad
   glm::vec4 borderColor{0.0f}; // ...in this colour (sRGB) and alpha
   Kind kind = Box;
   const UiTexture* texture = nullptr; // Glyph and Image
+  // Where it may draw: left, top, right, bottom (pixels); everywhere by
+  // default.
+  glm::vec4 clip{-1.0e9f, -1.0e9f, 1.0e9f, 1.0e9f};
 };
 
-/** A frame's UI, back to front: drawn over everything else. */
+/**
+ * A frame's UI, back to front: drawn over everything else. Each part in
+ * order (a UI layer's quads, kept from frame to frame while it's unchanged,
+ * so shared rather than copied), then `quads`.
+ */
 struct UiDrawList
 {
   std::vector<UiQuad> quads;
+  std::vector<std::shared_ptr<const std::vector<UiQuad>>> parts;
+
+  /** Each quad, in the order they're drawn. */
+  template <typename Visit>
+  void forEach(Visit&& visit) const
+  {
+    for (const auto& part : parts)
+      for (const UiQuad& quad : *part)
+        visit(quad);
+    for (const UiQuad& quad : quads)
+      visit(quad);
+  }
 };
 
 } // namespace sfs

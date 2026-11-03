@@ -225,7 +225,31 @@ int main()
     maps.pixels({2, 3}, {4, 4}, shape, data);
     CHECK(shape.size() == 8u && data.size() == 8u);
     CHECK(shape[0] == 255 && std::abs(int(shape[1]) - 128) <= 1);
+    CHECK(shape[2] == 255 && shape[3] == 255); // no band yet; unbounded
     CHECK(data[3] == 255);
+  }
+
+  TEST("bounds should mark an edge finer than a texel, and the band a fall")
+  {
+    // A half at the edge, ramped over two texels either side.
+    CHECK(GrassMaps::boundsValue(0.0f, 0.5f) == 0.5f);
+    CHECK(GrassMaps::boundsValue(-1.0f, 0.5f) == 0.0f);
+    CHECK(near(GrassMaps::boundsValue(0.25f, 0.5f), 0.625f, 1e-5f));
+    GrassMaps maps(GrassGrid::over({0.0f, 0.0f}, {4.0f, 4.0f}, 0.5f));
+    CHECK(maps.at(GrassMaps::Bounds, 3, 3) == 1.0f);
+    maps.takeGrownChanged();
+    maps.set(GrassMaps::Bounds, 3, 3, 0.2f);
+    CHECK(maps.takeGrownChanged().size() == 1u); // it shapes the blades
+
+    // The band: a texel's coverage, or a bare one's plus a third a texel
+    // away.
+    std::vector<uint8_t> shape(8 * 1 * 4, 255);
+    shape[0] = 0; // bare at x 0
+    grassEdgeBand(shape, {8, 1});
+    CHECK(shape[2] == 0);
+    CHECK(std::abs(int(shape[4 + 2]) - 85) <= 1);
+    CHECK(std::abs(int(shape[8 + 2]) - 170) <= 1);
+    CHECK(shape[12 + 2] == 255 && shape[28 + 2] == 255);
   }
 
   TEST("maps should survive saving, compactly, and refuse what isn't them")

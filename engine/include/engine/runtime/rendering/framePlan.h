@@ -125,11 +125,15 @@ struct FrameUniforms
   glm::vec4 lightningHigh;
   glm::vec4 lightningLight;
   glm::vec4 lightningGlow;
+  // What the camera looks at (xyz: FrameParams::cameraTarget), w how far
+  // round the line of sight to it things that clear the view (see
+  // MeshMaterial::fadeNearCamera) fade away (0: none).
+  glm::vec4 cameraTarget;
 };
 static_assert(sizeof(FrameUniforms) == 64 * 2 + 16 * 13 +
                                            64 * (2 + kMaxShadowCascades) +
                                            16 * (2 * kMaxShadowCascades + 4 +
-                                                 9 + 1 + 3 + 3 + 4 + 4 + 6),
+                                                 9 + 1 + 3 + 3 + 4 + 4 + 7),
               "FrameUniforms must match the WGSL Frame layout");
 
 /**
@@ -270,6 +274,7 @@ struct UiInstance
   glm::vec4 color;
   glm::vec4 borderColor;
   glm::vec4 shape; // radius, softness, border, kind
+  glm::vec4 clip;  // left, top, right, bottom: drawn only inside
 };
 
 /**
@@ -328,11 +333,21 @@ struct MaterialUniforms
   glm::vec4 baseColor;
   glm::vec4 params;      // normal scale, metallic, roughness, alpha cutoff
   glm::vec4 uvTransform; // tiling xy, offset zw
-  glm::uvec4 mode;       // x: AlphaMode, y: unlit
+  glm::uvec4 mode;       // x: AlphaMode, y: unlit, z: fadeNearCamera's bits
 };
 
 /** A standard-surface material's uniforms. */
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material);
+
+/** `Material` in meshFoliageSurface.wgsl: the standard's, and its foliage. */
+struct FoliageUniforms
+{
+  MaterialUniforms standard;
+  glm::vec4 foliage; // translucency, bend, sway, flutter
+};
+
+/** A foliage-surface material's uniforms (see FoliageSettings). */
+FoliageUniforms foliageMaterialUniforms(const MeshMaterial& material);
 
 /** `Terrain` in meshTerrainSurface.wgsl: a terrain material's parameters. */
 struct TerrainUniforms

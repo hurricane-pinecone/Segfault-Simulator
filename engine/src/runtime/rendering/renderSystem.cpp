@@ -48,6 +48,9 @@ namespace sfs
 RenderSystem::RenderSystem(IRenderer& renderer)
     : m_renderer(renderer), m_meshes(renderer)
 {
+  // What's on screen moves on in real time, however fast the game's going
+  // (its particles keep the game's time with their own time scale).
+  setTimeStep(TimeStep::Real);
 }
 
 RenderSystem::~RenderSystem() = default;
@@ -312,6 +315,7 @@ void RenderSystem::render()
   frame.cameraPosition = m_camera.position();
   frame.grassCameraOffset = grassCameraOffset;
   frame.cameraForward = m_camera.viewDirection();
+  frame.cameraTarget = m_camera.target;
   frame.nearPlane = m_camera.nearPlane;
   frame.farPlane = m_camera.farPlane;
   const Entity camera = sceneCamera();
@@ -1243,7 +1247,8 @@ void RenderSystem::emitLightning()
 
 void RenderSystem::submit(const UiDrawCommand& command)
 {
-  if (command.list && !command.list->quads.empty())
+  if (command.list &&
+      (!command.list->quads.empty() || !command.list->parts.empty()))
     m_renderer.drawUi(*command.list);
 }
 

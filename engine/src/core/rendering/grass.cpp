@@ -385,7 +385,7 @@ std::size_t GrassGround::groundTexels() const
 std::string_view GrassMaps::name(Channel channel)
 {
   static constexpr std::array<std::string_view, kChannels> kNames = {
-      "coverage", "length", "data0", "data1", "data2", "data3"};
+      "coverage", "length", "data0", "data1", "data2", "data3", "bounds"};
   return kNames[channel];
 }
 
@@ -497,13 +497,13 @@ void GrassMaps::fill(Channel channel, float value)
   std::fill(m_values[channel].begin(), m_values[channel].end(), toByte(value));
   m_changedMin = glm::ivec2(0);
   m_changedMax = m_grid.size;
-  if (channel <= Length)
+  if (shapesBlades(channel))
     markAllGrown();
 }
 
 void GrassMaps::touch(Channel channel, int x, int y)
 {
-  if (channel <= Length && !m_allGrown)
+  if (shapesBlades(channel) && !m_allGrown)
   {
     const int blocks = (m_grid.size.x + kGrownBlock - 1) / kGrownBlock;
     if (m_grownBlocks.empty())
@@ -586,8 +586,8 @@ void GrassMaps::pixels(glm::ivec2 from,
       const std::size_t at = index(x, y);
       shape[i + 0] = m_values[Coverage][at];
       shape[i + 1] = m_values[Length][at];
-      shape[i + 2] = 0;
-      shape[i + 3] = 0;
+      shape[i + 2] = 255;
+      shape[i + 3] = m_values[Bounds][at];
       for (int k = 0; k < 4; ++k)
         data[i + k] = m_values[Data0 + k][at];
     }
@@ -653,6 +653,51 @@ GrassMaps GrassMaps::fromJson(const nlohmann::json& json)
   {
     return {};
   }
+}
+
+void grassEdgeBand(std::span<uint8_t> shape, glm::ivec2 size)
+{
+  if (size.x <= 0 || size.y <= 0 ||
+      shape.size() < std::size_t(size.x) * size.y * 4)
+    return;
+  // A distance transform from the coverage, in two sweeps (forward, then
+  // back) taking each texel's least from the four already swept round it, a
+  // texel straight across 1 / kGrassEdgeBand and one diagonally that times
+  // the square root of 2 (in bytes: 1 is 255).
+  constexpr int kStraight = (255 + kGrassEdgeBand / 2) / kGrassEdgeBand;
+  constexpr int kDiagonal = (361 + kGrassEdgeBand / 2) / kGrassEdgeBand;
+  const auto blue = [&](int x, int y) -> uint8_t&
+  { return shape[(std::size_t(y) * size.x + x) * 4 + 2]; };
+  for (int y = 0; y < size.y; ++y)
+    for (int x = 0; x < size.x; ++x)
+      blue(x, y) = shape[(std::size_t(y) * size.x + x) * 4];
+  const auto sweep = [&](int step)
+  {
+    const int firstY = step > 0 ? 0 : size.y - 1;
+    const int firstX = step > 0 ? 0 : size.x - 1;
+    for (int y = firstY; y >= 0 && y < size.y; y += step)
+      for (int x = firstX; x >= 0 && x < size.x; x += step)
+      {
+        int least = blue(x, y);
+        const int behindX = x - step, behindY = y - step;
+        const bool hasX = behindX >= 0 && behindX < size.x;
+        const bool hasY = behindY >= 0 && behindY < size.y;
+        if (hasX)
+          least = std::min(least, blue(behindX, y) + kStraight);
+        if (hasY)
+        {
+          least = std::min(least, blue(x, behindY) + kStraight);
+          if (hasX)
+            least = std::min(least, blue(behindX, behindY) + kDiagonal);
+          const int aheadX = x + step;
+          if (aheadX >= 0 && aheadX < size.x)
+            least = std::min(least, blue(aheadX, behindY) + kDiagonal);
+        }
+        blue(x, y) = static_cast<uint8_t>(std::min(least, 255));
+      }
+  };
+  sweep(1);
+  sweep(-1);
 }
 
 // --- GrassTrample ------------------------------------------------------------

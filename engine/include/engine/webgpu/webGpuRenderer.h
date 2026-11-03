@@ -10,6 +10,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -101,6 +102,16 @@ public:
   void setTarget(WGPUCommandEncoder encoder,
                  WGPUTextureView target,
                  glm::ivec2 size);
+  /**
+   * Where this frame renders, with its target (the window's next picture)
+   * asked for only when it's needed: the passes that don't draw into it
+   * record into `encoder`; before the first that does, `acquire` runs, and
+   * points the renderer (setTarget) at the encoder and target the rest record
+   * into. Left without a target, those passes (composite, UI) are skipped.
+   */
+  void setLateTarget(WGPUCommandEncoder encoder,
+                     glm::ivec2 size,
+                     std::function<void()> acquire);
 
   MeshHandle createMesh(const MeshData& mesh) override;
   void destroyMesh(MeshHandle mesh) override;
@@ -174,13 +185,21 @@ private:
     // parts out by it: their shadows change every frame).
     bool timed = false;
     // (One for each GrassDraw.)
-    mutable std::array<wgpu::RenderPipeline, 3> grass;
-    mutable std::array<bool, 3> grassBroken{};
+    mutable std::array<wgpu::RenderPipeline, 6> grass;
+    mutable std::array<bool, 6> grassBroken{};
     // Its depth and normals, for ambient occlusion: built the first time a
     // frame has it.
     mutable wgpu::RenderPipeline depthNormals;
     mutable wgpu::RenderPipeline depthNormalsTwoSided;
     mutable bool depthNormalsBroken = false;
+    // Masked sections in the lit pass (see cutOutPipeline()): their depth
+    // first, cut out, then lit where it's equal, writing none; built the
+    // first time a frame has one.
+    mutable wgpu::RenderPipeline cutOutDepth;
+    mutable wgpu::RenderPipeline cutOutDepthTwoSided;
+    mutable wgpu::RenderPipeline cutOutLit;
+    mutable wgpu::RenderPipeline cutOutLitTwoSided;
+    mutable bool cutOutBroken = false;
     // As its shadow, writing heights too, for rain's overhead map: built the
     // first time it rains.
     mutable wgpu::RenderPipeline rainMap;
@@ -358,6 +377,11 @@ private:
   // (logged) if they don't build.
   std::shared_ptr<Surface> buildSurface(const std::string& surfaceWgsl,
                                         wgpu::BindGroupLayout materialLayout);
+  // Group 1's layout for the standard surface's material bindings, its
+  // parameters seen by the vertex stage too if `vertexToo` (foliage's).
+  wgpu::BindGroupLayout standardMaterialLayout(bool vertexToo);
+  // Whether the foliage surface is built (building it the first time).
+  bool foliageSurface();
   // A material graph shader's surface for an alpha mode: shared while any
   // material uses it.
   std::shared_ptr<const Surface>
@@ -440,12 +464,16 @@ private:
                            uint32_t bytesPerPixel);
   // What a grass pipeline draws: the ground under it, its nearest list of
   // blades (which find the air at their vertices, see meshGrass.wgsl), or
-  // the others.
+  // the others; the blades' depth alone (their pre-pass), and the two lists
+  // again lit only where their depth is that (equal, writing none).
   enum class GrassDraw
   {
     Ground,
     NearBlades,
     Blades,
+    Depth,
+    NearBladesEqual,
+    BladesEqual,
   };
   WGPURenderPipeline grassPipeline(const Surface& surface, GrassDraw draw);
   // Ambient occlusion (and contact shadows, worked out with it): whether this
@@ -518,9 +546,16 @@ private:
     SeeThrough,
     LightShadow,  // a point light's shadow map (every section)
     DepthNormals, // ambient occlusion's first pass (as Opaque)
+    CutOutDepth,  // the lit pass's masked sections' depth, before the rest
     RainMap,      // rain's overhead map (as All)
   };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
+  // A masked section's pipeline in the lit pass: its cut-out depth (drawn
+  // before anything's lit), or lit where that depth is (testing for equal,
+  // writing none: each pixel shaded once however many cut-out layers lie over
+  // it). Null if they don't build (it's lit as the others are, then).
+  WGPURenderPipeline
+  cutOutPipeline(const Surface& surface, bool depthOnly, bool twoSided);
   // The pipeline a surface draws with in a pass (see Sections).
   static WGPURenderPipeline pipelineFor(const Surface& surface,
                                         Sections which,
@@ -915,6 +950,11 @@ private:
   // Grass's ground drawn without its blades (SFS_GRASS_GROUND_ONLY), to
   // compare the two.
   bool m_grassGroundOnly = false;
+  // Grass blades' depth pre-pass (SFS_GRASS_PREPASS): 1 on, 0 off, -1 on and
+  // off two frames each (for comparing screenshots); over how many of the
+  // nearest lists.
+  int m_grassPrepass = 1;
+  uint32_t m_grassPrepassLists = 1;
   wgpu::Texture m_noOcclusion;
   wgpu::TextureView m_noOcclusionView;
   wgpu::BindGroupLayout m_occlusionLayout;
@@ -978,6 +1018,10 @@ private:
   wgpu::BindGroup m_shadowBindings;
   wgpu::BindGroup m_litBindings;
   std::shared_ptr<const Surface> m_standard;
+  // The foliage surface (MeshMaterial::foliage), built the first time a
+  // material needs it (null meanwhile, or if it doesn't build).
+  std::shared_ptr<const Surface> m_foliage;
+  bool m_foliageBroken = false;
   // Terrain materials' surface (meshTerrainSurface.wgsl), built the first
   // time one is made; and their layers' texture arrays, by their textures.
   std::shared_ptr<const Surface> m_terrain;
@@ -998,6 +1042,9 @@ private:
   // This frame's target, set by the backend.
   WGPUCommandEncoder m_encoder = nullptr;
   WGPUTextureView m_target = nullptr;
+  // Asks for the target, before the first pass into it (setLateTarget).
+  std::function<void()> m_acquire;
+  bool acquireTarget();
   glm::ivec2 m_viewport{0, 0};
 
   // This frame's work, gathered between beginFrame() and endFrame().

@@ -306,6 +306,9 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
   material->metallic = asset.metallic;
   material->roughness = asset.roughness;
   material->alphaCutoff = asset.alphaCutoff;
+  material->doubleSided = asset.doubleSided;
+  material->foliage = asset.foliage;
+  material->fadeNearCamera = asset.fadeNearCamera;
   return material;
 }
 

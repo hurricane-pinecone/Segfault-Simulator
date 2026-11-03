@@ -440,15 +440,22 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
     ImGui::SliderFloat("Strength", &m_brushStrength, 0.05f, 1.0f, "%.2f");
     ImGui::SetItemTooltip("How quickly it paints");
     ImGui::SameLine();
-    // Which map: where it grows, how long, or data for its material.
-    static constexpr const char* kChannels[] = {
-        "Coverage", "Length", "Data 0", "Data 1", "Data 2", "Data 3"};
+    // Which map: where it grows, how long, data for its material, or where
+    // it may grow at all (a crisp edge).
+    static constexpr const char* kChannels[] = {"Coverage",
+                                                "Length",
+                                                "Data 0",
+                                                "Data 1",
+                                                "Data 2",
+                                                "Data 3",
+                                                "Bounds"};
     ImGui::SetNextItemWidth(90.0f);
     ImGui::Combo(
         "##channel", &m_brushChannel, kChannels, IM_ARRAYSIZE(kChannels));
     ImGui::SetItemTooltip(
-        "What it paints: where grass grows, how long it is, or data its "
-        "material reads");
+        "What it paints: where grass grows (thinning out at the edge), how "
+        "long it is, data its material reads, or its bounds (none past them, "
+        "to a crisp edge)");
     ImGui::SameLine();
     ImGui::Checkbox("Erase", &m_brushErase);
     ImGui::SetItemTooltip("Take away instead (or hold Shift)");

@@ -7,6 +7,7 @@
 #include "glm/glm/ext/vector_int2.hpp"
 #include "nlohmann/json.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -187,12 +188,21 @@ private:
 
 /**
  * How grass grows over its ground, as grids the game and the editor's brush
- * write: how much grows (Coverage), how long it is (Length), and four Data
+ * write: how much grows (Coverage), how long it is (Length), four Data
  * channels the engine gives no meaning to, for a grass material to read
- * (moisture, say, for a game to colour dry grass yellow).
+ * (moisture, say, for a game to colour dry grass yellow), and where it may
+ * grow at all (Bounds).
  *
- * Values are 0 to 1. Unpainted maps grow full, full-length grass (coverage
- * and length 1, data 0).
+ * Grass gives out two ways. Where Coverage falls (worn or worked ground), it
+ * thins and shortens over a band about kGrassEdgeBand texels into it, in
+ * clumps (see grassEdgeBand()). Where Bounds falls below a half (a road, a
+ * wall), it stops dead, to the blade: Bounds is read between texels and cut
+ * at a half, so a game that writes it as a distance from the edge
+ * (boundsValue()) gets an edge where the edge really is, finer than a texel,
+ * with no band. A mower or wear changes Coverage and Length; Bounds stays.
+ *
+ * Values are 0 to 1. Unpainted maps grow full, full-length grass everywhere
+ * (coverage, length and bounds 1, data 0).
  */
 class GrassMaps
 {
@@ -205,8 +215,9 @@ public:
     Data1,
     Data2,
     Data3,
+    Bounds,
   };
-  static constexpr int kChannels = 6;
+  static constexpr int kChannels = 7;
 
   /** How stamp() changes values under it. */
   enum class Blend : uint8_t
@@ -220,10 +231,25 @@ public:
   /** The default value of a channel. */
   static float defaultValue(Channel channel)
   {
-    return channel <= Length ? 1.0f : 0.0f;
+    return channel <= Length || channel == Bounds ? 1.0f : 0.0f;
   }
   /** A channel's name as saved ("coverage", "length", "data0"...). */
   static std::string_view name(Channel channel);
+  /** Whether the blades grow from a channel (Coverage, Length, Bounds). */
+  static bool shapesBlades(Channel channel)
+  {
+    return channel <= Length || channel == Bounds;
+  }
+  /**
+   * Bounds for a texel whose middle is `distance` from the edge grass grows
+   * to (world units; below 0 on the side it's kept off), texels `texel`
+   * across: a half at the edge, ramped over two texels either side. Take the
+   * least of it and what's there to keep grass off several things at once.
+   */
+  static float boundsValue(float distance, float texel)
+  {
+    return std::clamp(0.5f + distance / (4.0f * texel), 0.0f, 1.0f);
+  }
 
   GrassMaps() = default;
   /** Maps over `grid`, every channel at its default. */
@@ -267,16 +293,16 @@ public:
   /** Texels a side of the blocks takeGrownChanged() tells of. */
   static constexpr int kGrownBlock = 16;
   /**
-   * Where Coverage or Length (what the blades are grown from) changed since
-   * the last call, as rectangles of texels (xy min, zw max exclusive): the
-   * kGrownBlock blocks with a change, run together along their rows. Then
-   * forgets them. A change to a data channel isn't one of them.
+   * Where Coverage, Length or Bounds (what the blades are grown from)
+   * changed since the last call, as rectangles of texels (xy min, zw max
+   * exclusive): the kGrownBlock blocks with a change, run together along their
+   * rows. Then forgets them. A change to a data channel isn't one of them.
    */
   std::vector<glm::ivec4> takeGrownChanged();
 
   /**
    * The GPU's two RGBA8 images of a rectangle of texels (rows from its min y):
-   * coverage, length, 0, 0; then data 0 to 3.
+   * coverage, length, 1 (for grassEdgeBand()), bounds; then data 0 to 3.
    */
   void pixels(glm::ivec2 from,
               glm::ivec2 to,
@@ -315,6 +341,21 @@ private:
   bool m_anyGrown = false;
   bool m_allGrown = false;
 };
+
+/** How many texels into grass the band where coverage gives out reaches. */
+inline constexpr int kGrassEdgeBand = 3;
+
+/**
+ * The band where grass gives out at a fall in coverage, into a rectangle of
+ * GrassMaps::pixels()'s shape image (`size` texels, coverage as the blades
+ * grow to it): each texel's blue becomes how far in it is, the least over the
+ * texels round it of their coverage plus how many texels away they are over
+ * kGrassEdgeBand (1: full grass at least that far round). The GPU grows grass
+ * thinner and shorter, in clumps, where it's low (meshGrassGrow.wgsl's
+ * grassShape()). A change of coverage moves it kGrassEdgeBand texels round;
+ * a texel's is only right with the image reaching that much past it.
+ */
+void grassEdgeBand(std::span<uint8_t> shape, glm::ivec2 size);
 
 /** What blades grow like (GrassComponent's settings for them). */
 struct GrassShape

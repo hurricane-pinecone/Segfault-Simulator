@@ -752,8 +752,9 @@ void EditorApp::handleShortcuts()
   if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P, kGlobal))
     m_mode == Mode::Playing ? stop() : requestBuild(true);
 
-  // Edit shortcuts belong to text fields while one is being typed in.
-  if (ImGui::GetIO().WantTextInput)
+  // Edit shortcuts belong to text fields while one is being typed in, and to
+  // the game while it's playing with the keyboard (its own Ctrl+Z, Delete...).
+  if (ImGui::GetIO().WantTextInput || sceneReceivesInput())
     return;
   if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, kGlobal))
     m_context.history->undo();

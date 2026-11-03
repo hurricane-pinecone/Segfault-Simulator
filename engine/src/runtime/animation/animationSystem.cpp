@@ -42,6 +42,8 @@ AnimationSystem::AnimationSystem(MeshLibrary& meshes, AssetStore& assets)
     : m_meshes(meshes), m_assets(assets)
 {
   registerComponent<AnimatorComponent>();
+  // Game time, but once a frame: posing is only seen once a frame.
+  setTimeStep(TimeStep::Frame);
 }
 
 // Nothing to free: the mesh library lets go of posed copies no one keeps

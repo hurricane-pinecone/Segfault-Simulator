@@ -49,6 +49,7 @@ private:
   Registry* m_registry = nullptr;
   std::unique_ptr<IParticleCollisionSource> m_collision;
   MeshHandle m_quad;
+  MeshHandle m_litQuad; // a lit effect's (ParticleEffectDesc::lit)
   std::unordered_map<std::string, MaterialHandle> m_materials;
 };
 

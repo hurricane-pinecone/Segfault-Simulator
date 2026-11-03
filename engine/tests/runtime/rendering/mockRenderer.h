@@ -88,7 +88,11 @@ public:
     grassDrawn.push_back(batch);
   }
 
-  void drawUi(const UiDrawList& list) override { uiDrawn = list.quads; }
+  void drawUi(const UiDrawList& list) override
+  {
+    uiDrawn.clear();
+    list.forEach([&](const UiQuad& quad) { uiDrawn.push_back(quad); });
+  }
 
   glm::ivec2 viewportSize() const override { return viewport; }
   uint32_t shadowMapResolution() const override { return 1024; }

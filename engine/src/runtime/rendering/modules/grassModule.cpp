@@ -562,23 +562,48 @@ void GrassModule::uploadMaps(Patch& patch)
   patch.coverRegrow.clear();
   if (!patch.sendMaps && (to.x <= from.x || to.y <= from.y))
     return;
+  // The band where grass gives out at a fall in coverage moves with it
+  // (grassEdgeBand()): sent kGrassEdgeBand texels round what changed, worked
+  // out from as far again past that.
+  const glm::ivec2 size = patch.maps.grid().size;
+  const glm::ivec2 band(kGrassEdgeBand);
+  from = glm::max(from - band, glm::ivec2(0));
+  to = glm::min(to + band, size);
+  const glm::ivec2 readFrom = glm::max(from - band, glm::ivec2(0));
+  const glm::ivec2 readTo = glm::min(to + band, size);
   std::vector<uint8_t> shape, data;
-  patch.maps.pixels(from, to, shape, data);
+  patch.maps.pixels(readFrom, readTo, shape, data);
   // Less where the terrain under it keeps grass off.
+  const int readWidth = readTo.x - readFrom.x;
   if (patch.terrain && patch.coverGrid == patch.maps.grid())
-  {
-    const int width = to.x - from.x;
-    for (int y = from.y; y < to.y; ++y)
-      for (int x = from.x; x < to.x; ++x)
+    for (int y = readFrom.y; y < readTo.y; ++y)
+      for (int x = readFrom.x; x < readTo.x; ++x)
       {
         uint8_t& coverage =
-            shape[(std::size_t(y - from.y) * width + (x - from.x)) * 4];
+            shape[(std::size_t(y - readFrom.y) * readWidth + (x - readFrom.x)) *
+                  4];
         coverage = static_cast<uint8_t>(
             (coverage *
                  patch.cover[std::size_t(y) * patch.coverGrid.size.x + x] +
              127) /
             255);
       }
+  grassEdgeBand(shape, readTo - readFrom);
+  // Just the texels to send, if it read more round them.
+  if (readFrom != from || readTo != to)
+  {
+    const int width = to.x - from.x;
+    std::size_t at = 0;
+    for (int y = from.y; y < to.y; ++y)
+    {
+      const std::size_t row =
+          (std::size_t(y - readFrom.y) * readWidth + (from.x - readFrom.x)) * 4;
+      std::copy_n(shape.begin() + row, width * 4, shape.begin() + at);
+      std::copy_n(data.begin() + row, width * 4, data.begin() + at);
+      at += std::size_t(width) * 4;
+    }
+    shape.resize(at);
+    data.resize(at);
   }
   m_renderer.updateGrassMaps(
       patch.gpu,
@@ -730,6 +755,11 @@ std::vector<uint8_t> GrassModule::coverOf(const GrassGround& ground,
           glm::ivec2(glm::floor(groundGrid.toTexels(grid.center(x, y)))),
           glm::ivec2(0),
           groundGrid.size - 1);
+      // Where there's no ground (a hole in the mesh) nothing grows anyway:
+      // left full, so the grass round a hole doesn't give out toward it as
+      // at an edge (see grassShape() in meshGrassGrow.wgsl).
+      if (!ground.has(at.x, at.y))
+        continue;
       const float grows = terrainGrass(terrain, ground.uv(at.x, at.y));
       cover[std::size_t(y) * grid.size.x + x] = static_cast<uint8_t>(
           std::lround(std::clamp(grows, 0.0f, 1.0f) * 255.0f));

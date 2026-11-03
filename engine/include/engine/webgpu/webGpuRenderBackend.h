@@ -18,10 +18,12 @@ namespace sfs
 class AssetStore;
 
 // WebGPU render backend: an SDL window (no GL context) plus a WebGPU device and
-// surface. Each frame it opens a command encoder and backbuffer view; scenes
-// draw into them through the renderer it provides (SceneServices::
-// renderer). For tools it also makes render targets, preview renderers and
-// images (see IRenderBackend).
+// surface. Each frame it opens a command encoder and acquires the window's
+// next picture (with SFS_LATE_ACQUIRE, only for the renderer's last passes,
+// once its offscreen passes are submitted); scenes draw through the renderer
+// it provides (SceneServices::renderer). For tools
+// it also makes render targets, preview renderers and images (see
+// IRenderBackend).
 //
 // It also hosts Dear ImGui with docking and multi-viewport enabled: panels dock
 // into the main window or drag out into their own OS windows.
@@ -66,6 +68,15 @@ private:
   bool initImGui();
   void shutdownImGui();
   void clearWindow();
+  // The window's next picture: at beginFrame, or with SFS_LATE_ACQUIRE as
+  // late as a frame can (before the first pass that draws into it: the
+  // renderer's composite, or ImGui; or at endFrame). First submits what's
+  // recorded so far, then records the rest into a new encoder. Once a frame;
+  // false if there's no picture (a lost surface, a window of no size). `clear`:
+  // clear it (unless the scene's composite is about to cover it).
+  bool acquire(bool clear);
+  // Submit and release this frame's encoder.
+  void submit();
 
   SDL_Window* m_window = nullptr;
   WebGpuContext m_context;
@@ -75,6 +86,10 @@ private:
   WGPUSurfaceTexture m_surfTex = {};
   WGPUTextureView m_view = nullptr;
   WGPUCommandEncoder m_encoder = nullptr;
+  bool m_acquired = false; // acquire() has run this frame
+  // SFS_LATE_ACQUIRE: acquire just before the first pass into the window,
+  // with the offscreen passes submitted; else at beginFrame, as before.
+  bool m_lateAcquire = false;
 
   std::unique_ptr<AssetStore> m_assetStore;
   std::unique_ptr<WebGpuRenderer> m_renderer;

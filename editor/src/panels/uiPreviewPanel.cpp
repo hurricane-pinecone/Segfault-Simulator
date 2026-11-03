@@ -607,6 +607,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
       {
         quad.rect.x += room;
         quad.rect.y += room;
+        quad.clip += glm::vec4(room);
         list.quads.push_back(quad);
       }
 

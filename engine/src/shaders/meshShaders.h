@@ -25,11 +25,15 @@ inline std::string meshPass(std::string_view surface, std::string_view pass)
   source += skyCommonWgsl;
   source += meshSurfaceWgsl;
   source += surface;
-  // Vertices where they are, unless the surface places them itself; how
-  // solid it is from the surface, unless it says more cheaply.
+  // Vertices where they are, unless the surface places them itself; back
+  // faces' normals turned round, unless it keeps them; how solid it is from
+  // the surface, unless it says more cheaply.
   if (surface.find("fn surfaceVertex(") == std::string_view::npos)
     source += "\nfn surfaceVertex(v: SurfaceVertex) -> SurfaceVertex {\n"
               "  return v;\n}\n";
+  if (surface.find("fn surfaceFlipsBackFaces(") == std::string_view::npos)
+    source += "\nfn surfaceFlipsBackFaces() -> bool {\n"
+              "  return true;\n}\n";
   if (surface.find("fn surfaceAlpha(") == std::string_view::npos)
     source += "\nfn surfaceAlpha(in: SurfaceIn) -> vec2f {\n"
               "  let s = surface(in);\n"

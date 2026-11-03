@@ -58,6 +58,9 @@ public:
   SceneId id() const;
   const std::string& name() const;
 
+  // A frame: the systems (in game time: see Registry::setTimeScale() and
+  // System::TimeStep), then the game objects and onUpdate() (real time:
+  // they're the player's, input and cameras).
   void update(double deltaTime);
   void processInput(const sfs::Input& input);
   void render();

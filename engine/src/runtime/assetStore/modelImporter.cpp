@@ -8,6 +8,7 @@
 #include "glm/glm/geometric.hpp"
 #include "glm/glm/gtc/type_ptr.hpp"
 #include "glm/glm/matrix.hpp"
+#include "nlohmann/json.hpp"
 
 #ifdef SFS_HAS_MODEL_IMPORT
   #include <cgltf.h>
@@ -184,6 +185,42 @@ loadTexture(const cgltf_texture* texture, bool linear, Textures& textures)
   return loaded;
 }
 
+// Settings from a material's extras, as a generator writes them: a tree's or
+// a plant's, {"sfs": {"foliage": {"translucency": 0.6, "bend": 1, ...}}}
+// (see FoliageSettings), and {"sfs": {"fadeNearCamera": 0.4}} (foliage fades
+// within 0.4 m without it: where the camera would be inside it). Left as they
+// are without.
+void readExtras(const cgltf_extras& extras, MeshMaterial& material)
+{
+  FoliageSettings& foliage = material.foliage;
+  if (!extras.data)
+    return;
+  const nlohmann::json json =
+      nlohmann::json::parse(extras.data, nullptr, false);
+  if (!json.is_object() || !json.contains("sfs") || !json["sfs"].is_object())
+    return;
+  const nlohmann::json& sfs = json["sfs"];
+  if (const auto fade = sfs.find("fadeNearCamera");
+      fade != sfs.end() && fade->is_number())
+    material.fadeNearCamera = fade->get<float>();
+  const auto it = sfs.find("foliage");
+  if (it == sfs.end() || !it->is_object())
+    return;
+  foliage.enabled = true;
+  if (!sfs.contains("fadeNearCamera"))
+    material.fadeNearCamera = 0.4f;
+  const auto number = [&](const char* key, float& out)
+  {
+    if (const auto value = it->find(key);
+        value != it->end() && value->is_number())
+      out = value->get<float>();
+  };
+  number("translucency", foliage.translucency);
+  number("bend", foliage.bend);
+  number("sway", foliage.sway);
+  number("flutter", foliage.flutter);
+}
+
 // The primitive's material, with its textures (only those its UVs can map).
 MeshMaterial
 readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
@@ -226,6 +263,7 @@ readMaterial(const cgltf_material* source, bool hasUvs, Textures& textures)
     material.alphaMode = AlphaMode::Blend;
   material.alphaCutoff = source->alpha_cutoff;
   material.doubleSided = source->double_sided;
+  readExtras(source->extras, material);
   return material;
 }
 

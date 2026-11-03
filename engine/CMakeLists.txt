@@ -131,6 +131,7 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/nameComponent.h"
             "${ENGINE_COMPONENT_DIR}/transformComponent.h"
             "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
+            "${ENGINE_COMPONENT_DIR}/meshLodComponent.h"
             "${ENGINE_COMPONENT_DIR}/pointLightComponent.h"
             "${ENGINE_COMPONENT_DIR}/cameraComponent.h"
             "${ENGINE_COMPONENT_DIR}/rigidBody3DComponent.h"

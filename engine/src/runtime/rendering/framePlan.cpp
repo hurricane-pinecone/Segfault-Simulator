@@ -10,6 +10,7 @@
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <span>
@@ -102,8 +103,18 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
           glm::vec4(material.tiling, material.offset),
           glm::uvec4(static_cast<uint32_t>(material.alphaMode),
                      material.unlit ? 1u : 0u,
-                     0,
+                     std::bit_cast<uint32_t>(material.fadeNearCamera),
                      0)};
+}
+
+FoliageUniforms foliageMaterialUniforms(const MeshMaterial& material)
+{
+  const FoliageSettings& foliage = material.foliage;
+  return {standardMaterialUniforms(material),
+          glm::vec4(std::max(foliage.translucency, 0.0f),
+                    foliage.bend,
+                    foliage.sway,
+                    foliage.flutter)};
 }
 
 TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain,
@@ -357,8 +368,11 @@ void FramePlan::addGrass(const GrassBatch& batch)
 
 void FramePlan::addUi(const UiDrawList& list)
 {
-  if (m_open)
-    m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
+  if (!m_open)
+    return;
+  for (const auto& part : list.parts)
+    m_uiQuads.insert(m_uiQuads.end(), part->begin(), part->end());
+  m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
 }
 
 void FramePlan::finish(
@@ -508,6 +522,8 @@ void FramePlan::finish(
   m_uniforms.sky = glm::vec4(lighting.skyColor, 1.0f);
   m_uniforms.time = glm::vec4(m_frame.time, 0.0f, 0.0f, 0.0f);
   m_uniforms.cameraForward = glm::vec4(m_frame.cameraForward, 0.0f);
+  m_uniforms.cameraTarget =
+      glm::vec4(m_frame.cameraTarget, std::max(m_frame.lineOfSight, 0.0f));
   const float windAngle = glm::radians(m_frame.wind.direction);
   m_uniforms.wind = glm::vec4(std::cos(windAngle),
                               std::sin(windAngle),
@@ -732,16 +748,17 @@ void FramePlan::finish(
   for (std::size_t i = 0; i < m_shadowedLights.size(); ++i)
     m_gpuLights[m_shadowedLights[i].light].shadow.x = static_cast<float>(i);
 
-  // The UI quads as instances, in batches sharing a texture. Boxes don't read
-  // their texture, so they needn't break a run of glyphs.
+  // The UI quads as instances, in batches sharing a texture. Boxes and chevrons
+  // don't read their texture, so they needn't break a run of glyphs.
   m_uiInstances.clear();
   m_uiBatches.clear();
   for (const UiQuad& quad : m_uiQuads)
   {
-    const UiTexture* texture =
-        quad.kind == UiQuad::Box ? nullptr : quad.texture;
+    const bool textured =
+        quad.kind == UiQuad::Glyph || quad.kind == UiQuad::Image;
+    const UiTexture* texture = textured ? quad.texture : nullptr;
     if (m_uiBatches.empty() ||
-        (m_uiBatches.back().texture != texture && quad.kind != UiQuad::Box))
+        (m_uiBatches.back().texture != texture && textured))
       m_uiBatches.push_back(
           {texture, static_cast<uint32_t>(m_uiInstances.size()), 0});
     ++m_uiBatches.back().count;
@@ -752,7 +769,8 @@ void FramePlan::finish(
                              glm::vec4(quad.radius,
                                        quad.softness,
                                        quad.border,
-                                       static_cast<float>(quad.kind))});
+                                       static_cast<float>(quad.kind)),
+                             quad.clip});
   }
   m_uiQuads.clear();
 }
