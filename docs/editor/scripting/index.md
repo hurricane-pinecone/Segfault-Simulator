@@ -213,6 +213,12 @@ A build compiles three files at a time, so the editor (and WSL, building for
 Windows) stays responsive. The **x** at the end of the build's progress bar,
 in the status bar, stops it, compilers and all; it counts as a failed build.
 
+Saving a script while a build is already running is safe: the editor notices
+what changed since the build began and builds again once it finishes, so
+nothing's left compiled from a header that moved on. If scripts keep changing
+while it tries, it gives up after a few tries and asks you to build again once
+they're saved.
+
 Saving is disabled while playing, so a play session can't overwrite the
 scene.
 
