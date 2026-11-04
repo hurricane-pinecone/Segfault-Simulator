@@ -1,9 +1,22 @@
 #include "engine/runtime/ui/ui.h"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <string_view>
+
+namespace sfs
+{
+
+uint32_t nextUiTextureId()
+{
+  static std::atomic<uint32_t> next{0x494D0000u}; // apart from fonts' pages
+  return ++next;
+}
+
+} // namespace sfs
 
 namespace sfs::ui
 {
@@ -80,6 +93,46 @@ View withBackground(const View& view, Change&& change)
   auto added = wrap(view, Node::Kind::Background);
   change(added->fill);
   return View(added);
+}
+
+// `view` with its buttons given `style`: itself if it's a button (`own`), else
+// those in it without a style of their own. The nodes on the way down to them
+// are copied; what has no button in it is shared, as it was.
+View styled(const View& view, const ButtonStyle& style, bool own)
+{
+  const Node& node = *view.node();
+  if (node.kind == Node::Kind::Button)
+  {
+    if ((!own && node.buttonStyle != ButtonStyle::Kind::Automatic) ||
+        node.children.empty())
+      return view;
+    auto changed = copy(view);
+    const View label = node.children[0];
+    changed->children.resize(1);
+    changed->buttonStyle = style.kind();
+    if (style.kind() == ButtonStyle::Kind::Custom)
+    {
+      // Its looks, made now (so they're in the tree, hashed and kept like
+      // any view): normal, hovered, pressed, disabled.
+      changed->children.reserve(5);
+      changed->children.push_back(style.makeBody({label, false, false, false}));
+      changed->children.push_back(style.makeBody({label, true, false, false}));
+      changed->children.push_back(style.makeBody({label, true, true, false}));
+      changed->children.push_back(style.makeBody({label, false, false, true}));
+    }
+    return View(changed);
+  }
+  std::shared_ptr<Node> changed;
+  for (std::size_t i = 0; i < node.children.size(); ++i)
+  {
+    View child = styled(node.children[i], style, false);
+    if (child.node() == node.children[i].node())
+      continue;
+    if (!changed)
+      changed = copy(view);
+    changed->children[i] = std::move(child);
+  }
+  return changed ? View(changed) : view;
 }
 
 std::vector<View> listOf(std::initializer_list<View> views)
@@ -327,6 +380,127 @@ View View::accordion(std::string group) &&
   return View(std::move(node));
 }
 
+View View::tint(Color color) const& { return View(*this).tint(color); }
+
+View View::tint(Color color) &&
+{
+  auto node = std::move(*this).owned();
+  node->mask = true;
+  node->color = color;
+  return View(std::move(node));
+}
+
+View View::tint() const& { return View(*this).tint(); }
+
+View View::tint() &&
+{
+  auto node = std::move(*this).owned();
+  node->mask = true;
+  return View(std::move(node));
+}
+
+View View::interpolation(Interpolation interpolation) const&
+{
+  return View(*this).interpolation(interpolation);
+}
+
+View View::interpolation(Interpolation interpolation) &&
+{
+  auto node = std::move(*this).owned();
+  node->interpolation = interpolation;
+  return View(std::move(node));
+}
+
+View View::resizable(bool resizable) const&
+{
+  return View(*this).resizable(resizable);
+}
+
+View View::resizable(bool resizable) &&
+{
+  auto node = std::move(*this).owned();
+  if (node->kind == Node::Kind::Image)
+    node->resizable = resizable;
+  return View(std::move(node));
+}
+
+View View::buttonStyle(const ButtonStyle& style) const
+{
+  return styled(*this, style, true);
+}
+
+View ButtonStyle::makeBody(const ButtonConfiguration& configuration) const
+{
+  return m_make ? m_make(configuration) : configuration.label;
+}
+
+ButtonStyle
+ButtonStyle::filled(Fill normal, Fill hovered, Fill pressed, Insets padding)
+{
+  return ButtonStyle(
+      [=](const ButtonConfiguration& c)
+      {
+        const Fill& fill = c.disabled  ? normal
+                           : c.pressed ? pressed
+                           : c.hovered ? hovered
+                                       : normal;
+        View face = c.label.padding(padding).background(fill);
+        return c.disabled ? std::move(face).opacity(0.45f) : face;
+      });
+}
+
+// --- pictures ----------------------------------------------------------------
+
+Picture::Picture(int width, int height)
+{
+  m_texture.id = nextUiTextureId();
+  m_texture.revision = 1;
+  resize(width, height);
+}
+
+Picture::Picture(int width, int height, const Color& color)
+    : Picture(width, height)
+{
+  fill(color);
+}
+
+namespace
+{
+uint8_t byteOf(float channel)
+{
+  return static_cast<uint8_t>(
+      std::lround(std::clamp(channel, 0.0f, 1.0f) * 255.0f));
+}
+} // namespace
+
+void Picture::set(int x, int y, const Color& color)
+{
+  if (x < 0 || y < 0 || x >= m_texture.size.x || y >= m_texture.size.y)
+    return;
+  uint8_t* pixel =
+      &m_texture.pixels[(std::size_t(y) * m_texture.size.x + x) * 4];
+  pixel[0] = byteOf(color.r);
+  pixel[1] = byteOf(color.g);
+  pixel[2] = byteOf(color.b);
+  pixel[3] = byteOf(color.a);
+}
+
+void Picture::fill(const Color& color)
+{
+  const uint8_t pixel[4] = {
+      byteOf(color.r), byteOf(color.g), byteOf(color.b), byteOf(color.a)};
+  for (std::size_t i = 0; i < m_texture.pixels.size(); i += 4)
+    std::copy(pixel, pixel + 4, &m_texture.pixels[i]);
+}
+
+void Picture::resize(int width, int height)
+{
+  m_texture.size = {std::max(width, 0), std::max(height, 0)};
+  m_texture.pixels.assign(
+      std::size_t(m_texture.size.x) * m_texture.size.y * 4, 0);
+  ++m_texture.revision;
+}
+
 View Text(std::string text)
 {
   auto node = make(Node::Kind::Text);
@@ -340,6 +514,38 @@ Image::Image(std::string file)
           {
             auto node = make(Node::Kind::Image);
             node->text = std::move(file);
+            return node;
+          }())
+{
+}
+
+Image::Image(std::shared_ptr<const Picture> picture)
+    : View(
+          [&]
+          {
+            auto node = make(Node::Kind::Image);
+            if (picture)
+            {
+              node->pictureWidth = picture->size().x;
+              node->pictureHeight = picture->size().y;
+            }
+            node->picture = std::move(picture);
+            return node;
+          }())
+{
+}
+
+Image::Image(std::shared_ptr<const RenderTexture> texture)
+    : View(
+          [&]
+          {
+            auto node = make(Node::Kind::Image);
+            if (texture)
+            {
+              node->pictureWidth = texture->size().x;
+              node->pictureHeight = texture->size().y;
+            }
+            node->rendered = std::move(texture);
             return node;
           }())
 {
@@ -503,7 +709,7 @@ ZStack::ZStack(std::vector<View> children)
 // that field changed. Its size is checked where it's known (64-bit
 // libstdc++), as a reminder.
 #if defined(__GLIBCXX__) && UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFu
-static_assert(sizeof(Node) == 448,
+static_assert(sizeof(Node) == 496,
               "Node changed: put the new field in Node::hash(), then update "
               "this size");
 #endif
@@ -566,7 +772,12 @@ uint64_t Node::hash() const
         static_cast<uint64_t>(color.has_value()) << 47 |
         static_cast<uint64_t>(stackAlignment) << 48 |
         static_cast<uint64_t>(alignment) << 52 |
-        static_cast<uint64_t>(axes) << 56);
+        static_cast<uint64_t>(axes) << 56 |
+        static_cast<uint64_t>(buttonStyle) << 58 |
+        static_cast<uint64_t>(mask) << 60 |
+        static_cast<uint64_t>(resizable) << 61 |
+        static_cast<uint64_t>(interpolation.has_value()) << 62 |
+        static_cast<uint64_t>(interpolation == Interpolation::Nearest) << 63);
   for (const View& child : children)
   {
     const Node& c = *child.node();
@@ -597,6 +808,15 @@ uint64_t Node::hash() const
     h.add(*color);
   h.add(id);
   h.add(help);
+  // A picture by which it is and its size (its pixels changing needs nothing
+  // laid out: the renderer uploads them again, by the texture's revision).
+  if (picture)
+    h.add(static_cast<uint64_t>(picture->texture().id) |
+          static_cast<uint64_t>(pictureWidth) << 32);
+  if (rendered)
+    h.add(static_cast<uint64_t>(rendered->texture().id) |
+          static_cast<uint64_t>(pictureWidth) << 32 | uint64_t{1} << 63);
+  h.add(static_cast<uint64_t>(pictureHeight) | uint64_t{0x9C} << 32);
   m_hash = h.value();
   m_keepsState = state;
   m_count = total;

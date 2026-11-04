@@ -140,6 +140,17 @@ public:
    */
   void relax(float smooth, float fade = 0.0f);
 
+  /**
+   * Weather only some tiles (tile indices), each by its own amount: `corners`
+   * (one for each tile) the smoothing at its four corners (x its lowest x and
+   * y, then y the highest x, z the highest y, w both), blended across it, so
+   * wet ground can weather while dry ground beside it stays as it is. No
+   * fade. Only those tiles change (and are marked changed); tiles it doesn't
+   * have are skipped.
+   */
+  void relax(std::span<const glm::ivec2> tiles,
+             std::span<const glm::vec4> corners);
+
   /** Flatten a world XY rectangle (e.g. where a field's been tilled). */
   void clear(glm::vec2 low, glm::vec2 high);
   /** Flatten inside a world XY polygon (its corners in order). */
@@ -323,6 +334,7 @@ private:
                              const glm::mat4& model,
                              float below,
                              float texel);
+  friend float lowestPoint(const UndersideMesh& mesh, const glm::mat4& model);
   struct Group
   {
     glm::vec3 center{0.0f}; // its bounding sphere's
@@ -342,6 +354,13 @@ Underside underside(const UndersideMesh& mesh,
                     const glm::mat4& model,
                     float below,
                     float texel = kDeformationTexel);
+
+/**
+ * The lowest a mesh's points are placed (`model`): world Z, exactly (only
+ * the groups that could reach lower than the lowest found so far are
+ * placed). Unlike its bounds placed, the same however it's turned.
+ */
+float lowestPoint(const UndersideMesh& mesh, const glm::mat4& model);
 
 /** Two undersides as one (the lowest of both over both). */
 Underside merged(const Underside& a, const Underside& b);

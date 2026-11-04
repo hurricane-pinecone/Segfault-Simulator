@@ -152,6 +152,8 @@ public:
   void destroyGrass(GrassHandle grass) override;
   void drawGrass(const GrassBatch& batch) override;
   void drawUi(const UiDrawList& list) override;
+  void beginFeed(const FeedView& view, const UiTexture& into) override;
+  bool textureShown(uint32_t id) const override;
   void endFrame() override;
 
 private:
@@ -231,6 +233,9 @@ private:
     // Its ground's terrain's splat map, for its ground past the maps (null:
     // none, a stand-in bound).
     std::shared_ptr<GpuTexture> farSplat;
+    // Its ground's deformation window, which its blades stand on (null: not
+    // deformed, a flat stand-in bound).
+    std::shared_ptr<GpuTexture> deformMap;
 
     wgpu::Buffer blades;
     wgpu::Buffer draws;
@@ -256,8 +261,26 @@ private:
     uint32_t tilesDrawn = 0;
     glm::uvec3 workgroups{0, 0, 0};
 
-    bool grown = false;    // this frame: its blades
-    bool placed = false;   // this frame: its draw's uniforms (for its ground)
+    bool grown = false;  // this frame: its blades
+    bool placed = false; // this frame: its draw's uniforms (for its ground)
+    bool groundPlaced = false; // likewise, kept for a camera feed's ground
+    // A camera feed's blades (CameraFeedComponent::grassBlades), grown apart
+    // from the view's: buffers and settings of its own (made when first
+    // grown).
+    struct Feed
+    {
+      std::array<uint32_t, 3> capacity{0, 0, 0};
+      wgpu::Buffer blades;
+      wgpu::Buffer draws;
+      wgpu::Buffer casters; // (none cast: bound only)
+      wgpu::Buffer growUniforms;
+      wgpu::Buffer drawUniforms;
+      wgpu::BindGroup growBindings;
+      std::array<wgpu::BindGroup, 3> drawBindings;
+      bool grown = false; // this frame
+      glm::uvec3 workgroups{0, 0, 0};
+    };
+    std::unique_ptr<Feed> feed;
     bool casts = false;    // this frame: its blades into the sun's shadow
     uint32_t castInto = 0; // the cascades they're drawn into so far (bits)
   };
@@ -428,6 +451,14 @@ private:
                           std::size_t clusters,
                           std::size_t indices);
   void rebuildLitBindings();
+  // The lit pass's bindings, with these frame uniforms, light clusters and
+  // occlusion map (the frame's, or a camera feed's).
+  wgpu::BindGroup makeLitBindings(WGPUBuffer frameUniforms,
+                                  WGPUBuffer ranges,
+                                  uint64_t rangeBytes,
+                                  WGPUBuffer indices,
+                                  uint64_t indexBytes,
+                                  WGPUTextureView occlusion);
   void uploadLights();
   // A post pass: one full-screen triangle into `target`, added onto what's
   // there with `blend`.
@@ -501,6 +532,20 @@ private:
                           uint32_t offset,
                           uint32_t cascade);
   void encodeComposite();
+
+  // A camera feed (beginFeed()): its targets made at its size, its blades
+  // grown (if it has them), its view drawn lit and composited into its
+  // picture; and grass in its view (the ground, and its blades).
+  void ensureFeedTargets(glm::ivec2 size);
+  void growFeedGrass();
+  void encodeFeed();
+  void encodeFeedGrass(WGPURenderPassEncoder pass);
+
+  // GPU-drawn textures (UiTexture::gpu): this frame's UI's made (if need be)
+  // and marked shown, and those neither shown nor drawn a while let go.
+  struct GpuRenderTexture;
+  GpuRenderTexture* renderTexture(uint32_t id, glm::ivec2 size);
+  void prepareRenderTextures();
   // Auto exposure's metering into m_exposure[0] (exposure.wgsl), and that
   // copied into m_exposure[1] for the next frame's.
   void encodeExposure();
@@ -846,11 +891,13 @@ private:
     wgpu::TextureView view;
     glm::ivec2 size{0, 0};
     uint32_t revision = 0;
-    wgpu::BindGroup bindings;
     bool used = false; // this frame
   };
   std::unordered_map<uint32_t, GpuUiTexture> m_uiTextures;
-  GpuUiTexture m_uiWhite; // what untextured boxes bind
+  GpuUiTexture m_uiWhite; // what a batch with no texture in a place binds
+  // A batch's glyph and image textures bound, by their ids (glyphs' << 32;
+  // 0: white); forgotten when a texture's made again or let go.
+  std::unordered_map<uint64_t, wgpu::BindGroup> m_uiBindings;
   wgpu::RenderPipeline m_uiPipeline;
   wgpu::BindGroupLayout m_uiFrameLayout;
   wgpu::BindGroupLayout m_uiTextureLayout;
@@ -1050,6 +1097,54 @@ private:
   // This frame's work, gathered between beginFrame() and endFrame().
   FramePlan m_plan;
   PlannedMesh m_plannedMesh; // the last one finish() asked for
+  // Whose draws encodeDraw() is drawing (their materials): the frame's, or
+  // its camera feed's.
+  const FramePlan* m_drawing = &m_plan;
+
+  // GPU-drawn textures (RenderTexture), by UiTexture id: the picture (in
+  // the window's format, so the composite draws into it), what the UI reads
+  // it through (without sRGB decoding, as its other images), and the frames
+  // it was last shown in a UI and last shown or drawn.
+  struct GpuRenderTexture
+  {
+    wgpu::Texture texture;
+    wgpu::TextureView view;
+    GpuUiTexture ui;
+    uint64_t shown = 0;
+    uint64_t used = 0;
+  };
+  std::unordered_map<uint32_t, GpuRenderTexture> m_renderTextures;
+  uint64_t m_frameCount = 0; // endFrame()s with a target
+
+  // This frame's camera feed (beginFeed()): its view, its picture (id, size)
+  // and its draws; its targets (multisampled as the lit pass's pipelines
+  // are; the glow's only drawn into), uniforms, instances, light clusters
+  // and bindings (the lit pass's, but for these).
+  std::optional<FeedView> m_feed;
+  uint32_t m_feedInto = 0;
+  FramePlan m_feedPlan;
+  struct FeedTargets
+  {
+    glm::ivec2 size{0, 0};
+    wgpu::Texture depth;
+    wgpu::TextureView depthView;
+    wgpu::Texture samples; // the scene's, multisampled (none with one sample)
+    wgpu::TextureView samplesView;
+    wgpu::Texture glow;
+    wgpu::TextureView glowView;
+    wgpu::Texture scene; // resolved, what the composite reads
+    wgpu::TextureView sceneView;
+  };
+  FeedTargets m_feedTargets;
+  wgpu::Buffer m_feedUniforms;
+  wgpu::Buffer m_feedCompositeParams;
+  wgpu::Buffer m_feedInstances;
+  std::size_t m_feedInstanceCapacity = 0;
+  wgpu::Buffer m_feedRanges;
+  wgpu::Buffer m_feedIndices;
+  std::size_t m_feedRangeCapacity = 0;
+  std::size_t m_feedIndexCapacity = 0;
+  wgpu::BindGroup m_feedLitBindings;
 };
 
 } // namespace sfs

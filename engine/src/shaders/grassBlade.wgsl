@@ -28,6 +28,37 @@ struct Grass {
   // them), z where the blades start thinning out to none (world units)
   far: vec4f,
   farMeadow: vec4f, // how much each of the splat map's channels' layers is
+  // The ground's deformation (ruts, see deformation.h): x 1 deformed, y a
+  // texel (m), z the window's size (texels); the window's valid part (xy its
+  // corner, zw its size, world); its patch (xy centre, z half its size, w the
+  // band it hands over in).
+  deform: vec4f,
+  deformWindow: vec4f,
+  deformPatch: vec4f,
+}
+
+// How far the ground's pressed in (below 0) or pushed up under a blade's root (m), as the
+// terrain's patch shows it: all of it inside the patch, handing over to none
+// over the band inside its edge (past it the ground's only parallax-mapped,
+// its surface where it was), and none off the window. The pass declares
+// `grassDeformMap` (r16float, the window, wrapping).
+fn grassDeformAt(p: vec2f) -> f32 {
+  if (grass.deform.x < 0.5) {
+    return 0.0;
+  }
+  let local = p - grass.deformWindow.xy;
+  if (any(local < vec2f(0.0)) || any(local >= grass.deformWindow.zw)) {
+    return 0.0;
+  }
+  let away = max(abs(p.x - grass.deformPatch.x), abs(p.y - grass.deformPatch.y));
+  let weight = 1.0 - smoothstep(grass.deformPatch.z - grass.deformPatch.w, grass.deformPatch.z, away);
+  if (weight <= 0.0) {
+    return 0.0;
+  }
+  let size = i32(grass.deform.z);
+  let texel = vec2i(floor(p / grass.deform.y));
+  let wrapped = ((texel % vec2i(size)) + vec2i(size)) % vec2i(size);
+  return textureLoad(grassDeformMap, wrapped, 0).r * weight;
 }
 
 struct Blade {
@@ -49,6 +80,8 @@ struct Blade {
 fn bladeAt(blade: GrownBlade, stiffness: f32, pressed: vec4f) -> Blade {
   var b: Blade;
   b.root = blade.root.xyz;
+  // On the ground as it's pressed (into a rut it's grown back over).
+  b.root.z += grassDeformAt(b.root.xy);
   b.height = blade.root.w;
   let tilt = unpack2x16snorm(blade.look.x);
   b.ground = vec3f(tilt, sqrt(max(1.0 - dot(tilt, tilt), 0.0)));

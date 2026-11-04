@@ -569,6 +569,68 @@ void DeformationMap::relax(float smooth, float fade)
   dropFlat(all);
 }
 
+void DeformationMap::relax(std::span<const glm::ivec2> tiles,
+                           std::span<const glm::vec4> corners)
+{
+  const std::size_t count = std::min(tiles.size(), corners.size());
+  std::vector<glm::ivec2> done;
+  Tile out(kTileTexels);
+  for (std::size_t t = 0; t < count; ++t)
+  {
+    const glm::vec4 c =
+        glm::clamp(corners[t], glm::vec4(0.0f), glm::vec4(1.0f));
+    if (std::max(std::max(c.x, c.y), std::max(c.z, c.w)) <= 0.0f)
+      continue;
+    Tile* tile = tileAt(tiles[t]);
+    if (!tile)
+      continue;
+    // Its neighbours, looked up once (null: flat there).
+    const Tile* around[3][3];
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx)
+        around[dy + 1][dx + 1] = tileAt(tiles[t] + glm::ivec2(dx, dy));
+    const auto valueAt = [&](int x, int y)
+    {
+      const int tx = x < 0 ? 0 : (x >= kTile ? 2 : 1);
+      const int ty = y < 0 ? 0 : (y >= kTile ? 2 : 1);
+      const Tile* from = around[ty][tx];
+      if (!from)
+        return 0.0f;
+      return (*from)[std::size_t((y + kTile) % kTile) * kTile +
+                     (x + kTile) % kTile];
+    };
+    const float last = static_cast<float>(kTile - 1);
+    for (int y = 0; y < kTile; ++y)
+    {
+      const float v = static_cast<float>(y) / last;
+      const float left = glm::mix(c.x, c.z, v), right = glm::mix(c.y, c.w, v);
+      for (int x = 0; x < kTile; ++x)
+      {
+        const std::size_t i = std::size_t(y) * kTile + x;
+        const float here = (*tile)[i];
+        const float smooth =
+            glm::mix(left, right, static_cast<float>(x) / last);
+        if (smooth <= 0.0f)
+        {
+          out[i] = here;
+          continue;
+        }
+        const bool inner = x > 0 && y > 0 && x < kTile - 1 && y < kTile - 1;
+        float sum = 0.0f;
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dx = -1; dx <= 1; ++dx)
+            sum +=
+                inner ? (*tile)[i + dy * kTile + dx] : valueAt(x + dx, y + dy);
+        out[i] = glm::mix(here, sum / 9.0f, smooth);
+      }
+    }
+    tile->swap(out);
+    m_changed.insert(keyOf(tiles[t]));
+    done.push_back(tiles[t]);
+  }
+  dropFlat(done);
+}
+
 void DeformationMap::clear(glm::vec2 low, glm::vec2 high)
 {
   const glm::vec2 corners[4] = {low, {high.x, low.y}, high, {low.x, high.y}};
@@ -1367,6 +1429,29 @@ Underside underside(const UndersideMesh& mesh,
     }
   }
   return lowestOf(scratch.low, below, texel, scratch.samples);
+}
+
+float lowestPoint(const UndersideMesh& mesh, const glm::mat4& model)
+{
+  const float stretch =
+      glm::length(glm::vec3(model[0][2], model[1][2], model[2][2]));
+  float lowest = std::numeric_limits<float>::infinity();
+  for (const UndersideMesh::Group& group : mesh.m_groups)
+  {
+    const float middle = model[0][2] * group.center.x +
+                         model[1][2] * group.center.y +
+                         model[2][2] * group.center.z + model[3][2];
+    if (middle - group.radius * stretch >= lowest)
+      continue; // none of it lower
+    for (uint32_t v = 0; v < group.vertices; ++v)
+    {
+      const glm::vec3& p = mesh.m_vertices[group.firstVertex + v];
+      lowest = std::min(lowest,
+                        model[0][2] * p.x + model[1][2] * p.y +
+                            model[2][2] * p.z + model[3][2]);
+    }
+  }
+  return lowest;
 }
 
 Underside merged(const Underside& a, const Underside& b)

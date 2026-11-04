@@ -62,6 +62,26 @@ struct Placeholder<View>
   }
 };
 
+// A picture (ui::Picture): a small grey checker, until the game draws one.
+template <typename P>
+  requires std::same_as<std::remove_const_t<P>, Picture>
+struct Placeholder<std::shared_ptr<P>>
+{
+  static void fill(std::shared_ptr<P>& picture, std::string_view, int)
+  {
+    if (picture)
+      return;
+    auto made = std::make_shared<Picture>(16, 16);
+    for (int y = 0; y < 16; ++y)
+      for (int x = 0; x < 16; ++x)
+        made->set(x,
+                  y,
+                  ((x / 4 + y / 4) % 2) != 0 ? Color::rgb(150, 150, 150, 0.6f)
+                                             : Color::rgb(90, 90, 90, 0.6f));
+    picture = std::move(made);
+  }
+};
+
 template <typename T, typename Allocator>
 struct Placeholder<std::vector<T, Allocator>>
 {

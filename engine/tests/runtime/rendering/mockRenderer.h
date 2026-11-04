@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace sfs::testing3d
@@ -102,6 +103,7 @@ public:
     frame = params;
     lights.assign(params.pointLights.begin(), params.pointLights.end());
     batches.clear();
+    feed.reset();
     drawn.clear();
     grassDrawn.clear();
     uiDrawn.clear();
@@ -115,7 +117,8 @@ public:
                        batch.shadowInstances.size(),
                        {batch.materials.begin(), batch.materials.end()},
                        batch.lightShadowInstances.size(),
-                       batch.together});
+                       batch.together,
+                       batch.feedInstances.size()});
     drawn.insert(drawn.end(), batch.instances.begin(), batch.instances.end());
   }
 
@@ -129,7 +132,23 @@ public:
     std::vector<MaterialHandle> materials;
     std::size_t lightShadowInstances = 0;
     bool together = false;
+    std::size_t feedInstances = 0;
   };
+
+  // Camera feeds: the textures a UI showed (as the test says), and this
+  // frame's feed (none: nothing filmed).
+  void beginFeed(const FeedView& view, const UiTexture& into) override
+  {
+    feed = view;
+    feedInto = into.id;
+  }
+  bool textureShown(uint32_t id) const override
+  {
+    return std::find(shown.begin(), shown.end(), id) != shown.end();
+  }
+  std::vector<uint32_t> shown;
+  std::optional<FeedView> feed;
+  uint32_t feedInto = 0;
 
   glm::ivec2 viewport{1280, 720};
   uint32_t nextId = 0;

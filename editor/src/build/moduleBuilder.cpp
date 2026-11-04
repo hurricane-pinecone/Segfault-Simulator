@@ -14,7 +14,8 @@
 namespace
 {
 constexpr int kJobs = 3; // compiles at once
-
+// Times a build goes again for sources saved while it ran, before it gives up.
+constexpr int kMaxRebuilds = 3;
 
 // Compiler and CMake errors, worth highlighting among the build output.
 bool looksLikeError(const std::string& line)
@@ -75,7 +76,7 @@ bool ModuleBuilder::start(const Project& project, Target target)
   std::vector<std::string> buildStep = {"cmake", "--build", build, "--parallel", std::to_string(kJobs)};
   if (target == Target::UiPreview)
     buildStep.insert(buildStep.end(), {"--target", project.moduleName() + "UiPreview"});
-  m_steps.push_back(std::move(buildStep));
+  watch(buildDir, {project.scriptsFolder(), project.root() / "CMakeLists.txt"}, std::move(buildStep));
 
   m_percent = -1;
   m_target = target;
@@ -162,13 +163,124 @@ bool ModuleBuilder::startWeb(const Project& project,
     m_steps.push_back(withEmscripten(
         "emcmake cmake -S " + quoted(m_environment.toBuildPath(source)) + " -B " + build +
         " -DCMAKE_BUILD_TYPE=Release -DSFS_CODEGEN_EXECUTABLE=" + quoted(m_environment.codegen())));
-  m_steps.push_back(withEmscripten("cmake --build " + build + " --parallel " + std::to_string(kJobs)));
+  watch(buildDir,
+        {project.scriptsFolder(), project.root() / "CMakeLists.txt"},
+        withEmscripten("cmake --build " + build + " --parallel " + std::to_string(kJobs)));
 
   m_percent = -1;
   m_target = Target::Web;
   m_heldOutput.reset();
   LOG_INFO("Building " + project.name() + " for the web...");
   return startNextStep();
+}
+
+std::vector<std::filesystem::path>
+ModuleBuilder::changedSince(const std::filesystem::path& stamp, const std::vector<std::filesystem::path>& folders)
+{
+  namespace fs = std::filesystem;
+  std::error_code error;
+  const fs::file_time_type since = fs::last_write_time(stamp, error);
+  if (error)
+    return {};
+
+  std::vector<fs::path> changed;
+  const auto check = [&](const fs::path& file)
+  {
+    std::error_code timeError;
+    const fs::file_time_type written = fs::last_write_time(file, timeError);
+    if (!timeError && written > since)
+      changed.push_back(file);
+  };
+  for (const fs::path& folder : folders)
+  {
+    if (!fs::is_directory(folder, error))
+    {
+      if (fs::is_regular_file(folder, error))
+        check(folder);
+      continue;
+    }
+    for (auto it = fs::recursive_directory_iterator(folder, error);
+         !error && it != fs::recursive_directory_iterator(); it.increment(error))
+      if (std::error_code typeError; it->is_regular_file(typeError))
+        check(it->path());
+  }
+  std::sort(changed.begin(), changed.end());
+  return changed;
+}
+
+void ModuleBuilder::watch(const std::filesystem::path& buildDir,
+                          std::vector<std::filesystem::path> sources,
+                          std::vector<std::string> buildStep)
+{
+  // The stamp goes after configuring (which makes the build folder), just
+  // before the build, on the build machine: by the clock the build tool
+  // compares file times with (an editor on Windows and WSL can disagree by
+  // seconds).
+  m_stamp = buildDir / ".build-started";
+  m_sources = std::move(sources);
+  m_buildStep = std::move(buildStep);
+  m_rebuilds = 0;
+  m_failAfterSteps = false;
+  m_steps.push_back(stampStep());
+  m_steps.push_back(m_buildStep);
+}
+
+std::vector<std::string> ModuleBuilder::stampStep() const
+{
+  return {"cmake", "-E", "touch", m_environment.toBuildPath(m_stamp)};
+}
+
+bool ModuleBuilder::rebuildChanged()
+{
+  const std::vector<std::filesystem::path> changed = changedSince(m_stamp, m_sources);
+  if (changed.empty())
+    return false;
+
+  std::string names;
+  for (std::size_t i = 0; i < changed.size() && i < 3; ++i)
+    names += (i ? ", " : "") + changed[i].filename().string();
+  if (changed.size() > 3)
+    names += " and " + std::to_string(changed.size() - 3) + " more";
+
+  // Touched on the build machine: newer than every object, so everything
+  // that includes them compiles again (from what they say now).
+  std::vector<std::string> touch = {"cmake", "-E", "touch"};
+  for (const std::filesystem::path& file : changed)
+    touch.push_back(m_environment.toBuildPath(file));
+
+  m_steps.clear();
+  m_steps.push_back(std::move(touch));
+  if (m_rebuilds >= kMaxRebuilds)
+  {
+    // Still touched, so the next build compiles them.
+    m_failAfterSteps = true;
+    LOG_ERROR("Scripts kept changing while the game built (" + names +
+              "): build again once they're saved");
+    return true;
+  }
+  ++m_rebuilds;
+  m_steps.push_back(stampStep());
+  m_steps.push_back(m_buildStep);
+  LOG_WARN(names + " changed while the game built: building again, so nothing's left compiled from before");
+  return true;
+}
+
+void ModuleBuilder::touchChangedNow()
+{
+  if (m_buildStep.empty())
+    return;
+  m_buildStep.clear();
+  const std::vector<std::filesystem::path> changed = changedSince(m_stamp, m_sources);
+  if (changed.empty())
+    return;
+  // The objects that did build are as stale as after a build that succeeded.
+  std::vector<std::string> touch = {"cmake", "-E", "touch"};
+  for (const std::filesystem::path& file : changed)
+    touch.push_back(m_environment.toBuildPath(file));
+  ChildProcess toucher;
+  if (toucher.start(m_environment.command(touch), [](std::string_view) {}))
+    for (int i = 0; i < 1000 && toucher.running(); ++i)
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
 bool ModuleBuilder::startNextStep()
@@ -244,6 +356,7 @@ void ModuleBuilder::cancel()
   m_process->terminate();
   m_process.reset();
   m_cancelled = true;
+  touchChangedNow();
   LOG_INFO("Build stopped");
 }
 
@@ -263,6 +376,7 @@ std::optional<bool> ModuleBuilder::poll()
   if (exitCode != 0)
   {
     m_steps.clear();
+    touchChangedNow();
     if (m_heldOutput)
     {
       for (const std::string& line : *m_heldOutput)
@@ -278,8 +392,17 @@ std::optional<bool> ModuleBuilder::poll()
               std::to_string(exitCode) + ")");
     return false;
   }
+  // Built: unless a source was saved meanwhile (see changedSince()).
+  if (m_steps.empty() && !m_failAfterSteps && !m_buildStep.empty())
+    rebuildChanged();
   if (!m_steps.empty())
     return startNextStep() ? std::nullopt : std::optional<bool>(false);
+  m_buildStep.clear();
+  if (m_failAfterSteps)
+  {
+    m_failAfterSteps = false;
+    return false;
+  }
 
   if (m_target != Target::UiPreview)
     LOG_INFO("Build succeeded");

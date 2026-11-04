@@ -36,6 +36,7 @@ struct MeshDrawCommand
   std::vector<MeshInstance> instances;
   std::vector<MeshInstance> shadowInstances;
   std::vector<MeshInstance> lightShadowInstances; // see MeshBatch
+  std::vector<MeshInstance> feedInstances;        // see MeshBatch
 };
 
 /** A grass field to draw (see GrassBatch), drawn with the opaque things. */

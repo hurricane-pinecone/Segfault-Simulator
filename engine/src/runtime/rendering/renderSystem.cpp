@@ -1,6 +1,7 @@
 #include "engine/runtime/rendering/renderSystem.h"
 
 #include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFeedComponent.h"
 #include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/pointLightComponent.h"
@@ -274,6 +275,7 @@ void RenderSystem::render()
 
   if (!buildContext(m_renderer.viewportSize()))
     return;
+  const std::optional<FeedView> feed = chooseFeed();
 
   m_commands.clear();
   for (auto& [type, module] : m_modules)
@@ -366,6 +368,8 @@ void RenderSystem::render()
   frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
+  if (feed && m_feedFilming)
+    m_renderer.beginFeed(*feed, m_feedFilming->texture());
   {
     SFS_CPU_SCOPE("render/submit commands");
     for (const AnyRenderCommand& command : m_commands)
@@ -377,6 +381,92 @@ void RenderSystem::render()
   }
 
   m_stats.pointLights = m_pointLights.size();
+}
+
+std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
+{
+  if (!entity.isValid() || !entity.hasComponent<CameraFeedComponent>())
+    return nullptr;
+  const auto& lens = entity.getComponent<CameraFeedComponent>();
+  Feed& feed = m_feeds[entity.getId()];
+  if (!feed.texture)
+    feed.texture =
+        std::make_shared<RenderTexture>(glm::ivec2(lens.width, lens.height));
+  return feed.texture;
+}
+
+std::optional<FeedView> RenderSystem::chooseFeed()
+{
+  m_context.feedOn = false;
+  m_feedFilming = nullptr;
+  if (m_feeds.empty() || m_space2D || !registry)
+    return std::nullopt;
+  SFS_CPU_SCOPE("render/camera feed");
+  const double now = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+
+  // The one most overdue of those shown (each due `rate` times a second).
+  Entity chosen;
+  Feed* chosenFeed = nullptr;
+  double mostLate = -1.0;
+  for (const Entity& entity :
+       registry->view<TransformComponent, CameraFeedComponent>())
+  {
+    const auto found = m_feeds.find(entity.getId());
+    if (found == m_feeds.end() || !found->second.texture)
+      continue;
+    Feed& feed = found->second;
+    const auto& lens = entity.getComponent<CameraFeedComponent>();
+    const glm::ivec2 size = glm::max(glm::ivec2(lens.width, lens.height), 1);
+    if (feed.texture->size() != size)
+      feed.texture->resize(size);
+    if (!lens.enabled || !m_renderer.textureShown(feed.texture->texture().id))
+      continue;
+    const double late =
+        now - feed.filmed - 1.0 / std::max(double(lens.rate), 0.1);
+    if (late >= 0.0 && late > mostLate)
+    {
+      mostLate = late;
+      chosen = entity;
+      chosenFeed = &feed;
+    }
+  }
+  if (!chosenFeed)
+    return std::nullopt;
+  // (Not let fall behind further than a frame: a feed shown again after a
+  // while starts its beat afresh.)
+  const auto& lens = chosen.getComponent<CameraFeedComponent>();
+  const double period = 1.0 / std::max(double(lens.rate), 0.1);
+  chosenFeed->filmed = mostLate > period ? now : now - mostLate;
+  m_feedFilming = chosenFeed->texture.get();
+
+  // Its view: along the entity's +X, +Z up, as a camera entity's.
+  const glm::mat4 world = hierarchy::worldMatrix(chosen);
+  Camera camera;
+  camera.setPose(
+      glm::vec3(world[3]), glm::vec3(world[0]), 10.0f, glm::vec3(world[2]));
+  camera.projection = Camera::Projection::Perspective;
+  camera.fieldOfView = glm::radians(std::clamp(lens.fieldOfView, 1.0f, 170.0f));
+  camera.nearPlane = std::max(lens.nearPlane, 0.001f);
+  camera.farPlane = std::max(lens.farPlane, camera.nearPlane * 2.0f);
+  const glm::ivec2 size = m_feedFilming->size();
+  const float aspect = static_cast<float>(size.x) / static_cast<float>(size.y);
+
+  FeedView view;
+  view.view = camera.viewMatrix();
+  view.projection = camera.projectionMatrix(aspect);
+  view.viewProjection = camera.viewProjection(aspect);
+  view.cameraPosition = camera.position();
+  view.cameraForward = camera.viewDirection();
+  view.nearPlane = camera.nearPlane;
+  view.farPlane = camera.farPlane;
+  view.size = size;
+  view.grassBlades = lens.grassBlades;
+  view.grassReach = std::max(lens.grassReach, 1.0f);
+  m_context.feedOn = true;
+  m_context.feedFrustum = Frustum::fromViewProjection(view.viewProjection);
+  return view;
 }
 
 bool RenderSystem::buildContext(const glm::ivec2& viewport)
@@ -1272,7 +1362,7 @@ void RenderSystem::submit(const GrassDrawCommand& command)
 void RenderSystem::submit(const MeshDrawCommand& command)
 {
   if (command.instances.empty() && command.shadowInstances.empty() &&
-      command.lightShadowInstances.empty())
+      command.lightShadowInstances.empty() && command.feedInstances.empty())
     return;
 
   // Commands name meshes by library handle; a stand-in that has loaded since
@@ -1282,7 +1372,8 @@ void RenderSystem::submit(const MeshDrawCommand& command)
                                 command.materials,
                                 command.instances,
                                 command.shadowInstances,
-                                command.lightShadowInstances});
+                                command.lightShadowInstances,
+                                command.feedInstances});
 
   m_stats.drawCalls += 1;
   m_stats.instances += command.instances.size();

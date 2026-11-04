@@ -53,3 +53,11 @@ endif()
 add_editor_test(scriptFilesTests scriptFilesTests.cpp "${EDITOR_SRC_DIR}/scripting/scriptFiles.cpp"
     "${EDITOR_SRC_DIR}/platform/paths.cpp")
 target_link_libraries(scriptFilesTests PRIVATE sfs::engine-core)
+
+add_editor_test(moduleBuilderTests moduleBuilderTests.cpp
+    "${EDITOR_SRC_DIR}/build/moduleBuilder.cpp"
+    "${EDITOR_SRC_DIR}/build/buildEnvironment.cpp"
+    "${EDITOR_SRC_DIR}/build/childProcess.cpp"
+    "${EDITOR_SRC_DIR}/project/project.cpp")
+target_include_directories(moduleBuilderTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../generated")
+target_link_libraries(moduleBuilderTests PRIVATE sfs::engine)

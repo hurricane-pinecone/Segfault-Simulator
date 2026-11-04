@@ -218,6 +218,29 @@ public:
    */
   virtual void drawUi(const UiDrawList& list) = 0;
 
+  /**
+   * Film a camera feed this frame: `view` drawn into `into` (a RenderTexture's,
+   * UiTexture::gpu) with the frame's light, shadows and sky, from the draws'
+   * feedInstances (MeshBatch) and the frame's grass. Between beginFrame() and
+   * the draws. A backend that can't draws nothing (the picture stays as it
+   * was).
+   */
+  virtual void beginFeed(const FeedView& view, const UiTexture& into)
+  {
+    (void)view;
+    (void)into;
+  }
+
+  /**
+   * Whether a UI drew from GPU-drawn texture `id` (UiTexture::gpu) in the
+   * last couple of frames: a camera feed's filmed only while it's shown.
+   */
+  virtual bool textureShown(uint32_t id) const
+  {
+    (void)id;
+    return false;
+  }
+
   /** Render everything queued since beginFrame(). */
   virtual void endFrame() = 0;
 };

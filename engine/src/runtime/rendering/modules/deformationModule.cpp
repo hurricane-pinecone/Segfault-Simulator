@@ -433,6 +433,8 @@ void DeformationModule::draw(const RenderContext& context,
   command.instances = {instance};
   if (context.shadowsEnabled)
     command.shadowInstances = {instance};
+  if (context.feedOn)
+    command.feedInstances = {instance};
   m_commands.push_back(std::move(command));
 }
 
@@ -548,9 +550,14 @@ void DeformationModule::pressMesh(const Entity& mesh,
     if (!ground)
       continue;
     // (A wheel sat down into the ground, in mud: from its lowest, so it
-    // costs no more than on firm ground.)
+    // costs no more than on firm ground. Its lowest point, not its bounds':
+    // turned, their corners reach as much as 1.4 x its radius below its
+    // axle, and from there nothing of it would be under `below`: it'd press
+    // only at each quarter turn, a rut of separate scoops.)
     const float below =
-        (rolled ? std::min(ground->height, world.min.z) : ground->height) +
+        (rolled ? std::min(ground->height,
+                           lowestPointOf(mesh, handle, model, world.min.z))
+                : ground->height) +
         kAboveGround;
     if (world.min.z > below)
       continue;
@@ -799,7 +806,12 @@ Underside DeformationModule::undersideOf(const Entity& mesh,
                      model,
                      below,
                      texel);
-  // Otherwise made ready once (again if the mesh is changed).
+  return underside(readyMesh(handle), model, below, texel);
+}
+
+const UndersideMesh& DeformationModule::readyMesh(MeshHandle handle)
+{
+  // Made ready once (again if the mesh is changed).
   const std::span<const glm::vec3> positions = m_meshes->positions(handle);
   const std::span<const uint32_t> indices = m_meshes->indices(handle);
   Ready& ready = m_ready[handle.id];
@@ -813,7 +825,20 @@ Underside DeformationModule::undersideOf(const Entity& mesh,
     ready.indices = indices.data();
     ready.corners = indices.size();
   }
-  return underside(*ready.mesh, model, below, texel);
+  return *ready.mesh;
+}
+
+float DeformationModule::lowestPointOf(const Entity& mesh,
+                                       MeshHandle handle,
+                                       const glm::mat4& model,
+                                       float bound)
+{
+  if (m_meshes->skinPose(handle, mesh.getId()))
+    return bound;
+  const UndersideMesh& ready = readyMesh(handle);
+  if (ready.empty())
+    return bound;
+  return std::max(lowestPoint(ready, model), bound);
 }
 
 void DeformationModule::buildPatchMesh()
@@ -956,6 +981,14 @@ void DeformationModule::relax(const Entity& ground, float smooth, float fade)
 {
   if (Field* field = fieldOf(ground))
     field->map.relax(smooth, fade);
+}
+
+void DeformationModule::relax(const Entity& ground,
+                              std::span<const glm::ivec2> tiles,
+                              std::span<const glm::vec4> corners)
+{
+  if (Field* field = fieldOf(ground))
+    field->map.relax(tiles, corners);
 }
 
 void DeformationModule::clearRegion(const Entity& ground,

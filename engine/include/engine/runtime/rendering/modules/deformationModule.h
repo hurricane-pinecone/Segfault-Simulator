@@ -118,6 +118,10 @@ public:
 
   /** Weather `ground`'s tracks (see DeformationMap::relax()). */
   void relax(const Entity& ground, float smooth, float fade = 0.0f);
+  /** Weather only some of `ground`'s tiles (see DeformationMap::relax()). */
+  void relax(const Entity& ground,
+             std::span<const glm::ivec2> tiles,
+             std::span<const glm::vec4> corners);
 
   /** Flatten `ground` inside a world XY polygon, or rectangle. */
   void clearRegion(const Entity& ground, std::span<const glm::vec2> polygon);
@@ -254,6 +258,16 @@ private:
                         const glm::mat4& model,
                         float below,
                         float texel);
+  // How low a deformer mesh reaches as placed (world Z): its lowest point
+  // (a turning wheel's tyre's, wherever it's turned to; its bounds' corners
+  // swing up to 1.4 x its radius below its axle), or `bound` where that
+  // isn't known (posed by an animator).
+  float lowestPointOf(const Entity& mesh,
+                      MeshHandle handle,
+                      const glm::mat4& model,
+                      float bound);
+  // A mesh made ready for undersideOf() (again if it's changed).
+  const UndersideMesh& readyMesh(MeshHandle handle);
   void upload(Field& field, glm::ivec2 tile);
   // Where the patch goes this frame (world XY), from the camera.
   static glm::vec2 patchCenterFor(const Camera& camera, float ground);

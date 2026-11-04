@@ -14,6 +14,7 @@
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/ext/vector_int4.hpp"
 
 #include <cstddef>
@@ -272,6 +273,29 @@ struct MeshBatch
   std::span<const MeshInstance> instances;
   std::span<const MeshInstance> shadowInstances;
   std::span<const MeshInstance> lightShadowInstances;
+  // The copies the frame's camera feed sees (see IRenderer::beginFeed()),
+  // drawn lit into its picture.
+  std::span<const MeshInstance> feedInstances;
+};
+
+/**
+ * A second view of the frame (a camera feed: CameraFeedComponent), drawn
+ * into a picture of `size` with the frame's light, shadows and sky.
+ */
+struct FeedView
+{
+  glm::mat4 view{1.0f};
+  glm::mat4 projection{1.0f};
+  glm::mat4 viewProjection{1.0f};
+  glm::vec3 cameraPosition{0.0f};
+  glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit
+  float nearPlane = 0.05f;
+  float farPlane = 200.0f;
+  glm::ivec2 size{0, 0};
+  // Grass's blades grown for it too, out to `grassReach` (else only the
+  // ground under them).
+  bool grassBlades = false;
+  float grassReach = 30.0f;
 };
 
 } // namespace sfs

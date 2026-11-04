@@ -247,7 +247,9 @@ fn grassShape(uv: vec2f) -> vec4f {
   let edge = smoothstep(0.25, 1.0, maps.b / max(maps.r, 1e-3));
   let noise = shapeNoise(t * 0.8 + 71.0) * 0.6 + shapeNoise(t * 0.3 + 3.1) * 0.4;
   let clump = mix(0.1, 0.9, noise);
-  let cover = clamp((maps.r * edge - clump) / 0.5 + 0.5, 0.0, 1.0);
+  // (None at all where nothing's covered: bare is bare, the clumps' noise
+  // never lifts it.)
+  let cover = clamp((maps.r * edge - clump) / 0.5 + 0.5, 0.0, 1.0) * step(0.002, maps.r);
   return vec4f(cover, maps.g * mix(0.45, 1.0, edge), maps.a, 0.0);
 }
 

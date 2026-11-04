@@ -127,13 +127,17 @@ struct Env
   Color color;
   float opacity = 1.0f;
   bool disabled = false;
-  uint64_t hash = 0; // all of it (rehash())
+  bool mask = false;    // images as masks in `color` (tint())
+  bool nearest = false; // images' pixels sharp (Interpolation::Nearest)
+  uint64_t hash = 0;    // all of it (rehash())
 
   void rehash()
   {
     hash = mixed(
         mixed(mixed(mixed(mixed(uint64_t{fontKey}, fontSize), color), opacity),
-              static_cast<uint64_t>(disabled)),
+              static_cast<uint64_t>(disabled) |
+                  static_cast<uint64_t>(mask) << 1 |
+                  static_cast<uint64_t>(nearest) << 2),
         uint64_t{0xE4});
   }
 };
@@ -252,8 +256,9 @@ public:
     }
     case Kind::Button:
     case Kind::Toggle:
-      if (!node.children.empty())
-        findKeys(*node.children[0].node(), step(path, 'l'));
+      // (A styled button's looks are all in the label's place.)
+      for (const View& child : node.children)
+        findKeys(*child.node(), step(path, 'l'));
       break;
     case Kind::Padding:
     case Kind::Background:
@@ -306,7 +311,8 @@ public:
   static Env envOf(const Node& node, const Env& outer)
   {
     Env env = outer;
-    if (!node.font && !node.color && node.opacity == 1.0f && !node.disabled)
+    if (!node.font && !node.color && node.opacity == 1.0f && !node.disabled &&
+        !node.mask && !node.interpolation)
       return env;
     if (node.font)
     {
@@ -321,6 +327,9 @@ public:
       env.color = *node.color;
     env.opacity *= node.opacity;
     env.disabled = env.disabled || node.disabled;
+    env.mask = env.mask || node.mask;
+    if (node.interpolation)
+      env.nearest = *node.interpolation == Interpolation::Nearest;
     env.rehash();
     return env;
   }
@@ -458,6 +467,13 @@ public:
       return imageSize(node, offer);
     case Kind::Button:
     {
+      // A plain one's its label; a custom one its normal look.
+      if (node.buttonStyle == ButtonStyle::Kind::Plain &&
+          !node.children.empty())
+        return measure(*node.children[0].node(), offer, env);
+      if (node.buttonStyle == ButtonStyle::Kind::Custom &&
+          node.children.size() == 5)
+        return measure(*node.children[1].node(), offer, env);
       const glm::vec2 pad = buttonPadding();
       const glm::vec2 label = node.children.empty()
                                   ? glm::vec2(0.0f)
@@ -721,31 +737,44 @@ public:
   }
 
   // An image's picture; none yet (a mesh still loading): the views round it
-  // aren't kept, so it's drawn when it comes.
-  const UiTexture* imageOf(const Node& node)
+  // aren't kept, so it's drawn when it comes. The game's own pixels (a
+  // Picture) are a texture of their own, whole.
+  const SourceImage* imageOf(const Node& node)
   {
+    if (node.picture || node.rendered)
+    {
+      m_picture.texture =
+          node.picture ? &node.picture->texture() : &node.rendered->texture();
+      m_picture.levels = 1;
+      m_picture.level[0] = {glm::vec4(0.0f, 0.0f, 1.0f, 1.0f),
+                            {node.pictureWidth, node.pictureHeight}};
+      return &m_picture;
+    }
     if (!m_images || node.placeholder)
       return nullptr;
-    const UiTexture* texture = m_images->image(node.text, node.meshIcon);
-    if (!texture)
+    const SourceImage* image = m_images->image(node.text, node.meshIcon);
+    if (!image)
       m_waiting = true;
-    return texture;
+    return image;
   }
 
   // An image's own size (a mesh's icon or a placeholder 32 points), shrunk
-  // to fit what it's offered, keeping its shape.
+  // to fit what it's offered (grown too, if it's resizable), keeping its
+  // shape.
   glm::vec2 imageSize(const Node& node, glm::vec2 offer)
   {
-    const UiTexture* texture = imageOf(node);
+    const SourceImage* image = imageOf(node);
     glm::vec2 size = node.meshIcon || node.placeholder
                          ? glm::vec2(32.0f * m_scale)
-                     : texture ? glm::vec2(texture->size) * m_scale
-                               : glm::vec2(0.0f);
-    float fit = 1.0f;
-    if (std::isfinite(offer.x) && size.x > offer.x && size.x > 0.0f)
-      fit = std::min(fit, offer.x / size.x);
-    if (std::isfinite(offer.y) && size.y > offer.y && size.y > 0.0f)
-      fit = std::min(fit, offer.y / size.y);
+                     : image ? glm::vec2(image->size()) * m_scale
+                             : glm::vec2(0.0f);
+    if (size.x <= 0.0f || size.y <= 0.0f)
+      return glm::vec2(0.0f);
+    const float across = std::isfinite(offer.x) ? offer.x / size.x : infinity;
+    const float down = std::isfinite(offer.y) ? offer.y / size.y : infinity;
+    float fit = std::min(across, down);
+    if (!node.resizable || !std::isfinite(fit))
+      fit = std::min(fit, 1.0f);
     return size * std::max(fit, 0.0f);
   }
 
@@ -764,22 +793,27 @@ public:
       box(square, toVec(faint, env.opacity), side * 0.22f);
       return;
     }
-    const UiTexture* texture = imageOf(node);
-    if (!texture || texture->size.x <= 0 || texture->size.y <= 0)
+    const SourceImage* image = imageOf(node);
+    if (!image || !image->texture || image->size().x <= 0 ||
+        image->size().y <= 0)
       return;
-    // Its shape kept, in the middle of its rect.
-    const glm::vec2 own(texture->size);
+    // Its shape kept, in the middle of its rect, on whole pixels (so a small
+    // icon drawn from a level its size is crisp), from the level nearest the
+    // size it's drawn.
+    const glm::vec2 own(image->size());
     const float fit = std::min(rect.width / own.x, rect.height / own.y);
-    const glm::vec2 size = own * fit;
+    const glm::vec2 size = glm::max(glm::round(own * fit), glm::vec2(1.0f));
     UiQuad quad;
-    quad.kind = UiQuad::Image;
-    quad.texture = texture;
-    quad.rect = {rect.x + (rect.width - size.x) * 0.5f,
-                 rect.y + (rect.height - size.y) * 0.5f,
+    quad.kind = env.mask ? UiQuad::Mask : UiQuad::Image;
+    quad.nearest = env.nearest;
+    quad.texture = image->texture;
+    quad.rect = {std::round(rect.x + (rect.width - size.x) * 0.5f),
+                 std::round(rect.y + (rect.height - size.y) * 0.5f),
                  size.x,
                  size.y};
-    quad.uv = {0.0f, 0.0f, 1.0f, 1.0f};
-    quad.color = {1.0f, 1.0f, 1.0f, env.opacity};
+    quad.uv = env.nearest ? image->level[0].uv : image->levelFor(size.x).uv;
+    quad.color = env.mask ? toVec(env.color, env.opacity)
+                          : glm::vec4(1.0f, 1.0f, 1.0f, env.opacity);
     m_quads.push_back(quad);
   }
 
@@ -863,6 +897,7 @@ public:
   bool m_waiting = false; // a picture's still to come
 
 private:
+  SourceImage m_picture; // a Picture's, as imageOf() gives it
   int m_depth = 0;
 
   // Whether `entry`, last frame's, still draws as it did.
@@ -1622,6 +1657,37 @@ private:
       };
     const bool over = enabled && hovered(path);
     const bool down = over && pressed(path);
+    if (node.buttonStyle == ButtonStyle::Kind::Plain)
+    {
+      // Its label is the button: dimmed pressed, or disabled.
+      if (node.children.empty())
+        return;
+      Env label = env;
+      label.opacity *= !enabled ? 0.45f : down ? 0.6f : 1.0f;
+      label.rehash();
+      place(*node.children[0].node(), rect, label, step(path, 'l'), index + 1);
+      return;
+    }
+    if (node.buttonStyle == ButtonStyle::Kind::Custom &&
+        node.children.size() == 5)
+    {
+      // The look for its state (normal, hovered, pressed, disabled: its
+      // children after the label), in the middle of its rect.
+      const std::size_t look = !enabled ? 4 : down ? 3 : over ? 2 : 1;
+      uint32_t at = index + 1;
+      for (std::size_t i = 0; i < look; ++i)
+        at += node.children[i].node()->count();
+      const Node& face = *node.children[look].node();
+      const glm::vec2 size = measure(face, {rect.width, rect.height}, env);
+      place(face,
+            aligned(rect,
+                    glm::min(size, glm::vec2(rect.width, rect.height)),
+                    Alignment::Center),
+            env,
+            step(path, 'l'),
+            at);
+      return;
+    }
     const Color fill = down   ? m_theme.buttonPressed
                        : over ? m_theme.buttonHovered
                               : m_theme.button;
@@ -2084,6 +2150,15 @@ glm::vec2 fit(const View& root,
   std::vector<Hit> hits;
   Layout laying(scale, theme, text, Pointer(), quads, hits, images);
   return laying.fitted(*root.node(), offer, laying.rootEnv());
+}
+
+const SourceImage::Level& SourceImage::levelFor(float pixels) const
+{
+  int at = 0;
+  while (at + 1 < std::min(levels, kMostLevels) &&
+         static_cast<float>(level[at + 1].size.x) >= pixels - 0.01f)
+    ++at;
+  return level[at];
 }
 
 Rect Rect::intersect(const Rect& other) const

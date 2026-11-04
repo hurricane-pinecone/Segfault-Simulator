@@ -748,19 +748,34 @@ void FramePlan::finish(
   for (std::size_t i = 0; i < m_shadowedLights.size(); ++i)
     m_gpuLights[m_shadowedLights[i].light].shadow.x = static_cast<float>(i);
 
-  // The UI quads as instances, in batches sharing a texture. Boxes and chevrons
-  // don't read their texture, so they needn't break a run of glyphs.
+  // The UI quads as instances, in batches sharing their textures: a glyph
+  // texture and an image's (an atlas page), bound side by side. A batch goes
+  // on until a quad needs another texture where one's bound; boxes and
+  // chevrons read neither, so they never break one.
   m_uiInstances.clear();
   m_uiBatches.clear();
   for (const UiQuad& quad : m_uiQuads)
   {
-    const bool textured =
-        quad.kind == UiQuad::Glyph || quad.kind == UiQuad::Image;
-    const UiTexture* texture = textured ? quad.texture : nullptr;
-    if (m_uiBatches.empty() ||
-        (m_uiBatches.back().texture != texture && textured))
+    const bool glyph = quad.kind == UiQuad::Glyph;
+    const bool image = quad.kind == UiQuad::Image || quad.kind == UiQuad::Mask;
+    if (m_uiBatches.empty())
       m_uiBatches.push_back(
-          {texture, static_cast<uint32_t>(m_uiInstances.size()), 0});
+          {nullptr, nullptr, static_cast<uint32_t>(m_uiInstances.size()), 0});
+    if (glyph || image)
+    {
+      const UiTexture*& bound =
+          glyph ? m_uiBatches.back().glyphs : m_uiBatches.back().image;
+      if (bound && bound != quad.texture)
+      {
+        UiBatch next = m_uiBatches.back();
+        next.first = static_cast<uint32_t>(m_uiInstances.size());
+        next.count = 0;
+        (glyph ? next.glyphs : next.image) = quad.texture;
+        m_uiBatches.push_back(next);
+      }
+      else
+        bound = quad.texture;
+    }
     ++m_uiBatches.back().count;
     m_uiInstances.push_back({quad.rect,
                              quad.uv,
@@ -769,7 +784,8 @@ void FramePlan::finish(
                              glm::vec4(quad.radius,
                                        quad.softness,
                                        quad.border,
-                                       static_cast<float>(quad.kind)),
+                                       static_cast<float>(quad.kind) +
+                                           (quad.nearest ? 8.0f : 0.0f)),
                              quad.clip});
   }
   m_uiQuads.clear();

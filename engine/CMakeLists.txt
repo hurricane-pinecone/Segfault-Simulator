@@ -134,6 +134,7 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/meshLodComponent.h"
             "${ENGINE_COMPONENT_DIR}/pointLightComponent.h"
             "${ENGINE_COMPONENT_DIR}/cameraComponent.h"
+            "${ENGINE_COMPONENT_DIR}/cameraFeedComponent.h"
             "${ENGINE_COMPONENT_DIR}/rigidBody3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"

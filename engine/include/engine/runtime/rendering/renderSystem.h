@@ -12,6 +12,7 @@
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/renderTexture.h"
 #include "engine/runtime/rendering/space2D.h"
 
 #include <cstddef>
@@ -303,6 +304,13 @@ public:
 
   const RenderStats& stats() const { return m_stats; }
 
+  /**
+   * The picture an entity's camera feed (CameraFeedComponent) films, made the
+   * first time it's asked for (null without one): show it with ui::Image. It's
+   * filmed only while it's shown, at the feed's rate, one feed a frame.
+   */
+  std::shared_ptr<const RenderTexture> cameraFeed(Entity entity);
+
   /** Lighting, shadow and camera knobs for the debug UI. */
   std::vector<ModuleSetting> settings() override;
 
@@ -381,6 +389,10 @@ private:
   // them) into m_shadowedLights, clearing castsShadow on the rest.
   void chooseShadowedLights();
 
+  // The camera feed to film this frame (shown, due, the most overdue), if
+  // any: its view, and its frustum in m_context for the modules.
+  std::optional<FeedView> chooseFeed();
+
   void submit(const MeshDrawCommand& command);
   void submit(const GrassDrawCommand& command);
   void submit(const UiDrawCommand& command);
@@ -456,6 +468,15 @@ private:
   std::vector<GlowPoint> m_glow;
 
   RenderContext m_context;
+  // Camera feeds asked for (cameraFeed()), by entity id: their pictures, when
+  // each was last filmed (seconds of a steady clock), and the one this frame.
+  struct Feed
+  {
+    std::shared_ptr<RenderTexture> texture;
+    double filmed = -1.0e9;
+  };
+  std::unordered_map<uint32_t, Feed> m_feeds;
+  const RenderTexture* m_feedFilming = nullptr;
   glm::mat4 m_lightViewProjection{1.0f};
   SunCascades m_cascades;
   // A physical sky: its model (for the settings it was built from), the sun

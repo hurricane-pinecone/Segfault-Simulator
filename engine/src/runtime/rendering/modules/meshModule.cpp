@@ -76,8 +76,13 @@ void MeshModule::addEntity(const RenderContext& context,
         break;
       }
     }
-  if (!visible && !castsShadow && !castsLightShadow)
+  // (The frame's camera feed's view, while one's filmed.)
+  const bool feedSees =
+      context.feedOn && context.feedFrustum.intersects(worldBounds);
+  if (!visible && !feedSees && !castsShadow && !castsLightShadow)
     return;
+  const auto seen =
+      static_cast<uint8_t>((visible ? Lit : 0) | (feedSees ? Feed : 0));
   if (skin)
     context.meshes->markSkinDrawn(renderer.mesh, entity.getId());
 
@@ -100,14 +105,14 @@ void MeshModule::addEntity(const RenderContext& context,
               drawn,
               model,
               instance,
-              visible,
+              seen,
               castsShadow,
               castsLightShadow);
     return;
   }
   addInstance(drawn,
               instance,
-              (visible ? Lit : 0) | (castsShadow ? SunShadow : 0) |
+              seen | (castsShadow ? SunShadow : 0) |
                   (castsLightShadow ? LightShadow : 0));
 }
 
@@ -144,6 +149,8 @@ void MeshModule::addInstance(MeshHandle mesh,
     command.shadowInstances.push_back(solid);
   if (passes & LightShadow)
     command.lightShadowInstances.push_back(solid);
+  if (passes & Feed)
+    command.feedInstances.push_back(instance);
 }
 
 void MeshModule::addLevels(const RenderContext& context,
@@ -152,7 +159,7 @@ void MeshModule::addLevels(const RenderContext& context,
                            MeshHandle mesh,
                            const glm::mat4& model,
                            const MeshInstance& instance,
-                           bool visible,
+                           uint8_t seen,
                            bool castsShadow,
                            bool castsLightShadow)
 {
@@ -232,7 +239,7 @@ void MeshModule::addLevels(const RenderContext& context,
         meshLevels - 1);
     addInstance(levels[caster].mesh, instance, shadowPasses);
   }
-  if (!visible)
+  if (seen == 0)
     return;
 
   // A level drawn, dithered by `dither` (MeshInstance::emission.w) while it
@@ -245,7 +252,7 @@ void MeshModule::addLevels(const RenderContext& context,
     shown.emission.w = dither;
     if (which < meshLevels)
     {
-      addInstance(levels[which].mesh, shown, Lit);
+      addInstance(levels[which].mesh, shown, seen);
       return;
     }
     const glm::vec3 up = glm::normalize(glm::vec3(model[2]));
@@ -267,7 +274,7 @@ void MeshModule::addLevels(const RenderContext& context,
     view -= std::floor(view / frames) * frames; // 0 .. frames
     shown.uvRect =
         glm::vec4(std::floor(view) / frames, 0.0f, 1.0f / frames, 1.0f);
-    addInstance(lod.impostor, shown, Lit);
+    addInstance(lod.impostor, shown, seen);
   };
   if (fade >= 1.0f)
   {

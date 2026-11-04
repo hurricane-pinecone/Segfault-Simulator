@@ -44,6 +44,7 @@ private:
     Lit = 1,
     SunShadow = 2,
     LightShadow = 4,
+    Feed = 8, // seen by the frame's camera feed (RenderContext::feedOn)
   };
 
   // An instance of `mesh` (with the materials in m_materials) into its
@@ -52,14 +53,15 @@ private:
   addInstance(MeshHandle mesh, const MeshInstance& instance, uint8_t passes);
 
   // An entity with levels of detail: its instances for the level(s) its
-  // distance from the camera picks, in the passes it's in.
+  // distance from the camera picks, in the passes it's in (`seen`: Lit and,
+  // or, Feed).
   void addLevels(const RenderContext& context,
                  uint32_t id,
                  const MeshLodComponent& lod,
                  MeshHandle mesh,
                  const glm::mat4& model,
                  const MeshInstance& instance,
-                 bool visible,
+                 uint8_t seen,
                  bool castsShadow,
                  bool castsLightShadow);
 

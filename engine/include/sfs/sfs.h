@@ -8,6 +8,7 @@
 #include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFeedComponent.h"
 #include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/deformerComponent.h"

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/core/rendering/mesh.h"
+#include "engine/runtime/rendering/renderTexture.h"
+#include "engine/runtime/ui/picture.h"
 
 #include <concepts>
 #include <functional>
@@ -9,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -125,7 +128,15 @@ Fill Panel();
 /** "As much as there is": a frame's width or height that takes all it can. */
 inline constexpr float infinity = std::numeric_limits<float>::infinity();
 
+/** How a picture's pixels are drawn bigger or smaller than they are. */
+enum class Interpolation : uint8_t
+{
+  Linear,  // blended between (smooth: photos, icons)
+  Nearest, // each pixel a sharp square (a yield map, pixel art)
+};
+
 struct Node;
+class ButtonStyle;
 
 /**
  * A piece of UI: a value, cheap to copy, changed by modifiers that each return
@@ -200,8 +211,33 @@ public:
   /** How see-through it, and everything in it, is (1: solid). */
   View opacity(float alpha) const&;
   View opacity(float alpha) &&;
+  /**
+   * Images in it drawn as masks (their alpha, in one colour): monochrome
+   * icons, a lamp's tell-tale lit or unlit. In `color`, or with none, in the
+   * colour they inherit (color()).
+   */
+  View tint(Color color) const&;
+  View tint(Color color) &&;
+  View tint() const&;
+  View tint() &&;
+  /** Images in it drawn smooth (Linear, the default) or sharp (Nearest). */
+  View interpolation(Interpolation interpolation) const&;
+  View interpolation(Interpolation interpolation) &&;
+  /**
+   * An Image that grows to fill what it's offered too (keeping its shape),
+   * not only shrinks: Image("map.png").resizable().frame(300, 200). On an
+   * Image only.
+   */
+  View resizable(bool resizable = true) const&;
+  View resizable(bool resizable = true) &&;
 
   // --- behaviour ------------------------------------------------------------
+
+  /**
+   * How a button looks (see ButtonStyle): on a Button, its own; on a view
+   * round buttons, every button in it without a style of its own.
+   */
+  View buttonStyle(const ButtonStyle& style) const;
 
   /** Buttons in it can't be pressed (and look it). */
   View disabled(bool disabled = true) const&;
@@ -254,6 +290,87 @@ View Text(std::string text);
 View Button(std::string label, std::function<void()> action);
 View Button(View label, std::function<void()> action);
 
+/** What a button style makes a button's look from. */
+struct ButtonConfiguration
+{
+  View label;            // what the button was given (its text, or view)
+  bool hovered = false;  // the pointer's over it
+  bool pressed = false;  // held down on it (the pointer over it)
+  bool disabled = false; // .disabled(), on it or round it
+};
+
+/**
+ * How a button looks, like SwiftUI's ButtonStyle: the theme's face
+ * (automatic()), none (plain(): the label is the button), or the game's: a
+ * function, or a struct with `View makeBody(const ButtonConfiguration&)
+ * const`, making its look from its label and state:
+ *
+ *   struct KeyStyle
+ *   {
+ *     View makeBody(const ButtonConfiguration& c) const
+ *     {
+ *       return c.label.padding(8).background(
+ *           Fill{.color = c.pressed ? dark : c.hovered ? light : normal});
+ *     }
+ *   };
+ *   Button("RUN", run).buttonStyle(KeyStyle{})
+ *
+ * A style's called when it's given (buttonStyle()), once for each state
+ * (normal, hovered, pressed, disabled), so what it makes is part of the tree
+ * and kept like any view; the pointer coming over a button lays out only
+ * that button again. The button is the size of its normal look: keep the
+ * looks the same size.
+ */
+class ButtonStyle
+{
+public:
+  enum class Kind : uint8_t
+  {
+    Automatic, // the theme's face
+    Plain,     // no face
+    Custom,    // the game's
+  };
+
+  /** The theme's: a soft, rounded face, lighter hovered, darker pressed. */
+  static ButtonStyle automatic() { return ButtonStyle(Kind::Automatic); }
+  /** No face: the label is the button, dimmed while it's pressed. */
+  static ButtonStyle plain() { return ButtonStyle(Kind::Plain); }
+  /** A face filled `normal`, `hovered` or `pressed`, round the label padded. */
+  static ButtonStyle filled(Fill normal,
+                            Fill hovered,
+                            Fill pressed,
+                            Insets padding = Insets::symmetric(7.0f, 14.0f));
+
+  template <typename F>
+    requires std::is_invocable_r_v<View, const F&, const ButtonConfiguration&>
+  ButtonStyle(F makeBody) : m_kind(Kind::Custom), m_make(std::move(makeBody))
+  {
+  }
+  template <typename S>
+    requires(!std::same_as<S, ButtonStyle>) &&
+                requires(const S& style, const ButtonConfiguration& c) {
+                  {
+                    style.makeBody(c)
+                  } -> std::convertible_to<View>;
+                }
+  ButtonStyle(S style)
+      : m_kind(Kind::Custom),
+        m_make([style = std::move(style)](const ButtonConfiguration& c)
+               { return View(style.makeBody(c)); })
+  {
+  }
+
+  Kind kind() const { return m_kind; }
+  /** Its look for `configuration` (a custom style's; others: the label). */
+  View makeBody(const ButtonConfiguration& configuration) const;
+
+private:
+  explicit ButtonStyle(Kind kind) : m_kind(kind) {}
+
+  Kind m_kind = Kind::Automatic;
+  std::function<View(const ButtonConfiguration&)> m_make;
+};
+
 /**
  * A picture: an image file ("asset:<id>", or a path in the project's folder:
  * PNG, JPG...), at its own size in points (a pixel each), or a mesh drawn as
@@ -264,6 +381,17 @@ class Image : public View
 {
 public:
   explicit Image(std::string file);
+  /**
+   * Pixels the game draws (a ui::Picture), at their size in points (a pixel
+   * each): a change to them is shown without laying anything out again.
+   */
+  explicit Image(std::shared_ptr<const Picture> picture);
+  /**
+   * A picture the GPU draws (a camera feed: RenderSystem::cameraFeed()), at
+   * its size in points: each new picture is shown without laying anything
+   * out again.
+   */
+  explicit Image(std::shared_ptr<const RenderTexture> texture);
   /**
    * A mesh (by its name in the scene's MeshLibrary, e.g. "farm:wheat") as an
    * icon: from a three-quarter view, lit, on nothing; 32 points by default.
@@ -417,9 +545,16 @@ struct Node
   Kind kind = Kind::Empty;
   std::vector<View> children;
 
-  std::string text;             // Text's; Image's file or mesh
-  bool meshIcon = false;        // Image's: `text` is a mesh's name
-  bool placeholder = false;     // Image's: a stand-in box (Image::placeholder)
+  std::string text;         // Text's; Image's file or mesh
+  bool meshIcon = false;    // Image's: `text` is a mesh's name
+  bool placeholder = false; // Image's: a stand-in box (Image::placeholder)
+  bool resizable = false;   // Image's: grows to fit, too
+  std::shared_ptr<const Picture> picture;  // Image's: the game's pixels...
+  int pictureWidth = 0, pictureHeight = 0; // ...and their size, when made
+  std::shared_ptr<const RenderTexture> rendered; // Image's: or the GPU's
+  // A Button's look (ButtonStyle::Kind). A custom one's children: its label,
+  // then its looks normal, hovered, pressed and disabled.
+  ButtonStyle::Kind buttonStyle = ButtonStyle::Kind::Automatic;
   std::function<void()> action; // Button's
   float value = 0.0f; // ProgressBar's fraction, Spacer's minimum, Slider's
                       // value, Toggle's 1 (on) or 0, DisclosureGroup's
@@ -446,6 +581,8 @@ struct Node
   std::optional<Color> color;
   float opacity = 1.0f;
   bool disabled = false;
+  bool mask = false; // images drawn as masks in the colour (tint())
+  std::optional<Interpolation> interpolation;
 
   Alignment alignment = Alignment::Center; // within a ZStack, or the screen
   std::string id;                          // see View::id()

@@ -15,6 +15,7 @@
 #include <SDL_stdinc.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -45,16 +46,16 @@ std::string UiModule::resolveFont(const std::string& file) const
   return resolveFile(file);
 }
 
-const UiTexture* UiModule::image(const std::string& source, bool mesh)
+const ui::SourceImage* UiModule::image(const std::string& source, bool mesh)
 {
   const std::string key = (mesh ? "m:" : "f:") + source;
   if (const auto it = m_images.find(key); it != m_images.end())
-    return it->second.get();
+    return it->second;
 
-  static uint32_t nextId = 0x494D0000u; // "IM": apart from fonts' textures
-  auto texture = std::make_unique<UiTexture>();
-  texture->id = ++nextId;
-  texture->revision = 1;
+  // Each is put in the atlas (small ones share its pages, with their smaller
+  // levels: see ui::ImageAtlas), once.
+  glm::ivec2 size{0, 0};
+  std::vector<uint8_t> pixels;
   if (mesh)
   {
     // Drawn once, at a size that stays sharp up to a large icon.
@@ -71,8 +72,8 @@ const UiTexture* UiModule::image(const std::string& source, bool mesh)
     if (!data || data->empty())
       return nullptr;
     constexpr int kIconSize = 128;
-    texture->size = {kIconSize, kIconSize};
-    texture->pixels = meshPreview::render(*data, kIconSize);
+    size = {kIconSize, kIconSize};
+    pixels = meshPreview::render(*data, kIconSize);
   }
   else
   {
@@ -90,21 +91,20 @@ const UiTexture* UiModule::image(const std::string& source, bool mesh)
       m_images[key] = nullptr;
       return nullptr;
     }
-    texture->size = {rgba->w, rgba->h};
-    texture->pixels.resize(std::size_t(rgba->w) * rgba->h * 4);
+    size = {rgba->w, rgba->h};
+    pixels.resize(std::size_t(rgba->w) * rgba->h * 4);
     SDL_LockSurface(rgba);
     for (int y = 0; y < rgba->h; ++y)
-      std::memcpy(&texture->pixels[std::size_t(y) * rgba->w * 4],
+      std::memcpy(&pixels[std::size_t(y) * rgba->w * 4],
                   static_cast<const uint8_t*>(rgba->pixels) +
                       std::size_t(y) * rgba->pitch,
                   std::size_t(rgba->w) * 4);
     SDL_UnlockSurface(rgba);
     SDL_FreeSurface(rgba);
   }
-  if (texture->pixels.size() !=
-      std::size_t(texture->size.x) * texture->size.y * 4)
+  if (pixels.size() != std::size_t(size.x) * size.y * 4)
     return nullptr;
-  return (m_images[key] = std::move(texture)).get();
+  return m_images[key] = m_atlas.add(pixels, size);
 }
 
 std::string UiModule::resolveFile(const std::string& file) const
@@ -312,6 +312,24 @@ const ui::Node* UiModule::sourceOf(const Found& found) const
 void UiModule::handleInput(Input& input)
 {
   MouseInput& mouse = input.mouse();
+  // (For screenshots of a hover or press: SFS_UI_POINTER=x,y pins the
+  // pointer there, in points from the top left; x,y,down holds it down too.)
+  static const char* const pinned = std::getenv("SFS_UI_POINTER");
+  if (pinned)
+  {
+    float x = 0.0f, y = 0.0f;
+    char down[8] = {};
+    const int read = std::sscanf(pinned, "%f,%f,%7s", &x, &y, down);
+    if (read >= 2)
+    {
+      // (Pressed again until something's held: the UI may not be there yet.)
+      const bool hold = read == 3;
+      pointer(
+          glm::vec2(x, y) * m_scale, true, hold && m_pressed == 0, false, hold);
+      mouse.block();
+      return;
+    }
+  }
   // The UI's mouse: held since a press on it, or over it with nothing held
   // (a drag the game started carries on across it).
   const bool held = mouse.mouseHeld(MouseButton::Left) ||

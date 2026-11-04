@@ -89,6 +89,8 @@ struct BladeOut {
 // The splat map of the terrain the grass grows on (its ground's material),
 // for its ground past the maps (see fs_ground; a stand-in without one).
 @group(2) @binding(8) var farSplat: texture_2d<f32>;
+// Its ground's deformation window (r: the offset, m; see grassDeformAt()).
+@group(2) @binding(9) var grassDeformMap: texture_2d<f32>;
 
 // A blade's vertex as placed (bladePoint()): the blade, how far up it, which
 // side, where, which way along it, and how shut in.
@@ -436,6 +438,10 @@ fn fs_ground(in: GroundOut) -> LitOut {
     tall = mix(1.0, tall, inside);
     data = mix(in.data, data, inside);
   }
+  // Over a rut (the ground pressed in under it, drawn lower by its terrain's
+  // patch) it's left to the blades standing in it: this is the ground's own
+  // surface, above the rut's floor.
+  coverage *= 1.0 - smoothstep(0.015, 0.04, -grassDeformAt(in.worldPosition.xy));
 
   let normal = normalize(in.normal);
   let toCamera = frame.cameraPosition.xyz - in.worldPosition;

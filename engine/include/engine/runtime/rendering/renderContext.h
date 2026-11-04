@@ -34,6 +34,11 @@ struct RenderContext
   bool shadowsEnabled = false;
   Frustum shadowFrustum;
 
+  // The frame's camera feed's view, while one is filmed (see
+  // CameraFeedComponent): a module adds what it sees as feedInstances.
+  bool feedOn = false;
+  Frustum feedFrustum;
+
   const SceneLighting* lighting = nullptr;
   const std::vector<PointLight>* pointLights = nullptr;
   // The point lights casting shadows this frame; a module includes a caster

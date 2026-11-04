@@ -227,6 +227,14 @@ struct GrassUniforms
   // map's channels' layers is.
   glm::vec4 far{0.0f};
   glm::vec4 farMeadow{0.0f};
+  // The ground's deformation (its terrain's, DeformationModule), which blades
+  // stand on, pressed in, over its patch: 1 if it's deformed, a texel (m),
+  // the window's size (texels), 0; the window's valid part (its corner and
+  // size, world); the patch's centre, half its size and the band it hands
+  // over in (see meshTerrainSurface.wgsl).
+  glm::vec4 deform{0.0f};
+  glm::vec4 deformWindow{0.0f};
+  glm::vec4 deformPatch{0.0f};
 };
 
 /** `Grow` in meshGrassGrow.wgsl. */
@@ -273,7 +281,7 @@ struct UiInstance
   glm::vec4 uv;
   glm::vec4 color;
   glm::vec4 borderColor;
-  glm::vec4 shape; // radius, softness, border, kind
+  glm::vec4 shape; // radius, softness, border, kind (+8: nearest texels)
   glm::vec4 clip;  // left, top, right, bottom: drawn only inside
 };
 
@@ -443,10 +451,14 @@ public:
     std::vector<Draw> draws;
   };
 
-  /** UI quads sharing a texture (null: none, white), drawn in one call. */
+  /**
+   * UI quads sharing their textures, drawn in one call: glyphs' and images'
+   * (null: none, white).
+   */
   struct UiBatch
   {
-    const UiTexture* texture = nullptr;
+    const UiTexture* glyphs = nullptr;
+    const UiTexture* image = nullptr;
     uint32_t first = 0;
     uint32_t count = 0;
   };

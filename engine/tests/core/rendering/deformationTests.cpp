@@ -5,6 +5,7 @@
 #include <engine/core/rendering/terrain.h>
 #include <glm/glm/ext/matrix_transform.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -223,6 +224,21 @@ int main()
     CHECK(map.empty()); // all but flat: gone
   }
 
+  TEST("relaxing some tiles should weather only them, by their corners")
+  {
+    DeformationMap map(0.1f);
+    map.set({0, 0}, -0.09f);
+    map.set({130, 0}, -0.09f); // tile (2, 0)
+    map.set({200, 0}, -0.09f); // tile (3, 0)
+    const glm::ivec2 tiles[] = {{0, 0}, {3, 0}};
+    const glm::vec4 corners[] = {glm::vec4(1.0f), glm::vec4(0.0f)};
+    map.relax(tiles, corners);
+    CHECK(near(map.at({0, 0}), -0.01f));
+    CHECK(near(map.at({1, 1}), -0.01f));
+    CHECK(near(map.at({130, 0}), -0.09f)); // not asked
+    CHECK(near(map.at({200, 0}), -0.09f)); // dry: as it was
+  }
+
   TEST("clearing should flatten inside the region only")
   {
     DeformationMap map(0.1f);
@@ -366,6 +382,12 @@ int main()
     CHECK(underside(
               ready, glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 9)), 0.5f)
               .empty());
+    // Its lowest point placed: exactly its lowest vertex's, however it's
+    // turned (not its bounds' corners, which a turned wheel swings lower).
+    float lowest = std::numeric_limits<float>::infinity();
+    for (const glm::vec3& p : positions)
+      lowest = std::min(lowest, glm::vec3(model * glm::vec4(p, 1.0f)).z);
+    CHECK(near(lowestPoint(ready, model), lowest));
   }
 
   TEST("half floats should round-trip the offsets the GPU reads")
