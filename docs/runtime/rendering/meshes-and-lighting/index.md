@@ -451,6 +451,10 @@ game's grid cell, slopes over a block).
 - `relax(ground, smooth, fade)` weathers the tracks: edges round off and
   ridges slump into ruts by `smooth`, and `fade` of what's left goes (call it
   after rain, or once a day).
+- `relax(ground, tiles, corners)` weathers only some tiles, each by its own
+  amount: `corners` (one per tile) is the smoothing at its four corners,
+  blended across it, so wet ground can weather while dry ground beside it
+  stays as it is (no fade). `map(ground)->tiles()` lists the tiles that exist.
 - `clearRegion(ground, polygon)` (or a rectangle) flattens it, e.g. where a
   field's been tilled.
 - `offsetAt(ground, point)` and `heightAt(ground, point)` read it (the
@@ -1368,6 +1372,13 @@ milliseconds every few seconds (the puddles' over the frames they ran in;
 0 when they didn't). `stats()` reports the last frame's draw calls,
 instances, shadow instances, point lights, and how many of those came from
 emission and cast shadows.
+
+`SFS_CPU_TIMING` does the same for the CPU side, logging named scopes'
+(`SFS_CPU_SCOPE("name")`, `engine/core/util/cpuTiming.h`) time and call count
+every few seconds; nested scopes count inside the ones around them. To catch a
+hitch rather than wait for the periodic log, `SFS_SLOW_FRAME_MS=<ms>` (with or
+without `SFS_CPU_TIMING`) logs a single "Slow frame" line, with its biggest
+scopes, for any frame that takes longer than that end to end.
 
 ## Read more
 
