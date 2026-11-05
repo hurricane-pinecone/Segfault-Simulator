@@ -444,6 +444,10 @@ For screenshots of a hover or press, `SFS_UI_POINTER=x,y` pins the UI's
 pointer at that point (in points from the top left), and `x,y,down` holds it
 down there too.
 
+For testing clicks, `SFS_UI_CLICK=help,frame` presses the middle of whatever
+has that text in its help, from that frame on, through the same hit testing
+the mouse uses, then lets go two frames later. It logs what it found there.
+
 Writing views stays as it was, with one thing to keep in mind: a view's look
 must come from its node, what it inherits, the theme, the State and the
 pointer (through `hovered()`/`pressed()`). Anything else it read wouldn't be

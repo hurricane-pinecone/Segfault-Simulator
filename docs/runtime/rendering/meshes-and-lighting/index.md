@@ -459,6 +459,9 @@ game's grid cell, slopes over a block).
   small steps between neighbours in few bytes) to keep with a saved game;
   `load(ground, bytes)` takes it back. It isn't saved with the scene.
 - `map(ground)` is the `DeformationMap` itself, to read or change directly.
+  `DeformationMap::takeRevised()` is its own list of tiles changed, kept apart
+  from the renderer's upload tracking, so a game can watch for changes (to
+  save, to replicate, to react to) without disturbing the GPU's.
 
 ```cpp
 auto* deformation = render.module<sfs::DeformationModule>();
@@ -1188,6 +1191,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   the GPU would show (`update()`), and let go once it's grown. The GPU keeps
   the blades as the maps grow to; the tiles over growing maps are grown each
   frame as they are now (`GrassMapsImage::now`, `kGrassTileActive`).
+  `SFS_GRASS_NOW` grows every tile that way, to check it looks the same as the
+  blades kept.
   A **cut** keeps its edge finer than a texel, as bounds are (a distance from
   the strip's edge, read between texels and cut at a half): a blade takes its
   length only from the texels on its own side of the line, so a mown edge is
@@ -1206,7 +1211,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   drawn the grass's colour (finely mottled) by how short it is, instead of
   letting the soil show between them, and short blades grow wider (up to
   1.8 times), stubbier tufts covering more ground with as many blades; worn
-  grass (less coverage) shows its soil again.
+  grass (less coverage) shows its soil again. `SFS_GRASS_NO_TURF` turns the
+  turf off, for a before and after.
   `GrassModule::lengthAt()` is how long the blades are at a point now.
 - **Sparse maps:** `GrassMaps` keeps each grid in 16 x 16 tiles
   (`GrassTiles`): a tile that's one value all over keeps just that, so wide
@@ -1403,7 +1409,9 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   frames read back, with the tiles' (grown from, built, kept, hidden, and
   their blades' buffer in use and in all). `SFS_GRASS_STATS=2` also counts the fragments drawn at
   each pixel (overdraw; it keeps the GPU from skipping hidden ones early, so
-  it's slower).
+  it's slower). `SFS_GRASS_GROWTH` logs each map's growth every 240 frames
+  instead: how many tiles are growing, how many are grown as they are now,
+  how many tiles that sends up, and how much memory the maps take.
 
 ## Debug settings
 
