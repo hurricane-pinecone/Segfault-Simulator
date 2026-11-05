@@ -138,7 +138,10 @@ a view changes as the camera moves, `SFS_CAMERA_STEP="forward,right,up,pan,orbit
 steps a 3D view that far again for each shot (metres along the ground, and
 degrees turning in place or round what it looks at), half way between shots;
 a sixth value of 1 moves only the camera grass is grown and thinned from,
-the view held still. `SFS_HOLD_TIME=<seconds>` holds the scene's time for
+the view held still. `SFS_CAMERA_TOUR="ex,ey,ez,tx,ty,tz|..."` (`;` or `|` between) sets the
+view for each shot instead, from each eye looking at its target (the last
+held), likewise half way between shots: one run's shots of several places.
+`SFS_HOLD_TIME=<seconds>` holds the scene's time for
 the renderer (the wind stays still), so shots compare.
 
 ### What each graphics API can do

@@ -1024,6 +1024,30 @@ void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain)
     uniforms.farMeadow[channel] = meadow(std::size_t(channel) + 1);
 }
 
+void grassVigourUniforms(const GrassVigourSettings& settings,
+                         glm::vec4 rect,
+                         glm::vec4& vigour,
+                         glm::vec4& vigourRect,
+                         glm::vec4& vigourDetail)
+{
+  if (!settings.on)
+  {
+    vigour = glm::vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    vigourRect = glm::vec4(0.0f);
+    vigourDetail = glm::vec4(0.0f, 8.0f, 0.0f, 0.5f);
+    return;
+  }
+  vigour = glm::vec4(settings.scale,
+                     settings.bias,
+                     std::clamp(settings.lengthLeast, 0.0f, 1.0f),
+                     std::clamp(settings.densityLeast, 0.0f, 1.0f));
+  vigourRect = rect;
+  vigourDetail = glm::vec4(settings.detail,
+                           std::max(settings.detailSize, 1e-3f),
+                           settings.drivesData0 ? 1.0f : 0.0f,
+                           settings.outside);
+}
+
 std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                                    const GrassFieldState& field,
                                    const FrameParams& frame)
@@ -1074,6 +1098,15 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                          0.0f,
                          0.0f)};
   plan.draw.far.z = kGrassFadeFrom * distance;
+  // Short grass's turf under it (meshGrass.wgsl; for a before and after,
+  // SFS_GRASS_NO_TURF=1: none).
+  static const bool noTurf = std::getenv("SFS_GRASS_NO_TURF") != nullptr;
+  plan.draw.far.w = noTurf ? 0.0f : 1.0f;
+  grassVigourUniforms(batch.vigour,
+                      field.vigourRect,
+                      plan.draw.vigour,
+                      plan.draw.vigourRect,
+                      plan.draw.vigourDetail);
 
   GrassGrowUniforms& uniforms = plan.grow;
   uniforms.model = model;
@@ -1098,6 +1131,9 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
   uniforms.ground = glm::vec4(ground.min, ground.texelSize());
   uniforms.groundSize = glm::ivec4(ground.size, 0, 0);
   uniforms.maps = maps;
+  uniforms.vigour = plan.draw.vigour;
+  uniforms.vigourRect = plan.draw.vigourRect;
+  uniforms.vigourDetail = plan.draw.vigourDetail;
   uniforms.shape =
       glm::vec4(shape.height, shape.heightVariation, shape.width, cell);
   uniforms.detail = glm::vec4(distance * kGrassFineDetail,

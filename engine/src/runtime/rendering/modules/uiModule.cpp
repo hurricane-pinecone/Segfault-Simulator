@@ -330,6 +330,66 @@ void UiModule::handleInput(Input& input)
       return;
     }
   }
+  // (For testing clicks: SFS_UI_CLICK=help,frame clicks the middle of what
+  // has that help (a part of its text) from that frame on (pressed, then let
+  // go two frames later, through the same hit testing as the mouse's), logged
+  // with what it found there.)
+  static const char* const click = std::getenv("SFS_UI_CLICK");
+  if (click)
+  {
+    static int frame = 0, pressedAt = -1;
+    static bool done = false;
+    static glm::vec2 at{0.0f};
+    const std::string spec = click;
+    const std::size_t comma = spec.rfind(',');
+    const std::string help = spec.substr(0, comma);
+    const int from =
+        comma == std::string::npos ? 0 : std::atoi(spec.c_str() + comma + 1);
+    ++frame;
+    if (!done && pressedAt < 0 && frame >= from)
+      for (const auto& [layer, kept] : m_drawn)
+        for (const ui::Hit& each : kept->cache.hits())
+          if (pressedAt < 0 && each.help.find(help) != std::string::npos)
+          {
+            at = glm::vec2(each.rect.x + each.rect.width * 0.5f,
+                           each.rect.y + each.rect.height * 0.5f);
+            const Found front = hitAt(at);
+            LOG_INFO("SFS_UI_CLICK '" + help + "': pressing at " +
+                     std::to_string(at.x) + "," + std::to_string(at.y) +
+                     ", in front there: " +
+                     (front.hit ? "'" + front.hit->help + "'" +
+                                      (front.hit->action ? " (clickable)"
+                                                         : " (not clickable)")
+                                : std::string("nothing")));
+            // ...and everything there, front to back.
+            std::string there;
+            for (auto l = m_drawn.rbegin(); l != m_drawn.rend(); ++l)
+              for (auto h = l->second->cache.hits().rbegin();
+                   h != l->second->cache.hits().rend();
+                   ++h)
+                if (h->rect.contains(at))
+                  there += std::string(there.empty() ? "" : ", ") +
+                           (h->action ? "clickable" : "not clickable") +
+                           (h->help.empty() ? "" : " '" + h->help + "'");
+            LOG_INFO("SFS_UI_CLICK '" + help +
+                     "': there, front to back: " + there);
+            pointer(at, true, true, false, true);
+            pressedAt = frame;
+          }
+    if (pressedAt >= 0 && !done)
+    {
+      if (frame >= pressedAt + 2)
+      {
+        pointer(at, true, false, true, false);
+        done = true;
+        LOG_INFO("SFS_UI_CLICK '" + help + "': let go");
+      }
+      else
+        pointer(at, true, false, false, true);
+      mouse.block();
+      return;
+    }
+  }
   // The UI's mouse: held since a press on it, or over it with nothing held
   // (a drag the game started carries on across it).
   const bool held = mouse.mouseHeld(MouseButton::Left) ||

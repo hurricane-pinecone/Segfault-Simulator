@@ -147,6 +147,8 @@ public:
   GrassHandle createGrass(const GrassGround& ground) override;
   void updateGrassGround(GrassHandle grass, const GrassGround& ground) override;
   void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override;
+  void updateGrassVigour(GrassHandle grass,
+                         const GrassVigourImage& image) override;
   void updateGrassTrample(GrassHandle grass,
                           const GrassTrampleImage& image) override;
   void destroyGrass(GrassHandle grass) override;
@@ -230,6 +232,11 @@ private:
     GpuImage shape;
     GpuImage data;
     GpuImage trample;
+    // Its maps as they are now (growing: GrassMaps::nowPixels()), where
+    // they've been cut (cutPixels()), and its vigour field.
+    GpuImage now;
+    GpuImage cut;
+    GpuImage vigour;
     // Its ground's terrain's splat map, for its ground past the maps (null:
     // none, a stand-in bound).
     std::shared_ptr<GpuTexture> farSplat;
@@ -473,6 +480,10 @@ private:
   // pipeline a surface draws it with (null if it doesn't build), growing the
   // frame's blades (a compute pass, before the lit pass), and drawing them.
   void rebuildGrassBindings(GpuGrass& grass);
+  // The grow pass's images past its first bindings (13 to 16: its maps as
+  // they are now, where they're cut, their data, its vigour field).
+  void growImages(const GpuGrass& grass,
+                  std::span<WGPUBindGroupEntry> entries) const;
   // An RGBA texture to sample (and fill from the CPU); pixels into a
   // rectangle of one, from `origin`, `size` of them.
   static GpuImage

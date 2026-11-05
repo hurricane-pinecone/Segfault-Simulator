@@ -207,7 +207,7 @@ void DeformationMap::set(glm::ivec2 texel, float offset)
   Tile& into = existing ? *existing : makeTile(tile);
   into[indexInTile(texel)] = offset;
   m_deepest = std::min(m_deepest, offset);
-  m_changed.insert(keyOf(tile));
+  markChanged(keyOf(tile));
 }
 
 float DeformationMap::at(glm::ivec2 texel, Cursor& cursor)
@@ -238,7 +238,7 @@ void DeformationMap::set(glm::ivec2 texel, float offset, Cursor& cursor)
   m_deepest = std::min(m_deepest, offset);
   if (cursor.changed != key)
   {
-    m_changed.insert(key);
+    markChanged(key);
     cursor.changed = key;
   }
 }
@@ -563,7 +563,7 @@ void DeformationMap::relax(float smooth, float fade)
   std::vector<glm::ivec2> all;
   for (const auto& [key, tile] : m_tiles)
   {
-    m_changed.insert(key);
+    markChanged(key);
     all.push_back(tileOfKey(key));
   }
   dropFlat(all);
@@ -625,7 +625,7 @@ void DeformationMap::relax(std::span<const glm::ivec2> tiles,
       }
     }
     tile->swap(out);
-    m_changed.insert(keyOf(tiles[t]));
+    markChanged(keyOf(tiles[t]));
     done.push_back(tiles[t]);
   }
   dropFlat(done);
@@ -684,7 +684,7 @@ void DeformationMap::clear(std::span<const glm::vec2> polygon)
         }
       if (any)
       {
-        m_changed.insert(keyOf({tx, ty}));
+        markChanged(keyOf({tx, ty}));
         touched.push_back({tx, ty});
       }
     }
@@ -694,7 +694,7 @@ void DeformationMap::clear(std::span<const glm::vec2> polygon)
 void DeformationMap::clearAll()
 {
   for (const auto& [key, tile] : m_tiles)
-    m_changed.insert(key);
+    markChanged(key);
   m_tiles.clear();
   m_deepest = 0.0f;
 }
@@ -723,6 +723,22 @@ std::vector<glm::ivec2> DeformationMap::takeChanged()
     out.push_back(tileOfKey(key));
   m_changed.clear();
   return out;
+}
+
+std::vector<glm::ivec2> DeformationMap::takeRevised()
+{
+  std::vector<glm::ivec2> out;
+  out.reserve(m_revised.size());
+  for (const int64_t key : m_revised)
+    out.push_back(tileOfKey(key));
+  m_revised.clear();
+  return out;
+}
+
+void DeformationMap::markChanged(int64_t key)
+{
+  m_changed.insert(key);
+  m_revised.insert(key);
 }
 
 std::vector<glm::ivec2> DeformationMap::tiles() const
@@ -861,7 +877,7 @@ bool DeformationMap::load(std::span<const uint8_t> bytes)
   m_deepest = std::min(deepest, 0.0f);
   m_tiles = std::move(read);
   for (const auto& [key, tile] : m_tiles)
-    m_changed.insert(key);
+    markChanged(key);
   return true;
 }
 

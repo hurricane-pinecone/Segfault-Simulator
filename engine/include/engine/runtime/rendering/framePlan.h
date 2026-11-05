@@ -235,6 +235,10 @@ struct GrassUniforms
   glm::vec4 deform{0.0f};
   glm::vec4 deformWindow{0.0f};
   glm::vec4 deformPatch{0.0f};
+  // Its vigour (GrassVigourSettings, see grassVigourUniforms()).
+  glm::vec4 vigour{0.0f, 1.0f, 1.0f, 1.0f};
+  glm::vec4 vigourRect{0.0f};
+  glm::vec4 vigourDetail{0.0f, 8.0f, 0.0f, 0.5f};
 };
 
 /** `Grow` in meshGrassGrow.wgsl. */
@@ -267,8 +271,12 @@ struct GrassGrowUniforms
   glm::vec4 eye{0.0f};
   glm::vec4 forward{0.0f};
   glm::vec4 hidden{0.0f};
+  // Its vigour, as GrassUniforms'.
+  glm::vec4 vigour{0.0f, 1.0f, 1.0f, 1.0f};
+  glm::vec4 vigourRect{0.0f};
+  glm::vec4 vigourDetail{0.0f, 8.0f, 0.0f, 0.5f};
 };
-static_assert(sizeof(GrassGrowUniforms) == 560,
+static_assert(sizeof(GrassGrowUniforms) == 608,
               "GrassGrowUniforms must match meshGrassGrow.wgsl's Grow");
 
 /** A grown blade (meshGrassGrow.wgsl's `GrownBlade`), in bytes. */
@@ -632,7 +640,22 @@ struct GrassFieldState
   glm::vec4 trampleBounds{0.0f, 0.0f, 1.0f, 1.0f}; // min xy, 1 / size
   std::array<uint32_t, 3> capacity{0, 0, 0};       // blades a list
   uint32_t shadowCapacity = 0; // blades that can cast the sun's shadow
+  // Its vigour field's world min, 1 / its world size (zw 0: none).
+  glm::vec4 vigourRect{0.0f};
 };
+
+/**
+ * A grass field's vigour (GrassVigourSettings) as its shaders take it, over
+ * its field's place (GrassFieldState::vigourRect): x scale, y bias, z the
+ * least length, w the least density; then the field's place; then x how much
+ * detail noise, y its size, z 1 if it drives Data 0, w the field past it.
+ * Off: vigour 1 everywhere (scale 0, bias 1).
+ */
+void grassVigourUniforms(const GrassVigourSettings& settings,
+                         glm::vec4 rect,
+                         glm::vec4& vigour,
+                         glm::vec4& vigourRect,
+                         glm::vec4& vigourDetail);
 
 /** How a grass field grows and draws this frame (see planGrass). */
 struct GrassPlan

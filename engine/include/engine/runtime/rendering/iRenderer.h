@@ -190,6 +190,15 @@ public:
   virtual void updateGrassTrample(GrassHandle grass,
                                   const GrassTrampleImage& image) = 0;
 
+  /**
+   * The field it grows by (GrassVigourField; empty: none), with its batch's
+   * GrassVigourSettings. A backend without it grows grass as its maps say.
+   */
+  virtual void updateGrassVigour(GrassHandle /*grass*/,
+                                 const GrassVigourImage& /*image*/)
+  {
+  }
+
   /** Free a grass field. Unknown or invalid handles are ignored. */
   virtual void destroyGrass(GrassHandle grass) = 0;
 

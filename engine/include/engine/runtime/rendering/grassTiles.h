@@ -5,8 +5,10 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace sfs
@@ -31,6 +33,9 @@ inline constexpr uint32_t kKeptBladeBytes = 16;
 inline constexpr uint32_t kGrassTileFresh = 4;     // built in the last moments
 inline constexpr uint32_t kGrassTileEdited = 8;    // built again for an edit
 inline constexpr uint32_t kGrassTileReversed = 16; // its high Y first
+// Over maps growing (GrassMaps::activeTiles()): its blades grown each frame
+// as the maps are now, not as kept.
+inline constexpr uint32_t kGrassTileActive = 32;
 
 /**
  * `TileEntry` in meshGrassGrow.wgsl: a tile to build, or one to grow a
@@ -158,6 +163,15 @@ public:
   /** Every tile built again. */
   void clear();
 
+  /**
+   * Where its maps (over `grid`, the ground's own XY) are growing: each of
+   * their tiles (kGrassMapTile texels a side, `tiles` across and down)
+   * non-zero if so. The tiles over them are marked kGrassTileActive.
+   */
+  void setActive(const GrassGrid& grid,
+                 glm::ivec2 tiles,
+                 std::span<const uint8_t> active);
+
   /** A frame's work. */
   struct Frame
   {
@@ -250,8 +264,17 @@ private:
   std::optional<uint32_t> roomFor(uint32_t chunks, uint64_t frame);
   void drop(uint32_t slot);
 
+  // Whether any of a rectangle of the ground's own XY is over maps growing.
+  bool activeOver(glm::vec2 low, glm::vec2 high) const;
+
   Limits m_limits;
   GrassHeights m_heights;
+  GrassGrid m_activeGrid;
+  glm::ivec2 m_activeTiles{0, 0};
+  std::vector<uint8_t> m_active;
+  bool m_anyActive = false;
+  // Every tile grown as its maps are now (SFS_GRASS_NOW: for checking).
+  bool m_allActive = std::getenv("SFS_GRASS_NOW") != nullptr;
   glm::vec2 m_lowest{0.0f}; // its lowest and highest ground
   Built m_for;
   Levels m_levels;

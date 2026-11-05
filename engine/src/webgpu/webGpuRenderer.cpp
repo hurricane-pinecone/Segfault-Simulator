@@ -1593,6 +1593,7 @@ GrassHandle WebGpuRenderer::createGrass(const GrassGround& ground)
   // flattened, until told otherwise.
   const uint8_t full[4] = {255, 255, 255, 255};
   const uint8_t none[4] = {0, 0, 0, 0};
+  const uint8_t uncut[4] = {0, 128, 128, 0}; // (no cut, no lean)
   const uint8_t standing[4] = {128, 128, 0, 255};
   grass.shape = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
   grass.data = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
@@ -1600,6 +1601,13 @@ GrassHandle WebGpuRenderer::createGrass(const GrassGround& ground)
   writeImage(queue, grass.shape, {0, 0}, {1, 1}, full, 4);
   writeImage(queue, grass.data, {0, 0}, {1, 1}, none, 4);
   writeImage(queue, grass.trample, {0, 0}, {1, 1}, standing, 4);
+  grass.now = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
+  grass.cut = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
+  grass.vigour = makeImage(device, {1, 1}, WGPUTextureFormat_R16Float);
+  writeImage(queue, grass.now, {0, 0}, {1, 1}, full, 4);
+  writeImage(queue, grass.cut, {0, 0}, {1, 1}, uncut, 4);
+  const uint16_t middling = glm::packHalf1x16(0.5f);
+  writeImage(queue, grass.vigour, {0, 0}, {1, 1}, &middling, 2);
 
   grass.growUniforms =
       makeBuffer(device,
@@ -1668,11 +1676,24 @@ GrassHandle WebGpuRenderer::createGrass(const GrassGround& ground)
   return GrassHandle{slot + 1};
 }
 
+void WebGpuRenderer::growImages(const GpuGrass& grass,
+                                std::span<WGPUBindGroupEntry> entries) const
+{
+  entries[0].binding = 13;
+  entries[0].textureView = grass.now.view.get();
+  entries[1].binding = 14;
+  entries[1].textureView = grass.cut.view.get();
+  entries[2].binding = 15;
+  entries[2].textureView = grass.data.view.get();
+  entries[3].binding = 16;
+  entries[3].textureView = grass.vigour.view.get();
+}
+
 void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
 {
   const WGPUDevice device = m_context.device();
   {
-    std::array<WGPUBindGroupEntry, 8> entries{};
+    std::array<WGPUBindGroupEntry, 12> entries{};
     entries[0].binding = 0;
     entries[0].buffer = grass.growUniforms.get();
     entries[0].size = sizeof(GrassGrowUniforms);
@@ -1694,6 +1715,7 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
     entries[7].binding = 7;
     entries[7].buffer = m_grassCounters.get();
     entries[7].size = WGPU_WHOLE_SIZE;
+    growImages(grass, std::span(entries).subspan(8));
     WGPUBindGroupDescriptor desc = {};
     desc.layout = m_grassGrowLayout.get();
     desc.entryCount = entries.size();
@@ -1704,22 +1726,22 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
     if (m_grassTileLayout && grass.kept && grass.tileState && grass.tileList &&
         grass.listedIn && m_grassCulling.all)
     {
-      std::array<WGPUBindGroupEntry, 13> tiled{};
+      std::array<WGPUBindGroupEntry, 17> tiled{};
       std::copy(entries.begin(), entries.end(), tiled.begin());
-      tiled[8].binding = 8;
-      tiled[8].buffer = grass.tileList.get();
-      tiled[8].size = WGPU_WHOLE_SIZE;
-      tiled[9].binding = 9;
-      tiled[9].buffer = grass.kept.get();
-      tiled[9].size = WGPU_WHOLE_SIZE;
-      tiled[10].binding = 10;
-      tiled[10].buffer = grass.tileState.get();
-      tiled[10].size = WGPU_WHOLE_SIZE;
-      tiled[11].binding = 11;
-      tiled[11].buffer = grass.listedIn.get();
-      tiled[11].size = WGPU_WHOLE_SIZE;
-      tiled[12].binding = 12;
-      tiled[12].textureView = m_grassCulling.all.get();
+      tiled[12].binding = 8;
+      tiled[12].buffer = grass.tileList.get();
+      tiled[12].size = WGPU_WHOLE_SIZE;
+      tiled[13].binding = 9;
+      tiled[13].buffer = grass.kept.get();
+      tiled[13].size = WGPU_WHOLE_SIZE;
+      tiled[14].binding = 10;
+      tiled[14].buffer = grass.tileState.get();
+      tiled[14].size = WGPU_WHOLE_SIZE;
+      tiled[15].binding = 11;
+      tiled[15].buffer = grass.listedIn.get();
+      tiled[15].size = WGPU_WHOLE_SIZE;
+      tiled[16].binding = 12;
+      tiled[16].textureView = m_grassCulling.all.get();
       desc.layout = m_grassTileLayout.get();
       desc.entryCount = tiled.size();
       desc.entries = tiled.data();
@@ -1733,7 +1755,7 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
       grass.deformMap ? grass.deformMap : solidTexture(glm::vec4(0.0f));
   for (std::size_t list = 0; list < grass.drawBindings.size(); ++list)
   {
-    std::array<WGPUBindGroupEntry, 10> entries{};
+    std::array<WGPUBindGroupEntry, 11> entries{};
     entries[0].binding = 0;
     entries[0].buffer = grass.blades.get();
     entries[0].size = WGPU_WHOLE_SIZE;
@@ -1746,8 +1768,9 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
     entries[3].sampler = m_clampSampler.get();
     entries[4].binding = 4;
     entries[4].textureView = grass.data.view.get();
+    // (Its ground as the maps are now.)
     entries[5].binding = 5;
-    entries[5].textureView = grass.shape.view.get();
+    entries[5].textureView = grass.now.view.get();
     entries[6].binding = 7;
     entries[6].buffer = grass.draws.get();
     entries[6].offset = (list + 1) * kGrassListStartBytes;
@@ -1756,16 +1779,18 @@ void WebGpuRenderer::rebuildGrassBindings(GpuGrass& grass)
     entries[7].textureView = farSplat->view.get();
     entries[8].binding = 9;
     entries[8].textureView = deformMap->view.get();
+    entries[9].binding = 10;
+    entries[9].textureView = grass.vigour.view.get();
     const bool pixels = m_grassStats && m_grassStats->pixels;
     if (pixels)
     {
-      entries[9].binding = 6;
-      entries[9].buffer = m_grassStats->fragments.get();
-      entries[9].size = WGPU_WHOLE_SIZE;
+      entries[10].binding = 6;
+      entries[10].buffer = m_grassStats->fragments.get();
+      entries[10].size = WGPU_WHOLE_SIZE;
     }
     WGPUBindGroupDescriptor desc = {};
     desc.layout = m_grassLayout.get();
-    desc.entryCount = pixels ? 10 : 9;
+    desc.entryCount = pixels ? 11 : 10;
     desc.entries = entries.data();
     grass.drawBindings[list].reset(wgpuDeviceCreateBindGroup(device, &desc));
   }
@@ -1845,24 +1870,26 @@ void WebGpuRenderer::updateGrassMaps(GrassHandle handle,
     {
       grass.shape = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
       grass.data = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
+      grass.now = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
+      grass.cut = makeImage(device, {1, 1}, WGPUTextureFormat_RGBA8Unorm);
       rebuildGrassBindings(grass);
     }
     const uint8_t full[4] = {255, 255, 255, 255};
     const uint8_t none[4] = {0, 0, 0, 0};
+    const uint8_t uncut[4] = {0, 128, 128, 0}; // (no cut, no lean)
     writeImage(queue, grass.shape, {0, 0}, {1, 1}, full, 4);
     writeImage(queue, grass.data, {0, 0}, {1, 1}, none, 4);
+    writeImage(queue, grass.now, {0, 0}, {1, 1}, full, 4);
+    writeImage(queue, grass.cut, {0, 0}, {1, 1}, uncut, 4);
     grass.state.mapsGrid = {};
     if (grass.tiles)
+    {
       grass.tiles->clear();
+      grass.tiles->setActive({}, {0, 0}, {});
+    }
     return;
   }
 
-  const glm::ivec2 from =
-      glm::clamp(image.from, glm::ivec2(0), image.grid.size);
-  const glm::ivec2 to = glm::clamp(image.to, from, image.grid.size);
-  const std::size_t bytes = std::size_t(to.x - from.x) * (to.y - from.y) * 4;
-  if (image.shape.size() < bytes || image.data.size() < bytes)
-    return;
   if (grass.state.mapsGrid.size != image.grid.size ||
       grass.shape.size != image.grid.size)
   {
@@ -1870,32 +1897,102 @@ void WebGpuRenderer::updateGrassMaps(GrassHandle handle,
         makeImage(device, image.grid.size, WGPUTextureFormat_RGBA8Unorm);
     grass.data =
         makeImage(device, image.grid.size, WGPUTextureFormat_RGBA8Unorm);
+    grass.now =
+        makeImage(device, image.grid.size, WGPUTextureFormat_RGBA8Unorm);
+    grass.cut =
+        makeImage(device, image.grid.size, WGPUTextureFormat_RGBA8Unorm);
     rebuildGrassBindings(grass);
   }
   grass.state.mapsGrid = image.grid;
-  writeImage(queue, grass.shape, from, to - from, image.shape.data(), 4);
-  writeImage(queue, grass.data, from, to - from, image.data.data(), 4);
 
-  // Its tiles over where what grows blades changed built again (with a
-  // few texels more round it: a change of coverage moves the band where
-  // grass gives out kGrassEdgeBand texels round, and a blade's maps are
-  // read between texels).
-  if (grass.tiles)
+  const glm::ivec2 from =
+      glm::clamp(image.from, glm::ivec2(0), image.grid.size);
+  const glm::ivec2 to = glm::clamp(image.to, from, image.grid.size);
+  const std::size_t texels = std::size_t(to.x - from.x) * (to.y - from.y);
+  if (texels > 0)
   {
-    const glm::vec2 texel = image.grid.texelSize();
-    constexpr int kRound = kGrassEdgeBand + 1;
-    const auto regrow = [&](glm::ivec2 low, glm::ivec2 high)
+    if (image.data.size() >= texels * 4)
+      writeImage(queue, grass.data, from, to - from, image.data.data(), 4);
+    if (image.shape.size() >= texels * 4)
     {
-      if (high.x > low.x && high.y > low.y)
-        grass.tiles->changed(image.grid.min + glm::vec2(low - kRound) * texel,
-                             image.grid.min + glm::vec2(high + kRound) * texel);
-    };
-    if (!image.regrow)
-      regrow(from, to);
-    else
-      for (const glm::ivec4& rect : *image.regrow)
-        regrow(glm::ivec2(rect.x, rect.y), glm::ivec2(rect.z, rect.w));
+      writeImage(queue, grass.shape, from, to - from, image.shape.data(), 4);
+      // Its tiles over where what grows blades changed built again (with a
+      // few texels more round it: a change of coverage moves the band where
+      // grass gives out kGrassEdgeBand texels round, and a blade's maps are
+      // read between texels).
+      if (grass.tiles)
+      {
+        const glm::vec2 texel = image.grid.texelSize();
+        constexpr int kRound = kGrassEdgeBand + 1;
+        const auto regrow = [&](glm::ivec2 low, glm::ivec2 high)
+        {
+          if (high.x > low.x && high.y > low.y)
+            grass.tiles->changed(
+                image.grid.min + glm::vec2(low - kRound) * texel,
+                image.grid.min + glm::vec2(high + kRound) * texel);
+        };
+        if (!image.regrow)
+          regrow(from, to);
+        else
+          for (const glm::ivec4& rect : *image.regrow)
+            regrow(glm::ivec2(rect.x, rect.y), glm::ivec2(rect.z, rect.w));
+      }
+    }
+    if (image.now.size() >= texels * 4)
+      writeImage(queue, grass.now, from, to - from, image.now.data(), 4);
+    else if (image.shape.size() >= texels * 4)
+      writeImage(queue, grass.now, from, to - from, image.shape.data(), 4);
+    if (image.cut.size() >= texels * 4)
+      writeImage(queue, grass.cut, from, to - from, image.cut.data(), 4);
   }
+  // Tiles growing, as they are now.
+  for (const GrassMapsTileImage& tile : image.tiles)
+  {
+    const glm::ivec2 low =
+        glm::clamp(tile.from, glm::ivec2(0), image.grid.size);
+    const glm::ivec2 high = glm::clamp(tile.to, low, image.grid.size);
+    const std::size_t count = std::size_t(high.x - low.x) * (high.y - low.y);
+    if (count == 0)
+      continue;
+    if (tile.now.size() >= count * 4)
+      writeImage(queue, grass.now, low, high - low, tile.now.data(), 4);
+    if (tile.cut.size() >= count * 4)
+      writeImage(queue, grass.cut, low, high - low, tile.cut.data(), 4);
+  }
+  if (image.activeChanged && grass.tiles)
+    grass.tiles->setActive(image.grid, image.activeTiles, image.active);
+}
+
+void WebGpuRenderer::updateGrassVigour(GrassHandle handle,
+                                       const GrassVigourImage& image)
+{
+  if (!handle.valid() || handle.id > m_grass.size() || !m_grass[handle.id - 1])
+    return;
+  GpuGrass& grass = *m_grass[handle.id - 1];
+  const WGPUDevice device = m_context.device();
+  const WGPUQueue queue = m_context.queue();
+  const glm::ivec2 size =
+      image.size.x > 0 && image.size.y > 0 &&
+              image.values.size() >= std::size_t(image.size.x) * image.size.y &&
+              image.max.x > image.min.x && image.max.y > image.min.y
+          ? image.size
+          : glm::ivec2(0);
+  if (size.x <= 0)
+  {
+    // None: grown as its maps say (its settings say where it isn't).
+    grass.state.vigourRect = glm::vec4(0.0f);
+    return;
+  }
+  if (grass.vigour.size != size)
+  {
+    grass.vigour = makeImage(device, size, WGPUTextureFormat_R16Float);
+    rebuildGrassBindings(grass);
+  }
+  std::vector<uint16_t> halves(std::size_t(size.x) * size.y);
+  for (std::size_t i = 0; i < halves.size(); ++i)
+    halves[i] = glm::packHalf1x16(image.values[i]);
+  writeImage(queue, grass.vigour, {0, 0}, size, halves.data(), 2);
+  grass.state.vigourRect = glm::vec4(image.min, 1.0f / (image.max - image.min));
 }
 
 void WebGpuRenderer::updateGrassTrample(GrassHandle handle,
@@ -2263,6 +2360,15 @@ void WebGpuRenderer::growGrass()
       grass.fromTiles = true;
       grass.builds = static_cast<uint32_t>(frame.builds.size());
       grass.tilesDrawn = static_cast<uint32_t>(frame.drawn.size());
+      static const bool kGrowthLog = std::getenv("SFS_GRASS_GROWTH") != nullptr;
+      if (kGrowthLog && m_grassFrame % 240 == 0)
+      {
+        std::size_t active = 0;
+        for (const GrassTileEntry& entry : frame.drawn)
+          active += (entry.lattice & kGrassTileActive) != 0 ? 1 : 0;
+        LOG_INFO("Grass tiles drawn: " + std::to_string(frame.drawn.size()) +
+                 ", " + std::to_string(active) + " over maps growing");
+      }
       const double chunkBytes = double(kGrassChunk) * kKeptBladeBytes;
       tileStats[0] += double(frame.drawn.size());
       tileStats[1] += double(frame.builds.size());
@@ -3643,7 +3749,7 @@ bool WebGpuRenderer::createPipelines()
   // its maps (data for its material, coverage for its ground) and where the
   // list drawn starts among its blades.
   {
-    std::array<WGPUBindGroupLayoutEntry, 10> entries{};
+    std::array<WGPUBindGroupLayoutEntry, 11> entries{};
     const WGPUShaderStage both =
         WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
     entries[0] =
@@ -3676,18 +3782,23 @@ bool WebGpuRenderer::createPipelines()
     entries[8].visibility = both;
     entries[8].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
     entries[8].texture.viewDimension = WGPUTextureViewDimension_2D;
+    // Its vigour field (its ground's, at its vertices).
+    entries[9].binding = 10;
+    entries[9].visibility = WGPUShaderStage_Vertex;
+    entries[9].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[9].texture.viewDimension = WGPUTextureViewDimension_2D;
     // And, counting (SFS_GRASS_STATS), the fragments each pixel shades.
-    entries[9] = wgpu::storageEntry(
+    entries[10] = wgpu::storageEntry(
         6, WGPUShaderStage_Fragment, WGPUBufferBindingType_Storage);
     WGPUBindGroupLayoutDescriptor desc = {};
-    desc.entryCount = m_grassStats && m_grassStats->pixels ? 10 : 9;
+    desc.entryCount = m_grassStats && m_grassStats->pixels ? 11 : 10;
     desc.entries = entries.data();
     m_grassLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
   }
   // Growing grass: its settings, ground and maps in, its blades and their
   // draws out.
   {
-    std::array<WGPUBindGroupLayoutEntry, 8> entries{};
+    std::array<WGPUBindGroupLayoutEntry, 12> entries{};
     entries[0] = wgpu::storageEntry(
         0, WGPUShaderStage_Compute, WGPUBufferBindingType_Uniform);
     entries[1].binding = 1;
@@ -3709,6 +3820,15 @@ bool WebGpuRenderer::createPipelines()
         6, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
     entries[7] = wgpu::storageEntry(
         7, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
+    // Its maps as they are now, where they're cut, their data and its vigour
+    // field (growImages()).
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+      entries[8 + i].binding = 13 + i;
+      entries[8 + i].visibility = WGPUShaderStage_Compute;
+      entries[8 + i].texture.sampleType = WGPUTextureSampleType_Float;
+      entries[8 + i].texture.viewDimension = WGPUTextureViewDimension_2D;
+    }
     WGPUBindGroupLayoutDescriptor desc = {};
     desc.entryCount = entries.size();
     desc.entries = entries.data();
@@ -3738,21 +3858,21 @@ bool WebGpuRenderer::createPipelines()
     // From tiles kept built: as much again, then the tiles (those to build,
     // then those to grow from), their kept blades, how many each has (and
     // lists this frame), and which list each of the frame's blades is in.
-    std::array<WGPUBindGroupLayoutEntry, 13> tiled{};
+    std::array<WGPUBindGroupLayoutEntry, 17> tiled{};
     std::copy(entries.begin(), entries.end(), tiled.begin());
-    tiled[8] = wgpu::storageEntry(
+    tiled[12] = wgpu::storageEntry(
         8, WGPUShaderStage_Compute, WGPUBufferBindingType_ReadOnlyStorage);
-    tiled[9] = wgpu::storageEntry(
+    tiled[13] = wgpu::storageEntry(
         9, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
-    tiled[10] = wgpu::storageEntry(
+    tiled[14] = wgpu::storageEntry(
         10, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
-    tiled[11] = wgpu::storageEntry(
+    tiled[15] = wgpu::storageEntry(
         11, WGPUShaderStage_Compute, WGPUBufferBindingType_Storage);
     // And the farthest depths over the screen's blocks (ensureGrassCulling()).
-    tiled[12].binding = 12;
-    tiled[12].visibility = WGPUShaderStage_Compute;
-    tiled[12].texture.sampleType = WGPUTextureSampleType_Uint;
-    tiled[12].texture.viewDimension = WGPUTextureViewDimension_2D;
+    tiled[16].binding = 12;
+    tiled[16].visibility = WGPUShaderStage_Compute;
+    tiled[16].texture.sampleType = WGPUTextureSampleType_Uint;
+    tiled[16].texture.viewDimension = WGPUTextureViewDimension_2D;
     desc.entryCount = tiled.size();
     desc.entries = tiled.data();
     m_grassTileLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
@@ -5643,7 +5763,7 @@ void WebGpuRenderer::growFeedGrass()
     // Its bindings, made again each time it's grown (a few a second): the
     // field's maps, its own buffers.
     {
-      std::array<WGPUBindGroupEntry, 8> entries{};
+      std::array<WGPUBindGroupEntry, 12> entries{};
       entries[0].binding = 0;
       entries[0].buffer = feed.growUniforms.get();
       entries[0].size = sizeof(GrassGrowUniforms);
@@ -5665,6 +5785,7 @@ void WebGpuRenderer::growFeedGrass()
       entries[7].binding = 7;
       entries[7].buffer = m_grassCounters.get();
       entries[7].size = WGPU_WHOLE_SIZE;
+      growImages(grass, std::span(entries).subspan(8));
       WGPUBindGroupDescriptor desc = {};
       desc.layout = m_grassGrowLayout.get();
       desc.entryCount = entries.size();
@@ -5677,7 +5798,7 @@ void WebGpuRenderer::growFeedGrass()
         grass.deformMap ? grass.deformMap : solidTexture(glm::vec4(0.0f));
     for (std::size_t list = 0; list < feed.drawBindings.size(); ++list)
     {
-      std::array<WGPUBindGroupEntry, 10> entries{};
+      std::array<WGPUBindGroupEntry, 11> entries{};
       entries[0].binding = 0;
       entries[0].buffer = feed.blades.get();
       entries[0].size = WGPU_WHOLE_SIZE;
@@ -5691,7 +5812,7 @@ void WebGpuRenderer::growFeedGrass()
       entries[4].binding = 4;
       entries[4].textureView = grass.data.view.get();
       entries[5].binding = 5;
-      entries[5].textureView = grass.shape.view.get();
+      entries[5].textureView = grass.now.view.get();
       entries[6].binding = 7;
       entries[6].buffer = feed.draws.get();
       entries[6].offset = (list + 1) * kGrassListStartBytes;
@@ -5700,18 +5821,20 @@ void WebGpuRenderer::growFeedGrass()
       entries[7].textureView = farSplat->view.get();
       entries[8].binding = 9;
       entries[8].textureView = deformMap->view.get();
+      entries[9].binding = 10;
+      entries[9].textureView = grass.vigour.view.get();
       // (The layout has the count's binding while counting: bound, never
       // written, as shadow.w is 0.)
       const bool pixels = m_grassStats && m_grassStats->pixels;
       if (pixels)
       {
-        entries[9].binding = 6;
-        entries[9].buffer = m_grassStats->fragments.get();
-        entries[9].size = WGPU_WHOLE_SIZE;
+        entries[10].binding = 6;
+        entries[10].buffer = m_grassStats->fragments.get();
+        entries[10].size = WGPU_WHOLE_SIZE;
       }
       WGPUBindGroupDescriptor desc = {};
       desc.layout = m_grassLayout.get();
-      desc.entryCount = pixels ? 10 : 9;
+      desc.entryCount = pixels ? 11 : 10;
       desc.entries = entries.data();
       feed.drawBindings[list].reset(wgpuDeviceCreateBindGroup(device, &desc));
     }

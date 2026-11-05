@@ -115,6 +115,53 @@ public:
    */
   void terrainPainted(const Entity& entity);
 
+  // --- growth (see GrassMaps' growth)
+  // ----------------------------------------
+
+  /**
+   * The clock grass grows by: days of growth (GrassMaps::setClock()), for all
+   * its maps, from the next frame (a game runs it slower in a drought).
+   */
+  void setClock(double growthDays);
+
+  /**
+   * How an entity's grass grows by a field over the world (how wet the
+   * ground is, say): its field (null: none; shared, so several grasses can
+   * take one) and how (GrassVigourSettings). Set it as often as it changes
+   * (its settings each frame, if they do: they cost nothing); the field goes
+   * up to the GPU when it's another one.
+   */
+  void setVigour(const Entity& entity,
+                 std::shared_ptr<const GrassVigourField> field,
+                 const GrassVigourSettings& settings);
+
+  /**
+   * Mow a strip (GrassCut, in world space: `a` to `b` world XY, `width` world
+   * units across): its blades cut to the line of its edges.
+   */
+  void cut(const Entity& entity, GrassCut cut);
+  /**
+   * Lay mown grass over the way it was rolled (GrassRoll, in world space, as
+   * cut()'s): its blades leaning that way (a striping roller's stripes).
+   */
+  void roll(const Entity& entity, GrassRoll roll);
+
+  /**
+   * Lay grass flat over a world circle (GrassMaps::flatten()): no longer than
+   * `to` of its length, standing up again over time.
+   */
+  void flatten(const Entity& entity,
+               glm::vec3 center,
+               float radius,
+               float to,
+               float softness = 0.5f);
+
+  /**
+   * How long an entity's blades are at a world point now, of their full
+   * height (GrassComponent::height): as grown, and by its vigour.
+   */
+  float lengthAt(const Entity& entity, glm::vec3 point) const;
+
   // --- for tests and tools
   // ----------------------------------------------------
 
@@ -197,6 +244,15 @@ private:
     float recovery = 3.0f;
     bool seen = false; // this frame
 
+    // How it grows by a field over the world (setVigour()), and the field the
+    // GPU has (for its handle `vigourGpu`).
+    std::shared_ptr<const GrassVigourField> vigourField;
+    GrassVigourSettings vigour;
+    const GrassVigourField* vigourSent = nullptr;
+    uint32_t vigourGpu = 0;
+    int framesLogged = 0; // SFS_GRASS_GROWTH's
+    std::size_t tilesSent = 0;
+
     // A big mesh's grass: in a window around the camera (its middle and
     // reach, the mesh's own XY), built again as the camera moves on.
     bool windowed = false;
@@ -240,8 +296,18 @@ private:
   void useWindow(Patch& patch, Window window);
   const Patch* find(const Entity& entity) const;
 
+  // How it's now, of a rectangle of its maps (GrassMaps::nowPixels()), as
+  // much as the terrain under it lets grow.
+  static void nowOf(const Patch& patch,
+                    glm::ivec2 from,
+                    glm::ivec2 to,
+                    std::vector<uint8_t>& now,
+                    std::vector<uint8_t>& cut);
+  void uploadVigour(Patch& patch);
+
   IRenderer& m_renderer;
   Registry* m_registry = nullptr;
+  std::optional<double> m_clock;    // setClock()'s
   MeshLibrary* m_meshes = nullptr;  // the last frame's
   MaterialHandle m_defaultMaterial; // plain green, for grass without one
   std::unordered_map<uint64_t, Patch> m_patches;

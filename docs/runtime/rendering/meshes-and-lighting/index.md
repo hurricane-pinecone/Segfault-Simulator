@@ -1172,6 +1172,54 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   `fill()` (and `terrainPainted()` after painting the terrain under it):
   anything else won't be seen**, since the blades grown from the maps are kept
   until the module says where they changed.
+- **Growth (grass growing back, mowing):** `Coverage` and `Length` are what
+  grass grows to. `set()`, `stamp()` and `fill()` put it there at once;
+  `GrassMaps::setTarget()` has it grow (or die back) toward a new value, and
+  `tear()` (coverage torn out, a rut), `flatten()` (laid flat, standing up
+  again) and `cut()` (a mower's strip) set it back. A texel changed that way
+  keeps an anchor (`GrassAnchor`, 8 bytes: when, and how it was then), and
+  how it is at any time is worked out from that, up or down toward its
+  target at its rates' class (`setRates()`, 16 classes, per day of growth;
+  `setGrowthScale()` per texel), by the maps' clock
+  (`GrassModule::setClock()`: days of growth as a game counts them, slower in
+  a drought; kept as whole ticks of 1/1024 day, so years of play never
+  drift). Nothing's done a frame for grass that's growing: each growing
+  16-texel tile is brought on and sent up only when it's changed by a step
+  the GPU would show (`update()`), and let go once it's grown. The GPU keeps
+  the blades as the maps grow to; the tiles over growing maps are grown each
+  frame as they are now (`GrassMapsImage::now`, `kGrassTileActive`).
+  A **cut** keeps its edge finer than a texel, as bounds are (a distance from
+  the strip's edge, read between texels and cut at a half): a blade takes its
+  length only from the texels on its own side of the line, so a mown edge is
+  a ruler-straight line at any angle, to the blade. `GrassCut::join` carries
+  a mower's strips on from frame to frame as one; mown blades grow level at
+  the cut (a little either way) till they're grown back past it.
+  `GrassModule::roll()` (`GrassRoll`) lays mown grass over the way a strip
+  runs, by how hard (a striping roller's 1): its blades face that way and
+  lean over it, so passes run back and forth are lit as lawn stripes are,
+  light leaning away, dark toward you. Each texel keeps its lean (blended
+  over a texel at a strip's edge, so it stays straight) with how long it was
+  then, and it stands up as it grows back (`setLeanFade()`: gone once it's
+  grown that much more, 0.25 of full length at first). The cut map the GPU
+  reads is RGBA8: the cut's edge, the lean now (x, y) and the cut's length.
+  Short grass (mown) sits on its own turf: the ground under the blades is
+  drawn the grass's colour (finely mottled) by how short it is, instead of
+  letting the soil show between them, and short blades grow wider (up to
+  1.8 times), stubbier tufts covering more ground with as many blades; worn
+  grass (less coverage) shows its soil again.
+  `GrassModule::lengthAt()` is how long the blades are at a point now.
+- **Sparse maps:** `GrassMaps` keeps each grid in 16 x 16 tiles
+  (`GrassTiles`): a tile that's one value all over keeps just that, so wide
+  ground costs little but where something crosses it.
+- **Vigour:** `GrassModule::setVigour(entity, field, settings)` grows grass
+  by a coarse field over the world (`GrassVigourField`: how wet the ground
+  is, say). A blade's vigour is `smoothstep(0, 1, w * scale + bias)`, `w` the
+  field where it grows plus a little smooth noise of the ground's
+  (`GrassVigourSettings`); where it's low the grass is shorter
+  (`lengthLeast`) and a little sparser (`densityLeast`), and with
+  `drivesData0` the material's Data 0 is `1 - vigour`. Only the settings
+  change a frame (a game eases them with the weather); the field goes up to
+  the GPU when it's another one.
 - **Growing blades:** blades are grown on the GPU (`meshGrassGrow.wgsl`), in
   tiles kept from frame to frame (`GrassTileCache`, `grassTiles.h`). The
   ground is split into fixed tiles, 64 by 64 cells of each lattice (below), so

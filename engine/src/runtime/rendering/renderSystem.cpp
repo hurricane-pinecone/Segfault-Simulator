@@ -25,8 +25,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <string>
 #include <tuple>
 #include <variant>
+#include <vector>
 
 namespace
 {
@@ -71,9 +73,14 @@ glm::vec3 RenderSystem::stepCamera()
   // way between them, so it's settled by each. With a sixth value of 1,
   // only grass's camera moves (where it's grown and thinned from), the view
   // held still: what changes is only how grass changes as the camera moves.
+  //
+  // Or with SFS_CAMERA_TOUR="eye x,y,z,target x,y,z;..." (or '|' between) the
+  // view for each shot of the sequence, from each eye looking at its target
+  // (the last held), likewise half way between them.
   static const char* const kStep = std::getenv("SFS_CAMERA_STEP");
+  static const char* const kTour = std::getenv("SFS_CAMERA_TOUR");
   ++m_renderedFrames;
-  if (!kStep || m_space2D)
+  if ((!kStep && !kTour) || m_space2D)
     return glm::vec3(0.0f);
   static const auto setting = [](const char* name, int fallback)
   {
@@ -83,6 +90,41 @@ glm::vec3 RenderSystem::stepCamera()
   static const int first = setting("SFS_SCREENSHOT_FRAME", 60);
   static const int every = std::max(setting("SFS_SCREENSHOT_EVERY", 0), 1);
   static const int count = std::max(setting("SFS_SCREENSHOT_COUNT", 1), 1);
+  if (kTour)
+  {
+    static const std::vector<std::pair<glm::vec3, glm::vec3>> tour = []
+    {
+      std::vector<std::pair<glm::vec3, glm::vec3>> views;
+      std::string text(kTour);
+      std::size_t at = 0;
+      while (at <= text.size())
+      {
+        const std::size_t end =
+            std::min(text.find_first_of(";|", at), text.size());
+        glm::vec3 eye(0.0f), target(0.0f);
+        if (std::sscanf(text.substr(at, end - at).c_str(),
+                        "%f,%f,%f,%f,%f,%f",
+                        &eye.x,
+                        &eye.y,
+                        &eye.z,
+                        &target.x,
+                        &target.y,
+                        &target.z) == 6)
+          views.emplace_back(eye, target);
+        at = end + 1;
+      }
+      return views;
+    }();
+    if (tour.empty())
+      return glm::vec3(0.0f);
+    const int shot = std::clamp((m_renderedFrames - first + every / 2) / every,
+                                0,
+                                static_cast<int>(tour.size()) - 1);
+    const auto& [eye, target] = tour[std::size_t(shot)];
+    m_camera.setPose(
+        eye, target - eye, glm::max(glm::distance(eye, target), 0.1f));
+    return glm::vec3(0.0f);
+  }
   float step[6] = {};
   std::sscanf(kStep,
               "%f,%f,%f,%f,%f,%f",
@@ -1355,7 +1397,8 @@ void RenderSystem::submit(const GrassDrawCommand& command)
                                   command.drawDistance,
                                   command.castsShadows,
                                   command.selfShadow,
-                                  command.ground});
+                                  command.ground,
+                                  command.vigour});
   m_stats.grassFields += 1;
 }
 
