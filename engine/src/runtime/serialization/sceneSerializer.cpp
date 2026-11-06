@@ -397,6 +397,10 @@ json renderToJson(const RenderSystem& render)
   }
   if (render.temporalAntiAliasing())
     out["temporalAntiAliasing"] = true;
+  // Debug settings (they do nothing in a release export; see
+  // debugFeatures.h), only when one is on.
+  if (render.drawColliders())
+    out["debug"] = {{"drawColliders", true}};
   return out;
 }
 
@@ -465,6 +469,10 @@ void renderFromJson(const json& value, RenderSystem& render)
     render.setWeather(SceneWeather::fromJson(in, render.weather()));
   render.setTemporalAntiAliasing(
       value.value("temporalAntiAliasing", render.temporalAntiAliasing()));
+  // Saved only when on: none is off (older files, and undoing a tick).
+  const json& debug = value.value("debug", json::object());
+  render.setDrawColliders(debug.is_object() &&
+                          valueOr(debug, "drawColliders", false));
 
   if (const json& in = value.value("wind", json::object()); in.is_object())
   {

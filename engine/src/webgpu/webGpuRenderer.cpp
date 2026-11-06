@@ -2729,6 +2729,8 @@ void WebGpuRenderer::encodeGrassShadows(WGPURenderPassEncoder pass,
 void WebGpuRenderer::beginFrame(const FrameParams& frame)
 {
   m_skinsDrawn.clear();
+  m_debugLines.clear();
+  m_debugLineVertices = 0;
   m_feed.reset();
   if (m_capabilities.pointLightShadows)
   {
@@ -2849,6 +2851,7 @@ void WebGpuRenderer::endFrame()
     m_rained = m_plan.rainMapOn() && ensureRainMap();
     uploadFrame();
     uploadLights();
+    uploadDebugLines();
   }
   // Skinned meshes deformed first: every pass draws them.
   if (!m_skinsDrawn.empty())
@@ -7072,6 +7075,11 @@ void WebGpuRenderer::encodeLitPass()
     encodeDraw(pass, draw, Sections::SeeThrough);
   beginTimedSpan(pass, "lit: rain");
   encodeRain(pass);
+  if (m_debugLineVertices > 0)
+  {
+    beginTimedSpan(pass, "lit: debug lines");
+    encodeDebugLines(pass);
+  }
   endTimedSpan(pass);
   endPass(pass);
 }
@@ -7216,6 +7224,173 @@ void WebGpuRenderer::encodeRain(WGPURenderPassEncoder pass)
   m_boundPipeline = pipeline;
   // Six corners each: two triangles.
   wgpuRenderPassEncoderDraw(pass, 6, drops, 0, 0);
+}
+
+void WebGpuRenderer::drawLines(std::span<const DebugLineVertex> vertices)
+{
+  if (!m_plan.open())
+    return;
+  // Whole lines only.
+  m_debugLines.insert(m_debugLines.end(),
+                      vertices.begin(),
+                      vertices.begin() + (vertices.size() & ~std::size_t{1}));
+}
+
+bool WebGpuRenderer::uploadDebugLines()
+{
+  m_debugLineVertices = 0;
+  if (m_debugLines.empty() || !debugLinePipeline())
+    return false;
+  const WGPUDevice device = m_context.device();
+  if (m_debugLines.size() > m_debugLineCapacity)
+  {
+    // Grown geometrically, so a frame with a few more rarely reallocates.
+    m_debugLineCapacity = std::max(
+        {m_debugLines.size(), m_debugLineCapacity * 2, std::size_t{4096}});
+    m_debugLineBuffer =
+        makeBuffer(device,
+                   m_debugLineCapacity * sizeof(DebugLineVertex),
+                   WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst);
+  }
+  wgpuQueueWriteBuffer(m_context.queue(),
+                       m_debugLineBuffer.get(),
+                       0,
+                       m_debugLines.data(),
+                       m_debugLines.size() * sizeof(DebugLineVertex));
+  // Undone by the composite's exposure (a graded frame's), so the lines
+  // show about as coloured.
+  const PostUniforms post = m_plan.compositeUniforms(m_viewport);
+  const bool graded = post.grade.x > 0.5f;
+  const glm::vec4 params(
+      graded && post.tone.y > 0.0f ? 1.0f / post.tone.y : 1.0f,
+      graded ? 1.0f : 0.0f,
+      0.0f,
+      0.0f);
+  wgpuQueueWriteBuffer(
+      m_context.queue(), m_debugLineParams.get(), 0, &params, sizeof(params));
+  m_debugLineVertices = static_cast<uint32_t>(m_debugLines.size());
+  return true;
+}
+
+WGPURenderPipeline WebGpuRenderer::debugLinePipeline()
+{
+  if (m_debugLinePipeline || m_debugLineBroken)
+    return m_debugLinePipeline.get();
+  const WGPUDevice device = m_context.device();
+  ValidationScope scope(device);
+  const wgpu::ShaderModule module(
+      wgpu::makeShader(device, shaders::debugLinePass().c_str()));
+
+  // Group 1: auto exposure's last correction, and the grading's exposure.
+  std::array<WGPUBindGroupLayoutEntry, 2> entries{};
+  entries[0].binding = 0;
+  entries[0].visibility = WGPUShaderStage_Fragment;
+  entries[0].texture.sampleType = WGPUTextureSampleType_Float;
+  entries[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+  entries[1] = wgpu::storageEntry(
+      1, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
+  WGPUBindGroupLayoutDescriptor layoutEntries = {};
+  layoutEntries.entryCount = entries.size();
+  layoutEntries.entries = entries.data();
+  m_debugLineLayout.reset(
+      wgpuDeviceCreateBindGroupLayout(device, &layoutEntries));
+  m_debugLineParams =
+      makeBuffer(device,
+                 sizeof(glm::vec4),
+                 WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+  std::array<WGPUBindGroupEntry, 2> bound{};
+  bound[0].binding = 0;
+  bound[0].textureView = m_exposureView[1].get();
+  bound[1].binding = 1;
+  bound[1].buffer = m_debugLineParams.get();
+  bound[1].size = sizeof(glm::vec4);
+  WGPUBindGroupDescriptor boundDesc = {};
+  boundDesc.layout = m_debugLineLayout.get();
+  boundDesc.entryCount = bound.size();
+  boundDesc.entries = bound.data();
+  m_debugLineBindings.reset(wgpuDeviceCreateBindGroup(device, &boundDesc));
+
+  // The lit pass's bindings (group 0: the frame), then the line's.
+  const WGPUBindGroupLayout groups[] = {
+      m_litLayout.get(), m_debugLineLayout.get()};
+  WGPUPipelineLayoutDescriptor layoutDesc = {};
+  layoutDesc.bindGroupLayoutCount = 2;
+  layoutDesc.bindGroupLayouts = groups;
+  const wgpu::PipelineLayout layout(
+      wgpuDeviceCreatePipelineLayout(device, &layoutDesc));
+
+  const std::array<WGPUVertexAttribute, 2> attributes{
+      attribute(
+          WGPUVertexFormat_Float32x3, offsetof(DebugLineVertex, position), 0),
+      attribute(WGPUVertexFormat_Unorm8x4, offsetof(DebugLineVertex, color), 1),
+  };
+  WGPUVertexBufferLayout vertices = {};
+  vertices.stepMode = WGPUVertexStepMode_Vertex;
+  vertices.arrayStride = sizeof(DebugLineVertex);
+  vertices.attributeCount = attributes.size();
+  vertices.attributes = attributes.data();
+
+  // Over what's there by alpha; the target's alpha keeps 1 - the line over
+  // it (temporal anti-aliasing's cue, as rain's). Nothing into the glow.
+  WGPUBlendState blending = {};
+  blending.color = {WGPUBlendOperation_Add,
+                    WGPUBlendFactor_SrcAlpha,
+                    WGPUBlendFactor_OneMinusSrcAlpha};
+  blending.alpha = {WGPUBlendOperation_Add,
+                    WGPUBlendFactor_Zero,
+                    WGPUBlendFactor_OneMinusSrcAlpha};
+  std::array<WGPUColorTargetState, 2> colors{};
+  for (WGPUColorTargetState& color : colors)
+    color.format = kSceneFormat;
+  colors[0].writeMask = WGPUColorWriteMask_All;
+  colors[0].blend = &blending;
+  colors[1].writeMask = WGPUColorWriteMask_None;
+  WGPUFragmentState fragment = {};
+  fragment.module = module.get();
+  fragment.entryPoint = wgpu::sv("fs_debugLine");
+  fragment.targetCount = colors.size();
+  fragment.targets = colors.data();
+  const WGPUDepthStencilState depth =
+      depthState(false, WGPUCompareFunction_LessEqual);
+  WGPURenderPipelineDescriptor desc = {};
+  desc.layout = layout.get();
+  desc.vertex.module = module.get();
+  desc.vertex.entryPoint = wgpu::sv("vs_debugLine");
+  desc.vertex.bufferCount = 1;
+  desc.vertex.buffers = &vertices;
+  desc.primitive.topology = WGPUPrimitiveTopology_LineList;
+  desc.primitive.cullMode = WGPUCullMode_None;
+  desc.depthStencil = &depth;
+  desc.multisample.count = m_sampleCount;
+  desc.multisample.mask = 0xFFFFFFFFu;
+  desc.fragment = &fragment;
+  m_debugLinePipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+  const std::optional<std::string> error = scope.end();
+  if (error || !m_debugLinePipeline || !m_debugLineBindings)
+  {
+    LOG_ERROR("Debug lines' pass doesn't build" +
+              (error ? ": " + *error : std::string()));
+    m_debugLinePipeline.reset();
+    m_debugLineBroken = true;
+  }
+  return m_debugLinePipeline.get();
+}
+
+void WebGpuRenderer::encodeDebugLines(WGPURenderPassEncoder pass)
+{
+  if (m_debugLineVertices == 0 || !m_debugLinePipeline)
+    return;
+  wgpuRenderPassEncoderSetPipeline(pass, m_debugLinePipeline.get());
+  m_boundPipeline = m_debugLinePipeline.get();
+  wgpuRenderPassEncoderSetBindGroup(
+      pass, 1, m_debugLineBindings.get(), 0, nullptr);
+  wgpuRenderPassEncoderSetVertexBuffer(
+      pass,
+      0,
+      m_debugLineBuffer.get(),
+      0,
+      m_debugLineVertices * sizeof(DebugLineVertex));
+  wgpuRenderPassEncoderDraw(pass, m_debugLineVertices, 1, 0, 0);
 }
 
 void WebGpuRenderer::encodeDraw(WGPURenderPassEncoder pass,

@@ -95,6 +95,11 @@ public:
     list.forEach([&](const UiQuad& quad) { uiDrawn.push_back(quad); });
   }
 
+  void drawLines(std::span<const DebugLineVertex> vertices) override
+  {
+    linesDrawn.insert(linesDrawn.end(), vertices.begin(), vertices.end());
+  }
+
   glm::ivec2 viewportSize() const override { return viewport; }
   uint32_t shadowMapResolution() const override { return 1024; }
 
@@ -107,6 +112,7 @@ public:
     drawn.clear();
     grassDrawn.clear();
     uiDrawn.clear();
+    linesDrawn.clear();
     ++frames;
   }
 
@@ -166,6 +172,7 @@ public:
   std::map<uint32_t, std::size_t> liveGrass; // ground texels, by handle
   std::vector<GrassBatch> grassDrawn;        // this frame
   std::vector<UiQuad> uiDrawn;               // this frame's UI
+  std::vector<DebugLineVertex> linesDrawn;   // this frame's debug lines
   struct MapUpdate
   {
     GrassHandle grass;

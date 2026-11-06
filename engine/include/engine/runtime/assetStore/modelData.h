@@ -32,6 +32,10 @@ struct ModelNode
   int parent = -1;       // index into ModelData::nodes; -1: a top node
   glm::mat4 local{1.0f}; // relative to its parent
   std::string part;      // the ModelPart it draws; empty: none
+  // A collider node (isColliderNodeName()): placed as a BoxCollider3D fitted
+  // to `bounds`, its mesh not drawn (so `part` is empty).
+  bool collider = false;
+  Aabb bounds; // its mesh's, in its own space; empty: it has none
 };
 
 /**

@@ -164,6 +164,17 @@ else()
     target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=0)
 endif()
 
+# Debug features (drawing colliders, ...; see debugFeatures.h). On, they're
+# compiled in and still need allowing at run time (the editor, a Debug build,
+# a development export); off, they're compiled out of the engine and every
+# game built on it.
+option(SFS_DEBUG_FEATURES "Compile in the engine's debug features (collider drawing, ...)" ON)
+if(SFS_DEBUG_FEATURES)
+    target_compile_definitions(engine-core PUBLIC SFS_DEBUG_FEATURES=1)
+else()
+    target_compile_definitions(engine-core PUBLIC SFS_DEBUG_FEATURES=0)
+endif()
+
 # Lua's POSIX build uses mkstemp for temp files instead of the unsafe tmpnam.
 if(UNIX AND NOT ENGINE_WEB_BUILD)
     set_source_files_properties(${LUA_SRC} PROPERTIES COMPILE_DEFINITIONS LUA_USE_POSIX)

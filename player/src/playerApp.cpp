@@ -1,6 +1,7 @@
 #include "playerApp.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/debugFeatures.h"
 #include "engine/runtime/rendering/backend/renderBackends.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
@@ -180,6 +181,15 @@ int PlayerApp::play()
   // A development build has the development keys (a debug player always).
   if (m_manifest.development)
     setDevKeys(true);
+  // Debug features (drawing colliders, ...; see debugFeatures.h): a
+  // development build's only, so a shipped game never has them, whatever its
+  // scenes or environment say (a debug player always).
+#ifdef NDEBUG
+  sfs::debugFeatures::allow(m_manifest.development);
+#endif
+  LOG_INFO(sfs::debugFeatures::enabled()
+               ? "Debug features: on (development build)"
+               : "Debug features: off (release build)");
   // The start scene's scripts run as it starts: a throw there ends the game
   // like one in a frame (run() then only tears down).
   try

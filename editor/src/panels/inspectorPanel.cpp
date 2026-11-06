@@ -40,6 +40,7 @@
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/systems/colliderFit.h"
 #include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/matrix.hpp"
 #include "glm/glm/trigonometric.hpp"
@@ -1117,29 +1118,14 @@ std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& enti
   return std::pair(size * 0.5f, glm::vec2(centre.x, centre.y * space->ySign()));
 }
 
-// The bounds, in the entity's local space, of its mesh and its descendants'
-// (a collider on a group covers the group). Empty if there are none (or only
-// stand-ins).
-sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene)
+// The bounds, in the entity's local space, of its mesh (or, with
+// `includeChildren` or none of its own, its descendants' too: a collider on a
+// group covers the group). Empty if there are none (or only stand-ins).
+sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene, bool includeChildren = false)
 {
-  sfs::Aabb bounds;
   if (!scene.meshes || !scene.tree)
-    return bounds;
-  const glm::mat4 toLocal = glm::inverse(sfs::hierarchy::worldMatrix(entity));
-  for (const sfs::Entity& part : scene.tree->subtree(entity))
-  {
-    if (!part.hasComponent<sfs::MeshRendererComponent>())
-      continue;
-    const sfs::Aabb* mesh = scene.meshes->bounds(
-        part.getComponent<sfs::MeshRendererComponent>().mesh);
-    if (!mesh || mesh->empty())
-      continue;
-    bounds.expand(
-        part == entity
-            ? *mesh
-            : mesh->transformed(toLocal * sfs::hierarchy::worldMatrix(part)));
-  }
-  return bounds;
+    return {};
+  return sfs::entityMeshBounds(entity, *scene.meshes, *scene.tree, includeChildren);
 }
 
 bool isCollider(const TypeInfo& type)
@@ -1149,11 +1135,13 @@ bool isCollider(const TypeInfo& type)
          type.name == "CapsuleCollider3DComponent";
 }
 
-// Size a collider to the entity's meshes. Does nothing if it isn't a collider
-// or there's no mesh to fit.
+// Size a collider to the entity's meshes (sfs::fitColliderToMesh) or, a 2D
+// box, its sprite. Does nothing if it isn't a collider or there's nothing to
+// fit.
 void fitCollider(const TypeInfo& type,
                  const sfs::Entity& entity,
-                 const MeshScene& scene)
+                 const MeshScene& scene,
+                 bool includeChildren = false)
 {
   if (type.name == "BoxCollider2D")
   {
@@ -1165,40 +1153,44 @@ void fitCollider(const TypeInfo& type,
     }
     return;
   }
-  const sfs::Aabb bounds =
-      isCollider(type) ? meshBounds(entity, scene) : sfs::Aabb();
-  if (bounds.empty())
+  if (!scene.meshes || !scene.tree)
     return;
-  void* object = type.component.get(entity);
-  const glm::vec3 half = bounds.extents();
   if (type.name == "BoxCollider3DComponent")
-  {
-    auto& box = *static_cast<sfs::BoxCollider3DComponent*>(object);
-    box.size = half * 2.0f;
-    box.offset = bounds.center();
-    // A flat mesh (a plane) gets a slab under its surface, not a sheet bodies
-    // can tunnel through.
-    constexpr float kMinThickness = 0.1f;
-    for (int axis = 0; axis < 3; ++axis)
-      if (box.size[axis] < kMinThickness)
-      {
-        box.offset[axis] -= (kMinThickness - box.size[axis]) * 0.5f;
-        box.size[axis] = kMinThickness;
-      }
-  }
+    sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
   else if (type.name == "SphereCollider3DComponent")
+    sfs::fitColliderToMesh<sfs::SphereCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+  else if (type.name == "CapsuleCollider3DComponent")
+    sfs::fitColliderToMesh<sfs::CapsuleCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+}
+
+// A 3D collider's Fit to Mesh row (one undo step, on every selected object),
+// and Include Children above it when the entity has a mesh and so do some of
+// its children (with no mesh of its own, its children's are what it fits).
+void colliderFitRows(const TypeInfo& type,
+                     const sfs::Entity& entity,
+                     std::span<const sfs::Entity> others,
+                     const MeshScene& scene,
+                     EditorHistory* history)
+{
+  static bool includeChildren = false;
+  const bool hasOwn =
+      entity.hasComponent<sfs::MeshRendererComponent>() && scene.meshes &&
+      scene.meshes->bounds(entity.getComponent<sfs::MeshRendererComponent>().mesh);
+  if (hasOwn && scene.tree && !scene.tree->children(entity).empty())
   {
-    auto& sphere = *static_cast<sfs::SphereCollider3DComponent*>(object);
-    sphere.radius = std::max({half.x, half.y, half.z, 0.01f});
-    sphere.offset = bounds.center();
+    widgets::propertyCheckbox("Include Children", &includeChildren);
+    ImGui::SetItemTooltip("Fit around the children's meshes too, not just this object's");
   }
-  else
-  {
-    auto& capsule = *static_cast<sfs::CapsuleCollider3DComponent*>(object);
-    capsule.radius = std::max({half.x, half.y, 0.01f});
-    capsule.height = std::max(half.z * 2.0f, capsule.radius * 2.0f);
-    capsule.offset = bounds.center();
-  }
+  widgets::propertyLabel("Mesh Bounds");
+  if (ImGui::Button("Fit to Mesh", ImVec2(-FLT_MIN, 0.0f)) && history)
+    history->change(
+        [&]
+        {
+          fitCollider(type, entity, scene, includeChildren);
+          for (const sfs::Entity& other : others)
+            fitCollider(type, other, scene, includeChildren);
+        });
+  ImGui::SetItemTooltip("Size and centre the collider to the mesh's bounds (after the model changes)");
 }
 
 // One edit of the 2D transform widgets below: `edit` changes a copy, `apply`
@@ -1434,23 +1426,20 @@ void componentSection(
       ImGui::TextDisabled("No editable fields");
     if (type.name == "AnimatorComponent")
       animatorPreview(entity, object, scene);
-    if (type.name == "BoxCollider2D" && spriteBox(entity, scene) && ImGui::Button("Fit to Sprite"))
-      history->change(
-          [&]
-          {
-            fitCollider(type, entity, scene);
-            for (const sfs::Entity& other : others)
-              fitCollider(type, other, scene);
-          });
-    else if (isCollider(type) && type.name != "BoxCollider2D" && !meshBounds(entity, scene).empty() &&
-             ImGui::Button("Fit to Mesh"))
-      history->change(
-          [&]
-          {
-            fitCollider(type, entity, scene);
-            for (const sfs::Entity& other : others)
-              fitCollider(type, other, scene);
-          });
+    if (type.name == "BoxCollider2D" && spriteBox(entity, scene))
+    {
+      widgets::propertyLabel("Sprite Bounds");
+      if (ImGui::Button("Fit to Sprite", ImVec2(-FLT_MIN, 0.0f)))
+        history->change(
+            [&]
+            {
+              fitCollider(type, entity, scene);
+              for (const sfs::Entity& other : others)
+                fitCollider(type, other, scene);
+            });
+    }
+    else if (isCollider(type) && type.name != "BoxCollider2D" && !meshBounds(entity, scene).empty())
+      colliderFitRows(type, entity, others, scene, history);
     if (type.name == "ScriptComponent")
     {
       // Several selected: their fields too, if they all run the same script.

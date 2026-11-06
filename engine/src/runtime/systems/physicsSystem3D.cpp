@@ -34,6 +34,10 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+// CollisionWorld3D (frozen worlds for queries off the main thread) lives in
+// this unit too: the only one that includes Jolt.
+#include "collisionWorld3D.inl"
+
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -90,12 +94,10 @@ void initJolt()
   std::call_once(once,
                  []
                  {
-                   JPH::RegisterDefaultAllocator();
                    JPH::Trace = joltTrace;
                    JPH_IF_ENABLE_ASSERTS(JPH::AssertFailed = joltAssert;)
-                   JPH::Factory::sInstance = new JPH::Factory();
-                   JPH::RegisterTypes();
                  });
+  collisionWorld::ready(); // (the allocator, the factory and the types: once)
 }
 
 // --- conversions
@@ -125,6 +127,7 @@ struct ColliderDesc
                         // radius, y = height
   glm::vec3 offset{0.0f};
   bool trigger = false;
+  int layer = 0;
 
   bool operator==(const ColliderDesc&) const = default;
 };
@@ -150,7 +153,8 @@ struct BodyDesc
            a.friction == b.friction && a.bounciness == b.bounciness &&
            a.linearDamping == b.linearDamping &&
            a.angularDamping == b.angularDamping &&
-           a.gravityScale == b.gravityScale && a.lockRotation == b.lockRotation;
+           a.gravityScale == b.gravityScale &&
+           a.lockRotation == b.lockRotation && a.touchStatic == b.touchStatic;
   }
 };
 
@@ -171,8 +175,11 @@ std::optional<BodyDesc> describe(const Entity& entity, const glm::mat4& world)
   if (entity.hasComponent<BoxCollider3DComponent>())
   {
     const auto& box = entity.getComponent<BoxCollider3DComponent>();
-    desc.colliders.push_back(
-        {ColliderDesc::Kind::Box, box.size * s, box.offset * s, box.trigger});
+    desc.colliders.push_back({ColliderDesc::Kind::Box,
+                              box.size * s,
+                              box.offset * s,
+                              box.trigger,
+                              box.layer});
   }
   if (entity.hasComponent<SphereCollider3DComponent>())
   {
@@ -180,7 +187,8 @@ std::optional<BodyDesc> describe(const Entity& entity, const glm::mat4& world)
     desc.colliders.push_back({ColliderDesc::Kind::Sphere,
                               glm::vec3(sphere.radius * largest, 0, 0),
                               sphere.offset * s,
-                              sphere.trigger});
+                              sphere.trigger,
+                              sphere.layer});
   }
   if (entity.hasComponent<CapsuleCollider3DComponent>())
   {
@@ -190,7 +198,8 @@ std::optional<BodyDesc> describe(const Entity& entity, const glm::mat4& world)
          glm::vec3(
              capsule.radius * std::max(s.x, s.y), capsule.height * s.z, 0),
          capsule.offset * s,
-         capsule.trigger});
+         capsule.trigger,
+         capsule.layer});
   }
   if (desc.colliders.empty())
     return std::nullopt;
@@ -288,16 +297,20 @@ public:
     BodyPair pair;
     bool trigger = false;
     bool added = false;
+    glm::vec3 point{0.0f};
   };
   std::vector<Change> changes;
 
   void OnContactAdded(const JPH::Body& a,
                       const JPH::Body& b,
-                      const JPH::ContactManifold&,
+                      const JPH::ContactManifold& manifold,
                       JPH::ContactSettings&) override
   {
-    changes.push_back(
-        {makePair(a.GetID(), b.GetID()), a.IsSensor() || b.IsSensor(), true});
+    const JPH::RVec3 at = manifold.GetWorldSpaceContactPointOn1(0);
+    changes.push_back({makePair(a.GetID(), b.GetID()),
+                       a.IsSensor() || b.IsSensor(),
+                       true,
+                       glm::vec3(at.GetX(), at.GetY(), at.GetZ())});
   }
 
   void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
@@ -350,6 +363,7 @@ struct PhysicsSystem3D::Impl
   std::vector<Contact3D> ended;
   double accumulator = 0.0;
   bool optimised = false;
+  uint64_t revision = 1; // (bodies added, removed or rebuilt, statics moved)
 
   Impl()
   {
@@ -441,8 +455,9 @@ struct PhysicsSystem3D::Impl
                                 JPH::EAllowedDOFs::TranslationZ;
     }
     // A kinematic trigger (e.g. a moving pickup zone) should notice static
-    // bodies too.
-    settings.mCollideKinematicVsNonDynamic = record.desc.sensor;
+    // bodies too; so should a kinematic body that asks to (touchStatic).
+    settings.mCollideKinematicVsNonDynamic =
+        record.desc.sensor || body.touchStatic;
 
     record.body = bodies().CreateAndAddBody(
         settings,
@@ -454,6 +469,7 @@ struct PhysicsSystem3D::Impl
     }
     record.lastWorld = world;
     entityByBody[record.body.GetIndexAndSequenceNumber()] = record.entity;
+    ++revision;
     return true;
   }
 
@@ -472,6 +488,7 @@ struct PhysicsSystem3D::Impl
     destroyBody(it->second.body);
     entityByBody.erase(key);
     records.erase(it);
+    ++revision;
   }
 
   Entity entityOf(JPH::uint32 body) const
@@ -533,6 +550,7 @@ struct PhysicsSystem3D::Impl
                                         toJolt(pose.position),
                                         toJolt(pose.rotation),
                                         JPH::EActivation::DontActivate);
+        ++revision;
         break;
       case JPH::EMotionType::Kinematic:
         // Moves through the world (pushing what's in the way) over this frame.
@@ -611,7 +629,8 @@ struct PhysicsSystem3D::Impl
           active.trigger = change.trigger;
           begun.push_back({entityOf(change.pair.first),
                            entityOf(change.pair.second),
-                           change.trigger});
+                           change.trigger,
+                           change.point});
         }
         continue;
       }
@@ -751,6 +770,54 @@ void PhysicsSystem3D::addForce(const Entity& entity, const glm::vec3& force)
 bool PhysicsSystem3D::hasBody(const Entity& entity) const
 {
   return m->find(entity) != nullptr;
+}
+
+uint64_t PhysicsSystem3D::revision() const { return m->revision; }
+
+std::shared_ptr<const CollisionWorld3D> PhysicsSystem3D::snapshot(
+    const std::function<bool(const Entity&)>& include) const
+{
+  std::vector<CollisionWorld3D::Body> bodies;
+  bodies.reserve(m->records.size());
+  for (const auto& [id, record] : m->records)
+  {
+    if (record.desc.sensor || record.desc.motion == JPH::EMotionType::Dynamic ||
+        (include && !include(record.entity)))
+      continue;
+    CollisionWorld3D::Body body;
+    body.id = record.entity.getId();
+    body.layer = 31;
+    const TransformComponent pose =
+        TransformComponent::fromMatrix(record.lastWorld);
+    body.position = pose.position;
+    body.rotation = pose.rotation;
+    for (const ColliderDesc& collider : record.desc.colliders)
+    {
+      if (collider.trigger)
+        continue;
+      body.layer = std::min(
+          body.layer, static_cast<uint32_t>(std::clamp(collider.layer, 0, 31)));
+      CollisionShape3D shape;
+      shape.offset = collider.offset;
+      shape.size = collider.size;
+      switch (collider.kind)
+      {
+      case ColliderDesc::Kind::Box:
+        shape.kind = CollisionShape3D::Kind::Box;
+        break;
+      case ColliderDesc::Kind::Sphere:
+        shape.kind = CollisionShape3D::Kind::Sphere;
+        break;
+      case ColliderDesc::Kind::Capsule:
+        shape.kind = CollisionShape3D::Kind::Capsule;
+        break;
+      }
+      body.shapes.push_back(shape);
+    }
+    if (!body.shapes.empty())
+      bodies.push_back(std::move(body));
+  }
+  return std::make_shared<const CollisionWorld3D>(bodies);
 }
 
 const std::vector<Contact3D>& PhysicsSystem3D::contactsBegun() const

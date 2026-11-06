@@ -12,6 +12,8 @@
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
 #include "engine/core/util/cpuTiming.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/runtime/rendering/debug/colliderLines.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/ext/matrix_transform.hpp"
@@ -26,6 +28,7 @@
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <variant>
 #include <vector>
@@ -221,6 +224,44 @@ AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
                                               : m_ambientOcclusion;
 }
 
+namespace
+{
+// SFS_DRAW_COLLIDERS=1 (or 0): over the scene's setting, for test runs.
+// Read once; a release export ignores it, and says so once.
+std::optional<bool> drawCollidersFromEnvironment()
+{
+  static const std::optional<bool> value = []() -> std::optional<bool>
+  {
+    const char* text = std::getenv("SFS_DRAW_COLLIDERS");
+    if (!text || !*text)
+      return std::nullopt;
+    return std::string_view(text) != "0";
+  }();
+  return value;
+}
+} // namespace
+
+bool RenderSystem::effectiveDrawColliders() const
+{
+  if (!debugFeatures::enabled())
+  {
+    static bool told = false;
+    if (!told && (drawCollidersFromEnvironment().value_or(false) ||
+                  m_forcedDrawColliders.value_or(false) || m_drawColliders))
+    {
+      told = true;
+      LOG_INFO("Draw colliders ignored: debug features are off in a release "
+               "build");
+    }
+    return false;
+  }
+  if (m_forcedDrawColliders)
+    return *m_forcedDrawColliders;
+  if (const std::optional<bool> environment = drawCollidersFromEnvironment())
+    return *environment;
+  return m_drawColliders;
+}
+
 bool RenderSystem::effectiveTemporalAntiAliasing() const
 {
   if (m_forcedTemporalAntiAliasing)
@@ -316,7 +357,10 @@ void RenderSystem::render()
   const glm::vec3 grassCameraOffset = stepCamera();
 
   if (!buildContext(m_renderer.viewportSize()))
+  {
+    m_debugLines.clear();
     return;
+  }
   const std::optional<FeedView> feed = chooseFeed();
 
   m_commands.clear();
@@ -417,6 +461,20 @@ void RenderSystem::render()
     for (const AnyRenderCommand& command : m_commands)
       std::visit([this](const auto& concrete) { submit(concrete); }, command);
   }
+  // Debug lines (debug features only): the game's, and the colliders.
+  if (debugFeatures::enabled())
+  {
+    SFS_CPU_SCOPE("render/debug lines");
+    if (effectiveDrawColliders() && registry)
+      m_stats.colliders =
+          colliderLines::appendAll(*registry, m_space2D, m_debugLines);
+    m_stats.debugLines = m_debugLines.lineCount();
+    if (!m_debugLines.empty())
+      m_renderer.drawLines(m_debugLines.vertices());
+  }
+  else
+    effectiveDrawColliders(); // says once that it's ignored, if it's asked for
+  m_debugLines.clear();
   {
     SFS_CPU_SCOPE("render/renderer end frame");
     m_renderer.endFrame();

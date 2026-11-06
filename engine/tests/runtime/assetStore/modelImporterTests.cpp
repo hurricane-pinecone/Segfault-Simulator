@@ -1,6 +1,18 @@
 #include "../../testHarness.h"
+#include "../rendering/mockRenderer.h"
 
+#include <engine/core/assets/assetDatabase.h>
+#include <engine/core/components/boxCollider3DComponent.h>
+#include <engine/core/components/meshRendererComponent.h>
+#include <engine/core/components/nameComponent.h>
+#include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/reflection/reflection.h>
+#include <engine/runtime/assetStore/assetStore.h>
+#include <engine/runtime/assetStore/modelData.h>
 #include <engine/runtime/assetStore/modelImporter.h>
+#include <engine/runtime/rendering/renderSystem.h>
+#include <engine/runtime/sceneManager/scene.h>
+#include <engine/runtime/serialization/sceneSerializer.h>
 
 #include <SDL.h>
 
@@ -210,6 +222,54 @@ std::filesystem::path writeSkinnedModel(const std::string& name)
       {"buffer": 0, "byteOffset": 264, "byteLength": 32}
     ],
     "buffers": [{"byteLength": 296, "uri": "data:application/octet-stream;base64,)" +
+                           base64(buffer) + R"("}]
+  })";
+  const std::filesystem::path file = folder / name;
+  std::ofstream(file) << gltf;
+  return file;
+}
+
+// A .gltf with a drawn "Body" (one triangle) and two collider nodes:
+// "Boom-collider.001" under "Boom" (moved up glTF's y), its positions' min and
+// max written down, and "Cab-COLLIDER", the same triangle without them (so its
+// bounds come from the data). The colliders' triangle spans x 0..2, y -2..2,
+// z -3..3 in glTF's axes.
+std::filesystem::path writeColliderModel(const std::string& name)
+{
+  const std::filesystem::path folder =
+      std::filesystem::temp_directory_path() / "sfsModelImporterTests";
+  std::filesystem::create_directories(folder);
+  std::vector<uint8_t> buffer;
+  append(buffer, std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0});    // 36 bytes
+  append(buffer, std::vector<float>{0, -2, -3, 2, 2, 3, 2, -2, 3}); // 36 bytes
+  append(buffer, std::vector<uint16_t>{0, 1, 2, 0});                // 8 bytes
+  const std::string gltf = R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 3]}],
+    "nodes": [
+      {"name": "Body", "mesh": 0, "children": [1]},
+      {"name": "Boom", "translation": [0, 1, 0], "children": [2]},
+      {"name": "Boom-collider.001", "mesh": 1},
+      {"name": "Cab-COLLIDER", "mesh": 2}
+    ],
+    "meshes": [
+      {"name": "Body", "primitives": [{"attributes": {"POSITION": 0}, "indices": 3}]},
+      {"name": "BoomBox", "primitives": [{"attributes": {"POSITION": 1}, "indices": 3}]},
+      {"name": "CabBox", "primitives": [{"attributes": {"POSITION": 2}, "indices": 3}]}
+    ],
+    "accessors": [
+      {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+      {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, -2, -3], "max": [2, 2, 3]},
+      {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+      {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+    ],
+    "bufferViews": [
+      {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+      {"buffer": 0, "byteOffset": 36, "byteLength": 36},
+      {"buffer": 0, "byteOffset": 72, "byteLength": 6}
+    ],
+    "buffers": [{"byteLength": 80, "uri": "data:application/octet-stream;base64,)" +
                            base64(buffer) + R"("}]
   })";
   const std::filesystem::path file = folder / name;
@@ -470,6 +530,140 @@ int main()
     }
     const auto nodes = importModelNodes(file);
     CHECK(nodes.has_value() && nodes->size() == 4u);
+  }
+
+  TEST("only nodes named \"<name>-collider\" should be colliders")
+  {
+    CHECK(isColliderNodeName("Boom-collider"));
+    CHECK(isColliderNodeName("boom-Collider"));
+    CHECK(isColliderNodeName("Boom-collider.001")); // a Blender copy
+    CHECK(!isColliderNodeName("Boom"));
+    CHECK(!isColliderNodeName("Collider"));
+    CHECK(!isColliderNodeName("-collider"));
+    CHECK(!isColliderNodeName("Boom-colliders"));
+    CHECK(!isColliderNodeName("Boom-collider.v2"));
+    CHECK(!isColliderNodeName("Boom_collider"));
+  }
+
+  TEST("a collider node should come in as a collider around its mesh, in the "
+       "engine's axes, its mesh not drawn")
+  {
+    const std::filesystem::path file = writeColliderModel("collider.gltf");
+    const auto model = importModel(file);
+    CHECK(model.has_value());
+    if (model)
+    {
+      // Neither the whole model nor the parts draw the colliders.
+      CHECK(model->whole.vertices.size() == 3u);
+      CHECK(model->parts.size() == 1u);
+      CHECK(model->parts.size() == 1u && model->parts[0].name == "Body");
+      CHECK(model->nodes.size() == 4u);
+      if (model->nodes.size() == 4u)
+      {
+        const ModelNode& body = model->nodes[0];
+        const ModelNode& boom = model->nodes[2];
+        const ModelNode& cab = model->nodes[3];
+        CHECK(!body.collider && body.part == "Body");
+        CHECK(boom.name == "Boom-collider.001");
+        CHECK(boom.collider && boom.part.empty());
+        CHECK(model->nodes[2].parent == 1); // still under Boom
+        // glTF (x, y, z) is the engine's (x, -z, y): x 0..2, y -3..3, z -2..2.
+        CHECK(testing::approx(boom.bounds.min.x, 0.0f));
+        CHECK(testing::approx(boom.bounds.max.x, 2.0f));
+        CHECK(testing::approx(boom.bounds.min.y, -3.0f));
+        CHECK(testing::approx(boom.bounds.max.y, 3.0f));
+        CHECK(testing::approx(boom.bounds.min.z, -2.0f));
+        CHECK(testing::approx(boom.bounds.max.z, 2.0f));
+        // Without a min and max written down: the same, from its data.
+        CHECK(cab.collider && cab.part.empty());
+        CHECK(testing::approx(cab.bounds.min.y, -3.0f));
+        CHECK(testing::approx(cab.bounds.max.z, 2.0f));
+      }
+    }
+    // The tree alone (the model placed before its geometry loads) agrees.
+    const auto nodes = importModelNodes(file);
+    CHECK(nodes.has_value() && nodes->size() == 4u);
+    if (nodes && model && nodes->size() == model->nodes.size())
+      for (std::size_t i = 0; i < nodes->size(); ++i)
+      {
+        CHECK((*nodes)[i].collider == model->nodes[i].collider);
+        CHECK((*nodes)[i].bounds.min == model->nodes[i].bounds.min);
+        CHECK((*nodes)[i].bounds.max == model->nodes[i].bounds.max);
+      }
+  }
+
+  TEST("a placed model's collider node should be an entity with a box "
+       "collider fitted to its mesh and no mesh renderer, scaled with the "
+       "import")
+  {
+    // A project with the model, imported at twice its size.
+    const std::filesystem::path project =
+        std::filesystem::temp_directory_path() / "sfsModelImporterTests" /
+        "project";
+    std::filesystem::create_directories(project / "assets");
+    std::filesystem::copy_file(
+        writeColliderModel("sprayer.gltf"),
+        project / "assets" / "sprayer.gltf",
+        std::filesystem::copy_options::overwrite_existing);
+    std::ofstream(project / "assets" / "sprayer.gltf.meta")
+        << R"({"formatVersion": 1, "id": "0123456789abcdef0123456789abcdef",
+               "settings": {"scale": 2}})";
+    const AssetDatabase database(project,
+                                 AssetDatabase::Mode::ReadOnly,
+                                 AssetDatabase::projectFolders());
+    const AssetRecord* record = database.findByPath("assets/sprayer.gltf");
+    CHECK(record != nullptr);
+    if (record)
+    {
+      AssetStore store;
+      store.setDatabase(&database);
+      testing3d::MockRenderer renderer;
+      Scene scene{0, SceneServices{.assetStore = store, .renderer = &renderer}};
+      RenderSystem& render = scene.addSystem<RenderSystem>(renderer);
+      SceneSerializer serializer(reflect::types(), &render.meshes());
+      serializer.setPrefabSource(
+          [&](std::string_view name) -> std::optional<nlohmann::json>
+          {
+            const auto asset = parseAssetMeshName(name);
+            return asset ? store.prefab(asset->model) : std::nullopt;
+          });
+      serializer.instantiate("asset:" + record->id.toString(), scene);
+      scene.update(0.0);
+      const auto find = [&](const std::string& name)
+      {
+        for (Entity entity : scene.entities())
+          if (entity.hasComponent<NameComponent>() &&
+              entity.getComponent<NameComponent>().name == name)
+            return entity;
+        return Entity{};
+      };
+      const Entity body = find("Body");
+      const Entity boom = find("Boom-collider.001");
+      const Entity cab = find("Cab-COLLIDER");
+      CHECK(body.isValid() && boom.isValid() && cab.isValid());
+      if (body.isValid() && boom.isValid() && cab.isValid())
+      {
+        CHECK(body.hasComponent<MeshRendererComponent>());
+        CHECK(!body.hasComponent<BoxCollider3DComponent>());
+        CHECK(!boom.hasComponent<MeshRendererComponent>());
+        CHECK(boom.hasComponent<BoxCollider3DComponent>());
+        CHECK(hierarchy::parentOf(boom).getComponent<NameComponent>().name ==
+              "Boom");
+        if (boom.hasComponent<BoxCollider3DComponent>())
+        {
+          // Twice x 0..2, y -3..3, z -2..2.
+          const auto& box = boom.getComponent<BoxCollider3DComponent>();
+          CHECK(testing::approx(box.size.x, 4.0f));
+          CHECK(testing::approx(box.size.y, 12.0f));
+          CHECK(testing::approx(box.size.z, 8.0f));
+          CHECK(testing::approx(box.offset.x, 2.0f));
+          CHECK(testing::approx(box.offset.y, 0.0f));
+          CHECK(!box.trigger);
+        }
+        CHECK(cab.hasComponent<BoxCollider3DComponent>());
+        CHECK(!cab.hasComponent<MeshRendererComponent>());
+      }
+    }
   }
 
   std::filesystem::remove_all(std::filesystem::temp_directory_path() /

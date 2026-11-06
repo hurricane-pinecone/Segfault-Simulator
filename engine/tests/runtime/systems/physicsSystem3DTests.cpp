@@ -16,6 +16,8 @@
 #include <engine/runtime/systems/physicsSystem3D.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 
 using namespace sfs;
 
@@ -301,6 +303,120 @@ int main()
     CHECK(listener.triggers == 1);
     CHECK(listener.collisions == 1);
     CHECK(listener.lastOther == floor);
+  }
+
+  TEST("a snapshot should answer overlaps exactly, turned, by layer, leaving "
+       "out what it's told to")
+  {
+    World world;
+    Entity post = world.box({0.0f, 0.0f, 0.6f}, {0.2f, 0.2f, 1.2f}, false);
+    Entity wall = world.box({5.0f, 0.0f, 1.0f}, {0.2f, 4.0f, 2.0f}, false);
+    wall.getComponent<BoxCollider3DComponent>().layer = 3;
+    world.run(kFrame);
+    const auto frozen = world.physics.snapshot();
+    CHECK(frozen->size() == 2);
+    // A 2 x 1 x 1 box standing on the ground.
+    const CollisionShape3D box{
+        CollisionShape3D::Kind::Box, {2.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.5f}};
+    const CollisionWorld3D::Probe probe(std::span(&box, 1));
+    // Its side 1 cm off the post's side, then 1 cm into it.
+    CHECK(!frozen->overlaps(
+        probe, {1.11f + 0.01f, 0.0f, 0.0f}, yawRotation(0.0f)));
+    CHECK(frozen->overlaps(probe, {1.09f, 0.0f, 0.0f}, yawRotation(0.0f)));
+    // Turned square, its end is only half a metre from its middle.
+    CHECK(
+        !frozen->overlaps(probe, {0.62f, 0.0f, 0.0f}, yawRotation(1.5707963f)));
+    // Over the post's top (1.2 m): clear.
+    CHECK(!frozen->overlaps(probe, {0.0f, 0.0f, 1.25f}, yawRotation(0.0f)));
+    // The wall is on layer 3: counted only when asked for.
+    CHECK(frozen->overlaps(probe, {4.5f, 0.0f, 0.0f}, yawRotation(0.0f)));
+    CHECK(!frozen->overlaps(
+        probe, {4.5f, 0.0f, 0.0f}, yawRotation(0.0f), ~(1u << 3)));
+    const uint64_t skip[] = {wall.getId()};
+    CHECK(!frozen->overlaps(
+        probe, {4.5f, 0.0f, 0.0f}, yawRotation(0.0f), ~0u, skip));
+    const auto hit =
+        frozen->overlap(probe, {1.0f, 0.0f, 0.0f}, yawRotation(0.0f));
+    CHECK(hit && hit->id == post.getId() && hit->depth > 0.05f);
+    // Swept along x from -3 m: it meets the post's side after 1.89 of 6 m.
+    const auto along = frozen->cast(
+        probe, {-3.0f, 0.0f, 0.0f}, yawRotation(0.0f), {3.0f, 0.0f, 0.0f});
+    CHECK(along && testing::approx(*along * 6.0f, 1.89f, 0.02f));
+  }
+
+  TEST("a snapshot should stay as it was when the scene changes, and be "
+       "queried from several threads at once")
+  {
+    World world;
+    Entity post = world.box({0.0f, 0.0f, 0.5f}, {0.5f, 0.5f, 1.0f}, false);
+    world.run(kFrame);
+    const uint64_t before = world.physics.revision();
+    const auto frozen = world.physics.snapshot();
+    hierarchy::setWorldMatrix(
+        post, TransformComponent({10.0f, 0.0f, 0.5f}).matrix());
+    world.run(kFrame);
+    CHECK(world.physics.revision() != before);
+    const CollisionShape3D ball{
+        CollisionShape3D::Kind::Sphere, {0.3f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.5f}};
+    const CollisionWorld3D::Probe probe(std::span(&ball, 1));
+    CHECK(frozen->overlaps(probe, {0.0f, 0.0f, 0.0f}, yawRotation(0.0f)));
+    CHECK(world.physics.snapshot()->overlaps(
+        probe, {10.0f, 0.0f, 0.0f}, yawRotation(0.0f)));
+    std::atomic<int> wrong{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+      threads.emplace_back(
+          [&, t]
+          {
+            for (int i = 0; i < 2000; ++i)
+            {
+              const float x =
+                  -2.0f + 0.002f * static_cast<float>(i) + 0.0001f * t;
+              const bool expect = std::abs(x) < 0.25f + 0.3f;
+              if (frozen->overlaps(probe, {x, 0.0f, 0.0f}, yawRotation(0.0f)) !=
+                  expect)
+                ++wrong;
+            }
+          });
+    for (std::thread& thread : threads)
+      thread.join();
+    CHECK(wrong.load() == 0);
+  }
+
+  TEST("a kinematic body that asks to should begin and end contacts with "
+       "static ones, and say where")
+  {
+    World world;
+    Entity post = world.box({2.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    Entity cart = world.box({0.0f, 0.0f, 0.5f}, {1.0f, 1.0f, 1.0f}, false);
+    RigidBody3DComponent body;
+    body.kinematic = true;
+    body.touchStatic = true;
+    cart.addComponent<RigidBody3DComponent>(body);
+    std::vector<Contact3D> begun, ended;
+    world.run(kFrame);
+    for (int i = 0; i <= 40; ++i)
+    {
+      hierarchy::setWorldMatrix(
+          cart, TransformComponent({0.05f * i, 0.0f, 0.5f}).matrix());
+      world.run(kFrame, &begun, &ended);
+    }
+    const auto touched = std::find_if(begun.begin(),
+                                      begun.end(),
+                                      [&](const Contact3D& c)
+                                      { return involves(c, post, cart); });
+    CHECK(touched != begun.end());
+    CHECK(touched != begun.end() && std::abs(touched->point.x - 1.9f) < 0.15f);
+    for (int i = 0; i <= 40; ++i)
+    {
+      hierarchy::setWorldMatrix(
+          cart, TransformComponent({2.0f - 0.1f * i, 0.0f, 0.5f}).matrix());
+      world.run(kFrame, nullptr, &ended);
+    }
+    CHECK(std::any_of(ended.begin(),
+                      ended.end(),
+                      [&](const Contact3D& c)
+                      { return involves(c, post, cart); }));
   }
 
   return testing::report("physicsSystem3DTests");

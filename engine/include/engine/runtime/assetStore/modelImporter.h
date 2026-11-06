@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <string_view>
 
 namespace sfs
 {
@@ -46,5 +47,16 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
 std::optional<std::vector<ModelNode>>
 importModelNodes(const std::filesystem::path& file,
                  const ModelImportSettings& settings = {});
+
+/**
+ * Whether a model node (a Blender object) is named as a collider: its name
+ * ends in "-collider", in any case, before any ".001"-style number Blender
+ * adds to a copy ("Boom-collider", "boom-Collider.002"). Its node then places
+ * as an entity with a BoxCollider3DComponent fitted to its mesh's bounds, in
+ * the node's own space (so turned and scaled with it), and its mesh isn't
+ * drawn: it's left out of the whole model and of the parts
+ * (ModelNode::collider).
+ */
+bool isColliderNodeName(std::string_view name);
 
 } // namespace sfs

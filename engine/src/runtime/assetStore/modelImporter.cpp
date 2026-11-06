@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -52,6 +53,25 @@ std::optional<AssetMeshName> parseAssetMeshName(std::string_view name)
   if (!name.empty() && name.front() != ':')
     return std::nullopt;
   return AssetMeshName{*id, std::string(name.empty() ? name : name.substr(1))};
+}
+
+bool isColliderNodeName(std::string_view name)
+{
+  // Blender's ".001" on a copy.
+  if (const std::size_t dot = name.rfind('.');
+      dot != std::string_view::npos && dot + 1 < name.size() &&
+      std::all_of(name.begin() + dot + 1,
+                  name.end(),
+                  [](char c) { return c >= '0' && c <= '9'; }))
+    name = name.substr(0, dot);
+  constexpr std::string_view kSuffix = "-collider";
+  return name.size() > kSuffix.size() &&
+         std::equal(kSuffix.begin(),
+                    kSuffix.end(),
+                    name.end() - kSuffix.size(),
+                    [](char a, char b) {
+                      return a == std::tolower(static_cast<unsigned char>(b));
+                    });
 }
 
 ModelImportSettings
@@ -469,7 +489,7 @@ void appendNode(const cgltf_node& node,
                 Textures& textures,
                 MeshData& out)
 {
-  if (node.mesh)
+  if (node.mesh && !isColliderNodeName(node.name ? node.name : ""))
   {
     float world[16];
     cgltf_node_transform_world(&node, world);
@@ -500,15 +520,36 @@ bool hasTriangles(const cgltf_mesh& mesh)
   return false;
 }
 
+bool isColliderNode(const cgltf_node& node)
+{
+  return isColliderNodeName(node.name ? node.name : "");
+}
+
+// Whether any node is a collider (isColliderNodeName()).
+bool hasColliderNodes(const cgltf_data& data)
+{
+  for (cgltf_size i = 0; i < data.nodes_count; ++i)
+    if (data.nodes[i].mesh && isColliderNode(data.nodes[i]))
+      return true;
+  return false;
+}
+
 // Each mesh's part name, when the model has more than one to pick from:
-// unique (files may repeat names), only for meshes with triangles.
+// unique (files may repeat names), only for meshes with triangles that a node
+// other than a collider draws.
 std::unordered_map<const cgltf_mesh*, std::string>
 partNames(const cgltf_data& data)
 {
   std::unordered_map<const cgltf_mesh*, std::string> partOf;
-  // With a skin, even one mesh is a part: its joints are nodes to place.
-  if (data.meshes_count <= 1 && data.skins_count == 0)
+  // With a skin, even one mesh is a part: its joints are nodes to place. With
+  // a collider, its node is an entity, so the rest are too.
+  if (data.meshes_count <= 1 && data.skins_count == 0 &&
+      !hasColliderNodes(data))
     return partOf;
+  std::set<const cgltf_mesh*> drawn;
+  for (cgltf_size i = 0; i < data.nodes_count; ++i)
+    if (data.nodes[i].mesh && !isColliderNode(data.nodes[i]))
+      drawn.insert(data.nodes[i].mesh);
   std::set<std::string> taken;
   for (cgltf_size i = 0; i < data.meshes_count; ++i)
   {
@@ -519,10 +560,75 @@ partNames(const cgltf_data& data)
     for (int n = 2; taken.contains(name); ++n)
       name = base + " " + std::to_string(n);
     taken.insert(name);
-    if (hasTriangles(data.meshes[i]))
+    if (hasTriangles(data.meshes[i]) && drawn.contains(&data.meshes[i]))
       partOf[&data.meshes[i]] = name;
   }
   return partOf;
+}
+
+// Whether a positions accessor carries a min and max to read its bounds from
+// (as glTF asks of every file), in plain floats.
+bool hasFloatBounds(const cgltf_accessor& positions)
+{
+  return positions.has_min && positions.has_max &&
+         positions.component_type == cgltf_component_type_r_32f &&
+         !positions.normalized;
+}
+
+// A mesh's bounds in its own space, placed (axes and scale), as its parts'
+// vertices are: from its positions' min and max, so without its data (read
+// from the data instead where a file leaves them out, if it's loaded).
+Aabb meshBounds(const cgltf_mesh& mesh, const glm::mat4& placement)
+{
+  Aabb bounds;
+  for (cgltf_size p = 0; p < mesh.primitives_count; ++p)
+  {
+    const cgltf_primitive& primitive = mesh.primitives[p];
+    if (primitive.type != cgltf_primitive_type_triangles)
+      continue;
+    for (cgltf_size a = 0; a < primitive.attributes_count; ++a)
+    {
+      const cgltf_accessor* positions = primitive.attributes[a].data;
+      if (primitive.attributes[a].type != cgltf_attribute_type_position ||
+          !positions)
+        continue;
+      if (hasFloatBounds(*positions))
+      {
+        bounds.expand(glm::make_vec3(positions->min));
+        bounds.expand(glm::make_vec3(positions->max));
+      }
+      else if (positions->buffer_view && positions->buffer_view->buffer->data)
+        for (cgltf_size k = 0; k < positions->count; ++k)
+        {
+          float v[3] = {0.0f, 0.0f, 0.0f};
+          cgltf_accessor_read_float(positions, k, v, 3);
+          bounds.expand(glm::make_vec3(v));
+        }
+    }
+  }
+  return bounds.empty() ? bounds : bounds.transformed(placement);
+}
+
+// Whether a collider's bounds need the file's data (a positions accessor
+// without a min and max): importModelNodes then loads it.
+bool collidersNeedData(const cgltf_data& data)
+{
+  for (cgltf_size i = 0; i < data.nodes_count; ++i)
+  {
+    const cgltf_node& node = data.nodes[i];
+    if (!node.mesh || !isColliderNode(node))
+      continue;
+    for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p)
+      for (cgltf_size a = 0; a < node.mesh->primitives[p].attributes_count; ++a)
+      {
+        const cgltf_attribute& attribute =
+            node.mesh->primitives[p].attributes[a];
+        if (attribute.type == cgltf_attribute_type_position && attribute.data &&
+            !hasFloatBounds(*attribute.data))
+          return true;
+      }
+  }
+  return false;
 }
 
 // The node tree, for placing the parts as entities. Each node's transform is
@@ -548,8 +654,13 @@ readNodes(const cgltf_data& data,
     out.parent = parent;
     out.local = placement * glm::make_mat4(local) * toFile;
     if (node.mesh)
-      if (const auto it = partOf.find(node.mesh); it != partOf.end())
+    {
+      out.collider = isColliderNode(node);
+      out.bounds = meshBounds(*node.mesh, placement);
+      if (const auto it = partOf.find(node.mesh);
+          it != partOf.end() && !out.collider)
         out.part = it->second;
+    }
     const int index = static_cast<int>(nodes.size());
     nodes.push_back(std::move(out));
     for (cgltf_size i = 0; i < node.children_count; ++i)
@@ -752,12 +863,21 @@ importModelNodes(const std::filesystem::path& file,
   DataPtr data(raw, cgltf_free);
   if (!valid(*data, path))
     return std::nullopt;
+  // Only a file whose colliders' bounds aren't written down needs its data.
+  if (collidersNeedData(*data) &&
+      cgltf_load_buffers(&options, data.get(), path.c_str()) !=
+          cgltf_result_success)
+  {
+    LOG_ERROR("Model import: can't load the data " + path + " refers to");
+    return std::nullopt;
+  }
   const glm::mat4 placement =
       glm::scale(glm::mat4(1.0f), glm::vec3(settings.scale)) * kYUpToZUp;
   const auto partOf = partNames(*data);
-  // As importModel gives them: a tree only with parts to place.
-  return partOf.empty() ? std::vector<ModelNode>()
-                        : readNodes(*data, placement, partOf);
+  // As importModel gives them: a tree only with parts (or colliders) to place.
+  return partOf.empty() && !hasColliderNodes(*data)
+             ? std::vector<ModelNode>()
+             : readNodes(*data, placement, partOf);
 }
 
 std::optional<ModelData> importModel(const std::filesystem::path& file,
@@ -833,8 +953,8 @@ std::optional<ModelData> importModel(const std::filesystem::path& file,
     }
   model.animations = readAnimations(*data, settings.scale, names);
 
-  // The node tree, for placing the parts as entities.
-  if (!model.parts.empty())
+  // The node tree, for placing the parts (and colliders) as entities.
+  if (!model.parts.empty() || hasColliderNodes(*data))
     model.nodes = readNodes(*data, placement, partOf);
 
   if (model.whole.empty())

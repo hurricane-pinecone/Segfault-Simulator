@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/lightning.h"
 #include "engine/core/rendering/rain.h"
@@ -44,6 +45,8 @@ struct RenderStats
   std::size_t shadowedLights = 0;       // point lights casting shadows
   std::size_t lightShadowInstances = 0; // casters for them
   std::size_t grassFields = 0;
+  std::size_t colliders = 0;  // drawn as debug lines (drawColliders)
+  std::size_t debugLines = 0; // every debug line, colliders' included
 };
 
 /**
@@ -302,6 +305,39 @@ public:
   ContactShadowSettings effectiveContactShadows() const;
   RainSettings effectiveRain() const;
 
+  // --- debug drawing (debug features: see debugFeatures.h) -----------------
+
+  /**
+   * Lines to draw over the next frame (see DebugLines), for debugging: add
+   * to it while updating; the frame draws them and empties it. Drawn only
+   * while debug features are enabled (the editor, a Debug build, a
+   * development export); otherwise emptied undrawn.
+   */
+  DebugLines& debugLines() { return m_debugLines; }
+
+  /**
+   * The scene's "Draw Colliders" debug setting (saved with it): every
+   * collider drawn as lines in the game and the editor's viewport (see
+   * colliderLines.h). Off by default.
+   */
+  void setDrawColliders(bool on) { m_drawColliders = on; }
+  bool drawColliders() const { return m_drawColliders; }
+  /**
+   * Over the scene's setting while the game runs (game code, a development
+   * key); none: the scene's (the default). SFS_DRAW_COLLIDERS=1 (or 0) in
+   * the environment forces it too, below this.
+   */
+  void forceDrawColliders(std::optional<bool> on)
+  {
+    m_forcedDrawColliders = on;
+  }
+  /**
+   * Whether this frame draws colliders: forced, else SFS_DRAW_COLLIDERS,
+   * else the scene's setting; always false while debug features are off (a
+   * release export), whatever those say.
+   */
+  bool effectiveDrawColliders() const;
+
   const RenderStats& stats() const { return m_stats; }
 
   /**
@@ -440,6 +476,9 @@ private:
   RainSettings m_rain;
   bool m_temporalAntiAliasing = false;
   std::optional<bool> m_forcedTemporalAntiAliasing;
+  DebugLines m_debugLines;
+  bool m_drawColliders = false;
+  std::optional<bool> m_forcedDrawColliders;
   SkySettings m_sky;
   ColorGrading m_grading;
   StyleSource m_styleSource;

@@ -3,8 +3,11 @@
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/camera.h"
 #include "engine/runtime/systems/collision3D.h"
+#include "engine/runtime/systems/collisionWorld3D.h"
 #include "glm/glm/ext/vector_float3.hpp"
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -77,6 +80,21 @@ public:
 
   /** Whether the entity currently has a physics body. */
   bool hasBody(const Entity& entity) const;
+
+  /**
+   * A frozen copy of the solid bodies that aren't dynamic (static ones, and
+   * kinematic ones where they are now), as of the last update, for queries on
+   * any thread (CollisionWorld3D): a planner trying shapes at many poses.
+   * `include`: which entities' bodies to copy (none given: all). A body's ids
+   * are its entity's (Entity::getId()); its layer the lowest of its colliders'.
+   */
+  std::shared_ptr<const CollisionWorld3D>
+  snapshot(const std::function<bool(const Entity&)>& include = {}) const;
+  /**
+   * Goes up whenever a body is added, removed or rebuilt, or a static one is
+   * moved: a snapshot of static bodies is current while this hasn't changed.
+   */
+  uint64_t revision() const;
 
   /** Contacts that began and ended during the last update. */
   const std::vector<Contact3D>& contactsBegun() const;

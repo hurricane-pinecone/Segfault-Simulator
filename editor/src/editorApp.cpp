@@ -21,6 +21,7 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/util/debugFeatures.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/meshLibrary.h"
@@ -117,6 +118,8 @@ void EditorApp::onSetup()
   // Play is for trying things out: its development keys work (F8 visual
   // styles), in any build of the editor.
   setDevKeys(true);
+  // So are its debug features (drawing colliders, ...), editing and playing.
+  sfs::debugFeatures::allow(true);
   m_context.history = &m_history;
 
   sfs::IRenderBackend& backend = *renderBackend();

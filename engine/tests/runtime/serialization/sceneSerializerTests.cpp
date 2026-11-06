@@ -329,6 +329,27 @@ int main()
     CHECK(target.render.contactShadowSettings() == contact);
   }
 
+  TEST("the draw colliders debug setting should round-trip; off saves as "
+       "before it existed, and loading a scene without it turns it off")
+  {
+    World plain;
+    const nlohmann::json plainSaved = plain.serializer().save(plain.scene);
+    CHECK(!plainSaved["render"].contains("debug"));
+
+    World source;
+    source.render.setDrawColliders(true);
+    const nlohmann::json saved = source.serializer().save(source.scene);
+    CHECK(saved["render"]["debug"]["drawColliders"] == true);
+    World target;
+    CHECK(!target.render.drawColliders());
+    target.serializer().load(saved, target.scene);
+    CHECK(target.render.drawColliders());
+
+    // Undone (a scene saved with it off loads over it): off again.
+    target.serializer().load(plainSaved, target.scene);
+    CHECK(!target.render.drawColliders());
+  }
+
   TEST("a scene's style should round-trip, and old files load as 3D")
   {
     World source;
