@@ -133,7 +133,10 @@ Arrived, Blocked).
 **No "no way" from a time limit.** Searches are budgeted in nodes, never the
 clock, so the answer is the same on a fast or a busy machine. Out of budget, an
 agent drives the clear way so far and the search goes on with twice the
-budget; it only reports `Blocked` when every reachable pose was tried.
+budget; it only reports `Blocked` when every reachable pose was tried, or at
+once when something stands on every goal (no pose there is clear, so none is
+ever reached; `blockers` names what's on it). Starting touching something with
+a goal within getting out of it is the one exception: that's searched.
 
 ## Ground costs and right of way
 

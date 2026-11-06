@@ -107,6 +107,32 @@ int main()
     CHECK(!r.blockers.empty());
   }
 
+  TEST("a goal something stands on should be proven blocked at once")
+  {
+    // A parked truck's corner over the goal, open ground everywhere else: no
+    // search over everything reachable, what's on the goal as the blocker.
+    const std::vector<BoxSpace::Solid> truck = {
+        {{41.0f, 2.5f}, {3.8f, 1.4f}, 0.0f, 0.0f, 4.0f, false, 7}};
+    const PlanRequest q = request(truck, {{0, 0}, 0.0f}, {{40, 0}, 0.0f});
+    const PlanResult r = planNow(q);
+    timed("r", r);
+    CHECK(r.state == PlanState::Blocked);
+    CHECK(r.stats.nodes == 0u);
+    CHECK(r.blockers.size() == 1u);
+    CHECK(!r.blockers.empty() && r.blockers.front().id == 7u);
+    // (Moved off it, the same goal's found.)
+    const PlanRequest clear =
+        request({{{41.0f, 4.0f}, {3.8f, 1.4f}, 0.0f, 0.0f, 4.0f, false, 7}},
+                {{0, 0}, 0.0f},
+                {{40, 0}, 0.0f});
+    CHECK(planNow(clear).state == PlanState::Found);
+    // (Starting touching it, within getting out: not refused.)
+    const PlanRequest escape =
+        request(truck, {{40, 0.3f}, 0.0f}, {{40, 0}, 0.0f});
+    const PlanResult e = planNow(escape);
+    CHECK(e.why.find("where it's to stop") == std::string::npos);
+  }
+
   TEST("turning round in a dead-end lane should back up, not fail")
   {
     // A lane 6 m wide, closed at x = 30: in facing +x, out facing -x.

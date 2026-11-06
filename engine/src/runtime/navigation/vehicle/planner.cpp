@@ -122,6 +122,47 @@ PlanResult planOnce(const PlanRequest& q,
     return r;
   }
   const Motions rig(q);
+  // A goal nothing can stand at (something stands on it) is never reached:
+  // that's proof at once, not after growing every pose it could reach (a
+  // parked truck's corner on a combine's put-away spot: millions of poses
+  // across a farm). Not when it starts touching something and the goal is
+  // within getting out of that (the way out is let off its touch).
+  if (!q.goals.empty() && !q.goalTest)
+  {
+    const bool startClear = rig.standsClear(q.from, q.hitch);
+    std::vector<Space::Hit> onGoals;
+    bool reachable = false;
+    for (const Goal& g : q.goals)
+    {
+      if (!startClear &&
+          glm::length(g.pose.position - q.from.position) <= kEscapeReach)
+      {
+        reachable = true;
+        break;
+      }
+      const void* body = rig.probe(false, 0.0f, 0.0f);
+      std::optional<Space::Hit> hit = q.space->hit(body, g.pose);
+      if (!hit && q.vehicle.trailer && g.hitch)
+        hit = q.space->hit(rig.probe(true, 0.0f, 0.0f),
+                           trailerPose(*q.vehicle.trailer, g.pose, *g.hitch));
+      if (!hit)
+      {
+        reachable = true;
+        break;
+      }
+      onGoals.push_back(*hit);
+    }
+    if (!reachable)
+    {
+      r.state = PlanState::Blocked;
+      r.why = "no way: something stands where it's to stop (at (" +
+              std::to_string(onGoals.front().point.x) + ", " +
+              std::to_string(onGoals.front().point.y) + "))";
+      r.blockers = std::move(onGoals);
+      r.stats.ms = msSince(t0);
+      return r;
+    }
+  }
   // The area searched: round the start and goals, widened if the search was
   // hemmed in only by it (no proof), up to everything there is.
   Rect area{q.from.position, q.from.position};
