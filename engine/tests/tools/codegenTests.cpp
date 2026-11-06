@@ -191,8 +191,14 @@ int main()
   TEST("an unsupported base should be an error")
   {
     const ParseResult result = parseHeader(
-        "class Boss : public Monster { public: int hp; };", "Boss.h");
+        "class Boss : public Monster<int> { public: int hp; };", "Boss.h");
     CHECK(hasDiagnostic(result, Diagnostic::Severity::Error, "Monster"));
+    // A plain name may be another reflected type: derivedType's
+    // static_assert rejects it when compiled unless it's a scriptable object.
+    const ParseResult named = parseHeader(
+        "class Boss : public Monster { public: int hp; };", "Boss.h");
+    CHECK(named.type && named.type->kind == TypeKind::Derived &&
+          named.type->base == "Monster");
   }
 
   TEST("systems should be recognised and nested namespaces kept")
@@ -470,6 +476,69 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(code.find("placeholderView<farm::JobBoard>") != std::string::npos);
     CHECK(code.find("placeholderView<farm::JobRow>") == std::string::npos);
     CHECK(code.find("void sfsRegisterModule(sfs::reflect::TypeRegistry&) {}") !=
+          std::string::npos);
+  }
+
+  TEST("a scriptable object may derive from another reflected type, the "
+       "engine's or the game's")
+  {
+    const ParseResult tractor = parseHeader(R"(
+      struct TractorSpec : public sfs::VehicleSpec
+      {
+        float hitchHeight = 0.5f;
+      };
+    )",
+                                            "/project/scripts/TractorSpec.h");
+    CHECK(tractor.type.has_value() && tractor.type->kind == TypeKind::Derived);
+    CHECK(tractor.diagnostics.empty());
+    CHECK(tractor.type->base == "VehicleSpec");
+    CHECK(findField(*tractor.type, "hitchHeight") != nullptr);
+
+    const ParseResult fancy = parseHeader(
+        "namespace game { struct FancyItem : ItemDef { int sparkle = 1; }; }",
+        "/project/scripts/FancyItem.h");
+    CHECK(fancy.type && fancy.type->kind == TypeKind::Derived &&
+          fancy.type->base == "ItemDef");
+
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "sfsRegisterModule";
+    options.includeRoot = "/project/scripts";
+    const std::string code = generateRegistration({*tractor.type}, options);
+    CHECK(code.find("derivedType<TractorSpec>(\"TractorSpec\", \"Tractor "
+                    "Spec\", \"game\", \"VehicleSpec\")") != std::string::npos);
+    CHECK(code.find("objectAs<TractorSpec>(object)->hitchHeight") !=
+          std::string::npos);
+    // Scriptable objects need nothing of the scripting runtime.
+    CHECK(code.find("scriptRegistry.h") == std::string::npos);
+  }
+
+  TEST("a type should have one base, and not a template")
+  {
+    const ParseResult two = parseHeader(
+        "struct Both : sfs::ScriptableObject, Other { int a = 0; };",
+        "/project/scripts/Both.h");
+    CHECK(hasDiagnostic(two, Diagnostic::Severity::Error, "one base"));
+    const ParseResult templated =
+        parseHeader("struct Listy : std::vector<int> { int a = 0; };",
+                    "/project/scripts/Listy.h");
+    CHECK(hasDiagnostic(
+        templated, Diagnostic::Severity::Error, "isn't a supported base"));
+  }
+
+  TEST("an AssetRef to a namespaced type should name it as registered")
+  {
+    const ParseResult car = parseHeader(
+        "struct Car { sfs::AssetRef<sfs::VehicleSpec> spec; };", "Car.h");
+    const FieldModel* spec = findField(*car.type, "spec");
+    CHECK(spec && spec->kind == "AssetRef" &&
+          spec->assetType == "sfs::VehicleSpec");
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "registerTypes";
+    const std::string code = generateRegistration({*car.type}, options);
+    CHECK(code.find("sfs::AssetRef<sfs::VehicleSpec>>") != std::string::npos);
+    CHECK(code.find("field.attributes.assetType = \"VehicleSpec\";") !=
           std::string::npos);
   }
 

@@ -41,7 +41,11 @@ These rules decide what is reflected:
   object, one deriving from `sfs::System` is a system, one deriving from
   `sfs::MeshSource` is a mesh source, and one deriving from
   `sfs::ScriptableObject` is a [scriptable object
-  type](../../editor/scripting/index.md#scriptable-objects). A type with no
+  type](../../editor/scripting/index.md#scriptable-objects). A type deriving
+  from another reflected type (`struct TractorSpec : sfs::VehicleSpec`) is
+  that type's kind with the base's fields first (`TypeInfo::base`, each
+  `FieldInfo::owner`, `TypeRegistry::isA()` / `chain()`); for now only
+  scriptable objects may. A type with no
   base is a component: always for a `struct`, and for a `class` once it has a
   public field. A `class` with no base and no public field (a plain helper
   your scripts use) is left alone, not reflected.
@@ -96,7 +100,7 @@ skipped. The build prints a warning that names the field and its type.
 and IDEs can jump to them:
 
 ```
-scripts/Boss.h:3: error: 'Monster' isn't a supported base; derive from sfs::GameObject, sfs::System, sfs::MeshSource or sfs::ScriptableObject, or nothing for a component
+scripts/Boss.h:3: error: 'Monster<int>' isn't a supported base; derive from sfs::GameObject, sfs::ui::Layer, sfs::System, sfs::MeshSource, sfs::ScriptableObject or another reflected type, or nothing for a component
 scripts/Crop.h:9: warning: 'items' has type 'std::vector<int>', which the editor can't edit yet; skipped
 ```
 

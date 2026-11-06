@@ -139,6 +139,8 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/capsuleCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/navAgentComponent.h"
+            "${ENGINE_COMPONENT_DIR}/vehicleComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassBenderComponent.h"
             "${ENGINE_COMPONENT_DIR}/deformerComponent.h"
@@ -278,6 +280,22 @@ add_library(sfs::engine ALIAS engine)
 sfs_engine_library_output(engine)
 
 target_link_libraries(engine PUBLIC engine-core)
+
+# Reflection for the runtime's own types (scriptable objects such as
+# VehicleSpec), registered as the engine's when the runtime loads (see
+# scriptRegistry.cpp). Without codegen a stub registers nothing.
+if(SFS_CODEGEN_AVAILABLE)
+    sfs_generate_reflection(engine
+        MODULE engine
+        FUNCTION sfs::reflect::registerEngineRuntimeTypes
+        FUNCTION_HEADER "engine/runtime/scripting/scriptRegistry.h"
+        INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        HEADERS
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/runtime/navigation/vehicle/vehicleSpec.h")
+else()
+    target_sources(engine PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineRuntimeReflection.cpp")
+endif()
 
 target_include_directories(engine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

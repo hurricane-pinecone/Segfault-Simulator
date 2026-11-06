@@ -59,6 +59,9 @@ struct FieldInfo
 {
   std::string name;        // as declared, e.g. "castsShadow"
   std::string displayName; // for the editor, e.g. "Casts Shadow"
+  // The type that declares it: the owning type's own name, or a reflected
+  // base's for a field it inherits (filled in by TypeRegistry::add).
+  std::string owner;
   FieldKind kind = FieldKind::Float;
   FieldAttributes attributes;
 
@@ -100,13 +103,23 @@ struct ScriptableOps
   void (*destroy)(void* object) = nullptr;
 };
 
-/** A reflected type: its names, kind, fields and (for components) ops. */
+/**
+ * A reflected type: its names, kind, fields and (for components) ops.
+ *
+ * A type may derive from another reflected type (for now a scriptable object
+ * from another one: `struct TractorSpec : sfs::VehicleSpec`), the engine's or
+ * a game's. `base` names it, and `fields` holds every level's fields, the
+ * base's first (each FieldInfo::owner says which level declares it); the
+ * registry fills the inherited ones in, whichever of the two is added first,
+ * and drops them again when the base goes (its module unloaded).
+ */
 struct TypeInfo
 {
   std::string name;        // C++ name, e.g. "TransformComponent"
   std::string displayName; // for the editor, e.g. "Transform"
   std::string module;      // which module registered it (e.g. "engine")
   TypeKind kind = TypeKind::Component;
+  std::string base; // the reflected type it derives from (empty: none)
   std::vector<FieldInfo> fields;
   ComponentOps component;   // valid when kind == Component
   ScriptableOps scriptable; // valid when kind == Data
@@ -128,9 +141,20 @@ public:
 
   const TypeInfo* find(std::string_view name) const;
 
+  /**
+   * Whether `type` is `base` or derives from it through reflected types
+   * (false if either isn't registered, or the chain is broken).
+   */
+  bool isA(std::string_view type, std::string_view base) const;
+  /** `type` and the reflected types it derives from, nearest first. */
+  std::vector<std::string> chain(std::string_view type) const;
+
   const std::vector<TypeInfo>& types() const { return m_types; }
 
 private:
+  // Fill every derived type's inherited fields in again.
+  void resolve();
+
   std::vector<TypeInfo> m_types;
 };
 

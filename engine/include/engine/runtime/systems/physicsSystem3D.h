@@ -37,6 +37,13 @@ struct RaycastHit3D
  * dynamic body may be a child). Moving a body's transform from code teleports
  * it; for a kinematic body it's a move that pushes what's in the way.
  *
+ * A scene with no dynamic bodies has nothing to simulate, only contacts to
+ * find: it steps only when a body moved, appeared or went, in steps short
+ * enough that no moving body passes anything unnoticed, so its cost doesn't
+ * grow with the game's speed. Bodies are checked against their components
+ * every update (a compare each); the scene is searched for new ones only when
+ * an entity gains or loses a collider or rigid body.
+ *
  * Contacts that begin or end (touching, or passing through a trigger) are
  * told to the game objects on both entities (GameObject::onCollisionEnter and
  * the rest) when it knows its scene, and kept as contactsBegun() and
@@ -95,6 +102,14 @@ public:
    * moved: a snapshot of static bodies is current while this hasn't changed.
    */
   uint64_t revision() const;
+
+  /** What the last update did, for tests and measuring. */
+  struct UpdateStats
+  {
+    int steps = 0;                // simulation steps taken
+    bool lookedForBodies = false; // searched the scene for new bodies
+  };
+  const UpdateStats& lastUpdateStats() const;
 
   /** Contacts that began and ended during the last update. */
   const std::vector<Contact3D>& contactsBegun() const;

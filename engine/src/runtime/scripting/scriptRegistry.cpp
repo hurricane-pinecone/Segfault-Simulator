@@ -8,6 +8,7 @@
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/cameraSystem.h"
+#include "engine/runtime/systems/navigationSystem.h"
 #include "engine/runtime/systems/physicsSystem2D.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 
@@ -45,6 +46,13 @@ const ScriptType* ScriptRegistry::find(std::string_view name) const
 
 namespace
 {
+// The runtime's reflected types join the engine's as soon as it's loaded.
+[[maybe_unused]] const bool g_runtimeTypes = []
+{
+  reflect::registerEngineRuntimeTypes(reflect::types());
+  return true;
+}();
+
 // The engine's own optional systems, offered beside a game's: a scene that
 // wants one lists it by name, like a game system.
 void registerEngineSystems(ScriptRegistry& registry)
@@ -67,6 +75,11 @@ void registerEngineSystems(ScriptRegistry& registry)
                           .addSystem = [](Scene& scene) -> System& {
                             return scene.addSystem<PhysicsSystem3D>(&scene);
                           }});
+  registry.add(ScriptType{.name = "NavigationSystem",
+                          .module = "engine",
+                          .kind = ScriptType::Kind::System,
+                          .addSystem = [](Scene& scene) -> System&
+                          { return scene.addSystem<NavigationSystem>(); }});
 #endif
 }
 } // namespace

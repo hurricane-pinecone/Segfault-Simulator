@@ -17,6 +17,10 @@ enum class TypeKind
   GameObject,
   MeshSource,
   ScriptableObject, // derives from sfs::ScriptableObject
+  // Derives from another reflected type (the engine's or the module's own,
+  // e.g. `struct TractorSpec : sfs::VehicleSpec`): its kind is its base's,
+  // decided when the generated code compiles; for now a scriptable object.
+  Derived,
 };
 
 struct FieldModel
@@ -43,6 +47,7 @@ struct TypeModel
   std::string qualifiedName; // with namespaces, e.g. "game::Player"
   TypeKind kind = TypeKind::Component;
   bool uiLayer = false; // a GameObject that's an sfs::ui::Layer
+  std::string base;     // Derived: the base's name, unqualified ("VehicleSpec")
   std::vector<FieldModel> fields;
   std::filesystem::path header;
 };

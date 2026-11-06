@@ -152,8 +152,16 @@ void emitField(std::ostringstream& out,
   if (!field.showIf.empty())
     out << "      field.attributes.showIf = \"" << field.showIf << "\";\n";
   if (field.kind == "AssetRef")
-    out << "      field.attributes.assetType = " << literal(field.assetType)
+  {
+    // By the registered (unqualified) name: AssetRef<sfs::VehicleSpec> refers
+    // to "VehicleSpec".
+    const std::size_t colons = field.assetType.rfind("::");
+    out << "      field.attributes.assetType = "
+        << literal(colons == std::string::npos
+                       ? field.assetType
+                       : field.assetType.substr(colons + 2))
         << ";\n";
+  }
   if (field.range)
     out << "      field.attributes.hasRange = true;\n"
         << "      field.attributes.min = static_cast<float>("
@@ -163,11 +171,11 @@ void emitField(std::ostringstream& out,
 
   out << "      field.address = [](void* object) -> void* {\n";
   if (field.isPublic)
-    out << "        return &static_cast<" << type.qualifiedName
-        << "*>(object)->" << field.name << ";\n";
+    out << "        return &objectAs<" << type.qualifiedName << ">(object)->"
+        << field.name << ";\n";
   else
-    out << "        return &(static_cast<" << type.qualifiedName
-        << "*>(object)->*memberOf(" << accessTag(type, field) << "{}));\n";
+    out << "        return &(objectAs<" << type.qualifiedName
+        << ">(object)->*memberOf(" << accessTag(type, field) << "{}));\n";
   out << "      };\n"
       << "      type.fields.push_back(std::move(field));\n"
       << "    }\n";
@@ -197,6 +205,12 @@ void emitType(std::ostringstream& out,
         << "    TypeInfo type = scriptableObjectType<" << type.qualifiedName
         << ">(" << name << ", " << literal(displayName(type.name, false))
         << ", " << module << ");\n";
+    break;
+  case TypeKind::Derived:
+    // derivedType's static_assert says what may derive (scriptable objects).
+    out << "    TypeInfo type = derivedType<" << type.qualifiedName << ">("
+        << name << ", " << literal(displayName(type.name, false)) << ", "
+        << module << ", " << literal(type.base) << ");\n";
     break;
   case TypeKind::MeshSource:
     out << "    static_assert(std::is_base_of_v<sfs::MeshSource, "
@@ -315,7 +329,12 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
   const bool hasScripts = std::any_of(
       types.begin(),
       types.end(),
-      [](const TypeModel& type) { return type.kind != TypeKind::Component; });
+      [](const TypeModel& type)
+      {
+        return type.kind == TypeKind::System ||
+               type.kind == TypeKind::GameObject ||
+               type.kind == TypeKind::MeshSource;
+      });
   if (hasScripts)
     out << "#include \"engine/runtime/rendering/meshSource.h\"\n"
         << "#include \"engine/runtime/sceneManager/scene.h\"\n"

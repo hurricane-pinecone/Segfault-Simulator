@@ -167,14 +167,35 @@ see the bodies as of the last physics update, so only while the scene plays.
 
 ## How it runs
 
-Each frame, before the game objects update, the system:
+Each update, before the game objects update, the system:
 
 1. Picks up bodies that were added, removed, or changed (a collider or rigid
    body field, or the entity's scale, which rebuilds the body) and transforms
-   moved by code.
-2. Steps the simulation at a fixed 60 steps a second, at most 4 per frame.
-   After a long hitch it drops the rest rather than trying to catch up.
+   moved by code. Each body is checked against what it was made from, which
+   costs a compare when nothing changed. The scene is searched for new bodies
+   only when an entity gained or lost a collider (see
+   `Registry::componentChanges`).
+2. Steps the simulation:
+    - **With dynamic bodies**, at a fixed 60 steps a second of game time, at
+      most 4 per update. After a long hitch it drops the rest rather than
+      trying to catch up.
+    - **With none** (only static and kinematic bodies: a game that uses
+      physics for colliders, queries and contacts), there's nothing to
+      simulate, only contacts to find. It steps only when a body moved,
+      appeared or went, about 60 times a second of real time, sooner when a
+      moving body has gone far. One step covers all the game time since,
+      split so that no moving body goes further in one than three quarters of
+      its own width along the way, nor 1 m. So it can't pass anything
+      unnoticed, however thin, and the cost doesn't grow with the game's
+      speed.
 3. Writes dynamic bodies' new positions into their transforms.
+
+The system runs each of the scene's game-time steps (see
+[Game time](../../core/ecs/index.md#game-time)), so a kinematic body moved by
+a system that steps too is tracked along its way. `lastUpdateStats()` tells
+how many steps the last update took and whether it searched the scene. With
+`SFS_CPU_TIMING` set, the log shows `physics3D/sync`, `physics3D/step` and
+`physics3D/contacts` separately.
 
 The engine's prebuilt Jolt package targets AVX2 CPUs, so games need an x86-64
 CPU from about 2013 or later. Physics isn't part of the web build.
