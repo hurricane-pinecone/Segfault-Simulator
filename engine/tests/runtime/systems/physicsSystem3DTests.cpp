@@ -54,11 +54,16 @@ struct World
   // Run for a while, collecting every contact that began or ended.
   void run(double seconds,
            std::vector<Contact3D>* begun = nullptr,
-           std::vector<Contact3D>* ended = nullptr)
+           std::vector<Contact3D>* ended = nullptr,
+           std::vector<Contact3D>* deepened = nullptr)
   {
     for (double t = 0.0; t < seconds; t += kFrame)
     {
       scene.update(kFrame);
+      if (deepened)
+        deepened->insert(deepened->end(),
+                         physics.contactsDeepened().begin(),
+                         physics.contactsDeepened().end());
       if (begun)
         begun->insert(begun->end(),
                       physics.contactsBegun().begin(),
@@ -534,6 +539,86 @@ int main()
                       ended.end(),
                       [&](const Contact3D& c)
                       { return involves(c, post, cart); }));
+  }
+
+  TEST("a kinematic body passing close by should begin a contact only if it "
+       "touches, not within the speculative distance")
+  {
+    // (Jolt reports shapes up to 2 cm apart as speculative contacts.)
+    for (float gap : {0.005f, 0.015f, 0.05f, -0.01f})
+    {
+      World world;
+      Entity post = world.box({2.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+      Entity cart =
+          world.box({0.0f, 0.6f + gap, 0.5f}, {1.0f, 1.0f, 1.0f}, false);
+      RigidBody3DComponent body;
+      body.kinematic = true;
+      body.touchStatic = true;
+      cart.addComponent<RigidBody3DComponent>(body);
+      std::vector<Contact3D> begun, ended;
+      world.run(kFrame);
+      for (int i = 0; i <= 80; ++i)
+      {
+        hierarchy::setWorldMatrix(
+            cart, TransformComponent({0.05f * i, 0.6f + gap, 0.5f}).matrix());
+        world.run(kFrame, &begun, &ended);
+      }
+      const auto with = [&](const std::vector<Contact3D>& list)
+      {
+        return std::count_if(list.begin(),
+                             list.end(),
+                             [&](const Contact3D& c)
+                             { return involves(c, post, cart); });
+      };
+      CHECK(with(begun) == (gap < 0.0f ? 1 : 0));
+      CHECK(with(ended) == with(begun));
+    }
+  }
+
+  TEST("a contact should tell how deep it went: began shallow, deepened to "
+       "its deepest, ended with that")
+  {
+    World world;
+    Entity post = world.box({2.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    Entity cart = world.box({2.0f, 0.65f, 0.5f}, {1.0f, 1.0f, 1.0f}, false);
+    RigidBody3DComponent body;
+    body.kinematic = true;
+    body.touchStatic = true;
+    cart.addComponent<RigidBody3DComponent>(body);
+    std::vector<Contact3D> begun, ended, deepened;
+    world.run(kFrame);
+    // (In from 5 cm away to 8 cm deep, 5 mm a frame, then back out.)
+    const auto place = [&](float y)
+    {
+      hierarchy::setWorldMatrix(
+          cart, TransformComponent({2.0f, y, 0.5f}).matrix());
+      world.run(kFrame, &begun, &ended, &deepened);
+    };
+    for (float y = 0.65f; y >= 0.52f - 1e-4f; y -= 0.005f)
+      place(y);
+    for (float y = 0.52f; y <= 0.7f; y += 0.005f)
+      place(y);
+    const auto with = [&](const std::vector<Contact3D>& list)
+    {
+      std::vector<Contact3D> found;
+      for (const Contact3D& c : list)
+        if (involves(c, post, cart))
+          found.push_back(c);
+      return found;
+    };
+    const std::vector<Contact3D> b = with(begun), e = with(ended),
+                                 d = with(deepened);
+    CHECK(b.size() == 1);
+    CHECK(e.size() == 1);
+    CHECK(!d.empty());
+    if (b.size() == 1 && e.size() == 1 && !d.empty())
+    {
+      CHECK(b[0].depth < 0.01f);
+      CHECK(std::abs(d.back().depth - 0.08f) < 0.01f);
+      CHECK(std::abs(e[0].depth - d.back().depth) < 1e-6f);
+      for (size_t i = 1; i < d.size(); ++i)
+        CHECK(d[i].depth > d[i - 1].depth);
+    }
   }
 
   TEST("with nothing changing, updates should neither search the scene nor "

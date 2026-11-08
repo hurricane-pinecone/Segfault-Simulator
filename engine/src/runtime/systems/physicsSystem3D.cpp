@@ -50,6 +50,8 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 
@@ -470,7 +472,9 @@ BodyPair makePair(const JPH::BodyID& a, const JPH::BodyID& b)
 }
 
 // Collects contact changes during a step (on the stepping thread: the job
-// system is single-threaded).
+// system is single-threaded). A contact begins when the shapes touch: Jolt
+// also reports speculative contacts (shapes up to its speculative distance,
+// 2 cm, apart, not touching), and those only count once they touch.
 class ContactCollector : public JPH::ContactListener
 {
 public:
@@ -480,7 +484,11 @@ public:
     bool trigger = false;
     bool added = false;
     glm::vec3 point{0.0f};
+    float depth = 0.0f;
+    bool deeper = false; // (not added: went deeper rather than ended)
   };
+  // (Deeper by less than this isn't told: Jolt's depths wobble that much.)
+  static constexpr float kDeeperStep = 0.001f;
   std::vector<Change> changes;
 
   void OnContactAdded(const JPH::Body& a,
@@ -488,17 +496,84 @@ public:
                       const JPH::ContactManifold& manifold,
                       JPH::ContactSettings&) override
   {
-    const JPH::RVec3 at = manifold.GetWorldSpaceContactPointOn1(0);
-    changes.push_back({makePair(a.GetID(), b.GetID()),
-                       a.IsSensor() || b.IsSensor(),
-                       true,
-                       glm::vec3(at.GetX(), at.GetY(), at.GetZ())});
+    touch(a, b, manifold);
+  }
+
+  void OnContactPersisted(const JPH::Body& a,
+                          const JPH::Body& b,
+                          const JPH::ContactManifold& manifold,
+                          JPH::ContactSettings&) override
+  {
+    touch(a, b, manifold);
   }
 
   void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
   {
-    changes.push_back(
-        {makePair(pair.GetBody1ID(), pair.GetBody2ID()), false, false});
+    if (touching.erase(keyOf(pair.GetBody1ID(),
+                             pair.GetSubShapeID1(),
+                             pair.GetBody2ID(),
+                             pair.GetSubShapeID2())) > 0)
+      changes.push_back(
+          {makePair(pair.GetBody1ID(), pair.GetBody2ID()), false, false});
+  }
+
+  // A body gone: its contacts with it (ended by the caller).
+  void forget(JPH::uint32 body)
+  {
+    std::erase_if(touching,
+                  [&](const auto& entry)
+                  {
+                    const Key& k = entry.first;
+                    return std::get<0>(k) == body || std::get<2>(k) == body;
+                  });
+  }
+
+private:
+  // (Body 1, its sub-shape, body 2, its sub-shape.)
+  using Key = std::tuple<JPH::uint32, JPH::uint32, JPH::uint32, JPH::uint32>;
+  // (Each touching sub-shape pair's deepest overlap so far.)
+  std::map<Key, float> touching;
+
+  static Key keyOf(const JPH::BodyID& a,
+                   const JPH::SubShapeID& sa,
+                   const JPH::BodyID& b,
+                   const JPH::SubShapeID& sb)
+  {
+    return {a.GetIndexAndSequenceNumber(),
+            sa.GetValue(),
+            b.GetIndexAndSequenceNumber(),
+            sb.GetValue()};
+  }
+
+  void touch(const JPH::Body& a,
+             const JPH::Body& b,
+             const JPH::ContactManifold& manifold)
+  {
+    const bool trigger = a.IsSensor() || b.IsSensor();
+    // (Speculative: not touching yet.)
+    if (!trigger && manifold.mPenetrationDepth < 0.0f)
+      return;
+    const float depth =
+        trigger ? 0.0f : std::max(0.0f, manifold.mPenetrationDepth);
+    const auto [entry, added] = touching.try_emplace(
+        keyOf(
+            a.GetID(), manifold.mSubShapeID1, b.GetID(), manifold.mSubShapeID2),
+        depth);
+    if (!added)
+    {
+      if (trigger || depth < entry->second + kDeeperStep)
+        return;
+      entry->second = depth;
+      changes.push_back(
+          {makePair(a.GetID(), b.GetID()), false, false, {}, depth, true});
+      return;
+    }
+    const JPH::RVec3 at = manifold.GetWorldSpaceContactPointOn1(0);
+    changes.push_back({makePair(a.GetID(), b.GetID()),
+                       trigger,
+                       true,
+                       glm::vec3(at.GetX(), at.GetY(), at.GetZ()),
+                       depth});
   }
 };
 
@@ -533,6 +608,7 @@ struct PhysicsSystem3D::Impl
   {
     int count = 0;
     bool trigger = false;
+    float depth = 0.0f; // the deepest any of its sub-shape pairs has gone
   };
 
   // First: Jolt must be set up (its allocator, above all) before any member
@@ -557,6 +633,7 @@ struct PhysicsSystem3D::Impl
   std::map<BodyPair, ActivePair> activePairs;
   std::vector<Contact3D> begun;
   std::vector<Contact3D> ended;
+  std::vector<Contact3D> deepened;
   double accumulator = 0.0;
   bool optimised = false;
   uint64_t revision = 1; // (bodies added, removed or rebuilt, statics moved)
@@ -747,10 +824,11 @@ struct PhysicsSystem3D::Impl
     Record& record = records[slot];
     const JPH::uint32 key = record.body.GetIndexAndSequenceNumber();
     // Its contacts end with it.
+    contacts.forget(key);
     for (auto pair = activePairs.begin(); pair != activePairs.end();)
       if (pair->first.first == key || pair->first.second == key)
       {
-        reportEnded(pair->first, pair->second.trigger);
+        reportEnded(pair->first, pair->second);
         pair = activePairs.erase(pair);
       }
       else
@@ -779,9 +857,13 @@ struct PhysicsSystem3D::Impl
     return it == entityByBody.end() ? Entity() : it->second;
   }
 
-  void reportEnded(const BodyPair& pair, bool trigger)
+  void reportEnded(const BodyPair& pair, const ActivePair& active)
   {
-    ended.push_back({entityOf(pair.first), entityOf(pair.second), trigger});
+    ended.push_back({entityOf(pair.first),
+                     entityOf(pair.second),
+                     active.trigger,
+                     glm::vec3(0.0f),
+                     active.depth});
   }
 
   // Bring the bodies in line with the components: new, removed, rebuilt and
@@ -1203,6 +1285,24 @@ struct PhysicsSystem3D::Impl
   void collectContacts()
   {
     SFS_CPU_SCOPE("physics3D/contacts");
+    // (Pairs that went deeper this update, and where each is in `deepened`.)
+    std::map<BodyPair, size_t> deeper;
+    const auto deepen =
+        [&](const BodyPair& pair, ActivePair& active, float depth)
+    {
+      if (active.trigger || depth <= active.depth)
+        return;
+      active.depth = depth;
+      const auto [at, first] = deeper.try_emplace(pair, deepened.size());
+      if (first)
+        deepened.push_back({entityOf(pair.first),
+                            entityOf(pair.second),
+                            false,
+                            glm::vec3(0.0f),
+                            depth});
+      else
+        deepened[at->second].depth = depth;
+    };
     for (const ContactCollector::Change& change : contacts.changes)
     {
       if (change.added)
@@ -1211,19 +1311,28 @@ struct PhysicsSystem3D::Impl
         if (active.count++ == 0)
         {
           active.trigger = change.trigger;
+          active.depth = change.depth;
           begun.push_back({entityOf(change.pair.first),
                            entityOf(change.pair.second),
                            change.trigger,
-                           change.point});
+                           change.point,
+                           change.depth});
         }
+        else
+          deepen(change.pair, active, change.depth);
         continue;
       }
       const auto it = activePairs.find(change.pair);
       if (it == activePairs.end())
         continue;
+      if (change.deeper)
+      {
+        deepen(change.pair, it->second, change.depth);
+        continue;
+      }
       if (--it->second.count == 0)
       {
-        reportEnded(change.pair, it->second.trigger);
+        reportEnded(change.pair, it->second);
         activePairs.erase(it);
       }
     }
@@ -1252,6 +1361,7 @@ void PhysicsSystem3D::update(double deltaTime)
 {
   m->begun.clear();
   m->ended.clear();
+  m->deepened.clear();
   m->stats.steps = 0;
   if (!registry)
     return;
@@ -1420,6 +1530,11 @@ const std::vector<Contact3D>& PhysicsSystem3D::contactsBegun() const
 const std::vector<Contact3D>& PhysicsSystem3D::contactsEnded() const
 {
   return m->ended;
+}
+
+const std::vector<Contact3D>& PhysicsSystem3D::contactsDeepened() const
+{
+  return m->deepened;
 }
 
 } // namespace sfs

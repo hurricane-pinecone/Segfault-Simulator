@@ -20,7 +20,7 @@ struct PlanStats
   uint32_t shots = 0;     // analytic shots tried
   int rounds = 0;         // budgets (1, 2, 4.. times the first)
   int widened = 0;        // times its area (or corridor) was widened
-  bool plain = false;     // a direct continuous-curvature path did it
+  bool plain = false;     // the start's own shot was the quickest way
   bool exactMiss = false; // the final exact check found a touch (a bug)
   double ms = 0.0;        // wall clock (diagnostics only, never a limit)
 };

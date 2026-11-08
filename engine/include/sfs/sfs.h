@@ -55,6 +55,7 @@
 #include "engine/runtime/systems/navigationSystem.h"
 #include "engine/runtime/systems/physicsSystem2D.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
+#include "engine/runtime/systems/prefabSystem.h"
 #include "engine/runtime/ui/layer.h"
 #include "engine/runtime/ui/preview.h"
 #include "engine/runtime/ui/ui.h"

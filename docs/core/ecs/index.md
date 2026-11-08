@@ -198,9 +198,10 @@ Destroying an object's entity (`scene.destroyEntity`) destroys the object too,
 at the next flush, and a scene's objects get `onDestroy()` when it ends.
 Objects made during an update start getting updates next frame.
 
-In a `StandardScene` (a scene file played), `scene.instantiate("asset:<id>")`
-makes a prefab's instance while the game runs and starts its scripts, as when
-the scene started.
+In a `StandardScene` (a scene file played), its `PrefabSystem`
+(`spawn("asset:<id>", transform)`; see
+[Prefab system](../../runtime/systems/prefab-system/index.md)) makes a prefab's
+instance while the game runs and starts its scripts, as when the scene started.
 
 Rule of thumb: use **systems** for behaviour over many homogeneous entities
 (movement, physics, rendering); use **GameObjects** for individually scripted

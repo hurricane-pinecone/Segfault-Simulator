@@ -8,18 +8,63 @@ namespace sfs::nav
 
 namespace
 {
-// A body's turn about Z (bodies on the ground stand upright).
-float yawOf(const glm::quat& q)
-{
-  return std::atan2(
-      2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
-}
 glm::vec2 rotate(glm::vec2 v, float a)
 {
   const float c = std::cos(a), s = std::sin(a);
   return {c * v.x - s * v.y, s * v.x + c * v.y};
 }
 } // namespace
+
+namespace
+{
+// (What prepare() hands back: the probe and the span it stands on.)
+struct Prepared
+{
+  CollisionWorld3D::Probe probe;
+  Span span;
+};
+} // namespace
+
+Span spanOf(std::span<const Box3> boxes)
+{
+  Span s;
+  bool any = false;
+  for (const Box3& b : boxes)
+  {
+    s.back = any ? std::min(s.back, b.back) : b.back;
+    s.front = any ? std::max(s.front, b.front) : b.front;
+    s.half = std::max(s.half, std::abs(b.shift) + b.half);
+    any = true;
+  }
+  return s;
+}
+
+Stance stanceOf(Pose2 pose,
+                const Span& span,
+                const std::function<float(glm::vec2)>& ground)
+{
+  const glm::quat yaw = yawRotation(pose.heading);
+  if (!ground)
+    return {{pose.position, 0.0f}, yaw};
+  const glm::vec2 f(std::cos(pose.heading), std::sin(pose.heading));
+  const glm::vec2 l(-f.y, f.x);
+  const float z = ground(pose.position);
+  const float length = span.front - span.back, width = 2.0f * span.half;
+  if (length < 0.01f || width < 0.01f)
+    return {{pose.position, z}, yaw};
+  const glm::vec2 mid = pose.position + f * (0.5f * (span.back + span.front));
+  const float zBack = ground(pose.position + f * span.back);
+  const float zFront = ground(pose.position + f * span.front);
+  const float zLeft = ground(mid + l * span.half);
+  const float zRight = ground(mid - l * span.half);
+  // (Nose up turns +x towards +z: about +y, negative. Left side up turns +y
+  // towards +z: about +x, positive.)
+  const float pitch = -std::atan2(zFront - zBack, length);
+  const float roll = std::atan2(zLeft - zRight, width);
+  return {{pose.position, z},
+          yaw * glm::angleAxis(pitch, glm::vec3(0.0f, 1.0f, 0.0f)) *
+              glm::angleAxis(roll, glm::vec3(1.0f, 0.0f, 0.0f))};
+}
 
 CollisionSpace::CollisionSpace(
     std::vector<std::shared_ptr<const CollisionWorld3D>> worlds,
@@ -41,12 +86,6 @@ CollisionSpace::CollisionSpace(
     m_bounds = {glm::vec2(-1.0f), glm::vec2(1.0f)};
 }
 
-glm::vec3 CollisionSpace::at(Pose2 pose) const
-{
-  const float z = m_options.ground ? m_options.ground(pose.position) : 0.0f;
-  return {pose.position, z};
-}
-
 std::shared_ptr<const void> CollisionSpace::prepare(std::span<const Box3> boxes,
                                                     float grow,
                                                     float extend,
@@ -63,16 +102,20 @@ std::shared_ptr<const void> CollisionSpace::prepare(std::span<const Box3> boxes,
     s.offset = {0.5f * (b.back + b.front), b.shift, 0.5f * (b.bottom + b.top)};
     shapes.push_back(s);
   }
-  return std::make_shared<const CollisionWorld3D::Probe>(shapes);
+  return std::make_shared<const Prepared>(
+      Prepared{CollisionWorld3D::Probe(shapes), spanOf(boxes)});
 }
 
 bool CollisionSpace::fits(const void* prepared, Pose2 pose) const
 {
-  const auto& probe = *static_cast<const CollisionWorld3D::Probe*>(prepared);
-  const glm::vec3 p = at(pose);
-  const glm::quat r = yawRotation(pose.heading);
+  const auto& p = *static_cast<const Prepared*>(prepared);
+  const Stance at = stanceOf(pose, p.span, m_options.ground);
   for (const auto& w : m_worlds)
-    if (w->overlaps(probe, p, r, m_options.layers, m_options.ignore))
+    if (w->overlaps(p.probe,
+                    at.position,
+                    at.rotation,
+                    m_options.layers,
+                    m_options.ignore))
       return false;
   return true;
 }
@@ -80,14 +123,88 @@ bool CollisionSpace::fits(const void* prepared, Pose2 pose) const
 std::optional<Space::Hit> CollisionSpace::hit(const void* prepared,
                                               Pose2 pose) const
 {
-  const auto& probe = *static_cast<const CollisionWorld3D::Probe*>(prepared);
-  const glm::vec3 p = at(pose);
-  const glm::quat r = yawRotation(pose.heading);
+  const auto& p = *static_cast<const Prepared*>(prepared);
+  const Stance at = stanceOf(pose, p.span, m_options.ground);
   for (const auto& w : m_worlds)
-    if (const auto h =
-            w->overlap(probe, p, r, m_options.layers, m_options.ignore))
+    if (const auto h = w->overlap(p.probe,
+                                  at.position,
+                                  at.rotation,
+                                  m_options.layers,
+                                  m_options.ignore))
       return Hit{h->id, {h->point.x, h->point.y}};
   return std::nullopt;
+}
+
+std::vector<BoxSpace::Solid>
+footprints(const CollisionWorld3D& world,
+           uint32_t layers,
+           std::span<const uint64_t> ignore,
+           const std::function<float(glm::vec2)>& ground)
+{
+  std::vector<BoxSpace::Solid> out;
+  for (const CollisionWorld3D::Body& b : world.bodies())
+  {
+    if (!(layers & (1u << (b.layer & 31u))) ||
+        std::find(ignore.begin(), ignore.end(), b.id) != ignore.end())
+      continue;
+    for (const CollisionShape3D& s : b.shapes)
+    {
+      const glm::quat turn = b.rotation * s.rotation;
+      const glm::vec3 centre = b.position + b.rotation * s.offset;
+      BoxSpace::Solid f;
+      f.centre = {centre.x, centre.y};
+      f.id = b.id;
+      float up = 0.0f;
+      if (s.kind == CollisionShape3D::Kind::Box)
+      {
+        const glm::vec3 h = 0.5f * s.size;
+        const glm::vec3 ax = turn * glm::vec3(1.0f, 0.0f, 0.0f),
+                        ay = turn * glm::vec3(0.0f, 1.0f, 0.0f),
+                        az = turn * glm::vec3(0.0f, 0.0f, 1.0f);
+        up = std::abs(ax.z) * h.x + std::abs(ay.z) * h.y + std::abs(az.z) * h.z;
+        // (Its yaw: its own x turned onto the ground; standing upright x is
+        // flat, tipped right up its y is.)
+        const glm::vec2 flat = glm::length(glm::vec2(ax)) > 1.0e-3f
+                                   ? glm::vec2(ax)
+                                   : glm::vec2(ay);
+        f.yaw = std::atan2(flat.y, flat.x);
+        // (Its corners' reach along its yaw and across it: exact standing
+        // upright, the upright box round it when tipped.)
+        const glm::vec2 u(std::cos(f.yaw), std::sin(f.yaw)), v(-u.y, u.x);
+        const auto reach = [&](glm::vec2 d)
+        {
+          return std::abs(glm::dot(glm::vec2(ax), d)) * h.x +
+                 std::abs(glm::dot(glm::vec2(ay), d)) * h.y +
+                 std::abs(glm::dot(glm::vec2(az), d)) * h.z;
+        };
+        f.half = {reach(u), reach(v)};
+      }
+      else
+      {
+        f.circle = true;
+        f.half = glm::vec2(s.size.x);
+        up = s.kind == CollisionShape3D::Kind::Capsule ? 0.5f * s.size.y
+                                                       : s.size.x;
+      }
+      const float under = ground ? ground(f.centre) : 0.0f;
+      f.bottom = centre.z - up - under;
+      f.top = centre.z + up - under;
+      out.push_back(f);
+    }
+  }
+  return out;
+}
+
+std::vector<BoxSpace::Solid> CollisionSpace::footprints() const
+{
+  std::vector<BoxSpace::Solid> out;
+  for (const auto& w : m_worlds)
+  {
+    std::vector<BoxSpace::Solid> each = nav::footprints(
+        *w, m_options.layers, m_options.ignore, m_options.ground);
+    out.insert(out.end(), each.begin(), each.end());
+  }
+  return out;
 }
 
 void CollisionSpace::raster(glm::vec2 origin,
@@ -99,55 +216,31 @@ void CollisionSpace::raster(glm::vec2 origin,
 {
   out.assign(
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
-  for (const auto& w : m_worlds)
-    for (const CollisionWorld3D::Body& b : w->bodies())
-    {
-      if (!(m_options.layers & (1u << (b.layer & 31u))) ||
-          std::find(m_options.ignore.begin(), m_options.ignore.end(), b.id) !=
-              m_options.ignore.end())
-        continue;
-      const float yaw = yawOf(b.rotation);
-      for (const CollisionShape3D& s : b.shapes)
+  for (const BoxSpace::Solid& f : footprints())
+  {
+    if (f.top < m_options.rasterLow || f.bottom > m_options.rasterHigh)
+      continue;
+    const float reach = (f.circle ? f.half.x : glm::length(f.half)) + inflate;
+    const glm::ivec2 lo =
+        glm::ivec2(glm::floor((f.centre - reach - origin) / cell));
+    const glm::ivec2 hi =
+        glm::ivec2(glm::floor((f.centre + reach - origin) / cell));
+    for (int y = std::max(lo.y, 0); y <= std::min(hi.y, height - 1); ++y)
+      for (int x = std::max(lo.x, 0); x <= std::min(hi.x, width - 1); ++x)
       {
-        const glm::vec3 off = b.rotation * s.offset;
-        const float z = b.position.z + off.z;
-        const float halfH =
-            s.kind == CollisionShape3D::Kind::Box       ? 0.5f * s.size.z
-            : s.kind == CollisionShape3D::Kind::Capsule ? 0.5f * s.size.y
-                                                        : s.size.x;
-        const float ground =
-            m_options.ground ? m_options.ground({b.position.x, b.position.y})
-                             : 0.0f;
-        if (z + halfH - ground < m_options.rasterLow ||
-            z - halfH - ground > m_options.rasterHigh)
-          continue;
-        const glm::vec2 c{b.position.x + off.x, b.position.y + off.y};
-        const bool box = s.kind == CollisionShape3D::Kind::Box;
-        const glm::vec2 half = box ? glm::vec2(0.5f * s.size.x, 0.5f * s.size.y)
-                                   : glm::vec2(s.size.x);
-        const float a = yaw + (box ? yawOf(s.rotation) : 0.0f);
-        const float reach = (box ? glm::length(half) : half.x) + inflate;
-        const glm::ivec2 lo =
-            glm::ivec2(glm::floor((c - reach - origin) / cell));
-        const glm::ivec2 hi =
-            glm::ivec2(glm::floor((c + reach - origin) / cell));
-        for (int y = std::max(lo.y, 0); y <= std::min(hi.y, height - 1); ++y)
-          for (int x = std::max(lo.x, 0); x <= std::min(hi.x, width - 1); ++x)
-          {
-            const glm::vec2 p = origin + (glm::vec2(x, y) + 0.5f) * cell;
-            float dist;
-            if (box)
-            {
-              const glm::vec2 local = rotate(p - c, -a);
-              dist = glm::length(local - glm::clamp(local, -half, half));
-            }
-            else
-              dist = glm::length(p - c) - half.x;
-            if (dist <= inflate)
-              out[static_cast<std::size_t>(y) * width + x] = 1;
-          }
+        const glm::vec2 p = origin + (glm::vec2(x, y) + 0.5f) * cell;
+        float dist;
+        if (!f.circle)
+        {
+          const glm::vec2 local = rotate(p - f.centre, -f.yaw);
+          dist = glm::length(local - glm::clamp(local, -f.half, f.half));
+        }
+        else
+          dist = glm::length(p - f.centre) - f.half.x;
+        if (dist <= inflate)
+          out[static_cast<std::size_t>(y) * width + x] = 1;
       }
-    }
+  }
 }
 
 } // namespace sfs::nav

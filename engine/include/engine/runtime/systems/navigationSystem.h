@@ -4,6 +4,9 @@
 #include "engine/runtime/navigation/agentKind.h"
 #include "engine/runtime/navigation/costLayer.h"
 #include "engine/runtime/navigation/fleet.h"
+#include "engine/runtime/navigation/vehicle/vehicleKind.h"
+#include "glm/glm/ext/matrix_float4x4.hpp"
+#include "glm/glm/ext/vector_float3.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -30,16 +33,17 @@ class WorkerPool;
  * What's solid comes from PhysicsSystem3D: a frozen copy of the static
  * colliders (PhysicsSystem3D::snapshot()), rebuilt when its revision
  * changes, with the coarse graph long trips take their corridor from (built
- * on a worker). Agents leave themselves out; one standing a while is solid
- * to the others' plans, one moving never is (they give way instead: see
- * nav::Fleet and nav::Traffic). A game adds what ground costs (setCostLayer:
+ * on a worker). Agents leave themselves out; one with nothing to do (or held
+ * by its game) is solid to the others' plans, one moving never is (they keep
+ * out of each other's reservations by rank instead: see nav::Fleet and
+ * nav::Traffic). A game adds what ground costs (setCostLayer:
  * crop, worn tracks; layers multiply) and who goes first
  * (setPriorityProvider: a working machine).
  *
  * An agent of kind "vehicle" also needs a VehicleComponent: its motion is
- * derived from that's VehicleSpec, the mass it moves (setLoadMass) and the
- * grip under it (setGripProvider). Without one it's left out, with an
- * error logged.
+ * derived from that's VehicleSpec and its rig (setRigProvider: the mass it
+ * moves, the grip under it, a measured wheelbase). Without one it's left
+ * out, with an error logged.
  *
  * Agent kinds come from nav::AgentKinds ("vehicle" built in), path searches
  * from each kind's registry (the vehicle's nav::vehicle::searches(),
@@ -71,12 +75,28 @@ public:
    * live limit (a working pace, a held pace). Infinity: none.
    */
   void setSpeedCap(const Entity& agent, float cap);
+  /** Its game is planning its next path: never a static obstacle meanwhile
+   * (nav::Fleet::setPlanning()). */
+  void setPlanning(const Entity& agent, bool planning);
   /**
    * Leave an agent out (false) or take it back: one carried by something
    * else, switched off. Out, it isn't planned, moved or claimed and isn't
    * solid to the others.
    */
   void setActive(const Entity& agent, bool active);
+  /**
+   * A driver takes the wheel (a player): the agent's goal or path dropped,
+   * the system moves it each update by the controls last given, by its
+   * kind's own motion from its spec (nav::Fleet::takeWheel; a vehicle:
+   * nav::vehicle::HandDrive), no faster than its speed cap, and writes its
+   * transform (and its trailer's) as for any agent, till handBack() stands it
+   * where it is. Solid to the other agents meanwhile. False: not an agent,
+   * or its kind can't be driven by hand.
+   */
+  bool takeWheel(const Entity& agent);
+  void setControls(const Entity& agent, const nav::Controls& controls);
+  void handBack(const Entity& agent);
+  bool handDriven(const Entity& agent) const;
   /** Drive a path the game made (a field pass), claimed like any other. */
   void setPath(const Entity& agent, std::shared_ptr<const nav::AgentPath> path);
   /** Plan now on this thread (a game's own checks, on its own worker). */
@@ -103,23 +123,38 @@ public:
     float forwardLimit = 83.0f, reverseLimit = 35.0f;
     // Mounted (on a linkage or front mount): it moves with the agent, its
     // colliders part of the agent's boxes where it is when hitched, never
-    // swinging (the hitch numbers unused).
+    // swinging (the hitch numbers unused), measured by mountedBox().
     bool rigid = false;
+    // m a mounted part's bottom is planned lower than it's held standing
+    // (driven, the body pitches into ruts and on its springs).
+    float rideDrop = 0.0f;
   };
+  /**
+   * THE measure of a mounted part's box as planned (one function: the
+   * agent's boxes here, Traffic's, and a game's own planners alike): the box
+   * lo..hi in the frame `world` (a part's world matrix), bounded in the
+   * agent's flat frame (its reference point `at`, facing its heading:
+   * however the part tilts with a lift, the plan holds the physics' shape),
+   * heights above `ground` under the box's middle, its bottom `drop` lower
+   * and never below the ground.
+   */
+  static nav::Box3 mountedBox(const glm::mat4& world,
+                              const glm::vec3& lo,
+                              const glm::vec3& hi,
+                              const nav::Pose2& at,
+                              const std::function<float(glm::vec2)>& ground,
+                              float drop);
   void hitch(const Entity& agent, const Hitch& hitch);
   void unhitch(const Entity& agent);
   /**
-   * The mass an agent moves besides its own (kg): what it tows and what it
-   * carries. A game reports it on hitching, unhitching and as loads change;
-   * how fast the agent speeds up and brakes is derived from it.
+   * A vehicle agent's rig, asked each update: the mass it moves besides its
+   * own (what it tows and carries), the grip under it (tyres x surface) and
+   * its measured wheelbase (nav::vehicle::Rig); its effort is always its
+   * component's. The game's own planners derive their spec from the same
+   * function (nav::vehicle::applySpec), so planner and driver are one spec.
+   * None: no load, grip 0.6 (firm, dry ground).
    */
-  void setLoadMass(const Entity& agent, float kg);
-  /**
-   * The grip under an agent (friction coefficient: tyres x surface) its
-   * cornering, traction and braking are derived from. None: 0.6 (firm,
-   * dry ground).
-   */
-  void setGripProvider(std::function<float(const Entity&)> grip);
+  void setRigProvider(std::function<nav::vehicle::Rig(const Entity&)> rig);
   /** Ground height for the colliders' heights (default: flat at 0). */
   void setGround(std::function<float(glm::vec2)> ground);
   /** Plan in this instead of the physics' colliders (no PhysicsSystem3D). */
@@ -163,11 +198,9 @@ private:
   std::map<Entity::EntityId, std::unique_ptr<Tracked>> m_tracked;
   std::map<std::string, std::shared_ptr<const nav::CostLayer>> m_costs;
   std::function<int(const Entity&)> m_priority;
-  std::function<float(const Entity&)> m_grip;
-  // What each agent tows and the mass it moves besides its own (live
-  // state, set by the game).
+  std::function<nav::vehicle::Rig(const Entity&)> m_rig;
+  // What each agent tows (live state, set by the game).
   std::map<Entity::EntityId, Hitch> m_hitches;
-  std::map<Entity::EntityId, float> m_loads;
   std::map<Entity::EntityId, float> m_speedCaps;
   std::set<Entity::EntityId> m_inactive;
   std::function<float(glm::vec2)> m_ground;

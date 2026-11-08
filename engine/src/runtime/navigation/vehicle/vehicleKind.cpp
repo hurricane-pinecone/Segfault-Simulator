@@ -20,7 +20,8 @@ void applySpec(AgentSpec& agent, const VehicleSpec& spec, const Rig& rig)
   const float effort = std::clamp(rig.effort, 0.01f, 1.0f);
   const float steer = std::clamp(spec.maxSteerAngle, 1.0f, 80.0f) * kDegrees;
 
-  agent.wheelbase = std::max(spec.wheelbase, 0.05f);
+  agent.wheelbase =
+      std::max(spec.wheelbase > 0.0f ? spec.wheelbase : rig.wheelbase, 0.05f);
   agent.minRadius = agent.wheelbase / std::tan(steer);
   agent.steerRate = std::max(spec.steerRate, 0.1f) * kDegrees;
   agent.topSpeed =
@@ -72,6 +73,7 @@ public:
   {
     m_drive = {spec.shuttleSeconds, spec.accel, spec.brake};
     m_follower.setDrive(m_drive);
+    m_hand.setModel(modelOf(spec)); // (the same model its paths are driven by)
   }
 
   void setPath(std::shared_ptr<const AgentPath> path,
@@ -97,20 +99,58 @@ public:
   const AgentPath* path() const override { return m_path.get(); }
   Step step(float dt, float speedCap, float stopAt) override
   {
+    if (m_handOn)
+    {
+      // (By hand: the controls, no path; the caller's cap still holds.)
+      m_hand.step(m_controls, dt, speedCap);
+      return {};
+    }
     const Follower::State st = m_follower.step(dt, speedCap, stopAt);
-    return {st.done, st.waiting};
+    return {st.done, st.waiting, st.hardStopFrom};
   }
   float s() const override { return m_follower.s(); }
-  float speed() const override { return m_follower.speed(); }
-  float curvature() const override { return m_follower.curvature(); }
-  Pose2 pose() const override { return m_follower.pose(); }
-  float hitch() const override { return m_follower.hitch(); }
+  float speed() const override
+  {
+    return m_handOn ? m_hand.speed() : m_follower.speed();
+  }
+  float stoppingDistance(float dt) const override
+  {
+    return Follower::stoppingDistance(std::abs(speed()), m_drive.brake, dt);
+  }
+  float curvature() const override
+  {
+    return m_handOn ? m_hand.curvature() : m_follower.curvature();
+  }
+  Pose2 pose() const override
+  {
+    return m_handOn ? m_hand.pose() : m_follower.pose();
+  }
+  float hitch() const override
+  {
+    return m_handOn ? m_hand.hitch() : m_follower.hitch();
+  }
   std::size_t index() const override { return m_follower.index(); }
+
+  bool takeWheel(Pose2 pose, float hitch, float speed) override
+  {
+    m_path = nullptr;
+    m_follower.setPath({}, 0.0f);
+    m_hand.start(pose, hitch, speed);
+    m_controls = {};
+    m_handOn = true;
+    return true;
+  }
+  void setControls(const Controls& controls) override { m_controls = controls; }
+  void handBack() override { m_handOn = false; }
+  bool handDriven() const override { return m_handOn; }
 
 private:
   std::shared_ptr<const AgentPath> m_path;
   Follower m_follower;
   Follower::Drive m_drive;
+  HandDrive m_hand;
+  Controls m_controls;
+  bool m_handOn = false;
 };
 
 Footprint footprintOf(const Box3& b, Pose2 q)
@@ -164,7 +204,6 @@ PlanRequest requestOf(const AgentSpec& a, const PlanAsk& ask)
 {
   PlanRequest q;
   q.vehicle = modelOf(a);
-  q.tunables.reversePenalty = a.reversePenalty;
   q.search = a.search.empty() ? std::string("hybridAStar") : a.search;
   q.mode = ask.mode;
   q.space = ask.world.space;
@@ -177,6 +216,7 @@ PlanRequest requestOf(const AgentSpec& a, const PlanAsk& ask)
     Goal goal;
     goal.pose = g.pose;
     goal.hitch = g.hitch;
+    goal.arriveGear = g.arriveGear;
     q.goals.push_back(goal);
     q.speedCap = std::min(q.speedCap, g.speedCap);
   }

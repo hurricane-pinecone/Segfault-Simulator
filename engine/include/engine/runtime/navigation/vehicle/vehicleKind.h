@@ -18,14 +18,21 @@ namespace sfs::nav::vehicle
 /**
  * What a vehicle's motion depends on besides its spec: the mass it moves
  * besides its own (towed and carried, kg), the grip under it (friction
- * coefficient: tyres x surface) and its driving style (NavAgentComponent::
- * effort).
+ * coefficient: tyres x surface), its driving style (NavAgentComponent::
+ * effort), and its wheelbase and fixed (rear) axle as measured from its
+ * model (m; the axle ahead of the entity's origin along +X, below 0 behind
+ * it), each used where the spec's is 0 ("measure it"). The axle is the
+ * vehicle's reference point: what its poses, paths and boxes are of. One game
+ * function makes it for both the game's planners and NavigationSystem
+ * (setRigProvider): one AgentSpec, one reference point.
  */
 struct Rig
 {
   float extraMass = 0.0f;
   float grip = 0.6f;
   float effort = 0.25f;
+  float wheelbase = 0.0f;
+  float axle = 0.0f;
 };
 
 /**

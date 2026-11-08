@@ -39,6 +39,9 @@ std::vector<Segment> smooth(const Motions& rig, const Way& c, const Goal* goal)
         if (rig.q.vehicle.trailer && j < n - 1 &&
             std::abs(wrapAngle(w.hitch - c.hitch[j])) > 0.05f)
           continue;
+        // (The goal come to in the gear it asks: the last word's last.)
+        if (j == n - 1 && goal && !arrivesAsAsked(*goal, word, rig.length))
+          continue;
         if (j == n - 1 && goal && goal->hitch &&
             std::abs(wrapAngle(w.hitch - *goal->hitch)) > goal->hitchTolerance)
           continue;

@@ -14,7 +14,8 @@ namespace sfs
  * makes of them: how fast it speeds up, brakes and corners is derived from
  * these, the rig's whole mass (what it tows and carries, which a game
  * reports to NavigationSystem) and the grip under it (a game's tyres x
- * surface, NavigationSystem::setGripProvider).
+ * surface): NavigationSystem::setRigProvider. A wheelbase of 0 means
+ * "measured": the rig's (from the model) is used.
  *
  * A game extends it with its own kinds of machine:
  *

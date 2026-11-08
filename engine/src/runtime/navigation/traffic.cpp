@@ -1,5 +1,7 @@
 #include "engine/runtime/navigation/traffic.h"
 
+#include "engine/runtime/navigation/vehicle/vehicleModel.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,10 +12,26 @@ namespace sfs::nav
 namespace
 {
 constexpr float kForever = std::numeric_limits<float>::infinity();
-constexpr float kTimeSlack = 1.0f;      // s either side a meeting still counts
-constexpr float kStandingMargin = 0.0f; // m round one standing still (exact)
+constexpr float kTimeSlack = 1.0f; // s either side a meeting still counts
+// m short of its stop: it stands there (for traffic), not just slows.
+constexpr float kAtStop = 0.5f;
+// m round one standing still: the planners' own gap round exact boxes (one
+// gap: vehicle::Tunables::gap), never less.
+constexpr float kStandingMargin = vehicle::Tunables{}.gap;
 glm::vec2 leftOf(glm::vec2 f) { return {-f.y, f.x}; }
+using Why = Traffic::Schedule::Why;
 } // namespace
+
+bool hits(const std::vector<Footprint>& a,
+          const std::vector<Footprint>& b,
+          float margin)
+{
+  for (const Footprint& p : a)
+    for (const Footprint& q : b)
+      if (overlaps(p, q, margin))
+        return true;
+  return false;
+}
 
 bool overlaps(const Footprint& a, const Footprint& b, float margin)
 {
@@ -34,30 +52,12 @@ bool overlaps(const Footprint& a, const Footprint& b, float margin)
   return true;
 }
 
-void Traffic::update(AgentId id, Claim claim, double now)
+void Traffic::update(AgentId id, Claim claim)
 {
-  m_now = now;
-  auto it = m_agents.find(id);
-  if (it == m_agents.end() || it->second.claim.path != claim.path)
-  {
-    // (A new path: a new claim, from now; the orders it was in are decided
-    // again.)
-    std::erase_if(m_order,
-                  [&](const auto& kv)
-                  { return kv.first.first == id || kv.first.second == id; });
-    m_agents[id] = Agent{std::move(claim), now};
-    return;
-  }
-  it->second.claim = std::move(claim);
+  m_agents[id].claim = std::move(claim);
 }
 
-void Traffic::remove(AgentId id)
-{
-  m_agents.erase(id);
-  std::erase_if(m_order,
-                [&](const auto& kv)
-                { return kv.first.first == id || kv.first.second == id; });
-}
+void Traffic::remove(AgentId id) { m_agents.erase(id); }
 
 void Traffic::cooperate(AgentId a, AgentId b, bool on)
 {
@@ -68,197 +68,322 @@ void Traffic::cooperate(AgentId a, AgentId b, bool on)
     m_cooperating.erase(key);
 }
 
-bool Traffic::yields(AgentId a, AgentId b) const
+bool Traffic::cooperating(AgentId a, AgentId b) const
 {
-  const auto key = std::minmax(a, b);
-  auto it = m_order.find(key);
-  if (it == m_order.end())
-  {
-    const auto xa = m_agents.find(a), ya = m_agents.find(b);
-    if (xa == m_agents.end() || ya == m_agents.end())
-      return xa == m_agents.end(); // (an unknown agent never has right of way)
-    const Agent& x = xa->second;
-    const Agent& y = ya->second;
-    AgentId yielder;
-    if (x.claim.priority != y.claim.priority)
-      yielder = x.claim.priority < y.claim.priority ? a : b;
-    else if (x.since != y.since)
-      yielder = x.since > y.since ? a : b; // (the later claim gives way)
-    else
-      yielder = std::max(a, b);
-    it = m_order.emplace(key, yielder).first;
-  }
-  const bool swapped = m_swapped.contains(key);
-  return (it->second == a) != swapped;
+  return m_cooperating.contains(std::minmax(a, b));
 }
 
-// (One standing still, or parked holding its path, is passed as close as its
-// exact boxes allow: planners keep clear of it already.)
+bool Traffic::ranksAbove(AgentId a, AgentId b) const
+{
+  const auto x = m_agents.find(a), y = m_agents.find(b);
+  if (x == m_agents.end() || y == m_agents.end())
+    return x != m_agents.end();
+  const int pa = x->second.claim.priority, pb = y->second.claim.priority;
+  return pa != pb ? pa > pb : a < b;
+}
+
+// (One standing still, or a static obstacle, is passed as close as its exact
+// boxes allow: planners keep clear of it already.)
 float Traffic::bodyMargin(const Claim& c) const
 {
-  return c.standing || c.parked ? kStandingMargin : m_margin;
+  return c.standing || c.solid ? kStandingMargin : m_margin;
 }
 
-// The first of a's samples that meets b's claim in time (and space), if any.
-bool Traffic::meets(const Agent& a, const Agent& b, std::size_t* first) const
+// Its reservation: its body (till it moves on; for good while it stands) and
+// its next seconds up to where it will stand, each in its time window.
+bool Traffic::meets(const Sample& s, const Agent& h) const
 {
-  const auto meetsAt = [&](const Sample& s)
-  {
-    const auto against = [&](const std::vector<Footprint>& boxes,
-                             float enter,
-                             float exit,
-                             float margin)
-    {
-      if (s.enter > exit + kTimeSlack || enter > s.exit + kTimeSlack)
-        return false;
-      for (const Footprint& p : s.boxes)
-        for (const Footprint& q : boxes)
-          if (overlaps(p, q, margin))
-            return true;
-      return false;
-    };
-    if (against(b.claim.body,
-                0.0f,
-                b.claim.standing || b.claim.ahead.empty()
-                    ? kForever
-                    : b.claim.ahead.front().exit,
-                bodyMargin(b.claim)))
-      return true;
-    if (!b.claim.standing)
-      for (const Sample& t : b.claim.ahead)
-        if (against(t.boxes, t.enter, t.exit, m_margin))
-          return true;
+  const Claim& c = h.claim;
+  const bool stands =
+      c.standing || c.ahead.empty() || h.reservedTo <= c.s + kAtStop;
+  const float bodyUntil = stands ? kForever : c.ahead.front().exit;
+  if (s.enter <= bodyUntil + kTimeSlack && hits(s.boxes, c.body, bodyMargin(c)))
+    return true;
+  if (stands)
     return false;
-  };
-  for (std::size_t i = 0; i < a.claim.ahead.size(); ++i)
-    if (meetsAt(a.claim.ahead[i]))
-    {
-      if (first)
-        *first = i;
+  for (const Sample& t : c.ahead)
+  {
+    if (t.s > h.reservedTo)
+      break;
+    if (s.enter > t.exit + kTimeSlack || t.enter > s.exit + kTimeSlack)
+      continue;
+    if (hits(s.boxes, t.boxes, m_margin))
       return true;
-    }
+  }
   return false;
 }
 
-bool Traffic::clearOf(AgentId other, const std::vector<Footprint>& boxes) const
+std::vector<Footprint> Traffic::reservedAbove(AgentId id) const
 {
-  const auto it = m_agents.find(other);
-  if (it == m_agents.end())
-    return true;
-  const Claim& c = it->second.claim;
-  for (const Footprint& p : boxes)
+  std::vector<Footprint> out;
+  const auto me = m_agents.find(id);
+  const AgentId meeting = me == m_agents.end() ? 0 : me->second.schedule.by;
+  for (const auto& [oid, h] : m_agents)
   {
-    for (const Footprint& q : c.body)
-      if (overlaps(p, q, m_margin))
+    if (oid == id || cooperating(id, oid))
+      continue;
+    for (const auto& area : h.held)
+      out.insert(out.end(), area.begin(), area.end());
+    if (!ranksAbove(oid, id) || h.claim.solid)
+      continue;
+    out.insert(out.end(), h.claim.body.begin(), h.claim.body.end());
+    if (h.claim.standing)
+      continue;
+    for (const Sample& t : h.claim.ahead)
+      if (t.s <= h.reservedTo)
+        out.insert(out.end(), t.boxes.begin(), t.boxes.end());
+    if (oid == meeting)
+      out.insert(out.end(), h.claim.way.begin(), h.claim.way.end());
+  }
+  return out;
+}
+
+bool Traffic::clearOfAbove(AgentId id,
+                           const std::vector<Footprint>& boxes,
+                           AgentId meeting) const
+{
+  for (const auto& [oid, h] : m_agents)
+  {
+    if (oid == id || cooperating(id, oid))
+      continue;
+    for (const auto& area : h.held)
+      if (hits(boxes, area))
         return false;
-    if (!c.standing)
-      for (const Sample& s : c.ahead)
-        for (const Footprint& q : s.boxes)
-          if (overlaps(p, q, m_margin))
-            return false;
+    if (!ranksAbove(oid, id) || h.claim.solid)
+      continue;
+    if (hits(boxes, h.claim.body, m_margin))
+      return false;
+    if (h.claim.standing)
+      continue;
+    for (const Sample& t : h.claim.ahead)
+      if (t.s <= h.reservedTo && hits(boxes, t.boxes, m_margin))
+        return false;
+    if (oid == meeting && hits(boxes, h.claim.way, m_margin))
+      return false;
   }
   return true;
 }
 
-std::vector<Footprint> Traffic::claimed(AgentId other) const
+// Its narrow ground: what it holds (granted, or still under its body) and,
+// in order along its way, each narrow stretch it comes to, granted whole
+// while nobody else holds ground it overlaps.
+void Traffic::holdZones(AgentId id, Agent& a)
 {
-  std::vector<Footprint> out;
-  const auto it = m_agents.find(other);
-  if (it == m_agents.end())
-    return out;
-  const Claim& c = it->second.claim;
-  out = c.body;
+  const Claim& c = a.claim;
+  const float reach = c.ahead.empty() ? c.s : c.ahead.back().s;
+  const auto heldByOther = [&](const std::vector<Footprint>& area)
+  {
+    for (const auto& [oid, o] : m_agents)
+      if (oid != id && !cooperating(id, oid))
+        for (const auto& other : o.held)
+          if (hits(area, other))
+            return true;
+    return false;
+  };
+  std::vector<std::vector<Footprint>> held;
+  std::vector<float> from;
   if (!c.standing)
-    for (const Sample& s : c.ahead)
-      out.insert(out.end(), s.boxes.begin(), s.boxes.end());
-  return out;
+    for (const Zone& z : c.zones)
+    {
+      if (z.from > reach || z.area.empty())
+        break;
+      const bool mine =
+          std::any_of(a.held.begin(),
+                      a.held.end(),
+                      [&](const auto& area) { return hits(z.area, area); });
+      if (!mine && heldByOther(z.area))
+        break; // (it waits for it: entering it is stopped below)
+      held.push_back(z.area);
+      from.push_back(hits(c.body, z.area) ? -kForever : z.from);
+    }
+  for (auto& area : a.held)
+    if (hits(c.body, area) &&
+        std::none_of(held.begin(),
+                     held.end(),
+                     [&](const auto& h) { return hits(h, area); }))
+    {
+      held.push_back(std::move(area)); // (still in it: held till it's out)
+      from.push_back(-kForever);
+    }
+  a.held = std::move(held);
+  a.heldFrom = std::move(from);
 }
 
-Traffic::Advice Traffic::advise(AgentId id) const
+// Never hold-and-wait: the narrow ground it isn't in yet, beyond where it
+// stands, is given up (granted again once it can go on to it).
+void Traffic::releaseShort(Agent& a, float stopAt)
 {
-  Advice out;
-  const auto me = m_agents.find(id);
-  if (me == m_agents.end() || me->second.claim.standing)
-    return out;
-  const Agent& a = me->second;
-  const auto rank = [](Advice::Kind k)
-  {
-    return k == Advice::Kind::ClearOut ? 3
-           : k == Advice::Kind::Wait   ? 2
-           : k == Advice::Kind::HoldAt ? 1
-                                       : 0;
-  };
-  const auto take = [&](Advice v)
-  {
-    if (rank(v.kind) > rank(out.kind) || (v.kind == out.kind && v.s < out.s))
-      out = v;
-  };
-  for (const auto& [oid, b] : m_agents)
-  {
-    if (oid == id || m_cooperating.contains(std::minmax(id, oid)))
-      continue;
-    std::size_t first = 0;
-    if (!meets(a, b, &first))
-      continue;
-    if (!yields(id, oid))
+  for (std::size_t i = a.held.size(); i-- > 0;)
+    if (a.heldFrom[i] > stopAt)
     {
-      // (The right of way: it stops only for the other's body on its way.)
-      for (std::size_t i = 0; i < a.claim.ahead.size(); ++i)
-        for (const Footprint& p : a.claim.ahead[i].boxes)
-          for (const Footprint& q : b.claim.body)
-            if (overlaps(p, q, bodyMargin(b.claim)))
-            {
-              const float s = i > 0 ? a.claim.ahead[i - 1].s : a.claim.s;
-              take({Advice::Kind::Wait, s, oid});
-              i = a.claim.ahead.size();
-              break;
-            }
-      continue;
+      a.held.erase(a.held.begin() + static_cast<std::ptrdiff_t>(i));
+      a.heldFrom.erase(a.heldFrom.begin() + static_cast<std::ptrdiff_t>(i));
     }
-    // Giving way: the last place before the meeting clear of all the other
-    // claims and fit to wait in.
+}
+
+void Traffic::scheduleOne(AgentId id,
+                          Agent& a,
+                          const std::vector<AgentId>& above)
+{
+  Schedule out;
+  holdZones(id, a);
+  const Claim& c = a.claim;
+  if (c.standing)
+  {
+    a.schedule = out;
+    return;
+  }
+  const auto rank = [](Why w)
+  {
+    return w == Why::Solid      ? 4
+           : w == Why::Reserved ? 3
+           : w == Why::Zone     ? 2
+           : w == Why::Body     ? 1
+                                : 0;
+  };
+  const auto take = [&](Why why, float s, AgentId by)
+  {
+    if (s < out.stopAt || (s == out.stopAt && rank(why) > rank(out.why)))
+    {
+      out.why = why;
+      out.stopAt = s;
+      out.by = by;
+    }
+  };
+  const auto before = [&](std::size_t i)
+  { return i > 0 ? c.ahead[i - 1].s : c.s; };
+
+  for (const auto& [oid, o] : m_agents)
+  {
+    if (oid == id || cooperating(id, oid))
+      continue;
+    // Never on into another's body, whatever the ranks; a static obstacle
+    // on its way is planned round.
+    for (std::size_t i = 0; i < c.ahead.size(); ++i)
+      if (hits(c.ahead[i].boxes, o.claim.body, bodyMargin(o.claim)))
+      {
+        take(o.claim.solid ? Why::Solid : Why::Body, before(i), oid);
+        break;
+      }
+    // Never into narrow ground another holds (once in it, on through).
+    for (const auto& area : o.held)
+    {
+      if (c.leaving == oid || hits(c.body, area))
+        continue;
+      for (std::size_t i = 0; i < c.ahead.size(); ++i)
+        if (hits(c.ahead[i].boxes, area))
+        {
+          take(Why::Zone, before(i), oid);
+          break;
+        }
+    }
+  }
+
+  // Out of every higher reservation: where its way first meets one, it
+  // stands at the last point before that clear of them all. (Not one that
+  // stands for its body, or for the narrow place it holds: that one waits
+  // for it to go on, so it goes first.)
+  const auto waitsForMe = [&](AgentId h)
+  {
+    const Schedule& hs = m_agents.at(h).schedule;
+    return (hs.why == Why::Body || hs.why == Why::Zone) && hs.by == id;
+  };
+  std::size_t first = c.ahead.size();
+  AgentId by = 0;
+  for (std::size_t i = 0; i < c.ahead.size() && !by; ++i)
+    for (const AgentId h : above)
+      if (!cooperating(id, h) && !m_agents.at(h).claim.solid &&
+          !waitsForMe(h) && meets(c.ahead[i], m_agents.at(h)))
+      {
+        first = i;
+        by = h;
+        break;
+      }
+  bool nowhere = false;
+  if (by)
+  {
     bool held = false;
     for (std::size_t j = first; j-- > 0;)
     {
-      const Sample& s = a.claim.ahead[j];
-      if (s.boxes.empty() || !clearOf(oid, s.boxes))
+      const Sample& s = c.ahead[j];
+      if (s.boxes.empty() || !clearOfAbove(id, s.boxes, by) ||
+          (m_noWait && m_noWait(s.boxes.front().centre)))
         continue;
-      if (m_noWait && m_noWait(s.boxes.front().centre))
-        continue;
-      take({Advice::Kind::HoldAt, s.s, oid});
+      take(Why::Reserved, s.s, by);
       held = true;
       break;
     }
-    if (held)
-      continue;
-    if (clearOf(oid, a.claim.body) && !(m_noWait && !a.claim.body.empty() &&
-                                        m_noWait(a.claim.body.front().centre)))
-      take({Advice::Kind::HoldAt, a.claim.s, oid});
-    else
-      take({Advice::Kind::ClearOut, a.claim.s, oid});
+    if (!held)
+    {
+      take(Why::Reserved, c.s, by);
+      nowhere =
+          !clearOfAbove(id, c.body, by) ||
+          (m_noWait && !c.body.empty() && m_noWait(c.body.front().centre));
+    }
   }
+  // Standing for traffic (or for its body: head-on) in the way of a higher
+  // one that stands for its body, or held by the body of one that waits for
+  // its narrow place: it must move off (else each waits on the other).
+  const bool standsHere = out.why != Why::None && out.stopAt <= c.s + kAtStop;
+  for (const AgentId h : above)
+  {
+    const Schedule& hs = m_agents.at(h).schedule;
+    const bool forBody = hs.why == Why::Body && hs.by == id;
+    if (waitsForMe(h) && !cooperating(id, h) &&
+        ((forBody && standsHere) || (out.why == Why::Body && out.by == h)))
+    {
+      nowhere = true;
+      if (out.why != Why::Reserved)
+        out.by = h;
+      break;
+    }
+  }
+  out.inTheWay = nowhere;
+  a.schedule = out;
+  if (out.why != Why::None)
+    releaseShort(a, out.stopAt);
+}
+
+void Traffic::schedule()
+{
+  std::vector<AgentId> order;
+  order.reserve(m_agents.size());
+  for (const auto& [id, a] : m_agents)
+    order.push_back(id);
+  std::sort(order.begin(),
+            order.end(),
+            [&](AgentId a, AgentId b) { return ranksAbove(a, b); });
+  std::vector<AgentId> above;
+  for (const AgentId id : order)
+  {
+    Agent& a = m_agents.at(id);
+    scheduleOne(id, a, above);
+    // (It reserves only up to where it will stand.)
+    a.reservedTo = a.schedule.why == Why::None ? kForever : a.schedule.stopAt;
+    above.push_back(id);
+  }
+}
+
+Traffic::Schedule Traffic::scheduleOf(AgentId id) const
+{
+  const auto it = m_agents.find(id);
+  return it == m_agents.end() ? Schedule{} : it->second.schedule;
+}
+
+std::vector<Footprint> Traffic::heldBesides(AgentId id) const
+{
+  std::vector<Footprint> out;
+  for (const auto& [oid, o] : m_agents)
+    if (oid != id && !cooperating(id, oid))
+      for (const auto& area : o.held)
+        out.insert(out.end(), area.begin(), area.end());
   return out;
 }
 
-void Traffic::cannotClear(AgentId id, AgentId other)
+bool Traffic::holdsZone(AgentId id) const
 {
-  const auto key = std::minmax(id, other);
-  const auto a = m_agents.find(id), b = m_agents.find(other);
-  if (a == m_agents.end() || b == m_agents.end())
-    return;
-  // (Once: the other gives way instead, if it isn't the one with the higher
-  // priority; else, or a second time, both stuck: a deadlock, reported.)
-  if (!m_swapped.contains(key) &&
-      b->second.claim.priority <= a->second.claim.priority)
-  {
-    m_swapped.insert(key);
-    return;
-  }
-  if (std::none_of(m_deadlocks.begin(),
-                   m_deadlocks.end(),
-                   [&](const Deadlock& d)
-                   { return std::minmax(d.a, d.b) == key; }))
-    m_deadlocks.push_back({id, other});
+  const auto it = m_agents.find(id);
+  return it != m_agents.end() && !it->second.held.empty();
 }
 
 } // namespace sfs::nav

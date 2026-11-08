@@ -16,27 +16,19 @@ void profile(VehiclePath& path,
   const std::size_t n = p.size();
   if (n == 0)
     return;
-  const float rate = vehicle.curvatureRate();
   std::vector<float> v(n);
   for (std::size_t i = 0; i < n; ++i)
   {
-    const float top = (p[i].gear > 0 ? vehicle.topSpeed : vehicle.reverseSpeed);
-    float lim = std::min(top, speedCap);
-    if (limits && i < limits->size())
-      lim = std::min(lim, (*limits)[i]);
-    const float k = std::abs(p[i].curvature);
-    if (k > 1.0e-6f)
-      lim = std::min(lim, std::sqrt(vehicle.lateralAccel / k));
     // (How fast curvature changes along here: from the neighbours in gear.)
     const std::size_t a = i > 0 && p[i - 1].gear == p[i].gear ? i - 1 : i;
     const std::size_t b = i + 1 < n && p[i + 1].gear == p[i].gear ? i + 1 : i;
-    if (b > a && p[b].s > p[a].s)
-    {
-      const float dk =
-          std::abs(p[b].curvature - p[a].curvature) / (p[b].s - p[a].s);
-      if (dk > 1.0e-6f)
-        lim = std::min(lim, rate / dk);
-    }
+    const float dk = b > a && p[b].s > p[a].s
+                         ? (p[b].curvature - p[a].curvature) / (p[b].s - p[a].s)
+                         : 0.0f;
+    float lim =
+        std::min(vehicle.speedAt(p[i].gear, p[i].curvature, dk), speedCap);
+    if (limits && i < limits->size())
+      lim = std::min(lim, (*limits)[i]);
     v[i] = lim;
   }
   v[0] = std::min(v[0], startSpeed);

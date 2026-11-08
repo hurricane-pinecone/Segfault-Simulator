@@ -17,24 +17,23 @@ namespace sfs
  * Navigation only: how it searches, what it collides with, its right of
  * way and how it prices a route. How it moves comes from elsewhere: a
  * "vehicle" (a car, a tractor, a rig towing a trailer: it turns on a
- * circle, reverses at a cost, follows its planned path exactly) needs a
+ * circle, backs up at its reverse speed, follows its planned path exactly,
+ * every way priced by the time it takes) needs a
  * VehicleComponent with its VehicleSpec.
  *
  * @param std::string kind - its agent kind ("vehicle")
  * @param std::string search - the path search, by name ("hybridAStar")
- * @param float reversePenalty - route cost: a second backing up costs this
- *        many
  * @param float effort - driving style: the share of what its engine, brakes
  *        and the grip allow that it uses speeding up, braking and cornering
  *        (1: flat out; small: gentle)
  * @param uint32_t layers - the colliders' layers it collides with (bits)
- * @param int priority - right of way (higher first: a working machine)
+ * @param int priority - rank in traffic (higher reserves first: a working
+ * machine)
  */
 struct NavAgentComponent
 {
   std::string kind = "vehicle";
   std::string search = "hybridAStar";
-  [[sfs::range(1, 5)]] float reversePenalty = 1.5f;
   [[sfs::range(0.05, 1)]] float effort = 0.25f;
   uint32_t layers = 0xFFFFFFFFu;
   int priority = 0;

@@ -138,7 +138,10 @@ protected:
 | `onTriggerEnter(collision)` / `onTriggerExit` | It starts or stops overlapping, where one of the two is a trigger |
 
 `collision.other` is the entity it touched. Each pair reports one enter and one
-exit, however many points touch. `PhysicsSystem3D` tells the game objects
+exit, however many points touch. A collision begins only when the shapes
+really touch: two passing within Jolt's speculative contact distance (2 cm),
+however long, haven't touched (the navigation planners keep exactly that gap).
+`PhysicsSystem3D` tells the game objects
 itself, as it updates (before the objects' own `onUpdate`s), when it knows its
 scene: a scene that lists it gets one that does. One made in code is told with
 `addSystem<sfs::PhysicsSystem3D>(&scene)`.
@@ -149,7 +152,18 @@ colliders are all triggers is a trigger. A static trigger notices moving
 bodies; a kinematic one notices static bodies too.
 
 `physics.contactsBegun()` and `contactsEnded()` list the same contacts for code
-that isn't a game object, such as a System script.
+that isn't a game object, such as a System script. Each `Contact3D` has a
+`depth`: how far the shapes overlap, in metres. A begun contact gives the
+depth when it began, and an ended one gives the deepest it reached.
+`contactsDeepened()` lists the contacts that went deeper during the last update,
+once each, with their deepest depth so far. Use it to tell a graze from a real
+hit while the contact lasts:
+
+```cpp
+for (const sfs::Contact3D& c : physics.contactsDeepened())
+  if (c.depth > 0.05f)
+    LOG_WARN("hit hard");
+```
 
 ## Raycasts
 

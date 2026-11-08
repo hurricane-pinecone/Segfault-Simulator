@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <mutex>
 
 namespace sfs::nav::vehicle
 {
@@ -95,7 +97,19 @@ Steering::Steering(float kappa, float sigma)
   m_R = 1.0f / m_kappa;
   // Elementary turns (smaller than the clothoids allow): for each deflection
   // up to 2 thetaC, the clothoids' length that ends the turn on the CC
-  // circle (bisection, once), interpolated by turn().
+  // circle (bisection, once per kappa and sigma: every planner call makes
+  // its rig's steering, and the table costs milliseconds), interpolated by
+  // turn().
+  static std::mutex cacheMutex;
+  static std::map<std::pair<float, float>, std::vector<float>> cache;
+  {
+    std::lock_guard lock(cacheMutex);
+    if (const auto it = cache.find({m_kappa, m_sigma}); it != cache.end())
+    {
+      m_elementary = it->second;
+      return;
+    }
+  }
   constexpr int kSamples = 64;
   m_elementary.resize(kSamples + 1);
   m_elementary[0] = m_r * std::sin(m_mu);
@@ -117,6 +131,8 @@ Steering::Steering(float kappa, float sigma)
     }
     m_elementary[static_cast<std::size_t>(n)] = 0.5f * (lo + hi);
   }
+  std::lock_guard lock(cacheMutex);
+  cache.emplace(std::pair{m_kappa, m_sigma}, m_elementary);
 }
 
 glm::vec2 Steering::centre(Motion m, int sense, End end) const

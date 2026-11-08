@@ -209,6 +209,32 @@ int main()
     CHECK(arrived);
   }
 
+  TEST("a player at the wheel should drive the agent from where it was put, "
+       "the system writing its transform, and hand it back where it stands")
+  {
+    Specs specs;
+    World world;
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    world.scene.update(kFrame);
+    // (Put somewhere by the game since the last update: driven from there.)
+    TransformComponent& t = car.getComponent<TransformComponent>();
+    t.position = {5.0f, 3.0f, 0.0f};
+    CHECK(world.navigation.takeWheel(car));
+    CHECK(world.navigation.handDriven(car));
+    nav::Controls c;
+    c.throttle = 1.0f;
+    world.navigation.setControls(car, c);
+    for (int i = 0; i < 60; ++i)
+      world.scene.update(kFrame);
+    const glm::vec3 at = hierarchy::worldPosition(car);
+    CHECK(at.x > 5.5f && std::abs(at.y - 3.0f) < 1.0e-3f);
+    world.navigation.handBack(car);
+    for (int i = 0; i < 30; ++i)
+      world.scene.update(kFrame);
+    CHECK(!world.navigation.handDriven(car));
+    CHECK(glm::length(glm::vec2(hierarchy::worldPosition(car) - at)) < 0.5f);
+  }
+
   TEST("a vehicle agent should drive by a derived spec (a game's "
        "TractorSpec) through its VehicleComponent, and one without a "
        "VehicleComponent should be left out")
@@ -254,6 +280,75 @@ int main()
           1.0e-3f);
   }
 
+  TEST("one AgentSpec: the agent's spec should be applySpec of its "
+       "VehicleSpec and the rig the game's provider gives (the game's planners "
+       "call the same), a measured wheelbase used only where the spec's is 0")
+  {
+    Specs specs;
+    World world;
+    Entity tractor = world.car({0.0f, 0.0f}, 0.0f, specs.tractor);
+    nav::vehicle::Rig given;
+    given.extraMass = 1234.5f;
+    given.grip = 0.437f;
+    given.wheelbase = 1.1f;
+    given.effort = 0.9f; // (not the provider's: the component's)
+    world.navigation.setRigProvider([&](const Entity&) { return given; });
+    world.scene.update(kFrame);
+    const nav::AgentSpec* driven =
+        world.navigation.fleet().spec(static_cast<uint64_t>(tractor.getId()));
+    CHECK(driven != nullptr);
+    AssetRef<VehicleSpec> ref;
+    ref.asset = specs.tractor;
+    nav::vehicle::Rig rig = given;
+    rig.effort = NavAgentComponent{}.effort;
+    nav::AgentSpec planned;
+    nav::vehicle::applySpec(planned, *ref.get(), rig);
+    if (driven)
+    {
+      CHECK(driven->accel == planned.accel && driven->brake == planned.brake);
+      CHECK(driven->lateralAccel == planned.lateralAccel);
+      CHECK(driven->minRadius == planned.minRadius);
+      CHECK(driven->wheelbase == ref.get()->wheelbase); // (the spec's wins)
+    }
+    // (A load changed: re-derived, unrounded.)
+    given.extraMass = 1300.25f;
+    world.scene.update(kFrame);
+    rig.extraMass = given.extraMass;
+    nav::vehicle::applySpec(planned, *ref.get(), rig);
+    CHECK(world.navigation.fleet()
+              .spec(static_cast<uint64_t>(tractor.getId()))
+              ->accel == planned.accel);
+    // (A spec whose wheelbase is 0, "measure it": the measured one.)
+    VehicleSpec measure;
+    measure.wheelbase = 0.0f;
+    nav::AgentSpec mower;
+    nav::vehicle::applySpec(mower, measure, given);
+    CHECK(mower.wheelbase == 1.1f);
+    CHECK(std::abs(mower.minRadius -
+                   1.1f / std::tan(glm::radians(measure.maxSteerAngle))) <
+          1.0e-4f);
+  }
+
+  TEST("a measured fixed axle (the rig's, where the spec's is 0) is the "
+       "agent's reference point: its pose is the axle's, the entity's origin "
+       "stays where it is")
+  {
+    Specs specs;
+    World world;
+    Entity tractor = world.car({4.0f, 2.0f}, 0.5f * nav::kPi, specs.tractor);
+    nav::vehicle::Rig given;
+    given.axle = -1.5f; // (behind its origin)
+    world.navigation.setRigProvider([&](const Entity&) { return given; });
+    world.scene.update(kFrame);
+    const nav::Pose2 pose =
+        world.navigation.fleet().pose(static_cast<uint64_t>(tractor.getId()));
+    CHECK(glm::length(pose.position - glm::vec2(4.0f, 0.5f)) < 1.0e-3f);
+    CHECK(std::abs(pose.heading - 0.5f * nav::kPi) < 1.0e-3f);
+    world.scene.update(kFrame);
+    CHECK(glm::length(glm::vec2(hierarchy::worldTransform(tractor).position) -
+                      glm::vec2(4.0f, 2.0f)) < 1.0e-3f);
+  }
+
   TEST("its debug toggles should be offered as settings")
   {
     World world;
@@ -287,6 +382,51 @@ int main()
     world.navigation.setActive(car, true);
     world.scene.update(kFrame);
     CHECK(world.navigation.fleet().has(id));
+  }
+
+  TEST("a mounted part's box should be measured in the agent's flat frame "
+       "(mountedBox: a lifted, pitched header's nose where the physics has "
+       "it), its bottom rideDrop lower, the same box the game plans with")
+  {
+    Specs specs;
+    World world;
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    // (A 3 m x 4 m x 1 m header ahead of the car, pitched 14 degrees up.)
+    Entity tool = world.solid({5.0f, 0.0f, 1.5f}, {3.0f, 4.0f, 1.0f});
+    tool.getComponent<TransformComponent>().rotation =
+        glm::angleAxis(glm::radians(-14.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    NavigationSystem::Hitch mounted;
+    mounted.towed = tool;
+    mounted.rigid = true;
+    mounted.rideDrop = 0.3f;
+    world.navigation.hitch(car, mounted);
+    world.scene.update(kFrame);
+    const nav::AgentSpec* spec = world.navigation.fleet().spec(
+        static_cast<nav::Fleet::AgentId>(car.getId()));
+    CHECK(spec && spec->boxes.size() == 2u);
+    if (spec && spec->boxes.size() == 2u)
+    {
+      const nav::Box3 b = spec->boxes.back();
+      const nav::Box3 same = NavigationSystem::mountedBox(
+          hierarchy::worldMatrix(tool),
+          glm::vec3(-1.5f, -2.0f, -0.5f),
+          glm::vec3(1.5f, 2.0f, 0.5f),
+          {{0.0f, 0.0f}, 0.0f},
+          [](glm::vec2) { return 0.0f; },
+          0.3f);
+      CHECK(b.back == same.back && b.front == same.front);
+      CHECK(b.bottom == same.bottom && b.top == same.top);
+      // (Pitched: longer than upright by the tilt, nose and tail where the
+      // corners are.)
+      const float c = std::cos(glm::radians(14.0f)),
+                  sn = std::sin(glm::radians(14.0f));
+      CHECK(std::abs(b.front - (5.0f + 1.5f * c + 0.5f * sn)) < 1.0e-4f);
+      CHECK(std::abs(b.back - (5.0f - 1.5f * c - 0.5f * sn)) < 1.0e-4f);
+      CHECK(std::abs(b.top - (1.5f + 1.5f * sn + 0.5f * c)) < 1.0e-4f);
+      CHECK(std::abs(b.bottom - (1.5f - 1.5f * sn - 0.5f * c - 0.3f)) <
+            1.0e-4f);
+      CHECK(std::abs(b.half - 2.0f) < 1.0e-4f);
+    }
   }
 
   return testing::report("navigationSystemTests");

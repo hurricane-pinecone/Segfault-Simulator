@@ -31,11 +31,19 @@ These rules are the owner's; when a task seems to need breaking one, stop and as
 - Store PROPERTIES, never physics OUTCOMES. Power, mass, brake force, wheelbase and tyre sizes are properties.
   Acceleration, deceleration, grip, flotation and cornering limits are outcomes: derive them from the properties
   plus load and surface. A deliberate behaviour cap is a clearly named behaviour setting, not a physics field.
+- ONE source for physics. Base values come from one defined place (spec assets, tyres, model nodes and colliders).
+  Each derived value (accel, braking, grip, turning radius, cusp time, driven speed, stopping distance, collision
+  shapes and poses) has one function that computes it (separate functions are fine). The planner and the driver
+  (speed profile, follower, look-ahead, traffic, game systems) call the SAME functions: there is no separate
+  planner physics. No local copies, constants or fudge factors (e.g. "brake * 2") anywhere else.
 
 ### Extensibility
 - Pluggable implementations are registered by name through a factory/registry (pattern: `RenderBackends::add`).
   Examples: navigation agent kinds ("vehicle", later "walker") and path searches ("hybridAStar").
 - Build one implementation and one interface. No speculative abstraction beyond that.
+- Reuse first. Before writing code, search the engine and game for code that already does it and reuse or extend it.
+  Never add a second implementation, copy or parallel path for the same concern (e.g. planner vs driver, game vs
+  engine). Fix a mismatch by deleting the duplicate, not by syncing numbers.
 - Standard problems get the textbook solution (e.g. vehicle travel: coarse graph -> hybrid A* -> curvature-
   continuous path -> speed profile -> path follower). Bespoke logic belongs in the game.
 

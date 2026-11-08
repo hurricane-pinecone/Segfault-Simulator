@@ -83,6 +83,84 @@ float priceOf(const PlanRequest& request,
   return w.cost;
 }
 
+std::optional<Space::Hit>
+touches(const PlanRequest& request, Pose2 pose, std::optional<float> hitch)
+{
+  if (!request.space)
+    return std::nullopt;
+  return Motions(request).touches(pose, hitch);
+}
+
+std::optional<float> touchesAlong(const PlanRequest& request,
+                                  Pose2 from,
+                                  float hitch,
+                                  std::span<const Segment> segments,
+                                  bool endIn)
+{
+  if (!request.space || segments.empty())
+    return std::nullopt;
+  // (Either gear: the way's the game's, the check only says what it touches.)
+  PlanRequest q = request;
+  q.vehicle.mayReverse = true;
+  for (VehicleModel::Mode& m : q.vehicle.modes)
+    m.forwardOnly = false;
+  const Motions rig(q);
+  std::vector<Segment> segs(segments.begin(), segments.end());
+  // Ending against what it's to come to: its last metres let off (cut).
+  if (endIn && rig.touches(endOf(from, segs), std::nullopt))
+  {
+    float keep = std::max(lengthOf(segs) - kEscapeReach, 0.0f);
+    std::vector<Segment> cut;
+    for (const Segment& s : segs)
+    {
+      if (keep <= 0.0f)
+        break;
+      Segment c = s;
+      if (s.length > keep)
+      {
+        c.length = keep;
+        c.k1 = s.k0 + (s.k1 - s.k0) * keep / std::max(s.length, 1e-6f);
+      }
+      keep -= c.length;
+      cut.push_back(c);
+    }
+    segs = std::move(cut);
+  }
+  Motions::Walk w;
+  w.hitch = hitch;
+  w.escape = rig.standsClear(from, hitch) ? 0.0f : kEscapeReach;
+  w.slack = 0.06f; // (as the final check: finer than the search's)
+  {
+    Motions::Walk all = w;
+    if (rig.walk(from, segs, q.tunables.exactStep, true, all))
+      return std::nullopt;
+  }
+  // Where: a step at a time, the walk carried on from one to the next.
+  const float step = q.tunables.exactStep;
+  float s = 0.0f;
+  Pose2 at = from;
+  for (const Segment& seg : segs)
+  {
+    if (seg.length <= 0.0f)
+      continue;
+    const int n =
+        std::max(1, static_cast<int>(std::ceil(seg.length / step - 1e-4f)));
+    const float ds = seg.length / static_cast<float>(n);
+    for (int i = 0; i < n; ++i)
+    {
+      const float k0 =
+          seg.k0 + (seg.k1 - seg.k0) * ds * static_cast<float>(i) / seg.length;
+      const Segment part{
+          seg.gear, ds, k0, k0 + (seg.k1 - seg.k0) * ds / seg.length};
+      if (!rig.walk(at, std::span<const Segment>(&part, 1), step, true, w))
+        return s + ds;
+      at = w.end;
+      s += ds;
+    }
+  }
+  return s; // (the whole walk failed where the steps didn't: at its end)
+}
+
 namespace
 {
 PlanResult planOnce(const PlanRequest& q,
@@ -140,11 +218,7 @@ PlanResult planOnce(const PlanRequest& q,
         reachable = true;
         break;
       }
-      const void* body = rig.probe(false, 0.0f, 0.0f);
-      std::optional<Space::Hit> hit = q.space->hit(body, g.pose);
-      if (!hit && q.vehicle.trailer && g.hitch)
-        hit = q.space->hit(rig.probe(true, 0.0f, 0.0f),
-                           trailerPose(*q.vehicle.trailer, g.pose, *g.hitch));
+      const std::optional<Space::Hit> hit = rig.touches(g.pose, g.hitch);
       if (!hit)
       {
         reachable = true;
@@ -191,6 +265,42 @@ PlanResult planOnce(const PlanRequest& q,
   }
   uint32_t budget = std::max<uint32_t>(q.nodeBudget, 1);
   uint32_t spent = 0;
+  // A goal hemmed in where it stands (a pocket the rig can't drive out of):
+  // proven from its side. The rig's motions are the same driven either way
+  // (it may reverse, nothing towed), so a goal is reachable from the start
+  // only if the start is from the goal: a search from each goal to the start
+  // that grows every pose it can reach within the first budget, never
+  // meeting its area's edge, proves there's no way, where the search from
+  // the start would grow every pose of the whole map to prove it. Tried
+  // once, when the first search hasn't found a way in its first budget.
+  bool goalSideTried = static_cast<bool>(q.goalTest) ||
+                       q.vehicle.trailer.has_value() || rig.forwardOnly ||
+                       !rig.standsClear(q.from, q.hitch);
+  const auto goalSideBlocked = [&](Rect a)
+  {
+    goalSideTried = true;
+    uint32_t used = 0;
+    for (const Goal& g : q.goals)
+    {
+      PlanRequest back = q;
+      back.from = g.pose;
+      back.hitch = 0.0f;
+      back.goals = {Goal{q.from}};
+      back.corridor.clear();
+      const Motions backRig(back);
+      const std::unique_ptr<ISearch> search =
+          searches().make(q.search, SearchContext{backRig, a, {}, {}});
+      if (!search)
+        return false;
+      const ISearch::Status st =
+          search->run(std::max<uint32_t>(q.nodeBudget, 1));
+      used += search->grown();
+      if (st != ISearch::Status::Exhausted || search->leftArea())
+        return false;
+    }
+    spent += used;
+    return true;
+  };
   for (;;)
   {
     Rect a{glm::max(area.lo - margin, world.lo),
@@ -211,8 +321,8 @@ PlanResult planOnce(const PlanRequest& q,
       r.stats.shots = s.shots();
       if (st == ISearch::Status::Found)
       {
-        r.stats.plain = s.grown() == 0;
         const Way c = s.found();
+        r.stats.plain = c.links.size() <= 1;
         r.goal = c.goal;
         std::vector<Segment> segs;
         const Goal* goal =
@@ -224,6 +334,17 @@ PlanResult planOnce(const PlanRequest& q,
             segs.insert(segs.end(), l.begin(), l.end());
         finish(rig, q, std::move(segs), r);
         r.state = PlanState::Found;
+        r.stats.ms = msSince(t0);
+        return r;
+      }
+      if (!goalSideTried &&
+          (st == ISearch::Status::Budget ||
+           (st == ISearch::Status::Exhausted && s.leftArea())) &&
+          goalSideBlocked(a))
+      {
+        r.state = PlanState::Blocked;
+        r.stats.nodes = spent + s.grown();
+        r.why = "no way: every pose the goal can be reached from searched";
         r.stats.ms = msSince(t0);
         return r;
       }

@@ -27,7 +27,7 @@ constexpr float kLevels[] = {1.0f, 0.5f, 0.25f};
 
 inline float bendSpeed(const VehicleModel& v, float k)
 {
-  return std::min(v.topSpeed, std::sqrt(v.lateralAccel / std::max(k, 1e-6f)));
+  return v.speedAt(1, std::max(k, 1e-6f), 0.0f);
 }
 
 // The vehicle in the mode it's driven in, its probes, and the one walk along
@@ -55,6 +55,9 @@ public:
   float towX = 0.0f, towY = 0.0f;     // (the trailer's, from its axle)
   std::vector<Steering> levels;
   float inscribed = 0.0f;
+  // (The rig's length, nose to tail, its trailer straight behind: how far a
+  // goal asking for a gear is come to in it (Goal::arriveGear).)
+  float length = 0.0f;
   // (walk()'s scratch: a Motions serves one thread.)
   mutable std::vector<Pose2> m_poses;
   mutable std::vector<float> m_hitches;
@@ -87,6 +90,19 @@ public:
     {
       towX = std::max(-v.trailer->box.back, v.trailer->box.front);
       towY = v.trailer->box.half + std::abs(v.trailer->box.shift);
+    }
+    {
+      float nose = 0.0f, tail = 0.0f;
+      for (const Box3& b : boxes)
+      {
+        nose = std::max(nose, b.front);
+        tail = std::max(tail, -b.back);
+      }
+      if (v.trailer)
+        tail = std::max(tail,
+                        v.trailer->hitchBehind + v.trailer->drawbar -
+                            std::min(v.trailer->box.back, 0.0f));
+      length = nose + tail;
     }
     grow = q.tunables.gap;
     body.resize(kExts * kWides);
@@ -212,13 +228,8 @@ public:
   }
   float speedFor(int gear, float k, float dkds) const
   {
-    const VehicleModel& v = q.vehicle;
-    float s = gear > 0 ? v.topSpeed : v.reverseSpeed;
-    if (std::abs(k) > 1e-6f)
-      s = std::min(s, std::sqrt(v.lateralAccel / std::abs(k)));
-    if (std::abs(dkds) > 1e-6f)
-      s = std::min(s, v.curvatureRate() / std::abs(dkds));
-    return std::max(std::min(s, q.speedCap), 0.1f);
+    return std::max(
+        std::min(q.vehicle.speedAt(gear, k, dkds), q.speedCap), 0.1f);
   }
 
   struct Walk
@@ -266,6 +277,10 @@ public:
         return false;
       if (w.gear != 0 && seg.gear != w.gear)
         w.cost += v.cuspSeconds(t.turnSpeed);
+      // (From a stand: the time pulling away, as the speed profile has it.)
+      if (w.gear == 0)
+        w.cost += v.pullAwaySeconds(
+            speedFor(seg.gear, seg.k0, (seg.k1 - seg.k0) / seg.length));
       w.gear = seg.gear;
       const int n =
           std::max(1, static_cast<int>(std::ceil(seg.length / step - 1e-4f)));
@@ -298,10 +313,7 @@ public:
           if (!std::isfinite(factor))
             return false;
         }
-        float dt = ds / speedFor(seg.gear, km, dkds) * factor;
-        if (seg.gear < 0)
-          dt *= t.reversePenalty;
-        w.cost += dt;
+        w.cost += ds / speedFor(seg.gear, km, dkds) * factor;
         if (v.trailer)
         {
           w.hitch = hitchStep(
@@ -349,14 +361,18 @@ public:
     w.end = at;
     return true;
   }
-  bool standsClear(Pose2 p, float hitch) const
+  // THE stand-here check (touches()): a plan's start, its goals, and a
+  // game's own "can it stop here" alike.
+  std::optional<Space::Hit> touches(Pose2 p, std::optional<float> hitch) const
   {
-    if (!space.fits(probe(false, 0.0f, 0.0f), p))
-      return false;
-    return !q.vehicle.trailer ||
-           space.fits(probe(true, 0.0f, 0.0f),
-                      trailerPose(*q.vehicle.trailer, p, hitch));
+    if (std::optional<Space::Hit> hit = space.hit(probe(false, 0.0f, 0.0f), p))
+      return hit;
+    if (!q.vehicle.trailer || !hitch)
+      return std::nullopt;
+    return space.hit(
+        probe(true, 0.0f, 0.0f), trailerPose(*q.vehicle.trailer, p, *hitch));
   }
+  bool standsClear(Pose2 p, float hitch) const { return !touches(p, hitch); }
   // A rough time for a word (no ground sampled): for sorting candidates.
   float estimate(std::span<const Segment> segs) const
   {
@@ -368,8 +384,6 @@ public:
       float dt =
           s.length /
           speedFor(s.gear, 0.5f * (std::abs(s.k0) + std::abs(s.k1)), dkds);
-      if (s.gear < 0)
-        dt *= q.tunables.reversePenalty;
       if (gear != 0 && gear != s.gear)
         c += q.vehicle.cuspSeconds(q.tunables.turnSpeed);
       gear = s.gear;

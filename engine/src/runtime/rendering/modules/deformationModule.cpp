@@ -8,6 +8,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/terrain.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/meshLibrary.h"
@@ -229,12 +230,18 @@ void DeformationModule::computeCommands(const RenderContext& context)
       ++it;
   }
 
-  deform();
+  {
+    SFS_CPU_SCOPE("deformation/press");
+    deform();
+  }
 
   PuddleModule* puddles = m_host ? m_host->module<PuddleModule>() : nullptr;
   for (const Seen& terrain : seen)
   {
-    draw(context, terrain.material, *terrain.drawn, *terrain.field);
+    {
+      SFS_CPU_SCOPE("deformation/draw");
+      draw(context, terrain.material, *terrain.drawn, *terrain.field);
+    }
     Field& field = *terrain.field;
     if (field.reshaped && puddles && field.sincePuddles >= kPuddleInterval)
     {
@@ -562,7 +569,10 @@ void DeformationModule::pressMesh(const Entity& mesh,
     if (world.min.z > below)
       continue;
     Underside& bottom = m_bottom;
-    bottom = undersideOf(mesh, handle, model, below, field.map.texel());
+    {
+      SFS_CPU_SCOPE("deformation/underside");
+      bottom = undersideOf(mesh, handle, model, below, field.map.texel());
+    }
     if (bottom.empty())
       continue;
     // Pressed all along the way it went since it last pressed, its
@@ -606,7 +616,10 @@ void DeformationModule::pressMesh(const Entity& mesh,
             ? m_assets->imageTexture(deformer.tread)
             : nullptr;
 
-    groundUnder(field, *over);
+    {
+      SFS_CPU_SCOPE("deformation/ground under");
+      groundUnder(field, *over);
+    }
     PressSettings settings;
     settings.ridge = deformer.ridge;
     settings.ridgeWidth = std::max(0.15f, deformer.sinkDepth * 2.5f);
@@ -677,6 +690,7 @@ void DeformationModule::pressMesh(const Entity& mesh,
       // A wheel sunk deep (in mud) pushes its ridge up higher.
       settings.ridgeMost =
           rolled ? std::max(ridgeMost, -0.4f * deepest) : ridgeMost;
+      SFS_CPU_SCOPE("deformation/map press");
       pressed += field.map.press(footprint, settings);
     }
     const glm::vec2 low = field.map.centerOf(over->from);

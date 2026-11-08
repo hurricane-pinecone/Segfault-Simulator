@@ -40,6 +40,9 @@ struct AgentGoal
   std::optional<float> hitch; // a trailer's angle there, if it matters
   int mode = 0;               // the mode it's driven in (0: travel)
   float speedCap = std::numeric_limits<float>::infinity();
+  // How it's come to (a vehicle's last stretch): 0 either way, 1 forward, -1
+  // backing (a parking spot it's reversed into).
+  int arriveGear = 0;
 };
 
 /**
@@ -55,10 +58,9 @@ struct AgentSpec
   float minRadius = 5.0f, wheelbase = 2.6f, steerRate = 1.2f;
   float topSpeed = 7.0f, reverseSpeed = 2.0f;
   float accel = 1.2f, brake = 2.0f, lateralAccel = 0.9f;
-  // (Route cost: a second backing up counts reversePenalty. A direction
-  // change is priced at its real time: VehicleModel::cuspSeconds(), from
-  // shuttleSeconds and the derived accel/brake the follower drives with.)
-  float reversePenalty = 1.5f;
+  // (Route cost: its time. A direction change is priced at its real time:
+  // VehicleModel::cuspSeconds(), from shuttleSeconds and the derived
+  // accel/brake the follower drives with; backing up at reverseSpeed.)
   float shuttleSeconds = 0.5f;
   bool mayReverse = true;
   /** A towed thing: its hitch behind the reference point, its axle behind
@@ -130,6 +132,20 @@ struct AgentPlan
   std::string why;
 };
 
+/**
+ * A driver's controls (a player at the wheel), each frame: throttle and
+ * brake 0..1, steering -1..1 of full lock (+ left), the gear it's driven in
+ * (1 forward, -1 backing up). How they move it is the agent kind's own
+ * motion, from the same spec its paths are driven by.
+ */
+struct Controls
+{
+  float throttle = 0.0f;
+  float brake = 0.0f;
+  float steer = 0.0f;
+  int gear = 1;
+};
+
 /** One agent driving its path (main thread). */
 class AgentMotion
 {
@@ -148,11 +164,24 @@ public:
   {
     bool done = false;    // at its end
     bool waiting = false; // standing to change gear
+    // Stood at once from this speed (m/s) at a stop named nearer than its
+    // brakes reach (a hard stop nothing priced); 0: none.
+    float hardStopFrom = 0.0f;
   };
   /** On by `deltaTime`, no faster than `speedCap`, standing by `stopAt` m. */
   virtual Step step(float deltaTime, float speedCap, float stopAt) = 0;
   virtual float s() const = 0;
   virtual float speed() const = 0; // signed: below 0 backing up
+  /**
+   * m it goes on along its path before it can stand, braking now (its
+   * kind's own stopping distance; a frame of `deltaTime` at its speed
+   * first). 0: it stands at once.
+   */
+  virtual float stoppingDistance(float deltaTime) const
+  {
+    (void)deltaTime;
+    return 0.0f;
+  }
   virtual float curvature() const = 0;
   virtual Pose2 pose() const = 0;
   virtual float hitch() const = 0;
@@ -160,6 +189,21 @@ public:
   virtual std::size_t index() const = 0;
   /** Its spec changed (a load, the grip): how it moves now. */
   virtual void setSpec(const AgentSpec&) {}
+  /**
+   * Driven by hand from `pose` (no path; its path dropped): each step()
+   * after this moves it by the last controls given (setControls). False: its
+   * kind can't be driven by hand. handBack() ends it, standing where it is.
+   */
+  virtual bool takeWheel(Pose2 pose, float hitch, float speed)
+  {
+    (void)pose;
+    (void)hitch;
+    (void)speed;
+    return false;
+  }
+  virtual void setControls(const Controls&) {}
+  virtual void handBack() {}
+  virtual bool handDriven() const { return false; }
 };
 
 /**

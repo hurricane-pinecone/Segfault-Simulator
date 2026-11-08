@@ -18,19 +18,23 @@ class WorkerPool;
 namespace sfs::nav
 {
 
+/** m/s: an agent slower than this is standing (one value, game included). */
+constexpr float kStill = 0.01f;
+
 /**
  * Every agent of a scene, planning and moving together: the part of
  * NavigationSystem that knows nothing of entities (so tools and tests drive
  * it directly). Each agent is planned by its kind (AgentKinds) on worker
- * threads, drives its path with its kind's follower, and claims its next
- * seconds in Traffic, whose advice it takes: the one giving way holds short,
- * clears out of the other's way (then waits till its own way on is clear of
- * the other's claim) or, held by one that has parked, plans round it. Only
- * the one giving way ever re-plans. An agent standing a while (parkedAfter,
- * whether or not it still holds a path) is a solid in everyone else's plans;
- * a moving one never is. The one with the right of way waits for the other's
- * body on its way only until that one has parked there (roundAfter): then it
- * plans round it, so a pair never both hold (a mutual hold).
+ * threads and drives its path with its kind's follower. Traffic is the
+ * textbook prioritised planning (Traffic): each frame every agent claims
+ * its way, then in rank order (priority, then id) reserves it in space and
+ * time, a lower one standing where it's clear of the higher reservations,
+ * waiting for narrow places (zones) another holds, and, standing in a
+ * higher one's way with nowhere clear on its path, planned to a wait spot
+ * clear of them (then planned on, or handed back to its game). An agent
+ * that is solid() (nothing to do; stood parkedAfter not for traffic, a stop
+ * its game made; or stuck: no wait spot) is a static obstacle: in every
+ * plan, and any path into it is planned again round it.
  *
  * Out of budget a plan hands over the clear way so far, which is driven
  * while the search goes on; "Blocked" is only reported when proven.
@@ -44,7 +48,7 @@ public:
     Idle,
     Planning, // standing, a plan on the way
     Moving,
-    Yielding, // giving way (holding short, clearing out, waiting)
+    Yielding, // standing for a higher reservation or a zone, or to a wait spot
     Arrived,
     Blocked, // proven: no way to its goal
   };
@@ -55,10 +59,10 @@ public:
       Arrived,
       Partial,  // driving the clear part while it searches on
       Blocked,  // proven, with what blocks it
-      Yielding, // began giving way to `other`
+      Yielding, // began standing for `other`'s reservation or zone
       Resumed,
       // Its path was the game's (setPath) and can't go on as it was (it
-      // cleared out of another's way, or one parked on it): the game plans
+      // went to a wait spot, or a static obstacle is on it): the game plans
       // it again from where it stands.
       NeedsPlan,
     };
@@ -70,24 +74,29 @@ public:
   };
   struct Settings
   {
-    unsigned threads = 2;        // planning threads (0: plans run in update())
-    float claimSeconds = 8.0f;   // how far ahead an agent claims its way
-    float claimEvery = 1.0f;     // m between its claim's samples
-    float parkedAfter = 2.0f;    // s still (path or not): a solid to others
-    float roundAfter = 5.0f;     // s held by a parked one: plan round it
-    float clearAhead = 15.0f;    // m of its way on clear of the other first
-    float clearOutReach = 80.0f; // m of the other's way a clear-out leaves
+    unsigned threads = 2;      // planning threads (0: plans run in update())
+    float claimSeconds = 8.0f; // how far ahead an agent claims its way
+    float claimEvery = 1.0f;   // m between its claim's samples
+    // s stood still, not for traffic (a stop its game made): a solid.
+    float parkedAfter = 2.0f;
+    // m of its way on it claims past its next seconds: where one ranked
+    // lower that meets it waits clear of; its zones are found that far.
+    float wayReach = 80.0f;
     uint32_t nodeBudget = 20000, budgetCap = 1u << 20;
-    uint32_t clearOutBudget = 20000, clearOutCap = 200000;
+    uint32_t waitSpotBudget = 20000, waitSpotCap = 200000;
   };
   /** What an agent did (diagnostics, tests). */
   struct Counters
   {
-    int plans = 0;       // plans asked for
-    int replans = 0;     // of which for giving way (clear-outs, round)
-    int clearOuts = 0;   // times told to clear out
-    int roundParked = 0; // plans round one parked on its way
-    float heldSeconds = 0.0f, waitSeconds = 0.0f;
+    int plans = 0;      // plans asked for
+    int replans = 0;    // of which for traffic (wait spots, round solids)
+    int waitSpots = 0;  // times sent to a wait spot (in a higher one's way)
+    int roundSolid = 0; // plans round a static obstacle on its way
+    float heldSeconds = 0.0f; // standing for traffic (any reason)
+    // Stops it couldn't brake for (told too late: AgentMotion::Step::
+    // hardStopFrom), and the fastest it was stood from.
+    int hardStops = 0;
+    float hardestStop = 0.0f;
   };
 
   Fleet();
@@ -124,8 +133,27 @@ public:
    * game's live limit (a working pace, a held pace). Infinity: none.
    */
   void setSpeedCap(AgentId id, float cap);
+  /**
+   * Its game is planning its next path (setPath() to come): it's about to
+   * move, so never a static obstacle meanwhile (not solid(), whatever it
+   * stood for). Two machines standing side by side, each planning its way
+   * off, each a solid in the other's plan, searched on for ever.
+   */
+  void setPlanning(AgentId id, bool planning);
   /** Stop and forget its goal. */
   void cancel(AgentId id);
+  /**
+   * A driver takes the wheel (a player): its goal and path dropped, it's
+   * moved each update by the controls last given (setControls), by its
+   * kind's own motion from its spec (no faster than its speed cap), till
+   * handBack() stands it where it is. Meanwhile it's solid to every other
+   * agent's plans (where it goes next is anyone's guess). False: its kind
+   * can't be driven by hand.
+   */
+  bool takeWheel(AgentId id);
+  void setControls(AgentId id, const Controls& controls);
+  void handBack(AgentId id);
+  bool handDriven(AgentId id) const;
   /** A pair that keep their own spacing (a cart beside its combine). */
   void cooperate(AgentId a, AgentId b, bool on);
 
@@ -149,6 +177,12 @@ public:
   float along(AgentId id) const;
   std::vector<AgentGoal> goals(AgentId id) const;
   std::vector<Footprint> footprint(AgentId id) const;
+  /**
+   * Whether it's a static obstacle in others' plans (nothing to do; stood
+   * parkedAfter not for traffic; stuck with no wait spot): the one test
+   * every planner world takes (the fleet's own, and a game's).
+   */
+  bool solid(AgentId id) const;
   /** Blocked: what blocks it. */
   std::vector<Space::Hit> blockers(AgentId id) const;
   Counters counters(AgentId id) const;
@@ -164,17 +198,20 @@ private:
   {
     None,
     Trip,     // its goal, from where it stands
-    ClearOut, // off another's claim
+    WaitSpot, // off the reservations ranked above it
   };
   void ask(AgentId id, Agent& a, Want want);
   void submit(AgentId id, Agent& a);
   void poll(AgentId id, Agent& a);
   void take(AgentId id, Agent& a, const AgentPlan& plan, bool final);
-  void claim(AgentId id, Agent& a);
+  void claim(AgentId id, Agent& a, float dt);
   void drive(AgentId id, Agent& a, float dt);
   World planWorld(AgentId except, const std::vector<Footprint>& more) const;
   bool standing(const Agent& a) const;
   bool parked(const Agent& a) const;
+  bool still(const Agent& a) const;
+  bool solid(const Agent& a) const;
+  std::vector<Traffic::Zone> zones(Agent& a, float s, std::size_t from);
   void event(Event::Kind kind,
              AgentId id,
              uint64_t request,
@@ -191,7 +228,6 @@ private:
   std::unique_ptr<WorkerPool> m_pool;
   std::vector<Event> m_events;
   uint64_t m_nextRequest = 1;
-  double m_now = 0.0;
 };
 
 } // namespace sfs::nav

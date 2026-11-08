@@ -1,6 +1,7 @@
 #include "engine/runtime/navigation/vehicle/vehicleSearch.h"
 
 #include <algorithm>
+#include <array>
 #include <queue>
 #include <tuple>
 #include <unordered_map>
@@ -12,6 +13,8 @@ namespace sfs::nav::vehicle
 namespace
 {
 constexpr float kUnknown = 1.0e5f; // (a cell the 2D heuristic can't reach)
+// (Poses grown before the heading-aware heuristic is built.)
+constexpr uint32_t kInformAfter = 300;
 
 // The 2D heuristic: seconds to the nearest goal round what's solid (walls
 // pushed out by the vehicle's inscribed half width), at top speed over the
@@ -162,7 +165,7 @@ struct Heuristic
         for (std::size_t i = 0; i < n; ++i)
           open[i] = d[i] > reach + openClear;
     }
-    std::vector<float> factor;
+    factor.clear();
     if (rig.cost)
       rig.cost->raster(origin, cell, w, h, rig.q.mode, factor);
     else
@@ -206,43 +209,182 @@ struct Heuristic
         }
       }
     }
-    buildHeading(rig, goals, factor);
+    buildTurning(rig, goals, factor);
   }
 
-  // The heading-aware part: seconds to the goal over coarser cells and 8
-  // directions of travel, from cell to cell along the direction (forward at
-  // top speed, backing at reverse speed x its penalty) and turning 45
-  // degrees in a cell costing what turning that much takes at the tightest
-  // radius beyond driving the arc's length flat out (theta (sqrt(R / a) -
-  // R / v)). It knows a rig facing away from the goal, or about to come at it
-  // from the wrong side, has turning to do; the goal is reached facing its
-  // way. A coarser cell is free if any cell in it is (optimistic); where it
+  // The turning part, built with the 2D part (cheap): seconds to the goal over
+  // coarser cells and 8 directions of travel, from cell to cell along the
+  // direction (forward at top speed, backing at reverse speed x its penalty)
+  // and turning 45 degrees in a cell costing what turning that much takes at
+  // the tightest radius beyond driving the arc's length flat out (theta (sqrt(R
+  // / a) - R / v)). It knows a rig facing away from the goal, or about to come
+  // at it from the wrong side, has turning to do; the goal is reached facing
+  // its way. A coarser cell is free if any cell in it is (optimistic); where it
   // finds no way it says nothing (the plain 2D part stands). Its cells are the
-  // 2D part's (dirCell: a multiple of them).
-  static constexpr int kDirs = 8;
-  float dirCell = 0.5f;
+  // 2D part's (turnCell: a multiple of them).
+  static constexpr int kTurnDirs = 8;
+  float turnCell = 0.5f;
+  int tw = 0, th = 0;
+  glm::vec2 torigin{0.0f};
+  std::vector<float> tsecs; // (cell * kTurnDirs + dir)
+  float turningAt(Pose2 p) const
+  {
+    if (tsecs.empty())
+      return 0.0f;
+    const glm::ivec2 c =
+        glm::ivec2(glm::floor((p.position - torigin) / turnCell));
+    if (c.x < 0 || c.y < 0 || c.x >= tw || c.y >= th)
+      return 0.0f;
+    const std::size_t base =
+        (static_cast<std::size_t>(c.y) * tw + c.x) * kTurnDirs;
+    // (Between two direction bins: the lesser, so it stays optimistic.)
+    const float u = wrapPositive(p.heading) / (kTwoPi / kTurnDirs);
+    const int d0 = static_cast<int>(std::floor(u)) % kTurnDirs;
+    const int d1 = (d0 + 1) % kTurnDirs;
+    const float v = std::min(tsecs[base + d0], tsecs[base + d1]);
+    return v >= kUnknown ? 0.0f : v;
+  }
+  void buildTurning(const Motions& rig,
+                    const std::vector<Pose2>& goals,
+                    const std::vector<float>& factor)
+  {
+    tsecs.clear();
+    if (goals.empty())
+      return;
+    const VehicleModel& v = rig.q.vehicle;
+    const int r = std::max(1, static_cast<int>(std::lround(turnCell / cell)));
+    turnCell = cell * static_cast<float>(r);
+    torigin = origin;
+    tw = (w + r - 1) / r;
+    th = (h + r - 1) / r;
+    const std::size_t cells = static_cast<std::size_t>(tw) * th;
+    std::vector<uint8_t> free(cells, 0);
+    std::vector<float> least(cells, kInf);
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x)
+      {
+        const std::size_t i = static_cast<std::size_t>(y) * w + x;
+        if (solid[i] || !inside[i])
+          continue;
+        const std::size_t j = static_cast<std::size_t>(y / r) * tw + x / r;
+        free[j] = 1;
+        if (std::isfinite(factor[i]))
+          least[j] = std::min(least[j], factor[i]);
+      }
+    const float top = std::max(v.topSpeed, 0.1f);
+    const float back = rig.forwardOnly ? 0.0f : std::max(v.reverseSpeed, 0.05f);
+    const float lat = std::max(v.lateralAccel, 0.01f);
+    const float perRadian =
+        std::max(0.0f, std::sqrt(rig.minRadius / lat) - rig.minRadius / top);
+    const float turnCost = perRadian * kTwoPi / kTurnDirs;
+    static const int ddx[kTurnDirs] = {1, 1, 0, -1, -1, -1, 0, 1};
+    static const int ddy[kTurnDirs] = {0, 1, 1, 1, 0, -1, -1, -1};
+    tsecs.assign(cells * kTurnDirs, kUnknown);
+    using Item = std::pair<float, uint32_t>;
+    std::priority_queue<Item, std::vector<Item>, std::greater<>> q;
+    for (const Pose2& g : goals)
+    {
+      const glm::ivec2 c =
+          glm::ivec2(glm::floor((g.position - torigin) / turnCell));
+      if (c.x < 0 || c.y < 0 || c.x >= tw || c.y >= th)
+        continue;
+      const float u = wrapPositive(g.heading) / (kTwoPi / kTurnDirs);
+      const int d0 = static_cast<int>(std::floor(u)) % kTurnDirs;
+      for (int d : {d0, (d0 + 1) % kTurnDirs})
+      {
+        const uint32_t i = static_cast<uint32_t>(
+            (static_cast<std::size_t>(c.y) * tw + c.x) * kTurnDirs + d);
+        tsecs[i] = 0.0f;
+        q.push({0.0f, i});
+      }
+    }
+    // (From the goal back: what reaches (cell, dir) in one move.)
+    while (!q.empty())
+    {
+      const auto [t, i] = q.top();
+      q.pop();
+      if (t > tsecs[i])
+        continue;
+      const int d = static_cast<int>(i % kTurnDirs);
+      const std::size_t cellIndex = i / kTurnDirs;
+      const int x = static_cast<int>(cellIndex % tw);
+      const int y = static_cast<int>(cellIndex / tw);
+      const auto relax = [&](int nx, int ny, int nd, float cost)
+      {
+        if (nx < 0 || ny < 0 || nx >= tw || ny >= th)
+          return;
+        const std::size_t c = static_cast<std::size_t>(ny) * tw + nx;
+        if (!free[c])
+          return;
+        const uint32_t j = static_cast<uint32_t>(c * kTurnDirs + nd);
+        if (t + cost < tsecs[j])
+        {
+          tsecs[j] = t + cost;
+          q.push({t + cost, j});
+        }
+      };
+      const float len = (d % 2 ? 1.41421356f : 1.0f) * turnCell;
+      const float f = std::isfinite(least[cellIndex]) ? least[cellIndex] : 1.0f;
+      // Driven forward from the cell behind, backing from the one ahead.
+      relax(x - ddx[d], y - ddy[d], d, len * f / top);
+      if (back > 0.0f)
+        relax(x + ddx[d], y + ddy[d], d, len * f / back);
+      relax(x, y, (d + 1) % kTurnDirs, turnCost);
+      relax(x, y, (d + kTurnDirs - 1) % kTurnDirs, turnCost);
+    }
+  }
+
+  // The heading-aware part (the non-holonomic heuristic, with obstacles):
+  // seconds to the goal by (cell, heading, gear), found from the goal back
+  // over the rig's own motions as a point that turns no tighter than its
+  // radius: short straights and full-lock arcs, forward (and backing, if it
+  // may, a cusp at each change) at the speeds it takes them, its reference
+  // point kept out of what's solid (the 2D part's raster). It is hybrid A*
+  // run backwards as a Dijkstra over coarse bins (dirCell x kDirs): each bin
+  // keeps the pose that reached it cheapest and goes on from there. It knows
+  // what Dolgov et al.'s two heuristics know apart (a rig facing away from
+  // its goal has turning to do; the way round what's solid) and what neither
+  // knows: that turning round takes room, so where there's none the way is
+  // round. It stops once past `reach` seconds (well beyond the start's): a
+  // bin it didn't reach is at least that far.
+  static constexpr int kDirs = 16;
+  float dirCell = 1.0f;
   int dw = 0, dh = 0;
   glm::vec2 dorigin{0.0f};
-  std::vector<float> dsecs; // (cell * kDirs + dir)
-  float headingAt(Pose2 p) const
+  std::vector<float> dsecs; // ((cell * kDirs + dir) * 2 + gear: 0 forward)
+  float cusp = 0.0f;
+  float beyond = 0.0f; // (a bin not reached: at least this)
+  // (Whether it got near the start (two turning radii: a start hemmed in
+  // tighter than its coarse motions go), and whether it ran into the edge
+  // of the area searched on the way: if it didn't and did, the way is
+  // likely outside it.)
+  bool nearStart = false, metEdge = false, reachedStart = false;
+  // (`gear`: the one it drives in now, 0 standing: a change costs a cusp.)
+  float headingAt(Pose2 p, int gear = 0) const
   {
     if (dsecs.empty())
-      return 0.0f;
+      return turningAt(p); // (not built yet)
     const glm::ivec2 c =
         glm::ivec2(glm::floor((p.position - dorigin) / dirCell));
     if (c.x < 0 || c.y < 0 || c.x >= dw || c.y >= dh)
       return 0.0f;
     const std::size_t base = (static_cast<std::size_t>(c.y) * dw + c.x) * kDirs;
     // (Between two direction bins: the lesser, so it stays optimistic.)
-    const float u = wrapPositive(p.heading) / (kTwoPi / kDirs);
-    const int d0 = static_cast<int>(std::floor(u)) % kDirs;
+    const float u = wrapPositive(p.heading) / (kTwoPi / kDirs) - 0.5f;
+    const int d0 = (static_cast<int>(std::floor(u)) + kDirs) % kDirs;
     const int d1 = (d0 + 1) % kDirs;
-    const float v = std::min(dsecs[base + d0], dsecs[base + d1]);
-    return v >= kUnknown ? 0.0f : v;
+    float v = kUnknown;
+    for (const int d : {d0, d1})
+      for (int g = 0; g < 2; ++g)
+      {
+        const bool change = gear != 0 && (gear > 0) != (g == 0);
+        v = std::min(v, dsecs[(base + d) * 2 + g] + (change ? cusp : 0.0f));
+      }
+    return v >= kUnknown ? beyond : v;
   }
-  void buildHeading(const Motions& rig,
-                    const std::vector<Pose2>& goals,
-                    const std::vector<float>& factor)
+  std::vector<float> factor; // (the cost layer's, by cell)
+  void
+  buildHeading(const Motions& rig, const std::vector<Pose2>& goals, Pose2 start)
   {
     dsecs.clear();
     if (goals.empty())
@@ -254,82 +396,394 @@ struct Heuristic
     dw = (w + r - 1) / r;
     dh = (h + r - 1) / r;
     const std::size_t cells = static_cast<std::size_t>(dw) * dh;
-    std::vector<uint8_t> free(cells, 0);
     std::vector<float> least(cells, kInf);
+    // (free: the body may be there; 2: the reference point may too, the
+    // ground not barred to it (an infinite factor: the search never goes
+    // there).)
+    std::vector<uint8_t> free(static_cast<std::size_t>(w) * h, 0);
     for (int y = 0; y < h; ++y)
       for (int x = 0; x < w; ++x)
       {
         const std::size_t i = static_cast<std::size_t>(y) * w + x;
         if (solid[i] || !inside[i])
           continue;
+        free[i] = 1;
+        if (!std::isfinite(factor[i]))
+          continue;
+        free[i] = 2;
         const std::size_t j = static_cast<std::size_t>(y / r) * dw + x / r;
-        free[j] = 1;
-        if (std::isfinite(factor[i]))
-          least[j] = std::min(least[j], factor[i]);
+        least[j] = std::min(least[j], factor[i]);
       }
-    const float top = std::max(v.topSpeed, 0.1f);
-    const float back = rig.forwardOnly ? 0.0f
-                                       : std::max(v.reverseSpeed, 0.05f) /
-                                             rig.q.tunables.reversePenalty;
-    const float lat = std::max(v.lateralAccel, 0.01f);
-    const float perRadian =
-        std::max(0.0f, std::sqrt(rig.minRadius / lat) - rig.minRadius / top);
-    const float turnCost = perRadian * kTwoPi / kDirs;
-    static const int ddx[kDirs] = {1, 1, 0, -1, -1, -1, 0, 1};
-    static const int ddy[kDirs] = {0, 1, 1, 1, 0, -1, -1, -1};
-    dsecs.assign(cells * kDirs, kUnknown);
-    using Item = std::pair<float, uint32_t>;
-    std::priority_queue<Item, std::vector<Item>, std::greater<>> q;
-    for (const Pose2& g : goals)
+    // (Hot: most of the map's time. Off the low side is off the raster, so
+    // a plain truncation does for the floor.)
+    const auto cellOf = [&](glm::vec2 p, float size, int cw, int ch)
     {
-      const glm::ivec2 c =
-          glm::ivec2(glm::floor((g.position - dorigin) / dirCell));
-      if (c.x < 0 || c.y < 0 || c.x >= dw || c.y >= dh)
-        continue;
-      const float u = wrapPositive(g.heading) / (kTwoPi / kDirs);
-      const int d0 = static_cast<int>(std::floor(u)) % kDirs;
-      for (int d : {d0, (d0 + 1) % kDirs})
+      const float fx = (p.x - origin.x) / size, fy = (p.y - origin.y) / size;
+      if (!(fx >= 0.0f && fy >= 0.0f))
+        return int64_t{-1};
+      const int x = static_cast<int>(fx), y = static_cast<int>(fy);
+      return x >= cw || y >= ch ? int64_t{-1}
+                                : static_cast<int64_t>(y) * cw + x;
+    };
+    const float dirWidth = kTwoPi / kDirs;
+    const auto binOf = [&](Pose2 p) -> int64_t
+    {
+      const int64_t c = cellOf(p.position, dirCell, dw, dh);
+      if (c < 0)
+        return -1;
+      const int d =
+          static_cast<int>(std::floor(wrapPositive(p.heading) / dirWidth)) %
+          kDirs;
+      return c * kDirs + d;
+    };
+    // The motions, driven backwards from where they end (what reaches a
+    // pose by each): straight a little longer than a bin's diagonal, so each
+    // leaves its bin, and at full lock either way. Each laid out
+    // once in its end's frame: its samples and its start.
+    // (Turning at the search's own rate: its turn primitives straighten
+    // out at each end, so a run of them turns no tighter than one does on
+    // average (in and out of lock over its length), not at full lock.)
+    float kmax = 1.0f / std::max(rig.minRadius, 0.01f);
+    if (!rig.levels.empty())
+    {
+      const Steering& st = rig.levels[0];
+      const float arc = std::max(0.0f, 2.0f - 2.0f * st.clothoidLength());
+      const float length = 2.0f * st.clothoidLength() + arc;
+      if (length > 0.0f)
+        kmax = std::min(
+            kmax, (2.0f * st.clothoidTurn() + arc * st.kappa()) / length);
+    }
+    struct Move
+    {
+      int gear;
+      float secs;                 // (on ground of factor 1)
+      std::vector<glm::vec2> at;  // (samples; the last is its start)
+      std::vector<glm::vec2> dir; // (the heading at each)
+      float turn;                 // (its start's heading, from the end's)
+      float length = 0.0f;
+    };
+    // The rig's body as discs of the inscribed radius along it, its
+    // reference point's and as far ahead and behind as the boxes reach:
+    // none of them may be on what's solid either.
+    std::vector<float> discs{0.0f};
+    for (const Box3& b : rig.boxes)
+    {
+      if (std::abs(b.shift) > b.half - rig.inscribed + 1e-3f)
+        continue; // (a box off to one side: the discs stay on the middle)
+      if (b.front - rig.inscribed > 0.5f * cell)
+        discs.push_back(b.front - rig.inscribed);
+      if (b.back + rig.inscribed < -0.5f * cell)
+        discs.push_back(b.back + rig.inscribed);
+    }
+    // And its outline: the boxes' edges, a point at most a cell apart,
+    // shrunk by half a cell's diagonal, over a raster of the cells anything
+    // solid touches (thin fences too): a point in one may be about that
+    // far clear, so it stays about as optimistic. A trailer's in its
+    // own frame, held at the angle it settles to on the move's turn (in
+    // line on a straight): the corners the discs miss, and what it sweeps.
+    const float shrink = 0.71f * cell;
+    const auto outline = [&](const Box3& b, std::vector<glm::vec2>& out)
+    {
+      const float x0 = b.back + shrink, x1 = std::max(x0, b.front - shrink);
+      const float y0 = b.shift - b.half + shrink,
+                  y1 = std::max(y0, b.shift + b.half - shrink);
+      const int nx = std::max(1, static_cast<int>(std::ceil((x1 - x0) / cell)));
+      const int ny = std::max(1, static_cast<int>(std::ceil((y1 - y0) / cell)));
+      for (int i = 0; i <= nx; ++i)
       {
-        const uint32_t i = static_cast<uint32_t>(
-            (static_cast<std::size_t>(c.y) * dw + c.x) * kDirs + d);
-        dsecs[i] = 0.0f;
-        q.push({0.0f, i});
+        const float x = x0 + (x1 - x0) * static_cast<float>(i) / nx;
+        out.push_back({x, y0});
+        out.push_back({x, y1});
+      }
+      for (int i = 1; i < ny; ++i)
+      {
+        const float y = y0 + (y1 - y0) * static_cast<float>(i) / ny;
+        out.push_back({x0, y});
+        out.push_back({x1, y});
+      }
+    };
+    std::vector<glm::vec2> body, towed;
+    for (const Box3& b : rig.boxes)
+      outline(b, body);
+    const Trailer* tr = v.trailer ? &*v.trailer : nullptr;
+    if (tr)
+      outline(tr->box, towed);
+    std::vector<uint8_t> edge; // (the cells anything solid touches)
+    rig.space.raster(origin, cell, w, h, shrink, edge);
+    // (How far each cell is from the nearest one the outline could be
+    // stopped by (solid, or ground barred under it), in metres, kept on the
+    // low side (an 8-way chamfer overstates by up to 8.3%, and a cell's
+    // width either end): where an outline's whole circle is further off than
+    // that, none of its points can be, so they aren't looked at. Open ground,
+    // most of a map, is passed at a glance; the answer is the same.)
+    std::vector<float> room(static_cast<std::size_t>(w) * h, 1e9f);
+    for (std::size_t i = 0; i < room.size(); ++i)
+      if (edge[i] || !std::isfinite(factor[i]))
+        room[i] = 0.0f;
+    {
+      const float dg = 1.41421356f;
+      for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+          float& r = room[static_cast<std::size_t>(y) * w + x];
+          if (x > 0)
+            r = std::min(r, room[static_cast<std::size_t>(y) * w + x - 1] + 1);
+          if (y > 0)
+          {
+            const std::size_t up = static_cast<std::size_t>(y - 1) * w + x;
+            r = std::min(r, room[up] + 1);
+            if (x > 0)
+              r = std::min(r, room[up - 1] + dg);
+            if (x + 1 < w)
+              r = std::min(r, room[up + 1] + dg);
+          }
+        }
+      for (int y = h - 1; y >= 0; --y)
+        for (int x = w - 1; x >= 0; --x)
+        {
+          float& r = room[static_cast<std::size_t>(y) * w + x];
+          if (x + 1 < w)
+            r = std::min(r, room[static_cast<std::size_t>(y) * w + x + 1] + 1);
+          if (y + 1 < h)
+          {
+            const std::size_t dn = static_cast<std::size_t>(y + 1) * w + x;
+            r = std::min(r, room[dn] + 1);
+            if (x > 0)
+              r = std::min(r, room[dn - 1] + dg);
+            if (x + 1 < w)
+              r = std::min(r, room[dn + 1] + dg);
+          }
+        }
+      for (float& r : room)
+        r = r * cell / 1.0824f - 2.0f * cell;
+    }
+    const auto roomAt = [&](glm::vec2 at)
+    {
+      const int64_t c = cellOf(at, cell, w, h);
+      return c < 0 ? -1.0f : room[static_cast<std::size_t>(c)];
+    };
+    // (Each outline's circle: about a centre, in its own frame.)
+    const auto circle = [](const std::vector<glm::vec2>& pts)
+    {
+      glm::vec2 lo(1e9f), hi(-1e9f);
+      for (const glm::vec2 p : pts)
+      {
+        lo = glm::min(lo, p);
+        hi = glm::max(hi, p);
+      }
+      const glm::vec2 c = pts.empty() ? glm::vec2(0.0f) : 0.5f * (lo + hi);
+      float r = 0.0f;
+      for (const glm::vec2 p : pts)
+        r = std::max(r, glm::length(p - c));
+      return std::array<float, 3>{c.x, c.y, r};
+    };
+    const std::array<float, 3> bodyRing = circle(body), towRing = circle(towed);
+    const auto settled = [&](float k, float length)
+    {
+      float a = 0.0f;
+      if (tr && k != 0.0f)
+        a = hitchStep(*tr, 0.0f, length, k);
+      return tr ? std::clamp(a, -tr->forwardLimit, tr->forwardLimit) : 0.0f;
+    };
+    std::vector<Move> moves;
+    std::vector<glm::vec2> hitchTurn; // (by move: cos, sin of its angle)
+    for (int gear : {1, -1})
+    {
+      if (gear < 0 && rig.forwardOnly)
+        continue;
+      for (float k : {0.0f, kmax, -kmax})
+      {
+        float speed = gear > 0 ? v.topSpeed : v.reverseSpeed;
+        if (k != 0.0f)
+          speed = std::min(speed, bendSpeed(v, kmax));
+        // (An arc turns a whole direction bin: a smaller turn would lose,
+        // bin by bin, to the straighter ways into the same bins.)
+        const float step = k != 0.0f ? std::max(1.5f * dirCell, dirWidth / kmax)
+                                     : 1.5f * dirCell;
+        const int samples =
+            std::max(1, static_cast<int>(std::ceil(step / cell)));
+        Move m{gear, step / std::max(speed, 0.05f), {}, {}, 0.0f};
+        const Segment back{-gear, step, k, k};
+        for (int s = 1; s <= samples; ++s)
+        {
+          const Pose2 a = advance(
+              {},
+              back,
+              step * static_cast<float>(s) / static_cast<float>(samples));
+          m.at.push_back(a.position);
+          m.dir.push_back(unit(a.heading));
+        }
+        m.turn = advance({}, back, step).heading;
+        m.length = step;
+        moves.push_back(std::move(m));
+        const float a = settled(k, step);
+        hitchTurn.push_back({std::cos(a), std::sin(a)});
       }
     }
-    // (From the goal back: what reaches (cell, dir) in one move.)
+    cusp = rig.forwardOnly ? 0.0f : v.cuspSeconds(rig.q.tunables.turnSpeed);
+    dsecs.assign(cells * kDirs * 2, kUnknown);
+    std::vector<Pose2> at(cells * kDirs * 2);
+    // (Metres driven to the goal from each: a trailer's checked only once
+    // it's as far out as it reaches back, its angle near the goal being
+    // whatever the way in made it.)
+    std::vector<float> run(tr ? cells * kDirs * 2 : 0, 0.0f);
+    const float towReach =
+        tr ? tr->hitchBehind + tr->drawbar - std::min(tr->box.back, 0.0f)
+           : 0.0f;
+    using Item = std::pair<float, uint32_t>;
+    std::priority_queue<Item, std::vector<Item>, std::greater<>> q;
+    for (std::size_t gi = 0; gi < goals.size(); ++gi)
+    {
+      const Pose2& g = goals[gi];
+      const int64_t b = binOf(g);
+      if (b < 0)
+        continue;
+      // (A goal to be come to in one gear: only that gear's bins seeded.)
+      const int arrive =
+          gi < rig.q.goals.size() ? rig.q.goals[gi].arriveGear : 0;
+      for (int k = 0; k < 2; ++k)
+      {
+        if (arrive != 0 && (k == 1) != (arrive < 0))
+          continue;
+        const std::size_t i = static_cast<std::size_t>(b) * 2 + k;
+        dsecs[i] = 0.0f;
+        at[i] = g;
+        q.push({0.0f, static_cast<uint32_t>(i)});
+      }
+    }
+    // (Where to stop: well past the start, once it's reached facing its
+    // way (the two direction bins headingAt() reads there); a bin not
+    // reached by then is at least that far. Never reached: everything
+    // the area holds was, and a bin not reached has no way in it.)
+    const int64_t startCell = cellOf(start.position, dirCell, dw, dh);
+    const float su = wrapPositive(start.heading) / dirWidth - 0.5f;
+    const int sd0 = (static_cast<int>(std::floor(su)) + kDirs) % kDirs;
+    const int sd1 = (sd0 + 1) % kDirs;
+    float reach = kInf, furthest = 0.0f;
+    beyond = 0.0f;
+    reachedStart = false;
+    nearStart = false;
+    metEdge = false;
+    const float near = 2.0f * rig.minRadius + dirCell;
     while (!q.empty())
     {
       const auto [t, i] = q.top();
       q.pop();
       if (t > dsecs[i])
         continue;
-      const int d = static_cast<int>(i % kDirs);
-      const std::size_t cellIndex = i / kDirs;
-      const int x = static_cast<int>(cellIndex % dw);
-      const int y = static_cast<int>(cellIndex / dw);
-      const auto relax = [&](int nx, int ny, int nd, float cost)
+      if (t > reach)
       {
-        if (nx < 0 || ny < 0 || nx >= dw || ny >= dh)
-          return;
-        const std::size_t c = static_cast<std::size_t>(ny) * dw + nx;
-        if (!free[c])
-          return;
-        const uint32_t j = static_cast<uint32_t>(c * kDirs + nd);
-        if (t + cost < dsecs[j])
-        {
-          dsecs[j] = t + cost;
-          q.push({t + cost, j});
-        }
+        beyond = reach;
+        break;
+      }
+      furthest = t;
+      const int dir = static_cast<int>(i / 2 % kDirs);
+      if (!reachedStart && static_cast<int64_t>(i / 2 / kDirs) == startCell &&
+          (dir == sd0 || dir == sd1))
+      {
+        reachedStart = true;
+        reach = 1.5f * t + 10.0f;
+      }
+      const Pose2 p = at[i];
+      nearStart = nearStart || glm::length(p.position - start.position) <= near;
+      const glm::vec2 f = unit(p.heading), l{-f.y, f.x};
+      const float fp = least[i / 2 / kDirs];
+      const int gear = i % 2 ? -1 : 1; // (what it drives on from p in)
+      const auto hits = [&](glm::vec2 at)
+      {
+        const int64_t c = cellOf(at, cell, w, h);
+        return c >= 0 && edge[static_cast<std::size_t>(c)];
       };
-      const float len = (d % 2 ? 1.41421356f : 1.0f) * dirCell;
-      const float f = std::isfinite(least[cellIndex]) ? least[cellIndex] : 1.0f;
-      // Driven forward from the cell behind, backing from the one ahead.
-      relax(x - ddx[d], y - ddy[d], d, len * f / top);
-      if (back > 0.0f)
-        relax(x + ddx[d], y + ddy[d], d, len * f / back);
-      relax(x, y, (d + 1) % kDirs, turnCost);
-      relax(x, y, (d + kDirs - 1) % kDirs, turnCost);
+      for (std::size_t mi = 0; mi < moves.size(); ++mi)
+      {
+        const Move& m = moves[mi];
+        bool clear = true;
+        for (std::size_t k = 0; k < m.at.size() && clear; ++k)
+        {
+          const glm::vec2 o = m.at[k];
+          const glm::vec2 a = p.position + f * o.x + l * o.y;
+          const glm::vec2 d = f * m.dir[k].x + l * m.dir[k].y;
+          const glm::vec2 n{-d.y, d.x};
+          // (The outline at the move's end only (its start, driven): the
+          // discs, at every sample, catch what it would pass over.)
+          const bool ends = k + 1 == m.at.size();
+          bool barredUnder = false; // (ground barred to the reference point)
+          const bool lookBody = ends && roomAt(a + d * bodyRing[0] +
+                                               n * bodyRing[1]) <= bodyRing[2];
+          for (const glm::vec2 b : lookBody ? body : std::vector<glm::vec2>{})
+          {
+            const int64_t c = cellOf(a + d * b.x + n * b.y, cell, w, h);
+            if (c < 0)
+              continue;
+            if (edge[static_cast<std::size_t>(c)])
+            {
+              clear = false;
+              break;
+            }
+            barredUnder = barredUnder ||
+                          !std::isfinite(factor[static_cast<std::size_t>(c)]);
+          }
+          // (The body over it: the cost layer may bar the whole pose (a body
+          // kept off a crop); it says, for this pose.)
+          if (clear && barredUnder && rig.cost &&
+              !std::isfinite(
+                  rig.cost->factor({a, std::atan2(d.y, d.x)}, rig.q.mode)))
+            clear = false;
+          if (clear && ends && tr && run[i] >= towReach)
+          {
+            const glm::vec2 hc = hitchTurn[mi];
+            const glm::vec2 td{
+                d.x * hc.x + d.y * hc.y, d.y * hc.x - d.x * hc.y};
+            const glm::vec2 tn{-td.y, td.x};
+            const glm::vec2 axle = a - d * tr->hitchBehind - td * tr->drawbar;
+            const bool lookTow =
+                roomAt(axle + td * towRing[0] + tn * towRing[1]) <= towRing[2];
+            for (const glm::vec2 b : lookTow ? towed : std::vector<glm::vec2>{})
+              if (hits(axle + td * b.x + tn * b.y))
+              {
+                clear = false;
+                break;
+              }
+          }
+          if (!clear)
+            break;
+          for (const float along : discs)
+          {
+            const int64_t c = cellOf(a + d * along, cell, w, h);
+            if (c < 0 ||
+                free[static_cast<std::size_t>(c)] < (along == 0.0f ? 2 : 1))
+            {
+              metEdge =
+                  metEdge || c < 0 || !inside[static_cast<std::size_t>(c)];
+              clear = false;
+              break;
+            }
+          }
+        }
+        if (!clear)
+          continue;
+        const glm::vec2 e = m.at.back();
+        const Pose2 from{p.position + f * e.x + l * e.y, p.heading + m.turn};
+        const int64_t b = binOf(from);
+        if (b < 0)
+          continue;
+        const std::size_t j = static_cast<std::size_t>(b) * 2 + (m.gear < 0);
+        const float fc =
+            std::min(fp, least[static_cast<std::size_t>(b) / kDirs]);
+        const float nt = t + m.secs * (std::isfinite(fc) ? fc : 1.0f) +
+                         (m.gear != gear ? cusp : 0.0f);
+        if (nt < dsecs[j])
+        {
+          dsecs[j] = nt;
+          at[j] = from;
+          if (tr)
+            run[j] = run[i] + m.length;
+          q.push({nt, static_cast<uint32_t>(j)});
+        }
+      }
     }
+    if (beyond == 0.0f)
+      beyond = furthest + 10.0f; // (all of it searched)
   }
 };
 
@@ -358,7 +812,6 @@ struct Primitive
 // Fill a primitive's samples as Motions::walk() lays them at `step`.
 void tabulate(const Motions& rig, Primitive& prim, float step)
 {
-  const Tunables& t = rig.q.tunables;
   Pose2 at;
   prim.gear = prim.segs.empty() ? 1 : prim.segs.front().gear;
   for (const Segment& seg : prim.segs)
@@ -375,9 +828,7 @@ void tabulate(const Motions& rig, Primitive& prim, float step)
       const float k1 = k0 + dkds * ds;
       const float km = 0.5f * (k0 + k1);
       at = advance(at, {seg.gear, ds, k0, k1}, ds);
-      float dt = ds / rig.speedFor(seg.gear, km, dkds);
-      if (seg.gear < 0)
-        dt *= t.reversePenalty;
+      const float dt = ds / rig.speedFor(seg.gear, km, dkds);
       prim.samples.push_back(
           {at.position, at.heading, km, static_cast<float>(seg.gear) * ds, dt});
     }
@@ -470,6 +921,11 @@ public:
   std::vector<Segment> shot; // (the found one's last stretch)
   int goal = -1;
   float foundHitch = 0.0f;
+  // (The quickest way to a goal a shot has found so far, all told: taken
+  // once no pose still open could beat it (its f), never just the first; or
+  // once Tunables::improveNodes more have been grown looking for one.)
+  float m_shotCost = kInf;
+  uint32_t m_shotAt = 0; // (poses grown when the first shot found a way)
   int32_t closest =
       0; // (the node with the least heuristic: the clear way so far)
   // (Scratch for grow(), and the near-goal words' times by fine bin.)
@@ -477,25 +933,84 @@ public:
   std::vector<float> m_hitches;
   std::unordered_map<uint64_t, float> m_near;
   std::unordered_set<uint64_t> m_shotFrom;
+  std::vector<glm::vec2> corridor;
+  bool m_ready = false;
+  bool m_informed = false;
+  bool m_outside = false; // (inform(): the way's likely outside the area)
 
   explicit HybridAStar(const SearchContext& ctx)
-      : rig(ctx.motions), q(ctx.motions.q), area(ctx.area)
+      : rig(ctx.motions), q(ctx.motions.q), area(ctx.area),
+        corridor(ctx.corridor)
   {
-    const std::vector<glm::vec2>& corridor = ctx.corridor;
-    std::vector<Pose2> seeds;
-    for (const Goal& g : q.goals)
-      seeds.push_back(g.pose);
-    heur.build(rig, area, seeds, corridor, q.corridorWidth);
-    prims = primitivesFor(rig);
     vias = ctx.vias;
     viaDone.assign(vias.size(), 0);
     Node root;
     root.pose = q.from;
     root.hitch = q.hitch;
     root.escape = rig.standsClear(q.from, q.hitch) ? 0.0f : kEscapeReach;
-    root.h = hOf(root.pose);
     nodes.push_back(root);
-    open.push({root.h, 0.0f, 0});
+  }
+  // The heuristic and the primitives, built only once a search is needed:
+  // a way the first shot finds (a plain way) costs neither.
+  void ready()
+  {
+    if (m_ready)
+      return;
+    m_ready = true;
+    std::vector<Pose2> seeds;
+    for (const Goal& g : q.goals)
+      seeds.push_back(g.pose);
+    heur.build(rig, area, seeds, corridor, q.corridorWidth);
+    prims = primitivesFor(rig);
+    nodes[0].h = hOf(nodes[0].pose);
+    open.push({nodes[0].h, 0.0f, 0});
+  }
+  // The heading-aware heuristic, built once the search has grown
+  // kInformAfter poses (a plain way never needs it): every pose waiting is
+  // priced again with it.
+  void inform()
+  {
+    m_informed = true;
+    std::vector<Pose2> seeds;
+    for (const Goal& g : q.goals)
+      seeds.push_back(g.pose);
+    heur.buildHeading(rig, seeds, q.from);
+    // (Its motions never got from the goals to the start in the area, and
+    // ran into the area's edge: the way is likely outside it; on searching
+    // here only floods. Done here, as if it had left the area: the planner
+    // widens it. Never a proof: the planner says "no way" only when the
+    // area is everything there is.)
+    if (!heur.nearStart && heur.metEdge)
+    {
+      // (Not when it's searching all there is already: the planner's
+      // widest, everything there is and 30 m round it and the trip.)
+      Rect world = rig.space.bounds();
+      world.lo = glm::min(world.lo, q.from.position);
+      world.hi = glm::max(world.hi, q.from.position);
+      for (const Goal& g : q.goals)
+      {
+        world.lo = glm::min(world.lo, g.pose.position);
+        world.hi = glm::max(world.hi, g.pose.position);
+      }
+      m_outside =
+          area.lo.x > world.lo.x - 29.0f || area.lo.y > world.lo.y - 29.0f ||
+          area.hi.x < world.hi.x + 29.0f || area.hi.y < world.hi.y + 29.0f;
+    }
+    std::vector<Item> waiting;
+    waiting.reserve(open.size() + 1);
+    while (!open.empty())
+    {
+      waiting.push_back(open.top());
+      open.pop();
+    }
+    for (const auto& [f, g, i] : waiting)
+    {
+      if (g > nodes[i].g)
+        continue;
+      Node& n = nodes[i];
+      n.h = hOf(n.pose, n.gear);
+      open.push({n.g + n.h, n.g, i});
+    }
   }
   // Along a primitive from node `n` (facing f, its left l): its poses from
   // the table, priced and checked as Motions::walk() does.
@@ -559,9 +1074,9 @@ public:
     w.end.heading = wrapAngle(w.end.heading);
     return true;
   }
-  float hOf(Pose2 p)
+  float hOf(Pose2 p, int gear = 0)
   {
-    float h = std::max(heur.at(p.position), heur.headingAt(p));
+    float h = std::max(heur.at(p.position), heur.headingAt(p, gear));
     // (Near a goal its turning matters: the quickest word there, unchecked;
     // remembered per fine bin, as many poses come close to each other.)
     for (std::size_t gi = 0; gi < q.goals.size(); ++gi)
@@ -587,6 +1102,8 @@ public:
         w.reverse = !rig.forwardOnly;
         w.cusps = !rig.forwardOnly;
         w.cuspSamples = 0; // (the three-point turns, not the C|CSCs)
+        // (Every word, however it arrives: the words with cusps are sampled
+        // too sparsely to bound one asked to arrive in a gear.)
         for (const auto& word : rig.levels[0].paths(p, g.pose, w))
           least = std::min(least, rig.estimate(word));
         m_near.emplace(key, least);
@@ -669,7 +1186,7 @@ public:
         c.parent = static_cast<int32_t>(from);
         c.prim = -2 - static_cast<int32_t>(extra.size());
         extra.push_back(word);
-        c.h = hOf(c.pose);
+        c.h = hOf(c.pose, c.gear);
         const uint32_t idx = static_cast<uint32_t>(nodes.size());
         nodes.push_back(c);
         best[keyOf(c,
@@ -682,6 +1199,35 @@ public:
       }
     }
   }
+  // A shot that gets there: the way found if it's the quickest yet.
+  bool offer(uint32_t from,
+             std::vector<Segment> word,
+             const Motions::Walk& w,
+             int gi)
+  {
+    // (Its time all told: to here, the shot, and braking to a stand at the
+    // goal, as the speed profile has it.)
+    float stop = 0.0f;
+    for (auto it = word.rbegin(); it != word.rend(); ++it)
+      if (it->length > 0.0f)
+      {
+        stop = q.vehicle.stopSeconds(
+            rig.speedFor(it->gear, it->k1, (it->k1 - it->k0) / it->length));
+        break;
+      }
+    const float total = nodes[from].g + w.cost + stop;
+    if (total >= m_shotCost)
+      return false;
+    if (m_shotCost == kInf)
+      m_shotAt = m_grown;
+    m_shotCost = total;
+    found_ = static_cast<int32_t>(from);
+    shot = std::move(word);
+    goal = gi;
+    foundHitch = w.hitch;
+    return true;
+  }
+  // Shots from `from` at the goals: each that gets there offered (offer()).
   bool tryShots(uint32_t from)
   {
     const Node& n = nodes[from];
@@ -690,6 +1236,7 @@ public:
              .insert(keyOf(n, q.tunables, q.vehicle.trailer.has_value(), false))
              .second)
       return false;
+    bool offered = false;
     for (std::size_t gi = 0; gi < q.goals.size(); ++gi)
     {
       const Goal& g = q.goals[gi];
@@ -700,6 +1247,9 @@ public:
           glm::length(g.pose.position - n.pose.position) < 4.0f * rig.minRadius;
       for (const auto& word : rig.words(n.pose, g.pose, close, 2))
       {
+        // (A goal to be come to in one gear: only words ending in it.)
+        if (!arrivesAsAsked(g, word, rig.length))
+          continue;
         if (tried++ >= 3)
           break;
         if (!plausible(n.pose, word))
@@ -715,32 +1265,111 @@ public:
         if (g.hitch &&
             std::abs(wrapAngle(w.hitch - *g.hitch)) > g.hitchTolerance)
           continue;
-        found_ = static_cast<int32_t>(from);
-        shot = word;
-        goal = static_cast<int>(gi);
-        foundHitch = w.hitch;
-        return true;
+        offered = offer(from, word, w, static_cast<int>(gi)) || offered;
+      }
+      // Its approach (as a driver parks in a bay): a goal hemmed in (a shed,
+      // a gap) is reached straight in, the way it faces or backing in, from
+      // its lined-up pose a turn or two out in the open; a shot there and the
+      // straight on, both walked as any. Without, a goal with room to turn
+      // only straight out of it floods the search round it.
+      if (!close)
+        continue;
+      const glm::vec2 f(std::cos(g.pose.heading), std::sin(g.pose.heading));
+      // (Asked to come to it in a gear: the straight in at least the rig's
+      // length, the whole rig coming in that way.)
+      const float out = g.arriveGear != 0
+                            ? std::max(2.0f * rig.minRadius, rig.length)
+                            : 2.0f * rig.minRadius;
+      for (const int gear : {1, -1})
+      {
+        if ((gear < 0 && rig.forwardOnly) ||
+            (g.arriveGear != 0 && gear != g.arriveGear))
+          continue;
+        // (Forward in: lined up behind it; backing in: ahead of it.)
+        const Pose2 lined{
+            g.pose.position - f * (out * static_cast<float>(gear)),
+            g.pose.heading};
+        const Segment in{gear, out, 0.0f, 0.0f};
+        Motions::Walk last;
+        last.gear = gear;
+        if (!rig.walk(lined,
+                      std::span<const Segment>(&in, 1),
+                      q.tunables.checkStep,
+                      true,
+                      last) ||
+            !arrives(last.end, g.pose))
+          continue;
+        int triedIn = 0;
+        for (const auto& word : rig.words(n.pose, lined, true, 2))
+        {
+          if (triedIn++ >= 3)
+            break;
+          if (!plausible(n.pose, word))
+            continue;
+          ++m_shots;
+          std::vector<Segment> whole(word.begin(), word.end());
+          whole.push_back(in);
+          Motions::Walk w;
+          w.hitch = n.hitch;
+          w.gear = n.gear;
+          w.escape = n.escape;
+          if (!rig.walk(n.pose, whole, q.tunables.checkStep, true, w) ||
+              !arrives(w.end, g.pose))
+            continue;
+          if (g.hitch &&
+              std::abs(wrapAngle(w.hitch - *g.hitch)) > g.hitchTolerance)
+            continue;
+          offered =
+              offer(from, std::move(whole), w, static_cast<int>(gi)) || offered;
+          break;
+        }
       }
     }
-    return false;
+    return offered;
   }
   Status run(uint32_t budget) override
   {
     const Tunables& t = q.tunables;
     const bool towing = q.vehicle.trailer.has_value();
-    if (m_grown == 0 && nodes.size() == 1 && !q.goals.empty() && tryShots(0))
-      return Status::Found;
+    if (!m_ready && !q.goals.empty())
+      tryShots(0);
+    ready();
     while (!open.empty())
     {
       if (m_grown >= budget)
-        return Status::Budget;
+        return m_shotCost < kInf ? Status::Found : Status::Budget;
+      if (m_shotCost < kInf && m_grown >= m_shotAt + t.improveNodes)
+        return Status::Found;
       if (q.cancel && q.cancel->load(std::memory_order_relaxed))
         return Status::Budget;
       const auto [f, g, i] = open.top();
       open.pop();
       if (g > nodes[i].g)
         continue; // (stale)
+      // (A shot's found a way: a pose that can't beat it all told, its time
+      // so far and at least what's left, is never grown; the way is taken
+      // when none is left that could. At least what's left: the heuristic's
+      // lower bounds only (the 2D map's and the turning's, unweighted), not
+      // its near-goal words, which a manoeuvre of several cusps can beat.)
+      if (m_shotCost < kInf &&
+          nodes[i].g + std::max(heur.at(nodes[i].pose.position),
+                                heur.headingAt(nodes[i].pose, nodes[i].gear)) >=
+              m_shotCost)
+        continue;
       ++m_grown;
+      if (!m_informed && m_grown >= kInformAfter)
+      {
+        open.push({f, g, i}); // (priced again with the rest)
+        inform();
+        if (m_outside)
+        {
+          if (m_shotCost < kInf)
+            return Status::Found;
+          m_leftArea = true;
+          return Status::Exhausted;
+        }
+        continue;
+      }
       const Node n = nodes[i];
       if (n.h < nodes[static_cast<std::size_t>(closest)].h)
         closest = static_cast<int32_t>(i);
@@ -767,8 +1396,8 @@ public:
         const bool hopeless =
             dist >= 15.0f && !heur.none &&
             heur.at(n.pose.position) * q.vehicle.topSpeed > 1.3f * dist + 4.0f;
-        if (!hopeless && m_grown % every == 0 && tryShots(i))
-          return Status::Found;
+        if (!hopeless && m_grown % every == 0)
+          tryShots(i);
       }
       if (!vias.empty() && m_grown % 3 == 0)
         tryVias(i);
@@ -797,7 +1426,7 @@ public:
           m_leftArea = true;
           continue;
         }
-        c.h = hOf(c.pose);
+        c.h = hOf(c.pose, c.gear);
         const uint64_t key = keyOf(c, t, towing, heur.isOpen(c.pose.position));
         const auto it = best.find(key);
         if (it != best.end() && nodes[it->second].g <= c.g)
@@ -808,7 +1437,7 @@ public:
         open.push({c.g + c.h, c.g, idx});
       }
     }
-    return Status::Exhausted;
+    return m_shotCost < kInf ? Status::Found : Status::Exhausted;
   }
   Way found() const override { return chainTo(found_, true); }
   Way bestSoFar() const override { return chainTo(closest, false); }

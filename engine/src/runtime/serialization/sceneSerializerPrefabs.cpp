@@ -298,11 +298,11 @@ std::optional<std::string> SceneSerializer::pathInInstance(const Entity& entity,
               std::to_string(entity.getComponent<PrefabLinkComponent>().id));
 }
 
-Entity
-SceneSerializer::loadInstance(const json& entry,
-                              Scene& scene,
-                              const Entity& parent,
-                              std::set<std::string>* unresolvedTypes) const
+Entity SceneSerializer::loadInstance(const json& entry,
+                                     Scene& scene,
+                                     const Entity& parent,
+                                     std::set<std::string>* unresolvedTypes,
+                                     std::vector<Entity>* created) const
 {
   Expander expander(m_prefabs);
   expander.instance(entry, "", "", idOf(entry));
@@ -318,6 +318,8 @@ SceneSerializer::loadInstance(const json& entry,
     if (above.isValid())
       hierarchy::setParent(entity, above);
     made[node.key] = entity;
+    if (created)
+      created->push_back(entity);
     if (node.key.empty())
       root = entity;
 
@@ -342,10 +344,11 @@ SceneSerializer::loadInstance(const json& entry,
 
 Entity SceneSerializer::instantiate(std::string_view prefab,
                                     Scene& scene,
-                                    const Entity& parent) const
+                                    const Entity& parent,
+                                    std::vector<Entity>* made) const
 {
   return loadInstance(
-      json{{"$prefab", std::string(prefab)}}, scene, parent, nullptr);
+      json{{"$prefab", std::string(prefab)}}, scene, parent, nullptr, made);
 }
 
 std::vector<SceneSerializer::PrefabNode>
