@@ -5,7 +5,6 @@
 its 3D suffix (`RigidBody3DComponent`, `BoxCollider3DComponent`...) to tell it
 from a 2D game's physics (`PhysicsSystem2D`, `RigidBody2DComponent`,
 `BoxCollider2D`; see [Runtime systems](../systems/index.md#2d-physics)).
-The web build has no 3D physics.
 
 ## Turning it on
 
@@ -211,8 +210,10 @@ how many steps the last update took and whether it searched the scene. With
 `SFS_CPU_TIMING` set, the log shows `physics3D/sync`, `physics3D/step` and
 `physics3D/contacts` separately.
 
-The engine's prebuilt Jolt package targets AVX2 CPUs, so games need an x86-64
-CPU from about 2013 or later. Physics isn't part of the web build.
+The engine's prebuilt Jolt package targets AVX2 CPUs, so a desktop game needs
+an x86-64 CPU from about 2013 or later. The web build compiles Jolt itself
+instead of using that package, so it has no such requirement; it runs
+wherever the browser's WebAssembly does.
 
 ## In the editor
 

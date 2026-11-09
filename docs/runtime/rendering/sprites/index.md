@@ -33,9 +33,10 @@ scene.createEntity()
 A sprite's size is its frame's size in pixels, divided by its image's
 `pixelsPerUnit` import setting (else the style's: a 2D game's `Space2D`, or
 `SpriteModule::setPixelsPerUnit` in 3D), times the transform's `scale2D()`. A
-negative scale mirrors it. A flat game's sprite turns with its transform's
-`yaw()`; an isometric one always faces the view. A child sprite is drawn where
-its parents put it (its world transform).
+negative scale mirrors the sprite (flipping its picture left-right or
+top-bottom) rather than turning it away from the camera. A flat game's sprite
+turns with its transform's `yaw()`; an isometric one always faces the view. A
+child sprite is drawn where its parents put it (its world transform).
 
 Scenes saved with the retired `SpriteTint` and `ShadowCasterComponent`
 components load with them folded into the sprite's `tint` and `castsShadow`.
