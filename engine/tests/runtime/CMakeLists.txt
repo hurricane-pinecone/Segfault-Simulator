@@ -25,6 +25,16 @@ add_runtime_test(physicsSystem2DTests systems/physicsSystem2DTests.cpp)
 add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
 add_runtime_test(physicsSystem3DTests systems/physicsSystem3DTests.cpp)
 add_runtime_test(colliderFitTests systems/colliderFitTests.cpp)
+add_runtime_test(prefabSystemTests systems/prefabSystemTests.cpp)
+
+# navigation/
+add_runtime_test(steeringTests navigation/vehicle/steeringTests.cpp)
+add_runtime_test(plannerTests navigation/vehicle/plannerTests.cpp)
+add_runtime_test(trafficTests navigation/trafficTests.cpp)
+add_runtime_test(coarseGraphTests navigation/coarseGraphTests.cpp)
+add_runtime_test(fleetTests navigation/fleetTests.cpp)
+add_runtime_test(collisionSpaceTests navigation/collisionSpaceTests.cpp)
+add_runtime_test(navigationSystemTests systems/navigationSystemTests.cpp)
 
 # particles/
 add_runtime_test(colliderParticleCollisionTests particles/colliderParticleCollisionTests.cpp)

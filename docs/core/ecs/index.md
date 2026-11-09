@@ -130,6 +130,12 @@ catches it, tells the player in a message box and ends the game. Use
 calls `fn(entity, a, b)` for each match without one, for code that runs every
 frame.
 
+`registry->componentChanges<A>()` goes up whenever an entity gains or loses an
+`A` (a destroyed entity loses all of its components). A system that keeps its
+own list of the entities with an `A` searches again only when it has moved,
+instead of every frame. Changing an `A`'s values doesn't count: compare those
+yourself.
+
 A program can have at most `MAX_COMPONENTS` (128) component types; one more is
 a fatal error when it's first used.
 
@@ -192,9 +198,10 @@ Destroying an object's entity (`scene.destroyEntity`) destroys the object too,
 at the next flush, and a scene's objects get `onDestroy()` when it ends.
 Objects made during an update start getting updates next frame.
 
-In a `StandardScene` (a scene file played), `scene.instantiate("asset:<id>")`
-makes a prefab's instance while the game runs and starts its scripts, as when
-the scene started.
+In a `StandardScene` (a scene file played), its `PrefabSystem`
+(`spawn("asset:<id>", transform)`; see
+[Prefab system](../../runtime/systems/prefab-system/index.md)) makes a prefab's
+instance while the game runs and starts its scripts, as when the scene started.
 
 Rule of thumb: use **systems** for behaviour over many homogeneous entities
 (movement, physics, rendering); use **GameObjects** for individually scripted

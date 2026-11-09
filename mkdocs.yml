@@ -98,7 +98,9 @@ nav:
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md
+          - Prefab system: runtime/systems/prefab-system/index.md
       - 3D physics: runtime/physics-3d/index.md
+      - Navigation (AI agents): runtime/navigation/index.md
       - Skeletal animation: runtime/animation/index.md
       - Game UI: runtime/ui/index.md
       - Particles in your game: runtime/particles/index.md

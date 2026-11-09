@@ -120,7 +120,10 @@ ScriptableObjects::list(std::string_view type)
       continue;
     const std::string asset = std::string(kPrefix) + record.id.toString();
     const std::string& recordType = typeOf(asset);
-    if (type.empty() || recordType == type)
+    // A type's own assets and those of the types derived from it (a
+    // TractorSpec is a VehicleSpec).
+    if (type.empty() || recordType == type ||
+        reflect::types().isA(recordType, type))
       entries.push_back({asset, record.path.stem().string(), recordType});
   }
   std::sort(entries.begin(),
@@ -175,7 +178,22 @@ nlohmann::json ScriptableObjects::fileContents(const std::string& type,
 ScriptableObjects& scriptableObjects()
 {
   static ScriptableObjects assets;
+  // AssetRef<T>::get() (core) finds assets through it from now on.
+  static const bool resolving = []
+  {
+    setScriptableObjectResolver([](std::string_view asset)
+                                { return assets.get(asset); });
+    return true;
+  }();
+  (void)resolving;
   return assets;
 }
+
+namespace
+{
+// Installed as the runtime loads, so AssetRef<T>::get() works before
+// anything else has asked for the process-wide assets.
+[[maybe_unused]] const bool g_resolverInstalled = (scriptableObjects(), true);
+} // namespace
 
 } // namespace sfs

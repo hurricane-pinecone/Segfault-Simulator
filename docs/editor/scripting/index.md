@@ -148,6 +148,30 @@ if (const ItemDef* item = chest.loot.get())
   LOG_INFO("A " + item->displayName);
 ```
 
+#### Deriving from another scriptable object type
+
+A scriptable object type may derive from another reflected one, the engine's
+or your own, to add fields to it: a game's tractors are vehicles with a hitch.
+
+```cpp
+#include "engine/runtime/navigation/vehicle/vehicleSpec.h"
+
+struct TractorSpec : sfs::VehicleSpec
+{
+  float hitchHeight = 0.5f;
+};
+```
+
+A `Tractor Spec.asset` holds every level's fields; the Inspector shows the
+base's first, each level under its type's name. An `sfs::AssetRef<sfs::VehicleSpec>`
+field lists and takes `TractorSpec` assets too, and `get()` gives one as a
+`VehicleSpec` (`dynamic_cast` it to reach the extra fields). The base must be
+a reflected type with one plain name (no templates, one base only). If its
+module isn't loaded the derived type keeps its own fields, and gets the
+base's again when it comes back. Only scriptable objects may derive from a
+reflected type for now; a component or script deriving from one fails to
+compile with a message saying so.
+
 Every asset of a type is listed by `sfs::scriptableObjects().all<ItemDef>()`, which is
 handy for "every crop in the game". Edits made while playing are picked up the
 next time the asset is asked for. Renaming a scriptable object type or its fields

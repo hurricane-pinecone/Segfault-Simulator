@@ -216,47 +216,5 @@ int main()
     CHECK(world.scene.findObjects<Mover>()[1]->entity() == later);
   }
 
-  TEST("StandardScene::instantiate should start the instance's scripts")
-  {
-    namespace fs = std::filesystem;
-    const fs::path folder = fs::temp_directory_path() / "sfs_instantiate_test";
-    fs::remove_all(folder);
-    fs::create_directories(folder / "prefabs");
-    std::ofstream(folder / "prefabs" / "mover.prefab") << R"({
-      "formatVersion": 1,
-      "root": {
-        "NameComponent": {"name": "Spawned"},
-        "TransformComponent": {},
-        "ScriptComponent": {"script": "Mover"},
-        "children": [{"$id": 1, "TransformComponent": {},
-                      "ScriptComponent": {"script": "Mover"}}]}})";
-    {
-      const AssetDatabase database(folder,
-                                   AssetDatabase::Mode::ReadWrite,
-                                   AssetDatabase::projectFolders());
-      const AssetRecord* record =
-          database.findByPath(fs::path("prefabs") / "mover.prefab");
-      CHECK(record != nullptr);
-
-      AssetStore store;
-      store.setDatabase(&database);
-      testing3d::MockRenderer renderer;
-      SceneServices services{.assetStore = store, .renderer = &renderer};
-      SceneManager manager;
-      manager.setSceneServices(&services);
-      StandardScene& scene = *manager.createScene<StandardScene>();
-
-      Mover::created = 0;
-      const Entity root =
-          record ? scene.instantiate("asset:" + record->id.toString())
-                 : Entity();
-      CHECK(root.isValid());
-      CHECK(Mover::created == 2);
-      CHECK(scene.findObjects<Mover>().size() == 2u);
-      manager.destroyAll();
-    }
-    fs::remove_all(folder);
-  }
-
   return testing::report("scriptRegistryTests");
 }

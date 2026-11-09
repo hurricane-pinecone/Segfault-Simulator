@@ -202,7 +202,7 @@ private:
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";
     model.qualifiedName += model.name;
-    model.kind = classify(node, model.uiLayer);
+    model.kind = classify(node, model);
 
     // struct members default to public, class members to private.
     bool isPublic = isStruct;
@@ -229,9 +229,10 @@ private:
     m_result.type = std::move(model);
   }
 
-  TypeKind classify(TSNode node, bool& uiLayer)
+  TypeKind classify(TSNode node, TypeModel& model)
   {
     TypeKind kind = TypeKind::Component;
+    int bases = 0;
     const uint32_t count = ts_node_named_child_count(node);
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -239,20 +240,28 @@ private:
       if (type(child) != "base_class_clause")
         continue;
 
-      const uint32_t bases = ts_node_named_child_count(child);
-      for (uint32_t b = 0; b < bases; ++b)
+      const uint32_t baseCount = ts_node_named_child_count(child);
+      for (uint32_t b = 0; b < baseCount; ++b)
       {
         const TSNode base = ts_node_named_child(child, b);
-        if (type(base) == "access_specifier")
+        if (type(base) == "access_specifier" || type(base) == "virtual")
           continue;
         const std::string name = normaliseType(text(base));
+        if (++bases > 1)
+        {
+          error(base,
+                "'" + name +
+                    "': a script type has one base (an engine base or "
+                    "another reflected type)");
+          continue;
+        }
         // A UI layer is a game object (drawn as UI).
         if (name == "GameObject" || name == "sfs::GameObject")
           kind = TypeKind::GameObject;
         else if (name == "ui::Layer" || name == "sfs::ui::Layer")
         {
           kind = TypeKind::GameObject;
-          uiLayer = true;
+          model.uiLayer = true;
         }
         else if (name == "System" || name == "sfs::System")
           kind = TypeKind::System;
@@ -260,12 +269,22 @@ private:
           kind = TypeKind::MeshSource;
         else if (name == "ScriptableObject" || name == "sfs::ScriptableObject")
           kind = TypeKind::ScriptableObject;
+        else if (name.find_first_of("<>(") == std::string::npos)
+        {
+          // Another reflected type (sfs::VehicleSpec, game::ItemDef): its
+          // fields come first; the compiler checks what it is.
+          kind = TypeKind::Derived;
+          const std::size_t colons = name.rfind("::");
+          model.base =
+              colons == std::string::npos ? name : name.substr(colons + 2);
+        }
         else
           error(base,
                 "'" + name +
                     "' isn't a supported base; derive from sfs::GameObject, "
-                    "sfs::ui::Layer, sfs::System, sfs::MeshSource or "
-                    "sfs::ScriptableObject, or nothing for a component");
+                    "sfs::ui::Layer, sfs::System, sfs::MeshSource, "
+                    "sfs::ScriptableObject or another reflected type, or "
+                    "nothing for a component");
       }
     }
     return kind;

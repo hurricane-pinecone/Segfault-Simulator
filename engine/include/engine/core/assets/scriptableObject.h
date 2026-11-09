@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 namespace sfs
 {
@@ -36,6 +37,43 @@ struct AssetRefBase
 
   bool empty() const { return asset.empty(); }
   bool operator==(const AssetRefBase&) const = default;
+};
+
+/**
+ * The scriptable object an "asset:<id>" names (null: none, missing or
+ * unreadable), through the resolver the runtime installs (the process-wide
+ * sfs::ScriptableObjects; none installed: null).
+ */
+const ScriptableObject* findScriptableObject(std::string_view asset);
+using ScriptableObjectResolver = const ScriptableObject* (*)(std::string_view);
+void setScriptableObjectResolver(ScriptableObjectResolver resolver);
+
+/**
+ * A field referring to a scriptable object of type T (an
+ * sfs::ScriptableObject). The editor picks it from the project's assets of
+ * that type and of types derived from it; get() gives the asset, loaded the
+ * first time anything asks for it and shared by everything that does.
+ *
+ *   sfs::AssetRef<ItemDef> weapon;
+ *   ...
+ *   if (const ItemDef* item = weapon.get())
+ *     damage = item->value;
+ *
+ * T may be only declared where the field is (a component naming another
+ * feature's asset type); it must be complete where get() is called.
+ */
+template <typename T>
+struct AssetRef : AssetRefBase
+{
+  /** The asset; null if none is set, it's missing, or it isn't a T (an
+   * asset of a type derived from T is one). */
+  const T* get() const
+  {
+    return asset.empty() ? nullptr
+                         : dynamic_cast<const T*>(findScriptableObject(asset));
+  }
+  const T* operator->() const { return get(); }
+  explicit operator bool() const { return get() != nullptr; }
 };
 
 } // namespace sfs

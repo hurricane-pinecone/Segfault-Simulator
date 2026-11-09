@@ -3,10 +3,13 @@
 #include <engine/core/assets/assetDatabase.h>
 #include <engine/core/reflection/registration.h>
 #include <engine/runtime/scriptableObjects/scriptableObjects.h>
+#include <engine/runtime/serialization/sceneSerializer.h>
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
+#include <vector>
 
 using namespace sfs;
 namespace fs = std::filesystem;
@@ -29,6 +32,41 @@ struct OtherDef : ScriptableObject
 {
 };
 
+// A type derived from another reflected one (as a game's TractorSpec from
+// the engine's VehicleSpec), registered as generated code would.
+struct MagicItemDef : ItemDef
+{
+  float charge = 1.5f;
+};
+
+// One whose base is never registered.
+struct Orphan : ScriptableObject
+{
+  int own = 3;
+};
+
+reflect::FieldInfo
+fieldOf(const char* name, reflect::FieldKind kind, void* (*address)(void*))
+{
+  reflect::FieldInfo field;
+  field.name = name;
+  field.kind = kind;
+  field.address = address;
+  return field;
+}
+
+void registerDerived()
+{
+  using namespace reflect;
+  TypeInfo magic = derivedType<MagicItemDef>(
+      "MagicItemDef", "Magic Item Def", "derived", "ItemDef");
+  magic.fields.push_back(fieldOf(
+      "charge",
+      FieldKind::Float,
+      [](void* o) -> void* { return &objectAs<MagicItemDef>(o)->charge; }));
+  types().add(magic);
+}
+
 void registerTypes()
 {
   using namespace reflect;
@@ -44,13 +82,13 @@ void registerTypes()
   };
   add("displayName",
       FieldKind::String,
-      [](void* o) -> void* { return &static_cast<ItemDef*>(o)->displayName; });
+      [](void* o) -> void* { return &objectAs<ItemDef>(o)->displayName; });
   add("value",
       FieldKind::Int,
-      [](void* o) -> void* { return &static_cast<ItemDef*>(o)->value; });
+      [](void* o) -> void* { return &objectAs<ItemDef>(o)->value; });
   add("upgradesTo",
       FieldKind::AssetRef,
-      [](void* o) -> void* { return &static_cast<ItemDef*>(o)->upgradesTo; });
+      [](void* o) -> void* { return &objectAs<ItemDef>(o)->upgradesTo; });
   item.fields.back().attributes.assetType = "ItemDef";
   types().add(item);
   types().add(scriptableObjectType<OtherDef>("OtherDef", "Other Def", "test"));
@@ -142,6 +180,103 @@ int main()
     CHECK(ref && ref->value == 7);
     scriptableObjects().setCatalogue(nullptr);
     CHECK(ItemDef::alive == 0);
+  }
+
+  TEST("a derived type should have its bases' fields first, then its own, "
+       "and know what it is")
+  {
+    registerDerived();
+    const reflect::TypeInfo* magic = reflect::types().find("MagicItemDef");
+    CHECK(magic && magic->kind == reflect::TypeKind::ScriptableObject);
+    CHECK(magic && magic->fields.size() == 4u);
+    CHECK(magic && magic->fields[0].name == "displayName" &&
+          magic->fields[0].owner == "ItemDef");
+    CHECK(magic && magic->fields[3].name == "charge" &&
+          magic->fields[3].owner == "MagicItemDef");
+    CHECK(reflect::types().isA("MagicItemDef", "ItemDef"));
+    CHECK(reflect::types().isA("MagicItemDef", "MagicItemDef"));
+    CHECK(!reflect::types().isA("ItemDef", "MagicItemDef"));
+    CHECK(reflect::types().chain("MagicItemDef") ==
+          std::vector<std::string>({"MagicItemDef", "ItemDef"}));
+    // The base's own list is untouched.
+    CHECK(reflect::types().find("ItemDef")->fields.size() == 3u);
+  }
+
+  TEST("a derived asset should load and save every level's fields, and an "
+       "AssetRef to its base should take it")
+  {
+    registerDerived();
+    Project project;
+    project.write("Wand",
+                  "MagicItemDef",
+                  {{"displayName", "Wand"}, {"value", 30}, {"charge", 4.0}});
+    project.write("Stick", "ItemDef", {{"value", 2}});
+    AssetDatabase catalogue(
+        project.root, AssetDatabase::Mode::ReadWrite, {"assets"});
+    scriptableObjects().setCatalogue(&catalogue);
+    const std::string wand = refOf(catalogue, "Wand");
+
+    const auto* magic = scriptableObjects().get<MagicItemDef>(wand);
+    CHECK(magic && magic->displayName == "Wand" && magic->value == 30 &&
+          magic->charge == 4.0f);
+    AssetRef<ItemDef> ref;
+    ref.asset = wand;
+    CHECK(ref && ref->value == 30 && ref.get() == magic);
+
+    // Round trip: saved, every level's fields; loaded back, the same.
+    const reflect::TypeInfo& type = *reflect::types().find("MagicItemDef");
+    const SceneSerializer serializer(reflect::types(), nullptr);
+    const nlohmann::json saved =
+        serializer.saveObject(type, const_cast<MagicItemDef*>(magic));
+    CHECK(saved.value("value", 0) == 30 &&
+          saved.value("charge", 0.0f) == 4.0f &&
+          saved.value("displayName", std::string()) == "Wand");
+    std::unique_ptr<void, void (*)(void*)> copy(
+        type.scriptable.create(), type.scriptable.destroy);
+    serializer.loadObject(type, copy.get(), saved);
+    const auto* back = dynamic_cast<const MagicItemDef*>(
+        static_cast<ScriptableObject*>(copy.get()));
+    CHECK(back && back->value == 30 && back->charge == 4.0f &&
+          back->displayName == "Wand");
+
+    // The picker's list for the base has both; the derived one's, its own.
+    const auto bases = scriptableObjects().list("ItemDef");
+    CHECK(bases.size() == 2u);
+    const auto derived = scriptableObjects().list("MagicItemDef");
+    CHECK(derived.size() == 1u && derived[0].asset == wand);
+    CHECK(scriptableObjects().get<MagicItemDef>(refOf(catalogue, "Stick")) ==
+          nullptr);
+    scriptableObjects().setCatalogue(nullptr);
+  }
+
+  TEST("a type whose base is unknown or removed should keep its own fields, "
+       "and get the base's when it comes")
+  {
+    using namespace reflect;
+    TypeInfo orphan =
+        derivedType<Orphan>("Orphan", "Orphan", "orphans", "LaterBase");
+    orphan.fields.push_back(fieldOf("own",
+                                    FieldKind::Int,
+                                    [](void* o) -> void*
+                                    { return &objectAs<Orphan>(o)->own; }));
+    types().add(orphan);
+    CHECK(types().find("Orphan")->fields.size() == 1u);
+    CHECK(!types().isA("Orphan", "LaterBase"));
+
+    // (Shaped like one: a base with one field, from another module.)
+    TypeInfo base =
+        scriptableObjectType<OtherDef>("LaterBase", "Later Base", "bases");
+    base.fields.push_back(
+        fieldOf("extra", FieldKind::Int, [](void* o) -> void* { return o; }));
+    types().add(base);
+    CHECK(types().find("Orphan")->fields.size() == 2u);
+    CHECK(types().find("Orphan")->fields[0].name == "extra");
+    CHECK(types().isA("Orphan", "LaterBase"));
+
+    types().removeModule("bases");
+    CHECK(types().find("Orphan")->fields.size() == 1u);
+    CHECK(types().find("Orphan")->fields[0].name == "own");
+    types().removeModule("orphans");
   }
 
   return testing::report("scriptableObjectsTests");

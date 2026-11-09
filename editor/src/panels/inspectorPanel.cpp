@@ -729,8 +729,17 @@ void scriptFields(sfs::ScriptComponent& component,
   }
 
   ImGui::SeparatorText(type->displayName.c_str());
+  // A derived type's fields come level by level, its bases' first, each
+  // level under its type's name.
+  std::string level = type->name;
   for (const FieldInfo& field : type->fields)
   {
+    if (!type->base.empty() && field.owner != level)
+    {
+      level = field.owner;
+      const TypeInfo* owner = sfs::reflect::types().find(level);
+      ImGui::TextDisabled("%s", owner ? owner->displayName.c_str() : level.c_str());
+    }
     ImGui::PushID(field.name.c_str());
     // Dimmed while theirs differ (see componentSection()).
     const bool mixed = std::any_of(otherValues.begin(),
@@ -1805,8 +1814,17 @@ void InspectorPanel::drawScriptableObject(EditorContext& context,
   const nlohmann::json before = serializer.saveObject(*type, object.get());
 
   ImGui::SeparatorText(type->displayName.c_str());
+  // A derived type's fields come level by level, its bases' first, each
+  // level under its type's name.
+  std::string level = type->name;
   for (const FieldInfo& field : type->fields)
   {
+    if (!type->base.empty() && field.owner != level)
+    {
+      level = field.owner;
+      const TypeInfo* owner = sfs::reflect::types().find(level);
+      ImGui::TextDisabled("%s", owner ? owner->displayName.c_str() : level.c_str());
+    }
     ImGui::PushID(field.name.c_str());
     fieldWidget(field, object.get(), meshes, nullptr);
     ImGui::PopID();

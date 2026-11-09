@@ -68,6 +68,13 @@ void Registry::removeComponent(const Entity& entity)
 }
 
 template <typename TComponent>
+uint64_t Registry::componentChanges() const
+{
+  return m_componentChanges[static_cast<std::size_t>(
+      Component<TComponent>::getId())];
+}
+
+template <typename TComponent>
 bool Registry::hasComponent(const Entity& entity) const
 {
   const int componentId = Component<TComponent>::getId();

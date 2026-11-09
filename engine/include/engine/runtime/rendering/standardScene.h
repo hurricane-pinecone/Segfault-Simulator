@@ -31,7 +31,7 @@ class RenderSystem;
  * The editor edits one of these and an exported game plays one, so a scene
  * looks and behaves the same in both. play() loads a scene file and starts
  * it; to start content that's already loaded (the editor's Play), call
- * startScripts().
+ * startScripts(). Its PrefabSystem makes prefab copies while it runs.
  */
 class StandardScene : public Scene
 {
@@ -77,15 +77,6 @@ public:
    * @return false (logged) if the file can't be loaded
    */
   bool play(const std::filesystem::path& file);
-
-  /**
-   * Make an instance of a prefab ("asset:<id>") while the game runs, under
-   * `parent` (none: a root), and start its scripts: each entity's game object
-   * is made and its onCreate run, as when a scene starts.
-   *
-   * @return its root, or a placeholder (logged) if the prefab can't be read
-   */
-  Entity instantiate(std::string_view prefab, const Entity& parent = {});
 
 protected:
   /** Sets up rendering and the built-in meshes; overrides must call it first.
