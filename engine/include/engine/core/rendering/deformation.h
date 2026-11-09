@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -76,6 +77,10 @@ struct PressSettings
   // Which way the deformer moves (world XY, any length; zero: still): its
   // ridge goes mostly to the sides.
   glm::vec2 motion{0.0f};
+  // A tyre's tread (how far its lugs stand proud, metres; 0: none):
+  // slumping leaves the bottom this deep of the ground it's on alone (a
+  // rut's floor, its lug marks), so walls slump, not its tread.
+  float tread = 0.0f;
 };
 
 class DeformationMap
@@ -135,6 +140,17 @@ public:
    */
   void relax(float smooth, float fade = 0.0f);
 
+  /**
+   * Weather only some tiles (tile indices), each by its own amount: `corners`
+   * (one for each tile) the smoothing at its four corners (x its lowest x and
+   * y, then y the highest x, z the highest y, w both), blended across it, so
+   * wet ground can weather while dry ground beside it stays as it is. No
+   * fade. Only those tiles change (and are marked changed); tiles it doesn't
+   * have are skipped.
+   */
+  void relax(std::span<const glm::ivec2> tiles,
+             std::span<const glm::vec4> corners);
+
   /** Flatten a world XY rectangle (e.g. where a field's been tilled). */
   void clear(glm::vec2 low, glm::vec2 high);
   /** Flatten inside a world XY polygon (its corners in order). */
@@ -147,6 +163,12 @@ public:
   std::vector<glm::ivec2> takeChanged();
   /** Whether anything's changed since takeChanged(). */
   bool changed() const { return !m_changed.empty(); }
+  /**
+   * The tiles changed since the last call to this (as takeChanged(), but
+   * kept apart from it: for a game to follow what changes, while its module
+   * uploads it), and forget them.
+   */
+  std::vector<glm::ivec2> takeRevised();
   /** Every tile it has (tile indices). */
   std::vector<glm::ivec2> tiles() const;
 
@@ -180,15 +202,30 @@ private:
   Tile* tileAt(glm::ivec2 tile);
   const Tile* tileAt(glm::ivec2 tile) const;
   Tile& makeTile(glm::ivec2 tile);
+  // Texels read and written a run at a time (as press() does), the tile
+  // last looked up, and last marked changed, remembered.
+  struct Cursor
+  {
+    int64_t key = std::numeric_limits<int64_t>::min();
+    Tile* tile = nullptr;
+    int64_t changed = std::numeric_limits<int64_t>::min();
+  };
+  float at(glm::ivec2 texel, Cursor& cursor);
+  void set(glm::ivec2 texel, float offset, Cursor& cursor);
   // press()'s second half: the soil pressed out pushed up alongside; and
-  // around the footprint, walls too steep slumped.
+  // around what was pressed (`first` to `last` in the footprint), walls too
+  // steep slumped.
   void pushUp(const Footprint& footprint,
               const std::vector<uint8_t>& under,
               const std::vector<uint8_t>& pressed,
+              glm::ivec2 first,
+              glm::ivec2 last,
               float pressedOut,
               const PressSettings& settings);
   void slump(const Footprint& footprint,
              const std::vector<uint8_t>& under,
+             glm::ivec2 first,
+             glm::ivec2 last,
              const PressSettings& settings);
   // Tiles flat again (every texel within a hair of 0) go.
   void dropFlat(std::span<const glm::ivec2> tiles);
@@ -197,6 +234,8 @@ private:
   float m_deepest = 0.0f;
   std::unordered_map<int64_t, Tile> m_tiles;
   std::unordered_set<int64_t> m_changed;
+  std::unordered_set<int64_t> m_revised; // takeRevised()'s
+  void markChanged(int64_t key);
 };
 
 /**
@@ -220,6 +259,13 @@ public:
   };
   /** The highest of its surface over a point, if any. */
   std::optional<Point> at(glm::vec2 point) const;
+  /** And which of its triangles that's on (for heightOn()). */
+  std::optional<Point> at(glm::vec2 point, uint32_t& triangle) const;
+  /**
+   * The height of one of its triangles' plane over a point: at()'s there,
+   * if it's on that triangle (as at() found it at points all round it).
+   */
+  float heightOn(uint32_t triangle, glm::vec2 point) const;
 
   bool empty() const { return m_triangles.empty(); }
   glm::vec2 low() const { return m_low; }
@@ -272,6 +318,57 @@ Underside underside(std::span<const glm::vec3> positions,
                     const glm::mat4& model,
                     float below,
                     float texel = kDeformationTexel);
+
+/**
+ * A mesh made ready to find its underside often (a deformer's, each time it
+ * moves): its triangles in small groups of neighbours, each group's bounds
+ * in the mesh's own space, so underside() passes over the groups nowhere
+ * near `below` (a tyre's top, a tractor's body) without placing them, and
+ * which of them face up on a closed solid (one facing down is always under
+ * those). The underside's the same as from the mesh itself, but for a hair
+ * where a solid's cut by `below`. Made once for a mesh.
+ */
+class UndersideMesh
+{
+public:
+  UndersideMesh() = default;
+  UndersideMesh(std::span<const glm::vec3> positions,
+                std::span<const uint32_t> indices);
+
+  bool empty() const { return m_groups.empty(); }
+
+private:
+  friend Underside underside(const UndersideMesh& mesh,
+                             const glm::mat4& model,
+                             float below,
+                             float texel);
+  friend float lowestPoint(const UndersideMesh& mesh, const glm::mat4& model);
+  struct Group
+  {
+    glm::vec3 center{0.0f}; // its bounding sphere's
+    float radius = 0.0f;
+    uint32_t firstVertex = 0, vertices = 0;
+    uint32_t firstIndex = 0, indices = 0; // into its own vertices
+  };
+  std::vector<glm::vec3> m_vertices;
+  std::vector<uint32_t> m_indices;
+  // Each triangle's (as m_indices): on a closed solid, 1 if it goes round
+  // anticlockwise seen from outside, -1 clockwise; 0 not on one.
+  std::vector<int8_t> m_outwards;
+  std::vector<Group> m_groups;
+};
+
+Underside underside(const UndersideMesh& mesh,
+                    const glm::mat4& model,
+                    float below,
+                    float texel = kDeformationTexel);
+
+/**
+ * The lowest a mesh's points are placed (`model`): world Z, exactly (only
+ * the groups that could reach lower than the lowest found so far are
+ * placed). Unlike its bounds placed, the same however it's turned.
+ */
+float lowestPoint(const UndersideMesh& mesh, const glm::mat4& model);
 
 /** Two undersides as one (the lowest of both over both). */
 Underside merged(const Underside& a, const Underside& b);

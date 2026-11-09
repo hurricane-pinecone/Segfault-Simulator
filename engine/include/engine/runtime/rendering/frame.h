@@ -14,6 +14,7 @@
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
+#include "glm/glm/ext/vector_int2.hpp"
 #include "glm/glm/ext/vector_int4.hpp"
 
 #include <cstddef>
@@ -38,12 +39,15 @@ inline constexpr std::size_t kMaxPointLights = 4096;
  * its textures it shows. `uvRect` maps the mesh's UVs into a rectangle (x, y:
  * its corner; z, w: its size): the whole texture by default, or one frame of a
  * sprite sheet, so a sprite is a quad mesh whose instances pick their frames.
+ * `emission` (rgb, linear) is light it gives off on top of its materials'
+ * (MeshRendererComponent::emission): a lamp switched on.
  */
 struct MeshInstance
 {
   glm::mat4 model{1.0f};
   glm::vec4 tint{1.0f};
   glm::vec4 uvRect{0.0f, 0.0f, 1.0f, 1.0f};
+  glm::vec4 emission{0.0f};
 };
 
 /**
@@ -125,7 +129,12 @@ struct FrameParams
   // SFS_CAMERA_STEP, see RenderSystem).
   glm::vec3 grassCameraOffset{0.0f};
   glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit view direction
-  float nearPlane = 0.1f;                     // the camera's depth range
+  // What the camera looks at, and how far round the line of sight to it
+  // things that clear the view fade away (MeshMaterial::fadeNearCamera; 0:
+  // none, the default: what's in front of what's looked at stays).
+  glm::vec3 cameraTarget{0.0f};
+  float lineOfSight = 0.0f;
+  float nearPlane = 0.1f; // the camera's depth range
   float farPlane = 500.0f;
 
   SceneLighting lighting;
@@ -206,9 +215,27 @@ struct GrassTrampleImage
  * grass), no pixels.
  *
  * The renderer keeps the blades it grows from them, and grows them again
- * only where `regrow` says coverage or length changed (rectangles of texels:
- * xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without it, all
- * of `from` to `to`.
+ * only where `regrow` says coverage, length or bounds changed (rectangles of
+ * texels: xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without
+ * it, all of `from` to `to`.
+ */
+struct GrassMapsTileImage
+{
+  glm::ivec2 from{0, 0};
+  glm::ivec2 to{0, 0};
+  std::span<const uint8_t> now; // RGBA8 (GrassMaps::nowPixels())
+  std::span<const uint8_t> cut; // RGBA8 (GrassMaps::cutPixels())
+};
+
+/**
+ * With grass growing (GrassMaps' growth), how it is now as well as what it
+ * grows to (`shape`): `now` (RGBA8, GrassMaps::nowPixels()) and `cut` (RGBA8,
+ * GrassMaps::cutPixels()) over the same rectangle; and, a few at a time as
+ * they grow, `tiles` of them alone. The blades the renderer keeps are kept as
+ * `shape` has them; those over tiles `active` marks (GrassMaps::activeTiles(),
+ * `activeTiles` across and down; sent when `activeChanged`) are grown as
+ * they are now each frame. With `shape` empty, only `data` changed (and
+ * nothing's grown again).
  */
 struct GrassMapsImage
 {
@@ -218,6 +245,25 @@ struct GrassMapsImage
   std::span<const uint8_t> shape;
   std::span<const uint8_t> data;
   std::optional<std::span<const glm::ivec4>> regrow;
+  std::span<const uint8_t> now;
+  std::span<const uint8_t> cut;
+  std::span<const GrassMapsTileImage> tiles;
+  bool activeChanged = false;
+  glm::ivec2 activeTiles{0, 0};
+  std::span<const uint8_t> active;
+};
+
+/**
+ * A field over the world that grass grows by (GrassVigourField): `size`
+ * values over the world XY rectangle `min` to `max`, rows from its min y.
+ * Empty: none.
+ */
+struct GrassVigourImage
+{
+  glm::vec2 min{0.0f};
+  glm::vec2 max{0.0f};
+  glm::ivec2 size{0, 0};
+  std::span<const float> values;
 };
 
 /**
@@ -241,6 +287,8 @@ struct GrassBatch
   // Its ground's own material: a terrain's meadow layers carry its ground's
   // look on past its maps (see grassFarGround()).
   MaterialHandle ground;
+  // How its vigour field (IRenderer::updateGrassVigour()) makes it grow.
+  GrassVigourSettings vigour;
 };
 
 /**
@@ -264,6 +312,29 @@ struct MeshBatch
   std::span<const MeshInstance> instances;
   std::span<const MeshInstance> shadowInstances;
   std::span<const MeshInstance> lightShadowInstances;
+  // The copies the frame's camera feed sees (see IRenderer::beginFeed()),
+  // drawn lit into its picture.
+  std::span<const MeshInstance> feedInstances;
+};
+
+/**
+ * A second view of the frame (a camera feed: CameraFeedComponent), drawn
+ * into a picture of `size` with the frame's light, shadows and sky.
+ */
+struct FeedView
+{
+  glm::mat4 view{1.0f};
+  glm::mat4 projection{1.0f};
+  glm::mat4 viewProjection{1.0f};
+  glm::vec3 cameraPosition{0.0f};
+  glm::vec3 cameraForward{0.0f, 0.0f, -1.0f}; // unit
+  float nearPlane = 0.05f;
+  float farPlane = 200.0f;
+  glm::ivec2 size{0, 0};
+  // Grass's blades grown for it too, out to `grassReach` (else only the
+  // ground under them).
+  bool grassBlades = false;
+  float grassReach = 30.0f;
 };
 
 } // namespace sfs

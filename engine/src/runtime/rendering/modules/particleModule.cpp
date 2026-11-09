@@ -1,6 +1,7 @@
 #include "engine/runtime/rendering/modules/particleModule.h"
 
 #include "engine/core/particles/decal.h"
+#include "engine/core/rendering/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/particles/colliderParticleCollision.h"
 #include "engine/runtime/particles/terrainParticleCollision.h"
@@ -12,6 +13,24 @@
 
 namespace sfs
 {
+
+namespace
+{
+constexpr const char* kLitQuadName = "builtin:particleQuadLit";
+
+// A lit particle's quad: its normals lean from facing the camera halfway up
+// it, so it's shaded as matter in the air is, lit from above, whichever way
+// it's seen from (with its instance's third axis as long as its others).
+MeshHandle litQuad(MeshLibrary& meshes)
+{
+  if (const MeshHandle quad = meshes.resolve(kLitQuadName); quad.valid())
+    return quad;
+  MeshData quad = meshes::plane(glm::vec2(1.0f));
+  for (MeshVertex& vertex : quad.vertices)
+    vertex.normal = glm::normalize(glm::vec3(0.0f, 1.0f, 1.0f));
+  return meshes.add(quad, kLitQuadName);
+}
+} // namespace
 
 ParticleModule::ParticleModule(AssetStore& assets) : m_assets(assets) {}
 
@@ -56,8 +75,9 @@ void ParticleModule::computeCommands(const RenderContext& context)
     if (!batch.textureId)
       continue;
     const bool glow = batch.blend == BlendMode::Additive;
-    const std::string name =
-        "particles:" + *batch.textureId + (glow ? ":add" : ":blend");
+    const std::string name = "particles:" + *batch.textureId +
+                             (glow ? ":add" : ":blend") +
+                             (batch.lit ? ":lit" : "");
     auto [at, added] = m_materials.emplace(name, MaterialHandle{});
     if (added)
       at->second = meshes.setMaterial(
@@ -66,11 +86,13 @@ void ParticleModule::computeCommands(const RenderContext& context)
                         *batch.textureId,
                         {},
                         glow ? AlphaMode::Additive : AlphaMode::Blend,
-                        true));
+                        !batch.lit));
+    if (batch.lit && !m_litQuad.valid())
+      m_litQuad = litQuad(meshes);
 
     MeshDrawCommand command;
     command.pass = RenderPass::Transparent;
-    command.mesh = m_quad;
+    command.mesh = batch.lit ? m_litQuad : m_quad;
     command.materials = {at->second};
     command.instances.reserve(batch.sprites.size());
     const float scale = space ? space->scale() : 1.0f;
@@ -92,7 +114,8 @@ void ParticleModule::computeCommands(const RenderContext& context)
           glm::vec4(x * size + glm::vec3(0, 0, x.y * size * lean), 0.0f);
       instance.model[1] =
           glm::vec4(y * size + glm::vec3(0, 0, y.y * size * lean), 0.0f);
-      instance.model[2] = glm::vec4(glm::cross(x, y), 0.0f);
+      // (As long as the others: a lit quad's normals lean along it.)
+      instance.model[2] = glm::vec4(glm::cross(x, y) * size, 0.0f);
       instance.model[3] = glm::vec4(centre, 1.0f);
       instance.tint = sprite.color;
       instance.uvRect = sprite.uvRect;

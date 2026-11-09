@@ -112,7 +112,7 @@ While a style is on (precedence, simply):
 | --- | --- |
 | **Replaces** | The scene's grading and tone mapping, always. Bloom (the scene camera's), haze, the sky, each shadow setting (`softness`, `cascades`, `cascadeDistance`, `cascadeSplit`), ambient occlusion, contact shadows, fog and rain, only when the style has them (`bloom`, `haze`, `sky`, `ambientOcclusion`, `contactShadows`, `fog`, `rain` (see [Rain](../meshes-and-lighting/index.md#rain)), and each key of `shadows`, are optional; left out, the scene's stay). A style's section with `"enabled": false` turns the scene's off while it's on. |
 | **Multiplies** | The scene's light: the sun's share of each surface's light (what shadow and turning away take) by `sunIntensity` x `sunTint`; the ambient rest by `ambientIntensity` x `ambientTint`; the sky colour (background, haze, reflections) by `skyIntensity` x `skyTint`. A day/night cycle that sets the lighting every frame keeps working underneath. Under a [physical sky](#physical-sky-and-image-based-lighting): the sun's light by the sun balance, the sky's diffuse light and reflections by the ambient balance, the background and haze by the sky balance. |
-| **Switches** | Materials with a variant for its `materialVariant` tag draw as it (below); and any material named in its `"materials"` (name -> material) draws as that one, including materials a game makes in code, which have no variants (e.g. `{"farm:field-paint": "asset:<terrain>"}`). A terrain standing in for a material with a base texture is tinted by that texture, so what the game paints there still shows. |
+| **Switches** | Materials with a variant for its `materialVariant` tag draw as it (below); and any material named in its `"materials"` (name -> material) draws as that one, including materials a game makes in code, which have no variants (e.g. `{"farm:field-paint": "asset:<terrain>"}`). A terrain standing in for a material with a base texture is tinted by that texture, so what the game paints there still shows; one with a `terrainPaint` (and `terrainTint`) has its layers painted by the game (see [terrain](../meshes-and-lighting/index.md)). |
 
 The scene's own settings are never changed: switch the style off and they're
 back. With no style (`""`), the scene's own settings are the look.
@@ -187,17 +187,22 @@ multiple scattering, from a transmittance table worked out on the CPU. The
 same model runs on the GPU (`sky.wgsl`) to render the sky into a small
 octahedral texture (256 x 256, the whole sphere) and its reflections (128 x
 128, five roughness mips) with fragment passes, only when the sun has moved a
-quarter of a degree (or the settings changed); the CPU works the sun's light
-out every frame and the diffuse light along with each re-render. So it costs
-next to nothing on a frame the sun hasn't moved, and a few small passes when
-it has.
+twentieth of a degree, or the light they hold changed a couple of percent (or
+the settings changed). The CPU works the sun's light out every frame, and the
+diffuse light in the background each time the sun has moved a quarter of a
+degree (a tenth near the horizon, where the light changes fastest); the frame
+eases from one of those to the next over about as long as the sun took
+between them, so dusk and dawn fade without steps. So it costs next to
+nothing on a frame the sun hasn't moved, and a few small passes when it has.
 
 What it costs (an RTX 3070, 1600 x 900, 5,000 shadow-casting objects, the
 frame start to finish): with the sun still, nothing measurable over a flat sky
 (1.48 ms against 1.50); on a frame the sun has moved far enough, about 2 ms
-of CPU (the diffuse light, worked out again) and half a millisecond of GPU
-(the sky and its reflections, rendered again). A day/night cycle with a
-4-minute day does that about six times a second. Four shadow cascades over
+of CPU in the background (the diffuse light, worked out again) and a quarter
+to half a millisecond of GPU (the sky and its reflections, rendered again).
+A day/night cycle with a 4-minute day works the diffuse light out about six
+times a second (fifteen near the horizon) and renders the sky about thirty:
+about 0.05 ms of GPU a frame on average. Four shadow cascades over
 200 m cost about 0.6 ms more than the one map (2.1 ms against 1.5 ms).
 
 It needs nothing beyond plain 2D textures and render passes (no cube maps,

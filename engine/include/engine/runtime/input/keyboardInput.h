@@ -59,6 +59,19 @@ enum class Key : int
   PageUp = SDL_SCANCODE_PAGEUP,
   PageDown = SDL_SCANCODE_PAGEDOWN,
 
+  // By where they are on a US keyboard (the key, whatever it types).
+  Minus = SDL_SCANCODE_MINUS,
+  Equals = SDL_SCANCODE_EQUALS,
+  LeftBracket = SDL_SCANCODE_LEFTBRACKET,
+  RightBracket = SDL_SCANCODE_RIGHTBRACKET,
+  Backslash = SDL_SCANCODE_BACKSLASH,
+  Semicolon = SDL_SCANCODE_SEMICOLON,
+  Apostrophe = SDL_SCANCODE_APOSTROPHE,
+  Grave = SDL_SCANCODE_GRAVE,
+  Comma = SDL_SCANCODE_COMMA,
+  Period = SDL_SCANCODE_PERIOD,
+  Slash = SDL_SCANCODE_SLASH,
+
   LeftShift = SDL_SCANCODE_LSHIFT,
   RightShift = SDL_SCANCODE_RSHIFT,
   LeftCtrl = SDL_SCANCODE_LCTRL,

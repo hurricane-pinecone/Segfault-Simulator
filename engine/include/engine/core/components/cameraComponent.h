@@ -47,6 +47,10 @@ namespace sfs
  *                            DepthOfFieldSettings)
  * @param float focusRange - how deep the sharp part around the focus is
  * @param float focusBlur - how blurred the farthest things get (1 = normal)
+ * @param float focusHyperfocal - the lens's hyperfocal distance: focused this
+ *                                far or farther, everything beyond the focus
+ *                                is sharp; the sharp part deepens toward it
+ *                                as the focus moves off (0: only focusRange)
  */
 struct CameraComponent
 {
@@ -68,6 +72,8 @@ struct CameraComponent
   bool depthOfField = false;
   [[sfs::range(0, 200)]] [[sfs::showIf(depthOfField)]] float focusRange = 10.0f;
   [[sfs::range(0, 3)]] [[sfs::showIf(depthOfField)]] float focusBlur = 1.0f;
+  [[sfs::range(0, 500)]] [[sfs::showIf(depthOfField)]] float focusHyperfocal =
+      80.0f;
 
   /** The bloom seen through this camera. */
   BloomSettings bloomSettings() const
@@ -78,7 +84,7 @@ struct CameraComponent
   /** The depth of field seen through this camera. */
   DepthOfFieldSettings depthOfFieldSettings() const
   {
-    return {depthOfField, focusRange, focusBlur};
+    return {depthOfField, focusRange, focusBlur, focusHyperfocal};
   }
 
   /** Point `camera` the way this camera, with world matrix `world`, looks. */

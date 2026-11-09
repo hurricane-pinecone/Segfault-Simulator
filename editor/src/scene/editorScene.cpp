@@ -6,11 +6,15 @@
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/spriteComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/rendering/renderSystem.h"
 
 void EditorScene::onInit()
 {
   sfs::StandardScene::onInit();
+  // Edited, not played: animators show their pose without moving their
+  // joints (Play's startScripts() turns them live).
+  getSystem<sfs::AnimationSystem>().setLive(false);
 
   sfs::Camera& camera = renderSystem().camera();
   camera.yaw = 0.9f;

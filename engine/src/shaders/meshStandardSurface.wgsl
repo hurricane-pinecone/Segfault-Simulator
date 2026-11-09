@@ -8,7 +8,7 @@ struct Material {
   baseColor: vec4f,   // linear rgb, and alpha
   params: vec4f,      // x normal scale, y metallic, z roughness, w alpha cutoff
   uvTransform: vec4f, // xy tiling, zw offset
-  mode: vec4u,        // x alpha mode, y unlit (its colour shown as it is)
+  mode: vec4u,        // x alpha mode, y unlit (its colour shown as it is), z fadeNearCamera (f32's bits)
 }
 
 @group(1) @binding(0) var baseTexture: texture_2d<f32>;      // sRGB: samples come back linear
@@ -36,6 +36,10 @@ fn surface(in: SurfaceIn) -> Surface {
     result.baseColor = vec3f(0.0);
   }
   result.alphaClip = material.params.w;
+  // Out of the camera's way, cut out (MeshMaterial::fadeNearCamera).
+  if (material.mode.x == ALPHA_MASK && cameraFaded(in, bitcast<f32>(material.mode.z))) {
+    result.alpha = 0.0;
+  }
   result.bloom = 1.0;
   return result;
 }

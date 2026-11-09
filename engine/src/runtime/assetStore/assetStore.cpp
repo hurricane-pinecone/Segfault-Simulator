@@ -9,6 +9,7 @@
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/serialization/legacyComponentNames.h"
+#include "engine/runtime/systems/colliderFit.h"
 #include "glm/glm/exponential.hpp"
 
 #include <SDL_image.h>
@@ -306,6 +307,9 @@ AssetStore::makeMaterial(const MaterialAsset& asset, const std::string& source)
   material->metallic = asset.metallic;
   material->roughness = asset.roughness;
   material->alphaCutoff = asset.alphaCutoff;
+  material->doubleSided = asset.doubleSided;
+  material->foliage = asset.foliage;
+  material->fadeNearCamera = asset.fadeNearCamera;
   return material;
 }
 
@@ -488,6 +492,17 @@ nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes,
     if (!node.part.empty())
       entries[i]["MeshRendererComponent"] = {
           {"mesh", assetMeshName(id, node.part)}};
+    // A collider node: a box around its mesh, in its own space (turned and
+    // scaled with it), its mesh not drawn. Made from the file each time, so it
+    // follows the model when it's re-imported.
+    if (node.collider)
+    {
+      BoxCollider3DComponent box;
+      fitCollider(box, node.bounds);
+      entries[i]["BoxCollider3DComponent"] = {
+          {"size", {box.size.x, box.size.y, box.size.z}},
+          {"offset", {box.offset.x, box.offset.y, box.offset.z}}};
+    }
     (node.parent < 0 ? tops : children[node.parent]).push_back(i);
   }
   const std::function<nlohmann::json(std::size_t)> build = [&](std::size_t i)

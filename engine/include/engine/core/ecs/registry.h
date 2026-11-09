@@ -20,6 +20,8 @@
 #include "system.h"
 #include <engine/core/logger/logger.h>
 
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <string_view>
@@ -86,12 +88,45 @@ public:
   template <typename Fn>
   void forEachSystem(Fn&& fn);
 
+  /**
+   * Game time: how fast the systems' time runs against real time (2: twice
+   * as fast, 0: stopped; see System::TimeStep). Scene::update() reads it once
+   * a frame, so a change made during one takes effect from the next.
+   */
+  void setTimeScale(double scale) { m_timeScale = scale > 0.0 ? scale : 0.0; }
+  double timeScale() const { return m_timeScale; }
+
+  /**
+   * The longest step a Stepped system takes (0, the default: a frame's game
+   * time in one step), and the most steps a frame: past that many the game
+   * falls behind (runs slower than its time scale) rather than take longer
+   * steps, so a slow frame can't make the next one slower still.
+   */
+  void setMaxTimeStep(double seconds, int mostSteps = 16)
+  {
+    m_maxTimeStep = seconds > 0.0 ? seconds : 0.0;
+    m_mostTimeSteps = mostSteps > 1 ? mostSteps : 1;
+  }
+  double maxTimeStep() const { return m_maxTimeStep; }
+  int mostTimeSteps() const { return m_mostTimeSteps; }
+
+  /**
+   * Goes up whenever an entity gains or loses a TComponent (one destroyed
+   * included), so a system can keep a list of the entities that have one and
+   * look again only when this has moved. Changing a component's values
+   * doesn't count.
+   */
+  template <typename TComponent>
+  uint64_t componentChanges() const;
+
 private:
   void addEntityToSystems(const Entity& entity);
 
   // An entity's components changed from `before`: it joins or leaves the
   // systems that now match it (one waiting for a flush joins them then).
   void componentsChanged(const Entity& entity, const Signature& before);
+  // Counts the components that differ between two signatures as changed.
+  void countChanges(const Signature& before, const Signature& after);
 
   // A component accessor used on an entity it can't be: fatal (see
   // fatalError()), naming what was asked for and why.
@@ -130,6 +165,13 @@ private:
   std::vector<Signature> entityComponentSignatures;
 
   std::vector<std::unique_ptr<System>> systems;
+
+  // By component id: how often an entity gained or lost one.
+  std::array<uint64_t, MAX_COMPONENTS> m_componentChanges{};
+
+  double m_timeScale = 1.0;
+  double m_maxTimeStep = 0.0;
+  int m_mostTimeSteps = 16;
 };
 
 } // namespace sfs

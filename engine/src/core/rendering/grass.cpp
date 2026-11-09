@@ -382,18 +382,65 @@ std::size_t GrassGround::groundTexels() const
 
 // --- GrassMaps ---------------------------------------------------------------
 
+namespace
+{
+
+// Up toward a target at one rate, down at another, over `days`.
+float toward(float now, float target, float up, float down, float days)
+{
+  return now < target ? std::min(now + up * days, target)
+                      : std::max(now - down * days, target);
+}
+
+// Days it takes to get from `from` to `to` that way (very long if it can't).
+float daysToward(float from, float to, float up, float down)
+{
+  const float change = to - from;
+  if (std::abs(change) < 0.5f / 255.0f)
+    return 0.0f;
+  const float rate = change > 0.0f ? up : down;
+  return rate > 1e-6f ? std::abs(change) / rate : 1.0e6f;
+}
+
+// Whether tick `a` comes after `b` (the clock wraps).
+bool after(uint32_t a, uint32_t b) { return int32_t(a - b) > 0; }
+
+// The heap of tiles due (GrassMaps::m_due): soonest on top.
+bool laterDue(const std::pair<uint32_t, int>& a,
+              const std::pair<uint32_t, int>& b)
+{
+  return after(a.first, b.first);
+}
+
+// The most ticks growing is kept apart by (beyond it, a texel waits).
+constexpr uint32_t kLongestGrowth = 0x3fffffffu;
+
+} // namespace
+
 std::string_view GrassMaps::name(Channel channel)
 {
   static constexpr std::array<std::string_view, kChannels> kNames = {
-      "coverage", "length", "data0", "data1", "data2", "data3"};
+      "coverage", "length", "data0", "data1", "data2", "data3", "bounds"};
   return kNames[channel];
 }
 
 GrassMaps::GrassMaps(const GrassGrid& grid) : m_grid(grid)
 {
   for (int c = 0; c < kChannels; ++c)
-    m_values[c].assign(
-        m_grid.count(), toByte(defaultValue(static_cast<Channel>(c))));
+    m_values[c] = GrassTiles<uint8_t>(
+        m_grid.size, toByte(defaultValue(static_cast<Channel>(c))));
+  m_anchors = GrassTiles<GrassAnchor>(m_grid.size, GrassAnchor{});
+  m_growthScale = GrassTiles<uint8_t>(m_grid.size, 128);
+  m_cut = GrassTiles<uint8_t>(m_grid.size, 0);
+  m_lean = GrassTiles<uint32_t>(m_grid.size, 0u);
+  m_band = GrassTiles<uint8_t>(m_grid.size, 255);
+  const std::size_t tiles = m_anchors.tileCount();
+  m_growingTile.assign(tiles, 0);
+  m_settleAt.assign(tiles, 0);
+  m_fastest.assign(tiles, 0.0f);
+  m_dueAt.assign(tiles, GrassAnchor::kSettled);
+  m_active.assign(tiles, 0);
+  m_tileNow.assign(tiles, 0);
   markAllChanged();
 }
 
@@ -418,15 +465,605 @@ float GrassMaps::sample(Channel channel, glm::vec2 point) const
   return glm::mix(a, b, t.y);
 }
 
+float GrassMaps::sampleNow(Channel channel, glm::vec2 point) const
+{
+  if (channel != Coverage && channel != Length)
+    return sample(channel, point);
+  if (empty() || point.x < m_grid.min.x || point.y < m_grid.min.y ||
+      point.x > m_grid.max.x || point.y > m_grid.max.y)
+    return defaultValue(channel);
+  const glm::vec2 at = m_grid.toTexels(point) - 0.5f;
+  const glm::ivec2 low =
+      glm::clamp(glm::ivec2(glm::floor(at)), glm::ivec2(0), m_grid.size - 1);
+  const glm::ivec2 high = glm::min(low + 1, m_grid.size - 1);
+  const glm::vec2 t =
+      glm::clamp(at - glm::vec2(low), glm::vec2(0.0f), glm::vec2(1.0f));
+  const float a =
+      glm::mix(now(channel, low.x, low.y), now(channel, high.x, low.y), t.x);
+  const float b =
+      glm::mix(now(channel, low.x, high.y), now(channel, high.x, high.y), t.x);
+  return glm::mix(a, b, t.y);
+}
+
+float GrassMaps::now(Channel channel, int x, int y) const
+{
+  if (channel != Coverage && channel != Length)
+    return at(channel, x, y);
+  const Grown grown = grownAt(x, y);
+  return channel == Coverage ? grown.cover : std::min(grown.length, grown.flat);
+}
+
+GrassMaps::Grown GrassMaps::grownAt(int x, int y) const
+{
+  const GrassAnchor anchor = m_anchors.at(x, y);
+  const float cover = at(Coverage, x, y);
+  const float length = at(Length, x, y);
+  if (anchor.settled())
+    return {cover, length, 2.0f};
+  const uint32_t ticks = m_now - anchor.time;
+  // (Before it was changed: the clock set back. As it was then.)
+  const float days =
+      ticks > 0x80000000u ? 0.0f : float(double(ticks) / kTicksPerDay);
+  const float scale = growthScale(x, y);
+  const GrassRates& coverRates = m_rates[anchor.classes & 15];
+  const GrassRates& lengthRates = m_rates[anchor.classes >> 4];
+  Grown grown;
+  grown.cover = toward(anchor.cover / 255.0f,
+                       cover,
+                       coverRates.coverUp * scale,
+                       coverRates.coverDown,
+                       days);
+  grown.length = toward(anchor.length / 255.0f,
+                        length,
+                        lengthRates.lengthUp * scale,
+                        lengthRates.lengthDown,
+                        days);
+  grown.flat =
+      anchor.flat == 255 ? 2.0f : anchor.flat / 255.0f + m_standUp * days;
+  return grown;
+}
+
+uint32_t GrassMaps::ticksToSettle(const GrassAnchor& anchor,
+                                  float cover,
+                                  float length,
+                                  float scale) const
+{
+  const GrassRates& coverRates = m_rates[anchor.classes & 15];
+  const GrassRates& lengthRates = m_rates[anchor.classes >> 4];
+  float days = std::max(daysToward(anchor.cover / 255.0f,
+                                   cover,
+                                   coverRates.coverUp * scale,
+                                   coverRates.coverDown),
+                        daysToward(anchor.length / 255.0f,
+                                   length,
+                                   lengthRates.lengthUp * scale,
+                                   lengthRates.lengthDown));
+  if (anchor.flat != 255)
+    days =
+        std::max(days,
+                 m_standUp > 1e-6f
+                     ? std::max(length - anchor.flat / 255.0f, 0.0f) / m_standUp
+                     : 1.0e6f);
+  const double ticks = std::ceil(double(days) * kTicksPerDay) + 1.0;
+  return uint32_t(std::min(ticks, double(kLongestGrowth)));
+}
+
+float GrassMaps::fastestRate(const GrassAnchor& anchor, float scale) const
+{
+  const GrassRates& coverRates = m_rates[anchor.classes & 15];
+  const GrassRates& lengthRates = m_rates[anchor.classes >> 4];
+  float fastest = std::max({coverRates.coverUp * scale,
+                            coverRates.coverDown,
+                            lengthRates.lengthUp * scale,
+                            lengthRates.lengthDown});
+  if (anchor.flat != 255)
+    fastest = std::max(fastest, m_standUp);
+  return fastest;
+}
+
+void GrassMaps::setClock(double growthDays)
+{
+  const double ticks = std::floor(growthDays * kTicksPerDay);
+  uint32_t now = uint32_t(int64_t(ticks) & 0xffffffffll);
+  if (now == GrassAnchor::kSettled)
+    --now;
+  m_now = now;
+}
+
+void GrassMaps::setRates(int rateClass, const GrassRates& rates)
+{
+  if (rateClass >= 0 && rateClass < kRateClasses)
+    m_rates[rateClass] = rates;
+}
+
+const GrassRates& GrassMaps::rates(int rateClass) const
+{
+  return m_rates[std::clamp(rateClass, 0, kRateClasses - 1)];
+}
+
+void GrassMaps::setGrowthScale(int x, int y, float scale)
+{
+  if (x < 0 || y < 0 || x >= m_grid.size.x || y >= m_grid.size.y)
+    return;
+  m_growthScale.set(x,
+                    y,
+                    static_cast<uint8_t>(std::lround(
+                        std::clamp(scale, 0.0f, 255.0f / 128.0f) * 128.0f)));
+}
+
+template <class Change>
+void GrassMaps::reanchor(int x, int y, Change&& change)
+{
+  const Grown grown = grownAt(x, y);
+  GrassAnchor anchor = m_anchors.at(x, y);
+  anchor.time = m_now;
+  anchor.cover = toByte(grown.cover);
+  anchor.length = toByte(grown.length);
+  anchor.flat = grown.flat < grown.length ? toByte(grown.flat) : 255;
+  change(anchor);
+  // Grown to its maps already: nothing to grow.
+  if (anchor.cover == m_values[Coverage].at(x, y) &&
+      anchor.length == m_values[Length].at(x, y) && anchor.flat == 255)
+    anchor.time = GrassAnchor::kSettled;
+  putAnchor(x, y, anchor);
+}
+
+void GrassMaps::putAnchor(int x, int y, const GrassAnchor& anchor)
+{
+  const GrassAnchor old = m_anchors.at(x, y);
+  if (old == anchor)
+    return;
+  m_anchors.set(x, y, anchor);
+  const int tile = m_anchors.tileOf(x, y);
+  markTileNow(tile);
+  if (anchor.settled())
+    return;
+  const float scale = growthScale(x, y);
+  const uint32_t settleAt =
+      anchor.time +
+      ticksToSettle(anchor, at(Coverage, x, y), at(Length, x, y), scale);
+  const float fastest = fastestRate(anchor, scale);
+  if (!m_growingTile[tile])
+  {
+    m_growingTile[tile] = 1;
+    ++m_growingTiles;
+    m_settleAt[tile] = settleAt;
+    m_fastest[tile] = fastest;
+    growingChanged(tile);
+    schedule(tile);
+    return;
+  }
+  if (after(settleAt, m_settleAt[tile]))
+    m_settleAt[tile] = settleAt;
+  m_fastest[tile] = std::max(m_fastest[tile], fastest);
+  if (m_dueAt[tile] == GrassAnchor::kSettled)
+    schedule(tile);
+}
+
+void GrassMaps::schedule(int tile)
+{
+  // When it's next changed by a step (of the GPU's: 1/255) at its fastest,
+  // or done growing if sooner.
+  const float fastest = std::max(m_fastest[tile], 1e-3f);
+  const double step = std::clamp(
+      std::ceil(kTicksPerDay / (255.0 * double(fastest))), 1.0, kTicksPerDay);
+  uint32_t due = m_now + uint32_t(step);
+  if (after(due, m_settleAt[tile]))
+    due = m_settleAt[tile];
+  if (due == GrassAnchor::kSettled)
+    --due;
+  m_dueAt[tile] = due;
+  m_due.emplace_back(due, tile);
+  std::push_heap(m_due.begin(), m_due.end(), laterDue);
+}
+
+void GrassMaps::snap(int x, int y)
+{
+  GrassAnchor anchor = m_anchors.at(x, y);
+  if (anchor.settled())
+    return;
+  anchor.time = GrassAnchor::kSettled;
+  anchor.cover = anchor.length = 0;
+  anchor.flat = 255;
+  m_anchors.set(x, y, anchor);
+  markTileNow(m_anchors.tileOf(x, y));
+}
+
+void GrassMaps::growingChanged(int tile)
+{
+  // It and those round it: whether any round each is growing.
+  const glm::ivec2 tiles = m_anchors.tiles();
+  const glm::ivec2 at(tile % tiles.x, tile / tiles.x);
+  for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx)
+    {
+      const glm::ivec2 n = at + glm::ivec2(dx, dy);
+      if (n.x < 0 || n.y < 0 || n.x >= tiles.x || n.y >= tiles.y)
+        continue;
+      uint8_t any = 0;
+      for (int ey = -1; ey <= 1 && !any; ++ey)
+        for (int ex = -1; ex <= 1 && !any; ++ex)
+        {
+          const glm::ivec2 m = n + glm::ivec2(ex, ey);
+          if (m.x >= 0 && m.y >= 0 && m.x < tiles.x && m.y < tiles.y)
+            any = m_growingTile[std::size_t(m.y) * tiles.x + m.x];
+        }
+      uint8_t& active = m_active[std::size_t(n.y) * tiles.x + n.x];
+      if (active != any)
+      {
+        active = any;
+        m_activeChanged = true;
+      }
+    }
+}
+
+bool GrassMaps::settledRound(int tile) const
+{
+  const glm::ivec2 tiles = m_anchors.tiles();
+  const glm::ivec2 at(tile % tiles.x, tile / tiles.x);
+  for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx)
+    {
+      const glm::ivec2 n = at + glm::ivec2(dx, dy);
+      if (n.x >= 0 && n.y >= 0 && n.x < tiles.x && n.y < tiles.y &&
+          m_growingTile[std::size_t(n.y) * tiles.x + n.x])
+        return false;
+    }
+  return true;
+}
+
+void GrassMaps::markTileNow(int tile)
+{
+  if (m_tileNow[tile])
+    return;
+  m_tileNow[tile] = 1;
+  m_tilesNow.push_back(tile);
+}
+
+void GrassMaps::settleTile(int tile)
+{
+  // Every texel of it grown: kept as settled (with its classes).
+  if (m_anchors.isUniform(tile))
+  {
+    GrassAnchor anchor = m_anchors.uniform(tile);
+    m_anchors.setTile(
+        tile, GrassAnchor{GrassAnchor::kSettled, 0, 0, 255, anchor.classes});
+  }
+  else
+  {
+    const glm::ivec2 tiles = m_anchors.tiles();
+    const glm::ivec2 from =
+        glm::ivec2(tile % tiles.x, tile / tiles.x) * kGrassMapTile;
+    const glm::ivec2 to = glm::min(from + kGrassMapTile, m_grid.size);
+    for (int y = from.y; y < to.y; ++y)
+      for (int x = from.x; x < to.x; ++x)
+        m_anchors.set(
+            x,
+            y,
+            GrassAnchor{
+                GrassAnchor::kSettled, 0, 0, 255, m_anchors.at(x, y).classes});
+    m_anchors.compact(tile);
+  }
+  m_growingTile[tile] = 0;
+  --m_growingTiles;
+  m_dueAt[tile] = GrassAnchor::kSettled;
+  growingChanged(tile);
+  markTileNow(tile);
+  // Cuts' edges forgotten once all round them has grown back.
+  const glm::ivec2 tiles = m_cut.tiles();
+  const glm::ivec2 at(tile % tiles.x, tile / tiles.x);
+  for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx)
+    {
+      const glm::ivec2 n = at + glm::ivec2(dx, dy);
+      if (n.x < 0 || n.y < 0 || n.x >= tiles.x || n.y >= tiles.y)
+        continue;
+      const int index = n.y * tiles.x + n.x;
+      if ((m_cut.isUniform(index) && m_cut.uniform(index) == 0) ||
+          m_growingTile[index] || !settledRound(index))
+        continue;
+      m_cut.setTile(index, 0);
+      m_lean.setTile(index, 0u);
+      markTileNow(index);
+    }
+}
+
+void GrassMaps::setTarget(Channel channel, int x, int y, float value)
+{
+  if (channel != Coverage && channel != Length)
+  {
+    set(channel, x, y, value);
+    return;
+  }
+  if (x < 0 || y < 0 || x >= m_grid.size.x || y >= m_grid.size.y)
+    return;
+  const uint8_t next = toByte(value);
+  if (m_values[channel].at(x, y) == next)
+    return;
+  // As it is now, by its old targets; then growing on toward the new.
+  const Grown grown = grownAt(x, y);
+  m_values[channel].set(x, y, next);
+  touch(channel, x, y);
+  GrassAnchor anchor = m_anchors.at(x, y);
+  anchor.time = m_now;
+  anchor.cover = toByte(grown.cover);
+  anchor.length = toByte(grown.length);
+  anchor.flat = grown.flat < grown.length ? toByte(grown.flat) : 255;
+  if (anchor.cover == m_values[Coverage].at(x, y) &&
+      anchor.length == m_values[Length].at(x, y) && anchor.flat == 255)
+    anchor.time = GrassAnchor::kSettled;
+  putAnchor(x, y, anchor);
+}
+
+void GrassMaps::setClasses(int x, int y, int coverClass, int lengthClass)
+{
+  if (x < 0 || y < 0 || x >= m_grid.size.x || y >= m_grid.size.y)
+    return;
+  const uint8_t classes =
+      uint8_t((coverClass & 15) | ((lengthClass & 15) << 4));
+  if (m_anchors.at(x, y).classes == classes)
+    return;
+  reanchor(x, y, [&](GrassAnchor& anchor) { anchor.classes = classes; });
+}
+
+void GrassMaps::tear(int x, int y, int coverClass)
+{
+  if (x < 0 || y < 0 || x >= m_grid.size.x || y >= m_grid.size.y)
+    return;
+  reanchor(x,
+           y,
+           [&](GrassAnchor& anchor)
+           {
+             anchor.cover = 0;
+             anchor.classes =
+                 uint8_t((anchor.classes & 0xf0) | (coverClass & 15));
+           });
+}
+
+void GrassMaps::flatten(glm::vec2 center,
+                        float radius,
+                        float to,
+                        float softness)
+{
+  if (empty() || radius <= 0.0f)
+    return;
+  const glm::ivec2 from =
+      glm::clamp(glm::ivec2(glm::floor(m_grid.toTexels(center - radius))),
+                 glm::ivec2(0),
+                 m_grid.size - 1);
+  const glm::ivec2 last =
+      glm::clamp(glm::ivec2(glm::floor(m_grid.toTexels(center + radius))),
+                 glm::ivec2(0),
+                 m_grid.size - 1);
+  const float inner = 1.0f - std::clamp(softness, 0.0f, 1.0f);
+  for (int y = from.y; y <= last.y; ++y)
+    for (int x = from.x; x <= last.x; ++x)
+    {
+      const float distance = glm::length(m_grid.center(x, y) - center) / radius;
+      if (distance >= 1.0f)
+        continue;
+      const float weight =
+          inner >= 1.0f ? 1.0f : 1.0f - smoothstep(inner, 1.0f, distance);
+      const float flat = 1.0f + (std::clamp(to, 0.0f, 1.0f) - 1.0f) * weight;
+      const Grown grown = grownAt(x, y);
+      // Only where it lays it flatter than it is.
+      if (toByte(flat) >= toByte(std::min(grown.length, grown.flat)))
+        continue;
+      reanchor(x, y, [&](GrassAnchor& anchor) { anchor.flat = toByte(flat); });
+    }
+}
+
+void GrassMaps::cut(const GrassCut& cut)
+{
+  if (empty())
+    return;
+  glm::vec2 along = cut.b - cut.a;
+  const float length = glm::length(along);
+  if (length < 1e-5f || cut.width <= 0.0f)
+    return;
+  along /= length;
+  const glm::vec2 across(-along.y, along.x);
+  const glm::vec2 middle = 0.5f * (cut.a + cut.b);
+  const glm::vec2 half(0.5f * length, 0.5f * cut.width);
+  const glm::vec2 texelSize = m_grid.texelSize();
+  const float texel = std::max(texelSize.x, texelSize.y);
+  // (The edge's kept over two texels either side, as bounds are.)
+  const float ramp = 2.0f * texel;
+  glm::vec2 low(1.0e30f), high(-1.0e30f);
+  for (const float u : {-1.0f, 1.0f})
+    for (const float v : {-1.0f, 1.0f})
+    {
+      const glm::vec2 corner = middle + along * (u * (half.x + ramp)) +
+                               across * (v * (half.y + ramp));
+      low = glm::min(low, corner);
+      high = glm::max(high, corner);
+    }
+  const glm::ivec2 from =
+      glm::clamp(glm::ivec2(glm::floor(m_grid.toTexels(low))),
+                 glm::ivec2(0),
+                 m_grid.size - 1);
+  const glm::ivec2 last =
+      glm::clamp(glm::ivec2(glm::floor(m_grid.toTexels(high))),
+                 glm::ivec2(0),
+                 m_grid.size - 1);
+  const uint8_t lengthClass = uint8_t(cut.lengthClass & 15);
+  const float leaves = std::clamp(cut.length, 0.0f, 1.0f);
+  for (int y = from.y; y <= last.y; ++y)
+    for (int x = from.x; x <= last.x; ++x)
+    {
+      // How far inside the strip its middle is (below 0: outside).
+      const glm::vec2 offset = m_grid.center(x, y) - middle;
+      const glm::vec2 out(std::abs(glm::dot(offset, along)) - half.x,
+                          std::abs(glm::dot(offset, across)) - half.y);
+      const float outside = glm::length(glm::max(out, glm::vec2(0.0f))) +
+                            std::min(std::max(out.x, out.y), 0.0f);
+      const float inside = -outside;
+      if (inside < -ramp)
+        continue;
+      uint8_t edge = toByte(GrassMaps::boundsValue(inside, texel));
+      const uint8_t old = m_cut.at(x, y);
+      if (cut.join)
+        edge = std::max(edge, old);
+      if (edge != old)
+      {
+        m_cut.set(x, y, edge);
+        markTileNow(m_cut.tileOf(x, y));
+      }
+      if (inside < 0.0f)
+        continue;
+      // (How long it leaves it, for the GPU: the blades cut level.)
+      const uint32_t lean = m_lean.at(x, y);
+      m_lean.set(x, y, (lean & 0x00ffffffu) | (uint32_t(toByte(leaves)) << 24));
+      reanchor(x,
+               y,
+               [&](GrassAnchor& anchor)
+               {
+                 const float now =
+                     std::min(anchor.length / 255.0f,
+                              anchor.flat == 255 ? 2.0f : anchor.flat / 255.0f);
+                 anchor.length = toByte(std::min(now, leaves));
+                 anchor.flat = 255;
+                 anchor.classes =
+                     uint8_t((anchor.classes & 0x0f) | (lengthClass << 4));
+               });
+    }
+}
+
+void GrassMaps::roll(const GrassRoll& roll)
+{
+  if (empty())
+    return;
+  glm::vec2 along = roll.b - roll.a;
+  const float length = glm::length(along);
+  if (length < 1e-5f || roll.width <= 0.0f)
+    return;
+  along /= length;
+  const glm::vec2 across(-along.y, along.x);
+  const glm::vec2 middle = 0.5f * (roll.a + roll.b);
+  const glm::vec2 half(0.5f * length, 0.5f * roll.width);
+  const glm::vec2 texelSize = m_grid.texelSize();
+  const float texel = std::max(texelSize.x, texelSize.y);
+  glm::vec2 low(1.0e30f), high(-1.0e30f);
+  for (const float u : {-1.0f, 1.0f})
+    for (const float v : {-1.0f, 1.0f})
+    {
+      const glm::vec2 corner = middle + along * (u * (half.x + texel)) +
+                               across * (v * (half.y + texel));
+      low = glm::min(low, corner);
+      high = glm::max(high, corner);
+    }
+  const glm::ivec2 from =
+      glm::clamp(glm::ivec2(glm::floor(m_grid.toTexels(low))),
+                 glm::ivec2(0),
+                 m_grid.size - 1);
+  const glm::ivec2 last =
+      glm::clamp(glm::ivec2(glm::floor(m_grid.toTexels(high))),
+                 glm::ivec2(0),
+                 m_grid.size - 1);
+  const glm::vec2 lean = along * std::clamp(roll.strength, 0.0f, 1.0f);
+  for (int y = from.y; y <= last.y; ++y)
+    for (int x = from.x; x <= last.x; ++x)
+    {
+      // Only what's growing keeps it (mown grass).
+      if (m_anchors.at(x, y).time == GrassAnchor::kSettled)
+        continue;
+      const glm::vec2 offset = m_grid.center(x, y) - middle;
+      const float inside =
+          std::min(half.x - std::abs(glm::dot(offset, along)),
+                   half.y - std::abs(glm::dot(offset, across)));
+      // How much of the texel's under it (its edge blended over a texel).
+      const float under = std::clamp(0.5f + inside / texel, 0.0f, 1.0f);
+      if (under <= 0.0f)
+        continue;
+      const uint32_t old = m_lean.at(x, y);
+      const glm::vec2 was(float(int8_t(old & 0xffu)) / 127.0f,
+                          float(int8_t((old >> 8) & 0xffu)) / 127.0f);
+      const glm::vec2 now = glm::mix(was, lean, under);
+      const Grown grown = grownAt(x, y);
+      const uint32_t laid =
+          under >= 0.5f ? uint32_t(toByte(std::min(grown.length, grown.flat)))
+                        : (old >> 16) & 0xffu;
+      const auto signedByte = [](float value)
+      {
+        return uint32_t(uint8_t(
+            int8_t(std::lround(std::clamp(value, -1.0f, 1.0f) * 127.0f))));
+      };
+      const uint32_t next = signedByte(now.x) | (signedByte(now.y) << 8) |
+                            (laid << 16) | (old & 0xff000000u);
+      if (next == old)
+        continue;
+      m_lean.set(x, y, next);
+      markTileNow(m_lean.tileOf(x, y));
+    }
+}
+
+void GrassMaps::settle()
+{
+  if (empty())
+    return;
+  for (int tile = 0; tile < int(m_anchors.tileCount()); ++tile)
+  {
+    if (m_growingTile[tile])
+      settleTile(tile);
+    else
+      m_anchors.compact(tile);
+  }
+  m_due.clear();
+  m_cut.fill(0);
+  m_lean.fill(0u);
+  markAllChanged();
+}
+
+void GrassMaps::update(int mostTiles)
+{
+  int done = 0;
+  while (!m_due.empty() && done < mostTiles)
+  {
+    const auto [when, tile] = m_due.front();
+    if (after(when, m_now))
+      break;
+    std::pop_heap(m_due.begin(), m_due.end(), laterDue);
+    m_due.pop_back();
+    if (m_dueAt[tile] != when || !m_growingTile[tile])
+      continue; // (put off, or done)
+    ++done;
+    m_dueAt[tile] = GrassAnchor::kSettled;
+    if (!after(m_settleAt[tile], m_now))
+      settleTile(tile);
+    else
+    {
+      markTileNow(tile);
+      schedule(tile);
+    }
+  }
+}
+
+std::vector<int> GrassMaps::takeTilesNow()
+{
+  std::vector<int> tiles;
+  tiles.swap(m_tilesNow);
+  for (const int tile : tiles)
+    m_tileNow[tile] = 0;
+  return tiles;
+}
+
+bool GrassMaps::takeActiveChanged()
+{
+  const bool changed = m_activeChanged;
+  m_activeChanged = false;
+  return changed;
+}
+
 void GrassMaps::set(Channel channel, int x, int y, float value)
 {
   if (x < 0 || y < 0 || x >= m_grid.size.x || y >= m_grid.size.y)
     return;
-  uint8_t& stored = m_values[channel][index(x, y)];
   const uint8_t next = toByte(value);
-  if (stored == next)
+  if (channel == Coverage || channel == Length)
+    snap(x, y);
+  if (m_values[channel].at(x, y) == next)
     return;
-  stored = next;
+  m_values[channel].set(x, y, next);
   touch(channel, x, y);
 }
 
@@ -449,6 +1086,7 @@ void GrassMaps::stamp(Channel channel,
                  glm::ivec2(0),
                  m_grid.size - 1);
   const float inner = 1.0f - std::clamp(softness, 0.0f, 1.0f);
+  GrassTiles<uint8_t>& values = m_values[channel];
   for (int y = from.y; y <= to.y; ++y)
     for (int x = from.x; x <= to.x; ++x)
     {
@@ -478,13 +1116,15 @@ void GrassMaps::stamp(Channel channel,
       next = std::clamp(next, 0.0f, 1.0f);
       uint8_t stored = toByte(next);
       // A gentle brush still gets there: at least a step toward its value.
-      const uint8_t current = m_values[channel][index(x, y)];
+      const uint8_t current = values.at(x, y);
       if (stored == current && weight > 0.0f && next != old)
         stored = static_cast<uint8_t>(
             std::clamp(int(current) + (next > old ? 1 : -1), 0, 255));
       if (stored != current)
       {
-        m_values[channel][index(x, y)] = stored;
+        if (channel == Coverage || channel == Length)
+          snap(x, y);
+        values.set(x, y, stored);
         touch(channel, x, y);
       }
     }
@@ -494,16 +1134,23 @@ void GrassMaps::fill(Channel channel, float value)
 {
   if (empty())
     return;
-  std::fill(m_values[channel].begin(), m_values[channel].end(), toByte(value));
+  m_values[channel].fill(toByte(value));
   m_changedMin = glm::ivec2(0);
   m_changedMax = m_grid.size;
-  if (channel <= Length)
+  if (shapesBlades(channel))
+  {
+    m_shapeChanged = true;
     markAllGrown();
+  }
+  if (channel == Coverage || channel == Length)
+    settle();
 }
 
 void GrassMaps::touch(Channel channel, int x, int y)
 {
-  if (channel <= Length && !m_allGrown)
+  if (shapesBlades(channel))
+    m_shapeChanged = true;
+  if (shapesBlades(channel) && !m_allGrown)
   {
     const int blocks = (m_grid.size.x + kGrownBlock - 1) / kGrownBlock;
     if (m_grownBlocks.empty())
@@ -531,10 +1178,19 @@ std::pair<glm::ivec2, glm::ivec2> GrassMaps::takeChanged()
   return changed;
 }
 
+bool GrassMaps::takeShapeChanged()
+{
+  const bool changed = m_shapeChanged;
+  m_shapeChanged = false;
+  return changed;
+}
+
 void GrassMaps::markAllChanged()
 {
   m_changedMin = glm::ivec2(0);
   m_changedMax = m_grid.size;
+  m_shapeChanged = !empty();
+  m_activeChanged = true;
   markAllGrown();
 }
 
@@ -583,14 +1239,96 @@ void GrassMaps::pixels(glm::ivec2 from,
   for (int y = from.y; y < to.y; ++y)
     for (int x = from.x; x < to.x; ++x, i += 4)
     {
-      const std::size_t at = index(x, y);
-      shape[i + 0] = m_values[Coverage][at];
-      shape[i + 1] = m_values[Length][at];
-      shape[i + 2] = 0;
-      shape[i + 3] = 0;
+      shape[i + 0] = m_values[Coverage].at(x, y);
+      shape[i + 1] = m_values[Length].at(x, y);
+      shape[i + 2] = 255;
+      shape[i + 3] = m_values[Bounds].at(x, y);
       for (int k = 0; k < 4; ++k)
-        data[i + k] = m_values[Data0 + k][at];
+        data[i + k] = m_values[Data0 + k].at(x, y);
     }
+}
+
+void GrassMaps::keepBand(glm::ivec2 from,
+                         glm::ivec2 to,
+                         std::span<const uint8_t> shape)
+{
+  from = glm::clamp(from, glm::ivec2(0), m_grid.size);
+  to = glm::clamp(to, from, m_grid.size);
+  const int width = to.x - from.x;
+  if (shape.size() < std::size_t(width) * (to.y - from.y) * 4)
+    return;
+  for (int y = from.y; y < to.y; ++y)
+    for (int x = from.x; x < to.x; ++x)
+      m_band.set(
+          x,
+          y,
+          shape[(std::size_t(y - from.y) * width + (x - from.x)) * 4 + 2]);
+  if (width <= 0 || to.y <= from.y)
+    return;
+  for (int ty = from.y / kGrassMapTile; ty <= (to.y - 1) / kGrassMapTile; ++ty)
+    for (int tx = from.x / kGrassMapTile; tx <= (to.x - 1) / kGrassMapTile;
+         ++tx)
+      m_band.compact(ty * m_band.tiles().x + tx);
+}
+
+void GrassMaps::nowPixels(glm::ivec2 from,
+                          glm::ivec2 to,
+                          std::vector<uint8_t>& now) const
+{
+  from = glm::clamp(from, glm::ivec2(0), m_grid.size);
+  to = glm::clamp(to, from, m_grid.size);
+  now.resize(std::size_t(to.x - from.x) * (to.y - from.y) * 4);
+  std::size_t i = 0;
+  for (int y = from.y; y < to.y; ++y)
+    for (int x = from.x; x < to.x; ++x, i += 4)
+    {
+      const Grown grown = grownAt(x, y);
+      now[i + 0] = toByte(grown.cover);
+      now[i + 1] = toByte(std::min(grown.length, grown.flat));
+      now[i + 2] = m_band.at(x, y);
+      now[i + 3] = m_values[Bounds].at(x, y);
+    }
+}
+
+void GrassMaps::cutPixels(glm::ivec2 from,
+                          glm::ivec2 to,
+                          std::vector<uint8_t>& cut) const
+{
+  from = glm::clamp(from, glm::ivec2(0), m_grid.size);
+  to = glm::clamp(to, from, m_grid.size);
+  cut.resize(std::size_t(to.x - from.x) * (to.y - from.y) * 4);
+  std::size_t i = 0;
+  for (int y = from.y; y < to.y; ++y)
+    for (int x = from.x; x < to.x; ++x, i += 4)
+    {
+      cut[i] = m_cut.at(x, y);
+      const uint32_t lean = m_lean.at(x, y);
+      cut[i + 3] = uint8_t(lean >> 24);
+      float stands = 0.0f; // how much of its lean's left, as it's grown back
+      if (lean & 0xffffu)
+      {
+        const Grown grown = grownAt(x, y);
+        const float grownBack = std::min(grown.length, grown.flat) -
+                                float((lean >> 16) & 0xffu) / 255.0f;
+        stands = std::clamp(1.0f - grownBack / m_leanFade, 0.0f, 1.0f);
+      }
+      const auto centred = [stands](uint32_t byte)
+      {
+        return uint8_t(std::lround(127.5f + float(int8_t(byte & 0xffu)) *
+                                                stands * (127.5f / 127.0f)));
+      };
+      cut[i + 1] = centred(lean);
+      cut[i + 2] = centred(lean >> 8);
+    }
+}
+
+std::size_t GrassMaps::bytes() const
+{
+  std::size_t total = m_anchors.bytes() + m_growthScale.bytes() +
+                      m_cut.bytes() + m_lean.bytes() + m_band.bytes();
+  for (const GrassTiles<uint8_t>& values : m_values)
+    total += values.bytes();
+  return total;
 }
 
 nlohmann::json GrassMaps::toJson() const
@@ -605,10 +1343,16 @@ nlohmann::json GrassMaps::toJson() const
   {
     const auto channel = static_cast<Channel>(c);
     const uint8_t standard = toByte(defaultValue(channel));
-    const std::vector<uint8_t>& values = m_values[c];
-    if (std::any_of(values.begin(),
-                    values.end(),
-                    [&](uint8_t value) { return value != standard; }))
+    std::vector<uint8_t> values(m_grid.count());
+    bool any = false;
+    for (int y = 0; y < m_grid.size.y; ++y)
+      for (int x = 0; x < m_grid.size.x; ++x)
+      {
+        const uint8_t value = m_values[c].at(x, y);
+        values[std::size_t(y) * m_grid.size.x + x] = value;
+        any = any || value != standard;
+      }
+    if (any)
       json[std::string(name(channel))] = encodeRuns(values);
   }
   return json;
@@ -645,7 +1389,12 @@ GrassMaps GrassMaps::fromJson(const nlohmann::json& json)
           decodeRuns(json[key], read.count());
       if (!values)
         return {};
-      maps.m_values[c] = std::move(*values);
+      GrassTiles<uint8_t>& tiles = maps.m_values[c];
+      for (int y = 0; y < read.size.y; ++y)
+        for (int x = 0; x < read.size.x; ++x)
+          tiles.set(x, y, (*values)[std::size_t(y) * read.size.x + x]);
+      for (int tile = 0; tile < int(tiles.tileCount()); ++tile)
+        tiles.compact(tile);
     }
     return maps;
   }
@@ -653,6 +1402,153 @@ GrassMaps GrassMaps::fromJson(const nlohmann::json& json)
   {
     return {};
   }
+}
+
+bool GrassMaps::operator==(const GrassMaps& other) const
+{
+  if (!(m_grid == other.m_grid))
+    return false;
+  for (int c = 0; c < kChannels; ++c)
+  {
+    const GrassTiles<uint8_t>& a = m_values[c];
+    const GrassTiles<uint8_t>& b = other.m_values[c];
+    for (int tile = 0; tile < int(a.tileCount()); ++tile)
+    {
+      if (a.isUniform(tile) && b.isUniform(tile))
+      {
+        if (a.uniform(tile) != b.uniform(tile))
+          return false;
+        continue;
+      }
+      const glm::ivec2 from =
+          glm::ivec2(tile % a.tiles().x, tile / a.tiles().x) * kGrassMapTile;
+      const glm::ivec2 to = glm::min(from + kGrassMapTile, m_grid.size);
+      for (int y = from.y; y < to.y; ++y)
+        for (int x = from.x; x < to.x; ++x)
+          if (a.at(x, y) != b.at(x, y))
+            return false;
+    }
+  }
+  return true;
+}
+
+// --- vigour ------------------------------------------------------------------
+
+namespace
+{
+
+// meshGrassGrow.wgsl's shapeHash() and shapeNoise() (and meshGrass.wgsl's
+// groundHash(), groundNoise()), the same sums.
+float fract(float value) { return value - std::floor(value); }
+
+float vigourHash(glm::vec2 p)
+{
+  glm::vec2 q(fract(p.x * 0.1031f), fract(p.y * 0.1030f));
+  const float d = glm::dot(q, glm::vec2(q.y, q.x) + 33.33f);
+  q += d;
+  return fract((q.x + q.y) * q.x);
+}
+
+float vigourNoise(glm::vec2 p)
+{
+  const glm::vec2 cell = glm::floor(p);
+  const glm::vec2 f = p - cell;
+  const glm::vec2 u = f * f * (3.0f - 2.0f * f);
+  const float a = vigourHash(cell);
+  const float b = vigourHash(cell + glm::vec2(1.0f, 0.0f));
+  const float c = vigourHash(cell + glm::vec2(0.0f, 1.0f));
+  const float d = vigourHash(cell + glm::vec2(1.0f, 1.0f));
+  return glm::mix(glm::mix(a, b, u.x), glm::mix(c, d, u.x), u.y);
+}
+
+} // namespace
+
+float GrassVigourField::sample(glm::vec2 point, float outside) const
+{
+  if (empty() || !(max.x > min.x) || !(max.y > min.y))
+    return outside;
+  const glm::vec2 uv = (point - min) / (max - min);
+  const float edge =
+      std::min(std::min(uv.x, uv.y), std::min(1.0f - uv.x, 1.0f - uv.y));
+  if (edge <= 0.0f)
+    return outside;
+  const glm::vec2 at = uv * glm::vec2(size) - 0.5f;
+  const glm::ivec2 low =
+      glm::clamp(glm::ivec2(glm::floor(at)), glm::ivec2(0), size - 1);
+  const glm::ivec2 high = glm::min(low + 1, size - 1);
+  const glm::vec2 t =
+      glm::clamp(at - glm::vec2(low), glm::vec2(0.0f), glm::vec2(1.0f));
+  const auto value = [&](glm::ivec2 texel)
+  { return values[std::size_t(texel.y) * size.x + texel.x]; };
+  const float field =
+      glm::mix(glm::mix(value(low), value({high.x, low.y}), t.x),
+               glm::mix(value({low.x, high.y}), value(high), t.x),
+               t.y);
+  return glm::mix(outside, field, smoothstep(0.0f, 0.03f, edge));
+}
+
+float grassVigourDetail(glm::vec2 point, float size)
+{
+  const float across = std::max(size, 1e-3f);
+  return vigourNoise(point / across + 17.3f) * 0.65f +
+         vigourNoise(point / (across * 0.37f) - 5.1f) * 0.35f;
+}
+
+float grassVigour(const GrassVigourField* field,
+                  const GrassVigourSettings& settings,
+                  glm::vec2 point)
+{
+  if (!settings.on)
+    return 1.0f;
+  const float w =
+      (field ? field->sample(point, settings.outside) : settings.outside) +
+      (grassVigourDetail(point, settings.detailSize) - 0.5f) * settings.detail;
+  return smoothstep(0.0f, 1.0f, w * settings.scale + settings.bias);
+}
+
+void grassEdgeBand(std::span<uint8_t> shape, glm::ivec2 size)
+{
+  if (size.x <= 0 || size.y <= 0 ||
+      shape.size() < std::size_t(size.x) * size.y * 4)
+    return;
+  // A distance transform from the coverage, in two sweeps (forward, then
+  // back) taking each texel's least from the four already swept round it, a
+  // texel straight across 1 / kGrassEdgeBand and one diagonally that times
+  // the square root of 2 (in bytes: 1 is 255).
+  constexpr int kStraight = (255 + kGrassEdgeBand / 2) / kGrassEdgeBand;
+  constexpr int kDiagonal = (361 + kGrassEdgeBand / 2) / kGrassEdgeBand;
+  const auto blue = [&](int x, int y) -> uint8_t&
+  { return shape[(std::size_t(y) * size.x + x) * 4 + 2]; };
+  for (int y = 0; y < size.y; ++y)
+    for (int x = 0; x < size.x; ++x)
+      blue(x, y) = shape[(std::size_t(y) * size.x + x) * 4];
+  const auto sweep = [&](int step)
+  {
+    const int firstY = step > 0 ? 0 : size.y - 1;
+    const int firstX = step > 0 ? 0 : size.x - 1;
+    for (int y = firstY; y >= 0 && y < size.y; y += step)
+      for (int x = firstX; x >= 0 && x < size.x; x += step)
+      {
+        int least = blue(x, y);
+        const int behindX = x - step, behindY = y - step;
+        const bool hasX = behindX >= 0 && behindX < size.x;
+        const bool hasY = behindY >= 0 && behindY < size.y;
+        if (hasX)
+          least = std::min(least, blue(behindX, y) + kStraight);
+        if (hasY)
+        {
+          least = std::min(least, blue(x, behindY) + kStraight);
+          if (hasX)
+            least = std::min(least, blue(behindX, behindY) + kDiagonal);
+          const int aheadX = x + step;
+          if (aheadX >= 0 && aheadX < size.x)
+            least = std::min(least, blue(aheadX, behindY) + kDiagonal);
+        }
+        blue(x, y) = static_cast<uint8_t>(std::min(least, 255));
+      }
+  };
+  sweep(1);
+  sweep(-1);
 }
 
 // --- GrassTrample ------------------------------------------------------------

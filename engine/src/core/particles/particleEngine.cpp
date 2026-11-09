@@ -196,7 +196,18 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
       break;
     }
 
-    p.pos = inst.origin + offset;
+    // Turned with its entity: the shape turns with it.
+    if (inst.yaw != 0.0f)
+    {
+      const float c = glm::cos(inst.yaw), sn = glm::sin(inst.yaw);
+      offset = {c * offset.x - sn * offset.y, sn * offset.x + c * offset.y};
+    }
+
+    // Somewhere along the way it came this frame (where it moved).
+    const glm::vec2 from =
+        inst.trails ? glm::mix(inst.trailFrom, inst.origin, randf(inst.rng))
+                    : inst.origin;
+    p.pos = from + offset;
 
     // Planar launch direction: a random offset within the spread (Cone narrows
     // it), centred on the spawn's aim direction (0 = +X for undirected
@@ -238,7 +249,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
   {
     if (desc.emitRate > 0.0f)
     {
-      inst.emitAccumulator += desc.emitRate * dt;
+      inst.emitAccumulator += desc.emitRate * inst.rate * dt;
       const int n = static_cast<int>(inst.emitAccumulator);
       if (n > 0)
       {
@@ -308,8 +319,9 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     }
 
     // Collide against the surface -- terrain on the iso path, colliders on the
-    // flat path -- and splat where the droplet sticks.
-    if (m_collisionSource)
+    // flat path -- and splat where the droplet sticks. (An effect landing on
+    // its emitter's plane skips it.)
+    if (m_collisionSource && !desc.landsOnPlane)
     {
       const ParticleHit hit =
           m_collisionSource->sweep({prevPos,
@@ -531,7 +543,7 @@ void ParticleEngine::emitDecal(EmitterInstance& inst,
   }
 }
 
-void ParticleEngine::syncComponentEmitters()
+void ParticleEngine::syncComponentEmitters(float dt)
 {
   // No registry means no entity-component emitters to sync (e.g. a headless
   // burst-only host). The spawnBurst path in simulate() still runs.
@@ -568,13 +580,60 @@ void ParticleEngine::syncComponentEmitters()
       inst.emitAccumulator = 0.0f;
       inst.burstTimer = 0.0f;
       inst.pendingBurst = 0;
+      inst.hasLast = false;
       inst.rng = (entity.getId() * 747796405u + 2891336453u) | 1u;
     }
 
-    inst.origin = transform.position2D() + glm::vec2(emitter.offset);
+    // Turned with the entity: its offset, shape and launch direction by its
+    // heading (where its +x points on the plane).
+    glm::vec2 offset(emitter.offset);
+    inst.yaw = 0.0f;
+    if (emitter.turnWithEntity)
+    {
+      const glm::vec3 forward =
+          transform.rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+      if (forward.x * forward.x + forward.y * forward.y > 1e-8f)
+        inst.yaw = glm::atan(forward.y, forward.x);
+      const float c = glm::cos(inst.yaw), s = glm::sin(inst.yaw);
+      offset = {c * offset.x - s * offset.y, s * offset.x + c * offset.y};
+    }
+    inst.aimAngle = inst.yaw;
+
+    inst.origin = transform.position2D() + offset;
     inst.groundLevel = ground;
     inst.spawnHeightBias = emitter.offset.z;
     inst.emitting = emitter.enabled;
+    inst.rate = glm::max(emitter.rate, 0.0f);
+    inst.tint = emitter.tint;
+
+    // The entity's velocity, from how far it's come since last frame (a jump
+    // further than anything moves -- placed somewhere new -- counts as none),
+    // the share of it particles leave with.
+    inst.inherit = emitter.inheritVelocity;
+    const float height = ground + emitter.offset.z;
+    inst.baseVelocity = {0.0f, 0.0f};
+    inst.baseVelocityZ = 0.0f;
+    constexpr float kJump = 100.0f; // m/s: faster is a teleport
+    // The way it came this frame, to spread its particles along (not a
+    // teleport, nor standing still).
+    const glm::vec2 moved = inst.origin - inst.lastOrigin;
+    inst.trails = inst.hasLast && moved != glm::vec2(0.0f) &&
+                  glm::dot(moved, moved) < kJump * kJump * dt * dt;
+    inst.trailFrom = inst.lastOrigin;
+    if (inst.hasLast && inst.inherit != 0.0f)
+    {
+      const glm::vec2 velocity = (inst.origin - inst.lastOrigin) / dt;
+      const float velocityZ = (height - inst.lastHeight) / dt;
+      if (glm::dot(velocity, velocity) < kJump * kJump &&
+          glm::abs(velocityZ) < kJump)
+      {
+        inst.baseVelocity = velocity * inst.inherit;
+        inst.baseVelocityZ = velocityZ * inst.inherit;
+      }
+    }
+    inst.lastOrigin = inst.origin;
+    inst.lastHeight = height;
+    inst.hasLast = true;
   }
 }
 
@@ -582,11 +641,12 @@ void ParticleEngine::simulate(double deltaTime)
 {
   ZoneScopedN("ParticleEngine::simulate");
 
-  const float dt = static_cast<float>(deltaTime);
+  // Paused (a time scale of 0): everything stays where it is.
+  const float dt = static_cast<float>(deltaTime) * m_timeScale;
   if (dt <= 0.0f)
     return;
 
-  syncComponentEmitters();
+  syncComponentEmitters(dt);
 
   for (auto it = m_entityEmitters.begin(); it != m_entityEmitters.end();)
   {
@@ -626,6 +686,7 @@ void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
     ParticleSpriteBatch batch;
     batch.textureId = &desc.texture;
     batch.blend = desc.blend;
+    batch.lit = desc.lit;
     const int cols = glm::max(1, desc.frameCols);
     const int rows = glm::max(1, desc.frameRows);
     const int frames = cols * rows;
@@ -635,8 +696,9 @@ void ParticleEngine::sprites(std::vector<ParticleSpriteBatch>& out) const
       const float n =
           p.lifetime > 0.0f ? glm::clamp(p.age / p.lifetime, 0.0f, 1.0f) : 0.0f;
       ParticleSprite sprite;
-      sprite.color =
-          glm::vec4(desc.colorOverLife.sample(n), desc.alphaOverLife.sample(n));
+      sprite.color = glm::vec4(desc.colorOverLife.sample(n),
+                               desc.alphaOverLife.sample(n)) *
+                     inst.tint;
       sprite.size = p.baseSize * desc.sizeOverLife.sample(n);
       if (sprite.color.a <= 0.0f || sprite.size <= 0.0f)
         continue;

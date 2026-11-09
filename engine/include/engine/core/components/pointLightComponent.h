@@ -22,6 +22,12 @@ namespace sfs
  * @param float sourceRadius - how big the lamp is (its bulb, its flame):
  *                             shiny things reflect a highlight that big,
  *                             default 0.05
+ * @param bool spot - a spot light: it shines only in a cone along the
+ *                    entity's +x (a headlamp, a torch), default false
+ * @param float innerAngle - a spot's full-strength core, degrees from its
+ *                           axis, default 20
+ * @param float outerAngle - where a spot's light has faded out, degrees from
+ *                           its axis (it fades between the two), default 30
  */
 struct PointLightComponent
 {
@@ -31,6 +37,9 @@ struct PointLightComponent
   glm::vec3 offset{0.0f};
   bool castsShadow = true;
   [[sfs::range(0, 5)]] float sourceRadius = 0.05f;
+  bool spot = false;
+  [[sfs::range(0, 90)]] [[sfs::showIf(spot)]] float innerAngle = 20.0f;
+  [[sfs::range(0, 90)]] [[sfs::showIf(spot)]] float outerAngle = 30.0f;
 
   PointLightComponent() = default;
 

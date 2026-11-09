@@ -3,6 +3,9 @@
 #include <engine/core/rendering/camera.h>
 #include <engine/core/rendering/lightClusters.h>
 
+#include "glm/glm/common.hpp"
+#include "glm/glm/geometric.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -189,6 +192,134 @@ int main()
     }
     CHECK(capped);
     CHECK(firstOnes);
+  }
+
+  TEST("a spot's bounds should hold its whole cone and be smaller than its "
+       "reach")
+  {
+    std::mt19937 random(7);
+    std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+    for (const float outer : {5.0f, 30.0f, 44.0f, 46.0f, 70.0f, 89.0f})
+    {
+      PointLight light;
+      light.position = {3.0f, -2.0f, 1.0f};
+      light.radius = 50.0f;
+      setSpot(light, {1.0f, 0.5f, -0.2f}, outer * 0.5f, outer);
+      const glm::vec4 bounds = lightBounds(light);
+      CHECK(bounds.w < light.radius);
+      bool inside = true;
+      for (int sample = 0; sample < 2000; ++sample)
+      {
+        const glm::vec3 offset(unit(random), unit(random), unit(random));
+        if (glm::length(offset) > 1.0f || glm::length(offset) < 1e-3f)
+          continue;
+        if (glm::dot(glm::normalize(offset), light.spotDirection) <
+            light.spotCosOuter)
+          continue; // outside the cone
+        const glm::vec3 point = light.position + offset * light.radius;
+        inside = inside &&
+                 glm::distance(point, glm::vec3(bounds)) <= bounds.w * 1.001f;
+      }
+      CHECK(inside);
+    }
+  }
+
+  TEST("a point light's bounds should be its own sphere")
+  {
+    PointLight light;
+    light.position = {1.0f, 2.0f, 3.0f};
+    light.radius = 6.0f;
+    CHECK(!light.spot());
+    const glm::vec4 bounds = lightBounds(light);
+    CHECK(glm::vec3(bounds) == light.position);
+    CHECK(bounds.w == light.radius);
+  }
+
+  TEST("a spot should reach spheres in its cone and not those behind or "
+       "beside it")
+  {
+    PointLight light;
+    light.radius = 40.0f;
+    setSpot(light, {1.0f, 0.0f, 0.0f}, 20.0f, 30.0f);
+    CHECK(lightReaches(light, {20.0f, 0.0f, 0.0f}, 0.5f));   // straight on
+    CHECK(lightReaches(light, {20.0f, 10.0f, 0.0f}, 0.5f));  // ~27 degrees
+    CHECK(!lightReaches(light, {20.0f, 20.0f, 0.0f}, 0.5f)); // 45 degrees
+    CHECK(lightReaches(light, {20.0f, 20.0f, 0.0f}, 8.0f));  // big: touches
+    CHECK(!lightReaches(light, {-5.0f, 0.0f, 0.0f}, 1.0f));  // behind
+    CHECK(lightReaches(light, {-0.5f, 0.0f, 0.0f}, 1.0f));   // round its tip
+    CHECK(!lightReaches(light, {45.0f, 0.0f, 0.0f}, 1.0f));  // past its reach
+    // Every sphere a sample of its cone is in.
+    std::mt19937 random(3);
+    std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+    bool reached = true;
+    for (int sample = 0; sample < 2000; ++sample)
+    {
+      const glm::vec3 point =
+          glm::vec3(unit(random), unit(random), unit(random)) * light.radius;
+      const float d = glm::length(point);
+      if (d > light.radius || d < 1e-3f || point.x / d < light.spotCosOuter)
+        continue;
+      const glm::vec3 center =
+          point + glm::vec3(unit(random), unit(random), unit(random));
+      reached = reached && lightReaches(light, center, 1.8f);
+    }
+    CHECK(reached);
+  }
+
+  TEST("a spot should reach only the shadow cube faces its cone looks into")
+  {
+    PointLight light;
+    light.radius = 40.0f;
+    CHECK(lightReachesFace(light, 1)); // a point light: all of them
+    setSpot(light, {1.0f, 0.0f, -0.1f}, 20.0f, 30.0f);
+    CHECK(lightReachesFace(light, 0));  // +x
+    CHECK(!lightReachesFace(light, 1)); // -x: behind
+    CHECK(lightReachesFace(light, 5));  // -z: it's aimed a little down
+    // Every direction in its cone lands in a face it reaches.
+    std::mt19937 random(5);
+    std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+    bool covered = true;
+    for (int sample = 0; sample < 4000; ++sample)
+    {
+      const glm::vec3 direction(unit(random), unit(random), unit(random));
+      if (glm::length(direction) < 1e-3f ||
+          glm::dot(glm::normalize(direction), light.spotDirection) <
+              light.spotCosOuter)
+        continue;
+      const glm::vec3 a = glm::abs(direction);
+      const int axis = a.x >= a.y && a.x >= a.z ? 0 : (a.y >= a.z ? 1 : 2);
+      const int face = axis * 2 + (direction[axis] >= 0.0f ? 0 : 1);
+      covered = covered && lightReachesFace(light, face);
+    }
+    CHECK(covered);
+  }
+
+  TEST("a spot should be listed where its cone is, and not far beside it")
+  {
+    Camera camera;
+    camera.distance = 30.0f;
+    const Setup s = setup(camera, {800.0f, 600.0f});
+    std::vector<PointLight> lights(1);
+    lights[0].position = camera.target;
+    lights[0].radius = 12.0f;
+    // Aimed across the view.
+    const glm::vec3 across =
+        glm::normalize(glm::cross(camera.viewDirection(), {0.0f, 0.0f, 1.0f}));
+    setSpot(lights[0], across, 10.0f, 15.0f);
+    ClusterLights lists;
+    assignLights(s.grid, s.view, lights, lists);
+    const auto clusterAt = [&](glm::vec3 point)
+    {
+      const glm::vec4 clip = s.view.viewProjection * glm::vec4(point, 1.0f);
+      const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+      const glm::vec2 pixel((ndc.x * 0.5f + 0.5f) * s.view.viewport.x,
+                            (0.5f - ndc.y * 0.5f) * s.view.viewport.y);
+      return s.grid.index(s.grid.tileOf(pixel),
+                          s.grid.sliceOf(glm::dot(
+                              point - s.view.cameraPosition, s.view.forward)));
+    };
+    CHECK(listed(lists, clusterAt(camera.target + across * 8.0f), 0));
+    CHECK(!listed(lists, clusterAt(camera.target - across * 10.0f), 0));
   }
 
   return testing::report("lightClustersTests");

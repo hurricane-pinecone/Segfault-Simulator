@@ -31,7 +31,9 @@ public:
   // Wait for the display when presenting (vsync), capping the frame rate at
   // its refresh rate (a shipped game, an editor). Off by default, so frame
   // timings show what the GPU can do. Before init(), or after: then the
-  // surface is configured again at once.
+  // surface is configured again at once. SFS_PRESENT_MODE=immediate, mailbox
+  // or fifo overrides both (where the surface has that mode): for measuring,
+  // e.g. Immediate, as a window's Mailbox may still wait for the display.
   void setVsync(bool vsync);
 
   // Configure another window's surface (e.g. an ImGui panel dragged out into
@@ -89,6 +91,10 @@ private:
   WGPUPresentMode m_present = WGPUPresentMode_Fifo;  // the main window's
   WGPUPresentMode m_unsynced = WGPUPresentMode_Fifo; // the fastest available
   bool m_vsync = false;
+  // SFS_PRESENT_MODE's, if set and offered (else Undefined).
+  WGPUPresentMode m_forcedPresent = WGPUPresentMode_Undefined;
+  // The main window's present mode for m_vsync and m_forcedPresent.
+  WGPUPresentMode mainPresentMode() const;
   bool m_hasTimestamps = false;
   bool m_hasPassTimestamps = false;
   int m_width = 0; // the main surface's configured size (0: not yet)

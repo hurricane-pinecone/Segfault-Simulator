@@ -60,16 +60,32 @@ int main()
                .has_value());
   }
 
-  TEST("inside several boxes, the smallest should win")
+  TEST("hit at the same distance, the smallest should win")
   {
     World world;
-    world.spawn(world.floor, {0, 0, -0.05f});
-    Entity box = world.spawn(world.cube, {0, 0, -0.5f});
+    // A box sunk into the floor, their tops level (z = 0.1).
+    world.spawn(world.floor, {0, 0, 0});
+    Entity box = world.spawn(world.cube, {0, 0, -0.9f});
 
-    // Starts inside both the floor and the box.
-    const Ray ray{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}};
+    // Off the triangles' shared diagonals.
+    const auto hit = pickEntity(world.scene, world.meshes, downAt(0.2f, 0.1f));
+    CHECK(hit && hit->entity.getId() == box.getId());
+  }
+
+  TEST("a camera inside a landscape's bounds should pick what's on it")
+  {
+    World world;
+    // Land whose bounds (mountains far off) reach well over the camera: here
+    // a box 200 tall, its faces far from the camera.
+    MeshHandle land = world.meshes.add(meshes::box({400, 400, 200}));
+    world.spawn(land, {0, 0, 0});
+    Entity box = world.spawn(world.cube, {3, 0, 0}); // its top at 1
+
+    // From 10 up, inside the land's bounds, down onto the box.
+    const Ray ray{{3.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}};
     const auto hit = pickEntity(world.scene, world.meshes, ray);
-    CHECK(hit->entity.getId() == box.getId());
+    CHECK(hit && hit->entity.getId() == box.getId());
+    CHECK(testing::approx(hit->distance, 9.0f));
   }
 
   TEST("entities without a mesh should be pickable by a marker")
@@ -137,8 +153,8 @@ int main()
                .has_value());
   }
 
-  TEST("a surface pick should follow the object's transform, and skip "
-       "bounds-only hits")
+  TEST("picks should follow the object's transform, and skip bounds-only "
+       "hits")
   {
     World world;
     Entity moved = world.spawn(world.cube, {5, 0, 0});
@@ -153,8 +169,8 @@ int main()
     plane.vertices = {{{0, 0, 0}}, {{1, 0, 0}}, {{0, 1, 1}}};
     plane.indices = {0, 1, 2};
     world.spawn(world.meshes.add(plane), {10, 10, 0});
-    CHECK(pickEntity(world.scene, world.meshes, downAt(10.9f, 10.9f))
-              .has_value());
+    CHECK(!pickEntity(world.scene, world.meshes, downAt(10.9f, 10.9f))
+               .has_value());
     CHECK(!pickSurface(world.scene, world.meshes, downAt(10.9f, 10.9f))
                .has_value());
   }

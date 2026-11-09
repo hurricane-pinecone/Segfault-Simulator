@@ -4,13 +4,16 @@
 
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
+#include "engine/core/components/parentComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/cpuTiming.h"
 #include "glm/glm/gtc/quaternion.hpp"
+#include "glm/glm/vector_relational.hpp"
 
 // Jolt.h must come first.
 #include <Jolt/Jolt.h>
@@ -34,13 +37,22 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+// CollisionWorld3D (frozen worlds for queries off the main thread) lives in
+// this unit too: the only one that includes Jolt.
+#include "collisionWorld3D.inl"
+
 #include <algorithm>
 #include <cstdarg>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
+#include <set>
+#include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace sfs
@@ -53,6 +65,17 @@ constexpr float kStep = 1.0f / 60.0f;
 // Steps per update at most, so a long frame (a breakpoint, loading) doesn't
 // snowball into ever longer catch-up frames.
 constexpr int kMaxStepsPerUpdate = 4;
+
+// With no dynamic bodies there's nothing to simulate, only contacts to find:
+// it steps only when something moved, appeared or went, once at least kStep
+// of real time has passed (or sooner when something has gone far), in one
+// step for all the time since, split so that no moving body goes further in
+// one than three quarters of its own width along the way (so it can't pass
+// anything unnoticed, however thin), nor kMaxTravel.
+constexpr float kWidthPerStep = 0.75f;
+constexpr float kMaxTravel = 1.0f;
+constexpr float kMinTravel = 0.01f;
+constexpr int kMostSubsteps = 16;
 
 // Static bodies only need testing against moving ones.
 constexpr JPH::ObjectLayer kStaticLayer = 0;
@@ -90,12 +113,10 @@ void initJolt()
   std::call_once(once,
                  []
                  {
-                   JPH::RegisterDefaultAllocator();
                    JPH::Trace = joltTrace;
                    JPH_IF_ENABLE_ASSERTS(JPH::AssertFailed = joltAssert;)
-                   JPH::Factory::sInstance = new JPH::Factory();
-                   JPH::RegisterTypes();
                  });
+  collisionWorld::ready(); // (the allocator, the factory and the types: once)
 }
 
 // --- conversions
@@ -125,6 +146,7 @@ struct ColliderDesc
                         // radius, y = height
   glm::vec3 offset{0.0f};
   bool trigger = false;
+  int layer = 0;
 
   bool operator==(const ColliderDesc&) const = default;
 };
@@ -150,7 +172,8 @@ struct BodyDesc
            a.friction == b.friction && a.bounciness == b.bounciness &&
            a.linearDamping == b.linearDamping &&
            a.angularDamping == b.angularDamping &&
-           a.gravityScale == b.gravityScale && a.lockRotation == b.lockRotation;
+           a.gravityScale == b.gravityScale &&
+           a.lockRotation == b.lockRotation && a.touchStatic == b.touchStatic;
   }
 };
 
@@ -161,37 +184,74 @@ glm::vec3 worldScale(const glm::mat4& world)
           glm::length(glm::vec3(world[2]))};
 }
 
-std::optional<BodyDesc> describe(const Entity& entity, const glm::mat4& world)
+// The components an entity's body is made from (null: it hasn't that one).
+// Kept with the body: a component stays where it is until it's removed.
+struct Parts
+{
+  const BoxCollider3DComponent* box = nullptr;
+  const SphereCollider3DComponent* sphere = nullptr;
+  const CapsuleCollider3DComponent* capsule = nullptr;
+  const RigidBody3DComponent* rigid = nullptr;
+
+  static Parts of(const Entity& entity)
+  {
+    Parts parts;
+    if (entity.hasComponent<BoxCollider3DComponent>())
+      parts.box = &entity.getComponent<BoxCollider3DComponent>();
+    if (entity.hasComponent<SphereCollider3DComponent>())
+      parts.sphere = &entity.getComponent<SphereCollider3DComponent>();
+    if (entity.hasComponent<CapsuleCollider3DComponent>())
+      parts.capsule = &entity.getComponent<CapsuleCollider3DComponent>();
+    if (entity.hasComponent<RigidBody3DComponent>())
+      parts.rigid = &entity.getComponent<RigidBody3DComponent>();
+    return parts;
+  }
+
+  bool anyCollider() const { return box || sphere || capsule; }
+  bool operator==(const Parts&) const = default;
+};
+
+// Calls `fn` with each collider, scaled by `s`, in a fixed order (box,
+// sphere, capsule).
+template <typename Fn>
+void forEachCollider(const Parts& parts, const glm::vec3& s, Fn&& fn)
+{
+  if (const BoxCollider3DComponent* box = parts.box)
+    fn(ColliderDesc{ColliderDesc::Kind::Box,
+                    box->size * s,
+                    box->offset * s,
+                    box->trigger,
+                    box->layer});
+  if (const SphereCollider3DComponent* sphere = parts.sphere)
+    fn(ColliderDesc{ColliderDesc::Kind::Sphere,
+                    glm::vec3(sphere->radius * std::max({s.x, s.y, s.z}), 0, 0),
+                    sphere->offset * s,
+                    sphere->trigger,
+                    sphere->layer});
+  if (const CapsuleCollider3DComponent* capsule = parts.capsule)
+    fn(ColliderDesc{
+        ColliderDesc::Kind::Capsule,
+        glm::vec3(
+            capsule->radius * std::max(s.x, s.y), capsule->height * s.z, 0),
+        capsule->offset * s,
+        capsule->trigger,
+        capsule->layer});
+}
+
+bool sameScale(const glm::vec3& a, const glm::vec3& b)
+{
+  const glm::vec3 tolerance = 1e-4f * glm::max(glm::abs(b), glm::vec3(1.0f));
+  return glm::all(glm::lessThanEqual(glm::abs(a - b), tolerance));
+}
+
+std::optional<BodyDesc> describe(const Parts& parts, const glm::mat4& world)
 {
   BodyDesc desc;
   desc.scale = worldScale(world);
-  const glm::vec3& s = desc.scale;
-  const float largest = std::max({s.x, s.y, s.z});
-
-  if (entity.hasComponent<BoxCollider3DComponent>())
-  {
-    const auto& box = entity.getComponent<BoxCollider3DComponent>();
-    desc.colliders.push_back(
-        {ColliderDesc::Kind::Box, box.size * s, box.offset * s, box.trigger});
-  }
-  if (entity.hasComponent<SphereCollider3DComponent>())
-  {
-    const auto& sphere = entity.getComponent<SphereCollider3DComponent>();
-    desc.colliders.push_back({ColliderDesc::Kind::Sphere,
-                              glm::vec3(sphere.radius * largest, 0, 0),
-                              sphere.offset * s,
-                              sphere.trigger});
-  }
-  if (entity.hasComponent<CapsuleCollider3DComponent>())
-  {
-    const auto& capsule = entity.getComponent<CapsuleCollider3DComponent>();
-    desc.colliders.push_back(
-        {ColliderDesc::Kind::Capsule,
-         glm::vec3(
-             capsule.radius * std::max(s.x, s.y), capsule.height * s.z, 0),
-         capsule.offset * s,
-         capsule.trigger});
-  }
+  forEachCollider(parts,
+                  desc.scale,
+                  [&](const ColliderDesc& collider)
+                  { desc.colliders.push_back(collider); });
   if (desc.colliders.empty())
     return std::nullopt;
 
@@ -201,14 +261,147 @@ std::optional<BodyDesc> describe(const Entity& entity, const glm::mat4& world)
                             desc.colliders.end(),
                             [](const ColliderDesc& c) { return c.trigger; });
 
-  if (entity.hasComponent<RigidBody3DComponent>())
+  if (parts.rigid)
   {
-    desc.body = entity.getComponent<RigidBody3DComponent>();
+    desc.body = *parts.rigid;
     desc.motion = desc.body.kinematic ? JPH::EMotionType::Kinematic
                                       : JPH::EMotionType::Dynamic;
   }
   return desc;
 }
+
+// Whether describe() would still give `desc` at the same scale: checked every
+// update without building anything.
+bool matches(const Parts& parts, const BodyDesc& desc)
+{
+  std::size_t count = 0;
+  bool same = true;
+  forEachCollider(parts,
+                  desc.scale,
+                  [&](const ColliderDesc& collider)
+                  {
+                    same = same && count < desc.colliders.size() &&
+                           desc.colliders[count] == collider;
+                    ++count;
+                  });
+  if (!same || count != desc.colliders.size())
+    return false;
+
+  if (!parts.rigid)
+    return desc.motion == JPH::EMotionType::Static;
+  const RigidBody3DComponent& a = desc.body;
+  const RigidBody3DComponent& b = *parts.rigid;
+  const JPH::EMotionType motion =
+      b.kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
+  return desc.motion == motion && a.mass == b.mass &&
+         a.friction == b.friction && a.bounciness == b.bounciness &&
+         a.linearDamping == b.linearDamping &&
+         a.angularDamping == b.angularDamping &&
+         a.gravityScale == b.gravityScale && a.lockRotation == b.lockRotation &&
+         a.touchStatic == b.touchStatic;
+}
+
+bool sameTransform(const TransformComponent& a, const TransformComponent& b)
+{
+  return a.position == b.position && a.rotation == b.rotation &&
+         a.scale == b.scale;
+}
+
+// Whether two components' bytes are the same, a word at a time (they're
+// made of floats and ints, so their sizes are whole words).
+bool sameWords(const std::byte* a, const std::byte* b, std::uint32_t size)
+{
+  for (std::uint32_t i = 0; i < size; i += 4)
+  {
+    std::uint32_t x, y;
+    std::memcpy(&x, a + i, 4);
+    std::memcpy(&y, b + i, 4);
+    if (x != y)
+      return false;
+  }
+  return true;
+}
+static_assert(sizeof(TransformComponent) % 4 == 0 &&
+              sizeof(ParentComponent) % 4 == 0 &&
+              sizeof(BoxCollider3DComponent) % 4 == 0 &&
+              sizeof(SphereCollider3DComponent) % 4 == 0 &&
+              sizeof(CapsuleCollider3DComponent) % 4 == 0 &&
+              sizeof(RigidBody3DComponent) % 4 == 0);
+
+// An entity and its ancestors as its world matrix was last worked out from:
+// unchanged, so is the matrix.
+struct Chain
+{
+  struct Link
+  {
+    const TransformComponent* transform = nullptr; // (none: identity)
+    TransformComponent value;
+    const ParentComponent* parent = nullptr;
+    Entity up; // the parent then
+  };
+  std::vector<Link> links;
+
+  enum class State
+  {
+    Same,
+    Moved,    // the same entities, some transform changed
+    Relinked, // a parent changed
+  };
+
+  void cache(const Entity& entity)
+  {
+    links.clear();
+    Entity at = entity;
+    for (int depth = 0; at.isValid() && depth < 64; ++depth)
+    {
+      Link link;
+      if (at.hasComponent<TransformComponent>())
+      {
+        link.transform = &at.getComponent<TransformComponent>();
+        link.value = *link.transform;
+      }
+      if (at.hasComponent<ParentComponent>())
+      {
+        link.parent = &at.getComponent<ParentComponent>();
+        link.up = link.parent->parent;
+      }
+      links.push_back(link);
+      at = hierarchy::parentOf(at);
+    }
+  }
+
+  State state() const
+  {
+    State result = State::Same;
+    for (const Link& link : links)
+    {
+      if (link.parent && !(link.parent->parent == link.up))
+        return State::Relinked;
+      if (link.transform && !sameTransform(*link.transform, link.value))
+        result = State::Moved;
+    }
+    return result;
+  }
+
+  // Whether `other` is made of the same components (whatever their values).
+  bool sameLinks(const Chain& other) const
+  {
+    if (links.size() != other.links.size())
+      return false;
+    for (std::size_t i = 0; i < links.size(); ++i)
+      if (links[i].transform != other.links[i].transform ||
+          links[i].parent != other.links[i].parent)
+        return false;
+    return true;
+  }
+
+  void refresh()
+  {
+    for (Link& link : links)
+      if (link.transform)
+        link.value = *link.transform;
+  }
+};
 
 JPH::RefConst<JPH::Shape> createShape(const ColliderDesc& collider)
 {
@@ -279,7 +472,9 @@ BodyPair makePair(const JPH::BodyID& a, const JPH::BodyID& b)
 }
 
 // Collects contact changes during a step (on the stepping thread: the job
-// system is single-threaded).
+// system is single-threaded). A contact begins when the shapes touch: Jolt
+// also reports speculative contacts (shapes up to its speculative distance,
+// 2 cm, apart, not touching), and those only count once they touch.
 class ContactCollector : public JPH::ContactListener
 {
 public:
@@ -288,22 +483,97 @@ public:
     BodyPair pair;
     bool trigger = false;
     bool added = false;
+    glm::vec3 point{0.0f};
+    float depth = 0.0f;
+    bool deeper = false; // (not added: went deeper rather than ended)
   };
+  // (Deeper by less than this isn't told: Jolt's depths wobble that much.)
+  static constexpr float kDeeperStep = 0.001f;
   std::vector<Change> changes;
 
   void OnContactAdded(const JPH::Body& a,
                       const JPH::Body& b,
-                      const JPH::ContactManifold&,
+                      const JPH::ContactManifold& manifold,
                       JPH::ContactSettings&) override
   {
-    changes.push_back(
-        {makePair(a.GetID(), b.GetID()), a.IsSensor() || b.IsSensor(), true});
+    touch(a, b, manifold);
+  }
+
+  void OnContactPersisted(const JPH::Body& a,
+                          const JPH::Body& b,
+                          const JPH::ContactManifold& manifold,
+                          JPH::ContactSettings&) override
+  {
+    touch(a, b, manifold);
   }
 
   void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
   {
-    changes.push_back(
-        {makePair(pair.GetBody1ID(), pair.GetBody2ID()), false, false});
+    if (touching.erase(keyOf(pair.GetBody1ID(),
+                             pair.GetSubShapeID1(),
+                             pair.GetBody2ID(),
+                             pair.GetSubShapeID2())) > 0)
+      changes.push_back(
+          {makePair(pair.GetBody1ID(), pair.GetBody2ID()), false, false});
+  }
+
+  // A body gone: its contacts with it (ended by the caller).
+  void forget(JPH::uint32 body)
+  {
+    std::erase_if(touching,
+                  [&](const auto& entry)
+                  {
+                    const Key& k = entry.first;
+                    return std::get<0>(k) == body || std::get<2>(k) == body;
+                  });
+  }
+
+private:
+  // (Body 1, its sub-shape, body 2, its sub-shape.)
+  using Key = std::tuple<JPH::uint32, JPH::uint32, JPH::uint32, JPH::uint32>;
+  // (Each touching sub-shape pair's deepest overlap so far.)
+  std::map<Key, float> touching;
+
+  static Key keyOf(const JPH::BodyID& a,
+                   const JPH::SubShapeID& sa,
+                   const JPH::BodyID& b,
+                   const JPH::SubShapeID& sb)
+  {
+    return {a.GetIndexAndSequenceNumber(),
+            sa.GetValue(),
+            b.GetIndexAndSequenceNumber(),
+            sb.GetValue()};
+  }
+
+  void touch(const JPH::Body& a,
+             const JPH::Body& b,
+             const JPH::ContactManifold& manifold)
+  {
+    const bool trigger = a.IsSensor() || b.IsSensor();
+    // (Speculative: not touching yet.)
+    if (!trigger && manifold.mPenetrationDepth < 0.0f)
+      return;
+    const float depth =
+        trigger ? 0.0f : std::max(0.0f, manifold.mPenetrationDepth);
+    const auto [entry, added] = touching.try_emplace(
+        keyOf(
+            a.GetID(), manifold.mSubShapeID1, b.GetID(), manifold.mSubShapeID2),
+        depth);
+    if (!added)
+    {
+      if (trigger || depth < entry->second + kDeeperStep)
+        return;
+      entry->second = depth;
+      changes.push_back(
+          {makePair(a.GetID(), b.GetID()), false, false, {}, depth, true});
+      return;
+    }
+    const JPH::RVec3 at = manifold.GetWorldSpaceContactPointOn1(0);
+    changes.push_back({makePair(a.GetID(), b.GetID()),
+                       trigger,
+                       true,
+                       glm::vec3(at.GetX(), at.GetY(), at.GetZ()),
+                       depth});
   }
 };
 
@@ -320,12 +590,25 @@ struct PhysicsSystem3D::Impl
     JPH::BodyID body;
     BodyDesc desc;
     glm::mat4 lastWorld{1.0f}; // the world matrix last read or written
+    // What it's made from, and what lastWorld was worked out from: so an
+    // unchanged entity costs a compare.
+    Parts parts;
+    Chain chain;
+    // Kinematic, with no dynamic bodies about: where Jolt has it, whether
+    // it's been moved since, and whether it still has its last move's speed.
+    glm::mat4 joltWorld{1.0f};
+    bool pendingMove = false;
+    bool coasting = false;
+    // Its shape's half size (body space), and its farthest point's distance.
+    glm::vec3 halfExtent{0.0f};
+    float reach = 0.0f;
   };
 
   struct ActivePair
   {
     int count = 0;
     bool trigger = false;
+    float depth = 0.0f; // the deepest any of its sub-shape pairs has gone
   };
 
   // First: Jolt must be set up (its allocator, above all) before any member
@@ -343,13 +626,55 @@ struct PhysicsSystem3D::Impl
   JPH::PhysicsSystem physics;
   ContactCollector contacts;
 
-  std::unordered_map<Entity::EntityId, Record> records;
+  // The bodies, packed, and where each entity's is (by id; -1: none).
+  std::vector<Record> records;
+  std::vector<int> slots;
   std::unordered_map<JPH::uint32, Entity> entityByBody;
   std::map<BodyPair, ActivePair> activePairs;
   std::vector<Contact3D> begun;
   std::vector<Contact3D> ended;
+  std::vector<Contact3D> deepened;
   double accumulator = 0.0;
   bool optimised = false;
+  uint64_t revision = 1; // (bodies added, removed or rebuilt, statics moved)
+
+  // The registry's component changes as of the last update, and whether any
+  // collider was on an entity without a transform when it last looked for
+  // new bodies (which gaining one would make a body).
+  struct Seen
+  {
+    uint64_t box = ~0ull, sphere = ~0ull, capsule = ~0ull, rigid = ~0ull,
+             transform = ~0ull, parent = ~0ull;
+    bool operator==(const Seen&) const = default;
+  } seen;
+  bool orphans = false;
+  bool lookAgain = false; // a body couldn't be made: try again next update
+
+  // Every component the bodies are made from or placed by (their own, and
+  // their ancestors' transforms and parent links), each once, with a copy of
+  // its bytes as last seen and the bodies it's part of: what the updates
+  // compare, all in one go, while no entity has gained or lost one.
+  struct Watch
+  {
+    const std::byte* at = nullptr;
+    std::uint32_t size = 0;
+    std::uint32_t copy = 0;  // where its copy is in `watchedBytes`
+    std::uint32_t first = 0; // its bodies' slots, in `watchers`
+    std::uint32_t last = 0;
+  };
+  std::vector<Watch> watches;
+  std::vector<std::byte> watchedBytes;
+  std::vector<int> watchers;
+  bool watchesStale = true; // bodies or their parts changed: list them again
+  std::vector<char> dirty;  // by slot
+  Chain scratch;
+  std::vector<int> dirtySlots;
+
+  int dynamicCount = 0;
+  int pendingCount = 0;   // kinematic bodies moved since the last step
+  bool changed = false;   // bodies added, removed or teleported since then
+  double sinceStep = 0.0; // game time since the last step (no dynamics)
+  UpdateStats stats;
 
   Impl()
   {
@@ -378,7 +703,7 @@ struct PhysicsSystem3D::Impl
 
   ~Impl()
   {
-    for (const auto& [id, record] : records)
+    for (const Record& record : records)
       destroyBody(record.body);
   }
 
@@ -394,11 +719,16 @@ struct PhysicsSystem3D::Impl
     bodies().DestroyBody(body);
   }
 
+  int slotOf(Entity::EntityId id) const
+  {
+    return id < slots.size() ? slots[id] : -1;
+  }
+
   const Record* find(const Entity& entity) const
   {
-    const auto it = records.find(entity.getId());
-    return it != records.end() && it->second.entity == entity ? &it->second
-                                                              : nullptr;
+    const int slot = slotOf(entity.getId());
+    return slot >= 0 && records[slot].entity == entity ? &records[slot]
+                                                       : nullptr;
   }
 
   // A dynamic body's id, if the entity has one.
@@ -410,27 +740,34 @@ struct PhysicsSystem3D::Impl
     return record->body;
   }
 
-  bool createBody(Record& record, const glm::mat4& world)
+  // Makes the entity's body and adds its record; false if it can't.
+  bool addRecord(const Entity& entity,
+                 const Parts& parts,
+                 BodyDesc desc,
+                 const glm::mat4& world)
   {
-    JPH::RefConst<JPH::Shape> shape = createShape(record.desc);
+    JPH::RefConst<JPH::Shape> shape = createShape(desc);
     if (!shape)
+    {
+      lookAgain = true;
       return false;
+    }
 
     const TransformComponent pose = TransformComponent::fromMatrix(world);
-    const bool moving = record.desc.motion != JPH::EMotionType::Static;
+    const bool moving = desc.motion != JPH::EMotionType::Static;
     JPH::BodyCreationSettings settings(shape,
                                        toJolt(pose.position),
                                        toJolt(pose.rotation),
-                                       record.desc.motion,
+                                       desc.motion,
                                        moving ? kMovingLayer : kStaticLayer);
-    const RigidBody3DComponent& body = record.desc.body;
-    settings.mIsSensor = record.desc.sensor;
+    const RigidBody3DComponent& body = desc.body;
+    settings.mIsSensor = desc.sensor;
     settings.mFriction = body.friction;
     settings.mRestitution = body.bounciness;
     settings.mLinearDamping = body.linearDamping;
     settings.mAngularDamping = body.angularDamping;
     settings.mGravityFactor = body.gravityScale;
-    if (record.desc.motion == JPH::EMotionType::Dynamic)
+    if (desc.motion == JPH::EMotionType::Dynamic)
     {
       settings.mOverrideMassProperties =
           JPH::EOverrideMassProperties::CalculateInertia;
@@ -441,37 +778,77 @@ struct PhysicsSystem3D::Impl
                                 JPH::EAllowedDOFs::TranslationZ;
     }
     // A kinematic trigger (e.g. a moving pickup zone) should notice static
-    // bodies too.
-    settings.mCollideKinematicVsNonDynamic = record.desc.sensor;
+    // bodies too; so should a kinematic body that asks to (touchStatic).
+    settings.mCollideKinematicVsNonDynamic = desc.sensor || body.touchStatic;
 
-    record.body = bodies().CreateAndAddBody(
+    const JPH::BodyID id = bodies().CreateAndAddBody(
         settings,
         moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
-    if (record.body.IsInvalid())
+    if (id.IsInvalid())
     {
       LOG_ERROR("PhysicsSystem3D: out of bodies");
+      lookAgain = true;
       return false;
     }
+
+    Record record;
+    record.entity = entity;
+    record.body = id;
+    record.desc = std::move(desc);
     record.lastWorld = world;
-    entityByBody[record.body.GetIndexAndSequenceNumber()] = record.entity;
+    record.joltWorld = world;
+    record.parts = parts;
+    record.chain.cache(entity);
+    const JPH::AABox bounds = shape->GetLocalBounds();
+    record.halfExtent = toGlm(bounds.GetExtent());
+    record.reach = glm::length(
+        glm::max(toGlm(bounds.mMin.Abs()), toGlm(bounds.mMax.Abs())));
+    if (record.desc.motion == JPH::EMotionType::Dynamic)
+      ++dynamicCount;
+
+    const Entity::EntityId key = entity.getId();
+    if (key >= slots.size())
+      slots.resize(key + 1, -1);
+    slots[key] = static_cast<int>(records.size());
+    records.push_back(std::move(record));
+    watchesStale = true;
+    entityByBody[id.GetIndexAndSequenceNumber()] = entity;
+    ++revision;
+    changed = true;
     return true;
   }
 
-  void removeRecord(std::unordered_map<Entity::EntityId, Record>::iterator it)
+  // Removes the body at `slot`; the last record takes its place.
+  void removeAt(int slot)
   {
-    const JPH::uint32 key = it->second.body.GetIndexAndSequenceNumber();
+    Record& record = records[slot];
+    const JPH::uint32 key = record.body.GetIndexAndSequenceNumber();
     // Its contacts end with it.
+    contacts.forget(key);
     for (auto pair = activePairs.begin(); pair != activePairs.end();)
       if (pair->first.first == key || pair->first.second == key)
       {
-        reportEnded(pair->first, pair->second.trigger);
+        reportEnded(pair->first, pair->second);
         pair = activePairs.erase(pair);
       }
       else
         ++pair;
-    destroyBody(it->second.body);
+    destroyBody(record.body);
     entityByBody.erase(key);
-    records.erase(it);
+    if (record.desc.motion == JPH::EMotionType::Dynamic)
+      --dynamicCount;
+    if (record.pendingMove)
+      --pendingCount;
+    slots[record.entity.getId()] = -1;
+    if (slot + 1 != static_cast<int>(records.size()))
+    {
+      record = std::move(records.back());
+      slots[record.entity.getId()] = slot;
+    }
+    records.pop_back();
+    ++revision;
+    changed = true;
+    watchesStale = true;
   }
 
   Entity entityOf(JPH::uint32 body) const
@@ -480,95 +857,281 @@ struct PhysicsSystem3D::Impl
     return it == entityByBody.end() ? Entity() : it->second;
   }
 
-  void reportEnded(const BodyPair& pair, bool trigger)
+  void reportEnded(const BodyPair& pair, const ActivePair& active)
   {
-    ended.push_back({entityOf(pair.first), entityOf(pair.second), trigger});
+    ended.push_back({entityOf(pair.first),
+                     entityOf(pair.second),
+                     active.trigger,
+                     glm::vec3(0.0f),
+                     active.depth});
   }
 
   // Bring the bodies in line with the components: new, removed, rebuilt and
-  // moved-by-code bodies.
+  // moved-by-code bodies. Each body is checked every update: while no entity
+  // has gained or lost the components a body is made from (or a transform or
+  // parent), through what it found last time, a compare when nothing's
+  // changed. The scene is searched for new bodies only when an entity has
+  // gained or lost a collider (or, if it matters, a transform).
   void sync(Registry& registry, float frameTime)
   {
-    std::unordered_set<Entity::EntityId> seen;
-    bool created = false;
+    stats.lookedForBodies = false;
+    const bool fixedSteps = dynamicCount > 0;
+    const Seen now{registry.componentChanges<BoxCollider3DComponent>(),
+                   registry.componentChanges<SphereCollider3DComponent>(),
+                   registry.componentChanges<CapsuleCollider3DComponent>(),
+                   registry.componentChanges<RigidBody3DComponent>(),
+                   registry.componentChanges<TransformComponent>(),
+                   registry.componentChanges<ParentComponent>()};
+    const bool settled = now == seen;
 
-    const auto visit = [&](const Entity& entity)
+    // Backwards: a removed body's place is taken by one already checked.
+    if (!settled || watchesStale)
     {
-      if (!seen.insert(entity.getId()).second)
-        return;
-      const glm::mat4 world = hierarchy::worldMatrix(entity);
-      std::optional<BodyDesc> desc = describe(entity, world);
-      if (!desc)
-        return;
+      for (int slot = static_cast<int>(records.size()) - 1; slot >= 0; --slot)
+        check(slot, frameTime, fixedSteps, settled);
+    }
+    else
+    {
+      // Just the bodies something of theirs changed for.
+      findChanged();
+      for (const int slot : dirtySlots)
+        check(slot, frameTime, fixedSteps, settled);
+    }
 
-      auto it = records.find(entity.getId());
-      if (it != records.end() &&
-          (it->second.entity != entity || !(it->second.desc == *desc)))
-      {
-        removeRecord(it); // a different entity now, or rebuilt below
-        it = records.end();
-      }
+    const bool look = now.box != seen.box || now.sphere != seen.sphere ||
+                      now.capsule != seen.capsule ||
+                      (orphans && now.transform != seen.transform) || lookAgain;
+    seen = now;
+    if (look)
+    {
+      lookAgain = false;
+      lookForBodies(registry);
+    }
+    if (watchesStale)
+      listWatches();
+  }
 
-      if (it == records.end())
-      {
-        Record record{entity, JPH::BodyID(), std::move(*desc), world};
-        if (createBody(record, world))
+  // The slots of the bodies a watched component changed for, last first.
+  void findChanged()
+  {
+    dirty.assign(records.size(), 0);
+    dirtySlots.clear();
+    for (const Watch& watch : watches)
+    {
+      std::byte* copy = watchedBytes.data() + watch.copy;
+      if (sameWords(watch.at, copy, watch.size))
+        continue;
+      std::memcpy(copy, watch.at, watch.size);
+      for (std::uint32_t i = watch.first; i < watch.last; ++i)
+        if (!dirty[watchers[i]])
         {
-          records.emplace(entity.getId(), std::move(record));
-          created = true;
+          dirty[watchers[i]] = 1;
+          dirtySlots.push_back(watchers[i]);
         }
+    }
+    std::sort(dirtySlots.begin(), dirtySlots.end(), std::greater<int>());
+  }
+
+  void listWatches()
+  {
+    // In memory order (a component type's are stored by entity id), so the
+    // compares run through memory rather than jump about it.
+    struct Entry
+    {
+      const std::byte* at;
+      std::size_t size;
+      int slot;
+    };
+    std::vector<Entry> entries;
+    const auto watch = [&](const void* at, std::size_t size, int slot)
+    {
+      if (at)
+        entries.push_back({static_cast<const std::byte*>(at), size, slot});
+    };
+    for (int slot = 0; slot < static_cast<int>(records.size()); ++slot)
+    {
+      const Record& record = records[slot];
+      for (const Chain::Link& link : record.chain.links)
+      {
+        watch(link.transform, sizeof(TransformComponent), slot);
+        watch(link.parent, sizeof(ParentComponent), slot);
+      }
+      watch(record.parts.box, sizeof(BoxCollider3DComponent), slot);
+      watch(record.parts.sphere, sizeof(SphereCollider3DComponent), slot);
+      watch(record.parts.capsule, sizeof(CapsuleCollider3DComponent), slot);
+      watch(record.parts.rigid, sizeof(RigidBody3DComponent), slot);
+    }
+    std::sort(entries.begin(),
+              entries.end(),
+              [](const Entry& a, const Entry& b)
+              { return std::less<const std::byte*>()(a.at, b.at); });
+
+    // One watch a component, however many bodies it's part of.
+    watches.clear();
+    watchedBytes.clear();
+    watchers.clear();
+    for (const Entry& entry : entries)
+    {
+      if (watches.empty() || watches.back().at != entry.at)
+      {
+        Watch added;
+        added.at = entry.at;
+        added.size = static_cast<std::uint32_t>(entry.size);
+        added.copy = static_cast<std::uint32_t>(watchedBytes.size());
+        added.first = static_cast<std::uint32_t>(watchers.size());
+        watchedBytes.insert(
+            watchedBytes.end(), entry.at, entry.at + entry.size);
+        watches.push_back(added);
+      }
+      watchers.push_back(entry.slot);
+      watches.back().last = static_cast<std::uint32_t>(watchers.size());
+    }
+    watchesStale = false;
+  }
+
+  // Whether the body at `slot` still matches its entity: removes, rebuilds
+  // or moves it if not. `settled`: no entity has gained or lost a component
+  // the body's made from since the last check.
+  void check(int slot, float frameTime, bool fixedSteps, bool settled)
+  {
+    Record& record = records[slot];
+    const Entity entity = record.entity;
+    if (!settled)
+    {
+      if (!entity.isAlive() || !entity.hasComponent<TransformComponent>())
+      {
+        removeAt(slot);
         return;
       }
-
-      Record& record = it->second;
-      if (world == record.lastWorld)
-        return;
-
-      // Moved by code since the last update.
-      const TransformComponent pose = TransformComponent::fromMatrix(world);
-      switch (record.desc.motion)
+      const Parts parts = Parts::of(entity);
+      if (!parts.anyCollider())
       {
-      case JPH::EMotionType::Static:
-        bodies().SetPositionAndRotation(record.body,
-                                        toJolt(pose.position),
-                                        toJolt(pose.rotation),
-                                        JPH::EActivation::DontActivate);
-        break;
-      case JPH::EMotionType::Kinematic:
-        // Moves through the world (pushing what's in the way) over this frame.
+        removeAt(slot);
+        return;
+      }
+      // (A component stays put while the entity has it: its parts and
+      // ancestors are watched where they were unless some came or went.)
+      scratch.cache(entity);
+      if (!(parts == record.parts) || !scratch.sameLinks(record.chain))
+        watchesStale = true;
+      record.parts = parts;
+      std::swap(record.chain.links, scratch.links);
+    }
+
+    glm::mat4 world = record.lastWorld;
+    switch (settled ? record.chain.state() : Chain::State::Moved)
+    {
+    case Chain::State::Same:
+      break;
+    case Chain::State::Moved:
+      record.chain.refresh();
+      world = hierarchy::worldMatrix(entity);
+      break;
+    case Chain::State::Relinked:
+      record.chain.cache(entity);
+      world = hierarchy::worldMatrix(entity);
+      watchesStale = true;
+      break;
+    }
+    const bool moved = world != record.lastWorld;
+
+    // (A turned matrix's scale comes out a little different each time: only
+    // a real change of scale rebuilds the body.)
+    if (!matches(record.parts, record.desc) ||
+        (moved && !sameScale(worldScale(world), record.desc.scale)))
+    {
+      std::optional<BodyDesc> desc = describe(record.parts, world);
+      if (!desc || !(*desc == record.desc))
+      {
+        const Parts parts = record.parts;
+        removeAt(slot); // a different body now: made again
+        if (desc)
+          addRecord(entity, parts, std::move(*desc), world);
+        return;
+      }
+    }
+    if (moved || (fixedSteps && record.pendingMove))
+      move(record, world, frameTime, fixedSteps);
+  }
+
+  // Moved by code since the last update.
+  void
+  move(Record& record, const glm::mat4& world, float frameTime, bool fixedSteps)
+  {
+    const TransformComponent pose = TransformComponent::fromMatrix(world);
+    switch (record.desc.motion)
+    {
+    case JPH::EMotionType::Static:
+      bodies().SetPositionAndRotation(record.body,
+                                      toJolt(pose.position),
+                                      toJolt(pose.rotation),
+                                      JPH::EActivation::DontActivate);
+      ++revision;
+      changed = true;
+      break;
+    case JPH::EMotionType::Kinematic:
+      if (fixedSteps)
+      {
+        // Moves through the world (pushing what's in the way) over this
+        // frame.
         bodies().MoveKinematic(record.body,
                                toJolt(pose.position),
                                toJolt(pose.rotation),
                                std::max(frameTime, kStep));
-        break;
-      case JPH::EMotionType::Dynamic:
-        bodies().SetPositionAndRotation(record.body,
-                                        toJolt(pose.position),
-                                        toJolt(pose.rotation),
-                                        JPH::EActivation::Activate);
-        break;
+        record.joltWorld = world;
+        record.coasting = true;
+        if (record.pendingMove)
+        {
+          record.pendingMove = false;
+          --pendingCount;
+        }
       }
-      record.lastWorld = world;
-    };
-
-    for (const Entity& entity :
-         registry.view<TransformComponent, BoxCollider3DComponent>())
-      visit(entity);
-    for (const Entity& entity :
-         registry.view<TransformComponent, SphereCollider3DComponent>())
-      visit(entity);
-    for (const Entity& entity :
-         registry.view<TransformComponent, CapsuleCollider3DComponent>())
-      visit(entity);
-
-    // Bodies whose entity is gone, or lost its colliders.
-    for (auto it = records.begin(); it != records.end();)
-    {
-      auto next = std::next(it);
-      if (!seen.contains(it->first) || !it->second.entity.isAlive())
-        removeRecord(it);
-      it = next;
+      else if (!record.pendingMove)
+      {
+        // Moved there at the next step.
+        record.pendingMove = true;
+        ++pendingCount;
+      }
+      break;
+    case JPH::EMotionType::Dynamic:
+      bodies().SetPositionAndRotation(record.body,
+                                      toJolt(pose.position),
+                                      toJolt(pose.rotation),
+                                      JPH::EActivation::Activate);
+      changed = true;
+      break;
     }
+    record.lastWorld = world;
+  }
+
+  // New bodies: entities with a transform and a collider but no body yet.
+  void lookForBodies(Registry& registry)
+  {
+    stats.lookedForBodies = true;
+    orphans = false;
+    bool created = false;
+    const auto visit = [&](const Entity& entity)
+    {
+      if (find(entity))
+        return;
+      if (!entity.hasComponent<TransformComponent>())
+      {
+        orphans = true;
+        return;
+      }
+      const glm::mat4 world = hierarchy::worldMatrix(entity);
+      const Parts parts = Parts::of(entity);
+      if (std::optional<BodyDesc> desc = describe(parts, world))
+        created = addRecord(entity, parts, std::move(*desc), world) || created;
+    };
+    registry.each<BoxCollider3DComponent>(
+        [&](const Entity& entity, BoxCollider3DComponent&) { visit(entity); });
+    registry.each<SphereCollider3DComponent>(
+        [&](const Entity& entity, SphereCollider3DComponent&)
+        { visit(entity); });
+    registry.each<CapsuleCollider3DComponent>(
+        [&](const Entity& entity, CapsuleCollider3DComponent&)
+        { visit(entity); });
 
     // A big batch (a scene's first update) makes the broad phase lopsided.
     if (created && !optimised)
@@ -578,10 +1141,129 @@ struct PhysicsSystem3D::Impl
     }
   }
 
+  void step(float seconds)
+  {
+    {
+      SFS_CPU_SCOPE("physics3D/step");
+      physics.Update(seconds, 1, tempAllocator.get(), jobs.get());
+    }
+    collectContacts();
+    ++stats.steps;
+  }
+
+  // With dynamic bodies: fixed steps of kStep, and their poses read back.
+  void stepFixed(double deltaTime)
+  {
+    sinceStep = 0.0;
+    changed = false;
+    accumulator += deltaTime;
+    int steps = 0;
+    while (accumulator >= kStep && steps < kMaxStepsPerUpdate)
+    {
+      step(kStep);
+      accumulator -= kStep;
+      ++steps;
+    }
+    if (steps == kMaxStepsPerUpdate)
+      accumulator = 0.0; // fell behind: drop the rest rather than catch up
+
+    if (steps > 0)
+      writeBack();
+  }
+
+  // How many steps the kinematic bodies' moves since the last one need
+  // (none: not yet).
+  int stepsNeeded() const
+  {
+    float most = 0.0f; // the furthest any went, in steps' worth
+    for (const Record& record : records)
+    {
+      if (!record.pendingMove)
+        continue;
+      const TransformComponent from =
+          TransformComponent::fromMatrix(record.joltWorld);
+      const TransformComponent to =
+          TransformComponent::fromMatrix(record.lastWorld);
+      const glm::vec3 offset = to.position - from.position;
+      const float distance = glm::length(offset);
+      // Its width along the way: how far it may go between looks.
+      float along = 0.0f;
+      if (distance > 0.0f)
+      {
+        const glm::vec3 way =
+            glm::abs(glm::inverse(to.rotation) * (offset / distance));
+        along = 2.0f * kWidthPerStep * glm::dot(way, record.halfExtent);
+      }
+      const float narrowest =
+          2.0f * kWidthPerStep *
+          std::min(
+              {record.halfExtent.x, record.halfExtent.y, record.halfExtent.z});
+      const float turned =
+          2.0f * std::acos(std::min(
+                     std::abs(glm::dot(from.rotation, to.rotation)), 1.0f));
+      const float steps =
+          distance / std::clamp(along, kMinTravel, kMaxTravel) +
+          turned * record.reach / std::clamp(narrowest, kMinTravel, kMaxTravel);
+      most = std::max(most, steps);
+    }
+    // (Just past a whole number of steps' worth: that many.)
+    return most >= 1.0f ? static_cast<int>(std::ceil(most - 0.01f)) : 0;
+  }
+
+  // With no dynamic bodies: only when something has moved, appeared or
+  // gone, in as few steps as finding every contact takes.
+  void stepKinematic(double deltaTime, double timeScale)
+  {
+    accumulator = 0.0;
+    if (pendingCount == 0 && !changed)
+    {
+      sinceStep = 0.0;
+      return;
+    }
+    sinceStep += deltaTime;
+    if (sinceStep <= 0.0)
+      return; // (paused)
+    const int needed = pendingCount > 0 ? stepsNeeded() : 0;
+    if (!changed && needed == 0 &&
+        sinceStep < kStep * std::max(timeScale, 1.0) * 0.999)
+      return; // not far enough yet
+
+    const float seconds = static_cast<float>(sinceStep);
+    for (Record& record : records)
+    {
+      if (record.desc.motion != JPH::EMotionType::Kinematic)
+        continue;
+      if (record.pendingMove)
+      {
+        const TransformComponent pose =
+            TransformComponent::fromMatrix(record.lastWorld);
+        bodies().MoveKinematic(
+            record.body, toJolt(pose.position), toJolt(pose.rotation), seconds);
+        record.joltWorld = record.lastWorld;
+        record.pendingMove = false;
+        record.coasting = true;
+      }
+      else if (record.coasting)
+      {
+        // Stopped: it mustn't carry on at its last move's speed.
+        bodies().SetLinearAndAngularVelocity(
+            record.body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+        record.coasting = false;
+      }
+    }
+    pendingCount = 0;
+    changed = false;
+    sinceStep = 0.0;
+
+    const int steps = std::clamp(needed, 1, kMostSubsteps);
+    for (int i = 0; i < steps; ++i)
+      step(seconds / static_cast<float>(steps));
+  }
+
   // Dynamic bodies' new poses into their transforms.
   void writeBack()
   {
-    for (auto& [id, record] : records)
+    for (Record& record : records)
     {
       if (record.desc.motion != JPH::EMotionType::Dynamic ||
           !bodies().IsActive(record.body))
@@ -596,11 +1278,31 @@ struct PhysicsSystem3D::Impl
       hierarchy::setWorldMatrix(record.entity, world);
       // As it reads back, so it doesn't look moved-by-code next time.
       record.lastWorld = hierarchy::worldMatrix(record.entity);
+      record.chain.refresh();
     }
   }
 
   void collectContacts()
   {
+    SFS_CPU_SCOPE("physics3D/contacts");
+    // (Pairs that went deeper this update, and where each is in `deepened`.)
+    std::map<BodyPair, size_t> deeper;
+    const auto deepen =
+        [&](const BodyPair& pair, ActivePair& active, float depth)
+    {
+      if (active.trigger || depth <= active.depth)
+        return;
+      active.depth = depth;
+      const auto [at, first] = deeper.try_emplace(pair, deepened.size());
+      if (first)
+        deepened.push_back({entityOf(pair.first),
+                            entityOf(pair.second),
+                            false,
+                            glm::vec3(0.0f),
+                            depth});
+      else
+        deepened[at->second].depth = depth;
+    };
     for (const ContactCollector::Change& change : contacts.changes)
     {
       if (change.added)
@@ -609,18 +1311,28 @@ struct PhysicsSystem3D::Impl
         if (active.count++ == 0)
         {
           active.trigger = change.trigger;
+          active.depth = change.depth;
           begun.push_back({entityOf(change.pair.first),
                            entityOf(change.pair.second),
-                           change.trigger});
+                           change.trigger,
+                           change.point,
+                           change.depth});
         }
+        else
+          deepen(change.pair, active, change.depth);
         continue;
       }
       const auto it = activePairs.find(change.pair);
       if (it == activePairs.end())
         continue;
+      if (change.deeper)
+      {
+        deepen(change.pair, it->second, change.depth);
+        continue;
+      }
       if (--it->second.count == 0)
       {
-        reportEnded(change.pair, it->second.trigger);
+        reportEnded(change.pair, it->second);
         activePairs.erase(it);
       }
     }
@@ -649,25 +1361,29 @@ void PhysicsSystem3D::update(double deltaTime)
 {
   m->begun.clear();
   m->ended.clear();
+  m->deepened.clear();
+  m->stats.steps = 0;
   if (!registry)
     return;
 
-  m->sync(*registry, static_cast<float>(deltaTime));
-
-  m->accumulator += deltaTime;
-  int steps = 0;
-  while (m->accumulator >= kStep && steps < kMaxStepsPerUpdate)
   {
-    m->physics.Update(kStep, 1, m->tempAllocator.get(), m->jobs.get());
-    m->collectContacts();
-    m->accumulator -= kStep;
-    ++steps;
+    SFS_CPU_SCOPE("physics3D/sync");
+    m->sync(*registry, static_cast<float>(deltaTime));
   }
-  if (steps == kMaxStepsPerUpdate)
-    m->accumulator = 0.0; // fell behind: drop the rest rather than catch up
-
-  if (steps > 0)
-    m->writeBack();
+  if (m->dynamicCount > 0)
+  {
+    // (Kinematic bodies moved before there were dynamic ones.)
+    if (m->pendingCount > 0)
+      for (Impl::Record& record : m->records)
+        if (record.pendingMove)
+          m->move(record,
+                  record.lastWorld,
+                  static_cast<float>(deltaTime),
+                  /*fixedSteps*/ true);
+    m->stepFixed(deltaTime);
+  }
+  else
+    m->stepKinematic(deltaTime, registry->timeScale());
 
   if (!m_scene)
     return;
@@ -748,9 +1464,62 @@ void PhysicsSystem3D::addForce(const Entity& entity, const glm::vec3& force)
     m->bodies().AddForce(*body, toJolt(force));
 }
 
+const PhysicsSystem3D::UpdateStats& PhysicsSystem3D::lastUpdateStats() const
+{
+  return m->stats;
+}
+
 bool PhysicsSystem3D::hasBody(const Entity& entity) const
 {
   return m->find(entity) != nullptr;
+}
+
+uint64_t PhysicsSystem3D::revision() const { return m->revision; }
+
+std::shared_ptr<const CollisionWorld3D> PhysicsSystem3D::snapshot(
+    const std::function<bool(const Entity&)>& include) const
+{
+  std::vector<CollisionWorld3D::Body> bodies;
+  bodies.reserve(m->records.size());
+  for (const Impl::Record& record : m->records)
+  {
+    if (record.desc.sensor || record.desc.motion == JPH::EMotionType::Dynamic ||
+        (include && !include(record.entity)))
+      continue;
+    CollisionWorld3D::Body body;
+    body.id = record.entity.getId();
+    body.layer = 31;
+    const TransformComponent pose =
+        TransformComponent::fromMatrix(record.lastWorld);
+    body.position = pose.position;
+    body.rotation = pose.rotation;
+    for (const ColliderDesc& collider : record.desc.colliders)
+    {
+      if (collider.trigger)
+        continue;
+      body.layer = std::min(
+          body.layer, static_cast<uint32_t>(std::clamp(collider.layer, 0, 31)));
+      CollisionShape3D shape;
+      shape.offset = collider.offset;
+      shape.size = collider.size;
+      switch (collider.kind)
+      {
+      case ColliderDesc::Kind::Box:
+        shape.kind = CollisionShape3D::Kind::Box;
+        break;
+      case ColliderDesc::Kind::Sphere:
+        shape.kind = CollisionShape3D::Kind::Sphere;
+        break;
+      case ColliderDesc::Kind::Capsule:
+        shape.kind = CollisionShape3D::Kind::Capsule;
+        break;
+      }
+      body.shapes.push_back(shape);
+    }
+    if (!body.shapes.empty())
+      bodies.push_back(std::move(body));
+  }
+  return std::make_shared<const CollisionWorld3D>(bodies);
 }
 
 const std::vector<Contact3D>& PhysicsSystem3D::contactsBegun() const
@@ -761,6 +1530,11 @@ const std::vector<Contact3D>& PhysicsSystem3D::contactsBegun() const
 const std::vector<Contact3D>& PhysicsSystem3D::contactsEnded() const
 {
   return m->ended;
+}
+
+const std::vector<Contact3D>& PhysicsSystem3D::contactsDeepened() const
+{
+  return m->deepened;
 }
 
 } // namespace sfs

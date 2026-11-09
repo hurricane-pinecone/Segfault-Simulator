@@ -152,8 +152,78 @@ public:
    * The nearest of a mesh's triangles (either side) a ray hits, with the mesh
    * placed by `world`. Nothing if it misses, or the mesh isn't ours.
    */
-  std::optional<RayHit>
-  raycast(MeshHandle mesh, const glm::mat4& world, const Ray& ray) const;
+  std::optional<RayHit> raycast(MeshHandle mesh,
+                                const glm::mat4& world,
+                                const Ray& ray,
+                                uint32_t owner = kNoOwner) const;
+
+  // --- skinned meshes -------------------------------------------------------
+
+  /** No entity: a mesh as it is, not anyone's posed copy. */
+  static constexpr uint32_t kNoOwner = 0xFFFFFFFFu;
+
+  /** A mesh's skin (see MeshSkin), or null if it doesn't deform. */
+  const MeshSkin* skin(MeshHandle mesh) const;
+
+  /** A skinned mesh's vertices' weights (as positions()); else empty. */
+  std::span<const SkinWeights> skinWeights(MeshHandle mesh) const;
+
+  /**
+   * One entity's posed copy of a skinned mesh: the renderer's copy that
+   * deforms (IRenderer::createSkinnedMesh) and its pose.
+   */
+  struct SkinPose
+  {
+    MeshHandle gpu; // the renderer's copy; invalid: drawn as bound
+    std::vector<glm::mat4> palette;
+    Aabb bounds;          // posed, in the mesh's own space
+    bool drawn = false;   // drawn since it was last posed (see markSkinDrawn)
+    uint64_t version = 0; // bumped with each new pose
+  };
+
+  /**
+   * Pose `owner`'s (an entity's id) copy of a skinned mesh, making it the
+   * first time: the renderer deforms it, and posedBounds(), posedPositions()
+   * and raycast() follow it. The same pose again changes nothing. Ignored for
+   * a mesh without a skin.
+   */
+  void setSkinPose(MeshHandle mesh,
+                   uint32_t owner,
+                   std::span<const glm::mat4> palette,
+                   const Aabb& bounds);
+
+  /** Keep `owner`'s copy as it is (not posed afresh this time). */
+  void keepSkin(MeshHandle mesh, uint32_t owner);
+
+  /** `owner`'s copy of a skinned mesh, or null if it has none. */
+  const SkinPose* skinPose(MeshHandle mesh, uint32_t owner) const;
+
+  /** Note that `owner`'s copy was drawn (MeshModule, as it draws it). */
+  void markSkinDrawn(MeshHandle mesh, uint32_t owner);
+
+  /**
+   * Free the copies neither posed nor kept since the last call (their
+   * entities are gone, or no longer animated). The animation system calls
+   * this once each update.
+   */
+  void releaseUnusedSkins();
+
+  /** Whether any mesh has a posed copy (so drawing looks them up). */
+  bool hasSkinPoses() const { return !m_skins.empty(); }
+
+  /**
+   * A mesh's bounds as `owner`'s copy is posed, or as bound (bounds()) if it
+   * has none: what to cull and pick an entity by.
+   */
+  const Aabb* posedBounds(MeshHandle mesh, uint32_t owner) const;
+
+  /**
+   * A mesh's positions as `owner`'s copy is posed (skinned on the CPU when
+   * first asked for after a new pose), or as bound (positions()) if it has
+   * none.
+   */
+  std::span<const glm::vec3> posedPositions(MeshHandle mesh,
+                                            uint32_t owner) const;
 
   /**
    * A material by name (an entry of MeshRendererComponent::materials),
@@ -286,7 +356,27 @@ private:
     std::vector<std::vector<SurfaceSample>> samples; // per section
     MeshHandle gpu;       // the renderer's mesh (none while missing)
     bool pending = false; // a stand-in loading in the background
+    std::shared_ptr<const MeshSkin> skin; // a skinned mesh's
+    std::vector<SkinWeights> skinWeights;
   };
+
+  // A posed copy, and when it was last posed or kept (see
+  // releaseUnusedSkins()), by mesh id and owner.
+  struct Skin
+  {
+    SkinPose pose;
+    bool used = true;
+    // Its positions skinned on the CPU, for the pose they're of.
+    mutable std::vector<glm::vec3> positions;
+    mutable uint64_t positionsVersion = 0;
+  };
+  static uint64_t skinKey(MeshHandle mesh, uint32_t owner)
+  {
+    return (uint64_t(mesh.id) << 32) | owner;
+  }
+  std::unordered_map<uint64_t, Skin> m_skins;
+  // Free every posed copy of a mesh (it's being removed or replaced).
+  void removeSkins(MeshHandle mesh);
 
   // Fill an entry from mesh data, uploading it.
   bool fill(Entry& entry, const MeshData& mesh);

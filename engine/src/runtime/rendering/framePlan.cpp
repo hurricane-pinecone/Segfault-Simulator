@@ -10,6 +10,7 @@
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <span>
@@ -102,8 +103,18 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
           glm::vec4(material.tiling, material.offset),
           glm::uvec4(static_cast<uint32_t>(material.alphaMode),
                      material.unlit ? 1u : 0u,
-                     0,
+                     std::bit_cast<uint32_t>(material.fadeNearCamera),
                      0)};
+}
+
+FoliageUniforms foliageMaterialUniforms(const MeshMaterial& material)
+{
+  const FoliageSettings& foliage = material.foliage;
+  return {standardMaterialUniforms(material),
+          glm::vec4(std::max(foliage.translucency, 0.0f),
+                    foliage.bend,
+                    foliage.sway,
+                    foliage.flutter)};
 }
 
 TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain,
@@ -357,8 +368,11 @@ void FramePlan::addGrass(const GrassBatch& batch)
 
 void FramePlan::addUi(const UiDrawList& list)
 {
-  if (m_open)
-    m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
+  if (!m_open)
+    return;
+  for (const auto& part : list.parts)
+    m_uiQuads.insert(m_uiQuads.end(), part->begin(), part->end());
+  m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
 }
 
 void FramePlan::finish(
@@ -416,8 +430,8 @@ void FramePlan::finish(
             std::max({glm::length(glm::vec3(instance.model[0])),
                       glm::length(glm::vec3(instance.model[1])),
                       glm::length(glm::vec3(instance.model[2]))});
-        if (glm::distance(center, light.position) >
-            light.radius + mesh->boundsRadius * scale)
+        // (A spot's: those in its cone.)
+        if (!lightReaches(light, center, mesh->boundsRadius * scale))
           continue;
         m_instances.push_back(instance);
         ++draw.instanceCount;
@@ -508,6 +522,8 @@ void FramePlan::finish(
   m_uniforms.sky = glm::vec4(lighting.skyColor, 1.0f);
   m_uniforms.time = glm::vec4(m_frame.time, 0.0f, 0.0f, 0.0f);
   m_uniforms.cameraForward = glm::vec4(m_frame.cameraForward, 0.0f);
+  m_uniforms.cameraTarget =
+      glm::vec4(m_frame.cameraTarget, std::max(m_frame.lineOfSight, 0.0f));
   const float windAngle = glm::radians(m_frame.wind.direction);
   m_uniforms.wind = glm::vec4(std::cos(windAngle),
                               std::sin(windAngle),
@@ -716,24 +732,50 @@ void FramePlan::finish(
       1.0f / static_cast<float>(std::max(pointShadowResolution, 1u));
   m_gpuLights.resize(count);
   for (std::size_t i = 0; i < count; ++i)
-    m_gpuLights[i] = {glm::vec4(lights[i].position, lights[i].radius),
-                      glm::vec4(lights[i].color, lights[i].intensity),
-                      glm::vec4(-1.0f, texel, lights[i].sourceRadius, 0.0f)};
+  {
+    // A spot: its axis and how its cone fades out (shadow.w, 0 for a point
+    // light, 1 / the cosines' span).
+    const PointLight& light = lights[i];
+    const float fade =
+        light.spot()
+            ? 1.0f / std::max(light.spotCosInner - light.spotCosOuter, 1e-4f)
+            : 0.0f;
+    m_gpuLights[i] = {glm::vec4(light.position, light.radius),
+                      glm::vec4(light.color, light.intensity),
+                      glm::vec4(-1.0f, texel, light.sourceRadius, fade),
+                      glm::vec4(light.spotDirection, light.spotCosOuter)};
+  }
   for (std::size_t i = 0; i < m_shadowedLights.size(); ++i)
     m_gpuLights[m_shadowedLights[i].light].shadow.x = static_cast<float>(i);
 
-  // The UI quads as instances, in batches sharing a texture. Boxes don't read
-  // their texture, so they needn't break a run of glyphs.
+  // The UI quads as instances, in batches sharing their textures: a glyph
+  // texture and an image's (an atlas page), bound side by side. A batch goes
+  // on until a quad needs another texture where one's bound; boxes and
+  // chevrons read neither, so they never break one.
   m_uiInstances.clear();
   m_uiBatches.clear();
   for (const UiQuad& quad : m_uiQuads)
   {
-    const UiTexture* texture =
-        quad.kind == UiQuad::Box ? nullptr : quad.texture;
-    if (m_uiBatches.empty() ||
-        (m_uiBatches.back().texture != texture && quad.kind != UiQuad::Box))
+    const bool glyph = quad.kind == UiQuad::Glyph;
+    const bool image = quad.kind == UiQuad::Image || quad.kind == UiQuad::Mask;
+    if (m_uiBatches.empty())
       m_uiBatches.push_back(
-          {texture, static_cast<uint32_t>(m_uiInstances.size()), 0});
+          {nullptr, nullptr, static_cast<uint32_t>(m_uiInstances.size()), 0});
+    if (glyph || image)
+    {
+      const UiTexture*& bound =
+          glyph ? m_uiBatches.back().glyphs : m_uiBatches.back().image;
+      if (bound && bound != quad.texture)
+      {
+        UiBatch next = m_uiBatches.back();
+        next.first = static_cast<uint32_t>(m_uiInstances.size());
+        next.count = 0;
+        (glyph ? next.glyphs : next.image) = quad.texture;
+        m_uiBatches.push_back(next);
+      }
+      else
+        bound = quad.texture;
+    }
     ++m_uiBatches.back().count;
     m_uiInstances.push_back({quad.rect,
                              quad.uv,
@@ -742,7 +784,9 @@ void FramePlan::finish(
                              glm::vec4(quad.radius,
                                        quad.softness,
                                        quad.border,
-                                       static_cast<float>(quad.kind))});
+                                       static_cast<float>(quad.kind) +
+                                           (quad.nearest ? 8.0f : 0.0f)),
+                             quad.clip});
   }
   m_uiQuads.clear();
 }
@@ -762,8 +806,13 @@ PostUniforms FramePlan::compositeUniforms(glm::ivec2 viewport) const
   const BloomSettings& bloom = m_frame.bloom;
   const ColorGrading& grading = m_frame.grading;
   PostUniforms out{};
-  out.texel = glm::vec4(
-      1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))), 0.0f, 0.0f);
+  // (SFS_FIREFLIES=<least light>: marks the pixels far brighter than
+  // those around them, and above that, magenta.)
+  static const char* const kFireflies = std::getenv("SFS_FIREFLIES");
+  out.texel =
+      glm::vec4(1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))),
+                kFireflies ? 1.0f : 0.0f,
+                kFireflies ? std::max(std::atof(kFireflies), 0.0) : 0.0);
   out.bloom = glm::vec4(
       0.0f, 0.0f, 0.0f, bloom.enabled ? std::max(bloom.intensity, 0.0f) : 0.0f);
   out.tone = glm::vec4(static_cast<float>(grading.toneMapper),
@@ -917,7 +966,7 @@ std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
       glm::vec4(std::max(m_frame.focusDistance, 0.01f),
                 std::max(settings.range, 0.0f) * 0.5f,
                 settings.blur * 8.0f * static_cast<float>(viewport.y) / 1080.0f,
-                0.0f),
+                std::max(settings.hyperfocal, 0.0f)),
       glm::vec4(1.0f / glm::vec2(half), 0.0f, 0.0f)};
 }
 
@@ -975,6 +1024,30 @@ void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain)
     uniforms.farMeadow[channel] = meadow(std::size_t(channel) + 1);
 }
 
+void grassVigourUniforms(const GrassVigourSettings& settings,
+                         glm::vec4 rect,
+                         glm::vec4& vigour,
+                         glm::vec4& vigourRect,
+                         glm::vec4& vigourDetail)
+{
+  if (!settings.on)
+  {
+    vigour = glm::vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    vigourRect = glm::vec4(0.0f);
+    vigourDetail = glm::vec4(0.0f, 8.0f, 0.0f, 0.5f);
+    return;
+  }
+  vigour = glm::vec4(settings.scale,
+                     settings.bias,
+                     std::clamp(settings.lengthLeast, 0.0f, 1.0f),
+                     std::clamp(settings.densityLeast, 0.0f, 1.0f));
+  vigourRect = rect;
+  vigourDetail = glm::vec4(settings.detail,
+                           std::max(settings.detailSize, 1e-3f),
+                           settings.drivesData0 ? 1.0f : 0.0f,
+                           settings.outside);
+}
+
 std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                                    const GrassFieldState& field,
                                    const FrameParams& frame)
@@ -1025,6 +1098,15 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                          0.0f,
                          0.0f)};
   plan.draw.far.z = kGrassFadeFrom * distance;
+  // Short grass's turf under it (meshGrass.wgsl; for a before and after,
+  // SFS_GRASS_NO_TURF=1: none).
+  static const bool noTurf = std::getenv("SFS_GRASS_NO_TURF") != nullptr;
+  plan.draw.far.w = noTurf ? 0.0f : 1.0f;
+  grassVigourUniforms(batch.vigour,
+                      field.vigourRect,
+                      plan.draw.vigour,
+                      plan.draw.vigourRect,
+                      plan.draw.vigourDetail);
 
   GrassGrowUniforms& uniforms = plan.grow;
   uniforms.model = model;
@@ -1049,6 +1131,9 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
   uniforms.ground = glm::vec4(ground.min, ground.texelSize());
   uniforms.groundSize = glm::ivec4(ground.size, 0, 0);
   uniforms.maps = maps;
+  uniforms.vigour = plan.draw.vigour;
+  uniforms.vigourRect = plan.draw.vigourRect;
+  uniforms.vigourDetail = plan.draw.vigourDetail;
   uniforms.shape =
       glm::vec4(shape.height, shape.heightVariation, shape.width, cell);
   uniforms.detail = glm::vec4(distance * kGrassFineDetail,

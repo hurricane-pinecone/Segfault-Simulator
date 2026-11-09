@@ -1,6 +1,7 @@
 #pragma once
 
 #include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/ext/vector_float4.hpp"
 
 #include <cstdint>
 
@@ -92,6 +93,12 @@ float moonlight(const SceneLighting& lighting);
  *                  the object's own glowing surface
  * @param sourceRadius how big what gives off the light is (0: a point): shiny
  *                  surfaces reflect a highlight that big, as a sphere light's
+ * @param spotDirection a spot light's axis, unit length, the way it shines
+ *                  (zero: not a spot, it shines all round)
+ * @param spotCosInner the cosine of a spot's full-strength core's angle from
+ *                  its axis
+ * @param spotCosOuter the cosine of the angle from its axis where a spot's
+ *                  light has faded out (at most spotCosInner)
  */
 struct PointLight
 {
@@ -102,7 +109,43 @@ struct PointLight
   bool castsShadow = false;
   float shadowNear = 0.05f;
   float sourceRadius = 0.0f;
+  glm::vec3 spotDirection{0.0f};
+  float spotCosInner = -1.0f;
+  float spotCosOuter = -1.0f;
+
+  bool spot() const { return spotDirection != glm::vec3(0.0f); }
 };
+
+/**
+ * Make `light` a spot along `direction` (any length; zero: a point light
+ * again), full strength within `innerDegrees` of it, faded out by
+ * `outerDegrees` (both from the axis, clamped to 0..180; outer at least
+ * inner).
+ */
+void setSpot(PointLight& light,
+             glm::vec3 direction,
+             float innerDegrees,
+             float outerDegrees);
+
+/**
+ * The smallest sphere around what a light can reach (centre xyz, radius w):
+ * a point light's own; a spot's around its cone (with its round cap), much
+ * smaller for a narrow one.
+ */
+glm::vec4 lightBounds(const PointLight& light);
+
+/**
+ * Whether a sphere (`center`, `radius`) might be lit by `light`: within its
+ * reach, and for a spot inside (or touching) its cone. Conservative: never
+ * false for a sphere it reaches.
+ */
+bool lightReaches(const PointLight& light, glm::vec3 center, float radius);
+
+/**
+ * Whether a spot's cone reaches into a shadow cube's face (+x, -x, +y, -y,
+ * +z, -z: 0 to 5) around it; always true for a point light. Conservative.
+ */
+bool lightReachesFace(const PointLight& light, int face);
 
 /**
  * Shadow settings: the sun's shadow map, and point lights' (a cube map each).
@@ -187,16 +230,28 @@ struct BloomSettings
  * through a real lens. The focus is the view's own (Camera::distance: a
  * camera entity's focusDistance, or the editor's orbit target).
  *
- * @param enabled  whether to blur at all
- * @param range    how deep the sharp part around the focus is, world units
- * @param blur     how blurred the farthest (and nearest) things get (1 =
- *                 normal; 0: none)
+ * The sharp part deepens the farther the focus, as through a real lens (a
+ * thin lens's circle of confusion: aperture x |d - s| / d, at the focus s):
+ * focused `hyperfocal` away or farther, everything beyond it is sharp, so a
+ * far overview of a landscape is in focus but for, at most, its horizon.
+ * Close up, where a real lens would leave very little sharp, `range` is
+ * always kept sharp.
+ *
+ * @param enabled     whether to blur at all
+ * @param range       how deep the sharp part around the focus is, at least,
+ *                    world units
+ * @param blur        how blurred the farthest (and nearest) things get (1 =
+ *                    normal; 0: none)
+ * @param hyperfocal  the lens's hyperfocal distance, world units: focused
+ *                    this far, everything beyond is sharp (0: no lens, only
+ *                    `range`)
  */
 struct DepthOfFieldSettings
 {
   bool enabled = false;
   float range = 10.0f;
   float blur = 1.0f;
+  float hyperfocal = 80.0f;
 };
 
 /**

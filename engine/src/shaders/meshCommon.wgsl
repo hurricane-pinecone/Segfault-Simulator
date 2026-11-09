@@ -66,6 +66,8 @@ struct Frame {
   lightningHigh: vec4f,  // xyz its top, where the cloud base glows, w 1 if the channel lights
   lightningLight: vec4f, // rgb a metre of the channel's light, w how wide the glow is (m)
   lightningGlow: vec4f,  // rgb the cloud base's glow at its middle, w 1 while it flashes
+  cameraTarget: vec4f,   // xyz what the camera looks at, w how far round the line of sight to it what
+                         // clears the view fades (0: none; see cameraFaded() in meshSurface.wgsl)
 }
 
 // A physical sky's cloud layer this frame (skyCommon.wgsl's CloudLayer), as
@@ -168,8 +170,9 @@ struct VertexIn {
   @location(8) uv: vec2f,  // after the instance locations (3-7)
 }
 
-// Per-instance data (buffer 1): model matrix columns, tint, and the rectangle
-// of its textures it shows (xy corner, zw size; a sprite sheet's frame).
+// Per-instance data (buffer 1): model matrix columns, tint, the rectangle
+// of its textures it shows (xy corner, zw size; a sprite sheet's frame) and
+// its own emission.
 struct InstanceIn {
   @location(3) model0: vec4f,
   @location(4) model1: vec4f,
@@ -177,6 +180,7 @@ struct InstanceIn {
   @location(6) model3: vec4f,
   @location(7) tint: vec4f,
   @location(9) uvRect: vec4f,
+  @location(10) emission: vec4f, // rgb: light it gives off over its materials'
 }
 
 fn instanceModel(instance: InstanceIn) -> mat4x4f {

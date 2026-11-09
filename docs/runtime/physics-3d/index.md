@@ -49,12 +49,6 @@ Colliders turn and scale with the entity. A sphere scales by the entity's
 largest scale axis, so it stays round. An entity may have one of each kind; they
 combine into one shape.
 
-In the editor, a collider added to an entity with a mesh starts out fitted to
-the bounds of its mesh and its children's (so one on a group covers the group),
-and **Fit to Mesh** on the collider refits it (after the meshes or their sizes
-change). A flat mesh, such as the built-in plane, gets a 0.1 m thick slab under
-its surface.
-
 `RigidBody3DComponent` fields: `mass` (kg), `kinematic`, `friction`,
 `bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats),
 `lockRotation` (never tips over, e.g. a character) and `bendsGrass` (flattens
@@ -63,6 +57,51 @@ on by default).
 
 The world is Z-up, in metres. Gravity defaults to (0, 0, −9.81);
 `physics.setGravity` changes it.
+
+### Fitting colliders to meshes
+
+In the editor, a collider added to an entity starts out fitted to its mesh's
+bounds, in the entity's own space (so it turns and scales with it). An entity
+with no mesh of its own, such as a group, fits its children's meshes, so one on
+a group covers the group. With no meshes at all, it keeps the defaults. Adding
+it is one undo step.
+
+**Fit to Mesh** in the collider's inspector refits it, after the model or its
+size changes. Tick **Include Children** (shown when the entity has a mesh and
+children) to fit around the children's meshes too. A box fits the bounds. A
+sphere is centred on them, with a radius of their largest half-size. A capsule
+stands upright with the bounds' height. A flat mesh, such as the built-in
+plane, gets a 0.1 m thick slab under its surface. A 2D `BoxCollider2D` fits
+its sprite the same way (**Fit to Sprite**).
+
+Code can do the same with `sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, meshes, tree)`
+or size a collider to any box with `sfs::fitCollider(collider, bounds)` (in
+`engine/runtime/systems/colliderFit.h`).
+
+### Colliders from a model
+
+Name a node (in Blender, an object) in a model with the suffix
+**`-collider`**, for example `Boom-collider`. When the model is placed, that
+node becomes an entity with a `BoxCollider3DComponent` fitted to its mesh's
+bounds, in the node's own space, so it is turned and scaled like the node.
+Its mesh isn't drawn. The suffix may be in any case, and Blender's `.001`
+numbering on a copy is fine (`Boom-collider.001`).
+
+Because the collider is its own entity in the model's tree, a collider under a
+moving part follows that part, for example the folding arms of a sprayer
+boom. Model one rough box per moving part and parent it to that part.
+
+The colliders come from the file each time the model is placed or the scene
+loads, in the editor, in prefabs that contain the model and in exported games.
+Re-export the model and its colliders follow. A collider you resize on a placed
+copy keeps your size, like any other prefab change. To check them, turn on
+[Draw Colliders](../rendering/debug-drawing/index.md#drawing-colliders).
+
+!!! note "Coming from another engine"
+    Unreal marks collision meshes with a `UBX_`/`UCX_` prefix, and Godot with
+    a `-col` or `-colonly` suffix. SFS uses the suffix `-collider`. It always
+    makes a box (not a convex hull) and never draws the mesh, like Godot's
+    `-colonly`.
 
 ## Moving bodies from code
 
@@ -98,7 +137,10 @@ protected:
 | `onTriggerEnter(collision)` / `onTriggerExit` | It starts or stops overlapping, where one of the two is a trigger |
 
 `collision.other` is the entity it touched. Each pair reports one enter and one
-exit, however many points touch. `PhysicsSystem3D` tells the game objects
+exit, however many points touch. A collision begins only when the shapes
+really touch: two passing within Jolt's speculative contact distance (2 cm),
+however long, haven't touched (the navigation planners keep exactly that gap).
+`PhysicsSystem3D` tells the game objects
 itself, as it updates (before the objects' own `onUpdate`s), when it knows its
 scene: a scene that lists it gets one that does. One made in code is told with
 `addSystem<sfs::PhysicsSystem3D>(&scene)`.
@@ -109,7 +151,18 @@ colliders are all triggers is a trigger. A static trigger notices moving
 bodies; a kinematic one notices static bodies too.
 
 `physics.contactsBegun()` and `contactsEnded()` list the same contacts for code
-that isn't a game object, such as a System script.
+that isn't a game object, such as a System script. Each `Contact3D` has a
+`depth`: how far the shapes overlap, in metres. A begun contact gives the
+depth when it began, and an ended one gives the deepest it reached.
+`contactsDeepened()` lists the contacts that went deeper during the last update,
+once each, with their deepest depth so far. Use it to tell a graze from a real
+hit while the contact lasts:
+
+```cpp
+for (const sfs::Contact3D& c : physics.contactsDeepened())
+  if (c.depth > 0.05f)
+    LOG_WARN("hit hard");
+```
 
 ## Raycasts
 
@@ -127,14 +180,35 @@ see the bodies as of the last physics update, so only while the scene plays.
 
 ## How it runs
 
-Each frame, before the game objects update, the system:
+Each update, before the game objects update, the system:
 
 1. Picks up bodies that were added, removed, or changed (a collider or rigid
    body field, or the entity's scale, which rebuilds the body) and transforms
-   moved by code.
-2. Steps the simulation at a fixed 60 steps a second, at most 4 per frame.
-   After a long hitch it drops the rest rather than trying to catch up.
+   moved by code. Each body is checked against what it was made from, which
+   costs a compare when nothing changed. The scene is searched for new bodies
+   only when an entity gained or lost a collider (see
+   `Registry::componentChanges`).
+2. Steps the simulation:
+    - **With dynamic bodies**, at a fixed 60 steps a second of game time, at
+      most 4 per update. After a long hitch it drops the rest rather than
+      trying to catch up.
+    - **With none** (only static and kinematic bodies: a game that uses
+      physics for colliders, queries and contacts), there's nothing to
+      simulate, only contacts to find. It steps only when a body moved,
+      appeared or went, about 60 times a second of real time, sooner when a
+      moving body has gone far. One step covers all the game time since,
+      split so that no moving body goes further in one than three quarters of
+      its own width along the way, nor 1 m. So it can't pass anything
+      unnoticed, however thin, and the cost doesn't grow with the game's
+      speed.
 3. Writes dynamic bodies' new positions into their transforms.
+
+The system runs each of the scene's game-time steps (see
+[Game time](../../core/ecs/index.md#game-time)), so a kinematic body moved by
+a system that steps too is tracked along its way. `lastUpdateStats()` tells
+how many steps the last update took and whether it searched the scene. With
+`SFS_CPU_TIMING` set, the log shows `physics3D/sync`, `physics3D/step` and
+`physics3D/contacts` separately.
 
 The engine's prebuilt Jolt package targets AVX2 CPUs, so a desktop game needs
 an x86-64 CPU from about 2013 or later. The web build compiles Jolt itself
@@ -147,6 +221,7 @@ wherever the browser's WebAssembly does.
   [Turning it on](#turning-it-on)).
 - Nothing simulates while you edit. Press **Play** to see bodies fall, and
   **Stop** to put everything back.
-- Add colliders and rigid bodies with **Add Component**.
+- Add colliders and rigid bodies with **Add Component**. A new collider fits
+  its mesh (see [Fitting colliders to meshes](#fitting-colliders-to-meshes)).
 - The selection's colliders are drawn in the viewport, green for solid and
   orange for triggers (with **Gizmos** on).

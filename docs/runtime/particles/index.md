@@ -63,6 +63,38 @@ Set `enabled = false` on the component to stop emitting; existing particles drai
 out naturally. The component is reflected, so emitters can be placed in the
 editor.
 
+An emitter on a machine that turns and moves, fed by something that varies (a
+combine's straw spreader, a grain auger's spout):
+
+```cpp
+auto& emitter = entity.addComponent<sfs::ParticleEmitterComponent>("chaff");
+emitter.turnWithEntity = true; // offset, shape and launch direction turn with
+                               // the entity's heading: the effect's +X is its +x
+emitter.inheritVelocity = 1.0f; // particles leave with the entity's velocity
+emitter.rate = flow;            // a share of the effect's emitRate (0: none)
+emitter.tint = {0.9f, 0.75f, 0.45f, 1.0f}; // multiplies the effect's colour
+```
+
+| Field | Does |
+| --- | --- |
+| `effect`, `offset`, `enabled` | which registered effect, from where (z: height above the entity), whether it emits |
+| `rate` | how much of the effect's `emitRate` it emits (1 as authored) |
+| `turnWithEntity` | the offset, emission shape and launch direction turn with the entity's heading |
+| `inheritVelocity` | how much of the entity's own velocity (from how far it moved last frame) its particles leave with |
+| `tint` | multiplies the effect's colour and alpha: one effect in many colours |
+
+An entity emitter that moved since last frame spreads that frame's particles
+along the way it came, so a fast one (or any in a sped-up game) leaves an even
+trail rather than a clump each frame.
+
+### Pausing
+
+`particles.setTimeScale(0.0f)` freezes every particle where it is and stops all
+emission (a paused game); `1` runs them as normal, `4` four times as fast (a
+game running at 4x: the scene's systems take game time from
+`Registry::setTimeScale()`, but the particles are simulated with the frame, in
+real time, so they follow it through this).
+
 ### Spawn momentum
 
 Inject the impulse of whatever caused the burst (a bullet, an explosion) so the
@@ -105,8 +137,19 @@ custom shaping — is authoring; see [Decals & splatter](../../core/particles/de
   every effect; over the cap, new emissions are dropped gracefully so stacked
   effects can't run the frame cost away. Each effect also has its own
   `maxParticles` capacity per live occurrence.
-- **See-through.** Particles are unlit and see-through (or glowing, for
+- **See-through.** Particles are see-through (or glowing, for
   `BlendMode::Additive`), so they draw after everything solid, back to front.
+  Each live emitter or burst is one instanced draw.
+- **Lit or not.** By default a particle shows its own colour (light: sparks,
+  embers, magic). An effect with `lit = true` is lit by the scene as matter is
+  (sun, sky, lamps, shadows), shaded as a surface facing up and toward the
+  camera: dust, grain, spray in a lit 3D world, which unlit would look dim by
+  day under a physical sky and glow at night.
+- **Landing cheaply.** With stains enabled, every colliding particle sweeps the
+  collision source each step. An effect with `landsOnPlane = true` lands on its
+  emitter's own plane instead (the emitter entity's height: put it on the ground,
+  or on whatever the particles fall onto, and raise the `offset`'s z), skipping
+  the sweep.
 - **Bounded marks.** `decals.setMaxDecals(n)` caps how many marks are kept (the
   oldest go first), and `decals.setCoverage(cellSize, perCell)` keeps a spot
   that's hit again and again from piling up marks.
@@ -120,6 +163,7 @@ custom shaping — is authoring; see [Decals & splatter](../../core/particles/de
 | `enableStains(decals, terrain = nullptr)` | make decal effects land and stick |
 | `groundElevationAt(position)` | surface height for a terrain-aware spawn |
 | `setMaxParticles(n)` | global live-particle ceiling |
+| `setTimeScale(scale)` | how fast particles' time runs (0: paused) |
 | `liveParticleCount()` | current live count (debug / HUD) |
 | `hasEffect(name)` / `effect(name)` / `effectNames()` | inspect registered effects |
 

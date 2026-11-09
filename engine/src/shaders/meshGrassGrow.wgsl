@@ -68,6 +68,13 @@ struct Grow {
   eye: vec4f,
   forward: vec4f,
   hidden: vec4f,
+  // Its vigour (GrassVigourSettings, see grassVigourUniforms()): x scale, y
+  // bias, z the least length, w the least density; the field's world min and
+  // 1 / its size (z 0: none); x how much detail noise, y its size, z 1 if it
+  // drives Data 0, w the field past it.
+  vigour: vec4f,
+  vigourRect: vec4f,
+  vigourDetail: vec4f,
 }
 
 // A tile to build, or to grow blades from (GrassTileEntry).
@@ -117,7 +124,7 @@ fn grassFull(away: f32) -> f32 {
 //   look.y: width, and segments plus how far it's taken on the coarser
 //           shape (0..1) (float16 x 2)
 //   look.z: facing (of a turn), lean, random, tone (unorm8 x 4)
-//   look.w: where it is on the maps (unorm16 x 2)
+//   look.w: the maps' data where it grows (unorm8 x 4)
 struct GrownBlade {
   root: vec4f,
   look: vec4u,
@@ -151,6 +158,14 @@ struct GrownBlade {
 // of the screen (nothing: very far; grassCulling.wgsl: as its bits), its
 // levels each with blocks twice the size.
 @group(0) @binding(12) var farthest: texture_2d<u32>;
+// The maps as they are now, growing (GrassMaps::nowPixels(): r coverage, g
+// length, b the band, a bounds), where they've been cut (cutPixels(): r the
+// cut's edge, g and b the way the blades lean, a how long the cut left them),
+// their data, and the field grass grows by (vigour).
+@group(0) @binding(13) var nowMap: texture_2d<f32>;
+@group(0) @binding(14) var cutMap: texture_2d<f32>;
+@group(0) @binding(15) var dataMap: texture_2d<f32>;
+@group(0) @binding(16) var vigourMap: texture_2d<f32>;
 
 // One more blade at a step: 0 cells (or kept blades) looked at, 1 on ground
 // and kept this far away, 2 covered (by its maps), 3 tall enough to draw, 4
@@ -202,6 +217,178 @@ fn heightAt(at: vec2f, fallback: f32) -> f32 {
     weight += w;
   }
   return select(fallback, total / weight, weight > 1e-5);
+}
+
+// A hash of a lattice point, 0..1, and smooth value noise from it (the
+// maps' own, for grassShape()).
+fn shapeHash(p: vec2f) -> f32 {
+  let q = fract(p * vec2f(0.1031, 0.1030));
+  let r = q + dot(q, q.yx + 33.33);
+  return fract((r.x + r.y) * r.x);
+}
+
+fn shapeNoise(p: vec2f) -> f32 {
+  let cell = floor(p);
+  let f = p - cell;
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = shapeHash(cell);
+  let b = shapeHash(cell + vec2f(1.0, 0.0));
+  let c = shapeHash(cell + vec2f(0.0, 1.0));
+  let d = shapeHash(cell + vec2f(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// The shape maps at `uv` as grass grows to them: r how much grows, g how
+// long, and b where it may grow at all (their bounds, read between texels:
+// it grows where they're at least a half, to the blade, see
+// GrassMaps::boundsValue()). Where coverage falls (worn or worked ground) it
+// gives out over a band (the maps' b, grassEdgeBand(): how far in from the
+// fall a point is), thinner and shorter toward it, and where it's part
+// covered, in clumps with gaps between (a worn way's surviving tufts) rather
+// than evenly sparse; the clumps' noise is fixed to the maps (so to the
+// ground: it holds still as the camera moves) and wanders a clump's edge
+// across the band, so the maps' texels never show as squares nor an edge as
+// a straight line. Deep in full grass (most of it) none of that's needed.
+// meshGrass.wgsl's (the ground under the blades) takes their density on
+// average instead of the clumps: keep its band as this.
+fn grassShape(uv: vec2f) -> vec4f {
+  return grassShapeOf(textureSampleLevel(shapeMap, mapSampler, uv, 0.0), uv);
+}
+
+// The same, of maps as read at `uv`.
+fn grassShapeOf(maps: vec4f, uv: vec2f) -> vec4f {
+  if (min(maps.r, maps.b) >= 0.999) {
+    return vec4f(1.0, maps.g, maps.a, 0.0);
+  }
+  let t = uv * vec2f(textureDimensions(shapeMap));
+  // (The band's against the grass here: part-covered ground as a whole is
+  // in clumps, not given out.)
+  let edge = smoothstep(0.25, 1.0, maps.b / max(maps.r, 1e-3));
+  let noise = shapeNoise(t * 0.8 + 71.0) * 0.6 + shapeNoise(t * 0.3 + 3.1) * 0.4;
+  let clump = mix(0.1, 0.9, noise);
+  // (None at all where nothing's covered: bare is bare, the clumps' noise
+  // never lifts it.)
+  let cover = clamp((maps.r * edge - clump) / 0.5 + 0.5, 0.0, 1.0) * step(0.002, maps.r);
+  return vec4f(cover, maps.g * mix(0.45, 1.0, edge), maps.a, 0.0);
+}
+
+// The maps as they are now at `uv` (growing): x coverage, y length. Where
+// they've been cut, a blade takes its length only from the texels on its own
+// side of the cut's edge (the cut map read between them and cut at a half,
+// as bounds are), so the edge is where the mower's was, to the blade.
+fn nowAt(uv: vec2f) -> vec2f {
+  let size = vec2i(textureDimensions(nowMap));
+  let p = uv * vec2f(size) - 0.5;
+  let low = vec2i(floor(p));
+  let f = p - floor(p);
+  var cover = 0.0;
+  var edge = 0.0;
+  var lengths: array<f32, 4>;
+  var cuts: array<f32, 4>;
+  var weights: array<f32, 4>;
+  for (var k = 0; k < 4; k++) {
+    let offset = vec2i(k & 1, k >> 1);
+    let texel = clamp(low + offset, vec2i(0), size - 1);
+    let now = textureLoad(nowMap, texel, 0);
+    let cut = textureLoad(cutMap, texel, 0).r;
+    let w = select(1.0 - f.x, f.x, offset.x == 1) * select(1.0 - f.y, f.y, offset.y == 1);
+    cover += now.r * w;
+    edge += cut * w;
+    lengths[k] = now.g;
+    cuts[k] = cut;
+    weights[k] = w;
+  }
+  let inside = edge >= 0.5;
+  var all = 0.0;
+  var side = 0.0;
+  var sum = 0.0;
+  for (var k = 0; k < 4; k++) {
+    all += lengths[k] * weights[k];
+    if ((cuts[k] >= 0.5) == inside) {
+      side += lengths[k] * weights[k];
+      sum += weights[k];
+    }
+  }
+  return vec2f(cover, select(all, side / max(sum, 1e-4), sum > 1e-4));
+}
+
+// How mown grass lies at `uv` (cutPixels(), read between texels): xy the way
+// its blades lean (by how much: a roller's 1), z how long the cut left it, w
+// whether it's cut (at least a half).
+fn laidAt(uv: vec2f) -> vec4f {
+  let size = vec2i(textureDimensions(cutMap));
+  let p = uv * vec2f(size) - 0.5;
+  let low = vec2i(floor(p));
+  let f = p - floor(p);
+  var sum = vec4f(0.0);
+  for (var k = 0; k < 4; k++) {
+    let offset = vec2i(k & 1, k >> 1);
+    let texel = clamp(low + offset, vec2i(0), size - 1);
+    let w = select(1.0 - f.x, f.x, offset.x == 1) * select(1.0 - f.y, f.y, offset.y == 1);
+    sum += textureLoad(cutMap, texel, 0) * w;
+  }
+  return vec4f(sum.gb * (255.0 / 127.5) - 1.0, sum.a, sum.r);
+}
+
+// A blade's height over mown grass: cut level (a little either way), not as
+// tall or short as it grows of itself, till it's grown back past the cut.
+fn mownHeight(full: f32, length: f32, tall: f32, laid: vec4f) -> f32 {
+  if (laid.w < 0.5) {
+    return full;
+  }
+  let level = grow.shape.x * length * (1.0 + (tall - 0.5) * 0.08);
+  return mix(level, full, smoothstep(0.0, 0.3, length - laid.z));
+}
+
+// Short blades (mown) wider, a stubbier, fuller tuft: as much ground covered by as many blades.
+fn stubby(height: f32) -> f32 {
+  return mix(1.8, 1.0, smoothstep(0.12, 0.45, height / max(grow.shape.x, 1e-3)));
+}
+
+// How the maps grow a blade as they are now at `uv`: grassShape()'s, from
+// what they grow to (`shapeMap`'s band and bounds, and its length times
+// `most`, the blade's vigour's) and how they are now.
+fn grassShapeNow(uv: vec2f, most: f32) -> vec4f {
+  let goal = textureSampleLevel(shapeMap, mapSampler, uv, 0.0);
+  let now = nowAt(uv);
+  return grassShapeOf(vec4f(now.x, min(now.y, goal.g * most), goal.b, goal.a), uv);
+}
+
+// Vigour (GrassVigourSettings): the field at a world point (`outside` past
+// it, handing over at its edge)...
+fn vigourField(world: vec2f) -> f32 {
+  if (grow.vigourRect.z <= 0.0) {
+    return grow.vigourDetail.w;
+  }
+  let uv = (world - grow.vigourRect.xy) * grow.vigourRect.zw;
+  let edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+  if (edge <= 0.0) {
+    return grow.vigourDetail.w;
+  }
+  let field = textureSampleLevel(vigourMap, mapSampler, uv, 0.0).r;
+  return mix(grow.vigourDetail.w, field, smoothstep(0.0, 0.03, edge));
+}
+
+// ...the ground's smooth detail noise over it (0..1, grassVigourDetail())...
+fn vigourDetailAt(world: vec2f) -> f32 {
+  let size = grow.vigourDetail.y;
+  return shapeNoise(world / size + 17.3) * 0.65 + shapeNoise(world / (size * 0.37) - 5.1) * 0.35;
+}
+
+// ...and the vigour of both (`detail` that noise's).
+fn vigourOf(world: vec2f, detail: f32) -> f32 {
+  if (grow.vigour.x == 0.0) {
+    return smoothstep(0.0, 1.0, grow.vigour.y); // (off: 1)
+  }
+  let w = vigourField(world) + (detail - 0.5) * grow.vigourDetail.x;
+  return smoothstep(0.0, 1.0, w * grow.vigour.x + grow.vigour.y);
+}
+
+// Whether a blade's kept by its vigour (fewer where it's low), by a random
+// number of its own (from its cell's seed).
+fn vigourKeeps(seed: u32, vigour: f32) -> bool {
+  let thin = f32(pcg(seed ^ 0x2c1b3c6du) >> 8u) / 16777216.0;
+  return thin < mix(grow.vigour.w, 1.0, vigour);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -257,17 +444,21 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
   count(1u);
   let root = (grow.model * vec4f(local, heightAt(at, ground.w), 1.0)).xyz;
 
-  // As its maps say: whether it grows here, and how long.
+  // As its maps say (as they are now): whether it grows here, and how long;
+  // and its vigour.
+  let vigour = vigourOf(root.xy, vigourDetailAt(root.xy));
   let uv = (local - grow.maps.xy) * grow.maps.zw;
-  let maps = textureSampleLevel(shapeMap, mapSampler, uv, 0.0);
+  let maps = grassShapeNow(uv, mix(grow.vigour.z, 1.0, vigour));
   let keep = random(&seed);
   let tall = random(&seed);
-  if (keep >= maps.r) {
+  if (keep >= maps.r * step(0.5, maps.b) || !vigourKeeps(seed, vigour)) {
     return;
   }
   count(2u);
-  var height = grow.shape.x * max(1.0 + grow.shape.y * (tall * 2.0 - 1.0) * 0.5, 0.05) * maps.g;
-  var width = grow.shape.z;
+  let laid = laidAt(uv);
+  var height = mownHeight(grow.shape.x * max(1.0 + grow.shape.y * (tall * 2.0 - 1.0) * 0.5, 0.05) * maps.g,
+                          maps.g, tall, laid);
+  var width = grow.shape.z * stubby(height);
   if (stable) {
     // Growing in; and wider where fewer are kept, so the field still reads
     // full.
@@ -287,7 +478,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
     width *= min(pow(max(left, 1.0 / 64.0), -0.4), 4.0);
   }
   let normal = normalize((grow.normalMatrix * vec4f(ground.xyz, 0.0)).xyz);
-  place(root, height, width, away, pack2x16snorm(normal.xy), uv, lattice, seed, 0u);
+  place(root, height, width, away, pack2x16snorm(normal.xy), uv, lattice, seed, 0u, vigour, laid.xy);
 }
 
 // A blade grown this frame (`seed` its cell's, past its place, rank and
@@ -295,7 +486,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
 // (and as a shadow caster, if near enough). `marks`: TileEntry::lattice's 4
 // and 8 (debug view), shown by its width's and segments' signs.
 fn place(root: vec3f, height: f32, width: f32, away: f32, normal: u32, uv: vec2f,
-         lattice: u32, seedAfter: u32, marks: u32) {
+         lattice: u32, seedAfter: u32, marks: u32, vigour: f32, lean: vec2f) {
   if (!shown(root, height)) {
     return;
   }
@@ -321,7 +512,8 @@ fn place(root: vec3f, height: f32, width: f32, away: f32, normal: u32, uv: vec2f
   for (var l = 0u; l < list; l++) {
     first += grow.capacity[l];
   }
-  put(first + index, list, level, root, height, width, away, normal, uv, lattice, seedAfter, marks);
+  put(first + index, list, level, root, height, width, away, normal, uv, lattice, seedAfter, marks,
+      vigour, lean);
 }
 
 // Whether a blade's tall enough to draw, and in view: a sphere round it,
@@ -354,23 +546,41 @@ fn detailOf(away: f32, height: f32) -> vec2f {
 
 // A blade listed, at `at` of `blades`, in `list` (its detail `level`).
 fn put(at: u32, list: u32, level: f32, root: vec3f, height: f32, width: f32, away: f32,
-       normal: u32, uv: vec2f, lattice: u32, seedAfter: u32, marks: u32) {
+       normal: u32, uv: vec2f, lattice: u32, seedAfter: u32, marks: u32, vigour: f32,
+       laid: vec2f) {
   let segments = select(select(1.0, 2.0, list == 1u), 4.0, list == 0u);
   let morph = select(min(level - f32(list), 0.99), 0.0, list == 2u); // (float16: below 1)
 
   var seed = seedAfter;
-  let facing = random(&seed);
-  let lean = random(&seed);
+  var facing = random(&seed);
+  // (Its own lean: grassBlade.wgsl bends it lean^2 x 1.2 radians, up to 0.6.)
+  var lean = random(&seed) * 0.7071;
   let blade = random(&seed);
   let tone = random(&seed);
+  // Mown grass laid over (a roller's stripes): facing the way it was rolled,
+  // give or take, and leaning over that way by how hard (to about 65 degrees,
+  // where rolled grass lies).
+  let pressed = length(laid);
+  if (pressed > 0.02) {
+    let toward = atan2(laid.y, laid.x) / 6.2831853 + (facing - 0.5) * 0.14;
+    let own = facing;
+    facing = fract(mix(own, toward, smoothstep(0.02, 0.3, pressed)) + 1.0);
+    lean = max(lean, sqrt(min(pressed, 1.0) * 0.95));
+  }
   let sizes = vec2f(width, segments + morph) *
               select(vec2f(1.0), vec2f(-1.0), vec2<bool>((marks & 4u) != 0u, (marks & 8u) != 0u));
+  // Its maps' data where it grows, for its material (Data 0 by its vigour,
+  // if that drives it).
+  var data = textureSampleLevel(dataMap, mapSampler, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0);
+  if (grow.vigourDetail.z > 0.5) {
+    data.x = 1.0 - vigour;
+  }
   blades[at] = GrownBlade(
       vec4f(root, height),
       vec4u(normal,
             pack2x16float(sizes),
             pack4x8unorm(vec4f(facing, lean, blade, tone)),
-            pack2x16unorm(clamp(uv, vec2f(0.0), vec2f(1.0)))));
+            pack4x8unorm(data)));
   count(5u + list);
   count(10u + lattice);
 
@@ -389,8 +599,9 @@ fn put(at: u32, list: u32, level: f32, root: vec3f, height: f32, width: f32, awa
 // --- Kept in tiles -----------------------------------------------------------
 
 // A tile's blade, kept (16 bytes):
-//   x: its cell in the tile (6 bits x, 6 y), then its height (unorm 20 bits,
-//      of the tallest a blade grows)
+//   x: its cell in the tile (6 bits x, 6 y), then its height (unorm 12 bits,
+//      of the tallest a blade grows, as its maps grow it to), then the
+//      ground's detail noise there (unorm 8 bits, vigourDetailAt())
 //   y: its root's height, z its ground texel's (the ground's own Z; f32)
 //   w: its ground's world normal, xy (snorm16 x 2)
 
@@ -445,10 +656,10 @@ fn buildCell(tile: TileEntry, i: u32) {
   }
   let height = heightAt(at, ground.w);
   let uv = (local - grow.maps.xy) * grow.maps.zw;
-  let maps = textureSampleLevel(shapeMap, mapSampler, uv, 0.0);
+  let maps = grassShape(uv);
   let keep = random(&seed);
   let tall = random(&seed);
-  if (keep >= maps.r) {
+  if (keep >= maps.r * step(0.5, maps.b)) {
     return;
   }
   let full = grow.shape.x * max(1.0 + grow.shape.y * (tall * 2.0 - 1.0) * 0.5, 0.05) * maps.g;
@@ -462,8 +673,10 @@ fn buildCell(tile: TileEntry, i: u32) {
   }
   count(15u);
   let normal = normalize((grow.normalMatrix * vec4f(ground.xyz, 0.0)).xyz);
-  let tall20 = u32(round(clamp(full / tallest(), 0.0, 1.0) * 1048575.0));
-  cache[tile.first + index] = vec4u(i | (tall20 << 12u), bitcast<u32>(height),
+  let tall12 = u32(round(clamp(full / tallest(), 0.0, 1.0) * 4095.0));
+  let world = (grow.model * vec4f(local, height, 1.0)).xy;
+  let detail = u32(round(clamp(vigourDetailAt(world), 0.0, 1.0) * 255.0));
+  cache[tile.first + index] = vec4u(i | (tall12 << 12u) | (detail << 24u), bitcast<u32>(height),
                                     bitcast<u32>(ground.w), pack2x16snorm(normal.xy));
 }
 
@@ -675,7 +888,7 @@ fn cs_grow(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index)
     var b: Grown;
     _ = grownFrom(tile, i, &b, true);
     put(at, list - 1u, detailOf(b.away, b.height).y, b.root, b.height, b.width, b.away,
-        b.normal, b.uv, tile.lattice & 3u, b.seed, tile.lattice & 12u);
+        b.normal, b.uv, tile.lattice & 3u, b.seed, tile.lattice & 12u, b.vigour, b.lean);
   }
 }
 
@@ -688,6 +901,8 @@ struct Grown {
   uv: vec2f,
   normal: u32, // its ground's (KeptBlade::w)
   seed: u32,   // its cell's, past its place, rank and maps' randoms
+  vigour: f32,
+  lean: vec2f, // how it's laid (laidAt(): mown grass rolled)
 }
 
 // Grows a tile's kept blade `i` as cs_main would have it: whether it's kept
@@ -720,13 +935,34 @@ fn grownFrom(tile: TileEntry, i: u32, b: ptr<function, Grown>, found: bool) -> b
     count(1u);
     count(2u);
   }
-  _ = random(&seed); // whether it grows here, and how tall: kept
-  _ = random(&seed);
+  let keep = random(&seed); // whether it grows here, and how tall
+  let tall = random(&seed);
   (*b).root = (grow.model * vec4f(local, bitcast<f32>(kept.y), 1.0)).xyz;
-  (*b).height = f32(kept.x >> 12u) / 1048575.0 * tallest() * grown;
-  (*b).width = grow.shape.z * min(pow(grassFull(away), -kWiden), kMostWider) * mix(0.4, 1.0, grown);
-  (*b).away = away;
   (*b).uv = (local - grow.maps.xy) * grow.maps.zw;
+  // Its vigour: fewer and shorter where it's low.
+  let vigour = vigourOf((*b).root.xy, f32(kept.x >> 24u) / 255.0);
+  if (!found && !vigourKeeps(seed, vigour)) {
+    return false;
+  }
+  (*b).vigour = vigour;
+  let most = mix(grow.vigour.z, 1.0, vigour);
+  if ((tile.lattice & 32u) != 0u) {
+    // Over maps growing: as they are now (kept as they grow to).
+    let maps = grassShapeNow((*b).uv, most);
+    if (!found && keep >= maps.r * step(0.5, maps.b)) {
+      return false;
+    }
+    let laid = laidAt((*b).uv);
+    (*b).height = mownHeight(grow.shape.x * max(1.0 + grow.shape.y * (tall * 2.0 - 1.0) * 0.5, 0.05) * maps.g,
+                             maps.g, tall, laid) * grown;
+    (*b).lean = laid.xy;
+  } else {
+    (*b).lean = vec2f(0.0);
+    (*b).height = f32((kept.x >> 12u) & 4095u) / 4095.0 * tallest() * most * grown;
+  }
+  (*b).width = grow.shape.z * min(pow(grassFull(away), -kWiden), kMostWider) * mix(0.4, 1.0, grown) *
+               stubby((*b).height);
+  (*b).away = away;
   (*b).normal = kept.w;
   (*b).seed = seed;
   return true;

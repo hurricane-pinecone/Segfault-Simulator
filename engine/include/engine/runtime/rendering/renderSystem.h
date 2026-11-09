@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/lightning.h"
 #include "engine/core/rendering/rain.h"
@@ -12,6 +13,7 @@
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/renderModuleHost.h"
 #include "engine/runtime/rendering/renderContext.h"
+#include "engine/runtime/rendering/renderTexture.h"
 #include "engine/runtime/rendering/space2D.h"
 
 #include <cstddef>
@@ -43,6 +45,8 @@ struct RenderStats
   std::size_t shadowedLights = 0;       // point lights casting shadows
   std::size_t lightShadowInstances = 0; // casters for them
   std::size_t grassFields = 0;
+  std::size_t colliders = 0;  // drawn as debug lines (drawColliders)
+  std::size_t debugLines = 0; // every debug line, colliders' included
 };
 
 /**
@@ -173,7 +177,8 @@ public:
 
   /**
    * Wait for a physical sky's diffuse light being worked out in the
-   * background (as the sun moves), so the next frame has it. For tests.
+   * background (as the sun moves), so the next frame has it (not easing
+   * toward it). For tests.
    */
   void finishSkyWork();
 
@@ -300,7 +305,47 @@ public:
   ContactShadowSettings effectiveContactShadows() const;
   RainSettings effectiveRain() const;
 
+  // --- debug drawing (debug features: see debugFeatures.h) -----------------
+
+  /**
+   * Lines to draw over the next frame (see DebugLines), for debugging: add
+   * to it while updating; the frame draws them and empties it. Drawn only
+   * while debug features are enabled (the editor, a Debug build, a
+   * development export); otherwise emptied undrawn.
+   */
+  DebugLines& debugLines() { return m_debugLines; }
+
+  /**
+   * The scene's "Draw Colliders" debug setting (saved with it): every
+   * collider drawn as lines in the game and the editor's viewport (see
+   * colliderLines.h). Off by default.
+   */
+  void setDrawColliders(bool on) { m_drawColliders = on; }
+  bool drawColliders() const { return m_drawColliders; }
+  /**
+   * Over the scene's setting while the game runs (game code, a development
+   * key); none: the scene's (the default). SFS_DRAW_COLLIDERS=1 (or 0) in
+   * the environment forces it too, below this.
+   */
+  void forceDrawColliders(std::optional<bool> on)
+  {
+    m_forcedDrawColliders = on;
+  }
+  /**
+   * Whether this frame draws colliders: forced, else SFS_DRAW_COLLIDERS,
+   * else the scene's setting; always false while debug features are off (a
+   * release export), whatever those say.
+   */
+  bool effectiveDrawColliders() const;
+
   const RenderStats& stats() const { return m_stats; }
+
+  /**
+   * The picture an entity's camera feed (CameraFeedComponent) films, made the
+   * first time it's asked for (null without one): show it with ui::Image. It's
+   * filmed only while it's shown, at the feed's rate, one feed a frame.
+   */
+  std::shared_ptr<const RenderTexture> cameraFeed(Entity entity);
 
   /** Lighting, shadow and camera knobs for the debug UI. */
   std::vector<ModuleSetting> settings() override;
@@ -380,6 +425,10 @@ private:
   // them) into m_shadowedLights, clearing castsShadow on the rest.
   void chooseShadowedLights();
 
+  // The camera feed to film this frame (shown, due, the most overdue), if
+  // any: its view, and its frustum in m_context for the modules.
+  std::optional<FeedView> chooseFeed();
+
   void submit(const MeshDrawCommand& command);
   void submit(const GrassDrawCommand& command);
   void submit(const UiDrawCommand& command);
@@ -427,6 +476,9 @@ private:
   RainSettings m_rain;
   bool m_temporalAntiAliasing = false;
   std::optional<bool> m_forcedTemporalAntiAliasing;
+  DebugLines m_debugLines;
+  bool m_drawColliders = false;
+  std::optional<bool> m_forcedDrawColliders;
   SkySettings m_sky;
   ColorGrading m_grading;
   StyleSource m_styleSource;
@@ -455,6 +507,15 @@ private:
   std::vector<GlowPoint> m_glow;
 
   RenderContext m_context;
+  // Camera feeds asked for (cameraFeed()), by entity id: their pictures, when
+  // each was last filmed (seconds of a steady clock), and the one this frame.
+  struct Feed
+  {
+    std::shared_ptr<RenderTexture> texture;
+    double filmed = -1.0e9;
+  };
+  std::unordered_map<uint32_t, Feed> m_feeds;
+  const RenderTexture* m_feedFilming = nullptr;
   glm::mat4 m_lightViewProjection{1.0f};
   SunCascades m_cascades;
   // A physical sky: its model (for the settings it was built from), the sun
@@ -488,8 +549,24 @@ private:
     // The light on the ground from the sky above, and on the clouds' tops
     // from it, clear of clouds.
     glm::vec3 clearSkyLight{0.0f};
+    double asked = 0.0; // when it was asked for (seconds, see m_skyCame)
   };
   std::future<SkyLight> m_skyJob;
+  // What the frame shows of it: eased from what it showed to the latest
+  // worked out (m_skyTo) over about as long as the sun took to get from the
+  // last's to its (so it keeps up without a step as each comes), from when
+  // it came (seconds of a steady clock).
+  SkyLight m_skyFrom;
+  SkyLight m_skyTo;
+  double m_skyCame = 0.0;
+  double m_skyEasing = 0.0;
+  bool m_skyFinished = false; // finishSkyWork(): the next frame shows it all
+  // What the sky's textures were last drawn for: drawn again as the sun
+  // moves a little, or the light they hold changes a little.
+  glm::vec3 m_skyDrawnSun{0.0f};
+  float m_skyDrawnGround = 0.0f;
+  float m_skyDrawnNight = 1.0f;
+  float m_skyDrawnCover = 0.0f;
   std::vector<PointLight> m_pointLights;
   std::vector<PointLight> m_shadowedLights; // those casting shadows
   std::vector<std::size_t> m_shadowCandidates;

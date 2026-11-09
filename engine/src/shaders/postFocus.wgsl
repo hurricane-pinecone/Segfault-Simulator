@@ -10,7 +10,8 @@
 
 struct Focus {
   depth: vec4f, // x projection[2][2], y projection[3][2], z 1 perspective (0 orthographic)
-  focus: vec4f, // x focus distance, y half the sharp range, z blur radius (half-size texels) at full blur
+  focus: vec4f, // x focus distance, y half the sharp range, z blur radius (half-size texels) at full blur,
+                // w the lens's hyperfocal distance (0: none)
   texel: vec4f, // xy a half-size texel (uv)
 }
 
@@ -35,9 +36,20 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Varyings {
   return out;
 }
 
-// How blurred a full-size pixel is, 0 to 1: nothing within the sharp range,
-// easing in beyond it, fully one and a half focus distances past it (and
-// toward the camera, as much).
+// How much past the sharp part a lens's blur grows to full (a share of the
+// most it may be and stay sharp).
+const kLensRamp = 0.6;
+
+// How blurred a full-size pixel is, 0 to 1, the lesser of two:
+// - the sharp range: nothing within it, easing in beyond it, fully one and a
+//   half focus distances past it (and toward the camera, as much);
+// - a thin lens: its circle of confusion, aperture x |d - s| / d at the focus
+//   s, is as the hyperfocal distance H x |1/s - 1/d| (in the share of it
+//   that's still sharp), so the sharp part deepens as the focus moves off
+//   and, focused H or farther, holds out to the horizon.
+// So close up the sharp range keeps what a lens would blur (a real one has
+// little in focus there), and from afar the lens keeps most of the view
+// sharp.
 fn blurAt(pixel: vec2i) -> f32 {
   let size = vec2i(textureDimensions(depthMap));
   let d = textureLoad(depthMap, clamp(pixel, vec2i(0), size - 1), 0); // its first sample
@@ -45,7 +57,13 @@ fn blurAt(pixel: vec2i) -> f32 {
                     focus.depth.y / min(d + focus.depth.x, -1e-6),
                     focus.depth.z > 0.5);
   let outside = max(abs(away - focus.focus.x) - focus.focus.y, 0.0);
-  return smoothstep(0.0, 1.0, outside / max(focus.focus.x * 1.5, 1.0));
+  let ranged = smoothstep(0.0, 1.0, outside / max(focus.focus.x * 1.5, 1.0));
+  if (focus.focus.w <= 0.0) {
+    return ranged;
+  }
+  let confusion = focus.focus.w * abs(1.0 / focus.focus.x - 1.0 / max(away, 1e-3));
+  let lens = smoothstep(0.0, 1.0, (confusion - 1.0) / kLensRamp);
+  return min(ranged, lens);
 }
 
 @fragment

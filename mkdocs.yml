@@ -94,10 +94,14 @@ nav:
           - Meshes, materials & lighting: runtime/rendering/meshes-and-lighting/index.md
           - Visual styles & grading: runtime/rendering/visual-styles/index.md
           - Render backends: runtime/rendering/backends/index.md
+          - Debug drawing: runtime/rendering/debug-drawing/index.md
       - Runtime systems:
           - runtime/systems/index.md
           - Camera system: runtime/systems/camera-system/index.md
+          - Prefab system: runtime/systems/prefab-system/index.md
       - 3D physics: runtime/physics-3d/index.md
+      - Navigation (AI agents): runtime/navigation/index.md
+      - Skeletal animation: runtime/animation/index.md
       - Game UI: runtime/ui/index.md
       - Particles in your game: runtime/particles/index.md
       - Voxel world: runtime/voxel/index.md

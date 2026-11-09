@@ -98,12 +98,14 @@ public:
 
   /**
    * Create an instance of a prefab in `scene`, under `parent` (none: a root).
+   * `made`, when given, gets every entity created, parents first.
    *
    * @return its root, or a placeholder (logged) if the prefab can't be read
    */
   Entity instantiate(std::string_view prefab,
                      Scene& scene,
-                     const Entity& parent = {}) const;
+                     const Entity& parent = {},
+                     std::vector<Entity>* made = nullptr) const;
 
   /**
    * A prefab file's contents ({ "formatVersion", "root" }) made from an entity
@@ -236,7 +238,8 @@ private:
   Entity loadInstance(const nlohmann::json& entry,
                       Scene& scene,
                       const Entity& parent,
-                      std::set<std::string>* unresolvedTypes) const;
+                      std::set<std::string>* unresolvedTypes,
+                      std::vector<Entity>* made = nullptr) const;
   // What a prefab alone gives: path -> (parent path, components), with every
   // known component's fields filled in, for comparing an instance against.
   std::vector<PrefabNode> expandBase(std::string_view prefab) const;

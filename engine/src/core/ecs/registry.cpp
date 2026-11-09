@@ -97,8 +97,20 @@ void Registry::removeEntityFromSystems(const Entity& entity)
   }
 }
 
+void Registry::countChanges(const Signature& before, const Signature& after)
+{
+  const Signature changed = before ^ after;
+  if (changed.none())
+    return;
+  for (std::size_t id = 0; id < m_componentChanges.size(); ++id)
+    if (changed.test(id))
+      ++m_componentChanges[id];
+}
+
 void Registry::componentsChanged(const Entity& entity, const Signature& before)
 {
+  countChanges(before, entityComponentSignatures[entity.getId()]);
+
   // Not in any system yet: it joins them, as it is then, at the next flush.
   if (entitiesToBeAdded.contains(entity))
     return;
@@ -156,7 +168,10 @@ void Registry::flushEntities()
       removeEntityFromSystems(entity);
 
     if (id < entityComponentSignatures.size())
+    {
+      countChanges(entityComponentSignatures[id], Signature());
       entityComponentSignatures[id].reset();
+    }
 
     for (auto& pool : componentPools)
     {

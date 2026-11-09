@@ -8,6 +8,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/terrain.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/meshLibrary.h"
@@ -34,8 +35,99 @@ constexpr int kTile = DeformationMap::kTile;
 constexpr float kPatchStep = DeformationModule::kPatchSpacing *
                              (1 << (DeformationModule::kPatchRings - 1));
 // How far above the ground a deformer's underside is looked at (metres):
-// enough for a ridge and the lugs above the tyre's lowest point.
+// enough for a ridge and the lugs above the tyre's lowest point (a wheel
+// sunk below the ground, above its lowest point).
 constexpr float kAboveGround = 0.12f;
+// How far a tyre's lugs stand proud (metres): a rut's floor that deep is
+// left as its lugs marked it when its walls slump (PressSettings::tread).
+constexpr float kTread = 0.03f;
+// Most presses a frame for one of a deformer's meshes along the way it went
+// since it last pressed (sliding, and rolling: each of more places, their
+// lowest, if there are more), and the farthest it's pressed along (further
+// in a frame, it was put there, not driven): kFarthestSweep, or as far as
+// kFastest goes in the frame's game time (the game going fast).
+constexpr int kMostSweeps = 16;
+constexpr int kMostRolls = 4;
+constexpr float kFarthestSweep = 1.0f;
+constexpr float kFastest = 25.0f;
+// How far a deformer's mesh goes before it presses again (metres), rather
+// than each frame, so what it costs goes with the distance, not the frame
+// rate. One rolling (a wheel) is pressed where it is, often enough that
+// the ground under each lug is pressed within kRollError of as deep as
+// pressing it each frame would (a wheel of radius r, pressed each s, is at
+// most s * s / 8r above its lowest: 8 cm on one of 80 cm, 5 cm on one of
+// 30); one sliding (a tine) is swept along the way it went, each
+// kSlideStride, or sooner once it's sunk or risen (lowered) kRiseStride or
+// turned enough to move any of it a texel.
+constexpr float kRollError = 0.001f;
+constexpr float kRollStrideMost = 0.12f;
+constexpr float kSlideStride = 0.06f;
+constexpr float kRiseStride = 0.003f;
+
+// How far a mesh moved from `was` to `now`: its origin over the ground and
+// up or down, and the most any point `radius` from its origin moved by its
+// turning (a wheel's rim as it rolls).
+struct Moved
+{
+  float along = 0.0f;
+  float rise = 0.0f;
+  float turned = 0.0f;
+};
+Moved movedFrom(const glm::mat4& was, const glm::mat4& now, float radius)
+{
+  Moved moved;
+  moved.along = glm::length(glm::vec2(now[3] - was[3]));
+  moved.rise = std::abs(now[3].z - was[3].z);
+  for (int axis = 0; axis < 3; ++axis)
+    moved.turned = std::max(
+        moved.turned, glm::length(glm::vec3(now[axis] - was[axis])) * radius);
+  return moved;
+}
+
+// Rolling rather than sliding: gone a way, and turned about as far as it
+// went (a wheel, a disc), so what's under it stays where it is as it goes.
+// (A wheel steered where it stands slides.)
+bool rolling(const Moved& moved, float texel)
+{
+  return moved.along >= 0.5f * texel && moved.turned >= texel &&
+         moved.turned > 0.5f * moved.along;
+}
+
+// Copies of `here` moved back by each of `shifts` (texels), as one: the
+// lowest of them over each texel.
+void lowestOf(const Underside& here,
+              std::span<const glm::ivec2> shifts,
+              Underside& out)
+{
+  glm::ivec2 low(std::numeric_limits<int>::max());
+  glm::ivec2 high(std::numeric_limits<int>::lowest());
+  for (const glm::ivec2 shift : shifts)
+  {
+    low = glm::min(low, here.from - shift);
+    high = glm::max(high, here.from + here.size - shift);
+  }
+  out.from = low;
+  out.size = high - low;
+  out.bottom.assign(std::size_t(out.size.x) * out.size.y,
+                    std::numeric_limits<float>::quiet_NaN());
+  out.coverage.assign(out.bottom.size(), 0.0f);
+  for (const glm::ivec2 shift : shifts)
+  {
+    const glm::ivec2 at = here.from - shift - out.from;
+    for (int y = 0; y < here.size.y; ++y)
+      for (int x = 0; x < here.size.x; ++x)
+      {
+        const std::size_t from = std::size_t(y) * here.size.x + x;
+        const float z = here.bottom[from];
+        if (std::isnan(z))
+          continue;
+        const std::size_t to = std::size_t(at.y + y) * out.size.x + at.x + x;
+        if (std::isnan(out.bottom[to]) || z < out.bottom[to])
+          out.bottom[to] = z;
+        out.coverage[to] = std::max(out.coverage[to], here.coverage[from]);
+      }
+  }
+}
 
 bool sameDeformation(const TerrainDeformation& a, const TerrainDeformation& b)
 {
@@ -82,6 +174,7 @@ DeformationModule::fieldOf(const Entity& entity) const
 
 void DeformationModule::update(double deltaTime)
 {
+  m_frameSeconds = static_cast<float>(deltaTime);
   for (auto& [key, field] : m_fields)
     field.sincePuddles += deltaTime;
 }
@@ -137,12 +230,18 @@ void DeformationModule::computeCommands(const RenderContext& context)
       ++it;
   }
 
-  deform();
+  {
+    SFS_CPU_SCOPE("deformation/press");
+    deform();
+  }
 
   PuddleModule* puddles = m_host ? m_host->module<PuddleModule>() : nullptr;
   for (const Seen& terrain : seen)
   {
-    draw(context, terrain.material, *terrain.drawn, *terrain.field);
+    {
+      SFS_CPU_SCOPE("deformation/draw");
+      draw(context, terrain.material, *terrain.drawn, *terrain.field);
+    }
     Field& field = *terrain.field;
     if (field.reshaped && puddles && field.sincePuddles >= kPuddleInterval)
     {
@@ -341,6 +440,8 @@ void DeformationModule::draw(const RenderContext& context,
   command.instances = {instance};
   if (context.shadowsEnabled)
     command.shadowInstances = {instance};
+  if (context.feedOn)
+    command.feedInstances = {instance};
   m_commands.push_back(std::move(command));
 }
 
@@ -351,7 +452,10 @@ void DeformationModule::deform()
     m_placed.clear();
     return;
   }
-  std::unordered_map<uint64_t, glm::mat4> placed;
+  m_stillPlaced.clear();
+  const float farthest = std::max(
+      kFarthestSweep,
+      kFastest * m_frameSeconds * static_cast<float>(m_registry->timeScale()));
   for (const Entity& mesh :
        m_registry->view<TransformComponent, MeshRendererComponent>())
   {
@@ -371,36 +475,68 @@ void DeformationModule::deform()
     }
     if (!deformer || !deformer->enabled)
       continue;
-    // Only when it's moved (pressing again where it stands changes nothing).
+    // Only once it's gone far enough since it last pressed (pressing again
+    // where it stands changes nothing).
     const glm::mat4 model = hierarchy::worldMatrix(mesh);
     const uint64_t key = keyOf(mesh);
-    placed[key] = model;
     const auto last = m_placed.find(key);
-    if (last != m_placed.end() && last->second == model)
-      continue;
-    const glm::vec2 motion = last != m_placed.end()
-                                 ? glm::vec2(model[3] - last->second[3])
-                                 : glm::vec2(0.0f);
-    pressMesh(mesh, model, at, *deformer, motion);
+    glm::vec2 motion(0.0f);
+    bool rolled = false;
+    float stride = kSlideStride;
+    if (last != m_placed.end())
+    {
+      const MeshHandle handle = mesh.getComponent<MeshRendererComponent>().mesh;
+      const Aabb* bounds = m_meshes->posedBounds(handle, mesh.getId());
+      const float radius =
+          bounds && !bounds->empty()
+              ? std::max(glm::length(bounds->min), glm::length(bounds->max))
+              : 0.0f;
+      const Moved moved = movedFrom(last->second.model, model, radius);
+      const float texel = kDeformationTexel;
+      // Gone further than its turning can tell (a wheel turns round in
+      // under 6.3 radii): as it went last time.
+      rolled =
+          moved.along > radius ? last->second.rolled : rolling(moved, texel);
+      // Rolling: its radius is how far it reaches below its middle (its
+      // axle).
+      stride =
+          !rolled ? kSlideStride
+                  : std::clamp(
+                        std::sqrt(8.0f * kRollError *
+                                  std::max(model[3].z -
+                                               bounds->transformed(model).min.z,
+                                           0.0f)),
+                        texel,
+                        kRollStrideMost);
+      if (moved.along < stride &&
+          (rolled || (moved.rise < kRiseStride && moved.turned < texel)))
+      {
+        m_stillPlaced[key] = last->second;
+        continue;
+      }
+      motion = glm::vec2(model[3] - last->second.model[3]);
+    }
+    m_stillPlaced[key] = Placed{model, rolled};
+    pressMesh(mesh, model, at, *deformer, motion, rolled, stride, farthest);
   }
-  m_placed = std::move(placed);
+  std::swap(m_placed, m_stillPlaced);
 }
 
 void DeformationModule::pressMesh(const Entity& mesh,
                                   const glm::mat4& model,
                                   const Entity& owner,
                                   const DeformerComponent& deformer,
-                                  glm::vec2 motion)
+                                  glm::vec2 motion,
+                                  bool rolled,
+                                  float stride,
+                                  float farthest)
 {
   const MeshHandle handle = mesh.getComponent<MeshRendererComponent>().mesh;
-  const Aabb* bounds = m_meshes->bounds(handle);
+  // A skinned mesh as an animator poses it (a foot down where it steps).
+  const Aabb* bounds = m_meshes->posedBounds(handle, mesh.getId());
   if (!bounds || bounds->empty())
     return;
   const Aabb world = bounds->transformed(model);
-  const std::shared_ptr<const TextureData> tread =
-      !deformer.tread.empty() && m_assets
-          ? m_assets->imageTexture(deformer.tread)
-          : nullptr;
   const glm::vec2 forward = glm::normalize(glm::vec2(model[0]) + 1e-9f);
   const glm::vec2 side(-forward.y, forward.x);
   GrassModule* grass = m_host ? m_host->module<GrassModule>() : nullptr;
@@ -420,71 +556,156 @@ void DeformationModule::pressMesh(const Entity& mesh,
     const std::optional<GroundSurface::Point> ground = surface.at(middle);
     if (!ground)
       continue;
-    const float below = ground->height + kAboveGround;
+    // (A wheel sat down into the ground, in mud: from its lowest, so it
+    // costs no more than on firm ground. Its lowest point, not its bounds':
+    // turned, their corners reach as much as 1.4 x its radius below its
+    // axle, and from there nothing of it would be under `below`: it'd press
+    // only at each quarter turn, a rut of separate scoops.)
+    const float below =
+        (rolled ? std::min(ground->height,
+                           lowestPointOf(mesh, handle, model, world.min.z))
+                : ground->height) +
+        kAboveGround;
     if (world.min.z > below)
       continue;
-    const Underside bottom = underside(m_meshes->positions(handle),
-                                       m_meshes->indices(handle),
-                                       model,
-                                       below,
-                                       field.map.texel());
+    Underside& bottom = m_bottom;
+    {
+      SFS_CPU_SCOPE("deformation/underside");
+      bottom = undersideOf(mesh, handle, model, below, field.map.texel());
+    }
     if (bottom.empty())
       continue;
+    // Pressed all along the way it went since it last pressed, its
+    // underside moved back along it: sliding (a tine's point), at each texel,
+    // so each tine cuts a furrow, not a row of dimples, and the soil it
+    // pushes aside rises evenly along it; rolling, at each stride, where it
+    // went further than two in a frame (the game going fast), so its track's
+    // unbroken. At most kMostSweeps (kMostRolls) presses, each of an even
+    // share of those places (their lowest) if there are more.
+    const float texel = field.map.texel();
+    const float moved = glm::length(motion);
+    int places = 1;
+    if (moved > 1e-6f && moved < farthest)
+    {
+      const float each = rolled ? stride : texel;
+      if (!rolled || moved > 2.0f * stride)
+        places = static_cast<int>(std::ceil(moved / std::max(each, texel)));
+    }
+    m_shifts.clear();
+    for (int k = 1; k <= places; ++k)
+    {
+      const glm::ivec2 shift =
+          k >= places
+              ? glm::ivec2(0)
+              : glm::ivec2(glm::round(
+                    motion * (1.0f - static_cast<float>(k) / places) / texel));
+      if (m_shifts.empty() || shift != m_shifts.back())
+        m_shifts.push_back(shift);
+    }
+    const int count = static_cast<int>(m_shifts.size());
+    const int presses = std::min(count, rolled ? kMostRolls : kMostSweeps);
+    // All it goes over, and the ground under that.
+    const Underside* over = &bottom;
+    if (count > 1)
+    {
+      lowestOf(bottom, m_shifts, m_swept);
+      over = &m_swept;
+    }
+    const std::shared_ptr<const TextureData> tread =
+        !deformer.tread.empty() && m_assets
+            ? m_assets->imageTexture(deformer.tread)
+            : nullptr;
 
-    // Each texel pressed down to its sink below the underside, deeper on
-    // soft soil and where the tread presses.
-    Footprint footprint;
-    footprint.from = bottom.from;
-    footprint.size = bottom.size;
-    footprint.target.assign(
-        bottom.bottom.size(), std::numeric_limits<float>::quiet_NaN());
-    footprint.coverage = bottom.coverage;
-    for (int y = 0; y < bottom.size.y; ++y)
-      for (int x = 0; x < bottom.size.x; ++x)
-      {
-        const std::size_t i = std::size_t(y) * bottom.size.x + x;
-        if (std::isnan(bottom.bottom[i]))
-          continue;
-        const glm::vec2 c = field.map.centerOf(bottom.from + glm::ivec2(x, y));
-        const std::optional<GroundSurface::Point> here = surface.at(c);
-        if (!here)
-          continue;
-        const float soft =
-            std::clamp(field.softnessAt ? field.softnessAt(c) : field.softness,
-                       0.0f,
-                       1.0f);
-        const float sink =
-            deformer.sinkDepth *
-            glm::mix(
-                1.0f, soft, std::clamp(deformer.softnessResponse, 0.0f, 1.0f));
-        float pattern = 0.0f;
-        if (tread)
-        {
-          const float size = std::max(deformer.treadSize, 0.01f);
-          pattern = redAt(*tread,
-                          glm::fract(glm::vec2(glm::dot(c, forward),
-                                               glm::dot(c, side)) /
-                                     size)) *
-                    deformer.treadDepth * soft;
-        }
-        footprint.target[i] = bottom.bottom[i] - here->height - sink - pattern;
-      }
+    {
+      SFS_CPU_SCOPE("deformation/ground under");
+      groundUnder(field, *over);
+    }
     PressSettings settings;
     settings.ridge = deformer.ridge;
     settings.ridgeWidth = std::max(0.15f, deformer.sinkDepth * 2.5f);
-    settings.ridgeMost = std::max(0.01f, deformer.sinkDepth * 0.4f);
+    const float ridgeMost = std::max(0.01f, deformer.sinkDepth * 0.4f);
     settings.motion = motion;
-    const float pressed = field.map.press(footprint, settings);
-    const glm::vec2 low = field.map.centerOf(bottom.from);
-    const glm::vec2 high = field.map.centerOf(bottom.from + bottom.size - 1);
+    settings.tread = rolled ? kTread : 0.0f;
+    float pressed = 0.0f;
+    float lowest = 0.0f;   // its deepest target, all told
+    float softness = 0.0f; // summed over the texels under it
+    int texels = 0;
+    for (int k = 0; k < presses; ++k)
+    {
+      // This press's share of the places: one, or the lowest of several.
+      const int first = k * count / presses;
+      const int end = (k + 1) * count / presses;
+      const Underside* piece = &bottom;
+      glm::ivec2 from = bottom.from - m_shifts[first];
+      if (end - first > 1)
+      {
+        lowestOf(
+            bottom,
+            std::span<const glm::ivec2>(m_shifts).subspan(first, end - first),
+            m_piece);
+        piece = &m_piece;
+        from = m_piece.from;
+      }
+      // Each texel pressed down to its sink below the underside, deeper on
+      // soft soil and where the tread presses.
+      Footprint& footprint = m_footprint;
+      footprint.from = from;
+      footprint.size = piece->size;
+      footprint.target.assign(
+          piece->bottom.size(), std::numeric_limits<float>::quiet_NaN());
+      footprint.coverage.assign(piece->coverage.begin(), piece->coverage.end());
+      float deepest = 0.0f;
+      for (int y = 0; y < piece->size.y; ++y)
+        for (int x = 0; x < piece->size.x; ++x)
+        {
+          const std::size_t i = std::size_t(y) * piece->size.x + x;
+          const glm::ivec2 at = from + glm::ivec2(x, y) - over->from;
+          const std::size_t under = std::size_t(at.y) * over->size.x + at.x;
+          if (std::isnan(piece->bottom[i]) || std::isnan(m_groundHeight[under]))
+            continue;
+          const float soft = m_groundSoftness[under];
+          const float sink =
+              deformer.sinkDepth *
+              glm::mix(1.0f,
+                       soft,
+                       std::clamp(deformer.softnessResponse, 0.0f, 1.0f));
+          float pattern = 0.0f;
+          if (tread)
+          {
+            const glm::vec2 c = field.map.centerOf(from + glm::ivec2(x, y));
+            const float size = std::max(deformer.treadSize, 0.01f);
+            pattern = redAt(*tread,
+                            glm::fract(glm::vec2(glm::dot(c, forward),
+                                                 glm::dot(c, side)) /
+                                       size)) *
+                      deformer.treadDepth * soft;
+          }
+          footprint.target[i] =
+              piece->bottom[i] - m_groundHeight[under] - sink - pattern;
+          deepest = std::min(deepest, footprint.target[i]);
+          softness += soft;
+          ++texels;
+        }
+      lowest = std::min(lowest, deepest);
+      // A wheel sunk deep (in mud) pushes its ridge up higher.
+      settings.ridgeMost =
+          rolled ? std::max(ridgeMost, -0.4f * deepest) : ridgeMost;
+      SFS_CPU_SCOPE("deformation/map press");
+      pressed += field.map.press(footprint, settings);
+    }
+    const glm::vec2 low = field.map.centerOf(over->from);
+    const glm::vec2 high = field.map.centerOf(over->from + over->size - 1);
     if (field.contacts)
-      field.contacts(Contact{.deformer = owner,
-                             .mesh = mesh,
-                             .low = low,
-                             .high = high,
-                             .motion = motion,
-                             .sinkDepth = deformer.sinkDepth,
-                             .pressed = pressed});
+      field.contacts(
+          Contact{.deformer = owner,
+                  .mesh = mesh,
+                  .low = low,
+                  .high = high,
+                  .motion = motion,
+                  .sinkDepth = deformer.sinkDepth,
+                  .pressed = pressed,
+                  .depth = -lowest,
+                  .softness = texels > 0 ? softness / texels : 0.0f});
 
     // Grass on it worn away where it's pressed (over at least a texel of
     // its maps, which are coarser than a rut).
@@ -505,6 +726,133 @@ void DeformationModule::pressMesh(const Entity& mesh,
                      0.3f);
       }
   }
+}
+
+void DeformationModule::groundUnder(const Field& field, const Underside& bottom)
+{
+  // Looked up at the corners of blocks of kBlock x kBlock texels (each
+  // once, and only around texels under the deformer). Where a block's
+  // corners are all on one of the surface's triangles, the texels between
+  // are on its plane (else each is looked up); the softness is the corners'
+  // between them (the same, where it's the same at all four: a game's
+  // softness is asked for once a block, not for each texel).
+  constexpr int kBlock = 4;
+  const glm::ivec2 size = bottom.size;
+  const glm::ivec2 blocks = (size + kBlock - 1) / kBlock;
+  const int across = blocks.x + 1;
+  m_corners.assign(std::size_t(across) * (blocks.y + 1), Corner{});
+  const std::size_t count = std::size_t(size.x) * size.y;
+  m_groundHeight.assign(count, std::numeric_limits<float>::quiet_NaN());
+  m_groundSoftness.assign(count, 0.0f);
+  const GroundSurface& surface = *field.surface;
+  const auto softnessAt = [&](glm::vec2 point)
+  {
+    return std::clamp(
+        field.softnessAt ? field.softnessAt(point) : field.softness,
+        0.0f,
+        1.0f);
+  };
+  const auto cornerAt = [&](int x, int y) -> const Corner&
+  {
+    Corner& corner = m_corners[std::size_t(y) * across + x];
+    if (!corner.asked)
+    {
+      corner.asked = true;
+      const glm::vec2 point =
+          field.map.centerOf(bottom.from + glm::ivec2(x, y) * kBlock);
+      corner.on = surface.at(point, corner.triangle).has_value();
+      corner.softness = softnessAt(point);
+    }
+    return corner;
+  };
+  for (int by = 0; by < blocks.y; ++by)
+    for (int bx = 0; bx < blocks.x; ++bx)
+    {
+      const glm::ivec2 first = glm::ivec2(bx, by) * kBlock;
+      const glm::ivec2 last = glm::min(first + kBlock, size);
+      bool any = false;
+      for (int y = first.y; y < last.y && !any; ++y)
+        for (int x = first.x; x < last.x && !any; ++x)
+          any = !std::isnan(bottom.bottom[std::size_t(y) * size.x + x]);
+      if (!any)
+        continue;
+      const Corner* corners[4] = {&cornerAt(bx, by),
+                                  &cornerAt(bx + 1, by),
+                                  &cornerAt(bx, by + 1),
+                                  &cornerAt(bx + 1, by + 1)};
+      bool oneTriangle = true;
+      for (const Corner* corner : corners)
+        oneTriangle = oneTriangle && corner->on &&
+                      corner->triangle == corners[0]->triangle;
+      for (int y = first.y; y < last.y; ++y)
+        for (int x = first.x; x < last.x; ++x)
+        {
+          const std::size_t i = std::size_t(y) * size.x + x;
+          if (std::isnan(bottom.bottom[i]))
+            continue;
+          const glm::vec2 point =
+              field.map.centerOf(bottom.from + glm::ivec2(x, y));
+          if (oneTriangle)
+            m_groundHeight[i] = surface.heightOn(corners[0]->triangle, point);
+          else if (const std::optional<GroundSurface::Point> here =
+                       surface.at(point))
+            m_groundHeight[i] = here->height;
+          const glm::vec2 f =
+              glm::vec2(glm::ivec2(x, y) - first) / static_cast<float>(kBlock);
+          m_groundSoftness[i] = glm::mix(
+              glm::mix(corners[0]->softness, corners[1]->softness, f.x),
+              glm::mix(corners[2]->softness, corners[3]->softness, f.x),
+              f.y);
+        }
+    }
+}
+
+Underside DeformationModule::undersideOf(const Entity& mesh,
+                                         MeshHandle handle,
+                                         const glm::mat4& model,
+                                         float below,
+                                         float texel)
+{
+  // Posed by an animator: as it's posed now.
+  if (m_meshes->skinPose(handle, mesh.getId()))
+    return underside(m_meshes->posedPositions(handle, mesh.getId()),
+                     m_meshes->indices(handle),
+                     model,
+                     below,
+                     texel);
+  return underside(readyMesh(handle), model, below, texel);
+}
+
+const UndersideMesh& DeformationModule::readyMesh(MeshHandle handle)
+{
+  // Made ready once (again if the mesh is changed).
+  const std::span<const glm::vec3> positions = m_meshes->positions(handle);
+  const std::span<const uint32_t> indices = m_meshes->indices(handle);
+  Ready& ready = m_ready[handle.id];
+  if (!ready.mesh || ready.positions != positions.data() ||
+      ready.vertices != positions.size() || ready.indices != indices.data() ||
+      ready.corners != indices.size())
+  {
+    ready.mesh = std::make_unique<UndersideMesh>(positions, indices);
+    ready.positions = positions.data();
+    ready.vertices = positions.size();
+    ready.indices = indices.data();
+    ready.corners = indices.size();
+  }
+  return *ready.mesh;
+}
+
+float DeformationModule::lowestPointOf(const Entity& mesh,
+                                       MeshHandle handle,
+                                       const glm::mat4& model,
+                                       float bound)
+{
+  if (m_meshes->skinPose(handle, mesh.getId()))
+    return bound;
+  const UndersideMesh& ready = readyMesh(handle);
+  if (ready.empty())
+    return bound;
+  return std::max(lowestPoint(ready, model), bound);
 }
 
 void DeformationModule::buildPatchMesh()
@@ -647,6 +995,14 @@ void DeformationModule::relax(const Entity& ground, float smooth, float fade)
 {
   if (Field* field = fieldOf(ground))
     field->map.relax(smooth, fade);
+}
+
+void DeformationModule::relax(const Entity& ground,
+                              std::span<const glm::ivec2> tiles,
+                              std::span<const glm::vec4> corners)
+{
+  if (Field* field = fieldOf(ground))
+    field->map.relax(tiles, corners);
 }
 
 void DeformationModule::clearRegion(const Entity& ground,

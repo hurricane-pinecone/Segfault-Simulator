@@ -25,7 +25,8 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> PointShadowOut {
   let model = instanceModel(instance);
   let world = model * vec4f(vertex.position, 1.0);
   let placed = surfaceVertex(SurfaceVertex(world.xyz, normalMatrix(model) * vertex.normal,
-                                            instanceUv(vertex, instance), 1.0));
+                                            instanceUv(vertex, instance), 1.0, vertex.color,
+                                            model[3].xyz));
   var out: PointShadowOut;
   out.clip = face.viewProjection * vec4f(placed.position, 1.0);
   out.uv = placed.uv;

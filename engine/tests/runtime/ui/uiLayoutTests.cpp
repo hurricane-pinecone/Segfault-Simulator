@@ -1,13 +1,17 @@
 #include "../../testHarness.h"
 
+#include <engine/runtime/rendering/framePlan.h>
 #include <engine/runtime/ui/fontAtlas.h>
+#include <engine/runtime/ui/imageAtlas.h>
 #include <engine/runtime/ui/layout.h>
 #include <engine/runtime/ui/placeholder.h>
 #include <engine/runtime/ui/preview.h>
 
 #include <filesystem>
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -50,9 +54,11 @@ struct Laid
   std::vector<UiQuad> quads;
   std::vector<Hit> hits;
   FakeText text;
+  View view; // what was laid out (its hits' sources are in it)
 };
 
-// Pictures a stand-in has: "crate.png" 64 x 32, every mesh an icon.
+// Pictures a stand-in has: "crate.png" 64 x 32, every mesh an icon, and
+// "lamp.png" 64 x 64 on a page with its levels (32, 16, 8) beside it.
 class FakeImages : public ImageSource
 {
 public:
@@ -60,15 +66,29 @@ public:
   {
     file.size = {64, 32};
     icon.size = {128, 128};
+    page.size = {256, 256};
+    fileImage.texture = &file;
+    fileImage.level[0].size = file.size;
+    iconImage.texture = &icon;
+    iconImage.level[0].size = icon.size;
+    lampImage.texture = &page;
+    lampImage.levels = 4;
+    for (int i = 0; i < 4; ++i)
+      lampImage.level[i] = {
+          glm::vec4(0.1f * static_cast<float>(i)), glm::ivec2(64 >> i)};
   }
-  const UiTexture* image(const std::string& source, bool mesh) override
+  const SourceImage* image(const std::string& source, bool mesh) override
   {
     if (mesh)
-      return &icon;
-    return source == "crate.png" ? &file : nullptr;
+      return &iconImage;
+    return source == "crate.png"  ? &fileImage
+           : source == "lamp.png" ? &lampImage
+                                  : nullptr;
   }
   UiTexture file;
   UiTexture icon;
+  UiTexture page;
+  SourceImage fileImage, iconImage, lampImage;
 };
 
 // A view of the game's own (a ViewStruct).
@@ -151,6 +171,7 @@ Laid lay(const View& view,
          ImageSource* images = nullptr)
 {
   Laid laid;
+  laid.view = view;
   layout(view,
          screen,
          scale,
@@ -177,6 +198,84 @@ const UiQuad* textQuad(const Laid& laid, const std::string& line)
 }
 
 bool near(float a, float b) { return std::abs(a - b) < 0.01f; }
+
+// Laid out keeping `state` (a scroll view's offset, a section's open), as
+// UiModule does frame to frame, `seconds` after the last.
+Laid layKept(const View& view,
+             State& state,
+             float seconds = 0.0f,
+             Pointer pointer = {})
+{
+  Laid laid;
+  laid.view = view;
+  state.advance(seconds);
+  layout(view,
+         {1000.0f, 500.0f},
+         1.0f,
+         Theme(),
+         laid.text,
+         pointer,
+         laid.quads,
+         laid.hits,
+         nullptr,
+         nullptr,
+         &state);
+  return laid;
+}
+
+// Ten lines, "line0" to "line9", 20 high each, one under another.
+View tenLines()
+{
+  std::vector<View> lines;
+  for (int i = 0; i < 10; ++i)
+    lines.push_back(Text("line" + std::to_string(i)));
+  return VStack(std::move(lines), Alignment::Leading).spacing(0.0f);
+}
+
+// The node a hit's for.
+const Node* sourceOf(const Laid& laid, const Hit& hit)
+{
+  return nodeAt(*laid.view.node(), hit.source);
+}
+
+// A hit clicked, or dragged to `at`, as UiModule does: given its node.
+void click(const Laid& laid, const Hit* hit)
+{
+  if (const Node* source = sourceOf(laid, *hit))
+    hit->action(*source);
+}
+void drag(const Laid& laid, const Hit* hit, glm::vec2 at)
+{
+  if (const Node* source = sourceOf(laid, *hit))
+    hit->drag(*source, at);
+}
+
+// The first hit that can be clicked made by a view of `kind`.
+const Hit* clickable(const Laid& laid, Node::Kind kind)
+{
+  for (const Hit& hit : laid.hits)
+    if (hit.action && sourceOf(laid, hit) && sourceOf(laid, hit)->kind == kind)
+      return &hit;
+  return nullptr;
+}
+
+// A scroll bar's hit (pressed on to grab or page).
+const Hit* barHit(const Laid& laid)
+{
+  for (const Hit& hit : laid.hits)
+    if (hit.press)
+      return &hit;
+  return nullptr;
+}
+
+const Hit* scrollHit(const Laid& laid)
+{
+  const Hit* found = nullptr;
+  for (const Hit& hit : laid.hits)
+    if (hit.scroll)
+      found = &hit; // the innermost: the last
+  return found;
+}
 
 } // namespace
 
@@ -300,7 +399,7 @@ int main()
       CHECK(buttons[0]->enabled && !buttons[1]->enabled);
       CHECK(buttons[0]->id != buttons[1]->id);
       CHECK(buttons[1]->rect.x > buttons[0]->rect.x + buttons[0]->rect.width);
-      buttons[0]->action();
+      click(laid, buttons[0]);
       CHECK(clicks == 1);
 
       // Hovered: drawn in its hovered colour.
@@ -334,7 +433,7 @@ int main()
       if (hit.action)
       {
         ++buttons;
-        named = named || hit.id.ends_with("#two");
+        named = named || sourceOf(laid, hit)->id == "two";
       }
     CHECK(buttons == 3 && named);
     CHECK(laid.text.drawn.size() == 3u);
@@ -629,19 +728,19 @@ int main()
       // the top of the range; beyond it, still the top; near a third of the
       // way, the nearest step.
       const float middle = slider->rect.y + 11.0f;
-      slider->drag({slider->rect.x + 152.0f, middle});
+      drag(laid, slider, {slider->rect.x + 152.0f, middle});
       CHECK(near(value, 10.0f));
-      slider->drag({slider->rect.x + 400.0f, middle});
+      drag(laid, slider, {slider->rect.x + 400.0f, middle});
       CHECK(near(value, 10.0f));
-      slider->drag({slider->rect.x + 8.0f + 144.0f * 0.33f, middle});
+      drag(laid, slider, {slider->rect.x + 8.0f + 144.0f * 0.33f, middle});
       CHECK(near(value, 3.0f));
-      slider->drag({slider->rect.x - 50.0f, middle});
+      drag(laid, slider, {slider->rect.x - 50.0f, middle});
       CHECK(near(value, 0.0f));
 
       // The toggle: its switch and label, clicked on.
       CHECK(toggle->rect.y >= slider->rect.y + slider->rect.height);
       CHECK(near(toggle->rect.width, 44.0f + 40.0f));
-      toggle->action();
+      click(laid, toggle);
       CHECK(on);
       CHECK(laid.text.drawn.size() == 1u && laid.text.drawn[0] == "rain");
     }
@@ -650,6 +749,898 @@ int main()
     Laid off = lay(ui.disabled());
     for (const Hit& hit : off.hits)
       CHECK(!hit.drag && !hit.action);
+  }
+
+  TEST("a scroll view should be its content's size up to its room, showing "
+       "and laying out only what's inside it, cut at its edges")
+  {
+    State state;
+    const View ui =
+        ScrollView(tenLines()).maxHeight(100.0f).align(Alignment::TopLeading);
+    Laid laid = layKept(ui, state);
+    const Hit* view = scrollHit(laid);
+    CHECK(view && near(view->rect.height, 100.0f) &&
+          near(view->rect.width, 50.0f));
+    // Five lines show; the rest aren't drawn at all.
+    CHECK(laid.text.drawn.size() == 5u);
+    const UiQuad* first = textQuad(laid, "line0");
+    CHECK(first && near(first->clip.y, 0.0f) && near(first->clip.w, 100.0f));
+    CHECK(!textQuad(laid, "line5"));
+    // A bar down its edge, as it's taller inside.
+    CHECK(barHit(laid) != nullptr);
+
+    // Shorter content: its own size, and no bar.
+    Laid shortOne =
+        layKept(ScrollView(VStack{Text("a"), Text("b")}.spacing(0.0f))
+                    .maxHeight(100.0f)
+                    .align(Alignment::TopLeading),
+                state);
+    const Hit* small = scrollHit(shortOne);
+    CHECK(small && near(small->rect.height, 40.0f));
+    CHECK(barHit(shortOne) == nullptr);
+
+    // In a stack short of room, it gives its room up first.
+    State stacked;
+    Laid fitted = layKept(VStack{Text("title"), ScrollView(tenLines())}
+                              .frame(0.0f, 120.0f)
+                              .align(Alignment::TopLeading),
+                          stacked);
+    const Hit* rest = scrollHit(fitted);
+    CHECK(rest && near(rest->rect.y, 28.0f) && near(rest->rect.height, 92.0f));
+
+    // Where it starts scrolled to, for a first frame.
+    State fresh;
+    Laid started = layKept(ScrollView(tenLines())
+                               .scrollOffset(40.0f)
+                               .maxHeight(100.0f)
+                               .align(Alignment::TopLeading),
+                           fresh);
+    const UiQuad* third = textQuad(started, "line2");
+    CHECK(third && near(third->rect.y, 0.0f));
+    CHECK(!textQuad(started, "line0") && !textQuad(started, "line1"));
+  }
+
+  TEST("the wheel should scroll a scroll view, eased, within its content; "
+       "its thumb should drag it and its track page it")
+  {
+    State state;
+    const View ui =
+        ScrollView(tenLines()).maxHeight(100.0f).align(Alignment::TopLeading);
+    Laid laid = layKept(ui, state);
+    const Hit* view = scrollHit(laid);
+    CHECK(view && view->scroll);
+    if (!view || !view->scroll)
+      break;
+    CHECK(!view->scroll({0.0f, -10.0f})); // at the top already
+    const uint64_t before = state.changes;
+    CHECK(view->scroll({0.0f, 50.0f}));
+    CHECK(state.changes > before); // the layer's changed
+    // Eased: part way after a moment, there a while later.
+    Laid moving = layKept(ui, state, 0.02f);
+    const UiQuad* line3 = textQuad(moving, "line3");
+    CHECK(line3 && line3->rect.y < 60.0f && line3->rect.y > 10.0f);
+    Laid there = layKept(ui, state, 1.0f);
+    line3 = textQuad(there, "line3");
+    CHECK(line3 && near(line3->rect.y, 10.0f));
+    // Partly showing: drawn, cut at the top.
+    const UiQuad* line2 = textQuad(there, "line2");
+    CHECK(line2 && near(line2->rect.y, -10.0f) && near(line2->clip.y, 0.0f));
+
+    // No further than the end; then it can't go on.
+    const Hit* again = scrollHit(there);
+    CHECK(again && again->scroll({0.0f, 500.0f}));
+    Laid end = layKept(ui, state, 1.0f);
+    CHECK(textQuad(end, "line9") &&
+          near(textQuad(end, "line9")->rect.y, 80.0f));
+    CHECK(near(state.scrolls.begin()->second.offset.y, 100.0f));
+    const Hit* atEnd = scrollHit(end);
+    CHECK(atEnd && !atEnd->scroll({0.0f, 10.0f}));
+
+    // The thumb: half the track (it shows half), at its far end now.
+    const glm::vec2 thumb = scrollThumb(100.0f, 100.0f, 200.0f, 100.0f, 20.0f);
+    CHECK(near(thumb.x, 50.0f) && near(thumb.y, 50.0f));
+    CHECK(near(scrollThumb(100.0f, 100.0f, 200.0f, 0.0f, 20.0f).x, 0.0f));
+    CHECK(near(scrollThumb(100.0f, 100.0f, 1000.0f, 0.0f, 20.0f).y, 20.0f));
+    CHECK(near(scrollThumb(100.0f, 100.0f, 80.0f, 0.0f, 20.0f).y, 100.0f));
+    CHECK(scrolled({0.0f, 90.0f}, {0.0f, 50.0f}, {0.0f, 100.0f}) ==
+          glm::vec2(0.0f, 100.0f));
+
+    // Pressed on the track above the thumb: a page up.
+    const Hit* bar = barHit(end);
+    CHECK(bar && bar->press && bar->drag);
+    if (bar && bar->press && bar->drag)
+    {
+      bar->press({bar->rect.x + 2.0f, bar->rect.y + 5.0f});
+      CHECK(state.scrolls.begin()->second.target.y < 15.0f);
+      // On the thumb, then dragged: it follows at once (no easing).
+      Laid paged = layKept(ui, state, 1.0f);
+      const Hit* top = barHit(paged);
+      CHECK(top != nullptr);
+      if (top)
+      {
+        // The track's 94 long (3 in from each end), the thumb 47 at the top.
+        top->press({top->rect.x + 2.0f, top->rect.y + 10.0f});
+        drag(paged, top, {top->rect.x + 2.0f, top->rect.y + 10.0f + 47.0f});
+        CHECK(near(state.scrolls.begin()->second.offset.y, 100.0f));
+        // Half a thumb's length down from where it was: 0.6 of the way.
+        drag(paged, top, {top->rect.x + 2.0f, top->rect.y + 10.0f + 23.5f});
+        CHECK(near(state.scrolls.begin()->second.offset.y, 60.0f));
+      }
+    }
+  }
+
+  TEST("what's scrolled out of a scroll view shouldn't be clickable, and "
+       "what's partly in only where it shows")
+  {
+    State state;
+    std::vector<View> buttons;
+    for (int i = 0; i < 6; ++i)
+      buttons.push_back(Button("b" + std::to_string(i), [] {}));
+    const View ui = ScrollView(VStack(std::move(buttons)).spacing(0.0f))
+                        .scrollOffset(17.0f)
+                        .maxHeight(100.0f)
+                        .align(Alignment::TopLeading);
+    Laid laid = layKept(ui, state);
+    std::vector<const Hit*> clickable;
+    for (const Hit& hit : laid.hits)
+      if (hit.action)
+        clickable.push_back(&hit);
+    // Buttons 34 high, scrolled 17: half the first, the second and third,
+    // most of the fourth.
+    CHECK(clickable.size() == 4u);
+    if (!clickable.empty())
+    {
+      CHECK(near(clickable[0]->rect.y, 0.0f) &&
+            near(clickable[0]->rect.height, 17.0f));
+      for (const Hit* hit : clickable)
+        CHECK(hit->rect.y >= 0.0f && hit->rect.y + hit->rect.height <= 100.01f);
+    }
+  }
+
+  TEST("the wheel should go to the innermost scroll view that can still "
+       "scroll that way")
+  {
+    State state;
+    const View inner = ScrollView(tenLines()).id("inner").frame(0.0f, 50.0f);
+    const View ui = ScrollView(VStack{inner, tenLines()}.spacing(0.0f))
+                        .maxHeight(100.0f)
+                        .align(Alignment::TopLeading);
+    Laid laid = layKept(ui, state);
+    const Hit* innermost = scrollHit(laid);
+    CHECK(innermost && innermost->rect.height <= 50.01f);
+    CHECK(state.scrolls.count(idKey("inner")) == 1u);
+    // The inner one takes it till its end; then it's the outer's turn.
+    CHECK(innermost && innermost->scroll({0.0f, 150.0f}));
+    CHECK(innermost && !innermost->scroll({0.0f, 10.0f}));
+    const Hit* outer = nullptr;
+    for (const Hit& hit : laid.hits)
+      if (hit.scroll && hit.rect.height > 60.0f)
+        outer = &hit;
+    CHECK(outer && outer->scroll({0.0f, 10.0f}));
+  }
+
+  TEST("a disclosure group should show its content only while open, its "
+       "header opening and closing it, eased")
+  {
+    State state;
+    const View ui = VStack(Alignment::Leading,
+                           {
+                               DisclosureGroup("Weather", Text("rain")),
+                               Text("after"),
+                           })
+                        .spacing(0.0f)
+                        .frame(300.0f)
+                        .align(Alignment::TopLeading);
+    Laid closed = layKept(ui, state);
+    // Closed: its header (26 high: the label and 6) and not its content.
+    CHECK(textQuad(closed, "Weather") && !textQuad(closed, "rain"));
+    const UiQuad* after = textQuad(closed, "after");
+    CHECK(after && near(after->rect.y, 26.0f));
+    const Hit* header = clickable(closed, Node::Kind::Disclosure);
+    CHECK(header && header->action && near(header->rect.width, 300.0f));
+    bool chevron = false;
+    for (const UiQuad& quad : closed.quads)
+      chevron =
+          chevron || (quad.kind == UiQuad::Chevron && near(quad.radius, 0.0f));
+    CHECK(chevron);
+    if (!header || !header->action)
+      break;
+
+    // Clicked: opening, part way, its content cut where it's got to.
+    click(closed, header);
+    Laid opening = layKept(ui, state, 0.1f);
+    after = textQuad(opening, "after");
+    CHECK(after && after->rect.y > 26.0f && after->rect.y < 52.0f);
+    const UiQuad* rain = textQuad(opening, "rain");
+    CHECK(rain && rain->clip.w < 52.0f);
+    // Open: the header, a 6 gap and its content.
+    Laid open = layKept(ui, state, 1.0f);
+    after = textQuad(open, "after");
+    CHECK(after && near(after->rect.y, 52.0f));
+    rain = textQuad(open, "rain");
+    CHECK(rain && near(rain->rect.y, 32.0f) && rain->clip.w > 1.0e8f);
+
+    // Closed again by its header, and remembered while it's laid out.
+    const Hit* again = clickable(open, Node::Kind::Disclosure);
+    CHECK(again && again->action);
+    if (again && again->action)
+      click(open, again);
+    Laid shut = layKept(ui, state, 1.0f);
+    CHECK(!textQuad(shut, "rain"));
+    Laid still = layKept(ui, state, 1.0f);
+    CHECK(!textQuad(still, "rain"));
+
+    // Open at first, without state (as a preview lays it out).
+    Laid given = lay(DisclosureGroup("Soil", Text("wet"), true)
+                         .align(Alignment::TopLeading));
+    CHECK(textQuad(given, "wet") != nullptr);
+  }
+
+  TEST("a disclosure group's accessory should be clickable over its header; "
+       "a bound one asks the game; an accordion keeps one open")
+  {
+    State state;
+    int resets = 0;
+    bool shown = false;
+    const View ui =
+        VStack(Alignment::Leading,
+               {
+                   DisclosureGroup("A", Text("a1"), true)
+                       .accessory(Button("Reset", [&] { ++resets; }))
+                       .accordion("g"),
+                   DisclosureGroup("B", Text("b1")).accordion("g"),
+                   DisclosureGroup(
+                       "C", shown, [&](bool to) { shown = to; }, Text("c1")),
+               })
+            .frame(300.0f)
+            .align(Alignment::TopLeading);
+    Laid laid = layKept(ui, state);
+    CHECK(textQuad(laid, "a1") && !textQuad(laid, "b1") &&
+          !textQuad(laid, "c1"));
+    // The accessory's in front of its header: it's what a click there hits.
+    const Hit* reset = nullptr;
+    for (const Hit& hit : laid.hits)
+      if (hit.action && hit.rect.contains({290.0f, 10.0f}))
+        reset = &hit;
+    CHECK(reset && sourceOf(laid, *reset)->kind == Node::Kind::Button);
+    if (reset)
+      click(laid, reset);
+    CHECK(resets == 1);
+
+    // B opened: A closes.
+    std::vector<const Hit*> headers;
+    for (const Hit& hit : laid.hits)
+      if (hit.action && sourceOf(laid, hit)->kind == Node::Kind::Disclosure)
+        headers.push_back(&hit);
+    CHECK(headers.size() == 3u);
+    if (headers.size() == 3u)
+    {
+      click(laid, headers[1]);
+      Laid swapped = layKept(ui, state, 1.0f);
+      CHECK(!textQuad(swapped, "a1") && textQuad(swapped, "b1"));
+      // C asks the game, and opens when it says so.
+      click(laid, headers[2]);
+      CHECK(shown);
+    }
+  }
+
+  TEST("a node's hash should be the same for the same tree, whatever its "
+       "functions, and change with anything it shows; modifiers on a view "
+       "being built change it in place, on a kept one a copy")
+  {
+    const auto make = [](std::string text, std::function<void()> action)
+    {
+      return VStack(Alignment::Leading,
+                    {Text(std::move(text)).font(Font::caption()),
+                     Button("Go", std::move(action)).help("go")})
+          .padding(8.0f)
+          .background(Panel());
+    };
+    int a = 0, b = 0;
+    const View one = make("6:40 pm", [&] { ++a; });
+    const View two = make("6:40 pm", [&] { ++b; });
+    CHECK(one.node()->hash() == two.node()->hash());
+    CHECK(one.node()->hash() != make("6:41 pm", [] {}).node()->hash());
+    CHECK(one.node()->hash() != make("6:40 pm", nullptr).node()->hash());
+    // The background, its padding, the stack, the text, the button and its
+    // label: modifiers on a view being built don't add nodes.
+    CHECK(one.node()->count() == 6u);
+    CHECK(Text("a").color(Color::black()).node()->hash() !=
+          Text("a").node()->hash());
+    // In place: one node, not a chain of copies.
+    const View built = Text("x").color(Color::black()).font(Font::title());
+    CHECK(built.node()->kind == Node::Kind::Text && built.node()->color &&
+          built.node()->font);
+    // A kept view isn't changed by a modifier on it.
+    const View kept = Text("y");
+    const View tinted = kept.color(Color::black());
+    CHECK(!kept.node()->color && tinted.node()->color);
+    CHECK(kept.node()->hash() != tinted.node()->hash());
+    // A hit's source: its node, found by its place in the tree.
+    const Node* label = nodeAt(*one.node(), 5);
+    CHECK(label && label->kind == Node::Kind::Text && label->text == "Go");
+    CHECK(nodeAt(*one.node(), 6) == nullptr);
+  }
+
+  // A layer kept from frame to frame, as UiModule keeps one.
+  struct Kept
+  {
+    State state;
+    Cache cache;
+    FakeText text;
+    View view;
+    ImageSource* images = nullptr;
+    const Cache::Stats&
+    lay(const View& next, Pointer pointer = {}, float seconds = 0.0f)
+    {
+      view = next;
+      text.drawn.clear();
+      state.advance(seconds);
+      layout(next,
+             {1000.0f, 500.0f},
+             1.0f,
+             Theme(),
+             text,
+             pointer,
+             state,
+             cache,
+             images);
+      return cache.stats();
+    }
+    const Hit* clickable(Node::Kind kind, int which = 0) const
+    {
+      for (const Hit& hit : cache.hits())
+        if (hit.action && nodeAt(*view.node(), hit.source)->kind == kind &&
+            which-- == 0)
+          return &hit;
+      return nullptr;
+    }
+  };
+  // The same quads (where, what colour, cut where), as laid out from scratch.
+  const auto sameAsFresh = [](const Kept& kept, Pointer pointer = {})
+  {
+    Laid fresh = lay(kept.view, {1000.0f, 500.0f}, 1.0f, pointer);
+    const std::vector<UiQuad>& quads = *kept.cache.quads();
+    if (quads.size() != fresh.quads.size() ||
+        kept.cache.hits().size() != fresh.hits.size())
+      return false;
+    for (std::size_t i = 0; i < quads.size(); ++i)
+      if (quads[i].rect != fresh.quads[i].rect ||
+          quads[i].color != fresh.quads[i].color ||
+          quads[i].clip != fresh.quads[i].clip)
+        return false;
+    for (std::size_t i = 0; i < fresh.hits.size(); ++i)
+      if (kept.cache.hits()[i].id != fresh.hits[i].id ||
+          kept.cache.hits()[i].source != fresh.hits[i].source ||
+          !near(kept.cache.hits()[i].rect.x, fresh.hits[i].rect.x) ||
+          !near(kept.cache.hits()[i].rect.y, fresh.hits[i].rect.y))
+        return false;
+    return true;
+  };
+  // A HUD: a clock panel and a job board.
+  const auto hud = [](std::string time, std::string job, int* clicks)
+  {
+    return HStack(Alignment::Top,
+                  {
+                      VStack(Alignment::Leading,
+                             {Text(std::move(time)),
+                              Button("Pause", [clicks] { ++*clicks; })})
+                          .padding(8.0f)
+                          .background(Panel()),
+                      Spacer(),
+                      VStack(Alignment::Leading,
+                             {Text(std::move(job)), Button("Eye", [] {})})
+                          .padding(8.0f)
+                          .background(Panel()),
+                  })
+        .align(Alignment::TopLeading);
+  };
+
+  TEST("a kept layer the same as last frame shouldn't be laid out or drawn "
+       "again; one whose text changed only where it did")
+  {
+    Kept kept;
+    int clicks = 0;
+    const Cache::Stats& first = kept.lay(hud("6:40 pm", "Plough", &clicks));
+    CHECK(!first.kept && first.placed > 0 && first.reused == 0);
+    CHECK(kept.text.drawn.size() == 4u);
+    CHECK(sameAsFresh(kept));
+    const auto quads = kept.cache.quads();
+
+    // Made again, the same: nothing laid out, nothing drawn, nothing copied.
+    const Cache::Stats& same = kept.lay(hud("6:40 pm", "Plough", &clicks));
+    CHECK(same.kept && same.placed == 0);
+    CHECK(kept.text.drawn.empty());
+    CHECK(kept.cache.quads() == quads);
+
+    // The clock's text changed (as wide): only it drawn again, the rest kept.
+    const Cache::Stats& tick = kept.lay(hud("6:41 pm", "Plough", &clicks));
+    CHECK(!tick.kept && tick.reused > 0);
+    CHECK(kept.text.drawn.size() == 1u &&
+          (kept.text.drawn.empty() || kept.text.drawn[0] == "6:41 pm"));
+    CHECK(sameAsFresh(kept));
+
+    // A wider text moves what's after it: drawn again, still right.
+    kept.lay(hud("12:41 pm", "Plough", &clicks));
+    CHECK(sameAsFresh(kept));
+    // And the board's job changed (as wide): the clock kept.
+    kept.lay(hud("12:41 pm", "Harrow", &clicks));
+    CHECK(kept.text.drawn.size() == 1u &&
+          (kept.text.drawn.empty() || kept.text.drawn[0] == "Harrow"));
+    CHECK(sameAsFresh(kept));
+
+    // Its button calls the newest tree's function, though its drawing's kept.
+    int newer = 0;
+    kept.lay(hud("12:41 pm", "Harrow", &newer));
+    CHECK(kept.cache.stats().kept);
+    const Hit* pause = kept.clickable(Node::Kind::Button);
+    CHECK(pause != nullptr);
+    if (pause)
+      pause->action(*nodeAt(*kept.view.node(), pause->source));
+    CHECK(newer == 1 && clicks == 0);
+  }
+
+  TEST("a kept layer should be drawn again when its State changes, and when "
+       "the pointer comes over a button, only that button")
+  {
+    Kept kept;
+    int clicks = 0;
+    kept.lay(hud("6:40 pm", "Plough", &clicks));
+    const Hit* eye = kept.clickable(Node::Kind::Button, 1);
+    CHECK(eye != nullptr);
+    if (!eye)
+      break;
+
+    // Hovered: the eye button drawn again (its look), nothing else (not even
+    // its label, which is where it was).
+    Pointer pointer;
+    pointer.hovered = eye->id;
+    const Cache::Stats& over =
+        kept.lay(hud("6:40 pm", "Plough", &clicks), pointer);
+    CHECK(!over.kept && over.reused > 0 && kept.text.drawn.empty());
+    CHECK(sameAsFresh(kept, pointer));
+    CHECK(!sameAsFresh(kept)); // (its hovered colour)
+    // Still over it: kept. The pointer over the panel, not a button: the
+    // button drawn again as it was.
+    CHECK(kept.lay(hud("6:40 pm", "Plough", &clicks), pointer).kept);
+    pointer.hovered = 12345;
+    const Cache::Stats& off =
+        kept.lay(hud("6:40 pm", "Plough", &clicks), pointer);
+    CHECK(!off.kept && kept.text.drawn.empty());
+    CHECK(sameAsFresh(kept));
+    CHECK(kept.lay(hud("6:40 pm", "Plough", &clicks), pointer).kept);
+
+    // A scroll view scrolled: drawn again as it eases, then kept.
+    Kept scroller;
+    const View list =
+        ScrollView(tenLines()).maxHeight(100.0f).align(Alignment::TopLeading);
+    scroller.lay(list);
+    CHECK(scroller.lay(list).kept);
+    const Hit* view = nullptr;
+    for (const Hit& hit : scroller.cache.hits())
+      if (hit.scroll)
+        view = &hit;
+    CHECK(view && view->scroll({0.0f, 40.0f}));
+    CHECK(!scroller.lay(list, {}, 0.02f).kept);
+    CHECK(!scroller.lay(list, {}, 1.0f).kept);
+    CHECK(sameAsFresh(scroller) == false); // (fresh isn't scrolled)
+    const UiQuad* line2 = nullptr;
+    for (const UiQuad& quad : *scroller.cache.quads())
+      if (quad.kind == UiQuad::Glyph && near(quad.rect.y, 0.0f))
+        line2 = &quad;
+    CHECK(line2 != nullptr); // line2 at the top, scrolled 40
+    scroller.lay(list, {}, 1.0f);
+    CHECK(scroller.lay(list, {}, 1.0f).kept);
+
+    // Scrolled part way, a line in it changed: the lines wholly in sight
+    // kept (they were cut to the view as they are now).
+    const auto lines = [](std::string last)
+    {
+      std::vector<View> each;
+      for (int i = 0; i < 9; ++i)
+        each.push_back(Text("line" + std::to_string(i)));
+      each.push_back(Text(std::move(last)));
+      return ScrollView(
+                 VStack(std::move(each), Alignment::Leading).spacing(0.0f))
+          .scrollOffset(30.0f)
+          .maxHeight(100.0f)
+          .align(Alignment::TopLeading);
+    };
+    Kept cut;
+    cut.lay(lines("line9"));
+    cut.lay(lines("line9"));
+    const Cache::Stats& changed = cut.lay(lines("LINE9"));
+    CHECK(!changed.kept && changed.reused >= 4);
+    // (line9's out of sight; line1 and line6, cut at the edges, aren't kept)
+    CHECK(cut.text.drawn.size() == 2u);
+    cut.lay(lines("LINE9"));
+    // As laid out from scratch (which starts scrolled there too).
+    CHECK(sameAsFresh(cut));
+  }
+
+  TEST("a disclosure group's state should stay with it when a view of "
+       "another kind is put before it")
+  {
+    Kept kept;
+    const auto panel = [](bool note)
+    {
+      std::vector<View> rows;
+      if (note)
+        rows.push_back(Text("note"));
+      rows.push_back(DisclosureGroup("Weather", Text("rain")));
+      return VStack(std::move(rows), Alignment::Leading)
+          .frame(300.0f)
+          .align(Alignment::TopLeading);
+    };
+    kept.lay(panel(false));
+    const Hit* header = kept.clickable(Node::Kind::Disclosure);
+    CHECK(header != nullptr);
+    if (header)
+      header->action(*nodeAt(*kept.view.node(), header->source));
+    kept.lay(panel(false), {}, 1.0f);
+    CHECK(std::find(kept.text.drawn.begin(), kept.text.drawn.end(), "rain") !=
+          kept.text.drawn.end());
+    kept.lay(panel(true), {}, 1.0f);
+    CHECK(std::find(kept.text.drawn.begin(), kept.text.drawn.end(), "rain") !=
+          kept.text.drawn.end());
+  }
+
+  // A style of the game's: a face of its own colour in each state.
+  const auto faceOf = [](const ButtonConfiguration& c)
+  {
+    const Color face = c.disabled  ? Color::rgb(10, 10, 10)
+                       : c.pressed ? Color::rgb(200, 0, 0)
+                       : c.hovered ? Color::rgb(0, 200, 0)
+                                   : Color::rgb(0, 0, 200);
+    return c.label.frame(80.0f, 30.0f).background(face);
+  };
+  // Whether a box of `color` was drawn.
+  const auto drewBox = [](const std::vector<UiQuad>& quads, Color color)
+  {
+    for (const UiQuad& quad : quads)
+      if (quad.kind == UiQuad::Box && near(quad.color.r, color.r) &&
+          near(quad.color.g, color.g) && near(quad.color.b, color.b))
+        return true;
+    return false;
+  };
+
+  TEST("a button style should make a button's look from its state: normal, "
+       "hovered, pressed, disabled; no theme face")
+  {
+    int clicks = 0;
+    const View ui = Button("Go", [&] { ++clicks; })
+                        .buttonStyle(ButtonStyle(faceOf))
+                        .align(Alignment::TopLeading);
+    Laid normal = lay(ui);
+    const Hit* hit = clickable(normal, Node::Kind::Button);
+    CHECK(hit != nullptr);
+    if (!hit)
+      break;
+    CHECK(near(hit->rect.width, 80.0f) && near(hit->rect.height, 30.0f));
+    CHECK(drewBox(normal.quads, Color::rgb(0, 0, 200)));
+    CHECK(!drewBox(normal.quads, Theme().button));
+    CHECK(textQuad(normal, "Go") != nullptr);
+    click(normal, hit);
+    CHECK(clicks == 1);
+
+    Pointer pointer;
+    pointer.hovered = hit->id;
+    CHECK(drewBox(lay(ui, {1000.0f, 500.0f}, 1.0f, pointer).quads,
+                  Color::rgb(0, 200, 0)));
+    pointer.pressed = hit->id;
+    Laid pressed = lay(ui, {1000.0f, 500.0f}, 1.0f, pointer);
+    CHECK(drewBox(pressed.quads, Color::rgb(200, 0, 0)));
+    CHECK(!drewBox(pressed.quads, Color::rgb(0, 0, 200)));
+    Laid disabled = lay(ui.disabled(), {1000.0f, 500.0f}, 1.0f, pointer);
+    CHECK(drewBox(disabled.quads, Color::rgb(10, 10, 10)));
+    const Hit* off = clickable(disabled, Node::Kind::Button);
+    CHECK(off && !off->enabled);
+    // A style struct (makeBody) does the same.
+    struct Struct
+    {
+      View makeBody(const ButtonConfiguration& c) const
+      {
+        return c.label.background(c.hovered ? Color::white() : Color::black());
+      }
+    };
+    CHECK(drewBox(lay(Button("Go", [] {})
+                          .buttonStyle(Struct{})
+                          .align(Alignment::TopLeading))
+                      .quads,
+                  Color::black()));
+  }
+
+  TEST("a styled button's hover should lay out only it again; what a style "
+       "captured should be in the hash")
+  {
+    Kept kept;
+    const auto row = [&](Color lit)
+    {
+      return HStack{Button("A", [] {}), Button("B", [] {})}
+          .buttonStyle(ButtonStyle([&, lit](const ButtonConfiguration& c)
+                                   { return faceOf(c).border(lit, 1.0f); }))
+          .align(Alignment::TopLeading);
+    };
+    kept.lay(row(Color::white()));
+    const Hit* a = kept.clickable(Node::Kind::Button);
+    CHECK(a != nullptr);
+    if (!a)
+      break;
+    CHECK(kept.lay(row(Color::white())).kept);
+    Pointer pointer;
+    pointer.hovered = a->id;
+    const Cache::Stats& over = kept.lay(row(Color::white()), pointer);
+    // Its face drawn again; its label (where it was) and B's kept.
+    CHECK(!over.kept && over.reused >= 2 && kept.text.drawn.empty());
+    CHECK(drewBox(*kept.cache.quads(), Color::rgb(0, 200, 0)));
+    CHECK(sameAsFresh(kept, pointer));
+    CHECK(kept.lay(row(Color::white()), pointer).kept);
+    CHECK(row(Color::white()).node()->hash() !=
+          row(Color::black()).node()->hash());
+  }
+
+  TEST("buttonStyle on a stack should style its buttons without one; plain "
+       "should be its label, dimmed pressed")
+  {
+    const View styled =
+        HStack{Button("a", [] {}),
+               Button("b", [] {}).buttonStyle(ButtonStyle::plain())}
+            .buttonStyle(ButtonStyle(faceOf));
+    const Node& stack = *styled.node();
+    CHECK(stack.children.size() == 2u);
+    if (stack.children.size() == 2u)
+    {
+      CHECK(stack.children[0].node()->buttonStyle ==
+                ButtonStyle::Kind::Custom &&
+            stack.children[0].node()->children.size() == 5u);
+      CHECK(stack.children[1].node()->buttonStyle == ButtonStyle::Kind::Plain);
+    }
+    // A view with no buttons is itself, not a copy.
+    const View text = Text("x");
+    CHECK(text.buttonStyle(ButtonStyle(faceOf)).node() == text.node());
+
+    const View plain = Button(Text("xy").color(Color::rgb(255, 0, 0)), [] {})
+                           .buttonStyle(ButtonStyle::plain())
+                           .align(Alignment::TopLeading);
+    Laid laid = lay(plain);
+    CHECK(laid.quads.size() == 1u && laid.quads[0].kind == UiQuad::Glyph);
+    const Hit* hit = clickable(laid, Node::Kind::Button);
+    CHECK(hit && near(hit->rect.width, 20.0f) && near(hit->rect.height, 20.0f));
+    if (!hit || laid.quads.empty())
+      break;
+    CHECK(near(laid.quads[0].color.r, 1.0f) &&
+          near(laid.quads[0].color.a, 1.0f));
+    Pointer pointer;
+    pointer.hovered = pointer.pressed = hit->id;
+    Laid down = lay(plain, {1000.0f, 500.0f}, 1.0f, pointer);
+    CHECK(down.quads.size() == 1u && near(down.quads[0].color.a, 0.6f));
+    // filled(): a face in each state's fill.
+    Fill normal{.color = Color::rgb(1, 2, 3)};
+    Fill hovered{.color = Color::rgb(4, 5, 6)};
+    Fill held{.color = Color::rgb(7, 8, 9)};
+    Laid filled =
+        lay(Button("go", [] {})
+                .buttonStyle(ButtonStyle::filled(normal, hovered, held))
+                .align(Alignment::TopLeading));
+    CHECK(drewBox(filled.quads, normal.color));
+  }
+
+  TEST("tinted images should draw as masks in the tint, from the level their "
+       "size; resizable ones should grow; nearest should be noted")
+  {
+    FakeImages images;
+    const glm::vec2 screen(1000.0f, 500.0f);
+    Laid lit = lay(Image("lamp.png")
+                       .tint(Color::rgb(255, 0, 0))
+                       .frame(16.0f, 16.0f)
+                       .align(Alignment::TopLeading),
+                   screen,
+                   1.0f,
+                   {},
+                   &images);
+    CHECK(lit.quads.size() == 1u);
+    if (lit.quads.size() == 1u)
+    {
+      const UiQuad& quad = lit.quads[0];
+      CHECK(quad.kind == UiQuad::Mask && quad.texture == &images.page);
+      CHECK(near(quad.color.r, 1.0f) && near(quad.color.g, 0.0f));
+      CHECK(near(quad.rect.z, 16.0f) && near(quad.rect.w, 16.0f));
+      CHECK(near(quad.uv.x, 0.2f)); // the 16-pixel level
+      CHECK(!quad.nearest);
+    }
+    // Tinted round it, in the colour it inherits.
+    Laid inherited = lay(HStack{Image("lamp.png").frame(24.0f, 24.0f)}
+                             .tint()
+                             .color(Color::rgb(0, 255, 0))
+                             .align(Alignment::TopLeading),
+                         screen,
+                         1.0f,
+                         {},
+                         &images);
+    CHECK(inherited.quads.size() == 1u &&
+          inherited.quads[0].kind == UiQuad::Mask &&
+          near(inherited.quads[0].color.g, 1.0f) &&
+          near(inherited.quads[0].uv.x, 0.1f)); // 24 pixels: the 32 level
+    // Untinted: an image, white.
+    Laid plain = lay(Image("lamp.png").align(Alignment::TopLeading),
+                     screen,
+                     1.0f,
+                     {},
+                     &images);
+    CHECK(plain.quads.size() == 1u && plain.quads[0].kind == UiQuad::Image &&
+          near(plain.quads[0].uv.x, 0.0f));
+    // Resizable: grows to its frame, keeping its shape; else as it is.
+    Laid grown =
+        lay(VStack{Image("crate.png").resizable().frame(128.0f, 128.0f)}.align(
+                Alignment::TopLeading),
+            screen,
+            1.0f,
+            {},
+            &images);
+    CHECK(grown.quads.size() == 1u && near(grown.quads[0].rect.z, 128.0f) &&
+          near(grown.quads[0].rect.w, 64.0f));
+    Laid same = lay(VStack{Image("crate.png").frame(128.0f, 128.0f)}.align(
+                        Alignment::TopLeading),
+                    screen,
+                    1.0f,
+                    {},
+                    &images);
+    CHECK(same.quads.size() == 1u && near(same.quads[0].rect.z, 64.0f));
+    Laid sharp = lay(Image("crate.png")
+                         .interpolation(Interpolation::Nearest)
+                         .align(Alignment::TopLeading),
+                     screen,
+                     1.0f,
+                     {},
+                     &images);
+    CHECK(sharp.quads.size() == 1u && sharp.quads[0].nearest);
+    CHECK(Image("lamp.png").tint(Color::white()).node()->hash() !=
+          Image("lamp.png").node()->hash());
+  }
+
+  TEST("an image atlas should put small images on one page with their "
+       "levels, averaged by alpha; big ones on their own")
+  {
+    ImageAtlas atlas;
+    // 64 x 64: white, its left half clear.
+    std::vector<uint8_t> icon(64 * 64 * 4, 255);
+    for (int y = 0; y < 64; ++y)
+      for (int x = 0; x < 32; ++x)
+        icon[(std::size_t(y) * 64 + x) * 4 + 3] = 0;
+    const SourceImage* first = atlas.add(icon, {64, 64});
+    const SourceImage* second = atlas.add(icon, {64, 64});
+    CHECK(first && second && atlas.pages() == 1u);
+    if (!first || !second)
+      break;
+    CHECK(first->texture == second->texture);
+    CHECK(first->levels == 4 && first->level[3].size == glm::ivec2(8, 8));
+    CHECK(first->level[1].uv != second->level[1].uv);
+    CHECK(near(first->levelFor(16.0f).uv.z * ImageAtlas::kPageSize, 16.0f));
+    CHECK(first->levelFor(17.0f).size.x == 32);
+    CHECK(first->levelFor(200.0f).size.x == 64);
+    // Halved across the clear edge: half covered, still white.
+    const std::vector<uint8_t> edge = {
+        255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0};
+    const std::vector<uint8_t> half = halved(edge, {2, 2});
+    CHECK(half.size() == 4u && half[0] == 255 && half[3] >= 127 &&
+          half[3] <= 128);
+    // The level copied where it says: the 32 level's right half opaque.
+    const SourceImage& image = *first;
+    const glm::ivec2 at =
+        glm::ivec2(glm::vec2(image.level[1].uv) * float(ImageAtlas::kPageSize));
+    const auto alphaAt = [&](int x, int y)
+    {
+      return image.texture->pixels
+          [(std::size_t(at.y + y) * ImageAtlas::kPageSize + at.x + x) * 4 + 3];
+    };
+    CHECK(alphaAt(4, 4) == 0 && alphaAt(28, 4) == 255);
+    std::vector<uint8_t> big(300 * 10 * 4, 255);
+    const SourceImage* own = atlas.add(big, {300, 10});
+    CHECK(own && own->levels == 1 && own->texture != first->texture &&
+          own->texture->size == glm::ivec2(300, 10));
+  }
+
+  TEST("a picture's new pixels should need nothing laid out again; a resize "
+       "only it")
+  {
+    auto picture = std::make_shared<Picture>(16, 8);
+    Kept kept;
+    const auto ui = [&] {
+      return HStack{Text("map"), Image(picture)}.align(Alignment::TopLeading);
+    };
+    kept.lay(ui());
+    const UiQuad* quad = nullptr;
+    for (const UiQuad& each : *kept.cache.quads())
+      if (each.kind == UiQuad::Image)
+        quad = &each;
+    CHECK(quad && quad->texture == &picture->texture() &&
+          near(quad->rect.z, 16.0f) && near(quad->rect.w, 8.0f));
+    const uint32_t version = picture->version();
+    picture->set(3, 2, Color::rgb(255, 0, 0));
+    picture->changed();
+    CHECK(picture->version() == version + 1);
+    CHECK(picture->pixels()[(2 * 16 + 3) * 4] == 255 &&
+          picture->pixels()[(2 * 16 + 3) * 4 + 3] == 255);
+    CHECK(kept.lay(ui()).kept);
+    picture->resize(32, 16);
+    const Cache::Stats& resized = kept.lay(ui());
+    CHECK(!resized.kept && kept.text.drawn.empty());
+    quad = nullptr;
+    for (const UiQuad& each : *kept.cache.quads())
+      if (each.kind == UiQuad::Image)
+        quad = &each;
+    CHECK(quad && near(quad->rect.z, 32.0f));
+    // Another picture: another view.
+    auto other = std::make_shared<Picture>(32, 16);
+    CHECK(Image(other).node()->hash() != Image(picture).node()->hash());
+  }
+
+  TEST("a render texture (a camera feed) should be shown from the GPU, its "
+       "new pictures needing nothing laid out again")
+  {
+    auto feed = std::make_shared<RenderTexture>(glm::ivec2(32, 18));
+    CHECK(feed->texture().gpu && feed->texture().pixels.empty() &&
+          feed->texture().id != 0);
+    Kept kept;
+    const auto ui = [&] {
+      return HStack{Text("rear"), Image(feed)}.align(Alignment::TopLeading);
+    };
+    kept.lay(ui());
+    const UiQuad* quad = nullptr;
+    for (const UiQuad& each : *kept.cache.quads())
+      if (each.kind == UiQuad::Image)
+        quad = &each;
+    CHECK(quad && quad->texture == &feed->texture() &&
+          near(quad->rect.z, 32.0f) && near(quad->rect.w, 18.0f));
+    // A new picture is the renderer's: the same views, kept.
+    CHECK(kept.lay(ui()).kept);
+    feed->resize({64, 36});
+    CHECK(!kept.lay(ui()).kept);
+    // Another feed, or a Picture: another view.
+    auto other = std::make_shared<RenderTexture>(glm::ivec2(64, 36));
+    CHECK(Image(other).node()->hash() != Image(feed).node()->hash());
+  }
+
+  TEST("UI batches should keep a glyph texture and an image texture bound "
+       "together: icons between text in one draw")
+  {
+    UiTexture glyphs, page, other;
+    glyphs.id = 1;
+    page.id = 2;
+    other.id = 3;
+    UiDrawList list;
+    const auto quad = [](UiQuad::Kind kind, const UiTexture* texture)
+    {
+      UiQuad made;
+      made.kind = kind;
+      made.texture = texture;
+      return made;
+    };
+    list.quads = {quad(UiQuad::Box, nullptr),
+                  quad(UiQuad::Mask, &page),
+                  quad(UiQuad::Glyph, &glyphs),
+                  quad(UiQuad::Image, &page),
+                  quad(UiQuad::Glyph, &glyphs),
+                  quad(UiQuad::Box, nullptr),
+                  quad(UiQuad::Mask, &other),
+                  quad(UiQuad::Glyph, &glyphs)};
+    list.quads[3].nearest = true;
+    FramePlan plan;
+    plan.begin(FrameParams{});
+    plan.addUi(list);
+    plan.finish({1000, 500}, 1024, 256, [](uint32_t) { return nullptr; });
+    const auto& batches = plan.uiBatches();
+    CHECK(batches.size() == 2u);
+    if (batches.size() == 2u)
+    {
+      CHECK(batches[0].glyphs == &glyphs && batches[0].image == &page &&
+            batches[0].first == 0u && batches[0].count == 6u);
+      CHECK(batches[1].glyphs == &glyphs && batches[1].image == &other &&
+            batches[1].count == 2u);
+    }
+    CHECK(plan.uiInstances().size() == 8u &&
+          near(plan.uiInstances()[3].shape.w, 10.0f) &&
+          near(plan.uiInstances()[1].shape.w, 4.0f));
   }
 
   return testing::report("uiLayoutTests");

@@ -51,6 +51,7 @@ struct ParticleSpriteBatch
 {
   const std::string* textureId = nullptr;
   BlendMode blend = BlendMode::Alpha;
+  bool lit = false; // lit by the scene's light (ParticleEffectDesc::lit)
   std::vector<ParticleSprite> sprites;
 };
 
@@ -121,6 +122,11 @@ public:
   // Advance every emitter and burst.
   void simulate(double deltaTime);
 
+  // How fast particles' time runs (1 as it is; 0 freezes them where they are
+  // and stops emitting: a paused game).
+  void setTimeScale(float scale) { m_timeScale = glm::max(scale, 0.0f); }
+  float timeScale() const { return m_timeScale; }
+
   // The live particles as drawn, a batch an effect instance.
   void sprites(std::vector<ParticleSpriteBatch>& out) const;
 
@@ -137,6 +143,24 @@ private:
     glm::vec2 origin{0.0f, 0.0f};
     float groundLevel = 0.0f;
     float spawnHeightBias = 0.0f; // emitter height offset added to startHeight
+    // Turned with its entity (ParticleEmitterComponent::turnWithEntity): the
+    // emission shape turns by this (radians about the up axis; the launch
+    // direction by aimAngle).
+    float yaw = 0.0f;
+    // An entity emitter's: its emit rate's scale, and its colour's.
+    float rate = 1.0f;
+    glm::vec4 tint{1.0f};
+    // Its entity's velocity (from where its origin was last frame), and how
+    // much of it particles leave with.
+    glm::vec2 lastOrigin{0.0f, 0.0f};
+    float lastHeight = 0.0f;
+    bool hasLast = false;
+    float inherit = 0.0f;
+    // An entity emitter that moved since last frame: where it was then (its
+    // particles this frame are spread along the way from there, so a fast
+    // one, or one in a sped-up game, leaves a trail rather than clumps).
+    glm::vec2 trailFrom{0.0f, 0.0f};
+    bool trails = false;
 
     // Impact momentum added to each emitted particle, and the spread centre
     // (radians) the emission fans around (0 = +X). Set from
@@ -174,7 +198,7 @@ private:
                  const ParticleEffectDesc& desc,
                  const Particle& p,
                  const ParticleHit& hit);
-  void syncComponentEmitters();
+  void syncComponentEmitters(float dt);
 
   const IParticleCollisionSource* m_collisionSource = nullptr;
   IDecalSink* m_decalSink = nullptr;
@@ -189,6 +213,7 @@ private:
 
   // Global live-particle ceiling (see setMaxParticles).
   int m_maxParticles = 6000;
+  float m_timeScale = 1.0f;
 
   uint32_t m_burstSeed = 0x6d2b79f5u;
 };

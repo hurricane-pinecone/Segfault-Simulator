@@ -6,15 +6,11 @@
 #include "scene/editorScene.h"
 #include "scene/prefabs.h"
 
-#include "engine/core/components/boxCollider2D.h"
-#include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/cameraComponent.h"
-#include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/pointLightComponent.h"
-#include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
@@ -22,10 +18,12 @@
 #include "engine/core/rendering/grass.h"
 #include "engine/core/rendering/terrain.h"
 #include "engine/runtime/assetStore/textureImporter.h"
+#include "engine/runtime/rendering/debug/colliderLines.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
 #include "glm/glm/gtc/matrix_transform.hpp"
 #include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/gtc/type_ptr.hpp"
@@ -35,6 +33,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <span>
 #include <array>
 #include <cmath>
 
@@ -73,12 +72,27 @@ constexpr ImU32 kDropColor = IM_COL32(90, 210, 255, 255);
 constexpr ImU32 kLightColor = IM_COL32(255, 220, 120, 255);
 constexpr ImU32 kCameraColor = IM_COL32(230, 230, 230, 255);
 constexpr ImU32 kInactiveCameraColor = IM_COL32(140, 140, 140, 200);
-constexpr ImU32 kColliderColor = IM_COL32(90, 230, 120, 255);
-constexpr ImU32 kTriggerColor = IM_COL32(255, 150, 60, 255);
 
 // How far ahead a camera's outline reaches, as a fraction of its distance from
 // the viewer, so it stays about the same size on screen.
 constexpr float kCameraIconScale = 0.08f;
+
+// What a click on `hit` selects: the outermost prefab instance it's part of
+// (the thing placed, not a mesh deep in its model); or, once that instance or
+// something in it is selected, the part itself, so a second click reaches in.
+sfs::Entity clickTarget(const sfs::Entity& hit, const sfs::Entity& selected)
+{
+  sfs::Entity root = sfs::SceneSerializer::instanceRootOf(hit);
+  if (!root.isValid())
+    return hit;
+  for (sfs::Entity above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)); above.isValid();
+       above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)))
+    root = above;
+  for (sfs::Entity in = selected; in.isValid(); in = sfs::hierarchy::parentOf(in))
+    if (in == root)
+      return hit;
+  return root;
+}
 } // namespace
 
 ViewportPanel::ViewportPanel(sfs::IRenderBackend& backend, std::string title)
@@ -422,15 +436,22 @@ void ViewportPanel::drawToolbar(const EditorContext& context)
     ImGui::SliderFloat("Strength", &m_brushStrength, 0.05f, 1.0f, "%.2f");
     ImGui::SetItemTooltip("How quickly it paints");
     ImGui::SameLine();
-    // Which map: where it grows, how long, or data for its material.
-    static constexpr const char* kChannels[] = {
-        "Coverage", "Length", "Data 0", "Data 1", "Data 2", "Data 3"};
+    // Which map: where it grows, how long, data for its material, or where
+    // it may grow at all (a crisp edge).
+    static constexpr const char* kChannels[] = {"Coverage",
+                                                "Length",
+                                                "Data 0",
+                                                "Data 1",
+                                                "Data 2",
+                                                "Data 3",
+                                                "Bounds"};
     ImGui::SetNextItemWidth(90.0f);
     ImGui::Combo(
         "##channel", &m_brushChannel, kChannels, IM_ARRAYSIZE(kChannels));
     ImGui::SetItemTooltip(
-        "What it paints: where grass grows, how long it is, or data its "
-        "material reads");
+        "What it paints: where grass grows (thinning out at the edge), how "
+        "long it is, data its material reads, or its bounds (none past them, "
+        "to a crisp edge)");
     ImGui::SameLine();
     ImGui::Checkbox("Erase", &m_brushErase);
     ImGui::SetItemTooltip("Take away instead (or hold Shift)");
@@ -977,8 +998,10 @@ void ViewportPanel::pick(EditorContext& context, const View& view)
   const sfs::Ray ray = context.render->camera().screenRay(
       {mouse.x - view.origin.x, mouse.y - view.origin.y}, {view.size.x, view.size.y});
 
-  const std::optional<sfs::PickHit> hit =
+  std::optional<sfs::PickHit> hit =
       sfs::pickEntity(*context.scene, context.render->meshes(), ray, context.render);
+  if (hit)
+    hit->entity = clickTarget(hit->entity, context.selection);
   // Ctrl: add what's clicked to the selection, or take it out.
   if (ImGui::GetIO().KeyCtrl && hit)
   {
@@ -1191,6 +1214,15 @@ void ViewportPanel::drawLightIcons(const EditorContext& context, const View& vie
     if (!at)
       continue;
 
+    // A spot: a line a metre along its axis, the way it shines.
+    if (light.spot)
+    {
+      const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
+      const glm::vec3 from(world * glm::vec4(light.offset, 1.0f));
+      if (const std::optional<ImVec2> ahead = toScreen(view, from + glm::normalize(glm::vec3(world[0]))))
+        drawList->AddLine(*at, *ahead, kLightColor, 2.0f);
+    }
+
     // A small sun: a disc with rays.
     drawList->AddCircleFilled(*at, 5.0f, kLightColor);
     for (int i = 0; i < 8; ++i)
@@ -1275,111 +1307,18 @@ void ViewportPanel::drawColliders(const EditorContext& context, const View& view
   if (!context.hasSelection() || !context.selection.hasComponent<sfs::TransformComponent>())
     return;
 
-  const sfs::Entity& entity = context.selection;
-  const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
-  const glm::vec3 scale{glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])),
-                        glm::length(glm::vec3(world[2]))};
-  // Turned with the entity but unscaled: scale goes into the sizes, the way
-  // the physics bakes it (a sphere stays round).
-  glm::mat4 turned = world;
-  for (int axis = 0; axis < 3; ++axis)
-    turned[axis] = scale[axis] > 0.0f ? world[axis] / scale[axis] : world[axis];
-
+  // The engine's lines for them (as the scene's Draw Colliders draws every
+  // collider), over the image: the selection's always, whether or not that's
+  // on. Their colours pack as ImGui's do (red in the low byte).
+  sfs::DebugLines lines;
+  sfs::colliderLines::append(context.selection, context.render->space2D(), lines);
   ImDrawList* drawList = ImGui::GetWindowDrawList();
-  ImU32 color = kColliderColor;
-  const auto line = [&](const glm::vec3& a, const glm::vec3& b)
+  const std::span<const sfs::DebugLineVertex> ends = lines.vertices();
+  for (std::size_t i = 0; i + 1 < ends.size(); i += 2)
   {
-    const std::optional<ImVec2> from = toScreen(view, glm::vec3(turned * glm::vec4(a, 1.0f)));
-    const std::optional<ImVec2> to = toScreen(view, glm::vec3(turned * glm::vec4(b, 1.0f)));
+    const std::optional<ImVec2> from = toScreen(view, ends[i].position);
+    const std::optional<ImVec2> to = toScreen(view, ends[i + 1].position);
     if (from && to)
-      drawList->AddLine(*from, *to, color, 1.5f);
-  };
-  // A circle (or the arc from `start` to `end` turns) in the plane of axes u,
-  // v.
-  const auto circle = [&](const glm::vec3& centre,
-                          const glm::vec3& u,
-                          const glm::vec3& v,
-                          float radius,
-                          float start = 0.0f,
-                          float end = 1.0f)
-  {
-    constexpr int kSegments = 32;
-    const int segments = std::max(4, static_cast<int>(kSegments * (end - start)));
-    for (int i = 0; i < segments; ++i)
-    {
-      const float a0 = 6.2831853f * (start + (end - start) * i / segments);
-      const float a1 = 6.2831853f * (start + (end - start) * (i + 1) / segments);
-      line(centre + radius * (std::cos(a0) * u + std::sin(a0) * v),
-           centre + radius * (std::cos(a1) * u + std::sin(a1) * v));
-    }
-  };
-  const glm::vec3 x{1, 0, 0}, y{0, 1, 0}, z{0, 0, 1};
-
-  // A 2D game's box: on its plane, where PhysicsSystem2D has it (unturned,
-  // unscaled), drawn where the plane puts it.
-  const std::optional<sfs::Space2D>& space = context.render->space2D();
-  if (space && entity.hasComponent<sfs::BoxCollider2D>())
-  {
-    const auto& box = entity.getComponent<sfs::BoxCollider2D>();
-    color = box.trigger ? kTriggerColor : kColliderColor;
-    const sfs::TransformComponent placed = sfs::hierarchy::worldTransform(entity);
-    const glm::vec2 centre = placed.position2D() + box.offset;
-    const glm::vec2 half = glm::abs(box.half);
-    const glm::vec2 corners[] = {centre - half,
-                                 {centre.x + half.x, centre.y - half.y},
-                                 centre + half,
-                                 {centre.x - half.x, centre.y + half.y}};
-    for (int i = 0; i < 4; ++i)
-    {
-      const auto from = toScreen(view, space->place(corners[i], placed.position.z));
-      const auto to = toScreen(view, space->place(corners[(i + 1) % 4], placed.position.z));
-      if (from && to)
-        drawList->AddLine(*from, *to, color, 1.5f);
-    }
-  }
-
-  if (entity.hasComponent<sfs::BoxCollider3DComponent>())
-  {
-    const auto& box = entity.getComponent<sfs::BoxCollider3DComponent>();
-    color = box.trigger ? kTriggerColor : kColliderColor;
-    const glm::vec3 half = box.size * scale * 0.5f;
-    const glm::vec3 centre = box.offset * scale;
-    const auto corner = [&](int i)
-    { return centre + glm::vec3((i & 1) ? half.x : -half.x, (i & 2) ? half.y : -half.y, (i & 4) ? half.z : -half.z); };
-    for (int a = 0; a < 8; ++a)
-      for (const int bit : {1, 2, 4})
-        if (!(a & bit))
-          line(corner(a), corner(a | bit));
-  }
-
-  if (entity.hasComponent<sfs::SphereCollider3DComponent>())
-  {
-    const auto& sphere = entity.getComponent<sfs::SphereCollider3DComponent>();
-    color = sphere.trigger ? kTriggerColor : kColliderColor;
-    const float radius = sphere.radius * std::max({scale.x, scale.y, scale.z});
-    const glm::vec3 centre = sphere.offset * scale;
-    circle(centre, x, y, radius);
-    circle(centre, x, z, radius);
-    circle(centre, y, z, radius);
-  }
-
-  if (entity.hasComponent<sfs::CapsuleCollider3DComponent>())
-  {
-    const auto& capsule = entity.getComponent<sfs::CapsuleCollider3DComponent>();
-    color = capsule.trigger ? kTriggerColor : kColliderColor;
-    const float radius = capsule.radius * std::max(scale.x, scale.y);
-    const float half = std::max(capsule.height * scale.z * 0.5f - radius, 0.0f);
-    const glm::vec3 centre = capsule.offset * scale;
-    const glm::vec3 top = centre + z * half;
-    const glm::vec3 bottom = centre - z * half;
-    circle(top, x, y, radius);
-    circle(bottom, x, y, radius);
-    for (const glm::vec3& side : {x, -x, y, -y})
-      line(top + side * radius, bottom + side * radius);
-    // The rounded ends: half circles over the top and under the bottom.
-    circle(top, x, z, radius, 0.0f, 0.5f);
-    circle(top, y, z, radius, 0.0f, 0.5f);
-    circle(bottom, x, z, radius, 0.5f, 1.0f);
-    circle(bottom, y, z, radius, 0.5f, 1.0f);
+      drawList->AddLine(*from, *to, ends[i].color, 1.5f);
   }
 }

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "engine/core/rendering/aabb.h"
+#include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -68,6 +70,39 @@ inline bool isSeeThrough(AlphaMode mode)
 }
 
 /**
+ * A tree's or a plant's parts (MeshMaterial::foliage): drawn with the foliage
+ * surface, which reads the mesh's vertex colours as data rather than colour
+ * (R how open the point is: it multiplies the albedo, darker deep in a crown;
+ * G how much it sways with its branch, 0 on the trunk to 1 at the twigs' tips;
+ * B how much it flutters, 0 on bark, up to 1 at a leaf card's far corners),
+ * moves its vertices in the frame's wind (the whole plant bending by its height
+ * above its instance's origin, its branches swaying, its leaves fluttering; in
+ * every pass, so its shadow moves too), lets sunlight through from behind and
+ * keeps its normals on back faces (leaf cards' normals bent out from the
+ * crown's middle shade it as one soft volume). A masked one keeps its cut-outs
+ * solid as its textures shrink into mipmaps, and fades by dithering where an
+ * instance asks (see MeshLodComponent's cross-fades).
+ *
+ * @param enabled      draw with the foliage surface
+ * @param translucency how much sunlight shows through it from behind (0 none,
+ *                     1 a thin leaf's), x the metallic-roughness texture's red
+ *                     (its thinness: glTF leaves that channel unused)
+ * @param bend         how far the whole plant bends in the wind (1 a tree's)
+ * @param sway         how far its branches sway (x the vertices' G)
+ * @param flutter      how much its leaves flutter (x the vertices' B)
+ */
+struct FoliageSettings
+{
+  bool enabled = false;
+  float translucency = 0.5f;
+  float bend = 1.0f;
+  float sway = 1.0f;
+  float flutter = 1.0f;
+
+  bool operator==(const FoliageSettings&) const = default;
+};
+
+/**
  * How a surface looks, glTF's metallic-roughness model: the albedo is the
  * vertex colour x baseColor x baseTexture, with alpha from baseColor's x the
  * texture's. A null texture counts as white.
@@ -102,6 +137,17 @@ struct MeshMaterial
   // with their faces turned either way), a back face lit as seen from
   // behind. Otherwise only its front faces are.
   bool doubleSided = false;
+  // A tree's or a plant's: the foliage surface (see FoliageSettings), in
+  // place of the standard one. Ignored with a shader or a terrain.
+  FoliageSettings foliage;
+  // Something the camera passes through rather than bumping into (a tree, a
+  // bush): within this many metres of the eye (where the camera would be
+  // inside it) it fades away by dithering (all back by 1.5 times as far), and
+  // round the line of sight to what the camera looks at if the frame asks
+  // (FrameParams::lineOfSight; off by default), in the camera's view only
+  // (its shadow stays). 0: never. The foliage surface's, and a masked
+  // standard one's.
+  float fadeNearCamera = 0.0f;
 
   // A material graph's shader (see materialGraphCompiler.h), and the values
   // and textures it reads, in its order (a null texture reads white). Null:
@@ -112,6 +158,13 @@ struct MeshMaterial
   // A terrain's layers and splat map (see TerrainMaterial), drawn in place of
   // the standard surface (and of a shader). Null: none.
   std::shared_ptr<const TerrainMaterial> terrain;
+  // What a game paints on its ground, for a terrain standing in for this
+  // material (MeshLibrary::setMaterialOverrides(), a style's variant): its
+  // layers' weights (TerrainMaterial::paint) and its tint (::tint; null: the
+  // base texture). The standard surface ignores them. Both are uploaded
+  // without mipmaps, so IRenderer::updateTexture() can change them in place.
+  std::shared_ptr<const TextureData> terrainPaint;
+  std::shared_ptr<const TextureData> terrainTint;
 
   // Materials (by name, e.g. "asset:<id>") to draw instead while a visual
   // style with the tag is active: (tag, material) pairs (see
@@ -134,6 +187,31 @@ struct MeshSection
 };
 
 /**
+ * One vertex's skin (see MeshSkin): up to four joints, by their place in the
+ * skin's joints, and how much each moves it (summing to 1; all 0: it stays
+ * as it is).
+ */
+struct SkinWeights
+{
+  std::array<uint16_t, 4> joints{0, 0, 0, 0};
+  glm::vec4 weights{0.0f};
+};
+
+/**
+ * What a skinned mesh (a character's body) moves with: its joints, the nodes
+ * of its model (entities, by name) that deform it, each with its inverse
+ * bind matrix (from the mesh's own space to the joint's, as the mesh was
+ * bound to it) and the box around the vertices it moves (in the mesh's own
+ * space, for bounds that hold whatever the pose; see skinnedBounds()).
+ */
+struct MeshSkin
+{
+  std::vector<std::string> joints;
+  std::vector<glm::mat4> inverseBind;
+  std::vector<Aabb> jointBounds;
+};
+
+/**
  * CPU-side mesh: an indexed triangle list (counter-clockwise front faces,
  * Z up). Plain data, so it can be built, combined and tested without a GPU;
  * a renderer uploads it once and hands back a MeshHandle.
@@ -147,8 +225,17 @@ struct MeshData
   std::vector<MeshVertex> vertices;
   std::vector<uint32_t> indices;
   std::vector<MeshSection> sections;
+  // A skinned mesh's skeleton, and each vertex's weights (as many as
+  // vertices); null and empty for a mesh that doesn't deform.
+  std::shared_ptr<const MeshSkin> skin;
+  std::vector<SkinWeights> skinWeights;
 
   bool empty() const { return indices.empty(); }
+  bool skinned() const
+  {
+    return skin && !skin->joints.empty() &&
+           skinWeights.size() == vertices.size();
+  }
 
   /** Bounds of every vertex position. */
   Aabb bounds() const;

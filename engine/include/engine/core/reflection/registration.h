@@ -5,6 +5,7 @@
 #include "engine/core/reflection/reflection.h"
 
 #include <string>
+#include <type_traits>
 #include <utility>
 
 // Helpers used by sfs-codegen's generated registration code. Not intended for
@@ -55,6 +56,42 @@ TypeInfo scriptableObjectType(std::string name,
   { return static_cast<sfs::ScriptableObject*>(new T()); };
   type.scriptable.destroy = [](void* object)
   { delete static_cast<sfs::ScriptableObject*>(object); };
+  return type;
+}
+
+/**
+ * A T from the pointer the editor and serializer hand a field's address
+ * function: a scriptable object as its sfs::ScriptableObject (what its
+ * ScriptableOps::create gives), anything else as itself. Going through the
+ * common base makes a base type's fields work on a derived object.
+ */
+template <typename T>
+T* objectAs(void* object)
+{
+  if constexpr (std::is_base_of_v<sfs::ScriptableObject, T>)
+    return static_cast<T*>(static_cast<sfs::ScriptableObject*>(object));
+  else
+    return static_cast<T*>(object);
+}
+
+/**
+ * A TypeInfo for T, which derives from the reflected type `base` (a game's
+ * TractorSpec from the engine's VehicleSpec, say): its kind is its base's.
+ * For now only scriptable objects may derive from a reflected type.
+ */
+template <typename T>
+TypeInfo derivedType(std::string name,
+                     std::string displayName,
+                     std::string module,
+                     std::string base)
+{
+  static_assert(std::is_base_of_v<sfs::ScriptableObject, T>,
+                "only scriptable objects may derive from another reflected "
+                "type for now; derive a component or a script from nothing, "
+                "sfs::GameObject, sfs::System or sfs::MeshSource");
+  TypeInfo type = scriptableObjectType<T>(
+      std::move(name), std::move(displayName), std::move(module));
+  type.base = std::move(base);
   return type;
 }
 

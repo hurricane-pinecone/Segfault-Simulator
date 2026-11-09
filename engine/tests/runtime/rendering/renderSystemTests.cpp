@@ -3,6 +3,7 @@
 
 #include <engine/core/components/boxCollider3DComponent.h>
 #include <engine/core/components/cameraComponent.h>
+#include <engine/core/components/cameraFeedComponent.h>
 #include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/grassBenderComponent.h>
 #include <engine/core/components/grassComponent.h>
@@ -30,6 +31,8 @@
 
 #include "glm/glm/ext/matrix_clip_space.hpp"
 #include "glm/glm/ext/matrix_transform.hpp"
+#include "glm/glm/ext/quaternion_trigonometric.hpp"
+#include "glm/glm/ext/scalar_constants.hpp"
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
@@ -248,6 +251,51 @@ int main()
     CHECK(h.renderer.lights.size() == 1u);
     CHECK(testing::approx(h.renderer.lights[0].position.x, 2.0f));
     CHECK(testing::approx(h.renderer.lights[0].position.z, 1.0f));
+  }
+
+  TEST("a camera feed nothing shows should cost nothing; one shown should be "
+       "filmed with what it sees, at its rate")
+  {
+    Harness h;
+    h.system.setShadowSettings({.enabled = false});
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    // Behind the scene's camera (at x ~ -16, facing +X), in front of the
+    // feed's: at x -40, looking back along -X (turned about Z).
+    h.spawn(box, {-60.0f, 0.0f, 0.0f});
+    Entity mount = h.scene.createEntity();
+    TransformComponent placed{glm::vec3(-40.0f, 0.0f, 1.0f)};
+    placed.rotation = glm::angleAxis(glm::pi<float>(), glm::vec3(0, 0, 1));
+    mount.addComponent<TransformComponent>(placed);
+    mount.addComponent<CameraFeedComponent>();
+    const std::shared_ptr<const RenderTexture> picture =
+        h.system.cameraFeed(mount);
+    CHECK(picture && picture->size() == glm::ivec2(320, 180) &&
+          picture->texture().gpu);
+    CHECK(h.system.cameraFeed(mount) == picture);
+
+    // Not shown: not filmed, nothing gathered for it.
+    h.frame();
+    CHECK(!h.renderer.feed && h.renderer.batches.empty());
+
+    // Shown: filmed, the box among what it sees (and not the scene's).
+    h.renderer.shown = {picture->texture().id};
+    h.frame();
+    CHECK(h.renderer.feed.has_value());
+    CHECK(h.renderer.feedInto == picture->texture().id);
+    CHECK(h.renderer.feed && h.renderer.feed->size == glm::ivec2(320, 180) &&
+          !h.renderer.feed->grassBlades);
+    CHECK(h.renderer.feed && glm::dot(h.renderer.feed->cameraForward,
+                                      glm::vec3(-1, 0, 0)) > 0.99f);
+    CHECK(h.renderer.batches.size() == 1u &&
+          h.renderer.batches[0].instances == 0u &&
+          h.renderer.batches[0].feedInstances == 1u);
+    // Straight after: not due yet (15 a second).
+    h.frame();
+    CHECK(!h.renderer.feed);
+    // Off: not filmed, however long it's been.
+    mount.getComponent<CameraFeedComponent>().enabled = false;
+    h.frame();
+    CHECK(!h.renderer.feed);
   }
 
   TEST("the scene should render through its active camera entity")
@@ -743,7 +791,9 @@ int main()
     CHECK(h.renderer.mapUpdates.size() == updates + 1);
     const auto& stamped = h.renderer.mapUpdates.back();
     const glm::ivec2 area = stamped.to - stamped.from;
-    CHECK(area.x > 0 && area.x <= 6 && area.y > 0 && area.y <= 6);
+    // (Round it, the band where grass gives out: kGrassEdgeBand more a side.)
+    CHECK(area.x > 0 && area.x <= 6 + 2 * kGrassEdgeBand && area.y > 0 &&
+          area.y <= 6 + 2 * kGrassEdgeBand);
     CHECK(lawn.getComponent<GrassComponent>().paint == bare.toJson());
 
     // Painting over it starts the maps over from the paint: unpainted.
@@ -1230,16 +1280,27 @@ int main()
         meshes::box({1.0f, 1.0f, 1.0f}, glm::vec3(0.8f, 0.3f, 0.2f)),
         "test:crate");
     h.frame(); // the module learns the meshes
-    const UiTexture* icon = ui.image("test:crate", true);
-    CHECK(icon != nullptr);
-    if (icon)
+    const ui::SourceImage* icon = ui.image("test:crate", true);
+    CHECK(icon != nullptr && icon->texture != nullptr);
+    if (icon && icon->texture)
     {
-      CHECK(icon->size == glm::ivec2(128, 128));
-      // Drawn, on nothing: some pixels solid, the corners clear.
+      CHECK(icon->size() == glm::ivec2(128, 128));
+      // Drawn, on nothing, into its place on an atlas page: some pixels
+      // solid, its corner clear.
+      const UiTexture& page = *icon->texture;
+      const glm::ivec2 at(
+          glm::round(glm::vec2(icon->level[0].uv.x, icon->level[0].uv.y) *
+                     glm::vec2(page.size)));
+      const auto alpha = [&](int x, int y)
+      {
+        return page
+            .pixels[(std::size_t(at.y + y) * page.size.x + (at.x + x)) * 4 + 3];
+      };
       bool solid = false;
-      for (std::size_t i = 3; i < icon->pixels.size(); i += 4)
-        solid = solid || icon->pixels[i] > 200;
-      CHECK(solid && icon->pixels[3] == 0);
+      for (int y = 0; y < 128; ++y)
+        for (int x = 0; x < 128; ++x)
+          solid = solid || alpha(x, y) > 200;
+      CHECK(solid && alpha(0, 0) == 0);
       CHECK(ui.image("test:crate", true) == icon); // once
       // By handle (Image::mesh(MeshHandle)), the same picture.
       CHECK(ui.image("#" + std::to_string(crate.id), true) != nullptr);

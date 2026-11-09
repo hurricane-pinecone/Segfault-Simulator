@@ -471,6 +471,33 @@ int main()
     CHECK(seen.size() == 1u); // no entity has had a Health
   }
 
+  TEST("componentChanges should count gaining and losing a component, not "
+       "changing it")
+  {
+    Registry reg;
+    const uint64_t before = reg.componentChanges<Velocity>();
+    Entity a = reg.createEntity();
+    a.addComponent<Position>();
+    CHECK(reg.componentChanges<Velocity>() == before); // another type
+    a.addComponent<Velocity>();
+    const uint64_t gained = reg.componentChanges<Velocity>();
+    CHECK(gained != before);
+    reg.flushEntities();
+    a.getComponent<Velocity>().dx = 3.0f;
+    a.addComponent<Velocity>(); // (replaced: still has one)
+    CHECK(reg.componentChanges<Velocity>() == gained);
+    a.removeComponent<Velocity>();
+    const uint64_t lost = reg.componentChanges<Velocity>();
+    CHECK(lost != gained);
+    a.addComponent<Velocity>();
+    const uint64_t again = reg.componentChanges<Velocity>();
+    CHECK(again != lost);
+    reg.destroyEntity(a);
+    CHECK(reg.componentChanges<Velocity>() == again); // (until the flush)
+    reg.flushEntities();
+    CHECK(reg.componentChanges<Velocity>() != again);
+  }
+
   TEST("getSystem on a missing system should be a fatal error naming it")
   {
     Registry reg;

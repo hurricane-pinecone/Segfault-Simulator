@@ -4,6 +4,7 @@
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/meshPrimitives.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/rendering/modules/decalModule.h"
@@ -19,6 +20,7 @@
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
+#include "engine/runtime/systems/prefabSystem.h"
 
 namespace sfs
 {
@@ -81,16 +83,6 @@ bool StandardScene::play(const std::filesystem::path& file)
   return true;
 }
 
-Entity StandardScene::instantiate(std::string_view prefab, const Entity& parent)
-{
-  const Entity root = serializer().instantiate(prefab, *this, parent);
-  if (root.isValid())
-    startObjects(*this,
-                 hierarchy::EntityTree(entities()).subtree(root),
-                 &m_render->meshes());
-  return root;
-}
-
 void StandardScene::filterInput(Input& input)
 {
   if (UiModule* ui = m_render ? m_render->module<UiModule>() : nullptr)
@@ -112,6 +104,10 @@ void StandardScene::onInit()
   auto& decals = m_render->withModule<DecalModule>(assetStore());
   m_render->withModule<ParticleModule>(assetStore()).enableStains(decals);
   m_render->withModule<UiModule>(*this);
+  // Animators pose their joints and skinned meshes (drawn by MeshModule).
+  addSystem<AnimationSystem>(m_render->meshes(), assetStore());
+  // Prefab copies made while the game runs (needs the render system's meshes).
+  addSystem<PrefabSystem>(*this);
 
   MeshLibrary& library = m_render->meshes();
   // Named, so scenes that use them save and load.

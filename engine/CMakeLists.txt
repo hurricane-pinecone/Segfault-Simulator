@@ -131,15 +131,20 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/nameComponent.h"
             "${ENGINE_COMPONENT_DIR}/transformComponent.h"
             "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
+            "${ENGINE_COMPONENT_DIR}/meshLodComponent.h"
             "${ENGINE_COMPONENT_DIR}/pointLightComponent.h"
             "${ENGINE_COMPONENT_DIR}/cameraComponent.h"
+            "${ENGINE_COMPONENT_DIR}/cameraFeedComponent.h"
             "${ENGINE_COMPONENT_DIR}/rigidBody3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/boxCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/sphereCollider3DComponent.h"
             "${ENGINE_COMPONENT_DIR}/capsuleCollider3DComponent.h"
+            "${ENGINE_COMPONENT_DIR}/navAgentComponent.h"
+            "${ENGINE_COMPONENT_DIR}/vehicleComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassComponent.h"
             "${ENGINE_COMPONENT_DIR}/grassBenderComponent.h"
             "${ENGINE_COMPONENT_DIR}/deformerComponent.h"
+            "${ENGINE_COMPONENT_DIR}/animatorComponent.h"
             "${ENGINE_COMPONENT_DIR}/scriptComponent.h"
             "${ENGINE_COMPONENT_DIR}/cameraFollowComponent.h"
             "${ENGINE_COMPONENT_DIR}/rigidBody2DComponent.h"
@@ -159,6 +164,17 @@ if(ENGINE_LIBRARY_TYPE STREQUAL "STATIC")
     target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=1)
 else()
     target_compile_definitions(engine-core PRIVATE SFS_TRACK_ALLOCATIONS=0)
+endif()
+
+# Debug features (drawing colliders, ...; see debugFeatures.h). On, they're
+# compiled in and still need allowing at run time (the editor, a Debug build,
+# a development export); off, they're compiled out of the engine and every
+# game built on it.
+option(SFS_DEBUG_FEATURES "Compile in the engine's debug features (collider drawing, ...)" ON)
+if(SFS_DEBUG_FEATURES)
+    target_compile_definitions(engine-core PUBLIC SFS_DEBUG_FEATURES=1)
+else()
+    target_compile_definitions(engine-core PUBLIC SFS_DEBUG_FEATURES=0)
 endif()
 
 # Lua's POSIX build uses mkstemp for temp files instead of the unsafe tmpnam.
@@ -264,6 +280,22 @@ add_library(sfs::engine ALIAS engine)
 sfs_engine_library_output(engine)
 
 target_link_libraries(engine PUBLIC engine-core)
+
+# Reflection for the runtime's own types (scriptable objects such as
+# VehicleSpec), registered as the engine's when the runtime loads (see
+# scriptRegistry.cpp). Without codegen a stub registers nothing.
+if(SFS_CODEGEN_AVAILABLE)
+    sfs_generate_reflection(engine
+        MODULE engine
+        FUNCTION sfs::reflect::registerEngineRuntimeTypes
+        FUNCTION_HEADER "engine/runtime/scripting/scriptRegistry.h"
+        INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        HEADERS
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/runtime/navigation/vehicle/vehicleSpec.h")
+else()
+    target_sources(engine PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineRuntimeReflection.cpp")
+endif()
 
 target_include_directories(engine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

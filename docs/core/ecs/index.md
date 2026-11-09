@@ -135,10 +135,38 @@ catches it, tells the player in a message box and ends the game. Use
 calls `fn(entity, a, b)` for each match without one, for code that runs every
 frame.
 
+`registry->componentChanges<A>()` goes up whenever an entity gains or loses an
+`A` (a destroyed entity loses all of its components). A system that keeps its
+own list of the entities with an `A` searches again only when it has moved,
+instead of every frame. Changing an `A`'s values doesn't count: compare those
+yourself.
+
 A program can have at most `MAX_COMPONENTS` (128) component types; one more is
 a fatal error when it's first used.
 
 `setEnabled(false)` skips a system's update/render (handy for debug toggles).
+
+### Game time
+
+Systems run in **game time**, which can go faster or slower than real time:
+`registry->setTimeScale(4.0)` (from a system) makes every system's `dt` four
+times the frame's, for a fast-forward. A big `dt` can make what steers or
+follows a path overshoot, so a scene can split a frame's game time into steps:
+after `registry->setMaxTimeStep(1.0 / 30.0)`, a system is updated as many
+times a frame as it takes for no step to be longer than that (at most 16 by
+default; past that the game falls behind rather than take longer steps, so a
+slow frame can't make the next one slower). Each system picks how it takes
+the time with `setTimeStep()`:
+
+| `System::TimeStep` | `update(dt)` gets |
+| --- | --- |
+| `Stepped` (default) | game time, in those steps: the same at any speed |
+| `Frame` | the frame's game time in one step (counting time, or costly work) |
+| `Real` | real time, whatever the scale (`RenderSystem`, `CameraSystem`) |
+
+`AnimationSystem` is `Frame`. Game objects' `onUpdate()` and the scene's own
+get real time: they're the player's (input, cameras). Particles keep game time
+with their own `ParticleModule::setTimeScale()`.
 
 ## GameObjects — the OOP layer
 
@@ -175,9 +203,10 @@ Destroying an object's entity (`scene.destroyEntity`) destroys the object too,
 at the next flush, and a scene's objects get `onDestroy()` when it ends.
 Objects made during an update start getting updates next frame.
 
-In a `StandardScene` (a scene file played), `scene.instantiate("asset:<id>")`
-makes a prefab's instance while the game runs and starts its scripts, as when
-the scene started.
+In a `StandardScene` (a scene file played), its `PrefabSystem`
+(`spawn("asset:<id>", transform)`; see
+[Prefab system](../../runtime/systems/prefab-system/index.md)) makes a prefab's
+instance while the game runs and starts its scripts, as when the scene started.
 
 Rule of thumb: use **systems** for behaviour over many homogeneous entities
 (movement, physics, rendering); use **GameObjects** for individually scripted

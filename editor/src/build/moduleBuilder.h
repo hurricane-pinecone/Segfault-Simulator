@@ -84,9 +84,35 @@ public:
 
   const BuildEnvironment& environment() const { return m_environment; }
 
+  /**
+   * The files in `folders` (searched through) changed since `stamp` was last
+   * written: saved while a build ran, if it was written as the build began.
+   * Nothing if there's no stamp.
+   *
+   * A build tool decides what to compile by comparing times: a header saved
+   * while a file including it was compiling leaves that file's object
+   * compiled from the old header but newer than it, so no later build
+   * compiles it again. With a struct that grew, its objects then disagree on
+   * the struct's size (a component "missing" from its pool, memory
+   * overwritten), until the header changes again.
+   */
+  static std::vector<std::filesystem::path>
+  changedSince(const std::filesystem::path& stamp, const std::vector<std::filesystem::path>& folders);
+
 private:
   bool startNextStep();
   std::filesystem::path buildDirectory(const Project& project) const;
+  // After a build that succeeded: the sources saved while it ran are touched
+  // (newer than every object) and it builds again. False if nothing changed.
+  bool rebuildChanged();
+  // Queues the stamp and `buildStep` (the build of `sources`, into `buildDir`).
+  void watch(const std::filesystem::path& buildDir,
+             std::vector<std::filesystem::path> sources,
+             std::vector<std::string> buildStep);
+  std::vector<std::string> stampStep() const;
+  // After a build that failed or was stopped: the sources saved while it ran
+  // are touched there and then, for the next build (which compiles them).
+  void touchChangedNow();
 
   BuildEnvironment m_environment;
   std::vector<std::vector<std::string>> m_steps; // commands still to run
@@ -94,6 +120,14 @@ private:
   std::atomic<int> m_percent = -1; // written by the output reader thread
   std::atomic<int> m_group = -1;   // the build's process group on the build machine (see stoppableCommand)
   bool m_cancelled = false;        // for poll() to report
+  // Written (on the build machine, by its clock: the one the build tool
+  // compares) just before each build step; the sources newer than it changed
+  // during the build (see changedSince()).
+  std::filesystem::path m_stamp;
+  std::vector<std::filesystem::path> m_sources; // the folders and files the build compiles from
+  std::vector<std::string> m_buildStep;          // the step that builds, run again by rebuildChanged()
+  int m_rebuilds = 0;                            // how many times this build has gone again
+  bool m_failAfterSteps = false;                 // the steps left only touch sources: then it failed
   Target m_target = Target::Module;
   // A UI Preview build's output, logged only if it fails. Written by the
   // output reader thread.

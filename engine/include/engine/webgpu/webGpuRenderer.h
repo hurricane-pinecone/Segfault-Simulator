@@ -10,8 +10,10 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -101,9 +103,26 @@ public:
   void setTarget(WGPUCommandEncoder encoder,
                  WGPUTextureView target,
                  glm::ivec2 size);
+  /**
+   * Where this frame renders, with its target (the window's next picture)
+   * asked for only when it's needed: the passes that don't draw into it
+   * record into `encoder`; before the first that does, `acquire` runs, and
+   * points the renderer (setTarget) at the encoder and target the rest record
+   * into. Left without a target, those passes (composite, UI) are skipped.
+   */
+  void setLateTarget(WGPUCommandEncoder encoder,
+                     glm::ivec2 size,
+                     std::function<void()> acquire);
 
   MeshHandle createMesh(const MeshData& mesh) override;
   void destroyMesh(MeshHandle mesh) override;
+  // Skinned copies: their own vertex buffer, deformed by a compute pass
+  // (skinning.wgsl) before the frame's first pass in frames they're drawn
+  // in after a new pose; drawn as any mesh after that, in every pass.
+  MeshHandle createSkinnedMesh(MeshHandle mesh) override;
+  void setSkinPose(MeshHandle skinned,
+                   std::span<const glm::mat4> palette,
+                   const Aabb& bounds) override;
   // Whether a handle is one of its meshes now (not destroyed, nor stale).
   bool hasMesh(MeshHandle mesh) const { return findMesh(mesh) != nullptr; }
   MaterialHandle createMaterial(const MeshMaterial& material) override;
@@ -129,11 +148,16 @@ public:
   GrassHandle createGrass(const GrassGround& ground) override;
   void updateGrassGround(GrassHandle grass, const GrassGround& ground) override;
   void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override;
+  void updateGrassVigour(GrassHandle grass,
+                         const GrassVigourImage& image) override;
   void updateGrassTrample(GrassHandle grass,
                           const GrassTrampleImage& image) override;
   void destroyGrass(GrassHandle grass) override;
   void drawGrass(const GrassBatch& batch) override;
   void drawUi(const UiDrawList& list) override;
+  void drawLines(std::span<const DebugLineVertex> vertices) override;
+  void beginFeed(const FeedView& view, const UiTexture& into) override;
+  bool textureShown(uint32_t id) const override;
   void endFrame() override;
 
 private:
@@ -167,13 +191,21 @@ private:
     // parts out by it: their shadows change every frame).
     bool timed = false;
     // (One for each GrassDraw.)
-    mutable std::array<wgpu::RenderPipeline, 3> grass;
-    mutable std::array<bool, 3> grassBroken{};
+    mutable std::array<wgpu::RenderPipeline, 6> grass;
+    mutable std::array<bool, 6> grassBroken{};
     // Its depth and normals, for ambient occlusion: built the first time a
     // frame has it.
     mutable wgpu::RenderPipeline depthNormals;
     mutable wgpu::RenderPipeline depthNormalsTwoSided;
     mutable bool depthNormalsBroken = false;
+    // Masked sections in the lit pass (see cutOutPipeline()): their depth
+    // first, cut out, then lit where it's equal, writing none; built the
+    // first time a frame has one.
+    mutable wgpu::RenderPipeline cutOutDepth;
+    mutable wgpu::RenderPipeline cutOutDepthTwoSided;
+    mutable wgpu::RenderPipeline cutOutLit;
+    mutable wgpu::RenderPipeline cutOutLitTwoSided;
+    mutable bool cutOutBroken = false;
     // As its shadow, writing heights too, for rain's overhead map: built the
     // first time it rains.
     mutable wgpu::RenderPipeline rainMap;
@@ -202,9 +234,17 @@ private:
     GpuImage shape;
     GpuImage data;
     GpuImage trample;
+    // Its maps as they are now (growing: GrassMaps::nowPixels()), where
+    // they've been cut (cutPixels()), and its vigour field.
+    GpuImage now;
+    GpuImage cut;
+    GpuImage vigour;
     // Its ground's terrain's splat map, for its ground past the maps (null:
     // none, a stand-in bound).
     std::shared_ptr<GpuTexture> farSplat;
+    // Its ground's deformation window, which its blades stand on (null: not
+    // deformed, a flat stand-in bound).
+    std::shared_ptr<GpuTexture> deformMap;
 
     wgpu::Buffer blades;
     wgpu::Buffer draws;
@@ -230,8 +270,26 @@ private:
     uint32_t tilesDrawn = 0;
     glm::uvec3 workgroups{0, 0, 0};
 
-    bool grown = false;    // this frame: its blades
-    bool placed = false;   // this frame: its draw's uniforms (for its ground)
+    bool grown = false;  // this frame: its blades
+    bool placed = false; // this frame: its draw's uniforms (for its ground)
+    bool groundPlaced = false; // likewise, kept for a camera feed's ground
+    // A camera feed's blades (CameraFeedComponent::grassBlades), grown apart
+    // from the view's: buffers and settings of its own (made when first
+    // grown).
+    struct Feed
+    {
+      std::array<uint32_t, 3> capacity{0, 0, 0};
+      wgpu::Buffer blades;
+      wgpu::Buffer draws;
+      wgpu::Buffer casters; // (none cast: bound only)
+      wgpu::Buffer growUniforms;
+      wgpu::Buffer drawUniforms;
+      wgpu::BindGroup growBindings;
+      std::array<wgpu::BindGroup, 3> drawBindings;
+      bool grown = false; // this frame
+      glm::uvec3 workgroups{0, 0, 0};
+    };
+    std::unique_ptr<Feed> feed;
     bool casts = false;    // this frame: its blades into the sun's shadow
     uint32_t castInto = 0; // the cascades they're drawn into so far (bits)
   };
@@ -281,16 +339,37 @@ private:
     GpuMaterial material; // the mesh's own
   };
 
+  // A skinned copy's (createSkinnedMesh()): the original's vertices and
+  // weights it's deformed from (references to its buffers), the bind group
+  // its compute pass reads them and writes its vertices with, and its pose.
+  struct GpuSkin
+  {
+    wgpu::Buffer source;
+    wgpu::Buffer weights;
+    wgpu::BindGroup bindings;
+    uint32_t vertexCount = 0;
+    uint32_t sourceSlot = 0; // the original's (destroyed with it)
+    std::vector<glm::mat4> palette;
+    bool dirty = false; // posed since its vertices were last deformed
+  };
+
   struct GpuMesh
   {
     wgpu::Buffer vertices;
     wgpu::Buffer indices;
     uint32_t indexCount = 0;
-    std::vector<GpuSection> sections;
+    // Shared with its skinned copies (which draw with its materials).
+    std::shared_ptr<std::vector<GpuSection>> sections;
     // A sphere around its vertices (for which point lights' reach it's in).
     glm::vec3 boundsCenter{0.0f};
     float boundsRadius = 0.0f;
     uint64_t version = 0; // new each time one's made (nextVersion())
+    // A skinned mesh's: its vertices' weights (SkinWeights) and joints; and,
+    // for a skinned copy, its skin.
+    wgpu::Buffer skinWeights;
+    uint32_t vertexCount = 0;
+    uint32_t joints = 0;
+    std::unique_ptr<GpuSkin> skin;
   };
 
   // An uploaded texture, keyed by its TextureData's address. `source` tells a
@@ -306,10 +385,15 @@ private:
   // What the plan needs of a mesh.
   static PlannedMesh plannedMesh(const GpuMesh& mesh)
   {
-    return {mesh.sections.size(), mesh.boundsCenter, mesh.boundsRadius};
+    return {mesh.sections->size(), mesh.boundsCenter, mesh.boundsRadius};
   }
 
   bool createPipelines();
+  // Skinning's compute pass (skinning.wgsl); without it (logged), skinned
+  // meshes draw as bound.
+  void createSkinningPipeline();
+  // Deform the skinned copies drawn this frame that were posed since.
+  void encodeSkinning();
   // Bloom's and the composite's (post.wgsl).
   bool createPostPipelines();
   bool createTextureResources();
@@ -325,6 +409,11 @@ private:
   // (logged) if they don't build.
   std::shared_ptr<Surface> buildSurface(const std::string& surfaceWgsl,
                                         wgpu::BindGroupLayout materialLayout);
+  // Group 1's layout for the standard surface's material bindings, its
+  // parameters seen by the vertex stage too if `vertexToo` (foliage's).
+  wgpu::BindGroupLayout standardMaterialLayout(bool vertexToo);
+  // Whether the foliage surface is built (building it the first time).
+  bool foliageSurface();
   // A material graph shader's surface for an alpha mode: shared while any
   // material uses it.
   std::shared_ptr<const Surface>
@@ -371,6 +460,14 @@ private:
                           std::size_t clusters,
                           std::size_t indices);
   void rebuildLitBindings();
+  // The lit pass's bindings, with these frame uniforms, light clusters and
+  // occlusion map (the frame's, or a camera feed's).
+  wgpu::BindGroup makeLitBindings(WGPUBuffer frameUniforms,
+                                  WGPUBuffer ranges,
+                                  uint64_t rangeBytes,
+                                  WGPUBuffer indices,
+                                  uint64_t indexBytes,
+                                  WGPUTextureView occlusion);
   void uploadLights();
   // A post pass: one full-screen triangle into `target`, added onto what's
   // there with `blend`.
@@ -385,6 +482,10 @@ private:
   // pipeline a surface draws it with (null if it doesn't build), growing the
   // frame's blades (a compute pass, before the lit pass), and drawing them.
   void rebuildGrassBindings(GpuGrass& grass);
+  // The grow pass's images past its first bindings (13 to 16: its maps as
+  // they are now, where they're cut, their data, its vigour field).
+  void growImages(const GpuGrass& grass,
+                  std::span<WGPUBindGroupEntry> entries) const;
   // An RGBA texture to sample (and fill from the CPU); pixels into a
   // rectangle of one, from `origin`, `size` of them.
   static GpuImage
@@ -407,12 +508,16 @@ private:
                            uint32_t bytesPerPixel);
   // What a grass pipeline draws: the ground under it, its nearest list of
   // blades (which find the air at their vertices, see meshGrass.wgsl), or
-  // the others.
+  // the others; the blades' depth alone (their pre-pass), and the two lists
+  // again lit only where their depth is that (equal, writing none).
   enum class GrassDraw
   {
     Ground,
     NearBlades,
     Blades,
+    Depth,
+    NearBladesEqual,
+    BladesEqual,
   };
   WGPURenderPipeline grassPipeline(const Surface& surface, GrassDraw draw);
   // Ambient occlusion (and contact shadows, worked out with it): whether this
@@ -440,6 +545,20 @@ private:
                           uint32_t offset,
                           uint32_t cascade);
   void encodeComposite();
+
+  // A camera feed (beginFeed()): its targets made at its size, its blades
+  // grown (if it has them), its view drawn lit and composited into its
+  // picture; and grass in its view (the ground, and its blades).
+  void ensureFeedTargets(glm::ivec2 size);
+  void growFeedGrass();
+  void encodeFeed();
+  void encodeFeedGrass(WGPURenderPassEncoder pass);
+
+  // GPU-drawn textures (UiTexture::gpu): this frame's UI's made (if need be)
+  // and marked shown, and those neither shown nor drawn a while let go.
+  struct GpuRenderTexture;
+  GpuRenderTexture* renderTexture(uint32_t id, glm::ivec2 size);
+  void prepareRenderTextures();
   // Auto exposure's metering into m_exposure[0] (exposure.wgsl), and that
   // copied into m_exposure[1] for the next frame's.
   void encodeExposure();
@@ -470,6 +589,11 @@ private:
   WGPURenderPipeline rainMapPipeline(const Surface& surface);
   WGPURenderPipeline rainPipeline();
   void encodeRain(WGPURenderPassEncoder pass);
+  // Debug lines (drawLines): the frame's uploaded (false if there are
+  // none, or their pipeline doesn't build), then drawn last in the lit pass.
+  bool uploadDebugLines();
+  WGPURenderPipeline debugLinePipeline();
+  void encodeDebugLines(WGPURenderPassEncoder pass);
   void encodeLitPass();
   // Temporal anti-aliasing's resolve (taa.wgsl) of the lit scene with its
   // history, into m_taa[m_taaIndex], copied back over the scene.
@@ -485,9 +609,16 @@ private:
     SeeThrough,
     LightShadow,  // a point light's shadow map (every section)
     DepthNormals, // ambient occlusion's first pass (as Opaque)
+    CutOutDepth,  // the lit pass's masked sections' depth, before the rest
     RainMap,      // rain's overhead map (as All)
   };
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
+  // A masked section's pipeline in the lit pass: its cut-out depth (drawn
+  // before anything's lit), or lit where that depth is (testing for equal,
+  // writing none: each pixel shaded once however many cut-out layers lie over
+  // it). Null if they don't build (it's lit as the others are, then).
+  WGPURenderPipeline
+  cutOutPipeline(const Surface& surface, bool depthOnly, bool twoSided);
   // The pipeline a surface draws with in a pass (see Sections).
   static WGPURenderPipeline pipelineFor(const Surface& surface,
                                         Sections which,
@@ -515,6 +646,20 @@ private:
   // Samples a pixel the lit pass draws with (multisampled anti-aliasing),
   // resolved into the scene's textures after it.
   uint32_t m_sampleCount = 4;
+
+  // Skinning: its pipeline, its shared bind group (every copy's palette, one
+  // after another, and each dispatch's uniforms at a dynamic offset) and
+  // the copies' (their source, weights and vertices); the buffers, grown as
+  // needed; and the copies drawn this frame (by slot).
+  wgpu::BindGroupLayout m_skinningSharedLayout;
+  wgpu::BindGroupLayout m_skinningLayout;
+  wgpu::ComputePipeline m_skinningPipeline;
+  wgpu::Buffer m_skinPalettes;
+  uint64_t m_skinPaletteCapacity = 0; // matrices
+  wgpu::Buffer m_skinUniforms;
+  uint64_t m_skinUniformCapacity = 0; // dispatches
+  wgpu::BindGroup m_skinningShared;
+  std::vector<uint32_t> m_skinsDrawn;
 
   // Mesh slots; a handle's id is its slot index + 1 (0 stays the null handle).
   std::vector<std::optional<GpuMesh>> m_meshes;
@@ -685,6 +830,19 @@ private:
   wgpu::RenderPipeline m_rainPipeline;
   bool m_rainBroken = false;
 
+  // Debug lines (drawLines): this frame's, their buffer (grown as needed),
+  // how many are uploaded this frame; their pipeline (debugLines.wgsl, built
+  // the first time, or failed: logged) and its bindings (the exposure).
+  std::vector<DebugLineVertex> m_debugLines;
+  wgpu::Buffer m_debugLineBuffer;
+  std::size_t m_debugLineCapacity = 0; // vertices
+  uint32_t m_debugLineVertices = 0;
+  wgpu::RenderPipeline m_debugLinePipeline;
+  wgpu::BindGroupLayout m_debugLineLayout;
+  wgpu::Buffer m_debugLineParams;
+  wgpu::BindGroup m_debugLineBindings;
+  bool m_debugLineBroken = false;
+
   // A physical sky (sky.wgsl): its transmittance table (from the CPU's
   // PhysicalSky), the sky rendered octahedrally (the background and haze
   // read it), the same with its clouds (what its reflections are blurred
@@ -764,11 +922,13 @@ private:
     wgpu::TextureView view;
     glm::ivec2 size{0, 0};
     uint32_t revision = 0;
-    wgpu::BindGroup bindings;
     bool used = false; // this frame
   };
   std::unordered_map<uint32_t, GpuUiTexture> m_uiTextures;
-  GpuUiTexture m_uiWhite; // what untextured boxes bind
+  GpuUiTexture m_uiWhite; // what a batch with no texture in a place binds
+  // A batch's glyph and image textures bound, by their ids (glyphs' << 32;
+  // 0: white); forgotten when a texture's made again or let go.
+  std::unordered_map<uint64_t, wgpu::BindGroup> m_uiBindings;
   wgpu::RenderPipeline m_uiPipeline;
   wgpu::BindGroupLayout m_uiFrameLayout;
   wgpu::BindGroupLayout m_uiTextureLayout;
@@ -868,6 +1028,11 @@ private:
   // Grass's ground drawn without its blades (SFS_GRASS_GROUND_ONLY), to
   // compare the two.
   bool m_grassGroundOnly = false;
+  // Grass blades' depth pre-pass (SFS_GRASS_PREPASS): 1 on, 0 off, -1 on and
+  // off two frames each (for comparing screenshots); over how many of the
+  // nearest lists.
+  int m_grassPrepass = 1;
+  uint32_t m_grassPrepassLists = 1;
   wgpu::Texture m_noOcclusion;
   wgpu::TextureView m_noOcclusionView;
   wgpu::BindGroupLayout m_occlusionLayout;
@@ -931,6 +1096,10 @@ private:
   wgpu::BindGroup m_shadowBindings;
   wgpu::BindGroup m_litBindings;
   std::shared_ptr<const Surface> m_standard;
+  // The foliage surface (MeshMaterial::foliage), built the first time a
+  // material needs it (null meanwhile, or if it doesn't build).
+  std::shared_ptr<const Surface> m_foliage;
+  bool m_foliageBroken = false;
   // Terrain materials' surface (meshTerrainSurface.wgsl), built the first
   // time one is made; and their layers' texture arrays, by their textures.
   std::shared_ptr<const Surface> m_terrain;
@@ -951,11 +1120,62 @@ private:
   // This frame's target, set by the backend.
   WGPUCommandEncoder m_encoder = nullptr;
   WGPUTextureView m_target = nullptr;
+  // Asks for the target, before the first pass into it (setLateTarget).
+  std::function<void()> m_acquire;
+  bool acquireTarget();
   glm::ivec2 m_viewport{0, 0};
 
   // This frame's work, gathered between beginFrame() and endFrame().
   FramePlan m_plan;
   PlannedMesh m_plannedMesh; // the last one finish() asked for
+  // Whose draws encodeDraw() is drawing (their materials): the frame's, or
+  // its camera feed's.
+  const FramePlan* m_drawing = &m_plan;
+
+  // GPU-drawn textures (RenderTexture), by UiTexture id: the picture (in
+  // the window's format, so the composite draws into it), what the UI reads
+  // it through (without sRGB decoding, as its other images), and the frames
+  // it was last shown in a UI and last shown or drawn.
+  struct GpuRenderTexture
+  {
+    wgpu::Texture texture;
+    wgpu::TextureView view;
+    GpuUiTexture ui;
+    uint64_t shown = 0;
+    uint64_t used = 0;
+  };
+  std::unordered_map<uint32_t, GpuRenderTexture> m_renderTextures;
+  uint64_t m_frameCount = 0; // endFrame()s with a target
+
+  // This frame's camera feed (beginFeed()): its view, its picture (id, size)
+  // and its draws; its targets (multisampled as the lit pass's pipelines
+  // are; the glow's only drawn into), uniforms, instances, light clusters
+  // and bindings (the lit pass's, but for these).
+  std::optional<FeedView> m_feed;
+  uint32_t m_feedInto = 0;
+  FramePlan m_feedPlan;
+  struct FeedTargets
+  {
+    glm::ivec2 size{0, 0};
+    wgpu::Texture depth;
+    wgpu::TextureView depthView;
+    wgpu::Texture samples; // the scene's, multisampled (none with one sample)
+    wgpu::TextureView samplesView;
+    wgpu::Texture glow;
+    wgpu::TextureView glowView;
+    wgpu::Texture scene; // resolved, what the composite reads
+    wgpu::TextureView sceneView;
+  };
+  FeedTargets m_feedTargets;
+  wgpu::Buffer m_feedUniforms;
+  wgpu::Buffer m_feedCompositeParams;
+  wgpu::Buffer m_feedInstances;
+  std::size_t m_feedInstanceCapacity = 0;
+  wgpu::Buffer m_feedRanges;
+  wgpu::Buffer m_feedIndices;
+  std::size_t m_feedRangeCapacity = 0;
+  std::size_t m_feedIndexCapacity = 0;
+  wgpu::BindGroup m_feedLitBindings;
 };
 
 } // namespace sfs

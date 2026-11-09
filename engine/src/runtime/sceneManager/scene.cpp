@@ -6,6 +6,8 @@
 #include "engine/core/util/cpuTiming.h"
 #include "engine/core/util/fatalError.h"
 #include "engine/runtime/input/input.h"
+#include <algorithm>
+#include <cmath>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/util/profiling.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -129,16 +131,38 @@ void Scene::updateObjects(double deltaTime)
 {
   {
     ZoneScopedN("Scene: systems update");
-    m_registry.forEachSystem(
-        [deltaTime](System& system)
-        {
-          if (!system.enabled())
-            return;
-          const cpuTiming::Scope timed(
-              cpuTiming::enabled() ? cpuTiming::label("update/", typeid(system))
-                                   : nullptr);
-          system.update(deltaTime);
-        });
+    // The frame's game time, in as many steps as the Stepped systems need
+    // (the others run once, on the last).
+    double gameTime = deltaTime * m_registry.timeScale();
+    int steps = 1;
+    const double maxStep = m_registry.maxTimeStep();
+    if (maxStep > 0.0 && gameTime > maxStep)
+    {
+      steps = std::min(static_cast<int>(std::ceil(gameTime / maxStep)),
+                       m_registry.mostTimeSteps());
+      gameTime = std::min(gameTime, maxStep * steps);
+    }
+    const double step = gameTime / steps;
+    for (int i = 0; i < steps; ++i)
+    {
+      const bool last = i + 1 == steps;
+      m_registry.forEachSystem(
+          [&](System& system)
+          {
+            if (!system.enabled())
+              return;
+            const System::TimeStep kind = system.timeStep();
+            if (kind != System::TimeStep::Stepped && !last)
+              return;
+            const cpuTiming::Scope timed(
+                cpuTiming::enabled()
+                    ? cpuTiming::label("update/", typeid(system))
+                    : nullptr);
+            system.update(kind == System::TimeStep::Stepped ? step
+                          : kind == System::TimeStep::Frame ? gameTime
+                                                            : deltaTime);
+          });
+    }
   }
 
   // By index, and only those there now: an object may create others (which

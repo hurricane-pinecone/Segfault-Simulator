@@ -2,6 +2,7 @@
 
 #include "engine/core/logger/logger.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +25,7 @@ struct Row
   const char* name;
   double total = 0.0; // milliseconds
   uint64_t calls = 0;
+  double frame = 0.0; // milliseconds this frame (for the slow frame lines)
 };
 
 struct State
@@ -41,7 +43,28 @@ struct State
   uint64_t frames = 0;
   std::chrono::steady_clock::time_point since =
       std::chrono::steady_clock::now();
+  const std::chrono::steady_clock::time_point started = since;
+  std::chrono::steady_clock::time_point frameEnded = since;
+  uint64_t frameCount = 0; // every frame since the start
 };
+
+// SFS_SLOW_FRAME_MS=<ms>: a frame longer than that (end to end) logs its
+// biggest scopes, to find what a hitch was. 0: off.
+double slowFrameMs()
+{
+  static const double ms = []
+  {
+    const char* value = std::getenv("SFS_SLOW_FRAME_MS");
+    return value ? std::max(0.0, std::atof(value)) : 0.0;
+  }();
+  return ms;
+}
+
+bool periodic()
+{
+  static const bool on = std::getenv("SFS_CPU_TIMING") != nullptr;
+  return on;
+}
 
 State& state()
 {
@@ -69,7 +92,7 @@ std::string readable(const std::type_info& type)
 
 bool enabled()
 {
-  static const bool on = std::getenv("SFS_CPU_TIMING") != nullptr;
+  static const bool on = periodic() || slowFrameMs() > 0.0;
   return on;
 }
 
@@ -82,9 +105,10 @@ void add(const char* name, double milliseconds)
     {
       row.total += milliseconds;
       row.calls += 1;
+      row.frame += milliseconds;
       return;
     }
-  s.rows.push_back({name, milliseconds, 1});
+  s.rows.push_back({name, milliseconds, 1, milliseconds});
 }
 
 const char* label(const char* prefix, const std::string& name)
@@ -120,7 +144,40 @@ void endFrame()
   State& s = state();
   const std::lock_guard lock(s.mutex);
   s.frames += 1;
+  s.frameCount += 1;
   const auto now = std::chrono::steady_clock::now();
+  const double frameMs =
+      std::chrono::duration<double, std::milli>(now - s.frameEnded).count();
+  s.frameEnded = now;
+  if (slowFrameMs() > 0.0 && frameMs > slowFrameMs())
+  {
+    std::vector<const Row*> biggest;
+    for (const Row& row : s.rows)
+      if (row.frame >= 0.25)
+        biggest.push_back(&row);
+    std::sort(biggest.begin(),
+              biggest.end(),
+              [](const Row* a, const Row* b) { return a->frame > b->frame; });
+    char part[160];
+    std::snprintf(part,
+                  sizeof(part),
+                  "Slow frame %llu at %.2f s: %.1f ms:",
+                  static_cast<unsigned long long>(s.frameCount),
+                  std::chrono::duration<double>(now - s.started).count(),
+                  frameMs);
+    std::string line = part;
+    for (std::size_t i = 0; i < biggest.size() && i < 16; ++i)
+    {
+      std::snprintf(
+          part, sizeof(part), " %s %.2f;", biggest[i]->name, biggest[i]->frame);
+      line += part;
+    }
+    LOG_INFO(line);
+  }
+  for (Row& row : s.rows)
+    row.frame = 0.0;
+  if (!periodic())
+    return;
   const double seconds = std::chrono::duration<double>(now - s.since).count();
   if (seconds < 5.0)
     return;

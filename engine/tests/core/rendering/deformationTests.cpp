@@ -3,7 +3,9 @@
 #include <engine/core/rendering/deformation.h>
 #include <engine/core/rendering/mesh.h>
 #include <engine/core/rendering/terrain.h>
+#include <glm/glm/ext/matrix_transform.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -162,6 +164,26 @@ int main()
     CHECK(map.at({2, 1}) > 0.0f); // its side rose
   }
 
+  TEST("a press should change the ground only around what it pressed")
+  {
+    // A wide footprint (a tine sliding on: most of it on ground it's pressed
+    // already) pressing two texels: the ridge and slumping stay round those,
+    // and an old wall elsewhere under it is left as it stands.
+    DeformationMap map(0.03f);
+    map.set({30, 4}, -0.2f); // an old step, far steeper than soil stands
+    PressSettings settings;
+    settings.ridgeMost = 1.0f;
+    Footprint footprint = footprintOf({0, 0}, {40, 10}, kNone);
+    for (const glm::ivec2 t : {glm::ivec2(2, 4), glm::ivec2(2, 5)})
+      footprint.target[std::size_t(t.y) * 40 + t.x] = -0.05f;
+    map.press(footprint, settings);
+    CHECK(map.at({2, 4}) < -0.02f);
+    CHECK(map.at({2, 2}) > 0.0f);        // its ridge, beside it
+    CHECK(near(map.at({30, 4}), -0.2f)); // the old step, as it was
+    CHECK(map.at({31, 4}) == 0.0f);
+    CHECK(map.at({20, 4}) == 0.0f); // nothing out of its reach
+  }
+
   TEST("a stamp should press its shape in from the ground where it lands")
   {
     DeformationMap map(0.01f);
@@ -200,6 +222,21 @@ int main()
     for (int i = 0; i < 50; ++i)
       map.relax(0.0f, 0.5f);
     CHECK(map.empty()); // all but flat: gone
+  }
+
+  TEST("relaxing some tiles should weather only them, by their corners")
+  {
+    DeformationMap map(0.1f);
+    map.set({0, 0}, -0.09f);
+    map.set({130, 0}, -0.09f); // tile (2, 0)
+    map.set({200, 0}, -0.09f); // tile (3, 0)
+    const glm::ivec2 tiles[] = {{0, 0}, {3, 0}};
+    const glm::vec4 corners[] = {glm::vec4(1.0f), glm::vec4(0.0f)};
+    map.relax(tiles, corners);
+    CHECK(near(map.at({0, 0}), -0.01f));
+    CHECK(near(map.at({1, 1}), -0.01f));
+    CHECK(near(map.at({130, 0}), -0.09f)); // not asked
+    CHECK(near(map.at({200, 0}), -0.09f)); // dry: as it was
   }
 
   TEST("clearing should flatten inside the region only")
@@ -301,6 +338,56 @@ int main()
     const Underside both = merged(under, Underside{});
     CHECK(both.size == under.size);
     (void)kNone;
+  }
+
+  TEST("a mesh made ready should give the same underside as the mesh itself")
+  {
+    // A closed box (its faces anticlockwise from outside) and an open square
+    // under it, turned and tilted a little.
+    std::vector<glm::vec3> positions;
+    std::vector<uint32_t> indices;
+    const glm::vec3 low(-0.2f, -0.1f, 0.05f), high(0.2f, 0.1f, 0.3f);
+    for (int k = 0; k < 8; ++k)
+      positions.push_back({k & 1 ? high.x : low.x,
+                           k & 2 ? high.y : low.y,
+                           k & 4 ? high.z : low.z});
+    for (const uint32_t i : {0u, 2u, 3u, 0u, 3u, 1u, 4u, 5u, 7u, 4u, 7u, 6u,
+                             0u, 1u, 5u, 0u, 5u, 4u, 2u, 6u, 7u, 2u, 7u, 3u,
+                             0u, 4u, 6u, 0u, 6u, 2u, 1u, 3u, 7u, 1u, 7u, 5u})
+      indices.push_back(i);
+    Square open = square(0.3f, 0.02f);
+    for (const uint32_t i : open.indices)
+      indices.push_back(i + 8);
+    positions.insert(
+        positions.end(), open.positions.begin(), open.positions.end());
+    const glm::mat4 model = glm::rotate(
+        glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, -2.0f, 0.0f)),
+        0.3f,
+        glm::normalize(glm::vec3(0.1f, 0.05f, 1.0f)));
+    const UndersideMesh ready(positions, indices);
+    CHECK(!ready.empty());
+    for (const float below : {0.5f, 0.1f})
+    {
+      const Underside a = underside(positions, indices, model, below, 0.03f);
+      const Underside b = underside(ready, model, below, 0.03f);
+      CHECK(!a.empty());
+      CHECK(a.from == b.from && a.size == b.size);
+      bool same = a.bottom.size() == b.bottom.size();
+      for (std::size_t i = 0; same && i < a.bottom.size(); ++i)
+        same = std::isnan(a.bottom[i]) == std::isnan(b.bottom[i]) &&
+               (std::isnan(a.bottom[i]) || near(a.bottom[i], b.bottom[i])) &&
+               near(a.coverage[i], b.coverage[i]);
+      CHECK(same);
+    }
+    CHECK(underside(
+              ready, glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 9)), 0.5f)
+              .empty());
+    // Its lowest point placed: exactly its lowest vertex's, however it's
+    // turned (not its bounds' corners, which a turned wheel swings lower).
+    float lowest = std::numeric_limits<float>::infinity();
+    for (const glm::vec3& p : positions)
+      lowest = std::min(lowest, glm::vec3(model * glm::vec4(p, 1.0f)).z);
+    CHECK(near(lowestPoint(ready, model), lowest));
   }
 
   TEST("half floats should round-trip the offsets the GPU reads")

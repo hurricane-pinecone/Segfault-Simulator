@@ -12,6 +12,7 @@
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
+#include "engine/core/components/animatorComponent.h"
 #include "engine/core/components/boxCollider2D.h"
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
@@ -30,6 +31,7 @@
 #include "engine/core/util/atomicFile.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/rendering/meshLibrary.h"
@@ -38,6 +40,7 @@
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
+#include "engine/runtime/systems/colliderFit.h"
 #include "glm/glm/gtc/quaternion.hpp"
 #include "glm/glm/matrix.hpp"
 #include "glm/glm/trigonometric.hpp"
@@ -52,6 +55,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -725,8 +729,17 @@ void scriptFields(sfs::ScriptComponent& component,
   }
 
   ImGui::SeparatorText(type->displayName.c_str());
+  // A derived type's fields come level by level, its bases' first, each
+  // level under its type's name.
+  std::string level = type->name;
   for (const FieldInfo& field : type->fields)
   {
+    if (!type->base.empty() && field.owner != level)
+    {
+      level = field.owner;
+      const TypeInfo* owner = sfs::reflect::types().find(level);
+      ImGui::TextDisabled("%s", owner ? owner->displayName.c_str() : level.c_str());
+    }
     ImGui::PushID(field.name.c_str());
     // Dimmed while theirs differ (see componentSection()).
     const bool mixed = std::any_of(otherValues.begin(),
@@ -962,7 +975,130 @@ struct MeshScene
   sfs::AssetDatabase* assets = nullptr; // where Extract writes materials
   const sfs::RenderSystem* render = nullptr;
   sfs::AssetStore* store = nullptr; // sprites' images
+  sfs::AnimationSystem* animation = nullptr; // animators' previews
 };
+
+// An AnimatorComponent's clip: none (its model as bound), or one of its
+// model's clips (listed once it has loaded).
+void animatorClipField(const FieldInfo& field,
+                       void* object,
+                       EditorHistory* history)
+{
+  const auto& animator = *static_cast<sfs::AnimatorComponent*>(object);
+  const std::vector<std::string> clips = animator.clipNames();
+  widgets::propertyLabel(field.displayName.c_str());
+  widgets::undoable(history,
+                    field.in<std::string>(object),
+                    [&](std::string& clip)
+                    {
+                      bool changed = false;
+                      if (ImGui::BeginCombo(
+                              "##value", clip.empty() ? "(none)" : clip.c_str()))
+                      {
+                        if (ImGui::Selectable("(none)", clip.empty()))
+                        {
+                          clip.clear();
+                          changed = true;
+                        }
+                        for (const std::string& name : clips)
+                          if (ImGui::Selectable(name.c_str(), name == clip))
+                          {
+                            clip = name;
+                            changed = true;
+                          }
+                        if (clips.empty())
+                          ImGui::TextDisabled("No clips (yet): its model "
+                                              "has none, or is loading");
+                        ImGui::EndCombo();
+                      }
+                      return changed;
+                    });
+  if (const float length = animator.length(); length > 0.0f)
+    ImGui::SetItemTooltip("%.2f s", length);
+}
+
+// An AnimatorComponent's source: its skinned meshes' own model (empty), or
+// another model asset whose clips it plays (one with its joints' names).
+void animatorSourceField(const FieldInfo& field,
+                         void* object,
+                         const MeshScene& scene,
+                         EditorHistory* history)
+{
+  widgets::propertyLabel(field.displayName.c_str());
+  const sfs::AssetDatabase* assets = scene.assets;
+  widgets::undoable(
+      history,
+      field.in<std::string>(object),
+      [&](std::string& source)
+      {
+        const sfs::AssetRecord* picked = nullptr;
+        if (const std::optional<sfs::AssetMeshName> named =
+                sfs::parseAssetMeshName(source);
+            named && assets)
+          picked = assets->find(named->model);
+        const std::string shown =
+            source.empty() ? "(its own model)"
+            : picked       ? picked->path.filename().string()
+                           : source;
+        bool changed = false;
+        if (ImGui::BeginCombo("##value", shown.c_str()))
+        {
+          if (ImGui::Selectable("(its own model)", source.empty()))
+          {
+            source.clear();
+            changed = true;
+          }
+          if (assets)
+            for (const sfs::AssetRecord& record : assets->records())
+            {
+              if (record.kind != sfs::AssetKind::Model)
+                continue;
+              const std::string name = sfs::assetMeshName(record.id);
+              if (ImGui::Selectable(record.path.generic_string().c_str(),
+                                    name == source))
+              {
+                source = name;
+                changed = true;
+              }
+            }
+          ImGui::EndCombo();
+        }
+        return changed;
+      });
+}
+
+// While editing: play an animator's clip in the viewport (its time runs
+// without entering Play), and put its time back when stopped.
+void animatorPreview(const sfs::Entity& entity,
+                     void* object,
+                     const MeshScene& scene)
+{
+  auto& animator = *static_cast<sfs::AnimatorComponent*>(object);
+  if (!scene.animation || scene.animation->live())
+    return;
+  static std::unordered_map<sfs::Entity::EntityId, float> startedAt;
+  const bool previewing = scene.animation->previewing(entity);
+  widgets::propertyLabel("Preview");
+  ImGui::BeginDisabled(animator.clip.empty());
+  if (ImGui::Button(previewing ? "Stop##preview" : "Play##preview",
+                    ImVec2(-FLT_MIN, 0.0f)))
+  {
+    scene.animation->setPreview(entity, !previewing);
+    if (!previewing)
+      startedAt[entity.getId()] = animator.time;
+    else if (const auto it = startedAt.find(entity.getId());
+             it != startedAt.end())
+    {
+      animator.time = it->second;
+      startedAt.erase(it);
+    }
+  }
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip(
+      previewing ? "Stop, back where it started"
+                 : "Play the clip in the viewport without entering Play "
+                   "(drag Time to scrub it)");
+}
 
 // A 2D game's sprite's box on its plane, about the entity (its pixels over the
 // pixels per unit, scaled, off its anchor), for a BoxCollider2D to fit. Empty
@@ -991,29 +1127,14 @@ std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& enti
   return std::pair(size * 0.5f, glm::vec2(centre.x, centre.y * space->ySign()));
 }
 
-// The bounds, in the entity's local space, of its mesh and its descendants'
-// (a collider on a group covers the group). Empty if there are none (or only
-// stand-ins).
-sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene)
+// The bounds, in the entity's local space, of its mesh (or, with
+// `includeChildren` or none of its own, its descendants' too: a collider on a
+// group covers the group). Empty if there are none (or only stand-ins).
+sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene, bool includeChildren = false)
 {
-  sfs::Aabb bounds;
   if (!scene.meshes || !scene.tree)
-    return bounds;
-  const glm::mat4 toLocal = glm::inverse(sfs::hierarchy::worldMatrix(entity));
-  for (const sfs::Entity& part : scene.tree->subtree(entity))
-  {
-    if (!part.hasComponent<sfs::MeshRendererComponent>())
-      continue;
-    const sfs::Aabb* mesh = scene.meshes->bounds(
-        part.getComponent<sfs::MeshRendererComponent>().mesh);
-    if (!mesh || mesh->empty())
-      continue;
-    bounds.expand(
-        part == entity
-            ? *mesh
-            : mesh->transformed(toLocal * sfs::hierarchy::worldMatrix(part)));
-  }
-  return bounds;
+    return {};
+  return sfs::entityMeshBounds(entity, *scene.meshes, *scene.tree, includeChildren);
 }
 
 bool isCollider(const TypeInfo& type)
@@ -1023,11 +1144,13 @@ bool isCollider(const TypeInfo& type)
          type.name == "CapsuleCollider3DComponent";
 }
 
-// Size a collider to the entity's meshes. Does nothing if it isn't a collider
-// or there's no mesh to fit.
+// Size a collider to the entity's meshes (sfs::fitColliderToMesh) or, a 2D
+// box, its sprite. Does nothing if it isn't a collider or there's nothing to
+// fit.
 void fitCollider(const TypeInfo& type,
                  const sfs::Entity& entity,
-                 const MeshScene& scene)
+                 const MeshScene& scene,
+                 bool includeChildren = false)
 {
   if (type.name == "BoxCollider2D")
   {
@@ -1039,40 +1162,44 @@ void fitCollider(const TypeInfo& type,
     }
     return;
   }
-  const sfs::Aabb bounds =
-      isCollider(type) ? meshBounds(entity, scene) : sfs::Aabb();
-  if (bounds.empty())
+  if (!scene.meshes || !scene.tree)
     return;
-  void* object = type.component.get(entity);
-  const glm::vec3 half = bounds.extents();
   if (type.name == "BoxCollider3DComponent")
-  {
-    auto& box = *static_cast<sfs::BoxCollider3DComponent*>(object);
-    box.size = half * 2.0f;
-    box.offset = bounds.center();
-    // A flat mesh (a plane) gets a slab under its surface, not a sheet bodies
-    // can tunnel through.
-    constexpr float kMinThickness = 0.1f;
-    for (int axis = 0; axis < 3; ++axis)
-      if (box.size[axis] < kMinThickness)
-      {
-        box.offset[axis] -= (kMinThickness - box.size[axis]) * 0.5f;
-        box.size[axis] = kMinThickness;
-      }
-  }
+    sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
   else if (type.name == "SphereCollider3DComponent")
+    sfs::fitColliderToMesh<sfs::SphereCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+  else if (type.name == "CapsuleCollider3DComponent")
+    sfs::fitColliderToMesh<sfs::CapsuleCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+}
+
+// A 3D collider's Fit to Mesh row (one undo step, on every selected object),
+// and Include Children above it when the entity has a mesh and so do some of
+// its children (with no mesh of its own, its children's are what it fits).
+void colliderFitRows(const TypeInfo& type,
+                     const sfs::Entity& entity,
+                     std::span<const sfs::Entity> others,
+                     const MeshScene& scene,
+                     EditorHistory* history)
+{
+  static bool includeChildren = false;
+  const bool hasOwn =
+      entity.hasComponent<sfs::MeshRendererComponent>() && scene.meshes &&
+      scene.meshes->bounds(entity.getComponent<sfs::MeshRendererComponent>().mesh);
+  if (hasOwn && scene.tree && !scene.tree->children(entity).empty())
   {
-    auto& sphere = *static_cast<sfs::SphereCollider3DComponent*>(object);
-    sphere.radius = std::max({half.x, half.y, half.z, 0.01f});
-    sphere.offset = bounds.center();
+    widgets::propertyCheckbox("Include Children", &includeChildren);
+    ImGui::SetItemTooltip("Fit around the children's meshes too, not just this object's");
   }
-  else
-  {
-    auto& capsule = *static_cast<sfs::CapsuleCollider3DComponent*>(object);
-    capsule.radius = std::max({half.x, half.y, 0.01f});
-    capsule.height = std::max(half.z * 2.0f, capsule.radius * 2.0f);
-    capsule.offset = bounds.center();
-  }
+  widgets::propertyLabel("Mesh Bounds");
+  if (ImGui::Button("Fit to Mesh", ImVec2(-FLT_MIN, 0.0f)) && history)
+    history->change(
+        [&]
+        {
+          fitCollider(type, entity, scene, includeChildren);
+          for (const sfs::Entity& other : others)
+            fitCollider(type, other, scene, includeChildren);
+        });
+  ImGui::SetItemTooltip("Size and centre the collider to the mesh's bounds (after the model changes)");
 }
 
 // One edit of the 2D transform widgets below: `edit` changes a copy, `apply`
@@ -1253,7 +1380,11 @@ void componentSection(
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             ImGui::GetStyle().Alpha * 0.55f);
       ImGui::BeginGroup();
-      if (field.attributes.materials && field.kind == FieldKind::StringList)
+      if (type.name == "AnimatorComponent" && field.name == "clip")
+        animatorClipField(field, object, history);
+      else if (type.name == "AnimatorComponent" && field.name == "source")
+        animatorSourceField(field, object, scene, history);
+      else if (field.attributes.materials && field.kind == FieldKind::StringList)
         materialsField(type,
                        field,
                        object,
@@ -1302,23 +1433,22 @@ void componentSection(
     }
     if (type.fields.empty())
       ImGui::TextDisabled("No editable fields");
-    if (type.name == "BoxCollider2D" && spriteBox(entity, scene) && ImGui::Button("Fit to Sprite"))
-      history->change(
-          [&]
-          {
-            fitCollider(type, entity, scene);
-            for (const sfs::Entity& other : others)
-              fitCollider(type, other, scene);
-          });
-    else if (isCollider(type) && type.name != "BoxCollider2D" && !meshBounds(entity, scene).empty() &&
-             ImGui::Button("Fit to Mesh"))
-      history->change(
-          [&]
-          {
-            fitCollider(type, entity, scene);
-            for (const sfs::Entity& other : others)
-              fitCollider(type, other, scene);
-          });
+    if (type.name == "AnimatorComponent")
+      animatorPreview(entity, object, scene);
+    if (type.name == "BoxCollider2D" && spriteBox(entity, scene))
+    {
+      widgets::propertyLabel("Sprite Bounds");
+      if (ImGui::Button("Fit to Sprite", ImVec2(-FLT_MIN, 0.0f)))
+        history->change(
+            [&]
+            {
+              fitCollider(type, entity, scene);
+              for (const sfs::Entity& other : others)
+                fitCollider(type, other, scene);
+            });
+    }
+    else if (isCollider(type) && type.name != "BoxCollider2D" && !meshBounds(entity, scene).empty())
+      colliderFitRows(type, entity, others, scene, history);
     if (type.name == "ScriptComponent")
     {
       // Several selected: their fields too, if they all run the same script.
@@ -1487,6 +1617,67 @@ void assetDetails(const sfs::AssetDatabase& assets,
     ImGui::TextUnformatted(record.settings.dump(2).c_str());
 }
 
+// A model's animation clips (an AnimatorComponent plays them by name) and
+// skins, once it has loaded.
+void modelAnimations(EditorContext& context, const sfs::AssetRecord& record)
+{
+  if (!context.scene)
+    return;
+  ImGui::SeparatorText("Animations");
+  const sfs::ModelData* model = nullptr;
+  switch (context.scene->assetStore().requestModel(record.id, &model))
+  {
+  case sfs::AssetStore::LoadState::Loading:
+    ImGui::TextDisabled("Loading...");
+    return;
+  case sfs::AssetStore::LoadState::Failed:
+    ImGui::TextDisabled("It didn't load (see the Console)");
+    return;
+  case sfs::AssetStore::LoadState::Loaded:
+    break;
+  }
+  std::size_t skinned = 0;
+  std::size_t joints = 0;
+  for (const sfs::ModelPart& part : model->parts)
+    if (part.mesh.skinned())
+    {
+      ++skinned;
+      joints = std::max(joints, part.mesh.skin->joints.size());
+    }
+  if (skinned > 0)
+    ImGui::TextDisabled("%zu skinned mesh%s, %zu joints",
+                        skinned,
+                        skinned == 1 ? "" : "es",
+                        joints);
+  if (!model->animations || model->animations->clips.empty())
+  {
+    ImGui::TextDisabled("No clips");
+    return;
+  }
+  if (ImGui::BeginTable("Clips",
+                        3,
+                        ImGuiTableFlags_SizingStretchProp |
+                            ImGuiTableFlags_RowBg))
+  {
+    ImGui::TableSetupColumn("Clip");
+    ImGui::TableSetupColumn("Length");
+    ImGui::TableSetupColumn("Channels");
+    ImGui::TableHeadersRow();
+    for (const sfs::AnimationClip& clip : model->animations->clips)
+    {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(clip.name.c_str());
+      ImGui::TableNextColumn();
+      ImGui::Text("%.2f s", clip.duration);
+      ImGui::TableNextColumn();
+      ImGui::Text("%zu", clip.channels.size());
+    }
+    ImGui::EndTable();
+  }
+  ImGui::TextDisabled("Play them with an Animator on the model's root");
+}
+
 // How a texture is brought in: smooth or pixel art, and whether it's a sprite
 // sheet (a grid of frames). Saved to its .meta, and shown straight away.
 void textureSettings(EditorContext& context, const sfs::AssetRecord& record)
@@ -1623,8 +1814,17 @@ void InspectorPanel::drawScriptableObject(EditorContext& context,
   const nlohmann::json before = serializer.saveObject(*type, object.get());
 
   ImGui::SeparatorText(type->displayName.c_str());
+  // A derived type's fields come level by level, its bases' first, each
+  // level under its type's name.
+  std::string level = type->name;
   for (const FieldInfo& field : type->fields)
   {
+    if (!type->base.empty() && field.owner != level)
+    {
+      level = field.owner;
+      const TypeInfo* owner = sfs::reflect::types().find(level);
+      ImGui::TextDisabled("%s", owner ? owner->displayName.c_str() : level.c_str());
+    }
     ImGui::PushID(field.name.c_str());
     fieldWidget(field, object.get(), meshes, nullptr);
     ImGui::PopID();
@@ -2063,6 +2263,8 @@ void InspectorPanel::drawContents(EditorContext& context)
         drawVisualStyle(context, *asset);
       if (asset->kind == sfs::AssetKind::Prefab && ImGui::Button("Edit Prefab"))
         context.openPrefab = asset->id;
+      if (asset->kind == sfs::AssetKind::Model)
+        modelAnimations(context, *asset);
     }
     else
       ImGui::TextDisabled("Nothing selected");
@@ -2074,7 +2276,12 @@ void InspectorPanel::drawContents(EditorContext& context)
   sfs::MeshLibrary* meshes =
       context.render ? &context.render->meshes() : nullptr;
   const sfs::hierarchy::EntityTree tree(context.scene->entities());
-  const MeshScene scene{meshes, &tree, context.assets, context.render, context.scene ? &context.scene->assetStore() : nullptr};
+  const MeshScene scene{meshes,
+                        &tree,
+                        context.assets,
+                        context.render,
+                        context.scene ? &context.scene->assetStore() : nullptr,
+                        context.scene ? context.scene->tryGetSystem<sfs::AnimationSystem>() : nullptr};
 
   EditorHistory* history = context.history;
 

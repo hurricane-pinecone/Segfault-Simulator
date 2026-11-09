@@ -342,6 +342,31 @@ void sceneWeather(sfs::RenderSystem& render, EditorHistory& history)
     ImGui::TextDisabled("The visual style's rain stands in for this");
   ImGui::PopID();
 }
+
+// Debug drawing (the engine's debug features: the editor, Debug builds and
+// development exports only; a release export ignores these).
+void sceneDebug(sfs::RenderSystem& render, EditorHistory& history)
+{
+  if (!ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
+    return;
+  ImGui::PushID("debug");
+  bool drawColliders = render.drawColliders();
+  if (widgets::undoable(&history,
+                        drawColliders,
+                        [](bool& on)
+                        { return widgets::propertyCheckbox("Draw Colliders", &on); }))
+    render.setDrawColliders(drawColliders);
+  ImGui::SetItemTooltip("Every collider drawn as lines, in the viewport and the game:\n"
+                        "solid ones green, triggers orange. Game code can turn it on\n"
+                        "or off (RenderSystem::forceDrawColliders), and so can\n"
+                        "SFS_DRAW_COLLIDERS=1 (or 0) in the environment.");
+  ImGui::TextDisabled("Development builds only: a release export ignores these");
+  if (render.effectiveDrawColliders())
+    ImGui::TextDisabled("Colliders drawn: %zu (%zu lines)",
+                        render.stats().colliders,
+                        render.stats().debugLines);
+  ImGui::PopID();
+}
 } // namespace
 
 void SceneSettingsPanel::drawContents(EditorContext& context)
@@ -357,6 +382,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   sceneSkyAndShadows(render, history);
   sceneAtmosphere(render, history);
   sceneWeather(render, history);
+  sceneDebug(render, history);
   ImGui::Separator();
 
   // Which view the game starts from.

@@ -30,6 +30,12 @@ namespace sfs
  * @param bool lightCastsShadows - whether things block its emission's light
  *                                 (as a point light's; see
  *                                 PointLightComponent), default true
+ * @param glm::vec3 emissionColor - the colour of its own glow (linear RGB)
+ * @param float emission - how bright it glows over its materials' own
+ *                         emission, all over it (0: not at all, the default;
+ *                         above 1 blooms): a lamp switched on, set from a
+ *                         script. It lights nothing around it: give a lamp a
+ *                         PointLightComponent for that
  */
 struct MeshRendererComponent
 {
@@ -41,6 +47,8 @@ struct MeshRendererComponent
   [[sfs::emissionLight, sfs::range(0, 4)]] float lightStrength = 1.0f;
   [[sfs::emissionLight, sfs::range(0, 4)]] float lightRange = 1.0f;
   [[sfs::emissionLight]] bool lightCastsShadows = true;
+  [[sfs::color]] glm::vec3 emissionColor{1.0f};
+  [[sfs::range(0, 50)]] float emission = 0.0f;
 
   MeshRendererComponent() = default;
 

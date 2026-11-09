@@ -22,6 +22,7 @@ struct SunCascade {
 @group(1) @binding(2) var<uniform> grass: Grass;
 @group(1) @binding(3) var trampleMap: texture_2d<f32>;
 @group(1) @binding(4) var trampleSampler: sampler;
+@group(1) @binding(5) var grassDeformMap: texture_2d<f32>; // see grassDeformAt()
 
 @vertex
 fn vs_main(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32) -> @builtin(position) vec4f {

@@ -31,6 +31,22 @@ public:
   bool enabled() const { return m_enabled; }
   void setEnabled(bool enabled) { m_enabled = enabled; }
 
+  // How the scene's game time (Registry::timeScale()) reaches update().
+  // Stepped, the default: game time, in steps no longer than the registry's
+  // longest step (several a frame when the game runs fast), so what steers,
+  // follows a path or meets other moving things does the same at any speed.
+  // Frame: a frame's game time in one step (what only adds time up, or costs
+  // too much to run more than once a frame). Real: real time, whatever the
+  // time scale (rendering, cameras).
+  enum class TimeStep
+  {
+    Stepped,
+    Frame,
+    Real
+  };
+  TimeStep timeStep() const { return m_timeStep; }
+  void setTimeStep(TimeStep step) { m_timeStep = step; }
+
   // UI-agnostic descriptors for a system's debug settings, surfaced by the
   // debug panel the same way render modules expose theirs. Default: none.
   virtual std::vector<ModuleSetting> settings() { return {}; }
@@ -57,6 +73,7 @@ private:
   static constexpr uint32_t kNowhere = 0xFFFFFFFFu;
   std::vector<uint32_t> m_positions;
   bool m_enabled = true;
+  TimeStep m_timeStep = TimeStep::Stepped;
 
   friend class Registry;
   friend class Scene;

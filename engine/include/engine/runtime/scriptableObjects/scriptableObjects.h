@@ -16,26 +16,6 @@ class AssetDatabase;
 class MeshLibrary;
 
 /**
- * A field referring to a scriptable object of type T (an
- * sfs::ScriptableObject). The editor picks it from the project's assets of that
- * type; get() gives the asset, loaded the first time anything asks for it and
- * shared by everything that does.
- *
- *   sfs::AssetRef<ItemDef> weapon;
- *   ...
- *   if (const ItemDef* item = weapon.get())
- *     damage = item->value;
- */
-template <typename T>
-struct AssetRef : AssetRefBase
-{
-  /** The asset; null if none is set, it's missing, or it isn't a T. */
-  const T* get() const;
-  const T* operator->() const { return get(); }
-  explicit operator bool() const { return get() != nullptr; }
-};
-
-/**
  * The project's (or game's) scriptable objects: .asset files, each holding the
  * field values of a scriptable object type ({ "formatVersion", "type", "fields"
  * }). Loaded from the catalogue on first use and kept until forgotten; one per
@@ -89,7 +69,7 @@ public:
   }
 
   /** The project's scriptable objects of a type (by its name; empty: every
-   * type), in path order. */
+   * type), with those of the types derived from it, in path order. */
   std::vector<Entry> list(std::string_view type = {});
   /** Every asset of type T, loaded, in path order. */
   template <typename T>
@@ -135,13 +115,7 @@ private:
       m_types; // each file's type, by reference
 };
 
-/** The process-wide scriptable objects. */
+/** The process-wide scriptable objects (what AssetRef<T>::get() reads). */
 ScriptableObjects& scriptableObjects();
-
-template <typename T>
-const T* AssetRef<T>::get() const
-{
-  return asset.empty() ? nullptr : scriptableObjects().get<T>(asset);
-}
 
 } // namespace sfs

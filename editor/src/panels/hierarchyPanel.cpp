@@ -10,6 +10,7 @@
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/components/nameComponent.h"
+#include "engine/core/components/pointLightComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/prefabComponents.h"
@@ -518,6 +519,15 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
   ImGui::Separator();
   if (ImGui::MenuItem("Point Light"))
     create([&] { return scene.createPointLight("Point Light"); });
+  if (ImGui::MenuItem("Spot Light"))
+    create(
+        [&]
+        {
+          sfs::Entity light = scene.createPointLight("Spot Light");
+          light.getComponent<sfs::PointLightComponent>().spot = true;
+          return light;
+        });
+  ImGui::SetItemTooltip("Shines along its +x: turn it to aim it");
   if (ImGui::MenuItem("Camera"))
     create(
         [&]
