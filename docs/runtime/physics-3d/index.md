@@ -45,16 +45,20 @@ Colliders:
 | `SphereCollider3DComponent` | A sphere of `radius` |
 | `CapsuleCollider3DComponent` | An upright capsule (`radius`, total `height` along Z), the usual shape for characters |
 
-Each has an `offset` from the entity's origin, and a `trigger` flag (see below).
-Colliders turn and scale with the entity. A sphere scales by the entity's
-largest scale axis, so it stays round. An entity may have one of each kind; they
-combine into one shape.
+Each has an `offset` from the entity's origin, a `trigger` flag (see below)
+and a `layer` (0 to 31, 0 by default): which layer a mask-based query such as
+[`CollisionWorld3D`](#querying-without-stepping) counts it in. It plays no
+part in the simulation itself. Colliders turn and scale with the entity. A
+sphere scales by the entity's largest scale axis, so it stays round. An
+entity may have one of each kind; they combine into one shape.
 
 `RigidBody3DComponent` fields: `mass` (kg), `kinematic`, `friction`,
 `bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats),
-`lockRotation` (never tips over, e.g. a character) and `bendsGrass` (flattens
+`lockRotation` (never tips over, e.g. a character), `bendsGrass` (flattens
 [grass](../../editor/index.md#grass) it moves through, sized by its colliders;
-on by default).
+on by default) and `touchStatic` (a kinematic body's contacts with static and
+other kinematic bodies are reported too; see
+[Collisions and triggers](#collisions-and-triggers)).
 
 The world is Z-up, in metres. Gravity defaults to (0, 0, −9.81);
 `physics.setGravity` changes it.
@@ -151,13 +155,19 @@ like a pickup, a checkpoint or a zone that opens a door. An entity whose
 colliders are all triggers is a trigger. A static trigger notices moving
 bodies; a kinematic one notices static bodies too.
 
-`physics.contactsBegun()` and `contactsEnded()` list the same contacts for code
-that isn't a game object, such as a System script. Each `Contact3D` has a
-`depth`: how far the shapes overlap, in metres. A begun contact gives the
-depth when it began, and an ended one gives the deepest it reached.
-`contactsDeepened()` lists the contacts that went deeper during the last update,
-once each, with their deepest depth so far. Use it to tell a graze from a real
-hit while the contact lasts:
+A solid kinematic body normally hears about dynamic bodies only, not static or
+other kinematic ones. Tick **Touch Static** on its `RigidBody3DComponent` for
+one that must know what it touches regardless, such as a machine driven by
+script.
+
+`physics.contactsBegun()` and `contactsEnded()` list the same contacts
+(`Contact3D`) for code that isn't a game object, such as a System script, each
+with the `point` where the bodies first touched. Each also has a `depth`: how
+far the shapes overlap, in metres. A begun contact gives the depth when it
+began, and an ended one gives the deepest it reached. `contactsDeepened()`
+lists the contacts that went deeper during the last update, once each, with
+their deepest depth so far. Use it to tell a graze from a real hit while the
+contact lasts:
 
 ```cpp
 for (const sfs::Contact3D& c : physics.contactsDeepened())
@@ -178,6 +188,46 @@ if (const auto hit = physics.raycast(ray, 200.0f))
 `raycast` returns the nearest solid body the ray hits: its `entity`, the
 `point`, the surface `normal` and the `distance`. Triggers are skipped. Raycasts
 see the bodies as of the last physics update, so only while the scene plays.
+
+## Querying without stepping
+
+A raycast asks the live simulation, on the main thread. Something that tries
+many poses instead, such as a vehicle planner checking thousands of spots for
+where a shape would fit, wants its own frozen copy it can query from worker
+threads while the game goes on. `physics.snapshot()` makes one, a
+`CollisionWorld3D`, from every static body and every kinematic one where it is
+right now:
+
+```cpp
+const auto world = physics.snapshot(); // every solid body that doesn't move by force
+
+const sfs::CollisionShape3D box{sfs::CollisionShape3D::Kind::Box, size};
+const sfs::CollisionWorld3D::Probe probe(std::span(&box, 1)); // built once, tried at many poses
+
+if (!world->overlaps(probe, position, sfs::yawRotation(heading)))
+  place(position, heading); // clear
+```
+
+- A `CollisionWorld3D` never changes once built, so any number of threads may
+  query it at once.
+- `snapshot(include)` copies only the bodies whose entity `include` accepts (a
+  vehicle leaving out its own parts), or every one with no filter given. Each
+  body's id is its entity's `Entity::getId()`, and its layer the lowest of its
+  (non-trigger) colliders' `layer`.
+- `physics.revision()` goes up whenever a body is added, removed or rebuilt,
+  or a static one moves. A snapshot stays correct for querying while it
+  hasn't changed; take a new one once it has.
+- A `Probe` holds the shapes to try, built once (the costly part) and reused
+  at however many poses are asked. A shape is a box (full size), a sphere
+  (`size.x` its radius) or an upright capsule (`size.x` radius, `size.y` total
+  height), each with its own `offset` and `rotation` within the probe.
+- `overlaps` asks whether the probe at a pose touches anything; `overlap`
+  returns the deepest hit (its `id`, `layer`, contact `point` and `depth`);
+  `cast` sweeps it from one pose to another in a straight line and returns how
+  far along (0 to 1) it first touches something, if it does.
+- All three take a `layers` mask (bit *n* is layer *n*, matching the
+  colliders' `layer` field; every layer by default) and a list of entity ids
+  to leave out.
 
 ## How it runs
 
