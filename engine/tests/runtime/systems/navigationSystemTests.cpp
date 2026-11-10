@@ -189,6 +189,34 @@ int main()
     CHECK(type && type->kind == ScriptType::Kind::System);
   }
 
+  TEST("a game's shared hold on the planning scheduler should be the system's "
+       "own scheduler, and a job on it should run there")
+  {
+    World world;
+    std::shared_ptr<nav::PlanScheduler> shared =
+        world.navigation.sharedScheduler();
+    CHECK(shared.get() == &world.navigation.scheduler());
+    const nav::PlanScheduler::JobId job = shared->submitOne(
+        7,
+        "test",
+        nav::PlanScheduler::Clock::now(),
+        [](const std::atomic<bool>&) { return std::any(42); });
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    nav::PlanScheduler::Collected in;
+    std::vector<std::any> legs;
+    while (std::chrono::steady_clock::now() < until)
+    {
+      in = shared->collect(job);
+      legs.insert(legs.end(), in.legs.begin(), in.legs.end());
+      if (in.state == nav::PlanScheduler::State::Done)
+        break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(in.state == nav::PlanScheduler::State::Done);
+    CHECK(legs.size() == 1 && std::any_cast<int>(legs.front()) == 42);
+  }
+
   TEST("an agent sent past a wall should drive round it and arrive, its "
        "transform moved by the system")
   {
@@ -207,6 +235,41 @@ int main()
       arrived = arrived || (e.agent == car &&
                             e.what.kind == nav::Fleet::Event::Kind::Arrived);
     CHECK(arrived);
+  }
+
+  TEST("a game's coarse edges (its worn tracks) should be put on the coarse "
+       "graph on the scheduler, and on again when they change, the graph "
+       "plans held keep as it was")
+  {
+    Specs specs;
+    World world;
+    world.solid({12.0f, 0.0f, 1.0f}, {1.0f, 8.0f, 2.0f});
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    const auto graphWith = [&](std::size_t edges)
+    {
+      for (int k = 0; k < 400; ++k)
+      {
+        world.scene.update(kFrame);
+        const auto& g = world.navigation.fleet().world().graph;
+        if (g && g->edges().size() == edges)
+          return g;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+      return std::shared_ptr<const nav::CoarseGraph>();
+    };
+    const auto plain = graphWith(0);
+    CHECK(plain != nullptr);
+    const nav::CoarseGraph::Edge a{{0.0f, -6.0f}, {20.0f, -6.0f}, 0.85f, 2.0f};
+    const nav::CoarseGraph::Edge b{{20.0f, -6.0f}, {24.0f, 0.0f}, 0.85f, 2.0f};
+    world.navigation.setCoarseEdges({a, b});
+    const auto worn = graphWith(2);
+    CHECK(worn != nullptr && worn != plain);
+    CHECK(plain && plain->edges().empty());
+    world.navigation.setCoarseEdges({b});
+    const auto less = graphWith(1);
+    CHECK(less != nullptr && less->edges().front() == b);
+    CHECK(world.navigation.coarseEdges().size() == 1u);
+    (void)car;
   }
 
   TEST("a player at the wheel should drive the agent from where it was put, "
@@ -384,49 +447,98 @@ int main()
     CHECK(world.navigation.fleet().has(id));
   }
 
-  TEST("a mounted part's box should be measured in the agent's flat frame "
-       "(mountedBox: a lifted, pitched header's nose where the physics has "
-       "it), its bottom rideDrop lower, the same box the game plans with")
+  TEST("a mounted part's box should be its true size in the agent's own "
+       "frame (mountedBox): as its mount holds it (Hitch::mount), never "
+       "with the body's pitch baked in; exactly where it's held")
   {
     Specs specs;
     World world;
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
-    // (A 3 m x 4 m x 1 m header ahead of the car, pitched 14 degrees up.)
+    // (A 3 m x 4 m x 1 m header ahead of the car, pitched 14 degrees up by
+    // its lift, the car's body pitched 5 degrees nose down on the ground.)
     Entity tool = world.solid({5.0f, 0.0f, 1.5f}, {3.0f, 4.0f, 1.0f});
-    tool.getComponent<TransformComponent>().rotation =
+    const glm::quat lifted =
         glm::angleAxis(glm::radians(-14.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::quat nosedDown =
+        glm::angleAxis(glm::radians(5.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    car.getComponent<TransformComponent>().rotation = nosedDown;
+    tool.getComponent<TransformComponent>().rotation = nosedDown * lifted;
+    tool.getComponent<TransformComponent>().position = glm::vec3(
+        glm::mat4_cast(nosedDown) * glm::vec4(5.0f, 0.0f, 1.5f, 1.0f));
     NavigationSystem::Hitch mounted;
     mounted.towed = tool;
     mounted.rigid = true;
-    mounted.rideDrop = 0.3f;
+    // (Its authored mount, lowered: level, 5 m ahead, 1 m up.)
+    mounted.mount =
+        glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 0.0f, 1.0f));
     world.navigation.hitch(car, mounted);
     world.scene.update(kFrame);
-    const nav::AgentSpec* spec = world.navigation.fleet().spec(
-        static_cast<nav::Fleet::AgentId>(car.getId()));
+    const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
+    const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
+    CHECK(spec && spec->boxes.size() == 2u);
+    if (spec && spec->boxes.size() == 2u)
+    {
+      // (Its true size from the mount, wherever it's held and however the
+      // body's pitched as it's measured.)
+      const nav::Box3 b = spec->boxes.back();
+      CHECK(std::abs(b.back - 3.5f) < 1.0e-4f);
+      CHECK(std::abs(b.front - 6.5f) < 1.0e-4f);
+      CHECK(std::abs(b.half - 2.0f) < 1.0e-4f);
+      CHECK(std::abs(b.bottom - 0.5f) < 1.0e-4f);
+      CHECK(std::abs(b.top - 1.5f) < 1.0e-4f);
+      const nav::Box3 same =
+          NavigationSystem::mountedBox(*mounted.mount,
+                                       glm::vec3(-1.5f, -2.0f, -0.5f),
+                                       glm::vec3(1.5f, 2.0f, 0.5f));
+      CHECK(b.back == same.back && b.front == same.front);
+      CHECK(b.bottom == same.bottom && b.top == same.top);
+    }
+    // (No mount given: where it's held now relative to the agent, the
+    // lift's 14 degrees but not the body's 5: in the agent's own frame.)
+    mounted.mount.reset();
+    world.navigation.hitch(car, mounted);
+    world.scene.update(kFrame);
+    spec = world.navigation.fleet().spec(id);
     CHECK(spec && spec->boxes.size() == 2u);
     if (spec && spec->boxes.size() == 2u)
     {
       const nav::Box3 b = spec->boxes.back();
-      const nav::Box3 same = NavigationSystem::mountedBox(
-          hierarchy::worldMatrix(tool),
-          glm::vec3(-1.5f, -2.0f, -0.5f),
-          glm::vec3(1.5f, 2.0f, 0.5f),
-          {{0.0f, 0.0f}, 0.0f},
-          [](glm::vec2) { return 0.0f; },
-          0.3f);
-      CHECK(b.back == same.back && b.front == same.front);
-      CHECK(b.bottom == same.bottom && b.top == same.top);
-      // (Pitched: longer than upright by the tilt, nose and tail where the
-      // corners are.)
       const float c = std::cos(glm::radians(14.0f)),
                   sn = std::sin(glm::radians(14.0f));
-      CHECK(std::abs(b.front - (5.0f + 1.5f * c + 0.5f * sn)) < 1.0e-4f);
-      CHECK(std::abs(b.back - (5.0f - 1.5f * c - 0.5f * sn)) < 1.0e-4f);
-      CHECK(std::abs(b.top - (1.5f + 1.5f * sn + 0.5f * c)) < 1.0e-4f);
-      CHECK(std::abs(b.bottom - (1.5f - 1.5f * sn - 0.5f * c - 0.3f)) <
-            1.0e-4f);
-      CHECK(std::abs(b.half - 2.0f) < 1.0e-4f);
+      CHECK(std::abs(b.front - (5.0f + 1.5f * c + 0.5f * sn)) < 1.0e-3f);
+      CHECK(std::abs(b.back - (5.0f - 1.5f * c - 0.5f * sn)) < 1.0e-3f);
+      CHECK(std::abs(b.top - (1.5f + 1.5f * sn + 0.5f * c)) < 1.0e-3f);
     }
+  }
+
+  TEST("a towed trailer: its box measured from its axle (Hitch::axle off "
+       "its origin), its drawbar to that axle, and the angle it was left at "
+       "taken while nothing moves the agent")
+  {
+    Specs specs;
+    World world;
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    // (A 4 m x 2 m trailer, its axle 0.5 m behind its middle, swung 0.2 rad.)
+    Entity trailer = world.solid({-6.0f, 0.0f, 0.5f}, {4.0f, 2.0f, 1.0f});
+    trailer.getComponent<TransformComponent>().rotation =
+        glm::angleAxis(0.2f, glm::vec3(0.0f, 0.0f, 1.0f));
+    NavigationSystem::Hitch towed;
+    towed.towed = trailer;
+    towed.hitchBehind = 1.0f;
+    towed.drawbar = 4.0f;
+    towed.axle = -0.5f;
+    world.navigation.hitch(car, towed);
+    world.scene.update(kFrame);
+    const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
+    const nav::AgentSpec* spec = world.navigation.fleet().spec(id);
+    CHECK(spec && spec->trailer.has_value());
+    if (spec && spec->trailer)
+    {
+      CHECK(std::abs(spec->trailer->drawbar - 4.0f) < 1.0e-4f);
+      CHECK(std::abs(spec->trailer->box.back - -1.5f) < 1.0e-3f);
+      CHECK(std::abs(spec->trailer->box.front - 2.5f) < 1.0e-3f);
+    }
+    CHECK(std::abs(world.navigation.fleet().hitch(id) - -0.2f) < 1.0e-3f);
   }
 
   return testing::report("navigationSystemTests");

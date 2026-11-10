@@ -6,11 +6,13 @@
 #include "engine/runtime/scripting/moduleHost.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Plays an exported game: loads its module and start scene (named by game.json)
@@ -61,23 +63,29 @@ private:
   void openLog(const std::vector<std::string>& early);
 
   std::chrono::steady_clock::time_point m_logFlushed;
+  // The log file, written on a thread of its own: a line logged is only
+  // queued, so no game frame waits on the disk (or on another thread's
+  // write). Written out at least every second and soon after a warning; an
+  // error waits till it's on disk (what comes before a crash).
   struct LogFile
   {
-    std::mutex mutex; // threads log too
     std::ofstream out;
-    std::chrono::steady_clock::time_point flushed = std::chrono::steady_clock::now();
+    std::mutex mutex;
+    std::condition_variable wake, written;
+    std::vector<std::string> queued;
+    uint64_t pushed = 0, done = 0; // lines queued, lines written and flushed
+    bool flushWanted = false, stopping = false;
+    std::thread writer;
 
-    // Write what's held back if it's been a second (or `now`).
-    void flushIfDue(bool now = false)
-    {
-      const std::lock_guard lock(mutex);
-      const auto time = std::chrono::steady_clock::now();
-      if (now || time - flushed > std::chrono::seconds(1))
-      {
-        out.flush();
-        flushed = time;
-      }
-    }
+    void start();
+    // Queued; `soon`: flushed as soon as it's written.
+    void push(std::string line, bool soon);
+    // Everything queued so far written and flushed (waits).
+    void sync();
+    // Flushed soon (doesn't wait).
+    void flushSoon();
+    // Everything written, the thread ended.
+    void stop();
   };
 
   std::filesystem::path m_folder;

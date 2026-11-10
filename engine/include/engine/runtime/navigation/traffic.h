@@ -62,6 +62,21 @@ bool hits(const std::vector<Footprint>& a,
  * Nobody drives on into another's body (Why::Body), whatever its rank. An
  * agent standing short of another's body reserves only up to there, so one
  * already in front of it (crossing its way) carries on through.
+ *
+ * - **Getting out of the way.** A lower agent already in a higher one's
+ *   way (its body in the ground that one claims, as planned) that is on
+ *   its way out of it (moving, or leaving it for a wait spot) is never
+ *   held there by that one's reservation: standing there it would only be
+ *   in its way. It goes on out, and the higher one stands short of its way
+ *   out where they'd meet in time (wayOut()), as it stands for a body.
+ * - **Easing off.** A lower agent whose stop is short of a crossing that
+ *   the higher one will have cleared in time (its reservation there ends,
+ *   it won't stand in it) slows to arrive just as it clears
+ *   (Schedule::easeTo) instead of braking to a stand at its stop; it still
+ *   never passes the stop while the crossing is reserved.
+ * - **Deadlocks.** Who stands waiting for whom is a wait-for graph
+ *   (waitsOn(): each agent waits on at most one); a cycle in it
+ *   (cycles()) is a deadlock nobody leaves by waiting. Fleet breaks it.
  */
 class Traffic
 {
@@ -85,9 +100,15 @@ public:
     // Where it is now; moving, its stopping stretch too (the way it goes on
     // before it can stand, braking now): it's committed to that.
     std::vector<Footprint> body;
-    float s = 0.0f;            // how far along its path it is
-    bool standing = false;     // no path to drive (its body is its claim)
-    bool solid = false;        // a static obstacle (Fleet::solid()): permanent
+    // How many of `body`'s first boxes are where it is now (the rest its
+    // stopping stretch); 0: all of them.
+    std::size_t here = 0;
+    float s = 0.0f;        // how far along its path it is
+    bool standing = false; // no path to drive (its body is its claim)
+    bool solid = false;    // a static obstacle (Fleet::solid()): permanent
+    // Not moving (slower than kStill): its body is passed at the planners'
+    // own gap, as one standing (planners plan past it at that gap).
+    bool still = false;
     std::vector<Sample> ahead; // its path's next seconds
     // The rest of its way past `ahead` (no times; its end too): where one
     // lower stands clear of.
@@ -96,6 +117,9 @@ public:
     // On its way to a wait spot off this one's way: its held ground doesn't
     // stop it (it's leaving; bodies still do).
     AgentId leaving = 0;
+    // Breaking a deadlock on its way to a wait spot: nobody's held ground
+    // stops it (bodies still do).
+    bool leavingAll = false;
   };
 
   /** Each frame, each agent: where it is and what it claims... */
@@ -129,21 +153,70 @@ public:
     // Standing in a higher agent's way with nowhere clear on its path:
     // to a wait spot clear of reservedAbove().
     bool inTheWay = false;
+    // m/s it eases off to (Reserved, its stop short of a crossing the
+    // higher ones will have cleared in time): it gets to its stop as the
+    // crossing clears, never braking to a stand there. Infinity: none.
+    float easeTo = std::numeric_limits<float>::infinity();
   };
   Schedule scheduleOf(AgentId id) const;
   /** Whether `a` ranks above `b` (goes first). */
   bool ranksAbove(AgentId a, AgentId b) const;
   /**
-   * Everything an agent must stand clear of while it waits: the
-   * reservations of every agent ranked above it (their bodies, next
-   * seconds and ways on) and the narrow ground others hold.
+   * Everything an agent must stand clear of while it waits (a wait spot):
+   * every agent ranked above it, its body and all its way on (its next
+   * seconds and on to wayReach, past where it stands for now), and the
+   * narrow ground others hold.
    */
   std::vector<Footprint> reservedAbove(AgentId id) const;
-  /** The narrow ground every agent but `id` holds (never to be entered). */
-  std::vector<Footprint> heldBesides(AgentId id) const;
+  /**
+   * The narrow ground every agent but `id` holds (never to be entered),
+   * leaving out each held stretch `in` (its body) is in already: it goes
+   * out through that.
+   */
+  std::vector<Footprint>
+  heldBesides(AgentId id, const std::vector<Footprint>& in = {}) const;
   /** Whether `id` holds a narrow place. */
   bool holdsZone(AgentId id) const;
   bool has(AgentId id) const { return m_agents.contains(id); }
+  /**
+   * Whom it stands waiting for: held still, short of their reservation,
+   * the narrow place they hold or their body (0: nobody; on its way, or
+   * slowing only). Its edge in the wait-for graph.
+   */
+  AgentId waitsOn(AgentId id) const;
+  /**
+   * The cycles of a wait-for graph (each agent waits on at most one), each
+   * once, its members in waiting order from the lowest id: deadlocks.
+   */
+  static std::vector<std::vector<AgentId>>
+  cycles(const std::map<AgentId, AgentId>& waitsOn);
+  /**
+   * All the ground it claims: its body, its next seconds and its way on (to
+   * wayReach): where one yielding to it in a deadlock waits clear of.
+   */
+  std::vector<Footprint> claimed(AgentId id) const;
+  /** Where a way planned for an agent would first be held standing in
+   * another's way (crossing()): its sample, and whose way (-1: nowhere). */
+  struct Crossing
+  {
+    int at = -1;
+    AgentId by = 0;
+  };
+  /**
+   * A way planned for `id` (`way`: its body where it starts, its samples
+   * along all of it, their times from now; leaving/leavingAll as it will
+   * claim it) checked as schedule() will check it, against every agent
+   * ranked above it, each one's reservation as planned (its body, all its
+   * next seconds and its way on, not cut short where it stands for now;
+   * one standing for another's body, zone or reservation: up to its stop):
+   * the first sample that meets one with no place before it clear of them
+   * all to stand and wait in (it would be held in their way). Ground it's
+   * on its way out of (wayOut()) doesn't hold it. One with a clear place
+   * to wait short of the meeting isn't crossing: it waits there. That's
+   * anywhere on its way short of it (`onTheWay`: a trip), or only where it
+   * starts (a way to a wait spot: it's off to wait clear of them).
+   */
+  Crossing crossing(AgentId id, const Claim& way, bool onTheWay = true) const;
 
 private:
   struct Agent
@@ -157,15 +230,38 @@ private:
   };
   bool cooperating(AgentId a, AgentId b) const;
   float bodyMargin(const Claim& c) const;
-  // Whether a sample meets `h`'s reservation in space and time.
-  bool meets(const Sample& s, const Agent& h) const;
+  // Whether a sample meets `h`'s reservation in space and time (`body`: its
+  // body too).
+  bool meets(const Sample& s, const Agent& h, bool body = true) const;
+  // Standing still touching `o`'s body: its way out let off (kEscapeReach).
+  bool escaping(const Claim& c, const Claim& o) const;
+  // Whether `boxes` come into the ground `h` claims as planned (its body,
+  // all its next seconds, its way on), within the traffic margin.
+  bool inGround(const std::vector<Footprint>& boxes, const Claim& h) const;
+  // Its body in `h`'s ground, on its way out of it (moving): how many of
+  // its next seconds' samples, from its first, take it out (through the
+  // first clear of it). Leaving it for a wait spot: through the last of
+  // its way there that's in it. 0: not in it, or not on its way out.
+  std::size_t wayOut(const Claim& c, AgentId hid, const Claim& h) const;
+  // (Its samples meet `h`'s reservation as planned: body, next seconds, way
+  // on from when they end.)
+  bool meetsPlanned(const Sample& s, const Claim& h) const;
   bool clearOfAbove(AgentId id,
                     const std::vector<Footprint>& boxes,
                     AgentId meeting) const;
   void scheduleOne(AgentId id, Agent& a, const std::vector<AgentId>& above);
+  // Seconds till every higher reservation its way meets from `first` on is
+  // clear (infinity: one will stand there, or meets it past its next
+  // seconds).
+  float clearIn(AgentId id,
+                const Claim& c,
+                std::size_t first,
+                const std::vector<AgentId>& above) const;
   void holdZones(AgentId id, Agent& a);
   static void releaseShort(Agent& a, float stopAt);
   std::unordered_map<AgentId, Agent> m_agents;
+  // This schedule()'s wayOut() of each (lower, higher) pair met (0: none).
+  std::map<std::pair<AgentId, AgentId>, std::size_t> m_wayOut;
   std::set<std::pair<AgentId, AgentId>> m_cooperating;
   std::function<bool(glm::vec2)> m_noWait;
   float m_margin = 0.3f;

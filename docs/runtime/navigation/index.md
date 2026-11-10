@@ -3,13 +3,20 @@
 `NavigationSystem` plans and drives AI agents round a 3D scene: a car going
 to the shed, a tractor fetching a trailer, several machines meeting in a yard.
 You tell an agent where to go; it finds the way round the scene's colliders on
-worker threads, drives it, and keeps out of the others' way by priority when they meet. Only
+the [planning scheduler](scheduler.md) (one worker pool, deadline first), drives it, and keeps out of the others' way by priority when they meet. Only
 vehicles are built so far; the code leaves room for walkers later.
 
 It's the standard textbook stack, so nothing in it is specific to one game:
 
 1. a **coarse graph** of the open ground (gateways, aisles) picks the corridor
-   for a long trip;
+   for a long trip (`PlanRequest::corridorFrom`: a trip longer than that keeps
+   its search within `corridorWidth` of the graph's way; a game's own edges,
+   its worn tracks, are cheaper to route along:
+   `NavigationSystem::setCoarseEdges()`, put on the graph on the scheduler by
+   `CoarseGraph::withEdges()`, which shares the clearance grid and prices
+   again only the cells round the edges that came or went); along roads, a game's own **lane graph** does
+   ([lane graphs](lanes.md): a graph search over the lanes, hybrid A\* only
+   for the short windows getting on, round corners and off);
 2. a **hybrid A\*** search (Dolgov et al. 2010) finds a drivable way along it,
    its moves continuous-curvature turns (Fraichard & Scheuer 2004; Banzhaf et
    al. 2017), costed in **seconds** (backing up and stopping to change gear
@@ -33,9 +40,14 @@ It's the standard textbook stack, so nothing in it is specific to one game:
    angle is whatever the way in made it), swung to the angle one arc leaves
    it at. So a rig facing away from the goal knows it has turning to do *and
    that turning round takes room, its trailer's too*: with no room near the
-   goal it is priced the way round. That map is built only once the search
-   has grown 300 poses (an easy way never pays for it; till then a cheap map
-   over cells x 8 directions that charges for turning in place stands in),
+   goal it is priced the way round. That map is made on a helper thread from the moment the
+   search starts (it needs nothing the search does; one helper at a time
+   across all plans, since the planning pool already takes all but two of
+   the machine's threads: a search that gets none makes its own when it needs
+   it) and taken once the search has grown 300 poses, so the search seldom
+   stands waiting for it (an easy way never waits; it's given up then; till it's taken a cheap map
+   over cells x 8 directions that charges for turning in place stands in:
+   the same map either way, so the same search),
    and it runs till the start is reached facing its way, then a little past
    (a bin not reached is at least that far; if the start is never reached,
    it has searched the whole area). If it never gets near the start and runs
@@ -59,8 +71,11 @@ It's the standard textbook stack, so nothing in it is specific to one game:
    `reverseSpeed`). A shot that gets there is not taken at once: it is the
    way found so far, and the search goes on while any open pose could still
    beat it (its time so far plus the unweighted heuristic), so a loop is
-   driven only when it really is quicker than backing up a little. There is
-   no turn-angle cap and no reverse surcharge;
+   driven only when it really is quicker than backing up a little. Once a
+   way is found, a shot that can't beat it even at its least time
+   (`Motions::leastTime()`: each segment at its fastest anywhere along it,
+   on the cheapest ground) is neither walked nor checked: the same offers,
+   by construction. There is no turn-angle cap and no reverse surcharge;
 3. a **smoother** shortens it with the same turns, so the wheel never snaps;
 4. a **speed profile** slows for tight curves and stops at gear changes;
 5. a **follower** drives the path exactly, the agent's pose its path's at the
@@ -162,18 +177,33 @@ struct TractorSpec : sfs::VehicleSpec
 ```
 
 Hitching is live, not data: `hitch(agent, {towed, hitchBehind, drawbar,
-forwardLimit, reverseLimit})` and `unhitch(agent)`. The towed entity's
-colliders are its box and its origin is its axle; the system plans the rig
-and writes the towed entity's transform.
+axle, forwardLimit, reverseLimit})` and `unhitch(agent)`. `drawbar` runs
+from the hitch to the towed thing's axle (where it pivots) and `axle` says
+how far that axle is ahead of the towed entity's origin (negative: behind);
+its colliders are its box, measured from the axle. The system plans the rig
+and writes the towed entity's transform. Its live trailer is the one its
+paths were planned with: along a path, the path's own angle on the hitch at
+the point it's at (the follower places the agent on its path); by hand,
+`hitchStep()` from where it was. A game that draws or collides the towed
+thing reads that angle (`Fleet::hitch()`) rather than swinging its own
+copy. While nothing moves the agent, the system takes the angle the towed
+thing was left at (`Fleet::setHitch()`).
 
 A mounted part (`rigid = true`: a linkage tool, a combine's header) joins
 the agent's own boxes. Each of its colliders is measured by
-`NavigationSystem::mountedBox()`: its corners bounded in the agent's flat
-frame (reference point, heading; heights above the ground), so a header
-pitched up by its lift is planned with its nose where the physics has it,
-and its bottom `rideDrop` metres lower (driven, the body pitches into ruts
-and on its springs). A game's own planners measure mounted tools with the
-same function. Call `refresh(agent)` after moving a mounted part (a lift).
+`NavigationSystem::mountedBox()`: its corners bounded in the agent's own
+frame, level (x from the reference point, heights up from the agent's
+origin), so the box is its true size whatever the body's pitch or roll when
+it's measured. The tilt is never baked into a size: every check stands the
+boxes on the ground per pose with `nav::stanceOf()`. `Hitch::mount` is the
+part's pose in the agent's frame as its mount holds it in the state it's
+driven in (a header raised for travel, lowered working): the game sets it
+from its authored mount and hitches again when the state changes (without
+one, the part is measured where it's held now relative to the agent). The
+box is planned exactly where the part is held: no allowance is added for
+the body bouncing. A game's own planners measure mounted tools with
+the same function and the same mount. Call `refresh(agent)` after moving a
+mounted part.
 
 The system writes the agent's transform (and its trailer's) while it drives.
 Don't move it yourself meanwhile; move it while it stands and it plans from
@@ -209,7 +239,6 @@ nav->requestGoal(semi, spot);
 | Event | When |
 | --- | --- |
 | `Arrived` | it's there |
-| `Partial` | the search ran out of its first budget: it drives the clear part while it searches on |
 | `Blocked` | proven: no way exists. `blockers` says what hems it in; the debug view marks them |
 | `Yielding`, `Resumed` | it began standing for `other`'s reservation or zone, and went on |
 | `NeedsPlan` | a game's path can't go on as it was (it went to a wait spot, or a static obstacle is on it): plan it again from where it stands |
@@ -218,9 +247,11 @@ nav->requestGoal(semi, spot);
 Arrived, Blocked).
 
 **No "no way" from a time limit.** Searches are budgeted in nodes, never the
-clock, so the answer is the same on a fast or a busy machine. Out of budget, an
-agent drives the clear way so far and the search goes on with twice the
-budget; it only reports `Blocked` when every reachable pose was tried, or at
+clock, so the answer is the same on a fast or a busy machine. Out of budget the
+search goes on with twice the budget; the agent stands (`Planning`) till the
+finished plan is in: the clear way so far is never driven (a partial leg). A
+search that ends short of its goal at its cap is asked again with a bigger
+cap. It only reports `Blocked` when every reachable pose was tried, or at
 once when something stands on every goal (no pose there is clear, so none is
 ever reached; `blockers` names what's on it). Starting touching something with
 a goal within getting out of it is the one exception: that's searched.
@@ -270,10 +301,27 @@ per meeting:
 3. **Wait spots.** With nowhere clear on its path, or standing in the way of
    a higher agent that stands for its body (head-on in a lane), the lower
    agent is `inTheWay`: it is planned (the same hybrid A\*) to the nearest
-   pose clear of every higher reservation (`Traffic::reservedAbove()`), then
+   pose clear of every higher agent's body and all the way it has yet to go
+   (`Traffic::reservedAbove()`: its next seconds and on to `wayReach`, its
+   goal included, so it never waits where one is still to come), then
    planned on from there (a game's path is handed back with `NeedsPlan`),
-   held by the reservations till they've passed. One that finds no wait
-   spot is stuck: a static obstacle the others plan round.
+   held by the reservations till they've passed. Narrow ground another
+   holds is a solid on the way there, except a stretch it is in already
+   (it backs out through all of that). One that finds no wait spot stands
+   where it is: if that leaves the two waiting on each other, it's a
+   deadlock (below).
+
+   The way there is checked like any other leg, before it's driven
+   (`Traffic::crossing()`, the same check and gap as below, every higher
+   agent's reservation as planned: all of its way on, or up to its stop if
+   it stands for a third one; its way out of the ground it's leaving isn't
+   held): where it would meet one, unless it can wait where it stands
+   (clear of them all), it is planned again with that agent's way a solid
+   (the traffic margin kept off it; but the ground it stands in now: it goes
+   out through that), up to twice; with no way round, its first way is
+   driven. The same check runs on every trip the fleet plans on its own
+   (re-planned round a static obstacle, after a wait spot), where any
+   clear place short of the meeting will do to wait in.
 4. **Zones.** Narrow places, where one agent can't pass another as wide as
    itself (its boxes' sides hemmed in by the statics on both sides: a
    gateway, a lane between buildings), are found along each path from the
@@ -295,21 +343,80 @@ per meeting:
    `Fleet::solid()`, the one test: a static solid in every plan
    (`Fleet::planWorld()`, a game's planner worlds), never waited on. A path
    into one is planned round it at once (`Why::Solid`; a game's path handed
-   back with `NeedsPlan`), standing short of it meanwhile. One whose game
+   back with `NeedsPlan`), standing short of it meanwhile. A game's way
+   handed back that comes back the same (end, heading, length) for the same
+   obstacle isn't handed back again: planned again, it would come back the
+   same; the agent stands short of it, logged once, till it moves. One whose game
    is planning its next path (`NavigationSystem::setPlanning()`) is about
    to move, so it's never a solid meanwhile: two machines side by side,
    each planning its way off with the other a solid in its plan, would
    search on for ever.
 
-Whatever its rank, nobody drives on into another's body (`Why::Body`); a
-standing body is kept the planners' own gap away (`vehicle::Tunables::gap`,
-2 cm). A higher agent standing short of a lower one's body reserves only up
+6. **Easing off.** Where a lower agent's stop is short of a crossing the
+   higher one will have cleared in time (it is moving, won't stand there,
+   and its timed reservation over the crossing ends), the lower one eases
+   off to arrive at its stop just as the crossing clears
+   (`Schedule::easeTo`, a speed cap through its own speed profile and
+   brakes) instead of braking to a stand there. It still never passes the
+   stop while the crossing is reserved, and slower than a walking pace
+   (1 m/s) it just stands and waits.
+7. **Deadlocks.** Who stands waiting for whom is a wait-for graph
+   (`Traffic::waitsOn()`: held still short of another's reservation,
+   narrow place or body; each agent waits on at most one). Each update the
+   fleet looks for:
+    - a **cycle** (`Traffic::cycles()`), every member held
+      `deadlockAfter` (1 s): the lowest ranked member that can yields,
+      planned to a wait spot clear of all the ground every other member
+      (and any queued behind them) claims (`Traffic::claimed()`: body, next
+      seconds, way on), their bodies solids on the way there kept the
+      traffic margin off. With no such spot (or held on its way there) the
+      next lowest yields instead: one at a time, never two yielding into
+      each other. While it goes to its wait spot it ranks above them (they
+      let it in); once there it ranks below them till it's on its way free
+      of them (they go through first). Nobody able to yield: the lowest is
+      stuck, a static obstacle the others plan round; that's logged once
+      (the same members forming it again, one of them planned again, isn't
+      news).
+    - a **chain** ending in one standing with no path to drive that isn't
+      moving off (its plan, or its game's, long in coming: the waiter held
+      `2 x parkedAfter`): lower, it yields to a wait spot clear of the
+      waiter's way; otherwise it's stuck for now, a static obstacle the
+      waiter plans round.
+
+   Each deadlock is logged with who, where, what each waits for and how
+   long they stood, which agent gave way and where to, and how many seconds
+   after they stood it broke (`Fleet::deadlockStats()` counts them; a
+   game's agents are named by their `NameComponent`). The farm hands in a
+   yard: one backs off to somewhere actually clear and lets the other
+   through.
+
+8. **Getting out of the way.** A lower agent that is already in a higher
+   one's way (its body, or the sample it's on, within the traffic margin of
+   the ground that one claims: body, next seconds, way on) and on its way
+   out of it (moving, or going to a wait spot off it) is never held there
+   by that one's reservation: standing there it would only be in its way
+   (and stopped at once, within its brakes' reach). It goes on out, and the
+   higher one stands short of its way out (its samples up to the first
+   clear of that ground; going to a wait spot, up to the last of its way
+   there in that ground) wherever they'd meet in time, as it stands for a
+   body (`Why::Body`), unless it's on that way out already (then it goes on
+   as its own way says). One standing still with a path of its own isn't on
+   its way out: it's held as before (in the way: a wait spot).
+
+Whatever its rank, nobody drives on into another's body (`Why::Body`),
+except out of one it stands touching: an agent standing still in a touch
+with one standing still too drives its way out of it (its first
+`vehicle::kEscapeReach`, 3 m, aren't held by that body: the planner's own
+let-off, the way planned out of the touch), never further into it; a
+standing body, or one not moving, is kept the planners' own gap away
+(`vehicle::Tunables::gap`, 2 cm): a wait spot planned past it at that gap is
+never stood short of. A higher agent standing short of a lower one's body reserves only up
 to there, so a lower one already crossing in front of it carries on through
 rather than stopping in front of it.
 
 `Traffic::scheduleOf(id)` says what an agent does this frame and why: `Why`
 (None, Reserved, Zone, Body, Solid), where it stands (`stopAt`), for whom
-(`by`) and whether it's `inTheWay`. A game's stuck log can print it.
+(`by`), whether it's `inTheWay` and what it eases off to (`easeTo`). A game's stuck log can print it.
 
 ```cpp
 fleet.add(2, spec, parkedPose);  // nothing to do: fleet.solid(2) is true
@@ -324,8 +431,17 @@ running beside a combine).
 
 - `setPath(entity, path)` drives a path the game laid itself (a field pass),
   claimed and given way to like any other.
-- `planNow(entity, ask)` plans synchronously on the calling thread, for a
-  game's own checks on its own worker.
+- `planNow(entity, ask)` plans synchronously on the calling thread: only for
+  a check that truly needs its answer this frame. Everything else goes through
+  `scheduler()`, the scene's one [planning scheduler](scheduler.md): a game's
+  own planning submits its jobs there (`nav::vehicle::submitPlan()` for one
+  vehicle plan) and collects their legs on the main thread.
+- `planAhead(entity, ask)` plans an agent's next way from where its current
+  path ends, needed by when it gets there (a look-ahead job, shed first under
+  load); `ahead(entity)` hands it over once it's finished. Hand it over with
+  `setPath()` as the current path ends: a moving agent then never stops for
+  a route, and if it's late the agent eases to a stand at the end of what it
+  has (its speed profile's normal stop) and pulls away when it comes.
 - `nav::vehicle::planNow(PlanRequest)` is the vehicle planner on its own, for
   tools that don't want a scene.
 - `nav::vehicle::touches(request, pose, hitch)` is THE stand-here check: what
@@ -344,7 +460,22 @@ running beside a combine).
   (backing onto what it's to hitch), its last `kEscapeReach` metres are let off
   too. It returns where the way first touches (metres along it), or nothing
   when it's clear. A game never checks its own ways with a check of its own:
-  the planner's ways and the game's are clear by the same rule.
+  the planner's ways and the game's are clear by the same rule. A live
+  look-ahead (every frame, as the vehicle drives) uses the overload taking a
+  `Motions` made once and kept (its probes prepared once) and a `step`: the
+  motion between two steps is swept, as the search's check is, so nothing
+  slips between them however far it looks.
+- `nav::vehicle::drivenSteps(poses, along, gears)` is THE form a way is
+  checked in: from each point to the next, the curvature that turns it from
+  one heading to the next over the step, in the later point's gear (a cusp,
+  the same point twice, no step). The planner's final check walks a path's
+  own samples so (`drivenSteps(path)`), a lane trip checks a stretch's poses
+  so, and a game checks the points it was handed (its route, its look-ahead)
+  so: one way, one answer, however it was laid. (Walked as its segments a step
+  apart, the poses and a trailer's angle, integrated over other steps, land a
+  little elsewhere: a way backing a trailer past a tree by a hair came out
+  clear for the planner and touching for the game's look-ahead, planned and
+  refused again for ever.)
 - A game's bespoke manoeuvres (a field's headland turns, going round what
   stands on a pass) are planned with `planNow()` too, with their own
   `CostLayer` (stay on the headland, keep near the pass's line) and a small
@@ -418,6 +549,38 @@ it takes them from `nav::footprints(world, layers, ignore, ground)` or
 it when tipped; a sphere's or capsule's circle), with its height band over the
 ground and its body's id. It's the one place a collider's 2D outline is worked
 out: `CollisionSpace::raster()` uses it too, so nothing keeps a copy of its own.
+(A capsule lying over gets the circle round all of it as it lies.)
+
+### The broad phase
+
+Most poses a plan checks are in the open, nowhere near a collider. Before
+asking Jolt, `CollisionSpace` looks each probe up in its worlds' **clearance**
+(the textbook distance-field broad phase): for a world of more than a few
+colliders, a grid (a quarter metre, coarser for a very large world) of how far
+each cell is at least from the nearest collider at any height, made once by
+`nav::distanceField()` (the coarse graph's exact Euclidean distance transform)
+over the cells the footprints touch, less the most a point and a collider's
+surface can be off their cells' middles; for a world of a few (parked
+machines), the footprints themselves, exactly. Each probe shape is covered by a few circles
+along its length (each round its stretch of the shape as it stands, tilted on
+the ground: the reach over the ground of that stretch and the other two half
+axes, so a long box beside a fence isn't taken as near it all along); a probe
+whose every circle clears that by more than 2 cm is clear of the world, with
+no Jolt query; anything nearer gets the exact check. So the answers are the exact
+check's by construction (a bound, never a guess), the grid is static (kept per
+world while the world lives, shared by every space made over it), and only
+poses near something cost a Jolt query. `Options::broadPhase = false` turns it
+off (tests compare the two).
+
+### Where planning time goes
+
+Every plan's `PlanStats` says where its time went (diagnostics only, never a
+limit): poses grown, the heuristic maps (and the heading-aware part), analytic
+shots (and the steering words worked out for them), the near-goal words, the
+smoother, the final exact check, the speed profile, and its collision queries
+(`nav::checkStats()`, per thread: answered exactly, settled by the broad
+phase, their milliseconds) and the cost layer's prices (asked, milliseconds).
+Each `planNow()` is a CPU timing scope (`nav/plan (workers)`).
 
 ## Adding a kind or a search
 
@@ -431,8 +594,8 @@ answers Unknown, never Exhausted).
 
 | Folder | What |
 | --- | --- |
-| `engine/runtime/navigation/` | shared by every kind: `Space` (what's solid), `CollisionSpace` (from engine colliders), `CostLayer`, `CoarseGraph`, the search contract, `Traffic`, `Fleet` (the agents together), `AgentKind` |
-| `engine/runtime/navigation/vehicle/` | the vehicle kind: model, steering, hybrid A\*, smoother, speed profile, follower, planner |
+| `engine/runtime/navigation/` | shared by every kind: `Space` (what's solid), `CollisionSpace` (from engine colliders), `CostLayer`, `CoarseGraph`, `LaneGraph`, the search contract, `Traffic`, `Fleet` (the agents together), `AgentKind` |
+| `engine/runtime/navigation/vehicle/` | the vehicle kind: model, steering, hybrid A\*, smoother, speed profile, follower, planner, lane trips |
 | `engine/runtime/systems/navigationSystem.h` | the System |
 
 The shared folder never includes the vehicle one.

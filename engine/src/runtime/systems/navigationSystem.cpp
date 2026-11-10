@@ -1,11 +1,13 @@
 #include "engine/runtime/systems/navigationSystem.h"
 
+#include "engine/core/util/cpuTiming.h"
+
 #include "engine/core/components/boxCollider3DComponent.h"
+#include "engine/core/components/nameComponent.h"
 #include "engine/core/components/navAgentComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/components/vehicleComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
-#include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/debugFeatures.h"
 #include "engine/runtime/navigation/coarseGraph.h"
@@ -20,7 +22,6 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
-#include <mutex>
 #include <tuple>
 
 #include <glm/glm/gtc/matrix_transform.hpp>
@@ -97,9 +98,10 @@ bool sameHitch(const std::optional<NavigationSystem::Hitch>& a,
   if (!a || !b)
     return !a && !b;
   return a->towed == b->towed && a->hitchBehind == b->hitchBehind &&
-         a->drawbar == b->drawbar && a->forwardLimit == b->forwardLimit &&
+         a->drawbar == b->drawbar && a->axle == b->axle &&
+         a->forwardLimit == b->forwardLimit &&
          a->reverseLimit == b->reverseLimit && a->rigid == b->rigid &&
-         a->rideDrop == b->rideDrop;
+         a->mount == b->mount;
 }
 
 uint32_t color(float r, float g, float b, float a = 1.0f)
@@ -141,28 +143,40 @@ struct NavigationSystem::Params
   glm::vec3 axle{0.0f};
 };
 
-// The coarse graph built on a worker for one world.
-struct NavigationSystem::GraphJob
-{
-  std::mutex mutex;
-  std::shared_ptr<const nav::CoarseGraph> graph;
-  std::shared_ptr<const nav::Space> space; // what it's for
-  bool done = false;
-};
-
 NavigationSystem::NavigationSystem()
 {
   registerComponent<NavAgentComponent>();
   registerComponent<TransformComponent>();
   nav::vehicle::addKind();
-  m_fleet = std::make_unique<nav::Fleet>(nav::Fleet::Settings{});
-  m_graphWorker = std::make_unique<WorkerPool>(1);
+  m_scheduler = std::make_shared<nav::PlanScheduler>();
+  m_fleet = std::make_unique<nav::Fleet>(nav::Fleet::Settings{}, m_scheduler);
+  // (Its log lines name agents by their entities' names.)
+  m_fleet->setNamer(
+      [this](uint64_t id)
+      {
+        const auto it = m_tracked.find(static_cast<Entity::EntityId>(id));
+        if (registry && it != m_tracked.end() &&
+            registry->isAlive(it->second->entity) &&
+            registry->hasComponent<NameComponent>(it->second->entity))
+          return registry->getComponent<NameComponent>(it->second->entity).name;
+        return "agent " + std::to_string(id);
+      });
 }
 
 NavigationSystem::~NavigationSystem()
 {
-  m_graphWorker.reset();
-  m_fleet.reset();
+  m_fleet.reset(); // (its jobs cancelled first)
+  m_scheduler.reset();
+}
+
+bool NavigationSystem::planAhead(const Entity& agent, nav::PlanAsk ask)
+{
+  return m_fleet->planAhead(agent.getId(), std::move(ask));
+}
+
+std::optional<nav::AgentPlan> NavigationSystem::ahead(const Entity& agent)
+{
+  return m_fleet->ahead(agent.getId());
 }
 
 uint64_t NavigationSystem::requestGoal(const Entity& agent,
@@ -249,6 +263,30 @@ void NavigationSystem::setActive(const Entity& agent, bool active)
     m_inactive.erase(agent.getId());
   else
     m_inactive.insert(agent.getId());
+}
+
+void NavigationSystem::setLaneGraph(const std::string& name,
+                                    std::shared_ptr<const nav::LaneGraph> graph)
+{
+  if (graph)
+    m_laneGraphs[name] = std::move(graph);
+  else
+    m_laneGraphs.erase(name);
+}
+
+void NavigationSystem::setCoarseEdges(std::vector<nav::CoarseGraph::Edge> edges)
+{
+  if (edges == m_coarseEdges)
+    return;
+  m_coarseEdges = std::move(edges);
+  m_edgesDirty = true;
+}
+
+std::shared_ptr<const nav::LaneGraph>
+NavigationSystem::laneGraph(const std::string& name) const
+{
+  const auto it = m_laneGraphs.find(name);
+  return it == m_laneGraphs.end() ? nullptr : it->second;
 }
 
 void NavigationSystem::setCostLayer(const std::string& name,
@@ -365,17 +403,10 @@ NavigationSystem::paramsOf(const Entity& agent)
   return p;
 }
 
-nav::Box3
-NavigationSystem::mountedBox(const glm::mat4& world,
-                             const glm::vec3& lo,
-                             const glm::vec3& hi,
-                             const nav::Pose2& at,
-                             const std::function<float(glm::vec2)>& ground,
-                             float drop)
+nav::Box3 NavigationSystem::mountedBox(const glm::mat4& inAgent,
+                                       const glm::vec3& lo,
+                                       const glm::vec3& hi)
 {
-  const glm::vec2 f(std::cos(at.heading), std::sin(at.heading)), l(-f.y, f.x);
-  const glm::vec3 middle(world * glm::vec4(0.5f * (lo + hi), 1.0f));
-  const float under = ground ? ground(glm::vec2(middle)) : 0.0f;
   glm::vec3 a(std::numeric_limits<float>::infinity());
   glm::vec3 b(-std::numeric_limits<float>::infinity());
   for (int corner = 0; corner < 8; ++corner)
@@ -383,18 +414,16 @@ NavigationSystem::mountedBox(const glm::mat4& world,
     const glm::vec3 c((corner & 1) ? hi.x : lo.x,
                       (corner & 2) ? hi.y : lo.y,
                       (corner & 4) ? hi.z : lo.z);
-    const glm::vec3 p(world * glm::vec4(c, 1.0f));
-    const glm::vec2 d = glm::vec2(p) - at.position;
-    const glm::vec3 q(glm::dot(d, f), glm::dot(d, l), p.z - under);
-    a = glm::min(a, q);
-    b = glm::max(b, q);
+    const glm::vec3 p(inAgent * glm::vec4(c, 1.0f));
+    a = glm::min(a, p);
+    b = glm::max(b, p);
   }
   nav::Box3 box;
   box.back = a.x;
   box.front = b.x;
   box.half = 0.5f * (b.y - a.y);
   box.shift = 0.5f * (b.y + a.y);
-  box.bottom = std::max(a.z - drop, 0.0f);
+  box.bottom = std::max(a.z, 0.0f);
   box.top = b.z;
   return box;
 }
@@ -412,15 +441,18 @@ nav::AgentSpec NavigationSystem::specOf(const Tracked& t) const
   const bool tows = t.hitch && registry->isAlive(towed);
   const glm::mat4 frame = frameOf(agent, t.axle);
   const glm::mat4 own = glm::inverse(frame);
-  // (Its reference point on the ground, facing its heading; heights above
-  // the ground there, or its own height with no ground set.)
-  const nav::Pose2 reference{
-      glm::vec2(frame[3]), hierarchy::worldTransform(agent).yaw()};
-  const float referenceZ = frame[3].z;
-  const std::function<float(glm::vec2)> ground =
-      m_ground ? m_ground
-               : std::function<float(glm::vec2)>([referenceZ](glm::vec2)
-                                                 { return referenceZ; });
+  // (Rotation and position only: a part's scale stays in its own corners.)
+  const auto unscaled = [](glm::mat4 m)
+  {
+    for (int k = 0; k < 3; ++k)
+      m[k] = glm::vec4(glm::normalize(glm::vec3(m[k])), 0.0f);
+    return m;
+  };
+  const glm::mat4 agentOwn =
+      glm::inverse(unscaled(hierarchy::worldMatrix(agent)));
+  const glm::mat4 towedOwn =
+      tows ? glm::inverse(unscaled(hierarchy::worldMatrix(towed)))
+           : glm::mat4(1.0f);
   const glm::mat4 trailerFrame =
       tows ? glm::inverse(hierarchy::worldMatrix(towed)) : glm::mat4(1.0f);
   std::optional<nav::Box3> trailerBox;
@@ -432,20 +464,28 @@ nav::AgentSpec NavigationSystem::specOf(const Tracked& t) const
         if (tows && t.hitch->rigid &&
             (e == towed || hierarchy::isAncestor(towed, e)))
         {
-          // (Mounted: one of its own boxes, where it's held now, in the
-          // agent's flat frame: mountedBox().)
-          s.boxes.push_back(mountedBox(hierarchy::worldMatrix(e),
-                                       box.offset - 0.5f * box.size,
-                                       box.offset + 0.5f * box.size,
-                                       reference,
-                                       ground,
-                                       t.hitch->rideDrop));
+          // (Mounted: one of its own boxes in the agent's own frame, level
+          // (mountedBox()): as its mount holds it (Hitch::mount), else where
+          // it's held now relative to the agent; from the reference point.)
+          const glm::mat4 part =
+              t.hitch->mount
+                  ? *t.hitch->mount * towedOwn * hierarchy::worldMatrix(e)
+                  : agentOwn * hierarchy::worldMatrix(e);
+          s.boxes.push_back(
+              mountedBox(glm::translate(glm::mat4(1.0f),
+                                        glm::vec3(-t.axle.x, -t.axle.y, 0.0f)) *
+                             part,
+                         box.offset - 0.5f * box.size,
+                         box.offset + 0.5f * box.size));
           return;
         }
         if (tows && (e == towed || hierarchy::isAncestor(towed, e)))
         {
-          if (const auto b = boxIn(trailerFrame, e, box, 0.0f))
+          if (auto b = boxIn(trailerFrame, e, box, 0.0f))
           {
+            // (From its axle: the trailer swings on it, Towed's frame.)
+            b->back -= t.hitch->axle;
+            b->front -= t.hitch->axle;
             if (!trailerBox)
               trailerBox = *b;
             else
@@ -541,6 +581,7 @@ void NavigationSystem::syncAgents()
       if (reshaped || !sameParams(t.params, params->spec))
       {
         // Re-derived (a hitch, a load, the grip, its spec or fields changed).
+        SFS_CPU_SCOPE("navigation/spec");
         t.fields = c;
         t.params = params->spec;
         t.axle = axle;
@@ -557,10 +598,18 @@ void NavigationSystem::syncAgents()
     // where it is now.
     if (!m_fleet->path(e.getId()) && !m_fleet->handDriven(e.getId()))
     {
+      // (Its trailer as it was left: the angle between the two.)
+      float swung = 0.0f;
+      if (hitch && !hitch->rigid && registry->isAlive(hitch->towed) &&
+          registry->hasComponent<TransformComponent>(hitch->towed))
+        swung =
+            nav::wrapAngle(yaw - hierarchy::worldTransform(hitch->towed).yaw());
       const nav::Pose2 p = m_fleet->pose(e.getId());
       if (glm::length(p.position - at) > 0.01f ||
           std::abs(nav::wrapAngle(p.heading - yaw)) > 0.002f)
-        m_fleet->place(e.getId(), {at, yaw});
+        m_fleet->place(e.getId(), {at, yaw}, swung);
+      else
+        m_fleet->setHitch(e.getId(), swung);
     }
   }
   for (auto it = m_tracked.begin(); it != m_tracked.end();)
@@ -604,31 +653,58 @@ void NavigationSystem::syncWorld()
   }
   if (rebuilt && m_space)
   {
-    // The coarse graph of the new statics, on a worker.
-    auto job = std::make_shared<GraphJob>();
-    job->space = m_space;
-    m_graphJob = job;
-    m_graphWorker->submit(
-        [job]
+    // The coarse graph of the new statics, on the scheduler (needed soon,
+    // not now: long trips plan without a corridor till it's in, nobody
+    // stands for it).
+    if (m_graphJob)
+      m_scheduler->cancel(m_graphJob);
+    m_graphFor = m_space;
+    m_graphJob = m_scheduler->submitOne(
+        0,
+        "coarse graph",
+        nav::PlanScheduler::Clock::now() + std::chrono::seconds(3),
+        [space = m_space, edges = m_coarseEdges](const std::atomic<bool>&)
         {
-          const nav::Rect area = job->space->bounds();
-          auto graph = nav::CoarseGraph::build(*job->space, area);
-          std::lock_guard lock(job->mutex);
-          job->graph = std::move(graph);
-          job->done = true;
+          auto built = nav::CoarseGraph::build(*space, space->bounds());
+          for (const nav::CoarseGraph::Edge& e : edges)
+            built->addEdge(e.a, e.b, e.factor, e.width);
+          return std::any(std::shared_ptr<const nav::CoarseGraph>(built));
         });
+    m_edgesDirty = false;
     m_worldDirty = true;
+  }
+  // The game's edges changed: the graph made again with them (on the
+  // scheduler, from the one there is), once no graph's being made.
+  if (m_edgesDirty && !m_graphJob && m_space && m_fleet->world().graph)
+  {
+    m_graphFor = m_space;
+    m_graphJob = m_scheduler->submitOne(
+        0,
+        "coarse graph edges",
+        nav::PlanScheduler::Clock::now() + std::chrono::seconds(3),
+        [graph = m_fleet->world().graph,
+         edges = m_coarseEdges](const std::atomic<bool>&)
+        {
+          return std::any(
+              std::shared_ptr<const nav::CoarseGraph>(graph->withEdges(edges)));
+        });
+    m_edgesDirty = false;
   }
   std::shared_ptr<const nav::CoarseGraph> graph = m_fleet->world().graph;
   if (m_graphJob)
   {
-    std::lock_guard lock(m_graphJob->mutex);
-    if (m_graphJob->done && m_graphJob->space == m_space)
-    {
-      graph = m_graphJob->graph;
-      m_graphJob = nullptr;
-      m_worldDirty = true;
-    }
+    const nav::PlanScheduler::Collected c = m_scheduler->collect(m_graphJob);
+    for (const std::any& leg : c.legs)
+      if (const auto* built =
+              std::any_cast<std::shared_ptr<const nav::CoarseGraph>>(&leg);
+          built && m_graphFor == m_space)
+      {
+        graph = *built;
+        m_worldDirty = true;
+      }
+    if (c.state != nav::PlanScheduler::State::Queued &&
+        c.state != nav::PlanScheduler::State::Running)
+      m_graphJob = 0;
   }
   if (m_worldDirty && m_space)
   {
@@ -663,8 +739,11 @@ void NavigationSystem::writeBack()
       continue;
     TransformComponent tw = hierarchy::worldTransform(towed);
     tw.setYaw(tp->heading);
-    tw.position.x = tp->position.x;
-    tw.position.y = tp->position.y;
+    // (Its pose is its axle's; its origin that far behind: Hitch::axle.)
+    const glm::vec2 origin =
+        tp->position - nav::unit(tp->heading) * t->hitch->axle;
+    tw.position.x = origin.x;
+    tw.position.y = origin.y;
     hierarchy::setWorldTransform(towed, tw);
   }
 }
@@ -757,8 +836,14 @@ void NavigationSystem::update(double deltaTime)
   m_events.clear();
   if (!registry)
     return;
-  syncAgents();
-  syncWorld();
+  {
+    SFS_CPU_SCOPE("navigation/sync agents");
+    syncAgents();
+  }
+  {
+    SFS_CPU_SCOPE("navigation/sync world");
+    syncWorld();
+  }
   m_fleet->update(deltaTime);
   for (nav::Fleet::Event& e : m_fleet->takeEvents())
     if (const auto it = m_tracked.find(static_cast<Entity::EntityId>(e.agent));

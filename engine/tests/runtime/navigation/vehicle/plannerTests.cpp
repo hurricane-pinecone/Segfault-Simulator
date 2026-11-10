@@ -1,5 +1,6 @@
 #include "../../../testHarness.h"
 
+#include <engine/runtime/navigation/collisionSpace.h>
 #include <engine/runtime/navigation/vehicle/follower.h>
 #include <engine/runtime/navigation/vehicle/motions.h>
 #include <engine/runtime/navigation/vehicle/planner.h>
@@ -7,6 +8,7 @@
 #include <engine/runtime/navigation/vehicle/steering.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <thread>
 
@@ -218,6 +220,27 @@ int main()
     // A curve's poses, sampled as a game lays them: the same answer.
     const std::vector<Segment> arc{{1, 10.0f, 0.2f, 0.2f}};
     CHECK(!touchesAlong(q, {{0, 0}, 0.0f}, 0.0f, arc).has_value());
+    // A live look-ahead's: one check kept, longer steps (swept between them):
+    // the same contact (to a step: where the step it falls in ends), nothing
+    // missed.
+    PlanRequest kept = q;
+    kept.vehicle.mayReverse = true;
+    const Motions rig(kept);
+    for (const float step : {0.1f, 0.5f, 1.0f})
+    {
+      const std::optional<float> coarse =
+          touchesAlong(rig, {{0, 0}, 0.0f}, 0.0f, through, false, step);
+      CHECK(coarse.has_value());
+      if (coarse && at)
+      {
+        CHECK(*coarse <= *at + step + 0.11f);
+        CHECK(*coarse >= *at - step - 0.11f);
+      }
+      CHECK(!touchesAlong(rig, {{0, 3.0f}, 0.0f}, 0.0f, through, false, step)
+                 .has_value());
+      CHECK(touchesAlong(rig, {{40, 0}, 0.0f}, 0.0f, back, false, step)
+                .has_value());
+    }
   }
 
   TEST("turning round in a dead-end lane should back up, not fail")
@@ -370,6 +393,60 @@ int main()
       if (p.gear < 0)
         worst = std::max(worst, std::abs(p.hitch));
     CHECK(worst <= t.reverseLimit + 0.02f);
+  }
+
+  // (D3e: one way, one answer. A game checks the points it's handed (its
+  // look-ahead) as drivenSteps(); the planner's final check takes a path in
+  // that same form, so what it found is clear when checked so.)
+  TEST("a path's driven steps should lay it again where its samples are")
+  {
+    const PlanRequest q = request({}, {{0, 0}, 0.0f}, {{40, 12}, 0.6f});
+    const PlanResult r = planNow(q);
+    CHECK(r.state == PlanState::Found);
+    const std::vector<Segment> steps = drivenSteps(r.path);
+    CHECK(!steps.empty());
+    const Pose2 end = endOf(r.path.start, steps);
+    CHECK(glm::length(end.position - r.path.end().position) < 0.01f);
+    CHECK(std::abs(wrapAngle(end.heading - r.path.end().heading)) < 1.0e-3f);
+    CHECK(std::abs(lengthOf(steps) - r.path.length()) < 0.01f);
+    // (A cusp, the same point twice, is no step; each step's gear the later
+    // point's.)
+    const std::vector<Pose2> poses = {
+        {{0, 0}, 0.0f}, {{1, 0}, 0.0f}, {{1, 0}, 0.0f}, {{0.5f, 0}, 0.0f}};
+    const std::vector<float> along = {0.0f, 1.0f, 1.0f, 1.5f};
+    const std::vector<int> gears = {1, 1, -1, -1};
+    const std::vector<Segment> cusp = drivenSteps(poses, along, gears);
+    CHECK(cusp.size() == 2);
+    CHECK(cusp.size() == 2 && cusp[0].gear == 1 && cusp[1].gear == -1);
+  }
+
+  TEST("a trailer backed past a post should be clear checked as it's driven "
+       "(its points' steps), the very check a game's look-ahead makes")
+  {
+    VehicleModel v = tractor();
+    Trailer t;
+    t.hitchBehind = 1.0f;
+    t.drawbar = 3.3f;
+    t.box = {-2.7f, 3.7f, 1.23f, 0.0f, 0.3f, 2.2f};
+    v.trailer = t;
+    v.minRadius = 6.5f;
+    // (Hemmed in ahead: it must back up first, past a post behind it.)
+    std::vector<BoxSpace::Solid> s = {
+        {{9.0f, 0.0f}, {0.2f, 6.0f}, 0, 0, 1.2f, false, 1},
+        {{-9.5f, -2.6f}, {0.3f, 0.3f}, 0, 0, 3.0f, false, 2}};
+    PlanRequest q;
+    q.vehicle = v;
+    q.space = std::make_shared<BoxSpace>(s);
+    q.from = {{0, 0}, 0.0f};
+    q.hitch = 0.15f;
+    q.goals = {{{{-2, 9}, kPi * 0.5f}}};
+    const PlanResult r = planNow(q);
+    timed("r", r);
+    CHECK(r.state == PlanState::Found);
+    CHECK(!r.stats.exactMiss);
+    PlanRequest check = q;
+    check.vehicle.mayReverse = true;
+    CHECK(!touchesAlong(check, q.from, q.hitch, drivenSteps(r.path), false));
   }
 
   // (A2t: a goal may say how it's come to (Goal::arriveGear): a parking spot
@@ -633,23 +710,33 @@ int main()
     CHECK(slowT > quickT);
   }
 
-  TEST("the background planner should hand back the same answer")
+  TEST("a plan on the planning scheduler should hand back the same answer")
   {
     const PlanRequest q =
         request(fenceWithGap(3.0f), {{0, 6}, 0.3f}, {{40, -4}, -0.2f});
     const PlanResult now = planNow(q);
-    Planner planner(2);
-    const auto t = planner.submit(q);
+    PlanScheduler scheduler;
+    const auto t =
+        submitPlan(scheduler, 1, "test", PlanScheduler::Clock::now(), q);
     PlanResult r;
+    int legs = 0;
     for (int i = 0; i < 2000; ++i)
     {
-      r = planner.poll(t);
-      if (r.state == PlanState::Found || r.state == PlanState::Blocked)
+      const PlanScheduler::Collected c = scheduler.collect(t);
+      for (const std::any& leg : c.legs)
+        if (const PlanResult* p = std::any_cast<PlanResult>(&leg))
+        {
+          r = *p;
+          ++legs;
+        }
+      if (c.state == PlanScheduler::State::Done)
         break;
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+    CHECK(legs == 1); // (the finished plan only, never a partial one)
     CHECK(r.state == PlanState::Found);
     CHECK(std::abs(r.seconds - now.seconds) < 1e-4f);
+    CHECK(r.path.points.size() == now.path.points.size());
   }
 
   TEST("a goal in a bay open only ahead of it should be backed into from its "
@@ -835,6 +922,150 @@ int main()
                 r.stats.nodes,
                 r.stats.ms,
                 r.path.length());
+  }
+
+  TEST("plans over engine colliders should be the same with the broad phase "
+       "as without (every query its exact answer), and the same again (the "
+       "heading map made on its own thread)")
+  {
+    // A yard: a fence across x = 20 with a gap, trees, a parked box, a shed's
+    // walls; rolling ground.
+    std::vector<sfs::CollisionWorld3D::Body> bodies;
+    uint64_t id = 1;
+    const auto box = [&](glm::vec3 at, glm::vec3 size, float yaw)
+    {
+      sfs::CollisionWorld3D::Body b;
+      b.id = id++;
+      b.position = at;
+      b.rotation = sfs::yawRotation(yaw);
+      b.shapes.push_back({sfs::CollisionShape3D::Kind::Box, size, {}});
+      bodies.push_back(b);
+    };
+    for (float y = -40.0f; y <= 40.0f; y += 2.0f)
+      if (std::abs(y) > 3.0f)
+        box({20.0f, y, 0.6f}, {0.2f, 2.0f, 1.2f}, 0.0f);
+    for (int k = 0; k < 40; ++k)
+    {
+      sfs::CollisionWorld3D::Body t;
+      t.id = id++;
+      t.position = {35.0f + 7.0f * static_cast<float>(k % 5),
+                    -14.0f + 7.0f * static_cast<float>(k / 5) +
+                        2.0f * static_cast<float>(k % 2),
+                    0.0f};
+      t.shapes.push_back({sfs::CollisionShape3D::Kind::Capsule,
+                          {0.4f, 6.0f, 0.0f},
+                          {0.0f, 0.0f, 3.0f}});
+      bodies.push_back(t);
+    }
+    box({5.0f, 12.0f, 1.5f}, {6.0f, 2.5f, 3.0f}, 0.4f);
+    box({-8.0f, -10.0f, 2.0f}, {12.0f, 0.3f, 4.0f}, 0.0f);
+    box({-8.0f, -16.0f, 2.0f}, {12.0f, 0.3f, 4.0f}, 0.0f);
+    auto world = std::make_shared<const sfs::CollisionWorld3D>(bodies);
+    CollisionSpace::Options on;
+    on.ground = [](glm::vec2 p)
+    { return 0.03f * p.x + 0.4f * std::sin(0.1f * p.y); };
+    CollisionSpace::Options off = on;
+    off.broadPhase = false;
+    const auto broad = std::make_shared<CollisionSpace>(
+        std::vector<std::shared_ptr<const sfs::CollisionWorld3D>>{world}, on);
+    const auto exact = std::make_shared<CollisionSpace>(
+        std::vector<std::shared_ptr<const sfs::CollisionWorld3D>>{world}, off);
+    const std::vector<std::pair<Pose2, Pose2>> trips{
+        {{{0.0f, 0.0f}, 0.0f}, {{40.0f, 0.0f}, 0.0f}},
+        {{{0.0f, 0.0f}, 3.14159f}, {{30.0f, 6.0f}, 1.5708f}},
+        {{{-14.0f, -13.0f}, 0.0f}, {{10.0f, -5.0f}, 3.14159f}},
+        {{{25.0f, -20.0f}, 1.5708f}, {{70.0f, 20.0f}, 0.0f}},
+        {{{2.0f, 20.0f}, -1.5708f}, {{8.0f, 20.0f}, 1.5708f}}};
+    int same = 0, found = 0;
+    double msBroad = 0.0, msExact = 0.0;
+    const CheckStats before = checkStats();
+    for (const auto& [from, to] : trips)
+    {
+      PlanRequest q;
+      q.vehicle = tractor();
+      q.from = from;
+      q.goals = {{to}};
+      q.space = broad;
+      const PlanResult a = planNow(q);
+      const PlanResult again = planNow(q);
+      q.space = exact;
+      const PlanResult b = planNow(q);
+      msBroad += a.stats.ms + again.stats.ms;
+      msExact += 2.0 * b.stats.ms;
+      const auto key = [](const PlanResult& r)
+      {
+        std::vector<float> k{static_cast<float>(r.state),
+                             static_cast<float>(r.stats.nodes),
+                             r.seconds};
+        for (const Segment& sg : r.path.segments)
+          k.insert(
+              k.end(), {static_cast<float>(sg.gear), sg.length, sg.k0, sg.k1});
+        return k;
+      };
+      same += key(a) == key(b) && key(a) == key(again);
+      found += a.state == PlanState::Found;
+    }
+    const CheckStats& after = checkStats();
+    CHECK(same == static_cast<int>(trips.size()));
+    CHECK(found == static_cast<int>(trips.size()));
+    // (And most of its queries were settled without Jolt.)
+    CHECK(after.broad - before.broad > 1000u);
+    std::printf("  %d of %zu plans the same, %llu queries settled by the "
+                "broad phase, %llu exact; %.0f ms with it, %.0f without\n",
+                same,
+                trips.size(),
+                static_cast<unsigned long long>(after.broad - before.broad),
+                static_cast<unsigned long long>(after.exact - before.exact),
+                0.5 * msBroad,
+                0.5 * msExact);
+  }
+
+  TEST("a shot's least time should never be more than walk() prices it at "
+       "(a shot that can't beat the way found is never walked: the same plans)")
+  {
+    // (Ground dearer here and there, never under its floor.)
+    class Patchy : public CostLayer
+    {
+    public:
+      float factor(Pose2 p, int) const override
+      {
+        return 0.85f + 0.5f * std::abs(std::sin(0.3f * p.position.x) *
+                                       std::cos(0.2f * p.position.y));
+      }
+      float floor() const override { return 0.85f; }
+    };
+    PlanRequest q = request({}, {{0, 0}, 0.0f}, {{10, 0}, 0.0f});
+    q.cost = std::make_shared<Patchy>();
+    const Motions rig(q);
+    uint32_t seed = 7u;
+    const auto next = [&seed]
+    {
+      seed = seed * 1664525u + 1013904223u;
+      return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    int words = 0, under = 0;
+    for (int k = 0; k < 200; ++k)
+    {
+      const Pose2 a{
+          {40.0f * next() - 20.0f, 40.0f * next() - 20.0f}, 6.2832f * next()};
+      const Pose2 b{
+          {40.0f * next() - 20.0f, 40.0f * next() - 20.0f}, 6.2832f * next()};
+      for (const auto& word : rig.words(a, b, true, 2))
+      {
+        Motions::Walk w;
+        if (!rig.walk(a, word, q.tunables.checkStep, false, w))
+          continue;
+        ++words;
+        under += rig.leastTime(word) <= w.cost * 1.0001f &&
+                 rig.leastTime(a.position, b.position) <=
+                     rig.leastTime(word) * 1.0001f;
+      }
+    }
+    CHECK(words > 500);
+    CHECK(under == words);
+    std::printf("  %d of %d words' least times under their walked times\n",
+                under,
+                words);
   }
 
   return testing::report("plannerTests");

@@ -509,7 +509,9 @@ not be writable, e.g. under Program Files). The previous run's log is kept as
 `log.prev.txt`. On Windows the game opens no console window; started from a
 terminal, it logs there too. Release builds log from INFO up, debug builds
 everything; a message repeated many times in a row is written once with a
-count.
+count. The file is written by a thread of its own (a line logged is only
+queued, so a frame never waits on the disk): at least every second, soon after
+a warning, and an error is on disk before its call returns.
 
 On x86-64 the engine's 3D physics is built for AVX2 (a CPU from about 2013 on):
 on an older processor the game says so in a message box instead of crashing.

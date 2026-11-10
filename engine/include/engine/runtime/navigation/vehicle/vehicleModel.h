@@ -17,6 +17,10 @@
 namespace sfs::nav::vehicle
 {
 
+// m a way may take to get out of a touch it starts in (the planner's let-off,
+// and Traffic's for a body it stands touching: one reach).
+constexpr float kEscapeReach = 3.0f;
+
 /**
  * A trailer on a hitch `hitchBehind` behind the reference point, its own axle
  * `drawbar` behind the hitch; its box is in the frame of its axle. Its angle

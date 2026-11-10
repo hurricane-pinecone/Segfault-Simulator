@@ -1,6 +1,6 @@
 #include "engine/runtime/navigation/vehicle/planner.h"
 
-#include "engine/core/jobs/workerPool.h"
+#include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/navigation/vehicle/smoother.h"
 #include "engine/runtime/navigation/vehicle/speedProfile.h"
 #include "engine/runtime/navigation/vehicle/vehicleSearch.h"
@@ -8,13 +8,16 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <mutex>
-#include <unordered_map>
 
 namespace sfs::nav::vehicle
 {
 
 void addHybridAStar(Searches& searches); // (hybridAStar.cpp)
+void takeProfTimes(double& heur,
+                   double& shot,
+                   double& heading,
+                   double& words,
+                   double& near); // (where the time goes: PlanStats)
 
 Searches& searches()
 {
@@ -51,7 +54,19 @@ void finish(const Motions& rig,
   w.hitch = q.hitch;
   w.escape = rig.standsClear(q.from, q.hitch) ? 0.0f : kEscapeReach;
   w.slack = 0.06f; // (the trailer's angle integrated finer than the search did)
-  if (!rig.walk(q.from, r.path.segments, q.tunables.exactStep, true, w, true))
+  // Checked as it's driven: its samples' steps (drivenSteps()), the very steps
+  // a game checks the points it's handed (its look-ahead) and a lane trip
+  // checks a stretch by. Its segments walked a step apart put the poses (and a
+  // trailer's angle, integrated over other steps) a little elsewhere: a way
+  // backing a trailer past a tree by a hair was clear by its segments and
+  // touching by its points, planned and refused again for ever (D3e, Paddock
+  // Gum 4).
+  const std::vector<Segment> driven = drivenSteps(r.path);
+  const auto te = std::chrono::steady_clock::now();
+  const bool clear =
+      rig.walk(q.from, driven, q.tunables.exactStep, true, w, true);
+  r.stats.exactMs = msSince(te);
+  if (!clear)
   {
     r.stats.exactMiss = true;
     if (w.hit)
@@ -63,7 +78,9 @@ void finish(const Motions& rig,
               ", " + std::to_string(w.end.position.y) +
               ") (swept, or the trailer's angle)";
   }
+  const auto tp = std::chrono::steady_clock::now();
   profile(r.path, q.vehicle, q.speedCap);
+  r.stats.profileMs = msSince(tp);
   r.seconds = r.path.duration();
 }
 } // namespace
@@ -74,7 +91,7 @@ float priceOf(const PlanRequest& request,
               const std::vector<Segment>& segments,
               bool check)
 {
-  const Motions rig(request);
+  const Motions rig(request, false);
   Motions::Walk w;
   w.hitch = hitch;
   w.escape = check && !rig.standsClear(from, hitch) ? kEscapeReach : 0.0f;
@@ -88,7 +105,7 @@ touches(const PlanRequest& request, Pose2 pose, std::optional<float> hitch)
 {
   if (!request.space)
     return std::nullopt;
-  return Motions(request).touches(pose, hitch);
+  return Motions(request, false).touches(pose, hitch);
 }
 
 std::optional<float> touchesAlong(const PlanRequest& request,
@@ -104,7 +121,20 @@ std::optional<float> touchesAlong(const PlanRequest& request,
   q.vehicle.mayReverse = true;
   for (VehicleModel::Mode& m : q.vehicle.modes)
     m.forwardOnly = false;
-  const Motions rig(q);
+  const Motions rig(q, false);
+  return touchesAlong(rig, from, hitch, segments, endIn, q.tunables.exactStep);
+}
+
+std::optional<float> touchesAlong(const Motions& rig,
+                                  Pose2 from,
+                                  float hitch,
+                                  std::span<const Segment> segments,
+                                  bool endIn,
+                                  float step)
+{
+  if (segments.empty())
+    return std::nullopt;
+  step = std::max(step, 0.01f);
   std::vector<Segment> segs(segments.begin(), segments.end());
   // Ending against what it's to come to: its last metres let off (cut).
   if (endIn && rig.touches(endOf(from, segs), std::nullopt))
@@ -132,11 +162,10 @@ std::optional<float> touchesAlong(const PlanRequest& request,
   w.slack = 0.06f; // (as the final check: finer than the search's)
   {
     Motions::Walk all = w;
-    if (rig.walk(from, segs, q.tunables.exactStep, true, all))
+    if (rig.walk(from, segs, step, true, all))
       return std::nullopt;
   }
   // Where: a step at a time, the walk carried on from one to the next.
-  const float step = q.tunables.exactStep;
   float s = 0.0f;
   Pose2 at = from;
   for (const Segment& seg : segs)
@@ -170,7 +199,26 @@ PlanResult planOnce(const PlanRequest& q,
 PlanResult planNow(const PlanRequest& q,
                    const std::function<void(const PlanResult&)>& onPartial)
 {
+  SFS_CPU_SCOPE("nav/plan (workers)");
+  double h0, s0, d0, w0, n0;
+  takeProfTimes(h0, s0, d0, w0, n0);
+  const CheckStats checks0 = checkStats();
+  // (Its collision queries: this thread's, before and after.)
+  const auto checked = [&](PlanResult& out)
+  {
+    const CheckStats& now = checkStats();
+    out.stats.checks = now.exact - checks0.exact;
+    out.stats.broadChecks = now.broad - checks0.broad;
+    out.stats.checkMs = now.ms - checks0.ms;
+    out.stats.costCalls = now.costs - checks0.costs;
+    out.stats.costMs = now.costMs - checks0.costMs;
+  };
   PlanResult r = planOnce(q, onPartial);
+  takeProfTimes(r.stats.heuristicMs,
+                r.stats.shotMs,
+                r.stats.headingMs,
+                r.stats.wordsMs,
+                r.stats.nearMs);
   // (The final check, finer than the search's, found a touch the search's
   // looks missed: searched again looking as finely. Rare.)
   if (r.state == PlanState::Found && r.stats.exactMiss &&
@@ -179,10 +227,22 @@ PlanResult planNow(const PlanRequest& q,
     PlanRequest fine = q;
     fine.tunables.checkStep = q.tunables.exactStep;
     PlanResult again = planOnce(fine, onPartial);
+    takeProfTimes(again.stats.heuristicMs,
+                  again.stats.shotMs,
+                  again.stats.headingMs,
+                  again.stats.wordsMs,
+                  again.stats.nearMs);
     again.stats.ms += r.stats.ms;
     again.stats.nodes += r.stats.nodes;
+    again.stats.heuristicMs += r.stats.heuristicMs;
+    again.stats.shotMs += r.stats.shotMs;
+    again.stats.headingMs += r.stats.headingMs;
+    again.stats.wordsMs += r.stats.wordsMs;
+    again.stats.nearMs += r.stats.nearMs;
+    checked(again);
     return again;
   }
+  checked(r);
   return r;
 }
 
@@ -200,6 +260,7 @@ PlanResult planOnce(const PlanRequest& q,
     return r;
   }
   const Motions rig(q);
+  r.stats.setupMs = msSince(t0);
   // A goal nothing can stand at (something stands on it) is never reached:
   // that's proof at once, not after growing every pose it could reach (a
   // parked truck's corner on a combine's put-away spot: millions of poses
@@ -257,8 +318,10 @@ PlanResult planOnce(const PlanRequest& q,
   {
     const float half =
         std::max(rig.reachY, q.vehicle.trailer ? rig.towY : 0.0f);
+    const auto tg = std::chrono::steady_clock::now();
     std::vector<glm::vec2> corridor =
         q.graph->route(q.from.position, q.goals[0].pose.position, half, &vias);
+    r.stats.graphMs = msSince(tg);
     if (local.corridor.empty() && glm::length(q.goals[0].pose.position -
                                               q.from.position) > q.corridorFrom)
       local.corridor = std::move(corridor);
@@ -324,6 +387,7 @@ PlanResult planOnce(const PlanRequest& q,
         const Way c = s.found();
         r.stats.plain = c.links.size() <= 1;
         r.goal = c.goal;
+        const auto tf = std::chrono::steady_clock::now();
         std::vector<Segment> segs;
         const Goal* goal =
             c.goal >= 0 ? &q.goals[static_cast<std::size_t>(c.goal)] : nullptr;
@@ -332,7 +396,9 @@ PlanResult planOnce(const PlanRequest& q,
         else
           for (const auto& l : c.links)
             segs.insert(segs.end(), l.begin(), l.end());
+        r.stats.smoothMs = msSince(tf);
         finish(rig, q, std::move(segs), r);
+        r.stats.finishMs = msSince(tf);
         r.state = PlanState::Found;
         r.stats.ms = msSince(t0);
         return r;
@@ -421,84 +487,23 @@ PlanResult planOnce(const PlanRequest& q,
 
 } // namespace
 
-struct Planner::Job
+PlanScheduler::JobId submitPlan(PlanScheduler& scheduler,
+                                uint64_t owner,
+                                std::string label,
+                                PlanScheduler::Clock::time_point deadline,
+                                PlanRequest request,
+                                bool lookAhead)
 {
-  PlanRequest request;
-  std::atomic<bool> cancel{false};
-  std::mutex mutex;
-  PlanResult latest;
-};
-struct Planner::Jobs
-{
-  std::mutex mutex;
-  std::unordered_map<Ticket, std::shared_ptr<Job>> jobs;
-};
-
-Planner::Planner(unsigned threads)
-    : m_pool(std::make_unique<WorkerPool>(threads)),
-      m_jobs(std::make_shared<Jobs>())
-{
-}
-
-Planner::~Planner()
-{
-  {
-    std::lock_guard lock(m_jobs->mutex);
-    for (auto& [t, job] : m_jobs->jobs)
-      job->cancel = true;
-  }
-  m_pool.reset();
-}
-
-Planner::Ticket Planner::submit(PlanRequest request)
-{
-  auto job = std::make_shared<Job>();
-  job->request = std::move(request);
-  job->request.cancel = &job->cancel;
-  const Ticket t = m_next++;
-  {
-    std::lock_guard lock(m_jobs->mutex);
-    m_jobs->jobs[t] = job;
-  }
-  m_pool->submit(
-      [job]
+  return scheduler.submitOne(
+      owner,
+      std::move(label),
+      deadline,
+      [request = std::move(request)](const std::atomic<bool>& cancel) mutable
       {
-        PlanResult r = planNow(job->request,
-                               [&](const PlanResult& partial)
-                               {
-                                 std::lock_guard lock(job->mutex);
-                                 job->latest = partial;
-                               });
-        std::lock_guard lock(job->mutex);
-        job->latest = std::move(r);
-      });
-  return t;
+        request.cancel = &cancel;
+        return std::any(planNow(request));
+      },
+      lookAhead);
 }
-
-PlanResult Planner::poll(Ticket ticket)
-{
-  std::shared_ptr<Job> job;
-  {
-    std::lock_guard lock(m_jobs->mutex);
-    const auto it = m_jobs->jobs.find(ticket);
-    if (it == m_jobs->jobs.end())
-      return {};
-    job = it->second;
-  }
-  std::lock_guard lock(job->mutex);
-  return job->latest;
-}
-
-void Planner::cancel(Ticket ticket)
-{
-  std::lock_guard lock(m_jobs->mutex);
-  const auto it = m_jobs->jobs.find(ticket);
-  if (it == m_jobs->jobs.end())
-    return;
-  it->second->cancel = true;
-  m_jobs->jobs.erase(it);
-}
-
-std::size_t Planner::busy() const { return m_pool->pending(); }
 
 } // namespace sfs::nav::vehicle

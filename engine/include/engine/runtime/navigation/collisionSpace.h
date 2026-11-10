@@ -3,8 +3,10 @@
 #include "engine/runtime/navigation/space.h"
 #include "engine/runtime/systems/collisionWorld3D.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace sfs::nav
@@ -61,6 +63,16 @@ footprints(const CollisionWorld3D& world,
  * vehicle's boxes as exact Jolt shapes, so a plan touches exactly what the
  * physics would. Heights count: a box only meets what its bottom..top
  * reaches (a raised header clears a low rail). Safe from any thread.
+ *
+ * A broad phase first (the textbook distance-field test): each world's
+ * clearance (how far each point is at least from its nearest collider, at
+ * any height: a grid built once per world by distanceField() and kept while
+ * the world lives, or the colliders themselves for a world of a few) is
+ * looked up at each probe shape's middle; a probe whose every shape's circle
+ * (round the shape as it stands, tilted) is clear of that by more than a
+ * hair is clear of the world, with no Jolt query. Only a pose near something
+ * gets the exact check, so the answers are the exact check's by
+ * construction (conservative: a bound, never a guess).
  */
 class CollisionSpace : public Space
 {
@@ -71,6 +83,7 @@ public:
     std::vector<uint64_t> ignore;           // ids left out (its own parts)
     std::function<float(glm::vec2)> ground; // ground height (default 0)
     float rasterLow = 0.05f, rasterHigh = 4.5f; // what the 2D heuristic counts
+    bool broadPhase = true; // (off: every query exact, for tests)
   };
   CollisionSpace(std::vector<std::shared_ptr<const CollisionWorld3D>> worlds,
                  Options options);
@@ -91,11 +104,23 @@ public:
   /** Its colliders' footprints (sfs::nav::footprints() of every world, by
    * its layers, ignored ids and ground). */
   std::vector<BoxSpace::Solid> footprints() const;
+  /** (The broad phase's: one world's clearance, collisionSpace.cpp's.) */
+  class Clearance;
 
 private:
   std::vector<std::shared_ptr<const CollisionWorld3D>> m_worlds;
   Options m_options;
+  // (Worked out once, the first time they're asked for: its worlds never
+  // change, and every heuristic's raster asks.)
+  mutable std::once_flag m_footOnce;
+  mutable std::vector<BoxSpace::Solid> m_foot;
   Rect m_bounds;
+  // The broad phase: each world's clearance (by world, made the first time
+  // it's asked; a static world's kept and shared while it lives).
+  const std::vector<std::shared_ptr<const Clearance>>& clearances() const;
+  mutable std::once_flag m_clearOnce;
+  mutable std::atomic<bool> m_clearMade{false};
+  mutable std::vector<std::shared_ptr<const Clearance>> m_clear;
 };
 
 } // namespace sfs::nav

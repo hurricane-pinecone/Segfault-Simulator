@@ -100,8 +100,21 @@ void add(const char* name, double milliseconds)
 {
   State& s = state();
   const std::lock_guard lock(s.mutex);
+  // (By its pointer first: a scope's name is a literal, the same pointer
+  // every call; only a name not seen at that address yet is compared as
+  // text. A scope's time includes the adds of those inside it: a text
+  // compare against every row there made a scope of a few nested ones look
+  // microseconds dearer than it is.)
   for (Row& row : s.rows)
-    if (row.name == name || std::strcmp(row.name, name) == 0)
+    if (row.name == name)
+    {
+      row.total += milliseconds;
+      row.calls += 1;
+      row.frame += milliseconds;
+      return;
+    }
+  for (Row& row : s.rows)
+    if (std::strcmp(row.name, name) == 0)
     {
       row.total += milliseconds;
       row.calls += 1;

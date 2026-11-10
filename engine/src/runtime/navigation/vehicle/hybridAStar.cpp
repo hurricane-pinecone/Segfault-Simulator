@@ -1,8 +1,14 @@
 #include "engine/runtime/navigation/vehicle/vehicleSearch.h"
 
+#include "engine/core/util/threadPriority.h"
+
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <queue>
+#include <span>
+#include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -12,7 +18,31 @@ namespace sfs::nav::vehicle
 
 namespace
 {
+// (where the time goes: PlanStats)
+struct ProfTimes
+{
+  double heur = 0, shot = 0, heading = 0, words = 0, near = 0;
+};
+thread_local ProfTimes t_prof;
+struct ProfScope
+{
+  double& into;
+  std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+  explicit ProfScope(double& d) : into(d) {}
+  ~ProfScope()
+  {
+    into += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0)
+                .count();
+  }
+};
 constexpr float kUnknown = 1.0e5f; // (a cell the 2D heuristic can't reach)
+// (Heading maps made on threads of their own at once, at most: past that a
+// search makes its own when it needs it, as before. The planning pool takes
+// the machine's threads less two (the game's and the render's): a thread per
+// search on top of it would crowd the game's frame out.)
+constexpr int kHeadingHelpers = 1;
+std::atomic<int> headingHelpers{0};
 // (Poses grown before the heading-aware heuristic is built.)
 constexpr uint32_t kInformAfter = 300;
 
@@ -81,23 +111,38 @@ struct Heuristic
         static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
     inside.assign(n, 1);
     if (corridor.size() >= 2)
-      for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x)
-        {
-          const glm::vec2 c = origin + (glm::vec2(x, y) + 0.5f) * cell;
-          float best = 1e9f;
-          for (std::size_t i = 1; i < corridor.size(); ++i)
+    {
+      // (A cell's in if any stretch of the corridor is within its width:
+      // each stretch's own cells looked at, those round its box, never the
+      // whole area's for every stretch.)
+      inside.assign(n, 0);
+      for (std::size_t i = 1; i < corridor.size(); ++i)
+      {
+        const glm::vec2 a = corridor[i - 1], d = corridor[i] - a;
+        const glm::vec2 lo =
+            (glm::min(a, corridor[i]) - corridorWidth - origin) / cell - 1.0f;
+        const glm::vec2 hi =
+            (glm::max(a, corridor[i]) + corridorWidth - origin) / cell + 1.0f;
+        const int x0 = std::max(0, static_cast<int>(std::floor(lo.x)));
+        const int y0 = std::max(0, static_cast<int>(std::floor(lo.y)));
+        const int x1 = std::min(w - 1, static_cast<int>(std::ceil(hi.x)));
+        const int y1 = std::min(h - 1, static_cast<int>(std::ceil(hi.y)));
+        for (int y = y0; y <= y1; ++y)
+          for (int x = x0; x <= x1; ++x)
           {
-            const glm::vec2 a = corridor[i - 1], d = corridor[i] - a;
+            uint8_t& in = inside[static_cast<std::size_t>(y) * w + x];
+            if (in)
+              continue;
+            const glm::vec2 c = origin + (glm::vec2(x, y) + 0.5f) * cell;
             const float t =
                 glm::dot(d, d) > 0
                     ? std::clamp(
                           glm::dot(c - a, d) / glm::dot(d, d), 0.0f, 1.0f)
                     : 0.0f;
-            best = std::min(best, glm::length(a + t * d - c));
+            in = glm::length(a + t * d - c) <= corridorWidth;
           }
-          inside[static_cast<std::size_t>(y) * w + x] = best <= corridorWidth;
-        }
+      }
+    }
     secs.assign(n, kUnknown);
     solid.clear();
     std::vector<glm::vec2> seeds;
@@ -167,7 +212,15 @@ struct Heuristic
     }
     factor.clear();
     if (rig.cost)
+    {
+      const auto t0 = std::chrono::steady_clock::now();
       rig.cost->raster(origin, cell, w, h, rig.q.mode, factor);
+      CheckStats& stats = checkStats();
+      ++stats.costs;
+      stats.costMs += std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - t0)
+                          .count();
+    }
     else
       factor.assign(n, 1.0f);
     const float speed = std::max(rig.q.vehicle.topSpeed, 0.1f);
@@ -383,8 +436,39 @@ struct Heuristic
     return v >= kUnknown ? beyond : v;
   }
   std::vector<float> factor; // (the cost layer's, by cell)
-  void
-  buildHeading(const Motions& rig, const std::vector<Pose2>& goals, Pose2 start)
+  // A copy of what the heading-aware part is made from (the 2D part's
+  // raster and cells), to make it on another thread.
+  Heuristic headingInputs() const
+  {
+    Heuristic h;
+    h.origin = origin;
+    h.cell = cell;
+    h.w = w;
+    h.h = this->h;
+    h.inside = inside;
+    h.solid = solid;
+    h.factor = factor;
+    return h;
+  }
+  // The heading-aware part made by another (headingInputs()'s copy).
+  void takeHeading(Heuristic&& from)
+  {
+    dirCell = from.dirCell;
+    dw = from.dw;
+    dh = from.dh;
+    dorigin = from.dorigin;
+    dsecs = std::move(from.dsecs);
+    cusp = from.cusp;
+    beyond = from.beyond;
+    nearStart = from.nearStart;
+    metEdge = from.metEdge;
+    reachedStart = from.reachedStart;
+  }
+  // (`stop`: given up part way when it turns true: no map, never used.)
+  void buildHeading(const Motions& rig,
+                    const std::vector<Pose2>& goals,
+                    Pose2 start,
+                    const std::atomic<bool>* stop = nullptr)
   {
     dsecs.clear();
     if (goals.empty())
@@ -508,8 +592,17 @@ struct Heuristic
     const Trailer* tr = v.trailer ? &*v.trailer : nullptr;
     if (tr)
       outline(tr->box, towed);
+    const auto stopped = [&]
+    {
+      if (!stop || !stop->load(std::memory_order_relaxed))
+        return false;
+      dsecs.clear();
+      return true;
+    };
     std::vector<uint8_t> edge; // (the cells anything solid touches)
     rig.space.raster(origin, cell, w, h, shrink, edge);
+    if (stopped())
+      return;
     // (How far each cell is from the nearest one the outline could be
     // stopped by (solid, or ground barred under it), in metres, kept on the
     // low side (an 8-way chamfer overstates by up to 8.3%, and a cell's
@@ -557,6 +650,8 @@ struct Heuristic
       for (float& r : room)
         r = r * cell / 1.0824f - 2.0f * cell;
     }
+    if (stopped())
+      return;
     const auto roomAt = [&](glm::vec2 at)
     {
       const int64_t c = cellOf(at, cell, w, h);
@@ -665,8 +760,11 @@ struct Heuristic
     nearStart = false;
     metEdge = false;
     const float near = 2.0f * rig.minRadius + dirCell;
+    uint32_t pops = 0;
     while (!q.empty())
     {
+      if ((++pops & 1023u) == 0 && stopped())
+        return;
       const auto [t, i] = q.top();
       q.pop();
       if (t > dsecs[i])
@@ -710,7 +808,8 @@ struct Heuristic
           bool barredUnder = false; // (ground barred to the reference point)
           const bool lookBody = ends && roomAt(a + d * bodyRing[0] +
                                                n * bodyRing[1]) <= bodyRing[2];
-          for (const glm::vec2 b : lookBody ? body : std::vector<glm::vec2>{})
+          for (const glm::vec2 b : lookBody ? std::span<const glm::vec2>(body)
+                                            : std::span<const glm::vec2>())
           {
             const int64_t c = cellOf(a + d * b.x + n * b.y, cell, w, h);
             if (c < 0)
@@ -727,7 +826,7 @@ struct Heuristic
           // kept off a crop); it says, for this pose.)
           if (clear && barredUnder && rig.cost &&
               !std::isfinite(
-                  rig.cost->factor({a, std::atan2(d.y, d.x)}, rig.q.mode)))
+                  priceAt(*rig.cost, {a, std::atan2(d.y, d.x)}, rig.q.mode)))
             clear = false;
           if (clear && ends && tr && run[i] >= towReach)
           {
@@ -738,7 +837,8 @@ struct Heuristic
             const glm::vec2 axle = a - d * tr->hitchBehind - td * tr->drawbar;
             const bool lookTow =
                 roomAt(axle + td * towRing[0] + tn * towRing[1]) <= towRing[2];
-            for (const glm::vec2 b : lookTow ? towed : std::vector<glm::vec2>{})
+            for (const glm::vec2 b : lookTow ? std::span<const glm::vec2>(towed)
+                                             : std::span<const glm::vec2>())
               if (hits(axle + td * b.x + tn * b.y))
               {
                 clear = false;
@@ -937,6 +1037,19 @@ public:
   bool m_ready = false;
   bool m_informed = false;
   bool m_outside = false; // (inform(): the way's likely outside the area)
+  // The heading-aware map, made on a thread of its own from the moment the
+  // search starts (it needs nothing the search does): ready, or nearly, by
+  // the time the search has grown kInformAfter poses, instead of the search
+  // standing while it's made. The same map: the same search.
+  struct Heading
+  {
+    Heuristic map;
+    std::atomic<bool> stop{false};
+    bool made = false;
+    double ms = 0.0;
+    std::thread worker;
+  };
+  std::unique_ptr<Heading> m_heading;
 
   explicit HybridAStar(const SearchContext& ctx)
       : rig(ctx.motions), q(ctx.motions.q), area(ctx.area),
@@ -950,6 +1063,16 @@ public:
     root.escape = rig.standsClear(q.from, q.hitch) ? 0.0f : kEscapeReach;
     nodes.push_back(root);
   }
+  ~HybridAStar() override
+  {
+    if (m_heading && m_heading->worker.joinable())
+    {
+      m_heading->stop = true;
+      m_heading->worker.join();
+    }
+  }
+  HybridAStar(const HybridAStar&) = delete;
+  HybridAStar& operator=(const HybridAStar&) = delete;
   // The heuristic and the primitives, built only once a search is needed:
   // a way the first shot finds (a plain way) costs neither.
   void ready()
@@ -957,10 +1080,46 @@ public:
     if (m_ready)
       return;
     m_ready = true;
+    const ProfScope prof(t_prof.heur);
     std::vector<Pose2> seeds;
     for (const Goal& g : q.goals)
       seeds.push_back(g.pose);
     heur.build(rig, area, seeds, corridor, q.corridorWidth);
+    if (!seeds.empty() && headingHelpers.fetch_add(1) < kHeadingHelpers)
+    {
+      m_heading = std::make_unique<Heading>();
+      m_heading->map = heur.headingInputs();
+      Heading* job = m_heading.get();
+      try
+      {
+        job->worker = std::thread(
+            [job, seeds, this]
+            {
+              lowerThisThreadPriority(); // (planning: PlanScheduler's)
+              const auto t0 = std::chrono::steady_clock::now();
+              try
+              {
+                job->map.buildHeading(rig, seeds, q.from, &job->stop);
+                job->made = !job->stop.load();
+              }
+              catch (...)
+              {
+                job->made = false; // (made again on the search's thread)
+              }
+              job->ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
+              --headingHelpers;
+            });
+      }
+      catch (...)
+      {
+        m_heading.reset(); // (no thread to be had: made when it's needed)
+        --headingHelpers;
+      }
+    }
+    else if (!seeds.empty())
+      --headingHelpers;
     prims = primitivesFor(rig);
     nodes[0].h = hOf(nodes[0].pose);
     open.push({nodes[0].h, 0.0f, 0});
@@ -971,10 +1130,22 @@ public:
   void inform()
   {
     m_informed = true;
+    const ProfScope prof(t_prof.heur);
+    const ProfScope heading(t_prof.heading);
     std::vector<Pose2> seeds;
     for (const Goal& g : q.goals)
       seeds.push_back(g.pose);
-    heur.buildHeading(rig, seeds, q.from);
+    if (m_heading)
+    {
+      m_heading->worker.join();
+      if (m_heading->made)
+        heur.takeHeading(std::move(m_heading->map));
+      else
+        heur.buildHeading(rig, seeds, q.from);
+      m_heading.reset();
+    }
+    else
+      heur.buildHeading(rig, seeds, q.from);
     // (Its motions never got from the goals to the start in the area, and
     // ran into the area's edge: the way is likely outside it; on searching
     // here only floods. Done here, as if it had left the area: the planner
@@ -1035,15 +1206,8 @@ public:
     {
       const Pose2 at{
           n.pose.position + f * sm.p.x + l * sm.p.y, n.pose.heading + sm.turn};
-      float dt = sm.dt;
-      if (rig.cost)
-      {
-        const float factor = rig.cost->factor(at, q.mode);
-        if (!std::isfinite(factor))
-          return false;
-        dt *= factor;
-      }
-      w.cost += dt;
+      if (!rig.cost)
+        w.cost += sm.dt;
       if (v.trailer)
       {
         const float was = w.hitch;
@@ -1070,6 +1234,16 @@ public:
         return false;
       from = to;
     }
+    // (Priced once it's found clear, in the same order: a motion that
+    // touches never asks the cost layer.)
+    if (rig.cost)
+      for (std::size_t k = 0; k < prim.samples.size(); ++k)
+      {
+        const float factor = priceAt(*rig.cost, m_poses[k + 1], q.mode);
+        if (!std::isfinite(factor))
+          return false;
+        w.cost += prim.samples[k].dt * factor;
+      }
     w.end = m_poses.back();
     w.end.heading = wrapAngle(w.end.heading);
     return true;
@@ -1098,6 +1272,7 @@ public:
         least = it->second;
       else
       {
+        const ProfScope prof(t_prof.near);
         Steering::Words w;
         w.reverse = !rig.forwardOnly;
         w.cusps = !rig.forwardOnly;
@@ -1112,6 +1287,13 @@ public:
         h = std::max(h, least);
     }
     return h * q.tunables.searchWeight;
+  }
+  // (Motions::words(), timed: PlanStats::wordsMs.)
+  std::vector<std::vector<Segment>>
+  timedWords(Pose2 a, Pose2 b, bool cusps, int cuspSamples) const
+  {
+    const ProfScope prof(t_prof.words);
+    return rig.words(a, b, cusps, cuspSamples);
   }
   // A word worth checking: its reference point never in a cell where it
   // certainly touches (cheap: no boxes, no trailer).
@@ -1138,6 +1320,7 @@ public:
   // Shots at the gaps' middles ahead: a node there, lined up through it.
   void tryVias(uint32_t from)
   {
+    const ProfScope prof(t_prof.shot);
     const Node& n = nodes[from];
     const float hn = heur.at(n.pose.position);
     // (Only the next one ahead: the nearest to the goal still behind the
@@ -1159,7 +1342,7 @@ public:
     if (v < vias.size())
     {
       int tried = 0;
-      for (const auto& word : rig.words(n.pose, vias[v], false))
+      for (const auto& word : timedWords(n.pose, vias[v], false, 10))
       {
         if (std::any_of(word.begin(),
                         word.end(),
@@ -1200,6 +1383,24 @@ public:
     }
   }
   // A shot that gets there: the way found if it's the quickest yet.
+  // The time braking to a stand at the end of a word, as the speed profile
+  // has it.
+  float stopOf(std::span<const Segment> word) const
+  {
+    for (auto it = word.rbegin(); it != word.rend(); ++it)
+      if (it->length > 0.0f)
+        return q.vehicle.stopSeconds(
+            rig.speedFor(it->gear, it->k1, (it->k1 - it->k0) / it->length));
+    return 0.0f;
+  }
+  // Whether a shot of at least `least` seconds from `from` can't beat the
+  // way found (offer() would turn it down): not walked. (A hair over, so the
+  // walk's own sum of the same times never comes in under it.)
+  bool cantBeat(uint32_t from, float least) const
+  {
+    return m_shotCost < kInf &&
+           nodes[from].g + least > m_shotCost * 1.001f + 1.0e-3f;
+  }
   bool offer(uint32_t from,
              std::vector<Segment> word,
              const Motions::Walk& w,
@@ -1207,14 +1408,7 @@ public:
   {
     // (Its time all told: to here, the shot, and braking to a stand at the
     // goal, as the speed profile has it.)
-    float stop = 0.0f;
-    for (auto it = word.rbegin(); it != word.rend(); ++it)
-      if (it->length > 0.0f)
-      {
-        stop = q.vehicle.stopSeconds(
-            rig.speedFor(it->gear, it->k1, (it->k1 - it->k0) / it->length));
-        break;
-      }
+    const float stop = stopOf(word);
     const float total = nodes[from].g + w.cost + stop;
     if (total >= m_shotCost)
       return false;
@@ -1230,6 +1424,7 @@ public:
   // Shots from `from` at the goals: each that gets there offered (offer()).
   bool tryShots(uint32_t from)
   {
+    const ProfScope prof(t_prof.shot);
     const Node& n = nodes[from];
     // (Once per search bin: another pose in the same bin shoots the same.)
     if (!m_shotFrom
@@ -1245,13 +1440,21 @@ public:
       // turns round on its own, and they're most of the words' cost.)
       const bool close =
           glm::length(g.pose.position - n.pose.position) < 4.0f * rig.minRadius;
-      for (const auto& word : rig.words(n.pose, g.pose, close, 2))
+      // (None of them could beat the way found, straight there flat out:
+      // nothing to offer, nothing looked at. The same offers by
+      // construction.)
+      const bool direct =
+          !cantBeat(from, rig.leastTime(n.pose.position, g.pose.position));
+      for (const auto& word : direct ? timedWords(n.pose, g.pose, close, 2)
+                                     : std::vector<std::vector<Segment>>{})
       {
         // (A goal to be come to in one gear: only words ending in it.)
         if (!arrivesAsAsked(g, word, rig.length))
           continue;
         if (tried++ >= 3)
           break;
+        if (cantBeat(from, rig.leastTime(word) + stopOf(word)))
+          continue; // (offer() would turn it down, walked or not)
         if (!plausible(n.pose, word))
           continue;
         ++m_shots;
@@ -1290,6 +1493,13 @@ public:
             g.pose.position - f * (out * static_cast<float>(gear)),
             g.pose.heading};
         const Segment in{gear, out, 0.0f, 0.0f};
+        // (Not even straight to where it lines up and in could beat the way
+        // found: nothing here to offer.)
+        if (cantBeat(from,
+                     rig.leastTime(n.pose.position, lined.position) +
+                         rig.leastTime(std::span<const Segment>(&in, 1)) +
+                         stopOf(std::span<const Segment>(&in, 1))))
+          continue;
         Motions::Walk last;
         last.gear = gear;
         if (!rig.walk(lined,
@@ -1300,7 +1510,7 @@ public:
             !arrives(last.end, g.pose))
           continue;
         int triedIn = 0;
-        for (const auto& word : rig.words(n.pose, lined, true, 2))
+        for (const auto& word : timedWords(n.pose, lined, true, 2))
         {
           if (triedIn++ >= 3)
             break;
@@ -1548,6 +1758,20 @@ public:
 // Diebel, "Path Planning for Autonomous Vehicles in Unknown Semi-structured
 // Environments", IJRR 2010) over continuous-curvature motions, with analytic
 // continuous-curvature shots to the goal.
+void takeProfTimes(double& heur,
+                   double& shot,
+                   double& heading,
+                   double& words,
+                   double& near)
+{
+  heur = t_prof.heur;
+  shot = t_prof.shot;
+  heading = t_prof.heading;
+  words = t_prof.words;
+  near = t_prof.near;
+  t_prof = {};
+}
+
 void addHybridAStar(Searches& searches)
 {
   searches.add("hybridAStar",

@@ -6,6 +6,7 @@
 #include "engine/runtime/navigation/vehicle/steering.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -17,8 +18,7 @@ namespace sfs::nav::vehicle
 {
 
 constexpr float kInf = std::numeric_limits<float>::infinity();
-constexpr float kEscapeReach = 3.0f; // m it may take to get out of a touch
-constexpr float kUnknown = 1.0e5f;   // (a cell the 2D heuristic can't reach)
+constexpr float kUnknown = 1.0e5f; // (a cell the 2D heuristic can't reach)
 
 // The curvature levels the paths are laid at: full lock and wider (a wide
 // bend at a higher speed is often quicker), each with the sharpness that
@@ -28,6 +28,20 @@ constexpr float kLevels[] = {1.0f, 0.5f, 0.25f};
 inline float bendSpeed(const VehicleModel& v, float k)
 {
   return v.speedAt(1, std::max(k, 1e-6f), 0.0f);
+}
+
+// The cost layer's price at a pose, counted and timed into this thread's
+// CheckStats (diagnostics: how much of a plan the ground's costs take).
+inline float priceAt(const CostLayer& cost, Pose2 at, int mode)
+{
+  const auto t0 = std::chrono::steady_clock::now();
+  const float f = cost.factor(at, mode);
+  CheckStats& stats = checkStats();
+  ++stats.costs;
+  stats.costMs += std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+  return f;
 }
 
 // The vehicle in the mode it's driven in, its probes, and the one walk along
@@ -62,7 +76,10 @@ public:
   mutable std::vector<Pose2> m_poses;
   mutable std::vector<float> m_hitches;
 
-  explicit Motions(const PlanRequest& r)
+  // `search`: the steering levels a search lays its motions with are made
+  // too (milliseconds when a vehicle's numbers are new); a check (touches(),
+  // touchesAlong(), priceOf(): walk() only) needs none.
+  explicit Motions(const PlanRequest& r, bool search = true)
       : q(r), space(*r.space), cost(r.cost.get())
   {
     const VehicleModel& v = q.vehicle;
@@ -109,6 +126,8 @@ public:
     tow.resize(kExts * kWides);
     for (float level : kLevels)
     {
+      if (!search)
+        break;
       const float k = kmax * level;
       levels.emplace_back(k, v.curvatureRate() / bendSpeed(v, k));
     }
@@ -289,6 +308,9 @@ public:
       // (Clear of a touch already: the stretch's samples gathered and
       // looked over at once (clearRange); getting out of one: pose by pose.)
       const bool together = check && w.escape <= 0.0f;
+      // (Priced once it's found clear, in the same order: a way that touches
+      // never asks the cost layer. Where it touches is asked for: as it goes.)
+      const bool defer = together && !wantHit && cost;
       std::vector<Pose2>& poses = m_poses;
       std::vector<float>& hitches = m_hitches;
       poses.clear();
@@ -306,14 +328,17 @@ public:
         const Pose2 was = at;
         const float hitchWas = w.hitch;
         at = advance(at, {seg.gear, ds, k0, k1}, ds);
-        float factor = 1.0f;
-        if (cost)
+        if (!defer)
         {
-          factor = cost->factor(at, q.mode);
-          if (!std::isfinite(factor))
-            return false;
+          float factor = 1.0f;
+          if (cost)
+          {
+            factor = priceAt(*cost, at, q.mode);
+            if (!std::isfinite(factor))
+              return false;
+          }
+          w.cost += ds / speedFor(seg.gear, km, dkds) * factor;
         }
-        w.cost += ds / speedFor(seg.gear, km, dkds) * factor;
         if (v.trailer)
         {
           w.hitch = hitchStep(
@@ -357,6 +382,18 @@ public:
               return failed(w, poses[i], true);
         return false;
       }
+      if (defer)
+        for (int i = 0; i < n; ++i)
+        {
+          const float k0 = seg.k0 + dkds * ds * static_cast<float>(i);
+          const float k1 = k0 + dkds * ds;
+          const float km = 0.5f * (k0 + k1);
+          const float factor =
+              priceAt(*cost, poses[static_cast<std::size_t>(i) + 1], q.mode);
+          if (!std::isfinite(factor))
+            return false;
+          w.cost += ds / speedFor(seg.gear, km, dkds) * factor;
+        }
     }
     w.end = at;
     return true;
@@ -373,6 +410,32 @@ public:
         probe(true, 0.0f, 0.0f), trailerPose(*q.vehicle.trailer, p, *hitch));
   }
   bool standsClear(Pose2 p, float hitch) const { return !touches(p, hitch); }
+  // At least the time walk() can price a word at, ground and all: each
+  // segment at the fastest it may go anywhere along it (its least curvature),
+  // on the cheapest ground (floor()); no cusps or pulling away counted. A
+  // shot that can't beat the best way found by this isn't walked.
+  float leastTime(std::span<const Segment> segs) const
+  {
+    float c = 0.0f;
+    for (const Segment& s : segs)
+    {
+      if (s.length <= 0.0f)
+        continue;
+      const float dkds = (s.k1 - s.k0) / s.length;
+      const float k =
+          s.k0 * s.k1 <= 0.0f ? 0.0f : std::min(std::abs(s.k0), std::abs(s.k1));
+      c += s.length / speedFor(s.gear, k, dkds);
+    }
+    return c * (cost ? cost->floor() : 1.0f);
+  }
+  // At least the time any way between two points takes (straight, flat out
+  // in its faster gear, on the cheapest ground).
+  float leastTime(glm::vec2 a, glm::vec2 b) const
+  {
+    const float top =
+        std::max(speedFor(1, 0.0f, 0.0f), speedFor(-1, 0.0f, 0.0f));
+    return glm::length(b - a) / top * (cost ? cost->floor() : 1.0f);
+  }
   // A rough time for a word (no ground sampled): for sorting candidates.
   float estimate(std::span<const Segment> segs) const
   {

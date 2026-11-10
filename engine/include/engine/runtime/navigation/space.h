@@ -12,6 +12,24 @@ namespace sfs::nav
 {
 
 /**
+ * What one thread's collision queries have cost so far (diagnostics only:
+ * a plan reads them before and after, PlanStats): queries a Space answered
+ * exactly (CollisionSpace: Jolt), those its broad phase settled without one,
+ * and the milliseconds in all of them.
+ */
+struct CheckStats
+{
+  uint64_t exact = 0, broad = 0;
+  double ms = 0.0;
+  // (And the cost layer's prices asked (CostLayer::factor()) and rasters
+  // made, and the milliseconds in them: a game's ground costs.)
+  uint64_t costs = 0;
+  double costMs = 0.0;
+};
+/** This thread's running totals. */
+CheckStats& checkStats();
+
+/**
  * What's solid, as the planner asks it: "would these boxes, placed so, touch
  * anything?" thousands of times a plan, from worker threads (an
  * implementation must be safe to query from several threads at once and

@@ -132,4 +132,20 @@ void sample(VehiclePath& path,
             const Trailer* trailer = nullptr,
             int leg = 0);
 
+/**
+ * A laid way's steps as it's driven: from each point to the next (`along`
+ * metres along the way, `gears` +1 forward, -1 backing up), the curvature that
+ * turns it from one point's heading to the next's over the step, in the later
+ * point's gear; a point repeated (a cusp: the same place twice) gives none.
+ * THE form a way is checked in: the planner's final check of a path (its
+ * samples), a lane trip's check of a stretch (its poses) and a game's check of
+ * the points it drives (its look-ahead) all take it, so one way gets one
+ * answer however it was laid.
+ */
+std::vector<Segment> drivenSteps(std::span<const Pose2> poses,
+                                 std::span<const float> along,
+                                 std::span<const int> gears);
+/** A path's samples' steps (drivenSteps()): the path as it's driven. */
+std::vector<Segment> drivenSteps(const VehiclePath& path);
+
 } // namespace sfs::nav::vehicle

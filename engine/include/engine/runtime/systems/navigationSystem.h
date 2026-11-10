@@ -2,8 +2,10 @@
 
 #include "engine/core/ecs/system.h"
 #include "engine/runtime/navigation/agentKind.h"
+#include "engine/runtime/navigation/coarseGraph.h"
 #include "engine/runtime/navigation/costLayer.h"
 #include "engine/runtime/navigation/fleet.h"
+#include "engine/runtime/navigation/laneGraph.h"
 #include "engine/runtime/navigation/vehicle/vehicleKind.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -20,12 +22,11 @@
 namespace sfs
 {
 
-class WorkerPool;
-
 /**
  * Navigation for AI agents (NavAgentComponent): it plans their ways round
- * the scene's colliders on worker threads, drives them along and settles
- * who gives way when they meet. A game sends an agent somewhere
+ * the scene's colliders on its planning scheduler (nav::PlanScheduler: one
+ * worker pool, deadline first, a fair turn per agent), drives them along and
+ * settles who gives way when they meet. A game sends an agent somewhere
  * (requestGoal) and hears how it went (events()); it never moves the agent
  * itself meanwhile: the system writes the agent's transform (and its
  * trailer's) each update.
@@ -33,9 +34,9 @@ class WorkerPool;
  * What's solid comes from PhysicsSystem3D: a frozen copy of the static
  * colliders (PhysicsSystem3D::snapshot()), rebuilt when its revision
  * changes, with the coarse graph long trips take their corridor from (built
- * on a worker). Agents leave themselves out; one with nothing to do (or held
- * by its game) is solid to the others' plans, one moving never is (they keep
- * out of each other's reservations by rank instead: see nav::Fleet and
+ * on the scheduler). Agents leave themselves out; one with nothing to do (or
+ * held by its game) is solid to the others' plans, one moving never is (they
+ * keep out of each other's reservations by rank instead: see nav::Fleet and
  * nav::Traffic). A game adds what ground costs (setCostLayer:
  * crop, worn tracks; layers multiply) and who goes first
  * (setPriorityProvider: a working machine).
@@ -99,8 +100,51 @@ public:
   bool handDriven(const Entity& agent) const;
   /** Drive a path the game made (a field pass), claimed like any other. */
   void setPath(const Entity& agent, std::shared_ptr<const nav::AgentPath> path);
-  /** Plan now on this thread (a game's own checks, on its own worker). */
+  /**
+   * Plan now on this thread: only for a check that truly needs its answer
+   * this frame; anything else goes through scheduler().
+   */
   nav::AgentPlan planNow(const Entity& agent, nav::PlanAsk ask) const;
+  /**
+   * THE planning scheduler: every path job of the scene (the agents', the
+   * coarse graph, a game's own) runs on its one pool.
+   */
+  nav::PlanScheduler& scheduler() { return *m_scheduler; }
+  /**
+   * The same, shared: for a game's job handles that may outlive this system
+   * (cancelled on the scheduler they were given, never a dangling one).
+   */
+  std::shared_ptr<nav::PlanScheduler> sharedScheduler() const
+  {
+    return m_scheduler;
+  }
+  /** Plan an agent's next way ahead (nav::Fleet::planAhead()). */
+  bool planAhead(const Entity& agent, nav::PlanAsk ask);
+  /** Its look-ahead plan once finished (nav::Fleet::ahead()). */
+  std::optional<nav::AgentPlan> ahead(const Entity& agent);
+
+  /**
+   * A lane graph by name (null: removed), the game's own (its roads, its
+   * aisles): long trips along it plan with vehicle::planLaneTrip(). Replaced
+   * whole when the game's lanes change; plans holding the old one finish on it.
+   */
+  void setLaneGraph(const std::string& name,
+                    std::shared_ptr<const nav::LaneGraph> graph);
+  std::shared_ptr<const nav::LaneGraph>
+  laneGraph(const std::string& name) const;
+
+  /**
+   * The game's own edges on the coarse graph (its worn tracks: cheaper to
+   * route along, so long trips' corridors take them), replacing the last
+   * ones: put on the graph as it is and on every one built after, on the
+   * scheduler (nav::CoarseGraph::withEdges(): only the cells round what came
+   * or went priced again). Plans holding the old graph finish on it.
+   */
+  void setCoarseEdges(std::vector<nav::CoarseGraph::Edge> edges);
+  const std::vector<nav::CoarseGraph::Edge>& coarseEdges() const
+  {
+    return m_coarseEdges;
+  }
 
   /** A ground cost by name (null: removed); all of them multiply. */
   void setCostLayer(const std::string& name,
@@ -120,30 +164,35 @@ public:
     Entity towed;
     float hitchBehind = 1.0f; // m, the hitch behind the agent's axle
     float drawbar = 4.0f;     // m, the towed thing's axle behind the hitch
+    // m its axle (where it pivots, its wheels) is ahead of its own origin
+    // (negative: behind): its colliders are measured from there, and its
+    // transform written at that much behind the axle's place.
+    float axle = 0.0f;
     float forwardLimit = 83.0f, reverseLimit = 35.0f;
     // Mounted (on a linkage or front mount): it moves with the agent, its
-    // colliders part of the agent's boxes where it is when hitched, never
-    // swinging (the hitch numbers unused), measured by mountedBox().
+    // colliders part of the agent's boxes, never swinging (the hitch numbers
+    // unused), measured by mountedBox().
     bool rigid = false;
-    // m a mounted part's bottom is planned lower than it's held standing
-    // (driven, the body pitches into ruts and on its springs).
-    float rideDrop = 0.0f;
+    // A mounted part's pose (its root's) in the agent's own frame (the
+    // agent entity's origin and axes, level: no body pitch or roll), as its
+    // mount holds it in the state it's driven in now (a header raised for
+    // travel, lowered working): the game sets it from its authored mount
+    // and hitches again when the state changes. None: where the part is held
+    // now, relative to the agent (still in the agent's own frame).
+    std::optional<glm::mat4> mount;
   };
   /**
    * THE measure of a mounted part's box as planned (one function: the
    * agent's boxes here, Traffic's, and a game's own planners alike): the box
-   * lo..hi in the frame `world` (a part's world matrix), bounded in the
-   * agent's flat frame (its reference point `at`, facing its heading:
-   * however the part tilts with a lift, the plan holds the physics' shape),
-   * heights above `ground` under the box's middle, its bottom `drop` lower
-   * and never below the ground.
+   * lo..hi of a collider whose frame is `inAgent` in the agent's own frame
+   * (level, its origin the reference point: x along it, heights up from the
+   * agent's origin), bounded there, exactly where it's held (its bottom
+   * never below 0). Its true size: no tilt is ever baked in (the ground's
+   * tilt is put on per checked pose by nav::stanceOf()).
    */
-  static nav::Box3 mountedBox(const glm::mat4& world,
+  static nav::Box3 mountedBox(const glm::mat4& inAgent,
                               const glm::vec3& lo,
-                              const glm::vec3& hi,
-                              const nav::Pose2& at,
-                              const std::function<float(glm::vec2)>& ground,
-                              float drop);
+                              const glm::vec3& hi);
   void hitch(const Entity& agent, const Hitch& hitch);
   void unhitch(const Entity& agent);
   /**
@@ -193,10 +242,11 @@ private:
   bool partOfAgent(const Entity& entity) const;
   std::shared_ptr<const nav::CostLayer> combinedCost() const;
 
+  std::shared_ptr<nav::PlanScheduler> m_scheduler; // (outlives m_fleet)
   std::unique_ptr<nav::Fleet> m_fleet;
-  std::unique_ptr<WorkerPool> m_graphWorker;
   std::map<Entity::EntityId, std::unique_ptr<Tracked>> m_tracked;
   std::map<std::string, std::shared_ptr<const nav::CostLayer>> m_costs;
+  std::map<std::string, std::shared_ptr<const nav::LaneGraph>> m_laneGraphs;
   std::function<int(const Entity&)> m_priority;
   std::function<nav::vehicle::Rig(const Entity&)> m_rig;
   // What each agent tows (live state, set by the game).
@@ -206,8 +256,12 @@ private:
   std::function<float(glm::vec2)> m_ground;
   std::shared_ptr<const nav::Space> m_givenSpace;
   std::shared_ptr<const nav::Space> m_space;
-  struct GraphJob;
-  std::shared_ptr<GraphJob> m_graphJob;
+  // The coarse graph being built (a scheduler job) and what for; the game's
+  // edges, and whether the graph has yet to take them.
+  nav::PlanScheduler::JobId m_graphJob = 0;
+  std::shared_ptr<const nav::Space> m_graphFor;
+  std::vector<nav::CoarseGraph::Edge> m_coarseEdges;
+  bool m_edgesDirty = false;
   uint64_t m_revision = ~0ull;
   bool m_worldDirty = true;
   std::vector<Event> m_events;

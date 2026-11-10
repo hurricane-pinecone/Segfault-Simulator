@@ -461,4 +461,43 @@ void sample(VehiclePath& path, float step, const Trailer* trailer, int leg)
   }
 }
 
+std::vector<Segment> drivenSteps(std::span<const Pose2> poses,
+                                 std::span<const float> along,
+                                 std::span<const int> gears)
+{
+  std::vector<Segment> out;
+  const std::size_t n = std::min({poses.size(), along.size(), gears.size()});
+  if (n < 2)
+    return out;
+  out.reserve(n - 1);
+  for (std::size_t k = 1; k < n; ++k)
+  {
+    const float ds = along[k] - along[k - 1];
+    if (ds < 1.0e-5f)
+      continue; // (a stop to change direction: the same point again)
+    const int gear = gears[k] < 0 ? -1 : 1;
+    const float k0 = wrapAngle(poses[k].heading - poses[k - 1].heading) /
+                     (static_cast<float>(gear) * ds);
+    out.push_back({gear, ds, k0, k0});
+  }
+  return out;
+}
+
+std::vector<Segment> drivenSteps(const VehiclePath& path)
+{
+  std::vector<Pose2> poses;
+  std::vector<float> along;
+  std::vector<int> gears;
+  poses.reserve(path.points.size());
+  along.reserve(path.points.size());
+  gears.reserve(path.points.size());
+  for (const PathPoint& p : path.points)
+  {
+    poses.push_back(p.pose);
+    along.push_back(p.s);
+    gears.push_back(p.gear);
+  }
+  return drivenSteps(poses, along, gears);
+}
+
 } // namespace sfs::nav::vehicle
