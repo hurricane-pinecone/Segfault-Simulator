@@ -157,6 +157,13 @@ public:
   void notifyContact(const Contact3D& contact, bool begun);
   void notifyContact(const Contact2D& contact, bool begun);
 
+  /** Game seconds since play began: the time handed to the scene's systems
+   * (Registry::gameTime()). */
+  double gameTime() const { return m_registry.gameTime(); }
+
+  /** Whether the game is paused (Registry::paused()). */
+  bool paused() const { return m_registry.paused(); }
+
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
 

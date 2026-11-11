@@ -40,7 +40,11 @@ public:
                     const ITerrainSurfaceSource* terrain = nullptr);
 
   void init(const ModuleInit& init) override;
-  void update(double deltaTime) override { simulate(deltaTime); }
+  /**
+   * Simulate `deltaTime` real seconds at the registry's time scale, or not at
+   * all while it is paused (Registry::paused()).
+   */
+  void update(double deltaTime) override;
   void computeCommands(const RenderContext& context) override;
   std::vector<ModuleSetting> settings(const RenderContext&) override;
 

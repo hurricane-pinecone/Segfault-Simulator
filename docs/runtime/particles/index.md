@@ -89,11 +89,15 @@ trail rather than a clump each frame.
 
 ### Pausing
 
-`particles.setTimeScale(0.0f)` freezes every particle where it is and stops all
-emission (a paused game); `1` runs them as normal, `4` four times as fast (a
-game running at 4x: the scene's systems take game time from
-`Registry::setTimeScale()`, but the particles are simulated with the frame, in
-real time, so they follow it through this).
+A scene's `ParticleModule` follows the registry: it simulates the frame's real
+time times `Registry::timeScale()`, so a game at 4x has its particles at 4x
+too, and while `Registry::paused()` every particle is frozen where it is and
+all emission stops. A game pauses or speeds up its particles only through the
+registry.
+
+`particles.setTimeScale(scale)` is a further multiplier on top (1 by default),
+for a standalone `ParticleEngine` (a tool, a test): `0` freezes it, `4` runs
+it four times as fast.
 
 ### Spawn momentum
 
@@ -163,7 +167,7 @@ custom shaping — is authoring; see [Decals & splatter](../../core/particles/de
 | `enableStains(decals, terrain = nullptr)` | make decal effects land and stick |
 | `groundElevationAt(position)` | surface height for a terrain-aware spawn |
 | `setMaxParticles(n)` | global live-particle ceiling |
-| `setTimeScale(scale)` | how fast particles' time runs (0: paused) |
+| `setTimeScale(scale)` | a multiplier on how fast particles' time runs (1; 0 freezes them) |
 | `liveParticleCount()` | current live count (debug / HUD) |
 | `hasEffect(name)` / `effect(name)` / `effectNames()` | inspect registered effects |
 

@@ -1,12 +1,18 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
 
+#include <engine/core/assets/assetDatabase.h>
+#include <engine/core/components/animatorComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/parentComponent.h>
+#include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/particles/particleEffect.h>
 #include <engine/core/util/fatalError.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
+#include <engine/runtime/rendering/modules/particleModule.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/rendering/standardScene.h>
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/sceneManager/sceneManager.h>
@@ -14,8 +20,11 @@
 #include <filesystem>
 #include <fstream>
 
+#include <cmath>
+#include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace sfs;
 
@@ -73,6 +82,101 @@ protected:
       ++*destroys;
   }
 };
+// Keeps the game time it's given and the registry's game time as it reads
+// it, each update.
+class Timed : public System
+{
+public:
+  explicit Timed(TimeStep kind) { setTimeStep(kind); }
+
+  Registry& world() { return *registry; }
+
+  double given = 0.0;
+  std::vector<double> seen;
+  // Whether the registry's game time was the sum of the steps given, each
+  // time it was read.
+  bool agreed = true;
+
+protected:
+  void update(double deltaTime) override
+  {
+    given += deltaTime;
+    seen.push_back(registry->gameTime());
+    agreed = agreed && std::abs(registry->gameTime() - given) < 1e-9;
+  }
+};
+
+std::string base64(const std::vector<uint8_t>& bytes)
+{
+  static const char* digits =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  for (std::size_t i = 0; i < bytes.size(); i += 3)
+  {
+    const uint32_t n = (bytes[i] << 16) |
+                       (i + 1 < bytes.size() ? bytes[i + 1] << 8 : 0) |
+                       (i + 2 < bytes.size() ? bytes[i + 2] : 0);
+    out += digits[(n >> 18) & 63];
+    out += digits[(n >> 12) & 63];
+    out += i + 1 < bytes.size() ? digits[(n >> 6) & 63] : '=';
+    out += i + 2 < bytes.size() ? digits[n & 63] : '=';
+  }
+  return out;
+}
+
+template <typename T>
+void append(std::vector<uint8_t>& out, const std::vector<T>& values)
+{
+  const auto* bytes = reinterpret_cast<const uint8_t*>(values.data());
+  out.insert(out.end(), bytes, bytes + values.size() * sizeof(T));
+}
+
+// A .gltf of one triangle, "Box", with a one-second clip, "Move", sliding it
+// one along x.
+void writeMovingModel(const std::filesystem::path& file)
+{
+  std::vector<uint8_t> buffer;
+  append(buffer, std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}); // 36 bytes
+  append(buffer, std::vector<uint16_t>{0, 1, 2, 0});             // 8 bytes
+  append(buffer, std::vector<float>{0, 1});                      // 8 bytes
+  append(buffer, std::vector<float>{0, 0, 0, 1, 0, 0});          // 24 bytes
+  std::ofstream(file) << R"({
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0]}],
+    "nodes": [{"name": "Box", "mesh": 0}],
+    "meshes": [{"name": "Box", "primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+    "animations": [{"name": "Move",
+      "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}],
+      "samplers": [{"input": 2, "output": 3}]}],
+    "accessors": [
+      {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+      {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
+      {"bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]},
+      {"bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3"}
+    ],
+    "bufferViews": [
+      {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+      {"buffer": 0, "byteOffset": 36, "byteLength": 6},
+      {"buffer": 0, "byteOffset": 44, "byteLength": 8},
+      {"buffer": 0, "byteOffset": 52, "byteLength": 24}
+    ],
+    "buffers": [{"byteLength": 76, "uri": "data:application/octet-stream;base64,)" +
+                             base64(buffer) + R"("}]
+  })";
+}
+
+// Every live particle's place, in order.
+std::vector<glm::vec2> particlePlaces(const ParticleEngine& particles)
+{
+  std::vector<ParticleSpriteBatch> batches;
+  particles.sprites(batches);
+  std::vector<glm::vec2> places;
+  for (const ParticleSpriteBatch& batch : batches)
+    for (const ParticleSprite& sprite : batch.sprites)
+      places.push_back(sprite.position);
+  return places;
+}
 } // namespace
 
 int main()
@@ -279,6 +383,100 @@ int main()
     }
     CHECK(renderer);
     CHECK(game);
+  }
+
+  TEST("gameTime should be the sum of the game time given, read on each step "
+       "and at the frame's end, at any time scale")
+  {
+    for (const double scale : {1.0, 4.0, 16.0})
+    {
+      World world;
+      Timed& stepped = world.scene.addSystem<Timed>(System::TimeStep::Stepped);
+      Registry& registry = stepped.world();
+      Timed& frame = world.scene.addSystem<Timed>(System::TimeStep::Frame);
+      registry.setTimeScale(scale);
+      registry.setMaxTimeStep(1.0 / 30.0);
+      CHECK(registry.gameTime() == 0.0);
+      for (int i = 0; i < 10; ++i)
+        world.scene.update(1.0 / 60.0);
+      CHECK(stepped.agreed);
+      CHECK(frame.agreed);
+      CHECK(frame.seen.size() == 10u);
+      CHECK(stepped.seen.size() > frame.seen.size() || scale == 1.0);
+      CHECK(testing::approx(registry.gameTime(), 10.0 / 60.0 * scale));
+      CHECK(testing::approx(frame.seen.back(), registry.gameTime()));
+    }
+  }
+
+  TEST("while paused, systems should still get their game time and gameTime "
+       "advance, while animators and particles stand still")
+  {
+    const std::filesystem::path project =
+        std::filesystem::temp_directory_path() / "sfsSceneTests" / "project";
+    std::filesystem::create_directories(project / "assets");
+    writeMovingModel(project / "assets" / "box.gltf");
+    std::ofstream(project / "assets" / "box.gltf.meta")
+        << R"({"formatVersion": 1, "id": "0123456789abcdef0123456789abcd01"})";
+    const AssetDatabase database(project,
+                                 AssetDatabase::Mode::ReadOnly,
+                                 AssetDatabase::projectFolders());
+    const AssetRecord* record = database.findByPath("assets/box.gltf");
+    CHECK(record != nullptr);
+
+    AssetStore store;
+    store.setDatabase(&database);
+    testing3d::MockRenderer renderer;
+    SceneServices services{.assetStore = store, .renderer = &renderer};
+    SceneManager manager;
+    manager.setSceneServices(&services);
+    StandardScene& scene = *manager.createScene<StandardScene>();
+    Timed& stepped = scene.addSystem<Timed>(System::TimeStep::Stepped);
+    Registry& registry = stepped.world();
+
+    Entity rig = scene.createEntity();
+    rig.addComponent<NameComponent>("Rig");
+    rig.addComponent<TransformComponent>();
+    rig.addComponent<AnimatorComponent>();
+    AnimatorComponent& animator = rig.getComponent<AnimatorComponent>();
+    animator.clip = "Move";
+    if (record)
+      animator.source = "asset:" + record->id.toString();
+    Entity box = scene.createEntity();
+    box.addComponent<NameComponent>("Box");
+    box.addComponent<TransformComponent>();
+    hierarchy::setParent(box, rig);
+
+    ParticleModule* particles = scene.renderSystem().module<ParticleModule>();
+    CHECK(particles != nullptr);
+    if (!particles)
+      return testing::report("sceneTests");
+    ParticleEffectDesc spark;
+    spark.burstCount = 3;
+    spark.lifetime = {10.0f, 10.0f};
+    spark.speed = {1.0f, 1.0f};
+    particles->registerEffect("spark", spark);
+    particles->spawnBurst("spark", {0.0f, 0.0f}, 0.0f);
+
+    // Running: the clip plays and the particles fly.
+    scene.update(0.1);
+    const float playedTo = rig.getComponent<AnimatorComponent>().time;
+    const std::vector<glm::vec2> flown = particlePlaces(*particles);
+    CHECK(playedTo > 0.0f);
+    CHECK(flown.size() == 3u);
+
+    registry.setPaused(true);
+    CHECK(registry.paused());
+    const double before = registry.gameTime();
+    scene.update(0.25);
+    CHECK(testing::approx(stepped.given, 0.35));
+    CHECK(testing::approx(registry.gameTime(), before + 0.25));
+    CHECK(rig.getComponent<AnimatorComponent>().time == playedTo);
+    CHECK(particlePlaces(*particles) == flown);
+
+    registry.setPaused(false);
+    scene.update(0.1);
+    CHECK(rig.getComponent<AnimatorComponent>().time > playedTo);
+    CHECK(particlePlaces(*particles) != flown);
   }
 
   return testing::report("sceneTests");

@@ -1,10 +1,13 @@
 # Segfault Simulator (SFS): rules for AI agents
 
 SFS is a general game engine. Nothing game-specific goes in it. Read README.md and docs/ before changing an area.
+Engine bar: a feature belongs in SFS only if a production-ready general engine (Unity, Unreal, Godot) would ship it
+(in the engine itself, or as a first-party library once SFS has them). Anything narrower is game code, even if more
+than one game could use it.
 These rules are the owner's; when a task seems to need breaking one, stop and ask.
-Consult on structure: before adding or splitting a system or component, moving data between them, changing how
-systems get data from each other, or choosing engine vs game, write a short design and get the owner's approval.
-Behaviour fixes inside an agreed structure don't need this.
+Consult on structure, decide within it: the approved architecture is the design. Within it, split responsibilities
+the best-practice way without asking, and split properly from the start. Ask the owner only when a change would alter
+the architecture or these rules, or how a game behaves for the player.
 
 ## Architecture
 
@@ -99,3 +102,7 @@ Behaviour fixes inside an agreed structure don't need this.
 - clang-format 17.0.6, on `.cpp`/`.h` files only (never md, yml, wgsl or CMake). Some files in HEAD aren't
   formatted: don't reformat code you didn't touch.
 - Screenshots: only the game's or editor's own windows, never the desktop.
+- Comments: plain, human-readable sentences, and only where the logic is complicated or not obvious. Don't narrate
+  what the code does, keep history, or add parenthetical asides. Every public and util function gets a proper
+  docstring (`/** ... */`: what it does, its parameters, its result). Fields other code reads (a component's fields
+  read by systems, a shared struct's) each get a docstring. Applies to all code written or changed.

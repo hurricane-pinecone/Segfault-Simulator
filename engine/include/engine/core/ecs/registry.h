@@ -111,6 +111,22 @@ public:
   int mostTimeSteps() const { return m_mostTimeSteps; }
 
   /**
+   * Game seconds since this registry began updating: the sum of the game
+   * time its systems have been given. A Stepped system reads the time at the
+   * end of the step it is given; Frame and Real systems read the frame's end.
+   */
+  double gameTime() const { return m_gameTime; }
+
+  /**
+   * Whether the game is paused. The engine's own moving parts (animations,
+   * particles) stand still while it is. Systems keep the game time the time
+   * scale gives them, and each decides what a pause stops for it by reading
+   * paused(). Like the time scale, it takes effect from the next frame.
+   */
+  void setPaused(bool paused) { m_paused = paused; }
+  bool paused() const { return m_paused; }
+
+  /**
    * Goes up whenever an entity gains or loses a TComponent (one destroyed
    * included), so a system can keep a list of the entities that have one and
    * look again only when this has moved. Changing a component's values
@@ -143,6 +159,11 @@ private:
   void removeEntityFromSystems(const Entity& entity);
 
 private:
+  friend class Scene;
+
+  // Scene adds each step's game time before that step's systems run.
+  void advanceGameTime(double seconds) { m_gameTime += seconds; }
+
   uint32_t entityCount = 0;
   uint64_t nextDebugId = 1;
 
@@ -172,6 +193,8 @@ private:
   double m_timeScale = 1.0;
   double m_maxTimeStep = 0.0;
   int m_mostTimeSteps = 16;
+  double m_gameTime = 0.0;
+  bool m_paused = false;
 };
 
 } // namespace sfs

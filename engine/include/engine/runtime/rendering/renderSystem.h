@@ -507,8 +507,7 @@ private:
   std::vector<GlowPoint> m_glow;
 
   RenderContext m_context;
-  // Camera feeds asked for (cameraFeed()), by entity id: their pictures, when
-  // each was last filmed (seconds of a steady clock), and the one this frame.
+  // The camera feed being filmed this frame.
   const RenderTexture* m_feedFilming = nullptr;
   glm::mat4 m_lightViewProjection{1.0f};
   SunCascades m_cascades;

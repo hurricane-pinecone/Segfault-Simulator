@@ -211,8 +211,23 @@ the time with `setTimeStep()`:
 | `Real` | real time, whatever the scale (`RenderSystem`, `CameraSystem`) |
 
 `AnimationSystem` is `Frame`. Game objects' `onUpdate()` and the scene's own
-get real time: they're the player's (input, cameras). Particles keep game time
-with their own `ParticleModule::setTimeScale()`.
+get real time: they're the player's (input, cameras). A `ParticleModule` is
+simulated with the frame's real time times the registry's time scale, so its
+particles keep game time too.
+
+`registry->gameTime()` is the game seconds since the registry began updating:
+the sum of the game time its systems have been given (a game's stopwatch,
+Unity's `Time.time`). The scene adds each step's time before that step's
+systems run, so a `Stepped` system reads the time at the end of its step, and
+`Frame` and `Real` systems read the frame's end. Only the scene advances it.
+Scripts read the same through `scene().gameTime()` and `scene().paused()`.
+
+`registry->setPaused(true)` pauses the game: the engine's own moving parts,
+`AnimationSystem`'s animators and `ParticleModule`'s particles, stand still.
+Systems keep getting the game time the time scale gives them (and
+`gameTime()` keeps counting); each one decides what a pause stops for it by
+reading `registry->paused()`. Like the time scale, it takes effect from the
+next frame.
 
 ## GameObjects — the OOP layer
 

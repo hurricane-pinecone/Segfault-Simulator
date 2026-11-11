@@ -6,6 +6,10 @@ You tell an agent where to go; it finds the way round the scene's colliders on
 the [planning scheduler](scheduler.md) (one worker pool, deadline first), drives it, and keeps out of the others' way by priority when they meet. Only
 vehicles are built so far; the code leaves room for walkers later.
 
+> **Library candidate.** The vehicle stack (`navigation/vehicle/`, towed rigs, fleet, traffic, lanes) is more than a
+> general engine ships in its core: it is to become an opt-in library once SFS has them. Until then, keep it general
+> and self-contained (nothing game-specific, no new ties from core code into it) so it can move out cleanly.
+
 It's the standard textbook stack, so nothing in it is specific to one game:
 
 1. a **coarse graph** of the open ground (gateways, aisles) picks the corridor

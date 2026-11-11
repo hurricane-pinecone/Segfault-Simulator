@@ -442,7 +442,8 @@ void AnimationSystem::update(double deltaTime)
   SFS_CPU_SCOPE("update/animation");
   ++m_frame;
   m_stats = {};
-  const float seconds = static_cast<float>(deltaTime) * m_timeScale;
+  const float seconds =
+      registry->paused() ? 0.0f : static_cast<float>(deltaTime) * m_timeScale;
 
   for (const Entity& entity : getEntities())
   {

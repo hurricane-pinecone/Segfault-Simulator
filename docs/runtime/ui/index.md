@@ -35,9 +35,12 @@ private:
 ```
 
 A layer is a script: put it on an entity (Add Component → Script, as for any
-game object), and it shows while the scene plays. Its state is just its
-members, or the game's systems it reads; `body()` runs every frame, so the UI
-always shows the game as it is, with nothing to keep in sync. What it drew is
+game object), and it shows while the scene plays. Its own state is just its
+members. What it shows of the game it reads from components, and what a click
+asks for it writes into a component's request field for the system that owns
+it to act on: a layer never reads or calls a game system, the same rule as for
+systems. `body()` runs every frame, so the UI always shows the game as it is,
+with nothing to keep in sync. What it drew is
 kept, though: a frame whose `body()` comes out the same isn't laid out or
 drawn again, and one that's changed is only where it changed (see
 [Retained drawing](#retained-drawing)), so writing it this way costs next to

@@ -74,8 +74,8 @@ Animation events are not supported yet.
 Every scene has an `AnimationSystem` (StandardScene adds it). Each update it:
 
 1. moves each animator's time on by the update's seconds times its `speed`
-   (times `AnimationSystem::setTimeScale()`): a game that stops updating its
-   scene (paused) pauses its animations, and `speed` 0 holds one;
+   (times `AnimationSystem::setTimeScale()`), or not at all while the game is
+   paused (`Registry::setPaused()`); `speed` 0 holds one;
 2. samples its clips and blends them by their cross-fade weights. The nodes its
    clips move start from their rest pose (as the model was placed), so a
    channel one clip has and the next doesn't goes back to rest;

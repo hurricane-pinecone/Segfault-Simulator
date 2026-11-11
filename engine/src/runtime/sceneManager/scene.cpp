@@ -146,6 +146,7 @@ void Scene::updateObjects(double deltaTime)
     for (int i = 0; i < steps; ++i)
     {
       const bool last = i + 1 == steps;
+      m_registry.advanceGameTime(step);
       m_registry.forEachSystem(
           [&](System& system)
           {
