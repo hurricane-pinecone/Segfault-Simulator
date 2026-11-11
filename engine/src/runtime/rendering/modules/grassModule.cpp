@@ -146,7 +146,7 @@ void GrassModule::gatherBenders(float seconds)
   };
 
   for (const Entity& entity :
-       m_registry->view<TransformComponent, GrassBenderComponent>())
+       m_registry->query<TransformComponent, GrassBenderComponent>())
   {
     const auto& bender = entity.getComponent<GrassBenderComponent>();
     const glm::mat4 model = hierarchy::worldMatrix(entity);
@@ -815,7 +815,7 @@ void GrassModule::computeCommands(const RenderContext& context)
 
   for (const Entity& entity :
        m_registry
-           ->view<TransformComponent, MeshRendererComponent, GrassComponent>())
+           ->query<TransformComponent, MeshRendererComponent, GrassComponent>())
   {
     const Patch* patch = refresh(entity);
     if (!patch)

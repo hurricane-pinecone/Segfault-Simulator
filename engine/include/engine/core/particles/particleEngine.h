@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
-#include "engine/core/ecs/registry.h" // IWYU pragma: keep -- registry->view<T...>()
+#include "engine/core/ecs/registry.h" // IWYU pragma: keep -- registry->query<T>()
 #include "engine/core/particles/decal.h"
 #include "engine/core/particles/iParticleCollisionSource.h"
 #include "engine/core/particles/particle.h"

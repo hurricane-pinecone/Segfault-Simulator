@@ -197,7 +197,7 @@ void DeformationModule::computeCommands(const RenderContext& context)
   for (auto& [key, field] : m_fields)
     field.seen = false;
   for (const Entity& entity :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.materials.empty())
@@ -447,7 +447,7 @@ void DeformationModule::draw(const RenderContext& context,
 
 void DeformationModule::deform()
 {
-  if (m_fields.empty() || m_registry->view<DeformerComponent>().empty())
+  if (m_fields.empty() || m_registry->query<DeformerComponent>().empty())
   {
     m_placed.clear();
     return;
@@ -457,7 +457,7 @@ void DeformationModule::deform()
       kFarthestSweep,
       kFastest * m_frameSeconds * static_cast<float>(m_registry->timeScale()));
   for (const Entity& mesh :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
     // Its deformer: its own, or an ancestor's that covers its children.
     const DeformerComponent* deformer = nullptr;

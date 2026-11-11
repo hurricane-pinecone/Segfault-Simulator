@@ -205,10 +205,10 @@ private:
   {
     std::vector<Box> solids;
     const Box near{at - glm::vec2(900.0f), at + glm::vec2(900.0f)};
-    for (sfs::Entity& solid : scene()
-                                  .view<sfs::SolidObject,
-                                        sfs::BoxCollider2D,
-                                        sfs::TransformComponent>())
+    for (const sfs::Entity& solid : scene()
+                                        .query<sfs::SolidObject,
+                                               sfs::BoxCollider2D,
+                                               sfs::TransformComponent>())
     {
       const auto& collider = solid.getComponent<sfs::BoxCollider2D>();
       const glm::vec2 centre =
@@ -268,13 +268,14 @@ private:
   void touch(glm::vec2 at)
   {
     const Box body = box(at);
-    for (sfs::Entity& orb : scene().view<Orb, sfs::TransformComponent>())
+    for (const sfs::Entity& orb : scene().query<Orb, sfs::TransformComponent>())
       if (glm::distance(
               orb.getComponent<sfs::TransformComponent>().position2D(),
               at - glm::vec2(0.0f, size.y * 0.5f)) < 58.0f)
         m_director->collect(orb);
 
-    for (sfs::Entity& spike : scene().view<Hazard, sfs::TransformComponent>())
+    for (const sfs::Entity& spike :
+         scene().query<Hazard, sfs::TransformComponent>())
     {
       const Hazard& hurt = spike.getComponent<Hazard>();
       const glm::vec2 centre =
@@ -287,7 +288,8 @@ private:
       }
     }
 
-    for (sfs::Entity& drone : scene().view<Drone, sfs::TransformComponent>())
+    for (const sfs::Entity& drone :
+         scene().query<Drone, sfs::TransformComponent>())
     {
       const glm::vec2 centre =
           drone.getComponent<sfs::TransformComponent>().position2D();
@@ -313,7 +315,8 @@ private:
     }
 
     if (m_grounded)
-      for (sfs::Entity& pad : scene().view<JumpPad, sfs::TransformComponent>())
+      for (const sfs::Entity& pad :
+           scene().query<JumpPad, sfs::TransformComponent>())
       {
         const glm::vec2 centre =
             pad.getComponent<sfs::TransformComponent>().position2D();

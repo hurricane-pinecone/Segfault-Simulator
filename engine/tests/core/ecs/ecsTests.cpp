@@ -3,6 +3,7 @@
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/util/fatalError.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -74,33 +75,79 @@ protected:
   }
 };
 
-// Keeps movers (set 0) and, as a second set, everything with Health, and
-// records what joined and left each.
+// Works on movers and observes everything with Health, recording each hook
+// and callback as "added"/"removed" lists of (entity id, which: 0 the movers,
+// 1 the Health observer), in the order they ran.
 class WatchingSystem : public System
 {
 public:
-  int healthSet = -1;
   std::vector<std::pair<Entity::EntityId, int>> added, removed;
   // Whether a leaving entity still had Position as it left.
   std::vector<bool> leftWithPosition;
+  // Every hook and callback, across systems, in the order they ran.
+  std::vector<std::string>* log = nullptr;
+  std::string name = "watching";
 
 protected:
   void create() override
   {
     registerComponent<Position>();
     registerComponent<Velocity>();
-    healthSet = watch<Health>();
+    observe<Health>([this](const Entity& entity) { joined(entity, 1); },
+                    [this](const Entity& entity) { left(entity, 1); });
   }
-  void onEntityAdded(const Entity& entity, int set) override
+  void onEntityAdded(const Entity& entity) override { joined(entity, 0); }
+  void onEntityRemoved(const Entity& entity) override { left(entity, 0); }
+
+private:
+  void joined(const Entity& entity, int which)
   {
-    added.emplace_back(entity.getId(), set);
+    added.emplace_back(entity.getId(), which);
+    if (log)
+      log->push_back(name + "+" + std::to_string(which));
   }
-  void onEntityRemoved(const Entity& entity, int set) override
+  void left(const Entity& entity, int which)
   {
-    removed.emplace_back(entity.getId(), set);
+    removed.emplace_back(entity.getId(), which);
     leftWithPosition.push_back(entity.hasComponent<Position>());
+    if (log)
+      log->push_back(name + "-" + std::to_string(which));
   }
 };
+
+// Whether `list` holds `entity`.
+bool lists(const std::vector<Entity>& list, const Entity& entity)
+{
+  return std::find(list.begin(), list.end(), entity) != list.end();
+}
+
+// Observes Health only, with no leave callback, and checks, as each joins,
+// that every list it should be in (its Health, and the movers when it moves)
+// already holds it.
+class HealthCounter : public System
+{
+public:
+  int joined = 0;
+  bool listedWhenTold = true;
+  std::vector<std::string>* log = nullptr;
+
+protected:
+  void create() override
+  {
+    observe<Health>(
+        [this](const Entity& entity)
+        {
+          ++joined;
+          listedWhenTold =
+              listedWhenTold && lists(registry->query<Health>(), entity) &&
+              (!entity.hasComponent<Velocity>() ||
+               lists(registry->query<Position, Velocity>(), entity));
+          if (log)
+            log->push_back("counter+");
+        });
+  }
+};
+
 } // namespace
 
 int main()
@@ -194,7 +241,7 @@ int main()
     CHECK(e.hasComponent<Enemy>());
   }
 
-  TEST("view should match entities having all requested components")
+  TEST("query should match entities having all requested components")
   {
     Registry reg;
     Entity moving = reg.createEntity();
@@ -207,10 +254,11 @@ int main()
     Entity hurt = reg.createEntity();
     hurt.addComponent<Health>();
 
-    CHECK(reg.view<Position>().size() == 2);           // moving + still
-    CHECK(reg.view<Position, Velocity>().size() == 1); // moving only
-    CHECK(reg.view<Health>().size() == 1);
-    CHECK(reg.view<Velocity, Health>().empty());
+    reg.flushEntities();
+    CHECK(reg.query<Position>().size() == 2);           // moving + still
+    CHECK(reg.query<Position, Velocity>().size() == 1); // moving only
+    CHECK(reg.query<Health>().size() == 1);
+    CHECK(reg.query<Velocity, Health>().empty());
   }
 
   TEST("destroying an entity should bump the generation and reuse its id")
@@ -233,15 +281,17 @@ int main()
     CHECK(reg.isAlive(b));
   }
 
-  TEST("view should drop a destroyed entity after flush")
+  TEST("query should drop a destroyed entity at the flush")
   {
     Registry reg;
     Entity e = reg.createEntity();
     e.addComponent<Position>();
-    CHECK(reg.view<Position>().size() == 1);
-    reg.destroyEntity(e);
     reg.flushEntities();
-    CHECK(reg.view<Position>().empty());
+    CHECK(reg.query<Position>().size() == 1);
+    reg.destroyEntity(e);
+    CHECK(reg.query<Position>().size() == 1); // (until the flush)
+    reg.flushEntities();
+    CHECK(reg.query<Position>().empty());
   }
 
   TEST("systems should register, look up, and remove")
@@ -472,33 +522,6 @@ int main()
     CHECK(movement.getEntities().empty());
   }
 
-  TEST("each should visit the matching living entities with their components")
-  {
-    Registry reg;
-    Entity a = reg.createEntity();
-    a.addComponent<Position>(Position{1.0f, 0.0f});
-    a.addComponent<Velocity>();
-    Entity b = reg.createEntity();
-    b.addComponent<Position>(Position{2.0f, 0.0f});
-    Entity c = reg.createEntity();
-    c.addComponent<Position>(Position{3.0f, 0.0f});
-    c.addComponent<Velocity>();
-    reg.flushEntities();
-    reg.destroyEntity(c);
-    reg.flushEntities();
-
-    std::vector<float> seen;
-    reg.each<Position, Velocity>(
-        [&](const Entity& entity, Position& position, Velocity&)
-        {
-          CHECK(entity == a);
-          seen.push_back(position.x);
-        });
-    CHECK(seen.size() == 1u);
-    reg.each<Health>([&](const Entity&, Health&) { seen.clear(); });
-    CHECK(seen.size() == 1u); // no entity has had a Health
-  }
-
   TEST("componentChanges should count gaining and losing a component, not "
        "changing it")
   {
@@ -526,11 +549,127 @@ int main()
     CHECK(reg.componentChanges<Velocity>() != again);
   }
 
-  TEST("a system should be told as entities join and leave its sets")
+  TEST("singleton should find the one entity with a component, kept up to "
+       "date as it comes and goes")
+  {
+    Registry reg;
+    CHECK(reg.singleton<Health>() == nullptr);
+    Entity a = reg.createEntity();
+    a.addComponent<Position>();
+    CHECK(reg.singleton<Health>() == nullptr);
+    a.addComponent<Health>();
+    CHECK(reg.singleton<Health>() == &a.getComponent<Health>());
+    reg.flushEntities();
+    CHECK(reg.singleton<Health>() == &a.getComponent<Health>());
+
+    // Several: one of them, still.
+    Entity b = reg.createEntity();
+    b.addComponent<Health>();
+    Health* either = reg.singleton<Health>();
+    CHECK(either == &a.getComponent<Health>() ||
+          either == &b.getComponent<Health>());
+
+    // The remembered one loses it: the other is found.
+    a.removeComponent<Health>();
+    CHECK(reg.singleton<Health>() == &b.getComponent<Health>());
+
+    // Destroyed: gone once the flush takes it.
+    reg.destroyEntity(b);
+    reg.flushEntities();
+    CHECK(reg.singleton<Health>() == nullptr);
+    a.addComponent<Health>();
+    CHECK(reg.singleton<Health>() == &a.getComponent<Health>());
+  }
+
+  TEST("query should list the entities with all its components in id order, "
+       "kept up to date, the same list each time")
+  {
+    Registry reg;
+    Entity a = reg.createEntity();
+    Entity b = reg.createEntity();
+    Entity c = reg.createEntity();
+    a.addComponent<Position>();
+    a.addComponent<Velocity>();
+    c.addComponent<Position>();
+    c.addComponent<Velocity>();
+    b.addComponent<Position>();
+    const std::vector<Entity>& movers = reg.query<Position, Velocity>();
+    CHECK(movers.empty()); // pending: they join at the flush
+    reg.flushEntities();
+    CHECK(movers.size() == 2u);
+    CHECK(movers[0].getId() == a.getId());
+    CHECK(movers[1].getId() == c.getId());
+    CHECK(&reg.query<Velocity, Position>() == &movers); // (cached)
+
+    // A list first asked for after the flush is filled by its scan.
+    CHECK(reg.query<Position>().size() == 3u);
+
+    // Joining in the middle keeps id order; leaving drops it, at once.
+    b.addComponent<Velocity>();
+    CHECK(movers.size() == 3u);
+    CHECK(movers[1].getId() == b.getId());
+    a.removeComponent<Velocity>();
+    CHECK(movers.size() == 2u);
+    CHECK(movers[0].getId() == b.getId());
+
+    // Destroyed: gone once the flush takes it.
+    reg.destroyEntity(c);
+    CHECK(movers.size() == 2u);
+    reg.flushEntities();
+    CHECK(movers.size() == 1u);
+    CHECK(movers[0].getId() == b.getId());
+
+    // A reused id joins in id order, not at the end.
+    Entity d = reg.createEntity();
+    CHECK(d.getId() == c.getId());
+    d.addComponent<Position>();
+    d.addComponent<Velocity>();
+    reg.flushEntities();
+    CHECK(movers.size() == 2u);
+    CHECK(movers[0].getId() == b.getId());
+    CHECK(movers[1].getId() == d.getId());
+  }
+
+  TEST("an entity made and destroyed before a flush should join no query")
+  {
+    Registry reg;
+    const std::vector<Entity>& positioned = reg.query<Position>();
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    reg.destroyEntity(e);
+    reg.flushEntities();
+    CHECK(positioned.empty());
+  }
+
+  TEST("a system's entities should be the registry's query for its components, "
+       "in id order")
+  {
+    Registry reg;
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    std::vector<Entity> made;
+    for (int i = 0; i < 4; ++i)
+    {
+      Entity e = reg.createEntity();
+      e.addComponent<Position>();
+      e.addComponent<Velocity>();
+      made.push_back(e);
+    }
+    reg.flushEntities();
+    CHECK(&movement.getEntities() == &reg.query<Position, Velocity>());
+    reg.destroyEntity(made[0]);
+    reg.flushEntities();
+    made[1].removeComponent<Velocity>();
+    made[1].addComponent<Velocity>(); // back in, before the others by id
+    const std::vector<Entity>& movers = movement.getEntities();
+    CHECK(movers.size() == 3u);
+    CHECK(movers[0] == made[1] && movers[1] == made[2] && movers[2] == made[3]);
+  }
+
+  TEST("a system should be told as entities join and leave its entities and "
+       "what it observes")
   {
     Registry reg;
     WatchingSystem& sys = reg.addSystem<WatchingSystem>();
-    CHECK(sys.healthSet == 1);
 
     Entity mover = reg.createEntity();
     mover.addComponent<Position>();
@@ -540,21 +679,21 @@ int main()
     CHECK(sys.added.empty()); // (until the flush)
     reg.flushEntities();
     CHECK(sys.added.size() == 2u);
+    CHECK(sys.added[0] == std::make_pair(mover.getId(), 0));
+    CHECK(sys.added[1] == std::make_pair(hurt.getId(), 1));
     CHECK(sys.getEntities().size() == 1u);
-    CHECK(sys.getEntities(sys.healthSet).size() == 1u);
-    CHECK(sys.getEntities(sys.healthSet).front().getId() == hurt.getId());
-    CHECK(sys.getEntities(7).empty());
+    CHECK(reg.query<Health>().size() == 1u);
+    CHECK(reg.query<Health>().front().getId() == hurt.getId());
 
-    // Gaining Health: it joins the second set too.
+    // Gaining Health: the observer is told.
     mover.addComponent<Health>();
     CHECK(sys.added.size() == 3u);
-    CHECK(sys.added.back().first == mover.getId());
-    CHECK(sys.added.back().second == sys.healthSet);
+    CHECK(sys.added.back() == std::make_pair(mover.getId(), 1));
 
-    // Losing Velocity: it leaves set 0 only.
+    // Losing Velocity: it leaves the system's entities only.
     mover.removeComponent<Velocity>();
     CHECK(sys.removed.size() == 1u);
-    CHECK(sys.removed.back().second == 0);
+    CHECK(sys.removed.back() == std::make_pair(mover.getId(), 0));
     CHECK(sys.leftWithPosition.back());
     CHECK(sys.getEntities().empty());
 
@@ -562,24 +701,77 @@ int main()
     reg.destroyEntity(mover);
     reg.flushEntities();
     CHECK(sys.removed.size() == 2u);
-    CHECK(sys.removed.back().first == mover.getId());
-    CHECK(sys.removed.back().second == sys.healthSet);
-    CHECK(sys.getEntities(sys.healthSet).size() == 1u);
+    CHECK(sys.removed.back() == std::make_pair(mover.getId(), 1));
+    CHECK(sys.leftWithPosition.back());
+    CHECK(reg.query<Health>().size() == 1u);
   }
 
-  TEST("a system added late should be told of the entities already there")
+  TEST("hooks should run after every list is updated, by system registration "
+       "order, the entities' hooks before the observe callbacks")
   {
     Registry reg;
+    std::vector<std::string> log;
+    HealthCounter& counter = reg.addSystem<HealthCounter>();
+    counter.log = &log;
+    WatchingSystem& first = reg.addSystem<WatchingSystem>();
+    first.log = &log;
+
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    e.addComponent<Velocity>();
+    e.addComponent<Health>();
+    reg.flushEntities();
+    CHECK(log ==
+          std::vector<std::string>({"counter+", "watching+0", "watching+1"}));
+    CHECK(counter.joined == 1);
+    CHECK(counter.listedWhenTold);
+
+    // Destroyed: told in the same order, still with its components.
+    log.clear();
+    reg.destroyEntity(e);
+    reg.flushEntities();
+    CHECK(log == std::vector<std::string>({"watching-0", "watching-1"}));
+    CHECK(first.leftWithPosition.size() == 2u);
+    CHECK(first.leftWithPosition[0] && first.leftWithPosition[1]);
+  }
+
+  TEST("a system added late should be told of the entities already there, in "
+       "id order, but not of those pending a flush")
+  {
+    Registry reg;
+    Entity healer = reg.createEntity();
+    healer.addComponent<Health>();
     Entity mover = reg.createEntity();
     mover.addComponent<Position>();
     mover.addComponent<Velocity>();
     mover.addComponent<Health>();
     reg.flushEntities();
+    Entity pending = reg.createEntity();
+    pending.addComponent<Health>();
 
     WatchingSystem& sys = reg.addSystem<WatchingSystem>();
-    CHECK(sys.added.size() == 2u);
+    CHECK(sys.added.size() == 3u);
+    CHECK(sys.added[0] == std::make_pair(healer.getId(), 1));
+    CHECK(sys.added[1] == std::make_pair(mover.getId(), 0));
+    CHECK(sys.added[2] == std::make_pair(mover.getId(), 1));
     CHECK(sys.getEntities().size() == 1u);
-    CHECK(sys.getEntities(sys.healthSet).size() == 1u);
+    reg.flushEntities();
+    CHECK(sys.added.size() == 4u);
+    CHECK(sys.added.back() == std::make_pair(pending.getId(), 1));
+  }
+
+  TEST("a removed system should no longer be told")
+  {
+    Registry reg;
+    HealthCounter& counter = reg.addSystem<HealthCounter>();
+    Entity e = reg.createEntity();
+    e.addComponent<Health>();
+    reg.flushEntities();
+    CHECK(counter.joined == 1);
+    reg.removeSystem<HealthCounter>();
+    reg.createEntity().addComponent<Health>();
+    reg.flushEntities(); // (counter is gone: nothing may call it)
+    CHECK(reg.query<Health>().size() == 2u);
   }
 
   TEST("getSystem on a missing system should be a fatal error naming it")

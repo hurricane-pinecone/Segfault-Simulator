@@ -37,6 +37,11 @@ the architecture or these rules, or how a game behaves for the player.
   later system reads, in the registered update order. A request is a component field the serving system fills in
   later (a plan request and its result). When two systems feed each other, the earlier one reads what the later one
   wrote last frame. No `getSystem` for data, and no callbacks between systems.
+- Lists of entities by component: a system's own are `getEntities()` (its `registerComponent`s); any other kind is
+  `registry->query<Ts...>()` (scripts: `scene().query<Ts...>()`: cached, kept current, shared). A system that must
+  react as another kind joins or leaves uses `observe<Ts...>(added, removed)`. No system keeps its own entity list.
+- A component a scene has exactly one of (a world clock, the weather) is read with `registry->singleton<T>()`
+  (scripts: `scene().singleton<T>()`), never a query of one.
 - Component fields the editor can't edit (or that shouldn't be saved or shown) are `[[sfs::hide]]`.
 - A component describes its own concern only. It never holds references to another feature's data or assets: e.g.
   `NavAgentComponent` does not reference a `VehicleSpec`. A system that needs several concerns views the entities
@@ -106,3 +111,6 @@ the architecture or these rules, or how a game behaves for the player.
   what the code does, keep history, or add parenthetical asides. Every public and util function gets a proper
   docstring (`/** ... */`: what it does, its parameters, its result). Fields other code reads (a component's fields
   read by systems, a shared struct's) each get a docstring. Applies to all code written or changed.
+- Optimise as you go when it's simple and doesn't change behaviour: take by const reference instead of copying
+  (maps, vectors, strings, components), move instead of copy, reserve when the size is known, hoist repeated lookups
+  out of loops. Leave larger optimisations for a measured change.

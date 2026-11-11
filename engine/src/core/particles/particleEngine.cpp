@@ -557,7 +557,7 @@ void ParticleEngine::syncComponentEmitters(float dt)
     inst.emitting = false;
 
   for (const auto& entity :
-       registry->view<TransformComponent, ParticleEmitterComponent>())
+       registry->query<TransformComponent, ParticleEmitterComponent>())
   {
     const auto& emitter = entity.getComponent<ParticleEmitterComponent>();
 

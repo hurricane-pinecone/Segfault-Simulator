@@ -100,9 +100,9 @@ protected:
 };
 ```
 
-`getEntities()` is the system's own membership: every entity whose components
-include the set it registered. For an ad-hoc query across a different component
-set, a system can also use `registry->view<A, B, ...>()`.
+See [A system's entities](#a-systems-entities-registercomponent) for what
+`getEntities()` holds, and [Queries](#queries-lists-of-entities-by-component) for
+lists of other kinds of entity.
 
 A system has three optional lifecycle hooks: `create()` (once — register
 components), `update(double dt)` (per frame), and `render()` (per frame, after
@@ -127,65 +127,93 @@ it and throws `sfs::FatalError`) naming the missing type. The game loop
 catches it, tells the player in a message box and ends the game. Use
 `tryGetSystem<T>()` when a system may or may not be present.
 
-`scene.view<A, B>()` makes a list; `registry->each<A, B>(fn)` (in a system)
-calls `fn(entity, a, b)` for each match without one, for code that runs every
-frame.
-
 `registry->componentChanges<A>()` goes up whenever an entity gains or loses an
-`A` (a destroyed entity loses all of its components). A system that keeps its
-own list of the entities with an `A` searches again only when it has moved,
-instead of every frame. Changing an `A`'s values doesn't count: compare those
+`A` (a destroyed entity loses all of its components). Code that works
+something out from the entities with an `A` can redo it only when it has
+moved, instead of every frame. Changing an `A`'s values doesn't count: compare those
 yourself.
 
-### Joining and leaving
+### A system's entities: registerComponent
+
+`registerComponent<T>()`, called in the system's constructor or `create()`,
+adds `T` to the components an entity needs to be one of the system's
+entities. `getEntities()` returns them: the living entities with all of its
+registered components, in id order. It is the registry's shared query for
+those components (see [Queries](#queries-lists-of-entities-by-component)), so
+the system keeps no copy, and it is read-only.
+
+A new entity joins at the registry's flush (the start of the scene's next
+update, or `flushEntities()`); an entity already flushed joins or leaves at
+once as it gains or loses a component; a destroyed one leaves at the flush.
 
 All per-entity data belongs on its components (hidden fields for what isn't
 authored), which systems update: a system never keeps its own map or struct per
-entity. A system that must set something up or release it as an entity joins or
-leaves (an engine-side resource, a shared index) does it in
-`onEntityAdded(entity, set)` and `onEntityRemoved(entity, set)`, rather than
-searching `getEntities()` for newcomers every frame. They're called as an entity joins or leaves: when it
-gains or loses a component, when it's created or destroyed (at the registry's
-flush), and when the system is added to a registry that already has it.
-Joining, it has all the set's components. Leaving, it's still alive with its
-other components: a destroyed entity still has all of them, and one that lost
-a component no longer has that one. Keep the hooks to the system's own state:
-don't add or remove components, entities or systems from them.
+entity. A system that must set something up or release it as one of its
+entities joins or leaves (an engine-side resource, a shared index) does it in
+`onEntityAdded(entity)` and `onEntityRemoved(entity)`, rather than searching
+`getEntities()` for newcomers every frame. They're called as an entity joins
+or leaves: when it gains or loses a component, when it's created or destroyed
+(at the flush), and, for every entity already there in id order, when the
+system is added to a registry. Joining, it has all the registered components.
+Leaving, it's still alive with its other components: a destroyed entity still
+has all of them, and one that lost a component no longer has that one. Keep
+the hooks to the system's own state: don't add or remove components, entities
+or systems from them.
 
-A system that also works on a second kind of entity watches it as another set,
-registered where its components are:
+### Queries: lists of entities by component
+
+`registry->query<A, B>()` (scripts: `scene().query<A, B>()`) is the list of
+entities with both components, in id order: the living ones that have been
+flushed, with the same timing as a system's entities. The registry makes it
+the first time it's asked for (one scan) and keeps it up to date from then on
+as components are added and removed, so reading it every frame costs nothing,
+and everyone asking for the same components shares the list. The reference
+stays valid as long as the registry. To add or remove those component types
+while going through it, go through a copy (destroying entities is fine: they
+leave at the next flush).
+
+```cpp
+for (const sfs::Entity& light :
+     registry->query<sfs::TransformComponent, sfs::PointLightComponent>())
+  draw(light);
+```
+
+Use a query for any other kind of entity a system or script reads; a system's
+own kind is `getEntities()`.
+
+### Observing joins and leaves
+
+A system that must react as another kind of entity joins or leaves (set
+something up for a new wheel, release it as it goes) observes it where its
+components are registered:
 
 ```cpp
 class RigSystem : public sfs::System
 {
-  int m_tools = -1;
-  std::unordered_map<sfs::Entity::EntityId, Rig> m_rigs;
-  std::unordered_map<sfs::Entity::EntityId, Tool> m_toolStates;
-
 protected:
   void create() override
   {
-    registerComponent<sfs::VehicleComponent>(); // set 0: getEntities()
-    m_tools = watch<Implement, sfs::TransformComponent>();
+    registerComponent<sfs::VehicleComponent>(); // getEntities(), onEntityAdded()
+    observe<Wheel, sfs::TransformComponent>(
+        [this](const sfs::Entity& wheel) { setUpWheel(wheel); },
+        [this](const sfs::Entity& wheel) { releaseWheel(wheel); });
   }
-  void onEntityAdded(const sfs::Entity& e, int set) override
+  void update(double dt) override
   {
-    if (set == 0)
-      m_rigs.emplace(e.getId(), Rig{});
-    else
-      m_toolStates.emplace(e.getId(), Tool{});
-  }
-  void onEntityRemoved(const sfs::Entity& e, int set) override
-  {
-    if (set == 0)
-      m_rigs.erase(e.getId());
-    else
-      m_toolStates.erase(e.getId());
+    for (const sfs::Entity& wheel :
+         registry->query<Wheel, sfs::TransformComponent>())
+      spin(wheel, dt);
   }
 };
 ```
 
-`getEntities(set)` lists a watched set's entities.
+The callbacks (the second is optional) are called with the same timing as
+`onEntityAdded()` and `onEntityRemoved()`; the list itself is read with
+`query()`. For one change, every list is updated first, then the systems are
+told in the order they were added and, within a system, its
+`onEntityAdded()`/`onEntityRemoved()` first and then its observe callbacks in
+the order they were declared. Observe only where a reaction is needed: to just
+read a list, query it.
 
 A program can have at most `MAX_COMPONENTS` (128) component types; one more is
 a fatal error when it's first used.
@@ -221,6 +249,16 @@ Unity's `Time.time`). The scene adds each step's time before that step's
 systems run, so a `Stepped` system reads the time at the end of its step, and
 `Frame` and `Real` systems read the frame's end. Only the scene advances it.
 Scripts read the same through `scene().gameTime()` and `scene().paused()`.
+
+### One-per-scene components
+
+A component a scene has exactly one of (a world clock, the weather) is read
+with `registry->singleton<T>()` (scripts: `scene().singleton<T>()`): the
+component, or null when no entity has one. It costs nothing to call every
+frame: the registry keeps track of who holds each component type as
+components are added and removed. If several entities have one, it logs a
+warning once and returns one of them. Use it instead of a query of one.
+Unlike a query, it includes an entity still waiting for its first flush.
 
 `registry->setPaused(true)` pauses the game: the engine's own moving parts,
 `AnimationSystem`'s animators and `ParticleModule`'s particles, stand still.
@@ -287,13 +325,13 @@ e.addComponent<Position>(Position{1.0f, 2.0f});
 e.addComponent<Velocity>(Velocity{0.0f, 1.0f});
 
 reg.addSystem<DriftSystem>();    // create() runs immediately
-reg.flushEntities();             // distributes new entities to matched systems
+reg.flushEntities();             // new entities join queries and systems
 
 reg.destroyEntity(e);
 reg.flushEntities();             // destruction is deferred until flush
 ```
 
 Entity destruction is deferred: a destroyed entity stays alive (and its
-components remain readable) until the next `flushEntities()` call. Views and
-system membership update at flush time, so call `flushEntities()` whenever the
-caller needs a consistent snapshot.
+components remain readable) until the next `flushEntities()` call. New
+entities join queries and systems at the flush too, so call `flushEntities()`
+whenever the caller needs a consistent snapshot.

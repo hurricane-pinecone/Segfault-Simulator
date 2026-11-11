@@ -61,7 +61,7 @@ void PuddleModule::emit(const RenderContext& context,
   for (auto& [key, field] : m_fields)
     field.seen = false;
   for (const Entity& entity :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.materials.empty())

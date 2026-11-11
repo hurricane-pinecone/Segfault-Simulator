@@ -132,39 +132,37 @@ std::size_t appendAll(Registry& registry,
                       DebugLines& out)
 {
   std::size_t drawn = 0;
-  registry.each<TransformComponent, BoxCollider3DComponent>(
-      [&](const Entity& entity,
-          const TransformComponent&,
-          const BoxCollider3DComponent& box)
-      {
-        box3D(placementOf(entity), box, out);
-        ++drawn;
-      });
-  registry.each<TransformComponent, SphereCollider3DComponent>(
-      [&](const Entity& entity,
-          const TransformComponent&,
-          const SphereCollider3DComponent& sphere)
-      {
-        sphere3D(placementOf(entity), sphere, out);
-        ++drawn;
-      });
-  registry.each<TransformComponent, CapsuleCollider3DComponent>(
-      [&](const Entity& entity,
-          const TransformComponent&,
-          const CapsuleCollider3DComponent& capsule)
-      {
-        capsule3D(placementOf(entity), capsule, out);
-        ++drawn;
-      });
+  for (const Entity& entity :
+       registry.query<TransformComponent, BoxCollider3DComponent>())
+  {
+    box3D(placementOf(entity),
+          entity.getComponent<BoxCollider3DComponent>(),
+          out);
+    ++drawn;
+  }
+  for (const Entity& entity :
+       registry.query<TransformComponent, SphereCollider3DComponent>())
+  {
+    sphere3D(placementOf(entity),
+             entity.getComponent<SphereCollider3DComponent>(),
+             out);
+    ++drawn;
+  }
+  for (const Entity& entity :
+       registry.query<TransformComponent, CapsuleCollider3DComponent>())
+  {
+    capsule3D(placementOf(entity),
+              entity.getComponent<CapsuleCollider3DComponent>(),
+              out);
+    ++drawn;
+  }
   if (space)
-    registry.each<TransformComponent, BoxCollider2D>(
-        [&](const Entity& entity,
-            const TransformComponent&,
-            const BoxCollider2D& box)
-        {
-          box2D(entity, box, *space, out);
-          ++drawn;
-        });
+    for (const Entity& entity :
+         registry.query<TransformComponent, BoxCollider2D>())
+    {
+      box2D(entity, entity.getComponent<BoxCollider2D>(), *space, out);
+      ++drawn;
+    }
   return drawn;
 }
 

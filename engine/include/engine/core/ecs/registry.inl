@@ -5,7 +5,6 @@
 #include "engine/core/util/fatalError.h"
 #include <algorithm>
 #include <string>
-#include <tuple>
 
 namespace sfs
 {
@@ -67,6 +66,31 @@ void Registry::removeComponent(const Entity& entity)
     pool->remove(static_cast<std::size_t>(entityId));
 }
 
+template <typename... TComponents>
+const std::vector<Entity>& Registry::query()
+{
+  Signature signature;
+  (signature.set(Component<TComponents>::getId()), ...);
+  return queryOf(signature);
+}
+
+template <typename TComponent>
+TComponent* Registry::singleton()
+{
+  const std::size_t id =
+      static_cast<std::size_t>(Component<TComponent>::getId());
+  if (m_holderCount[id] == 0)
+    return nullptr;
+  if (m_holderCount[id] > 1 && !m_warnedNotSingle[id])
+    warnNotSingle(id, detail::componentTypeKey<TComponent>());
+  if (m_holder[id] == kNoHolder)
+    m_holder[id] = findHolder(id);
+  if (m_holder[id] == kNoHolder)
+    return nullptr;
+  Pool<TComponent>* pool = poolOf<TComponent>();
+  return pool ? pool->find(m_holder[id]) : nullptr;
+}
+
 template <typename TComponent>
 uint64_t Registry::componentChanges() const
 {
@@ -106,7 +130,7 @@ TSystem& Registry::addSystem(TArgs&&... args)
 
   System* base = ptr;
   base->create();
-  addExistingEntities(*base);
+  attach(*base);
 
   return *ptr;
 }
@@ -165,53 +189,6 @@ TSystem* Registry::tryGetSystem() const
   }
 
   return nullptr;
-}
-
-template <typename... TComponents, typename Fn>
-void Registry::each(Fn&& fn)
-{
-  Signature requiredSignature;
-  (requiredSignature.set(Component<TComponents>::getId()), ...);
-
-  const auto pools = std::make_tuple(poolOf<TComponents>()...);
-  if (((std::get<Pool<TComponents>*>(pools) == nullptr) || ...))
-    return; // a type no entity has had
-
-  for (Entity::EntityId entityId = 0;
-       entityId < entityComponentSignatures.size();
-       entityId++)
-  {
-    if (!entityAlive[entityId] || (entityComponentSignatures[entityId] &
-                                   requiredSignature) != requiredSignature)
-      continue;
-    Entity entity{entityId, generations[entityId], entityDebugIds[entityId]};
-    entity.setRegistry(this);
-    fn(entity, std::get<Pool<TComponents>*>(pools)->get(entityId)...);
-  }
-}
-
-template <typename... TComponents>
-std::vector<Entity> Registry::view()
-{
-  Signature requiredSignature;
-
-  (requiredSignature.set(Component<TComponents>::getId()), ...);
-
-  std::vector<Entity> result;
-
-  for (Entity::EntityId entityId = 0;
-       entityId < entityComponentSignatures.size();
-       entityId++)
-  {
-    const Signature& entitySignature = entityComponentSignatures[entityId];
-
-    if ((entitySignature & requiredSignature) == requiredSignature)
-    {
-      result.push_back(getEntity(entityId));
-    }
-  }
-
-  return result;
 }
 
 template <typename Fn>

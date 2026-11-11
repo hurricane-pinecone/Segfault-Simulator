@@ -90,14 +90,6 @@ public:
   // Every living entity, in id order (e.g. for an editor's hierarchy).
   std::vector<Entity> entities() { return m_registry.entities(); }
 
-  // Every living entity with all these components, in id order: a query for
-  // scripts (a System keeps its own list of the entities it works on).
-  template <typename... TComponents>
-  std::vector<Entity> view()
-  {
-    return m_registry.view<TComponents...>();
-  }
-
   // Apply pending entity creation/destruction now instead of at the start of
   // the next update (e.g. after an editor replaces the scene's contents).
   // Game objects on entities it destroys are destroyed too.
@@ -163,6 +155,29 @@ public:
 
   /** Whether the game is paused (Registry::paused()). */
   bool paused() const { return m_registry.paused(); }
+
+  /**
+   * The flushed, living entities with all these components, in id order: the
+   * registry's shared list, kept up to date (Registry::query()). To add or
+   * remove these component types while going through it, go through a copy.
+   * @return the shared list, read-only
+   */
+  template <typename... TComponents>
+  const std::vector<Entity>& query()
+  {
+    return m_registry.query<TComponents...>();
+  }
+
+  /**
+   * The scene's one TComponent (a world clock, the weather), in constant
+   * time: Registry::singleton().
+   * @return the component, or null when no living entity has one
+   */
+  template <typename TComponent>
+  TComponent* singleton()
+  {
+    return m_registry.singleton<TComponent>();
+  }
 
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);

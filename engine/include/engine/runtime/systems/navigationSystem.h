@@ -201,7 +201,7 @@ public:
 
 protected:
   void update(double deltaTime) override;
-  void onEntityRemoved(const Entity& entity, int set) override;
+  void onEntityRemoved(const Entity& entity) override;
 
 private:
   // An agent as it stands (a view of its NavAgentComponent, made when it's

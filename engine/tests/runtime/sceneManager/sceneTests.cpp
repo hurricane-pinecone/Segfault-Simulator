@@ -196,17 +196,18 @@ int main()
     CHECK(world.scene.findEntities("Gate")[1] == loose);
   }
 
-  TEST("view should list the entities with all the given components")
+  TEST("query should list the flushed entities with all the given components")
   {
     World world;
     Entity named = world.named("Farm");
     Entity tagged = world.named("Gate");
     tagged.addComponent<ParentComponent>();
+    CHECK(world.scene.query<NameComponent>().empty()); // (until the flush)
     world.scene.flushEntities();
 
-    CHECK(world.scene.view<NameComponent>().size() == 2u);
-    const std::vector<Entity> both =
-        world.scene.view<NameComponent, ParentComponent>();
+    CHECK(world.scene.query<NameComponent>().size() == 2u);
+    const std::vector<Entity>& both =
+        world.scene.query<NameComponent, ParentComponent>();
     CHECK(both.size() == 1u && both[0] == tagged);
     CHECK(named.isValid());
   }

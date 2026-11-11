@@ -4,6 +4,7 @@
 
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
+#include "engine/core/components/contactReportComponent.h"
 #include "engine/core/components/parentComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
@@ -76,6 +77,39 @@ constexpr float kWidthPerStep = 0.75f;
 constexpr float kMaxTravel = 1.0f;
 constexpr float kMinTravel = 0.01f;
 constexpr int kMostSubsteps = 16;
+
+// The nearest ContactReportComponent at or above a body's entity, or an
+// invalid entity when there is none.
+Entity reportOf(Entity entity)
+{
+  while (entity.isValid() && entity.isAlive())
+  {
+    if (entity.hasComponent<ContactReportComponent>())
+      return entity;
+    entity = hierarchy::parentOf(entity);
+  }
+  return {};
+}
+
+// Hands each contact to the reports of both sides, `a` being the report's own
+// collider. Contacts are few, so the parents are walked for each one.
+void reportContacts(const std::vector<Contact3D>& contacts,
+                    std::vector<Contact3D> ContactReportComponent::*list)
+{
+  for (const Contact3D& contact : contacts)
+  {
+    const Entity first = reportOf(contact.a);
+    const Entity second = reportOf(contact.b);
+    if (first)
+      (first.getComponent<ContactReportComponent>().*list).push_back(contact);
+    if (second && second != first)
+    {
+      Contact3D swapped = contact;
+      std::swap(swapped.a, swapped.b);
+      (second.getComponent<ContactReportComponent>().*list).push_back(swapped);
+    }
+  }
+}
 
 // Static bodies only need testing against moving ones.
 constexpr JPH::ObjectLayer kStaticLayer = 0;
@@ -1124,14 +1158,12 @@ struct PhysicsSystem3D::Impl
       if (std::optional<BodyDesc> desc = describe(parts, world))
         created = addRecord(entity, parts, std::move(*desc), world) || created;
     };
-    registry.each<BoxCollider3DComponent>(
-        [&](const Entity& entity, BoxCollider3DComponent&) { visit(entity); });
-    registry.each<SphereCollider3DComponent>(
-        [&](const Entity& entity, SphereCollider3DComponent&)
-        { visit(entity); });
-    registry.each<CapsuleCollider3DComponent>(
-        [&](const Entity& entity, CapsuleCollider3DComponent&)
-        { visit(entity); });
+    for (const Entity& entity : registry.query<BoxCollider3DComponent>())
+      visit(entity);
+    for (const Entity& entity : registry.query<SphereCollider3DComponent>())
+      visit(entity);
+    for (const Entity& entity : registry.query<CapsuleCollider3DComponent>())
+      visit(entity);
 
     // A big batch (a scene's first update) makes the broad phase lopsided.
     if (created && !optimised)
@@ -1365,6 +1397,15 @@ void PhysicsSystem3D::update(double deltaTime)
   m->stats.steps = 0;
   if (!registry)
     return;
+  const std::vector<Entity>& reports =
+      registry->query<ContactReportComponent>();
+  for (const Entity& entity : reports)
+  {
+    auto& report = entity.getComponent<ContactReportComponent>();
+    report.begun.clear();
+    report.ended.clear();
+    report.deepened.clear();
+  }
 
   {
     SFS_CPU_SCOPE("physics3D/sync");
@@ -1384,6 +1425,13 @@ void PhysicsSystem3D::update(double deltaTime)
   }
   else
     m->stepKinematic(deltaTime, registry->timeScale());
+
+  if (!reports.empty())
+  {
+    reportContacts(m->begun, &ContactReportComponent::begun);
+    reportContacts(m->ended, &ContactReportComponent::ended);
+    reportContacts(m->deepened, &ContactReportComponent::deepened);
+  }
 
   if (!m_scene)
     return;

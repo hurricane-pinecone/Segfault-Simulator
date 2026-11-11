@@ -21,7 +21,7 @@ ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
   float bestT = 2.0f;
 
   for (const auto& solid :
-       m_registry->view<SolidObject, TransformComponent, BoxCollider2D>())
+       m_registry->query<SolidObject, TransformComponent, BoxCollider2D>())
   {
     const auto& box = solid.getComponent<BoxCollider2D>();
     const glm::vec2 centre =

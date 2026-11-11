@@ -81,7 +81,7 @@ void SpriteModule::computeCommands(const RenderContext& context)
 
   std::unordered_map<uint32_t, std::size_t> byMaterial; // into m_commands
   for (const Entity& entity :
-       m_registry->view<SpriteComponent, TransformComponent>())
+       m_registry->query<SpriteComponent, TransformComponent>())
   {
     const auto& sprite = entity.getComponent<SpriteComponent>();
     if (sprite.image.empty())

@@ -209,7 +209,7 @@ NavAgentComponent* NavigationSystem::agentOf(const Entity& agent)
              : nullptr;
 }
 
-void NavigationSystem::onEntityRemoved(const Entity& entity, int set)
+void NavigationSystem::onEntityRemoved(const Entity& entity)
 {
   // (Out of the fleet, if it was in it.)
   const auto id = static_cast<nav::Fleet::AgentId>(entity.getId());
@@ -503,58 +503,59 @@ nav::AgentSpec NavigationSystem::specOf(const Tracked& t) const
   const glm::mat4 trailerFrame =
       tows ? glm::inverse(hierarchy::worldMatrix(towed)) : glm::mat4(1.0f);
   std::optional<nav::Box3> trailerBox;
-  registry->each<BoxCollider3DComponent>(
-      [&](Entity e, BoxCollider3DComponent& box)
+  const auto addBox = [&](const Entity& e, const BoxCollider3DComponent& box)
+  {
+    if (box.trigger)
+      return;
+    if (tows && t.hitch->rigid &&
+        (e == towed || hierarchy::isAncestor(towed, e)))
+    {
+      // (Mounted: one of its own boxes in the agent's own frame, level
+      // (mountedBox()): as its mount holds it (Hitch::mount), else where
+      // it's held now relative to the agent; from the reference point.)
+      const glm::mat4 part =
+          t.hitch->mount
+              ? *t.hitch->mount * towedOwn * hierarchy::worldMatrix(e)
+              : agentOwn * hierarchy::worldMatrix(e);
+      s.boxes.push_back(
+          mountedBox(glm::translate(glm::mat4(1.0f),
+                                    glm::vec3(-t.axle.x, -t.axle.y, 0.0f)) *
+                         part,
+                     box.offset - 0.5f * box.size,
+                     box.offset + 0.5f * box.size));
+      return;
+    }
+    if (tows && (e == towed || hierarchy::isAncestor(towed, e)))
+    {
+      if (auto b = boxIn(trailerFrame, e, box, 0.0f))
       {
-        if (box.trigger)
-          return;
-        if (tows && t.hitch->rigid &&
-            (e == towed || hierarchy::isAncestor(towed, e)))
+        // (From its axle: the trailer swings on it, Towed's frame.)
+        b->back -= t.hitch->axle;
+        b->front -= t.hitch->axle;
+        if (!trailerBox)
+          trailerBox = *b;
+        else
         {
-          // (Mounted: one of its own boxes in the agent's own frame, level
-          // (mountedBox()): as its mount holds it (Hitch::mount), else where
-          // it's held now relative to the agent; from the reference point.)
-          const glm::mat4 part =
-              t.hitch->mount
-                  ? *t.hitch->mount * towedOwn * hierarchy::worldMatrix(e)
-                  : agentOwn * hierarchy::worldMatrix(e);
-          s.boxes.push_back(
-              mountedBox(glm::translate(glm::mat4(1.0f),
-                                        glm::vec3(-t.axle.x, -t.axle.y, 0.0f)) *
-                             part,
-                         box.offset - 0.5f * box.size,
-                         box.offset + 0.5f * box.size));
-          return;
+          // (One box for the trailer: the bounds of its colliders.)
+          nav::Box3& tb = *trailerBox;
+          const float lo = std::min(tb.shift - tb.half, b->shift - b->half);
+          const float hi = std::max(tb.shift + tb.half, b->shift + b->half);
+          tb.back = std::min(tb.back, b->back);
+          tb.front = std::max(tb.front, b->front);
+          tb.half = 0.5f * (hi - lo);
+          tb.shift = 0.5f * (hi + lo);
+          tb.bottom = std::min(tb.bottom, b->bottom);
+          tb.top = std::max(tb.top, b->top);
         }
-        if (tows && (e == towed || hierarchy::isAncestor(towed, e)))
-        {
-          if (auto b = boxIn(trailerFrame, e, box, 0.0f))
-          {
-            // (From its axle: the trailer swings on it, Towed's frame.)
-            b->back -= t.hitch->axle;
-            b->front -= t.hitch->axle;
-            if (!trailerBox)
-              trailerBox = *b;
-            else
-            {
-              // (One box for the trailer: the bounds of its colliders.)
-              nav::Box3& tb = *trailerBox;
-              const float lo = std::min(tb.shift - tb.half, b->shift - b->half);
-              const float hi = std::max(tb.shift + tb.half, b->shift + b->half);
-              tb.back = std::min(tb.back, b->back);
-              tb.front = std::max(tb.front, b->front);
-              tb.half = 0.5f * (hi - lo);
-              tb.shift = 0.5f * (hi + lo);
-              tb.bottom = std::min(tb.bottom, b->bottom);
-              tb.top = std::max(tb.top, b->top);
-            }
-          }
-          return;
-        }
-        if (e == agent || hierarchy::isAncestor(agent, e))
-          if (const auto b = boxIn(own, e, box, t.axle.z))
-            s.boxes.push_back(*b);
-      });
+      }
+      return;
+    }
+    if (e == agent || hierarchy::isAncestor(agent, e))
+      if (const auto b = boxIn(own, e, box, t.axle.z))
+        s.boxes.push_back(*b);
+  };
+  for (const Entity& e : registry->query<BoxCollider3DComponent>())
+    addBox(e, e.getComponent<BoxCollider3DComponent>());
   if (tows && !t.hitch->rigid && trailerBox)
   {
     nav::AgentSpec::Towed tw;

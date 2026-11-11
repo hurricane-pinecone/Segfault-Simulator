@@ -36,12 +36,9 @@ void MeshModule::computeCommands(const RenderContext& context)
   if (!m_registry || !context.meshes)
     return;
 
-  // Without making a list of them: this runs every frame.
-  m_registry->each<TransformComponent, MeshRendererComponent>(
-      [&](const Entity& entity,
-          const TransformComponent&,
-          const MeshRendererComponent& renderer)
-      { addEntity(context, entity, renderer); });
+  for (const Entity& entity :
+       m_registry->query<TransformComponent, MeshRendererComponent>())
+    addEntity(context, entity, entity.getComponent<MeshRendererComponent>());
 }
 
 void MeshModule::addEntity(const RenderContext& context,

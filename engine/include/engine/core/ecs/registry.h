@@ -25,6 +25,7 @@
 #include <memory>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace sfs
@@ -72,18 +73,6 @@ public:
 
   template <typename TSystem>
   TSystem* tryGetSystem() const;
-
-  template <typename... TComponents>
-  std::vector<Entity> view();
-
-  /**
-   * Call `fn(entity, components&...)` for every living entity with all these
-   * components, in id order: view() without making a list. `fn` mustn't add
-   * or remove these component types (creating and destroying entities is
-   * fine: that waits for the next flush).
-   */
-  template <typename... TComponents, typename Fn>
-  void each(Fn&& fn);
 
   template <typename Fn>
   void forEachSystem(Fn&& fn);
@@ -135,14 +124,74 @@ public:
   template <typename TComponent>
   uint64_t componentChanges() const;
 
+  /**
+   * The registry's one TComponent, for components a scene has exactly one of
+   * (a world clock, the weather): constant time, kept up to date as
+   * components are added and removed. Null when no living entity has one.
+   * When several do, it logs a warning (once per type) and returns one.
+   */
+  template <typename TComponent>
+  TComponent* singleton();
+
+  /**
+   * The entities with all these components, in id order: the living ones
+   * that have been flushed (a new entity joins at the next flushEntities(),
+   * as it joins systems; a destroyed one leaves at the flush). The registry
+   * makes the list the first time it's asked for (one scan) and keeps it up
+   * to date from then on as components are added and removed, so asking
+   * again, every frame or anywhere else, costs nothing, and everyone asking
+   * for the same components shares it. The reference stays valid as long as
+   * the registry. To add or remove these component types while going
+   * through it, go through a copy.
+   * @return the shared list, read-only
+   */
+  template <typename... TComponents>
+  const std::vector<Entity>& query();
+
 private:
-  void addEntityToSystems(const Entity& entity);
+  struct Query
+  {
+    Signature signature;
+    std::vector<Entity> entities; // by id
+  };
+  // A query list an entity just joined (or left), for the hooks.
+  struct QueryChange
+  {
+    const std::vector<Entity>* list = nullptr;
+    bool joined = false;
+  };
+  // The query for a signature, made and filled the first time.
+  const std::vector<Entity>& queryOf(const Signature& signature);
+  // Whether an entity is waiting for its first flush (in no query yet).
+  bool isPending(Entity::EntityId id) const;
+  // An entity's components went from `before` to `after`, and it was (`wasIn`)
+  // and now is (`isIn`) a flushed, living entity: it joins or leaves the
+  // queries that now match it, then the systems following them are told.
+  void syncQueries(Entity::EntityId id,
+                   const Signature& before,
+                   bool wasIn,
+                   const Signature& after,
+                   bool isIn);
+  // A system just added (after its create()): it follows the queries of its
+  // entities and observers, and is told of their members, entity by entity in
+  // id order.
+  void attach(System& system);
+  // A system already in the registry follows its list `index` too (an
+  // observe() after it was added), told of the members already there.
+  void follow(System& system, std::size_t index);
 
   // An entity's components changed from `before`: it joins or leaves the
-  // systems that now match it (one waiting for a flush joins them then).
+  // queries that now match it (one waiting for a flush joins them then).
   void componentsChanged(const Entity& entity, const Signature& before);
-  // Counts the components that differ between two signatures as changed.
-  void countChanges(const Signature& before, const Signature& after);
+  // Counts the components that differ between two signatures as changed,
+  // and keeps singleton()'s holders up to date (pending entities included).
+  void countChanges(Entity::EntityId id,
+                    const Signature& before,
+                    const Signature& after);
+  // The id of a living entity with this component, found by a scan (when
+  // the remembered holder lost it while others still have one).
+  Entity::EntityId findHolder(std::size_t componentId) const;
+  void warnNotSingle(std::size_t componentId, std::string_view type);
 
   // A component accessor used on an entity it can't be: fatal (see
   // fatalError()), naming what was asked for and why.
@@ -153,13 +202,9 @@ private:
   template <typename TComponent>
   Pool<TComponent>* poolOf();
 
-  // Give a newly added system the living entities that already match it
-  // (entities still pending a flush join it at that flush instead).
-  void addExistingEntities(System& system);
-  void removeEntityFromSystems(const Entity& entity);
-
 private:
   friend class Scene;
+  friend class System;
 
   // Scene adds each step's game time before that step's systems run.
   void advanceGameTime(double seconds) { m_gameTime += seconds; }
@@ -189,6 +234,21 @@ private:
 
   // By component id: how often an entity gained or lost one.
   std::array<uint64_t, MAX_COMPONENTS> m_componentChanges{};
+  // By component id: how many entities have one, one of them (kNoHolder:
+  // to be found again), and whether singleton() has warned about several.
+  static constexpr Entity::EntityId kNoHolder = ~Entity::EntityId{0};
+  std::array<uint32_t, MAX_COMPONENTS> m_holderCount{};
+  std::array<Entity::EntityId, MAX_COMPONENTS> m_holder = []
+  {
+    std::array<Entity::EntityId, MAX_COMPONENTS> holders{};
+    holders.fill(kNoHolder);
+    return holders;
+  }();
+  std::array<bool, MAX_COMPONENTS> m_warnedNotSingle{};
+  // query()'s lists, by signature (node-based: references stay valid).
+  std::unordered_map<Signature, Query> m_queries;
+  // syncQueries()'s scratch, reused between calls.
+  std::vector<QueryChange> m_queryChanges;
 
   double m_timeScale = 1.0;
   double m_maxTimeStep = 0.0;

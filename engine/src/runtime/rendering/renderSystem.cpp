@@ -511,7 +511,7 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   CameraFeedComponent* chosenFeed = nullptr;
   double mostLate = -1.0;
   for (const Entity& entity :
-       registry->view<TransformComponent, CameraFeedComponent>())
+       registry->query<TransformComponent, CameraFeedComponent>())
   {
     auto& feed = entity.getComponent<CameraFeedComponent>();
     if (!feed.picture)
@@ -1028,7 +1028,7 @@ void RenderSystem::gatherEmissionLights()
   };
 
   for (const Entity& entity :
-       registry->view<TransformComponent, MeshRendererComponent>())
+       registry->query<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
@@ -1130,7 +1130,7 @@ void RenderSystem::gatherPointLights()
     return;
 
   for (const Entity& entity :
-       registry->view<TransformComponent, PointLightComponent>())
+       registry->query<TransformComponent, PointLightComponent>())
   {
     const auto& light = entity.getComponent<PointLightComponent>();
     if (light.intensity <= 0.0f || light.radius <= 0.0f)

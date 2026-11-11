@@ -18,7 +18,7 @@ namespace sfs
 inline Entity findActiveCamera(Registry& registry)
 {
   for (const auto& entity :
-       registry.view<CameraComponent, TransformComponent>())
+       registry.query<CameraComponent, TransformComponent>())
     if (entity.getComponent<CameraComponent>().active)
       return entity;
   return {};
