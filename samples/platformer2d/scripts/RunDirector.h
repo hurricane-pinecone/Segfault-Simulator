@@ -97,8 +97,7 @@ public:
   {
     if (m_camera.isValid() &&
         m_camera.hasComponent<sfs::CameraFollowComponent>())
-      m_camera.getComponent<sfs::CameraFollowComponent>().shake(
-          strength, seconds);
+      sfs::CameraSystem::shake(m_camera, strength, seconds);
   }
 
   // The runner hit something (or fell, or the wall caught it): the run ends.

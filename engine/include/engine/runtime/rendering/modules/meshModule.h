@@ -56,8 +56,7 @@ private:
   // distance from the camera picks, in the passes it's in (`seen`: Lit and,
   // or, Feed).
   void addLevels(const RenderContext& context,
-                 uint32_t id,
-                 const MeshLodComponent& lod,
+                 MeshLodComponent& lod,
                  MeshHandle mesh,
                  const glm::mat4& model,
                  const MeshInstance& instance,
@@ -67,20 +66,6 @@ private:
 
   Registry* m_registry = nullptr;
 
-  // Each entity with levels of detail (by id): the level it's at, the one
-  // it's crossing over from (the same once done) and since when (seconds),
-  // and the frame it was last drawn in.
-  struct LodState
-  {
-    uint8_t level = 0;
-    uint8_t previous = 0;
-    bool started = false;
-    double since = 0.0;
-    uint64_t seen = 0;
-  };
-  // Forget entities' levels not drawn lately.
-  void forgetLevels();
-  std::unordered_map<uint32_t, LodState> m_lods;
   uint64_t m_frame = 0;
   double m_now = 0.0; // seconds, this frame
 

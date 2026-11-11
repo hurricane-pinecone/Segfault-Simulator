@@ -46,17 +46,21 @@ the scene plays:
 | `fade` | How long switching `clip` cross-fades, in seconds |
 | `source` | The model asset (`asset:<id>`) whose clips it plays; empty: its skinned meshes' own model. Another model's clips play on this one's joints by name (a shared animation library for characters with the same skeleton) |
 
-Game code drives it through the component:
+Game code drives it through `AnimationSystem` (what needs its clips or
+starts one) and the component's fields (the rest). The component is plain
+data: its hidden fields (`playback`, `finished`...) are the system's to keep.
 
 ```cpp
+auto& animation = registry->getSystem<sfs::AnimationSystem>();
 auto& animator = entity.getComponent<sfs::AnimatorComponent>();
-animator.play("walk", 0.25f);    // cross-fade to walk over a quarter second
-animator.setSpeed(walkSpeed / 1.4f);
-if (animator.current() == "pick-up" && animator.finished())
-  animator.play("idle", 0.2f);
-float seconds = animator.length("sprint");
-animator.stop();                 // hold the pose; resume() carries on
-animator.setNormalizedTime(0.5f);
+animation.play(entity, "walk", 0.25f); // cross-fade to walk over a quarter second
+animator.speed = walkSpeed / 1.4f;
+if (animator.clip == "pick-up" && animator.finished)
+  animation.play(entity, "idle", 0.2f);
+float seconds = animation.length(entity, "sprint");
+animator.playing = false;              // hold the pose; true carries on
+animator.time = 0.5f;                  // seek
+animation.restart(entity);             // the clip playing, from its start
 ```
 
 `play()` with a fade blends the clip in while the others fade out; playing

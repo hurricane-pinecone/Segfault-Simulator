@@ -298,6 +298,55 @@ bool assetRefCombo(const char* label,
   return picked;
 }
 
+// A list of the project's scriptable objects of `type`, in order: a row each,
+// picked (or dropped) as an AssetRef is, taken out with its "x", and one more
+// added at the end with "+". Each change is an undo step. True when it's
+// changed.
+bool assetRefList(const char* label,
+                  const std::string& type,
+                  std::vector<std::string>& assets,
+                  EditorHistory* history)
+{
+  bool changed = false;
+  std::optional<std::size_t> remove;
+  const float button = ImGui::GetFrameHeight();
+  for (std::size_t i = 0; i < assets.size(); ++i)
+  {
+    ImGui::PushID(static_cast<int>(i));
+    widgets::propertyLabel(i == 0 ? label : "##item");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - button -
+                            ImGui::GetStyle().ItemInnerSpacing.x);
+    changed |= widgets::undoable(history,
+                                 assets[i],
+                                 [&](std::string& asset) {
+                                   return assetRefCombo("##asset", type, asset);
+                                 });
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::Button("x", ImVec2(button, button)))
+      remove = i;
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Take it out of the list");
+    ImGui::PopID();
+  }
+  widgets::propertyLabel(assets.empty() ? label : "##add");
+  const bool add = ImGui::Button("+");
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Add one to the end");
+  if (remove || add)
+  {
+    if (history)
+      history->beginChange();
+    if (remove)
+      assets.erase(assets.begin() + static_cast<std::ptrdiff_t>(*remove));
+    else
+      assets.emplace_back();
+    if (history)
+      history->endChange();
+    changed = true;
+  }
+  return changed;
+}
+
 // What a material slot's icons do with its material asset: edit it (a graph
 // in the node editor; a standard one in the Inspector) and find it in the
 // Assets panel.
@@ -591,6 +640,12 @@ void fieldWidget(const FieldInfo& field,
                return assetRefCombo(id, attributes.assetType, asset);
              });
     break;
+  case FieldKind::AssetRefList:
+    assetRefList(label,
+                 attributes.assetType,
+                 field.in<sfs::AssetRefListBase>(object).assets,
+                 history);
+    break;
   }
 }
 
@@ -639,6 +694,8 @@ nlohmann::json fieldValue(const FieldInfo& field, void* object)
     return field.in<std::vector<std::string>>(object);
   case Kind::AssetRef:
     return field.in<sfs::AssetRefBase>(object).asset;
+  case Kind::AssetRefList:
+    return field.in<sfs::AssetRefListBase>(object).assets;
   }
   return nullptr;
 }
@@ -688,6 +745,9 @@ void copyField(const FieldInfo& field, void* from, void* to)
     break;
   case Kind::AssetRef:
     field.in<sfs::AssetRefBase>(to) = field.in<sfs::AssetRefBase>(from);
+    break;
+  case Kind::AssetRefList:
+    field.in<sfs::AssetRefListBase>(to) = field.in<sfs::AssetRefListBase>(from);
     break;
   }
 }
@@ -982,10 +1042,13 @@ struct MeshScene
 // model's clips (listed once it has loaded).
 void animatorClipField(const FieldInfo& field,
                        void* object,
+                       const sfs::Entity& entity,
+                       const MeshScene& scene,
                        EditorHistory* history)
 {
-  const auto& animator = *static_cast<sfs::AnimatorComponent*>(object);
-  const std::vector<std::string> clips = animator.clipNames();
+  const std::vector<std::string> clips =
+      scene.animation ? scene.animation->clipNames(entity)
+                      : std::vector<std::string>{};
   widgets::propertyLabel(field.displayName.c_str());
   widgets::undoable(history,
                     field.in<std::string>(object),
@@ -1013,7 +1076,9 @@ void animatorClipField(const FieldInfo& field,
                       }
                       return changed;
                     });
-  if (const float length = animator.length(); length > 0.0f)
+  if (const float length =
+          scene.animation ? scene.animation->length(entity) : 0.0f;
+      length > 0.0f)
     ImGui::SetItemTooltip("%.2f s", length);
 }
 
@@ -1381,7 +1446,7 @@ void componentSection(
                             ImGui::GetStyle().Alpha * 0.55f);
       ImGui::BeginGroup();
       if (type.name == "AnimatorComponent" && field.name == "clip")
-        animatorClipField(field, object, history);
+        animatorClipField(field, object, entity, scene, history);
       else if (type.name == "AnimatorComponent" && field.name == "source")
         animatorSourceField(field, object, scene, history);
       else if (field.attributes.materials && field.kind == FieldKind::StringList)

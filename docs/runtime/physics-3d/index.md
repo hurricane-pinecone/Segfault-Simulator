@@ -52,9 +52,9 @@ combine into one shape.
 
 `RigidBody3DComponent` fields: `mass` (kg), `kinematic`, `friction`,
 `bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats),
-`lockRotation` (never tips over, e.g. a character) and `bendsGrass` (flattens
-[grass](../../editor/index.md#grass) it moves through, sized by its colliders;
-on by default).
+and `lockRotation` (never tips over, e.g. a character). A body flattens
+[grass](../../editor/index.md#grass) only with a `GrassBenderComponent`
+(`fitColliders` sizes it by its colliders).
 
 The world is Z-up, in metres. Gravity defaults to (0, 0, −9.81);
 `physics.setGravity` changes it.

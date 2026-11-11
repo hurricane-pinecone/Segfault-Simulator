@@ -447,6 +447,35 @@ int main()
     CHECK(world.navigation.fleet().has(id));
   }
 
+  TEST("a destroyed agent's hitch, speed cap and leave-out should go with it: "
+       "a new agent on its reused id starts clean, in the fleet")
+  {
+    Specs specs;
+    World world;
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    Entity tool = world.solid({-2.0f, 0.0f, 0.5f}, {1.0f, 3.0f, 1.0f});
+    world.scene.update(kFrame);
+    const auto id = static_cast<nav::Fleet::AgentId>(car.getId());
+    const std::size_t alone = world.navigation.fleet().spec(id)->boxes.size();
+    NavigationSystem::Hitch mounted;
+    mounted.towed = tool;
+    mounted.rigid = true;
+    world.navigation.hitch(car, mounted);
+    world.navigation.setSpeedCap(car, 0.0f);
+    world.navigation.setActive(car, false);
+    world.scene.update(kFrame);
+    CHECK(!world.navigation.fleet().has(id));
+    world.scene.destroyEntity(car);
+    world.scene.flushEntities();
+    Entity next = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    CHECK(static_cast<nav::Fleet::AgentId>(next.getId()) == id);
+    world.scene.update(kFrame);
+    CHECK(world.navigation.fleet().has(id));
+    CHECK(world.navigation.fleet().spec(id)->boxes.size() == alone);
+    const NavAgentComponent& fresh = next.getComponent<NavAgentComponent>();
+    CHECK(!fresh.hitch && fresh.active && std::isinf(fresh.speedCap));
+  }
+
   TEST("a mounted part's box should be its true size in the agent's own "
        "frame (mountedBox): as its mount holds it (Hitch::mount), never "
        "with the body's pitch baked in; exactly where it's held")

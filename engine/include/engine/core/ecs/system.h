@@ -16,14 +16,14 @@ public:
   System() = default;
   virtual ~System() = default;
 
-  // The entities it works on, in no particular order. Iterate them; don't
-  // add, remove or reorder them (the registry keeps the list).
+  // The entities it works on (those with every component it registered),
+  // in no particular order. Iterate them; don't add, remove or reorder them
+  // (the registry keeps the list).
   const std::vector<Entity>& getEntities() const;
   std::vector<Entity>& getEntities();
+  // The entities of another of its sets (watch(); 0: the ones above).
+  const std::vector<Entity>& getEntities(int set) const;
   const Signature& getComponentSignature() const;
-
-  void addEntity(const Entity& entity);
-  void removeEntity(const Entity& entity);
 
   // Disabled systems are skipped by Scene update/render and by render
   // providers. Intended for debug toggling; the render system is never
@@ -56,22 +56,53 @@ protected:
   virtual void update(double deltatime){};
   virtual void render(){};
 
+  // An entity joined or left one of its sets (0: its registered components'
+  // set; others: watch()'s), as it gained or lost components, was created
+  // or destroyed, or the system was added to a registry that already had
+  // it. Joining, it has all the set's components. Leaving, it's out of the
+  // set but still alive, with its other components (a destroyed one has
+  // them all; one that lost a component no longer has that one). Keep them
+  // to the system's own state: don't add or remove components, entities or
+  // systems from here.
+  virtual void onEntityAdded(const Entity& entity, int set) {}
+  virtual void onEntityRemoved(const Entity& entity, int set) {}
+
   template <typename TComponent>
   void registerComponent();
 
+  // Another set of entities it keeps: those with every one of TComponents
+  // (getEntities(set), onEntityAdded(..., set)), for a system that also
+  // works on a second kind of entity. Call it where its components are
+  // registered (its constructor or create()). @return the set's number
+  template <typename... TComponents>
+  int watch();
+
 private:
   void setRegistry(Registry* registry) { this->registry = registry; }
+
+  // The entity's components are now `components` (alive: false, it's being
+  // destroyed): it joins or leaves each of its sets accordingly (Registry).
+  void sync(const Entity& entity, const Signature& components, bool alive);
 
 protected:
   Registry* registry = nullptr;
 
 private:
-  Signature componentSignature;
-  std::vector<Entity> entities;
-  // Each entity's place in `entities`, by id (kNowhere: not there), so one
-  // leaves in constant time.
+  // A set of entities it keeps: those with every component in `signature`.
+  struct Set
+  {
+    Signature signature;
+    std::vector<Entity> entities;
+    // Each entity's place in `entities`, by id (kNowhere: not there), so one
+    // leaves in constant time.
+    std::vector<uint32_t> positions;
+  };
   static constexpr uint32_t kNowhere = 0xFFFFFFFFu;
-  std::vector<uint32_t> m_positions;
+  bool contains(const Set& set, const Entity& entity) const;
+  void add(Set& set, const Entity& entity);
+  void remove(Set& set, const Entity& entity);
+
+  std::vector<Set> m_sets = std::vector<Set>(1); // [0]: registerComponent()'s
   bool m_enabled = true;
   TimeStep m_timeStep = TimeStep::Stepped;
 
@@ -83,7 +114,16 @@ template <typename TComponent>
 void System::registerComponent()
 {
   const auto componentId = Component<TComponent>::getId();
-  componentSignature.set(componentId);
+  m_sets.front().signature.set(componentId);
+}
+
+template <typename... TComponents>
+int System::watch()
+{
+  Set set;
+  (set.signature.set(Component<TComponents>::getId()), ...);
+  m_sets.push_back(std::move(set));
+  return static_cast<int>(m_sets.size()) - 1;
 }
 
 } // namespace sfs

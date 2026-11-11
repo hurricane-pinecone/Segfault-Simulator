@@ -101,15 +101,11 @@ void GrassModule::gatherBenders(float seconds)
     m_benders.push_back({center, radius, velocity});
   };
 
-  // Rigid bodies that bend grass, as their colliders: a sphere as itself; a
-  // box or capsule as a sphere as wide as its footprint, its bottom where
-  // theirs is.
-  for (const Entity& entity :
-       m_registry->view<TransformComponent, RigidBody3DComponent>())
+  // A collider-fitted bender: a sphere for each of its solid colliders (a
+  // sphere as itself; a box or capsule as a sphere as wide as its footprint,
+  // its bottom where theirs is).
+  const auto addColliders = [&](const Entity& entity, const glm::mat4& model)
   {
-    if (!entity.getComponent<RigidBody3DComponent>().bendsGrass)
-      continue;
-    const glm::mat4 model = hierarchy::worldMatrix(entity);
     const glm::vec3 scale(glm::length(glm::vec3(model[0])),
                           glm::length(glm::vec3(model[1])),
                           glm::length(glm::vec3(model[2])));
@@ -147,13 +143,18 @@ void GrassModule::gatherBenders(float seconds)
             radius);
       }
     }
-  }
+  };
 
   for (const Entity& entity :
        m_registry->view<TransformComponent, GrassBenderComponent>())
   {
     const auto& bender = entity.getComponent<GrassBenderComponent>();
     const glm::mat4 model = hierarchy::worldMatrix(entity);
+    if (bender.fitColliders)
+    {
+      addColliders(entity, model);
+      continue;
+    }
     // Around its mesh, as placed: its middle, and its largest half-extent.
     const Aabb* bounds =
         bender.fitMesh && m_meshes &&

@@ -27,6 +27,7 @@
 #include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/rendering/visualStyles.h>
 #include <engine/runtime/sceneManager/scene.h>
+#include <engine/runtime/systems/cameraSystem.h>
 #include <engine/runtime/ui/layer.h>
 
 #include "glm/glm/ext/matrix_clip_space.hpp"
@@ -347,16 +348,17 @@ int main()
     eye.addComponent<CameraComponent>(lens);
     CameraFollowComponent follow;
     follow.shakeMaxOffset = 1.0f;
-    follow.shake(1.0f, 1.0f);
-    follow.updateShake(0.1f);
     eye.addComponent<CameraFollowComponent>(follow);
+    CameraSystem::shake(eye, 1.0f, 1.0f);
+    auto& shaken = eye.getComponent<CameraFollowComponent>();
+    CameraSystem::advanceShake(shaken, 0.1f);
 
     h.frame();
 
     const Camera& camera = h.system.camera();
     CHECK(testing::approx(camera.orthoHeight, 5.0f)); // twice as big
     // Shaken across the view: sideways is -Y here, up is +Z.
-    const glm::vec2 shake = follow.shakeOffset();
+    const glm::vec2 shake = shaken.shakeOffset;
     CHECK(std::abs(shake.x) > 0.0f || std::abs(shake.y) > 0.0f);
     CHECK(testing::approx(camera.target.x, 4.0f));
     CHECK(testing::approx(camera.target.y, -shake.x));
@@ -1107,8 +1109,8 @@ int main()
           h.renderer.mapUpdates.back().grid.empty());
   }
 
-  TEST("rigid bodies and grass benders should flatten grass, unless they opt "
-       "out")
+  TEST("grass benders should flatten grass (fitted to their colliders, or a "
+       "radius); a rigid body without one never does")
   {
     Harness h;
     GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
@@ -1117,22 +1119,25 @@ int main()
     Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
     lawn.addComponent<GrassComponent>(GrassComponent{.density = 30.0f});
 
-    // A ball resting at (-3, 0), a crate (box) at (3, 0), a ball that opts
-    // out at (0, 3), and a bender with no physics at (0, -3).
+    // Collider-fitted benders: a ball resting at (-3, 0), a crate (box) at
+    // (3, 0); a ball with no bender at (0, 3); and a bender with no physics
+    // at (0, -3).
     const MeshHandle ballMesh =
         h.system.meshes().add(meshes::sphere(0.5f, 12, 8));
     Entity ball = h.spawn(ballMesh, {-3.0f, 0.0f, 0.0f});
     ball.addComponent<RigidBody3DComponent>();
     ball.addComponent<SphereCollider3DComponent>(
         SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
+    ball.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.fitColliders = true});
     Entity crate = h.spawn(ballMesh, {3.0f, 0.0f, 0.0f});
     crate.addComponent<RigidBody3DComponent>();
     crate.addComponent<BoxCollider3DComponent>(
         BoxCollider3DComponent{{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.5f}});
+    crate.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.fitColliders = true});
     Entity aloof = h.spawn(ballMesh, {0.0f, 3.0f, 0.0f});
-    RigidBody3DComponent noBending;
-    noBending.bendsGrass = false;
-    aloof.addComponent<RigidBody3DComponent>(noBending);
+    aloof.addComponent<RigidBody3DComponent>();
     aloof.addComponent<SphereCollider3DComponent>(
         SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
     Entity walker = h.scene.createEntity();

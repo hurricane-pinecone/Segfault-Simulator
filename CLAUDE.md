@@ -2,6 +2,9 @@
 
 SFS is a general game engine. Nothing game-specific goes in it. Read README.md and docs/ before changing an area.
 These rules are the owner's; when a task seems to need breaking one, stop and ask.
+Consult on structure: before adding or splitting a system or component, moving data between them, changing how
+systems get data from each other, or choosing engine vs game, write a short design and get the owner's approval.
+Behaviour fixes inside an agreed structure don't need this.
 
 ## Architecture
 
@@ -16,13 +19,28 @@ These rules are the owner's; when a task seems to need breaking one, stop and as
 - `engine-webgpu` is the render backend. The editor (`editor/`) consumes the engine like any game does.
 
 ### Components
-- Components are DATA ONLY: no logic, and no live or runtime state. Live state lives inside the system, keyed by
-  entity.
+- Components hold ALL per-entity data, and NO logic: its state, including what changes in play (a transform's
+  position, a machine's speed or fuel), and anything a system works out or keeps about that entity (a plan or
+  search in progress for it, a cache derived from it, a handle to its engine-side job, a logged-once flag). Systems
+  hold the logic and update it. A system never keeps per-entity data of its own: no map or struct keyed by entity.
+- A system's own data is only what isn't about any one entity it iterates: shared caches and indexes, scratch
+  buffers, handles to engine internals, settings, debug views. Iterate `getEntities()`; use `onEntityAdded()` /
+  `onEntityRemoved()` to set up or release what an entity joining or leaving needs, never to keep a parallel copy.
+- The data's types belong to the components (their headers, or plain data headers), never to a system: no
+  system-defined struct held from a component by pointer.
+- Systems are single-purpose and never read other systems: what a system needs from another concern comes through
+  components.
+- How systems communicate: a system reads and writes only components. It hands work on by writing a component a
+  later system reads, in the registered update order. A request is a component field the serving system fills in
+  later (a plan request and its result). When two systems feed each other, the earlier one reads what the later one
+  wrote last frame. No `getSystem` for data, and no callbacks between systems.
+- Component fields the editor can't edit (or that shouldn't be saved or shown) are `[[sfs::hide]]`.
 - A component describes its own concern only. It never holds references to another feature's data or assets: e.g.
   `NavAgentComponent` does not reference a `VehicleSpec`. A system that needs several concerns views the entities
   that have all of those components. A component may reference an asset that IS its own concern (MeshRenderer ->
   mesh, VehicleComponent -> VehicleSpec).
-- Don't multiply components per entity. Shared per-model data goes in a ScriptableObject asset, not a component.
+- One concern per component: a component holds one concern's data. Add a component for a new concern rather than
+  adding its fields to an existing one. Shared per-model data goes in a ScriptableObject asset, not a component.
 - Components are never extended by inheritance (ECS lookups are by exact type).
 
 ### Data and assets

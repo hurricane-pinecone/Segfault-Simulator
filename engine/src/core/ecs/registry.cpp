@@ -54,7 +54,6 @@ Entity Registry::getEntity(Entity::EntityId id)
 
 void Registry::addExistingEntities(System& system)
 {
-  const Signature& systemSignature = system.getComponentSignature();
   for (Entity::EntityId id = 0; id < entityCount; ++id)
   {
     if (!entityAlive[id])
@@ -64,37 +63,22 @@ void Registry::addExistingEntities(System& system)
     if (entitiesToBeAdded.count(entity) > 0)
       continue;
 
-    if ((entityComponentSignatures[id] & systemSignature) == systemSignature)
-      system.addEntity(entity);
+    system.sync(entity, entityComponentSignatures[id], true);
   }
 }
 
 void Registry::addEntityToSystems(const Entity& entity)
 {
-  const int entityId = entity.getId();
-  const auto& entityComponentSignature = entityComponentSignatures[entityId];
-
+  const Signature& components = entityComponentSignatures[entity.getId()];
   for (auto& system : systems)
-  {
-    const auto& systemComponentSignature = system->getComponentSignature();
-
-    bool isInterested = (entityComponentSignature & systemComponentSignature) ==
-                        systemComponentSignature;
-    if (isInterested)
-      system->addEntity(entity);
-  }
+    system->sync(entity, components, true);
 }
 
 void Registry::removeEntityFromSystems(const Entity& entity)
 {
-  // Only the systems it could be in: those its components match.
-  const Signature& entitySignature = entityComponentSignatures[entity.getId()];
+  const Signature& components = entityComponentSignatures[entity.getId()];
   for (auto& system : systems)
-  {
-    const Signature& systemSignature = system->getComponentSignature();
-    if ((entitySignature & systemSignature) == systemSignature)
-      system->removeEntity(entity);
-  }
+    system->sync(entity, components, false);
 }
 
 void Registry::countChanges(const Signature& before, const Signature& after)
@@ -117,15 +101,7 @@ void Registry::componentsChanged(const Entity& entity, const Signature& before)
 
   const Signature& after = entityComponentSignatures[entity.getId()];
   for (auto& system : systems)
-  {
-    const Signature& wanted = system->getComponentSignature();
-    const bool was = (before & wanted) == wanted;
-    const bool is = (after & wanted) == wanted;
-    if (was && !is)
-      system->removeEntity(entity);
-    else if (is && !was)
-      system->addEntity(entity);
-  }
+    system->sync(entity, after, true);
 }
 
 void Registry::badComponentAccess(const Entity& entity,

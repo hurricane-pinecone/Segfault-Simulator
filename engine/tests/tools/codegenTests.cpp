@@ -289,6 +289,13 @@ int main()
     const FieldModel* loot = findField(*chest.type, "loot");
     CHECK(loot && loot->kind == "AssetRef" && loot->assetType == "ItemDef");
 
+    // A list of them.
+    const ParseResult bag = parseHeader(
+        "struct Bag { sfs::AssetRefList<ItemDef> items; };", "Bag.h");
+    const FieldModel* items = findField(*bag.type, "items");
+    CHECK(items && items->kind == "AssetRefList" &&
+          items->assetType == "ItemDef");
+
     GeneratorOptions options;
     options.module = "game";
     options.function = "sfsRegisterModule";
@@ -300,6 +307,11 @@ int main()
                     "ItemDef>") != std::string::npos);
     CHECK(code.find("sfs::AssetRef<ItemDef>>") != std::string::npos);
     CHECK(code.find("field.attributes.assetType = \"ItemDef\";") !=
+          std::string::npos);
+    const std::string bagCode = generateRegistration({*bag.type}, options);
+    CHECK(bagCode.find("sfs::AssetRefList<ItemDef>>") != std::string::npos);
+    CHECK(bagCode.find("FieldKind::AssetRefList") != std::string::npos);
+    CHECK(bagCode.find("field.attributes.assetType = \"ItemDef\";") !=
           std::string::npos);
   }
 

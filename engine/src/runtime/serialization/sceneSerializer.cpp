@@ -145,6 +145,8 @@ json fieldToJson(const reflect::FieldInfo& field,
     return field.in<std::vector<std::string>>(object);
   case Kind::AssetRef:
     return field.in<AssetRefBase>(object).asset;
+  case Kind::AssetRefList:
+    return field.in<AssetRefListBase>(object).assets;
   case Kind::Mesh:
   {
     const MeshHandle mesh = field.in<MeshHandle>(object);
@@ -216,6 +218,7 @@ bool fieldFromJson(const reflect::FieldInfo& field,
     field.in<AssetRefBase>(object).asset = value.get<std::string>();
     return true;
   case Kind::StringList:
+  case Kind::AssetRefList:
   {
     if (!value.is_array())
       return false;
@@ -226,7 +229,10 @@ bool fieldFromJson(const reflect::FieldInfo& field,
         return false;
       strings.push_back(item.get<std::string>());
     }
-    field.in<std::vector<std::string>>(object) = std::move(strings);
+    if (field.kind == Kind::AssetRefList)
+      field.in<AssetRefListBase>(object).assets = std::move(strings);
+    else
+      field.in<std::vector<std::string>>(object) = std::move(strings);
     return true;
   }
   case Kind::Mesh:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/components/navAgentComponent.h"
 #include "engine/core/ecs/system.h"
 #include "engine/runtime/navigation/agentKind.h"
 #include "engine/runtime/navigation/coarseGraph.h"
@@ -15,7 +16,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -153,34 +153,8 @@ public:
   void setPriorityProvider(std::function<int(const Entity&)> priority);
   /** A pair that keep their own spacing (a cart beside its combine). */
   void cooperate(const Entity& a, const Entity& b, bool on);
-  /**
-   * A towed thing on an agent's hitch (a trailer, an implement on its
-   * drawbar): the game hitches and unhitches, the system then plans and
-   * drives the rig and writes the towed entity's transform. Angles are
-   * degrees its drawbar may swing going forward / backing up.
-   */
-  struct Hitch
-  {
-    Entity towed;
-    float hitchBehind = 1.0f; // m, the hitch behind the agent's axle
-    float drawbar = 4.0f;     // m, the towed thing's axle behind the hitch
-    // m its axle (where it pivots, its wheels) is ahead of its own origin
-    // (negative: behind): its colliders are measured from there, and its
-    // transform written at that much behind the axle's place.
-    float axle = 0.0f;
-    float forwardLimit = 83.0f, reverseLimit = 35.0f;
-    // Mounted (on a linkage or front mount): it moves with the agent, its
-    // colliders part of the agent's boxes, never swinging (the hitch numbers
-    // unused), measured by mountedBox().
-    bool rigid = false;
-    // A mounted part's pose (its root's) in the agent's own frame (the
-    // agent entity's origin and axes, level: no body pitch or roll), as its
-    // mount holds it in the state it's driven in now (a header raised for
-    // travel, lowered working): the game sets it from its authored mount
-    // and hitches again when the state changes. None: where the part is held
-    // now, relative to the agent (still in the agent's own frame).
-    std::optional<glm::mat4> mount;
-  };
+  /** A towed thing on an agent's hitch (NavAgentComponent::hitch). */
+  using Hitch = NavHitch;
   /**
    * THE measure of a mounted part's box as planned (one function: the
    * agent's boxes here, Traffic's, and a game's own planners alike): the box
@@ -193,6 +167,7 @@ public:
   static nav::Box3 mountedBox(const glm::mat4& inAgent,
                               const glm::vec3& lo,
                               const glm::vec3& hi);
+  /** Put on / take off its NavAgentComponent::hitch. */
   void hitch(const Entity& agent, const Hitch& hitch);
   void unhitch(const Entity& agent);
   /**
@@ -226,9 +201,24 @@ public:
 
 protected:
   void update(double deltaTime) override;
+  void onEntityRemoved(const Entity& entity, int set) override;
 
 private:
-  struct Tracked;
+  // An agent as it stands (a view of its NavAgentComponent, made when it's
+  // looked at, never kept): whether it's in the fleet, and the plan
+  // parameters it has there (or is about to be given).
+  struct Tracked
+  {
+    Entity entity;
+    glm::vec3& axle;
+    std::optional<Hitch>& hitch;
+    uint32_t& layers;
+    std::string& complaint;
+    bool inFleet = false;
+    nav::AgentSpec params;
+  };
+  // Its NavAgentComponent (null: not one of its agents).
+  NavAgentComponent* agentOf(const Entity& agent);
   void syncAgents();
   void syncWorld();
   void writeBack();
@@ -236,7 +226,7 @@ private:
   struct Params;
   // What it plans by besides its boxes (none: it can't be an agent, an
   // error logged once).
-  std::optional<Params> paramsOf(const Entity& agent);
+  std::optional<Params> paramsOf(Tracked& agent);
   // With its boxes (and its trailer's), from its colliders.
   nav::AgentSpec specOf(const Tracked& agent) const;
   bool partOfAgent(const Entity& entity) const;
@@ -244,15 +234,19 @@ private:
 
   std::shared_ptr<nav::PlanScheduler> m_scheduler; // (outlives m_fleet)
   std::unique_ptr<nav::Fleet> m_fleet;
-  std::map<Entity::EntityId, std::unique_ptr<Tracked>> m_tracked;
+  // An agent (none: not one), and every agent, with its id.
+  std::optional<Tracked> trackedOf(const Entity& agent) const;
+  std::optional<Tracked> trackedById(Entity::EntityId id) const;
+  struct TrackedEntry
+  {
+    Entity::EntityId id;
+    std::optional<Tracked> t;
+  };
+  std::vector<TrackedEntry> tracked() const;
   std::map<std::string, std::shared_ptr<const nav::CostLayer>> m_costs;
   std::map<std::string, std::shared_ptr<const nav::LaneGraph>> m_laneGraphs;
   std::function<int(const Entity&)> m_priority;
   std::function<nav::vehicle::Rig(const Entity&)> m_rig;
-  // What each agent tows (live state, set by the game).
-  std::map<Entity::EntityId, Hitch> m_hitches;
-  std::map<Entity::EntityId, float> m_speedCaps;
-  std::set<Entity::EntityId> m_inactive;
   std::function<float(glm::vec2)> m_ground;
   std::shared_ptr<const nav::Space> m_givenSpace;
   std::shared_ptr<const nav::Space> m_space;
@@ -265,7 +259,6 @@ private:
   uint64_t m_revision = ~0ull;
   bool m_worldDirty = true;
   std::vector<Event> m_events;
-  std::map<Entity::EntityId, std::string> m_complaints; // (logged once)
   bool m_drawPaths = false, m_drawClaims = false, m_drawBlocked = true;
 };
 

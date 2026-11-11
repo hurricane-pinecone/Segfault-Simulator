@@ -26,6 +26,7 @@
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/util/activeCamera.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
@@ -928,7 +929,7 @@ void EditorApp::alignViewWithSelection()
   const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
   sfs::Camera& view = m_context.render->camera();
   if (entity.hasComponent<sfs::CameraComponent>())
-    entity.getComponent<sfs::CameraComponent>().applyTo(view, world);
+    sfs::viewThrough(entity.getComponent<sfs::CameraComponent>(), world, view);
   else
     view.setPose(glm::vec3(world[3]), glm::vec3(world[0]), view.distance);
 }

@@ -35,8 +35,8 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
 // A field's C++ type, as its static_assert and member pointer spell it.
 std::string cppTypeOf(const FieldModel& field)
 {
-  if (field.kind == "AssetRef")
-    return "sfs::AssetRef<" + field.assetType + ">";
+  if (field.kind == "AssetRef" || field.kind == "AssetRefList")
+    return "sfs::" + field.kind + "<" + field.assetType + ">";
   return canonicalTypes().at(field.kind);
 }
 
@@ -151,7 +151,7 @@ void emitField(std::ostringstream& out,
     out << "      field.attributes.emissionLight = true;\n";
   if (!field.showIf.empty())
     out << "      field.attributes.showIf = \"" << field.showIf << "\";\n";
-  if (field.kind == "AssetRef")
+  if (field.kind == "AssetRef" || field.kind == "AssetRefList")
   {
     // By the registered (unqualified) name: AssetRef<sfs::VehicleSpec> refers
     // to "VehicleSpec".

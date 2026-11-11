@@ -509,12 +509,6 @@ private:
   RenderContext m_context;
   // Camera feeds asked for (cameraFeed()), by entity id: their pictures, when
   // each was last filmed (seconds of a steady clock), and the one this frame.
-  struct Feed
-  {
-    std::shared_ptr<RenderTexture> texture;
-    double filmed = -1.0e9;
-  };
-  std::unordered_map<uint32_t, Feed> m_feeds;
   const RenderTexture* m_feedFilming = nullptr;
   glm::mat4 m_lightViewProjection{1.0f};
   SunCascades m_cascades;

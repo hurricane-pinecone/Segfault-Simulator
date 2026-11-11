@@ -59,12 +59,15 @@ is moved so its world position eases toward it.
 
 ## Screen shake
 
-Call `shake()` on a `CameraFollowComponent` to start a displacement that
-fades out over the given duration. Calling it again while a shake is running
-restarts it.
+Call `CameraSystem::shake()` on a camera entity with a
+`CameraFollowComponent` to start a displacement that fades out over the given
+duration. Calling it again while a shake is running restarts it. The shake
+under way is kept in the component's hidden fields (`shakeOffset`,
+`shakeStrength`...); the system advances it.
 
 ```cpp
-camera.getComponent<sfs::CameraFollowComponent>().shake(
+sfs::CameraSystem::shake(
+    camera,
     0.8f,  // strength: 0..1 (clamped), scales shakeMaxOffset
     0.3f,  // duration in seconds (default 0.5)
     1.5f); // decay exponent (default 1)

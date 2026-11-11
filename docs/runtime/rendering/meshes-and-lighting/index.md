@@ -1370,8 +1370,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
 - **Trampling:** `GrassTrample` is a grid over the field's ground in the
   world. It's pressed by `GrassBender` spheres where they reach into the
   grass, and springs back over `recovery` seconds. Each update the module
-  gathers benders (rigid bodies that bend grass, as their colliders, and
-  `GrassBenderComponent`s). When the map changes, it sends it to the renderer
+  gathers benders (`GrassBenderComponent`s: fitted to their colliders, their
+  mesh, or a radius; nothing else bends grass). When the map changes, it sends it to the renderer
   as an image (`IRenderer::updateGrassTrample`).
 
 - **Shadows:** grass grows before the sun's shadow pass. Blades within

@@ -603,11 +603,10 @@ camera, in a window that follows it, so it costs no more than a small field.
 Set a field into a hole in the land (with its edge on a whole number of
 quarter units) and give both the same grass, and they meet with no seam.
 
-**What flattens grass:** anything with a Rigid Body, sized by its colliders,
-unless its **Bends Grass** is off. A **Grass Bender** component does the same
-for things without physics, such as a character moved by a script or a
-vehicle's wheels. With **Fit Mesh** on (the default) it's sized to its entity's
-own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
+**What flattens grass:** anything with a **Grass Bender** component, and
+nothing else (a Rigid Body alone doesn't). With **Fit Colliders** on it's sized
+by its entity's own colliders: a physics prop, a crate knocked about. With
+**Fit Mesh** on (the default) it's sized to its entity's own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
 or use it on something without a mesh, to set its **Radius** yourself. Grass is pressed the way a thing is moving, or outward under one
 standing still, and springs back afterwards.
 

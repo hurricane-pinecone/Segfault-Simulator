@@ -8,7 +8,8 @@ actors.
 ## The model
 
 - **Entity** — a lightweight id. It holds no data itself; you attach components.
-- **Component** — a plain data struct (position, sprite, health, …). No behaviour.
+- **Component** — a plain data struct (position, sprite, health, …): the entity's
+  state, including what changes as the game runs. No behaviour.
 - **System** — behaviour that runs each frame over every entity carrying a chosen
   set of components.
 
@@ -135,6 +136,56 @@ frame.
 own list of the entities with an `A` searches again only when it has moved,
 instead of every frame. Changing an `A`'s values doesn't count: compare those
 yourself.
+
+### Joining and leaving
+
+All per-entity data belongs on its components (hidden fields for what isn't
+authored), which systems update: a system never keeps its own map or struct per
+entity. A system that must set something up or release it as an entity joins or
+leaves (an engine-side resource, a shared index) does it in
+`onEntityAdded(entity, set)` and `onEntityRemoved(entity, set)`, rather than
+searching `getEntities()` for newcomers every frame. They're called as an entity joins or leaves: when it
+gains or loses a component, when it's created or destroyed (at the registry's
+flush), and when the system is added to a registry that already has it.
+Joining, it has all the set's components. Leaving, it's still alive with its
+other components: a destroyed entity still has all of them, and one that lost
+a component no longer has that one. Keep the hooks to the system's own state:
+don't add or remove components, entities or systems from them.
+
+A system that also works on a second kind of entity watches it as another set,
+registered where its components are:
+
+```cpp
+class RigSystem : public sfs::System
+{
+  int m_tools = -1;
+  std::unordered_map<sfs::Entity::EntityId, Rig> m_rigs;
+  std::unordered_map<sfs::Entity::EntityId, Tool> m_toolStates;
+
+protected:
+  void create() override
+  {
+    registerComponent<sfs::VehicleComponent>(); // set 0: getEntities()
+    m_tools = watch<Implement, sfs::TransformComponent>();
+  }
+  void onEntityAdded(const sfs::Entity& e, int set) override
+  {
+    if (set == 0)
+      m_rigs.emplace(e.getId(), Rig{});
+    else
+      m_toolStates.emplace(e.getId(), Tool{});
+  }
+  void onEntityRemoved(const sfs::Entity& e, int set) override
+  {
+    if (set == 0)
+      m_rigs.erase(e.getId());
+    else
+      m_toolStates.erase(e.getId());
+  }
+};
+```
+
+`getEntities(set)` lists a watched set's entities.
 
 A program can have at most `MAX_COMPONENTS` (128) component types; one more is
 a fatal error when it's first used.

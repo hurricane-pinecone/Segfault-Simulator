@@ -125,17 +125,6 @@ void drawFootprint(DebugLines& lines,
 
 } // namespace
 
-// What it knows of each agent's entity.
-struct NavigationSystem::Tracked
-{
-  Entity entity;
-  NavAgentComponent fields;
-  nav::AgentSpec params; // (no boxes)
-  glm::vec3 axle{0.0f};  // its reference point in its frame (its spec's)
-  std::optional<Hitch> hitch;
-  bool fresh = true;
-};
-
 // What an agent plans by, besides its boxes.
 struct NavigationSystem::Params
 {
@@ -154,11 +143,11 @@ NavigationSystem::NavigationSystem()
   m_fleet->setNamer(
       [this](uint64_t id)
       {
-        const auto it = m_tracked.find(static_cast<Entity::EntityId>(id));
-        if (registry && it != m_tracked.end() &&
-            registry->isAlive(it->second->entity) &&
-            registry->hasComponent<NameComponent>(it->second->entity))
-          return registry->getComponent<NameComponent>(it->second->entity).name;
+        const std::optional<Tracked> t =
+            registry ? trackedById(static_cast<Entity::EntityId>(id))
+                     : std::nullopt;
+        if (t && registry->hasComponent<NameComponent>(t->entity))
+          return registry->getComponent<NameComponent>(t->entity).name;
         return "agent " + std::to_string(id);
       });
 }
@@ -212,9 +201,59 @@ nav::AgentPlan NavigationSystem::planNow(const Entity& agent,
   return m_fleet->planNow(agent.getId(), std::move(ask));
 }
 
+NavAgentComponent* NavigationSystem::agentOf(const Entity& agent)
+{
+  return registry && registry->isAlive(agent) &&
+                 registry->hasComponent<NavAgentComponent>(agent)
+             ? &registry->getComponent<NavAgentComponent>(agent)
+             : nullptr;
+}
+
+void NavigationSystem::onEntityRemoved(const Entity& entity, int set)
+{
+  // (Out of the fleet, if it was in it.)
+  const auto id = static_cast<nav::Fleet::AgentId>(entity.getId());
+  if (m_fleet->has(id))
+  {
+    m_fleet->remove(id);
+    m_revision = ~0ull; // (its parts back among the statics)
+  }
+}
+
+std::optional<NavigationSystem::Tracked>
+NavigationSystem::trackedOf(const Entity& agent) const
+{
+  if (!registry || !registry->isAlive(agent) ||
+      !registry->hasComponent<NavAgentComponent>(agent))
+    return std::nullopt;
+  NavAgentComponent& c = registry->getComponent<NavAgentComponent>(agent);
+  Tracked t{agent, c.givenAxle, c.givenHitch, c.givenLayers, c.complaint};
+  const auto id = static_cast<nav::Fleet::AgentId>(agent.getId());
+  t.inFleet = m_fleet->has(id);
+  if (const nav::AgentSpec* spec = t.inFleet ? m_fleet->spec(id) : nullptr)
+    t.params = *spec;
+  return t;
+}
+
+std::optional<NavigationSystem::Tracked>
+NavigationSystem::trackedById(Entity::EntityId id) const
+{
+  return registry ? trackedOf(registry->getEntity(id)) : std::nullopt;
+}
+
+std::vector<NavigationSystem::TrackedEntry> NavigationSystem::tracked() const
+{
+  std::vector<TrackedEntry> all;
+  for (const Entity& e : getEntities())
+    if (std::optional<Tracked> t = trackedOf(e))
+      all.push_back({e.getId(), std::move(t)});
+  return all;
+}
+
 void NavigationSystem::setSpeedCap(const Entity& agent, float cap)
 {
-  m_speedCaps[agent.getId()] = cap;
+  if (NavAgentComponent* c = agentOf(agent))
+    c->speedCap = cap;
   m_fleet->setSpeedCap(agent.getId(), cap);
 }
 
@@ -227,12 +266,12 @@ bool NavigationSystem::takeWheel(const Entity& agent)
 {
   // (From where it stands now: put somewhere since the last update, it's
   // driven from there.)
-  if (const auto it = m_tracked.find(agent.getId());
-      it != m_tracked.end() && registry && !m_fleet->path(agent.getId()) &&
+  if (const std::optional<Tracked> t = trackedOf(agent);
+      t && t->inFleet && !m_fleet->path(agent.getId()) &&
       !m_fleet->handDriven(agent.getId()))
   {
     const TransformComponent world = hierarchy::worldTransform(agent);
-    const glm::vec3 axle = it->second->axle;
+    const glm::vec3 axle = t->axle;
     const glm::vec2 at =
         glm::vec2(world.position) +
         glm::vec2(glm::vec3(world.rotation * glm::vec3(axle.x, axle.y, 0)));
@@ -259,10 +298,8 @@ bool NavigationSystem::handDriven(const Entity& agent) const
 
 void NavigationSystem::setActive(const Entity& agent, bool active)
 {
-  if (active)
-    m_inactive.erase(agent.getId());
-  else
-    m_inactive.insert(agent.getId());
+  if (NavAgentComponent* c = agentOf(agent))
+    c->active = active; // (in or out of the fleet at its sync)
 }
 
 void NavigationSystem::setLaneGraph(const std::string& name,
@@ -324,18 +361,20 @@ void NavigationSystem::setSpace(std::shared_ptr<const nav::Space> space)
 
 void NavigationSystem::refresh(const Entity& agent)
 {
-  if (const auto it = m_tracked.find(agent.getId()); it != m_tracked.end())
-    m_fleet->setSpec(agent.getId(), specOf(*it->second));
+  if (const std::optional<Tracked> t = trackedOf(agent); t && t->inFleet)
+    m_fleet->setSpec(agent.getId(), specOf(*t));
 }
 
 void NavigationSystem::hitch(const Entity& agent, const Hitch& hitch)
 {
-  m_hitches[agent.getId()] = hitch;
+  if (NavAgentComponent* c = agentOf(agent))
+    c->hitch = hitch;
 }
 
 void NavigationSystem::unhitch(const Entity& agent)
 {
-  m_hitches.erase(agent.getId());
+  if (NavAgentComponent* c = agentOf(agent))
+    c->hitch.reset();
 }
 
 void NavigationSystem::setRigProvider(
@@ -351,8 +390,10 @@ nav::Fleet::State NavigationSystem::state(const Entity& agent) const
 
 bool NavigationSystem::partOfAgent(const Entity& e) const
 {
-  for (const auto& [id, t] : m_tracked)
+  for (const auto& [id, t] : tracked())
   {
+    if (!t->inFleet)
+      continue;
     if (e == t->entity || hierarchy::isAncestor(t->entity, e))
       return true;
     if (t->hitch && registry->isAlive(t->hitch->towed) &&
@@ -362,13 +403,19 @@ bool NavigationSystem::partOfAgent(const Entity& e) const
   return false;
 }
 
-std::optional<NavigationSystem::Params>
-NavigationSystem::paramsOf(const Entity& agent)
+std::optional<NavigationSystem::Params> NavigationSystem::paramsOf(Tracked& t)
 {
+  const Entity& agent = t.entity;
+  if (!registry->hasComponent<NavAgentComponent>(agent))
+  {
+    LOG_ERROR("NavigationSystem: agent " + std::to_string(agent.getId()) +
+              " has no NavAgentComponent for its parameters: left out");
+    return std::nullopt;
+  }
   const NavAgentComponent& c = registry->getComponent<NavAgentComponent>(agent);
   const auto complain = [&](const std::string& why) -> std::optional<Params>
   {
-    std::string& said = m_complaints[agent.getId()];
+    std::string& said = t.complaint;
     if (said != why)
       LOG_ERROR("NavigationSystem: agent " + std::to_string(agent.getId()) +
                 " " + why + ": left out");
@@ -399,7 +446,7 @@ NavigationSystem::paramsOf(const Entity& agent)
   }
   else if (!nav::AgentKinds::find(c.kind))
     return complain("has an unknown kind '" + c.kind + "'");
-  m_complaints.erase(agent.getId());
+  t.complaint.clear();
   return p;
 }
 
@@ -535,68 +582,69 @@ void NavigationSystem::syncAgents()
 {
   if (!registry)
     return;
-  for (auto& [id, t] : m_tracked)
-    t->fresh = false;
-  for (const Entity& e : getEntities())
+  for (auto& [id, tracked] : tracked())
   {
-    if (m_inactive.contains(e.getId()))
-      continue; // (left out: dropped below if it was an agent)
+    Tracked& t = *tracked;
+    const Entity& e = t.entity;
+    if (!registry->hasComponent<NavAgentComponent>(e))
+    {
+      LOG_ERROR("NavigationSystem: agent " + std::to_string(id) +
+                " has no NavAgentComponent at its sync: skipped");
+      continue;
+    }
     const NavAgentComponent& c = registry->getComponent<NavAgentComponent>(e);
-    const std::optional<Params> params = paramsOf(e);
+    // (Left out, or nothing it can plan by (logged): out of the fleet.)
+    const std::optional<Params> params =
+        c.active ? paramsOf(t) : std::optional<Params>{};
     if (!params)
-      continue; // (logged; dropped below if it was an agent)
-    std::optional<Hitch> hitch;
-    if (const auto h = m_hitches.find(e.getId()); h != m_hitches.end())
-      hitch = h->second;
-
-    auto it = m_tracked.find(e.getId());
+    {
+      if (t.inFleet)
+      {
+        m_fleet->remove(id);
+        t.inFleet = false;
+        m_revision = ~0ull;
+      }
+      continue;
+    }
+    const std::optional<Hitch>& hitch = c.hitch;
     const TransformComponent world = hierarchy::worldTransform(e);
     const float yaw = world.yaw();
     const glm::vec3 axle = params->axle;
     const glm::vec2 at =
         glm::vec2(world.position) +
         glm::vec2(glm::vec3(world.rotation * glm::vec3(axle.x, axle.y, 0)));
-    if (it == m_tracked.end() || it->second->entity != e)
+    if (!t.inFleet)
     {
-      auto t = std::make_unique<Tracked>();
-      t->entity = e;
-      t->fields = c;
-      t->params = params->spec;
-      t->axle = axle;
-      t->hitch = hitch;
-      Tracked& tracked = *t;
-      m_tracked[e.getId()] = std::move(t);
-      m_fleet->add(e.getId(), specOf(tracked), {at, yaw});
-      if (const auto cap = m_speedCaps.find(e.getId());
-          cap != m_speedCaps.end())
-        m_fleet->setSpeedCap(e.getId(), cap->second);
+      t.layers = c.layers;
+      t.params = params->spec;
+      t.axle = axle;
+      t.hitch = hitch;
+      m_fleet->add(id, specOf(t), {at, yaw});
+      m_fleet->setSpeedCap(id, c.speedCap);
+      t.inFleet = true;
       m_revision = ~0ull; // (its parts leave the statics)
-      it = m_tracked.find(e.getId());
     }
     else
     {
-      Tracked& t = *it->second;
-      const bool reshaped = t.axle != axle || !sameHitch(t.hitch, hitch) ||
-                            t.fields.layers != c.layers;
+      const bool reshaped =
+          t.axle != axle || !sameHitch(t.hitch, hitch) || t.layers != c.layers;
       if (reshaped || !sameParams(t.params, params->spec))
       {
         // Re-derived (a hitch, a load, the grip, its spec or fields changed).
         SFS_CPU_SCOPE("navigation/spec");
-        t.fields = c;
+        t.layers = c.layers;
         t.params = params->spec;
         t.axle = axle;
         t.hitch = hitch;
-        m_fleet->setSpec(e.getId(), specOf(t));
+        m_fleet->setSpec(id, specOf(t));
         if (reshaped)
           m_revision = ~0ull;
       }
     }
-    it->second->fresh = true;
-    it->second->fields.priority = c.priority;
-    m_fleet->setPriority(e.getId(), m_priority ? m_priority(e) : c.priority);
+    m_fleet->setPriority(id, m_priority ? m_priority(e) : c.priority);
     // Moved by something else while it has no path (placed, teleported):
     // where it is now.
-    if (!m_fleet->path(e.getId()) && !m_fleet->handDriven(e.getId()))
+    if (!m_fleet->path(id) && !m_fleet->handDriven(id))
     {
       // (Its trailer as it was left: the angle between the two.)
       float swung = 0.0f;
@@ -604,23 +652,14 @@ void NavigationSystem::syncAgents()
           registry->hasComponent<TransformComponent>(hitch->towed))
         swung =
             nav::wrapAngle(yaw - hierarchy::worldTransform(hitch->towed).yaw());
-      const nav::Pose2 p = m_fleet->pose(e.getId());
+      const nav::Pose2 p = m_fleet->pose(id);
       if (glm::length(p.position - at) > 0.01f ||
           std::abs(nav::wrapAngle(p.heading - yaw)) > 0.002f)
-        m_fleet->place(e.getId(), {at, yaw}, swung);
+        m_fleet->place(id, {at, yaw}, swung);
       else
-        m_fleet->setHitch(e.getId(), swung);
+        m_fleet->setHitch(id, swung);
     }
   }
-  for (auto it = m_tracked.begin(); it != m_tracked.end();)
-    if (!it->second->fresh)
-    {
-      m_fleet->remove(it->first);
-      it = m_tracked.erase(it);
-      m_revision = ~0ull;
-    }
-    else
-      ++it;
 }
 
 void NavigationSystem::syncWorld()
@@ -640,10 +679,15 @@ void NavigationSystem::syncWorld()
   {
     m_revision = physics->revision();
     uint32_t layers = 0;
-    for (const auto& [id, t] : m_tracked)
-      layers |= t->fields.layers;
+    bool any = false;
+    for (const auto& [id, t] : tracked())
+      if (t->inFleet)
+      {
+        layers |= t->layers;
+        any = true;
+      }
     nav::CollisionSpace::Options o;
-    o.layers = m_tracked.empty() ? ~0u : layers;
+    o.layers = any ? layers : ~0u;
     o.ground = m_ground;
     auto statics =
         physics->snapshot([this](const Entity& e) { return !partOfAgent(e); });
@@ -717,9 +761,9 @@ void NavigationSystem::syncWorld()
 
 void NavigationSystem::writeBack()
 {
-  for (const auto& [id, t] : m_tracked)
+  for (const auto& [id, t] : tracked())
   {
-    if (!m_fleet->path(id) && !m_fleet->handDriven(id))
+    if (!t->inFleet || (!m_fleet->path(id) && !m_fleet->handDriven(id)))
       continue;
     const Entity& e = t->entity;
     const nav::Pose2 p = m_fleet->pose(id);
@@ -758,8 +802,10 @@ void NavigationSystem::draw()
     return;
   DebugLines& lines = render->debugLines();
   const float z = 0.15f;
-  for (const auto& [id, t] : m_tracked)
+  for (const auto& [id, t] : tracked())
   {
+    if (!t->inFleet)
+      continue;
     const nav::Fleet::State st = m_fleet->state(id);
     if (m_drawPaths)
     {
@@ -846,9 +892,9 @@ void NavigationSystem::update(double deltaTime)
   }
   m_fleet->update(deltaTime);
   for (nav::Fleet::Event& e : m_fleet->takeEvents())
-    if (const auto it = m_tracked.find(static_cast<Entity::EntityId>(e.agent));
-        it != m_tracked.end())
-      m_events.push_back({it->second->entity, std::move(e)});
+    if (const std::optional<Tracked> t =
+            trackedById(static_cast<Entity::EntityId>(e.agent)))
+      m_events.push_back({t->entity, std::move(e)});
   writeBack();
   draw();
 }
@@ -876,10 +922,14 @@ std::vector<ModuleSetting> NavigationSystem::settings()
     s.type = ModuleSetting::Type::Text;
     s.getText = [this]
     {
-      int n[6] = {};
-      for (const auto& [id, t] : m_tracked)
-        ++n[static_cast<int>(m_fleet->state(id))];
-      return std::to_string(m_tracked.size()) + " (" + std::to_string(n[2]) +
+      int n[6] = {}, agents = 0;
+      for (const auto& [id, t] : tracked())
+        if (t->inFleet)
+        {
+          ++n[static_cast<int>(m_fleet->state(id))];
+          ++agents;
+        }
+      return std::to_string(agents) + " (" + std::to_string(n[2]) +
              " moving, " + std::to_string(n[1]) + " planning, " +
              std::to_string(n[3]) + " giving way, " + std::to_string(n[5]) +
              " blocked)";
@@ -888,8 +938,10 @@ std::vector<ModuleSetting> NavigationSystem::settings()
   }
   static const char* names[] = {
       "idle", "planning", "moving", "giving way", "arrived", "blocked"};
-  for (const auto& [id, t] : m_tracked)
+  for (const auto& [id, t] : tracked())
   {
+    if (!t->inFleet)
+      continue;
     ModuleSetting s;
     s.label = "Agent " + std::to_string(id);
     s.type = ModuleSetting::Type::Text;

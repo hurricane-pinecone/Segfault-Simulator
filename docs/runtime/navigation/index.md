@@ -179,8 +179,11 @@ struct TractorSpec : sfs::VehicleSpec
 };
 ```
 
-Hitching is live, not data: `hitch(agent, {towed, hitchBehind, drawbar,
-axle, forwardLimit, reverseLimit})` and `unhitch(agent)`. `drawbar` runs
+Hitching is live state, not authored data: `hitch(agent, {towed,
+hitchBehind, drawbar, axle, forwardLimit, reverseLimit})` and
+`unhitch(agent)` set the agent's `NavAgentComponent::hitch` (a hidden field,
+a `NavHitch`, alongside `speedCap` and `active`: `setSpeedCap()`,
+`setActive()`), so it goes with the entity. `drawbar` runs
 from the hitch to the towed thing's axle (where it pivots) and `axle` says
 how far that axle is ahead of the towed entity's origin (negative: behind);
 its colliders are its box, measured from the axle. The system plans the rig

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "engine/core/rendering/mesh.h"
 
 namespace sfs
@@ -64,6 +66,14 @@ struct MeshLodComponent
   [[sfs::range(0, 2)]] float fadeSeconds = 0.3f;
   [[sfs::range(0, 3)]] int shadowLevel = 1;
   [[sfs::range(0, 10000)]] float cullDistance = 0.0f;
+
+  // As drawn (MeshModule's): the level it's at, the one it's crossing over
+  // from (the same once done) and since when (seconds); when it was last
+  // drawn with levels (not lately: it starts at its level afresh).
+  [[sfs::hide]] uint8_t level = 0;
+  [[sfs::hide]] uint8_t previousLevel = 0;
+  [[sfs::hide]] double levelSince = 0.0;
+  [[sfs::hide]] double levelSeen = -1.0e9;
 };
 
 } // namespace sfs

@@ -55,12 +55,17 @@ std::string lowercase(std::string_view text)
 }
 
 // Collapse runs of whitespace to one space and drop spaces around "::".
-// T, for a (normalised) "sfs::AssetRef<T>" or "AssetRef<T>".
-std::optional<std::string> assetRefType(std::string_view type)
+// T, for a (normalised) "sfs::<wrapper><T>" or "<wrapper><T>" (wrapper:
+// "AssetRef", "AssetRefList").
+std::optional<std::string> assetRefType(std::string_view type,
+                                        std::string_view wrapper)
 {
   if (type.starts_with("sfs::"))
     type.remove_prefix(5);
-  constexpr std::string_view open = "AssetRef<";
+  if (!type.starts_with(wrapper))
+    return std::nullopt;
+  type.remove_prefix(wrapper.size());
+  constexpr std::string_view open = "<";
   if (!type.starts_with(open) || !type.ends_with('>'))
     return std::nullopt;
   std::string inner(type.substr(open.size(), type.size() - open.size() - 1));
@@ -338,10 +343,17 @@ private:
     // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed
     // type.
     std::optional<std::string> kind;
-    if (const std::optional<std::string> data = assetRefType(base.type))
+    if (const std::optional<std::string> data =
+            assetRefType(base.type, "AssetRef"))
     {
       kind = "AssetRef";
       base.assetType = *data;
+    }
+    else if (const std::optional<std::string> list =
+                 assetRefType(base.type, "AssetRefList"))
+    {
+      kind = "AssetRefList";
+      base.assetType = *list;
     }
     else if (const auto known = fieldKinds().find(base.type);
              known != fieldKinds().end())

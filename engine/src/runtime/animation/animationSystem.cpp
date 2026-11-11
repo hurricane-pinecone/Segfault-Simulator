@@ -50,24 +50,94 @@ AnimationSystem::AnimationSystem(MeshLibrary& meshes, AssetStore& assets)
 // (and frees the rest with itself, whichever goes first).
 AnimationSystem::~AnimationSystem() = default;
 
+AnimationSystem::Binding*
+AnimationSystem::bindingOf(const Entity& animator) const
+{
+  return animator.isAlive() && animator.hasComponent<AnimatorComponent>()
+             ? &animator.getComponent<AnimatorComponent>()
+             : nullptr;
+}
+
+AnimatorComponent* AnimationSystem::animatorOf(const Entity& animator)
+{
+  return bindingOf(animator) && animator.isAlive()
+             ? &animator.getComponent<AnimatorComponent>()
+             : nullptr;
+}
+
+void AnimationSystem::play(const Entity& entity,
+                           std::string_view clip,
+                           float fade)
+{
+  AnimatorComponent* animator = animatorOf(entity);
+  if (!animator)
+    return;
+  animator->playing = true;
+  if (clip == animator->clip && animator->started)
+    return;
+  animator->clip = std::string(clip);
+  animator->fadeRequest = fade;
+  animator->restart = true;
+}
+
+void AnimationSystem::restart(const Entity& entity)
+{
+  AnimatorComponent* animator = animatorOf(entity);
+  if (!animator)
+    return;
+  animator->playing = true;
+  animator->time = 0.0f;
+  animator->restart = true;
+  animator->fadeRequest = 0.0f;
+}
+
+const AnimationSet* AnimationSystem::clips(const Entity& animator) const
+{
+  const Binding* binding = bindingOf(animator);
+  return binding ? binding->clips.get() : nullptr;
+}
+
+float AnimationSystem::length(const Entity& animator,
+                              std::string_view clip) const
+{
+  const AnimationSet* set = clips(animator);
+  if (!set)
+    return 0.0f;
+  const AnimationClip* found = set->find(
+      clip.empty()
+          ? std::string_view(animator.getComponent<AnimatorComponent>().clip)
+          : clip);
+  return found ? found->duration : 0.0f;
+}
+
+std::vector<std::string>
+AnimationSystem::clipNames(const Entity& animator) const
+{
+  std::vector<std::string> names;
+  if (const AnimationSet* set = clips(animator))
+    for (const AnimationClip& clip : set->clips)
+      names.push_back(clip.name);
+  return names;
+}
+
 void AnimationSystem::setPreview(const Entity& animator, bool preview)
 {
-  if (preview)
-    m_previews.insert(animator.getId());
-  else
-    m_previews.erase(animator.getId());
+  if (Binding* binding = bindingOf(animator))
+    binding->preview = preview;
 }
 
 bool AnimationSystem::previewing(const Entity& animator) const
 {
-  return m_previews.contains(animator.getId());
+  const Binding* binding = bindingOf(animator);
+  return binding && binding->preview;
 }
 
 void AnimationSystem::rebind(const Entity& animator)
 {
-  for (auto& [id, binding] : m_bindings)
-    if (!animator.isValid() || binding.animator == animator)
-      binding.stale = true;
+  for (const Entity& entity : getEntities())
+    if (Binding* binding = bindingOf(entity);
+        binding && (!animator.isValid() || entity == animator))
+      binding->stale = true;
 }
 
 std::shared_ptr<const AnimationSet>
@@ -102,7 +172,9 @@ AnimationSystem::clipsFor(const Binding& binding,
   return data ? data->animations : nullptr;
 }
 
-void AnimationSystem::bind(Binding& binding, AnimatorComponent& animator)
+void AnimationSystem::bind(const Entity& entity,
+                           Binding& binding,
+                           AnimatorComponent& animator)
 {
   // Rest poses carry over (a live joint's transform is posed by now).
   std::unordered_map<Entity::EntityId, std::pair<uint32_t, JointPose>> rest;
@@ -138,7 +210,7 @@ void AnimationSystem::bind(Binding& binding, AnimatorComponent& animator)
       if (!child.hasComponent<AnimatorComponent>())
         add(child, index);
   };
-  add(binding.animator, -1);
+  add(entity, -1);
 
   for (std::size_t i = 0; i < binding.nodes.size(); ++i)
   {
@@ -212,76 +284,75 @@ void AnimationSystem::advance(Binding& binding,
                               float seconds,
                               bool running)
 {
-  const AnimationSet* set = animator.m_clips.get();
+  const AnimationSet* set = binding.clips.get();
   const auto durationOf = [set](const std::string& name)
   {
     const AnimationClip* clip = set ? set->find(name) : nullptr;
     return clip ? clip->duration : 0.0f;
   };
-  AnimationPlayback& playback = animator.m_playback;
+  AnimationPlayback& playback = animator.playback;
 
   // A clip changed (by play(), or in the Inspector), or played again.
   const AnimationPlayback::Layer* current = playback.current();
   const bool changed = !current || current->clip != animator.clip;
   if (animator.clip.empty())
     playback.clear();
-  else if (changed || animator.m_restart)
+  else if (changed || animator.restart)
   {
     const float duration = durationOf(animator.clip);
     // From its start when played; as `time` says when it's set in the
     // fields (or the scene starts).
-    const float start = animator.m_restart && animator.m_started
+    const float start = animator.restart && animator.started
                             ? 0.0f
                             : std::clamp(animator.time, 0.0f, 1.0f) * duration;
-    const float fade = !m_live || !animator.m_started   ? 0.0f
-                       : animator.m_fadeRequest >= 0.0f ? animator.m_fadeRequest
-                                                        : animator.fade;
+    const float fade = !m_live || !animator.started   ? 0.0f
+                       : animator.fadeRequest >= 0.0f ? animator.fadeRequest
+                                                      : animator.fade;
     if (!changed)
       playback.clear(); // the same clip from its start
     playback.play(animator.clip, fade, start);
-    animator.m_timeWritten = -1.0f;
+    binding.timeWritten = -1.0f;
   }
-  animator.m_restart = false;
-  animator.m_fadeRequest = -1.0f;
+  animator.restart = false;
+  animator.fadeRequest = -1.0f;
 
   // `time` set from outside (the Inspector, a script): seek to it.
   if (AnimationPlayback::Layer* layer = playback.current();
-      layer && animator.m_timeWritten >= 0.0f &&
-      animator.time != animator.m_timeWritten)
+      layer && binding.timeWritten >= 0.0f &&
+      animator.time != binding.timeWritten)
     layer->time =
         std::clamp(animator.time, 0.0f, 1.0f) * durationOf(layer->clip);
 
   if (running && animator.playing)
     playback.advance(seconds * animator.speed, animator.loop, durationOf);
 
-  animator.m_finished = false;
+  animator.finished = false;
   if (const AnimationPlayback::Layer* layer = playback.current())
   {
     const float duration = durationOf(layer->clip);
     animator.time = duration > 0.0f ? layer->time / duration : 0.0f;
-    animator.m_finished = !animator.loop && duration > 0.0f &&
-                          (animator.speed >= 0.0f ? layer->time >= duration
-                                                  : layer->time <= 0.0f);
+    animator.finished = !animator.loop && duration > 0.0f &&
+                        (animator.speed >= 0.0f ? layer->time >= duration
+                                                : layer->time <= 0.0f);
   }
-  animator.m_timeWritten = animator.time;
-  animator.m_started = true;
-  (void)binding;
+  binding.timeWritten = animator.time;
+  animator.started = true;
 }
 
 void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
 {
-  const AnimationSet* set = animator.m_clips.get();
+  const AnimationSet* set = binding.clips.get();
   const std::size_t count = binding.nodes.size();
-  binding.pose.resize(count);
+  m_pose.resize(count);
   // What its clips move starts from rest (so a channel one clip has and
   // another doesn't goes back); the rest as they are now.
   if (set)
     useSet(binding, *set);
   for (std::size_t i = 0; i < count; ++i)
-    binding.pose[i] =
+    m_pose[i] =
         binding.animated[i] ? binding.rest[i] : poseOf(binding.nodes[i]);
 
-  const auto& layers = animator.m_playback.layers();
+  const auto& layers = animator.playback.layers();
   if (set && !layers.empty())
   {
     if (layers.size() == 1)
@@ -290,7 +361,7 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
         applyClip(*clip,
                   layers.front().time,
                   targetsFor(binding, *set, *clip),
-                  binding.pose);
+                  m_pose);
     }
     else
     {
@@ -300,13 +371,11 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
       std::vector<float> weights;
       for (const AnimationPlayback::Layer& layer : layers)
       {
-        binding.layerPose = binding.pose;
+        m_layerPose = m_pose;
         if (const AnimationClip* clip = set->find(layer.clip))
-          applyClip(*clip,
-                    layer.time,
-                    targetsFor(binding, *set, *clip),
-                    binding.layerPose);
-        posed.push_back(binding.layerPose);
+          applyClip(
+              *clip, layer.time, targetsFor(binding, *set, *clip), m_layerPose);
+        posed.push_back(m_layerPose);
         weights.push_back(layer.weight);
       }
       std::vector<JointPose> mix(layers.size());
@@ -316,22 +385,22 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
           continue;
         for (std::size_t l = 0; l < posed.size(); ++l)
           mix[l] = posed[l][i];
-        binding.pose[i] = blendPoses(mix, weights);
+        m_pose[i] = blendPoses(mix, weights);
       }
     }
   }
 
   // Each node relative to the animator, down the tree.
-  binding.models.resize(count);
+  m_models.resize(count);
   for (std::size_t i = 0; i < count; ++i)
   {
     const int parent = binding.parents[i];
-    binding.models[i] =
-        parent < 0 ? glm::mat4(1.0f)
-                   : binding.models[static_cast<std::size_t>(parent)] *
-                         (binding.nodes[i].hasComponent<TransformComponent>()
-                              ? binding.pose[i].matrix()
-                              : glm::mat4(1.0f));
+    m_models[i] = parent < 0
+                      ? glm::mat4(1.0f)
+                      : m_models[static_cast<std::size_t>(parent)] *
+                            (binding.nodes[i].hasComponent<TransformComponent>()
+                                 ? m_pose[i].matrix()
+                                 : glm::mat4(1.0f));
   }
 
   // Playing: the joints are moved (what's attached to them follows).
@@ -342,9 +411,9 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
       {
         TransformComponent& transform =
             binding.nodes[i].getComponent<TransformComponent>();
-        transform.position = binding.pose[i].translation;
-        transform.rotation = binding.pose[i].rotation;
-        transform.scale = binding.pose[i].scale;
+        transform.position = m_pose[i].translation;
+        transform.rotation = m_pose[i].rotation;
+        transform.scale = m_pose[i].scale;
       }
 
   // Each skinned mesh's palette and bounds.
@@ -353,20 +422,17 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
     const MeshSkin* meshSkin = m_meshes.skin(skin.base);
     if (!meshSkin || meshSkin->joints.size() != skin.joints.size())
       continue;
-    binding.jointModels.resize(skin.joints.size());
+    m_jointModels.resize(skin.joints.size());
     for (std::size_t j = 0; j < skin.joints.size(); ++j)
-      binding.jointModels[j] =
+      m_jointModels[j] =
           skin.joints[j] >= 0
-              ? binding.models[static_cast<std::size_t>(skin.joints[j])]
-              : binding.models[skin.node];
-    skinPalette(*meshSkin,
-                binding.jointModels,
-                binding.models[skin.node],
-                binding.palette);
+              ? m_models[static_cast<std::size_t>(skin.joints[j])]
+              : m_models[skin.node];
+    skinPalette(*meshSkin, m_jointModels, m_models[skin.node], m_palette);
     m_meshes.setSkinPose(skin.base,
                          skin.mesh.getId(),
-                         binding.palette,
-                         skinnedBounds(*meshSkin, binding.palette));
+                         m_palette,
+                         skinnedBounds(*meshSkin, m_palette));
     ++m_stats.skins;
   }
 }
@@ -378,32 +444,19 @@ void AnimationSystem::update(double deltaTime)
   m_stats = {};
   const float seconds = static_cast<float>(deltaTime) * m_timeScale;
 
-  // Animators gone (or no longer animators) are forgotten.
-  for (auto it = m_bindings.begin(); it != m_bindings.end();)
-    if (!it->second.animator.isAlive() ||
-        !it->second.animator.hasComponent<AnimatorComponent>())
-    {
-      m_previews.erase(it->first);
-      it = m_bindings.erase(it);
-    }
-    else
-      ++it;
-
   for (const Entity& entity : getEntities())
   {
     if (!entity.isAlive())
       continue;
     AnimatorComponent& animator = entity.getComponent<AnimatorComponent>();
-    Binding& binding = m_bindings[entity.getId()];
-    if (binding.animator != entity)
-    {
-      binding = Binding{};
-      binding.animator = entity;
-    }
+    Binding* found = bindingOf(entity);
+    if (!found)
+      continue;
+    Binding& binding = *found;
 
     // What's below it, found again when it's changed.
     ++binding.framesSinceBind;
-    bool stale = binding.stale || animator.source != animator.m_sourceSeen;
+    bool stale = binding.stale || animator.source != binding.sourceSeen;
     for (std::size_t i = 0; !stale && i < binding.nodes.size(); ++i)
       stale = !binding.nodes[i].isAlive();
     if (!stale && binding.framesSinceBind >= kRebindFrames &&
@@ -411,14 +464,14 @@ void AnimationSystem::update(double deltaTime)
       stale = true;
     if (stale)
     {
-      bind(binding, animator);
+      bind(entity, binding, animator);
       bool waiting = false;
-      animator.m_clips = clipsFor(binding, animator, waiting);
-      animator.m_sourceSeen = waiting ? std::string() : animator.source;
+      binding.clips = clipsFor(binding, animator, waiting);
+      binding.sourceSeen = waiting ? std::string() : animator.source;
       if (waiting)
         binding.complete = false; // look again soon
     }
-    if (!animator.m_clips)
+    if (!binding.clips)
     {
       // Nothing to play (yet): its meshes as bound.
       for (const SkinBinding& skin : binding.skins)
@@ -427,7 +480,7 @@ void AnimationSystem::update(double deltaTime)
     }
     ++m_stats.animators;
 
-    const bool running = m_live || m_previews.contains(entity.getId());
+    const bool running = m_live || binding.preview;
     advance(binding, animator, seconds, running);
 
     // Off screen: posed now and then (its time ran anyway).

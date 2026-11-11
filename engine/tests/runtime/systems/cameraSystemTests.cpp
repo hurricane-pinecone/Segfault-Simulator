@@ -163,11 +163,11 @@ int main()
     reg.flushEntities();
 
     auto& c = camera.getComponent<CameraFollowComponent>();
-    c.shake(1.0f, 1.0f, 1.0f); // full strength, 1s, linear
+    CameraSystem::shake(camera, 1.0f, 1.0f, 1.0f); // full strength, 1s, linear
     sys.update(0.1);
 
     // Some displacement this frame, each axis bounded by strength * maxOffset.
-    const glm::vec2 o = c.shakeOffset();
+    const glm::vec2 o = c.shakeOffset;
     CHECK(std::abs(o.x) > 0.0f || std::abs(o.y) > 0.0f);
     CHECK(std::abs(o.x) <= 1.0f + 1e-4f);
     CHECK(std::abs(o.y) <= 1.0f + 1e-4f);
@@ -190,13 +190,13 @@ int main()
     reg.flushEntities();
 
     auto& c = camera.getComponent<CameraFollowComponent>();
-    c.shake(1.0f, 0.5f);
+    CameraSystem::shake(camera, 1.0f, 0.5f);
 
     for (int i = 0; i < 10; i++) // 1.0s elapsed > 0.5s duration
       sys.update(0.1);
 
-    CHECK(testing::approx(c.shakeOffset().x, 0.0f));
-    CHECK(testing::approx(c.shakeOffset().y, 0.0f));
+    CHECK(testing::approx(c.shakeOffset.x, 0.0f));
+    CHECK(testing::approx(c.shakeOffset.y, 0.0f));
   }
 
   TEST("shake clamps strength so the offset never exceeds maxOffset")
@@ -211,11 +211,11 @@ int main()
     reg.flushEntities();
 
     auto& c = camera.getComponent<CameraFollowComponent>();
-    c.shake(5.0f, 1.0f); // over-strength: clamps to 1.0
-    sys.update(0.05);    // early in the shake, amplitude ~ strength
+    CameraSystem::shake(camera, 5.0f, 1.0f); // over-strength: clamps to 1.0
+    sys.update(0.05); // early in the shake, amplitude ~ strength
 
-    CHECK(std::abs(c.shakeOffset().x) <= 1.0f + 1e-4f);
-    CHECK(std::abs(c.shakeOffset().y) <= 1.0f + 1e-4f);
+    CHECK(std::abs(c.shakeOffset.x) <= 1.0f + 1e-4f);
+    CHECK(std::abs(c.shakeOffset.y) <= 1.0f + 1e-4f);
   }
 
   TEST("a parented camera should follow its target in the world")

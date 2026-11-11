@@ -1,9 +1,12 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 namespace sfs
 {
+
+class RenderTexture;
 
 /**
  * A camera that films the scene into a small picture a UI shows (a tractor
@@ -45,6 +48,11 @@ struct CameraFeedComponent
   float farPlane = 200.0f;
   bool grassBlades = false;
   [[sfs::range(5, 100)]] [[sfs::showIf(grassBlades)]] float grassReach = 30.0f;
+
+  // As filmed (RenderSystem's): its picture (made the first time a UI asks
+  // for it), and when it was last filmed (seconds, steady clock).
+  [[sfs::hide]] std::shared_ptr<RenderTexture> picture;
+  [[sfs::hide]] double filmed = -1.0e9;
 };
 
 } // namespace sfs

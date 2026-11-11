@@ -73,6 +73,34 @@ protected:
     ++created;
   }
 };
+
+// Keeps movers (set 0) and, as a second set, everything with Health, and
+// records what joined and left each.
+class WatchingSystem : public System
+{
+public:
+  int healthSet = -1;
+  std::vector<std::pair<Entity::EntityId, int>> added, removed;
+  // Whether a leaving entity still had Position as it left.
+  std::vector<bool> leftWithPosition;
+
+protected:
+  void create() override
+  {
+    registerComponent<Position>();
+    registerComponent<Velocity>();
+    healthSet = watch<Health>();
+  }
+  void onEntityAdded(const Entity& entity, int set) override
+  {
+    added.emplace_back(entity.getId(), set);
+  }
+  void onEntityRemoved(const Entity& entity, int set) override
+  {
+    removed.emplace_back(entity.getId(), set);
+    leftWithPosition.push_back(entity.hasComponent<Position>());
+  }
+};
 } // namespace
 
 int main()
@@ -496,6 +524,62 @@ int main()
     CHECK(reg.componentChanges<Velocity>() == again); // (until the flush)
     reg.flushEntities();
     CHECK(reg.componentChanges<Velocity>() != again);
+  }
+
+  TEST("a system should be told as entities join and leave its sets")
+  {
+    Registry reg;
+    WatchingSystem& sys = reg.addSystem<WatchingSystem>();
+    CHECK(sys.healthSet == 1);
+
+    Entity mover = reg.createEntity();
+    mover.addComponent<Position>();
+    mover.addComponent<Velocity>();
+    Entity hurt = reg.createEntity();
+    hurt.addComponent<Health>();
+    CHECK(sys.added.empty()); // (until the flush)
+    reg.flushEntities();
+    CHECK(sys.added.size() == 2u);
+    CHECK(sys.getEntities().size() == 1u);
+    CHECK(sys.getEntities(sys.healthSet).size() == 1u);
+    CHECK(sys.getEntities(sys.healthSet).front().getId() == hurt.getId());
+    CHECK(sys.getEntities(7).empty());
+
+    // Gaining Health: it joins the second set too.
+    mover.addComponent<Health>();
+    CHECK(sys.added.size() == 3u);
+    CHECK(sys.added.back().first == mover.getId());
+    CHECK(sys.added.back().second == sys.healthSet);
+
+    // Losing Velocity: it leaves set 0 only.
+    mover.removeComponent<Velocity>();
+    CHECK(sys.removed.size() == 1u);
+    CHECK(sys.removed.back().second == 0);
+    CHECK(sys.leftWithPosition.back());
+    CHECK(sys.getEntities().empty());
+
+    // Destroyed: it leaves what it's still in, its components still there.
+    reg.destroyEntity(mover);
+    reg.flushEntities();
+    CHECK(sys.removed.size() == 2u);
+    CHECK(sys.removed.back().first == mover.getId());
+    CHECK(sys.removed.back().second == sys.healthSet);
+    CHECK(sys.getEntities(sys.healthSet).size() == 1u);
+  }
+
+  TEST("a system added late should be told of the entities already there")
+  {
+    Registry reg;
+    Entity mover = reg.createEntity();
+    mover.addComponent<Position>();
+    mover.addComponent<Velocity>();
+    mover.addComponent<Health>();
+    reg.flushEntities();
+
+    WatchingSystem& sys = reg.addSystem<WatchingSystem>();
+    CHECK(sys.added.size() == 2u);
+    CHECK(sys.getEntities().size() == 1u);
+    CHECK(sys.getEntities(sys.healthSet).size() == 1u);
   }
 
   TEST("getSystem on a missing system should be a fatal error naming it")
