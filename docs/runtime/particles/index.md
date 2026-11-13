@@ -82,10 +82,29 @@ emitter.tint = {0.9f, 0.75f, 0.45f, 1.0f}; // multiplies the effect's colour
 | `turnWithEntity` | the offset, emission shape and launch direction turn with the entity's heading |
 | `inheritVelocity` | how much of the entity's own velocity (from how far it moved last frame) its particles leave with |
 | `tint` | multiplies the effect's colour and alpha: one effect in many colours |
+| `shapeScale` | scales where the effect's emission shape spawns, per axis, before it turns with the entity (Unity's `ShapeModule.scale`): one dust effect as wide as each machine's header |
+| `maxParticles` | this emitter's own capacity (0: the effect's `maxParticles`), e.g. scaled with `shapeScale` |
 
 An entity emitter that moved since last frame spreads that frame's particles
 along the way it came, so a fast one (or any in a sped-up game) leaves an even
 trail rather than a clump each frame.
+
+### Wind
+
+A `WindZoneComponent` blows on particles, as Unity's directional WindZone does:
+`wind` (metres a second across the world's XY) and `enabled`. Where its entity
+is doesn't matter. Each update the particles add up the enabled zones. An
+effect is carried by the wind only if its `windInfluence` is above 0: its
+particles get `drag * windInfluence * wind` added to their planar
+acceleration, so their drag carries them toward `windInfluence` times the
+wind (dust 0.5, smoke near 1, sparks 0). A game's weather writes the zone:
+
+```cpp
+if (auto* zone = scene().singleton<sfs::WindZoneComponent>())
+  zone->wind = weather.wind;
+```
+
+A `ParticleEngine` with no registry (a tool, a test) has no wind.
 
 ### Pausing
 

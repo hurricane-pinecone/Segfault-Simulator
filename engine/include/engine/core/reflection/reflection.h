@@ -121,6 +121,9 @@ struct TypeInfo
   std::string displayName; // for the editor, e.g. "Transform"
   std::string module;      // which module registered it (e.g. "engine")
   TypeKind kind = TypeKind::Component;
+  /** A component with no data (an empty struct): it marks an entity; the
+   * editor lists it under Tags. */
+  bool tag = false;
   std::string base; // the reflected type it derives from (empty: none)
   std::vector<FieldInfo> fields;
   ComponentOps component;   // valid when kind == Component

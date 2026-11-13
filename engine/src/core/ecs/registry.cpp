@@ -9,6 +9,28 @@
 namespace sfs
 {
 
+Registry::~Registry()
+{
+  // Taken out of the registry first, so a destructor that looks another system
+  // up finds none rather than one already destroyed.
+  std::vector<std::unique_ptr<System>> leaving = std::move(systems);
+  systems.clear();
+  forgetSystemLookups();
+  for (std::unique_ptr<System>& system : leaving)
+    system.reset();
+}
+
+void Registry::forgetSystemLookups()
+{
+  // Counted before the slots are cleared: a lookup storing after the clear
+  // then sees the count changed and takes its answer back.
+  m_systemsChanged.fetch_add(1);
+  for (std::atomic<std::uintptr_t>& slot : m_systemSlots)
+    slot.store(kNotLookedUp);
+  for (std::atomic<const std::type_info*>& type : m_systemSlotTypes)
+    type.store(nullptr, std::memory_order_relaxed);
+}
+
 Entity Registry::createEntity()
 {
   Entity::EntityId id;
@@ -63,11 +85,18 @@ bool Registry::isPending(Entity::EntityId id) const
 
 void Registry::attach(System& system)
 {
+  // Observers' signatures are canonical as made; the registered one only
+  // now, as registerComponent() must still see a second Any group as one.
+  system.m_signature = system.m_signature.canonical();
   const std::size_t lists = system.listCount();
   system.m_lists.clear();
   system.m_lists.reserve(lists);
   for (std::size_t i = 0; i < lists; ++i)
-    system.m_lists.push_back(&queryOf(system.signatureOf(i)));
+  {
+    const uint32_t index = listOf(system.signatureOf(i));
+    m_queryFollowed[index] = 1;
+    system.m_lists.push_back(&m_queryLists[index]);
+  }
 
   for (Entity::EntityId id = 0; id < entityCount; ++id)
   {
@@ -76,11 +105,8 @@ void Registry::attach(System& system)
     const Entity entity = getEntity(id);
     const Signature components = entityComponentSignatures[id];
     for (std::size_t i = 0; i < lists; ++i)
-    {
-      const Signature& signature = system.signatureOf(i);
-      if ((components & signature) == signature)
+      if (system.signatureOf(i).matches(components))
         system.tellJoined(i, entity);
-    }
   }
 }
 
@@ -92,11 +118,32 @@ void Registry::follow(System& system, std::size_t index)
               " is out of order; not followed");
     return;
   }
-  const std::vector<Entity>& list = queryOf(system.signatureOf(index));
-  system.m_lists.push_back(&list);
-  const std::vector<Entity> members = list; // a callback may change the list
+  const uint32_t list = listOf(system.signatureOf(index));
+  m_queryFollowed[list] = 1;
+  system.m_lists.push_back(&m_queryLists[list]);
+  // A callback may change the list.
+  const std::vector<Entity> members = m_queryLists[list];
   for (const Entity& entity : members)
     system.tellJoined(index, entity);
+}
+
+void Registry::countChange(Entity::EntityId entity,
+                           std::size_t componentId,
+                           bool gained)
+{
+  ++m_componentChanges[componentId];
+  if (gained)
+  {
+    if (m_holderCount[componentId]++ == 0)
+      m_holder[componentId] = entity;
+  }
+  else
+  {
+    if (m_holderCount[componentId] > 0)
+      --m_holderCount[componentId];
+    if (m_holder[componentId] == entity)
+      m_holder[componentId] = kNoHolder;
+  }
 }
 
 void Registry::countChanges(Entity::EntityId entity,
@@ -107,69 +154,72 @@ void Registry::countChanges(Entity::EntityId entity,
   if (changed.none())
     return;
   for (std::size_t id = 0; id < m_componentChanges.size(); ++id)
-  {
-    if (!changed.test(id))
-      continue;
-    ++m_componentChanges[id];
-    if (after.test(id))
-    {
-      if (m_holderCount[id]++ == 0)
-        m_holder[id] = entity;
-    }
-    else
-    {
-      if (m_holderCount[id] > 0)
-        --m_holderCount[id];
-      if (m_holder[id] == entity)
-        m_holder[id] = kNoHolder;
-    }
-  }
+    if (changed.test(id))
+      countChange(entity, id, after.test(id));
 }
 
-const std::vector<Entity>& Registry::queryOf(const Signature& signature)
+uint32_t Registry::listOf(const QuerySignature& signature)
 {
-  auto found = m_queries.find(signature);
-  if (found != m_queries.end())
-    return found->second.entities;
-  Query& query = m_queries[signature];
-  query.signature = signature;
+  const auto [found, made] = m_queryIndex.try_emplace(
+      signature, static_cast<uint32_t>(m_querySignatures.size()));
+  if (!made)
+    return found->second;
+  const uint32_t index = found->second;
+  m_querySignatures.push_back(signature);
+  m_queryFollowed.push_back(0);
+  std::vector<Entity>& entities = m_queryLists.emplace_back();
+  const Signature named = signature.all | signature.any | signature.excluding;
+  for (std::size_t componentId = 0; componentId < MAX_COMPONENTS; ++componentId)
+    if (named.test(componentId))
+      m_queriesNaming[componentId].push_back(index);
   for (Entity::EntityId id = 0; id < entityComponentSignatures.size(); ++id)
     if (entityAlive[id] && !isPending(id) &&
-        (entityComponentSignatures[id] & signature) == signature)
-      query.entities.push_back(getEntity(id));
-  return query.entities;
+        signature.matches(entityComponentSignatures[id]))
+      entities.push_back(getEntity(id));
+  return index;
 }
 
 void Registry::syncQueries(Entity::EntityId id,
                            const Signature& before,
                            bool wasIn,
                            const Signature& after,
-                           bool isIn)
+                           bool isIn,
+                           const std::vector<uint32_t>* lists)
 {
   // Taken, so a hook that changes components anyway gets a scratch of its own.
   std::vector<QueryChange> changes = std::move(m_queryChanges);
   changes.clear();
+  bool followed = false;
   const Entity entity = getEntity(id);
-  for (auto& [signature, query] : m_queries)
+  const auto sync = [&](uint32_t index)
   {
-    const bool was = wasIn && (before & signature) == signature;
-    const bool is = isIn && (after & signature) == signature;
+    const QuerySignature& signature = m_querySignatures[index];
+    const bool was = wasIn && signature.matches(before);
+    const bool is = isIn && signature.matches(after);
     if (was == is)
-      continue;
+      return;
     // Kept in id order, as a scan would list them.
-    auto at = std::lower_bound(query.entities.begin(),
-                               query.entities.end(),
+    std::vector<Entity>& entities = m_queryLists[index];
+    auto at = std::lower_bound(entities.begin(),
+                               entities.end(),
                                id,
                                [](const Entity& member, Entity::EntityId key)
                                { return member.getId() < key; });
     if (is)
-      query.entities.insert(at, entity);
-    else if (at != query.entities.end() && at->getId() == id)
-      query.entities.erase(at);
-    changes.push_back({&query.entities, is});
-  }
+      entities.insert(at, entity);
+    else if (at != entities.end() && at->getId() == id)
+      entities.erase(at);
+    changes.push_back({&entities, is});
+    followed = followed || m_queryFollowed[index] != 0;
+  };
+  if (lists)
+    for (const uint32_t index : *lists)
+      sync(index);
+  else
+    for (uint32_t index = 0; index < m_querySignatures.size(); ++index)
+      sync(index);
 
-  if (!changes.empty())
+  if (followed)
     for (std::size_t s = 0; s < systems.size(); ++s)
     {
       System& system = *systems[s];
@@ -203,16 +253,18 @@ void Registry::warnNotSingle(std::size_t componentId, std::string_view type)
            " entities have a " + std::string(type) + "; using one of them");
 }
 
-void Registry::componentsChanged(const Entity& entity, const Signature& before)
+void Registry::componentsChanged(const Entity& entity,
+                                 const Signature& before,
+                                 std::size_t componentId)
 {
   const Entity::EntityId id = entity.getId();
   const Signature& after = entityComponentSignatures[id];
-  countChanges(id, before, after);
+  countChange(id, componentId, after.test(componentId));
 
   // Not in any query yet: it joins them, as it is then, at the next flush.
   if (isPending(id))
     return;
-  syncQueries(id, before, true, after, true);
+  syncQueries(id, before, true, after, true, &m_queriesNaming[componentId]);
 }
 
 void Registry::badComponentAccess(const Entity& entity,

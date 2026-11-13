@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-// What sfs-codegen learns from a header: the script type it declares and that
-// type's editable fields. Produced by the parser, consumed by the generator.
+// What sfs-codegen learns from a header: the script types it declares and their
+// editable fields. Produced by the parser, consumed by the generator.
 namespace sfs::codegen
 {
 
@@ -50,6 +50,7 @@ struct TypeModel
   std::string base;     // Derived: the base's name, unqualified ("VehicleSpec")
   std::vector<FieldModel> fields;
   std::filesystem::path header;
+  unsigned line = 0; // 1-based, where it's declared
 };
 
 struct Diagnostic
@@ -69,6 +70,8 @@ struct Diagnostic
 struct ParseResult
 {
   std::optional<TypeModel> type; // the header's script type, if found
+  /** [[sfs::component]] types besides the file's, in declaration order. */
+  std::vector<TypeModel> components;
   std::vector<Diagnostic> diagnostics;
 };
 

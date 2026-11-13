@@ -6,6 +6,8 @@
 #include <engine/core/util/atomicFile.h>
 #include <engine/core/util/cpuFeatures.h>
 #include <engine/core/util/format.h>
+#include <engine/core/util/hash.h>
+#include <engine/core/util/readFileText.h>
 #include <engine/core/util/string.h>
 
 #include <cstddef>
@@ -190,6 +192,27 @@ int main()
     sfs::Logger::removeSink(thrower);
     sfs::Logger::removeSink(counter);
     CHECK(calls == 1);
+  }
+
+  TEST("fnv1a64 should match FNV-1a, in parts as whole")
+  {
+    CHECK(fnv1a64("") == kFnv1a64Offset);
+    CHECK(fnv1a64("a") == 0xAF63DC4C8601EC8Cull);
+    CHECK(fnv1a64("bar", fnv1a64("foo/")) == fnv1a64("foo/bar"));
+    CHECK(mix64(0) == 0u);
+    CHECK(mix64(1) != mix64(2));
+  }
+
+  TEST("readFileText should give a file's bytes, or nothing")
+  {
+    const fs::path file = fs::temp_directory_path() / "sfsReadFileText.txt";
+    {
+      std::ofstream out(file, std::ios::binary);
+      out << "a\r\nb";
+    }
+    CHECK(readFileText(file) == std::optional<std::string>("a\r\nb"));
+    fs::remove(file);
+    CHECK(!readFileText(file).has_value());
   }
 
   return testing::report("utilTests");

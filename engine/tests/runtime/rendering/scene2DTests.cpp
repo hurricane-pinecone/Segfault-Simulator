@@ -159,13 +159,13 @@ int main()
     CHECK(h.renderer.drawn.size() == 1u);
     CHECK(testing::approx(h.renderer.drawn.front().tint.x, 0.5f));
     CHECK(testing::approx(h.renderer.drawn.front().tint.w, 0.25f));
-    const auto* sprites = h.system.module<SpriteModule>();
-    CHECK(!sprites->commands().empty() &&
-          sprites->commands().front().shadowInstances.empty());
+    CHECK(h.renderer.batches.size() == 1u &&
+          h.renderer.batches.front().shadowInstances == 0u);
 
     e.getComponent<SpriteComponent>().castsShadow = true;
     h.frame();
-    CHECK(sprites->commands().front().shadowInstances.size() == 1u);
+    CHECK(h.renderer.batches.size() == 1u &&
+          h.renderer.batches.front().shadowInstances == 1u);
   }
 
   TEST("a child sprite should be drawn where its parent puts it")
@@ -280,6 +280,8 @@ int main()
     h.frame(0.5);
 
     CHECK(h.renderer.drawn.size() == 1u);
+    if (h.renderer.drawn.empty())
+      continue;
     const MeshInstance& mark = h.renderer.drawn.front();
     CHECK(testing::approx(glm::length(glm::vec3(mark.model[0])), 2.0f));
     CHECK(testing::approx(mark.uvRect.x, 0.25f));
@@ -304,8 +306,11 @@ int main()
     decals.addDecal(spawn);
     h.frame();
 
-    CHECK(decals.commands().size() == 1u);
-    const MeshInstance& mark = decals.commands().front().instances.front();
+    CHECK(h.renderer.batches.size() == 1u);
+    CHECK(h.renderer.drawn.size() == 1u);
+    if (h.renderer.drawn.empty())
+      continue;
+    const MeshInstance& mark = h.renderer.drawn.front();
     CHECK(testing::approx(mark.model[3].x, 2.0f));
     CHECK(testing::approx(mark.model[3].y, 3.0f));
     CHECK(mark.model[3].z > 1.0f && mark.model[3].z < 1.05f);

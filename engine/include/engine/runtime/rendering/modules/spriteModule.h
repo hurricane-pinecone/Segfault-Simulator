@@ -60,6 +60,9 @@ public:
   void init(const ModuleInit& init) override { m_registry = init.registry; }
   void computeCommands(const RenderContext& context) override;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   // A sheet (and its normal map) as a material: made once.
   MaterialHandle material(MeshLibrary& meshes,

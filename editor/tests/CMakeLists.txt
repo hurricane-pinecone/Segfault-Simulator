@@ -39,6 +39,9 @@ target_link_libraries(gltfFilesTests PRIVATE sfs::engine-core)
 add_editor_test(historyStepsTests historyStepsTests.cpp "${EDITOR_SRC_DIR}/history/historySteps.cpp")
 target_link_libraries(historyStepsTests PRIVATE sfs::engine-core)
 
+add_editor_test(nodeIdUpgradeTests nodeIdUpgradeTests.cpp "${EDITOR_SRC_DIR}/build/nodeIdUpgrade.cpp")
+target_link_libraries(nodeIdUpgradeTests PRIVATE sfs::engine)
+
 add_editor_test(selectionTests selectionTests.cpp)
 target_link_libraries(selectionTests PRIVATE sfs::engine)
 

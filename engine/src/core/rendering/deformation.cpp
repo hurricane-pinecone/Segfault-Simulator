@@ -750,6 +750,29 @@ std::vector<glm::ivec2> DeformationMap::tiles() const
   return out;
 }
 
+bool DeformationMap::anyTileIn(glm::ivec2 first, glm::ivec2 count) const
+{
+  if (count.x <= 0 || count.y <= 0 || m_tiles.empty())
+    return false;
+  // Whichever is fewer: the block's tiles looked up, or the map's checked.
+  if (static_cast<std::size_t>(count.x) * static_cast<std::size_t>(count.y) <
+      m_tiles.size())
+  {
+    for (int y = 0; y < count.y; ++y)
+      for (int x = 0; x < count.x; ++x)
+        if (m_tiles.contains(keyOf(first + glm::ivec2(x, y))))
+          return true;
+    return false;
+  }
+  for (const auto& [key, tile] : m_tiles)
+  {
+    const glm::ivec2 at = tileOfKey(key) - first;
+    if (at.x >= 0 && at.y >= 0 && at.x < count.x && at.y < count.y)
+      return true;
+  }
+  return false;
+}
+
 void DeformationMap::halves(glm::ivec2 tile, std::span<uint16_t> out) const
 {
   const Tile* from = tileAt(tile);

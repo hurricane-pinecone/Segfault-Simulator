@@ -150,6 +150,10 @@ private:
     // An entity emitter's: its emit rate's scale, and its colour's.
     float rate = 1.0f;
     glm::vec4 tint{1.0f};
+    // An entity emitter's scale of its emission shape, and its own capacity
+    // (0: the effect's).
+    glm::vec2 shapeScale{1.0f};
+    int maxParticles = 0;
     // Its entity's velocity (from where its origin was last frame), and how
     // much of it particles leave with.
     glm::vec2 lastOrigin{0.0f, 0.0f};
@@ -210,6 +214,12 @@ private:
   // fire-and-forget bursts. Both drain their particles before being dropped.
   std::unordered_map<Entity::EntityId, EmitterInstance> m_entityEmitters;
   std::vector<EmitterInstance> m_bursts;
+
+  // The wind (WindZoneComponent) summed this update, across the plane.
+  glm::vec2 m_wind{0.0f};
+
+  // Sum the enabled wind zones into m_wind (none without a registry).
+  void gatherWind();
 
   // Global live-particle ceiling (see setMaxParticles).
   int m_maxParticles = 6000;

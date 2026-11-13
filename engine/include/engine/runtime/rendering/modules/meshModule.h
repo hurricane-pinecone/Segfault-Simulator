@@ -32,6 +32,9 @@ public:
 
   void computeCommands(const RenderContext& context) override;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   // One entity's instance, into the command for its mesh and materials.
   void addEntity(const RenderContext& context,

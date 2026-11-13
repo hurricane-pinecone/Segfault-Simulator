@@ -60,8 +60,11 @@ public:
 
   // A frame: the systems (in game time: see Registry::setTimeScale() and
   // System::TimeStep), then the game objects and onUpdate() (real time:
-  // they're the player's, input and cameras).
+  // they're the player's, input and cameras), then the systems' lateUpdate().
   void update(double deltaTime);
+  // The frame's input: filterInput(), then each game object (without the
+  // keys that input contexts outranking its own claim: see
+  // InputContextComponent), then onProcessInput().
   void processInput(const sfs::Input& input);
   void render();
 
@@ -157,15 +160,16 @@ public:
   bool paused() const { return m_registry.paused(); }
 
   /**
-   * The flushed, living entities with all these components, in id order: the
-   * registry's shared list, kept up to date (Registry::query()). To add or
-   * remove these component types while going through it, go through a copy.
+   * The flushed, living entities that match these terms (components, one
+   * Any<...> group, Excluding<...> groups), in id order: the registry's
+   * shared list, kept up to date (Registry::query()). To add or remove these
+   * component types while going through it, go through a copy.
    * @return the shared list, read-only
    */
-  template <typename... TComponents>
+  template <typename... TTerms>
   const std::vector<Entity>& query()
   {
-    return m_registry.query<TComponents...>();
+    return m_registry.query<TTerms...>();
   }
 
   /**

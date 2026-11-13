@@ -1,10 +1,14 @@
 #include "../../testHarness.h"
 
+#include <engine/core/components/boxCollider3DComponent.h>
+#include <engine/core/components/cameraCollisionComponent.h>
 #include <engine/core/components/cameraComponent.h>
 #include <engine/core/components/cameraFollowComponent.h>
+#include <engine/core/components/rigidBody3DComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/rendering/camera.h>
 #include <engine/runtime/systems/cameraSystem.h>
 
 #include <cmath>
@@ -30,6 +34,66 @@ Entity addCamera(Registry& reg,
   e.addComponent<CameraFollowComponent>(follow);
   return e;
 }
+// A camera 20 m from its pivot at the origin, 0.3 rad above level, with
+// camera collision, and blockers to put between them.
+struct Orbit
+{
+  Registry reg;
+  CameraSystem& sys = reg.addSystem<CameraSystem>();
+  Camera view;
+  Entity camera;
+
+  Orbit()
+  {
+    view.target = glm::vec3(0.0f);
+    view.yaw = 0.4f;
+    view.pitch = 0.3f;
+    view.distance = 20.0f;
+    camera = reg.createEntity();
+    camera.addComponent<TransformComponent>(
+        TransformComponent(view.position(), view.orientation()));
+    CameraComponent lens;
+    lens.focusDistance = 20.0f;
+    camera.addComponent<CameraComponent>(lens);
+    camera.addComponent<CameraCollisionComponent>();
+  }
+
+  CameraCollisionComponent& collision()
+  {
+    return camera.getComponent<CameraCollisionComponent>();
+  }
+
+  // A static box standing `out` metres back from the pivot toward the eye,
+  // its top at `top`, `tall` high.
+  Entity box(float out, float top, float tall = 8.0f)
+  {
+    const glm::vec3 back = -view.groundForward() * out;
+    Entity entity = reg.createEntity();
+    entity.addComponent<TransformComponent>(
+        TransformComponent(glm::vec3(back.x, back.y, top - tall * 0.5f)));
+    BoxCollider3DComponent shape;
+    shape.size = {4.0f, 4.0f, tall};
+    entity.addComponent<BoxCollider3DComponent>(shape);
+    reg.flushEntities();
+    return entity;
+  }
+
+  // The camera's pitch now (radians above its pivot), and its distance.
+  float pitch() const
+  {
+    const TransformComponent& t = camera.getComponent<TransformComponent>();
+    Camera seen;
+    seen.setPose(t.position, t.rotation * glm::vec3(1.0f, 0.0f, 0.0f), 20.0f);
+    return seen.pitch;
+  }
+  float distance() const
+  {
+    return glm::length(camera.getComponent<TransformComponent>().position);
+  }
+
+  // The height of the eye's line to the pivot, `out` metres back.
+  float lineAt(float out) const { return out * std::tan(pitch()); }
+};
 } // namespace
 
 int main()
@@ -247,6 +311,127 @@ int main()
     CHECK(testing::approx(world.y, 5.0f));
     CHECK(testing::approx(
         camera.getComponent<TransformComponent>().position.x, 4.0f));
+  }
+
+  TEST("a box between the eye and the pivot should lift the camera over it, "
+       "keeping its distance")
+  {
+    Orbit orbit;
+    orbit.reg.flushEntities();
+    orbit.sys.lateUpdate(0.016);
+    CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f)); // nothing in the way
+    orbit.box(10.0f, 8.0f);
+    orbit.sys.lateUpdate(0.016);
+    CHECK(orbit.pitch() > 0.4f);
+    CHECK(orbit.lineAt(10.0f) >= 8.0f);
+    CHECK(testing::approx(orbit.distance(), 20.0f, 1e-3f));
+  }
+
+  TEST("a blocker too short, on a layer masked out, moving, or a trigger "
+       "shouldn't lift the camera")
+  {
+    {
+      Orbit orbit;
+      orbit.box(10.0f, 8.0f, 0.5f); // a slab under minHeight
+      orbit.sys.lateUpdate(0.016);
+      CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+    }
+    {
+      Orbit orbit;
+      orbit.box(10.0f, 8.0f).getComponent<BoxCollider3DComponent>().layer = 2;
+      orbit.collision().layers = ~(1 << 2);
+      orbit.sys.lateUpdate(0.016);
+      CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+    }
+    {
+      Orbit orbit;
+      orbit.box(10.0f, 8.0f).getComponent<BoxCollider3DComponent>().trigger =
+          true;
+      orbit.sys.lateUpdate(0.016);
+      CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+    }
+    {
+      Orbit orbit;
+      orbit.box(10.0f, 8.0f).addComponent<RigidBody3DComponent>();
+      orbit.reg.flushEntities();
+      orbit.sys.lateUpdate(0.016);
+      CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+      orbit.collision().movingBlocks = true;
+      orbit.sys.lateUpdate(0.016);
+      CHECK(orbit.pitch() > 0.4f);
+    }
+  }
+
+  TEST("a camera left alone shouldn't stack lifts, and should ease back once "
+       "clear")
+  {
+    Orbit orbit;
+    Entity wall = orbit.box(10.0f, 8.0f);
+    orbit.sys.lateUpdate(0.016);
+    const float lifted = orbit.pitch();
+    orbit.sys.lateUpdate(0.016);
+    orbit.sys.lateUpdate(0.016);
+    CHECK(testing::approx(orbit.pitch(), lifted, 1e-4f));
+
+    wall.removeComponent<BoxCollider3DComponent>();
+    orbit.sys.lateUpdate(0.1);
+    const float easing = orbit.pitch();
+    CHECK(easing < lifted && easing > 0.3f);
+    // Eased by 1 - e^(-easeBack * dt) of the way.
+    CHECK(testing::approx(
+        easing - 0.3f, (lifted - 0.3f) * std::exp(-3.0f * 0.1f), 1e-3f));
+    for (int i = 0; i < 100; ++i)
+      orbit.sys.lateUpdate(0.1);
+    CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+  }
+
+  TEST("a controller moving the camera should be lifted from its own pose")
+  {
+    Orbit orbit;
+    orbit.box(10.0f, 8.0f);
+    orbit.sys.lateUpdate(0.016);
+    const float lifted = orbit.pitch();
+    // The controller puts it back at its own pose each frame.
+    for (int i = 0; i < 3; ++i)
+    {
+      orbit.camera.getComponent<TransformComponent>() =
+          TransformComponent(orbit.view.position(), orbit.view.orientation());
+      orbit.sys.lateUpdate(0.016);
+      CHECK(testing::approx(orbit.pitch(), lifted, 1e-3f));
+    }
+  }
+
+  TEST("a camera with its collision turned off shouldn't be lifted, its "
+       "lift easing back as when clear")
+  {
+    Orbit orbit;
+    orbit.box(10.0f, 8.0f);
+    orbit.sys.lateUpdate(0.016);
+    const float lift = orbit.collision().lift;
+    CHECK(lift > 0.1f);
+
+    orbit.collision().enabled = false;
+    orbit.sys.lateUpdate(0.1);
+    CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+    CHECK(testing::approx(
+        orbit.collision().lift, lift * std::exp(-3.0f * 0.1f), 1e-4f));
+    // Moved by its controller while off: left where the controller put it.
+    orbit.camera.getComponent<TransformComponent>() =
+        TransformComponent(orbit.view.position(), orbit.view.orientation());
+    orbit.sys.lateUpdate(0.1);
+    CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
+
+    orbit.collision().enabled = true;
+    orbit.sys.lateUpdate(0.016);
+    CHECK(orbit.pitch() > 0.4f);
+  }
+
+  TEST("a lift should never pass maxPitch")
+  {
+    Orbit orbit;
+    orbit.box(2.5f, 200.0f, 200.0f); // right behind the pivot
+    orbit.sys.lateUpdate(0.016);
+    CHECK(testing::approx(orbit.pitch(), glm::radians(80.0f), 1e-3f));
   }
 
   return testing::report("cameraSystemTests");

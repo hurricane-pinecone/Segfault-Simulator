@@ -124,6 +124,15 @@ private:
 render.withModule<MarkerModule>();
 ```
 
+`emit()` copies a module's commands into the frame's list, so a module can
+keep them from frame to frame and build them again only when something
+changes. A module that builds every command afresh each frame, starting with
+`flush()` as above, should say so: overriding `rebuildsEveryFrame()` to return
+true has `emit()` move them instead of copying their instances. Its
+`commands()` then hold the frame's only until they're emitted: a test reads
+what was drawn, or calls `computeCommands()` itself. The engine's mesh, sprite,
+decal, particle, voxel and deformation modules all do this.
+
 Or implement `IRenderModule<RenderContext>` directly and append to the
 frame's `AnyRenderCommand`s in `emit()`. Either way the render system sorts
 your commands with everyone else's by `RenderPass` and submits them; a module

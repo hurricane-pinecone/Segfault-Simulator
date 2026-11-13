@@ -482,15 +482,58 @@ void RenderSystem::render()
   m_stats.pointLights = m_pointLights.size();
 }
 
+namespace
+{
+// A camera feed's picture, at its size.
+std::shared_ptr<RenderTexture> pictureFor(const CameraFeedComponent& feed)
+{
+  return std::make_shared<RenderTexture>(glm::ivec2(feed.width, feed.height));
+}
+} // namespace
+
 std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
 {
   if (!entity.isValid() || !entity.hasComponent<CameraFeedComponent>())
     return nullptr;
   auto& lens = entity.getComponent<CameraFeedComponent>();
   if (!lens.picture)
-    lens.picture =
-        std::make_shared<RenderTexture>(glm::ivec2(lens.width, lens.height));
+    lens.picture = pictureFor(lens);
   return lens.picture;
+}
+
+void RenderSystem::makeFeedPictures()
+{
+  if (!registry)
+    return;
+  for (const Entity& entity : registry->query<CameraFeedComponent>())
+  {
+    auto& feed = entity.getComponent<CameraFeedComponent>();
+    if (!feed.picture)
+      feed.picture = pictureFor(feed);
+  }
+}
+
+void RenderSystem::refreshMeshBounds()
+{
+  if (!registry)
+    return;
+  for (const Entity& entity : registry->query<MeshRendererComponent>())
+  {
+    auto& renderer = entity.getComponent<MeshRendererComponent>();
+    if (renderer.mesh == renderer.boundsOf)
+      continue;
+    if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
+    {
+      renderer.bounds = *bounds;
+      renderer.boundsOf = renderer.mesh;
+    }
+    else
+    {
+      // Not loaded yet: tried again next update.
+      renderer.bounds = Aabb{};
+      renderer.boundsOf = MeshHandle{};
+    }
+  }
 }
 
 std::optional<FeedView> RenderSystem::chooseFeed()

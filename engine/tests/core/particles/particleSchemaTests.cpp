@@ -29,6 +29,7 @@ int main()
     CHECK(find(schema, "lifetime") != nullptr);
     CHECK(find(schema, "speed") != nullptr);
     CHECK(find(schema, "drag") != nullptr);
+    CHECK(find(schema, "windInfluence") != nullptr);
     CHECK(find(schema, "size") != nullptr);
     CHECK(find(schema, "color") != nullptr);
   }
@@ -36,6 +37,7 @@ int main()
   TEST("each field should carry the correct kind")
   {
     CHECK(find(schema, "drag")->kind == FieldKind::Float);
+    CHECK(find(schema, "windInfluence")->kind == FieldKind::Float);
     CHECK(find(schema, "lifetime")->kind == FieldKind::Range);
     CHECK(find(schema, "speed")->kind == FieldKind::Range);
     CHECK(find(schema, "size")->kind == FieldKind::Range);

@@ -39,6 +39,7 @@ private:
   void drawPrefabHeader(EditorContext& context, const sfs::Entity& entity);
 
   std::string m_componentFilter; // the Add Component search box
+  std::string m_tagFilter;       // the Add Tag search box
   sfs::AssetId m_materialId;     // the material being edited, as last read
   std::optional<sfs::MaterialAsset> m_material;
   sfs::AssetId m_scriptableId;                   // the scriptable object being edited, as last read

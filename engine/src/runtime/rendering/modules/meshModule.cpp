@@ -5,6 +5,7 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/aabb.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/ext/scalar_constants.hpp"
@@ -186,10 +187,7 @@ void MeshModule::addLevels(const RenderContext& context,
   // How far, in the model's own size.
   const glm::vec3 origin(model[3]);
   const glm::vec3 eye = context.camera->position();
-  const float scale = std::max({glm::length(glm::vec3(model[0])),
-                                glm::length(glm::vec3(model[1])),
-                                glm::length(glm::vec3(model[2])),
-                                1e-4f});
+  const float scale = std::max(largestScale(model), 1e-4f);
   const float distance = glm::distance(eye, origin) / scale;
   if (lod.cullDistance > 0.0f && distance > lod.cullDistance)
     return;

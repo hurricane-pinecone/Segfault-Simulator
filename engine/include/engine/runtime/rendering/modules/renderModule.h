@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/moduleSettings.h"
+#include <iterator>
 #include <vector>
 
 namespace sfs
@@ -74,6 +75,14 @@ public:
   /** Build the frame's commands into m_commands. */
   virtual void computeCommands(const TContext& context) = 0;
 
+  /**
+   * The commands the last computeCommands() built. A module that builds them
+   * afresh every frame, as rebuildsEveryFrame() says, hands them on in
+   * emit(), so after an emit() its commands are no longer whole: read them
+   * from what was drawn, or call computeCommands() directly to read them
+   * here.
+   * @return the commands
+   */
   const std::vector<TCommand>& commands() const { return m_commands; }
 
   void emit(const TContext& context,
@@ -81,11 +90,25 @@ public:
   {
     computeCommands(context);
     // TCommand -> the context's command variant.
-    out.insert(out.end(), m_commands.begin(), m_commands.end());
+    if (rebuildsEveryFrame())
+      out.insert(out.end(),
+                 std::make_move_iterator(m_commands.begin()),
+                 std::make_move_iterator(m_commands.end()));
+    else
+      out.insert(out.end(), m_commands.begin(), m_commands.end());
   }
 
 protected:
   void flush() { m_commands.clear(); }
+
+  /**
+   * Whether computeCommands() always starts with flush() and builds every
+   * command again, so emit() can move them into the frame's list instead of
+   * copying them and all their instances. Default: false, for a module
+   * that keeps its commands from frame to frame.
+   * @return true to have them moved
+   */
+  virtual bool rebuildsEveryFrame() const { return false; }
 
   std::vector<TCommand> m_commands;
 };

@@ -100,6 +100,13 @@ Each frame, in the scene's render phase, `RenderSystem`:
 So registration order doesn't decide draw order, and a module never needs to
 know about the others.
 
+The renderer encodes each pass's draws in that order and sets only the state
+that changes between neighbouring draws: a mesh's vertex and index buffers,
+the pipeline and the material's bindings are set once for a run of draws that
+share them, and a mesh's buffers only once one of its sections draws in the
+pass. Each sun shadow caster's bounding sphere is placed in the world once a
+frame, and each cascade tests it against its own box.
+
 ## Picking
 
 `picking.h` finds what's under a ray (`RenderSystem::screenRay(pixel)` gives
@@ -107,6 +114,42 @@ the ray through a pixel): `pickEntity()` the nearest entity whose bounds it
 enters (a sprite where it was drawn last frame, given the render system), and
 `pickSurface()` the exact mesh triangle. The editor selects with these, in
 every style.
+
+### Picking under the cursor
+
+A game picks with two components, as Unity's raycasters do before input is
+dispatched:
+
+- **`PickableComponent`** marks what can be picked. A hit on any mesh at or
+  below it counts as it, through the nearest pickable entity above the mesh:
+  on a machine's root, a click on its wheel picks the machine. Meshes with no
+  pickable entity above them (or under one with `enabled` off) are skipped and
+  don't block the ray, so a roof over a tractor doesn't hide it.
+- **`CursorPickComponent`** goes on the camera entity. A `StandardScene` fills
+  it on the scene camera every frame, after its UI has taken the mouse and
+  before any game object sees the input, so a click is picked in the frame it
+  happens:
+
+| Field | Meaning |
+| --- | --- |
+| `hover` | Pick every frame (what's under the cursor). Off, the default: only on frames a mouse button is pressed |
+| `ray` | The world ray through the cursor, every frame |
+| `blocked` | The UI has the mouse: nothing is picked |
+| `inView` | The cursor is inside the view |
+| `picked` | The pickable entity picked this frame; invalid for none |
+| `part` | The mesh entity the ray hit (`picked` or one of its descendants) |
+| `point`, `distance` | Where the ray hit it, and how far along the ray |
+
+```cpp
+const auto& cursor = camera.getComponent<sfs::CursorPickComponent>();
+if (cursor.picked.isValid() && mouse.mousePressed(sfs::MouseButton::Left))
+  select(cursor.picked);
+```
+
+`pickPickable(scene, meshes, ray)` is the pick itself, for any other ray: the
+nearest triangle hit among pickable meshes, each ruled out first by its bounds
+(as posed). It returns a `PickHit` with `entity` (the pickable), `part`,
+`point` and `distance`.
 
 ## Stats and debug settings
 

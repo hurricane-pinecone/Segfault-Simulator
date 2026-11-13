@@ -1,6 +1,7 @@
 #include "../../testHarness.h"
 
 #include <engine/core/ecs/ecs.h>
+#include <engine/core/util/debugFeatures.h>
 #include <engine/core/util/fatalError.h>
 
 #include <algorithm>
@@ -30,6 +31,9 @@ struct Health
 struct Enemy
 {
 }; // data-free tag
+struct Hidden
+{
+};
 
 // Runs `body`, which should stop with a FatalError; its message, or empty if
 // it didn't.
@@ -58,6 +62,30 @@ template <int... Ns>
 void registerNumbered(std::integer_sequence<int, Ns...>)
 {
   (Component<Numbered<Ns>>::getId(), ...);
+}
+
+// A system type per N, for registries with many kinds of system.
+template <int N>
+class NumberedSystem : public System
+{
+};
+
+// Adds a NumberedSystem<N> for each N to `reg`, in order, noting each.
+template <int... Ns>
+void addNumberedSystems(Registry& reg,
+                        std::vector<System*>& added,
+                        std::integer_sequence<int, Ns...>)
+{
+  (added.push_back(&reg.addSystem<NumberedSystem<Ns>>()), ...);
+}
+
+// Whether `reg` finds each NumberedSystem<N> as the one added for it.
+template <int... Ns>
+bool findsNumberedSystems(const Registry& reg,
+                          const std::vector<System*>& added,
+                          std::integer_sequence<int, Ns...>)
+{
+  return ((reg.tryGetSystem<NumberedSystem<Ns>>() == added[Ns]) && ...);
 }
 
 // Interested in entities that have both Position and Velocity.
@@ -147,6 +175,79 @@ protected:
         });
   }
 };
+
+// Works on visible positioned entities (Position, Excluding Hidden) and
+// observes those with Velocity or Health, recording each hook and callback as
+// (entity id, which: 0 its entities, 1 the observer), and whether a leaving
+// entity had Hidden as it left.
+class VisibleSystem : public System
+{
+public:
+  std::vector<std::pair<Entity::EntityId, int>> added, removed;
+  std::vector<bool> leftHidden;
+
+protected:
+  void create() override
+  {
+    registerComponent<Position>();
+    registerComponent<Excluding<Hidden>>();
+    observe<Any<Velocity, Health>>(
+        [this](const Entity& entity) { added.emplace_back(entity.getId(), 1); },
+        [this](const Entity& entity) { left(entity, 1); });
+  }
+  void onEntityAdded(const Entity& entity) override
+  {
+    added.emplace_back(entity.getId(), 0);
+  }
+  void onEntityRemoved(const Entity& entity) override { left(entity, 0); }
+
+private:
+  void left(const Entity& entity, int which)
+  {
+    removed.emplace_back(entity.getId(), which);
+    leftHidden.push_back(entity.hasComponent<Hidden>());
+  }
+};
+
+// Registers two Any groups: the second should be ignored.
+class TwoAnySystem : public System
+{
+protected:
+  void create() override
+  {
+    registerComponent<Any<Velocity, Health>>();
+    registerComponent<Any<Enemy, Hidden>>();
+  }
+};
+
+// Works on entities without Hidden and observes those with it, logging each
+// hook and callback in the order they ran ("shown+", "shown-", "hidden+",
+// "hidden-").
+class HiddenWatcher : public System
+{
+public:
+  std::vector<std::string> log;
+
+protected:
+  void create() override
+  {
+    registerComponent<Excluding<Hidden>>();
+    observe<Hidden>([this](const Entity&) { log.push_back("hidden+"); },
+                    [this](const Entity&) { log.push_back("hidden-"); });
+  }
+  void onEntityAdded(const Entity&) override { log.push_back("shown+"); }
+  void onEntityRemoved(const Entity&) override { log.push_back("shown-"); }
+};
+
+// The ids in `list`, in its order.
+std::vector<Entity::EntityId> idsOf(const std::vector<Entity>& list)
+{
+  std::vector<Entity::EntityId> ids;
+  ids.reserve(list.size());
+  for (const Entity& entity : list)
+    ids.push_back(entity.getId());
+  return ids;
+}
 
 } // namespace
 
@@ -317,6 +418,169 @@ int main()
     // recoverable lookup is tryGetSystem, which reports absence as a null.
     Registry reg;
     CHECK(reg.tryGetSystem<MovementSystem>() == nullptr);
+  }
+
+  TEST("a system looked up while missing should be found once it's added")
+  {
+    Registry reg;
+    CHECK(reg.tryGetSystem<MovementSystem>() == nullptr);
+    CHECK(reg.tryGetSystem<MovementSystem>() == nullptr); // asked again
+    MovementSystem& first = reg.addSystem<MovementSystem>();
+    CHECK(reg.tryGetSystem<MovementSystem>() == &first);
+    CHECK(reg.tryGetSystem<MovementSystem>() == &first);
+
+    reg.removeSystem<MovementSystem>();
+    CHECK(reg.tryGetSystem<MovementSystem>() == nullptr);
+    MovementSystem& second = reg.addSystem<MovementSystem>();
+    CHECK(reg.tryGetSystem<MovementSystem>() == &second);
+    CHECK(&reg.getSystem<MovementSystem>() == &second);
+  }
+
+  TEST("a system should be found by a class it derives from, first added first")
+  {
+    class Base : public System
+    {
+    };
+    class First : public Base
+    {
+    };
+    class Second : public Base
+    {
+    };
+    Registry reg;
+    CHECK(reg.tryGetSystem<Base>() == nullptr);
+    Second& second = reg.addSystem<Second>();
+    CHECK(reg.tryGetSystem<Base>() == &second);
+    First& first = reg.addSystem<First>();
+    CHECK(reg.tryGetSystem<Base>() == &second);
+    CHECK(reg.tryGetSystem<First>() == &first);
+    CHECK(reg.tryGetSystem<System>() == &second);
+
+    reg.removeSystem<Second>();
+    CHECK(reg.tryGetSystem<Base>() == &first);
+    CHECK(reg.tryGetSystem<Second>() == nullptr);
+    reg.removeSystem<Base>(); // every system that is one
+    CHECK(reg.tryGetSystem<First>() == nullptr);
+    CHECK(!reg.hasSystem<System>());
+  }
+
+  TEST("registries should each answer for their own systems")
+  {
+    Registry with;
+    Registry without;
+    MovementSystem& sys = with.addSystem<MovementSystem>();
+    CHECK(with.tryGetSystem<MovementSystem>() == &sys);
+    CHECK(without.tryGetSystem<MovementSystem>() == nullptr);
+    CHECK(with.tryGetSystem<MovementSystem>() == &sys);
+  }
+
+  TEST("two system types sharing a name should still be told apart in a "
+       "debug build")
+  {
+    // Local classes of one name in one function share a name, so a lookup
+    // id: the remembered answer is the other's, which a debug build catches.
+    // It runs before the test that uses up the lookup's slots.
+    Registry reg;
+    System* added = nullptr;
+    {
+      class Twin : public System
+      {
+      };
+      added = &reg.addSystem<Twin>();
+      CHECK(reg.tryGetSystem<Twin>() == added);
+    }
+    {
+      class Twin : public System
+      {
+      public:
+        int other = 0;
+      };
+      if (debugFeatures::enabled())
+      {
+        CHECK(reg.tryGetSystem<Twin>() == nullptr);
+        CHECK(!reg.hasSystem<Twin>());
+      }
+    }
+  }
+
+  TEST("a type's lookup id should be its own and the same every time")
+  {
+    const int movement = detail::systemLookupId<MovementSystem>();
+    CHECK(movement == detail::systemLookupId<MovementSystem>());
+    CHECK(movement != detail::systemLookupId<WatchingSystem>());
+    CHECK(detail::systemTypeId(detail::componentTypeKey<MovementSystem>()) ==
+          movement);
+  }
+
+  TEST("systems of more types than the lookup has slots should all be found")
+  {
+    Registry reg;
+    std::vector<System*> added;
+    addNumberedSystems(reg, added, std::make_integer_sequence<int, 300>());
+    CHECK(added.size() == 300u);
+    CHECK(findsNumberedSystems(
+        reg, added, std::make_integer_sequence<int, 300>()));
+    // Asked again: the remembered answers, and the scans past the slots.
+    CHECK(findsNumberedSystems(
+        reg, added, std::make_integer_sequence<int, 300>()));
+    reg.removeSystem<NumberedSystem<299>>();
+    reg.removeSystem<NumberedSystem<0>>();
+    CHECK(reg.tryGetSystem<NumberedSystem<299>>() == nullptr);
+    CHECK(reg.tryGetSystem<NumberedSystem<0>>() == nullptr);
+    CHECK(reg.tryGetSystem<NumberedSystem<1>>() == added[1]);
+  }
+
+  TEST("a system looked up as it's removed should not be found after")
+  {
+    // Its destructor looks it up while it's still being taken out (as the
+    // scan always has, it may find itself then): that answer mustn't stay.
+    class Leaving : public System
+    {
+    public:
+      ~Leaving() override
+      {
+        static_cast<void>(registry->tryGetSystem<Leaving>());
+        static_cast<void>(registry->tryGetSystem<MovementSystem>());
+      }
+    };
+    Registry reg;
+    Leaving& leaving = reg.addSystem<Leaving>();
+    MovementSystem& movement = reg.addSystem<MovementSystem>();
+    CHECK(reg.tryGetSystem<Leaving>() == &leaving);
+    reg.removeSystem<Leaving>();
+    CHECK(reg.tryGetSystem<Leaving>() == nullptr);
+    CHECK(!reg.hasSystem<Leaving>());
+    CHECK(reg.tryGetSystem<MovementSystem>() == &movement);
+  }
+
+  TEST("in teardown a system should find no other, even one looked up before")
+  {
+    struct Seen
+    {
+      bool movementFound = true;
+      bool selfFound = true;
+    } seen;
+    class Last : public System
+    {
+    public:
+      Seen* seen = nullptr;
+      ~Last() override
+      {
+        seen->movementFound =
+            registry->tryGetSystem<MovementSystem>() != nullptr;
+        seen->selfFound = registry->hasSystem<Last>();
+      }
+    };
+    {
+      Registry reg;
+      MovementSystem& movement = reg.addSystem<MovementSystem>();
+      Last& last = reg.addSystem<Last>();
+      last.seen = &seen;
+      CHECK(reg.tryGetSystem<MovementSystem>() == &movement); // remembered
+      CHECK(reg.tryGetSystem<Last>() == &last);
+    }
+    CHECK(!seen.movementFound);
+    CHECK(!seen.selfFound);
   }
 
   TEST("a system should gain and lose entities on flush")
@@ -772,6 +1036,292 @@ int main()
     reg.createEntity().addComponent<Health>();
     reg.flushEntities(); // (counter is gone: nothing may call it)
     CHECK(reg.query<Health>().size() == 2u);
+  }
+
+  TEST("a system's destructor should still read components and queries")
+  {
+    struct Seen
+    {
+      int hp = -1;
+      std::size_t listed = 0;
+      bool systemFound = true;
+    } seen;
+    class Flusher : public System
+    {
+    public:
+      Seen* seen = nullptr;
+      Entity watched;
+      ~Flusher() override
+      {
+        seen->hp = watched.getComponent<Health>().hp;
+        seen->listed = registry->query<Health>().size();
+        seen->systemFound = registry->tryGetSystem<Flusher>() != nullptr;
+      }
+    };
+    {
+      Registry reg;
+      Entity e = reg.createEntity();
+      e.addComponent<Health>(42);
+      reg.createEntity().addComponent<Health>();
+      reg.flushEntities();
+      Flusher& flusher = reg.addSystem<Flusher>();
+      flusher.seen = &seen;
+      flusher.watched = e;
+    }
+    CHECK(seen.hp == 42);
+    CHECK(seen.listed == 2u);
+    CHECK(!seen.systemFound);
+  }
+
+  TEST("an Any query should list entities with at least one of its "
+       "components, moving them in and out as they gain and lose them")
+  {
+    Registry reg;
+    Entity a = reg.createEntity();
+    Entity b = reg.createEntity();
+    Entity c = reg.createEntity();
+    Entity d = reg.createEntity();
+    a.addComponent<Position>();
+    b.addComponent<Velocity>();
+    c.addComponent<Health>();
+    d.addComponent<Position>();
+    d.addComponent<Velocity>();
+    const std::vector<Entity>& either = reg.query<Any<Position, Velocity>>();
+    CHECK(either.empty()); // pending: they join at the flush
+    reg.flushEntities();
+    using Ids = std::vector<Entity::EntityId>;
+    CHECK(idsOf(either) == Ids({a.getId(), b.getId(), d.getId()}));
+
+    // Losing the only one leaves; losing one of two stays; gaining one joins
+    // in id order.
+    a.removeComponent<Position>();
+    d.removeComponent<Position>();
+    c.addComponent<Velocity>();
+    CHECK(idsOf(either) == Ids({b.getId(), c.getId(), d.getId()}));
+
+    // Destroyed: gone once the flush takes it.
+    reg.destroyEntity(b);
+    CHECK(either.size() == 3u);
+    reg.flushEntities();
+    CHECK(idsOf(either) == Ids({c.getId(), d.getId()}));
+  }
+
+  TEST("an Excluding query should drop an entity that gains an excluded "
+       "component and take it back when it loses it")
+  {
+    Registry reg;
+    Entity a = reg.createEntity();
+    Entity b = reg.createEntity();
+    a.addComponent<Position>();
+    b.addComponent<Position>();
+    b.addComponent<Hidden>();
+    const std::vector<Entity>& shown = reg.query<Position, Excluding<Hidden>>();
+    reg.flushEntities();
+    using Ids = std::vector<Entity::EntityId>;
+    CHECK(idsOf(shown) == Ids({a.getId()}));
+
+    b.removeComponent<Hidden>();
+    CHECK(idsOf(shown) == Ids({a.getId(), b.getId()}));
+    a.addComponent<Hidden>();
+    CHECK(idsOf(shown) == Ids({b.getId()}));
+    a.removeComponent<Position>(); // hidden and unpositioned: still out
+    a.removeComponent<Hidden>();
+    CHECK(idsOf(shown) == Ids({b.getId()}));
+
+    // Excluding alone: everything flushed without the component.
+    CHECK(idsOf(reg.query<Excluding<Hidden>>()) == Ids({a.getId(), b.getId()}));
+
+    reg.destroyEntity(b);
+    CHECK(shown.size() == 1u);
+    reg.flushEntities();
+    CHECK(shown.empty());
+  }
+
+  TEST("a query should mix all-of, Any and Excluding, Excluding winning")
+  {
+    Registry reg;
+    std::vector<Entity> made;
+    for (int i = 0; i < 5; ++i)
+    {
+      made.push_back(reg.createEntity());
+      made.back().addComponent<Position>();
+    }
+    // 0 and 1 match; 2 is excluded; 3 has no Any and is excluded; 4 has no
+    // Position.
+    made[0].addComponent<Velocity>();
+    made[1].addComponent<Health>();
+    made[2].addComponent<Velocity>();
+    made[2].addComponent<Enemy>();
+    made[3].addComponent<Hidden>();
+    made[4].removeComponent<Position>();
+    made[4].addComponent<Velocity>();
+    reg.flushEntities();
+    const std::vector<Entity>& mixed =
+        reg.query<Position, Any<Velocity, Health>, Excluding<Enemy, Hidden>>();
+    using Ids = std::vector<Entity::EntityId>;
+    CHECK(idsOf(mixed) == Ids({made[0].getId(), made[1].getId()}));
+
+    made[2].removeComponent<Enemy>();
+    made[3].addComponent<Health>(); // has one of Any, but still Hidden
+    made[4].addComponent<Position>();
+    CHECK(idsOf(mixed) == Ids({made[0].getId(),
+                               made[1].getId(),
+                               made[2].getId(),
+                               made[4].getId()}));
+    made[0].addComponent<Hidden>();
+    CHECK(idsOf(mixed) ==
+          Ids({made[1].getId(), made[2].getId(), made[4].getId()}));
+
+    // Excluding wins over all-of and over Any.
+    CHECK(reg.query<Position, Excluding<Position>>().empty());
+    CHECK(reg.query<Any<Position, Velocity>, Excluding<Position, Velocity>>()
+              .empty());
+  }
+
+  TEST("queries that differ only in their filters should keep separate "
+       "lists; the same terms in any order should share one")
+  {
+    Registry reg;
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    e.addComponent<Velocity>();
+    reg.flushEntities();
+    const std::vector<const std::vector<Entity>*> lists = {
+        &reg.query<Position, Velocity>(),
+        &reg.query<Position, Any<Velocity, Health>>(),
+        &reg.query<Position, Excluding<Velocity>>(),
+        &reg.query<Any<Position, Velocity>>(),
+        &reg.query<Excluding<Position, Velocity>>(),
+        &reg.query<Position>()};
+    for (std::size_t i = 0; i < lists.size(); ++i)
+      for (std::size_t j = i + 1; j < lists.size(); ++j)
+        CHECK(lists[i] != lists[j]);
+    CHECK(lists[0]->size() == 1u && lists[1]->size() == 1u);
+    CHECK(lists[2]->empty() && lists[4]->empty());
+
+    CHECK(&reg.query<Excluding<Hidden>, Position>() ==
+          &reg.query<Position, Excluding<Hidden>>());
+    CHECK(&reg.query<Any<Velocity, Health>, Position>() ==
+          &reg.query<Position, Any<Health, Velocity>>());
+    CHECK(&reg.query<Excluding<Hidden>, Position, Excluding<Enemy>>() ==
+          &reg.query<Position, Excluding<Enemy, Hidden>>());
+  }
+
+  TEST("queries that always list the same entities should share one list")
+  {
+    Registry reg;
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    e.addComponent<Velocity>();
+    reg.flushEntities();
+    // An Any of one component is that component.
+    CHECK(&reg.query<Position, Any<Velocity>>() ==
+          &reg.query<Position, Velocity>());
+    CHECK(&reg.query<Any<Position>>() == &reg.query<Position>());
+    // An Any sharing a component with the all-of terms is always met.
+    CHECK(&reg.query<Position, Any<Position, Health>>() ==
+          &reg.query<Position>());
+    // An Any of one excluded component can't be met: still nothing listed.
+    CHECK(reg.query<Any<Velocity>, Excluding<Velocity>>().empty());
+    CHECK(reg.query<Any<Velocity, Health>, Excluding<Velocity, Health>>()
+              .empty());
+    CHECK(reg.query<Position, Any<Velocity>>().size() == 1u);
+  }
+
+  TEST("a loop that adds a component its own query excludes should go "
+       "through a copy of the list")
+  {
+    Registry reg;
+    for (int i = 0; i < 4; ++i)
+      reg.createEntity().addComponent<Position>();
+    reg.flushEntities();
+    const std::vector<Entity>& shown = reg.query<Position, Excluding<Hidden>>();
+    for (Entity entity : std::vector<Entity>(shown))
+      entity.addComponent<Hidden>();
+    CHECK(shown.empty());
+    CHECK(reg.query<Hidden>().size() == 4u);
+  }
+
+  TEST("one change that moves an entity out of a system's list and into its "
+       "observer's should tell it in list order")
+  {
+    Registry reg;
+    HiddenWatcher& watcher = reg.addSystem<HiddenWatcher>();
+    Entity e = reg.createEntity();
+    reg.flushEntities();
+    e.addComponent<Hidden>();
+    e.removeComponent<Hidden>();
+    CHECK(watcher.log ==
+          std::vector<std::string>(
+              {"shown+", "shown-", "hidden+", "shown+", "hidden-"}));
+  }
+
+  TEST("filtered queries should join and leave at the same flushes as all-of "
+       "queries")
+  {
+    Registry reg;
+    const std::vector<Entity>& positioned = reg.query<Position>();
+    const std::vector<Entity>& shown = reg.query<Position, Excluding<Hidden>>();
+    const std::vector<Entity>& either = reg.query<Any<Position, Velocity>>();
+
+    // Made and destroyed before a flush: in none.
+    Entity gone = reg.createEntity();
+    gone.addComponent<Position>();
+    reg.destroyEntity(gone);
+    // Pending: joins at the flush, as it is then.
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    e.addComponent<Hidden>();
+    e.removeComponent<Hidden>();
+    CHECK(positioned.empty() && shown.empty() && either.empty());
+    reg.flushEntities();
+    CHECK(positioned.size() == 1u && shown.size() == 1u && either.size() == 1u);
+    CHECK(shown.front() == e && either.front() == e);
+
+    reg.destroyEntity(e);
+    CHECK(positioned.size() == 1u && shown.size() == 1u && either.size() == 1u);
+    reg.flushEntities();
+    CHECK(positioned.empty() && shown.empty() && either.empty());
+  }
+
+  TEST("a system's own terms and observers should take Any and Excluding, its "
+       "hooks running as entities move in and out")
+  {
+    Registry reg;
+    VisibleSystem& sys = reg.addSystem<VisibleSystem>();
+    CHECK(&sys.getEntities() == &reg.query<Position, Excluding<Hidden>>());
+
+    Entity e = reg.createEntity();
+    e.addComponent<Position>();
+    e.addComponent<Health>();
+    reg.flushEntities();
+    using Joins = std::vector<std::pair<Entity::EntityId, int>>;
+    CHECK(sys.added == Joins({{e.getId(), 0}, {e.getId(), 1}}));
+
+    // Gaining the excluded component leaves, already having it; losing it
+    // joins again.
+    e.addComponent<Hidden>();
+    CHECK(sys.removed == Joins({{e.getId(), 0}}));
+    CHECK(sys.leftHidden.back());
+    CHECK(sys.getEntities().empty());
+    e.removeComponent<Hidden>();
+    CHECK(sys.added.back() == std::make_pair(e.getId(), 0));
+    CHECK(sys.getEntities().size() == 1u);
+
+    // The observer's Any: gaining a second keeps it, losing both leaves.
+    e.addComponent<Velocity>();
+    e.removeComponent<Health>();
+    CHECK(sys.removed.size() == 1u);
+    e.removeComponent<Velocity>();
+    CHECK(sys.removed.back() == std::make_pair(e.getId(), 1));
+
+    // A second Any group is ignored.
+    TwoAnySystem& twoAny = reg.addSystem<TwoAnySystem>();
+    QuerySignature firstAny;
+    firstAny.any.set(Component<Velocity>::getId());
+    firstAny.any.set(Component<Health>::getId());
+    CHECK(twoAny.getComponentSignature() == firstAny);
+    CHECK(&twoAny.getEntities() == &reg.query<Any<Velocity, Health>>());
   }
 
   TEST("getSystem on a missing system should be a fatal error naming it")

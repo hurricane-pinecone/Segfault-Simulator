@@ -135,6 +135,10 @@ struct ParticleEffectDesc
   glm::vec2 gravity{0.0f, 0.0f}; // planar acceleration (tiles/sec^2)
   float gravityZ = 0.0f;         // vertical acceleration; negative = falls
   float drag = 0.0f; // linear velocity damping per second (0 = none)
+  // The share of the wind (WindZoneComponent) its particles are carried
+  // toward by their drag: drag * windInfluence * wind is added to the planar
+  // acceleration, so they settle at windInfluence times the wind. 0: none.
+  float windInfluence = 0.0f;
 
   // --- appearance over normalized life (age / lifetime) ---
   Curve sizeOverLife = Curve::constant(1.0f);

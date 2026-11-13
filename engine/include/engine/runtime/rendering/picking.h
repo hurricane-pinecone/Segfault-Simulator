@@ -11,8 +11,10 @@ namespace sfs
 {
 
 class MeshLibrary;
+class MouseInput;
 class RenderSystem;
 class Scene;
+struct CursorPickComponent;
 
 /** Half-size of the box that stands in for an entity with no mesh (a light, an
  * empty). */
@@ -30,10 +32,20 @@ std::optional<Aabb> entityBounds(const Entity& entity,
                                  const MeshLibrary& meshes,
                                  const RenderSystem* drawnBy = nullptr);
 
+/** What a pick found. */
 struct PickHit
 {
+  /** The entity picked. */
   Entity entity;
-  float distance = 0.0f; // along the ray
+  /** How far along the ray it was hit. */
+  float distance = 0.0f;
+  /**
+   * The entity whose mesh or bounds the ray hit: `entity` itself, or with
+   * pickPickable() a mesh at or below it.
+   */
+  Entity part;
+  /** Where the ray hit, in world space. */
+  glm::vec3 point{0.0f};
 };
 
 /**
@@ -48,6 +60,41 @@ std::optional<PickHit> pickEntity(Scene& scene,
                                   const MeshLibrary& meshes,
                                   const Ray& ray,
                                   const RenderSystem* drawnBy = nullptr);
+
+/**
+ * The pickable entity under a ray (PickableComponent): of the meshes with an
+ * enabled pickable entity at or above them, the one whose triangles the ray
+ * meets nearest, as that pickable entity. Each mesh is ruled out first by its
+ * bounds (as posed). Meshes with no pickable entity above them, or under a
+ * disabled one, are skipped: they don't block the ray.
+ *
+ * @param scene the scene whose meshes it tries
+ * @param meshes the library their meshes are in
+ * @param ray the ray, e.g. RenderSystem::screenRay at the cursor
+ * @return the hit (entity: the pickable one, part: the mesh's entity), or
+ *         nothing
+ */
+std::optional<PickHit>
+pickPickable(Scene& scene, const MeshLibrary& meshes, const Ray& ray);
+
+/**
+ * Fills a CursorPickComponent for a frame: its ray, whether the UI has the
+ * mouse and whether the cursor is in view, and, when the mouse isn't blocked
+ * and a button was pressed this frame (every frame with `hover`), what
+ * pickPickable() finds under the cursor. What was picked is cleared first.
+ * StandardScene calls it for the scene camera before input reaches objects.
+ *
+ * @param scene the scene to pick in
+ * @param meshes the library its meshes are in
+ * @param ray the ray through the cursor
+ * @param mouse this frame's mouse, after the UI has taken it or not
+ * @param pick the component to fill
+ */
+void pickUnderCursor(Scene& scene,
+                     const MeshLibrary& meshes,
+                     const Ray& ray,
+                     const MouseInput& mouse,
+                     CursorPickComponent& pick);
 
 struct SurfaceHit
 {

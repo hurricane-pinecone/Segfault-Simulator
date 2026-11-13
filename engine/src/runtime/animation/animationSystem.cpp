@@ -3,6 +3,7 @@
 #include "engine/core/components/animatorComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/nameComponent.h"
+#include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
@@ -35,6 +36,15 @@ JointPose poseOf(const Entity& entity)
     return {};
   const TransformComponent& t = entity.getComponent<TransformComponent>();
   return {t.position, t.rotation, t.scale};
+}
+
+// Its RestPoseComponent's pose, or its transform's if it has none.
+JointPose restOf(const Entity& entity)
+{
+  if (!entity.hasComponent<RestPoseComponent>())
+    return poseOf(entity);
+  const RestPoseComponent& rest = entity.getComponent<RestPoseComponent>();
+  return {rest.position, rest.rotation, rest.scale};
 }
 } // namespace
 
@@ -176,18 +186,10 @@ void AnimationSystem::bind(const Entity& entity,
                            Binding& binding,
                            AnimatorComponent& animator)
 {
-  // Rest poses carry over (a live joint's transform is posed by now).
-  std::unordered_map<Entity::EntityId, std::pair<uint32_t, JointPose>> rest;
-  for (std::size_t i = 0; i < binding.nodes.size() && i < binding.rest.size();
-       ++i)
-    rest[binding.nodes[i].getId()] = {
-        binding.nodes[i].getGeneration(), binding.rest[i]};
-
   binding.nodes.clear();
   binding.parents.clear();
   binding.byName.clear();
   binding.skins.clear();
-  binding.rest.clear();
   binding.animated.clear();
   binding.targets.clear();
   binding.targetsOf = nullptr;
@@ -215,13 +217,10 @@ void AnimationSystem::bind(const Entity& entity,
   for (std::size_t i = 0; i < binding.nodes.size(); ++i)
   {
     const Entity& node = binding.nodes[i];
-    // Kept only while playing: while editing, nothing poses the joints, so
-    // they're at rest as they are (and may have been moved by hand).
-    const auto kept = m_live ? rest.find(node.getId()) : rest.end();
-    binding.rest.push_back(kept != rest.end() &&
-                                   kept->second.first == node.getGeneration()
-                               ? kept->second.second
-                               : poseOf(node));
+    // A model's nodes recorded their rest pose as they loaded; one made in
+    // code rests as it's first found.
+    if (m_live && !node.hasComponent<RestPoseComponent>())
+      hierarchy::recordRestPose(node);
     if (!node.hasComponent<MeshRendererComponent>())
       continue;
     const MeshHandle mesh = node.getComponent<MeshRendererComponent>().mesh;
@@ -345,12 +344,13 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
   const std::size_t count = binding.nodes.size();
   m_pose.resize(count);
   // What its clips move starts from rest (so a channel one clip has and
-  // another doesn't goes back); the rest as they are now.
+  // another doesn't goes back); the rest as they are now. While editing
+  // nothing moves the joints, so they're at rest as they are.
   if (set)
     useSet(binding, *set);
   for (std::size_t i = 0; i < count; ++i)
-    m_pose[i] =
-        binding.animated[i] ? binding.rest[i] : poseOf(binding.nodes[i]);
+    m_pose[i] = binding.animated[i] && m_live ? restOf(binding.nodes[i])
+                                              : poseOf(binding.nodes[i]);
 
   const auto& layers = animator.playback.layers();
   if (set && !layers.empty())

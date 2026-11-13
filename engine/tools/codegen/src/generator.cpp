@@ -340,9 +340,19 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
         << "#include \"engine/runtime/sceneManager/scene.h\"\n"
         << "#include \"engine/runtime/scripting/scriptRegistry.h\"\n";
   out << "\n";
+  // A header declaring several types is included once.
+  std::vector<const std::filesystem::path*> headers;
   for (const TypeModel& type : types)
+  {
+    if (std::any_of(headers.begin(),
+                    headers.end(),
+                    [&](const std::filesystem::path* header)
+                    { return *header == type.header; }))
+      continue;
+    headers.push_back(&type.header);
     out << "#include \"" << includePath(type.header, options.includeRoot)
         << "\"\n";
+  }
   out << "\n#include <cstdint>\n#include <memory>\n#include <string>\n#include "
          "<type_traits>\n"
       << "#include <utility>\n#include <vector>\n\n";

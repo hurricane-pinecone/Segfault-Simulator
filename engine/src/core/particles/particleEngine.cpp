@@ -2,6 +2,7 @@
 
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/transformComponent.h"
+#include "engine/core/components/windZoneComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/particles/decalSplatter.h"
 // Pulled in for the Entity::getComponent<T> template definitions in entity.inl.
@@ -154,7 +155,9 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
   // Per-effect capacity and the global live-particle ceiling both clamp the
   // emission; over-budget particles are dropped (graceful, never grows
   // unbounded).
-  int room = desc.maxParticles - static_cast<int>(inst.particles.size());
+  const int capacity =
+      inst.maxParticles > 0 ? inst.maxParticles : desc.maxParticles;
+  int room = capacity - static_cast<int>(inst.particles.size());
   const int globalRoom = m_maxParticles - liveParticleCount();
   room = glm::min(room, globalRoom);
 
@@ -195,6 +198,8 @@ void ParticleEngine::emitParticles(EmitterInstance& inst,
                 (randf(inst.rng) * 2.0f - 1.0f) * desc.boxExtents.y};
       break;
     }
+
+    offset *= inst.shapeScale;
 
     // Turned with its entity: the shape turns with it.
     if (inst.yaw != 0.0f)
@@ -277,6 +282,11 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
 
   const float damp =
       desc.drag > 0.0f ? glm::max(0.0f, 1.0f - desc.drag * dt) : 1.0f;
+  // Carried toward windInfluence times the wind by its drag.
+  const glm::vec2 planarAccel =
+      desc.windInfluence > 0.0f
+          ? desc.gravity + desc.drag * desc.windInfluence * m_wind
+          : desc.gravity;
 
   auto& ps = inst.particles;
 
@@ -303,7 +313,7 @@ void ParticleEngine::stepInstance(EmitterInstance& inst,
     const glm::vec2 prevPos = p.pos;
     const float prevHeight = p.height;
 
-    p.vel += desc.gravity * dt;
+    p.vel += planarAccel * dt;
     p.velZ += desc.gravityZ * dt;
     p.vel *= damp;
     p.velZ *= damp;
@@ -605,6 +615,8 @@ void ParticleEngine::syncComponentEmitters(float dt)
     inst.emitting = emitter.enabled;
     inst.rate = glm::max(emitter.rate, 0.0f);
     inst.tint = emitter.tint;
+    inst.shapeScale = emitter.shapeScale;
+    inst.maxParticles = emitter.maxParticles;
 
     // The entity's velocity, from how far it's come since last frame (a jump
     // further than anything moves -- placed somewhere new -- counts as none),
@@ -637,6 +649,19 @@ void ParticleEngine::syncComponentEmitters(float dt)
   }
 }
 
+void ParticleEngine::gatherWind()
+{
+  m_wind = glm::vec2(0.0f);
+  if (!registry)
+    return;
+  for (const Entity& entity : registry->query<WindZoneComponent>())
+  {
+    const auto& zone = entity.getComponent<WindZoneComponent>();
+    if (zone.enabled)
+      m_wind += zone.wind;
+  }
+}
+
 void ParticleEngine::simulate(double deltaTime)
 {
   ZoneScopedN("ParticleEngine::simulate");
@@ -647,6 +672,7 @@ void ParticleEngine::simulate(double deltaTime)
     return;
 
   syncComponentEmitters(dt);
+  gatherWind();
 
   for (auto it = m_entityEmitters.begin(); it != m_entityEmitters.end();)
   {

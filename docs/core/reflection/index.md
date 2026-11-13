@@ -51,6 +51,36 @@ These rules decide what is reflected:
   your scripts use) is left alone, not reflected.
 - **Fields:** public data members are reflected, in the same way Unity
   serializes public fields. Static, `const` and function members are ignored.
+- **More components in one header:** any other class or struct at namespace
+  scope marked `[[sfs::component]]` is a component too, so one header can
+  declare a concern's small components together. A header may hold only
+  marked types (no type named after the file needed). The same rules apply to
+  their fields, and a marked class is a component even with nothing in it. A
+  marked type can't have a base (components aren't extended by inheritance:
+  that's an error), and one nested in a class or a function, or a template, is
+  warned about and not registered. Two types with the same name, in one header
+  or across a build's headers, are an error.
+
+```cpp
+// TipParts.h: the parts a tipping trailer's model is made of.
+namespace game
+{
+struct [[sfs::component]] TipBody {};
+struct [[sfs::component]] TipPivot
+{
+  float maxAngle = 50.0f;
+};
+} // namespace game
+```
+
+### Tags
+
+A component with no data, an empty struct such as `TipBody` above or the
+engine's `sfs::SolidObject`, is a **tag**: it marks an entity (`TypeInfo::tag`,
+from `std::is_empty_v`). It is still a component everywhere (saved as
+`"TipBody": {}`, queried and added like any other); only the editor treats it
+differently, listing it as a chip under the Inspector's Tags. A component with
+only `[[sfs::hide]]` fields isn't empty, so it isn't a tag.
 
 ### Attributes
 
@@ -70,6 +100,7 @@ warning for that namespace.
 | `[[sfs::material]]` | Edit a `std::string` as a picker of the project's material assets (saved as `asset:<id>`) |
 | `[[sfs::emissionLight]]` | A setting of the light the component's glowing materials give off: the Inspector shows it only while one of its materials can glow |
 | `[[sfs::showIf(field)]]` | The Inspector shows it only while the named `bool` field of the same object is on, as a camera's bloom settings show only while it blooms. `showIf(!field)` shows it only while that field is off. |
+| `[[sfs::component]]` | On a type, not a field: register it as a component besides the file's type (see above) |
 
 `[[sfs::show]]` works on private fields without making your class `friend` the
 engine. The generated code reaches the member through an explicit template

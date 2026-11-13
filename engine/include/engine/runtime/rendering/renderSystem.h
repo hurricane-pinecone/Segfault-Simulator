@@ -341,9 +341,11 @@ public:
   const RenderStats& stats() const { return m_stats; }
 
   /**
-   * The picture an entity's camera feed (CameraFeedComponent) films, made the
-   * first time it's asked for (null without one): show it with ui::Image. It's
-   * filmed only while it's shown, at the feed's rate, one feed a frame.
+   * The picture an entity's camera feed (CameraFeedComponent) films (null
+   * without one), made now if update() hasn't made it yet: show it with
+   * ui::Image. It's filmed only while it's shown, at the feed's rate, one feed
+   * a frame. Prefer reading CameraFeedComponent::picture, which update()
+   * makes for every feed.
    */
   std::shared_ptr<const RenderTexture> cameraFeed(Entity entity);
 
@@ -382,6 +384,8 @@ protected:
           m_weather.clamped().wind, static_cast<float>(deltaTime));
       advanceLightning(static_cast<float>(deltaTime));
     }
+    refreshMeshBounds();
+    makeFeedPictures();
     updateModules(deltaTime);
   }
   void render() override;
@@ -389,6 +393,13 @@ protected:
   ModuleInit moduleInit() override { return {registry, nullptr}; }
 
 private:
+  // Set each MeshRendererComponent's bounds from the library when its mesh
+  // has changed since they were taken (a handle compare each).
+  void refreshMeshBounds();
+
+  // Give every CameraFeedComponent without a picture its picture.
+  void makeFeedPictures();
+
   // Age the strikes, dropping (and freeing) those that have faded.
   void advanceLightning(float seconds);
 

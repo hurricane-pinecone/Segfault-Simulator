@@ -18,6 +18,7 @@
 
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/nameComponent.h"
+#include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
@@ -1685,8 +1686,9 @@ sfs::Entity loadPrefabContent(EditorScene& scene,
                               SceneDocument& document,
                               const sfs::AssetId& prefab)
 {
-  document.restore(nlohmann::json{
-      {"formatVersion", 2}, {"entities", nlohmann::json::array()}});
+  document.restore(
+      nlohmann::json{{"formatVersion", sfs::SceneSerializer::kSceneFormatVersion},
+                     {"entities", nlohmann::json::array()}});
   sfs::Entity root =
       scene.serializer().instantiate(prefabs::nameOf(prefab), scene);
   scene.flushEntities();
@@ -2335,6 +2337,11 @@ void EditorApp::play()
   m_context.render->setFollowSceneCamera(true);
   // Scriptable objects load into the playing scene's meshes, fresh each Play.
   sfs::scriptableObjects().setMeshes(&m_context.scene->renderSystem().meshes());
+  // The scene plays as edited, not reloaded: a model node moved by hand since
+  // it loaded rests where it now is.
+  for (const sfs::Entity& entity :
+       m_context.scene->query<sfs::RestPoseComponent>())
+    sfs::hierarchy::recordRestPose(entity);
   sfs::startScripts(*m_context.scene,
                     m_context.scene->gameSystems(),
                     &m_context.scene->renderSystem().meshes());

@@ -2599,7 +2599,7 @@ void WebGpuRenderer::encodeGrass(WGPURenderPassEncoder pass)
             : nullptr;
     if (!material || !material->surface)
       continue;
-    m_boundPipeline = nullptr; // the mesh pipelines need setting again after
+    forgetBound(); // the mesh draws need their state setting again after
 
     // The blades' depth first (an opaque material's: a masked one's may cut
     // them out as it lights them), so the ground under them and all but the
@@ -2716,7 +2716,7 @@ void WebGpuRenderer::encodeGrassShadows(WGPURenderPassEncoder pass,
       wgpuRenderPassEncoderSetPipeline(pass, m_grassShadowPipeline.get());
       wgpuRenderPassEncoderSetBindGroup(
           pass, 0, m_shadowBindings.get(), 1, &offset);
-      m_boundPipeline = nullptr; // the mesh pipelines need setting again after
+      forgetBound(); // the mesh draws need their state setting again after
       bound = true;
     }
     wgpuRenderPassEncoderSetBindGroup(
@@ -4973,10 +4973,7 @@ void WebGpuRenderer::encodePointShadows()
       const glm::mat4& model = m_plan.instances()[draw.firstInstance + k].model;
       const glm::vec3 offset =
           glm::vec3(model * glm::vec4(mesh->boundsCenter, 1.0f)) - light;
-      const float reach = mesh->boundsRadius * 1.4143f *
-                          std::max({glm::length(glm::vec3(model[0])),
-                                    glm::length(glm::vec3(model[1])),
-                                    glm::length(glm::vec3(model[2]))});
+      const float reach = mesh->boundsRadius * 1.4143f * largestScale(model);
       const float along = sign * offset[axis];
       const float a = offset[(axis + 1) % 3], b = offset[(axis + 2) % 3];
       if (along - std::abs(a) >= -reach && along - std::abs(b) >= -reach)
@@ -5015,7 +5012,7 @@ void WebGpuRenderer::encodePointShadows()
       desc.timestampWrites = timedRenderPass();
       WGPURenderPassEncoder pass =
           wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
-      m_boundPipeline = nullptr;
+      forgetBound();
       const auto offset = static_cast<uint32_t>(kFaceStride * (i * 6 + face));
       wgpuRenderPassEncoderSetBindGroup(
           pass, 0, m_pointShadowBindings.get(), 1, &offset);
@@ -5885,7 +5882,7 @@ void WebGpuRenderer::encodeFeedGrass(WGPURenderPassEncoder pass)
             : nullptr;
     if (!material || !material->surface)
       continue;
-    m_boundPipeline = nullptr;
+    forgetBound();
     const std::array<wgpu::BindGroup, 3>& bindings =
         feed ? feed->drawBindings : grass.drawBindings;
 
@@ -6072,7 +6069,7 @@ void WebGpuRenderer::encodeFeed()
   if (!instances.empty())
     wgpuRenderPassEncoderSetVertexBuffer(
         pass, 1, m_feedInstances.get(), 0, WGPU_WHOLE_SIZE);
-  m_boundPipeline = nullptr;
+  forgetBound();
   m_drawing = &m_feedPlan;
   wgpuRenderPassEncoderSetBindGroup(
       pass, 0, m_feedLitBindings.get(), 0, nullptr);
@@ -6088,7 +6085,7 @@ void WebGpuRenderer::encodeFeed()
           pass, 1, m_feedInstances.get(), 0, WGPU_WHOLE_SIZE);
   }
   encodeSkyBackground(pass);
-  m_boundPipeline = nullptr;
+  forgetBound();
   for (const Draw& draw : m_feedPlan.blendDraws())
     encodeDraw(pass, draw, Sections::SeeThrough);
   m_drawing = &m_plan;
@@ -6405,6 +6402,7 @@ void WebGpuRenderer::encodeSkyBackground(WGPURenderPassEncoder pass)
   if (!m_plan.frame().sky.physical || !m_skyReady || !m_skyBackgroundPipeline)
     return;
   wgpuRenderPassEncoderSetPipeline(pass, m_skyBackgroundPipeline.get());
+  forgetBound();
   m_boundPipeline = m_skyBackgroundPipeline.get();
   wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
 }
@@ -6935,7 +6933,7 @@ void WebGpuRenderer::encodeShadowPass()
 
   WGPURenderPassEncoder pass =
       wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
-  m_boundPipeline = nullptr;
+  forgetBound();
   if (!m_plan.instances().empty())
     wgpuRenderPassEncoderSetVertexBuffer(
         pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
@@ -7028,7 +7026,7 @@ void WebGpuRenderer::encodeLitPass()
 
   // The frame's bindings stay set across the surfaces' pipelines (they share
   // group 0's layout).
-  m_boundPipeline = nullptr;
+  forgetBound();
   wgpuRenderPassEncoderSetBindGroup(pass, 0, m_litBindings.get(), 0, nullptr);
   // Timing (SFS_GPU_TIMING): each big draw on its own, the small ones
   // between them together.
@@ -7069,7 +7067,7 @@ void WebGpuRenderer::encodeLitPass()
   encodeSkyBackground(pass);
 
   // The see-through pipelines differ from the opaque ones.
-  m_boundPipeline = nullptr;
+  forgetBound();
   beginTimedSpan(pass, "lit: see-through");
   for (const Draw& draw : m_plan.blendDraws())
     encodeDraw(pass, draw, Sections::SeeThrough);
@@ -7134,7 +7132,7 @@ void WebGpuRenderer::encodeRainMap()
   desc.timestampWrites = timedRenderPass();
   WGPURenderPassEncoder pass =
       wgpuCommandEncoderBeginRenderPass(m_encoder, &desc);
-  m_boundPipeline = nullptr;
+  forgetBound();
   if (!m_plan.instances().empty())
     wgpuRenderPassEncoderSetVertexBuffer(
         pass, 1, m_instanceBuffer.get(), 0, WGPU_WHOLE_SIZE);
@@ -7221,6 +7219,7 @@ void WebGpuRenderer::encodeRain(WGPURenderPassEncoder pass)
   if (!pipeline)
     return;
   wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+  forgetBound();
   m_boundPipeline = pipeline;
   // Six corners each: two triangles.
   wgpuRenderPassEncoderDraw(pass, 6, drops, 0, 0);
@@ -7381,6 +7380,7 @@ void WebGpuRenderer::encodeDebugLines(WGPURenderPassEncoder pass)
   if (m_debugLineVertices == 0 || !m_debugLinePipeline)
     return;
   wgpuRenderPassEncoderSetPipeline(pass, m_debugLinePipeline.get());
+  forgetBound();
   m_boundPipeline = m_debugLinePipeline.get();
   wgpuRenderPassEncoderSetBindGroup(
       pass, 1, m_debugLineBindings.get(), 0, nullptr);
@@ -7401,11 +7401,6 @@ void WebGpuRenderer::encodeDraw(WGPURenderPassEncoder pass,
   const std::optional<GpuMesh>& mesh = m_meshes[draw.meshSlot];
   if (!mesh)
     return;
-
-  wgpuRenderPassEncoderSetVertexBuffer(
-      pass, 0, mesh->vertices.get(), 0, WGPU_WHOLE_SIZE);
-  wgpuRenderPassEncoderSetIndexBuffer(
-      pass, mesh->indices.get(), WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
 
   for (std::size_t i = 0; i < mesh->sections->size(); ++i)
   {
@@ -7441,8 +7436,25 @@ void WebGpuRenderer::encodeDraw(WGPURenderPassEncoder pass,
       m_boundPipeline = pipeline;
       wgpuRenderPassEncoderSetPipeline(pass, pipeline);
     }
-    wgpuRenderPassEncoderSetBindGroup(
-        pass, 1, material.bindings.get(), 0, nullptr);
+    // The mesh's buffers only once a section draws, and nothing the pass
+    // already has set again.
+    if (mesh->vertices.get() != m_boundVertices)
+    {
+      m_boundVertices = mesh->vertices.get();
+      wgpuRenderPassEncoderSetVertexBuffer(
+          pass, 0, m_boundVertices, 0, WGPU_WHOLE_SIZE);
+    }
+    if (mesh->indices.get() != m_boundIndices)
+    {
+      m_boundIndices = mesh->indices.get();
+      wgpuRenderPassEncoderSetIndexBuffer(
+          pass, m_boundIndices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+    }
+    if (material.bindings.get() != m_boundMaterial)
+    {
+      m_boundMaterial = material.bindings.get();
+      wgpuRenderPassEncoderSetBindGroup(pass, 1, m_boundMaterial, 0, nullptr);
+    }
     wgpuRenderPassEncoderDrawIndexed(pass,
                                      section.indexCount,
                                      draw.instanceCount,
@@ -7636,7 +7648,7 @@ void WebGpuRenderer::encodeOcclusion()
   const uint32_t offset = 0;
   wgpuRenderPassEncoderSetBindGroup(
       pass, 0, m_shadowBindings.get(), 1, &offset);
-  m_boundPipeline = nullptr;
+  forgetBound();
   for (const Draw& draw : m_plan.litDraws())
     encodeDraw(pass, draw, Sections::DepthNormals);
   endPass(pass);

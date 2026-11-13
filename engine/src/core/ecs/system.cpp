@@ -11,14 +11,17 @@ const std::vector<Entity>& System::getEntities() const
   return m_lists.empty() ? none : *m_lists.front();
 }
 
-const Signature& System::getComponentSignature() const { return m_signature; }
+const QuerySignature& System::getComponentSignature() const
+{
+  return m_signature;
+}
 
-const Signature& System::signatureOf(std::size_t index) const
+const QuerySignature& System::signatureOf(std::size_t index) const
 {
   return index == 0 ? m_signature : m_observers[index - 1].signature;
 }
 
-void System::addObserver(const Signature& signature,
+void System::addObserver(const QuerySignature& signature,
                          EntityCallback added,
                          EntityCallback removed)
 {
@@ -47,6 +50,14 @@ void System::warnLateRegister() const
 {
   LOG_WARN("registerComponent() after the system was added to a registry: "
            "ignored (register components in the constructor or create())");
+}
+
+void System::warnSecondAny(std::string_view groupKey) const
+{
+  LOG_ERROR("registerComponent<" + detail::readableTypeName(groupKey) +
+            ">() in " + detail::readableTypeName(typeid(*this)) +
+            ": a system takes one sfs::Any<...> group; this one is ignored "
+            "(list every alternative in one group)");
 }
 
 } // namespace sfs

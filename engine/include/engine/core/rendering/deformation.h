@@ -171,6 +171,13 @@ public:
   std::vector<glm::ivec2> takeRevised();
   /** Every tile it has (tile indices). */
   std::vector<glm::ivec2> tiles() const;
+  /**
+   * Whether it has any tile in a block of tiles, without listing them.
+   * @param first the block's lowest tile, as a tile index
+   * @param count how many tiles the block spans in x and y
+   * @return true if one of its tiles is in the block
+   */
+  bool anyTileIn(glm::ivec2 first, glm::ivec2 count) const;
 
   /**
    * A tile's offsets as half floats (rows from its lowest y, kTile x kTile),

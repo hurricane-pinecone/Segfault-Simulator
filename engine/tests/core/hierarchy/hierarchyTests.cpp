@@ -1,6 +1,7 @@
 #include "../../testHarness.h"
 
 #include <engine/core/components/parentComponent.h>
+#include <engine/core/components/restPoseComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/hierarchy/hierarchy.h>
@@ -216,6 +217,33 @@ int main()
 
     const hierarchy::EntityTree tree(registry.entities());
     CHECK(tree.preOrder().size() == 2u);
+  }
+
+  TEST("recordRestPose should add or refresh the rest pose, given a transform")
+  {
+    Registry registry;
+    Entity part = placed(registry, {1.0f, 2.0f, 3.0f});
+    TransformComponent& transform = part.getComponent<TransformComponent>();
+    transform.setYaw(kHalfTurn);
+    transform.scale = glm::vec3(2.0f);
+    hierarchy::recordRestPose(part);
+    CHECK(part.hasComponent<RestPoseComponent>());
+    const RestPoseComponent& rest = part.getComponent<RestPoseComponent>();
+    CHECK(approxVec(rest.position, {1.0f, 2.0f, 3.0f}));
+    const glm::quat turned = part.getComponent<TransformComponent>().rotation;
+    CHECK(testing::approx(glm::dot(rest.rotation, turned), 1.0f));
+    CHECK(approxVec(rest.scale, glm::vec3(2.0f)));
+
+    part.getComponent<TransformComponent>().position = {5.0f, 0.0f, 0.0f};
+    CHECK(approxVec(
+        part.getComponent<RestPoseComponent>().position, {1.0f, 2.0f, 3.0f}));
+    hierarchy::recordRestPose(part);
+    CHECK(approxVec(
+        part.getComponent<RestPoseComponent>().position, {5.0f, 0.0f, 0.0f}));
+
+    Entity bare = registry.createEntity();
+    hierarchy::recordRestPose(bare);
+    CHECK(!bare.hasComponent<RestPoseComponent>());
   }
 
   return testing::report("hierarchyTests");

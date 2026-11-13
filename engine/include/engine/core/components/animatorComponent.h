@@ -77,8 +77,8 @@ struct AnimatorComponent
   // outside); previewed (editing). Its entities: those below it (down to
   // another animator), parents first, itself first of all; their names'
   // places; its skinned meshes; whether all were found (false while a mesh
-  // is still loading); each node's rest pose (as first found) and whether
-  // its clips move it; each clip's channels' nodes (-1: none); updates since
+  // is still loading); whether its clips move each node (from its
+  // RestPoseComponent); each clip's channels' nodes (-1: none); updates since
   // it was bound, and whether it's to be bound again.
   [[sfs::hide]] std::shared_ptr<const AnimationSet> clips;
   [[sfs::hide]] std::string sourceSeen;
@@ -89,7 +89,6 @@ struct AnimatorComponent
   [[sfs::hide]] std::unordered_map<std::string, int> byName;
   [[sfs::hide]] std::vector<AnimatorSkin> skins;
   [[sfs::hide]] bool complete = true;
-  [[sfs::hide]] std::vector<JointPose> rest;
   [[sfs::hide]] std::vector<char> animated;
   [[sfs::hide]] const AnimationSet* targetsOf = nullptr;
   [[sfs::hide]] std::unordered_map<const AnimationClip*, std::vector<int>>

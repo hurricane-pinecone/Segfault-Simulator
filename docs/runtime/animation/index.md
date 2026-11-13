@@ -77,8 +77,12 @@ Every scene has an `AnimationSystem` (StandardScene adds it). Each update it:
    (times `AnimationSystem::setTimeScale()`), or not at all while the game is
    paused (`Registry::setPaused()`); `speed` 0 holds one;
 2. samples its clips and blends them by their cross-fade weights. The nodes its
-   clips move start from their rest pose (as the model was placed), so a
-   channel one clip has and the next doesn't goes back to rest;
+   clips move start from their rest pose, so a channel one clip has and the
+   next doesn't goes back to rest. The rest pose is each node's
+   `RestPoseComponent`, recorded as its model was placed (see
+   [Prefabs](../serialization/index.md#prefabs)); a node made in code gets one
+   from its transform when the animator first finds it while playing. While
+   editing, nothing moves the joints, so they rest as they are;
 3. sets the joints' `TransformComponent`s (while the game plays);
 4. works out each skinned mesh's joint palette (`inverse(mesh) * joint *
    inverseBind`, all relative to the animator) and posed bounds, and hands

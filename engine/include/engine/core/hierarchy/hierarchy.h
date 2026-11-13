@@ -77,6 +77,15 @@ TransformComponent worldTransform(const Entity& entity);
 void setWorldTransform(Entity entity, const TransformComponent& world);
 
 /**
+ * Record the entity's TransformComponent (its local pose) as its
+ * RestPoseComponent, adding one if missing or refreshing it. Does nothing to
+ * an entity without a TransformComponent.
+ *
+ * @param entity The entity to record.
+ */
+void recordRestPose(Entity entity);
+
+/**
  * A snapshot of the parent/child structure of a set of entities, for walking
  * it top-down. Siblings keep the order of the list it was built from (a
  * scene's entities(): id order). An entity whose parent isn't in the list is a

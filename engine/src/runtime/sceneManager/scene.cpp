@@ -1,4 +1,5 @@
 
+#include "engine/core/components/inputContextComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/hierarchy/hierarchy.h"
@@ -7,6 +8,7 @@
 #include "engine/core/util/fatalError.h"
 #include "engine/runtime/input/input.h"
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/util/profiling.h>
@@ -27,6 +29,37 @@ T& requireService(T* service, const char* name)
     return *service;
 
   fatalError(std::string("Scene: the render backend provides no ") + name);
+}
+// An active input context's keys, as read before input is handed out.
+struct KeyClaim
+{
+  Entity owner;
+  int priority = 0;
+  std::vector<Key> keys;
+};
+
+// The active contexts' claims, logging an unknown key name once a context.
+std::vector<KeyClaim> activeClaims(Registry& registry)
+{
+  std::vector<KeyClaim> claims;
+  for (const Entity& entity : registry.query<InputContextComponent>())
+  {
+    auto& context = entity.getComponent<InputContextComponent>();
+    if (!context.active || context.keys.empty())
+      continue;
+    KeyClaim claim{entity, context.priority, {}};
+    claim.keys.reserve(context.keys.size());
+    for (const std::string& name : context.keys)
+      if (const std::optional<Key> key = keyFromName(name))
+        claim.keys.push_back(*key);
+      else if (!context.loggedUnknown)
+      {
+        context.loggedUnknown = true;
+        LOG_WARN("InputContextComponent: no key is named '" + name + "'");
+      }
+    claims.push_back(std::move(claim));
+  }
+  return claims;
 }
 } // namespace
 
@@ -129,11 +162,11 @@ void Scene::update(double deltaTime)
 
 void Scene::updateObjects(double deltaTime)
 {
+  // The frame's game time, in as many steps as the Stepped systems need
+  // (the others run once, on the last).
+  double gameTime = deltaTime * m_registry.timeScale();
   {
     ZoneScopedN("Scene: systems update");
-    // The frame's game time, in as many steps as the Stepped systems need
-    // (the others run once, on the last).
-    double gameTime = deltaTime * m_registry.timeScale();
     int steps = 1;
     const double maxStep = m_registry.maxTimeStep();
     if (maxStep > 0.0 && gameTime > maxStep)
@@ -179,8 +212,24 @@ void Scene::updateObjects(double deltaTime)
     object.onUpdate(deltaTime);
   }
 
-  SFS_CPU_SCOPE("update/scene");
-  onUpdate(deltaTime);
+  {
+    SFS_CPU_SCOPE("update/scene");
+    onUpdate(deltaTime);
+  }
+
+  ZoneScopedN("Scene: systems late update");
+  m_registry.forEachSystem(
+      [&](System& system)
+      {
+        if (!system.enabled())
+          return;
+        const cpuTiming::Scope timed(
+            cpuTiming::enabled()
+                ? cpuTiming::label("lateUpdate/", typeid(system))
+                : nullptr);
+        system.lateUpdate(
+            system.timeStep() == System::TimeStep::Real ? deltaTime : gameTime);
+      });
 }
 
 void Scene::flushEntities()
@@ -209,13 +258,34 @@ void Scene::processInput(const Input& input)
   // What the scene takes first (its UI's clicks) the objects don't see.
   Input seen = input;
   filterInput(seen);
+  // The keys input contexts claim, read once: each object gets the keyboard
+  // without the keys claimed by contexts that outrank its own.
+  const std::vector<KeyClaim> claims = activeClaims(m_registry);
+  Input own;
   {
     const ObjectCalls calls(*this);
     for (std::size_t i = 0, count = m_gameObjects.size(); i < count; ++i)
     {
       GameObject& object = *m_gameObjects[i];
-      if (!object.m_destroyed)
+      if (object.m_destroyed)
+        continue;
+      if (claims.empty())
+      {
         object.onProcessInput(seen);
+        continue;
+      }
+      const Entity& entity = object.entity();
+      const auto* context =
+          entity.isAlive() && entity.hasComponent<InputContextComponent>()
+              ? &entity.getComponent<InputContextComponent>()
+              : nullptr;
+      const int rank = context && context->active ? context->priority : INT_MIN;
+      own = seen;
+      for (const KeyClaim& claim : claims)
+        if (claim.owner != entity && claim.priority > rank)
+          for (const Key key : claim.keys)
+            own.keyboard().withhold(key);
+      object.onProcessInput(own);
     }
     onProcessInput(seen);
   }

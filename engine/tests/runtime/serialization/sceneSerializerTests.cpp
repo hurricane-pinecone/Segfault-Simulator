@@ -635,7 +635,7 @@ int main()
     source.scene.flushEntities();
 
     const nlohmann::json saved = source.serializer().save(source.scene);
-    CHECK(saved["formatVersion"] == 2);
+    CHECK(saved["formatVersion"] == SceneSerializer::kSceneFormatVersion);
     CHECK(saved["entities"].size() == 2u); // roots: Farm, Loose
     CHECK(saved["entities"][0]["children"][0]["NameComponent"]["name"] ==
           "Barn");

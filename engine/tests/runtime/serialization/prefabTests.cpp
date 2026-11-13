@@ -4,6 +4,7 @@
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/pointLightComponent.h>
+#include <engine/core/components/restPoseComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
@@ -13,10 +14,12 @@
 #include <engine/runtime/sceneManager/scene.h>
 #include <engine/runtime/serialization/prefabComponents.h>
 #include <engine/runtime/serialization/sceneSerializer.h>
+#include <engine/runtime/serialization/unresolvedComponents.h>
 
 #include <algorithm>
 #include <map>
 #include <string>
+#include <vector>
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer;
@@ -77,6 +80,50 @@ json named(const std::string& name, json extra = json::object())
 {
   extra["NameComponent"] = {{"name", name}};
   return extra;
+}
+
+// Stable ids of stableModel()'s nodes (as a model's prefab gives them).
+constexpr const char* kArm = "2554517965";
+constexpr const char* kHand = "2860501858";
+constexpr const char* kLeg = "3000000007";
+
+// A model's prefab, as the asset store makes it: an arm with a hand, and a
+// leg, each $id a stable id.
+json stableModel()
+{
+  json arm = named(
+      "Arm",
+      {{"$id", std::stoul(kArm)}, {"TransformComponent", json::object()}});
+  arm["children"] = json::array({named(
+      "Hand",
+      {{"$id", std::stoul(kHand)}, {"TransformComponent", json::object()}})});
+  json model = named("Model", {{"TransformComponent", json::object()}});
+  model["children"] =
+      json::array({arm,
+                   named("Leg",
+                         {{"$id", std::stoul(kLeg)},
+                          {"TransformComponent", json::object()}})});
+  return {{"formatVersion", 2}, {"model", true}, {"root", model}};
+}
+
+// A cart prefab with the model as its entity 7, overriding, removing and
+// adding (a glove under `gloveParent`, if given) by these paths into the
+// model.
+json cartWithModel(const json& overrides,
+                   const std::vector<std::string>& removed,
+                   const std::string& gloveParent)
+{
+  json instance = {{"$id", 7}, {"$prefab", "asset:model"}};
+  if (!overrides.empty())
+    instance["$overrides"] = overrides;
+  if (!removed.empty())
+    instance["$removed"] = removed;
+  if (!gloveParent.empty())
+    instance["$added"] =
+        json::array({named("Glove", {{"$parent", gloveParent}})});
+  json cart = named("Cart", {{"TransformComponent", json::object()}});
+  cart["children"] = json::array({instance});
+  return {{"formatVersion", 1}, {"root", cart}};
 }
 
 // A fence: a post with two rails, rail 2 red.
@@ -365,6 +412,263 @@ int main()
     CHECK(applied["root"]["children"][0]["MeshRendererComponent"]["tint"][0] ==
           0.0);
     CHECK(applied["root"]["children"][0]["$id"] == 1);
+  }
+
+  TEST("a model's entities should record their rest pose after overrides; a "
+       "prefab's own should not")
+  {
+    World w;
+    json arm = named(
+        "Arm", {{"$id", 1}, {"TransformComponent", {{"position", {0, 0, 1}}}}});
+    arm["children"] = json::array({named(
+        "Joint",
+        {{"$id", 2}, {"TransformComponent", {{"position", {0, 0, 2}}}}})});
+    json model = named("Model", {{"TransformComponent", json::object()}});
+    model["children"] = json::array({arm});
+    w.prefabs["asset:model"] = {
+        {"formatVersion", 1}, {"model", true}, {"root", model}};
+    json cart = named("Cart", {{"TransformComponent", json::object()}});
+    cart["children"] = json::array(
+        {named("Handle",
+               {{"$id", 1}, {"TransformComponent", {{"position", {1, 0, 0}}}}}),
+         {{"$id", 2}, {"$prefab", "asset:model"}}});
+    w.prefabs["asset:cart"] = {{"formatVersion", 1}, {"root", cart}};
+
+    const json entry = {
+        {"$prefab", "asset:cart"},
+        {"$overrides",
+         {{"2/2", {{"TransformComponent", {{"position", {0, 0, 7}}}}}}}}};
+    w.serializer().load({{"formatVersion", 2}, {"entities", {entry}}}, w.scene);
+
+    const Entity joint = w.find("Joint");
+    CHECK(joint.hasComponent<RestPoseComponent>());
+    CHECK(joint.getComponent<RestPoseComponent>().position ==
+          glm::vec3(0, 0, 7));
+    CHECK(w.find("Arm").getComponent<RestPoseComponent>().position ==
+          glm::vec3(0, 0, 1));
+    CHECK(w.find("Model").hasComponent<RestPoseComponent>());
+    CHECK(!w.find("Cart").hasComponent<RestPoseComponent>());
+    CHECK(!w.find("Handle").hasComponent<RestPoseComponent>());
+
+    // Recorded, not saved: the instance saves as it was loaded.
+    joint.getComponent<TransformComponent>().position = {0, 0, 7};
+    const json saved = w.serializer().save(w.scene);
+    CHECK(saved["entities"].size() == 1u);
+    CHECK(saved["entities"][0] == entry);
+  }
+
+  TEST("a prefab with model nodes' old ids should expand as its upgraded form, "
+       "nested in a scene's instance too")
+  {
+    World w;
+    w.prefabs["asset:model"] = stableModel();
+    // Old ids are the nodes' places in the model's order: Arm 1, Hand 2, Leg 3.
+    const json old = cartWithModel(
+        {{"1", {{"PointLightComponent", json::object()}}}}, {"3"}, "2");
+    const json upgraded = cartWithModel(
+        {{kArm, {{"PointLightComponent", json::object()}}}}, {kLeg}, kHand);
+    w.prefabs["asset:old"] = old;
+    w.prefabs["asset:new"] = upgraded;
+    const SceneSerializer serializer = w.serializer();
+    const auto fromOld = serializer.expandPrefab("asset:old");
+    const auto fromNew = serializer.expandPrefab("asset:new");
+    CHECK(fromOld.size() == 5u); // cart, model, arm, hand, glove
+    CHECK(fromOld.size() == fromNew.size());
+    for (std::size_t i = 0; i < std::min(fromOld.size(), fromNew.size()); ++i)
+    {
+      CHECK(fromOld[i].key == fromNew[i].key);
+      CHECK(fromOld[i].parent == fromNew[i].parent);
+      CHECK(fromOld[i].components == fromNew[i].components);
+    }
+    // A scene's override through the cart into the model, both ways.
+    const json oldEntry = {
+        {"$prefab", "asset:new"},
+        {"$overrides", {{"7/2", {{"NameComponent", {{"name", "Paw"}}}}}}}};
+    json newEntry = oldEntry;
+    newEntry["$overrides"] = {
+        {std::string("7/") + kHand, {{"NameComponent", {{"name", "Paw"}}}}}};
+    const auto a = serializer.expandEntry(oldEntry);
+    const auto b = serializer.expandEntry(newEntry);
+    CHECK(a.size() == b.size());
+    for (std::size_t i = 0; i < std::min(a.size(), b.size()); ++i)
+      CHECK(a[i].components == b[i].components);
+    CHECK(w.serializer().load(
+        {{"formatVersion", 2}, {"entities", {oldEntry}}}, w.scene));
+    CHECK(w.find("Paw").isValid());
+    CHECK(w.find("Paw").getComponent<PrefabLinkComponent>().id ==
+          std::stoul(kHand));
+    CHECK(hierarchy::parentOf(w.find("Glove")) == w.find("Paw"));
+    CHECK(w.find("Arm").hasComponent<PointLightComponent>());
+    CHECK(!w.find("Leg").isValid());
+  }
+
+  TEST("changes naming nodes a model no longer has should be kept, warned once "
+       "and saved back unchanged")
+  {
+    World w;
+    w.prefabs["asset:model"] = stableModel();
+    w.prefabs["asset:cart"] = cartWithModel(json::object(), {}, "");
+    const json gone = {{"PointLightComponent", json::object()}};
+    const json entry = {
+        {"$prefab", "asset:cart"},
+        {"$overrides",
+         {{std::string("7/") + kArm, {{"NameComponent", {{"name", "Limb"}}}}},
+          {"7/2999999999", gone}}},
+        {"$removed", {"7/3111111111"}},
+        {"$added", {named("Ghost", {{"$parent", "7/3222222222"}})}}};
+    CHECK(w.serializer().load(
+        {{"formatVersion", 3}, {"entities", {entry}}}, w.scene));
+    const Entity cart = w.find("Cart");
+    CHECK(w.find("Limb").isValid());
+    CHECK(!w.find("Ghost").isValid());
+    CHECK(cart.hasComponent<UnresolvedComponents>());
+    if (cart.hasComponent<UnresolvedComponents>())
+    {
+      const json& unused = cart.getComponent<UnresolvedComponents>().overrides;
+      CHECK(unused["$overrides"] == json({{"7/2999999999", gone}}));
+      CHECK(unused["$removed"] == json::array({"7/3111111111"}));
+      CHECK(unused["$added"][0]["$parent"] == "7/3222222222");
+      CHECK(cart.getComponent<UnresolvedComponents>().components.empty());
+    }
+    const json saved = w.serializer().save(w.scene);
+    CHECK(saved["entities"].size() == 1u);
+    CHECK(saved["entities"][0] == entry);
+
+    // An old id past the model's nodes is kept as "old:<id>", so it can never
+    // name a node the model gains later.
+    World old;
+    old.prefabs["asset:model"] = stableModel();
+    old.prefabs["asset:cart"] = cartWithModel(json::object(), {}, "");
+    const json oldEntry = {
+        {"$prefab", "asset:cart"}, {"$overrides", {{"7/9", gone}}}};
+    old.serializer().load(
+        {{"formatVersion", 2}, {"entities", {oldEntry}}}, old.scene);
+    const json kept = {
+        {"$prefab", "asset:cart"}, {"$overrides", {{"7/old:9", gone}}}};
+    CHECK(old.serializer().save(old.scene)["entities"][0] == kept);
+    CHECK(old.serializer()
+              .nodeIdEdits({{"formatVersion", 3}, {"entities", {kept}}})
+              .empty());
+  }
+
+  TEST("unused removals and additions should be saved back in their places")
+  {
+    World w;
+    w.prefabs["asset:model"] = stableModel();
+    w.prefabs["asset:cart"] = cartWithModel(json::object(), {}, "");
+    const json entry = {
+        {"$prefab", "asset:cart"},
+        {"$removed", {"7/3111111111", std::string("7/") + kLeg}},
+        {"$added",
+         {named("Ghost", {{"$parent", "7/3222222222"}}),
+          named("Bell", {{"$parent", std::string("7/") + kArm}})}}};
+    w.serializer().load({{"formatVersion", 3}, {"entities", {entry}}}, w.scene);
+    CHECK(w.find("Bell").isValid());
+    CHECK(!w.find("Leg").isValid());
+    CHECK(w.serializer().save(w.scene)["entities"][0] == entry);
+  }
+
+  TEST("what a prefab adds inside its nested instance should be the prefab's "
+       "own in every instance of it")
+  {
+    World w;
+    w.prefabs["asset:model"] = stableModel();
+    // The cart adds a glove under the model's hand (with no id, as files from
+    // before had them).
+    w.prefabs["asset:cart"] = cartWithModel(json::object(), {}, kHand);
+    const Entity cart = w.serializer().instantiate("asset:cart", w.scene);
+    const Entity glove = w.find("Glove");
+    CHECK(glove.hasComponent<PrefabLinkComponent>());
+    const uint32_t id = glove.hasComponent<PrefabLinkComponent>()
+                            ? glove.getComponent<PrefabLinkComponent>().id
+                            : 0;
+    CHECK((id & kAddedNodeIdBit) != 0u);
+    CHECK((id & kModelNodeIdBit) == 0u);
+    const std::string path = "7/" + std::to_string(id);
+    CHECK(SceneSerializer::pathInInstance(glove, cart) ==
+          std::optional<std::string>(path));
+
+    // Unchanged, the instance saves as just the prefab; changed, as an
+    // override that loads back onto it.
+    CHECK(w.serializer().save(w.scene)["entities"][0] ==
+          json({{"$prefab", "asset:cart"}}));
+    glove.getComponent<NameComponent>().name = "Mitten";
+    const json saved = w.serializer().save(w.scene)["entities"][0];
+    const json mitten = {{"NameComponent", {{"name", "Mitten"}}}};
+    CHECK(saved ==
+          json({{"$prefab", "asset:cart"}, {"$overrides", {{path, mitten}}}}));
+    World again;
+    again.prefabs = w.prefabs;
+    again.serializer().load(
+        {{"formatVersion", 3}, {"entities", {saved}}}, again.scene);
+    CHECK(again.find("Mitten").isValid());
+    CHECK(hierarchy::parentOf(again.find("Mitten")) == again.find("Hand"));
+
+    // Saved as the prefab (Apply), the glove keeps its id, and a part added
+    // beside it gets another.
+    glove.getComponent<NameComponent>().name = "Glove";
+    Entity strap = w.scene.createEntity();
+    strap.addComponent<NameComponent>("Strap");
+    hierarchy::setParent(strap, w.find("Hand"));
+    w.scene.flushEntities();
+    const json applied = w.serializer().savePrefab(w.scene, cart);
+    const json& added = applied["root"]["children"][0]["$added"];
+    CHECK(added.size() == 2u);
+    CHECK(added[0]["$id"] == id);
+    CHECK(added[1].contains("$id"));
+    CHECK(added[1].value("$id", 0u) != id);
+    CHECK((added[1].value("$id", 0u) & kAddedNodeIdBit) != 0u);
+    w.prefabs["asset:cart"] = applied;
+    World applies;
+    applies.prefabs = w.prefabs;
+    const Entity copy =
+        applies.serializer().instantiate("asset:cart", applies.scene);
+    CHECK(applies.find("Glove").getComponent<PrefabLinkComponent>().id == id);
+    CHECK(applies.serializer().save(applies.scene)["entities"][0] ==
+          json({{"$prefab", "asset:cart"}}));
+    CHECK(SceneSerializer::pathInInstance(applies.find("Strap"), copy)
+              .has_value());
+  }
+
+  TEST("an instance whose prefab can't be read, or is named by a non-string, "
+       "should be reported and kept")
+  {
+    World w;
+    const json file = {
+        {"formatVersion", 3},
+        {"entities", {{{"$prefab", "asset:gone"}}, {{"$prefab", 5}}}}};
+    std::vector<std::string> unreadable;
+    CHECK(w.serializer().nodeIdEdits(file, &unreadable).empty());
+    CHECK(unreadable == std::vector<std::string>({"asset:gone", "5"}));
+    CHECK(w.serializer().load(file, w.scene));
+    CHECK(w.serializer().save(w.scene)["entities"] == file["entities"]);
+  }
+
+  TEST("an unpacked model node's stable id should be kept, and new ids count "
+       "on from the prefab's own")
+  {
+    World w;
+    Entity root = w.scene.createEntity();
+    root.addComponent<NameComponent>("Root");
+    Entity node = w.scene.createEntity();
+    node.addComponent<NameComponent>("Node");
+    node.addComponent<PrefabLinkComponent>(
+        PrefabLinkComponent{static_cast<uint32_t>(std::stoul(kArm))});
+    hierarchy::setParent(node, root);
+    Entity own = w.scene.createEntity();
+    own.addComponent<NameComponent>("Own");
+    own.addComponent<PrefabLinkComponent>(PrefabLinkComponent{4});
+    hierarchy::setParent(own, root);
+    Entity fresh = w.scene.createEntity();
+    fresh.addComponent<NameComponent>("Fresh");
+    hierarchy::setParent(fresh, root);
+    w.scene.flushEntities();
+
+    const json saved = w.serializer().savePrefab(w.scene, root);
+    CHECK(saved["formatVersion"] == SceneSerializer::kPrefabFormatVersion);
+    CHECK(saved["root"]["children"][0]["$id"] == std::stoul(kArm));
+    CHECK(saved["root"]["children"][1]["$id"] == 4);
+    CHECK(saved["root"]["children"][2]["$id"] == 5);
   }
 
   return testing::report("prefabTests");

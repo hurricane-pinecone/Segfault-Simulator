@@ -32,10 +32,6 @@ namespace sfs
 namespace
 {
 
-// Bumped when the file layout changes incompatibly. 2: hierarchies (nested
-// "children"); format 1 files still load.
-constexpr int kFormatVersion = 2;
-
 // The key an entity's children are nested under, beside its components.
 constexpr const char* kChildrenKey = "children";
 
@@ -635,7 +631,7 @@ json SceneSerializer::saveComponents(const Entity& entity) const
 
 json SceneSerializer::saveSubtree(const Entity& entity,
                                   const hierarchy::EntityTree& tree,
-                                  bool ids) const
+                                  SavedIds ids) const
 {
   // An instance whose prefab didn't load goes back out as it was read.
   if (entity.hasComponent<MissingPrefabComponent>())
@@ -653,8 +649,13 @@ json SceneSerializer::saveSubtree(const Entity& entity,
     if (!children.empty())
       entry[kChildrenKey] = std::move(children);
   }
-  if (ids && entity.hasComponent<PrefabLinkComponent>())
-    entry["$id"] = entity.getComponent<PrefabLinkComponent>().id;
+  if (ids != SavedIds::None && entity.hasComponent<PrefabLinkComponent>())
+  {
+    const uint32_t id = entity.getComponent<PrefabLinkComponent>().id;
+    if (ids == SavedIds::All ||
+        ((id & kAddedNodeIdBit) != 0 && (id & kModelNodeIdBit) == 0))
+      entry["$id"] = id;
+  }
   return entry;
 }
 
@@ -730,7 +731,7 @@ json SceneSerializer::save(Scene& scene,
   for (const Entity& root : tree.roots())
     entities.push_back(saveSubtree(root, tree));
 
-  json out = {{"formatVersion", kFormatVersion},
+  json out = {{"formatVersion", kSceneFormatVersion},
               {"systems", gameSystems},
               {"entities", std::move(entities)}};
   if (const RenderSystem* render = scene.tryGetSystem<RenderSystem>())
@@ -747,7 +748,7 @@ bool SceneSerializer::load(const json& in,
     LOG_ERROR("Scene data has no entity list");
     return false;
   }
-  if (valueOr(in, "formatVersion", 0) > kFormatVersion)
+  if (valueOr(in, "formatVersion", 0) > kSceneFormatVersion)
   {
     LOG_ERROR("Scene was saved by a newer engine (format " +
               std::to_string(valueOr(in, "formatVersion", 0)) + ")");

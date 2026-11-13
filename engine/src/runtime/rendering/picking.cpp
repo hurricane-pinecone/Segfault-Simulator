@@ -1,12 +1,17 @@
 #include "engine/runtime/rendering/picking.h"
 
+#include "engine/core/components/cursorPickComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
+#include "engine/core/components/pickableComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/runtime/input/mouseInput.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/modules/spriteModule.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/sceneManager/scene.h"
+
+#include <limits>
 
 namespace sfs
 {
@@ -18,6 +23,21 @@ float volume(const Aabb& box)
   const glm::vec3 size = box.max - box.min;
   return size.x * size.y * size.z;
 }
+
+// The nearest pickable entity at or above `entity`, or an invalid entity.
+Entity pickableOf(Entity entity)
+{
+  for (; entity.isValid(); entity = hierarchy::parentOf(entity))
+    if (entity.hasComponent<PickableComponent>())
+      return entity;
+  return {};
+}
+
+constexpr MouseButton kButtons[] = {MouseButton::Left,
+                                    MouseButton::Middle,
+                                    MouseButton::Right,
+                                    MouseButton::X1,
+                                    MouseButton::X2};
 } // namespace
 
 std::optional<Aabb> entityBounds(const Entity& entity,
@@ -101,11 +121,71 @@ std::optional<PickHit> pickEntity(Scene& scene,
         best && distance <= best->distance + kTie && size < bestVolume;
     if (nearer || tiedButSmaller)
     {
-      best = PickHit{entity, distance};
+      best = PickHit{entity, distance, entity, ray.at(distance)};
       bestVolume = size;
     }
   }
   return best;
+}
+
+std::optional<PickHit>
+pickPickable(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
+{
+  std::optional<PickHit> best;
+  float nearest = std::numeric_limits<float>::max();
+  for (const Entity& part :
+       scene.query<MeshRendererComponent, TransformComponent>())
+  {
+    const Entity pickable = pickableOf(part);
+    if (!pickable.isValid() ||
+        !pickable.getComponent<PickableComponent>().enabled)
+      continue;
+    const MeshHandle mesh = part.getComponent<MeshRendererComponent>().mesh;
+    const Aabb* bounds = meshes.posedBounds(mesh, part.getId());
+    const glm::mat4 world = hierarchy::worldMatrix(part);
+    float entry = 0.0f;
+    if (!bounds || bounds->empty() ||
+        !ray.intersectAabb(bounds->transformed(world), entry) ||
+        entry >= nearest)
+      continue;
+    // Where it meets the triangles: the bounds only say it might.
+    if (const auto hit = meshes.raycast(mesh, world, ray, part.getId());
+        hit && hit->distance < nearest)
+    {
+      nearest = hit->distance;
+      best = PickHit{pickable, hit->distance, part, ray.at(hit->distance)};
+    }
+  }
+  return best;
+}
+
+void pickUnderCursor(Scene& scene,
+                     const MeshLibrary& meshes,
+                     const Ray& ray,
+                     const MouseInput& mouse,
+                     CursorPickComponent& pick)
+{
+  pick.ray = ray;
+  pick.blocked = mouse.blocked();
+  pick.inView = mouse.inView();
+  pick.picked = {};
+  pick.part = {};
+  pick.point = glm::vec3(0.0f);
+  pick.distance = 0.0f;
+  if (pick.blocked)
+    return;
+  bool pressed = pick.hover;
+  for (const MouseButton button : kButtons)
+    pressed = pressed || mouse.mousePressed(button);
+  if (!pressed)
+    return;
+  if (const std::optional<PickHit> hit = pickPickable(scene, meshes, ray))
+  {
+    pick.picked = hit->entity;
+    pick.part = hit->part;
+    pick.point = hit->point;
+    pick.distance = hit->distance;
+  }
 }
 
 std::optional<SurfaceHit>

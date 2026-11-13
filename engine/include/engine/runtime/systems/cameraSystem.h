@@ -1,5 +1,6 @@
 #pragma once
 
+#include <engine/core/components/cameraCollisionComponent.h>
 #include <engine/core/components/cameraComponent.h>
 #include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/transformComponent.h>
@@ -13,6 +14,9 @@
 #include <glm/glm/trigonometric.hpp>
 
 #include <engine/core/ecs/registry.h>
+#include <engine/core/rendering/aabb.h>
+
+#include <vector>
 
 namespace sfs
 {
@@ -21,6 +25,10 @@ namespace sfs
  * Moves cameras that follow something (CameraFollowComponent): eases each one
  * toward its target and advances its shake. The same in every render style.
  * Also resolves the scene's active camera (activeCamera()).
+ *
+ * After every game object's update (lateUpdate()), it keeps the view of each
+ * camera with a CameraCollisionComponent clear of solid colliders, pitching
+ * it up about its pivot over what's in the way.
  */
 class CameraSystem : public System
 {
@@ -124,6 +132,43 @@ public:
   {
     return registry ? findActiveCamera(*registry) : Entity{};
   }
+
+  /**
+   * Lifts each camera with a CameraCollisionComponent (and a
+   * CameraComponent and TransformComponent) over the static colliders
+   * between its eye and its pivot, from the pose its controller left it in.
+   * @param deltaTime the frame's real time, for easing back down
+   */
+  void lateUpdate(double deltaTime) override;
+
+private:
+  // A blocker's shape in the world, for finding its top under a point.
+  struct Blocker
+  {
+    enum class Kind
+    {
+      Box,
+      Sphere,
+      Capsule
+    } kind = Kind::Box;
+    Aabb bounds;          // in the world
+    glm::mat4 toLocal{1}; // box: world to the entity's own space
+    Aabb box;             // box: the box in the entity's own space
+    glm::vec3 a{0.0f};    // sphere: centre; capsule: one end of its axis
+    glm::vec3 b{0.0f};    // capsule: the other end
+    float radius = 0.0f;
+  };
+
+  // Fill m_blockers with the blockers within `reach` of `pivot` across the
+  // ground that the camera's settings count.
+  void gatherBlockers(const CameraCollisionComponent& collision,
+                      const glm::vec3& pivot,
+                      float reach);
+  // The highest top of the blockers at a point, or nothing where none is.
+  bool topAt(const glm::vec2& point, float& top) const;
+
+  // Scratch: the blockers near the camera being lifted.
+  std::vector<Blocker> m_blockers;
 };
 
 } // namespace sfs

@@ -115,6 +115,22 @@ struct World
       ended->insert(ended->end(), heard.ended.begin(), heard.ended.end());
   }
 
+  // Moves a body from `from` to `to` in 60 frames, adding what `report`
+  // heard to the lists.
+  void slide(const Entity& entity,
+             const glm::vec3& from,
+             const glm::vec3& to,
+             const Entity& report,
+             std::vector<Contact3D>* begun,
+             std::vector<Contact3D>* ended = nullptr)
+  {
+    for (int i = 1; i <= 60; ++i)
+    {
+      place(entity, from + (to - from) * (static_cast<float>(i) / 60.0f));
+      step(report, begun, ended);
+    }
+  }
+
   // Teleports a body to `position`.
   static void place(const Entity& entity, const glm::vec3& position)
   {
@@ -819,13 +835,12 @@ int main()
     Entity cart = world.cart({0.0f, 0.0f, 0.5f}, root);
     std::vector<Contact3D> begun, ended;
     world.step(root, &begun, &ended);
-    World::place(cart, {3.0f, 0.0f, 0.5f});
-    world.step(root, &begun, &ended);
+    world.slide(cart, {0.0f, 0.0f, 0.5f}, {3.0f, 0.0f, 0.5f}, root, &begun);
     CHECK(begun.size() == 1);
     CHECK(!begun.empty() && begun[0].a == cart && begun[0].b == post &&
           !begun[0].trigger);
-    World::place(cart, {0.0f, 0.0f, 0.5f});
-    world.step(root, nullptr, &ended);
+    world.slide(
+        cart, {3.0f, 0.0f, 0.5f}, {0.0f, 0.0f, 0.5f}, root, nullptr, &ended);
     CHECK(ended.size() == 1);
     CHECK(!ended.empty() && ended[0].a == cart && ended[0].b == post);
   }
@@ -842,13 +857,12 @@ int main()
     Entity innerCart = world.cart({0.0f, 5.0f, 0.5f}, inner);
     std::vector<Contact3D> rootHeard, innerHeard;
     world.step(root, &rootHeard);
-    World::place(outerCart, {3.0f, 0.0f, 0.5f});
-    World::place(innerCart, {3.0f, 5.0f, 0.5f});
-    world.scene.update(kFrame);
-    const auto& rootReport = root.getComponent<ContactReportComponent>();
-    const auto& innerReport = inner.getComponent<ContactReportComponent>();
-    CHECK(rootReport.begun.size() == 1 && rootReport.begun[0].a == outerCart);
-    CHECK(innerReport.begun.size() == 1 && innerReport.begun[0].a == innerCart);
+    world.slide(
+        outerCart, {0.0f, 0.0f, 0.5f}, {3.0f, 0.0f, 0.5f}, root, &rootHeard);
+    world.slide(
+        innerCart, {0.0f, 5.0f, 0.5f}, {3.0f, 5.0f, 0.5f}, inner, &innerHeard);
+    CHECK(rootHeard.size() == 1 && rootHeard[0].a == outerCart);
+    CHECK(innerHeard.size() == 1 && innerHeard[0].a == innerCart);
   }
 
   TEST("a contact report should be cleared by an update with no contacts")
@@ -857,11 +871,15 @@ int main()
     world.box({3.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
     Entity root = world.reporter();
     Entity cart = world.cart({0.0f, 0.0f, 0.5f}, root);
-    world.scene.update(kFrame);
-    World::place(cart, {3.0f, 0.0f, 0.5f});
-    world.scene.update(kFrame);
     const auto& report = root.getComponent<ContactReportComponent>();
-    CHECK(report.begun.size() == 1);
+    bool heard = false;
+    for (int i = 1; i <= 60 && !heard; ++i)
+    {
+      World::place(cart, {0.05f * i, 0.0f, 0.5f});
+      world.scene.update(kFrame);
+      heard = !report.begun.empty();
+    }
+    CHECK(heard);
     world.scene.update(kFrame);
     CHECK(report.begun.empty() && report.ended.empty() &&
           report.deepened.empty());
@@ -875,15 +893,19 @@ int main()
     post.addComponent<ContactReportComponent>();
     Entity cart = world.cart({0.0f, 0.0f, 0.5f});
     cart.addComponent<ContactReportComponent>();
-    world.scene.update(kFrame);
-    World::place(cart, {3.0f, 0.0f, 0.5f});
-    world.scene.update(kFrame);
-    const auto& postHeard = post.getComponent<ContactReportComponent>();
-    const auto& cartHeard = cart.getComponent<ContactReportComponent>();
-    CHECK(postHeard.begun.size() == 1 && postHeard.begun[0].a == post &&
-          postHeard.begun[0].b == cart);
-    CHECK(cartHeard.begun.size() == 1 && cartHeard.begun[0].a == cart &&
-          cartHeard.begun[0].b == post);
+    std::vector<Contact3D> postHeard, cartHeard;
+    world.step(post, &postHeard);
+    for (int i = 1; i <= 60; ++i)
+    {
+      World::place(cart, {0.05f * i, 0.0f, 0.5f});
+      world.step(post, &postHeard);
+      const auto& own = cart.getComponent<ContactReportComponent>().begun;
+      cartHeard.insert(cartHeard.end(), own.begin(), own.end());
+    }
+    CHECK(postHeard.size() == 1 && postHeard[0].a == post &&
+          postHeard[0].b == cart);
+    CHECK(cartHeard.size() == 1 && cartHeard[0].a == cart &&
+          cartHeard[0].b == post);
   }
 
   TEST("a contact report should flag a trigger contact")

@@ -3,6 +3,7 @@
 
 #include <engine/core/assets/assetDatabase.h>
 #include <engine/core/components/animatorComponent.h>
+#include <engine/core/components/inputContextComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/parentComponent.h>
 #include <engine/core/components/transformComponent.h>
@@ -11,6 +12,7 @@
 #include <engine/core/util/fatalError.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
+#include <engine/runtime/input/input.h>
 #include <engine/runtime/rendering/modules/particleModule.h>
 #include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/rendering/standardScene.h>
@@ -105,6 +107,68 @@ protected:
     agreed = agreed && std::abs(registry->gameTime() - given) < 1e-9;
   }
 };
+
+// Notes whether it saw Space and Up pressed, and its turn among the calls.
+class Listener : public GameObject
+{
+public:
+  bool space = false;
+  bool up = false;
+  std::vector<std::string>* order = nullptr;
+  std::string name;
+
+  // Gives it an input context claiming `keys`.
+  void claim(std::vector<std::string> keys, int priority, bool active = true)
+  {
+    entity().addComponent<InputContextComponent>(
+        InputContextComponent{std::move(keys), priority, active});
+  }
+
+protected:
+  void onProcessInput(const Input& input) override
+  {
+    space = input.keyboard().keyPressed(Key::Space);
+    up = input.keyboard().keyPressed(Key::Up);
+  }
+  void onUpdate(double) override
+  {
+    if (order)
+      order->push_back(name);
+  }
+};
+
+// Notes its update and late update in a shared list.
+class Late : public System
+{
+public:
+  explicit Late(std::vector<std::string>& order, std::string name)
+      : m_order(order), m_name(std::move(name))
+  {
+  }
+  double lateGiven = 0.0;
+
+protected:
+  void update(double) override { m_order.push_back(m_name + ".update"); }
+  void lateUpdate(double deltaTime) override
+  {
+    lateGiven += deltaTime;
+    m_order.push_back(m_name + ".late");
+  }
+
+private:
+  std::vector<std::string>& m_order;
+  std::string m_name;
+};
+
+// Space and Up pressed this frame.
+Input spaceAndUp()
+{
+  Input input;
+  input.keyboard().beginFrame();
+  input.keyboard().pressKey(SDL_SCANCODE_SPACE);
+  input.keyboard().pressKey(SDL_SCANCODE_UP);
+  return input;
+}
 
 std::string base64(const std::vector<uint8_t>& bytes)
 {
@@ -450,7 +514,71 @@ int main()
     ParticleModule* particles = scene.renderSystem().module<ParticleModule>();
     CHECK(particles != nullptr);
     if (!particles)
-      return testing::report("sceneTests");
+      TEST("an input context should take its keys from lower contexts and from "
+           "objects with none, but not from its own object")
+      {
+        World world;
+        Listener& driver =
+            world.scene.attachObject<Listener>(world.scene.createEntity());
+        Listener& camera =
+            world.scene.attachObject<Listener>(world.scene.createEntity());
+        Listener& planner =
+            world.scene.attachObject<Listener>(world.scene.createEntity());
+        driver.claim({"Space", "Up"}, 2);
+        planner.claim({"Up"}, 1);
+        world.scene.flushEntities();
+        world.scene.processInput(spaceAndUp());
+        CHECK(driver.space && driver.up);
+        CHECK(!camera.space && !camera.up);
+        CHECK(!planner.space && !planner.up);
+      }
+
+    TEST("an inactive input context should withhold nothing, and equal "
+         "priorities should share")
+    {
+      World world;
+      Listener& driver =
+          world.scene.attachObject<Listener>(world.scene.createEntity());
+      Listener& camera =
+          world.scene.attachObject<Listener>(world.scene.createEntity());
+      Listener& planner =
+          world.scene.attachObject<Listener>(world.scene.createEntity());
+      driver.claim({"Space"}, 2, /*active*/ false);
+      planner.claim({"Up", "Nonsense"}, 1);
+      camera.claim({"Up"}, 1);
+      world.scene.flushEntities();
+      world.scene.processInput(spaceAndUp());
+      CHECK(camera.space && planner.space); // the driver's is off
+      CHECK(camera.up && planner.up);       // shared at priority 1
+      CHECK(driver.space && !driver.up);    // its own is off: it ranks lowest
+      CHECK(
+          planner.entity().getComponent<InputContextComponent>().loggedUnknown);
+    }
+
+    TEST("lateUpdate should run on enabled systems in order, after every "
+         "object's update")
+    {
+      World world;
+      std::vector<std::string> order;
+      Late& first = world.scene.addSystem<Late>(order, "first");
+      Late& second = world.scene.addSystem<Late>(order, "second");
+      Late& off = world.scene.addSystem<Late>(order, "off");
+      off.setEnabled(false);
+      Listener& object = world.scene.createObject<Listener>();
+      object.order = &order;
+      object.name = "object";
+      world.scene.update(0.5);
+      const std::vector<std::string> expected = {"first.update",
+                                                 "second.update",
+                                                 "object",
+                                                 "first.late",
+                                                 "second.late"};
+      CHECK(order == expected);
+      CHECK(testing::approx(first.lateGiven, 0.5));
+      CHECK(testing::approx(second.lateGiven, 0.5));
+    }
+
+    return testing::report("sceneTests");
     ParticleEffectDesc spark;
     spark.burstCount = 3;
     spark.lifetime = {10.0f, 10.0f};

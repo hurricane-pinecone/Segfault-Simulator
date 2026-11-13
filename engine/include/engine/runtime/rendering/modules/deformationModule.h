@@ -199,6 +199,9 @@ public:
   // again on the GPU).
   static constexpr double kPuddleInterval = 0.5;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   struct Field
   {
@@ -229,6 +232,14 @@ private:
     bool seen = false; // this frame
   };
 
+  // A deformable terrain drawn this frame: its field, and its material as
+  // drawn.
+  struct Seen
+  {
+    Field* field = nullptr;
+    MaterialHandle material;
+    const MeshMaterial* drawn = nullptr;
+  };
   static uint64_t keyOf(const Entity& entity);
   Field* fieldOf(const Entity& entity);
   const Field* fieldOf(const Entity& entity) const;
@@ -320,6 +331,10 @@ private:
   std::vector<float> m_groundSoftness;
   MeshHandle m_patchMesh;
   std::vector<uint16_t> m_halves; // scratch: a tile's
+  // Scratch: the frame's deformable terrains, and the meshes that may be a
+  // deformer's, their own or an ancestor's, in id order.
+  std::vector<Seen> m_seen;
+  std::vector<Entity> m_mayDeform;
 };
 
 } // namespace sfs

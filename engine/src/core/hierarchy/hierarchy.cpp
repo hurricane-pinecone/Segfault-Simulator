@@ -1,6 +1,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 
 #include "engine/core/components/parentComponent.h"
+#include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "glm/glm/matrix.hpp"
@@ -123,6 +124,20 @@ void setWorldTransform(Entity entity, const TransformComponent& world)
     entity.getComponent<TransformComponent>() = world;
   else
     setWorldMatrix(entity, world.matrix());
+}
+
+void recordRestPose(Entity entity)
+{
+  if (!entity.hasComponent<TransformComponent>())
+    return;
+  if (!entity.hasComponent<RestPoseComponent>())
+    entity.addComponent<RestPoseComponent>();
+  const TransformComponent& transform =
+      entity.getComponent<TransformComponent>();
+  RestPoseComponent& rest = entity.getComponent<RestPoseComponent>();
+  rest.position = transform.position;
+  rest.rotation = transform.rotation;
+  rest.scale = transform.scale;
 }
 
 EntityTree::EntityTree(const std::vector<Entity>& entities)

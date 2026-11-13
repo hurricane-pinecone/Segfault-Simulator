@@ -12,6 +12,7 @@
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/jobs/workerPool.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/terrain.h"
 #include "engine/core/util/cpuTiming.h"
 #include "engine/runtime/rendering/iRenderer.h"
@@ -30,14 +31,6 @@ namespace sfs
 
 namespace
 {
-
-// The largest of a transform's scales (what a sphere's radius scales by).
-float largestScale(const glm::mat4& model)
-{
-  return std::max({glm::length(glm::vec3(model[0])),
-                   glm::length(glm::vec3(model[1])),
-                   glm::length(glm::vec3(model[2]))});
-}
 
 // How far a world unit across the ground is in its mesh's own XY.
 float sidewaysScale(const glm::mat4& model)

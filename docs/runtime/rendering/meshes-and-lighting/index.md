@@ -112,6 +112,26 @@ onto visible ground.
 | `lightCastsShadows` | Whether things block its emission's light |
 | `emissionColor`, `emission` | A glow of its own, all over it, on top of its materials' emission (0: none; above 1 blooms). For a lamp switched on and off from a script, without a material for each state. It lights nothing round it: give the lamp a light for that. |
 
+### Mesh bounds
+
+A system that needs a mesh's size, or a box around an entity in the world,
+reads the renderer's `bounds` (Unity's `Renderer.localBounds`, Godot's
+`get_aabb()`): the mesh's bounds in its own space, which the render system
+fills in at the start of its update once the mesh is in its library.
+
+```cpp
+const auto& renderer = entity.getComponent<sfs::MeshRendererComponent>();
+if (renderer.bounds.empty())
+  return; // still loading: try again next frame
+const sfs::Aabb world = renderer.bounds.transformed(sfs::hierarchy::worldMatrix(entity));
+```
+
+They are empty until the mesh has loaded, and for a handle the library doesn't
+know. A mesh assigned during a frame gets its bounds at the next update (the
+render system updates first in a `StandardScene`), and a changed `mesh` gets
+new ones then. A skinned mesh's bounds are as bound, not as posed. `boundsOf`
+is the mesh they were taken from.
+
 Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
 solid, back to front, one at a time, so keep their numbers modest.
@@ -395,35 +415,37 @@ it's driven over; it's plain data on the CPU.
 **Deformers.** A `DeformerComponent` presses in wherever its meshes touch the
 ground: the entity's own and, with `children`, its children's (put one on a
 tractor prefab's root and its wheels and implement all deform; its body never
-reaches the ground). As one of its meshes moves, the mesh's underside (what's
-seen of it from below, near the ground: lugs, tines, a roller), looked at
-sixteen times a texel so edges slope rather than step, presses the ground down
-to `sinkDepth` below it. It presses again once it's gone a little way, not
-each frame, so what it costs goes with the distance driven, not the frame
-rate, and a parked one costs nothing: one rolling (a wheel, a disc) pressed
-where it is, often enough that its ruts come within a millimetre of as deep
-(each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30); one sliding (a
-tine, a plough body) each 6 cm (its underside found afresh, as it bobs), or as
-soon as it's lowered or turned enough to move any of it a texel, pressed all
-along the way it went, a texel at a time (its underside moved back along it),
-so it cuts an unbroken furrow rather than a row of dimples, its ridges even
-along it. With the game going fast (`Registry::timeScale()`), a mesh goes
-further between frames: a rolling one is pressed each stride along the way it
-went too, and either is pressed at most 16 times a frame (4 rolling), each
+reaches the ground). Each frame only meshes with a deformer of their own, or
+with a parent, are looked at, in id order: a mesh with neither, such as a lone
+tree or the ground, costs the deformation nothing. As one of its meshes moves,
+the mesh's underside (what's seen of it from below, near the ground: lugs,
+tines, a roller), looked at sixteen times a texel so edges slope rather than
+step, presses the ground down to `sinkDepth` below it. It presses again once
+it's gone a little way, not each frame, so what it costs goes with the distance
+driven, not the frame rate, and a parked one costs nothing: one rolling (a
+wheel, a disc) pressed where it is, often enough that its ruts come within a
+millimetre of as deep (each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30);
+one sliding (a tine, a plough body) each 6 cm (its underside found afresh, as it
+bobs), or as soon as it's lowered or turned enough to move any of it a texel,
+pressed all along the way it went, a texel at a time (its underside moved back
+along it), so it cuts an unbroken furrow rather than a row of dimples, its
+ridges even along it. With the game going fast (`Registry::timeScale()`), a mesh
+goes further between frames: a rolling one is pressed each stride along the way
+it went too, and either is pressed at most 16 times a frame (4 rolling), each
 press the lowest of its share of the places, so tracks stay unbroken at any
-speed; one that went further than 25 m/s of game time could take it (or a
-metre) was put there, not driven, and is pressed only where it lands. A
-mesh is made ready for this once (its triangles grouped, so those nowhere
-near the ground aren't looked at, nor, on a closed solid, those facing up); a
-skinned one is taken as it's posed. The soil pressed out rises
-in a low ridge to the sides (`ridge`: the share of it; the rest compacts), at
-most 0.4 x `sinkDepth` high, or 0.4 x the rut a wheel's pressing, if deeper,
-and walls steeper than soil stands slump, around what it pressed. Nothing
-goes deeper than 0.5 m. Rest vehicles on the ground as it is: lowering one by
-its sink only presses it further each pass. In deep mud a game can let one
-sit down into the ground (say by how muddy it is there and how heavy the
-vehicle is, not by the rut it's making): its ruts go as deep as it sits plus
-its sink, its ridges higher, and its wheels sit in them.
+speed; one that went further than 25 m/s of game time could take it (or a metre)
+was put there, not driven, and is pressed only where it lands. A mesh is made
+ready for this once (its triangles grouped, so those nowhere near the ground
+aren't looked at, nor, on a closed solid, those facing up); a skinned one is
+taken as it's posed. The soil pressed out rises in a low ridge to the sides
+(`ridge`: the share of it; the rest compacts), at most 0.4 x `sinkDepth` high,
+or 0.4 x the rut a wheel's pressing, if deeper, and walls steeper than soil
+stands slump, around what it pressed. Nothing goes deeper than 0.5 m. Rest
+vehicles on the ground as it is: lowering one by its sink only presses it
+further each pass. In deep mud a game can let one sit down into the ground (say
+by how muddy it is there and how heavy the vehicle is, not by the rut it's
+making): its ruts go as deep as it sits plus its sink, its ridges higher, and
+its wheels sit in them.
 
 | DeformerComponent | Meaning (default) |
 | --- | --- |

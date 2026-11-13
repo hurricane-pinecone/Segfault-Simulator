@@ -253,15 +253,16 @@ grey checker.
 A camera feed films the scene into a small picture: a tractor's rear camera, a
 combine's grain tank. Put a `CameraFeedComponent` on an entity (a child of the
 machine, so it rides along); it looks along the entity's +X with +Z up, like a
-camera entity. Ask the render system for its picture, a
-`std::shared_ptr<const RenderTexture>`, and show it:
+camera entity. Its `picture`, a `std::shared_ptr<RenderTexture>` (as Unity's
+`Camera.targetTexture`), is what it films: the render system makes it at its
+first update after the feed appears, sized `width` by `height`, and resizes it
+when they change. A layer reads it from the component and shows it:
 
 ```cpp
-auto& render = scene().getSystem<sfs::RenderSystem>();
-m_rear = render.cameraFeed(rearCameraEntity); // made the first time
-
 // in a view
-Image(m_rear).resizable().frame(320, 180)
+const auto& feed = rearCamera.getComponent<sfs::CameraFeedComponent>();
+if (feed.picture)
+  Image(feed.picture).resizable().frame(320, 180)
 ```
 
 The GPU draws it, and its pixels never come back to the CPU. Each new picture

@@ -152,8 +152,9 @@ public:
   /**
    * A prefab asset's contents (a .prefab file; see SceneSerializer), read on
    * first use and kept. A model is a prefab too: its node tree, each node an
-   * entity drawing its part (or, with one mesh, a single entity). Nothing
-   * (logged once) if the id isn't either in the database or can't be read.
+   * entity drawing its part (or, with one mesh, a single entity), its "$id"
+   * the node's stable id (ModelNode::id). Nothing (logged once) if the id
+   * isn't either in the database or can't be read.
    */
   std::optional<nlohmann::json> prefab(const AssetId& id);
 
@@ -237,7 +238,8 @@ private:
   std::unordered_map<std::string, SurfacePtr> m_surfaces;
   std::unordered_map<std::string, FontPtr> m_fonts;
 
-  // A model's node tree as prefab content (see prefab()).
+  // A model's node tree as prefab content (see prefab()), marked "model": true
+  // so its instances record their nodes' rest poses (see SceneSerializer).
   static nlohmann::json modelPrefab(const std::vector<ModelNode>& nodes,
                                     const AssetId& id,
                                     const std::string& name);

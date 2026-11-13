@@ -4,6 +4,7 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/reflection/reflection.h>
+#include <engine/core/reflection/registration.h>
 
 #include <algorithm>
 #include <string>
@@ -21,6 +22,15 @@ const reflect::FieldInfo* findField(const reflect::TypeInfo& type,
                    [&](const reflect::FieldInfo& f) { return f.name == name; });
   return it != type.fields.end() ? &*it : nullptr;
 }
+
+struct EmptyMark
+{
+};
+
+struct OnlyHidden
+{
+  [[sfs::hide]] int count = 0;
+};
 } // namespace
 
 int main()
@@ -108,6 +118,18 @@ int main()
 
     CHECK(registry.types().size() == 1u);
     CHECK(registry.find("A")->displayName == std::string("New"));
+  }
+
+  TEST("an empty component should be a tag; one with hidden data should not")
+  {
+    CHECK(reflect::componentType<EmptyMark>("EmptyMark", "Empty Mark", "test")
+              .tag);
+    CHECK(
+        !reflect::componentType<OnlyHidden>("OnlyHidden", "Only Hidden", "test")
+             .tag);
+    const reflect::TypeInfo* solid = reflect::types().find("SolidObject");
+    CHECK(solid != nullptr && solid->tag);
+    CHECK(!reflect::types().find("TransformComponent")->tag);
   }
 
   return testing::report("reflectionTests");

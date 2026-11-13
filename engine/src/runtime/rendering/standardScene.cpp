@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/standardScene.h"
 
+#include "engine/core/components/cursorPickComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
@@ -15,6 +16,7 @@
 #include "engine/runtime/rendering/modules/puddleModule.h"
 #include "engine/runtime/rendering/modules/spriteModule.h"
 #include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
@@ -85,8 +87,22 @@ bool StandardScene::play(const std::filesystem::path& file)
 
 void StandardScene::filterInput(Input& input)
 {
-  if (UiModule* ui = m_render ? m_render->module<UiModule>() : nullptr)
+  if (!m_render)
+    return;
+  if (UiModule* ui = m_render->module<UiModule>())
     ui->handleInput(input);
+  // What the cursor is over, for the camera that picks: after the UI has had
+  // the mouse, before any object sees the input.
+  if (const Entity camera = m_render->sceneCamera();
+      camera.isValid() && camera.hasComponent<CursorPickComponent>())
+  {
+    const MouseInput& mouse = input.mouse();
+    pickUnderCursor(*this,
+                    m_render->meshes(),
+                    m_render->screenRay(mouse.getPosition()),
+                    mouse,
+                    camera.getComponent<CursorPickComponent>());
+  }
 }
 
 void StandardScene::onInit()

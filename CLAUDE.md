@@ -8,6 +8,13 @@ These rules are the owner's; when a task seems to need breaking one, stop and as
 Consult on structure, decide within it: the approved architecture is the design. Within it, split responsibilities
 the best-practice way without asking, and split properly from the start. Ask the owner only when a change would alter
 the architecture or these rules, or how a game behaves for the player.
+**Blazingly fast, by design.** SFS is built for speed at the memory level from the start, not optimised later. Data
+lives in one place and is read where it lives: no copies, no parallel or mirrored structures, no per-frame
+allocation (reuse buffers, pools and arenas). Hot data is contiguous and cache-friendly (dense arrays of plain data,
+struct-of-arrays where systems stream one field, no pointer chasing or node-based containers on hot paths). Work is
+incremental (dirty flags, change versions: only what changed is recomputed) and parallel where it's independent.
+Every new engine design states its memory layout, what it allocates and when, and its per-frame cost; reviews check
+it. The standard engine approach is the baseline; do better where the data allows.
 
 ## Architecture
 

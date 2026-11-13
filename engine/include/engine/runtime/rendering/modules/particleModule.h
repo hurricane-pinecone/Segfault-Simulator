@@ -48,6 +48,9 @@ public:
   void computeCommands(const RenderContext& context) override;
   std::vector<ModuleSetting> settings(const RenderContext&) override;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   AssetStore& m_assets;
   Registry* m_registry = nullptr;
