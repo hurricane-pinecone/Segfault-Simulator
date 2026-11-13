@@ -119,6 +119,7 @@ instantiation, which the C++ standard exempts from access checks.
 | `glm::quat` | Euler angles in degrees |
 | `sfs::MeshHandle` | Mesh picker; saved by mesh name |
 | `sfs::AssetRef<T>` | Picker of the project's [scriptable objects](../../editor/scripting/index.md#scriptable-objects) of type `T`; saved as `asset:<id>` |
+| `sfs::AssetRefList<T>` | List editor (add, remove and pick a scriptable object of type `T` for each row); saved as a JSON array of `asset:<id>` |
 | `std::vector<std::string>` | Not shown unless an attribute says how; saved as a JSON array |
 | `nlohmann::json` | Not shown; saved as-is (free-form data, such as a script component's per-entity field values) |
 
