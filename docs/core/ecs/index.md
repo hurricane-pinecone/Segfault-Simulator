@@ -199,7 +199,7 @@ scene.addSystem<DriftSystem>();
 DriftSystem& drift = scene.getSystem<DriftSystem>(); // system must be present
 if (scene.hasSystem<DriftSystem>()) { /* ... */ }
 
-// When presence is conditional, use tryGetSystem -- it returns null if absent.
+// When presence is conditional, use tryGetSystem: it returns null if absent.
 if (DriftSystem* opt = scene.tryGetSystem<DriftSystem>())
 {
   // ...
@@ -500,7 +500,8 @@ name that component: two signature tests each, plus the sorted insert or
 erase where it joins or leaves (and a 4-byte change counter bumped). Systems
 are told only when a list one of them follows changed. A flush tests each
 entity joining or leaving against every list, streaming the dense signatures.
-`ecsBenchTests` times this with 106 query lists, 60 systems and 2000 entities:
+`ecsBenchTests` times this with 120 query lists over 40 component types, 60
+systems and 2000 entities:
 a component no list names costs about 20 ns to add or remove, one a few lists
 name about 0.5 µs, and one about half the lists name about 2.6 µs, most of it
 moving list entries to keep them in id order (an optimised build).
