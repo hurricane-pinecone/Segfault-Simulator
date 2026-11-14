@@ -388,8 +388,9 @@ per meeting:
       (the same members forming it again, one of them planned again, isn't
       news).
     - a **chain** ending in one standing with no path to drive that isn't
-      moving off (its plan, or its game's, long in coming: the waiter held
-      `2 x parkedAfter`): lower, it yields to a wait spot clear of the
+      moving off (its plan, or its game's, long in coming): a deadlock once
+      both the waiter and the one it waits on have stood that way
+      `2 x parkedAfter`. Lower, it yields to a wait spot clear of the
       waiter's way; otherwise it's stuck for now, a static obstacle the
       waiter plans round.
 
@@ -566,12 +567,15 @@ out: `CollisionSpace::raster()` uses it too, so nothing keeps a copy of its own.
 Most poses a plan checks are in the open, nowhere near a collider. Before
 asking Jolt, `CollisionSpace` looks each probe up in its worlds' **clearance**
 (the textbook distance-field broad phase): for a world of more than a few
-colliders, a grid (a quarter metre, coarser for a very large world) of how far
-each cell is at least from the nearest collider at any height, made once by
-`nav::distanceField()` (the coarse graph's exact Euclidean distance transform)
-over the cells the footprints touch, less the most a point and a collider's
-surface can be off their cells' middles; for a world of a few (parked
-machines), the footprints themselves, exactly. Each probe shape is covered by a few circles
+colliders, a grid (a quarter metre, up to 12 m from anything: a probe never
+reaches further) of how far each cell is at least from the nearest collider
+at any height, laid out in 16 m tiles, each made the first time a plan's
+query falls in it (`nav::distanceField()`, the coarse graph's exact Euclidean
+distance transform, over the tile and the margin a collider just outside it
+could still reach), so a big world's plan only costs the tiles it actually
+visits, less the most a point and a collider's surface can be off their
+cells' middles; for a world of a few (parked machines), the footprints
+themselves, exactly. Each probe shape is covered by a few circles
 along its length (each round its stretch of the shape as it stands, tilted on
 the ground: the reach over the ground of that stretch and the other two half
 axes, so a long box beside a fence isn't taken as near it all along); a probe
