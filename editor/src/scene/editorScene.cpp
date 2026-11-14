@@ -64,7 +64,7 @@ sfs::Entity EditorScene::createCamera(const std::string& name,
   sfs::Entity entity = createEmpty(name);
   if (space)
   {
-    entity.getComponent<sfs::TransformComponent>().setPosition2D(
+    entity.getComponent<sfs::TransformComponent>()->setPosition2D(
         space->unplace(glm::vec2(view.target), 0.0f));
     sfs::CameraComponent camera;
     camera.orthographic = true;
@@ -73,7 +73,7 @@ sfs::Entity EditorScene::createCamera(const std::string& name,
     entity.addComponent<sfs::CameraComponent>(camera);
     return entity;
   }
-  entity.getComponent<sfs::TransformComponent>() =
+  *entity.getComponent<sfs::TransformComponent>() =
       sfs::TransformComponent(view.position(), view.orientation());
   sfs::CameraComponent camera;
   camera.focusDistance = view.distance;
@@ -89,7 +89,7 @@ void EditorScene::destroyBranch(const sfs::Entity& entity)
 
 std::optional<std::size_t> EditorScene::saveOrderOf(const sfs::Entity& entity)
 {
-  if (!entity.isAlive())
+  if (!entity.isValid())
     return std::nullopt;
   const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
   const sfs::Entity::EntityId id = entity.getId();
@@ -135,13 +135,13 @@ void EditorScene::resetToDefault(Style style)
   render.clearSpace2D();
 
   sfs::Entity ground = createPrimitive(Primitive::Plane, "Ground");
-  auto& groundRenderer = ground.getComponent<sfs::MeshRendererComponent>();
-  groundRenderer.tint = {0.55f, 0.70f, 0.45f, 1.0f};
-  groundRenderer.castsShadow = false;
+  auto* groundRenderer = ground.getComponent<sfs::MeshRendererComponent>();
+  groundRenderer->tint = {0.55f, 0.70f, 0.45f, 1.0f};
+  groundRenderer->castsShadow = false;
 
   createPrimitive(Primitive::Cube, "Cube");
 
   sfs::Entity light = createPointLight("Point Light");
-  light.getComponent<sfs::TransformComponent>().position = {2.0f, -2.0f, 2.0f};
+  light.getComponent<sfs::TransformComponent>()->position = {2.0f, -2.0f, 2.0f};
   flushEntities();
 }

@@ -35,4 +35,18 @@ void allow(bool allowed);
 /** Whether debug features may run: compiled in and allowed. */
 bool enabled();
 
+/**
+ * Whether the transform check runs: after the transform pass, every cached
+ * world matrix (WorldTransformComponent) is compared with one composed afresh,
+ * as is each cached read in the render phase (hierarchy::cachedWorldMatrix());
+ * a mismatch is logged once per entity. It catches a transform written after
+ * the pass, and any bug in the cache. Off unless the environment sets
+ * SFS_CHECK_TRANSFORMS=1 or setCheckTransforms() turns it on, and always off
+ * when enabled() is false. Costs a full recompute a frame while on.
+ */
+bool checkTransforms();
+
+/** Turn the transform check (checkTransforms()) on or off, as tests do. */
+void setCheckTransforms(bool on);
+
 } // namespace sfs::debugFeatures

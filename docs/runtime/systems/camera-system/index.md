@@ -24,7 +24,7 @@ sfs::Entity camera = createEntity()
     .addComponent<sfs::TransformComponent>(startPosition)
     .addComponent<sfs::CameraComponent>(lens)
     .addComponent<sfs::CameraFollowComponent>(
-        static_cast<int>(player.getId()),
+        player,
         glm::vec3{0.0f, 2.0f, 0.0f}, // look slightly ahead of the target
         8.0f);                       // smoothing: typical range 4 to 16
 ```
@@ -36,7 +36,7 @@ frame's position.
 
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `target` | `int` | `-1` | Id of the entity to follow. `-1`, or an entity without a `TransformComponent`, leaves the camera where it is. |
+| `target` | `sfs::Entity` | none | The entity to follow, saved as a [reference](../../serialization/index.md#entity-references). None, a destroyed entity or one without a `TransformComponent` leaves the camera where it is. |
 | `offset` | `glm::vec3` | `(0, 0, 0)` | Added to the target's position |
 | `smoothing` | `float` | `8` | How fast it catches up. Higher is snappier; `0` doesn't move. |
 | `shakeMaxOffset` | `float` | `0.5` | Peak shake displacement at full strength, in world units. Tune per game. |
@@ -138,11 +138,11 @@ It's the camera the render system draws through.
 
 ```cpp
 const sfs::Entity camera = getSystem<sfs::CameraSystem>().activeCamera();
-if (camera.isValid())
+if (const auto* lens = camera.getComponent<sfs::CameraComponent>())
 {
   const glm::vec2 centre =
       sfs::hierarchy::worldTransform(camera).position2D(); // on the plane
-  const float zoom = camera.getComponent<sfs::CameraComponent>().zoom;
+  const float zoom = lens->zoom;
 }
 ```
 

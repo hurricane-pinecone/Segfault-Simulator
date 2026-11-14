@@ -5,7 +5,7 @@
 #include "engine/core/components/windZoneComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/particles/decalSplatter.h"
-// Pulled in for the Entity::getComponent<T> template definitions in entity.inl.
+// Pulled in for the query rows (queryView.h) and entity.inl's templates.
 #include "engine/core/ecs/registry.h" // IWYU pragma: keep
 #include "engine/core/util/profiling.h"
 #include "glm/glm/common.hpp"
@@ -566,11 +566,9 @@ void ParticleEngine::syncComponentEmitters(float dt)
   for (auto& [id, inst] : m_entityEmitters)
     inst.emitting = false;
 
-  for (const auto& entity :
+  for (const auto& [entity, local, emitter] :
        registry->query<TransformComponent, ParticleEmitterComponent>())
   {
-    const auto& emitter = entity.getComponent<ParticleEmitterComponent>();
-
     const EffectId fx = effectIdOf(emitter.effect);
     if (fx < 0)
       continue; // unknown effect name -- skip
@@ -654,9 +652,8 @@ void ParticleEngine::gatherWind()
   m_wind = glm::vec2(0.0f);
   if (!registry)
     return;
-  for (const Entity& entity : registry->query<WindZoneComponent>())
+  for (WindZoneComponent& zone : registry->query<WindZoneComponent>())
   {
-    const auto& zone = entity.getComponent<WindZoneComponent>();
     if (zone.enabled)
       m_wind += zone.wind;
   }

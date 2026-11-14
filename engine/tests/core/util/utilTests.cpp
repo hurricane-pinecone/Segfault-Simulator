@@ -203,6 +203,25 @@ int main()
     CHECK(mix64(1) != mix64(2));
   }
 
+  TEST("hashWords should tell apart words that differ in any one of them")
+  {
+    const uint64_t base[5] = {1, 2, 3, 4, 5};
+    const uint64_t hash = hashWords(base, 5);
+    CHECK(hashWords(base, 5) == hash);
+    int differ = 0;
+    for (int word = 0; word < 5; ++word)
+      for (int bit = 0; bit < 64; ++bit)
+      {
+        uint64_t changed[5] = {1, 2, 3, 4, 5};
+        changed[word] ^= uint64_t{1} << bit;
+        differ += hashWords(changed, 5) != hash ? 1 : 0;
+      }
+    CHECK(differ == 5 * 64);
+    // Swapping two words changes it too: their places count.
+    const uint64_t swapped[5] = {2, 1, 3, 4, 5};
+    CHECK(hashWords(swapped, 5) != hash);
+  }
+
   TEST("readFileText should give a file's bytes, or nothing")
   {
     const fs::path file = fs::temp_directory_path() / "sfsReadFileText.txt";
@@ -213,6 +232,27 @@ int main()
     CHECK(readFileText(file) == std::optional<std::string>("a\r\nb"));
     fs::remove(file);
     CHECK(!readFileText(file).has_value());
+  }
+
+  TEST("a part's name or glob should match a node's name, with or without "
+       "Blender's copy number")
+  {
+    CHECK(sfs::globMatch("blade-2", "blade-*"));
+    CHECK(sfs::globMatch("arm", "a?m"));
+    CHECK(!sfs::globMatch("arm", "a?"));
+    // A `*` in a name is matched by the pattern's wildcard.
+    CHECK(sfs::globMatch("a*b", "a*"));
+    CHECK(sfs::globMatch("*x", "*"));
+    CHECK(sfs::globMatch("a*b", "a*b"));
+    CHECK(!sfs::globMatch("a*b", "a*c"));
+    CHECK(sfs::baseNodeName("link-lower.001") == "link-lower");
+    CHECK(sfs::baseNodeName("v1.2a") == "v1.2a");
+    CHECK(sfs::baseNodeName("trailing.") == "trailing.");
+    CHECK(sfs::matchesPart("Arm.001", "Arm"));
+    CHECK(sfs::matchesPart("Blade-2.003", "Blade-*"));
+    CHECK(sfs::matchesPart("Arm", "Arm"));
+    CHECK(!sfs::matchesPart("Arm.x", "Arm"));
+    CHECK(!sfs::matchesPart("Forearm", "Arm"));
   }
 
   return testing::report("utilTests");

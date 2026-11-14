@@ -75,6 +75,16 @@ importModelNodes(const std::filesystem::path& file,
 uint32_t stableNodeId(std::string_view namePath);
 
 /**
+ * A node's name as a segment of a name path (see stableNodeId()): the name
+ * with "/", "#" and "\" escaped with a "\". It doesn't add the "#k" a
+ * repeated sibling name gets.
+ *
+ * @param name the node's name (empty for an unnamed node)
+ * @return the segment
+ */
+std::string nodeNameSegment(std::string_view name);
+
+/**
  * Whether a model node (a Blender object) is named as a collider: its name
  * ends in "-collider", in any case, before any ".001"-style number Blender
  * adds to a copy ("Boom-collider", "boom-Collider.002"). Its node then places

@@ -51,7 +51,7 @@ struct World
 
 glm::vec2 positionOf(const Entity& entity)
 {
-  return entity.getComponent<TransformComponent>().position2D();
+  return entity.getComponent<TransformComponent>()->position2D();
 }
 
 class Listener : public GameObject
@@ -89,11 +89,11 @@ int main()
     Entity mover = world.body({0.0f, 0.0f}, {3.0f, 0.0f}, {0.0f, -10.0f});
     world.scene.update(0.5);
 
-    const auto& body = mover.getComponent<RigidBody2DComponent>();
-    CHECK(testing::approx(body.velocity.y, -5.0f));
+    const auto* body = mover.getComponent<RigidBody2DComponent>();
+    CHECK(testing::approx(body->velocity.y, -5.0f));
     CHECK(testing::approx(positionOf(mover).x, 1.5f));
     CHECK(testing::approx(positionOf(mover).y, -2.5f));
-    CHECK(testing::approx(body.previousPosition.x, 0.0f));
+    CHECK(testing::approx(body->previousPosition.x, 0.0f));
   }
 
   TEST("a body should stop flush against a static box and lose that speed")
@@ -105,7 +105,7 @@ int main()
 
     CHECK(testing::approx(positionOf(mover).x, 2.0f));
     CHECK(testing::approx(
-        mover.getComponent<RigidBody2DComponent>().velocity.x, 0.0f));
+        mover.getComponent<RigidBody2DComponent>()->velocity.x, 0.0f));
   }
 
   TEST("a fast body should not pass through a thin wall in one step")
@@ -129,7 +129,7 @@ int main()
     CHECK(positionOf(faller).x >
           3.5f); // still sliding: the floor didn't stop x
     CHECK(testing::approx(
-        faller.getComponent<RigidBody2DComponent>().velocity.y, 0.0f));
+        faller.getComponent<RigidBody2DComponent>()->velocity.y, 0.0f));
   }
 
   TEST("a trigger should block nothing but be told what passes through")
@@ -163,7 +163,7 @@ int main()
     CHECK(testing::approx(onFloor.lastNormal.y, -1.0f));
 
     // Jumping off ends it.
-    faller.getComponent<RigidBody2DComponent>().velocity.y = 15.0f;
+    faller.getComponent<RigidBody2DComponent>()->velocity.y = 15.0f;
     world.run(0.2);
     CHECK(onFaller.exited == 1);
   }
@@ -173,7 +173,7 @@ int main()
     World world;
     Entity mover = world.body({0.0f, 0.0f}, {60.0f, 0.0f});
     Entity high = world.wall({3.0f, 0.0f}, {0.5f, 2.0f});
-    high.getComponent<TransformComponent>().position.z = 2.0f;
+    high.getComponent<TransformComponent>()->position.z = 2.0f;
     world.run(0.5);
 
     CHECK(positionOf(mover).x > 20.0f);

@@ -3,8 +3,12 @@
 #include "sfs/codegen/model.h"
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
+
+struct TSTree;
+struct TSNode;
 
 namespace sfs::codegen
 {
@@ -27,6 +31,44 @@ namespace sfs::codegen
  */
 // A UI header (*.ui.h) is skipped: nothing in it is a script or a component.
 ParseResult parseHeader(std::string_view source, const std::filesystem::path& path);
+
+/**
+ * parseHeader() on a syntax tree the caller already has (sfs-lsp's, kept up to
+ * date as the file is edited), instead of parsing the text again.
+ *
+ * @param source the header's text, which `tree` was parsed from
+ * @param path the header
+ * @param tree its tree-sitter C++ tree; null gives an empty result
+ * @return as parseHeader(source, path)
+ */
+ParseResult parseHeader(std::string_view source,
+                        const std::filesystem::path& path,
+                        const TSTree* tree);
+
+/**
+ * The field kind (FieldModel::kind) codegen gives a field of a type.
+ *
+ * @param type the type as written, e.g. "glm::vec3" or "sfs::AssetRef<Spec>"
+ * @param insideSfs whether the field is declared inside namespace sfs, where
+ *   `Entity` means sfs::Entity
+ * @return e.g. "Vec3" or "AssetRef"; empty for a type the editor can't edit
+ */
+std::string fieldKindOf(std::string_view type, bool insideSfs);
+
+/** A file's whole contents; empty when it can't be read. */
+std::string readFile(const std::filesystem::path& path);
+
+/** The text of `source` a tree-sitter node covers; empty for a null node. */
+std::string_view nodeText(std::string_view source, TSNode node);
+
+/** A node's child by field name (tree-sitter's), e.g. "name". */
+TSNode childField(TSNode node, std::string_view name);
+
+/** Whether a namespace name is SFS's or inside it: "sfs" or "sfs::...". */
+bool isSfsNamespace(std::string_view name);
+
+/** The source range a tree-sitter node covers. */
+SourceRange rangeOf(TSNode node);
 
 /**
  * Find a UI header's (*.ui.h) structs and classes, at namespace scope: the

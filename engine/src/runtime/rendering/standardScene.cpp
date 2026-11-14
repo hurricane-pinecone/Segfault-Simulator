@@ -93,15 +93,15 @@ void StandardScene::filterInput(Input& input)
     ui->handleInput(input);
   // What the cursor is over, for the camera that picks: after the UI has had
   // the mouse, before any object sees the input.
-  if (const Entity camera = m_render->sceneCamera();
-      camera.isValid() && camera.hasComponent<CursorPickComponent>())
+  if (CursorPickComponent* pick =
+          m_render->sceneCamera().getComponent<CursorPickComponent>())
   {
     const MouseInput& mouse = input.mouse();
     pickUnderCursor(*this,
                     m_render->meshes(),
                     m_render->screenRay(mouse.getPosition()),
                     mouse,
-                    camera.getComponent<CursorPickComponent>());
+                    *pick);
   }
 }
 

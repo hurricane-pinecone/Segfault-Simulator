@@ -58,7 +58,7 @@ namespace sfs
 class NavigationSystem : public System
 {
 public:
-  NavigationSystem();
+  NavigationSystem() = default;
   ~NavigationSystem() override;
   NavigationSystem(const NavigationSystem&) = delete;
   NavigationSystem& operator=(const NavigationSystem&) = delete;
@@ -200,6 +200,7 @@ public:
   std::vector<ModuleSetting> settings() override;
 
 protected:
+  void create() override;
   void update(double deltaTime) override;
   void onEntityRemoved(const Entity& entity) override;
 

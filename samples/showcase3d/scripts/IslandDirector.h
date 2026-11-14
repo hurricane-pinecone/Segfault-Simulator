@@ -60,10 +60,11 @@ public:
   /** The hero touched a spark: take it. */
   void collect(sfs::Entity spark)
   {
-    if (!spark.isValid() || !spark.hasComponent<Spark>())
+    const Spark* found = spark.getComponent<Spark>();
+    if (!found)
       return;
     const glm::vec3 at = sfs::hierarchy::worldPosition(spark);
-    m_collected += spark.getComponent<Spark>().value;
+    m_collected += found->value;
     spark.removeComponent<Spark>(); // once
     scene().destroyBranch(spark);
     burst("sparkle", at);
@@ -155,17 +156,15 @@ private:
     lighting.skyColor = glm::mix(night, glm::mix(noon, dusk, low), day);
     render->setLighting(lighting);
 
-    for (const sfs::Entity& lamp :
-         scene().query<Lantern, sfs::PointLightComponent>())
+    for (auto [lantern, pointLight] :
+         scene().query<Lantern, sfs::PointLightComponent>().components())
     {
-      const Lantern& lantern = lamp.getComponent<Lantern>();
-      lamp.getComponent<sfs::PointLightComponent>().intensity =
+      pointLight.intensity =
           glm::mix(lantern.dayIntensity, lantern.nightIntensity, m_darkness);
     }
-    if (m_fireflies.isValid() &&
-        m_fireflies.hasComponent<sfs::ParticleEmitterComponent>())
-      m_fireflies.getComponent<sfs::ParticleEmitterComponent>().enabled =
-          m_darkness > 0.45f;
+    if (sfs::ParticleEmitterComponent* particleEmitter =
+            m_fireflies.getComponent<sfs::ParticleEmitterComponent>())
+      particleEmitter->enabled = m_darkness > 0.45f;
   }
 
   // Enough pins down: a spark appears where they stood.
@@ -176,9 +175,9 @@ private:
     int down = 0;
     glm::vec3 where(0.0f);
     int count = 0;
-    for (const sfs::Entity& pin : scene().query<Pin, sfs::TransformComponent>())
+    for (auto [tag, transform] :
+         scene().query<Pin, sfs::TransformComponent>().components())
     {
-      const auto& transform = pin.getComponent<sfs::TransformComponent>();
       const glm::vec3 up = transform.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
       down += up.z < 0.55f ? 1 : 0;
       where += transform.position;
@@ -226,16 +225,16 @@ private:
     m_near = nullptr;
     if (!m_hero.isValid())
       return;
-    const glm::vec3 hero =
-        m_hero.getComponent<sfs::TransformComponent>().position;
+    const auto* heroAt = m_hero.getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(heroAt, m_hero))
+      return;
+    const glm::vec3 hero = heroAt->position;
     float best = 1e9f;
-    for (const sfs::Entity& sign :
-         scene().query<Station, sfs::TransformComponent>())
+    for (auto [station, transform] :
+         scene().query<Station, sfs::TransformComponent>().components())
     {
-      const Station& station = sign.getComponent<Station>();
-      const float d = glm::length(
-          glm::vec2(sign.getComponent<sfs::TransformComponent>().position) -
-          glm::vec2(hero));
+      const float d =
+          glm::length(glm::vec2(transform.position) - glm::vec2(hero));
       if (d < station.radius && d < best)
       {
         best = d;
@@ -275,12 +274,13 @@ inline void IslandDirector::onCreate(sfs::Scene& scene)
   registerEffects();
 
   // The sparks to find: those in the scene, and the strike spark to come.
-  for (const sfs::Entity& spark : scene.query<Spark>())
-    m_total += spark.getComponent<Spark>().value;
+  for (Spark& worth : scene.query<Spark>())
+    m_total += worth.value;
   for (sfs::Entity& glow : scene.findEntities("Spark Glow"))
-    if (glow.hasComponent<sfs::MeshRendererComponent>())
+    if (sfs::MeshRendererComponent* meshRenderer =
+            glow.getComponent<sfs::MeshRendererComponent>())
     {
-      m_sparkLook = glow.getComponent<sfs::MeshRendererComponent>();
+      m_sparkLook = *meshRenderer;
       break;
     }
   if (!scene.query<Pin>().empty())

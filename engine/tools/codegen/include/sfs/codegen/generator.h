@@ -40,6 +40,14 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
 std::string generateUiPreviews(const std::vector<UiTypeModel>& types,
                                const GeneratorOptions& options);
 
+/**
+ * The C++ type a field kind stands for, as the generated code spells it.
+ *
+ * @param kind a FieldModel::kind, e.g. "Vec3"
+ * @return e.g. "glm::vec3"; empty for an asset reference or an unknown kind
+ */
+std::string_view cppTypeOfKind(std::string_view kind);
+
 /** "castsShadow" -> "Casts Shadow", "MeshRendererComponent" -> "Mesh Renderer". */
 std::string displayName(std::string_view identifier, bool stripComponentSuffix);
 

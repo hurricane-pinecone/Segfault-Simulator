@@ -15,6 +15,7 @@
 #include <engine/core/logger/logger.h>
 #include <engine/core/util/allocationMetrics.h>
 #include <engine/core/util/cpuTiming.h>
+#include <engine/core/util/errorDialog.h>
 #include <engine/core/util/profiling.h>
 
 #include <algorithm>
@@ -103,6 +104,20 @@ bool Game::init(int windowWidth, int windowHeight)
                                     : std::string(m_backend->name())));
   window = m_backend->window();
   updatePixelSize();
+
+#ifndef __EMSCRIPTEN__
+  // Errors shown to the person playing (a fatal one, a failed sfs::expect in
+  // development) are SDL message boxes over the game's window. They work
+  // without a window too.
+  setErrorDialog(
+      [this](const std::string& message)
+      {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                                 "Error",
+                                 message.c_str(),
+                                 ownsWindow() ? window : nullptr);
+      });
+#endif
 
   onInit();
 
@@ -224,16 +239,10 @@ void Game::frame()
 void Game::onFatalError(const std::string& message)
 {
   LOG_ERROR(message);
-#ifndef __EMSCRIPTEN__
-  // Works without a window too (e.g. before one opens). Unless nobody's there
-  // to click it (an automated run sets SFS_NO_ERROR_DIALOG): then the log
-  // says it, and the game ends rather than waiting on a dialog.
-  if (!std::getenv("SFS_NO_ERROR_DIALOG"))
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
-                             "Error",
-                             (message + "\n\nThe log has the details.").c_str(),
-                             ownsWindow() ? window : nullptr);
-#endif
+  // Unless nobody's there to click it (an automated run sets
+  // SFS_NO_ERROR_DIALOG): then the log says it, and the game ends rather than
+  // waiting on a dialog.
+  showErrorDialog(message + "\n\nThe log has the details.");
   isRunning = false;
 }
 
@@ -643,6 +652,7 @@ void Game::destroy()
   }
   window = nullptr;
 
+  setErrorDialog({});
   SDL_Quit();
 }
 

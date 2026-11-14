@@ -1,18 +1,22 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "rigComponent.h"
 
 #include <engine/core/components/cameraComponent.h>
+#include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/grassBenderComponent.h>
 #include <engine/core/components/grassComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/pointLightComponent.h>
+#include <engine/core/components/sceneIdComponent.h>
 #include <engine/core/components/spriteComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/reflection.h>
 #include <engine/core/rendering/grass.h>
 #include <engine/core/rendering/meshPrimitives.h>
+#include <engine/core/util/random.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -29,6 +33,9 @@
 
 using namespace sfs;
 using sfs::testing3d::MockRenderer;
+using sfs::testing3d::registerRig;
+using sfs::testing3d::RigComponent;
+using json = nlohmann::json;
 
 namespace
 {
@@ -56,14 +63,14 @@ struct World
 
   std::string nameOf(const Entity& entity)
   {
-    return entity.isValid() ? entity.getComponent<NameComponent>().name : "";
+    return entity.isValid() ? entity.getComponent<NameComponent>()->name : "";
   }
 
   Entity findByName(const std::string& name)
   {
     for (Entity entity : scene.entities())
-      if (entity.hasComponent<NameComponent>() &&
-          entity.getComponent<NameComponent>().name == name)
+      if (const NameComponent* named = entity.getComponent<NameComponent>();
+          named && named->name == name)
         return entity;
     return {};
   }
@@ -97,20 +104,20 @@ int main()
 
     Entity loaded = target.findByName("Crate");
     CHECK(loaded.isValid());
-    const auto& t = loaded.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.z, 3.0f));
-    CHECK(testing::approx(t.scale.x, 2.0f));
-    CHECK(testing::approx(glm::angle(t.rotation), 0.7f, 1e-4f));
+    const auto* t = loaded.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.z, 3.0f));
+    CHECK(testing::approx(t->scale.x, 2.0f));
+    CHECK(testing::approx(glm::angle(t->rotation), 0.7f, 1e-4f));
 
-    const auto& r = loaded.getComponent<MeshRendererComponent>();
-    CHECK(r.mesh == target.cube); // resolved by name in the new library
-    CHECK(testing::approx(r.tint.g, 0.5f));
-    CHECK(!r.castsShadow);
+    const auto* r = loaded.getComponent<MeshRendererComponent>();
+    CHECK(r->mesh == target.cube); // resolved by name in the new library
+    CHECK(testing::approx(r->tint.g, 0.5f));
+    CHECK(!r->castsShadow);
 
-    const auto& light =
+    const auto* light =
         target.findByName("Lamp").getComponent<PointLightComponent>();
-    CHECK(testing::approx(light.intensity, 2.5f));
-    CHECK(testing::approx(light.offset.z, 1.8f));
+    CHECK(testing::approx(light->intensity, 2.5f));
+    CHECK(testing::approx(light->offset.z, 1.8f));
     CHECK(!target.findByName("Lamp").hasComponent<TransformComponent>());
   }
 
@@ -409,18 +416,16 @@ int main()
         source.serializer().save(source.scene), target.scene);
     const Entity loaded = target.findByName("Lawn");
     CHECK(loaded.isValid() && loaded.hasComponent<GrassComponent>());
-    if (loaded.isValid() && loaded.hasComponent<GrassComponent>())
+    if (const GrassComponent* back = loaded.getComponent<GrassComponent>())
     {
-      const GrassComponent& back = loaded.getComponent<GrassComponent>();
-      CHECK(back.material == grass.material);
-      CHECK(testing::approx(back.density, 120.0f));
-      CHECK(testing::approx(back.stiffness, 0.8f));
-      CHECK(GrassMaps::fromJson(back.paint) == paint);
+      CHECK(back->material == grass.material);
+      CHECK(testing::approx(back->density, 120.0f));
+      CHECK(testing::approx(back->stiffness, 0.8f));
+      CHECK(GrassMaps::fromJson(back->paint) == paint);
     }
     const Entity bender = target.findByName("Walker");
-    CHECK(bender.isValid() && bender.hasComponent<GrassBenderComponent>() &&
-          testing::approx(
-              bender.getComponent<GrassBenderComponent>().radius, 1.25f));
+    const auto* bends = bender.getComponent<GrassBenderComponent>();
+    CHECK((bends && testing::approx(bends->radius, 1.25f)));
   }
 
   TEST("unknown components and missing fields should not stop a load")
@@ -436,9 +441,9 @@ int main()
     CHECK(world.serializer().load(data, world.scene));
     Entity survivor = world.findByName("Survivor");
     CHECK(survivor.isValid());
-    const auto& t = survivor.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.x, 4.0f));
-    CHECK(testing::approx(t.scale.x, 1.0f)); // missing field kept its default
+    const auto* t = survivor.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.x, 4.0f));
+    CHECK(testing::approx(t->scale.x, 1.0f)); // missing field kept its default
   }
 
   TEST("unknown components should be kept and saved back unchanged")
@@ -471,7 +476,7 @@ int main()
     const auto entities = world.scene.entities();
     CHECK(entities.size() == 1u);
     CHECK(testing::approx(
-        entities[0].getComponent<PointLightComponent>().intensity, 1.0f));
+        entities[0].getComponent<PointLightComponent>()->intensity, 1.0f));
   }
 
   TEST("an unknown mesh name should survive a save, drawing nothing meanwhile")
@@ -484,7 +489,7 @@ int main()
     World world;
     world.serializer().load(data, world.scene);
     const MeshHandle mesh =
-        world.scene.entities()[0].getComponent<MeshRendererComponent>().mesh;
+        world.scene.entities()[0].getComponent<MeshRendererComponent>()->mesh;
     CHECK(world.render.meshes().isMissing(mesh));
     CHECK(world.render.meshes().bounds(mesh) ==
           nullptr); // skipped when drawing
@@ -502,7 +507,7 @@ int main()
     CHECK(waiting.render.meshes().isMissing(
         waiting.scene.entities()[0]
             .getComponent<MeshRendererComponent>()
-            .mesh));
+            ->mesh));
     CHECK(waiting.serializer().save(waiting.scene) == saved);
   }
 
@@ -581,14 +586,14 @@ int main()
     CHECK(entities.size() == 2u);
     const Entity root = entities[0];
     CHECK(testing::approx(
-        root.getComponent<TransformComponent>().position.z, 3.0f));
-    CHECK(
-        testing::approx(root.getComponent<PointLightComponent>().radius, 4.0f));
+        root.getComponent<TransformComponent>()->position.z, 3.0f));
     CHECK(testing::approx(
-        root.getComponent<CameraComponent>().fieldOfView, 60.0f));
+        root.getComponent<PointLightComponent>()->radius, 4.0f));
+    CHECK(testing::approx(
+        root.getComponent<CameraComponent>()->fieldOfView, 60.0f));
     CHECK(!root.hasComponent<UnresolvedComponents>());
     CHECK(testing::approx(
-        entities[1].getComponent<TransformComponent>().position.z, 5.0f));
+        entities[1].getComponent<TransformComponent>()->position.z, 5.0f));
 
     std::filesystem::remove_all(dir);
   }
@@ -612,11 +617,11 @@ int main()
 
     const auto entities = world.scene.entities();
     CHECK(entities.size() == 1u);
-    const auto& sprite = entities[0].getComponent<SpriteComponent>();
-    CHECK(sprite.image == "white_pixel");
-    CHECK(testing::approx(sprite.tint.y, 0.25f));
-    CHECK(testing::approx(sprite.tint.w, 0.75f));
-    CHECK(sprite.castsShadow);
+    const auto* sprite = entities[0].getComponent<SpriteComponent>();
+    CHECK(sprite->image == "white_pixel");
+    CHECK(testing::approx(sprite->tint.y, 0.25f));
+    CHECK(testing::approx(sprite->tint.w, 0.75f));
+    CHECK(sprite->castsShadow);
     CHECK(!entities[0].hasComponent<UnresolvedComponents>());
 
     std::filesystem::remove_all(dir);
@@ -735,6 +740,256 @@ int main()
     world.scene.flushEntities();
     CHECK(world.findByName("Old").isValid());
     CHECK(!hierarchy::parentOf(world.findByName("Old")).isValid());
+  }
+
+  TEST("a reference between scene entities should save scene-absolute, the "
+       "target's id given once and kept")
+  {
+    registerRig();
+    World source;
+    Entity a = source.named("A");
+    Entity b = source.named("B");
+    Entity c = source.named("C");
+    hierarchy::setParent(c, b); // a nested plain entry is named the same way
+    a.addComponent<RigComponent>(RigComponent{c, {b, Entity(), a}});
+    const json saved = source.serializer().save(source.scene);
+    const json& entries = saved["entities"];
+    CHECK(entries.size() == 2u);
+    CHECK(entries[0]["RigComponent"]["arm"] ==
+          "/" + entries[1]["children"][0]["$sceneId"].dump());
+    const json blades = entries[0]["RigComponent"]["blades"];
+    CHECK(blades.size() == 3u && blades[1].is_null());
+    CHECK(blades[0] == "/" + entries[1]["$sceneId"].dump());
+    CHECK(blades[2] == "/" + entries[0]["$sceneId"].dump());
+
+    World loaded;
+    CHECK(loaded.serializer().load(saved, loaded.scene));
+    const RigComponent* rig =
+        loaded.findByName("A").getComponent<RigComponent>();
+    CHECK(rig->arm == loaded.findByName("C"));
+    CHECK(rig->blades[0] == loaded.findByName("B"));
+    CHECK(!rig->blades[1].isValid());
+    CHECK(rig->blades[2] == loaded.findByName("A"));
+    CHECK(loaded.serializer().save(loaded.scene) == saved);
+  }
+
+  TEST("a scene with no references should save no scene ids")
+  {
+    registerRig();
+    World source;
+    source.named("A").addComponent<RigComponent>();
+    Entity gone = source.named("Gone");
+    source.named("B").addComponent<RigComponent>(RigComponent{gone, {gone}});
+    source.scene.destroyEntity(gone);
+    source.scene.flushEntities();
+    const json saved = source.serializer().save(source.scene);
+    CHECK(saved.dump().find("$sceneId") == std::string::npos);
+    CHECK(saved["entities"][1]["RigComponent"] ==
+          json({{"arm", nullptr}, {"blades", {nullptr}}}));
+  }
+
+  TEST("entries loaded one at a time should resolve their references when "
+       "the session finishes")
+  {
+    registerRig();
+    World source;
+    Entity a = source.named("A");
+    a.addComponent<RigComponent>(RigComponent{source.named("B"), {}});
+    const json saved = source.serializer().save(source.scene);
+
+    World opened;
+    const SceneSerializer serializer = opened.serializer();
+    SceneSerializer::LoadSession session;
+    for (const json& entry : saved["entities"])
+      serializer.loadEntity(entry, opened.scene, {}, &session);
+    Entity loadedA = opened.findByName("A");
+    CHECK(!loadedA.getComponent<RigComponent>()->arm.isValid());
+    serializer.finish(session, opened.scene);
+    CHECK(loadedA.getComponent<RigComponent>()->arm == opened.findByName("B"));
+    CHECK(!loadedA.hasComponent<UnresolvedComponents>());
+
+    // Alone, an entry resolves at once: its target isn't there yet.
+    World alone;
+    alone.serializer().loadEntity(saved["entities"][0], alone.scene);
+    loadedA = alone.findByName("A");
+    CHECK(!loadedA.getComponent<RigComponent>()->arm.isValid());
+    CHECK(loadedA.hasComponent<UnresolvedComponents>());
+    CHECK(alone.serializer().saveEntity(loadedA)["RigComponent"]["arm"] ==
+          saved["entities"][0]["RigComponent"]["arm"]);
+  }
+
+  TEST("a copied branch should name its own entities, and the same ones "
+       "outside it")
+  {
+    registerRig();
+    World w;
+    Entity outside = w.named("Outside");
+    Entity top = w.named("Top");
+    Entity first = w.named("First");
+    Entity second = w.named("Second");
+    hierarchy::setParent(first, top);
+    hierarchy::setParent(second, top);
+    first.addComponent<RigComponent>(RigComponent{second, {outside, top}});
+
+    const json entry = w.serializer().saveEntity(top);
+    CHECK(outside.hasComponent<SceneIdComponent>());
+    CHECK(entry["children"][0]["RigComponent"] ==
+          json({{"arm", "#2"},
+                {"blades",
+                 {"/" + std::to_string(
+                            outside.getComponent<SceneIdComponent>()->id),
+                  "#0"}}}));
+    CHECK(!entry.contains("$sceneId"));
+
+    const Entity copy = w.serializer().loadEntity(entry, w.scene);
+    w.scene.flushEntities();
+    CHECK(copy != top);
+    std::vector<Entity> children;
+    for (const Entity& child : hierarchy::childrenOf(copy))
+      children.push_back(child);
+    CHECK(children.size() == 2u);
+    const RigComponent* rig = children[0].getComponent<RigComponent>();
+    CHECK(rig->arm == children[1]);
+    CHECK(rig->arm != second);
+    CHECK(rig->blades[0] == outside);
+    CHECK(rig->blades[1] == copy);
+  }
+
+  TEST("a camera should follow the same entity after a reload; an old saved "
+       "id should load as none")
+  {
+    World source;
+    Entity player = source.named("Player");
+    Entity camera = source.named("Camera");
+    camera.addComponent<CameraFollowComponent>(CameraFollowComponent{player});
+    const json saved = source.serializer().save(source.scene);
+
+    World loaded;
+    loaded.named("Before"); // ids move: what an old id named is gone
+    loaded.serializer().load(saved, loaded.scene);
+    CHECK(loaded.findByName("Camera")
+              .getComponent<CameraFollowComponent>()
+              ->target == loaded.findByName("Player"));
+
+    World old;
+    old.serializer().load(
+        json{{"formatVersion", 2},
+             {"entities",
+              {{{"CameraFollowComponent", {{"target", 0}}}},
+               {{"CameraFollowComponent", {{"target", -1}}}}}}},
+        old.scene);
+    for (const Entity& entity : old.scene.entities())
+      CHECK(!entity.getComponent<CameraFollowComponent>()->target.isValid());
+  }
+
+  TEST("a set reference should drop the value kept for it: set, then "
+       "cleared, it saves as none")
+  {
+    registerRig();
+    World w;
+    const json file = {
+        {"formatVersion", 3},
+        {"entities",
+         {{{"NameComponent", {{"name", "A"}}},
+           {"RigComponent", {{"arm", "/77"}, {"blades", {"/78", "/79"}}}}}}}};
+    w.serializer().load(file, w.scene);
+    Entity a = w.findByName("A");
+    CHECK(a.hasComponent<UnresolvedComponents>());
+    // Unset, they're saved back as read.
+    CHECK(w.serializer().save(w.scene)["entities"][0]["RigComponent"] ==
+          file["entities"][0]["RigComponent"]);
+
+    RigComponent* rig = a.getComponent<RigComponent>();
+    rig->arm = a;
+    rig->blades = {Entity(), a}; // the first kept, the second set
+    w.serializer().save(w.scene);
+    rig->arm = Entity();
+    rig->blades = {Entity(), Entity()};
+    CHECK(w.serializer().save(w.scene)["entities"][0]["RigComponent"] ==
+          json({{"arm", nullptr}, {"blades", {"/78", nullptr}}}));
+    rig->blades.clear();
+    w.serializer().save(w.scene);
+    CHECK(!a.hasComponent<UnresolvedComponents>()); // nothing left to keep
+  }
+
+  TEST("a scene id written in code as a signed number should be read")
+  {
+    registerRig();
+    World w;
+    w.serializer().load(
+        json{{"formatVersion", 3},
+             {"entities",
+              {{{"NameComponent", {{"name", "A"}}},
+                {"RigComponent", {{"arm", "/4"}, {"blades", json::array()}}}},
+               {{"$sceneId", 4}, {"NameComponent", {{"name", "B"}}}}}}},
+        w.scene);
+    CHECK(w.findByName("A").getComponent<RigComponent>()->arm ==
+          w.findByName("B"));
+  }
+
+  TEST("new scene ids should be random, never one in use, and existing ids "
+       "should be kept")
+  {
+    registerRig();
+    // The first two ids the source gives from this seed.
+    random::seed(42);
+    const uint32_t first = static_cast<uint32_t>(random::next() & 0x7FFFFFFFu);
+    const uint32_t second = static_cast<uint32_t>(random::next() & 0x7FFFFFFFu);
+    CHECK(first != 0u && second != 0u && first != second);
+
+    World w;
+    Entity taken = w.named("Taken");
+    taken.addComponent<SceneIdComponent>(SceneIdComponent{first});
+    Entity kept = w.named("Kept");
+    kept.addComponent<SceneIdComponent>(SceneIdComponent{7});
+    Entity fresh = w.named("Fresh");
+    w.named("A").addComponent<RigComponent>(RigComponent{fresh, {taken, kept}});
+    random::seed(42);
+    const json saved = w.serializer().save(w.scene);
+    // The first draw is in use, so it draws again.
+    CHECK(fresh.getComponent<SceneIdComponent>()->id == second);
+    CHECK(taken.getComponent<SceneIdComponent>()->id == first);
+    CHECK(kept.getComponent<SceneIdComponent>()->id == 7u);
+    CHECK(saved["entities"][3]["RigComponent"] ==
+          json({{"arm", "/" + std::to_string(second)},
+                {"blades", {"/" + std::to_string(first), "/7"}}}));
+    // Saving again hands out nothing.
+    CHECK(w.serializer().save(w.scene) == saved);
+  }
+
+  TEST("two branches of a scene that each add a referenced entity should "
+       "give them different ids, so the merged scene resolves both")
+  {
+    registerRig();
+    World base;
+    base.named("Ground");
+    const json start = base.serializer().save(base.scene);
+
+    // Each branch adds an entity and a reference to it, and saves.
+    const auto branch = [&](const std::string& name)
+    {
+      World w;
+      w.serializer().load(start, w.scene);
+      Entity target = w.named(name);
+      w.named(name + " Pointer")
+          .addComponent<RigComponent>(RigComponent{target, {}});
+      return w.serializer().save(w.scene);
+    };
+    const json left = branch("Left");
+    const json right = branch("Right");
+    CHECK(left["entities"][1]["$sceneId"] != right["entities"][1]["$sceneId"]);
+
+    // The merge keeps both branches' new entries.
+    json merged = start;
+    for (const json* side : {&left, &right})
+      for (std::size_t i = 1; i < (*side)["entities"].size(); ++i)
+        merged["entities"].push_back((*side)["entities"][i]);
+    World w;
+    w.serializer().load(merged, w.scene);
+    CHECK(w.findByName("Left Pointer").getComponent<RigComponent>()->arm ==
+          w.findByName("Left"));
+    CHECK(w.findByName("Right Pointer").getComponent<RigComponent>()->arm ==
+          w.findByName("Right"));
   }
 
   return testing::report("sceneSerializerTests");

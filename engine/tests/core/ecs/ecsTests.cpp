@@ -1,14 +1,30 @@
 #include "../../testHarness.h"
 
 #include <engine/core/ecs/ecs.h>
+#include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/logger/logger.h>
+#include <engine/core/util/allocationMetrics.h>
 #include <engine/core/util/debugFeatures.h>
+#include <engine/core/util/errorDialog.h>
 #include <engine/core/util/fatalError.h>
 
 #include <algorithm>
+#include <csignal>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <optional>
+#include <set>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__)
+  #include <sys/wait.h>
+  #include <unistd.h>
+#endif
 
 using namespace sfs;
 
@@ -32,6 +48,10 @@ struct Enemy
 {
 }; // data-free tag
 struct Hidden
+{
+};
+// Used only by the matches test, so matches is the first to see it.
+struct FirstSeenByMatches
 {
 };
 
@@ -220,6 +240,34 @@ protected:
   }
 };
 
+// VisibleSystem's terms, each list named once with Query.
+class NamedQuerySystem : public System
+{
+public:
+  using Visible = Query<Position, Excluding<Hidden>>;
+  using Moving = Query<Any<Velocity, Health>>;
+  int observed = 0;
+
+protected:
+  void create() override
+  {
+    registerComponent<Visible>();
+    observe<Moving>([this](const Entity&) { ++observed; });
+  }
+};
+
+// Registers an Any group, then a Query list holding another Any group and a
+// component: only the second Any group should be ignored.
+class QueryAnySystem : public System
+{
+protected:
+  void create() override
+  {
+    registerComponent<Any<Velocity, Health>>();
+    registerComponent<Query<Position, Any<Enemy, Hidden>>>();
+  }
+};
+
 // Works on entities without Hidden and observes those with it, logging each
 // hook and callback in the order they ran ("shown+", "shown-", "hidden+",
 // "hidden-").
@@ -237,6 +285,132 @@ protected:
   }
   void onEntityAdded(const Entity&) override { log.push_back("shown+"); }
   void onEntityRemoved(const Entity&) override { log.push_back("shown-"); }
+};
+
+// Collects the errors logged while it lives (the log's repeat folding is reset
+// first, so a message logged by an earlier test still reaches it).
+struct ErrorLog
+{
+  std::vector<std::string> errors;
+  Logger::SinkId sink;
+
+  ErrorLog()
+  {
+    Logger::flush();
+    sink = Logger::addSink(
+        [this](Logger::Level level, const std::string& message)
+        {
+          if (level == Logger::Level::ERROR)
+            errors.push_back(message);
+        });
+  }
+  ~ErrorLog()
+  {
+    Logger::removeSink(sink);
+    Logger::flush();
+  }
+  ErrorLog(const ErrorLog&) = delete;
+  ErrorLog& operator=(const ErrorLog&) = delete;
+
+  // Whether the error `index` (default: the last) says `part`.
+  bool says(std::string_view part, std::size_t index = ~std::size_t{0}) const
+  {
+    if (errors.empty())
+      return false;
+    const std::string& error =
+        errors[index < errors.size() ? index : errors.size() - 1];
+    return error.find(part) != std::string::npos;
+  }
+};
+
+// Sets an environment variable while it lives (none: unset), then puts back
+// what was there.
+class ScopedEnv
+{
+public:
+  ScopedEnv(const char* name, const char* value) : m_name(name)
+  {
+    if (const char* was = std::getenv(name))
+      m_was = was;
+    set(value);
+  }
+  ~ScopedEnv() { set(m_was ? m_was->c_str() : nullptr); }
+  ScopedEnv(const ScopedEnv&) = delete;
+  ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+  void set(const char* value)
+  {
+#if defined(_WIN32)
+    _putenv_s(m_name, value ? value : "");
+#else
+    if (value)
+      setenv(m_name, value, 1);
+    else
+      unsetenv(m_name);
+#endif
+  }
+  const char* m_name;
+  std::optional<std::string> m_was;
+};
+
+// A component one call site looks up: each call is the same expect site.
+bool expectHealth(const Entity& entity)
+{
+  return expect(entity.getComponent<Health>(), entity);
+}
+
+// The canonical signature of a query's terms.
+template <typename... TTerms>
+QuerySignature signatureOf()
+{
+  return detail::makeQuerySignature<TTerms...>();
+}
+
+// Works on Health, noting what a leaving entity's lookups gave.
+class HealthLeaving : public System
+{
+public:
+  bool hadBit = true;
+  Health* leaving = nullptr;
+  int hp = -1;
+
+protected:
+  void create() override { registerComponent<Health>(); }
+  void onEntityRemoved(const Entity& entity) override
+  {
+    hadBit = entity.hasComponent<Health>();
+    leaving = entity.getComponent<Health>();
+    hp = leaving ? leaving->hp : -1;
+  }
+};
+
+// Names its terms once and registers them as one alias.
+class AliasSystem : public System
+{
+public:
+  using Entities = Query<Position, Velocity, Excluding<Hidden>>;
+
+protected:
+  void create() override { registerComponent<Entities>(); }
+};
+
+// Registers a const term, which is the plain component.
+class ConstSystem : public System
+{
+protected:
+  void create() override { registerComponent<const Velocity>(); }
+};
+
+// Works on positioned entities with either Velocity or Health.
+class EitherSystem : public System
+{
+protected:
+  void create() override
+  {
+    registerComponent<Position>();
+    registerComponent<Any<Velocity, Health>>();
+  }
 };
 
 // The ids in `list`, in its order.
@@ -267,8 +441,8 @@ int main()
     Entity a = reg.createEntity();
     Entity b = reg.createEntity();
     CHECK(a.isValid());
-    CHECK(a.isAlive());
-    CHECK(b.isAlive());
+    CHECK(b.isValid());
+    CHECK(static_cast<bool>(a));
     CHECK(a.getId() != b.getId());
     CHECK(a.getDebugId() != b.getDebugId());
     CHECK(a != b);
@@ -311,12 +485,12 @@ int main()
     CHECK(e.hasComponent<Velocity>());
     CHECK(!e.hasComponent<Health>());
 
-    CHECK(testing::approx(e.getComponent<Position>().x, 1.0f));
-    CHECK(testing::approx(e.getComponent<Velocity>().dy, 4.0f));
+    CHECK(testing::approx(e.getComponent<Position>()->x, 1.0f));
+    CHECK(testing::approx(e.getComponent<Velocity>()->dy, 4.0f));
 
-    e.getComponent<Position>().x =
+    e.getComponent<Position>()->x =
         9.0f; // mutation through the reference persists
-    CHECK(testing::approx(e.getComponent<Position>().x, 9.0f));
+    CHECK(testing::approx(e.getComponent<Position>()->x, 9.0f));
 
     e.removeComponent<Position>();
     CHECK(!e.hasComponent<Position>());
@@ -330,8 +504,8 @@ int main()
     Entity b = reg.createEntity();
     a.addComponent<Health>(Health{30});
     b.addComponent<Health>(Health{70});
-    CHECK(a.getComponent<Health>().hp == 30);
-    CHECK(b.getComponent<Health>().hp == 70);
+    CHECK(a.getComponent<Health>()->hp == 30);
+    CHECK(b.getComponent<Health>()->hp == 70);
   }
 
   TEST("addTag should attach a marker component")
@@ -370,16 +544,17 @@ int main()
     const uint32_t gen = a.getGeneration();
 
     reg.destroyEntity(a);
-    CHECK(a.isAlive()); // deferred: alive until flush
+    CHECK(a.isValid()); // deferred: alive until flush
     reg.flushEntities();
-    CHECK(!a.isAlive());
-    CHECK(!reg.isAlive(a));
+    CHECK(!a.isValid());
+    CHECK(!reg.isValid(a));
 
     Entity b = reg.createEntity();
     CHECK(b.getId() == aid);             // id reused
     CHECK(b.getGeneration() == gen + 1); // with a bumped generation
-    CHECK(!reg.isAlive(a));              // stale handle stays dead
-    CHECK(reg.isAlive(b));
+    CHECK(!reg.isValid(a));              // stale handle stays dead
+    CHECK(!a.isValid());
+    CHECK(reg.isValid(b));
   }
 
   TEST("query should drop a destroyed entity at the flush")
@@ -666,11 +841,11 @@ int main()
     Registry reg;
     Entity first = reg.createEntity();
     first.addComponent<Health>(Health{7});
-    Health& health = first.getComponent<Health>();
+    Health* health = first.getComponent<Health>();
     for (int i = 0; i < 1000; ++i)
       reg.createEntity().addComponent<Health>(Health{i});
-    CHECK(&health == &first.getComponent<Health>());
-    CHECK(health.hp == 7);
+    CHECK(health == first.getComponent<Health>());
+    CHECK(health->hp == 7);
   }
 
   TEST("a stale handle should not read the components of its id's new entity")
@@ -685,32 +860,145 @@ int main()
     Entity reused = reg.createEntity();
     reused.addComponent<Health>(Health{2});
     CHECK(reused.getId() == old.getId());
-    CHECK(!old.isAlive());
+    CHECK(!old.isValid());
     CHECK(!old.hasComponent<Health>());
-    const std::string message =
-        fatalMessage([&] { (void)old.getComponent<Health>(); });
-    CHECK(message.find("destroyed") != std::string::npos);
-    CHECK(message.find("Health") != std::string::npos);
-    CHECK(reused.getComponent<Health>().hp == 2);
+    CHECK(old.getComponent<Health>() == nullptr);
+    CHECK(reused.getComponent<Health>()->hp == 2);
   }
 
-  TEST("component access on a dead or invalid entity should be a fatal error")
+  TEST("a handle should be valid exactly while its entity lives")
+  {
+    static_assert(sizeof(void*) != 8 || sizeof(Entity) == 24,
+                  "an entity handle is 24 bytes on 64-bit targets");
+    Registry reg;
+    Entity none;
+    CHECK(!none.isValid());
+    CHECK(!static_cast<bool>(none));
+
+    Entity a = reg.createEntity();
+    CHECK(a.isValid());
+    CHECK(static_cast<bool>(a));
+    CHECK(reg.isValid(a));
+    reg.flushEntities();
+    reg.destroyEntity(a);
+    CHECK(a.isValid()); // until the flush
+    reg.flushEntities();
+    CHECK(!a.isValid());
+    CHECK(!reg.isValid(a));
+    CHECK(!reg.getEntity(a.getId()).isValid());
+
+    Entity b = reg.createEntity(); // a's id, reused
+    CHECK(b.getId() == a.getId());
+    CHECK(!a.isValid());
+    CHECK(!reg.isValid(a));
+    CHECK(b.isValid());
+    CHECK(reg.getEntity(a.getId()) == b);
+
+    // Many lives of one id: each generation new, none carrying the dead bit.
+    std::set<uint32_t> generations;
+    bool deadBitSeen = false;
+    for (int i = 0; i < 100; ++i)
+    {
+      const Entity e = reg.createEntity();
+      generations.insert(e.getGeneration());
+      deadBitSeen = deadBitSeen || (e.getGeneration() & 0x80000000u) != 0;
+      CHECK(e.isValid());
+      reg.destroyEntity(e);
+      reg.flushEntities();
+      CHECK(!e.isValid());
+    }
+    CHECK(generations.size() == 100u);
+    CHECK(!deadBitSeen);
+  }
+
+  TEST("getComponent should give the stored component, or null without a "
+       "log")
+  {
+    Registry reg;
+    Entity other = reg.createEntity();
+    other.addComponent<Velocity>();
+    Entity e = reg.createEntity();
+    e.addComponent<Health>(Health{5});
+    ErrorLog log;
+
+    Health* health = e.getComponent<Health>();
+    CHECK(health != nullptr);
+    health->hp = 9; // writes through
+    CHECK(e.getComponent<Health>()->hp == 9);
+    CHECK(reg.getComponent<Health>(e) == health);
+    CHECK(e.getComponent<Velocity>() == nullptr); // a miss
+    CHECK(e.getComponent<Enemy>() == nullptr);    // no such pool yet
+    CHECK(Entity{}.getComponent<Health>() == nullptr);
+
+    reg.flushEntities();
+    reg.destroyEntity(e);
+    CHECK(e.getComponent<Health>() == health); // until the flush
+    reg.flushEntities();
+    CHECK(e.getComponent<Health>() == nullptr);
+    CHECK(reg.getComponent<Health>(e) == nullptr);
+
+    Entity reused = reg.createEntity();
+    reused.addComponent<Health>(Health{2});
+    CHECK(reused.getId() == e.getId());
+    CHECK(e.getComponent<Health>() == nullptr); // stale
+    CHECK(reused.getComponent<Health>()->hp == 2);
+    CHECK(log.errors.empty());
+  }
+
+  TEST("in a hook told of its removal, getComponent should still give the "
+       "component while hasComponent says it's gone")
+  {
+    Registry reg;
+    HealthLeaving& sys = reg.addSystem<HealthLeaving>();
+    Entity e = reg.createEntity();
+    e.addComponent<Health>(Health{4});
+    reg.flushEntities();
+    e.removeComponent<Health>();
+    CHECK(!sys.hadBit);
+    CHECK(sys.leaving != nullptr);
+    CHECK(sys.hp == 4);
+    CHECK(e.getComponent<Health>() == nullptr); // gone after the hooks
+  }
+
+  TEST("adding to a destroyed or empty handle should log an error and add "
+       "nothing")
   {
     Registry reg;
     Entity e = reg.createEntity();
     reg.flushEntities();
-    CHECK(fatalMessage([&] { (void)e.getComponent<Health>(); })
-              .find("has no such component") != std::string::npos);
     reg.destroyEntity(e);
     reg.flushEntities();
-    CHECK(!fatalMessage([&] { e.addComponent<Health>(); }).empty());
+    ErrorLog log;
+
+    e.addComponent<Health>();
+    CHECK(log.errors.size() == 1u);
+    CHECK(log.says("addComponent<"));
+    CHECK(log.says("Health"));
+    CHECK(log.says("entity " + std::to_string(e.getId()) + " was destroyed"));
+    CHECK(log.says("nothing added"));
+    e.addTag<Enemy>();
+    CHECK(log.errors.size() == 2u);
+    CHECK(log.says("addTag<"));
+    reg.addComponent<Velocity>(e);
+    CHECK(log.errors.size() == 3u);
     e.removeComponent<Health>(); // nothing to remove: no error
+    CHECK(log.errors.size() == 3u);
+    CHECK(reg.query<Health>().empty());
 
     Entity none;
+    none.addComponent<Health>();
+    CHECK(log.errors.size() == 4u);
+    CHECK(log.says("default-made"));
+    none.addTag<Enemy>();
+    CHECK(log.errors.size() == 5u);
     CHECK(!none.hasComponent<Health>());
-    CHECK(!none.isAlive());
-    CHECK(!fatalMessage([&] { (void)none.getComponent<Health>(); }).empty());
-    CHECK(!fatalMessage([&] { none.addComponent<Health>(); }).empty());
+
+    Entity reused = reg.createEntity();
+    CHECK(reused.getId() == e.getId());
+    e.addComponent<Health>();
+    CHECK(log.errors.size() == 6u);
+    CHECK(log.says("belongs to another entity"));
+    CHECK(!reused.hasComponent<Health>());
   }
 
   TEST("removeComponent should destroy the component")
@@ -798,7 +1086,7 @@ int main()
     const uint64_t gained = reg.componentChanges<Velocity>();
     CHECK(gained != before);
     reg.flushEntities();
-    a.getComponent<Velocity>().dx = 3.0f;
+    a.getComponent<Velocity>()->dx = 3.0f;
     a.addComponent<Velocity>(); // (replaced: still has one)
     CHECK(reg.componentChanges<Velocity>() == gained);
     a.removeComponent<Velocity>();
@@ -822,27 +1110,27 @@ int main()
     a.addComponent<Position>();
     CHECK(reg.singleton<Health>() == nullptr);
     a.addComponent<Health>();
-    CHECK(reg.singleton<Health>() == &a.getComponent<Health>());
+    CHECK(reg.singleton<Health>() == a.getComponent<Health>());
     reg.flushEntities();
-    CHECK(reg.singleton<Health>() == &a.getComponent<Health>());
+    CHECK(reg.singleton<Health>() == a.getComponent<Health>());
 
     // Several: one of them, still.
     Entity b = reg.createEntity();
     b.addComponent<Health>();
     Health* either = reg.singleton<Health>();
-    CHECK(either == &a.getComponent<Health>() ||
-          either == &b.getComponent<Health>());
+    CHECK(either == a.getComponent<Health>() ||
+          either == b.getComponent<Health>());
 
     // The remembered one loses it: the other is found.
     a.removeComponent<Health>();
-    CHECK(reg.singleton<Health>() == &b.getComponent<Health>());
+    CHECK(reg.singleton<Health>() == b.getComponent<Health>());
 
     // Destroyed: gone once the flush takes it.
     reg.destroyEntity(b);
     reg.flushEntities();
     CHECK(reg.singleton<Health>() == nullptr);
     a.addComponent<Health>();
-    CHECK(reg.singleton<Health>() == &a.getComponent<Health>());
+    CHECK(reg.singleton<Health>() == a.getComponent<Health>());
   }
 
   TEST("query should list the entities with all its components in id order, "
@@ -863,7 +1151,7 @@ int main()
     CHECK(movers.size() == 2u);
     CHECK(movers[0].getId() == a.getId());
     CHECK(movers[1].getId() == c.getId());
-    CHECK(&reg.query<Velocity, Position>() == &movers); // (cached)
+    CHECK(&reg.query<Velocity, Position>().entities() == &movers); // (cached)
 
     // A list first asked for after the flush is filled by its scan.
     CHECK(reg.query<Position>().size() == 3u);
@@ -919,7 +1207,8 @@ int main()
       made.push_back(e);
     }
     reg.flushEntities();
-    CHECK(&movement.getEntities() == &reg.query<Position, Velocity>());
+    CHECK(&movement.getEntities().entities() ==
+          &reg.query<Position, Velocity>().entities());
     reg.destroyEntity(made[0]);
     reg.flushEntities();
     made[1].removeComponent<Velocity>();
@@ -1053,7 +1342,7 @@ int main()
       Entity watched;
       ~Flusher() override
       {
-        seen->hp = watched.getComponent<Health>().hp;
+        seen->hp = watched.getComponent<Health>()->hp;
         seen->listed = registry->query<Health>().size();
         seen->systemFound = registry->tryGetSystem<Flusher>() != nullptr;
       }
@@ -1187,24 +1476,25 @@ int main()
     e.addComponent<Velocity>();
     reg.flushEntities();
     const std::vector<const std::vector<Entity>*> lists = {
-        &reg.query<Position, Velocity>(),
-        &reg.query<Position, Any<Velocity, Health>>(),
-        &reg.query<Position, Excluding<Velocity>>(),
-        &reg.query<Any<Position, Velocity>>(),
-        &reg.query<Excluding<Position, Velocity>>(),
-        &reg.query<Position>()};
+        &reg.query<Position, Velocity>().entities(),
+        &reg.query<Position, Any<Velocity, Health>>().entities(),
+        &reg.query<Position, Excluding<Velocity>>().entities(),
+        &reg.query<Any<Position, Velocity>>().entities(),
+        &reg.query<Excluding<Position, Velocity>>().entities(),
+        &reg.query<Position>().entities()};
     for (std::size_t i = 0; i < lists.size(); ++i)
       for (std::size_t j = i + 1; j < lists.size(); ++j)
         CHECK(lists[i] != lists[j]);
     CHECK(lists[0]->size() == 1u && lists[1]->size() == 1u);
     CHECK(lists[2]->empty() && lists[4]->empty());
 
-    CHECK(&reg.query<Excluding<Hidden>, Position>() ==
-          &reg.query<Position, Excluding<Hidden>>());
-    CHECK(&reg.query<Any<Velocity, Health>, Position>() ==
-          &reg.query<Position, Any<Health, Velocity>>());
-    CHECK(&reg.query<Excluding<Hidden>, Position, Excluding<Enemy>>() ==
-          &reg.query<Position, Excluding<Enemy, Hidden>>());
+    CHECK(&reg.query<Excluding<Hidden>, Position>().entities() ==
+          &reg.query<Position, Excluding<Hidden>>().entities());
+    CHECK(&reg.query<Any<Velocity, Health>, Position>().entities() ==
+          &reg.query<Position, Any<Health, Velocity>>().entities());
+    CHECK(&reg.query<Excluding<Hidden>, Position, Excluding<Enemy>>()
+               .entities() ==
+          &reg.query<Position, Excluding<Enemy, Hidden>>().entities());
   }
 
   TEST("queries that always list the same entities should share one list")
@@ -1215,12 +1505,13 @@ int main()
     e.addComponent<Velocity>();
     reg.flushEntities();
     // An Any of one component is that component.
-    CHECK(&reg.query<Position, Any<Velocity>>() ==
-          &reg.query<Position, Velocity>());
-    CHECK(&reg.query<Any<Position>>() == &reg.query<Position>());
+    CHECK(&reg.query<Position, Any<Velocity>>().entities() ==
+          &reg.query<Position, Velocity>().entities());
+    CHECK(&reg.query<Any<Position>>().entities() ==
+          &reg.query<Position>().entities());
     // An Any sharing a component with the all-of terms is always met.
-    CHECK(&reg.query<Position, Any<Position, Health>>() ==
-          &reg.query<Position>());
+    CHECK(&reg.query<Position, Any<Position, Health>>().entities() ==
+          &reg.query<Position>().entities());
     // An Any of one excluded component can't be met: still nothing listed.
     CHECK(reg.query<Any<Velocity>, Excluding<Velocity>>().empty());
     CHECK(reg.query<Any<Velocity, Health>, Excluding<Velocity, Health>>()
@@ -1289,7 +1580,8 @@ int main()
   {
     Registry reg;
     VisibleSystem& sys = reg.addSystem<VisibleSystem>();
-    CHECK(&sys.getEntities() == &reg.query<Position, Excluding<Hidden>>());
+    CHECK(&sys.getEntities().entities() ==
+          &reg.query<Position, Excluding<Hidden>>().entities());
 
     Entity e = reg.createEntity();
     e.addComponent<Position>();
@@ -1321,7 +1613,828 @@ int main()
     firstAny.any.set(Component<Velocity>::getId());
     firstAny.any.set(Component<Health>::getId());
     CHECK(twoAny.getComponentSignature() == firstAny);
-    CHECK(&twoAny.getEntities() == &reg.query<Any<Velocity, Health>>());
+    CHECK(&twoAny.getEntities().entities() ==
+          &reg.query<Any<Velocity, Health>>().entities());
+  }
+
+  TEST("a Query list should be the same query as its terms written out")
+  {
+    using Shown = Query<Position, Excluding<Hidden>>;
+    using Moving = Query<Position, Any<Velocity, Health>, Excluding<Enemy>>;
+    CHECK(detail::makeQuerySignature<Shown>() ==
+          detail::makeQuerySignature<Position, Excluding<Hidden>>());
+    CHECK(detail::makeQuerySignature<Moving>() ==
+          detail::makeQuerySignature<Position,
+                                     Any<Velocity, Health>,
+                                     Excluding<Enemy>>());
+
+    using Ids = std::vector<Entity::EntityId>;
+    Registry reg;
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>();
+    a.addComponent<Velocity>();
+    b.addComponent<Position>();
+    b.addComponent<Hidden>();
+    c.addComponent<Position>();
+    c.addComponent<Health>();
+    c.addComponent<Enemy>();
+    reg.flushEntities();
+    CHECK(&reg.query<Shown>().entities() ==
+          &reg.query<Position, Excluding<Hidden>>().entities());
+    CHECK(idsOf(reg.query<Shown>()) == Ids({a.getId(), c.getId()}));
+    CHECK(&reg.query<Moving>().entities() ==
+          &reg.query<Position, Any<Velocity, Health>, Excluding<Enemy>>()
+               .entities());
+    CHECK(idsOf(reg.query<Moving>()) == Ids({a.getId()}));
+
+    // Beside other terms, in any order, and inside another Query.
+    CHECK(&reg.query<Shown, Velocity>().entities() ==
+          &reg.query<Position, Velocity, Excluding<Hidden>>().entities());
+    CHECK(&reg.query<Any<Velocity, Health>, Shown>().entities() ==
+          &reg.query<Position, Any<Velocity, Health>, Excluding<Hidden>>()
+               .entities());
+    CHECK(&reg.query<Query<Shown, Excluding<Enemy>>>().entities() ==
+          &reg.query<Position, Excluding<Hidden, Enemy>>().entities());
+    CHECK(&reg.query<Query<Query<Position>>>().entities() ==
+          &reg.query<Position>().entities());
+    // Canonical as written out: an Any of one is that component.
+    CHECK(&reg.query<Query<Any<Velocity>>, Position>().entities() ==
+          &reg.query<Position, Velocity>().entities());
+
+    // A system's terms and observers take it too.
+    NamedQuerySystem& named = reg.addSystem<NamedQuerySystem>();
+    CHECK(&named.getEntities().entities() ==
+          &reg.query<Position, Excluding<Hidden>>().entities());
+    CHECK(named.getComponentSignature() ==
+          detail::makeQuerySignature<Position, Excluding<Hidden>>());
+    CHECK(named.observed == 2); // a and c, already there
+    Entity d = reg.createEntity();
+    d.addComponent<Velocity>();
+    reg.flushEntities();
+    CHECK(named.observed == 3);
+
+    // A second Any inside a Query is ignored, the rest of the list kept.
+    QueryAnySystem& queryAny = reg.addSystem<QueryAnySystem>();
+    CHECK(&queryAny.getEntities().entities() ==
+          &reg.query<Position, Any<Velocity, Health>>().entities());
+  }
+
+  TEST("matches should test one entity against a query's terms, as its list "
+       "would")
+  {
+    Registry reg;
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>();
+    a.addComponent<Velocity>();
+    b.addComponent<Position>();
+    b.addComponent<Hidden>();
+    c.addComponent<Health>();
+
+    // Plain components: all of them; not yet flushed, it already matches.
+    CHECK(a.matches<Position>());
+    CHECK(a.matches<Position, Velocity>());
+    CHECK(!b.matches<Position, Velocity>());
+    CHECK(a.matches<>());
+
+    // Any: at least one of the group.
+    CHECK(a.matches<Any<Velocity, Health>>());
+    CHECK(c.matches<Any<Velocity, Health>>());
+    CHECK(!b.matches<Any<Velocity, Health>>());
+
+    // Excluding: none of the group, and it wins over the others.
+    CHECK(a.matches<Position, Excluding<Hidden>>());
+    CHECK(!b.matches<Position, Excluding<Hidden>>());
+    CHECK(!a.matches<Position, Excluding<Position>>());
+
+    // A Query alias is its terms written out, nested or beside others.
+    using Moving = Query<Position, Any<Velocity, Health>, Excluding<Hidden>>;
+    CHECK(a.matches<Moving>());
+    CHECK(!b.matches<Moving>());
+    CHECK(!c.matches<Moving>());
+    CHECK(a.matches<Query<Moving>, Velocity>());
+    reg.flushEntities();
+    for (const Entity& e : {a, b, c})
+      CHECK(e.matches<Moving>() ==
+            (std::find(reg.query<Moving>().entities().begin(),
+                       reg.query<Moving>().entities().end(),
+                       e) != reg.query<Moving>().entities().end()));
+
+    // Changes count at once, as hasComponent sees them.
+    b.removeComponent<Hidden>();
+    b.addComponent<Health>();
+    CHECK(b.matches<Moving>());
+
+    // A dead or empty handle matches nothing, not even no terms.
+    reg.destroyEntity(a);
+    reg.flushEntities();
+    CHECK(!a.matches<Position>());
+    CHECK(!a.matches<>());
+    CHECK(!Entity().matches<Excluding<Hidden>>());
+
+    // A term type no registry has a pool for yet: its id comes from the
+    // signature, and it matches once added.
+    CHECK(!c.matches<FirstSeenByMatches>());
+    c.addComponent<FirstSeenByMatches>();
+    CHECK(c.matches<FirstSeenByMatches>());
+
+    // The same instantiation in another registry.
+    Registry other;
+    Entity d = other.createEntity();
+    d.addComponent<Position>();
+    d.addComponent<Velocity>();
+    CHECK(d.matches<Moving>());
+    CHECK(!d.matches<FirstSeenByMatches>());
+  }
+
+  TEST("find should give a living entity's component by id, or null")
+  {
+    Registry reg;
+    Entity entity = reg.createEntity();
+    entity.addComponent<Position>();
+    Entity other = reg.createEntity();
+    // Before the flush too: the entity is alive from its creation.
+    CHECK(reg.find<Position>(entity.getId()) ==
+          entity.getComponent<Position>());
+    CHECK(reg.find<Velocity>(entity.getId()) == nullptr);
+    CHECK(reg.find<Position>(other.getId()) == nullptr);
+    reg.flushEntities();
+    entity.removeComponent<Position>();
+    CHECK(reg.find<Position>(entity.getId()) == nullptr);
+    CHECK(reg.getEntity(entity.getId()) == entity);
+    reg.destroyEntity(other);
+    reg.flushEntities();
+    CHECK(!reg.getEntity(other.getId()).isValid());
+    CHECK(!reg.isValid(other));
+#ifndef NDEBUG
+    // A dead id is a caller's mistake: logged in debug builds, null.
+    CHECK(reg.find<Position>(other.getId()) == nullptr);
+    CHECK(reg.find<Position>(1000) == nullptr);
+#endif
+  }
+
+  TEST("a query's rows should unpack its components in term order")
+  {
+    Registry reg;
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>(Position{1.0f, 0.0f});
+    a.addComponent<Velocity>(Velocity{2.0f, 0.0f});
+    a.addComponent<Health>(Health{10});
+    b.addComponent<Position>(Position{3.0f, 0.0f});
+    b.addComponent<Velocity>(Velocity{4.0f, 0.0f});
+    c.addComponent<Position>(Position{5.0f, 0.0f});
+    c.addComponent<Health>(Health{30});
+    c.addComponent<Hidden>();
+    reg.flushEntities();
+
+    // Required components bind as references, and writes go through.
+    std::vector<Entity> seen;
+    for (auto [entity, position, velocity] : reg.query<Position, Velocity>())
+    {
+      static_assert(std::is_same_v<decltype(entity), const Entity&>);
+      static_assert(std::is_same_v<decltype(position), Position&>);
+      static_assert(std::is_same_v<decltype(velocity), Velocity&>);
+      position.x += velocity.dx;
+      seen.push_back(entity);
+    }
+    CHECK(seen == std::vector<Entity>({a, b}));
+    CHECK(testing::approx(a.getComponent<Position>()->x, 3.0f));
+    CHECK(testing::approx(b.getComponent<Position>()->x, 7.0f));
+
+    // Any members bind as pointers, null when absent; Excluding binds nothing.
+    using Shown = Query<Position, Any<Velocity, Health>, Excluding<Hidden>>;
+    static_assert(std::tuple_size_v<QueryRow<Shown>> == 4);
+    int rows = 0;
+    bool pointersRight = true;
+    for (auto [entity, position, velocity, health] : reg.query<Shown>())
+    {
+      static_assert(std::is_same_v<decltype(velocity), Velocity*>);
+      static_assert(std::is_same_v<decltype(health), Health*>);
+      ++rows;
+      if (entity == a)
+        pointersRight = pointersRight && velocity && health &&
+                        health->hp == 10 &&
+                        &position == a.getComponent<Position>();
+      else
+        pointersRight = pointersRight && entity == b && velocity && !health;
+    }
+    CHECK(rows == 2);
+    CHECK(pointersRight);
+
+    // Query aliases, nested too, unpack their terms in order.
+    using Moving = Query<Position, Velocity>;
+    using Tagged = Query<Moving, Any<Health, Enemy>>;
+    static_assert(std::tuple_size_v<QueryRow<Excluding<Hidden>, Tagged>> == 5);
+    rows = 0;
+    for (const auto& [entity, position, velocity, health, enemy] :
+         reg.query<Excluding<Hidden>, Tagged>())
+    {
+      static_assert(std::is_same_v<decltype(position), Position&>);
+      static_assert(std::is_same_v<decltype(enemy), Enemy* const>);
+      ++rows;
+      CHECK(entity == a);
+      CHECK(health == a.getComponent<Health>());
+      CHECK(enemy == nullptr);
+    }
+    CHECK(rows == 1);
+
+    // Entity-only loops go through the same entities as the list.
+    const QueryView<Position> view = reg.query<Position>();
+    std::vector<Entity> byReference, byCopy;
+    for (const Entity& entity : view)
+      byReference.push_back(entity);
+    for (Entity entity : view)
+      byCopy.push_back(entity);
+    CHECK(byReference == view.entities());
+    CHECK(byCopy == view.entities());
+    CHECK((view.size() == 3u));
+    CHECK(!view.empty());
+    CHECK(view[1] == b);
+    CHECK(view.front() == a);
+    CHECK(view.back() == c);
+
+    // It converts to the registry's list itself; a copy is made on request.
+    const std::vector<Entity>& list = reg.query<Position>();
+    CHECK(&list == &view.entities());
+    const std::vector<Entity> copy(reg.query<Position>());
+    CHECK(copy == list);
+
+    // An empty view goes through nothing.
+    const QueryView<Position, Velocity> none;
+    CHECK(none.empty());
+    CHECK((none.size() == 0u));
+    CHECK(none.entities().empty());
+    rows = 0;
+    for (auto [entity, position, velocity] : none)
+      ++rows;
+    CHECK(rows == 0);
+  }
+
+  TEST("a row of one component should convert to it, and components() "
+       "should unpack rows without their entity")
+  {
+    Registry reg;
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>(Position{1.0f, 0.0f});
+    a.addComponent<Velocity>(Velocity{2.0f, 0.0f});
+    a.addComponent<Health>(Health{10});
+    b.addComponent<Position>(Position{3.0f, 0.0f});
+    b.addComponent<Velocity>(Velocity{4.0f, 0.0f});
+    c.addComponent<Position>(Position{5.0f, 0.0f});
+    c.addComponent<Hidden>();
+    reg.flushEntities();
+
+    // Exactly one bound component, a required one, converts; const stays.
+    static_assert(std::is_convertible_v<QueryRow<Position>, Position&>);
+    static_assert(std::is_convertible_v<QueryRow<Position, Excluding<Hidden>>,
+                                        const Position&>);
+    static_assert(
+        std::is_convertible_v<QueryRow<const Position>, const Position&>);
+    static_assert(!std::is_convertible_v<QueryRow<const Position>, Position&>);
+    static_assert(
+        !std::is_convertible_v<QueryRow<Position, Velocity>, Position&>);
+    static_assert(!std::is_convertible_v<QueryRow<Any<Position>>, Position*>);
+    static_assert(
+        !std::is_convertible_v<QueryRow<Position, Any<Velocity>>, Position&>);
+    static_assert(!std::is_convertible_v<QueryRow<Excluding<Hidden>>,
+                                         detail::NoSoleComponent&>);
+    // The entity conversion and the unpacking stay.
+    static_assert(std::is_convertible_v<QueryRow<Position>, const Entity&>);
+    static_assert(std::tuple_size_v<QueryRow<Position>> == 2);
+    static_assert(std::is_convertible_v<ComponentRow<Velocity>, Velocity&>);
+
+    float sum = 0.0f;
+    for (Position& position : reg.query<Position>())
+    {
+      sum += position.x;
+      position.y = 1.0f;
+    }
+    CHECK(testing::approx(sum, 9.0f));
+    CHECK(testing::approx(c.getComponent<Position>()->y, 1.0f));
+    sum = 0.0f;
+    for (const Position& position : reg.query<Position, Excluding<Hidden>>())
+      sum += position.x;
+    CHECK(testing::approx(sum, 4.0f));
+    int rows = 0;
+    for (const Velocity& velocity : reg.query<const Velocity>())
+      rows += &velocity == a.getComponent<Velocity>() ||
+                      &velocity == b.getComponent<Velocity>()
+                  ? 1
+                  : 100;
+    CHECK(rows == 2);
+    // The same list as the plain term.
+    CHECK(&reg.query<const Velocity>().entities() ==
+          &reg.query<Velocity>().entities());
+    for (auto [entity, velocity] : reg.query<const Velocity>())
+      static_assert(std::is_same_v<decltype(velocity), const Velocity&>);
+    std::vector<Entity> seen;
+    for (const Entity& entity : reg.query<Position>())
+      seen.push_back(entity);
+    CHECK(seen == std::vector<Entity>({a, b, c}));
+
+    // components(): the same rows, the entity left out.
+    seen.clear();
+    rows = 0;
+    for (auto [position, velocity] :
+         reg.query<Position, Velocity>().components())
+    {
+      static_assert(std::is_same_v<decltype(position), Position&>);
+      static_assert(std::is_same_v<decltype(velocity), Velocity&>);
+      position.x += velocity.dx;
+      ++rows;
+    }
+    CHECK(rows == 2);
+    CHECK(testing::approx(a.getComponent<Position>()->x, 3.0f));
+    CHECK(testing::approx(b.getComponent<Position>()->x, 7.0f));
+    using Shown = Query<Position, Any<Velocity, Health>, Excluding<Hidden>>;
+    static_assert(std::tuple_size_v<std::remove_cvref_t<
+                      decltype(*reg.query<Shown>().components().begin())>> ==
+                  3);
+    rows = 0;
+    for (const auto& [position, velocity, health] :
+         reg.query<Shown>().components())
+    {
+      static_assert(std::is_same_v<decltype(velocity), Velocity* const>);
+      rows += &position == a.getComponent<Position>()
+                  ? (velocity && health ? 1 : 100)
+                  : (velocity && !health ? 10 : 100);
+    }
+    CHECK(rows == 11);
+    for (auto [velocity] : reg.query<const Velocity>().components())
+      static_assert(std::is_same_v<decltype(velocity), const Velocity&>);
+    sum = 0.0f;
+    for (Velocity& velocity : reg.query<Velocity>().components())
+      sum += velocity.dx;
+    CHECK(testing::approx(sum, 6.0f));
+
+    // Empty lists and an empty view go through nothing.
+    rows = 0;
+    for (auto [position, health, hidden] :
+         reg.query<Position, Health, Hidden>().components())
+      ++rows;
+    for (Enemy& enemy : reg.query<Enemy>())
+      ++rows;
+    const QueryView<Position, Velocity> none;
+    for (auto [position, velocity] : none.components())
+      ++rows;
+    CHECK(rows == 0);
+  }
+
+  TEST("a const component should be the plain component in every term and "
+       "lookup")
+  {
+    Registry reg;
+    AliasSystem& alias = reg.addSystem<AliasSystem>();
+    ConstSystem& constant = reg.addSystem<ConstSystem>();
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>();
+    a.addComponent<Velocity>(Velocity{2.0f, 0.0f});
+    b.addComponent<Position>();
+    b.addComponent<Health>(Health{5});
+    c.addComponent<Position>();
+    c.addComponent<Velocity>();
+    c.addComponent<Hidden>();
+    reg.flushEntities();
+
+    // Any<const A> binds const A* and shares Any<A>'s list.
+    CHECK(&reg.query<Position, Any<const Velocity, Health>>().entities() ==
+          &reg.query<Position, Any<Velocity, Health>>().entities());
+    int rows = 0;
+    for (auto [entity, position, velocity, health] :
+         reg.query<Position, Any<const Velocity, Health>>())
+    {
+      static_assert(std::is_same_v<decltype(velocity), const Velocity*>);
+      static_assert(std::is_same_v<decltype(health), Health*>);
+      rows += velocity == entity.getComponent<Velocity>() ? 1 : 100;
+    }
+    CHECK(rows == 3);
+    // Excluding<const A> excludes A.
+    CHECK(&reg.query<Position, Excluding<const Hidden>>().entities() ==
+          &reg.query<Position, Excluding<Hidden>>().entities());
+    CHECK(reg.query<Position, Excluding<const Hidden>>().size() == 2u);
+    // registerComponent<const A> follows A's list; getEntities<const A> of
+    // a system registered with A binds const A&.
+    CHECK(&constant.getEntities().entities() ==
+          &reg.query<Velocity>().entities());
+    rows = 0;
+    for (const Velocity& velocity : alias.getEntities<const Velocity>())
+      rows += &velocity == a.getComponent<Velocity>() ? 1 : 100;
+    CHECK(rows == 1);
+    for (auto [entity, velocity] : alias.getEntities<const Velocity>())
+      static_assert(std::is_same_v<decltype(velocity), const Velocity&>);
+    // Lookups and tests of const A are of A.
+    CHECK(a.matches<const Velocity>());
+    CHECK(!b.matches<const Velocity>());
+    CHECK(a.hasComponent<const Velocity>());
+    CHECK(!b.hasComponent<const Velocity>());
+    const Velocity* read = a.getComponent<const Velocity>();
+    CHECK(read != nullptr && read == a.getComponent<Velocity>());
+    CHECK(b.getComponent<const Velocity>() == nullptr);
+    CHECK(Component<const Velocity>::getId() == Component<Velocity>::getId());
+    // The registry's reads take T's storage and give const.
+    const Velocity* found = reg.find<const Velocity>(a.getId());
+    CHECK(found != nullptr && found == a.getComponent<Velocity>());
+    CHECK(reg.find<const Velocity>(b.getId()) == nullptr);
+    const Registry::Finder<const Velocity> velocities =
+        reg.finder<const Velocity>();
+    CHECK(velocities(a.getId()) == found);
+    CHECK(velocities(b.getId()) == nullptr);
+    CHECK(&velocities.held(a.getId()) == found);
+    static_assert(
+        std::is_same_v<decltype(velocities.held(0)), const Velocity&>);
+    const Health* only = reg.singleton<const Health>();
+    CHECK(only != nullptr && only == b.getComponent<Health>());
+    // These don't compile, so they aren't tested here: const on a group or
+    // list (query<const Query<...>>(): QueryTerm's static_assert says to put
+    // it on the components inside), and adding or removing a const component
+    // (add's and removeComponent's static_asserts).
+  }
+
+  TEST("getEntities should view the system's list, its rows unpacking the "
+       "terms asked for when the registered ones imply them")
+  {
+    Registry reg;
+    AliasSystem& sys = reg.addSystem<AliasSystem>();
+    Entity a = reg.createEntity(), b = reg.createEntity(),
+           c = reg.createEntity();
+    a.addComponent<Position>();
+    a.addComponent<Velocity>(Velocity{1.0f, 0.0f});
+    b.addComponent<Position>();
+    b.addComponent<Velocity>();
+    b.addComponent<Hidden>();
+    c.addComponent<Position>();
+    reg.flushEntities();
+    CHECK(&sys.getEntities().entities() ==
+          &reg.query<AliasSystem::Entities>().entities());
+    CHECK(&sys.getEntities<AliasSystem::Entities>().entities() ==
+          &sys.getEntities().entities());
+
+    int rows = 0;
+    for (const Entity& entity : sys.getEntities())
+      rows += entity == a ? 1 : 100;
+    CHECK(rows == 1);
+    for (auto [entity, position, velocity] :
+         sys.getEntities<AliasSystem::Entities>())
+      position.x = velocity.dx;
+    CHECK(testing::approx(a.getComponent<Position>()->x, 1.0f));
+    rows = 0;
+    for (auto [entity, velocity] : sys.getEntities<Velocity>())
+    {
+      static_assert(std::is_same_v<decltype(velocity), Velocity&>);
+      rows += &velocity == a.getComponent<Velocity>() ? 1 : 100;
+    }
+    CHECK(rows == 1);
+    CHECK(sys.getEntities<Excluding<Hidden>>().size() == 1u);
+
+    // An Any group through the system's own.
+    EitherSystem& either = reg.addSystem<EitherSystem>();
+    Entity hurt = reg.createEntity();
+    hurt.addComponent<Position>();
+    hurt.addComponent<Health>();
+    reg.flushEntities();
+    rows = 0;
+    for (auto [entity, velocity, health] :
+         either.getEntities<Any<Velocity, Health>>())
+    {
+      ++rows;
+      const bool exactlyOne = (velocity != nullptr) != (health != nullptr);
+      CHECK(exactlyOne);
+    }
+    CHECK(rows == 3); // a, b and hurt
+    CHECK(either.getEntities<Position>().size() == 3u);
+
+    // Terms it can't vouch for: logged once, an empty view.
+    ErrorLog log;
+    CHECK(sys.getEntities<Health>().empty());
+    CHECK(log.errors.size() == 1u);
+    CHECK(log.says("AliasSystem"));
+    CHECK(log.says("Health"));
+    CHECK(sys.getEntities<Health>().empty());
+    CHECK(either.getEntities<Velocity>().empty());
+    CHECK(log.errors.size() == 2u);
+    CHECK(sys.getEntities<Health>().empty());
+    CHECK(log.errors.size() == 2u);
+  }
+
+  TEST("implies should tell whether one signature's entities all match "
+       "another's terms")
+  {
+    // Required terms: a subset is implied, a superset isn't.
+    CHECK(signatureOf<Position, Velocity>().implies(signatureOf<Position>()));
+    CHECK(!signatureOf<Position>().implies(signatureOf<Position, Velocity>()));
+    CHECK(signatureOf<>().implies(signatureOf<>()));
+    // Exclusions must be excluded here too.
+    CHECK(signatureOf<Position, Excluding<Hidden>>().implies(
+        signatureOf<Excluding<Hidden>>()));
+    CHECK(signatureOf<Position, Excluding<Hidden, Enemy>>().implies(
+        signatureOf<Position, Excluding<Hidden>>()));
+    CHECK(!signatureOf<Position>().implies(
+        signatureOf<Position, Excluding<Hidden>>()));
+    // An Any group met by a required term here.
+    CHECK(signatureOf<Position, Velocity>().implies(
+        signatureOf<Any<Velocity, Health>>()));
+    CHECK(
+        !signatureOf<Position>().implies(signatureOf<Any<Velocity, Health>>()));
+    // An Any group holding this one's whole group.
+    CHECK(signatureOf<Any<Velocity, Health>>().implies(
+        signatureOf<Any<Velocity, Health, Enemy>>()));
+    CHECK(!signatureOf<Any<Velocity, Health, Enemy>>().implies(
+        signatureOf<Any<Velocity, Health>>()));
+    CHECK(
+        !signatureOf<Any<Velocity, Health>>().implies(signatureOf<Velocity>()));
+    // A canonical Any of one is a required term, either way round.
+    CHECK(signatureOf<Any<Velocity>>().implies(signatureOf<Velocity>()));
+    CHECK(signatureOf<Velocity>().implies(signatureOf<Any<Velocity>>()));
+  }
+
+#ifndef NDEBUG
+  TEST("changing a list's own components in its loop should log once and end "
+       "the loop (debug builds)")
+  {
+    Registry reg;
+    for (int i = 0; i < 3; ++i)
+      reg.createEntity().addComponent<Position>();
+    reg.flushEntities();
+    ErrorLog log;
+
+    int visited = 0;
+    for (const Entity& entity : reg.query<Position, Excluding<Hidden>>())
+    {
+      ++visited;
+      Entity(entity).addComponent<Hidden>();
+    }
+    CHECK(visited == 1);
+    CHECK(log.errors.size() == 1u);
+    CHECK(log.says("query list changed"));
+    CHECK(log.says("Hidden"));
+    CHECK(log.says("no system"));
+
+    // A component the list doesn't name changes nothing.
+    visited = 0;
+    for (const Entity& entity : reg.query<Position>())
+    {
+      ++visited;
+      Entity(entity).addComponent<Velocity>();
+    }
+    CHECK(visited == 3);
+    CHECK(log.errors.size() == 1u);
+
+    // A system's own list names the system.
+    for (const Entity& entity : reg.entities())
+      Entity(entity).removeComponent<Hidden>();
+    AliasSystem& sys = reg.addSystem<AliasSystem>();
+    CHECK(sys.getEntities().size() == 3u);
+    visited = 0;
+    for (const Entity& entity : sys.getEntities())
+    {
+      ++visited;
+      Entity(entity).addComponent<Hidden>();
+    }
+    CHECK(visited == 1);
+    CHECK(log.errors.size() == 2u);
+    CHECK(log.says("AliasSystem (its entities)"));
+
+    // Rows without their entity check the same way.
+    visited = 0;
+    for (const Entity& entity : reg.entities())
+      Entity(entity).removeComponent<Hidden>();
+    for (auto [position] :
+         reg.query<Position, Excluding<Hidden>>().components())
+    {
+      ++visited;
+      for (const Entity& entity : reg.entities())
+        Entity(entity).addComponent<Hidden>();
+      position.x = 1.0f;
+    }
+    CHECK(visited == 1);
+    CHECK(log.errors.size() == 3u);
+    for (const Entity& entity : reg.entities())
+      Entity(entity).removeComponent<Hidden>();
+    visited = 0;
+    // Another list, as the logger folds a repeated message into a count.
+    for (Position& position : reg.query<Position, Excluding<Hidden, Enemy>>())
+    {
+      ++visited;
+      for (const Entity& entity : reg.entities())
+        Entity(entity).addComponent<Hidden>();
+      position.x = 1.0f;
+    }
+    CHECK(visited == 1);
+    CHECK(log.errors.size() == 4u);
+  }
+#endif
+
+  TEST("expect should pass a component silently and log a missing one with "
+       "where, which entity and what")
+  {
+    Registry reg;
+    Entity e = reg.createEntity();
+    e.addComponent<Health>();
+    ErrorLog log;
+    // sfs-ignore-next-line(component-pointer)
+    CHECK(expect(e.getComponent<Health>(), e));
+    CHECK(log.errors.empty());
+    const int line = __LINE__ + 2;
+    // sfs-ignore-next-line(component-pointer)
+    CHECK(!expect(e.getComponent<Velocity>(), e));
+    CHECK(log.errors.size() == 1u);
+    CHECK(log.says("ecsTests.cpp:" + std::to_string(line) + ":"));
+    CHECK(log.says("entity " + std::to_string(e.getId()) + " has no"));
+    CHECK(log.says("Velocity"));
+    // sfs-ignore-next-line(component-pointer)
+    CHECK(!expect(Entity{}.getComponent<Health>(), Entity{}));
+    CHECK(log.errors.size() == 2u);
+  }
+
+  TEST("a failing expect should report once per call site")
+  {
+    Registry reg;
+    Entity bare = reg.createEntity();
+    detail::forgetExpectFailures();
+    ErrorLog log;
+    for (int i = 0; i < 3; ++i)
+      CHECK(!expectHealth(bare));
+    CHECK(log.errors.size() == 1u);
+    CHECK(log.says("has no"));
+    // Another site reports on its own.
+    // sfs-ignore-next-line(component-pointer)
+    CHECK(!expect(bare.getComponent<Velocity>(), bare));
+    CHECK(log.errors.size() == 2u);
+    // Forgotten (as a new run), the first site reports again.
+    detail::forgetExpectFailures();
+    CHECK(!expectHealth(bare));
+    CHECK(log.errors.size() == 3u);
+  }
+
+  TEST("in development a failing expect should show the error dialog once per "
+       "call site, unless SFS_NO_ERROR_DIALOG is set")
+  {
+    Registry reg;
+    Entity bare = reg.createEntity();
+    const bool wasEnabled = debugFeatures::enabled();
+    debugFeatures::allow(true);
+    std::vector<std::string> shown;
+    setErrorDialog([&shown](const std::string& message)
+                   { shown.push_back(message); });
+    ErrorLog log;
+    {
+      const ScopedEnv dialogs("SFS_NO_ERROR_DIALOG", nullptr);
+      detail::forgetExpectFailures();
+      CHECK(!expectHealth(bare));
+      CHECK(!expectHealth(bare));
+      CHECK(shown.size() == (debugFeatures::compiled() ? 1u : 0u));
+      CHECK(
+          (shown.empty() || shown.front().find("has no") != std::string::npos));
+      CHECK((shown.empty() ||
+             shown.front().find("carries on") != std::string::npos));
+    }
+    {
+      const ScopedEnv dialogs("SFS_NO_ERROR_DIALOG", "1");
+      detail::forgetExpectFailures();
+      Logger::flush(); // the same line again isn't folded into the last
+      const std::size_t before = shown.size();
+      CHECK(!expectHealth(bare));
+      CHECK(shown.size() == before); // a log line only
+      CHECK(log.errors.size() == 2u);
+    }
+    setErrorDialog({});
+    debugFeatures::allow(wasEnabled);
+  }
+
+  TEST("in release a failing expect should log once per call site and fall "
+       "back, with no dialog and no abort")
+  {
+    Registry reg;
+    Entity bare = reg.createEntity();
+    const bool wasEnabled = debugFeatures::enabled();
+    debugFeatures::allow(false);
+    std::size_t shown = 0;
+    setErrorDialog([&shown](const std::string&) { ++shown; });
+    const ScopedEnv dialogs("SFS_NO_ERROR_DIALOG", nullptr);
+    const ScopedEnv abort("SFS_EXPECT_ABORT", "1");
+    detail::forgetExpectFailures();
+    ErrorLog log;
+    CHECK(!expectHealth(bare));
+    CHECK(!expectHealth(bare));
+    CHECK(log.errors.size() == 1u);
+    CHECK(shown == 0u);
+    setErrorDialog({});
+    debugFeatures::allow(wasEnabled);
+  }
+
+#if defined(__linux__)
+  TEST("in development SFS_EXPECT_ABORT=1 should make a failing expect abort "
+       "(in a child process)")
+  {
+    if (debugFeatures::compiled())
+    {
+      Logger::flush();
+      std::fflush(nullptr);
+      const pid_t child = fork();
+      if (child == 0)
+      {
+        setenv("SFS_EXPECT_ABORT", "1", 1);
+        debugFeatures::allow(true);
+        detail::forgetExpectFailures();
+        Registry reg;
+        const Entity bare = reg.createEntity();
+        expectHealth(bare);
+        _exit(0); // not aborted
+      }
+      int status = 0;
+      CHECK(child > 0);
+      CHECK(waitpid(child, &status, 0) == child);
+      CHECK(WIFSIGNALED(status));
+      CHECK((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT));
+    }
+  }
+#endif
+
+  TEST("views, rows, typed walks and lookups should allocate nothing")
+  {
+    Registry reg;
+    AliasSystem& sys = reg.addSystem<AliasSystem>();
+    Entity root = reg.createEntity();
+    root.addComponent<Position>();
+    std::vector<Entity> made;
+    for (int i = 0; i < 64; ++i)
+    {
+      Entity e = reg.createEntity();
+      e.addComponent<Position>();
+      if (i % 2 == 0)
+        e.addComponent<Velocity>();
+      if (i % 3 == 0)
+        e.addComponent<Health>();
+      hierarchy::setParent(e, i < 32 ? root : made[i - 32]);
+      made.push_back(e);
+    }
+    reg.flushEntities();
+
+    float sum = 0.0f;
+    std::size_t count = 0;
+    const auto pass = [&]
+    {
+      for (auto [entity, position, velocity, health] :
+           reg.query<Position, Any<Velocity, Health>>())
+        sum += position.x + (velocity ? velocity->dx : 0.0f) +
+               (health ? static_cast<float>(health->hp) : 0.0f);
+      for (const Entity& entity : reg.query<Position>())
+        count += entity.getId();
+      for (auto [entity, position, velocity] :
+           sys.getEntities<AliasSystem::Entities>())
+        sum += position.x + velocity.dy;
+      for (auto [child, position] : hierarchy::childrenOf<Position>(root))
+        sum += position.y;
+      for (auto [entity, velocity] : hierarchy::descendants<Velocity>(root))
+        sum += velocity.dx;
+      for (Position& position : reg.query<Position>())
+        sum += position.y;
+      for (auto [position, velocity] :
+           reg.query<Position, Velocity>().components())
+        sum += position.x + velocity.dx;
+      for (const Position& position :
+           hierarchy::childrenOf<const Position>(root))
+        sum += position.x;
+      for (auto [velocity] :
+           hierarchy::descendants<Velocity>(root).components())
+        sum += velocity.dy;
+      count += hierarchy::findChild<Health>(root).isValid() ? 1 : 0;
+      count += hierarchy::findDescendant<Velocity, Health>(root).isValid();
+      for (const Entity& entity : made)
+      {
+        if (const Velocity* velocity = entity.getComponent<Velocity>())
+          sum += velocity->dx;
+        count += entity.hasComponent<Health>() + entity.isValid();
+        count += entity.matches<Position, Any<Velocity, Health>>();
+      }
+    };
+    pass(); // makes the lists and the terms' signatures
+
+    MemoryMetrics& metrics = getMemoryMetrics();
+    const std::size_t probe = metrics.allocationCount.load();
+    {
+      ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+      int* volatile block = new int(1);
+      delete block;
+    }
+    if (metrics.allocationCount.load() == probe)
+      std::fprintf(stderr,
+                   "      note: allocation tracking is off in this build; "
+                   "nothing to count\n");
+    else
+    {
+      const std::size_t before = metrics.allocationCount.load();
+      {
+        ScopedMemoryTracking track(MemoryTrackingPhase::Update);
+        pass();
+      }
+      CHECK(metrics.allocationCount.load() == before);
+    }
+    CHECK(count > 0u);
   }
 
   TEST("getSystem on a missing system should be a fatal error naming it")

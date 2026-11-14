@@ -15,10 +15,13 @@ class Entity;
 class Registry;
 struct MeshLodComponent;
 struct MeshRendererComponent;
+struct WorldTransformComponent;
 
 /**
  * Render module that draws every entity with a TransformComponent and a
- * MeshRendererComponent. Entities sharing a mesh merge into one
+ * MeshRendererComponent, where the transform pass placed it (its
+ * WorldTransformComponent), so it needs the Scene's TransformSystem: on a
+ * bare Registry it draws nothing. Entities sharing a mesh merge into one
  * MeshDrawCommand (one instanced draw). Each instance is culled twice: against
  * the camera frustum for the lit pass, and against the sun's shadow volume for
  * the shadow pass. An entity with a MeshLodComponent draws the level for its
@@ -36,10 +39,13 @@ protected:
   bool rebuildsEveryFrame() const override { return true; }
 
 private:
-  // One entity's instance, into the command for its mesh and materials.
+  // One entity's instance, into the command for its mesh and materials;
+  // `check`: debugFeatures::checkTransforms(), read once a frame.
   void addEntity(const RenderContext& context,
                  const Entity& entity,
-                 const MeshRendererComponent& renderer);
+                 const MeshRendererComponent& renderer,
+                 const WorldTransformComponent& world,
+                 bool check);
 
   // Where each of an instance's draws goes.
   enum Pass : uint8_t

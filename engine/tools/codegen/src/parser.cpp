@@ -1,13 +1,19 @@
 #include "sfs/codegen/parser.h"
 
+#include "sfs/codegen/attributes.h"
+#include "sfs/codegen/suppressions.h"
+
 #include <tree_sitter/api.h>
 #include <tree_sitter/tree-sitter-cpp.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -21,26 +27,34 @@ namespace
 const std::map<std::string, std::string, std::less<>>& fieldKinds()
 {
   static const std::map<std::string, std::string, std::less<>> kinds = {
-      {"bool", "Bool"},
-      {"int", "Int"},
-      {"int32_t", "Int"},
-      {"std::int32_t", "Int"},
-      {"unsigned", "UInt"},
-      {"unsigned int", "UInt"},
-      {"uint32_t", "UInt"},
-      {"std::uint32_t", "UInt"},
-      {"float", "Float"},
-      {"std::string", "String"},
-      {"glm::vec2", "Vec2"},
-      {"glm::vec3", "Vec3"},
-      {"glm::vec4", "Vec4"},
-      {"glm::quat", "Quat"},
-      {"MeshHandle", "Mesh"},
-      {"sfs::MeshHandle", "Mesh"},
-      {"nlohmann::json", "Json"},
-      {"std::vector<std::string>", "StringList"},
+      {"bool", "Bool"},           {"int", "Int"},
+      {"int32_t", "Int"},         {"std::int32_t", "Int"},
+      {"unsigned", "UInt"},       {"unsigned int", "UInt"},
+      {"uint32_t", "UInt"},       {"std::uint32_t", "UInt"},
+      {"float", "Float"},         {"std::string", "String"},
+      {"glm::vec2", "Vec2"},      {"glm::vec3", "Vec3"},
+      {"glm::vec4", "Vec4"},      {"glm::quat", "Quat"},
+      {"MeshHandle", "Mesh"},     {"sfs::MeshHandle", "Mesh"},
+      {"nlohmann::json", "Json"}, {"std::vector<std::string>", "StringList"},
+      {"sfs::Entity", "Entity"},  {"std::vector<sfs::Entity>", "EntityList"},
   };
   return kinds;
+}
+
+// Spellings of the entity kinds that name sfs::Entity only inside namespace
+// sfs (elsewhere `Entity` may be anything).
+const std::map<std::string, std::string, std::less<>>& sfsFieldKinds()
+{
+  static const std::map<std::string, std::string, std::less<>> kinds = {
+      {"Entity", "Entity"},
+      {"std::vector<Entity>", "EntityList"},
+  };
+  return kinds;
+}
+
+bool isEntityKind(std::string_view kind)
+{
+  return kind == "Entity" || kind == "EntityList";
 }
 
 std::string lowercase(std::string_view text)
@@ -95,6 +109,56 @@ std::string normaliseType(std::string_view text)
   return out;
 }
 
+// How deep a walk of the tree has gone. Declarations never nest deeply; only
+// generated or hostile code (an expression of thousands of terms) does, and
+// following it down would overflow the stack. Below the limit the walk stops,
+// which loses nothing codegen reads.
+class NestingLimit
+{
+public:
+  static constexpr int kMaxDepth = 256;
+
+  // Goes a level down: false at the limit (logged once per file).
+  bool enter(const std::filesystem::path& path)
+  {
+    if (m_depth >= kMaxDepth)
+    {
+      if (!m_logged)
+        std::fprintf(stderr,
+                     "sfs-codegen: %s: code nested over %d levels deep is "
+                     "skipped\n",
+                     path.string().c_str(),
+                     kMaxDepth);
+      m_logged = true;
+      return false;
+    }
+    ++m_depth;
+    return true;
+  }
+
+  void leave() { --m_depth; }
+
+private:
+  int m_depth = 0;
+  bool m_logged = false;
+};
+
+// An attribute's arguments, read by its shape: MinMax both, BoolField the
+// field ("!" first when negated), String the unescaped text.
+struct AttributeValue
+{
+  std::string first;
+  std::string second;
+};
+
+// A field's [[sfs::...]] attribute, read but waiting for the field's kind.
+struct FieldAttribute
+{
+  const AttributeInfo* info;
+  TSNode node;
+  AttributeValue value;
+};
+
 // Walks one header's syntax tree.
 class HeaderParser
 {
@@ -105,58 +169,59 @@ public:
   {
   }
 
-  ParseResult run()
+  ParseResult run(const TSTree* tree)
   {
-    const std::unique_ptr<TSParser, decltype(&ts_parser_delete)> parser(
-        ts_parser_new(), &ts_parser_delete);
-    ts_parser_set_language(parser.get(), tree_sitter_cpp());
-
-    const std::unique_ptr<TSTree, decltype(&ts_tree_delete)> tree(
-        ts_parser_parse_string(parser.get(),
-                               nullptr,
-                               m_source.data(),
-                               static_cast<uint32_t>(m_source.size())),
-        &ts_tree_delete);
-
-    visit(ts_tree_root_node(tree.get()));
+    visit(ts_tree_root_node(tree));
 
     if (!m_result.type && !m_helper && m_result.components.empty())
-      warn(ts_tree_root_node(tree.get()),
-           "no class or struct named after the file ('" +
-               m_path.stem().string() + "')");
+    {
+      // On the first line, so an editor doesn't underline the whole file.
+      const std::size_t lineEnd = m_source.find_first_of("\r\n");
+      const auto width = static_cast<unsigned>(
+          lineEnd == std::string_view::npos ? m_source.size() : lineEnd);
+      m_result.diagnostics.push_back(
+          {RuleId::NoScriptType,
+           m_path,
+           {0, 0, 0, width},
+           "No class or struct in this header is named after the file, " +
+               m_path.stem().string() + ". Name the script type " +
+               m_path.stem().string() +
+               ", or mark a helper header with "
+               "sfs-ignore-file(no-script-type)."});
+    }
+
+    m_result.suppressions =
+        findSuppressions(tree, m_source, m_path, m_result.diagnostics);
+    applySuppressions(m_result.suppressions, m_result.diagnostics);
     return std::move(m_result);
   }
 
 private:
   std::string text(TSNode node) const
   {
-    const uint32_t start = ts_node_start_byte(node);
-    const uint32_t end = ts_node_end_byte(node);
-    return std::string(m_source.substr(start, end - start));
+    return std::string(nodeText(m_source, node));
   }
 
   static std::string type(TSNode node) { return ts_node_type(node); }
 
   static TSNode field(TSNode node, const char* name)
   {
-    return ts_node_child_by_field_name(
-        node, name, static_cast<uint32_t>(std::strlen(name)));
+    return childField(node, name);
   }
 
-  void report(TSNode node, Diagnostic::Severity severity, std::string message)
+  // A diagnostic of `rule` about `node`; its severity is the rule's.
+  void report(RuleId rule,
+              TSNode node,
+              std::string message,
+              std::string fixTitle = {},
+              std::vector<TextEdit> fix = {})
   {
-    m_result.diagnostics.push_back({severity,
+    m_result.diagnostics.push_back({rule,
                                     m_path,
-                                    ts_node_start_point(node).row + 1,
-                                    std::move(message)});
-  }
-  void warn(TSNode node, std::string message)
-  {
-    report(node, Diagnostic::Severity::Warning, std::move(message));
-  }
-  void error(TSNode node, std::string message)
-  {
-    report(node, Diagnostic::Severity::Error, std::move(message));
+                                    rangeOf(node),
+                                    std::move(message),
+                                    std::move(fixTitle),
+                                    std::move(fix)});
   }
 
   // Depth-first over declarations, tracking the enclosing namespaces.
@@ -184,16 +249,24 @@ private:
           lowercase(text(name)) == m_target)
       {
         if (m_result.type)
-          error(node, "more than one type named '" + text(name) + "'");
+          report(RuleId::DuplicateType,
+                 node,
+                 "More than one type is named " + text(name) +
+                     ". Give each type a name of its own.");
         else
           parseType(node, kind == "struct_specifier", marked);
       }
       else if (marked && ts_node_is_null(name))
-        warn(node, "[[sfs::component]] on an unnamed type: not registered");
+        report(RuleId::ComponentNotRegistered,
+               node,
+               "An unnamed type can't be registered as a component. Give it "
+               "a name, or remove [[sfs::component]].");
       else if (marked && (m_classDepth > 0 || m_localDepth > 0))
-        warn(node,
-             "[[sfs::component]] '" + text(name) +
-                 "' is nested (or a template): not registered");
+        report(RuleId::ComponentNotRegistered,
+               node,
+               "The component " + text(name) +
+                   " is nested or a template, so it isn't registered. Declare "
+                   "it as a plain type at namespace scope.");
       else if (marked)
         parseType(node, kind == "struct_specifier", marked);
 
@@ -231,24 +304,163 @@ private:
       for (uint32_t a = 0; a < attributes; ++a)
       {
         const TSNode attribute = ts_node_named_child(declaration, a);
-        const TSNode prefix = field(attribute, "prefix");
-        if (ts_node_is_null(prefix) || text(prefix) != "sfs")
+        const AttributeInfo* info = sfsAttribute(attribute);
+        if (!info)
           continue;
-        const std::string name = text(field(attribute, "name"));
-        if (name == "component")
+        if (info->target != AttributeTarget::Type)
+        {
+          wrongTarget(*info, attribute);
+          continue;
+        }
+        AttributeValue value;
+        if (attributeArguments(*info, attribute, value) &&
+            info->id == AttributeId::Component)
           marked = true;
-        else
-          warn(attribute, "unknown attribute [[sfs::" + name + "]]");
       }
     }
     return marked;
   }
 
+  // The table entry of an [[sfs::...]] attribute; null for someone else's
+  // attribute, or (with a warning) an unknown one.
+  const AttributeInfo* sfsAttribute(TSNode attribute)
+  {
+    const TSNode prefix = field(attribute, "prefix");
+    if (ts_node_is_null(prefix) || text(prefix) != "sfs")
+      return nullptr;
+    const TSNode nameNode = field(attribute, "name");
+    const std::string name = text(nameNode);
+    if (const AttributeInfo* info = findAttribute(name))
+      return info;
+
+    std::string message = "There is no attribute [[sfs::" + name + "]].";
+    if (const AttributeInfo* closest = closestAttribute(name))
+    {
+      const std::string fixed = "[[sfs::" + std::string(closest->name) + "]]";
+      message += " Use " + fixed + " if that's what you meant.";
+      report(RuleId::UnknownSfsAttribute,
+             attribute,
+             std::move(message),
+             "Change to " + fixed,
+             {{rangeOf(nameNode), std::string(closest->name)}});
+    }
+    else
+      report(RuleId::UnknownSfsAttribute, attribute, std::move(message));
+    return nullptr;
+  }
+
+  void wrongTarget(const AttributeInfo& info, TSNode attribute)
+  {
+    const bool onType = info.target == AttributeTarget::Type;
+    report(RuleId::AttributeTarget,
+           attribute,
+           "The attribute [[sfs::" + std::string(info.name) + "]] goes on " +
+               (onType ? "a type, not a field" : "a field, not a type") +
+               ", so it's ignored here. Move it to " +
+               (onType ? "the type." : "a field."));
+  }
+
+  static TSNode argumentList(TSNode attribute)
+  {
+    const uint32_t count = ts_node_named_child_count(attribute);
+    for (uint32_t i = 0; i < count; ++i)
+      if (type(ts_node_named_child(attribute, i)) == "argument_list")
+        return ts_node_named_child(attribute, i);
+    return TSNode{};
+  }
+
+  // Reads an attribute's arguments by its table shape into `value`; false,
+  // with a warning, when they don't fit it.
+  bool attributeArguments(const AttributeInfo& info,
+                          TSNode attribute,
+                          AttributeValue& value)
+  {
+    const TSNode arguments = argumentList(attribute);
+    const uint32_t count =
+        ts_node_is_null(arguments) ? 0 : ts_node_named_child_count(arguments);
+    const TSNode argument =
+        count == 1 ? ts_node_named_child(arguments, 0) : TSNode{};
+    const std::string written = "[[sfs::" + std::string(info.name) + "]]";
+    switch (info.args)
+    {
+    case AttributeArgs::None:
+      // Still applied: the arguments are only noise.
+      if (!ts_node_is_null(arguments))
+        report(RuleId::AttributeArguments,
+               attribute,
+               "The attribute " + written +
+                   " takes no arguments. Remove the parentheses.");
+      return true;
+    case AttributeArgs::MinMax:
+      if (count != 2)
+        break;
+      value.first = text(ts_node_named_child(arguments, 0));
+      value.second = text(ts_node_named_child(arguments, 1));
+      return true;
+    case AttributeArgs::BoolField:
+    {
+      // (field), or (!field) to show it while the field is off.
+      const bool negated =
+          !ts_node_is_null(argument) && type(argument) == "unary_expression" &&
+          ts_node_named_child_count(argument) == 1 &&
+          text(argument).starts_with("!") &&
+          type(ts_node_named_child(argument, 0)) == "identifier";
+      if (ts_node_is_null(argument) ||
+          (type(argument) != "identifier" && !negated))
+      {
+        report(
+            RuleId::AttributeArguments,
+            attribute,
+            "The attribute " + written +
+                " needs the name of a bool field. Write (field), or (!field) "
+                "for while it's off.");
+        return false;
+      }
+      value.first = negated ? "!" + text(ts_node_named_child(argument, 0))
+                            : text(argument);
+      return true;
+    }
+    case AttributeArgs::String:
+    {
+      const std::string literal =
+          ts_node_is_null(argument) || type(argument) != "string_literal"
+              ? std::string()
+              : text(argument);
+      if (literal.size() < 3 || literal.front() != '"' || literal.back() != '"')
+      {
+        report(RuleId::AttributeArguments,
+               attribute,
+               "The attribute " + written +
+                   " needs one non-empty string. Write " +
+                   std::string(info.arguments) + ".");
+        return false;
+      }
+      value.first.clear();
+      for (std::size_t i = 1; i + 1 < literal.size(); ++i)
+      {
+        if (literal[i] == '\\' && i + 2 < literal.size() &&
+            (literal[i + 1] == '"' || literal[i + 1] == '\\'))
+          ++i;
+        value.first += literal[i];
+      }
+      return true;
+    }
+    }
+    report(RuleId::AttributeArguments,
+           attribute,
+           "The attribute " + written + " needs two arguments. Write " +
+               std::string(info.arguments) + ".");
+    return false;
+  }
+
   void visitChildren(TSNode node)
   {
+    if (!m_depth.enter(m_path))
+      return;
     const uint32_t count = ts_node_named_child_count(node);
     for (uint32_t i = 0; i < count; ++i)
       visit(ts_node_named_child(node, i));
+    m_depth.leave();
   }
 
   // Registers a class specifier: the file's type, or (marked) one of the
@@ -257,6 +469,7 @@ private:
   {
     TypeModel model;
     model.name = text(field(node, "name"));
+    model.nameRange = rangeOf(field(node, "name"));
     model.header = m_path;
     model.line = ts_node_start_point(node).row + 1;
     for (const std::string& ns : m_namespaces)
@@ -267,17 +480,24 @@ private:
     const bool fileType = lowercase(model.name) == m_target;
     if (marked && model.kind != TypeKind::Component)
     {
-      error(node,
-            "[[sfs::component]] is for components; " + model.name +
-                " derives from " + baseOf(node));
+      report(RuleId::ComponentBase,
+             node,
+             "A component can't derive from another type, but " + model.name +
+                 " derives from " + baseOf(node) + ". Give " + model.name +
+                 " the fields itself, or put the shared data in a component "
+                 "of its own.");
       return;
     }
     if (!fileType && registered(model.name))
     {
-      error(node, "more than one type named '" + model.name + "'");
+      report(RuleId::DuplicateType,
+             node,
+             "More than one type is named " + model.name +
+                 ". Give each type a name of its own.");
       return;
     }
 
+    m_showIfs.clear();
     // struct members default to public, class members to private.
     bool isPublic = isStruct;
     const TSNode body = field(node, "body");
@@ -291,6 +511,7 @@ private:
       else if (memberKind == "field_declaration")
         parseField(member, isPublic, model);
     }
+    checkShowIfs(model);
 
     // A class with no engine base and nothing to edit (e.g. FieldMap, a
     // helper a script uses) isn't a component: it's left alone. Components
@@ -358,10 +579,11 @@ private:
         const std::string name = normaliseType(text(base));
         if (++bases > 1)
         {
-          error(base,
-                "'" + name +
-                    "': a script type has one base (an engine base or "
-                    "another reflected type)");
+          report(RuleId::ScriptBase,
+                 base,
+                 "A script type has one base, so " + name +
+                     " can't be another. Derive from one engine base or one "
+                     "reflected type.");
           continue;
         }
         // A UI layer is a game object (drawn as UI).
@@ -388,12 +610,12 @@ private:
               colons == std::string::npos ? name : name.substr(colons + 2);
         }
         else
-          error(base,
-                "'" + name +
-                    "' isn't a supported base; derive from sfs::GameObject, "
-                    "sfs::ui::Layer, sfs::System, sfs::MeshSource, "
-                    "sfs::ScriptableObject or another reflected type, or "
-                    "nothing for a component");
+          report(RuleId::ScriptBase,
+                 base,
+                 name + " isn't a base a script type can have. Derive from "
+                        "sfs::GameObject, sfs::ui::Layer, sfs::System, "
+                        "sfs::MeshSource, sfs::ScriptableObject or another "
+                        "reflected type, or from nothing for a component.");
       }
     }
     return kind;
@@ -405,6 +627,7 @@ private:
     bool show = false;
     FieldModel base;
     base.isPublic = isPublic;
+    m_fieldAttributes.clear();
 
     const uint32_t count = ts_node_named_child_count(node);
     for (uint32_t i = 0; i < count; ++i)
@@ -417,7 +640,7 @@ private:
       if (childKind == "type_qualifier" && text(child) == "const")
         return; // nothing to edit
       if (childKind == "attribute_declaration")
-        parseAttributes(child, base, hide, show);
+        parseAttributes(child, hide, show);
     }
 
     // Methods declared without a body are field_declarations too, the
@@ -444,24 +667,28 @@ private:
 
     const TSNode typeNode = field(node, "type");
     base.type = normaliseType(text(typeNode));
-    // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed
-    // type.
+    const std::string kindName = fieldKindOf(base.type, insideSfs());
     std::optional<std::string> kind;
-    if (const std::optional<std::string> data =
-            assetRefType(base.type, "AssetRef"))
+    if (!kindName.empty())
+      kind = kindName;
+    if (kindName == "AssetRef" || kindName == "AssetRefList")
+      base.assetType = *assetRefType(base.type, kindName);
+
+    // The attributes take effect once the field's kind is known.
+    if (kind)
+      for (const FieldAttribute& attribute : m_fieldAttributes)
+        applyAttribute(attribute, *kind, base);
+    // Shared assets can't point at entities, and script fields can't yet.
+    if (kind && isEntityKind(*kind) && model.kind != TypeKind::Component)
     {
-      kind = "AssetRef";
-      base.assetType = *data;
+      report(RuleId::EntityField,
+             node,
+             "Entity reference fields belong on components, so this " +
+                 base.type +
+                 " field is skipped. Move it to a component, which a system "
+                 "can then read.");
+      return;
     }
-    else if (const std::optional<std::string> list =
-                 assetRefType(base.type, "AssetRefList"))
-    {
-      kind = "AssetRefList";
-      base.assetType = *list;
-    }
-    else if (const auto known = fieldKinds().find(base.type);
-             known != fieldKinds().end())
-      kind = known->second;
 
     // Every declarator: `float a, b;` declares two fields.
     for (uint32_t i = 0; i < count; ++i)
@@ -473,110 +700,145 @@ private:
 
       if (type(child) != "field_identifier")
       {
-        warn(child,
-             "'" + text(child) +
-                 "': pointer, reference and array "
-                 "fields can't be edited; skipped");
+        report(RuleId::FieldType,
+               child,
+               "The editor can't edit pointer, reference or array fields, so "
+               "the field " +
+                   text(child) +
+                   " is skipped. Store a value it can edit instead, such as an "
+                   "sfs::Entity or an asset reference.");
         continue;
       }
       if (!kind)
       {
-        warn(child,
-             "'" + text(child) + "' has type '" + base.type +
-                 "', which the editor can't edit yet; skipped");
+        report(RuleId::FieldType,
+               child,
+               "The editor can't edit fields of type " + base.type +
+                   " yet, so the field " + text(child) +
+                   " is skipped. Use a type the editor can edit.");
         continue;
       }
 
       FieldModel fieldModel = base;
       fieldModel.name = text(child);
+      fieldModel.nameRange = rangeOf(child);
       fieldModel.kind = *kind;
       model.fields.push_back(std::move(fieldModel));
     }
   }
 
-  void parseAttributes(TSNode declaration,
-                       FieldModel& fieldModel,
-                       bool& hide,
-                       bool& show)
+  // Reads a field's [[sfs::...]] attributes: hide and show at once, the
+  // rest into m_fieldAttributes for applyAttribute().
+  void parseAttributes(TSNode declaration, bool& hide, bool& show)
   {
     const uint32_t count = ts_node_named_child_count(declaration);
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode attribute = ts_node_named_child(declaration, i);
-      const TSNode prefix = field(attribute, "prefix");
-      if (ts_node_is_null(prefix) || text(prefix) != "sfs")
-        continue; // someone else's attribute
-
-      const std::string name = text(field(attribute, "name"));
-      if (name == "hide")
+      const AttributeInfo* info = sfsAttribute(attribute);
+      if (!info)
+        continue;
+      if (info->target != AttributeTarget::Field)
+      {
+        wrongTarget(*info, attribute);
+        continue;
+      }
+      AttributeValue value;
+      if (!attributeArguments(*info, attribute, value))
+        continue;
+      if (info->id == AttributeId::Hide)
         hide = true;
-      else if (name == "show")
+      else if (info->id == AttributeId::Show)
         show = true;
-      else if (name == "color")
-        fieldModel.color = true;
-      else if (name == "script")
-        fieldModel.script = true;
-      else if (name == "texture")
-        fieldModel.texture = true;
-      else if (name == "materials")
-        fieldModel.materials = true;
-      else if (name == "material")
-        fieldModel.material = true;
-      else if (name == "emissionLight")
-        fieldModel.emissionLight = true;
-      else if (name == "range")
-        parseRange(attribute, fieldModel);
-      else if (name == "showIf")
-        parseShowIf(attribute, fieldModel);
       else
-        warn(attribute, "unknown attribute [[sfs::" + name + "]]");
+        m_fieldAttributes.push_back({info, attribute, std::move(value)});
     }
   }
 
-  void parseRange(TSNode attribute, FieldModel& fieldModel)
+  // Sets an attribute's FieldModel member, unless it doesn't apply to fields
+  // of `kind`.
+  void applyAttribute(const FieldAttribute& attribute,
+                      std::string_view kind,
+                      FieldModel& fieldModel)
   {
-    TSNode arguments{};
-    const uint32_t count = ts_node_named_child_count(attribute);
-    for (uint32_t i = 0; i < count; ++i)
-      if (type(ts_node_named_child(attribute, i)) == "argument_list")
-        arguments = ts_node_named_child(attribute, i);
-
-    if (ts_node_is_null(arguments) || ts_node_named_child_count(arguments) != 2)
+    const AttributeInfo& info = *attribute.info;
+    if (!appliesTo(info, kind))
     {
-      warn(attribute, "[[sfs::range]] needs two arguments: (min, max)");
+      report(RuleId::AttributeFieldType,
+             attribute.node,
+             "The attribute [[sfs::" + std::string(info.name) + "]] is for " +
+                 attributeFieldTypes(info) +
+                 " fields, so it's ignored here. Remove it, or change the "
+                 "field's type.");
       return;
     }
-    fieldModel.range = {text(ts_node_named_child(arguments, 0)),
-                        text(ts_node_named_child(arguments, 1))};
+    const AttributeValue& value = attribute.value;
+    switch (info.id)
+    {
+    case AttributeId::Range:
+      fieldModel.range = {value.first, value.second};
+      break;
+    case AttributeId::Color:
+      fieldModel.color = true;
+      break;
+    case AttributeId::Script:
+      fieldModel.script = true;
+      break;
+    case AttributeId::Texture:
+      fieldModel.texture = true;
+      break;
+    case AttributeId::Materials:
+      fieldModel.materials = true;
+      break;
+    case AttributeId::Material:
+      fieldModel.material = true;
+      break;
+    case AttributeId::EmissionLight:
+      fieldModel.emissionLight = true;
+      break;
+    case AttributeId::ShowIf:
+      fieldModel.showIf = value.first;
+      m_showIfs.push_back({attribute.node, value.first});
+      break;
+    case AttributeId::Part:
+      fieldModel.part = value.first;
+      break;
+    case AttributeId::Hide:
+    case AttributeId::Show:
+    case AttributeId::Component:
+      break; // read by parseAttributes, or not a field's
+    }
   }
 
-  void parseShowIf(TSNode attribute, FieldModel& fieldModel)
+  // Warns about showIf attributes naming no reflected bool field of `model`.
+  // A derived type's switch may be its base's field, so it isn't checked.
+  void checkShowIfs(const TypeModel& model)
   {
-    TSNode arguments{};
-    const uint32_t count = ts_node_named_child_count(attribute);
-    for (uint32_t i = 0; i < count; ++i)
-      if (type(ts_node_named_child(attribute, i)) == "argument_list")
-        arguments = ts_node_named_child(attribute, i);
-
-    // (field), or (!field) to show it while the field is off.
-    const TSNode argument = ts_node_is_null(arguments) ||
-                                    ts_node_named_child_count(arguments) != 1
-                                ? TSNode{}
-                                : ts_node_named_child(arguments, 0);
-    const bool negated =
-        !ts_node_is_null(argument) && type(argument) == "unary_expression" &&
-        ts_node_named_child_count(argument) == 1 &&
-        text(argument).starts_with("!") &&
-        type(ts_node_named_child(argument, 0)) == "identifier";
-    if (ts_node_is_null(argument) ||
-        (type(argument) != "identifier" && !negated))
-    {
-      warn(attribute,
-           "[[sfs::showIf]] needs a bool field's name: (field) or (!field)");
+    if (model.kind == TypeKind::Derived)
       return;
+    for (const auto& [node, written] : m_showIfs)
+    {
+      const std::string_view target =
+          std::string_view(written).substr(written.starts_with('!') ? 1 : 0);
+      const bool found =
+          std::any_of(model.fields.begin(),
+                      model.fields.end(),
+                      [&](const FieldModel& field)
+                      { return field.name == target && field.kind == "Bool"; });
+      if (!found)
+        report(RuleId::ShowIfTarget,
+               node,
+               "The attribute [[sfs::showIf(" + written + ")]] names " +
+                   std::string(target) + ", but " + model.name +
+                   " has no reflected bool field by that name. Name one of " +
+                   model.name + "'s bool fields.");
     }
-    fieldModel.showIf =
-        negated ? "!" + text(ts_node_named_child(argument, 0)) : text(argument);
+  }
+
+  // Whether the declarations being read are inside namespace sfs.
+  bool insideSfs() const
+  {
+    return !m_namespaces.empty() && isSfsNamespace(m_namespaces.front());
   }
 
   std::string_view m_source;
@@ -585,8 +847,12 @@ private:
   std::vector<std::string> m_namespaces;
   ParseResult m_result;
   bool m_helper = false; // the file's class is a helper (no type, no warning)
-  int m_classDepth = 0;  // class bodies entered
-  int m_localDepth = 0;  // templates and function bodies entered
+  std::vector<FieldAttribute> m_fieldAttributes; // the field being read's
+  // The showIf attributes of the type being read, with their argument.
+  std::vector<std::pair<TSNode, std::string>> m_showIfs;
+  int m_classDepth = 0; // class bodies entered
+  int m_localDepth = 0; // templates and function bodies entered
+  NestingLimit m_depth;
 };
 
 // Walks a UI header's syntax tree for its structs (see parseUiHeader).
@@ -618,17 +884,14 @@ public:
 private:
   std::string text(TSNode node) const
   {
-    const uint32_t start = ts_node_start_byte(node);
-    const uint32_t end = ts_node_end_byte(node);
-    return std::string(m_source.substr(start, end - start));
+    return std::string(nodeText(m_source, node));
   }
 
   static std::string type(TSNode node) { return ts_node_type(node); }
 
   static TSNode field(TSNode node, const char* name)
   {
-    return ts_node_child_by_field_name(
-        node, name, static_cast<uint32_t>(std::strlen(name)));
+    return childField(node, name);
   }
 
   void visit(TSNode node)
@@ -660,9 +923,12 @@ private:
 
   void visitChildren(TSNode node)
   {
+    if (!m_depth.enter(m_path))
+      return;
     const uint32_t count = ts_node_named_child_count(node);
     for (uint32_t i = 0; i < count; ++i)
       visit(ts_node_named_child(node, i));
+    m_depth.leave();
   }
 
   void parseType(TSNode node, bool isStruct)
@@ -726,18 +992,88 @@ private:
   std::filesystem::path m_path;
   std::vector<std::string> m_namespaces;
   UiParseResult m_result;
+  NestingLimit m_depth;
 };
 
 } // namespace
 
+std::string readFile(const std::filesystem::path& path)
+{
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream contents;
+  contents << in.rdbuf();
+  return contents.str();
+}
+
+std::string_view nodeText(std::string_view source, TSNode node)
+{
+  if (ts_node_is_null(node))
+    return {};
+  const uint32_t start = ts_node_start_byte(node);
+  return source.substr(start, ts_node_end_byte(node) - start);
+}
+
+TSNode childField(TSNode node, std::string_view name)
+{
+  return ts_node_child_by_field_name(
+      node, name.data(), static_cast<uint32_t>(name.size()));
+}
+
+bool isSfsNamespace(std::string_view name)
+{
+  return name == "sfs" || name.starts_with("sfs::");
+}
+
+std::string fieldKindOf(std::string_view type, bool insideSfs)
+{
+  const std::string normal = normaliseType(type);
+  // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed
+  // type.
+  if (assetRefType(normal, "AssetRef"))
+    return "AssetRef";
+  if (assetRefType(normal, "AssetRefList"))
+    return "AssetRefList";
+  if (const auto known = fieldKinds().find(normal); known != fieldKinds().end())
+    return known->second;
+  if (const auto inSfs = sfsFieldKinds().find(normal);
+      inSfs != sfsFieldKinds().end() && insideSfs)
+    return inSfs->second;
+  return {};
+}
+
+SourceRange rangeOf(TSNode node)
+{
+  const TSPoint start = ts_node_start_point(node);
+  const TSPoint end = ts_node_end_point(node);
+  return {start.row, start.column, end.row, end.column};
+}
+
 ParseResult parseHeader(std::string_view source,
-                        const std::filesystem::path& path)
+                        const std::filesystem::path& path,
+                        const TSTree* tree)
 {
   // UI code (Hud.ui.h: views, previews) is the game's own, never a script
   // or a component.
+  if (path.filename().string().ends_with(".ui.h") || !tree)
+    return {};
+  return HeaderParser(source, path).run(tree);
+}
+
+ParseResult parseHeader(std::string_view source,
+                        const std::filesystem::path& path)
+{
   if (path.filename().string().ends_with(".ui.h"))
     return {};
-  return HeaderParser(source, path).run();
+  const std::unique_ptr<TSParser, decltype(&ts_parser_delete)> parser(
+      ts_parser_new(), &ts_parser_delete);
+  ts_parser_set_language(parser.get(), tree_sitter_cpp());
+  const std::unique_ptr<TSTree, decltype(&ts_tree_delete)> tree(
+      ts_parser_parse_string(parser.get(),
+                             nullptr,
+                             source.data(),
+                             static_cast<uint32_t>(source.size())),
+      &ts_tree_delete);
+  return parseHeader(source, path, tree.get());
 }
 
 UiParseResult parseUiHeader(std::string_view source,
@@ -755,12 +1091,13 @@ std::vector<Diagnostic> checkNames(const std::vector<TypeModel>& types)
     const auto [it, added] = first.emplace(type.name, &type);
     if (added)
       continue;
-    diagnostics.push_back({Diagnostic::Severity::Error,
+    const unsigned row = type.line > 0 ? type.line - 1 : 0;
+    diagnostics.push_back({RuleId::DuplicateType,
                            type.header,
-                           type.line,
-                           "more than one type named '" + type.name +
-                               "': also declared in " +
-                               it->second->header.string()});
+                           {row, 0, row, 0},
+                           "More than one type is named " + type.name +
+                               ", here and in " + it->second->header.string() +
+                               ". Give each type a name of its own."});
   }
   return diagnostics;
 }

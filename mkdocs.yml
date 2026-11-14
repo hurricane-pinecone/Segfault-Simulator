@@ -79,6 +79,7 @@ nav:
   - Editor:
       - editor/index.md
       - Game scripts: editor/scripting/index.md
+      - "Code checks: sfs-lsp": editor/sfs-lsp/index.md
       - Material graphs:
           - editor/material-graphs/index.md
           - Recipes: editor/material-graphs/recipes/index.md

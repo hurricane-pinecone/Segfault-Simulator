@@ -120,10 +120,10 @@ reads the renderer's `bounds` (Unity's `Renderer.localBounds`, Godot's
 fills in at the start of its update once the mesh is in its library.
 
 ```cpp
-const auto& renderer = entity.getComponent<sfs::MeshRendererComponent>();
-if (renderer.bounds.empty())
-  return; // still loading: try again next frame
-const sfs::Aabb world = renderer.bounds.transformed(sfs::hierarchy::worldMatrix(entity));
+const auto* renderer = entity.getComponent<sfs::MeshRendererComponent>();
+if (!renderer || renderer->bounds.empty())
+  return; // none, or still loading: try again next frame
+const sfs::Aabb world = renderer->bounds.transformed(sfs::hierarchy::worldMatrix(entity));
 ```
 
 They are empty until the mesh has loaded, and for a handle the library doesn't

@@ -281,7 +281,9 @@ in any CMake-aware IDE to work on scripts outside the editor.
 
 The editor builds the module in `.sfs/build/<platform>/`, which `.gitignore`
 excludes. Each build links its compile database at `.sfs/compile_commands.json`,
-where the project's `.clangd` points clangd. It uses the toolchain and engine it was built with, so the module
+where the project's `.clangd` points clangd (it also silences clang's warnings
+about the engine's `[[sfs::...]]` attributes, which
+[sfs-lsp](../sfs-lsp/index.md) checks instead). It uses the toolchain and engine it was built with, so the module
 always matches the engine it runs in. A Windows editor cross-built from WSL runs
 these builds back in WSL.
 

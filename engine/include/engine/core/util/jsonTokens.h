@@ -46,6 +46,25 @@ struct JsonToken
  */
 std::optional<std::vector<JsonToken>> scanJsonTokens(std::string_view text);
 
+/** Where one value of a JSON text is: [begin, end), brackets included. */
+struct JsonSpan
+{
+  std::size_t begin = 0;
+  std::size_t end = 0;
+};
+
+/**
+ * Where the value at a JSON pointer is in a JSON text (an object or array as
+ * well as a scalar), so a tool can replace or insert into just that.
+ *
+ * @param text    the JSON text (UTF-8)
+ * @param pointer the value's RFC 6901 JSON pointer ("" the whole document)
+ * @return its span, or nothing if the text isn't valid JSON or has no value
+ *         there
+ */
+std::optional<JsonSpan> findJsonValue(std::string_view text,
+                                      std::string_view pointer);
+
 /**
  * One JSON pointer segment, escaped as RFC 6901 asks ("~" as "~0", "/" as
  * "~1"), to be appended to a pointer after a "/".

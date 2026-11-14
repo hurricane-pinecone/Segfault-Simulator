@@ -54,6 +54,10 @@ namespace sfs
 RenderSystem::RenderSystem(IRenderer& renderer)
     : m_renderer(renderer), m_meshes(renderer)
 {
+}
+
+void RenderSystem::create()
+{
   // What's on screen moves on in real time, however fast the game's going
   // (its particles keep the game's time with their own time scale).
   setTimeStep(TimeStep::Real);
@@ -192,9 +196,8 @@ BloomSettings RenderSystem::effectiveBloom() const
 {
   if (m_style && m_style->bloom)
     return *m_style->bloom;
-  const Entity camera = sceneCamera();
-  return camera.isValid() ? bloomOf(camera.getComponent<CameraComponent>())
-                          : m_bloom;
+  const CameraComponent* camera = sceneCamera().getComponent<CameraComponent>();
+  return camera ? bloomOf(*camera) : m_bloom;
 }
 
 HazeSettings RenderSystem::effectiveHaze() const
@@ -301,26 +304,28 @@ void RenderSystem::render()
   {
     // A 2D game's camera: over its point of the plane, looking straight at
     // it (up the screen: the plane's up), shaken across it.
-    if (const Entity camera = sceneCamera(); camera.isValid())
+    if (const Entity camera = sceneCamera();
+        const auto* lens = camera.getComponent<CameraComponent>())
     {
-      const auto& lens = camera.getComponent<CameraComponent>();
-      glm::vec2 point = hierarchy::worldTransform(camera).position2D();
-      if (camera.hasComponent<CameraFollowComponent>())
-        point += camera.getComponent<CameraFollowComponent>().shakeOffset *
-                 glm::vec2(1.0f, m_space2D->ySign());
+      glm::vec2 point = hierarchy::cachedWorldTransform(camera).position2D();
+      if (CameraFollowComponent* cameraFollow =
+              camera.getComponent<CameraFollowComponent>())
+        point +=
+            cameraFollow->shakeOffset * glm::vec2(1.0f, m_space2D->ySign());
       const glm::vec3 centre = m_space2D->place(point);
-      const float back = std::max(lens.farPlane * 0.5f, 1.0f);
+      const float back = std::max(lens->farPlane * 0.5f, 1.0f);
       m_camera.setPose(glm::vec3(centre.x, centre.y, back),
                        glm::vec3(0.0f, 0.0f, -1.0f),
                        back,
                        glm::vec3(0.0f, 1.0f, 0.0f));
-      m_camera.projection = lens.orthographic ? Camera::Projection::Orthographic
-                                              : Camera::Projection::Perspective;
-      const float magnify = std::max(lens.zoom, 0.01f);
-      m_camera.orthoHeight = lens.orthoHeight / magnify;
-      m_camera.fieldOfView = glm::radians(lens.fieldOfView);
-      m_camera.nearPlane = lens.nearPlane;
-      m_camera.farPlane = lens.farPlane;
+      m_camera.projection = lens->orthographic
+                                ? Camera::Projection::Orthographic
+                                : Camera::Projection::Perspective;
+      const float magnify = std::max(lens->zoom, 0.01f);
+      m_camera.orthoHeight = lens->orthoHeight / magnify;
+      m_camera.fieldOfView = glm::radians(lens->fieldOfView);
+      m_camera.nearPlane = lens->nearPlane;
+      m_camera.farPlane = lens->farPlane;
     }
     else
     {
@@ -337,18 +342,17 @@ void RenderSystem::render()
     }
   }
   else if (m_followSceneCamera)
-    if (const Entity camera = sceneCamera(); camera.isValid())
+    if (const Entity camera = sceneCamera();
+        const CameraComponent* lens = camera.getComponent<CameraComponent>())
     {
-      viewThrough(camera.getComponent<CameraComponent>(),
-                  hierarchy::worldMatrix(camera),
-                  m_camera);
+      viewThrough(*lens, hierarchy::cachedWorldMatrix(camera), m_camera);
 
       // A follow's shake moves the view across itself (as it moves a flat
       // or isometric camera across the ground).
-      if (camera.hasComponent<CameraFollowComponent>())
+      if (CameraFollowComponent* cameraFollow =
+              camera.getComponent<CameraFollowComponent>())
       {
-        const glm::vec2 shake =
-            camera.getComponent<CameraFollowComponent>().shakeOffset;
+        const glm::vec2 shake = cameraFollow->shakeOffset;
         const glm::vec3 right = m_camera.groundRight();
         const glm::vec3 up = glm::cross(right, m_camera.viewDirection());
         m_camera.target += right * shake.x + up * shake.y;
@@ -436,8 +440,8 @@ void RenderSystem::render()
   }
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
-  if (camera.isValid())
-    frame.depthOfField = depthOfFieldOf(camera.getComponent<CameraComponent>());
+  if (const CameraComponent* lens = camera.getComponent<CameraComponent>())
+    frame.depthOfField = depthOfFieldOf(*lens);
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = effectiveShadows();
@@ -493,21 +497,20 @@ std::shared_ptr<RenderTexture> pictureFor(const CameraFeedComponent& feed)
 
 std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
 {
-  if (!entity.isValid() || !entity.hasComponent<CameraFeedComponent>())
+  CameraFeedComponent* lens = entity.getComponent<CameraFeedComponent>();
+  if (!lens)
     return nullptr;
-  auto& lens = entity.getComponent<CameraFeedComponent>();
-  if (!lens.picture)
-    lens.picture = pictureFor(lens);
-  return lens.picture;
+  if (!lens->picture)
+    lens->picture = pictureFor(*lens);
+  return lens->picture;
 }
 
 void RenderSystem::makeFeedPictures()
 {
   if (!registry)
     return;
-  for (const Entity& entity : registry->query<CameraFeedComponent>())
+  for (CameraFeedComponent& feed : registry->query<CameraFeedComponent>())
   {
-    auto& feed = entity.getComponent<CameraFeedComponent>();
     if (!feed.picture)
       feed.picture = pictureFor(feed);
   }
@@ -517,9 +520,9 @@ void RenderSystem::refreshMeshBounds()
 {
   if (!registry)
     return;
-  for (const Entity& entity : registry->query<MeshRendererComponent>())
+  for (MeshRendererComponent& renderer :
+       registry->query<MeshRendererComponent>())
   {
-    auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.mesh == renderer.boundsOf)
       continue;
     if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
@@ -553,10 +556,9 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   Entity chosen;
   CameraFeedComponent* chosenFeed = nullptr;
   double mostLate = -1.0;
-  for (const Entity& entity :
+  for (auto [entity, transform, feed] :
        registry->query<TransformComponent, CameraFeedComponent>())
   {
-    auto& feed = entity.getComponent<CameraFeedComponent>();
     if (!feed.picture)
       continue;
     const auto& lens = feed;
@@ -578,20 +580,21 @@ std::optional<FeedView> RenderSystem::chooseFeed()
     return std::nullopt;
   // (Not let fall behind further than a frame: a feed shown again after a
   // while starts its beat afresh.)
-  const auto& lens = chosen.getComponent<CameraFeedComponent>();
-  const double period = 1.0 / std::max(double(lens.rate), 0.1);
+  const CameraFeedComponent* lens = chosenFeed;
+  const double period = 1.0 / std::max(double(lens->rate), 0.1);
   chosenFeed->filmed = mostLate > period ? now : now - mostLate;
   m_feedFilming = chosenFeed->picture.get();
 
   // Its view: along the entity's +X, +Z up, as a camera entity's.
-  const glm::mat4 world = hierarchy::worldMatrix(chosen);
+  const glm::mat4 world = hierarchy::cachedWorldMatrix(chosen);
   Camera camera;
   camera.setPose(
       glm::vec3(world[3]), glm::vec3(world[0]), 10.0f, glm::vec3(world[2]));
   camera.projection = Camera::Projection::Perspective;
-  camera.fieldOfView = glm::radians(std::clamp(lens.fieldOfView, 1.0f, 170.0f));
-  camera.nearPlane = std::max(lens.nearPlane, 0.001f);
-  camera.farPlane = std::max(lens.farPlane, camera.nearPlane * 2.0f);
+  camera.fieldOfView =
+      glm::radians(std::clamp(lens->fieldOfView, 1.0f, 170.0f));
+  camera.nearPlane = std::max(lens->nearPlane, 0.001f);
+  camera.farPlane = std::max(lens->farPlane, camera.nearPlane * 2.0f);
   const glm::ivec2 size = m_feedFilming->size();
   const float aspect = static_cast<float>(size.x) / static_cast<float>(size.y);
 
@@ -604,8 +607,8 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   view.nearPlane = camera.nearPlane;
   view.farPlane = camera.farPlane;
   view.size = size;
-  view.grassBlades = lens.grassBlades;
-  view.grassReach = std::max(lens.grassReach, 1.0f);
+  view.grassBlades = lens->grassBlades;
+  view.grassReach = std::max(lens->grassReach, 1.0f);
   m_context.feedOn = true;
   m_context.feedFrustum = Frustum::fromViewProjection(view.viewProjection);
   return view;
@@ -1070,10 +1073,9 @@ void RenderSystem::gatherEmissionLights()
     return point;
   };
 
-  for (const Entity& entity :
+  for (auto [entity, transform, renderer] :
        registry->query<TransformComponent, MeshRendererComponent>())
   {
-    const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
         renderer.lightStrength <= 0.0f || renderer.lightRange <= 0.0f)
       continue;
@@ -1136,7 +1138,7 @@ void RenderSystem::gatherEmissionLights()
       if (!placed)
       {
         placed = true;
-        model = hierarchy::worldMatrix(entity);
+        model = hierarchy::cachedWorldMatrix(entity);
         normals = glm::transpose(glm::inverse(glm::mat3(model)));
         areaScale = std::abs(glm::determinant(glm::mat3(model)));
       }
@@ -1172,10 +1174,9 @@ void RenderSystem::gatherPointLights()
   if (!registry)
     return;
 
-  for (const Entity& entity :
+  for (auto [entity, local, light] :
        registry->query<TransformComponent, PointLightComponent>())
   {
-    const auto& light = entity.getComponent<PointLightComponent>();
     if (light.intensity <= 0.0f || light.radius <= 0.0f)
       continue;
 
@@ -1186,7 +1187,8 @@ void RenderSystem::gatherPointLights()
     if (m_space2D)
     {
       radius *= m_space2D->scale();
-      const TransformComponent transform = hierarchy::worldTransform(entity);
+      const TransformComponent transform =
+          hierarchy::cachedWorldTransform(entity);
       const glm::vec2 offset(light.offset.x, light.offset.y);
       if (m_space2D->projection == Space2D::Projection::Isometric)
         position = m_space2D->place(transform.position2D() + offset,
@@ -1201,7 +1203,7 @@ void RenderSystem::gatherPointLights()
     glm::vec3 spotDirection(0.0f);
     if (!m_space2D)
     {
-      const glm::mat4 world = hierarchy::worldMatrix(entity);
+      const glm::mat4 world = hierarchy::cachedWorldMatrix(entity);
       position = glm::vec3(world * glm::vec4(light.offset, 1.0f));
       if (light.spot)
         spotDirection = glm::vec3(world[0]);

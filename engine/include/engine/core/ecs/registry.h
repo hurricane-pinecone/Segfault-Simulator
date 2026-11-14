@@ -29,6 +29,7 @@
 #include <memory>
 #include <set>
 #include <string_view>
+#include <type_traits>
 #include <typeinfo>
 #include <unordered_map>
 #include <vector>
@@ -53,9 +54,132 @@ public:
   ~Registry();
 
   Entity createEntity();
-  Entity getEntity(Entity::EntityId id);
+
+  /**
+   * A handle to the living entity with this id.
+   * @return it, or an invalid entity if no living entity has the id
+   */
+  Entity getEntity(Entity::EntityId id)
+  {
+    if (id >= m_generations.size() || !alive(id))
+      return {};
+    Entity entity{id, m_generations[id], entityDebugIds[id]};
+    entity.setRegistry(this);
+    return entity;
+  }
+
   void destroyEntity(const Entity& entity);
-  bool isAlive(const Entity& entity) const;
+
+  /**
+   * Whether the handle is to a living entity of this registry: its id is in
+   * use (not destroyed and flushed) by the same generation. One load and one
+   * compare: a free id's generation carries kDead, which no handle has.
+   * @param entity the handle, of this registry
+   * @return whether it refers to a living entity
+   */
+  bool isValid(const Entity& entity) const
+  {
+    const Entity::EntityId id = entity.getId();
+    return id < m_generations.size() &&
+           m_generations[id] == entity.getGeneration();
+  }
+
+  /**
+   * The TComponent of a living entity, by id, in one lookup and with no
+   * liveness check: for engine walks over ids that are known to be alive
+   * (the links, the preorder index, a query list). Where that isn't known,
+   * use the checked getComponent() and hasComponent(). It agrees with
+   * hasComponent(), in hooks run while the component is removed too. Debug
+   * builds check the id is alive, log an error and give null when it isn't.
+   * @param id a living entity's id
+   * @return its component, or null if it has none
+   */
+  template <typename TComponent>
+  TComponent* find(Entity::EntityId id)
+  {
+    return finder<TComponent>()(id);
+  }
+
+  /**
+   * find<TComponent>() for many ids in a row, as a pass over a list does:
+   * the component type's storage is looked up once, when it's made. Make it
+   * where the loop starts and keep it no longer: it misses a component type
+   * first used after it was made. A Finder of a const TComponent reads
+   * TComponent's storage and gives const.
+   */
+  template <typename TComponent>
+  class Finder
+  {
+  public:
+    /** One that finds nothing, for an empty list's loop. */
+    Finder() = default;
+    /**
+     * A Finder over `pool`, the registry's storage of TComponent (null when
+     * there is none yet).
+     */
+    Finder(const Registry& registry, Pool<std::remove_cv_t<TComponent>>* pool)
+        : m_registry(&registry), m_pool(pool),
+          m_componentId(
+              static_cast<std::size_t>(Component<TComponent>::getId()))
+    {
+    }
+
+    /**
+     * The TComponent of the living entity `id`, as find() gives it.
+     * @param id a living entity's id
+     * @return its component, or null if it has none
+     */
+    TComponent* operator()(Entity::EntityId id) const
+    {
+#ifndef NDEBUG
+      if (id >= m_registry->m_generations.size() || !m_registry->alive(id))
+      {
+        m_registry->findOnDead(id, detail::componentTypeKey<TComponent>());
+        return nullptr;
+      }
+#endif
+      // Bounded, so even a wrong id gives null rather than a stray read.
+      const std::vector<Signature>& signatures =
+          m_registry->entityComponentSignatures;
+      if (!m_pool || id >= signatures.size() ||
+          !signatures[id].test(m_componentId))
+        return nullptr;
+      return &m_pool->get(id);
+    }
+
+    /**
+     * The TComponent of the living entity `id`, which is known to have one
+     * (a query row's required term): its slot, with no test.
+     * @param id a living entity's id that holds a TComponent
+     * @return its component
+     */
+    TComponent& held(Entity::EntityId id) const { return m_pool->get(id); }
+
+  private:
+    const Registry* m_registry = nullptr;
+    Pool<std::remove_cv_t<TComponent>>* m_pool = nullptr;
+    std::size_t m_componentId = 0;
+  };
+
+  /** A Finder for TComponent (see find()), for a loop over living ids. */
+  template <typename TComponent>
+  Finder<TComponent> finder()
+  {
+    return Finder<TComponent>(*this, poolOf<TComponent>());
+  }
+
+  /**
+   * Whether the living entity `id` matches a query's terms, as its list
+   * would (the typed hierarchy walks and Entity::matches() test with it).
+   * @param id a living entity's id
+   * @param signature the terms' canonical signature
+   * @return whether its components match
+   */
+  bool matches(Entity::EntityId id, const QuerySignature& signature) const
+  {
+    return id < entityComponentSignatures.size() &&
+           signature.matches(entityComponentSignatures[id]);
+  }
 
   /** Every living entity, in id order. */
   std::vector<Entity> entities();
@@ -80,17 +204,38 @@ public:
    */
   const std::vector<HierarchyLinks::Placed>& preorder();
 
+  /**
+   * Gives the entity a TComponent made from `args`, replacing one it has. On
+   * a handle that isn't valid it logs an error and adds nothing.
+   */
   template <typename TComponent, typename... TArgs>
-  void addComponent(const Entity& entity, TArgs&&... args);
+  void addComponent(const Entity& entity, TArgs&&... args)
+  {
+    add<TComponent>("addComponent", entity, std::forward<TArgs>(args)...);
+  }
 
+  /** Takes the entity's TComponent away; nothing if it has none. */
   template <typename TComponent>
   void removeComponent(const Entity& entity);
 
+  /** Whether the handle is valid and its entity has a TComponent. */
   template <typename TComponent>
   bool hasComponent(const Entity& entity) const;
 
+  /**
+   * The entity's TComponent, in one inline lookup: the handle's check, then
+   * the component's slot. In any hook or callback run while a TComponent is
+   * being removed (removal hooks, and the joining hooks of lists excluding
+   * it) it still gives the component (it's destroyed after them), though
+   * hasComponent() and find() say it's gone.
+   * @return the component, or null when it has none or the handle isn't
+   *         valid
+   */
   template <typename TComponent>
-  TComponent& getComponent(const Entity& entity);
+  TComponent* getComponent(const Entity& entity)
+  {
+    return isValid(entity) ? stored<TComponent>(entity.getId()) : nullptr;
+  }
 
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);
@@ -197,23 +342,28 @@ public:
    * component the entity must have, one Any<...> group it must have at least
    * one of, or an Excluding<...> group it must have none of (it wins over
    * the others), e.g. query<TransformComponent, Any<A, B>, Excluding<C>>().
+   * A Query<...> list of terms stands for those terms written out, so a long
+   * list can be named once: `using Served = Query<A, B, Excluding<C>>;` then
+   * query<Served>().
    * The registry makes the list the first time it's asked for (one scan) and
    * keeps it up to date from then on as components are added and removed,
    * so asking again, every frame or anywhere else, costs nothing, and
    * everyone asking for the same terms shares it (in any order, and terms
    * that always list the same entities count as the same: Any<A> is A). The
-   * reference stays valid as long as the registry. To add or remove these
-   * component types while going through it, go through a copy.
-   * @return the shared list, read-only
+   * list stays valid as long as the registry. Its rows unpack the terms'
+   * components (queryView.h): `for (auto [e, a, b] : query<A, B>())`. To add
+   * or remove these component types while going through it, go through a
+   * copy.
+   * @return a view of the shared list, read-only
    */
   template <typename... TTerms>
-  const std::vector<Entity>& query();
+  QueryView<TTerms...> query();
 
 private:
   // A query list an entity just joined (or left), for the hooks.
   struct QueryChange
   {
-    const std::vector<Entity>* list = nullptr;
+    const detail::QueryList* list = nullptr;
     bool joined = false;
   };
   // The index of the list for a canonical signature, made and filled the
@@ -257,14 +407,35 @@ private:
   Entity::EntityId findHolder(std::size_t componentId) const;
   void warnNotSingle(std::size_t componentId, std::string_view type);
 
-  // A component accessor used on an entity it can't be: fatal (see
-  // fatalError()), naming what was asked for and why.
-  [[noreturn]] void badComponentAccess(const Entity& entity,
-                                       const char* action,
-                                       std::string_view type) const;
+  // addComponent() under the name of the call that asked (addComponent,
+  // addTag): a handle that isn't valid is refused and logged.
+  template <typename TComponent, typename... TArgs>
+  void add(const char* action, const Entity& entity, TArgs&&... args);
+  // An add to a handle that isn't valid: logged, naming the action, the
+  // component type (its key) and why.
+  static void
+  refuseAdd(const Entity& entity, const char* action, std::string_view type);
+  // find() given an id that isn't alive (checked in debug builds only):
+  // logged.
+  void findOnDead(Entity::EntityId id, std::string_view type) const;
+  // A loop's list changed under it (QueryIterator's debug check): logged as an
+  // error naming the query (its terms' type key) and the systems following
+  // the list.
+  void listChangedInLoop(const detail::QueryList& list,
+                         std::string_view terms) const;
 
+  // TComponent's storage, or null before one is added; a const
+  // TComponent's is TComponent's.
   template <typename TComponent>
-  Pool<TComponent>* poolOf();
+  Pool<std::remove_cv_t<TComponent>>* poolOf();
+  // The TComponent stored for `id` in its own pool: its slot, or null. No
+  // alive check.
+  template <typename TComponent>
+  TComponent* stored(Entity::EntityId id)
+  {
+    Pool<std::remove_cv_t<TComponent>>* pool = poolOf<TComponent>();
+    return pool ? pool->find(id) : nullptr;
+  }
 
   // Puts `child` under `parent` (HierarchyLinks::kNone: makes it a root), in
   // id order among its new siblings. Both are living ids, and the caller has
@@ -277,8 +448,11 @@ private:
   void unlinkRemoved(Entity::EntityId id);
 
 private:
+  friend class Entity;
   friend class Scene;
   friend class System;
+  template <typename... TTerms>
+  friend class QueryIterator;
   friend bool hierarchy::setParent(Entity child, const Entity& parent);
 
   // Scene adds each step's game time before that step's systems run.
@@ -292,8 +466,15 @@ private:
   // they were freed in.
   std::set<uint32_t> freeEntityIds;
   std::vector<uint64_t> entityDebugIds;
-  std::vector<uint32_t> generations;
-  std::vector<bool> entityAlive;
+  // Set on a free id's generation (bit 31), which no handle carries, so one
+  // compare tells a living handle. The flush that removes an entity sets
+  // (generation + 1) | kDead, and createEntity() clears it as it reuses the
+  // id: generations wrap at 2^31.
+  static constexpr uint32_t kDead = 1u << 31;
+  // By id: its generation, kDead set while the id is free.
+  std::vector<uint32_t> m_generations;
+  // Whether the id (in range) is in use by a living entity.
+  bool alive(Entity::EntityId id) const { return !(m_generations[id] & kDead); }
   // The hierarchy, its nodes sized with the arrays above.
   HierarchyLinks m_links;
   // Goes up when an entity is created or removed: with the links' version,
@@ -348,12 +529,11 @@ private:
   }();
   std::array<bool, MAX_COMPONENTS> m_warnedNotSingle{};
   // query()'s lists, by index: each one's canonical signature (dense, for a
-  // flush to test them all), its entities in id order (a deque, so a list's
-  // references stay valid as more are made) and whether a system has
-  // followed it (never cleared: a change to lists no system follows tells
-  // no system).
+  // flush to test them all), its list (a deque, so a list's references stay
+  // valid as more are made) and whether a system has followed it (never
+  // cleared: a change to lists no system follows tells no system).
   std::vector<QuerySignature> m_querySignatures;
-  std::deque<std::vector<Entity>> m_queryLists;
+  std::deque<detail::QueryList> m_queryLists;
   std::vector<uint8_t> m_queryFollowed;
   // The index of each signature's list.
   std::unordered_map<QuerySignature, uint32_t> m_queryIndex;
@@ -361,8 +541,12 @@ private:
   // excluding), by index. Only those can change as an entity gains or loses
   // one.
   std::array<std::vector<uint32_t>, MAX_COMPONENTS> m_queriesNaming;
-  // syncQueries()'s scratch, reused between calls.
-  std::vector<QueryChange> m_queryChanges;
+  // syncQueries()'s scratch, one per nesting depth (a hook's component
+  // change syncs inside a sync), reused between calls. A deque, so a deeper
+  // one added doesn't move those in use.
+  std::deque<std::vector<QueryChange>> m_queryChanges;
+  // How many syncQueries() calls are under way.
+  uint32_t m_syncDepth = 0;
 
   double m_timeScale = 1.0;
   double m_maxTimeStep = 0.0;
@@ -374,4 +558,5 @@ private:
 } // namespace sfs
 
 #include "entity.inl"   // IWYU pragma: keep
+#include "queryView.h"  // IWYU pragma: keep
 #include "registry.inl" // IWYU pragma: keep

@@ -77,17 +77,18 @@ constexpr float kMaxTravel = 1.0f;
 constexpr float kMinTravel = 0.01f;
 constexpr int kMostSubsteps = 16;
 
-// The nearest ContactReportComponent at or above a body's entity, or an
-// invalid entity when there is none.
-Entity reportOf(Entity entity)
+// The nearest ContactReportComponent at or above a body's entity; null when
+// there is none.
+ContactReportComponent* reportOf(Entity entity)
 {
-  while (entity.isValid() && entity.isAlive())
+  while (entity.isValid())
   {
-    if (entity.hasComponent<ContactReportComponent>())
-      return entity;
+    if (ContactReportComponent* report =
+            entity.getComponent<ContactReportComponent>())
+      return report;
     entity = hierarchy::parentOf(entity);
   }
-  return {};
+  return nullptr;
 }
 
 // Hands each contact to the reports of both sides, `a` being the report's own
@@ -97,15 +98,15 @@ void reportContacts(const std::vector<Contact3D>& contacts,
 {
   for (const Contact3D& contact : contacts)
   {
-    const Entity first = reportOf(contact.a);
-    const Entity second = reportOf(contact.b);
+    ContactReportComponent* first = reportOf(contact.a);
+    ContactReportComponent* second = reportOf(contact.b);
     if (first)
-      (first.getComponent<ContactReportComponent>().*list).push_back(contact);
+      (first->*list).push_back(contact);
     if (second && second != first)
     {
       Contact3D swapped = contact;
       std::swap(swapped.a, swapped.b);
-      (second.getComponent<ContactReportComponent>().*list).push_back(swapped);
+      (second->*list).push_back(swapped);
     }
   }
 }
@@ -229,14 +230,10 @@ struct Parts
   static Parts of(const Entity& entity)
   {
     Parts parts;
-    if (entity.hasComponent<BoxCollider3DComponent>())
-      parts.box = &entity.getComponent<BoxCollider3DComponent>();
-    if (entity.hasComponent<SphereCollider3DComponent>())
-      parts.sphere = &entity.getComponent<SphereCollider3DComponent>();
-    if (entity.hasComponent<CapsuleCollider3DComponent>())
-      parts.capsule = &entity.getComponent<CapsuleCollider3DComponent>();
-    if (entity.hasComponent<RigidBody3DComponent>())
-      parts.rigid = &entity.getComponent<RigidBody3DComponent>();
+    parts.box = entity.getComponent<BoxCollider3DComponent>();
+    parts.sphere = entity.getComponent<SphereCollider3DComponent>();
+    parts.capsule = entity.getComponent<CapsuleCollider3DComponent>();
+    parts.rigid = entity.getComponent<RigidBody3DComponent>();
     return parts;
   }
 
@@ -387,9 +384,9 @@ struct Chain
     for (int depth = 0; at.isValid() && depth < 64; ++depth)
     {
       Link link;
-      if (at.hasComponent<TransformComponent>())
+      if (TransformComponent* transform = at.getComponent<TransformComponent>())
       {
-        link.transform = &at.getComponent<TransformComponent>();
+        link.transform = transform;
         link.value = *link.transform;
       }
       link.at = at;
@@ -1025,7 +1022,7 @@ struct PhysicsSystem3D::Impl
     const Entity entity = record.entity;
     if (!settled)
     {
-      if (!entity.isAlive() || !entity.hasComponent<TransformComponent>())
+      if (!entity.isValid() || !entity.hasComponent<TransformComponent>())
       {
         removeAt(slot);
         return;
@@ -1390,11 +1387,10 @@ void PhysicsSystem3D::update(double deltaTime)
   m->stats.steps = 0;
   if (!registry)
     return;
-  const std::vector<Entity>& reports =
+  const QueryView<ContactReportComponent> reports =
       registry->query<ContactReportComponent>();
-  for (const Entity& entity : reports)
+  for (ContactReportComponent& report : reports)
   {
-    auto& report = entity.getComponent<ContactReportComponent>();
     report.begun.clear();
     report.ended.clear();
     report.deepened.clear();

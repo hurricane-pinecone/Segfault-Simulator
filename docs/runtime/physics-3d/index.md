@@ -161,9 +161,10 @@ reports its own part of the tree. On a machine's root it hears every part of
 the machine touch something:
 
 ```cpp
-for (const sfs::Entity& machine : getEntities()) // Machine + ContactReport
+// The system registered Machine and ContactReportComponent.
+for (const sfs::ContactReportComponent& report :
+     getEntities<sfs::ContactReportComponent>())
 {
-  const auto& report = machine.getComponent<sfs::ContactReportComponent>();
   for (const sfs::Contact3D& c : report.begun)
     LOG_INFO("%s touched %s", name(c.a).c_str(), name(c.b).c_str());
 }

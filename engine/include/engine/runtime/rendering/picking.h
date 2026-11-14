@@ -54,7 +54,8 @@ struct PickHit
  * only rule it out), so a camera inside a landscape's bounds still picks what
  * stands on it; anything else where the ray enters its bounds
  * (entityBounds()). When several are hit at the same distance, the smallest
- * wins, so an object standing on a large floor is picked over the floor.
+ * wins, so an object standing on a large floor is picked over the floor. It
+ * sees every living entity, those not yet flushed into queries included.
  */
 std::optional<PickHit> pickEntity(Scene& scene,
                                   const MeshLibrary& meshes,
@@ -106,7 +107,8 @@ struct SurfaceHit
 /**
  * The mesh surface under a ray: the nearest triangle of any entity's mesh,
  * exact where pickEntity uses bounds. For dropping things onto objects, e.g. a
- * material onto the part of a model under the cursor.
+ * material onto the part of a model under the cursor. Like pickEntity(), it
+ * sees entities not yet flushed into queries.
  */
 std::optional<SurfaceHit>
 pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray);

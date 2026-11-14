@@ -132,7 +132,7 @@ struct NavigationSystem::Params
   glm::vec3 axle{0.0f};
 };
 
-NavigationSystem::NavigationSystem()
+void NavigationSystem::create()
 {
   registerComponent<NavAgentComponent>();
   registerComponent<TransformComponent>();
@@ -146,8 +146,9 @@ NavigationSystem::NavigationSystem()
         const std::optional<Tracked> t =
             registry ? trackedById(static_cast<Entity::EntityId>(id))
                      : std::nullopt;
-        if (t && registry->hasComponent<NameComponent>(t->entity))
-          return registry->getComponent<NameComponent>(t->entity).name;
+        if (const NameComponent* name =
+                t ? registry->getComponent<NameComponent>(t->entity) : nullptr)
+          return name->name;
         return "agent " + std::to_string(id);
       });
 }
@@ -203,10 +204,7 @@ nav::AgentPlan NavigationSystem::planNow(const Entity& agent,
 
 NavAgentComponent* NavigationSystem::agentOf(const Entity& agent)
 {
-  return registry && registry->isAlive(agent) &&
-                 registry->hasComponent<NavAgentComponent>(agent)
-             ? &registry->getComponent<NavAgentComponent>(agent)
-             : nullptr;
+  return registry ? registry->getComponent<NavAgentComponent>(agent) : nullptr;
 }
 
 void NavigationSystem::onEntityRemoved(const Entity& entity)
@@ -223,11 +221,11 @@ void NavigationSystem::onEntityRemoved(const Entity& entity)
 std::optional<NavigationSystem::Tracked>
 NavigationSystem::trackedOf(const Entity& agent) const
 {
-  if (!registry || !registry->isAlive(agent) ||
-      !registry->hasComponent<NavAgentComponent>(agent))
+  NavAgentComponent* c =
+      registry ? registry->getComponent<NavAgentComponent>(agent) : nullptr;
+  if (!c)
     return std::nullopt;
-  NavAgentComponent& c = registry->getComponent<NavAgentComponent>(agent);
-  Tracked t{agent, c.givenAxle, c.givenHitch, c.givenLayers, c.complaint};
+  Tracked t{agent, c->givenAxle, c->givenHitch, c->givenLayers, c->complaint};
   const auto id = static_cast<nav::Fleet::AgentId>(agent.getId());
   t.inFleet = m_fleet->has(id);
   if (const nav::AgentSpec* spec = t.inFleet ? m_fleet->spec(id) : nullptr)
@@ -396,7 +394,7 @@ bool NavigationSystem::partOfAgent(const Entity& e) const
       continue;
     if (e == t->entity || hierarchy::isAncestor(t->entity, e))
       return true;
-    if (t->hitch && registry->isAlive(t->hitch->towed) &&
+    if (t->hitch && registry->isValid(t->hitch->towed) &&
         (e == t->hitch->towed || hierarchy::isAncestor(t->hitch->towed, e)))
       return true;
   }
@@ -406,13 +404,13 @@ bool NavigationSystem::partOfAgent(const Entity& e) const
 std::optional<NavigationSystem::Params> NavigationSystem::paramsOf(Tracked& t)
 {
   const Entity& agent = t.entity;
-  if (!registry->hasComponent<NavAgentComponent>(agent))
+  const NavAgentComponent* c = registry->getComponent<NavAgentComponent>(agent);
+  if (!c)
   {
     LOG_ERROR("NavigationSystem: agent " + std::to_string(agent.getId()) +
               " has no NavAgentComponent for its parameters: left out");
     return std::nullopt;
   }
-  const NavAgentComponent& c = registry->getComponent<NavAgentComponent>(agent);
   const auto complain = [&](const std::string& why) -> std::optional<Params>
   {
     std::string& said = t.complaint;
@@ -423,29 +421,29 @@ std::optional<NavigationSystem::Params> NavigationSystem::paramsOf(Tracked& t)
     return std::nullopt;
   };
   Params p;
-  p.spec.kind = c.kind;
-  p.spec.search = c.search;
-  if (c.kind == "vehicle")
+  p.spec.kind = c->kind;
+  p.spec.search = c->search;
+  if (c->kind == "vehicle")
   {
     // A vehicle moves as its VehicleSpec says, with what it tows and
     // carries and the grip under it.
-    if (!registry->hasComponent<VehicleComponent>(agent))
+    const VehicleComponent* v = registry->getComponent<VehicleComponent>(agent);
+    if (!v)
       return complain("is a vehicle with no VehicleComponent");
-    const VehicleComponent& v = registry->getComponent<VehicleComponent>(agent);
-    const VehicleSpec* spec = v.spec.get();
+    const VehicleSpec* spec = v->spec.get();
     if (!spec)
-      return complain(v.spec.empty() ? "has a VehicleComponent with no spec"
-                                     : "has a VehicleComponent whose spec " +
-                                           v.spec.asset + " can't be read");
+      return complain(v->spec.empty() ? "has a VehicleComponent with no spec"
+                                      : "has a VehicleComponent whose spec " +
+                                            v->spec.asset + " can't be read");
     nav::vehicle::Rig rig = m_rig ? m_rig(agent) : nav::vehicle::Rig{};
-    rig.effort = c.effort;
+    rig.effort = c->effort;
     nav::vehicle::applySpec(p.spec, *spec, rig);
     // (Its reference point: the spec's, else the axle measured (the rig's).)
     p.axle = spec->axle != glm::vec3(0.0f) ? spec->axle
                                            : glm::vec3(rig.axle, 0.0f, 0.0f);
   }
-  else if (!nav::AgentKinds::find(c.kind))
-    return complain("has an unknown kind '" + c.kind + "'");
+  else if (!nav::AgentKinds::find(c->kind))
+    return complain("has an unknown kind '" + c->kind + "'");
   t.complaint.clear();
   return p;
 }
@@ -485,7 +483,7 @@ nav::AgentSpec NavigationSystem::specOf(const Tracked& t) const
   Entity towed;
   if (t.hitch)
     towed = t.hitch->towed;
-  const bool tows = t.hitch && registry->isAlive(towed);
+  const bool tows = t.hitch && registry->isValid(towed);
   const glm::mat4 frame = frameOf(agent, t.axle);
   const glm::mat4 own = glm::inverse(frame);
   // (Rotation and position only: a part's scale stays in its own corners.)
@@ -554,8 +552,8 @@ nav::AgentSpec NavigationSystem::specOf(const Tracked& t) const
       if (const auto b = boxIn(own, e, box, t.axle.z))
         s.boxes.push_back(*b);
   };
-  for (const Entity& e : registry->query<BoxCollider3DComponent>())
-    addBox(e, e.getComponent<BoxCollider3DComponent>());
+  for (auto [e, boxCollider3D] : registry->query<BoxCollider3DComponent>())
+    addBox(e, boxCollider3D);
   if (tows && !t.hitch->rigid && trailerBox)
   {
     nav::AgentSpec::Towed tw;
@@ -587,16 +585,16 @@ void NavigationSystem::syncAgents()
   {
     Tracked& t = *tracked;
     const Entity& e = t.entity;
-    if (!registry->hasComponent<NavAgentComponent>(e))
+    const NavAgentComponent* c = registry->getComponent<NavAgentComponent>(e);
+    if (!c)
     {
       LOG_ERROR("NavigationSystem: agent " + std::to_string(id) +
                 " has no NavAgentComponent at its sync: skipped");
       continue;
     }
-    const NavAgentComponent& c = registry->getComponent<NavAgentComponent>(e);
     // (Left out, or nothing it can plan by (logged): out of the fleet.)
     const std::optional<Params> params =
-        c.active ? paramsOf(t) : std::optional<Params>{};
+        c->active ? paramsOf(t) : std::optional<Params>{};
     if (!params)
     {
       if (t.inFleet)
@@ -607,7 +605,7 @@ void NavigationSystem::syncAgents()
       }
       continue;
     }
-    const std::optional<Hitch>& hitch = c.hitch;
+    const std::optional<Hitch>& hitch = c->hitch;
     const TransformComponent world = hierarchy::worldTransform(e);
     const float yaw = world.yaw();
     const glm::vec3 axle = params->axle;
@@ -616,24 +614,24 @@ void NavigationSystem::syncAgents()
         glm::vec2(glm::vec3(world.rotation * glm::vec3(axle.x, axle.y, 0)));
     if (!t.inFleet)
     {
-      t.layers = c.layers;
+      t.layers = c->layers;
       t.params = params->spec;
       t.axle = axle;
       t.hitch = hitch;
       m_fleet->add(id, specOf(t), {at, yaw});
-      m_fleet->setSpeedCap(id, c.speedCap);
+      m_fleet->setSpeedCap(id, c->speedCap);
       t.inFleet = true;
       m_revision = ~0ull; // (its parts leave the statics)
     }
     else
     {
       const bool reshaped =
-          t.axle != axle || !sameHitch(t.hitch, hitch) || t.layers != c.layers;
+          t.axle != axle || !sameHitch(t.hitch, hitch) || t.layers != c->layers;
       if (reshaped || !sameParams(t.params, params->spec))
       {
         // Re-derived (a hitch, a load, the grip, its spec or fields changed).
         SFS_CPU_SCOPE("navigation/spec");
-        t.layers = c.layers;
+        t.layers = c->layers;
         t.params = params->spec;
         t.axle = axle;
         t.hitch = hitch;
@@ -642,14 +640,14 @@ void NavigationSystem::syncAgents()
           m_revision = ~0ull;
       }
     }
-    m_fleet->setPriority(id, m_priority ? m_priority(e) : c.priority);
+    m_fleet->setPriority(id, m_priority ? m_priority(e) : c->priority);
     // Moved by something else while it has no path (placed, teleported):
     // where it is now.
     if (!m_fleet->path(id) && !m_fleet->handDriven(id))
     {
       // (Its trailer as it was left: the angle between the two.)
       float swung = 0.0f;
-      if (hitch && !hitch->rigid && registry->isAlive(hitch->towed) &&
+      if (hitch && !hitch->rigid && registry->isValid(hitch->towed) &&
           registry->hasComponent<TransformComponent>(hitch->towed))
         swung =
             nav::wrapAngle(yaw - hierarchy::worldTransform(hitch->towed).yaw());
@@ -779,7 +777,7 @@ void NavigationSystem::writeBack()
       continue; // (a mounted one: the game holds it where it's mounted)
     const Entity towed = t->hitch->towed;
     const std::optional<nav::Pose2> tp = m_fleet->towedPose(id);
-    if (!tp || !registry->isAlive(towed) ||
+    if (!tp || !registry->isValid(towed) ||
         !registry->hasComponent<TransformComponent>(towed))
       continue;
     TransformComponent tw = hierarchy::worldTransform(towed);

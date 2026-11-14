@@ -52,6 +52,13 @@ bool ModuleBuilder::start(const Project& project, Target target)
     LOG_ERROR("A build is already running");
     return false;
   }
+  if (!m_environment.engineShared())
+  {
+    LOG_ERROR("This editor's engine is static (built with ENGINE_SHARED=OFF), "
+              "so it can't build or load a game module: use an editor built "
+              "with a shared engine (build/Debug, build-win or the SDK)");
+    return false;
+  }
   if (!project.ensureBuildFiles())
     return false;
 

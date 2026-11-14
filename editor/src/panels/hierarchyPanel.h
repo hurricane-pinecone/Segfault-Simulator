@@ -80,4 +80,8 @@ private:
   std::vector<sfs::Entity> m_rows;
   std::vector<sfs::Entity> m_lastRows;
   double m_slowClickAt = 0.0;
+  // The last press on a row: it opened or closed the row (its arrow), so its
+  // release selects nothing; it was a double-click's second press.
+  bool m_pressToggled = false;
+  bool m_pressDouble = false;
 };

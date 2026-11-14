@@ -118,6 +118,13 @@ int main()
       ::chmod(launcher.c_str(), 0755);
 
       ModuleBuilder builder(BuildEnvironment::current());
+      // An editor on a static engine refuses to build one at all.
+      if (!BuildEnvironment::current().engineShared())
+      {
+        CHECK(!builder.start(*project));
+        fs::remove_all(root);
+        return testing::report("moduleBuilderTests");
+      }
       CHECK(builder.start(*project));
       std::optional<bool> built;
       for (int i = 0; i < 3000 && !(built = builder.poll()); ++i)

@@ -78,13 +78,16 @@ int main()
     CHECK(transform->component.has(entity));
 
     void* object = transform->component.get(entity);
+    CHECK(object == entity.getComponent<TransformComponent>());
     findField(*transform, "position")->in<glm::vec3>(object) = {
         1.0f, 2.0f, 3.0f};
     CHECK(testing::approx(
-        entity.getComponent<TransformComponent>().position.y, 2.0f));
+        entity.getComponent<TransformComponent>()->position.y, 2.0f));
 
     transform->component.remove(entity);
     CHECK(!entity.hasComponent<TransformComponent>());
+    CHECK(transform->component.get(entity) == nullptr);
+    CHECK(transform->component.get(Entity()) == nullptr);
   }
 
   TEST("a module's types should be removable as a unit")

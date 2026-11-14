@@ -28,6 +28,8 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
       {"Mesh", "sfs::MeshHandle"},
       {"Json", "nlohmann::json"},
       {"StringList", "std::vector<std::string>"},
+      {"Entity", "sfs::Entity"},
+      {"EntityList", "std::vector<sfs::Entity>"},
   };
   return types;
 }
@@ -37,7 +39,7 @@ std::string cppTypeOf(const FieldModel& field)
 {
   if (field.kind == "AssetRef" || field.kind == "AssetRefList")
     return "sfs::" + field.kind + "<" + field.assetType + ">";
-  return canonicalTypes().at(field.kind);
+  return std::string(cppTypeOfKind(field.kind));
 }
 
 // A C++ string literal for `text`.
@@ -162,6 +164,8 @@ void emitField(std::ostringstream& out,
                        : field.assetType.substr(colons + 2))
         << ";\n";
   }
+  if (!field.part.empty())
+    out << "      field.attributes.part = " << literal(field.part) << ";\n";
   if (field.range)
     out << "      field.attributes.hasRange = true;\n"
         << "      field.attributes.min = static_cast<float>("
@@ -284,6 +288,13 @@ void emitType(std::ostringstream& out,
 }
 
 } // namespace
+
+std::string_view cppTypeOfKind(std::string_view kind)
+{
+  const auto it = canonicalTypes().find(kind);
+  return it != canonicalTypes().end() ? std::string_view(it->second)
+                                      : std::string_view();
+}
 
 std::string displayName(std::string_view identifier, bool stripComponentSuffix)
 {

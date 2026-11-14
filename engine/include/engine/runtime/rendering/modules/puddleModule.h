@@ -97,7 +97,9 @@ private:
   static uint64_t keyOf(const Entity& entity);
   // A terrain's puddle settings, and what its layers' are drawn from.
   static bool samePuddles(const TerrainMaterial& a, const TerrainMaterial& b);
-  void refresh(const Entity& entity, Field& field);
+  // A puddled terrain this frame (`mesh` its renderer's): its ground laid,
+  // its puddles found.
+  void refresh(const Entity& entity, MeshHandle mesh, Field& field);
   void use(Field& field, std::shared_ptr<const std::vector<glm::vec4>> ground);
   void send(Field& field);
 

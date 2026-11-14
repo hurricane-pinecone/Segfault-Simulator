@@ -39,14 +39,20 @@ public:
 
   /**
    * The entities this system works on: the living, flushed entities that
-   * match the terms it registered (registerComponent()), in id order. It is
-   * the registry's shared query for that signature (Registry::query()), so
-   * the system keeps no copy. Empty until the system is added to a registry.
-   * The list changes as entities join and leave: to add or remove these
-   * component types while going through it, go through a copy.
-   * @return the list, read-only
+   * match the terms it registered (registerComponent()), in id order, as a
+   * view of the registry's shared list for that signature
+   * (Registry::query()), so the system keeps no copy. With terms, its rows
+   * unpack them: getEntities<Entities>() for the system's own
+   * `using Entities = sfs::Query<...>`, getEntities<Hitch, Motion>() for
+   * fewer. The terms must be implied by what the system registered (every
+   * entity it lists matches them); otherwise it logs an error once and gives
+   * an empty view. Empty until the system is added to a registry. The list
+   * changes as entities join and leave: to add or remove these component
+   * types while going through it, go through a copy.
+   * @return a view of the list, read-only
    */
-  const std::vector<Entity>& getEntities() const;
+  template <typename... TTerms>
+  QueryView<TTerms...> getEntities() const;
 
   /** What an entity must match to be one of getEntities(). */
   const QuerySignature& getComponentSignature() const;
@@ -78,6 +84,11 @@ public:
   virtual std::vector<ModuleSetting> settings() { return {}; }
 
 protected:
+  /**
+   * Sets the system up, once, when it's added to a registry, with its
+   * registry set: registers components and observers, sets its time step,
+   * builds what it builds once. The constructor only initialises members.
+   */
   virtual void create(){};
   virtual void update(double deltatime){};
   /**
@@ -104,8 +115,12 @@ protected:
    * these hooks first, then its observe() callbacks in the order they were
    * declared. With an Excluding<...> term, gaining an excluded component
    * makes it leave (it already has that one) and losing it makes it join.
-   * Keep them to the system's own state: don't add or remove components,
-   * entities or systems from here.
+   * Keep them to the system's own state and that entity: a hook may add a
+   * component to the entity joining, or remove one from an entity leaving
+   * because it lost a component (not from one being destroyed: it still has
+   * them all, and the flush removes them). Such a change updates the lists
+   * naming that component then and there. Don't add or remove other
+   * entities' components, entities or systems from here.
    * @param entity the entity joining or leaving
    */
   virtual void onEntityAdded(const Entity& entity) {}
@@ -116,9 +131,11 @@ protected:
    * Adds a term to what an entity needs to be one of this system's entities
    * (getEntities(), onEntityAdded()), as Registry::query() takes them: a
    * component it must have, an Any<...> group it must have one of (one group
-   * per system: a second is logged and ignored) or an Excluding<...> group
-   * it must have none of. Call it in the constructor or create(), before the
-   * system is added to a registry.
+   * per system: a second is logged and ignored), an Excluding<...> group
+   * it must have none of, or a Query<...> list of these, added one by one.
+   * Call it in create(). A system with more than a couple of terms names
+   * them once, `using Entities = sfs::Query<...>;`, registers
+   * registerComponent<Entities>() and goes through getEntities<Entities>().
    */
   template <typename TTerm>
   void registerComponent();
@@ -132,8 +149,8 @@ protected:
    * something up for a new wheel, release it as it goes), with the same
    * timing as onEntityAdded() and onEntityRemoved(). Read the list itself
    * with registry->query<TTerms...>(). Call it where the components are
-   * registered (the constructor or create()). Only use it where a reaction
-   * is needed; to just read a list, query it.
+   * registered, in create(). Only use it where a reaction is needed; to just
+   * read a list, query it.
    * @param added called as one joins, e.g.
    *   `[this](const sfs::Entity& wheel) { setUpWheel(wheel); }`
    * @param removed called as one leaves (none: nothing to release)
@@ -155,6 +172,16 @@ private:
   // A registerComponent() of a second Any<...> group (its type key, from
   // detail::componentTypeKey()): logged and ignored.
   void warnSecondAny(std::string_view groupKey) const;
+  // getEntities<...>() asked for terms the registered ones don't imply (the
+  // type key of the first it can't vouch for): logged.
+  void warnNotImplied(std::string_view termKey) const;
+  // registerComponent() of each of a Query list's terms (the pointer only
+  // carries the type).
+  template <typename... TTerms>
+  void registerEach(const Query<TTerms...>*)
+  {
+    (registerComponent<TTerms>(), ...);
+  }
 
   // How many lists it follows (its entities, then each observer's) and the
   // signature of list `index` (0: the registered entities, k: observer k-1).
@@ -178,7 +205,7 @@ private:
   std::vector<Observer> m_observers; // in declaration order
   // The registry's query list for m_signature, then for each observer, set
   // when the system is added to a registry.
-  std::vector<const std::vector<Entity>*> m_lists;
+  std::vector<const detail::QueryList*> m_lists;
   bool m_enabled = true;
   TimeStep m_timeStep = TimeStep::Stepped;
 
@@ -194,12 +221,16 @@ void System::registerComponent()
     warnLateRegister();
     return;
   }
-  if (detail::QueryTerm<TTerm>::isAny && m_signature.any.any())
+  if constexpr (detail::isQueryList<TTerm>)
   {
-    warnSecondAny(detail::componentTypeKey<TTerm>());
-    return;
+    static_assert(detail::QueryTerm<TTerm>::anyGroups <= 1,
+                  "an sfs::Query list takes at most one sfs::Any<...> group");
+    registerEach(static_cast<const TTerm*>(nullptr));
   }
-  detail::QueryTerm<TTerm>::addTo(m_signature);
+  else if (detail::QueryTerm<TTerm>::anyGroups > 0 && m_signature.any.any())
+    warnSecondAny(detail::componentTypeKey<TTerm>());
+  else
+    detail::QueryTerm<TTerm>::addTo(m_signature);
 }
 
 template <typename... TTerms>

@@ -146,8 +146,10 @@ inline static void renderDebugControls(Scene* scene)
   scene->forEachSystem(
       [](System& system)
       {
-        // The render system is required for anything to draw.
-        if (typeid(system) == typeid(RenderSystem))
+        // The render system is required for anything to draw, and the
+        // transform pass for anything drawn to be where it is.
+        if (typeid(system) == typeid(RenderSystem) ||
+            typeid(system) == typeid(TransformSystem))
           return;
 
         const std::string name = prettyTypeName(typeid(system));

@@ -12,22 +12,27 @@ namespace sfs
 {
 
 template <typename TComponent>
-Pool<TComponent>* Registry::poolOf()
+Pool<std::remove_cv_t<TComponent>>* Registry::poolOf()
 {
-  const auto componentId =
-      static_cast<std::size_t>(Component<TComponent>::getId());
+  using Stored = std::remove_cv_t<TComponent>;
+  const auto componentId = static_cast<std::size_t>(Component<Stored>::getId());
   return componentId < componentPools.size()
-             ? static_cast<Pool<TComponent>*>(componentPools[componentId].get())
+             ? static_cast<Pool<Stored>*>(componentPools[componentId].get())
              : nullptr;
 }
 
 template <typename TComponent, typename... TArgs>
-void Registry::addComponent(const Entity& entity, TArgs&&... args)
+void Registry::add(const char* action, const Entity& entity, TArgs&&... args)
 {
+  static_assert(!std::is_const_v<TComponent> && !std::is_volatile_v<TComponent>,
+                "add the component itself, not a const one: const is for "
+                "reading it (getComponent<const T>, a const query term)");
   const auto componentId = Component<TComponent>::getId();
-  if (!isAlive(entity))
-    badComponentAccess(
-        entity, "addComponent", detail::componentTypeKey<TComponent>());
+  if (!isValid(entity))
+  {
+    refuseAdd(entity, action, detail::componentTypeKey<TComponent>());
+    return;
+  }
   const auto entityId = entity.getId();
 
   if (static_cast<std::size_t>(componentId) >= componentPools.size())
@@ -54,8 +59,11 @@ void Registry::addComponent(const Entity& entity, TArgs&&... args)
 template <typename TComponent>
 void Registry::removeComponent(const Entity& entity)
 {
+  static_assert(!std::is_const_v<TComponent> && !std::is_volatile_v<TComponent>,
+                "remove the component itself, not a const one: const is for "
+                "reading it (getComponent<const T>, a const query term)");
   const int componentId = Component<TComponent>::getId();
-  if (!isAlive(entity))
+  if (!isValid(entity))
     return;
   const auto entityId = entity.getId();
   const Signature before = entityComponentSignatures[entityId];
@@ -69,11 +77,10 @@ void Registry::removeComponent(const Entity& entity)
 }
 
 template <typename... TTerms>
-const std::vector<Entity>& Registry::query()
+QueryView<TTerms...> Registry::query()
 {
-  static const QuerySignature signature =
-      detail::makeQuerySignature<TTerms...>();
-  return m_queryLists[listOf(signature)];
+  return QueryView<TTerms...>(
+      this, &m_queryLists[listOf(detail::querySignature<TTerms...>())]);
 }
 
 template <typename TComponent>
@@ -89,7 +96,7 @@ TComponent* Registry::singleton()
     m_holder[id] = findHolder(id);
   if (m_holder[id] == kNoHolder)
     return nullptr;
-  Pool<TComponent>* pool = poolOf<TComponent>();
+  Pool<std::remove_cv_t<TComponent>>* pool = poolOf<TComponent>();
   return pool ? pool->find(m_holder[id]) : nullptr;
 }
 
@@ -104,20 +111,8 @@ template <typename TComponent>
 bool Registry::hasComponent(const Entity& entity) const
 {
   const int componentId = Component<TComponent>::getId();
-  return isAlive(entity) &&
+  return isValid(entity) &&
          entityComponentSignatures[entity.getId()].test(componentId);
-}
-
-template <typename TComponent>
-TComponent& Registry::getComponent(const Entity& entity)
-{
-  Pool<TComponent>* pool = poolOf<TComponent>();
-  TComponent* component =
-      pool && isAlive(entity) ? pool->find(entity.getId()) : nullptr;
-  if (!component)
-    badComponentAccess(
-        entity, "getComponent", detail::componentTypeKey<TComponent>());
-  return *component;
 }
 
 template <typename TSystem, typename... TArgs>

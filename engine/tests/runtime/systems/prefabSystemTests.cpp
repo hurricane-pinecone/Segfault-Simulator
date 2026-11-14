@@ -1,14 +1,18 @@
 #include "../../testHarness.h"
 #include "../rendering/mockRenderer.h"
+#include "../serialization/rigComponent.h"
 
 #include <engine/core/assets/assetDatabase.h>
+#include <engine/core/components/cameraFollowComponent.h>
 #include <engine/core/components/capsuleCollider3DComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/scriptComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
+#include <engine/runtime/animation/animationSystem.h>
 #include <engine/runtime/assetStore/assetStore.h>
 #include <engine/runtime/game/gameObject.h>
+#include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/rendering/standardScene.h>
 #include <engine/runtime/sceneManager/sceneManager.h>
 #include <engine/runtime/scripting/scriptRegistry.h>
@@ -39,7 +43,7 @@ public:
 struct Project
 {
   fs::path folder = fs::temp_directory_path() / "sfs_prefab_system_test";
-  std::string tree, post;
+  std::string tree, post, follower, lost;
 
   Project()
   {
@@ -59,6 +63,16 @@ struct Project
     std::ofstream(folder / "prefabs" / "post.prefab") << R"({
       "formatVersion": 1,
       "root": {"NameComponent": {"name": "Post"}}})";
+    // A camera that follows its own child, and one whose target is gone.
+    std::ofstream(folder / "prefabs" / "follower.prefab") << R"({
+      "formatVersion": 2,
+      "root": {"NameComponent": {"name": "Follower"},
+               "CameraFollowComponent": {"target": "1"},
+               "children": [{"$id": 1, "NameComponent": {"name": "Dog"}}]}})";
+    std::ofstream(folder / "prefabs" / "lost.prefab") << R"({
+      "formatVersion": 2,
+      "root": {"NameComponent": {"name": "Lost"},
+               "CameraFollowComponent": {"target": "8"}}})";
     const AssetDatabase database(folder,
                                  AssetDatabase::Mode::ReadWrite,
                                  AssetDatabase::projectFolders());
@@ -68,6 +82,12 @@ struct Project
     if (const AssetRecord* r =
             database.findByPath(fs::path("prefabs") / "post.prefab"))
       post = "asset:" + r->id.toString();
+    if (const AssetRecord* r =
+            database.findByPath(fs::path("prefabs") / "follower.prefab"))
+      follower = "asset:" + r->id.toString();
+    if (const AssetRecord* r =
+            database.findByPath(fs::path("prefabs") / "lost.prefab"))
+      lost = "asset:" + r->id.toString();
   }
   ~Project() { fs::remove_all(folder); }
 };
@@ -129,6 +149,19 @@ int main()
     CHECK(world.prefabs != nullptr);
   }
 
+  TEST("a StandardScene's render and animation systems should keep the time "
+       "steps they set up")
+  {
+    World world(project);
+    const RenderSystem* render = world.scene->tryGetSystem<RenderSystem>();
+    const AnimationSystem* animation =
+        world.scene->tryGetSystem<AnimationSystem>();
+    CHECK(render != nullptr);
+    CHECK(animation != nullptr);
+    CHECK((render && render->timeStep() == System::TimeStep::Real));
+    CHECK((animation && animation->timeStep() == System::TimeStep::Frame));
+  }
+
   TEST("spawn should place the prefab's root at the transform, with its "
        "children and scripts")
   {
@@ -138,10 +171,10 @@ int main()
         world.prefabs->spawn(project.tree, at({10, 20, 1}, 0.5f, 2.0f));
     CHECK(root.isValid());
     CHECK(Counter::created == 2);
-    const TransformComponent& t = root.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.x, 10.0f) &&
-          testing::approx(t.position.y, 20.0f));
-    CHECK(testing::approx(t.scale.x, 2.0f));
+    const TransformComponent* t = root.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.x, 10.0f) &&
+          testing::approx(t->position.y, 20.0f));
+    CHECK(testing::approx(t->scale.x, 2.0f));
     CHECK(root.hasComponent<CapsuleCollider3DComponent>());
     world.step();
     const Entity crown = world.scene->findEntity("Tree/Crown");
@@ -196,6 +229,30 @@ int main()
     CHECK(world.scene->entities().size() == before);
   }
 
+  TEST("a spawned copy's references should name its own entities; a missing "
+       "target should be logged once however often it's spawned")
+  {
+    World world(project);
+    const Entity first = world.prefabs->spawn(project.follower, at({}));
+    const Entity second = world.prefabs->spawn(project.follower, at({}));
+    for (const Entity& root : {first, second})
+    {
+      const Entity target = root.getComponent<CameraFollowComponent>()->target;
+      CHECK(target.isValid());
+      CHECK(hierarchy::parentOf(target) == root);
+    }
+    CHECK(first.getComponent<CameraFollowComponent>()->target !=
+          second.getComponent<CameraFollowComponent>()->target);
+
+    testing3d::LogLines log;
+    for (int i = 0; i < 4; ++i)
+    {
+      const Entity root = world.prefabs->spawn(project.lost, at({}));
+      CHECK(!root.getComponent<CameraFollowComponent>()->target.isValid());
+    }
+    CHECK(log.count("no entity at '8'") == 1u);
+  }
+
   TEST("spawning under a destroyed parent should return an invalid entity")
   {
     World world(project);
@@ -214,7 +271,7 @@ int main()
     world.prefabs->despawn(root);
     world.step();
     world.step();
-    CHECK(!root.isAlive());
+    CHECK(!root.isValid());
     CHECK(world.named("Tree") == 0u && world.named("Crown") == 0u);
     CHECK(!world.physics->hasBody(root));
     CHECK(world.scene->findObjects<Counter>().empty());

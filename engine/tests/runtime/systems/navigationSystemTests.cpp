@@ -280,8 +280,8 @@ int main()
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
     world.scene.update(kFrame);
     // (Put somewhere by the game since the last update: driven from there.)
-    TransformComponent& t = car.getComponent<TransformComponent>();
-    t.position = {5.0f, 3.0f, 0.0f};
+    TransformComponent* t = car.getComponent<TransformComponent>();
+    t->position = {5.0f, 3.0f, 0.0f};
     CHECK(world.navigation.takeWheel(car));
     CHECK(world.navigation.handDriven(car));
     nav::Controls c;
@@ -472,8 +472,8 @@ int main()
     world.scene.update(kFrame);
     CHECK(world.navigation.fleet().has(id));
     CHECK(world.navigation.fleet().spec(id)->boxes.size() == alone);
-    const NavAgentComponent& fresh = next.getComponent<NavAgentComponent>();
-    CHECK(!fresh.hitch && fresh.active && std::isinf(fresh.speedCap));
+    const NavAgentComponent* fresh = next.getComponent<NavAgentComponent>();
+    CHECK(!fresh->hitch && fresh->active && std::isinf(fresh->speedCap));
   }
 
   TEST("a mounted part's box should be its true size in the agent's own "
@@ -490,9 +490,9 @@ int main()
         glm::angleAxis(glm::radians(-14.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     const glm::quat nosedDown =
         glm::angleAxis(glm::radians(5.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    car.getComponent<TransformComponent>().rotation = nosedDown;
-    tool.getComponent<TransformComponent>().rotation = nosedDown * lifted;
-    tool.getComponent<TransformComponent>().position = glm::vec3(
+    car.getComponent<TransformComponent>()->rotation = nosedDown;
+    tool.getComponent<TransformComponent>()->rotation = nosedDown * lifted;
+    tool.getComponent<TransformComponent>()->position = glm::vec3(
         glm::mat4_cast(nosedDown) * glm::vec4(5.0f, 0.0f, 1.5f, 1.0f));
     NavigationSystem::Hitch mounted;
     mounted.towed = tool;
@@ -549,7 +549,7 @@ int main()
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
     // (A 4 m x 2 m trailer, its axle 0.5 m behind its middle, swung 0.2 rad.)
     Entity trailer = world.solid({-6.0f, 0.0f, 0.5f}, {4.0f, 2.0f, 1.0f});
-    trailer.getComponent<TransformComponent>().rotation =
+    trailer.getComponent<TransformComponent>()->rotation =
         glm::angleAxis(0.2f, glm::vec3(0.0f, 0.0f, 1.0f));
     NavigationSystem::Hitch towed;
     towed.towed = trailer;

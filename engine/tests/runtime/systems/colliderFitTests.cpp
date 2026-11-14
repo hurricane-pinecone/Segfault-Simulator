@@ -120,13 +120,13 @@ int main()
     world.spawn(&arm, TransformComponent{glm::vec3(3, 0, 0.5f)}, root);
     root.addComponent<BoxCollider3DComponent>();
     CHECK(fitColliderToMesh<BoxCollider3DComponent>(root, world.meshes));
-    const auto& collider = root.getComponent<BoxCollider3DComponent>();
-    CHECK(near(collider.size, {2, 1, 1}));
-    CHECK(near(collider.offset, {0, 0, 0.5f}));
+    const auto* collider = root.getComponent<BoxCollider3DComponent>();
+    CHECK(near(collider->size, {2, 1, 1}));
+    CHECK(near(collider->offset, {0, 0, 0.5f}));
 
     CHECK(fitColliderToMesh<BoxCollider3DComponent>(root, world.meshes, true));
-    CHECK(near(collider.size, {4.5f, 1, 1})); // x from -1 to 3.5
-    CHECK(near(collider.offset, {1.25f, 0, 0.5f}));
+    CHECK(near(collider->size, {4.5f, 1, 1})); // x from -1 to 3.5
+    CHECK(near(collider->offset, {1.25f, 0, 0.5f}));
   }
 
   TEST("an entity with no mesh should fit its children's, in its own space")
@@ -149,7 +149,7 @@ int main()
     CHECK(near(bounds.max, {1.5f, 0.5f, 0.5f}));
     CHECK(fitColliderToMesh<SphereCollider3DComponent>(group, world.meshes));
     CHECK(testing::approx(
-        group.getComponent<SphereCollider3DComponent>().radius, 1.5f));
+        group.getComponent<SphereCollider3DComponent>()->radius, 1.5f));
   }
 
   TEST("no collider of that kind, or no meshes, should change nothing")
@@ -162,7 +162,7 @@ int main()
     CHECK(!fitColliderToMesh<BoxCollider3DComponent>(meshed, world.meshes));
     CHECK(!fitColliderToMesh<CapsuleCollider3DComponent>(empty, world.meshes));
     CHECK(testing::approx(
-        empty.getComponent<CapsuleCollider3DComponent>().height, 1.8f));
+        empty.getComponent<CapsuleCollider3DComponent>()->height, 1.8f));
   }
 
   return testing::report("colliderFitTests");

@@ -718,8 +718,8 @@ int main()
       const auto find = [&](const std::string& name)
       {
         for (Entity entity : scene.entities())
-          if (entity.hasComponent<NameComponent>() &&
-              entity.getComponent<NameComponent>().name == name)
+          if (const NameComponent* named = entity.getComponent<NameComponent>();
+              named && named->name == name)
             return entity;
         return Entity{};
       };
@@ -733,18 +733,18 @@ int main()
         CHECK(!body.hasComponent<BoxCollider3DComponent>());
         CHECK(!boom.hasComponent<MeshRendererComponent>());
         CHECK(boom.hasComponent<BoxCollider3DComponent>());
-        CHECK(hierarchy::parentOf(boom).getComponent<NameComponent>().name ==
+        CHECK(hierarchy::parentOf(boom).getComponent<NameComponent>()->name ==
               "Boom");
-        if (boom.hasComponent<BoxCollider3DComponent>())
+        if (const BoxCollider3DComponent* box =
+                boom.getComponent<BoxCollider3DComponent>())
         {
           // Twice x 0..2, y -3..3, z -2..2.
-          const auto& box = boom.getComponent<BoxCollider3DComponent>();
-          CHECK(testing::approx(box.size.x, 4.0f));
-          CHECK(testing::approx(box.size.y, 12.0f));
-          CHECK(testing::approx(box.size.z, 8.0f));
-          CHECK(testing::approx(box.offset.x, 2.0f));
-          CHECK(testing::approx(box.offset.y, 0.0f));
-          CHECK(!box.trigger);
+          CHECK(testing::approx(box->size.x, 4.0f));
+          CHECK(testing::approx(box->size.y, 12.0f));
+          CHECK(testing::approx(box->size.z, 8.0f));
+          CHECK(testing::approx(box->offset.x, 2.0f));
+          CHECK(testing::approx(box->offset.y, 0.0f));
+          CHECK(!box->trigger);
         }
         CHECK(cab.hasComponent<BoxCollider3DComponent>());
         CHECK(!cab.hasComponent<MeshRendererComponent>());
@@ -769,6 +769,19 @@ int main()
     }
     CHECK(ids.contains("Body/Arm/Hand"));
     CHECK(ids.contains("Cab"));
+  }
+
+  TEST("a name as a name path segment should escape what separates and "
+       "numbers segments")
+  {
+    CHECK(nodeNameSegment("Arm") == "Arm");
+    CHECK(nodeNameSegment("") == "");
+    CHECK(nodeNameSegment("a/b#c\\d") == "a\\/b\\#c\\\\d");
+    const std::map<std::string, uint32_t> ids =
+        idsByPath(writeTreeModel("segment.gltf", kTreeNodes, "[0, 4]"));
+    CHECK(ids.at("Body/Arm/Hand") ==
+          stableNodeId(nodeNameSegment("Body") + "/" + nodeNameSegment("Arm") +
+                       "/Hand"));
   }
 
   TEST("reordering nodes, or moving and renaming the file, should keep every "
@@ -1020,8 +1033,8 @@ int main()
     const auto find = [&](const std::string& name)
     {
       for (Entity entity : scene.entities())
-        if (entity.hasComponent<NameComponent>() &&
-            entity.getComponent<NameComponent>().name == name)
+        if (const NameComponent* named = entity.getComponent<NameComponent>();
+            named && named->name == name)
           return entity;
       return Entity{};
     };
@@ -1032,9 +1045,10 @@ int main()
     CHECK(!find("Leg").isValid());
     if (arm.isValid() && cab.isValid() && glove.isValid())
     {
-      CHECK(arm.getComponent<TransformComponent>().position.z == 2.0f);
-      CHECK(cab.getComponent<TransformComponent>().position.z == 5.0f);
-      CHECK(find("Hand").getComponent<TransformComponent>().position.z == 0.0f);
+      CHECK(arm.getComponent<TransformComponent>()->position.z == 2.0f);
+      CHECK(cab.getComponent<TransformComponent>()->position.z == 5.0f);
+      CHECK(find("Hand").getComponent<TransformComponent>()->position.z ==
+            0.0f);
       CHECK(hierarchy::parentOf(glove) == find("Hand"));
       CHECK(!find("Machine").hasComponent<UnresolvedComponents>());
     }

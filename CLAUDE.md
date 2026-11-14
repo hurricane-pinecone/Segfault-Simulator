@@ -47,6 +47,8 @@ it. The standard engine approach is the baseline; do better where the data allow
 - Lists of entities by component: a system's own are `getEntities()` (its `registerComponent`s); any other kind is
   `registry->query<Ts...>()` (scripts: `scene().query<Ts...>()`: cached, kept current, shared). A system that must
   react as another kind joins or leaves uses `observe<Ts...>(added, removed)`. No system keeps its own entity list.
+- A system's set-up goes in `create()` (called once, when it's added, with its registry set): registering components,
+  observers, time step, and anything it builds once. The constructor only initialises members.
 - A component a scene has exactly one of (a world clock, the weather) is read with `registry->singleton<T>()`
   (scripts: `scene().singleton<T>()`), never a query of one.
 - Component fields the editor can't edit (or that shouldn't be saved or shown) are `[[sfs::hide]]`.
@@ -101,7 +103,7 @@ it. The standard engine approach is the baseline; do better where the data allow
 ## Reflection and the editor
 - Codegen (`engine/tools/codegen`, tree-sitter) finds types by base class. There are no registration macros.
   Attributes: `[[sfs::hide]]`, `[[sfs::show]]`, `[[sfs::showIf]]`, `[[sfs::range(a,b)]]`, `[[sfs::color]]`, etc.
-  See `parser.cpp parseAttributes()`. Never use comment annotations.
+  See `parser.cpp parseAttributes()`. Never use comment annotations (`sfs-ignore` directives aside).
 - Inspector rows put the label on the left and the widget on the right (`widgets::propertyLabel`, `propertyCheckbox`).
   Hide settings that don't apply.
 

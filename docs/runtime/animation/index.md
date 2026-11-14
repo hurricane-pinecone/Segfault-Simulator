@@ -52,14 +52,16 @@ data: its hidden fields (`playback`, `finished`...) are the system's to keep.
 
 ```cpp
 auto& animation = registry->getSystem<sfs::AnimationSystem>();
-auto& animator = entity.getComponent<sfs::AnimatorComponent>();
+sfs::AnimatorComponent* animator = entity.getComponent<sfs::AnimatorComponent>();
+if (!sfs::expect(animator, entity))
+  return;
 animation.play(entity, "walk", 0.25f); // cross-fade to walk over a quarter second
-animator.speed = walkSpeed / 1.4f;
-if (animator.clip == "pick-up" && animator.finished)
+animator->speed = walkSpeed / 1.4f;
+if (animator->clip == "pick-up" && animator->finished)
   animation.play(entity, "idle", 0.2f);
 float seconds = animation.length(entity, "sprint");
-animator.playing = false;              // hold the pose; true carries on
-animator.time = 0.5f;                  // seek
+animator->playing = false;             // hold the pose; true carries on
+animator->time = 0.5f;                 // seek
 animation.restart(entity);             // the clip playing, from its start
 ```
 

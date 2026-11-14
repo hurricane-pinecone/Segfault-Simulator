@@ -1,3 +1,6 @@
+# The engine's version: its CMake package's, and what its tools report.
+set(ENGINE_VERSION 0.1.0)
+
 set(ENGINE_WEB_BUILD FALSE)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR EMSCRIPTEN)
@@ -33,7 +36,8 @@ message(STATUS "ENGINE_LIBRARY_TYPE=${ENGINE_LIBRARY_TYPE}")
 # machine, so a native build builds it, while a cross-build (Windows from WSL,
 # or the web) uses a host copy given in SFS_CODEGEN_EXECUTABLE. Core-only builds
 # have no codegen (no tree-sitter), and register no engine types; nor does a
-# web build without a host codegen (it can't load scene files).
+# web build without a host codegen (it can't load scene files). A Windows cross
+# build still builds codegen's library, for its sfs-lsp.
 set(SFS_CODEGEN_EXECUTABLE "" CACHE FILEPATH
     "Host sfs-codegen to use when cross-compiling (e.g. from a native build's bin/)")
 if(ENGINE_CORE_ONLY)
@@ -51,6 +55,9 @@ elseif(CMAKE_CROSSCOMPILING)
     set(SFS_CODEGEN_COMMAND "${SFS_CODEGEN_EXECUTABLE}")
     set(SFS_CODEGEN_DEPENDS "${SFS_CODEGEN_EXECUTABLE}")
     set(SFS_CODEGEN_AVAILABLE TRUE)
+    if(NOT ENGINE_WEB_BUILD)
+        add_subdirectory(tools/codegen)
+    endif()
 else()
     add_subdirectory(tools/codegen)
     set(SFS_CODEGEN_COMMAND sfs-codegen)
@@ -58,6 +65,11 @@ else()
     set(SFS_CODEGEN_AVAILABLE TRUE)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsCodegen.cmake")
+# sfs-lsp, the language server editors run beside clangd: wherever codegen's
+# library is built (every build but core-only and web ones).
+if(TARGET sfs-codegen-lib)
+    add_subdirectory(tools/lsp)
+endif()
 if(ENGINE_WEB_BUILD)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/sfsWebGame.cmake")
 endif()
@@ -71,13 +83,27 @@ function(sfs_engine_library_output target)
 endfunction()
 
 # AddressSanitizer + UndefinedBehaviorSanitizer build, used by the sanitize CI
-# job. The flags apply to the engine libraries and the tests, which are the only
-# targets defined under this directory; Conan dependencies are prebuilt and stay
-# uninstrumented.
+# job. The flags apply to the engine libraries and the tests defined under this
+# directory; the workspace applies the same ones to the editor and the player
+# (ENGINE_SANITIZE_COMPILE_OPTIONS and _LINK_OPTIONS, handed up to it). Conan
+# dependencies are prebuilt and stay uninstrumented.
 option(ENGINE_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(ENGINE_SANITIZE)
-    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address,undefined)
+    set(ENGINE_SANITIZE_COMPILE_OPTIONS
+        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    set(ENGINE_SANITIZE_LINK_OPTIONS -fsanitize=address,undefined)
+    add_compile_options(${ENGINE_SANITIZE_COMPILE_OPTIONS})
+    add_link_options(${ENGINE_SANITIZE_LINK_OPTIONS})
+    set(ENGINE_SANITIZE_COMPILE_OPTIONS ${ENGINE_SANITIZE_COMPILE_OPTIONS} PARENT_SCOPE)
+    set(ENGINE_SANITIZE_LINK_OPTIONS ${ENGINE_SANITIZE_LINK_OPTIONS} PARENT_SCOPE)
+    # The tools' libraries are added above, before these flags: instrument
+    # them too, so their tests and sfs-lsp run checked.
+    foreach(tool sfs-codegen-lib sfs-lsp-lib)
+        if(TARGET ${tool})
+            target_compile_options(${tool} PRIVATE ${ENGINE_SANITIZE_COMPILE_OPTIONS})
+            target_link_options(${tool} INTERFACE ${ENGINE_SANITIZE_LINK_OPTIONS})
+        endif()
+    endforeach()
 endif()
 
 # __FILE__ (in log lines, asserts, profiler zones) relative to the engine's
@@ -687,7 +713,7 @@ if(NOT ENGINE_WEB_BUILD)
 
         write_basic_package_version_file(
             "${CMAKE_CURRENT_BINARY_DIR}/engineConfigVersion.cmake"
-            VERSION 0.1.0
+            VERSION ${ENGINE_VERSION}
             COMPATIBILITY SameMajorVersion
         )
 

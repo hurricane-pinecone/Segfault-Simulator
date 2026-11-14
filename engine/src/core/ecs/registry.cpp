@@ -1,7 +1,6 @@
 #include <engine/core/ecs/entity.h>
 #include <engine/core/ecs/registry.h>
 #include <engine/core/logger/logger.h>
-#include <engine/core/util/fatalError.h>
 
 #include <algorithm>
 #include <string>
@@ -39,42 +38,27 @@ Entity Registry::createEntity()
   {
     id = *freeEntityIds.begin();
     freeEntityIds.erase(freeEntityIds.begin());
+    m_generations[id] &= ~kDead;
   }
   else
   {
     id = entityCount++;
 
     entityComponentSignatures.resize(entityCount);
-    generations.resize(entityCount, 0);
+    m_generations.resize(entityCount, 0);
     entityDebugIds.resize(entityCount, 0);
-    entityAlive.resize(entityCount, false);
     m_links.nodes.resize(entityCount);
   }
 
-  entityAlive[id] = true;
   entityDebugIds[id] = nextDebugId++;
   constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
   m_links.nodes[id] = {kNone, kNone, kNone, kNone};
   ++m_entitySetVersion;
 
-  Entity entity{id, generations[id], entityDebugIds[id]};
+  Entity entity{id, m_generations[id], entityDebugIds[id]};
   entity.setRegistry(this);
 
   entitiesToBeAdded.insert(entity);
-
-  return entity;
-}
-
-Entity Registry::getEntity(Entity::EntityId id)
-{
-  if (id >= entityCount)
-    return {};
-
-  if (!entityAlive[id])
-    return {};
-
-  Entity entity{id, generations[id], entityDebugIds[id]};
-  entity.setRegistry(this);
 
   return entity;
 }
@@ -83,7 +67,7 @@ bool Registry::isPending(Entity::EntityId id) const
 {
   if (entitiesToBeAdded.empty())
     return false;
-  const Entity probe{id, generations[id], entityDebugIds[id]};
+  const Entity probe{id, m_generations[id], entityDebugIds[id]};
   return entitiesToBeAdded.contains(probe);
 }
 
@@ -104,7 +88,7 @@ void Registry::attach(System& system)
 
   for (Entity::EntityId id = 0; id < entityCount; ++id)
   {
-    if (!entityAlive[id] || isPending(id))
+    if (!alive(id) || isPending(id))
       continue;
     const Entity entity = getEntity(id);
     const Signature components = entityComponentSignatures[id];
@@ -126,7 +110,7 @@ void Registry::follow(System& system, std::size_t index)
   m_queryFollowed[list] = 1;
   system.m_lists.push_back(&m_queryLists[list]);
   // A callback may change the list.
-  const std::vector<Entity> members = m_queryLists[list];
+  const std::vector<Entity> members = m_queryLists[list].entities;
   for (const Entity& entity : members)
     system.tellJoined(index, entity);
 }
@@ -180,13 +164,13 @@ uint32_t Registry::listOf(const QuerySignature& signature)
   const uint32_t index = found->second;
   m_querySignatures.push_back(signature);
   m_queryFollowed.push_back(0);
-  std::vector<Entity>& entities = m_queryLists.emplace_back();
+  std::vector<Entity>& entities = m_queryLists.emplace_back().entities;
   const Signature named = signature.all | signature.any | signature.excluding;
   for (std::size_t componentId = 0; componentId < MAX_COMPONENTS; ++componentId)
     if (named.test(componentId))
       m_queriesNaming[componentId].push_back(index);
   for (Entity::EntityId id = 0; id < entityComponentSignatures.size(); ++id)
-    if (entityAlive[id] && !isPending(id) &&
+    if (alive(id) && !isPending(id) &&
         signature.matches(entityComponentSignatures[id]))
       entities.push_back(getEntity(id));
   return index;
@@ -199,8 +183,18 @@ void Registry::syncQueries(Entity::EntityId id,
                            bool isIn,
                            const std::vector<uint32_t>* lists)
 {
-  // Taken, so a hook that changes components anyway gets a scratch of its own.
-  std::vector<QueryChange> changes = std::move(m_queryChanges);
+  // A hook may change a component, which syncs again inside this sync: each
+  // nesting depth has a scratch of its own, kept with its capacity.
+  struct Depth
+  {
+    explicit Depth(uint32_t& depth) : depth(depth) { ++depth; }
+    ~Depth() { --depth; }
+    uint32_t& depth;
+  };
+  if (m_syncDepth == m_queryChanges.size())
+    m_queryChanges.emplace_back();
+  std::vector<QueryChange>& changes = m_queryChanges[m_syncDepth];
+  const Depth nested(m_syncDepth);
   changes.clear();
   bool followed = false;
   const Entity entity = getEntity(id);
@@ -212,7 +206,8 @@ void Registry::syncQueries(Entity::EntityId id,
     if (was == is)
       return;
     // Kept in id order, as a scan would list them.
-    std::vector<Entity>& entities = m_queryLists[index];
+    detail::QueryList& list = m_queryLists[index];
+    std::vector<Entity>& entities = list.entities;
     auto at = std::lower_bound(entities.begin(),
                                entities.end(),
                                id,
@@ -222,7 +217,8 @@ void Registry::syncQueries(Entity::EntityId id,
       entities.insert(at, entity);
     else if (at != entities.end() && at->getId() == id)
       entities.erase(at);
-    changes.push_back({&entities, is});
+    ++list.version;
+    changes.push_back({&list, is});
     followed = followed || m_queryFollowed[index] != 0;
   };
   if (lists)
@@ -248,13 +244,12 @@ void Registry::syncQueries(Entity::EntityId id,
           break;
         }
     }
-  m_queryChanges = std::move(changes);
 }
 
 Entity::EntityId Registry::findHolder(std::size_t componentId) const
 {
   for (Entity::EntityId id = 0; id < entityComponentSignatures.size(); ++id)
-    if (entityAlive[id] && entityComponentSignatures[id].test(componentId))
+    if (alive(id) && entityComponentSignatures[id].test(componentId))
       return id;
   return kNoHolder;
 }
@@ -280,37 +275,54 @@ void Registry::componentsChanged(const Entity& entity,
   syncQueries(id, before, true, after, true, &m_queriesNaming[componentId]);
 }
 
-void Registry::badComponentAccess(const Entity& entity,
-                                  const char* action,
-                                  std::string_view type) const
+void Registry::refuseAdd(const Entity& entity,
+                         const char* action,
+                         std::string_view type)
 {
-  const std::string what = std::string(action) + "<" +
-                           detail::readableTypeName(type) + ">: entity " +
-                           std::to_string(entity.getId());
+  const std::string what =
+      std::string(action) + "<" + detail::readableTypeName(type) + ">: ";
+  const Registry* registry = entity.registryOf();
   const auto id = entity.getId();
-  if (!entity.isValid())
-    fatalError(what + " isn't an entity (a default-made Entity)");
-  if (id >= entityAlive.size() || !entityAlive[id])
-    fatalError(what + " was destroyed");
-  if (generations[id] != entity.getGeneration())
-    fatalError(what + " was destroyed (its id now belongs to another entity)");
-  fatalError(what + " has no such component");
+  std::string why;
+  if (!registry || id == Entity::InvalidId)
+    why = "the handle isn't an entity (a default-made Entity)";
+  else if (id >= registry->m_generations.size() || !registry->alive(id))
+    why = "entity " + std::to_string(id) + " was destroyed";
+  else
+    why = "entity " + std::to_string(id) +
+          " was destroyed (its id now belongs to another entity)";
+  LOG_ERROR(what + why + "; nothing added");
 }
 
-namespace detail
+void Registry::findOnDead(Entity::EntityId id, std::string_view type) const
 {
-void invalidEntity(const char* action)
-{
-  fatalError(std::string(action) +
-             " on an Entity that isn't one (default-made, or reset)");
+  LOG_ERROR("find<" + detail::readableTypeName(type) + ">: entity " +
+            std::to_string(id) + " isn't alive; giving null");
 }
-} // namespace detail
+
+void Registry::listChangedInLoop(const detail::QueryList& list,
+                                 std::string_view terms) const
+{
+  std::string followers;
+  for (const std::unique_ptr<System>& system : systems)
+    for (std::size_t i = 0; i < system->m_lists.size(); ++i)
+      if (system->m_lists[i] == &list)
+        followers += (followers.empty() ? "" : ", ") +
+                     detail::readableTypeName(typeid(*system)) +
+                     (i == 0 ? " (its entities)" : " (an observer)");
+  LOG_ERROR("a query list changed while a loop went through it: " +
+            detail::readableTypeName(terms) + ", the list of " +
+            (followers.empty() ? std::string("no system") : followers) +
+            ". The loop ends here in debug builds only, so release builds "
+            "behave differently: never add or remove a component a list names "
+            "while looping it; go through a copy");
+}
 
 void Registry::flushEntities()
 {
   for (const auto& entity : entitiesToBeRemoved)
   {
-    if (!isAlive(entity))
+    if (!isValid(entity))
       continue;
 
     const auto id = entity.getId();
@@ -339,8 +351,7 @@ void Registry::flushEntities()
       }
     }
 
-    entityAlive[id] = false;
-    generations[id]++;
+    m_generations[id] = (m_generations[id] + 1) | kDead;
     ++m_entitySetVersion;
 
     freeEntityIds.insert(id);
@@ -354,7 +365,7 @@ void Registry::flushEntities()
   {
     const Entity entity = *entitiesToBeAdded.begin();
     entitiesToBeAdded.erase(entitiesToBeAdded.begin());
-    if (!isAlive(entity))
+    if (!isValid(entity))
       continue;
     const Signature& components = entityComponentSignatures[entity.getId()];
     syncQueries(entity.getId(), components, false, components, true);
@@ -363,7 +374,7 @@ void Registry::flushEntities()
 
 void Registry::destroyEntity(const Entity& entity)
 {
-  if (!isAlive(entity))
+  if (!isValid(entity))
     return;
 
   if (entitiesToBeRemoved.contains(entity))
@@ -477,7 +488,7 @@ const std::vector<HierarchyLinks::Placed>& Registry::preorder()
   const std::vector<HierarchyNode>& nodes = m_links.nodes;
   for (Entity::EntityId root = 0; root < entityCount; ++root)
   {
-    if (!entityAlive[root] || nodes[root].parent != kNone)
+    if (!alive(root) || nodes[root].parent != kNone)
       continue;
     // Down to the first child, else across to the next sibling of the
     // nearest entity on the way back up that has one.
@@ -512,17 +523,9 @@ std::vector<Entity> Registry::entities()
 {
   std::vector<Entity> result;
   for (Entity::EntityId id = 0; id < entityCount; ++id)
-    if (entityAlive[id])
+    if (alive(id))
       result.push_back(getEntity(id));
   return result;
-}
-
-bool Registry::isAlive(const Entity& entity) const
-{
-  const auto id = entity.getId();
-
-  return id < entityAlive.size() && entityAlive[id] &&
-         generations[id] == entity.getGeneration();
 }
 
 } // namespace sfs

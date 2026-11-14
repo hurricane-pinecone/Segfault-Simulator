@@ -20,10 +20,9 @@ ParticleHit ColliderParticleCollision::sweep(const ParticleSweep& m) const
   const glm::vec2 seg = m.to - m.from;
   float bestT = 2.0f;
 
-  for (const auto& solid :
+  for (auto [solid, solidObject, transform, box] :
        m_registry->query<SolidObject, TransformComponent, BoxCollider2D>())
   {
-    const auto& box = solid.getComponent<BoxCollider2D>();
     const glm::vec2 centre =
         hierarchy::worldTransform(solid).position2D() + box.offset;
 

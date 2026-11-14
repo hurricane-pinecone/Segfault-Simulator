@@ -26,9 +26,10 @@ struct Box
   bool body = false; // a RigidBody2DComponent's (not static)
 };
 
-Box boxOf(const Entity& entity, const TransformComponent& world)
+Box boxOf(const Entity& entity,
+          const BoxCollider2D& collider,
+          const TransformComponent& world)
 {
-  const auto& collider = entity.getComponent<BoxCollider2D>();
   const glm::vec2 centre = world.position2D() + collider.offset;
   const glm::vec2 half = glm::abs(collider.half);
   return Box{entity,
@@ -89,7 +90,9 @@ uint64_t pairKey(const Entity& a, const Entity& b)
 }
 } // namespace
 
-PhysicsSystem2D::PhysicsSystem2D(Scene* scene) : m_scene(scene)
+PhysicsSystem2D::PhysicsSystem2D(Scene* scene) : m_scene(scene) {}
+
+void PhysicsSystem2D::create()
 {
   registerComponent<TransformComponent>();
   registerComponent<RigidBody2DComponent>();
@@ -105,15 +108,14 @@ void PhysicsSystem2D::update(double deltaTime)
 
   // The statics that stop bodies: their solid boxes, as they are now.
   std::vector<Box> solids;
-  for (const Entity& entity :
+  for (auto [entity, boxCollider2D, transform] :
        registry->query<BoxCollider2D, TransformComponent>())
-    if (!entity.hasComponent<RigidBody2DComponent>() &&
-        !entity.getComponent<BoxCollider2D>().trigger)
-      solids.push_back(boxOf(entity, hierarchy::worldTransform(entity)));
+    if (!entity.hasComponent<RigidBody2DComponent>() && !boxCollider2D.trigger)
+      solids.push_back(
+          boxOf(entity, boxCollider2D, hierarchy::worldTransform(entity)));
 
-  for (const Entity& entity : getEntities())
+  for (auto [entity, body] : getEntities<RigidBody2DComponent>())
   {
-    auto& body = entity.getComponent<RigidBody2DComponent>();
     TransformComponent world = hierarchy::worldTransform(entity);
     body.previousPosition = world.position2D();
     body.velocity += body.gravity * dt;
@@ -122,10 +124,10 @@ void PhysicsSystem2D::update(double deltaTime)
       continue;
 
     // Across, then up or down: each axis stops at the first solid in the way.
-    if (entity.hasComponent<BoxCollider2D>() &&
-        !entity.getComponent<BoxCollider2D>().trigger)
+    if (BoxCollider2D* boxCollider2D = entity.getComponent<BoxCollider2D>();
+        boxCollider2D && !boxCollider2D->trigger)
     {
-      Box box = boxOf(entity, world);
+      Box box = boxOf(entity, *boxCollider2D, world);
       for (int axis = 0; axis < 2; ++axis)
       {
         const float wanted = step[axis];
@@ -143,9 +145,9 @@ void PhysicsSystem2D::update(double deltaTime)
   // What touches what now: every collider against the others, bodies first
   // (two statics never meet).
   std::vector<Box> boxes;
-  for (const Entity& entity :
+  for (auto [entity, collider, transform] :
        registry->query<BoxCollider2D, TransformComponent>())
-    boxes.push_back(boxOf(entity, hierarchy::worldTransform(entity)));
+    boxes.push_back(boxOf(entity, collider, hierarchy::worldTransform(entity)));
   std::unordered_map<uint64_t, Contact2D> touching;
   for (std::size_t i = 0; i < boxes.size(); ++i)
     for (std::size_t j = 0; j < boxes.size(); ++j)

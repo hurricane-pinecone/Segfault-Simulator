@@ -31,8 +31,8 @@ protected:
   void create() override { registerComponent<Counter>(); }
   void update(double) override
   {
-    for (const Entity& entity : getEntities())
-      ++entity.getComponent<Counter>().ticks;
+    for (auto [entity, counter] : getEntities<Counter>())
+      ++counter.ticks;
   }
 };
 
@@ -52,7 +52,7 @@ protected:
   }
   void onUpdate(double deltaTime) override
   {
-    entity().getComponent<TransformComponent>().position.x +=
+    entity().getComponent<TransformComponent>()->position.x +=
         speed * static_cast<float>(deltaTime);
   }
 
@@ -125,9 +125,9 @@ int main()
 
     world.scene.update(0.5);
     CHECK(testing::approx(
-        box.getComponent<TransformComponent>().position.x, 0.5f));
+        box.getComponent<TransformComponent>()->position.x, 0.5f));
     CHECK(testing::approx(
-        plain.getComponent<TransformComponent>().position.x, 0.0f));
+        plain.getComponent<TransformComponent>()->position.x, 0.0f));
   }
 
   TEST("an entity's saved script fields should be set before onCreate")
@@ -151,9 +151,9 @@ int main()
 
     world.scene.update(0.5);
     CHECK(testing::approx(
-        fast.getComponent<TransformComponent>().position.x, 2.0f));
+        fast.getComponent<TransformComponent>()->position.x, 2.0f));
     CHECK(testing::approx(
-        standard.getComponent<TransformComponent>().position.x, 0.5f));
+        standard.getComponent<TransformComponent>()->position.x, 0.5f));
   }
 
   TEST("startScripts should add game systems that see existing entities")
@@ -166,7 +166,7 @@ int main()
     startScripts(world.scene, {"TickSystem"});
     world.scene.update(0.1);
     world.scene.update(0.1);
-    CHECK(counted.getComponent<Counter>().ticks == 2);
+    CHECK(counted.getComponent<Counter>()->ticks == 2);
   }
 
   TEST("unknown scripts should be skipped, not crash")

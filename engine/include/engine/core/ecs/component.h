@@ -4,6 +4,7 @@
 
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <typeinfo>
 
 namespace sfs
@@ -81,12 +82,16 @@ template <typename T>
 class Component
 {
 public:
-  // Unique id of component T, shared by every entity and every module.
-  // IE: entity1 TransformComponent::getId() -> 1
-  //     entity2 TransformComponent::getId() -> 1
+  /**
+   * The id of component T, shared by every entity and every module: entity1's
+   * and entity2's TransformComponent both have id 1, say. A const T is T
+   * (`getComponent<const T>()`, a `const T` query term), with T's id.
+   * @return T's id
+   */
   static int getId()
   {
-    return detail::moduleTypeId<T, &detail::componentTypeId>();
+    return detail::moduleTypeId<std::remove_cv_t<T>,
+                                &detail::componentTypeId>();
   }
 };
 

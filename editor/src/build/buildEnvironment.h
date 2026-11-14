@@ -29,10 +29,22 @@ public:
   const std::string& toolchainFile() const { return m_toolchainFile; }
   const std::string& enginePrefix() const { return m_enginePrefix; }
   const std::string& codegen() const { return m_codegen; }
+  /**
+   * The sfs-lsp matching this engine (as the build machine sees it), for the
+   * Code panel's Neovim.
+   */
+  const std::string& lsp() const { return m_lsp; }
   /** The engine's source tree (as the build machine sees it); empty if none. */
   const std::string& sourceDir() const { return m_sourceDir; }
   const std::string& generator() const { return m_generator; }
   const std::string& buildType() const { return m_buildType; }
+
+  /**
+   * Whether the editor's engine is a shared library. A game module (a shared
+   * library itself) links the one engine the editor runs, so a static engine
+   * (ENGINE_SHARED=OFF, a build for engine tests) can't build or load one.
+   */
+  bool engineShared() const { return m_engineShared; }
 
   /** File extension of a built module (".dll", ".so"). */
   const std::string& moduleSuffix() const { return m_moduleSuffix; }
@@ -66,8 +78,10 @@ private:
   std::string m_toolchainFile;
   std::string m_enginePrefix;
   std::string m_codegen;
+  std::string m_lsp;
   std::string m_sourceDir;
   std::string m_generator;
   std::string m_buildType;
   std::string m_moduleSuffix;
+  bool m_engineShared = true;
 };

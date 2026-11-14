@@ -33,7 +33,9 @@ protected:
     m_physics = scene.tryGetSystem<sfs::PhysicsSystem3D>();
     m_director = scene.tryFindObject<IslandDirector>();
     m_model = scene.findEntity("Hero/Model");
-    m_spawn = entity().getComponent<sfs::TransformComponent>().position;
+    const auto* transform = entity().getComponent<sfs::TransformComponent>();
+    if (sfs::expect(transform, entity()))
+      m_spawn = transform->position;
     m_facing = 1.5707963f;
   }
 
@@ -63,10 +65,12 @@ protected:
       return;
     const float dt = static_cast<float>(std::min(deltaTime, 0.05));
     const HeroTuning& t = settings();
-    auto& transform = entity().getComponent<sfs::TransformComponent>();
+    auto* transform = entity().getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(transform, entity()))
+      return;
     glm::vec3 velocity = m_physics->velocity(entity());
 
-    if (transform.position.z < fallLimit)
+    if (transform->position.z < fallLimit)
     {
       respawn();
       return;
@@ -76,7 +80,7 @@ protected:
     // ends at them; a ray starting inside it would find the hero).
     const bool wasGrounded = m_grounded;
     sfs::Ray ray;
-    ray.origin = transform.position - glm::vec3(0.0f, 0.0f, 0.02f);
+    ray.origin = transform->position - glm::vec3(0.0f, 0.0f, 0.02f);
     ray.direction = glm::vec3(0.0f, 0.0f, -1.0f);
     const auto below = m_physics->raycast(ray, 0.15f);
     m_grounded = below && below->entity != entity() && velocity.z < 2.0f;
@@ -86,7 +90,7 @@ protected:
       m_airJumps = t.airJumps;
       m_dashReady = true;
       if (!wasGrounded && m_fallSpeed < -5.0f)
-        land(transform.position, -m_fallSpeed);
+        land(transform->position, -m_fallSpeed);
     }
     else
       m_coyote = std::max(m_coyote - dt, 0.0f);
@@ -115,7 +119,7 @@ protected:
                             ? glm::normalize(wish)
                             : glm::vec2(std::cos(m_facing), std::sin(m_facing));
       if (m_director)
-        m_director->burst("dash", transform.position + glm::vec3(0, 0, 0.6f));
+        m_director->burst("dash", transform->position + glm::vec3(0, 0, 0.6f));
     }
     m_dashQueued = false;
     if (m_dashClock > 0.0f)
@@ -134,7 +138,7 @@ protected:
       m_grounded = false;
       squash(1.25f);
       if (m_director)
-        m_director->burst("dust", transform.position);
+        m_director->burst("dust", transform->position);
     }
     else if (m_jumpQueued > 0.0f && !m_grounded && m_airJumps > 0)
     {
@@ -143,7 +147,7 @@ protected:
       --m_airJumps;
       squash(1.3f);
       if (m_director)
-        m_director->burst("puff", transform.position + glm::vec3(0, 0, 0.3f));
+        m_director->burst("puff", transform->position + glm::vec3(0, 0, 0.3f));
     }
     // A short hop when jump is let go early; and a snappier fall.
     if (!m_jumpHeld && velocity.z > 0.0f)
@@ -155,12 +159,11 @@ protected:
 
     // The model: turned the way it faces, squashed back into shape.
     m_stretch += (1.0f - m_stretch) * std::min(12.0f * dt, 1.0f);
-    if (m_model.isValid() && m_model.hasComponent<sfs::TransformComponent>())
+    if (auto* model = m_model.getComponent<sfs::TransformComponent>())
     {
-      auto& model = m_model.getComponent<sfs::TransformComponent>();
-      model.rotation = glm::angleAxis(m_facing, glm::vec3(0.0f, 0.0f, 1.0f));
+      model->rotation = glm::angleAxis(m_facing, glm::vec3(0.0f, 0.0f, 1.0f));
       const float wide = 1.0f / std::sqrt(m_stretch);
-      model.scale = glm::vec3(wide, wide, m_stretch);
+      model->scale = glm::vec3(wide, wide, m_stretch);
     }
   }
 
@@ -193,13 +196,15 @@ private:
 
   void respawn()
   {
-    auto& transform = entity().getComponent<sfs::TransformComponent>();
-    transform.position = m_spawn + glm::vec3(0.0f, 0.0f, 0.5f);
+    auto* transform = entity().getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(transform, entity()))
+      return;
+    transform->position = m_spawn + glm::vec3(0.0f, 0.0f, 0.5f);
     if (m_physics)
       m_physics->setVelocity(entity(), glm::vec3(0.0f));
     m_dashClock = 0.0f;
     if (m_director)
-      m_director->burst("sparkle", transform.position + glm::vec3(0, 0, 0.8f));
+      m_director->burst("sparkle", transform->position + glm::vec3(0, 0, 0.8f));
   }
 
   sfs::PhysicsSystem3D* m_physics = nullptr;

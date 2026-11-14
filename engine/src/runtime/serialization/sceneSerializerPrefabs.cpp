@@ -4,6 +4,8 @@
 
 #include "engine/runtime/serialization/sceneSerializer.h"
 
+#include "engine/core/components/sceneIdComponent.h"
+#include "engine/core/ecs/expect.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
@@ -13,6 +15,7 @@
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/unresolvedComponents.h"
+#include "entityRefPaths.h"
 
 #include <algorithm>
 #include <charconv>
@@ -42,13 +45,7 @@ std::string join(const std::string& path, const std::string& part)
   return path.empty() ? part : path + "/" + part;
 }
 
-std::optional<uint32_t> idOf(const json& entry)
-{
-  const auto it = entry.find("$id");
-  if (it == entry.end() || !it->is_number_integer() || it->get<int64_t>() < 0)
-    return std::nullopt;
-  return static_cast<uint32_t>(it->get<int64_t>());
-}
+using entityRefs::idOf;
 
 // A file's "formatVersion" (0 if it has none).
 int formatOf(const json& file)
@@ -57,17 +54,7 @@ int formatOf(const json& file)
   return it != file.end() && it->is_number_integer() ? it->get<int>() : 0;
 }
 
-// A path segment as an id; nothing if it isn't one.
-std::optional<uint32_t> segmentId(std::string_view segment)
-{
-  uint32_t id = 0;
-  const auto [end, error] =
-      std::from_chars(segment.data(), segment.data() + segment.size(), id);
-  if (segment.empty() || error != std::errc() ||
-      end != segment.data() + segment.size())
-    return std::nullopt;
-  return id;
-}
+using entityRefs::segmentId;
 
 // The id of an entity a prefab adds inside one of its nested instances, when
 // its file gives it none: made from the id of the instance (or entity) whose
@@ -184,6 +171,8 @@ struct SceneSerializer::PrefabNode
   // An instance root: the parts of its entry naming entities its prefab
   // doesn't have (see UnresolvedComponents::overrides); null if none.
   json unused;
+  // Its entry's "$sceneId" (SceneIdComponent), if it has one.
+  std::optional<uint32_t> sceneId;
 };
 
 namespace
@@ -195,15 +184,19 @@ public:
   using Node = SceneSerializer::PrefabNode;
   using NodeIdEdit = SceneSerializer::NodeIdEdit;
 
-  // `warn`: log each instance's unused overrides (when loading). `edits`:
-  // record the old model node ids translated in entries that have a pointer
-  // (those of the file being upgraded). `unreadable`: gets the name of each
-  // prefab an instance names that can't be expanded.
-  explicit Expander(const SceneSerializer::PrefabSource& source,
-                    bool warn = false,
-                    std::vector<NodeIdEdit>* edits = nullptr,
-                    std::vector<std::string>* unreadable = nullptr)
-      : m_source(source), m_warn(warn), m_edits(edits), m_unreadable(unreadable)
+  // `types`: which components' fields are entity references, rebased to
+  // expansion keys as they're read. `warn`: log each instance's unused
+  // overrides (when loading). `edits`: record the old model node ids
+  // translated in entries that have a pointer (those of the file being
+  // upgraded). `unreadable`: gets the name of each prefab an instance names
+  // that can't be expanded.
+  Expander(const SceneSerializer::PrefabSource& source,
+           const reflect::TypeRegistry& types,
+           bool warn = false,
+           std::vector<NodeIdEdit>* edits = nullptr,
+           std::vector<std::string>* unreadable = nullptr)
+      : m_source(source), m_types(types), m_warn(warn), m_edits(edits),
+        m_unreadable(unreadable)
   {
   }
 
@@ -242,15 +235,24 @@ public:
                   "; its instance is kept as saved");
       if (m_unreadable)
         m_unreadable->push_back(label);
-      add({key, parent, json::object(), link, name, entry});
+      Node placeholder{key, parent, json::object(), link, name, entry};
+      placeholder.sceneId = entityRefs::sceneIdOf(entry);
+      add(std::move(placeholder));
       return;
     }
 
     m_stack.push_back(name);
     const std::size_t first = nodes.size();
-    content((*data)["root"], key, parent, link, key);
+    // The prefab's references are relative to its root: this instance.
+    content((*data)["root"], key, parent, link, key, key);
+    // What the entry overrides and adds belongs to the file holding the entry,
+    // not to this prefab: an instance of it added there (a copy of a prefab
+    // placed under another copy) is no cycle. One that is comes back through
+    // that file's own place on the stack.
+    m_stack.pop_back();
     const std::size_t root = m_index[key];
     nodes[root].prefab = name;
+    nodes[root].sceneId = entityRefs::sceneIdOf(entry);
     if (const auto model = data->find("model");
         model != data->end() && model->is_boolean() && model->get<bool>())
     {
@@ -278,7 +280,7 @@ public:
         if (const auto it = m_index.find(at); it == m_index.end())
           unused["$overrides"][unusedPath(key, at)] = patch;
         else if (!nodes[it->second].removed)
-          mergePatch(nodes[it->second].components, patch);
+          mergeOverride(nodes[it->second].components, patch, key);
       }
     if (const auto removed = entry.find("$removed");
         removed != entry.end() && removed->is_array())
@@ -337,6 +339,7 @@ public:
                   parentKey,
                   link ? std::optional<uint32_t>(addedId(extra, *link, '+', i))
                        : std::nullopt,
+                  key,
                   pointer ? &extraPointer : nullptr);
       }
     if (!unused.is_null())
@@ -345,18 +348,19 @@ public:
         warnUnused(name, unused);
       nodes[root].unused = std::move(unused);
     }
-    m_stack.pop_back();
   }
 
   // A prefab's (or scene's) entry: entities with "$id"s are keyed by them under
   // `owner` (the instance they belong to); others get "+n" keys, or with
   // `madeIds` (inside what a prefab adds to a nested instance) ids made from
-  // their parent's. `pointer`: as instance()'s.
+  // their parent's. Its references are relative to the key `refBase` (the
+  // instance whose prefab or entry holds it). `pointer`: as instance()'s.
   void content(const json& entry,
                const std::string& key,
                const std::string& parent,
                std::optional<uint32_t> link,
                const std::string& owner,
+               const std::string& refBase,
                const std::string* pointer = nullptr,
                bool madeIds = false)
   {
@@ -365,7 +369,10 @@ public:
       instance(entry, key, parent, link, pointer);
       return;
     }
-    add({key, parent, componentsOf(entry), link});
+    Node node{key, parent, componentsOf(entry), link};
+    rebase(node.components, refBase);
+    node.sceneId = entityRefs::sceneIdOf(entry);
+    add(std::move(node));
     if (const auto children = entry.find(kChildrenKey);
         children != entry.end() && children->is_array())
       for (std::size_t i = 0; i < children->size(); ++i)
@@ -382,6 +389,7 @@ public:
                     key,
                     key,
                     addedId(child, *link, '/', i),
+                    refBase,
                     pointer ? &childPointer : nullptr);
           continue;
         }
@@ -394,6 +402,7 @@ public:
                 key,
                 childId,
                 childId ? owner : childKey,
+                refBase,
                 pointer ? &childPointer : nullptr);
       }
   }
@@ -413,11 +422,13 @@ private:
   // An entity added under `parentKey` by the entry of the instance at `key`.
   // With an `id` (the entry is a prefab's), it belongs to that prefab: keyed
   // by the id under the instance its parent is in, as pathInInstance() finds
-  // it. Without one (a scene's own), it gets a "+n" key.
+  // it. Without one (a scene's own), it gets a "+n" key. `refBase`: as
+  // content()'s.
   void addEntity(const json& entry,
                  const std::string& key,
                  const std::string& parentKey,
                  std::optional<uint32_t> id,
+                 const std::string& refBase,
                  const std::string* pointer)
   {
     std::string owner;
@@ -438,7 +449,92 @@ private:
     if (entry.contains("$prefab"))
       instance(entry, entityKey, parentKey, id, pointer);
     else
-      content(entry, entityKey, parentKey, id, owner, pointer, id.has_value());
+      content(entry,
+              entityKey,
+              parentKey,
+              id,
+              owner,
+              refBase,
+              pointer,
+              id.has_value());
+  }
+
+  // The referencing type a component of `components` is, if it is one.
+  const reflect::TypeInfo* referencing(std::string_view name) const
+  {
+    for (const reflect::TypeInfo* type : m_types.referencingTypes())
+      if (type->name == name)
+        return type;
+    return nullptr;
+  }
+
+  // An entity's components with their relative references made expansion
+  // keys: each followed from `base`, the key it's relative to.
+  void rebase(json& components, const std::string& base) const
+  {
+    for (const reflect::TypeInfo* type : m_types.referencingTypes())
+      if (const auto it = components.find(type->name);
+          it != components.end() && it->is_object())
+        rebaseFields(*it, *type, base);
+  }
+
+  static void rebaseFields(json& fields,
+                           const reflect::TypeInfo& type,
+                           const std::string& base)
+  {
+    for (const reflect::FieldInfo& field : type.fields)
+    {
+      if (!reflect::isEntityField(field))
+        continue;
+      const auto value = fields.find(field.name);
+      if (value == fields.end())
+        continue;
+      if (value->is_string())
+        rebaseValue(*value, base);
+      else if (value->is_array())
+        for (json& item : *value)
+          if (item.is_string())
+            rebaseValue(item, base);
+    }
+  }
+
+  // One that goes above the root keeps its path as written: it names
+  // nothing, so it's logged, kept and saved back when it resolves.
+  static void rebaseValue(json& value, const std::string& base)
+  {
+    const std::string& path = value.get_ref<const std::string&>();
+    if (base.empty() || !entityRefs::isRelative(path))
+      return;
+    value = entityRefs::followPath(base, path);
+  }
+
+  // mergePatch() of an instance's override onto an entity's components, the
+  // override's references rebased from `base` (the instance) first.
+  void mergeOverride(json& components,
+                     const json& patch,
+                     const std::string& base) const
+  {
+    if (!patch.is_object())
+    {
+      mergePatch(components, patch);
+      return;
+    }
+    if (!components.is_object())
+      components = json::object();
+    for (const auto& [name, value] : patch.items())
+    {
+      if (value.is_null())
+        components.erase(name);
+      else if (const reflect::TypeInfo* type =
+                   value.is_object() ? referencing(name) : nullptr)
+      {
+        json rebased = value;
+        rebaseFields(rebased, *type, base);
+        mergePatch(components[name], rebased);
+      }
+      else
+        mergePatch(components[name], value);
+    }
   }
 
   // The key of the instance an entity's children belong to: the entity's own
@@ -478,35 +574,33 @@ private:
     std::optional<uint32_t> fromId;
     uint32_t toId = 0;
     std::string model;
-    for (std::size_t start = 0; start < path.size();)
-    {
-      const std::size_t slash = std::min(path.find('/', start), path.size());
-      std::string_view segment = path.substr(start, slash - start);
-      start = slash + 1;
-      if (segment.empty())
-        continue;
-      bool past = false;
-      if (const std::optional<uint32_t> old = segmentId(segment);
-          old && *old < kAddedNodeIdBit)
-        if (const auto owner = m_index.find(at);
-            owner != m_index.end() && nodes[owner->second].modelNodes)
+    entityRefs::forEachSegment(
+        path,
+        [&](std::string_view segment)
         {
-          fromId = *old;
-          model = nodes[owner->second].prefab;
-          past = *old < 1 || *old > *nodes[owner->second].modelNodes;
-          if (!past)
-          {
-            const std::string& node = nodes[owner->second + *old].key;
-            segment = std::string_view(node).substr(node.rfind('/') + 1);
-            toId = segmentId(segment).value_or(0);
-          }
-        }
-      if (!at.empty())
-        at += '/';
-      if (past)
-        at += kOldNodeIdPrefix;
-      at += segment;
-    }
+          bool past = false;
+          if (const std::optional<uint32_t> old = segmentId(segment);
+              old && *old < kAddedNodeIdBit)
+            if (const auto owner = m_index.find(at);
+                owner != m_index.end() && nodes[owner->second].modelNodes)
+            {
+              fromId = *old;
+              model = nodes[owner->second].prefab;
+              past = *old < 1 || *old > *nodes[owner->second].modelNodes;
+              if (!past)
+              {
+                const std::string& node = nodes[owner->second + *old].key;
+                segment = std::string_view(node).substr(node.rfind('/') + 1);
+                toId = segmentId(segment).value_or(0);
+              }
+            }
+          if (!at.empty())
+            at += '/';
+          if (past)
+            at += kOldNodeIdPrefix;
+          at += segment;
+          return true;
+        });
     if (fromId && m_edits && pointer)
     {
       NodeIdEdit edit;
@@ -577,6 +671,7 @@ private:
   }
 
   const SceneSerializer::PrefabSource& m_source;
+  const reflect::TypeRegistry& m_types;
   bool m_warn = false;
   std::vector<NodeIdEdit>* m_edits = nullptr;
   std::vector<std::string>* m_unreadable = nullptr;
@@ -604,30 +699,40 @@ std::optional<std::string> SceneSerializer::pathInInstance(const Entity& entity,
 {
   if (entity == root)
     return std::string();
-  if (!entity.isValid() || !entity.hasComponent<PrefabLinkComponent>())
+  PrefabLinkComponent* prefabLink = entity.getComponent<PrefabLinkComponent>();
+  if (!prefabLink)
     return std::nullopt;
   // Its id is in the file of the instance it belongs to: the nearest instance
-  // root above it (for a nested instance's root, the one containing it).
-  const Entity owner = nearestInstance(hierarchy::parentOf(entity));
+  // root above it (for a nested instance's root, the one containing it), or
+  // `root` itself, whatever it is.
+  Entity owner = hierarchy::parentOf(entity);
+  while (owner.isValid() && owner != root &&
+         !owner.hasComponent<PrefabInstanceComponent>())
+    owner = hierarchy::parentOf(owner);
   if (!owner.isValid())
     return std::nullopt;
   const std::optional<std::string> ownerPath = pathInInstance(owner, root);
   if (!ownerPath)
     return std::nullopt;
-  return join(*ownerPath,
-              std::to_string(entity.getComponent<PrefabLinkComponent>().id));
+  return join(*ownerPath, std::to_string(prefabLink->id));
 }
 
 Entity SceneSerializer::loadInstance(const json& entry,
                                      Scene& scene,
                                      const Entity& parent,
-                                     std::set<std::string>* unresolvedTypes,
+                                     LoadOp& op,
                                      std::vector<Entity>* created) const
 {
-  Expander expander(m_prefabs, true);
+  Expander expander(m_prefabs, m_types, true);
   expander.instance(entry, "", "", idOf(entry));
+  const auto prefab = entry.find("$prefab");
+  const std::string_view source =
+      prefab != entry.end() && prefab->is_string()
+          ? std::string_view(prefab->get_ref<const std::string&>())
+          : std::string_view("A prefab instance");
 
   std::unordered_map<std::string, Entity> made;
+  std::vector<PendingRef> pending;
   Entity root;
   for (PrefabNode& node : expander.nodes)
   {
@@ -640,8 +745,16 @@ Entity SceneSerializer::loadInstance(const json& entry,
     made[node.key] = entity;
     if (created)
       created->push_back(entity);
+    // Entries a copy numbers ("#n"): the root, and what the scene added
+    // (keys "+n"; what a prefab holds has an id).
+    if (op.entries && (node.key.empty() || std::string_view(node.key)
+                                               .substr(node.key.rfind('/') + 1)
+                                               .starts_with('+')))
+      op.entries->push_back(entity);
     if (node.key.empty())
       root = entity;
+    if (node.sceneId)
+      entity.addComponent<SceneIdComponent>(SceneIdComponent{*node.sceneId});
 
     if (!node.missing.is_null())
     {
@@ -652,12 +765,13 @@ Entity SceneSerializer::loadInstance(const json& entry,
           MissingPrefabComponent{std::move(kept)});
       continue;
     }
-    loadComponents(node.components, entity, unresolvedTypes);
+    loadComponents(
+        node.components, entity, op.unresolvedTypes, pending, source);
     if (!node.unused.is_null())
     {
       if (!entity.hasComponent<UnresolvedComponents>())
         entity.addComponent<UnresolvedComponents>();
-      entity.getComponent<UnresolvedComponents>().overrides =
+      entity.getComponent<UnresolvedComponents>()->overrides =
           std::move(node.unused);
     }
     if (node.model)
@@ -668,6 +782,9 @@ Entity SceneSerializer::loadInstance(const json& entry,
       entity.addComponent<PrefabInstanceComponent>(
           PrefabInstanceComponent{node.prefab});
   }
+  // Paths into the instance resolve now; the rest name what the load around
+  // it makes.
+  resolveRefs(pending, scene, nullptr, &made, &op.refs);
   return root;
 }
 
@@ -676,16 +793,20 @@ Entity SceneSerializer::instantiate(std::string_view prefab,
                                     const Entity& parent,
                                     std::vector<Entity>* made) const
 {
-  return loadInstance(
-      json{{"$prefab", std::string(prefab)}}, scene, parent, nullptr, made);
+  // Named: pending references view its "$prefab" until they resolve.
+  const json entry = {{"$prefab", std::string(prefab)}};
+  LoadOp op;
+  const Entity root = loadInstance(entry, scene, parent, op, made);
+  resolveRefs(op.refs, scene, nullptr, nullptr, nullptr);
+  return root;
 }
 
 std::vector<SceneSerializer::PrefabNode>
 SceneSerializer::expandBase(const json& entry) const
 {
-  Expander expander(m_prefabs);
+  Expander expander(m_prefabs, m_types);
   if (entry.is_object())
-    expander.content(entry, "", "", std::nullopt, "");
+    expander.content(entry, "", "", std::nullopt, "", "");
 
   // Fill in every field of the components the registry knows, as saving an
   // entity writes them, so a field the prefab file lacks (added to the type
@@ -739,12 +860,12 @@ SceneSerializer::nodeIdEdits(const json& file,
   std::vector<NodeIdEdit> edits;
   if (!file.is_object())
     return edits;
-  Expander expander(m_prefabs, true, &edits, unreadable);
+  Expander expander(m_prefabs, m_types, true, &edits, unreadable);
   if (const auto root = file.find("root");
       root != file.end() && root->is_object())
   {
     const std::string pointer = "/root";
-    expander.content(*root, "", "", std::nullopt, "", &pointer);
+    expander.content(*root, "", "", std::nullopt, "", "", &pointer);
   }
   if (const auto entities = file.find("entities");
       entities != file.end() && entities->is_array())
@@ -754,62 +875,129 @@ SceneSerializer::nodeIdEdits(const json& file,
         // Keys of their own, apart from each other's and the root's.
         const std::string key = "+entity" + std::to_string(i);
         const std::string pointer = "/entities/" + std::to_string(i);
-        expander.content((*entities)[i], key, "", std::nullopt, key, &pointer);
+        expander.content(
+            (*entities)[i], key, "", std::nullopt, key, key, &pointer);
       }
   return edits;
 }
 
-json SceneSerializer::instanceEntry(const Entity& root) const
+namespace
 {
-  const std::string prefab =
-      root.getComponent<PrefabInstanceComponent>().prefab;
-  const std::vector<PrefabNode> base = expandBase(json{{"$prefab", prefab}});
-  std::unordered_map<std::string, const PrefabNode*> byPath;
-  for (const PrefabNode& node : base)
-    if (!node.removed && node.missing.is_null())
-      byPath[node.key] = &node;
-
-  json overrides = json::object();
-  json added = json::array();
-  std::unordered_set<std::string> seen;
-
+// An instance's entities as its entry sees them, children in id order: each
+// of its prefab's (`owned(entity, path, node)`, the root first), and each top
+// of what isn't, saved whole as added (`added(entity, parentPath,
+// fromPrefab)`: a prefab's entity moved to another parent, or made an
+// instance of another prefab since, is added too).
+template <typename Owned, typename Added>
+void walkInstance(
+    const Entity& root,
+    const std::unordered_map<std::string, const SceneSerializer::PrefabNode*>&
+        byPath,
+    const Owned& owned,
+    const Added& added)
+{
   const std::function<void(const Entity&, const std::string&)> walk =
       [&](const Entity& entity, const std::string& parentPath)
   {
-    const std::optional<std::string> path = pathInInstance(entity, root);
+    const std::optional<std::string> path =
+        SceneSerializer::pathInInstance(entity, root);
     const auto node = path ? byPath.find(*path) : byPath.end();
-    const std::string isInstanceOf =
-        entity.hasComponent<PrefabInstanceComponent>()
-            ? entity.getComponent<PrefabInstanceComponent>().prefab
-            : "";
-    // Not the prefab's, moved to another parent in it, or now an instance of
-    // another prefab (e.g. made into one since): saved whole.
+    const auto* instance = entity.getComponent<PrefabInstanceComponent>();
+    const std::string isInstanceOf = instance ? instance->prefab : "";
     if (entity != root &&
         (node == byPath.end() || node->second->parent != parentPath ||
          node->second->prefab != isInstanceOf))
     {
-      // What a prefab added here keeps its ids; one moved from elsewhere in
-      // the prefab is a copy (the original is removed) and gets none.
-      json extra = saveSubtree(
-          entity, node == byPath.end() ? SavedIds::Added : SavedIds::None);
-      extra["$parent"] = parentPath;
-      added.push_back(std::move(extra));
+      added(entity, parentPath, node != byPath.end());
       return;
     }
     if (node == byPath.end())
       return; // the root, with the prefab unreadable: nothing to compare with
-    seen.insert(*path);
-    // A nested instance whose prefab didn't load has nothing to compare.
-    if (!entity.hasComponent<MissingPrefabComponent>())
-    {
-      json patch = mergeDiff(node->second->components, saveComponents(entity));
-      if (!patch.empty())
-        overrides[*path] = std::move(patch);
-    }
+    owned(entity, *path, *node->second);
     for (const Entity& child : hierarchy::childrenOf(entity))
       walk(child, *path);
   };
   walk(root, std::string());
+}
+
+// A prefab's expanded entities by path, as an instance of it is compared.
+std::unordered_map<std::string, const SceneSerializer::PrefabNode*>
+byPathOf(const std::vector<SceneSerializer::PrefabNode>& base)
+{
+  std::unordered_map<std::string, const SceneSerializer::PrefabNode*> byPath;
+  byPath.reserve(base.size());
+  for (const SceneSerializer::PrefabNode& node : base)
+    if (!node.removed && node.missing.is_null())
+      byPath[node.key] = &node;
+  return byPath;
+}
+} // namespace
+
+std::vector<Entity> SceneSerializer::addedTops(const Entity& root) const
+{
+  std::vector<Entity> tops;
+  const auto* instance = root.getComponent<PrefabInstanceComponent>();
+  if (!expect(instance, root))
+    return tops;
+  const std::vector<PrefabNode> base =
+      expandBase(json{{"$prefab", instance->prefab}});
+  walkInstance(
+      root,
+      byPathOf(base),
+      [](const Entity&, const std::string&, const PrefabNode&) {},
+      [&](const Entity& entity, const std::string&, bool)
+      { tops.push_back(entity); });
+  return tops;
+}
+
+json SceneSerializer::instanceEntry(const Entity& root) const
+{
+  // A read: no op, so it hands out no scene ids and keeps every kept value.
+  RefContext refs;
+  refs.fileRoot = root;
+  refs.sceneIds = true;
+  json entry = instanceEntry(root, refs);
+  if (SceneIdComponent* sceneId = root.getComponent<SceneIdComponent>())
+    entry[entityRefs::kSceneIdKey] = sceneId->id;
+  return entry;
+}
+
+json SceneSerializer::instanceEntry(const Entity& root,
+                                    const RefContext& refs) const
+{
+  const auto* instance = root.getComponent<PrefabInstanceComponent>();
+  if (!expect(instance, root))
+    return json::object();
+  const std::string prefab = instance->prefab;
+  const std::vector<PrefabNode> base = expandBase(json{{"$prefab", prefab}});
+  const std::unordered_map<std::string, const PrefabNode*> byPath =
+      byPathOf(base);
+
+  json overrides = json::object();
+  json added = json::array();
+  std::unordered_set<std::string> seen;
+  walkInstance(
+      root,
+      byPath,
+      [&](const Entity& entity, const std::string& path, const PrefabNode& node)
+      {
+        seen.insert(path);
+        // A nested instance whose prefab didn't load has nothing to compare.
+        if (entity.hasComponent<MissingPrefabComponent>())
+          return;
+        json patch = mergeDiff(node.components, saveComponents(entity, refs));
+        if (!patch.empty())
+          overrides[path] = std::move(patch);
+      },
+      [&](const Entity& entity, const std::string& parentPath, bool owned)
+      {
+        // What a prefab added here keeps its ids; one moved from elsewhere in
+        // the prefab is a copy (the original is removed) and gets none.
+        json extra =
+            saveSubtree(entity, owned ? SavedIds::None : SavedIds::Added, refs);
+        extra["$parent"] = parentPath;
+        added.push_back(std::move(extra));
+      });
 
   // The prefab's entities this one lacks (just the tops of removed branches).
   json removed = json::array();
@@ -820,9 +1008,10 @@ json SceneSerializer::instanceEntry(const Entity& root) const
 
   // What the loaded entry named that the prefab doesn't have goes back out,
   // each list item in the place it was read from.
-  if (root.hasComponent<UnresolvedComponents>())
+  if (UnresolvedComponents* unresolvedComponents =
+          root.getComponent<UnresolvedComponents>())
   {
-    const json& unused = root.getComponent<UnresolvedComponents>().overrides;
+    const json& unused = unresolvedComponents->overrides;
     if (const auto it = unused.find("$overrides");
         it != unused.end() && it->is_object())
       for (const auto& [path, patch] : it->items())
@@ -873,10 +1062,10 @@ json SceneSerializer::savePrefab(const Entity& root,
       owned.push_back(entity);
       // A model node's stable id (from an unpacked model) or an added
       // entity's is kept, but new ids count on from the prefab's own.
-      if (entity.hasComponent<PrefabLinkComponent>() &&
-          entity.getComponent<PrefabLinkComponent>().id < kAddedNodeIdBit)
-        next =
-            std::max(next, entity.getComponent<PrefabLinkComponent>().id + 1);
+      if (PrefabLinkComponent* prefabLink =
+              entity.getComponent<PrefabLinkComponent>();
+          prefabLink && prefabLink->id < kAddedNodeIdBit)
+        next = std::max(next, prefabLink->id + 1);
       if (entity.hasComponent<PrefabInstanceComponent>() ||
           entity.hasComponent<MissingPrefabComponent>())
         return;
@@ -890,11 +1079,13 @@ json SceneSerializer::savePrefab(const Entity& root,
   {
     // Kept only if it's unique here (an entity moved in from another prefab
     // may clash).
-    if (entity.hasComponent<PrefabLinkComponent>() &&
-        used.insert(entity.getComponent<PrefabLinkComponent>().id).second)
+    if (PrefabLinkComponent* prefabLink =
+            entity.getComponent<PrefabLinkComponent>();
+        prefabLink && used.insert(prefabLink->id).second)
       continue;
-    if (entity.hasComponent<PrefabLinkComponent>())
-      entity.getComponent<PrefabLinkComponent>().id = next;
+    if (PrefabLinkComponent* prefabLink =
+            entity.getComponent<PrefabLinkComponent>())
+      prefabLink->id = next;
     else
       entity.addComponent<PrefabLinkComponent>(PrefabLinkComponent{next});
     used.insert(next++);
@@ -912,17 +1103,20 @@ json SceneSerializer::savePrefab(const Entity& root,
     {
       if (child.hasComponent<MissingPrefabComponent>())
         continue;
-      if (!child.hasComponent<PrefabLinkComponent>())
+      const auto* link = child.getComponent<PrefabLinkComponent>();
+      if (!link)
         fresh.emplace_back(child, holder);
-      else if (const uint32_t id = child.getComponent<PrefabLinkComponent>().id;
-               (id & kAddedNodeIdBit) != 0 && (id & kModelNodeIdBit) == 0)
-        addedIds.insert(id);
+      else if ((link->id & kAddedNodeIdBit) != 0 &&
+               (link->id & kModelNodeIdBit) == 0)
+        addedIds.insert(link->id);
       inside(child, holder);
     }
   };
   for (const Entity& entity : owned)
     if (entity.hasComponent<PrefabInstanceComponent>())
-      inside(entity, entity.getComponent<PrefabLinkComponent>().id);
+      if (const auto* link = entity.getComponent<PrefabLinkComponent>();
+          expect(link, entity))
+        inside(entity, link->id);
   for (auto& [entity, holder] : fresh)
   {
     uint32_t id = 0;
@@ -935,13 +1129,20 @@ json SceneSerializer::savePrefab(const Entity& root,
     entity.addComponent<PrefabLinkComponent>(PrefabLinkComponent{id});
   }
 
-  // The root's own content (not as an instance, even if it is one).
-  json rootEntry = saveComponents(root);
-  if (root.hasComponent<PrefabInstanceComponent>())
+  // The root's own content (not as an instance, even if it is one). Its
+  // references are paths from the root; it can't name anything outside.
+  SaveOp op;
+  RefContext refs;
+  refs.fileRoot = root;
+  refs.sceneAllowed = false;
+  refs.op = &op;
+  json rootEntry = saveComponents(root, refs);
+  if (PrefabInstanceComponent* prefabInstance =
+          root.getComponent<PrefabInstanceComponent>())
   {
     // Apply: the prefab keeps its own root placement.
-    for (const PrefabNode& node : expandBase(json{
-             {"$prefab", root.getComponent<PrefabInstanceComponent>().prefab}}))
+    for (const PrefabNode& node :
+         expandBase(json{{"$prefab", prefabInstance->prefab}}))
       if (node.key.empty())
       {
         const auto transform = node.components.find("TransformComponent");
@@ -960,7 +1161,7 @@ json SceneSerializer::savePrefab(const Entity& root,
 
   json children = json::array();
   for (const Entity& child : hierarchy::childrenOf(root))
-    children.push_back(saveSubtree(child, SavedIds::All));
+    children.push_back(saveSubtree(child, SavedIds::All, refs));
   if (!children.empty())
     rootEntry[kChildrenKey] = std::move(children);
   return {

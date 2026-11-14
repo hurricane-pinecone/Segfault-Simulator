@@ -92,7 +92,7 @@ protected:
 class Timed : public System
 {
 public:
-  explicit Timed(TimeStep kind) { setTimeStep(kind); }
+  explicit Timed(TimeStep kind) : m_kind(kind) {}
 
   Registry& world() { return *registry; }
 
@@ -103,12 +103,16 @@ public:
   bool agreed = true;
 
 protected:
+  void create() override { setTimeStep(m_kind); }
   void update(double deltaTime) override
   {
     given += deltaTime;
     seen.push_back(registry->gameTime());
     agreed = agreed && std::abs(registry->gameTime() - given) < 1e-9;
   }
+
+private:
+  TimeStep m_kind;
 };
 
 // Notes whether it saw Space and Up pressed, and its turn among the calls.
@@ -310,14 +314,14 @@ int main()
 
     world.scene.destroyBranch(cart);
     world.scene.flushEntities();
-    CHECK(!cart.isAlive());
-    CHECK(!crate.isAlive());
-    CHECK(!lid.isAlive());
-    CHECK(ball.isAlive());
+    CHECK(!cart.isValid());
+    CHECK(!crate.isValid());
+    CHECK(!lid.isValid());
+    CHECK(ball.isValid());
     CHECK(world.scene.entities().size() == 1u);
     world.scene.destroyBranch(cart); // already gone: nothing happens
     world.scene.flushEntities();
-    CHECK(ball.isAlive());
+    CHECK(ball.isValid());
   }
 
   TEST("a game object should know its scene by onCreate")
@@ -512,10 +516,10 @@ int main()
     rig.addComponent<NameComponent>("Rig");
     rig.addComponent<TransformComponent>();
     rig.addComponent<AnimatorComponent>();
-    AnimatorComponent& animator = rig.getComponent<AnimatorComponent>();
-    animator.clip = "Move";
+    AnimatorComponent* animator = rig.getComponent<AnimatorComponent>();
+    animator->clip = "Move";
     if (record)
-      animator.source = "asset:" + record->id.toString();
+      animator->source = "asset:" + record->id.toString();
     Entity box = scene.createEntity();
     box.addComponent<NameComponent>("Box");
     box.addComponent<TransformComponent>();
@@ -561,8 +565,9 @@ int main()
       CHECK(camera.space && planner.space); // the driver's is off
       CHECK(camera.up && planner.up);       // shared at priority 1
       CHECK(driver.space && !driver.up);    // its own is off: it ranks lowest
-      CHECK(
-          planner.entity().getComponent<InputContextComponent>().loggedUnknown);
+      CHECK(planner.entity()
+                .getComponent<InputContextComponent>()
+                ->loggedUnknown);
     }
 
     TEST("lateUpdate should run on enabled systems in order, after every "
@@ -598,7 +603,7 @@ int main()
 
     // Running: the clip plays and the particles fly.
     scene.update(0.1);
-    const float playedTo = rig.getComponent<AnimatorComponent>().time;
+    const float playedTo = rig.getComponent<AnimatorComponent>()->time;
     const std::vector<glm::vec2> flown = particlePlaces(*particles);
     CHECK(playedTo > 0.0f);
     CHECK(flown.size() == 3u);
@@ -609,12 +614,12 @@ int main()
     scene.update(0.25);
     CHECK(testing::approx(stepped.given, 0.35));
     CHECK(testing::approx(registry.gameTime(), before + 0.25));
-    CHECK(rig.getComponent<AnimatorComponent>().time == playedTo);
+    CHECK(rig.getComponent<AnimatorComponent>()->time == playedTo);
     CHECK(particlePlaces(*particles) == flown);
 
     registry.setPaused(false);
     scene.update(0.1);
-    CHECK(rig.getComponent<AnimatorComponent>().time > playedTo);
+    CHECK(rig.getComponent<AnimatorComponent>()->time > playedTo);
     CHECK(particlePlaces(*particles) != flown);
   }
 

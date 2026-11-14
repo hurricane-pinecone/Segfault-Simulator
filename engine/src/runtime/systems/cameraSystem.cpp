@@ -101,10 +101,9 @@ void CameraSystem::gatherBlockers(const CameraCollisionComponent& collision,
            !entity.hasComponent<RigidBody3DComponent>();
   };
 
-  for (const Entity& entity :
+  for (auto [entity, transform, box] :
        registry->query<TransformComponent, BoxCollider3DComponent>())
   {
-    const auto& box = entity.getComponent<BoxCollider3DComponent>();
     if (!counts(collision, box.trigger, box.layer) || !still(entity))
       continue;
     const glm::mat4 world = hierarchy::worldMatrix(entity);
@@ -116,10 +115,9 @@ void CameraSystem::gatherBlockers(const CameraCollisionComponent& collision,
     blocker.toLocal = glm::inverse(world);
     keep(std::move(blocker));
   }
-  for (const Entity& entity :
+  for (auto [entity, transform, sphere] :
        registry->query<TransformComponent, SphereCollider3DComponent>())
   {
-    const auto& sphere = entity.getComponent<SphereCollider3DComponent>();
     if (!counts(collision, sphere.trigger, sphere.layer) || !still(entity))
       continue;
     const glm::mat4 world = hierarchy::worldMatrix(entity);
@@ -132,10 +130,9 @@ void CameraSystem::gatherBlockers(const CameraCollisionComponent& collision,
     blocker.bounds.expand(blocker.a + glm::vec3(blocker.radius));
     keep(std::move(blocker));
   }
-  for (const Entity& entity :
+  for (auto [entity, transform, capsule] :
        registry->query<TransformComponent, CapsuleCollider3DComponent>())
   {
-    const auto& capsule = entity.getComponent<CapsuleCollider3DComponent>();
     if (!counts(collision, capsule.trigger, capsule.layer) || !still(entity))
       continue;
     const glm::mat4 world = hierarchy::worldMatrix(entity);
@@ -204,14 +201,12 @@ void CameraSystem::lateUpdate(double deltaTime)
   if (!registry)
     return;
   const float dt = static_cast<float>(deltaTime);
-  for (const Entity& entity : registry->query<TransformComponent,
-                                              CameraComponent,
-                                              CameraCollisionComponent>())
+  for (auto [entity, transform, camera, collision] :
+       registry->query<TransformComponent,
+                       CameraComponent,
+                       CameraCollisionComponent>())
   {
-    auto& transform = entity.getComponent<TransformComponent>();
-    auto& collision = entity.getComponent<CameraCollisionComponent>();
-    const float focus =
-        std::max(entity.getComponent<CameraComponent>().focusDistance, 0.01f);
+    const float focus = std::max(camera.focusDistance, 0.01f);
 
     // Left where it was lifted to: nothing moved it, so the controller's pose
     // is still the one it was lifted from.

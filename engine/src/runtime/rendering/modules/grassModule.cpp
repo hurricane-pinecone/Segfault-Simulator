@@ -102,34 +102,34 @@ void GrassModule::gatherBenders(float seconds)
     const glm::vec3 scale(glm::length(glm::vec3(model[0])),
                           glm::length(glm::vec3(model[1])),
                           glm::length(glm::vec3(model[2])));
-    if (entity.hasComponent<SphereCollider3DComponent>())
+    if (const SphereCollider3DComponent* sphere =
+            entity.getComponent<SphereCollider3DComponent>())
     {
-      const auto& sphere = entity.getComponent<SphereCollider3DComponent>();
-      if (!sphere.trigger)
+      if (!sphere->trigger)
         add(entity,
             0,
-            glm::vec3(model * glm::vec4(sphere.offset, 1.0f)),
-            sphere.radius * largestScale(model));
+            glm::vec3(model * glm::vec4(sphere->offset, 1.0f)),
+            sphere->radius * largestScale(model));
     }
-    if (entity.hasComponent<BoxCollider3DComponent>())
+    if (const BoxCollider3DComponent* box =
+            entity.getComponent<BoxCollider3DComponent>())
     {
-      const auto& box = entity.getComponent<BoxCollider3DComponent>();
-      if (!box.trigger)
+      if (!box->trigger)
       {
-        const glm::vec3 half = box.size * scale * 0.5f;
+        const glm::vec3 half = box->size * scale * 0.5f;
         const float radius = std::max(half.x, half.y);
-        const glm::vec3 center(model * glm::vec4(box.offset, 1.0f));
+        const glm::vec3 center(model * glm::vec4(box->offset, 1.0f));
         add(entity, 1, center - glm::vec3(0.0f, 0.0f, half.z - radius), radius);
       }
     }
-    if (entity.hasComponent<CapsuleCollider3DComponent>())
+    if (const CapsuleCollider3DComponent* capsule =
+            entity.getComponent<CapsuleCollider3DComponent>())
     {
-      const auto& capsule = entity.getComponent<CapsuleCollider3DComponent>();
-      if (!capsule.trigger)
+      if (!capsule->trigger)
       {
-        const float radius = capsule.radius * std::max(scale.x, scale.y);
-        const float half = capsule.height * scale.z * 0.5f;
-        const glm::vec3 center(model * glm::vec4(capsule.offset, 1.0f));
+        const float radius = capsule->radius * std::max(scale.x, scale.y);
+        const float half = capsule->height * scale.z * 0.5f;
+        const glm::vec3 center(model * glm::vec4(capsule->offset, 1.0f));
         add(entity,
             2,
             center - glm::vec3(0.0f, 0.0f, std::max(half - radius, 0.0f)),
@@ -138,10 +138,9 @@ void GrassModule::gatherBenders(float seconds)
     }
   };
 
-  for (const Entity& entity :
+  for (auto [entity, transform, bender] :
        m_registry->query<TransformComponent, GrassBenderComponent>())
   {
-    const auto& bender = entity.getComponent<GrassBenderComponent>();
     const glm::mat4 model = hierarchy::worldMatrix(entity);
     if (bender.fitColliders)
     {
@@ -149,13 +148,12 @@ void GrassModule::gatherBenders(float seconds)
       continue;
     }
     // Around its mesh, as placed: its middle, and its largest half-extent.
+    const auto* renderer = bender.fitMesh && m_meshes
+                               ? entity.getComponent<MeshRendererComponent>()
+                               : nullptr;
     const Aabb* bounds =
-        bender.fitMesh && m_meshes &&
-                entity.hasComponent<MeshRendererComponent>()
-            ? m_meshes->posedBounds(
-                  entity.getComponent<MeshRendererComponent>().mesh,
-                  entity.getId())
-            : nullptr;
+        renderer ? m_meshes->posedBounds(renderer->mesh, entity.getId())
+                 : nullptr;
     if (bounds && !bounds->empty())
     {
       const glm::vec3 half = (bounds->max - bounds->min) * 0.5f *
@@ -234,25 +232,24 @@ float GrassModule::windowSlack(float drawDistance)
 
 GrassModule::Patch* GrassModule::refresh(const Entity& entity)
 {
-  if (!m_meshes || !entity.isValid() ||
-      !entity.hasComponent<TransformComponent>() ||
-      !entity.hasComponent<MeshRendererComponent>() ||
-      !entity.hasComponent<GrassComponent>())
+  const auto* grass = entity.getComponent<GrassComponent>();
+  const auto* renderer = entity.getComponent<MeshRendererComponent>();
+  if (!m_meshes || !grass || !renderer ||
+      !entity.hasComponent<TransformComponent>())
     return nullptr;
-  const auto& grass = entity.getComponent<GrassComponent>();
-  const MeshHandle mesh = entity.getComponent<MeshRendererComponent>().mesh;
+  const MeshHandle mesh = renderer->mesh;
   if (m_meshes->isMissing(mesh))
     return nullptr; // not loaded (yet): grass once it is
 
   Patch& patch = m_patches[keyOf(entity)];
   patch.seen = true;
-  patch.recovery = grass.recovery;
+  patch.recovery = grass->recovery;
   const glm::mat4 model = hierarchy::worldMatrix(entity);
 
   // A mesh much wider than its grass reaches either side of the camera grows
   // it in a window around the camera.
   const Aabb* bounds = m_meshes->bounds(mesh);
-  const float reach = windowReach(grass.drawDistance) / sidewaysScale(model);
+  const float reach = windowReach(grass->drawDistance) / sidewaysScale(model);
   const bool windowed = bounds && !bounds->empty() &&
                         std::max(bounds->max.x - bounds->min.x,
                                  bounds->max.y - bounds->min.y) > 2.5f * reach;
@@ -302,26 +299,26 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   if (patch.windowed)
   {
     // Its trample map comes with its window.
-    if (patch.model != model || patch.trampleHeight != tallest(grass))
+    if (patch.model != model || patch.trampleHeight != tallest(*grass))
       patch.windowStale = true;
     patch.model = model;
   }
   else if (rebuild || patch.model != model ||
-           patch.trampleHeight != tallest(grass))
+           patch.trampleHeight != tallest(*grass))
   {
     patch.model = model;
-    patch.trampleHeight = tallest(grass);
+    patch.trampleHeight = tallest(*grass);
     patch.trample = GrassTrample(patch.ground, model, patch.trampleHeight);
   }
 
   // Painted again (in the editor, or by setting `paint`): its maps start over
   // from it (a window's: from the next one).
-  if (patch.paint != grass.paint || (rebuild && patch.windowed))
+  if (patch.paint != grass->paint || (rebuild && patch.windowed))
   {
-    patch.paint = grass.paint;
+    patch.paint = grass->paint;
     if (patch.windowed)
     {
-      GrassMaps painted = GrassMaps::fromJson(grass.paint);
+      GrassMaps painted = GrassMaps::fromJson(grass->paint);
       patch.painted =
           painted.empty()
               ? nullptr
@@ -330,7 +327,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
     }
     else
     {
-      patch.maps = GrassMaps::fromJson(grass.paint);
+      patch.maps = GrassMaps::fromJson(grass->paint);
       patch.sendMaps = true;
       patch.coverMadeMaps = false;
     }
@@ -372,7 +369,7 @@ GrassModule::Patch* GrassModule::refresh(const Entity& entity)
   if (patch.windowed)
   {
     SFS_CPU_SCOPE("grass/window");
-    windowAround(patch, grass);
+    windowAround(patch, *grass);
   }
   else if (patch.terrain && patch.maps.empty() && !patch.ground.empty())
   {
@@ -806,20 +803,18 @@ void GrassModule::computeCommands(const RenderContext& context)
   if (context.camera)
     m_camera = context.camera->position();
 
-  for (const Entity& entity :
+  for (auto [entity, transform, meshRenderer, grass] :
        m_registry
            ->query<TransformComponent, MeshRendererComponent, GrassComponent>())
   {
     const Patch* patch = refresh(entity);
     if (!patch)
       continue;
-    const auto& grass = entity.getComponent<GrassComponent>();
     MaterialHandle material = grass.material.empty()
                                   ? MaterialHandle{}
                                   : m_meshes->material(grass.material);
     if (!material.valid())
       material = m_defaultMaterial;
-    const auto& meshRenderer = entity.getComponent<MeshRendererComponent>();
     m_commands.push_back(GrassDrawCommand{
         patch->gpu,
         material,
@@ -850,11 +845,11 @@ void GrassModule::computeCommands(const RenderContext& context)
 std::shared_ptr<const TerrainMaterial>
 GrassModule::terrainUnder(const Entity& entity)
 {
-  const auto& meshRenderer = entity.getComponent<MeshRendererComponent>();
-  if (!m_meshes || meshRenderer.materials.empty())
+  const auto* meshRenderer = entity.getComponent<MeshRendererComponent>();
+  if (!m_meshes || !meshRenderer || meshRenderer->materials.empty())
     return nullptr;
   const MeshMaterial* drawn =
-      m_meshes->materialData(m_meshes->material(meshRenderer.materials[0]));
+      m_meshes->materialData(m_meshes->material(meshRenderer->materials[0]));
 
   return drawn && drawn->terrain && terrainLimitsGrass(*drawn->terrain)
              ? drawn->terrain

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "scene/unusedOverrides.h"
+
 #include "engine/core/assets/assetDatabase.h"
 #include "engine/core/ecs/entity.h"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -48,7 +50,10 @@ sfs::Entity place(EditorContext& context,
                   const sfs::Entity& parent,
                   std::optional<glm::vec3> position = std::nullopt);
 
-/** Write an instance's changes into its prefab; every instance updates. */
+/**
+ * Write an instance's changes into its prefab; every instance updates. Its
+ * [[sfs::part]] fields are checked first (parts::heal()).
+ */
 void apply(EditorContext& context, const sfs::Entity& root);
 
 /** Drop an instance's changes, except where it's placed. */
@@ -63,5 +68,27 @@ void revertField(EditorContext& context, const sfs::Entity& entity, const std::s
  * the entity isn't part of an instance.
  */
 std::map<std::string, std::set<std::string>> overridesOf(EditorContext& context, const sfs::Entity& entity);
+
+/**
+ * Point unused parts of an instance's saved entry (unusedOverrides::of()) at
+ * entities it has now, as one undoable edit: the entry's paths are moved
+ * (unusedOverrides::move()), then the instance is rebuilt, so what now names
+ * an entity applies. The rebuilt root is selected.
+ *
+ * @param context the editor (its scene and history)
+ * @param root    the instance's root
+ * @param moves   old path -> new path, relative to the instance
+ */
+void reattachUnused(EditorContext& context, const sfs::Entity& root, const std::map<std::string, std::string>& moves);
+
+/**
+ * Drop one unused part of an instance's saved entry, as one undoable edit (the
+ * instance is rebuilt, its root selected).
+ *
+ * @param context the editor (its scene and history)
+ * @param root    the instance's root
+ * @param item    the part to drop, as unusedOverrides::of() gave it
+ */
+void removeUnused(EditorContext& context, const sfs::Entity& root, const unusedOverrides::Unused& item);
 
 } // namespace prefabs

@@ -196,7 +196,7 @@ int main()
     CHECK(within);
     CHECK(widest > 2.0f); // past the effect's own extent
 
-    auto& own = entity.getComponent<ParticleEmitterComponent>();
+    auto& own = *entity.getComponent<ParticleEmitterComponent>();
     own.maxParticles = 600;
     engine.simulate(0.3);
     CHECK(engine.liveParticleCount() == 600); // over the effect's 512
@@ -251,7 +251,7 @@ int main()
     windZone(registry, {3.0f, 0.0f});
     windZone(registry, {0.0f, 4.0f});
     Entity off = windZone(registry, {50.0f, 50.0f});
-    off.getComponent<WindZoneComponent>().enabled = false;
+    off.getComponent<WindZoneComponent>()->enabled = false;
     registry.flushEntities();
     ParticleEngine engine;
     engine.setRegistry(&registry);

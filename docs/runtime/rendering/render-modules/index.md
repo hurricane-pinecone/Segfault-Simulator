@@ -54,7 +54,7 @@ file describes) registers mesh, grass, sprite, decal, particle and UI modules.
 
 | Module | Draws | Construct with |
 | --- | --- | --- |
-| `MeshModule` | `MeshRendererComponent` entities, instanced per mesh and culled for the lit and shadow passes (see [Meshes, materials & lighting](../meshes-and-lighting/index.md)) | nothing |
+| `MeshModule` | `MeshRendererComponent` entities, instanced per mesh and culled for the lit and shadow passes (see [Meshes, materials & lighting](../meshes-and-lighting/index.md)). Places them from the transform pass's `WorldTransformComponent`, so it needs the scene's `TransformSystem` (every `Scene` has one; on a bare `Registry` it draws nothing) | nothing |
 | `SpriteModule` | `SpriteComponent` entities (see [Sprites & sprite sheets](../sprites/index.md)) | the asset store, optionally a `Facing` |
 | `ParticleModule` | Particle effects, simulated in the game's own space (see [Particles in your game](../../particles/index.md)) | the asset store |
 | `DecalModule` | Marks left where particles land: splashes, scorches, paint | the asset store |
@@ -132,6 +132,16 @@ true has `emit()` move them instead of copying their instances. Its
 `commands()` then hold the frame's only until they're emitted: a test reads
 what was drawn, or calls `computeCommands()` itself. The engine's mesh, sprite,
 decal, particle, voxel and deformation modules all do this.
+
+`computeCommands()` and `emit()` run in the render phase, after the
+transform pass, so a module places an entity with
+`hierarchy::cachedWorldMatrix(entity)` (or `cachedWorldTransform`), a read of
+its `WorldTransformComponent`, instead of walking up its parents; `MeshModule`
+goes through `query<WorldTransformComponent, MeshRendererComponent>()` and
+reads the cache it holds. `update(dt)` runs in the update phase, before the
+pass: read `hierarchy::worldMatrix(entity)` there, and in anything game code
+calls, as the cache would be a frame behind. See
+[World matrices](../../../core/hierarchy/index.md#world-matrices).
 
 Or implement `IRenderModule<RenderContext>` directly and append to the
 frame's `AnyRenderCommand`s in `emit()`. Either way the render system sorts

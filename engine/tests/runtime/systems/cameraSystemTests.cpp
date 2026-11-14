@@ -60,7 +60,7 @@ struct Orbit
 
   CameraCollisionComponent& collision()
   {
-    return camera.getComponent<CameraCollisionComponent>();
+    return *camera.getComponent<CameraCollisionComponent>();
   }
 
   // A static box standing `out` metres back from the pivot toward the eye,
@@ -81,14 +81,14 @@ struct Orbit
   // The camera's pitch now (radians above its pivot), and its distance.
   float pitch() const
   {
-    const TransformComponent& t = camera.getComponent<TransformComponent>();
+    const TransformComponent* t = camera.getComponent<TransformComponent>();
     Camera seen;
-    seen.setPose(t.position, t.rotation * glm::vec3(1.0f, 0.0f, 0.0f), 20.0f);
+    seen.setPose(t->position, t->rotation * glm::vec3(1.0f, 0.0f, 0.0f), 20.0f);
     return seen.pitch;
   }
   float distance() const
   {
-    return glm::length(camera.getComponent<TransformComponent>().position);
+    return glm::length(camera.getComponent<TransformComponent>()->position);
   }
 
   // The height of the eye's line to the pivot, `out` metres back.
@@ -98,6 +98,16 @@ struct Orbit
 
 int main()
 {
+  TEST("the camera system should take real time, set up when it's added")
+  {
+    Registry reg;
+    const CameraSystem& sys = reg.addSystem<CameraSystem>();
+    CHECK(sys.timeStep() == System::TimeStep::Real);
+    CHECK((sys.getComponentSignature() ==
+           detail::makeQuerySignature<TransformComponent,
+                                      CameraFollowComponent>()));
+  }
+
   TEST("a camera should ease toward its target")
   {
     Registry reg;
@@ -107,16 +117,16 @@ int main()
     target.addComponent<TransformComponent>(TransformComponent{{10.0f, 0.0f}});
 
     CameraFollowComponent cam;
-    cam.target = static_cast<int>(target.getId());
+    cam.target = target;
     cam.smoothing = 8.0f;
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
     sys.update(0.1);
 
-    const auto& t = camera.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.x, smoothed(0.0f, 10.0f, 8.0f, 0.1f)));
-    CHECK(testing::approx(t.position.y, 0.0f));
+    const auto* t = camera.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.x, smoothed(0.0f, 10.0f, 8.0f, 0.1f)));
+    CHECK(testing::approx(t->position.y, 0.0f));
   }
 
   TEST("the camera offset should shift the followed point")
@@ -128,7 +138,7 @@ int main()
     target.addComponent<TransformComponent>(TransformComponent{{10.0f, 0.0f}});
 
     CameraFollowComponent cam;
-    cam.target = static_cast<int>(target.getId());
+    cam.target = target;
     cam.smoothing = 8.0f;
     cam.offset = {0.0f, 4.0f, 0.0f}; // desired = target + offset
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
@@ -136,8 +146,8 @@ int main()
 
     sys.update(0.1);
 
-    const auto& t = camera.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.y, smoothed(0.0f, 4.0f, 8.0f, 0.1f)));
+    const auto* t = camera.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.y, smoothed(0.0f, 4.0f, 8.0f, 0.1f)));
   }
 
   TEST("a camera with no valid target should not move")
@@ -145,16 +155,24 @@ int main()
     Registry reg;
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
-    CameraFollowComponent cam;
-    cam.target = 9999; // no such entity
+    CameraFollowComponent cam; // none
     Entity camera = addCamera(reg, {3.0f, 7.0f}, cam);
+    // One whose target has been destroyed.
+    Entity gone = reg.createEntity();
+    gone.addComponent<TransformComponent>(TransformComponent{{10.0f, 0.0f}});
+    cam.target = gone;
+    Entity orphan = addCamera(reg, {3.0f, 7.0f}, cam);
+    reg.destroyEntity(gone);
     reg.flushEntities();
 
     sys.update(0.1);
 
-    const auto& t = camera.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.x, 3.0f));
-    CHECK(testing::approx(t.position.y, 7.0f));
+    for (const Entity& still : {camera, orphan})
+    {
+      const auto* t = still.getComponent<TransformComponent>();
+      CHECK(testing::approx(t->position.x, 3.0f));
+      CHECK(testing::approx(t->position.y, 7.0f));
+    }
   }
 
   TEST("activeCamera should expose the first camera, or nothing")
@@ -179,13 +197,13 @@ int main()
     off.addComponent<TransformComponent>(
         TransformComponent{glm::vec2{1.0f, 0.0f}});
     off.addComponent<CameraComponent>();
-    off.getComponent<CameraComponent>().active = false;
+    off.getComponent<CameraComponent>()->active = false;
 
     Entity on = reg.createEntity();
     on.addComponent<TransformComponent>(
         TransformComponent{glm::vec2{4.0f, 0.0f}});
     on.addComponent<CameraComponent>();
-    on.getComponent<CameraComponent>().zoom = 2.0f;
+    on.getComponent<CameraComponent>()->zoom = 2.0f;
     reg.flushEntities();
 
     CHECK(sys.activeCamera() == on);
@@ -201,16 +219,16 @@ int main()
         TransformComponent{glm::vec3{0.0f, 0.0f, 10.0f}});
 
     CameraFollowComponent cam;
-    cam.target = static_cast<int>(target.getId());
+    cam.target = target;
     cam.offset = {0.0f, -5.0f, 2.0f};
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
     sys.update(0.1);
 
-    const auto& t = camera.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.y, smoothed(0.0f, -5.0f, 8.0f, 0.1f)));
-    CHECK(testing::approx(t.position.z, smoothed(0.0f, 12.0f, 8.0f, 0.1f)));
+    const auto* t = camera.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.y, smoothed(0.0f, -5.0f, 8.0f, 0.1f)));
+    CHECK(testing::approx(t->position.z, smoothed(0.0f, 12.0f, 8.0f, 0.1f)));
   }
 
   TEST("shake produces a bounded offset without moving the base position")
@@ -221,25 +239,25 @@ int main()
     // No valid target, so the followed base position stays put and only the
     // shake offset can change.
     CameraFollowComponent cam;
-    cam.target = 9999;
+    cam.target = Entity();
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {5.0f, 5.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraFollowComponent>();
+    auto* c = camera.getComponent<CameraFollowComponent>();
     CameraSystem::shake(camera, 1.0f, 1.0f, 1.0f); // full strength, 1s, linear
     sys.update(0.1);
 
     // Some displacement this frame, each axis bounded by strength * maxOffset.
-    const glm::vec2 o = c.shakeOffset;
+    const glm::vec2 o = c->shakeOffset;
     CHECK(std::abs(o.x) > 0.0f || std::abs(o.y) > 0.0f);
     CHECK(std::abs(o.x) <= 1.0f + 1e-4f);
     CHECK(std::abs(o.y) <= 1.0f + 1e-4f);
 
     // The base transform is untouched by the shake (no drift).
-    const auto& t = camera.getComponent<TransformComponent>();
-    CHECK(testing::approx(t.position.x, 5.0f));
-    CHECK(testing::approx(t.position.y, 5.0f));
+    const auto* t = camera.getComponent<TransformComponent>();
+    CHECK(testing::approx(t->position.x, 5.0f));
+    CHECK(testing::approx(t->position.y, 5.0f));
   }
 
   TEST("shake fades to nothing after its duration")
@@ -248,19 +266,19 @@ int main()
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
     CameraFollowComponent cam;
-    cam.target = 9999;
+    cam.target = Entity();
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraFollowComponent>();
+    auto* c = camera.getComponent<CameraFollowComponent>();
     CameraSystem::shake(camera, 1.0f, 0.5f);
 
     for (int i = 0; i < 10; i++) // 1.0s elapsed > 0.5s duration
       sys.update(0.1);
 
-    CHECK(testing::approx(c.shakeOffset.x, 0.0f));
-    CHECK(testing::approx(c.shakeOffset.y, 0.0f));
+    CHECK(testing::approx(c->shakeOffset.x, 0.0f));
+    CHECK(testing::approx(c->shakeOffset.y, 0.0f));
   }
 
   TEST("shake clamps strength so the offset never exceeds maxOffset")
@@ -269,17 +287,17 @@ int main()
     CameraSystem& sys = reg.addSystem<CameraSystem>();
 
     CameraFollowComponent cam;
-    cam.target = 9999;
+    cam.target = Entity();
     cam.shakeMaxOffset = 1.0f;
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
     reg.flushEntities();
 
-    auto& c = camera.getComponent<CameraFollowComponent>();
+    auto* c = camera.getComponent<CameraFollowComponent>();
     CameraSystem::shake(camera, 5.0f, 1.0f); // over-strength: clamps to 1.0
     sys.update(0.05); // early in the shake, amplitude ~ strength
 
-    CHECK(std::abs(c.shakeOffset.x) <= 1.0f + 1e-4f);
-    CHECK(std::abs(c.shakeOffset.y) <= 1.0f + 1e-4f);
+    CHECK(std::abs(c->shakeOffset.x) <= 1.0f + 1e-4f);
+    CHECK(std::abs(c->shakeOffset.y) <= 1.0f + 1e-4f);
   }
 
   TEST("a parented camera should follow its target in the world")
@@ -297,7 +315,7 @@ int main()
     rig.addComponent<TransformComponent>(
         TransformComponent{glm::vec2{6.0f, 0.0f}});
     CameraFollowComponent cam;
-    cam.target = target.getId();
+    cam.target = target;
     cam.offset = glm::vec3(0.0f, 1.0f, 0.0f);
     cam.smoothing = 1000.0f; // snaps
     Entity camera = addCamera(reg, {0.0f, 0.0f}, cam);
@@ -310,7 +328,7 @@ int main()
     CHECK(testing::approx(world.x, 10.0f));
     CHECK(testing::approx(world.y, 5.0f));
     CHECK(testing::approx(
-        camera.getComponent<TransformComponent>().position.x, 4.0f));
+        camera.getComponent<TransformComponent>()->position.x, 4.0f));
   }
 
   TEST("a box between the eye and the pivot should lift the camera over it, "
@@ -338,14 +356,14 @@ int main()
     }
     {
       Orbit orbit;
-      orbit.box(10.0f, 8.0f).getComponent<BoxCollider3DComponent>().layer = 2;
+      orbit.box(10.0f, 8.0f).getComponent<BoxCollider3DComponent>()->layer = 2;
       orbit.collision().layers = ~(1 << 2);
       orbit.sys.lateUpdate(0.016);
       CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
     }
     {
       Orbit orbit;
-      orbit.box(10.0f, 8.0f).getComponent<BoxCollider3DComponent>().trigger =
+      orbit.box(10.0f, 8.0f).getComponent<BoxCollider3DComponent>()->trigger =
           true;
       orbit.sys.lateUpdate(0.016);
       CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));
@@ -394,7 +412,7 @@ int main()
     // The controller puts it back at its own pose each frame.
     for (int i = 0; i < 3; ++i)
     {
-      orbit.camera.getComponent<TransformComponent>() =
+      *orbit.camera.getComponent<TransformComponent>() =
           TransformComponent(orbit.view.position(), orbit.view.orientation());
       orbit.sys.lateUpdate(0.016);
       CHECK(testing::approx(orbit.pitch(), lifted, 1e-3f));
@@ -416,7 +434,7 @@ int main()
     CHECK(testing::approx(
         orbit.collision().lift, lift * std::exp(-3.0f * 0.1f), 1e-4f));
     // Moved by its controller while off: left where the controller put it.
-    orbit.camera.getComponent<TransformComponent>() =
+    *orbit.camera.getComponent<TransformComponent>() =
         TransformComponent(orbit.view.position(), orbit.view.orientation());
     orbit.sys.lateUpdate(0.1);
     CHECK(testing::approx(orbit.pitch(), 0.3f, 1e-3f));

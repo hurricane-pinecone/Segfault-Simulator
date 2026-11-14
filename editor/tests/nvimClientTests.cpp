@@ -164,6 +164,65 @@ int main()
       std::fclose(in);
   }
 
+  TEST("Neovim should see SFS_LSP, and the engine config start sfs-lsp only in "
+       "a project or the SFS tree")
+  {
+    const auto write = [](const std::filesystem::path& path, const char* text)
+    {
+      std::filesystem::create_directories(path.parent_path());
+      std::FILE* out = std::fopen(path.string().c_str(), "w");
+      std::fputs(text, out);
+      std::fclose(out);
+    };
+    write(work / "Game/project.sfsproj", "{}\n");
+    write(work / "Game/scripts/Crop.h", "struct Crop { int a; };\n");
+    write(work / "Engine/.sfs-engine",
+          "# Marks the SFS source tree as a root for sfs-lsp.\n");
+    write(work / "Engine/include/thing.h", "struct Thing { int a; };\n");
+    write(work / "Other/loose.h", "struct Loose { int a; };\n");
+
+    NvimClient lsp(environment);
+    CHECK(lsp.start(options, 100, 12));
+    // Repeats a command until its output shows `expected` (attaching is
+    // asynchronous).
+    const auto shows =
+        [&](const std::string& command, const std::string& expected)
+    {
+      const auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (std::chrono::steady_clock::now() < deadline)
+      {
+        lsp.input(command);
+        for (int i = 0; i < 10; ++i)
+        {
+          lsp.poll();
+          if (screenContains(lsp.screen(), expected))
+            return true;
+          std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+      }
+      return false;
+    };
+    CHECK(shows(":echo 'lsp=' . ($SFS_LSP ==# '" + environment.lsp() + "')<CR>",
+                "lsp=1"));
+    if (std::system(("test -x '" + environment.lsp() + "'").c_str()) != 0)
+      std::puts("sfs-lsp isn't built; skipping the attach checks");
+    else
+    {
+      const std::string count =
+          ":lua print('sfs_lsp=' .. #vim.lsp.get_clients({ bufnr = 0, name = "
+          "'sfs_lsp' }))<CR>";
+      lsp.open(work / "Game/scripts/Crop.h");
+      CHECK(shows(count, "sfs_lsp=1"));
+      lsp.open(work / "Engine/include/thing.h");
+      CHECK(shows(count, "sfs_lsp=1"));
+      lsp.open(work / "Other/loose.h");
+      std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+      CHECK(shows(count, "sfs_lsp=0"));
+    }
+    lsp.stop();
+  }
+
   std::filesystem::remove_all(work);
   return testing::report("nvimClientTests");
 }

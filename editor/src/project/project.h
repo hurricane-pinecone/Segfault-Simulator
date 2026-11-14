@@ -61,8 +61,9 @@ public:
 
   /**
    * Write the project's CMakeLists.txt (building its scripts into a game
-   * module) and .gitignore, unless they already exist -- older projects gain
-   * them on their first build.
+   * module), .gitignore and .clangd, unless they already exist -- older
+   * projects gain them on their first build. A .clangd still exactly as an
+   * older editor wrote it is brought up to date.
    *
    * @return false (logged) if a file can't be written.
    */

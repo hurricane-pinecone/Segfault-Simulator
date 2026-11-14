@@ -260,9 +260,9 @@ when they change. A layer reads it from the component and shows it:
 
 ```cpp
 // in a view
-const auto& feed = rearCamera.getComponent<sfs::CameraFeedComponent>();
-if (feed.picture)
-  Image(feed.picture).resizable().frame(320, 180)
+const auto* feed = rearCamera.getComponent<sfs::CameraFeedComponent>();
+if (feed && feed->picture)
+  Image(feed->picture).resizable().frame(320, 180)
 ```
 
 The GPU draws it, and its pixels never come back to the CPU. Each new picture

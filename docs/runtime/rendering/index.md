@@ -141,9 +141,9 @@ dispatched:
 | `point`, `distance` | Where the ray hit it, and how far along the ray |
 
 ```cpp
-const auto& cursor = camera.getComponent<sfs::CursorPickComponent>();
-if (cursor.picked.isValid() && mouse.mousePressed(sfs::MouseButton::Left))
-  select(cursor.picked);
+if (const auto* cursor = camera.getComponent<sfs::CursorPickComponent>();
+    cursor && cursor->picked && mouse.mousePressed(sfs::MouseButton::Left))
+  select(cursor->picked);
 ```
 
 `pickPickable(scene, meshes, ray)` is the pick itself, for any other ray: the

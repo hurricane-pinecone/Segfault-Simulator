@@ -32,6 +32,19 @@ function(sfs_generate_reflection target)
     target_sources(${target} PRIVATE "${output}")
 endfunction()
 
+# GCC 13 before 13.3 on MinGW (GCC PR 110572): in C++23, <typeinfo> defines
+# std::type_info::operator== inline, so an unoptimised build (the UI Preview
+# module, a Debug module) emits a copy of it, which clashes with the one in
+# the libstdc++.a that modules link statically. They're the same function, so
+# the linker may keep either.
+function(_sfs_allow_typeinfo_duplicate target)
+    if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13 AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.3)
+        target_link_options(${target} PRIVATE -Wl,--allow-multiple-definition)
+    endif()
+endfunction()
+
 # sfs_add_game_module: build a project's scripts into a game module -- the
 # shared library the editor loads (and reloads) to run them.
 #
@@ -67,6 +80,7 @@ function(sfs_add_game_module name)
         VISIBILITY_INLINES_HIDDEN ON
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/module"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/module")
+    _sfs_allow_typeinfo_duplicate(${name})
 
     sfs_generate_reflection(${name}
         MODULE ${name}
@@ -106,6 +120,7 @@ function(sfs_add_game_module name)
         VISIBILITY_INLINES_HIDDEN ON
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ui-preview"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ui-preview")
+    _sfs_allow_typeinfo_duplicate(${preview})
 
     # clangd (and most editors) look for the compile database in the project:
     # link it at <project>/.sfs/compile_commands.json, which the project's

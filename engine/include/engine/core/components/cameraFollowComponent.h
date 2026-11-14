@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/core/ecs/entity.h"
+
 #include <glm/glm/ext/vector_float2.hpp>
 #include <glm/glm/ext/vector_float3.hpp>
 
@@ -13,22 +15,25 @@ namespace sfs
  * every render style: a flat or isometric camera centres on the followed point,
  * and a 3D one moves with it, keeping its own orientation.
  *
- * @param int target - id of the entity to follow (-1: none)
+ * @param Entity target - the entity to follow (none: stay put)
  * @param glm::vec3 offset - offset from the target, default 0
  * @param float smoothing - follow ease rate (higher = snappier), default 8
  */
 struct CameraFollowComponent
 {
   CameraFollowComponent() = default;
-  CameraFollowComponent(int target,
+  CameraFollowComponent(Entity target,
                         glm::vec3 offset = glm::vec3(0.0f),
                         float smoothing = 8.0f)
       : target(target), offset(offset), smoothing(smoothing)
   {
   }
 
-  int target = -1;
+  /** The entity to follow; none (or one without a transform): stay put. */
+  Entity target;
+  /** Added to the target's world position. */
   glm::vec3 offset{0.0f};
+  /** How fast it catches up (higher is snappier; 0 doesn't move). */
   [[sfs::range(0, 30)]] float smoothing = 8.0f;
 
   // Peak shake displacement at strength 1.0, in world units; tune per game.

@@ -275,7 +275,8 @@ A prefab's tab shows it alone, on a floor grid (metre lines, every tenth
 stronger, the X axis red and Y green). The tab you last clicked is the one being
 edited: the Hierarchy, Inspector and undo follow it, and each tab keeps its own
 selection, undo history and Hierarchy scroll. Unapplied changes put a dot on the
-tab; closing it then asks whether to apply them. Play always plays the scene.
+tab (and undoing back to what was applied takes it off again); closing it then
+asks whether to apply them. Play always plays the scene.
 
 Copies show in sage in the Hierarchy (their parts a little softer). Changing a
 copy (moving it, a tint, a material, a script value, adding or deleting
@@ -293,6 +294,21 @@ so reordering the nodes in Blender moves nothing; renaming one leaves its old
 changes unused but kept (see
 [Model node ids](../runtime/serialization/index.md#model-node-ids)).
 
+Selecting a model's node shows its id and name path, dimmed, under its name
+(with a warning when siblings share its name: their ids then follow their
+order in the file). An instance root with changes its prefab no longer has
+lists them under **Unused overrides**, each with:
+
+- **Reattach to...**: pick the entity it's meant for, and the change moves
+  there. When a node was renamed in the source file, type its old name in
+  **Renamed from** and pick the node as it's named now: the changes of that
+  node and of every node below it move at once (their old ids are worked out
+  from the new name paths with the old name put back).
+- **Remove**: drop it.
+
+Both are undoable. A nested instance's unused changes belong to the prefab
+holding it: reattach them in that prefab's tab.
+
 Prefabs and scenes saved by an older engine name model nodes by their place in
 the file. They still load onto the same nodes; to upgrade a whole project's
 files at once:
@@ -304,6 +320,64 @@ SfsEditor --list-node-ids <model-file>
 
 The first checks every change before writing anything (`--check` only
 checks); the second lists a model's nodes with their ids.
+
+## Entity references
+
+A component field of type `sfs::Entity` (or `std::vector<sfs::Entity>`) names
+another entity: a machine's arm, the door a switch opens (see
+[Field types](../core/reflection/index.md#field-types)). The Inspector shows it
+as a slot: the target's name and, dimmed, where it is.
+
+| Action | Result |
+| --- | --- |
+| Drag an entity from the Hierarchy onto the slot | Sets it (a tooltip says why when it can't be named) |
+| The target button beside it | A picker: the part matches first, then the prefab's or instance's entities as a tree and, in a scene, the whole scene, with a search box |
+| Click the name | Selects the target |
+| **x** | Clears it |
+
+A list has a row per item, each with its own **x**, and **+** to add one.
+Every change is an undo step. In a prefab's tab a reference can only name the
+prefab's own entities (a prefab can't point outside itself); in a scene, any
+entity. References are saved as paths (see
+[Entity references](../runtime/serialization/index.md#entity-references)), so
+each copy of a prefab names its own parts, and undo, duplicating and reverting
+keep them.
+
+A reference whose saved target is gone (a model node renamed in its source
+file) shows **Missing (was ...)** until it's set or cleared; its saved value is
+kept until then.
+
+**Parts.** A field marked `[[sfs::part("name")]]` (a glob for a list, such as
+`"blade-*"`) is filled from the names of the nodes below its entity, in
+order, ignoring Blender's `.001` copy numbers: one field takes the first match
+(warned when there are several), a list every match. It's filled:
+
+- when the component is added (its empty fields);
+- by right-click on the component → **Fill Parts** (every part field, again);
+- when a prefab is opened or applied: a part field whose target doesn't
+  match its pattern (renamed in the model, or set by hand to a node named
+  otherwise), or whose saved target didn't resolve, is filled again by name and
+  logged. It's an undo step, so the prefab's tab then has changes to apply. One
+  whose part is gone keeps its value, with a warning; an empty one stays
+  empty.
+
+Parts are never filled while the game runs: what's filled is saved, and loads
+as an authored reference. Without the editor's window, the same filling runs
+over a project's prefabs (it builds and loads the game module first):
+
+```
+SfsEditor --fill-parts <project-folder> <prefab|all> [--dry-run]
+```
+
+`<prefab>` is a path from the project folder (`prefabs/Tractor.prefab`). A
+prefab whose fields change is edited in place: only the part values' text is
+replaced (or added, in the editor's key order, where the file has none), so
+its diff is just those values. Each edited file must open to exactly what was
+filled before it's written; one that doesn't, or that still uses old component
+names, is left as it was and reported. A nested instance of another prefab is
+left to that prefab's own file. `--dry-run` writes no prefab, but the game
+module is still built, into the project's `.sfs/build`. Any other argument is
+refused.
 
 ## Animated characters
 
@@ -324,6 +398,7 @@ Any entity can be the child of another, and moves, turns and scales with it
 
 | Action | Result |
 | --- | --- |
+| Click a row | Selects it, when the mouse is released (a drag from a row, to drop it on another or into a reference slot, leaves the selection as it is) |
 | Drag an entity onto another | It becomes that entity's child, staying where it is in the world |
 | Drag an entity onto the empty space below the list | It becomes a root, staying where it is |
 | Right-click → Create Child | A new entity under this one, at its origin |
@@ -372,6 +447,13 @@ outlined, the one clicked last a little bolder.
   until you set it. **Add Component** adds one to each that hasn't one, and
   right-click → **Remove Component** removes it from them all; tags the same,
   with **+ Add Tag** and a chip's **x**. Each of these is one undo step.
+- An **entity reference** set on several is set relatively: a target in the
+  first one's own prefab copy becomes the same part of each one's copy (each
+  tractor gets its own arm), and any other target (an entity of the scene
+  itself) is the same entity for all. Where a copy has no such part, its field
+  is left as it was (logged). Clearing one, or a list's item, clears the saved
+  value a **Missing** reference keeps on each of them too, and a Missing
+  reference shows as differing from an empty one.
 - The **gizmo** sits in the middle of them (the average of where they are).
   Moving it moves them all as far; rotating or scaling it turns or scales
   each one as much, about its own origin. To turn a set of objects about
@@ -438,7 +520,14 @@ executable. It is deliberately small: no plugin manager or
 plugins, a built-in colour scheme, 2-space indents, and C++ support through
 Neovim's built-in LSP client when `clangd` is installed. That gives go to
 definition (`gd`), hover (`K`), completion, diagnostics, rename (`grn`) and code
-actions (`gra`); `Space h` switches between header and source.
+actions (`gra`); `Space h` switches between header and source. Beside clangd it
+runs [sfs-lsp](sfs-lsp/index.md), the engine's own checks: completion and docs
+for `[[sfs::...]]` attributes, sfs-codegen's warnings as you type, and lints of
+the SFS API with their fixes.
+
+The editor sets `SFS_LSP` to the `sfs-lsp` that matches its engine for every
+config, so your own config can start it too: see
+[sfs-lsp in Neovim](sfs-lsp/index.md#neovim) for the lines to add.
 
 The editor sets `g:sfs_editor = 1` before any config runs, so your own config
 can check `vim.g.sfs_editor` and leave out what an embedded editor doesn't need
@@ -458,7 +547,9 @@ in the project's `scripts/` folder (not assets or builds): `Space f f` and
 
 Projects carry a `.clangd` that points clangd at the game module's compile
 database (each build links it at `.sfs/compile_commands.json`), so clangd finds
-the engine headers with any config, in any editor.
+the engine headers with any config, in any editor. It also turns off clang's
+unknown-attribute warnings, which `[[sfs::...]]` would set off; sfs-lsp checks
+attributes instead.
 
 The panel draws with a monospace font: a Nerd Font Mono if one is installed
 (for the icons many configs use), otherwise Cascadia Mono or Consolas on

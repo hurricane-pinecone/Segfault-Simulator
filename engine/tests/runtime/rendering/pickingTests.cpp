@@ -106,7 +106,7 @@ int main()
   {
     World world;
     Entity box = world.spawn(world.cube, {1, 2, 3});
-    box.getComponent<TransformComponent>().scale = {2, 2, 2};
+    box.getComponent<TransformComponent>()->scale = {2, 2, 2};
 
     const auto bounds = entityBounds(box, world.meshes);
     CHECK(testing::approx(bounds->min.x, 0.0f));
@@ -161,7 +161,7 @@ int main()
   {
     World world;
     Entity moved = world.spawn(world.cube, {5, 0, 0});
-    moved.getComponent<TransformComponent>().scale = {2, 2, 2};
+    moved.getComponent<TransformComponent>()->scale = {2, 2, 2};
     CHECK(pickSurface(world.scene, world.meshes, downAt(5.9f, 0.0f))
               .has_value()); // scaled to +-1
     CHECK(!pickSurface(world.scene, world.meshes, downAt(0.0f, 0.0f))
@@ -202,7 +202,7 @@ int main()
     const auto hit = pickPickable(world.scene, world.meshes, downAt(0, 0));
     CHECK(hit && hit->entity == machine);
 
-    machine.getComponent<PickableComponent>().enabled = false;
+    machine.getComponent<PickableComponent>()->enabled = false;
     CHECK(!pickPickable(world.scene, world.meshes, downAt(0, 0)));
   }
 

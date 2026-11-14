@@ -138,7 +138,7 @@ int main()
     CHECK(testing::approx(quad.uvRect.w, 1.0f));
 
     // No image: nothing to draw.
-    e.getComponent<SpriteComponent>().image.clear();
+    e.getComponent<SpriteComponent>()->image.clear();
     h.renderer.drawn.clear();
     h.frame();
     CHECK(h.renderer.drawn.empty());
@@ -162,7 +162,7 @@ int main()
     CHECK(h.renderer.batches.size() == 1u &&
           h.renderer.batches.front().shadowInstances == 0u);
 
-    e.getComponent<SpriteComponent>().castsShadow = true;
+    e.getComponent<SpriteComponent>()->castsShadow = true;
     h.frame();
     CHECK(h.renderer.batches.size() == 1u &&
           h.renderer.batches.front().shadowInstances == 1u);

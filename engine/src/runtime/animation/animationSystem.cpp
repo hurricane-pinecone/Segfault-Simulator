@@ -31,24 +31,28 @@ constexpr uint32_t kRebindFrames = 30;
 
 JointPose poseOf(const Entity& entity)
 {
-  if (!entity.hasComponent<TransformComponent>())
+  const TransformComponent* t = entity.getComponent<TransformComponent>();
+  if (!t)
     return {};
-  const TransformComponent& t = entity.getComponent<TransformComponent>();
-  return {t.position, t.rotation, t.scale};
+  return {t->position, t->rotation, t->scale};
 }
 
 // Its RestPoseComponent's pose, or its transform's if it has none.
 JointPose restOf(const Entity& entity)
 {
-  if (!entity.hasComponent<RestPoseComponent>())
+  const RestPoseComponent* rest = entity.getComponent<RestPoseComponent>();
+  if (!rest)
     return poseOf(entity);
-  const RestPoseComponent& rest = entity.getComponent<RestPoseComponent>();
-  return {rest.position, rest.rotation, rest.scale};
+  return {rest->position, rest->rotation, rest->scale};
 }
 } // namespace
 
 AnimationSystem::AnimationSystem(MeshLibrary& meshes, AssetStore& assets)
     : m_meshes(meshes), m_assets(assets)
+{
+}
+
+void AnimationSystem::create()
 {
   registerComponent<AnimatorComponent>();
   // Game time, but once a frame: posing is only seen once a frame.
@@ -62,16 +66,12 @@ AnimationSystem::~AnimationSystem() = default;
 AnimationSystem::Binding*
 AnimationSystem::bindingOf(const Entity& animator) const
 {
-  return animator.isAlive() && animator.hasComponent<AnimatorComponent>()
-             ? &animator.getComponent<AnimatorComponent>()
-             : nullptr;
+  return animator.getComponent<AnimatorComponent>();
 }
 
 AnimatorComponent* AnimationSystem::animatorOf(const Entity& animator)
 {
-  return bindingOf(animator) && animator.isAlive()
-             ? &animator.getComponent<AnimatorComponent>()
-             : nullptr;
+  return bindingOf(animator);
 }
 
 void AnimationSystem::play(const Entity& entity,
@@ -110,12 +110,12 @@ float AnimationSystem::length(const Entity& animator,
                               std::string_view clip) const
 {
   const AnimationSet* set = clips(animator);
-  if (!set)
+  const AnimatorComponent* component =
+      animator.getComponent<AnimatorComponent>();
+  if (!set || !component)
     return 0.0f;
-  const AnimationClip* found = set->find(
-      clip.empty()
-          ? std::string_view(animator.getComponent<AnimatorComponent>().clip)
-          : clip);
+  const AnimationClip* found =
+      set->find(clip.empty() ? std::string_view(component->clip) : clip);
   return found ? found->duration : 0.0f;
 }
 
@@ -143,10 +143,9 @@ bool AnimationSystem::previewing(const Entity& animator) const
 
 void AnimationSystem::rebind(const Entity& animator)
 {
-  for (const Entity& entity : getEntities())
-    if (Binding* binding = bindingOf(entity);
-        binding && (!animator.isValid() || entity == animator))
-      binding->stale = true;
+  for (auto [entity, binding] : getEntities<AnimatorComponent>())
+    if (animator == Entity{} || entity == animator)
+      binding.stale = true;
 }
 
 std::shared_ptr<const AnimationSet>
@@ -202,9 +201,8 @@ void AnimationSystem::bind(const Entity& entity,
     const int index = static_cast<int>(binding.nodes.size());
     binding.nodes.push_back(node);
     binding.parents.push_back(parent);
-    if (node.hasComponent<NameComponent>())
-      binding.byName.try_emplace(
-          node.getComponent<NameComponent>().name, index);
+    if (NameComponent* name = node.getComponent<NameComponent>())
+      binding.byName.try_emplace(name->name, index);
   };
   add(entity, -1);
   const hierarchy::DescendantRange below = hierarchy::descendants(entity);
@@ -232,9 +230,11 @@ void AnimationSystem::bind(const Entity& entity,
     // code rests as it's first found.
     if (m_live && !node.hasComponent<RestPoseComponent>())
       hierarchy::recordRestPose(node);
-    if (!node.hasComponent<MeshRendererComponent>())
+    MeshRendererComponent* meshRenderer =
+        node.getComponent<MeshRendererComponent>();
+    if (!meshRenderer)
       continue;
-    const MeshHandle mesh = node.getComponent<MeshRendererComponent>().mesh;
+    const MeshHandle mesh = meshRenderer->mesh;
     if (m_meshes.isPending(mesh))
       binding.complete = false;
     const MeshSkin* skin = m_meshes.skin(mesh);
@@ -417,14 +417,14 @@ void AnimationSystem::pose(Binding& binding, AnimatorComponent& animator)
   // Playing: the joints are moved (what's attached to them follows).
   if (m_live)
     for (std::size_t i = 1; i < count; ++i)
-      if (binding.animated[i] &&
-          binding.nodes[i].hasComponent<TransformComponent>())
+      if (TransformComponent* transform =
+              binding.animated[i]
+                  ? binding.nodes[i].getComponent<TransformComponent>()
+                  : nullptr)
       {
-        TransformComponent& transform =
-            binding.nodes[i].getComponent<TransformComponent>();
-        transform.position = m_pose[i].translation;
-        transform.rotation = m_pose[i].rotation;
-        transform.scale = m_pose[i].scale;
+        transform->position = m_pose[i].translation;
+        transform->rotation = m_pose[i].rotation;
+        transform->scale = m_pose[i].scale;
       }
 
   // Each skinned mesh's palette and bounds.
@@ -456,21 +456,16 @@ void AnimationSystem::update(double deltaTime)
   const float seconds =
       registry->paused() ? 0.0f : static_cast<float>(deltaTime) * m_timeScale;
 
-  for (const Entity& entity : getEntities())
+  for (auto [entity, animator] : getEntities<AnimatorComponent>())
   {
-    if (!entity.isAlive())
-      continue;
-    AnimatorComponent& animator = entity.getComponent<AnimatorComponent>();
-    Binding* found = bindingOf(entity);
-    if (!found)
-      continue;
-    Binding& binding = *found;
+    // An animator's binding is its component (Binding is AnimatorComponent).
+    Binding& binding = animator;
 
     // What's below it, found again when it's changed.
     ++binding.framesSinceBind;
     bool stale = binding.stale || animator.source != binding.sourceSeen;
     for (std::size_t i = 0; !stale && i < binding.nodes.size(); ++i)
-      stale = !binding.nodes[i].isAlive();
+      stale = !binding.nodes[i].isValid();
     if (!stale && binding.framesSinceBind >= kRebindFrames &&
         (!m_live || !binding.complete))
       stale = true;

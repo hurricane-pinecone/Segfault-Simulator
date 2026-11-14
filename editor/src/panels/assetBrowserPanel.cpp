@@ -22,7 +22,7 @@
 #include "engine/runtime/serialization/sceneSerializer.h"
 
 #include "imgui.h"
-#include "imgui_internal.h" // ImRect (a drop target over the whole folder), the focused window
+#include "imgui_internal.h" // ImRect (a drop target over the whole folder)
 
 #include <algorithm>
 #include <array>
@@ -986,12 +986,7 @@ void AssetBrowserPanel::drawContents(EditorContext& context)
   }
   // Whose the Edit menu is: this panel's while it, or one of its parts, was
   // the last panel focused (menus and popups don't count).
-  if (const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow)
-    if (!(focused->Flags &
-          (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
-           ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_Tooltip)))
-      m_ownsEdit = focused->RootWindowDockTree ==
-                   ImGui::GetCurrentWindow()->RootWindowDockTree;
+  widgets::trackFocus(m_ownsEdit);
 
   // Keys, while this panel has focus (elsewhere they're the scene's).
   if (!m_renaming && !ImGui::GetIO().WantTextInput)
@@ -1602,7 +1597,7 @@ void AssetBrowserPanel::acceptEntity(EditorContext& context,
     return;
   const sfs::Entity entity = context.scene->getEntity(
       *static_cast<const sfs::Entity::EntityId*>(peek->Data));
-  if (entity.isValid() && entity.isAlive())
+  if (entity.isValid())
     if (const auto id = prefabs::create(context, entity, assetRelative(folder)))
       context.selectedAsset = {};
 }

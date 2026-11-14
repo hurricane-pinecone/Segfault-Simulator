@@ -17,7 +17,9 @@
 // With --ui-previews, the headers are UI headers (*.ui.h) and the output is
 // the editor's UI preview module: their views, filled with placeholders.
 //
-// Exits non-zero (and writes nothing) if any header has an error. The output
+// Diagnostics print as `file:line: severity: message [rule]`; a header's
+// sfs-ignore comments hide the warnings they name. Exits non-zero (and writes
+// nothing) if any header has an error, which can't be hidden. The output
 // file is only rewritten when its contents change, so an unchanged scan
 // doesn't trigger a rebuild.
 namespace
@@ -30,23 +32,16 @@ void usage()
                "[--include-root <dir>] [--ui-previews] <header>...\n";
 }
 
-std::string readFile(const std::filesystem::path& path)
+bool isError(const sfs::codegen::Diagnostic& diagnostic)
 {
-  std::ifstream in(path, std::ios::binary);
-  std::ostringstream contents;
-  contents << in.rdbuf();
-  return contents.str();
+  return sfs::codegen::severityOf(diagnostic) == sfs::codegen::Severity::Error;
 }
 
+// file:line: severity: message [rule], the format editors and IDEs parse; the
+// rule is what an sfs-ignore comment names.
 void print(const sfs::codegen::Diagnostic& diagnostic)
 {
-  const char* severity =
-      diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error
-          ? "error"
-          : "warning";
-  // file:line: severity: message, the format editors and IDEs parse.
-  std::cerr << diagnostic.file.string() << ':' << diagnostic.line << ": "
-            << severity << ": " << diagnostic.message << '\n';
+  std::cerr << sfs::codegen::formatDiagnostic(diagnostic, false) << '\n';
 }
 
 // The script registration for `headers`; false if one has an error.
@@ -59,12 +54,11 @@ bool generateScripts(const std::vector<std::filesystem::path>& headers,
   for (const std::filesystem::path& header : headers)
   {
     sfs::codegen::ParseResult result =
-        sfs::codegen::parseHeader(readFile(header), header);
+        sfs::codegen::parseHeader(sfs::codegen::readFile(header), header);
     for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
     {
       print(diagnostic);
-      failed |=
-          diagnostic.severity == sfs::codegen::Diagnostic::Severity::Error;
+      failed |= isError(diagnostic);
     }
     if (result.type)
       types.push_back(std::move(*result.type));
@@ -139,7 +133,7 @@ int main(int argc, char* argv[])
     for (const std::filesystem::path& header : headers)
     {
       sfs::codegen::UiParseResult result =
-          sfs::codegen::parseUiHeader(readFile(header), header);
+          sfs::codegen::parseUiHeader(sfs::codegen::readFile(header), header);
       for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
         print(diagnostic);
       for (sfs::codegen::UiTypeModel& type : result.types)
@@ -150,7 +144,8 @@ int main(int argc, char* argv[])
   else if (!generateScripts(headers, options, generated))
     return 1;
 
-  if (std::filesystem::exists(output) && readFile(output) == generated)
+  if (std::filesystem::exists(output) &&
+      sfs::codegen::readFile(output) == generated)
     return 0;
 
   if (output.has_parent_path())

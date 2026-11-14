@@ -194,8 +194,9 @@ These blocking jobs run on every push and pull request:
   release relies on, so it stays free of the runtime stack.
 - **test-runtime**: full native build, runs the `runtime` label.
 - **sanitize-runtime**: the full build with `ENGINE_SANITIZE=ON` (the flags apply
-  to the engine targets only, so the prebuilt dependencies stay uninstrumented),
-  running the runtime tests under the sanitizers.
+  to the engine, editor and player targets and their tests, so the prebuilt
+  dependencies stay uninstrumented), running the runtime tests under the
+  sanitizers.
 - **format**: enforces `.clang-format` (see [Code Formatting](#code-formatting)).
 - **build**: the web build, gated on the four test jobs.
 
@@ -287,6 +288,13 @@ Running from the repo root breaks asset paths:
 ```bash
 ./build/Debug/bin/SfsEditor   # don't
 ```
+
+The editor needs a shared engine (`ENGINE_SHARED=ON`, the default with GCC,
+Clang and MinGW) to build and load a project's game module, which links the
+same engine. A tree configured with `-DENGINE_SHARED=OFF` (such as a
+`build/Static` kept for engine tests) builds an editor that says so and refuses
+to build modules: opening a project, Play, `--export` and `--fill-parts` need
+`build/Debug`, `build-win` or the SDK instead.
 
 ## Optional Aliases (zsh)
 

@@ -5,11 +5,15 @@
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/ecs/ecs.h>
 #include <engine/core/hierarchy/hierarchy.h>
+#include <engine/core/logger/logger.h>
 
 #include <glm/glm/gtc/quaternion.hpp>
 
 #include <cstdint>
+#include <cstring>
 #include <random>
+#include <string>
+#include <type_traits>
 #include <vector>
 
 using namespace sfs;
@@ -31,7 +35,30 @@ bool approxVec(const glm::vec3& a, const glm::vec3& b)
          testing::approx(a.z, b.z);
 }
 
+// A transform with an awkward position, turn and uneven scale, different for
+// each seed, so composing several leaves rounding in every bit.
+TransformComponent oddTransform(int seed)
+{
+  std::mt19937 random(static_cast<uint32_t>(seed) * 7919u + 1u);
+  std::uniform_real_distribution<float> spread(-3.0f, 3.0f);
+  const glm::vec3 position(spread(random), spread(random), spread(random));
+  const glm::quat rotation = glm::normalize(glm::quat(
+      spread(random), spread(random), spread(random), spread(random)));
+  const glm::vec3 scale(1.0f + spread(random) * 0.2f,
+                        0.5f + spread(random) * 0.1f,
+                        1.0f - spread(random) * 0.1f);
+  return TransformComponent(position, rotation, scale);
+}
+
 struct Tagged
+{
+};
+struct Marked
+{
+  int value = 0;
+};
+// No entity has one.
+struct Unheld
 {
 };
 
@@ -83,8 +110,8 @@ int main()
   {
     Registry registry;
     Entity parent = placed(registry, {10.0f, 0.0f, 0.0f});
-    parent.getComponent<TransformComponent>().setYaw(kHalfTurn);
-    parent.getComponent<TransformComponent>().scale = glm::vec3(2.0f);
+    parent.getComponent<TransformComponent>()->setYaw(kHalfTurn);
+    parent.getComponent<TransformComponent>()->scale = glm::vec3(2.0f);
     Entity child = placed(registry, {1.0f, 0.0f, 0.0f});
     CHECK(hierarchy::setParent(child, parent));
 
@@ -103,6 +130,40 @@ int main()
     CHECK(approxVec(hierarchy::worldPosition(child), {1.0f, 2.0f, 3.0f}));
   }
 
+  TEST("worldMatrix should equal composeWorld applied from the top, bitwise")
+  {
+    Registry registry;
+    std::vector<Entity> chain;
+    glm::mat4x3 expected;
+    const glm::mat4x3* above = nullptr;
+    Entity parent;
+    // Seventy levels (more than a walk keeps on its stack), with a group
+    // without a transform every tenth level.
+    for (int level = 0; level < 70; ++level)
+    {
+      Entity entity = registry.createEntity();
+      if (level % 10 != 5)
+      {
+        entity.addComponent<TransformComponent>(oddTransform(level));
+        expected = hierarchy::composeWorld(
+            above, *entity.getComponent<TransformComponent>());
+        above = &expected;
+      }
+      hierarchy::setParent(entity, parent);
+      parent = entity;
+      chain.push_back(entity);
+      const glm::mat4 read = hierarchy::worldMatrix(entity);
+      const glm::mat4 wanted(expected);
+      CHECK(std::memcmp(&read, &wanted, sizeof(read)) == 0);
+    }
+    CHECK(hierarchy::worldPosition(chain.back()) == glm::vec3(expected[3]));
+
+    // A root's is its own matrix.
+    const Entity root = chain.front();
+    CHECK(hierarchy::worldMatrix(root) ==
+          root.getComponent<TransformComponent>()->matrix());
+  }
+
   TEST("setParent should refuse loops and leave the hierarchy unchanged")
   {
     Registry registry;
@@ -117,6 +178,23 @@ int main()
     CHECK(!hierarchy::parentOf(a).isValid());
     CHECK(hierarchy::isAncestor(a, c));
     CHECK(!hierarchy::isAncestor(c, a));
+  }
+
+  TEST("rootOf should give the top of an entity's branch")
+  {
+    Registry registry;
+    Entity a = placed(registry, {});
+    Entity b = placed(registry, {});
+    Entity c = placed(registry, {});
+    hierarchy::setParent(b, a);
+    hierarchy::setParent(c, b);
+    CHECK(hierarchy::rootOf(c) == a);
+    CHECK(hierarchy::rootOf(b) == a);
+    CHECK(hierarchy::rootOf(a) == a);
+    CHECK(!hierarchy::rootOf(Entity()).isValid());
+    registry.destroyEntity(c);
+    registry.flushEntities();
+    CHECK(!hierarchy::rootOf(c).isValid());
   }
 
   TEST("making an entity a root should take it out of its parent's children")
@@ -269,6 +347,166 @@ int main()
     CHECK(!hierarchy::findDescendant<NameComponent>(parent).isValid());
   }
 
+  TEST("typed childrenOf should give the matching children as rows")
+  {
+    Registry registry;
+    Entity parent = registry.createEntity();
+    Entity plain = registry.createEntity();
+    Entity tagged = registry.createEntity();
+    Entity both = registry.createEntity();
+    Entity named = registry.createEntity();
+    for (Entity child : {plain, tagged, both, named})
+      hierarchy::setParent(child, parent);
+    tagged.addComponent<Tagged>();
+    both.addComponent<Tagged>();
+    both.addComponent<Marked>(Marked{7});
+    named.addComponent<NameComponent>();
+    named.addComponent<Marked>(Marked{3});
+    // Not flushed: pending children are walked too.
+
+    std::vector<Entity> walked;
+    for (auto [child, tag] : hierarchy::childrenOf<Tagged>(parent))
+    {
+      static_assert(std::is_same_v<decltype(tag), Tagged&>);
+      walked.push_back(child);
+    }
+    CHECK((walked == std::vector<Entity>{tagged, both}));
+
+    // Rows bind required components by reference, Any members by pointer.
+    int sum = 0;
+    for (auto [child, mark] : hierarchy::childrenOf<Marked>(parent))
+      sum += mark.value;
+    CHECK(sum == 10);
+    walked.clear();
+    for (auto [child, tag, name] :
+         hierarchy::childrenOf<Any<Tagged, NameComponent>>(parent))
+    {
+      static_assert(std::is_same_v<decltype(name), NameComponent*>);
+      walked.push_back(child);
+      CHECK((tag != nullptr) != (name != nullptr));
+    }
+    CHECK((walked == std::vector<Entity>{tagged, both, named}));
+    walked.clear();
+    for (const Entity& child :
+         hierarchy::childrenOf<Tagged, Excluding<Marked>>(parent))
+      walked.push_back(child);
+    CHECK((walked == std::vector<Entity>{tagged}));
+
+    // Without the entity: one component converts, components() unpacks.
+    sum = 0;
+    for (Marked& mark : hierarchy::childrenOf<Marked>(parent))
+      sum += mark.value;
+    for (const Marked& mark :
+         hierarchy::childrenOf<const Marked, Excluding<Tagged>>(parent))
+      sum += mark.value * 100;
+    CHECK(sum == 310);
+    int rows = 0;
+    for (auto [tag, mark] :
+         hierarchy::childrenOf<Tagged, Marked>(parent).components())
+    {
+      static_assert(std::is_same_v<decltype(tag), Tagged&>);
+      rows += mark.value;
+    }
+    CHECK(rows == 7);
+    rows = 0;
+    for (auto [tag, name] :
+         hierarchy::childrenOf<Any<Tagged, NameComponent>>(parent).components())
+    {
+      static_assert(std::is_same_v<decltype(name), NameComponent*>);
+      ++rows;
+    }
+    CHECK(rows == 3);
+    for (Unheld& unheld : hierarchy::childrenOf<Unheld>(parent))
+      ++rows;
+    for (auto [unheld] : hierarchy::childrenOf<Unheld>(parent).components())
+      ++rows;
+    for (auto [tag] : hierarchy::childrenOf<Tagged>(Entity()).components())
+      ++rows;
+    CHECK(rows == 3);
+
+    CHECK(hierarchy::childrenOf<Unheld>(parent).empty());
+    CHECK(hierarchy::childrenOf<Tagged>(Entity()).empty());
+    CHECK(hierarchy::childrenOf<Tagged>(tagged).empty());
+    registry.destroyEntity(parent);
+    registry.flushEntities();
+    CHECK(hierarchy::childrenOf<Tagged>(parent).empty());
+  }
+
+  TEST("typed descendants should give the matching entities in preorder, "
+       "skipping below a row when asked")
+  {
+    Registry registry;
+    Entity root = registry.createEntity();
+    Entity a = registry.createEntity();
+    Entity a1 = registry.createEntity();
+    Entity a1x = registry.createEntity();
+    Entity b = registry.createEntity();
+    Entity b1 = registry.createEntity();
+    hierarchy::setParent(a, root);
+    hierarchy::setParent(b, root);
+    hierarchy::setParent(a1, a);
+    hierarchy::setParent(a1x, a1);
+    hierarchy::setParent(b1, b);
+    for (Entity tagged : {a1, a1x, b, b1})
+      tagged.addComponent<Tagged>();
+    registry.flushEntities();
+
+    std::vector<Entity> walked;
+    for (auto [entity, tag] : hierarchy::descendants<Tagged>(root))
+      walked.push_back(entity);
+    CHECK((walked == std::vector<Entity>{a1, a1x, b, b1}));
+    int found = 0;
+    for (Tagged& tag : hierarchy::descendants<Tagged>(root))
+      found += &tag == a1x.getComponent<Tagged>() ? 10 : 1;
+    for (auto [tag] : hierarchy::descendants<Tagged>(root).components())
+      found += &tag == b1.getComponent<Tagged>() ? 100 : 0;
+    for (auto [tag] : hierarchy::descendants<Tagged>(Entity()).components())
+      ++found;
+    CHECK(found == 113);
+
+    // Skipping below a1 leaves out a1x; a, which doesn't match, is walked
+    // through.
+    walked.clear();
+    const hierarchy::DescendantRows<Tagged> rows =
+        hierarchy::descendants<Tagged>(root);
+    for (auto it = rows.begin(); it != rows.end(); ++it)
+    {
+      walked.push_back((*it).entity());
+      if ((*it).entity() == a1)
+        it.skipChildren();
+    }
+    CHECK((walked == std::vector<Entity>{a1, b, b1}));
+    CHECK(hierarchy::descendants<Tagged>(Entity()).begin() ==
+          hierarchy::descendants<Tagged>(Entity()).end());
+  }
+
+  TEST("findChild, findChildren and findDescendant should take several terms")
+  {
+    Registry registry;
+    Entity parent = registry.createEntity();
+    Entity tagged = registry.createEntity();
+    Entity both = registry.createEntity();
+    Entity deep = registry.createEntity();
+    hierarchy::setParent(tagged, parent);
+    hierarchy::setParent(both, parent);
+    hierarchy::setParent(deep, tagged);
+    tagged.addComponent<Tagged>();
+    both.addComponent<Tagged>();
+    both.addComponent<Marked>();
+    deep.addComponent<Marked>();
+    deep.addComponent<NameComponent>();
+
+    CHECK(hierarchy::findChild<Tagged, Marked>(parent) == both);
+    CHECK(hierarchy::findChild<Tagged, Excluding<Marked>>(parent) == tagged);
+    CHECK(!hierarchy::findChild<Marked, NameComponent>(parent).isValid());
+    std::vector<Entity> found;
+    hierarchy::findChildren<Any<Marked, NameComponent>>(parent, found);
+    CHECK((found == std::vector<Entity>{both}));
+    CHECK(hierarchy::findDescendant<Marked, NameComponent>(parent) == deep);
+    CHECK(hierarchy::findDescendant<Marked>(parent) == deep); // preorder
+    CHECK(!hierarchy::findDescendant<Tagged>(Entity()).isValid());
+  }
+
   TEST("descendants should walk in preorder, skipping subtrees when asked")
   {
     Registry registry;
@@ -325,7 +563,7 @@ int main()
 
     std::vector<Entity> living;
     for (const Entity& entity : all)
-      if (entity.isAlive())
+      if (entity.isValid())
         living.push_back(entity);
     std::vector<HierarchyLinks::Placed> reference;
     for (const Entity& entity : living)
@@ -455,6 +693,52 @@ int main()
     CHECK(hierarchy::setParent(child, {}));
   }
 
+  TEST("a destroyed parent should make a living child of its registry a root, "
+       "and be refused, logged, otherwise")
+  {
+    Registry registry;
+    Registry other;
+    Entity parent = registry.createEntity();
+    Entity child = registry.createEntity();
+    Entity gone = registry.createEntity();
+    Entity strangerGone = other.createEntity();
+    hierarchy::setParent(child, parent);
+    registry.destroyEntity(gone);
+    registry.flushEntities();
+    other.destroyEntity(strangerGone);
+    other.flushEntities();
+    std::vector<std::string> errors;
+    Logger::flush();
+    const Logger::SinkId sink = Logger::addSink(
+        [&errors](Logger::Level level, const std::string& message)
+        {
+          if (level == Logger::Level::ERROR)
+            errors.push_back(message);
+        });
+
+    CHECK(hierarchy::setParent(child, gone)); // made a root
+    CHECK(!hierarchy::parentOf(child).isValid());
+    CHECK(errors.empty());
+
+    // A destroyed child given a destroyed parent: refused, logged.
+    CHECK(!hierarchy::canParent(gone, gone));
+    CHECK(!hierarchy::setParent(gone, gone));
+    CHECK(errors.size() == 1u);
+    CHECK((!errors.empty() &&
+           errors.back().find("was destroyed") != std::string::npos));
+
+    // A destroyed parent from another registry: refused, logged.
+    hierarchy::setParent(child, parent);
+    CHECK(!hierarchy::canParent(child, strangerGone));
+    CHECK(!hierarchy::setParent(child, strangerGone));
+    CHECK(errors.size() == 2u);
+    CHECK((!errors.empty() &&
+           errors.back().find("different registries") != std::string::npos));
+    CHECK(hierarchy::parentOf(child) == parent); // unchanged
+    Logger::removeSink(sink);
+    Logger::flush();
+  }
+
   TEST("linkVersion should move only when a link changes")
   {
     Registry registry;
@@ -485,21 +769,21 @@ int main()
   {
     Registry registry;
     Entity parent = placed(registry, {5.0f, 5.0f, 0.0f});
-    parent.getComponent<TransformComponent>().setYaw(kHalfTurn);
+    parent.getComponent<TransformComponent>()->setYaw(kHalfTurn);
     Entity child = placed(registry, {6.0f, 5.0f, 1.0f});
-    child.getComponent<TransformComponent>().scale = glm::vec3(3.0f);
+    child.getComponent<TransformComponent>()->scale = glm::vec3(3.0f);
 
     CHECK(hierarchy::setParentKeepWorld(child, parent));
     CHECK(approxVec(hierarchy::worldPosition(child), {6.0f, 5.0f, 1.0f}));
     // Local now: 1 unit along the parent's turned axis (world +X is its -Y).
-    CHECK(approxVec(child.getComponent<TransformComponent>().position,
+    CHECK(approxVec(child.getComponent<TransformComponent>()->position,
                     {0.0f, -1.0f, 1.0f}));
     CHECK(approxVec(
-        child.getComponent<TransformComponent>().scale, glm::vec3(3.0f)));
+        child.getComponent<TransformComponent>()->scale, glm::vec3(3.0f)));
 
     CHECK(hierarchy::setParentKeepWorld(child, {}));
-    CHECK(approxVec(
-        child.getComponent<TransformComponent>().position, {6.0f, 5.0f, 1.0f}));
+    CHECK(approxVec(child.getComponent<TransformComponent>()->position,
+                    {6.0f, 5.0f, 1.0f}));
   }
 
   TEST("setWorldMatrix should place a child at a world position")
@@ -510,7 +794,7 @@ int main()
     hierarchy::setParent(child, parent);
     hierarchy::setWorldMatrix(
         child, TransformComponent({1.0f, 1.0f, 1.0f}).matrix());
-    CHECK(approxVec(child.getComponent<TransformComponent>().position,
+    CHECK(approxVec(child.getComponent<TransformComponent>()->position,
                     {1.0f, 1.0f, -3.0f}));
   }
 
@@ -558,7 +842,7 @@ int main()
     world.scale = glm::vec3(-1.0f, 1.0f, 1.0f);
     hierarchy::setWorldTransform(child, world);
 
-    const auto& local = child.getComponent<TransformComponent>();
+    const TransformComponent& local = *child.getComponent<TransformComponent>();
     CHECK(testing::approx(local.position.x, 2.0f));
     CHECK(testing::approx(local.position.y, -4.0f));
     CHECK(testing::approx(local.scale.x, -1.0f)); // still mirrored
@@ -618,23 +902,23 @@ int main()
   {
     Registry registry;
     Entity part = placed(registry, {1.0f, 2.0f, 3.0f});
-    TransformComponent& transform = part.getComponent<TransformComponent>();
+    TransformComponent& transform = *part.getComponent<TransformComponent>();
     transform.setYaw(kHalfTurn);
     transform.scale = glm::vec3(2.0f);
     hierarchy::recordRestPose(part);
     CHECK(part.hasComponent<RestPoseComponent>());
-    const RestPoseComponent& rest = part.getComponent<RestPoseComponent>();
+    const RestPoseComponent& rest = *part.getComponent<RestPoseComponent>();
     CHECK(approxVec(rest.position, {1.0f, 2.0f, 3.0f}));
-    const glm::quat turned = part.getComponent<TransformComponent>().rotation;
+    const glm::quat turned = part.getComponent<TransformComponent>()->rotation;
     CHECK(testing::approx(glm::dot(rest.rotation, turned), 1.0f));
     CHECK(approxVec(rest.scale, glm::vec3(2.0f)));
 
-    part.getComponent<TransformComponent>().position = {5.0f, 0.0f, 0.0f};
+    part.getComponent<TransformComponent>()->position = {5.0f, 0.0f, 0.0f};
     CHECK(approxVec(
-        part.getComponent<RestPoseComponent>().position, {1.0f, 2.0f, 3.0f}));
+        part.getComponent<RestPoseComponent>()->position, {1.0f, 2.0f, 3.0f}));
     hierarchy::recordRestPose(part);
     CHECK(approxVec(
-        part.getComponent<RestPoseComponent>().position, {5.0f, 0.0f, 0.0f}));
+        part.getComponent<RestPoseComponent>()->position, {5.0f, 0.0f, 0.0f}));
 
     Entity bare = registry.createEntity();
     hierarchy::recordRestPose(bare);

@@ -6,7 +6,10 @@
 #include "editorContext.h"
 #include "platform/shell.h"
 #include "scene/editorScene.h"
+#include "scene/entityLabel.h"
+#include "scene/parts.h"
 #include "scene/prefabs.h"
+#include "scene/references.h"
 #include "scripting/scriptFiles.h"
 #include "widgets/lookWidgets.h"
 #include "widgets/theme.h"
@@ -29,8 +32,10 @@
 #include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/emissionLights.h"
 #include "engine/core/util/atomicFile.h"
+#include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
+#include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/game/gameObject.h"
@@ -299,6 +304,54 @@ bool assetRefCombo(const char* label,
   return picked;
 }
 
+// A list's rows, as the Inspector edits a list field: the label on its first
+// row, each item drawn by `item(i)` (in its own ID scope, with room left for
+// an "x" that takes it out), then a "+" row that adds one at the end. A
+// removal or addition is one undo step: `remove(i)` or `add()` makes it. True
+// when the list changed (an item's own edit included).
+template <typename Item, typename Remove, typename Add>
+bool listRows(const char* label,
+              std::size_t count,
+              EditorHistory* history,
+              Item&& item,
+              Remove&& remove,
+              Add&& add)
+{
+  bool changed = false;
+  std::optional<std::size_t> removed;
+  const float button = ImGui::GetFrameHeight();
+  const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+  for (std::size_t i = 0; i < count; ++i)
+  {
+    ImGui::PushID(static_cast<int>(i));
+    widgets::propertyLabel(i == 0 ? label : "##item");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - button -
+                            spacing);
+    changed |= item(i);
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::Button("x", ImVec2(button, button)))
+      removed = i;
+    ImGui::SetItemTooltip("Take it out of the list");
+    ImGui::PopID();
+  }
+  widgets::propertyLabel(count == 0 ? label : "##add");
+  const bool adding = ImGui::Button("+");
+  ImGui::SetItemTooltip("Add one to the end");
+  if (removed || adding)
+  {
+    if (history)
+      history->beginChange();
+    if (removed)
+      remove(*removed);
+    else
+      add();
+    if (history)
+      history->endChange();
+    changed = true;
+  }
+  return changed;
+}
+
 // A list of the project's scriptable objects of `type`, in order: a row each,
 // picked (or dropped) as an AssetRef is, taken out with its "x", and one more
 // added at the end with "+". Each change is an undo step. True when it's
@@ -308,44 +361,389 @@ bool assetRefList(const char* label,
                   std::vector<std::string>& assets,
                   EditorHistory* history)
 {
-  bool changed = false;
-  std::optional<std::size_t> remove;
-  const float button = ImGui::GetFrameHeight();
-  for (std::size_t i = 0; i < assets.size(); ++i)
-  {
-    ImGui::PushID(static_cast<int>(i));
-    widgets::propertyLabel(i == 0 ? label : "##item");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - button -
-                            ImGui::GetStyle().ItemInnerSpacing.x);
-    changed |= widgets::undoable(history,
+  return listRows(
+      label,
+      assets.size(),
+      history,
+      [&](std::size_t i)
+      {
+        return widgets::undoable(history,
                                  assets[i],
                                  [&](std::string& asset) {
                                    return assetRefCombo("##asset", type, asset);
                                  });
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    if (ImGui::Button("x", ImVec2(button, button)))
-      remove = i;
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Take it out of the list");
-    ImGui::PopID();
+      },
+      [&](std::size_t i)
+      { assets.erase(assets.begin() + static_cast<std::ptrdiff_t>(i)); },
+      [&] { assets.emplace_back(); });
+}
+
+// What an entity reference slot needs beyond its value: the entity and the
+// component holding it, the editor (to select a target, and whether a
+// prefab's content is edited on its own), and its picker's search.
+struct RefSlot
+{
+  EditorContext& context;
+  sfs::Entity holder;
+  const TypeInfo& type;
+  EntityPickerSearch& search;
+};
+
+// The root a slot's references are named from (references::contextRoot()).
+sfs::Entity contextOf(const RefSlot& slot)
+{
+  return references::contextRoot(slot.holder, slot.context.editingPrefab);
+}
+
+// Whether a slot may name `target`: in a prefab's tab only the prefab's own
+// entities (a prefab can't point outside itself); in a scene any. Null if it
+// may, else why not.
+const char* refusal(const RefSlot& slot, const sfs::Entity& target)
+{
+  if (!target.isValid())
+    return "That entity is gone";
+  if (slot.context.editingPrefab &&
+      sfs::hierarchy::rootOf(target) != sfs::hierarchy::rootOf(slot.holder))
+    return "A prefab can only name its own entities";
+  return nullptr;
+}
+
+// A pick list row: the entity's name, then where it is, dimmed.
+bool pickRow(const sfs::Entity& entity,
+             const sfs::Entity& base,
+             const sfs::Entity& current)
+{
+  ImGui::PushID(static_cast<int>(entity.getId()));
+  const bool picked =
+      ImGui::Selectable(entityLabel(entity).c_str(), entity == current);
+  const std::string where =
+      references::namePath(sfs::hierarchy::parentOf(entity), base);
+  if (!where.empty())
+  {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", where.c_str());
   }
-  widgets::propertyLabel(assets.empty() ? label : "##add");
-  const bool add = ImGui::Button("+");
-  if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Add one to the end");
-  if (remove || add)
+  ImGui::PopID();
+  return picked;
+}
+
+// An entity and what's below it as a tree to pick from: a click on a name
+// picks it, the arrow opens it.
+void pickTree(const sfs::Entity& entity,
+              const sfs::Entity& current,
+              std::optional<sfs::Entity>& picked)
+{
+  const bool leaf = !sfs::hierarchy::hasChildren(entity);
+  ImGuiTreeNodeFlags flags =
+      ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+  if (leaf)
+    flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+  if (entity == current)
+    flags |= ImGuiTreeNodeFlags_Selected;
+  ImGui::PushID(static_cast<int>(entity.getId()));
+  const bool open =
+      ImGui::TreeNodeEx("##node", flags, "%s", entityLabel(entity).c_str());
+  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+    picked = entity;
+  if (open && !leaf)
+  {
+    for (const sfs::Entity& child : sfs::hierarchy::childrenOf(entity))
+      pickTree(child, current, picked);
+    ImGui::TreePop();
+  }
+  ImGui::PopID();
+}
+
+// Look the picker's lists up again if what they were made for has changed.
+void refreshSearch(const RefSlot& slot,
+                   const FieldInfo& field,
+                   const sfs::Entity& own)
+{
+  EntityPickerSearch& search = slot.search;
+  const std::string text = toLower(search.filter);
+  const uint64_t revision =
+      slot.context.history ? slot.context.history->revision() : 0;
+  if (search.madeFor == text && search.revision == revision &&
+      search.holder == slot.holder && search.field == &field)
+    return;
+  search.madeFor = text;
+  search.revision = revision;
+  search.holder = slot.holder;
+  search.field = &field;
+  search.named.clear();
+  search.own.clear();
+  search.scene.clear();
+  search.more = false;
+
+  const auto found = [&](const sfs::Entity& entity)
+  { return toLower(entityLabel(entity)).find(text) != std::string::npos; };
+  if (!field.attributes.part.empty())
+    for (const sfs::Entity& entity : sfs::hierarchy::descendants(slot.holder))
+      if (sfs::matchesPart(entityLabel(entity), field.attributes.part) &&
+          found(entity))
+        search.named.push_back(entity);
+  if (text.empty())
+    return; // the trees are drawn instead
+
+  constexpr std::size_t kMaxFound = 200;
+  std::size_t room = kMaxFound;
+  const auto collect =
+      [&](const sfs::Entity& top, std::vector<sfs::Entity>& out)
+  {
+    const auto visit = [&](const sfs::Entity& entity)
+    {
+      if (!found(entity))
+        return;
+      if (room == 0)
+      {
+        search.more = true;
+        return;
+      }
+      --room;
+      out.push_back(entity);
+    };
+    visit(top);
+    for (const sfs::Entity& entity : sfs::hierarchy::descendants(top))
+      visit(entity);
+  };
+  if (own.isValid())
+    collect(own, search.own);
+  if (!slot.context.editingPrefab && slot.context.scene)
+    for (const sfs::Entity& root : slot.context.scene->roots())
+      collect(root, search.scene);
+}
+
+// The pick button's popup: the holder's [[sfs::part]] matches first, then the
+// prefab's or instance's entities as a tree and, in a scene, the whole scene;
+// with a search, the entities whose names have it. Nothing until one's picked.
+std::optional<sfs::Entity> entityPicker(const RefSlot& slot,
+                                        const FieldInfo& field,
+                                        const sfs::Entity& current)
+{
+  std::optional<sfs::Entity> picked;
+  if (!ImGui::BeginPopup("pick"))
+    return picked;
+  if (ImGui::IsWindowAppearing())
+  {
+    slot.search.filter.clear();
+    slot.search.revision = ~0ull;
+    ImGui::SetKeyboardFocusHere();
+  }
+  // The search box stays put; the lists scroll below it, in a region of
+  // their own about 18 rows high (less on a short screen).
+  const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+  const ImVec2 list(
+      std::max(360.0f, rowHeight * 18.0f),
+      std::min(rowHeight * 18.0f, ImGui::GetIO().DisplaySize.y * 0.5f));
+  widgets::searchInput("search", slot.search.filter, "Search", list.x);
+  ImGui::BeginChild("list", list);
+  // The prefab (its tab), or the instance holding the component.
+  const sfs::Entity own = slot.context.editingPrefab
+                              ? sfs::hierarchy::rootOf(slot.holder)
+                              : sfs::SceneSerializer::entryRootOf(slot.holder);
+  refreshSearch(slot, field, own);
+  const EntityPickerSearch& search = slot.search;
+  const bool searching = !search.madeFor.empty();
+  const auto rows =
+      [&](const std::vector<sfs::Entity>& entities, const sfs::Entity& base)
+  {
+    for (const sfs::Entity& entity : entities)
+      if (entity.isValid() && pickRow(entity, base, current))
+        picked = entity;
+  };
+
+  if (!field.attributes.part.empty())
+  {
+    ImGui::SeparatorText(("Named \"" + field.attributes.part + "\"").c_str());
+    rows(search.named, slot.holder);
+    if (search.named.empty())
+      ImGui::TextDisabled("Nothing below it has that name");
+  }
+  if (own.isValid())
+  {
+    ImGui::SeparatorText(slot.context.editingPrefab ? "Prefab" : "Instance");
+    if (searching)
+      rows(search.own, own);
+    else
+      pickTree(own, current, picked);
+  }
+  if (!slot.context.editingPrefab && slot.context.scene)
+  {
+    ImGui::SeparatorText("Scene");
+    if (searching)
+      rows(search.scene, {});
+    else
+      for (const sfs::Entity& root : slot.context.scene->roots())
+        pickTree(root, current, picked);
+  }
+  if (search.more)
+    ImGui::TextDisabled("More found: search for more of the name");
+  ImGui::EndChild();
+
+  if (picked)
+  {
+    if (const char* why = refusal(slot, *picked))
+    {
+      LOG_WARN(std::string(why) + "; " + entityLabel(*picked) + " wasn't set");
+      picked.reset();
+    }
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+  return picked;
+}
+
+// One entity reference, beside its label (drawn by the caller): its target's
+// name and, dimmed, where that is; a click selects the target. An entity can
+// be dropped on it from the Hierarchy, or picked with the target button. With
+// `clear`, an "x" empties it (a list's rows have their own "x"). A reference
+// whose saved target was missing shows that until it's set or cleared. Each
+// change is an undo step. True when it's changed.
+bool entitySlot(const RefSlot& slot,
+                const FieldInfo& field,
+                uint32_t item,
+                sfs::Entity& value,
+                EditorHistory* history,
+                bool clear)
+{
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float button = ImGui::GetFrameHeight();
+  // Room for the pick button, and the clear "x" (a list row's own "x" has
+  // room left by listRows()).
+  const float width =
+      std::max(button,
+               ImGui::CalcItemWidth() -
+                   (clear ? 2.0f : 1.0f) * (button + style.ItemInnerSpacing.x));
+  const bool alive = value.isValid();
+  const std::string* kept =
+      alive ? nullptr
+            : references::keptValue(slot.holder, slot.type, field, item);
+
+  bool changed = false;
+  bool forget = false;
+  std::optional<sfs::Entity> next;
+
+  // The name (and where it is), drawn into a button's frame.
+  const bool clicked = ImGui::Button("##slot", ImVec2(width, 0.0f));
+  const ImVec2 min = ImGui::GetItemRectMin();
+  const ImVec2 max = ImGui::GetItemRectMax();
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  draw->PushClipRect(ImVec2(min.x + style.FramePadding.x, min.y),
+                     ImVec2(max.x - style.FramePadding.x, max.y),
+                     true);
+  const ImVec2 text(min.x + style.FramePadding.x, min.y + style.FramePadding.y);
+  if (alive)
+  {
+    const std::string name = entityLabel(value);
+    draw->AddText(text, ImGui::GetColorU32(ImGuiCol_Text), name.c_str());
+    const std::string where =
+        references::namePath(sfs::hierarchy::parentOf(value), contextOf(slot));
+    if (!where.empty())
+      draw->AddText(ImVec2(text.x + ImGui::CalcTextSize(name.c_str()).x +
+                               style.ItemInnerSpacing.x * 2.0f,
+                           text.y),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                    where.c_str());
+  }
+  else if (kept)
+    draw->AddText(
+        text, theme::kMissing, ("Missing (was " + *kept + ")").c_str());
+  else
+    draw->AddText(text, ImGui::GetColorU32(ImGuiCol_TextDisabled), "None");
+  draw->PopClipRect();
+  if (ImGui::BeginItemTooltip())
+  {
+    if (alive)
+      ImGui::Text(
+          "%s\nClick to select it", references::namePath(value, {}).c_str());
+    else if (kept)
+      ImGui::TextUnformatted(
+          "What it named when it was saved isn't there (a model node "
+          "renamed?): set it again, or clear it");
+    else
+      ImGui::TextUnformatted(
+          "Drop an entity from the Hierarchy here, or pick one");
+    ImGui::EndTooltip();
+  }
+  if (alive && clicked)
+    slot.context.selection = value;
+
+  if (ImGui::BeginDragDropTarget())
+  {
+    const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+    if (payload && payload->IsDataType(assetDrop::kEntityPayload) &&
+        slot.context.scene)
+    {
+      const sfs::Entity dragged = slot.context.scene->getEntity(
+          *static_cast<const sfs::Entity::EntityId*>(payload->Data));
+      if (const char* why = refusal(slot, dragged))
+        ImGui::SetTooltip("%s", why);
+      else if (ImGui::AcceptDragDropPayload(assetDrop::kEntityPayload))
+        next = dragged;
+    }
+    ImGui::EndDragDropTarget();
+  }
+
+  ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+  if (widgets::targetButton("##pick"))
+    ImGui::OpenPopup("pick");
+  ImGui::SetItemTooltip("Pick an entity");
+  if (const std::optional<sfs::Entity> picked =
+          entityPicker(slot, field, value))
+    next = picked;
+
+  if (clear)
+  {
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    ImGui::BeginDisabled(!value.isValid() && !kept);
+    if (ImGui::Button("x", ImVec2(button, button)))
+    {
+      next = sfs::Entity();
+      forget = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Clear it");
+  }
+
+  if (next && (*next != value || forget))
   {
     if (history)
       history->beginChange();
-    if (remove)
-      assets.erase(assets.begin() + static_cast<std::ptrdiff_t>(*remove));
-    else
-      assets.emplace_back();
+    value = *next;
+    if (forget)
+      references::forgetKept(slot.holder, slot.type, field, item);
     if (history)
       history->endChange();
     changed = true;
   }
   return changed;
+}
+
+// An entity list: a row per item, set as an Entity field is, taken out with
+// its "x" (the values kept for the items after it moving up with them), and
+// one more added at the end with "+". Each change is an undo step. True when
+// it's changed.
+bool entityList(const char* label,
+                const RefSlot& slot,
+                const FieldInfo& field,
+                std::vector<sfs::Entity>& targets,
+                EditorHistory* history)
+{
+  return listRows(
+      label,
+      targets.size(),
+      history,
+      [&](std::size_t i)
+      {
+        return entitySlot(
+            slot, field, static_cast<uint32_t>(i), targets[i], history, false);
+      },
+      [&](std::size_t i)
+      {
+        targets.erase(targets.begin() + static_cast<std::ptrdiff_t>(i));
+        references::eraseKeptItem(slot.holder, slot.type, field, i);
+      },
+      [&] { targets.emplace_back(); });
 }
 
 // What a material slot's icons do with its material asset: edit it (a graph
@@ -512,13 +910,15 @@ void materialField(const FieldInfo& field,
 }
 
 // One field, with the widget its kind and attributes call for. Every edit is
-// recorded for undo.
+// recorded for undo. `refs`: what an Entity or EntityList field's slot needs
+// (only components have them).
 void fieldWidget(const FieldInfo& field,
                  void* object,
                  sfs::MeshLibrary* meshes,
                  EditorHistory* history,
                  const ScriptActions* scriptActions = nullptr,
-                 const MaterialActions* materialActions = nullptr)
+                 const MaterialActions* materialActions = nullptr,
+                 const RefSlot* refs = nullptr)
 {
   const char* label = field.displayName.c_str();
   const auto& attributes = field.attributes;
@@ -647,12 +1047,43 @@ void fieldWidget(const FieldInfo& field,
                  field.in<sfs::AssetRefListBase>(object).assets,
                  history);
     break;
+  case FieldKind::Entity:
+    row();
+    if (refs)
+      entitySlot(*refs,
+                 field,
+                 references::kNoItem,
+                 field.in<sfs::Entity>(object),
+                 history,
+                 true);
+    break;
+  case FieldKind::EntityList:
+    if (refs)
+      entityList(label,
+                 *refs,
+                 field,
+                 field.in<std::vector<sfs::Entity>>(object),
+                 history);
+    break;
   }
 }
 
-// A field's value as JSON (a mesh by its handle's id), to compare and copy
+// Whose a component's entity reference fields are: the entity, the
+// component's type, and whether the scene is a prefab's content (a prefab's
+// tab).
+struct RefHolder
+{
+  sfs::Entity entity;
+  const TypeInfo* type = nullptr;
+  bool prefabContent = false;
+};
+
+// A field's value as JSON (a mesh by its handle's id; a reference as
+// references::comparable() gives it for its holder), to compare and copy
 // between objects of a type.
-nlohmann::json fieldValue(const FieldInfo& field, void* object)
+nlohmann::json fieldValue(const FieldInfo& field,
+                          void* object,
+                          const RefHolder* holder = nullptr)
 {
   using Kind = FieldKind;
   switch (field.kind)
@@ -697,12 +1128,27 @@ nlohmann::json fieldValue(const FieldInfo& field, void* object)
     return field.in<sfs::AssetRefBase>(object).asset;
   case Kind::AssetRefList:
     return field.in<sfs::AssetRefListBase>(object).assets;
+  case Kind::Entity:
+  case Kind::EntityList:
+    return holder ? references::comparable(holder->entity,
+                                           *holder->type,
+                                           field,
+                                           object,
+                                           holder->prefabContent)
+                  : nlohmann::json();
   }
   return nullptr;
 }
 
-// Copy a field from one object of a type to another.
-void copyField(const FieldInfo& field, void* from, void* to)
+// Copy a field from one object of a type to another. A reference (on
+// components: `fromHolder` holds the source, `toEntity` the other) is copied
+// relatively, with its kept values (references::copy()); where the other has
+// no such part, the field is left as it was.
+void copyField(const FieldInfo& field,
+               void* from,
+               void* to,
+               const RefHolder* fromHolder = nullptr,
+               const sfs::Entity& toEntity = {})
 {
   using Kind = FieldKind;
   switch (field.kind)
@@ -749,6 +1195,17 @@ void copyField(const FieldInfo& field, void* from, void* to)
     break;
   case Kind::AssetRefList:
     field.in<sfs::AssetRefListBase>(to) = field.in<sfs::AssetRefListBase>(from);
+    break;
+  case Kind::Entity:
+  case Kind::EntityList:
+    if (fromHolder)
+      references::copy(*fromHolder->type,
+                       field,
+                       fromHolder->entity,
+                       from,
+                       toEntity,
+                       to,
+                       fromHolder->prefabContent);
     break;
   }
 }
@@ -1170,25 +1627,25 @@ void animatorPreview(const sfs::Entity& entity,
 // unless the game is flat and the sprite's image is there.
 std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& entity, const MeshScene& scene)
 {
-  if (!scene.render || !scene.store || !entity.hasComponent<sfs::SpriteComponent>() ||
-      !entity.hasComponent<sfs::TransformComponent>())
+  const auto* sprite = entity.getComponent<sfs::SpriteComponent>();
+  const auto* transform = entity.getComponent<sfs::TransformComponent>();
+  if (!scene.render || !scene.store || !sprite || !transform)
     return std::nullopt;
   const std::optional<sfs::Space2D>& space = scene.render->space2D();
   if (!space || space->projection != sfs::Space2D::Projection::Flat)
     return std::nullopt;
-  const auto& sprite = entity.getComponent<sfs::SpriteComponent>();
   const std::optional<sfs::AssetStore::SpriteFrame> frame =
-      sprite.image.empty() ? std::nullopt : scene.store->spriteFrame(sprite.image, sprite.frame);
+      sprite->image.empty() ? std::nullopt : scene.store->spriteFrame(sprite->image, sprite->frame);
   if (!frame)
     return std::nullopt;
   const float pixelsPerUnit = frame->pixelsPerUnit > 0.0f ? frame->pixelsPerUnit : space->pixelsPerUnit;
   const glm::vec2 size =
-      frame->pixels * glm::abs(entity.getComponent<sfs::TransformComponent>().scale2D()) / pixelsPerUnit;
+      frame->pixels * glm::abs(transform->scale2D()) / pixelsPerUnit;
   // As SpriteModule draws it: its centre off the anchor (image y down), on
   // the game's plane (its y down too, if the game's runs down).
-  const glm::vec2 pivot(sprite.anchor.x - 0.5f, 0.5f - sprite.anchor.y);
+  const glm::vec2 pivot(sprite->anchor.x - 0.5f, 0.5f - sprite->anchor.y);
   const glm::vec2 centre =
-      -pivot * size + glm::vec2(sprite.renderOffset.x, -sprite.renderOffset.y) / pixelsPerUnit;
+      -pivot * size + glm::vec2(sprite->renderOffset.x, -sprite->renderOffset.y) / pixelsPerUnit;
   return std::pair(size * 0.5f, glm::vec2(centre.x, centre.y * space->ySign()));
 }
 
@@ -1247,9 +1704,8 @@ void colliderFitRows(const TypeInfo& type,
                      EditorHistory* history)
 {
   static bool includeChildren = false;
-  const bool hasOwn =
-      entity.hasComponent<sfs::MeshRendererComponent>() && scene.meshes &&
-      scene.meshes->bounds(entity.getComponent<sfs::MeshRendererComponent>().mesh);
+  const auto* ownRenderer = entity.getComponent<sfs::MeshRendererComponent>();
+  const bool hasOwn = ownRenderer && scene.meshes && scene.meshes->bounds(ownRenderer->mesh);
   if (hasOwn && sfs::hierarchy::hasChildren(entity))
   {
     widgets::propertyCheckbox("Include Children", &includeChildren);
@@ -1292,10 +1748,13 @@ void planarTransform(const sfs::Entity& entity,
                      EditorHistory* history,
                      bool isometric)
 {
-  std::vector<sfs::TransformComponent*> all{&entity.getComponent<sfs::TransformComponent>()};
+  sfs::TransformComponent* own = entity.getComponent<sfs::TransformComponent>();
+  if (!own)
+    return;
+  std::vector<sfs::TransformComponent*> all{own};
   for (const sfs::Entity& other : others)
-    if (other.hasComponent<sfs::TransformComponent>())
-      all.push_back(&other.getComponent<sfs::TransformComponent>());
+    if (sfs::TransformComponent* transform = other.getComponent<sfs::TransformComponent>())
+      all.push_back(transform);
 
   widgets::propertyLabel("Position");
   ImGui::SetNextItemWidth(-FLT_MIN);
@@ -1363,12 +1822,14 @@ void planarTransform(const sfs::Entity& entity,
   ImGui::SetItemTooltip("Negative mirrors it");
 }
 
-// A collapsible section for one component, with Remove in its context menu.
+// A collapsible section for one component, with Remove (and, with
+// [[sfs::part]] fields, Fill Parts) in its context menu.
 // `overridden`: the fields a prefab instance overrides here (marked, with
 // Revert to Prefab on right-click, which calls `revert`); null if none.
 // `entity`'s component of a type, with every field it shows; with `others`
 // (several selected), edits to a field go to all of them, and fields whose
-// values differ between them are dimmed.
+// values differ between them are dimmed. `context` and `pickSearch`: what
+// entity reference slots need (the editor, and their picker's search).
 void componentSection(
     const TypeInfo& type,
     const sfs::Entity& entity,
@@ -1379,16 +1840,25 @@ void componentSection(
     const std::function<void(const std::string& field)>& revert = {},
     const ScriptActions* scriptActions = nullptr,
     const MaterialActions* materialActions = nullptr,
-    std::span<const sfs::Entity> others = {})
+    std::span<const sfs::Entity> others = {},
+    EditorContext* context = nullptr,
+    EntityPickerSearch* pickSearch = nullptr)
 {
   ImGui::PushID(type.name.c_str());
   const bool expanded = ImGui::CollapsingHeader(
       type.displayName.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 
   bool remove = false;
+  bool fill = false;
   if (ImGui::BeginPopupContextItem())
   {
     remove = ImGui::MenuItem("Remove Component");
+    if (parts::hasParts(type))
+    {
+      fill = ImGui::MenuItem("Fill Parts");
+      ImGui::SetItemTooltip(
+          "Set its part fields from the names of the entities below it");
+    }
     ImGui::EndPopup();
   }
 
@@ -1400,18 +1870,28 @@ void componentSection(
           for (const sfs::Entity& other : others)
             type.component.remove(other);
         });
+  else if (fill)
+    history->change(
+        [&]
+        {
+          parts::fill(entity, type);
+          for (const sfs::Entity& other : others)
+            parts::fill(other, type);
+        });
   else if (expanded)
   {
     void* object = type.component.get(entity);
+    std::optional<RefSlot> refs;
+    if (context && pickSearch)
+      refs.emplace(RefSlot{*context, entity, type, *pickSearch});
+    const bool prefabContent = context && context->editingPrefab;
+    const RefHolder holder{entity, &type, prefabContent};
     if (type.name == "TransformComponent")
       if (const sfs::Entity parent = sfs::hierarchy::parentOf(entity);
           parent.isValid())
       {
-        const bool named = parent.hasComponent<sfs::NameComponent>();
         ImGui::TextDisabled(
-            "Relative to parent \"%s\"",
-            named ? parent.getComponent<sfs::NameComponent>().name.c_str()
-                  : "(unnamed)");
+            "Relative to parent \"%s\"", entityLabel(parent).c_str());
       }
     const bool glows = materialsCanGlow(type, object, meshes);
     // A 2D game's transform is edited as it's used: on the plane.
@@ -1436,10 +1916,14 @@ void componentSection(
       bool mixed = false;
       if (!others.empty())
       {
-        before = fieldValue(field, object);
+        before = fieldValue(field, object, &holder);
         for (const sfs::Entity& other : others)
-          mixed = mixed ||
-                  fieldValue(field, type.component.get(other)) != before;
+        {
+          const RefHolder theirs{other, &type, prefabContent};
+          mixed =
+              mixed ||
+              fieldValue(field, type.component.get(other), &theirs) != before;
+        }
       }
       if (mixed)
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -1458,8 +1942,13 @@ void componentSection(
                        history,
                        materialActions);
       else
-        fieldWidget(
-            field, object, meshes, history, scriptActions, materialActions);
+        fieldWidget(field,
+                    object,
+                    meshes,
+                    history,
+                    scriptActions,
+                    materialActions,
+                    refs ? &*refs : nullptr);
       ImGui::EndGroup();
       if (mixed)
       {
@@ -1469,10 +1958,10 @@ void componentSection(
       }
       // Edited: the same on every selected object, in the same undo step
       // (folded into one just recorded, if the edit made its own).
-      if (!others.empty() && fieldValue(field, object) != before)
+      if (!others.empty() && fieldValue(field, object, &holder) != before)
       {
         for (const sfs::Entity& other : others)
-          copyField(field, object, type.component.get(other));
+          copyField(field, object, type.component.get(other), &holder, other);
         if (history && !history->changing())
           history->amendLast();
       }
@@ -1536,18 +2025,12 @@ void componentSection(
   ImGui::PopID();
 }
 
-std::string lowercase(std::string text)
-{
-  for (char& c : text)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  return text;
-}
-
 /**
  * A button opening a picker of the components (or, with `tags`, the tags) that
  * can be added, grouped by the module that registered them (the engine's
  * first, then the game's), narrowed by a search box. A collider starts out
- * fitted to the entity's meshes.
+ * fitted to the entity's meshes, and [[sfs::part]] fields filled from the
+ * names below it.
  *
  * @param label The button's text.
  * @param popup The picker popup's ID.
@@ -1581,7 +2064,7 @@ void addTypeButton(const char* label,
   if (ImGui::IsWindowAppearing())
     ImGui::SetKeyboardFocusHere();
   widgets::searchInput("search", filter, "Search", 220.0f);
-  const std::string search = lowercase(filter);
+  const std::string search = toLower(filter);
 
   std::vector<const TypeInfo*> candidates;
   for (const TypeInfo& type : sfs::reflect::types().types())
@@ -1592,7 +2075,7 @@ void addTypeButton(const char* label,
                      others.end(),
                      [&](const sfs::Entity& other)
                      { return !type.component.has(other); })) &&
-        lowercase(type.displayName).find(search) != std::string::npos)
+        toLower(type.displayName).find(search) != std::string::npos)
       candidates.push_back(&type);
   std::stable_sort(candidates.begin(),
                    candidates.end(),
@@ -1623,6 +2106,7 @@ void addTypeButton(const char* label,
             {
               type->component.add(entity);
               fitCollider(*type, entity, scene);
+              parts::fill(entity, *type, true);
             }
             // To every selected object that hasn't one.
             for (const sfs::Entity& other : others)
@@ -1630,6 +2114,7 @@ void addTypeButton(const char* label,
               {
                 type->component.add(other);
                 fitCollider(*type, other, scene);
+                parts::fill(other, *type, true);
               }
           });
   }
@@ -2479,12 +2964,13 @@ void InspectorPanel::drawContents(EditorContext& context)
     if (!entity.hasComponent<sfs::NameComponent>())
       sfs::Entity(entity).addComponent<sfs::NameComponent>();
     widgets::undoable(history,
-                      entity.getComponent<sfs::NameComponent>().name,
+                      entity.getComponent<sfs::NameComponent>()->name,
                       [](std::string& name)
                       {
                         widgets::propertyLabel("Name");
                         return widgets::inputText("##name", name);
                       });
+    drawModelNode(context, entity);
     ImGui::Separator();
 
     drawPrefabHeader(context, entity);
@@ -2561,7 +3047,9 @@ void InspectorPanel::drawContents(EditorContext& context)
           },
           &scriptActions,
           &materialActions,
-          others);
+          others,
+          &context,
+          &m_pickSearch);
     }
 
   ImGui::Spacing();
@@ -2589,27 +3077,37 @@ void InspectorPanel::drawContents(EditorContext& context)
       prefabs::revert(context, root);
   }
   m_pendingInstanceAction.reset();
+  if (!m_pendingReattach.empty())
+    prefabs::reattachUnused(context,
+                            sfs::SceneSerializer::instanceRootOf(entity),
+                            m_pendingReattach);
+  m_pendingReattach.clear();
+  if (m_pendingRemoveUnused)
+    prefabs::removeUnused(context,
+                          sfs::SceneSerializer::instanceRootOf(entity),
+                          *m_pendingRemoveUnused);
+  m_pendingRemoveUnused.reset();
 }
 
 void InspectorPanel::drawPrefabHeader(EditorContext& context,
                                       const sfs::Entity& entity)
 {
-  if (entity.hasComponent<sfs::MissingPrefabComponent>())
+  if (sfs::MissingPrefabComponent* missingPrefab = entity.getComponent<sfs::MissingPrefabComponent>())
   {
-    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "Missing prefab");
+    ImGui::TextColored(
+        ImGui::ColorConvertU32ToFloat4(theme::kMissing), "Missing prefab");
     ImGui::TextWrapped("%s",
-                       entity.getComponent<sfs::MissingPrefabComponent>()
-                           .entry.value("$prefab", "")
+                       missingPrefab->entry.value("$prefab", "")
                            .c_str());
     ImGui::TextDisabled("Kept as saved until its prefab is back");
     ImGui::Separator();
     return;
   }
   const sfs::Entity root = sfs::SceneSerializer::instanceRootOf(entity);
-  if (!root.isValid())
+  const auto* instance = root.getComponent<sfs::PrefabInstanceComponent>();
+  if (!instance)
     return;
-  const std::string name =
-      root.getComponent<sfs::PrefabInstanceComponent>().prefab;
+  const std::string name = instance->prefab;
   const sfs::AssetRecord* record = prefabs::recordOf(context, name);
 
   ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::kAccent),
@@ -2650,5 +3148,209 @@ void InspectorPanel::drawPrefabHeader(EditorContext& context,
   if (ImGui::SmallButton("Revert"))
     m_pendingInstanceAction = InstanceAction::Revert;
   ImGui::SetItemTooltip("Drop this copy's changes (it stays where it is)");
+  drawUnusedOverrides(context, root);
   ImGui::Separator();
+}
+
+const InspectorPanel::ModelNodes*
+InspectorPanel::modelNodesOf(EditorContext& context, const sfs::Entity& entity)
+{
+  const auto* link = entity.getComponent<sfs::PrefabLinkComponent>();
+  if (!context.assets || !link || (link->id & sfs::kModelNodeIdBit) == 0)
+    return nullptr;
+  const sfs::Entity model = sfs::SceneSerializer::instanceRootOf(entity);
+  const auto* instance = model.getComponent<sfs::PrefabInstanceComponent>();
+  if (!instance || model == entity)
+    return nullptr;
+  const sfs::AssetRecord* record = prefabs::recordOf(context, instance->prefab);
+  if (!record || record->kind != sfs::AssetKind::Model)
+    return nullptr;
+
+  // Read once per model, even when it can't be (then it has no nodes), and
+  // again when its file changes: looked at once a second, not every frame.
+  const double now = ImGui::GetTime();
+  if (m_modelNodes && m_modelNodes->model == record->id &&
+      now - m_modelNodes->checked < 1.0)
+    return m_modelNodes->nodes.empty() ? nullptr : &*m_modelNodes;
+  const std::filesystem::path file = context.assets->absolutePath(*record);
+  std::error_code error;
+  const std::filesystem::file_time_type written =
+      std::filesystem::last_write_time(file, error);
+  if (!m_modelNodes || m_modelNodes->model != record->id ||
+      m_modelNodes->written != written)
+  {
+    m_modelNodes = ModelNodes{record->id, written, now, {}, {}};
+    if (std::optional<std::vector<sfs::ModelNode>> nodes =
+            sfs::importModelNodes(
+                file,
+                sfs::ModelImportSettings::fromJson(record->settings),
+                &m_modelNodes->paths))
+      m_modelNodes->nodes = std::move(*nodes);
+  }
+  m_modelNodes->checked = now;
+  return m_modelNodes->nodes.empty() ? nullptr : &*m_modelNodes;
+}
+
+void InspectorPanel::drawModelNode(EditorContext& context,
+                                   const sfs::Entity& entity)
+{
+  const ModelNodes* model = modelNodesOf(context, entity);
+  if (!model)
+    return;
+  const uint32_t id = entity.getComponent<sfs::PrefabLinkComponent>()->id;
+  const auto node =
+      std::find_if(model->nodes.begin(),
+                   model->nodes.end(),
+                   [&](const sfs::ModelNode& each) { return each.id == id; });
+  if (node == model->nodes.end())
+  {
+    ImGui::TextDisabled("Node %u: not in the model file now", id);
+    return;
+  }
+  const std::size_t index =
+      static_cast<std::size_t>(node - model->nodes.begin());
+  ImGui::TextDisabled("Node %u  %s", id, model->paths[index].c_str());
+  ImGui::SetItemTooltip("Its id in the model, made from its name path: "
+                        "renaming it (or a node above it) in the source file "
+                        "gives it a new one");
+  const std::size_t sharing = static_cast<std::size_t>(std::count_if(
+      model->nodes.begin(),
+      model->nodes.end(),
+      [&](const sfs::ModelNode& each)
+      { return each.parent == node->parent && each.name == node->name; }));
+  if (sharing > 1)
+    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.45f, 1.0f),
+                       "%zu siblings share this name; its id follows their "
+                       "order in the model file.",
+                       sharing);
+}
+
+void InspectorPanel::drawUnusedOverrides(EditorContext& context,
+                                         const sfs::Entity& root)
+{
+  // Read from the instance again only when it or the scene changes.
+  const uint64_t revision = context.history ? context.history->revision() : 0;
+  if (m_unused.root != root || m_unused.revision != revision)
+  {
+    m_unused = UnusedList{root, revision, unusedOverrides::of(root), {}, false};
+    for (const unusedOverrides::Unused& item : m_unused.items)
+    {
+      std::string what;
+      switch (item.kind)
+      {
+      case unusedOverrides::Unused::Kind::Override:
+        what = "Overrides " + item.path;
+        if (item.value.is_object())
+        {
+          std::string components;
+          for (const auto& [type, fields] : item.value.items())
+            components += (components.empty() ? "" : ", ") + type;
+          what += " (" + components + ")";
+        }
+        break;
+      case unusedOverrides::Unused::Kind::Removed:
+        what = "Removes " + item.path;
+        break;
+      case unusedOverrides::Unused::Kind::Added:
+        what = "Adds an entity under " + item.path;
+        break;
+      }
+      m_unused.labels.push_back(std::move(what));
+    }
+    if (!m_unused.items.empty())
+      for (const sfs::Entity& entity : sfs::hierarchy::descendants(root))
+        if (const auto* prefabLink = entity.getComponent<sfs::PrefabLinkComponent>();
+            prefabLink && (prefabLink->id & sfs::kModelNodeIdBit) != 0)
+        {
+          m_unused.modelNodes = true;
+          break;
+        }
+  }
+  if (m_unused.items.empty())
+    return;
+  // A nested instance's are the prefab's that holds it: edited there.
+  const sfs::Entity holder = sfs::SceneSerializer::entryRootOf(root);
+  const bool editable = holder == root || !holder.isValid();
+
+  ImGui::SeparatorText("Unused overrides");
+  ImGui::PushTextWrapPos(0.0f);
+  ImGui::TextDisabled(
+      "Saved changes naming entities its prefab no longer has (a model node "
+      "renamed or deleted in its source file): kept, unused, until they're "
+      "reattached or removed.");
+  if (const auto* holding = holder.getComponent<sfs::PrefabInstanceComponent>(); !editable && holding)
+    ImGui::TextDisabled("They're %s's: edit that prefab to reattach them.",
+                        prefabs::label(context, holding->prefab).c_str());
+  ImGui::PopTextWrapPos();
+
+  for (std::size_t i = 0; i < m_unused.items.size(); ++i)
+  {
+    const unusedOverrides::Unused& item = m_unused.items[i];
+    ImGui::PushID(static_cast<int>(i));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(m_unused.labels[i].c_str());
+    if (!item.value.is_null() && ImGui::BeginItemTooltip())
+    {
+      ImGui::TextUnformatted(item.value.dump(2).c_str());
+      ImGui::EndTooltip();
+    }
+    if (editable)
+    {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Reattach to..."))
+      {
+        m_renamedFrom.clear();
+        ImGui::OpenPopup("reattach");
+      }
+      ImGui::SetItemTooltip("Point it at an entity the instance has now");
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Remove"))
+        m_pendingRemoveUnused = item;
+      ImGui::SetItemTooltip("Drop it");
+    }
+
+    if (ImGui::BeginPopup("reattach"))
+    {
+      ImGui::TextUnformatted(("Reattach " + item.path + " to:").c_str());
+      // Only a model's nodes are renamed in a source file.
+      if (m_unused.modelNodes)
+      {
+        widgets::propertyLabel("Renamed from");
+        widgets::inputText("##renamedFrom", m_renamedFrom);
+        ImGui::SetItemTooltip(
+            "If a model node was renamed: its old name. Then the one you pick "
+            "and everything below it take what their old ids had");
+      }
+      ImGui::Separator();
+      std::optional<sfs::Entity> picked;
+      pickTree(root, {}, picked);
+      if (picked)
+      {
+        if (m_renamedFrom.empty())
+        {
+          if (const std::optional<std::string> path =
+                  sfs::SceneSerializer::pathInInstance(*picked, root))
+            m_pendingReattach = {{item.path, *path}};
+          else
+            LOG_WARN(entityLabel(*picked) +
+                     " was added to the instance, so its saved changes can't "
+                     "name it");
+        }
+        else if (const ModelNodes* model = modelNodesOf(context, *picked))
+        {
+          m_pendingReattach = unusedOverrides::renamedNodeMoves(
+              root, *picked, m_renamedFrom, model->nodes, model->paths);
+          if (m_pendingReattach.empty())
+            LOG_WARN("No unused override names '" + m_renamedFrom + "' (as " +
+                     entityLabel(*picked) + "'s old name) or a node below it");
+        }
+        else
+          LOG_WARN(entityLabel(*picked) +
+                   " isn't a model's node: pick the renamed node itself");
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
+  }
 }

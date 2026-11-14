@@ -2,6 +2,7 @@
 
 #include "scene/editorScene.h"
 
+#include "engine/runtime/serialization/sceneSerializer.h"
 #include "nlohmann/json.hpp"
 
 #include <chrono>
@@ -30,6 +31,13 @@ public:
 
   /** Change the path it saves to (e.g. back to the scene after editing a prefab). */
   void setPath(const std::filesystem::path& path) { m_path = path; }
+
+  /**
+   * Whether the scene holds a prefab's content, edited on its own (a prefab's
+   * tab): its snapshots then keep the prefab's entity ids (see
+   * sfs::SceneSerializer::save()).
+   */
+  void setPrefabContent(bool prefabContent) { m_prefabContent = prefabContent; }
 
   /** Replace the scene with the default layout, not yet saved anywhere. */
   void newScene(EditorScene::Style style = EditorScene::Style::ThreeD);
@@ -70,12 +78,15 @@ public:
 private:
   EditorScene* m_scene;
   std::filesystem::path m_path;
+  bool m_prefabContent = false;
 
-  // A file being opened: its entities still to add.
+  // A file being opened: its entities still to add, and the references
+  // between entries that resolve once they're all in.
   struct Opening
   {
     nlohmann::json entities;
     std::size_t next = 0;
+    sfs::SceneSerializer::LoadSession session;
   };
   std::optional<Opening> m_opening;
 };

@@ -48,9 +48,10 @@ std::optional<Aabb> entityBounds(const Entity& entity,
     return std::nullopt;
   const glm::mat4 world = hierarchy::worldMatrix(entity);
 
-  if (entity.hasComponent<MeshRendererComponent>())
-    if (const Aabb* local = meshes.posedBounds(
-            entity.getComponent<MeshRendererComponent>().mesh, entity.getId()))
+  if (MeshRendererComponent* meshRenderer =
+          entity.getComponent<MeshRendererComponent>())
+    if (const Aabb* local =
+            meshes.posedBounds(meshRenderer->mesh, entity.getId()))
       return local->transformed(world);
 
   // A sprite's quad, where it was drawn (a hair thick, so a ray along it
@@ -103,13 +104,13 @@ std::optional<PickHit> pickEntity(Scene& scene,
     // A mesh by where the ray meets its triangles: its bounds only say it
     // might be hit (a ray from inside a landscape's bounds enters them at
     // once, wherever it really meets the ground).
-    if (entity.hasComponent<MeshRendererComponent>())
+    if (MeshRendererComponent* meshRenderer =
+            entity.getComponent<MeshRendererComponent>())
     {
-      const auto hit =
-          meshes.raycast(entity.getComponent<MeshRendererComponent>().mesh,
-                         hierarchy::worldMatrix(entity),
-                         ray,
-                         entity.getId());
+      const auto hit = meshes.raycast(meshRenderer->mesh,
+                                      hierarchy::worldMatrix(entity),
+                                      ray,
+                                      entity.getId());
       if (!hit)
         continue;
       distance = hit->distance;
@@ -133,14 +134,14 @@ pickPickable(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
 {
   std::optional<PickHit> best;
   float nearest = std::numeric_limits<float>::max();
-  for (const Entity& part :
+  for (auto [part, meshRenderer, transform] :
        scene.query<MeshRendererComponent, TransformComponent>())
   {
     const Entity pickable = pickableOf(part);
-    if (!pickable.isValid() ||
-        !pickable.getComponent<PickableComponent>().enabled)
+    const auto* pick = pickable.getComponent<PickableComponent>();
+    if (!pick || !pick->enabled)
       continue;
-    const MeshHandle mesh = part.getComponent<MeshRendererComponent>().mesh;
+    const MeshHandle mesh = meshRenderer.mesh;
     const Aabb* bounds = meshes.posedBounds(mesh, part.getId());
     const glm::mat4 world = hierarchy::worldMatrix(part);
     float entry = 0.0f;
@@ -192,12 +193,16 @@ std::optional<SurfaceHit>
 pickSurface(Scene& scene, const MeshLibrary& meshes, const Ray& ray)
 {
   std::optional<SurfaceHit> best;
+  // A pick sees entities not yet flushed into queries, as pickEntity() does,
+  // so one made this frame can be picked.
+  // sfs-ignore-next-line(filter-in-loop)
   for (const Entity& entity : scene.entities())
   {
-    if (!entity.hasComponent<MeshRendererComponent>() ||
-        !entity.hasComponent<TransformComponent>())
+    MeshRendererComponent* meshRenderer =
+        entity.getComponent<MeshRendererComponent>();
+    if (!meshRenderer || !entity.hasComponent<TransformComponent>())
       continue;
-    const MeshHandle mesh = entity.getComponent<MeshRendererComponent>().mesh;
+    const MeshHandle mesh = meshRenderer->mesh;
     const Aabb* local = meshes.posedBounds(mesh, entity.getId());
     if (!local)
       continue;

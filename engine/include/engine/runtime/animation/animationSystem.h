@@ -102,6 +102,7 @@ public:
   const Stats& stats() const { return m_stats; }
 
 protected:
+  void create() override;
   void update(double deltaTime) override;
 
 private:

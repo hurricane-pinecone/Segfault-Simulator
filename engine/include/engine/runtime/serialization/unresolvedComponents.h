@@ -28,6 +28,15 @@ struct UnresolvedComponents
    * entry, so it's saved back there. Null when there are none.
    */
   nlohmann::json overrides;
+  /**
+   * Entity references whose saved target didn't exist when the entity
+   * loaded, as saved: { "TypeName": { "field": value } }, an EntityList's
+   * value an array with null for its items that resolved. A value is saved
+   * back while its field (or item) stays empty; one relative to an instance
+   * is kept relative to the entity's nearest instance root. Null when there
+   * are none.
+   */
+  nlohmann::json refs;
 };
 
 } // namespace sfs

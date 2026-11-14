@@ -64,17 +64,22 @@ public:
 
   void collect(const sfs::Entity& orb)
   {
-    const glm::vec2 at =
-        orb.getComponent<sfs::TransformComponent>().position2D();
-    bump(orb.getComponent<Orb>().value);
+    const auto* transform = orb.getComponent<sfs::TransformComponent>();
+    const Orb* value = orb.getComponent<Orb>();
+    if (!sfs::expect(transform, orb) || !sfs::expect(value, orb))
+      return;
+    const glm::vec2 at = transform->position2D();
+    bump(value->value);
     particles().spawnBurst("spark", at);
     scene().destroyEntity(orb);
   }
 
   void destroyDrone(const sfs::Entity& drone)
   {
-    const glm::vec2 at =
-        drone.getComponent<sfs::TransformComponent>().position2D();
+    const auto* transform = drone.getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(transform, drone))
+      return;
+    const glm::vec2 at = transform->position2D();
     bump(50);
     particles().spawnBurst("boom", at);
     shake(0.55f, 0.25f);
@@ -95,8 +100,7 @@ public:
 
   void shake(float strength, float seconds)
   {
-    if (m_camera.isValid() &&
-        m_camera.hasComponent<sfs::CameraFollowComponent>())
+    if (m_camera.hasComponent<sfs::CameraFollowComponent>())
       sfs::CameraSystem::shake(m_camera, strength, seconds);
   }
 
@@ -173,9 +177,8 @@ private:
 
   glm::vec2 runnerAt() const
   {
-    return m_runner.isValid()
-               ? m_runner.getComponent<sfs::TransformComponent>().position2D()
-               : glm::vec2(0.0f);
+    const auto* transform = m_runner.getComponent<sfs::TransformComponent>();
+    return transform ? transform->position2D() : glm::vec2(0.0f);
   }
 
   void bump(int points)
@@ -270,7 +273,7 @@ private:
                                                   2.2f,
                                                   420.0f,
                                                   glm::vec3(0.0f, 0.0f, 60.0f));
-    entity.getComponent<sfs::TransformComponent>().position.y -= kTile * 0.5f;
+    entity.getComponent<sfs::TransformComponent>()->position.y -= kTile * 0.5f;
   }
 
   void jumpPad(glm::vec2 groundAt)
@@ -384,37 +387,35 @@ private:
 
   void animate(float step)
   {
-    for (const sfs::Entity& entity : scene().query<Orb, sfs::SpriteComponent>())
+    for (auto [orb, sprite] :
+         scene().query<Orb, sfs::SpriteComponent>().components())
     {
-      Orb& orb = entity.getComponent<Orb>();
       orb.spin += step * 10.0f;
-      entity.getComponent<sfs::SpriteComponent>().frame =
-          3 + static_cast<int>(orb.spin) % 4;
+      sprite.frame = 3 + static_cast<int>(orb.spin) % 4;
     }
-    for (const sfs::Entity& entity :
+    for (auto [entity, drone, transform] :
          scene().query<Drone, sfs::TransformComponent>())
     {
-      Drone& drone = entity.getComponent<Drone>();
       drone.clock += step;
-      entity.getComponent<sfs::TransformComponent>().setPosition2D(
+      transform.setPosition2D(
           drone.home +
           glm::vec2(
               std::sin(drone.clock * drone.speed * 0.5f) * drone.amplitude,
               std::sin(drone.clock * drone.speed) * drone.amplitude * 0.5f));
-      if (entity.hasComponent<sfs::SpriteComponent>())
-        entity.getComponent<sfs::SpriteComponent>().frame =
-            7 + static_cast<int>(drone.clock * 12.0f) % 2;
+      if (sfs::SpriteComponent* sprite =
+              entity.getComponent<sfs::SpriteComponent>())
+        sprite->frame = 7 + static_cast<int>(drone.clock * 12.0f) % 2;
     }
   }
 
   void placeWall(glm::vec2 runner)
   {
-    if (!m_wall.isValid())
+    auto* transform = m_wall.getComponent<sfs::TransformComponent>();
+    auto* sprite = m_wall.getComponent<sfs::SpriteComponent>();
+    if (!transform || !sprite)
       return;
-    auto& transform = m_wall.getComponent<sfs::TransformComponent>();
-    transform.setPosition2D({m_wallX - kTile, runner.y - kTile * 2.0f});
-    m_wall.getComponent<sfs::SpriteComponent>().frame =
-        static_cast<int>(m_clock * 16.0f) % 2;
+    transform->setPosition2D({m_wallX - kTile, runner.y - kTile * 2.0f});
+    sprite->frame = static_cast<int>(m_clock * 16.0f) % 2;
   }
 
   void registerEffects();
@@ -457,11 +458,14 @@ inline void RunDirector::onCreate(sfs::Scene& scene)
   if (const sfs::Entity start = scene.findEntity("Start Ground");
       start.isValid())
   {
-    const auto& transform = start.getComponent<sfs::TransformComponent>();
-    const auto& box = start.getComponent<sfs::BoxCollider2D>();
-    m_cursor = transform.position.x + box.half.x;
-    m_top = transform.position.y - box.half.y;
-    m_lowest = transform.position.y + box.half.y;
+    const auto* transform = start.getComponent<sfs::TransformComponent>();
+    const auto* box = start.getComponent<sfs::BoxCollider2D>();
+    if (sfs::expect(transform, start) && sfs::expect(box, start))
+    {
+      m_cursor = transform->position.x + box->half.x;
+      m_top = transform->position.y - box->half.y;
+      m_lowest = transform->position.y + box->half.y;
+    }
   }
 
   // The wall: a column of noise down the screen, lit magenta.

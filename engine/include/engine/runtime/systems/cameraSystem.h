@@ -33,31 +33,17 @@ namespace sfs
 class CameraSystem : public System
 {
 public:
-  CameraSystem()
-  {
-    registerComponent<TransformComponent>();
-    registerComponent<CameraFollowComponent>();
-    // The player's view: real time, however fast the game's going.
-    setTimeStep(TimeStep::Real);
-  }
-
   void update(double deltaTime) override
   {
-    for (auto& cameraEntity : getEntities())
+    for (auto [cameraEntity, cameraTransform, follow] :
+         getEntities<TransformComponent, CameraFollowComponent>())
     {
-      auto& cameraTransform = cameraEntity.getComponent<TransformComponent>();
-      auto& follow = cameraEntity.getComponent<CameraFollowComponent>();
-
       // Shake is independent of following, so advance it before the target
       // checks below can `continue` past the rest of the loop.
       advanceShake(follow, static_cast<float>(deltaTime));
 
-      auto target = registry->getEntity(follow.target);
-
-      if (!target)
-        continue;
-
-      if (!target.hasComponent<TransformComponent>())
+      const Entity& target = follow.target;
+      if (!target.isValid() || !target.hasComponent<TransformComponent>())
         continue;
 
       // In the world, so a parented camera or target follows as well.
@@ -92,13 +78,14 @@ public:
                     float duration = 0.5f,
                     float decay = 1.0f)
   {
-    if (!camera.isAlive() || !camera.hasComponent<CameraFollowComponent>())
+    CameraFollowComponent* follow =
+        camera.getComponent<CameraFollowComponent>();
+    if (!follow)
       return;
-    auto& follow = camera.getComponent<CameraFollowComponent>();
-    follow.shakeStrength = glm::clamp(strength, 0.0f, 1.0f);
-    follow.shakeDuration = glm::max(duration, 0.0001f);
-    follow.shakeDecay = glm::max(decay, 0.0f);
-    follow.shakeElapsed = 0.0f;
+    follow->shakeStrength = glm::clamp(strength, 0.0f, 1.0f);
+    follow->shakeDuration = glm::max(duration, 0.0001f);
+    follow->shakeDecay = glm::max(decay, 0.0f);
+    follow->shakeElapsed = 0.0f;
   }
 
   /**
@@ -140,6 +127,15 @@ public:
    * @param deltaTime the frame's real time, for easing back down
    */
   void lateUpdate(double deltaTime) override;
+
+protected:
+  void create() override
+  {
+    registerComponent<TransformComponent>();
+    registerComponent<CameraFollowComponent>();
+    // The player's view: real time, however fast the game's going.
+    setTimeStep(TimeStep::Real);
+  }
 
 private:
   // A blocker's shape in the world, for finding its top under a point.

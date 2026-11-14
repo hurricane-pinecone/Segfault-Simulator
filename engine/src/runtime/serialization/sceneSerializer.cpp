@@ -1,6 +1,7 @@
 #include "engine/runtime/serialization/sceneSerializer.h"
 
 #include "engine/core/assets/scriptableObject.h"
+#include "engine/core/components/sceneIdComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
@@ -12,6 +13,7 @@
 #include "engine/runtime/serialization/legacyComponentNames.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/unresolvedComponents.h"
+#include "entityRefPaths.h"
 #include "glm/glm/ext/quaternion_float.hpp"
 #include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
@@ -153,6 +155,9 @@ json fieldToJson(const reflect::FieldInfo& field,
                 "': the mesh has no name, so it can't be saved");
     return std::string(name);
   }
+  case Kind::Entity:
+  case Kind::EntityList:
+    break; // saved in context, by SceneSerializer::saveRef
   }
   return nullptr;
 }
@@ -254,6 +259,9 @@ bool fieldFromJson(const reflect::FieldInfo& field,
     field.in<MeshHandle>(object) = mesh;
     return true;
   }
+  case Kind::Entity:
+  case Kind::EntityList:
+    break; // resolved once loaded, by SceneSerializer::loadFields
   }
   return false;
 }
@@ -579,34 +587,152 @@ SceneSerializer::SceneSerializer(const reflect::TypeRegistry& types,
 json SceneSerializer::saveObject(const reflect::TypeInfo& type,
                                  void* object) const
 {
-  json fields = json::object();
-  for (const reflect::FieldInfo& field : type.fields)
-    fields[field.name] = fieldToJson(field, object, m_meshes);
-  return fields;
+  return saveFields(type, object, Entity(), nullptr);
 }
 
 void SceneSerializer::loadObject(const reflect::TypeInfo& type,
                                  void* object,
                                  const json& fields) const
 {
-  if (!fields.is_object())
-    return;
+  loadFields(type, object, fields, Entity(), nullptr, "");
+}
+
+json SceneSerializer::saveFields(const reflect::TypeInfo& type,
+                                 void* object,
+                                 const Entity& entity,
+                                 const RefContext* refs) const
+{
+  json fields = json::object();
   for (const reflect::FieldInfo& field : type.fields)
   {
-    if (!fields.contains(field.name))
+    if (refs && refs->op && reflect::isEntityField(field))
+      forgetSetRefs(entity, type, field, object);
+    if (field.kind == reflect::FieldKind::Entity)
+      fields[field.name] = refs ? saveRef(field.in<Entity>(object),
+                                          *refs,
+                                          entity,
+                                          type,
+                                          field,
+                                          kNoItem)
+                                : json(nullptr);
+    else if (field.kind == reflect::FieldKind::EntityList)
+    {
+      const auto& targets = field.in<std::vector<Entity>>(object);
+      json list = json::array();
+      for (std::size_t i = 0; i < targets.size(); ++i)
+        list.push_back(refs ? saveRef(targets[i],
+                                      *refs,
+                                      entity,
+                                      type,
+                                      field,
+                                      static_cast<uint32_t>(i))
+                            : json(nullptr));
+      fields[field.name] = std::move(list);
+    }
+    else
+      fields[field.name] = fieldToJson(field, object, m_meshes);
+  }
+  return fields;
+}
+
+void SceneSerializer::loadFields(const reflect::TypeInfo& type,
+                                 void* object,
+                                 const json& fields,
+                                 const Entity& entity,
+                                 std::vector<PendingRef>* pending,
+                                 std::string_view source) const
+{
+  if (!fields.is_object())
+    return;
+  const auto wrongType = [&](const reflect::FieldInfo& field)
+  {
+    LOG_ERROR("Loading " + type.name + "." + field.name +
+              ": the saved value has the wrong type; kept the default");
+  };
+  // A saved reference becomes pending, resolved once its target is made.
+  const auto refer =
+      [&](const reflect::FieldInfo& field, uint32_t item, const json& value)
+  {
+    if (value.is_string())
+      pending->push_back(
+          {entity, &type, &field, item, value.get<std::string>(), source});
+    else if (value.is_number_integer())
+    {
+      // An entity's id, as saved before references were paths: ids follow
+      // load order, so it names nothing now (-1 was none).
+      if (value.get<int64_t>() >= 0)
+        LOG_WARN("Loading " + type.name + "." + field.name +
+                 ": saved as an entity id, which doesn't survive a reload; "
+                 "left empty, set it again");
+    }
+    else if (!value.is_null())
+      wrongType(field);
+  };
+
+  for (const reflect::FieldInfo& field : type.fields)
+  {
+    const auto it = fields.find(field.name);
+    if (it == fields.end())
       continue; // new field since the save: keep its default
-    if (!fieldFromJson(field, object, fields[field.name], m_meshes))
-      LOG_ERROR("Loading " + type.name + "." + field.name +
-                ": the saved value has the wrong type; kept the default");
+    const json& value = *it;
+    if (!reflect::isEntityField(field))
+    {
+      if (!fieldFromJson(field, object, value, m_meshes))
+        wrongType(field);
+      continue;
+    }
+    // Without a load to resolve them in (loadObject), they're left alone.
+    if (!pending)
+      continue;
+    if (field.kind == reflect::FieldKind::Entity)
+    {
+      field.in<Entity>(object) = Entity();
+      refer(field, kNoItem, value);
+      continue;
+    }
+    if (!value.is_array())
+    {
+      wrongType(field);
+      continue;
+    }
+    // Sized now and left so until its items resolve.
+    auto& list = field.in<std::vector<Entity>>(object);
+    list.assign(value.size(), Entity());
+    for (std::size_t i = 0; i < value.size(); ++i)
+      refer(field, static_cast<uint32_t>(i), value[i]);
   }
 }
 
 json SceneSerializer::saveEntity(const Entity& entity) const
 {
-  return saveSubtree(entity);
+  // Its entries numbered in the order loadEntity() makes them, for
+  // references inside the branch ("#n"): plain entities, instance roots and
+  // what was added to an instance, each before what's below it.
+  std::unordered_map<Entity::EntityId, uint32_t> branch;
+  const std::function<void(const Entity&)> number = [&](const Entity& at)
+  {
+    branch.emplace(at.getId(), static_cast<uint32_t>(branch.size()));
+    if (at.hasComponent<MissingPrefabComponent>())
+      return;
+    if (at.hasComponent<PrefabInstanceComponent>())
+    {
+      for (const Entity& added : addedTops(at))
+        number(added);
+      return;
+    }
+    for (const Entity& child : hierarchy::childrenOf(at))
+      number(child);
+  };
+  number(entity);
+  SaveOp op;
+  RefContext refs;
+  refs.branch = &branch;
+  refs.op = &op;
+  return saveSubtree(entity, SavedIds::None, refs);
 }
 
-json SceneSerializer::saveComponents(const Entity& entity) const
+json SceneSerializer::saveComponents(const Entity& entity,
+                                     const RefContext& refs) const
 {
   json components = json::object();
   for (const reflect::TypeInfo& type : m_types.types())
@@ -617,67 +743,80 @@ json SceneSerializer::saveComponents(const Entity& entity) const
     if (!object)
       continue;
 
-    components[type.name] = saveObject(type, object);
+    components[type.name] = saveFields(type, object, entity, &refs);
   }
 
   // Components that didn't load (type not registered) go back out as read.
-  if (entity.hasComponent<UnresolvedComponents>())
-    for (const auto& [name, fields] :
-         entity.getComponent<UnresolvedComponents>().components.items())
+  if (UnresolvedComponents* unresolvedComponents =
+          entity.getComponent<UnresolvedComponents>())
+    for (const auto& [name, fields] : unresolvedComponents->components.items())
       if (!components.contains(name))
         components[name] = fields;
   return components;
 }
 
-json SceneSerializer::saveSubtree(const Entity& entity, SavedIds ids) const
+json SceneSerializer::saveSubtree(const Entity& entity,
+                                  SavedIds ids,
+                                  const RefContext& refs) const
 {
-  // An instance whose prefab didn't load goes back out as it was read.
-  if (entity.hasComponent<MissingPrefabComponent>())
-    return entity.getComponent<MissingPrefabComponent>().entry;
-
   json entry;
-  if (entity.hasComponent<PrefabInstanceComponent>())
-    entry = instanceEntry(entity); // the prefab, and how this one differs
+  if (MissingPrefabComponent* missingPrefab =
+          entity.getComponent<MissingPrefabComponent>())
+  {
+    // An instance whose prefab didn't load goes back out as it was read,
+    // but a copy's isn't the scene's entry, so it takes no scene id.
+    entry = missingPrefab->entry;
+    ids = SavedIds::None; // its "$id" is in what was read
+    if (!refs.sceneIds)
+      entry.erase(entityRefs::kSceneIdKey);
+  }
+  else if (entity.hasComponent<PrefabInstanceComponent>())
+    // The prefab, and how this one differs.
+    entry = instanceEntry(entity, instanceContext(entity, refs));
   else
   {
-    entry = saveComponents(entity);
+    entry = saveComponents(entity, refs);
     json children = json::array();
     for (const Entity& child : hierarchy::childrenOf(entity))
-      children.push_back(saveSubtree(child, ids));
+      children.push_back(saveSubtree(child, ids, refs));
     if (!children.empty())
       entry[kChildrenKey] = std::move(children);
   }
-  if (ids != SavedIds::None && entity.hasComponent<PrefabLinkComponent>())
+  const PrefabLinkComponent* link = entity.getComponent<PrefabLinkComponent>();
+  if (ids != SavedIds::None && link)
   {
-    const uint32_t id = entity.getComponent<PrefabLinkComponent>().id;
+    const uint32_t id = link->id;
     if (ids == SavedIds::All ||
         ((id & kAddedNodeIdBit) != 0 && (id & kModelNodeIdBit) == 0))
       entry["$id"] = id;
   }
+  if (const SceneIdComponent* sceneId = entity.getComponent<SceneIdComponent>();
+      refs.sceneIds && sceneId)
+    entry[entityRefs::kSceneIdKey] = sceneId->id;
   return entry;
 }
 
 Entity SceneSerializer::loadEntity(const json& entry,
                                    Scene& scene,
-                                   const Entity& parent) const
-{
-  return loadEntity(entry, scene, parent, nullptr);
-}
-
-Entity SceneSerializer::loadEntity(const json& entry,
-                                   Scene& scene,
                                    const Entity& parent,
-                                   std::set<std::string>* unresolvedTypes) const
+                                   LoadOp& op) const
 {
   if (entry.is_object() && entry.contains("$prefab"))
-    return loadInstance(entry, scene, parent, unresolvedTypes);
+    return loadInstance(entry, scene, parent, op); // numbers its own entries
 
   Entity entity = scene.createEntity();
+  if (op.entries)
+    op.entries->push_back(entity);
   if (parent.isValid())
     hierarchy::setParent(entity, parent);
   if (!entry.is_object())
     return entity;
-  loadComponents(entry, entity, unresolvedTypes);
+  loadComponents(
+      entry, entity, op.unresolvedTypes, op.refs, entityRefs::kSceneSource);
+  if (const std::optional<uint32_t> id = entityRefs::sceneIdOf(entry))
+    entity.addComponent<SceneIdComponent>(SceneIdComponent{*id});
+  if (const std::optional<uint32_t> id = entityRefs::idOf(entry))
+    entity.addComponent<PrefabLinkComponent>(PrefabLinkComponent{*id});
 
   // After the parent's components, so children are created (and get ids)
   // after it, in saved order.
@@ -685,14 +824,15 @@ Entity SceneSerializer::loadEntity(const json& entry,
       children != entry.end() && children->is_array())
     for (const json& child : *children)
       if (child.is_object())
-        loadEntity(child, scene, entity, unresolvedTypes);
+        loadEntity(child, scene, entity, op);
   return entity;
 }
 
-void SceneSerializer::loadComponents(
-    const json& entry,
-    Entity& entity,
-    std::set<std::string>* unresolvedTypes) const
+void SceneSerializer::loadComponents(const json& entry,
+                                     Entity& entity,
+                                     std::set<std::string>* unresolvedTypes,
+                                     std::vector<PendingRef>& pending,
+                                     std::string_view source) const
 {
   json unresolved = json::object();
   for (const auto& [typeName, fields] : entry.items())
@@ -708,7 +848,8 @@ void SceneSerializer::loadComponents(
     }
 
     type->component.add(entity);
-    loadObject(*type, type->component.get(entity), fields);
+    loadFields(
+        *type, type->component.get(entity), fields, entity, &pending, source);
   }
 
   if (!unresolved.empty())
@@ -722,11 +863,31 @@ void SceneSerializer::loadComponents(
 }
 
 json SceneSerializer::save(Scene& scene,
-                           const std::vector<std::string>& gameSystems) const
+                           const std::vector<std::string>& gameSystems,
+                           bool prefabContent) const
 {
+  // Every scene id a reference needs is given before any entry is written.
+  SaveOp op;
+  giveSceneIds(scene, op);
+  const uint32_t given = op.given;
+  RefContext refs;
+  refs.sceneIds = true;
+  refs.op = &op;
+  // Entities of a prefab whose content is open on its own keep their prefab
+  // ids (an editor's undo snapshot of it must not renumber them).
+  const SavedIds ids = prefabContent ? SavedIds::All : SavedIds::None;
   json entities = json::array();
   for (const Entity& root : scene.roots())
-    entities.push_back(saveSubtree(root));
+    entities.push_back(saveSubtree(root, ids, refs));
+  // One its holder list didn't have yet (made or changed since the last
+  // flush) got its id while the entries were written, perhaps after its
+  // holder's: write them again.
+  if (op.given != given)
+  {
+    entities.clear();
+    for (const Entity& root : scene.roots())
+      entities.push_back(saveSubtree(root, ids, refs));
+  }
 
   json out = {{"formatVersion", kSceneFormatVersion},
               {"systems", gameSystems},
@@ -753,9 +914,12 @@ bool SceneSerializer::load(const json& in,
   }
 
   std::set<std::string> unresolvedTypes;
+  LoadOp op;
+  op.unresolvedTypes = &unresolvedTypes;
   for (const json& entry : in["entities"])
     if (entry.is_object())
-      loadEntity(entry, scene, {}, &unresolvedTypes);
+      loadEntity(entry, scene, {}, op);
+  resolveRefs(op.refs, scene, nullptr, nullptr, nullptr);
 
   if (!unresolvedTypes.empty())
   {
@@ -804,6 +968,13 @@ bool SceneSerializer::writeJsonFile(const json& data,
   text += '\n';
   // Never half a scene on disk, whatever happens while it's written.
   return writeFileAtomically(path, text);
+}
+
+std::string SceneSerializer::jsonText(const json& value, int depth)
+{
+  std::string text;
+  writePretty(text, value, depth);
+  return text;
 }
 
 std::optional<json>

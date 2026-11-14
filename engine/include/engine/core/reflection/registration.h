@@ -20,9 +20,11 @@ ComponentOps componentOps()
   ComponentOps ops;
   ops.has = [](const Entity& entity) { return entity.hasComponent<T>(); };
   ops.get = [](const Entity& entity) -> void*
-  { return entity.hasComponent<T>() ? &entity.getComponent<T>() : nullptr; };
+  { return entity.getComponent<T>(); };
   ops.add = [](const Entity& entity) { Entity(entity).addComponent<T>(); };
   ops.remove = [](const Entity& entity) { entity.removeComponent<T>(); };
+  ops.holders = [](Registry& registry) -> const std::vector<Entity>&
+  { return registry.query<T>(); };
   return ops;
 }
 

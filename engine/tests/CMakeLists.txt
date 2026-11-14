@@ -19,6 +19,6 @@ if(TARGET engine-webgpu)
     add_subdirectory(webgpu)
 endif()
 
-if(TARGET sfs-codegen-lib)
+if(TARGET sfs-codegen) # native builds, where the tools run
     add_subdirectory(tools)
 endif()

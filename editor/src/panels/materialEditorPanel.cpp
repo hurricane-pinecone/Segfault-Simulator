@@ -13,7 +13,7 @@
 #include "engine/runtime/rendering/renderSystem.h"
 
 #include "imgui.h"
-#include "imgui_internal.h" // NavWindow, RootWindowDockTree, FindWindowByName
+#include "imgui_internal.h" // FindWindowByName
 
 #include <algorithm>
 #include <chrono>
@@ -204,12 +204,7 @@ void MaterialEditorPanel::drawContents(EditorContext& context)
 
   // Whose the Edit menu is: this panel's while it, or one of its parts, was
   // the last panel focused (menus and popups don't count).
-  if (const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow)
-    if (!(focused->Flags &
-          (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
-           ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_Tooltip)))
-      m_ownsEdit = focused->RootWindowDockTree ==
-                   ImGui::GetCurrentWindow()->RootWindowDockTree;
+  widgets::trackFocus(m_ownsEdit);
 
   handleKeys(context);
   drawToolbar(context);

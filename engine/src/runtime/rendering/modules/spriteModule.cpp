@@ -80,10 +80,9 @@ void SpriteModule::computeCommands(const RenderContext& context)
   const glm::vec3 toward = glm::cross(across, up);
 
   std::unordered_map<uint32_t, std::size_t> byMaterial; // into m_commands
-  for (const Entity& entity :
+  for (auto [entity, sprite, local] :
        m_registry->query<SpriteComponent, TransformComponent>())
   {
-    const auto& sprite = entity.getComponent<SpriteComponent>();
     if (sprite.image.empty())
       continue;
     std::optional<AssetStore::SpriteFrame> found =
@@ -98,7 +97,8 @@ void SpriteModule::computeCommands(const RenderContext& context)
         frame.pixelsPerUnit > 0.0f ? frame.pixelsPerUnit : defaultPixels;
 
     // Where it is in the world: its parents' moves, turns and scales too.
-    const TransformComponent transform = hierarchy::worldTransform(entity);
+    const TransformComponent transform =
+        hierarchy::cachedWorldTransform(entity);
     // Its size in the world, and where its pivot sits on it (from its centre,
     // image y down).
     const glm::vec2 size = frame.pixels * transform.scale2D() / pixelsPerUnit;
@@ -119,9 +119,8 @@ void SpriteModule::computeCommands(const RenderContext& context)
       const float angle = transform.yaw() * space.ySign();
       const glm::vec3 x(std::cos(angle), std::sin(angle), 0.0f);
       const glm::vec3 y(-x.y, x.x, 0.0f);
-      const int layer = entity.hasComponent<RenderLayerComponent>()
-                            ? entity.getComponent<RenderLayerComponent>().layer
-                            : 0;
+      const auto* renderLayer = entity.getComponent<RenderLayerComponent>();
+      const int layer = renderLayer ? renderLayer->layer : 0;
       const glm::vec3 origin =
           space.place(transform.position2D(), transform.position.z, layer);
       // Standing up from the plane: leaning back as a real one would.

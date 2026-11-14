@@ -50,10 +50,11 @@ namespace
 {
 const Aabb* ownMeshBounds(const Entity& entity, const MeshLibrary& meshes)
 {
-  if (!entity.hasComponent<MeshRendererComponent>())
+  MeshRendererComponent* meshRenderer =
+      entity.getComponent<MeshRendererComponent>();
+  if (!meshRenderer)
     return nullptr;
-  const Aabb* bounds =
-      meshes.bounds(entity.getComponent<MeshRendererComponent>().mesh);
+  const Aabb* bounds = meshes.bounds(meshRenderer->mesh);
   return bounds && !bounds->empty() ? bounds : nullptr;
 }
 } // namespace
@@ -81,12 +82,13 @@ bool fitColliderToMesh(const Entity& entity,
                        const MeshLibrary& meshes,
                        bool includeChildren)
 {
-  if (!entity.hasComponent<Collider>())
+  Collider* collider = entity.getComponent<Collider>();
+  if (!collider)
     return false;
   const Aabb bounds = entityMeshBounds(entity, meshes, includeChildren);
   if (bounds.empty())
     return false;
-  fitCollider(entity.getComponent<Collider>(), bounds);
+  fitCollider(*collider, bounds);
   return true;
 }
 

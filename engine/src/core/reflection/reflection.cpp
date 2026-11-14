@@ -50,6 +50,16 @@ bool TypeRegistry::isA(std::string_view type, std::string_view base) const
 
 void TypeRegistry::resolve()
 {
+  inheritFields();
+  m_referencing.clear();
+  for (const TypeInfo& type : m_types)
+    if (type.kind == TypeKind::Component &&
+        std::any_of(type.fields.begin(), type.fields.end(), isEntityField))
+      m_referencing.push_back(&type);
+}
+
+void TypeRegistry::inheritFields()
+{
   // Nothing derives (the usual case): nothing to do.
   if (std::none_of(m_types.begin(),
                    m_types.end(),

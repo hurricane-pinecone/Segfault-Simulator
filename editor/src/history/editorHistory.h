@@ -59,8 +59,13 @@ public:
                      std::function<void()> redo,
                      std::size_t bytes);
 
-  /** Counts edits, undos and redos: unchanged means the scene is as it was. */
-  uint64_t revision() const { return m_revision; }
+  /**
+   * Which state the history is at (HistorySteps::state()): every edit makes
+   * a new one, and undo and redo return to the one that point had. Equal to
+   * an earlier value exactly when the scene is back to how it was then, so a
+   * tab compares it with the value it was saved (or applied) at.
+   */
+  uint64_t revision() const { return m_steps.state(); }
 
   bool canUndo() const { return m_steps.canUndo(); }
   bool canRedo() const { return m_steps.canRedo(); }
@@ -98,6 +103,5 @@ private:
   HistorySteps m_steps;
   std::optional<nlohmann::json> m_pendingBefore;
   Selection m_pendingSelection;
-  uint64_t m_revision = 0;
   bool m_enabled = true;
 };

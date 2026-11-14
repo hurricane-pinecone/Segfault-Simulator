@@ -110,21 +110,22 @@ void append(const Entity& entity,
 {
   if (!entity.isValid() || !entity.hasComponent<TransformComponent>())
     return;
-  if (space && entity.hasComponent<BoxCollider2D>())
-    box2D(entity, entity.getComponent<BoxCollider2D>(), *space, out);
+  if (const BoxCollider2D* box2 = entity.getComponent<BoxCollider2D>();
+      space && box2)
+    box2D(entity, *box2, *space, out);
 
-  const bool box = entity.hasComponent<BoxCollider3DComponent>();
-  const bool sphere = entity.hasComponent<SphereCollider3DComponent>();
-  const bool capsule = entity.hasComponent<CapsuleCollider3DComponent>();
+  const auto* box = entity.getComponent<BoxCollider3DComponent>();
+  const auto* sphere = entity.getComponent<SphereCollider3DComponent>();
+  const auto* capsule = entity.getComponent<CapsuleCollider3DComponent>();
   if (!box && !sphere && !capsule)
     return;
   const Placement at = placementOf(entity);
   if (box)
-    box3D(at, entity.getComponent<BoxCollider3DComponent>(), out);
+    box3D(at, *box, out);
   if (sphere)
-    sphere3D(at, entity.getComponent<SphereCollider3DComponent>(), out);
+    sphere3D(at, *sphere, out);
   if (capsule)
-    capsule3D(at, entity.getComponent<CapsuleCollider3DComponent>(), out);
+    capsule3D(at, *capsule, out);
 }
 
 std::size_t appendAll(Registry& registry,
@@ -132,35 +133,29 @@ std::size_t appendAll(Registry& registry,
                       DebugLines& out)
 {
   std::size_t drawn = 0;
-  for (const Entity& entity :
+  for (auto [entity, transform, boxCollider3D] :
        registry.query<TransformComponent, BoxCollider3DComponent>())
   {
-    box3D(placementOf(entity),
-          entity.getComponent<BoxCollider3DComponent>(),
-          out);
+    box3D(placementOf(entity), boxCollider3D, out);
     ++drawn;
   }
-  for (const Entity& entity :
+  for (auto [entity, transform, sphereCollider3D] :
        registry.query<TransformComponent, SphereCollider3DComponent>())
   {
-    sphere3D(placementOf(entity),
-             entity.getComponent<SphereCollider3DComponent>(),
-             out);
+    sphere3D(placementOf(entity), sphereCollider3D, out);
     ++drawn;
   }
-  for (const Entity& entity :
+  for (auto [entity, transform, capsuleCollider3D] :
        registry.query<TransformComponent, CapsuleCollider3DComponent>())
   {
-    capsule3D(placementOf(entity),
-              entity.getComponent<CapsuleCollider3DComponent>(),
-              out);
+    capsule3D(placementOf(entity), capsuleCollider3D, out);
     ++drawn;
   }
   if (space)
-    for (const Entity& entity :
+    for (auto [entity, transform, boxCollider2D] :
          registry.query<TransformComponent, BoxCollider2D>())
     {
-      box2D(entity, entity.getComponent<BoxCollider2D>(), *space, out);
+      box2D(entity, boxCollider2D, *space, out);
       ++drawn;
     }
   return drawn;

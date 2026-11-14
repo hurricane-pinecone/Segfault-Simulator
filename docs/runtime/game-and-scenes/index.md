@@ -150,8 +150,12 @@ processInput → update(dt) → render
   GameObject's `onUpdate`, the scene's `onUpdate`, and then every enabled
   `System`'s `lateUpdate(dt)` (see
   [ECS](../../core/ecs/index.md#late-update)).
-- **render** — every `System`'s `render()` (this is where `RenderSystem` draws),
-  then `onRender`.
+- **render** — every `System`'s `render()`, in the order they were added:
+  first the `TransformSystem`'s transform pass, which every scene has (it
+  caches each entity's world matrix; see
+  [World matrices](../../core/hierarchy/index.md#world-matrices)), then the
+  rest (this is where `RenderSystem` draws), then `onRender`. Nothing in the
+  render phase should write a `TransformComponent`.
 
 ## Input contexts
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 
 namespace sfs
 {
@@ -16,6 +17,9 @@ class Scanner
 public:
   explicit Scanner(std::string_view text) : m_text(text) {}
 
+  // Record where the value at `pointer` is (in `found`) as it's scanned.
+  void find(std::string_view pointer) { m_find = pointer; }
+
   bool document()
   {
     skipSpace();
@@ -27,6 +31,7 @@ public:
   }
 
   std::vector<JsonToken> tokens;
+  std::optional<JsonSpan> found;
 
 private:
   void skipSpace()
@@ -47,6 +52,16 @@ private:
   }
 
   bool value(std::string& pointer, int depth)
+  {
+    const std::size_t begin = m_at;
+    if (!anyValue(pointer, depth))
+      return false;
+    if (m_find && pointer == *m_find)
+      found = JsonSpan{begin, m_at};
+    return true;
+  }
+
+  bool anyValue(std::string& pointer, int depth)
   {
     if (depth > kMaxDepth || m_at >= m_text.size())
       return false;
@@ -293,6 +308,7 @@ private:
 
   std::string_view m_text;
   std::size_t m_at = 0;
+  std::optional<std::string_view> m_find;
 };
 } // namespace
 
@@ -302,6 +318,16 @@ std::optional<std::vector<JsonToken>> scanJsonTokens(std::string_view text)
   if (!scanner.document())
     return std::nullopt;
   return std::move(scanner.tokens);
+}
+
+std::optional<JsonSpan> findJsonValue(std::string_view text,
+                                      std::string_view pointer)
+{
+  Scanner scanner(text);
+  scanner.find(pointer);
+  if (!scanner.document())
+    return std::nullopt;
+  return scanner.found;
 }
 
 std::string jsonPointerSegment(std::string_view segment)

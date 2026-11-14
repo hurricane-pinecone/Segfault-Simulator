@@ -146,5 +146,25 @@ int main()
     CHECK(jsonPointerSegment("") == "");
   }
 
+  TEST("a value's span should cover it whole, objects and arrays included")
+  {
+    const std::string text =
+        R"({"root": {"a": [1, {"b": "x]"}], "c": {}}, "d": null})";
+    const auto span = [&](std::string_view pointer)
+    {
+      const std::optional<JsonSpan> found = findJsonValue(text, pointer);
+      return found ? text.substr(found->begin, found->end - found->begin)
+                   : std::string("(none)");
+    };
+    CHECK(span("") == text);
+    CHECK(span("/root/a") == R"([1, {"b": "x]"}])");
+    CHECK(span("/root/a/1") == R"({"b": "x]"})");
+    CHECK(span("/root/a/1/b") == R"("x]")");
+    CHECK(span("/root/c") == "{}");
+    CHECK(span("/d") == "null");
+    CHECK(span("/root/missing") == "(none)");
+    CHECK(!findJsonValue("{", "").has_value());
+  }
+
   return testing::report("jsonTokensTests");
 }

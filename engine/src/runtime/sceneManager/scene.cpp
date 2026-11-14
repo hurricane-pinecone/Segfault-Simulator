@@ -42,9 +42,8 @@ struct KeyClaim
 std::vector<KeyClaim> activeClaims(Registry& registry)
 {
   std::vector<KeyClaim> claims;
-  for (const Entity& entity : registry.query<InputContextComponent>())
+  for (auto [entity, context] : registry.query<InputContextComponent>())
   {
-    auto& context = entity.getComponent<InputContextComponent>();
     if (!context.active || context.keys.empty())
       continue;
     KeyClaim claim{entity, context.priority, {}};
@@ -102,8 +101,8 @@ namespace
 {
 bool named(const Entity& entity, std::string_view name)
 {
-  return entity.hasComponent<NameComponent>() &&
-         entity.getComponent<NameComponent>().name == name;
+  const NameComponent* component = entity.getComponent<NameComponent>();
+  return component && component->name == name;
 }
 } // namespace
 
@@ -285,10 +284,7 @@ void Scene::processInput(const Input& input)
         continue;
       }
       const Entity& entity = object.entity();
-      const auto* context =
-          entity.isAlive() && entity.hasComponent<InputContextComponent>()
-              ? &entity.getComponent<InputContextComponent>()
-              : nullptr;
+      const auto* context = entity.getComponent<InputContextComponent>();
       const int rank = context && context->active ? context->priority : INT_MIN;
       own = seen;
       for (const KeyClaim& claim : claims)
@@ -402,8 +398,8 @@ void Scene::destroyObjects()
 void Scene::destroyObjectsOfDeadEntities()
 {
   for (const std::unique_ptr<GameObject>& object : m_gameObjects)
-    if (!object->m_destroyed && object->m_entity.isValid() &&
-        !object->m_entity.isAlive())
+    if (!object->m_destroyed && object->m_entity != Entity{} &&
+        !object->m_entity.isValid())
     {
       object->m_destroyed = true;
       m_objectsDestroyed = true;

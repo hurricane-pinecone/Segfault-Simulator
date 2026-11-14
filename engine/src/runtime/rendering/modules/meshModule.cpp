@@ -2,10 +2,11 @@
 
 #include "engine/core/components/meshLodComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
-#include "engine/core/components/transformComponent.h"
+#include "engine/core/components/worldTransformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/rendering/aabb.h"
+#include "engine/core/util/debugFeatures.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/ext/scalar_constants.hpp"
@@ -37,14 +38,17 @@ void MeshModule::computeCommands(const RenderContext& context)
   if (!m_registry || !context.meshes)
     return;
 
-  for (const Entity& entity :
-       m_registry->query<TransformComponent, MeshRendererComponent>())
-    addEntity(context, entity, entity.getComponent<MeshRendererComponent>());
+  const bool check = debugFeatures::checkTransforms();
+  for (auto [entity, worldTransform, meshRenderer] :
+       m_registry->query<WorldTransformComponent, MeshRendererComponent>())
+    addEntity(context, entity, meshRenderer, worldTransform, check);
 }
 
 void MeshModule::addEntity(const RenderContext& context,
                            const Entity& entity,
-                           const MeshRendererComponent& renderer)
+                           const MeshRendererComponent& renderer,
+                           const WorldTransformComponent& world,
+                           bool check)
 {
   const Aabb* localBounds = context.meshes->bounds(renderer.mesh);
   if (!localBounds)
@@ -63,7 +67,7 @@ void MeshModule::addEntity(const RenderContext& context,
       localBounds = &skin->bounds;
   }
 
-  const glm::mat4 model = hierarchy::worldMatrix(entity);
+  const glm::mat4 model = hierarchy::cachedWorldMatrix(entity, world, check);
   const Aabb worldBounds = localBounds->transformed(model);
 
   const bool visible = context.frustum.intersects(worldBounds);
@@ -101,10 +105,13 @@ void MeshModule::addEntity(const RenderContext& context,
   MeshInstance instance{model, renderer.tint};
   instance.emission =
       glm::vec4(renderer.emissionColor * renderer.emission, 0.0f);
-  if (!skin && context.camera && entity.hasComponent<MeshLodComponent>())
+  MeshLodComponent* lod = !skin && context.camera
+                              ? entity.getComponent<MeshLodComponent>()
+                              : nullptr;
+  if (lod)
   {
     addLevels(context,
-              entity.getComponent<MeshLodComponent>(),
+              *lod,
               drawn,
               model,
               instance,

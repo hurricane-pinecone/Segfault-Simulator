@@ -21,10 +21,7 @@ void EditorHistory::endChange()
 
   const nlohmann::json after = m_context.document->snapshot();
   if (after != *m_pendingBefore)
-  {
     m_steps.push(*m_pendingBefore, after, m_pendingSelection, currentSelection());
-    ++m_revision;
-  }
   m_pendingBefore.reset();
 }
 
@@ -36,7 +33,6 @@ void EditorHistory::pushAssetEdit(std::function<void()> undo, std::function<void
       std::make_shared<const HistorySteps::AssetEdit>(
           HistorySteps::AssetEdit{std::move(undo), std::move(redo), bytes}),
       currentSelection());
-  ++m_revision;
 }
 
 void EditorHistory::amendLast()
@@ -57,7 +53,6 @@ void EditorHistory::undo()
     else
       apply(restore->snapshot, restore->selection);
   }
-  ++m_revision;
 }
 
 void EditorHistory::redo()
@@ -71,7 +66,6 @@ void EditorHistory::redo()
     else
       apply(restore->snapshot, restore->selection);
   }
-  ++m_revision;
 }
 
 void EditorHistory::rewrite(const std::function<void(nlohmann::json&)>& edit)

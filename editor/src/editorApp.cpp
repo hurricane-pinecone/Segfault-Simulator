@@ -34,6 +34,7 @@
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/webgpu/webGpuRenderBackend.h"
+#include "scene/parts.h"
 #include "scene/prefabs.h"
 #include "widgets/theme.h"
 
@@ -867,8 +868,8 @@ void EditorApp::duplicateSelection()
               serializer.saveEntity(original),
               *m_context.scene,
               sfs::hierarchy::parentOf(original));
-          if (copy.hasComponent<sfs::NameComponent>())
-            copy.getComponent<sfs::NameComponent>().name += " (copy)";
+          if (sfs::NameComponent* name = copy.getComponent<sfs::NameComponent>())
+            name->name += " (copy)";
           copies.push_back(copy);
         }
         m_context.scene->flushEntities();
@@ -890,7 +891,7 @@ void EditorApp::deleteSelection()
         m_context.selection = {};
         m_context.selectionGroup.clear();
         for (const sfs::Entity& entity : doomed)
-          if (entity.isAlive())
+          if (entity.isValid())
             m_context.scene->destroyBranch(entity);
       });
 }
@@ -906,16 +907,18 @@ void EditorApp::alignSelectionWithView()
       {
         const sfs::Camera& view = m_context.render->camera();
         sfs::Entity entity = m_context.selection;
-        const glm::vec3 scale =
-            entity.getComponent<sfs::TransformComponent>().scale;
+        sfs::TransformComponent* transform =
+            entity.getComponent<sfs::TransformComponent>();
+        if (!transform)
+          return;
+        const glm::vec3 scale = transform->scale;
         sfs::hierarchy::setWorldMatrix(
             entity,
             sfs::TransformComponent(view.position(), view.orientation())
                 .matrix());
-        entity.getComponent<sfs::TransformComponent>().scale = scale;
-        if (entity.hasComponent<sfs::CameraComponent>())
-          entity.getComponent<sfs::CameraComponent>().focusDistance =
-              view.distance;
+        transform->scale = scale;
+        if (sfs::CameraComponent* camera = entity.getComponent<sfs::CameraComponent>())
+          camera->focusDistance = view.distance;
       });
 }
 
@@ -929,8 +932,8 @@ void EditorApp::alignViewWithSelection()
   const sfs::Entity entity = m_context.selection;
   const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
   sfs::Camera& view = m_context.render->camera();
-  if (entity.hasComponent<sfs::CameraComponent>())
-    sfs::viewThrough(entity.getComponent<sfs::CameraComponent>(), world, view);
+  if (sfs::CameraComponent* camera = entity.getComponent<sfs::CameraComponent>())
+    sfs::viewThrough(*camera, world, view);
   else
     view.setPose(glm::vec3(world[3]), glm::vec3(world[0]), view.distance);
 }
@@ -1713,6 +1716,7 @@ void EditorApp::bindContext()
       m_context.scene ? &m_context.scene->renderSystem() : nullptr;
   m_context.document = m_active ? m_active->document : nullptr;
   m_context.history = m_active ? m_active->history : &m_history;
+  m_context.editingPrefab = m_active && m_active->prefab.valid();
 }
 
 void EditorApp::activate(Workspace& workspace)
@@ -1755,6 +1759,7 @@ void EditorApp::openPrefab(const sfs::AssetId& prefab)
   workspace.prefab = prefab;
   workspace.scene = makeScene(true);
   workspace.ownDocument = std::make_unique<SceneDocument>(*workspace.scene);
+  workspace.ownDocument->setPrefabContent(true);
   workspace.ownHistory = std::make_unique<EditorHistory>(m_context);
   workspace.document = workspace.ownDocument.get();
   workspace.history = workspace.ownHistory.get();
@@ -1796,6 +1801,10 @@ void EditorApp::openPrefab(const sfs::AssetId& prefab)
   m_context.selectedAsset = {};
   m_context.focusRequest = root;
   LOG_INFO("Editing the prefab " + record->path.generic_string());
+  // Part fields a renamed model node left stale are filled again by name, as
+  // an edit: the prefab then has changes to apply.
+  m_context.history->change([&]
+                            { parts::heal(root, record->path.generic_string()); });
 }
 
 bool EditorApp::applyPrefab(Workspace& workspace)
@@ -1810,6 +1819,11 @@ bool EditorApp::applyPrefab(Workspace& workspace)
     LOG_ERROR("A prefab has one top object: put the others under it to apply");
     return false;
   }
+  const auto heal = [&] { parts::heal(root, record->path.generic_string()); };
+  if (&workspace == m_active)
+    m_context.history->change(heal);
+  else
+    heal(); // its history only records while its tab is the active one
   const nlohmann::json prefab = workspace.scene->serializer().savePrefab(root, true);
   const bool written = rewritePrefab(
       workspace.prefab,

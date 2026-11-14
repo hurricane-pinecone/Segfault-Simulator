@@ -105,6 +105,80 @@ sfs::Entity copy = serializer.loadEntity(serializer.saveEntity(lamp),
                                          sfs::hierarchy::parentOf(lamp));
 ```
 
+The copy's [references](#entity-references) to entities inside the branch name
+the copy's own entities, and those to entities outside it the same ones as the
+original's.
+
+To load a scene file's entries a few at a time (the editor opens a big scene
+over several frames), pass each `loadEntity` call a
+`SceneSerializer::LoadSession` and call `finish(session, scene)` once every
+entry is in: references between entries wait for it.
+
+## Entity references
+
+A reflected `sfs::Entity` field (or `std::vector<sfs::Entity>`, see
+[Reflection](../../core/reflection/index.md#field-types)) points at another
+entity. Entity ids change from load to load, so it's saved as a path, `null`
+for none, and resolved once the load has made every entity:
+
+| Saved as | Names | Where |
+| --- | --- | --- |
+| `"1"`, `"1/2318043377"` | the entity at that `$id` path (as `$overrides` keys) from the context root | prefab files, instance entries |
+| `""` | the context root itself | as above |
+| `"../3"` | up one path segment, then down | a nested instance's entry in a prefab file naming the outer prefab's entity |
+| `"/7"`, `"/7/1/2318043377"` | the scene entry with `"$sceneId": 7`, then a path in its instance | scene files |
+| `"#2"`, `"#2/1"` | the third entity loading the copy makes as an entry (from `#0`, the branch's top: plain entities, instance roots and what was added to an instance), then a path in its instance | `saveEntity` output only |
+
+The **context root** is the prefab's root for a prefab file's own content, and
+an instance's root for what its entry holds (`$overrides`, `$added`), so each
+instance of a prefab resolves to its own parts. A scene's plain entries have
+none: their references are scene-absolute. For example:
+
+```json
+// Tractor.prefab, the root's components: its model instance is $id 1
+"Linkage": { "lowerLeft": "1/2318043377", "arms": ["1/3051889210", "1/2694101533"] }
+// a scene: one entry's weighbridge is another entry
+{ "SellPoint": { "weighbridge": "/7" } }    { "$sceneId": 7, "NameComponent": { "name": "Weighbridge" } }
+```
+
+- Paths use the engine's own ids, never names: renaming or moving an entity in
+  the editor changes nothing, and neither does reordering a model's nodes (see
+  [Model node ids](#model-node-ids)).
+- **`$sceneId`** (a hidden `SceneIdComponent`) is given only to the entries a
+  reference names, when the scene is saved or a branch copied (`saveEntity`),
+  and kept from then on: existing ids are never reused or renumbered. A new
+  one is a random 31-bit number not already in use in the scene, as Unity's
+  file ids are, so two branches of a scene that each add a referenced entity
+  give them different ids and merge cleanly. The ids come from the engine's
+  random source (`core/util/random.h`); `random::seed` makes them repeat, for
+  tests. A scene without references saves exactly as before.
+- Reading an instance's entry (`instanceEntry`, as the editor does to show
+  its overrides) changes nothing: it gives no scene ids, so a reference whose
+  target has none yet is written as `null` there.
+- A reference to an entity outside the prefab is saved as `null`, with a
+  warning: a prefab can't point outside itself. An entity a prefab adds
+  inside one of its nested instances is its own, named through that instance
+  by its added id (`"5/1535798911"`).
+- An unchanged reference in an instance writes no override, and a changed one
+  writes one, like any other field.
+- A reference whose target isn't there when it loads (a model node renamed in
+  its source file, say, or a `..` above the prefab's root) is logged, once
+  per prefab, field and value however often the prefab is spawned, and left
+  empty. Its saved value is kept (`UnresolvedComponents::refs`) and saved back
+  while the field stays empty; setting the field drops it.
+- An integer, as some fields held entity ids before references were paths,
+  loads as none, with a warning (`-1`, none, without one).
+- Nothing is looked up while the game runs: a resolved reference is a field,
+  read like any other `sfs::Entity` (check it, `if (entity)`, before using it).
+- For tools (the editor): `entryRootOf(entity)` is the instance whose entry
+  holds an entity's components (its references' context root in a scene),
+  `sceneHolderOf(target)` the entry a scene-absolute reference names a target
+  through and its path there, `sceneIdHolders(scene)` the entities by scene
+  id, `entityAtPath(root, path)` the entity a path names,
+  `keptReference`/`keptReferences` the saved values kept for empty references,
+  and `jsonText(value, depth)` a value as files write it (to edit one in place
+  with `findJsonValue` and `applyTextEdits` from `core/util/jsonTokens.h`).
+
 ## Prefabs
 
 A prefab is a saved branch of entities that scenes place copies of. A
@@ -154,7 +228,16 @@ A copy (an *instance*) is saved as the prefab and how it differs from it:
   place rather than reloading; `hierarchy::recordRestPose(entity)` records one
   from code.
 - An instance whose prefab can't be read loads as a placeholder and is saved
-  back unchanged; a prefab containing itself is left out (logged).
+  back unchanged; a prefab containing itself is left out (logged). Only a
+  prefab's own content can make a cycle: a copy of a prefab added (`$added`)
+  under a copy of the same prefab in a scene, or in another prefab, is no
+  cycle and loads.
+- A prefab's content opened on its own (the editor's prefab tab: its root no
+  longer an instance) keeps its entities' ids when the scene holding it is
+  saved and loaded again (an undo snapshot): `save(scene, systems, true)`
+  writes each plain entry's `PrefabLinkComponent` as `"$id"`, and loading a
+  plain entry with one gives it back. Other saves write none, so scenes save
+  as before.
 - An override, `$removed` path or `$added` entity's `$parent` that names an
   entity the prefab no longer has (a model node renamed or deleted in its
   source file) is kept, never dropped: it's held, unused, in the instance
@@ -251,4 +334,6 @@ A scene still loads after the code it was saved with has changed:
 | Mesh name not found | A stand-in that keeps the name and draws nothing (an error is logged); saving writes the name back, and it loads as the real mesh once one has that name |
 | Model nodes named by their old ids (place in the model file) | Read as the nodes in those places; saved back with their stable ids |
 | Override or path naming an entity the prefab no longer has | Kept, unused, and saved back unchanged; a warning is logged |
+| Entity reference naming an entity that isn't there | Left empty, and saved back unchanged while it stays so; a warning is logged |
+| Entity reference saved as an entity id (an integer) | None; a warning is logged |
 | File from a newer format | Refused |

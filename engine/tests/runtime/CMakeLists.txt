@@ -26,6 +26,7 @@ add_runtime_test(cameraSystemTests systems/cameraSystemTests.cpp)
 add_runtime_test(physicsSystem3DTests systems/physicsSystem3DTests.cpp)
 add_runtime_test(colliderFitTests systems/colliderFitTests.cpp)
 add_runtime_test(prefabSystemTests systems/prefabSystemTests.cpp)
+add_runtime_test(transformSystemTests systems/transformSystemTests.cpp)
 
 # navigation/
 add_runtime_test(steeringTests navigation/vehicle/steeringTests.cpp)

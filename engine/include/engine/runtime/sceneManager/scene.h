@@ -6,6 +6,7 @@
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"
+#include "engine/runtime/systems/transformSystem.h"
 #include <SDL_render.h>
 #include <memory>
 #include <string>
@@ -33,12 +34,13 @@ struct SceneServices
   IRenderer* renderer = nullptr;
 };
 
+// Every scene has a TransformSystem, added first, so the render phase opens
+// with the transform pass (see TransformSystem).
 class Scene
 {
 public:
   Scene(SceneId id, const SceneServices& services)
-      : m_assetStore(services.assetStore), m_renderer(services.renderer),
-        m_id(id), m_name("scene_" + std::to_string(id))
+      : Scene(id, services, "scene_" + std::to_string(id))
   {
   }
 
@@ -46,6 +48,7 @@ public:
       : m_assetStore(services.assetStore), m_renderer(services.renderer),
         m_id(id), m_name(name)
   {
+    addSystem<TransformSystem>();
   }
 
   virtual ~Scene() = default;
@@ -67,6 +70,12 @@ public:
   // keys that input contexts outranking its own claim: see
   // InputContextComponent), then onProcessInput().
   void processInput(const sfs::Input& input);
+  /**
+   * The render phase: each enabled system's render(), in the order they were
+   * added (the transform pass first), then onRender(). Nothing in it should
+   * write a TransformComponent: what's drawn reads the world matrices the
+   * pass cached.
+   */
   void render();
 
   // Invoked inside the debug ImGui frame (debug builds only) so a scene can add
@@ -183,13 +192,14 @@ public:
 
   /**
    * The flushed, living entities that match these terms (components, one
-   * Any<...> group, Excluding<...> groups), in id order: the registry's
-   * shared list, kept up to date (Registry::query()). To add or remove these
-   * component types while going through it, go through a copy.
-   * @return the shared list, read-only
+   * Any<...> group, Excluding<...> groups), in id order: a view of the
+   * registry's shared list, kept up to date, whose rows unpack the terms'
+   * components (Registry::query()). To add or remove these component types
+   * while going through it, go through a copy.
+   * @return a view of the shared list, read-only
    */
   template <typename... TTerms>
-  const std::vector<Entity>& query()
+  QueryView<TTerms...> query()
   {
     return m_registry.query<TTerms...>();
   }

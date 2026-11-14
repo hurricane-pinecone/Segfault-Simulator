@@ -108,11 +108,11 @@ struct World
             std::vector<Contact3D>* ended = nullptr)
   {
     scene.update(kFrame);
-    const auto& heard = report.getComponent<ContactReportComponent>();
+    const auto* heard = report.getComponent<ContactReportComponent>();
     if (begun)
-      begun->insert(begun->end(), heard.begun.begin(), heard.begun.end());
+      begun->insert(begun->end(), heard->begun.begin(), heard->begun.end());
     if (ended)
-      ended->insert(ended->end(), heard.ended.begin(), heard.ended.end());
+      ended->insert(ended->end(), heard->ended.begin(), heard->ended.end());
   }
 
   // Moves a body from `from` to `to` in 60 frames, adding what `report`
@@ -178,7 +178,7 @@ public:
   {
     m_entity = entity;
     m_speed = metresPerSecond;
-    x = entity.getComponent<TransformComponent>().position.x;
+    x = entity.getComponent<TransformComponent>()->position.x;
   }
 
 protected:
@@ -187,7 +187,7 @@ protected:
     if (!m_entity.isValid())
       return;
     x += m_speed * static_cast<float>(deltaTime);
-    m_entity.getComponent<TransformComponent>().position.x = x;
+    m_entity.getComponent<TransformComponent>()->position.x = x;
   }
 
 private:
@@ -361,7 +361,7 @@ int main()
     World world;
     Entity wall = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
     world.run(kFrame);
-    wall.getComponent<TransformComponent>().position = {10.0f, 0.0f, 0.0f};
+    wall.getComponent<TransformComponent>()->position = {10.0f, 0.0f, 0.0f};
     world.run(kFrame);
     const auto hit =
         world.physics.raycast(Ray{{10.0f, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
@@ -405,10 +405,10 @@ int main()
   {
     World world;
     Entity lift = world.box({0.0f, 0.0f, 2.0f}, {2.0f, 2.0f, 0.2f}, true);
-    lift.getComponent<RigidBody3DComponent>().kinematic = true;
+    lift.getComponent<RigidBody3DComponent>()->kinematic = true;
     world.run(1.0);
     CHECK(testing::approx(world.z(lift), 2.0f));
-    lift.getComponent<TransformComponent>().position.z = 3.0f;
+    lift.getComponent<TransformComponent>()->position.z = 3.0f;
     world.run(0.2);
     CHECK(testing::approx(world.z(lift), 3.0f));
   }
@@ -426,7 +426,7 @@ int main()
     world.run(3.0);
     CHECK(testing::approx(hierarchy::worldPosition(crate).x, 5.0f, 0.02f));
     CHECK(testing::approx(world.z(crate), 0.5f, 0.03f));
-    CHECK(testing::approx(crate.getComponent<TransformComponent>().position.x,
+    CHECK(testing::approx(crate.getComponent<TransformComponent>()->position.x,
                           0.0f,
                           0.02f)); // local
   }
@@ -436,7 +436,7 @@ int main()
     World world;
     world.physics.setGravity(glm::vec3(0.0f));
     Entity puck = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, true);
-    puck.getComponent<RigidBody3DComponent>().linearDamping = 0.0f;
+    puck.getComponent<RigidBody3DComponent>()->linearDamping = 0.0f;
     world.run(kFrame);
     world.physics.setVelocity(puck, {2.0f, 0.0f, 0.0f});
     world.run(1.0);
@@ -526,7 +526,7 @@ int main()
     World world;
     Entity post = world.box({0.0f, 0.0f, 0.6f}, {0.2f, 0.2f, 1.2f}, false);
     Entity wall = world.box({5.0f, 0.0f, 1.0f}, {0.2f, 4.0f, 2.0f}, false);
-    wall.getComponent<BoxCollider3DComponent>().layer = 3;
+    wall.getComponent<BoxCollider3DComponent>()->layer = 3;
     world.run(kFrame);
     const auto frozen = world.physics.snapshot();
     CHECK(frozen->size() == 2);
@@ -743,7 +743,7 @@ int main()
     world.run(kFrame);
     CHECK(world.physics.lastUpdateStats().lookedForBodies);
     CHECK(world.physics.hasBody(post));
-    post.getComponent<TransformComponent>().position.x = 5.0f;
+    post.getComponent<TransformComponent>()->position.x = 5.0f;
     world.run(kFrame);
     CHECK(!world.physics.lastUpdateStats().lookedForBodies);
     CHECK(world.physics.revision() > revision + 1);
@@ -751,7 +751,7 @@ int main()
         world.physics.raycast(Ray{{5.0f, 20.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
     CHECK(hit && hit->entity == post);
     // And a collider changed in place.
-    post.getComponent<BoxCollider3DComponent>().size = {0.5f, 0.5f, 3.0f};
+    post.getComponent<BoxCollider3DComponent>()->size = {0.5f, 0.5f, 3.0f};
     world.run(kFrame);
     const auto taller =
         world.physics.raycast(Ray{{5.0f, 20.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
@@ -848,7 +848,7 @@ int main()
     const uint64_t revision = world.physics.revision();
     for (int i = 0; i < 200; ++i)
     {
-      spinner.getComponent<TransformComponent>().setYaw(0.037f * i);
+      spinner.getComponent<TransformComponent>()->setYaw(0.037f * i);
       world.run(kFrame, &begun, &ended);
     }
     CHECK(world.physics.revision() == revision);
@@ -904,18 +904,18 @@ int main()
     world.box({3.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
     Entity root = world.reporter();
     Entity cart = world.cart({0.0f, 0.0f, 0.5f}, root);
-    const auto& report = root.getComponent<ContactReportComponent>();
+    const auto* report = root.getComponent<ContactReportComponent>();
     bool heard = false;
     for (int i = 1; i <= 60 && !heard; ++i)
     {
       World::place(cart, {0.05f * i, 0.0f, 0.5f});
       world.scene.update(kFrame);
-      heard = !report.begun.empty();
+      heard = !report->begun.empty();
     }
     CHECK(heard);
     world.scene.update(kFrame);
-    CHECK(report.begun.empty() && report.ended.empty() &&
-          report.deepened.empty());
+    CHECK(report->begun.empty() && report->ended.empty() &&
+          report->deepened.empty());
   }
 
   TEST("two reported bodies should each hear the one contact, from their own "
@@ -932,7 +932,7 @@ int main()
     {
       World::place(cart, {0.05f * i, 0.0f, 0.5f});
       world.step(post, &postHeard);
-      const auto& own = cart.getComponent<ContactReportComponent>().begun;
+      const auto& own = cart.getComponent<ContactReportComponent>()->begun;
       cartHeard.insert(cartHeard.end(), own.begin(), own.end());
     }
     CHECK(postHeard.size() == 1 && postHeard[0].a == post &&

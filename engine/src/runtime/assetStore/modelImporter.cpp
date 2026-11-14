@@ -2,6 +2,7 @@
 
 #include "engine/core/logger/logger.h"
 #include "engine/core/util/hash.h"
+#include "engine/core/util/string.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "glm/glm/ext/matrix_float3x3.hpp"
@@ -61,13 +62,7 @@ std::optional<AssetMeshName> parseAssetMeshName(std::string_view name)
 
 bool isColliderNodeName(std::string_view name)
 {
-  // Blender's ".001" on a copy.
-  if (const std::size_t dot = name.rfind('.');
-      dot != std::string_view::npos && dot + 1 < name.size() &&
-      std::all_of(name.begin() + dot + 1,
-                  name.end(),
-                  [](char c) { return c >= '0' && c <= '9'; }))
-    name = name.substr(0, dot);
+  name = baseNodeName(name); // Blender's ".001" on a copy
   constexpr std::string_view kSuffix = "-collider";
   return name.size() > kSuffix.size() &&
          std::equal(kSuffix.begin(),
@@ -674,6 +669,18 @@ void writeSegment(std::string_view name, uint32_t repeat, const Out& out)
   }
 }
 
+} // namespace
+
+std::string nodeNameSegment(std::string_view name)
+{
+  std::string segment;
+  segment.reserve(name.size());
+  writeSegment(name, 0, [&](std::string_view bytes) { segment += bytes; });
+  return segment;
+}
+
+namespace
+{
 // Gives each node its stable id from its name path (see stableNodeId()),
 // hashing each path on from its parent's, so no path is spelled out unless
 // it's asked for (`namePaths`) or named in a warning. `names` are the nodes'

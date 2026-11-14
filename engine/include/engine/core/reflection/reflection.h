@@ -28,6 +28,9 @@ enum class FieldKind : uint8_t
   AssetRef,     // sfs::AssetRef<T>: a scriptable object of type T (saved as
                 // "asset:<id>"; see scriptableObject.h)
   AssetRefList, // sfs::AssetRefList<T>: a list of them (saved as an array)
+  Entity,       // sfs::Entity: another entity, resolved at load (saved as a
+                // path; see sceneSerializer.h)
+  EntityList,   // std::vector<sfs::Entity>: a list of them (saved as an array)
 };
 
 /** Editor hints for a field, from its [[sfs::...]] attributes. */
@@ -52,6 +55,9 @@ struct FieldAttributes
   // AssetRef, AssetRefList: the scriptable object type it refers to, e.g.
   // "ItemDef"
   std::string assetType;
+  // [[sfs::part("name")]]: on an Entity or EntityList field, the model node
+  // name (a glob pattern for a list, e.g. "blade-*") the editor fills it from
+  std::string part;
   float min = 0.0f;
   float max = 0.0f;
 };
@@ -94,6 +100,8 @@ struct ComponentOps
   void* (*get)(const Entity& entity) = nullptr; // nullptr if absent
   void (*add)(const Entity& entity) = nullptr;  // default-constructed
   void (*remove)(const Entity& entity) = nullptr;
+  /** The registry's entities with T, as of its last flush (its query list). */
+  const std::vector<Entity>& (*holders)(Registry& registry) = nullptr;
 };
 
 /** Making and freeing objects of a scriptable object type
@@ -156,12 +164,31 @@ public:
 
   const std::vector<TypeInfo>& types() const { return m_types; }
 
+  /**
+   * The component types with an Entity or EntityList field, in registration
+   * order, so what handles references visits only them. Like find()'s, the
+   * pointers last until the registry next changes.
+   */
+  const std::vector<const TypeInfo*>& referencingTypes() const
+  {
+    return m_referencing;
+  }
+
 private:
-  // Fill every derived type's inherited fields in again.
+  // Fill every derived type's inherited fields in again (inheritFields), and
+  // list the referencing types.
   void resolve();
+  void inheritFields();
 
   std::vector<TypeInfo> m_types;
+  std::vector<const TypeInfo*> m_referencing;
 };
+
+/** Whether a field holds entity references (FieldKind Entity or EntityList). */
+inline bool isEntityField(const FieldInfo& field)
+{
+  return field.kind == FieldKind::Entity || field.kind == FieldKind::EntityList;
+}
 
 /**
  * The process-wide registry, with the engine's own types already registered.

@@ -44,10 +44,9 @@ protected:
   {
     m_director = scene.tryFindObject<RunDirector>();
     // The camera follows, looking a little ahead.
-    if (sfs::Entity camera = scene.findEntity("Camera");
-        camera.isValid() && camera.hasComponent<sfs::CameraFollowComponent>())
-      camera.getComponent<sfs::CameraFollowComponent>().target =
-          static_cast<int>(entity().getId());
+    if (auto* follow = scene.findEntity("Camera")
+                           .getComponent<sfs::CameraFollowComponent>())
+      follow->target = entity();
   }
 
   void onProcessInput(const sfs::Input& input) override
@@ -81,8 +80,10 @@ protected:
     }
     const float dt = std::min(static_cast<float>(deltaTime), 1.0f / 30.0f) *
                      m_director->timeScale();
-    auto& transform = entity().getComponent<sfs::TransformComponent>();
-    glm::vec2 at = transform.position2D();
+    auto* transform = entity().getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(transform, entity()))
+      return;
+    glm::vec2 at = transform->position2D();
 
     m_coyote -= dt;
     m_jumpQueued -= dt;
@@ -160,7 +161,7 @@ protected:
     const bool wasGrounded = m_grounded;
     const float fallSpeed = m_velocity.y;
     at = moveAndCollide(at, dt);
-    transform.setPosition2D(at);
+    transform->setPosition2D(at);
     if (m_grounded && !wasGrounded && fallSpeed > 900.0f)
     {
       m_director->puff("dust", at);
@@ -205,15 +206,14 @@ private:
   {
     std::vector<Box> solids;
     const Box near{at - glm::vec2(900.0f), at + glm::vec2(900.0f)};
-    for (const sfs::Entity& solid : scene()
-                                        .query<sfs::SolidObject,
-                                               sfs::BoxCollider2D,
-                                               sfs::TransformComponent>())
+    for (auto [solidObject, collider, transform] :
+         scene()
+             .query<sfs::SolidObject,
+                    sfs::BoxCollider2D,
+                    sfs::TransformComponent>()
+             .components())
     {
-      const auto& collider = solid.getComponent<sfs::BoxCollider2D>();
-      const glm::vec2 centre =
-          solid.getComponent<sfs::TransformComponent>().position2D() +
-          collider.offset;
+      const glm::vec2 centre = transform.position2D() + collider.offset;
       const Box b{centre - collider.half, centre + collider.half};
       if (overlaps(b, near))
         solids.push_back(b);
@@ -268,19 +268,16 @@ private:
   void touch(glm::vec2 at)
   {
     const Box body = box(at);
-    for (const sfs::Entity& orb : scene().query<Orb, sfs::TransformComponent>())
-      if (glm::distance(
-              orb.getComponent<sfs::TransformComponent>().position2D(),
-              at - glm::vec2(0.0f, size.y * 0.5f)) < 58.0f)
+    for (auto [orb, value, transform] :
+         scene().query<Orb, sfs::TransformComponent>())
+      if (glm::distance(transform.position2D(),
+                        at - glm::vec2(0.0f, size.y * 0.5f)) < 58.0f)
         m_director->collect(orb);
 
-    for (const sfs::Entity& spike :
-         scene().query<Hazard, sfs::TransformComponent>())
+    for (auto [hurt, transform] :
+         scene().query<Hazard, sfs::TransformComponent>().components())
     {
-      const Hazard& hurt = spike.getComponent<Hazard>();
-      const glm::vec2 centre =
-          spike.getComponent<sfs::TransformComponent>().position2D() +
-          hurt.offset;
+      const glm::vec2 centre = transform.position2D() + hurt.offset;
       if (overlaps(body, {centre - hurt.half, centre + hurt.half}))
       {
         m_director->end(at);
@@ -288,11 +285,10 @@ private:
       }
     }
 
-    for (const sfs::Entity& drone :
+    for (auto [drone, flight, transform] :
          scene().query<Drone, sfs::TransformComponent>())
     {
-      const glm::vec2 centre =
-          drone.getComponent<sfs::TransformComponent>().position2D();
+      const glm::vec2 centre = transform.position2D();
       if (!overlaps(body,
                     {centre - glm::vec2(30.0f, 22.0f),
                      centre + glm::vec2(30.0f, 22.0f)}))
@@ -315,15 +311,14 @@ private:
     }
 
     if (m_grounded)
-      for (const sfs::Entity& pad :
-           scene().query<JumpPad, sfs::TransformComponent>())
+      for (auto [jumpPad, transform] :
+           scene().query<JumpPad, sfs::TransformComponent>().components())
       {
-        const glm::vec2 centre =
-            pad.getComponent<sfs::TransformComponent>().position2D();
+        const glm::vec2 centre = transform.position2D();
         if (std::abs(centre.x - at.x) < 40.0f &&
             std::abs(centre.y + 32.0f - at.y) < 40.0f)
         {
-          m_velocity.y = -pad.getComponent<JumpPad>().launch;
+          m_velocity.y = -jumpPad.launch;
           m_grounded = false;
           m_airJumpsLeft = airJumps;
           m_canDash = true;
@@ -336,7 +331,11 @@ private:
   // 9 wall.
   void animate(float dt)
   {
-    if (!entity().hasComponent<sfs::SpriteComponent>())
+    auto* sprite = entity().getComponent<sfs::SpriteComponent>();
+    if (!sprite)
+      return;
+    auto* transform = entity().getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(transform, entity()))
       return;
     m_animClock += dt;
     int frame = 0;
@@ -350,11 +349,10 @@ private:
       frame = 2 + static_cast<int>(m_animClock * 14.0f) % 4;
     else
       frame = static_cast<int>(m_animClock * 2.5f) % 2;
-    entity().getComponent<sfs::SpriteComponent>().frame = frame;
+    sprite->frame = frame;
     // Facing: the sprite turns round (scale x).
-    auto& transform = entity().getComponent<sfs::TransformComponent>();
-    transform.scale.x =
-        std::abs(transform.scale.x) * (m_facing < 0.0f ? -1.0f : 1.0f);
+    transform->scale.x =
+        std::abs(transform->scale.x) * (m_facing < 0.0f ? -1.0f : 1.0f);
   }
 
   RunDirector* m_director = nullptr;

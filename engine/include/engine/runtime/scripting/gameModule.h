@@ -20,7 +20,7 @@ sfsRegisterModule(sfs::reflect::TypeRegistry& registry);
 // whenever the two can't work together. Bump the number when a change to the
 // engine's headers changes what a module compiled against them expects (a
 // class's layout or virtual functions, an inline function's behaviour).
-#define SFS_ENGINE_ABI_NUMBER 2
+#define SFS_ENGINE_ABI_NUMBER 3
 
 #define SFS_ABI_STRINGIFY2(x) #x
 #define SFS_ABI_STRINGIFY(x) SFS_ABI_STRINGIFY2(x)

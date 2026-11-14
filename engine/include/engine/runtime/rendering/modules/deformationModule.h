@@ -243,16 +243,18 @@ private:
   static uint64_t keyOf(const Entity& entity);
   Field* fieldOf(const Entity& entity);
   const Field* fieldOf(const Entity& entity) const;
-  // A deformable terrain this frame: its mesh as placed (to press into),
-  // then its patch and window (to draw).
-  void prepare(const Entity& entity, Field& field);
+  // A deformable terrain this frame (`mesh` its renderer's): its mesh as
+  // placed (to press into), then its patch and window (to draw).
+  void prepare(const Entity& entity, MeshHandle mesh, Field& field);
   void draw(const RenderContext& context,
             MaterialHandle material,
             const MeshMaterial& drawn,
             Field& field);
   // Press the frame's deformers into the fields they're over.
   void deform();
+  // Presses `mesh` (its renderer's `handle`) into the fields it's over.
   void pressMesh(const Entity& mesh,
+                 MeshHandle handle,
                  const glm::mat4& model,
                  const Entity& owner,
                  const DeformerComponent& deformer,

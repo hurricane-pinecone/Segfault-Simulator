@@ -15,6 +15,7 @@
 // SfsEditor --export-web <project-folder> [output-folder]
 // SfsEditor --upgrade-node-ids <project-folder> [--check]
 // SfsEditor --list-node-ids <model-file>
+// SfsEditor --fill-parts <project-folder> <prefab|all> [--dry-run]
 int main(int argc, char* argv[])
 {
   if (argc >= 3 && std::string_view(argv[1]) == "--export")
@@ -39,6 +40,17 @@ int main(int argc, char* argv[])
         argv[2], argc >= 4 && std::string_view(argv[3]) == "--check");
   if (argc >= 3 && std::string_view(argv[1]) == "--list-node-ids")
     return listNodeIdsHeadless(argv[2]);
+  if (argc >= 2 && std::string_view(argv[1]) == "--fill-parts")
+  {
+    // Anything it doesn't know is refused: a misspelt --dry-run must not write.
+    const bool dryRun = argc == 5 && std::string_view(argv[4]) == "--dry-run";
+    if (argc < 4 || (argc > 4 && !dryRun))
+    {
+      LOG_ERROR("Usage: SfsEditor --fill-parts <project-folder> <prefab|all> [--dry-run]");
+      return 1;
+    }
+    return fillPartsHeadless(argv[2], argv[3], dryRun);
+  }
 
   // The engine's physics is built for AVX2 (see missingCpuFeatures): say so,
   // rather than crash at the first physics step.

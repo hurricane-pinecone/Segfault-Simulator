@@ -372,6 +372,7 @@ public:
   bool animating() const { return m_animating; }
 
 protected:
+  void create() override;
   void update(double deltaTime) override
   {
     if (m_animating)

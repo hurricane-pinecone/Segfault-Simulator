@@ -3,10 +3,10 @@
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
+#include "scene/entityLabel.h"
 #include "widgets/lookWidgets.h"
 #include "widgets/widgets.h"
 
-#include "engine/core/components/nameComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/runtime/rendering/debug/ui.h"
 #include "engine/runtime/rendering/renderSystem.h"
@@ -388,10 +388,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   // Which view the game starts from.
   if (const sfs::Entity camera = render.sceneCamera(); camera.isValid())
   {
-    const bool named = camera.hasComponent<sfs::NameComponent>();
-    ImGui::Text("Game camera: %s",
-                named ? camera.getComponent<sfs::NameComponent>().name.c_str()
-                      : "(unnamed)");
+    ImGui::Text("Game camera: %s", entityLabel(camera).c_str());
   }
   else
   {

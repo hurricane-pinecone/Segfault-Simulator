@@ -8,19 +8,15 @@
 // Moves everything with a Bob: floating sparks, turning crystals, the lift.
 class BobSystem : public sfs::System
 {
+  using Entities = sfs::Query<Bob, sfs::TransformComponent>;
+
 protected:
-  void create() override
-  {
-    registerComponent<Bob>();
-    registerComponent<sfs::TransformComponent>();
-  }
+  void create() override { registerComponent<Entities>(); }
 
   void update(double deltaTime) override
   {
-    for (const sfs::Entity& entity : getEntities())
+    for (auto [entity, bob, transform] : getEntities<Entities>())
     {
-      Bob& bob = entity.getComponent<Bob>();
-      auto& transform = entity.getComponent<sfs::TransformComponent>();
       if (bob.clock < 0.0f)
       {
         bob.home = transform.position;

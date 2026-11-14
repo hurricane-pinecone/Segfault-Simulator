@@ -5,12 +5,6 @@
 namespace sfs
 {
 
-const std::vector<Entity>& System::getEntities() const
-{
-  static const std::vector<Entity> none;
-  return m_lists.empty() ? none : *m_lists.front();
-}
-
 const QuerySignature& System::getComponentSignature() const
 {
   return m_signature;
@@ -49,7 +43,16 @@ void System::tellLeft(std::size_t index, const Entity& entity)
 void System::warnLateRegister() const
 {
   LOG_WARN("registerComponent() after the system was added to a registry: "
-           "ignored (register components in the constructor or create())");
+           "ignored (register components in create())");
+}
+
+void System::warnNotImplied(std::string_view termKey) const
+{
+  LOG_ERROR("getEntities<...>() in " + detail::readableTypeName(typeid(*this)) +
+            ": its registered terms don't imply " +
+            detail::readableTypeName(termKey) +
+            ", so its entities may lack it; giving an empty list (register "
+            "it, or query it)");
 }
 
 void System::warnSecondAny(std::string_view groupKey) const

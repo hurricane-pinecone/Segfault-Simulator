@@ -124,28 +124,30 @@ void startObjects(Scene& scene,
   // Entities first, then attach: onCreate may create more entities.
   std::vector<Entity> scripted;
   for (const Entity& entity : entities)
-    if (entity.hasComponent<ScriptComponent>() &&
-        !entity.getComponent<ScriptComponent>().script.empty())
+    if (ScriptComponent* script = entity.getComponent<ScriptComponent>();
+        script && !script->script.empty())
       scripted.push_back(entity);
 
   for (const Entity& entity : scripted)
   {
     // An earlier onCreate may have destroyed it.
-    if (!entity.isAlive())
+    const ScriptComponent* component = entity.getComponent<ScriptComponent>();
+    if (!component)
       continue;
-    const ScriptComponent& component = entity.getComponent<ScriptComponent>();
-    const ScriptType* type = scripts().find(component.script);
+    const ScriptType* type = scripts().find(component->script);
     if (!type || type->kind != ScriptType::Kind::GameObject ||
         !type->createObject)
     {
-      LOG_ERROR("Play: no game object script named '" + component.script + "'");
+      LOG_ERROR("Play: no game object script named '" + component->script +
+                "'");
       continue;
     }
 
     std::unique_ptr<GameObject> object = type->createObject();
     // This entity's field values, from the editor, before onCreate sees them.
-    if (const reflect::TypeInfo* info = reflect::types().find(component.script))
-      serializer.loadObject(*info, object.get(), component.fields);
+    if (const reflect::TypeInfo* info =
+            reflect::types().find(component->script))
+      serializer.loadObject(*info, object.get(), component->fields);
     scene.adoptObject(std::move(object), entity);
   }
 }

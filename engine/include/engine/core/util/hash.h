@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -50,6 +51,34 @@ constexpr uint64_t mix64(uint64_t value)
 constexpr uint64_t hashCombine(uint64_t seed, uint64_t value)
 {
   return seed ^ (value + 0x9E3779B97F4A7C15ull + (seed << 6) + (seed >> 2));
+}
+
+/**
+ * A fast hash of a few 64-bit words, to notice that they changed: two
+ * independent multiply-xorshift chains (the even words and the odd ones), so
+ * their steps overlap. Each step is a bijection of its chain for a given
+ * word, so two inputs that differ in one word never collide; others collide
+ * at about 2^-64.
+ *
+ * @param words the words
+ * @param count how many there are
+ * @return their hash
+ */
+constexpr uint64_t hashWords(const uint64_t* words, std::size_t count)
+{
+  uint64_t even = 0x9E3779B97F4A7C15ull;
+  uint64_t odd = 0xD1B54A32D192ED03ull;
+  for (std::size_t word = 0; word < count; word += 2)
+  {
+    even = (even ^ words[word]) * 0xBF58476D1CE4E5B9ull;
+    even ^= even >> 31;
+    if (word + 1 < count)
+    {
+      odd = (odd ^ words[word + 1]) * 0x94D049BB133111EBull;
+      odd ^= odd >> 29;
+    }
+  }
+  return even ^ odd;
 }
 
 } // namespace sfs

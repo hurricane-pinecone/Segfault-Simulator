@@ -212,6 +212,30 @@ bool searchInput(const char* id,
   return changed;
 }
 
+void trackFocus(bool& owns)
+{
+  const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow;
+  if (!focused || (focused->Flags &
+                   (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
+                    ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_Tooltip)))
+    return;
+  // RootWindow stops at a docked window (RootWindowDockTree would be the dock
+  // host every docked panel shares).
+  owns = focused->RootWindow == ImGui::GetCurrentWindow()->RootWindow;
+}
+
+bool itemReleasedWithoutDrag(ImGuiMouseButton button)
+{
+  if (!ImGui::IsMouseReleased(button) || ImGui::IsMouseDragPastThreshold(button) ||
+      !ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+    return false;
+  // Pressed on it too.
+  const ImVec2 pressed = ImGui::GetIO().MouseClickedPos[button];
+  const ImVec2 min = ImGui::GetItemRectMin();
+  const ImVec2 max = ImGui::GetItemRectMax();
+  return pressed.x >= min.x && pressed.y >= min.y && pressed.x < max.x && pressed.y < max.y;
+}
+
 std::string shownTab(const char* window)
 {
   const ImGuiWindow* found = ImGui::FindWindowByName(window);
