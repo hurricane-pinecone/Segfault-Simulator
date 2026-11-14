@@ -82,18 +82,41 @@ emitter.tint = {0.9f, 0.75f, 0.45f, 1.0f}; // multiplies the effect's colour
 | `turnWithEntity` | the offset, emission shape and launch direction turn with the entity's heading |
 | `inheritVelocity` | how much of the entity's own velocity (from how far it moved last frame) its particles leave with |
 | `tint` | multiplies the effect's colour and alpha: one effect in many colours |
+| `shapeScale` | scales where the effect's emission shape spawns, per axis, before it turns with the entity (Unity's `ShapeModule.scale`): one dust effect as wide as each machine's header |
+| `maxParticles` | this emitter's own capacity (0: the effect's `maxParticles`), e.g. scaled with `shapeScale` |
 
 An entity emitter that moved since last frame spreads that frame's particles
 along the way it came, so a fast one (or any in a sped-up game) leaves an even
 trail rather than a clump each frame.
 
+### Wind
+
+A `WindZoneComponent` blows on particles, as Unity's directional WindZone does:
+`wind` (metres a second across the world's XY) and `enabled`. Where its entity
+is doesn't matter. Each update the particles add up the enabled zones. An
+effect is carried by the wind only if its `windInfluence` is above 0: its
+particles get `drag * windInfluence * wind` added to their planar
+acceleration, so their drag carries them toward `windInfluence` times the
+wind (dust 0.5, smoke near 1, sparks 0). A game's weather writes the zone:
+
+```cpp
+if (auto* zone = scene().singleton<sfs::WindZoneComponent>())
+  zone->wind = weather.wind;
+```
+
+A `ParticleEngine` with no registry (a tool, a test) has no wind.
+
 ### Pausing
 
-`particles.setTimeScale(0.0f)` freezes every particle where it is and stops all
-emission (a paused game); `1` runs them as normal, `4` four times as fast (a
-game running at 4x: the scene's systems take game time from
-`Registry::setTimeScale()`, but the particles are simulated with the frame, in
-real time, so they follow it through this).
+A scene's `ParticleModule` follows the registry: it simulates the frame's real
+time times `Registry::timeScale()`, so a game at 4x has its particles at 4x
+too, and while `Registry::paused()` every particle is frozen where it is and
+all emission stops. A game pauses or speeds up its particles only through the
+registry.
+
+`particles.setTimeScale(scale)` is a further multiplier on top (1 by default),
+for a standalone `ParticleEngine` (a tool, a test): `0` freezes it, `4` runs
+it four times as fast.
 
 ### Spawn momentum
 
@@ -163,7 +186,7 @@ custom shaping — is authoring; see [Decals & splatter](../../core/particles/de
 | `enableStains(decals, terrain = nullptr)` | make decal effects land and stick |
 | `groundElevationAt(position)` | surface height for a terrain-aware spawn |
 | `setMaxParticles(n)` | global live-particle ceiling |
-| `setTimeScale(scale)` | how fast particles' time runs (0: paused) |
+| `setTimeScale(scale)` | a multiplier on how fast particles' time runs (1; 0 freezes them) |
 | `liveParticleCount()` | current live count (debug / HUD) |
 | `hasEffect(name)` / `effect(name)` / `effectNames()` | inspect registered effects |
 

@@ -31,7 +31,7 @@ protected:
   void create() override { registerComponent<Counter>(); }
   void update(double) override
   {
-    for (Entity& entity : getEntities())
+    for (const Entity& entity : getEntities())
       ++entity.getComponent<Counter>().ticks;
   }
 };

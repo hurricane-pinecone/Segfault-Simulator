@@ -1,6 +1,7 @@
 #include "engine/runtime/navigation/vehicle/steering.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -21,6 +22,22 @@ float turned(float from, float to, int sense)
   return d > kTwoPi - 1.0e-4f ? 0.0f : d;
 }
 float angleOf(glm::vec2 v) { return std::atan2(v.y, v.x); }
+
+// A word being laid: its segments in place (at most a C|CSC's ten), never
+// on the heap.
+struct Word
+{
+  std::array<Segment, 12> s;
+  std::size_t n = 0;
+  void push_back(const Segment& x)
+  {
+    if (n < s.size())
+      s[n++] = x;
+  }
+  bool empty() const { return n == 0; }
+  const Segment& front() const { return s[0]; }
+  std::span<const Segment> view() const { return {s.data(), n}; }
+};
 } // namespace
 
 Pose2 advance(Pose2 from, const Segment& seg, float s)
@@ -152,6 +169,17 @@ bool Steering::turn(float deflection,
                     bool ccEnd,
                     std::vector<Segment>& out) const
 {
+  return turnInto(deflection, sense, gear, ccStart, ccEnd, out);
+}
+
+template <class Out>
+bool Steering::turnInto(float deflection,
+                        int sense,
+                        int gear,
+                        bool ccStart,
+                        bool ccEnd,
+                        Out& out) const
+{
   const float need =
       (static_cast<float>(ccStart) + static_cast<float>(ccEnd)) * m_thetaC;
   if (!ccStart && !ccEnd && deflection < 1.0e-5f)
@@ -195,7 +223,7 @@ bool Steering::turn(float deflection,
 void Steering::csc(Motion a,
                    Motion b,
                    int gear,
-                   std::vector<std::vector<Segment>>& out,
+                   const Each& out,
                    bool ccStart) const
 {
   // (Between the circles, the straight's ends: Omega2 - Omega1 is, turned
@@ -227,21 +255,18 @@ void Steering::csc(Motion a,
       }
       if (length < -1.0e-5f)
         continue;
-      std::vector<Segment> w;
-      if (!turn(turned(a.d, d, s1), s1, gear, ccStart, true, w))
+      Word w;
+      if (!turnInto(turned(a.d, d, s1), s1, gear, ccStart, true, w))
         continue;
       if (length > 1.0e-5f)
         w.push_back({gear, length, 0.0f, 0.0f});
-      if (!turn(turned(d, b.d, s2), s2, gear, true, true, w))
+      if (!turnInto(turned(d, b.d, s2), s2, gear, true, true, w))
         continue;
-      out.push_back(std::move(w));
+      out(w.view());
     }
 }
 
-void Steering::ccc(Motion a,
-                   Motion b,
-                   int gear,
-                   std::vector<std::vector<Segment>>& out) const
+void Steering::ccc(Motion a, Motion b, int gear, const Each& out) const
 {
   // (Two CC turns meeting: their centres 2 r apart.)
   const float l = 2.0f * m_r;
@@ -260,19 +285,16 @@ void Steering::ccc(Motion a,
       const float sf = static_cast<float>(s);
       const float d1 = angleOf(om - o1) + sf * (kHalfPi - m_mu);
       const float d2 = angleOf(o3 - om) - sf * (kHalfPi - m_mu);
-      std::vector<Segment> w;
-      if (turn(turned(a.d, d1, s), s, gear, true, true, w) &&
-          turn(turned(d1, d2, -s), -s, gear, true, true, w) &&
-          turn(turned(d2, b.d, s), s, gear, true, true, w))
-        out.push_back(std::move(w));
+      Word w;
+      if (turnInto(turned(a.d, d1, s), s, gear, true, true, w) &&
+          turnInto(turned(d1, d2, -s), -s, gear, true, true, w) &&
+          turnInto(turned(d2, b.d, s), s, gear, true, true, w))
+        out(w.view());
     }
   }
 }
 
-void Steering::threePoint(Motion a,
-                          Motion b,
-                          int gear,
-                          std::vector<std::vector<Segment>>& out) const
+void Steering::threePoint(Motion a, Motion b, int gear, const Each& out) const
 {
   const float l = 2.0f * m_R;
   for (int s : {1, -1})
@@ -290,11 +312,11 @@ void Steering::threePoint(Motion a,
       const glm::vec2 o2 = mid + side * h * across;
       const float d1 = angleOf(o2 - o1) + sf * kHalfPi;
       const float d2 = angleOf(o3 - o2) + sf * kHalfPi;
-      std::vector<Segment> w;
-      if (turn(turned(a.d, d1, s), s, gear, true, false, w) &&
-          turn(turned(d1 + kPi, d2, s), s, -gear, false, false, w) &&
-          turn(turned(d2 + kPi, b.d, s), s, gear, false, true, w))
-        out.push_back(std::move(w));
+      Word w;
+      if (turnInto(turned(a.d, d1, s), s, gear, true, false, w) &&
+          turnInto(turned(d1 + kPi, d2, s), s, -gear, false, false, w) &&
+          turnInto(turned(d2 + kPi, b.d, s), s, gear, false, true, w))
+        out(w.view());
     }
   }
 }
@@ -303,7 +325,7 @@ void Steering::cuspFirst(Motion a,
                          Motion b,
                          int gear,
                          int samples,
-                         std::vector<std::vector<Segment>>& out) const
+                         const Each& out) const
 {
   for (int s : {1, -1})
   {
@@ -316,22 +338,26 @@ void Steering::cuspFirst(Motion a,
                          static_cast<float>(std::max(samples, 1));
       const float d1 = a.d + sf * deflection;
       const glm::vec2 p = o1 + m_R * unit(d1 - sf * kHalfPi);
-      std::vector<Segment> first;
-      if (!turn(deflection, s, gear, true, false, first))
+      Word first;
+      if (!turnInto(deflection, s, gear, true, false, first))
         continue;
-      std::vector<std::vector<Segment>> rest;
       // (On from the cusp backing the other way, the same motion sense: a
       // turn the other way would only go back over the first.)
-      csc({p, d1 + kPi}, b, -gear, rest, false);
-      for (std::vector<Segment>& r : rest)
-      {
-        if (r.empty() || r.front().gear != -gear ||
-            (r.front().k0 * static_cast<float>(-gear) * sf) <= 0.0f)
-          continue;
-        std::vector<Segment> w = first;
-        w.insert(w.end(), r.begin(), r.end());
-        out.push_back(std::move(w));
-      }
+      csc(
+          {p, d1 + kPi},
+          b,
+          -gear,
+          [&](std::span<const Segment> r)
+          {
+            if (r.empty() || r.front().gear != -gear ||
+                (r.front().k0 * static_cast<float>(-gear) * sf) <= 0.0f)
+              return;
+            Word w = first;
+            for (const Segment& x : r)
+              w.push_back(x);
+            out(w.view());
+          },
+          false);
     }
   }
 }
@@ -340,6 +366,29 @@ std::vector<std::vector<Segment>>
 Steering::paths(Pose2 from, Pose2 to, const Words& words) const
 {
   std::vector<std::vector<Segment>> out;
+  paths(from,
+        to,
+        words,
+        [&](std::span<const Segment> w)
+        { out.emplace_back(w.begin(), w.end()); });
+  return out;
+}
+
+void Steering::paths(Pose2 from,
+                     Pose2 to,
+                     const Words& words,
+                     const Each& each) const
+{
+  // (Each checked, if asked: it really ends at the goal.)
+  const Each verified = [&](std::span<const Segment> w)
+  {
+    const Pose2 e = endOf(from, w);
+    if (glm::length(e.position - to.position) > 0.02f ||
+        std::abs(wrapAngle(e.heading - to.heading)) > 0.01f)
+      return;
+    each(w);
+  };
+  const Each& out = words.verify ? verified : each;
   const auto motion = [](Pose2 p, int gear) {
     return Motion{p.position, gear > 0 ? p.heading : p.heading + kPi};
   };
@@ -359,22 +408,18 @@ Steering::paths(Pose2 from, Pose2 to, const Words& words) const
       cuspFirst(
           motion(from, gear), motion(to, -gear), gear, words.cuspSamples, out);
       // CSC|C: a C|CSC from the goal back to the start, driven the other way.
-      std::vector<std::vector<Segment>> back;
-      cuspFirst(
-          motion(to, gear), motion(from, -gear), gear, words.cuspSamples, back);
-      for (const std::vector<Segment>& w : back)
-        out.push_back(reversed(w));
+      cuspFirst(motion(to, gear),
+                motion(from, -gear),
+                gear,
+                words.cuspSamples,
+                [&](std::span<const Segment> w)
+                {
+                  Word r;
+                  for (auto it = w.rbegin(); it != w.rend(); ++it)
+                    r.push_back({-it->gear, it->length, it->k1, it->k0});
+                  out(r.view());
+                });
     }
-  // (Each checked, if asked: it really ends at the goal.)
-  if (words.verify)
-    std::erase_if(out,
-                  [&](const std::vector<Segment>& w)
-                  {
-                    const Pose2 e = endOf(from, w);
-                    return glm::length(e.position - to.position) > 0.02f ||
-                           std::abs(wrapAngle(e.heading - to.heading)) > 0.01f;
-                  });
-  return out;
 }
 
 float hitchStep(const Trailer& trailer, float hitch, float ds, float k)

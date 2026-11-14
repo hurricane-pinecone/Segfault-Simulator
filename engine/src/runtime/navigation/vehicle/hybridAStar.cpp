@@ -545,6 +545,7 @@ struct Heuristic
       std::vector<glm::vec2> dir; // (the heading at each)
       float turn;                 // (its start's heading, from the end's)
       float length = 0.0f;
+      float reach = 0.0f; // (its discs' furthest from where it's driven to)
     };
     // The rig's body as discs of the inscribed radius along it, its
     // reference point's and as far ahead and behind as the boxes reach:
@@ -657,6 +658,60 @@ struct Heuristic
       const int64_t c = cellOf(at, cell, w, h);
       return c < 0 ? -1.0f : room[static_cast<std::size_t>(c)];
     };
+    // (Likewise how far each cell is from the nearest one a disc can't be on
+    // (not free, or ground barred to the reference point) or the raster's
+    // edge, kept on the low side: a move whose discs all stay within that of
+    // where it starts can't meet one, so they aren't looked at one by one.)
+    std::vector<float> discRoom(static_cast<std::size_t>(w) * h, 1e9f);
+    {
+      const float dg = 1.41421356f;
+      for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+          const std::size_t i = static_cast<std::size_t>(y) * w + x;
+          float& r = discRoom[i];
+          if (free[i] < 2)
+            r = 0.0f;
+          r = std::min(r,
+                       static_cast<float>(std::min(
+                           std::min(x, w - 1 - x), std::min(y, h - 1 - y))));
+          if (x > 0)
+            r = std::min(r, discRoom[i - 1] + 1);
+          if (y > 0)
+          {
+            const std::size_t up = i - static_cast<std::size_t>(w);
+            r = std::min(r, discRoom[up] + 1);
+            if (x > 0)
+              r = std::min(r, discRoom[up - 1] + dg);
+            if (x + 1 < w)
+              r = std::min(r, discRoom[up + 1] + dg);
+          }
+        }
+      for (int y = h - 1; y >= 0; --y)
+        for (int x = w - 1; x >= 0; --x)
+        {
+          const std::size_t i = static_cast<std::size_t>(y) * w + x;
+          float& r = discRoom[i];
+          if (x + 1 < w)
+            r = std::min(r, discRoom[i + 1] + 1);
+          if (y + 1 < h)
+          {
+            const std::size_t dn = i + static_cast<std::size_t>(w);
+            r = std::min(r, discRoom[dn] + 1);
+            if (x > 0)
+              r = std::min(r, discRoom[dn - 1] + dg);
+            if (x + 1 < w)
+              r = std::min(r, discRoom[dn + 1] + dg);
+          }
+        }
+      for (float& r : discRoom)
+        r = r * cell / 1.0824f - 2.0f * cell;
+    }
+    const auto discRoomAt = [&](glm::vec2 at)
+    {
+      const int64_t c = cellOf(at, cell, w, h);
+      return c < 0 ? -1.0f : discRoom[static_cast<std::size_t>(c)];
+    };
     // (Each outline's circle: about a centre, in its own frame.)
     const auto circle = [](const std::vector<glm::vec2>& pts)
     {
@@ -710,6 +765,10 @@ struct Heuristic
         }
         m.turn = advance({}, back, step).heading;
         m.length = step;
+        for (std::size_t k = 0; k < m.at.size(); ++k)
+          for (const float along : discs)
+            m.reach =
+                std::max(m.reach, glm::length(m.at[k] + m.dir[k] * along));
         moves.push_back(std::move(m));
         const float a = settled(k, step);
         hitchTurn.push_back({std::cos(a), std::sin(a)});
@@ -787,6 +846,7 @@ struct Heuristic
       const glm::vec2 f = unit(p.heading), l{-f.y, f.x};
       const float fp = least[i / 2 / kDirs];
       const int gear = i % 2 ? -1 : 1; // (what it drives on from p in)
+      const float spare = discRoomAt(p.position);
       const auto hits = [&](glm::vec2 at)
       {
         const int64_t c = cellOf(at, cell, w, h);
@@ -847,6 +907,8 @@ struct Heuristic
           }
           if (!clear)
             break;
+          if (spare > m.reach)
+            continue; // (every disc of it in the open)
           for (const float along : discs)
           {
             const int64_t c = cellOf(a + d * along, cell, w, h);
@@ -1026,6 +1088,8 @@ public:
   // once Tunables::improveNodes more have been grown looking for one.)
   float m_shotCost = kInf;
   uint32_t m_shotAt = 0; // (poses grown when the first shot found a way)
+  uint32_t m_bestAt = 0, m_ways = 0; // (when the best was found; how many)
+  float m_firstCost = kInf;
   int32_t closest =
       0; // (the node with the least heuristic: the clear way so far)
   // (Scratch for grow(), and the near-goal words' times by fine bin.)
@@ -1279,8 +1343,11 @@ public:
         w.cuspSamples = 0; // (the three-point turns, not the C|CSCs)
         // (Every word, however it arrives: the words with cusps are sampled
         // too sparsely to bound one asked to arrive in a gear.)
-        for (const auto& word : rig.levels[0].paths(p, g.pose, w))
-          least = std::min(least, rig.estimate(word));
+        rig.levels[0].paths(p,
+                            g.pose,
+                            w,
+                            [&](std::span<const Segment> word)
+                            { least = std::min(least, rig.estimate(word)); });
         m_near.emplace(key, least);
       }
       if (std::isfinite(least))
@@ -1288,12 +1355,16 @@ public:
     }
     return h * q.tunables.searchWeight;
   }
-  // (Motions::words(), timed: PlanStats::wordsMs.)
-  std::vector<std::vector<Segment>>
-  timedWords(Pose2 a, Pose2 b, bool cusps, int cuspSamples) const
+  // (Motions::wordsInto(), timed: PlanStats::wordsMs; into one of the
+  // search's own lists, laid out flat.)
+  mutable Motions::WordList m_wordLists[2];
+  const Motions::WordList&
+  timedWords(Pose2 a, Pose2 b, bool cusps, int cuspSamples, int list = 0) const
   {
     const ProfScope prof(t_prof.words);
-    return rig.words(a, b, cusps, cuspSamples);
+    Motions::WordList& out = m_wordLists[list];
+    rig.wordsInto(a, b, cusps, cuspSamples, out);
+    return out;
   }
   // A word worth checking: its reference point never in a cell where it
   // certainly touches (cheap: no boxes, no trailer).
@@ -1342,8 +1413,10 @@ public:
     if (v < vias.size())
     {
       int tried = 0;
-      for (const auto& word : timedWords(n.pose, vias[v], false, 10))
+      const Motions::WordList& words = timedWords(n.pose, vias[v], false, 10);
+      for (std::size_t wi = 0; wi < words.size(); ++wi)
       {
+        const std::span<const Segment> word = words.at(wi);
         if (std::any_of(word.begin(),
                         word.end(),
                         [](const Segment& sg) { return sg.gear < 0; }))
@@ -1368,7 +1441,7 @@ public:
         c.escape = w.escape;
         c.parent = static_cast<int32_t>(from);
         c.prim = -2 - static_cast<int32_t>(extra.size());
-        extra.push_back(word);
+        extra.emplace_back(word.begin(), word.end());
         c.h = hOf(c.pose, c.gear);
         const uint32_t idx = static_cast<uint32_t>(nodes.size());
         nodes.push_back(c);
@@ -1413,7 +1486,12 @@ public:
     if (total >= m_shotCost)
       return false;
     if (m_shotCost == kInf)
+    {
       m_shotAt = m_grown;
+      m_firstCost = total;
+    }
+    ++m_ways;
+    m_bestAt = m_grown;
     m_shotCost = total;
     found_ = static_cast<int32_t>(from);
     shot = std::move(word);
@@ -1445,9 +1523,11 @@ public:
       // construction.)
       const bool direct =
           !cantBeat(from, rig.leastTime(n.pose.position, g.pose.position));
-      for (const auto& word : direct ? timedWords(n.pose, g.pose, close, 2)
-                                     : std::vector<std::vector<Segment>>{})
+      const Motions::WordList* words =
+          direct ? &timedWords(n.pose, g.pose, close, 2) : nullptr;
+      for (std::size_t wi = 0; words && wi < words->size(); ++wi)
       {
+        const std::span<const Segment> word = words->at(wi);
         // (A goal to be come to in one gear: only words ending in it.)
         if (!arrivesAsAsked(g, word, rig.length))
           continue;
@@ -1468,7 +1548,11 @@ public:
         if (g.hitch &&
             std::abs(wrapAngle(w.hitch - *g.hitch)) > g.hitchTolerance)
           continue;
-        offered = offer(from, word, w, static_cast<int>(gi)) || offered;
+        offered = offer(from,
+                        std::vector<Segment>(word.begin(), word.end()),
+                        w,
+                        static_cast<int>(gi)) ||
+                  offered;
       }
       // Its approach (as a driver parks in a bay): a goal hemmed in (a shed,
       // a gap) is reached straight in, the way it faces or backing in, from
@@ -1510,8 +1594,11 @@ public:
             !arrives(last.end, g.pose))
           continue;
         int triedIn = 0;
-        for (const auto& word : timedWords(n.pose, lined, true, 2))
+        const Motions::WordList& inWords =
+            timedWords(n.pose, lined, true, 2, 1);
+        for (std::size_t wi = 0; wi < inWords.size(); ++wi)
         {
+          const std::span<const Segment> word = inWords.at(wi);
           if (triedIn++ >= 3)
             break;
           if (!plausible(n.pose, word))
@@ -1652,6 +1739,14 @@ public:
   Way found() const override { return chainTo(found_, true); }
   Way bestSoFar() const override { return chainTo(closest, false); }
   uint32_t grown() const override { return m_grown; }
+  void describe(PlanStats& s) const override
+  {
+    s.ways = m_ways;
+    s.firstAt = m_shotAt;
+    s.bestAt = m_bestAt;
+    s.firstSeconds = m_ways ? m_firstCost : 0.0f;
+    s.bestSeconds = m_ways ? m_shotCost : 0.0f;
+  }
   uint32_t shots() const override { return m_shots; }
   bool leftArea() const override { return m_leftArea; }
   // What hems it in: what the motions out of the poses nearest the goal
@@ -1770,6 +1865,33 @@ void takeProfTimes(double& heur,
   words = t_prof.words;
   near = t_prof.near;
   t_prof = {};
+}
+
+std::vector<HeuristicParts> heuristicAt(const PlanRequest& request,
+                                        std::span<const Pose2> poses)
+{
+  std::vector<HeuristicParts> out(poses.size());
+  if (!request.space || request.goals.empty())
+    return out;
+  const Motions rig(request);
+  // (The planner's first area: round the start and goals, its margin.)
+  Rect area{request.from.position, request.from.position};
+  std::vector<Pose2> seeds;
+  for (const Goal& g : request.goals)
+  {
+    area.lo = glm::min(area.lo, g.pose.position);
+    area.hi = glm::max(area.hi, g.pose.position);
+    seeds.push_back(g.pose);
+  }
+  area.lo -= request.margin;
+  area.hi += request.margin;
+  Heuristic h;
+  h.build(rig, area, seeds, request.corridor, request.corridorWidth);
+  h.buildHeading(rig, seeds, request.from);
+  for (std::size_t i = 0; i < poses.size(); ++i)
+    out[i] = {
+        h.at(poses[i].position), h.turningAt(poses[i]), h.headingAt(poses[i])};
+  return out;
 }
 
 void addHybridAStar(Searches& searches)

@@ -46,17 +46,21 @@ the scene plays:
 | `fade` | How long switching `clip` cross-fades, in seconds |
 | `source` | The model asset (`asset:<id>`) whose clips it plays; empty: its skinned meshes' own model. Another model's clips play on this one's joints by name (a shared animation library for characters with the same skeleton) |
 
-Game code drives it through the component:
+Game code drives it through `AnimationSystem` (what needs its clips or
+starts one) and the component's fields (the rest). The component is plain
+data: its hidden fields (`playback`, `finished`...) are the system's to keep.
 
 ```cpp
+auto& animation = registry->getSystem<sfs::AnimationSystem>();
 auto& animator = entity.getComponent<sfs::AnimatorComponent>();
-animator.play("walk", 0.25f);    // cross-fade to walk over a quarter second
-animator.setSpeed(walkSpeed / 1.4f);
-if (animator.current() == "pick-up" && animator.finished())
-  animator.play("idle", 0.2f);
-float seconds = animator.length("sprint");
-animator.stop();                 // hold the pose; resume() carries on
-animator.setNormalizedTime(0.5f);
+animation.play(entity, "walk", 0.25f); // cross-fade to walk over a quarter second
+animator.speed = walkSpeed / 1.4f;
+if (animator.clip == "pick-up" && animator.finished)
+  animation.play(entity, "idle", 0.2f);
+float seconds = animation.length(entity, "sprint");
+animator.playing = false;              // hold the pose; true carries on
+animator.time = 0.5f;                  // seek
+animation.restart(entity);             // the clip playing, from its start
 ```
 
 `play()` with a fade blends the clip in while the others fade out; playing
@@ -70,11 +74,15 @@ Animation events are not supported yet.
 Every scene has an `AnimationSystem` (StandardScene adds it). Each update it:
 
 1. moves each animator's time on by the update's seconds times its `speed`
-   (times `AnimationSystem::setTimeScale()`): a game that stops updating its
-   scene (paused) pauses its animations, and `speed` 0 holds one;
+   (times `AnimationSystem::setTimeScale()`), or not at all while the game is
+   paused (`Registry::setPaused()`); `speed` 0 holds one;
 2. samples its clips and blends them by their cross-fade weights. The nodes its
-   clips move start from their rest pose (as the model was placed), so a
-   channel one clip has and the next doesn't goes back to rest;
+   clips move start from their rest pose, so a channel one clip has and the
+   next doesn't goes back to rest. The rest pose is each node's
+   `RestPoseComponent`, recorded as its model was placed (see
+   [Prefabs](../serialization/index.md#prefabs)); a node made in code gets one
+   from its transform when the animator first finds it while playing. While
+   editing, nothing moves the joints, so they rest as they are;
 3. sets the joints' `TransformComponent`s (while the game plays);
 4. works out each skinned mesh's joint palette (`inverse(mesh) * joint *
    inverseBind`, all relative to the animator) and posed bounds, and hands

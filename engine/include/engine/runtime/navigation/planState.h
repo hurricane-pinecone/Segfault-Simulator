@@ -39,6 +39,11 @@ struct PlanStats
   // and their milliseconds.)
   double wordsMs = 0.0, nearMs = 0.0, costMs = 0.0;
   uint64_t costCalls = 0;
+  // (How it got to its way: the ways found (each quicker than the last), the
+  // first one's time (seconds, as the search prices it) and the poses grown
+  // when it and the one taken were found.)
+  uint32_t ways = 0, firstAt = 0, bestAt = 0;
+  float firstSeconds = 0.0f, bestSeconds = 0.0f;
 };
 
 } // namespace sfs::nav

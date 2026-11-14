@@ -6,7 +6,6 @@
 #include <engine/core/components/grassComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
 #include <engine/core/components/nameComponent.h>
-#include <engine/core/components/parentComponent.h>
 #include <engine/core/components/pointLightComponent.h>
 #include <engine/core/components/spriteComponent.h>
 #include <engine/core/components/transformComponent.h>
@@ -635,14 +634,14 @@ int main()
     source.scene.flushEntities();
 
     const nlohmann::json saved = source.serializer().save(source.scene);
-    CHECK(saved["formatVersion"] == 2);
+    CHECK(saved["formatVersion"] == SceneSerializer::kSceneFormatVersion);
     CHECK(saved["entities"].size() == 2u); // roots: Farm, Loose
     CHECK(saved["entities"][0]["children"][0]["NameComponent"]["name"] ==
           "Barn");
     CHECK(saved["entities"][0]["children"][0]["children"][0]["NameComponent"]
                ["name"] == "Door");
     CHECK(!saved["entities"][1].contains("children"));
-    CHECK(!saved.dump().contains("ParentComponent"));
+    CHECK(!saved.dump().contains("Parent"));
 
     World target;
     CHECK(target.serializer().load(saved, target.scene));
@@ -697,15 +696,32 @@ int main()
     world.scene.flushEntities();
 
     const Entity copy = world.serializer().loadEntity(
-        world.serializer().saveEntity(world.scene, lamp), world.scene, root);
+        world.serializer().saveEntity(lamp), world.scene, root);
     world.scene.flushEntities();
 
     CHECK(world.scene.entities().size() == 5u);
     CHECK(hierarchy::parentOf(copy) == root);
-    const hierarchy::EntityTree tree(world.scene.entities());
-    CHECK(tree.children(root).size() == 2u);
-    CHECK(tree.children(copy).size() == 1u);
-    CHECK(world.nameOf(tree.children(copy)[0]) == "Bulb");
+    std::vector<Entity> rootChildren;
+    for (const Entity& child : hierarchy::childrenOf(root))
+      rootChildren.push_back(child);
+    CHECK((rootChildren == std::vector<Entity>{lamp, copy}));
+    CHECK(world.nameOf(hierarchy::findChild<NameComponent>(copy)) == "Bulb");
+  }
+
+  TEST("saving after a top-level leaf is deleted should leave no trace of it")
+  {
+    World world;
+    world.named("Kept");
+    Entity leaf = world.named("Leaf");
+    world.scene.flushEntities();
+    CHECK(world.scene.preorder().size() == 2u); // built before the delete
+    world.scene.destroyEntity(leaf);
+    world.scene.flushEntities();
+    const nlohmann::json saved = world.serializer().save(world.scene);
+    CHECK(saved["entities"].size() == 1u);
+    for (const nlohmann::json& entry : saved["entities"])
+      CHECK(!entry.empty());
+    CHECK(world.scene.preorder().size() == 1u);
   }
 
   TEST("a format 1 file (no hierarchy) should still load")
@@ -718,7 +734,7 @@ int main()
     CHECK(world.serializer().load(v1, world.scene));
     world.scene.flushEntities();
     CHECK(world.findByName("Old").isValid());
-    CHECK(!world.findByName("Old").hasComponent<ParentComponent>());
+    CHECK(!hierarchy::parentOf(world.findByName("Old")).isValid());
   }
 
   return testing::report("sceneSerializerTests");

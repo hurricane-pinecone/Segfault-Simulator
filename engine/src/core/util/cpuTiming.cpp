@@ -1,5 +1,6 @@
 #include "engine/core/util/cpuTiming.h"
 
+#include "engine/core/ecs/component.h"
 #include "engine/core/logger/logger.h"
 
 #include <algorithm>
@@ -10,9 +11,6 @@
 #include <mutex>
 #include <typeinfo>
 #include <vector>
-#if defined(__GNUC__) || defined(__clang__)
-  #include <cxxabi.h>
-#endif
 
 namespace sfs::cpuTiming
 {
@@ -74,15 +72,7 @@ State& state()
 
 std::string readable(const std::type_info& type)
 {
-  std::string name = type.name();
-#if defined(__GNUC__) || defined(__clang__)
-  int status = 0;
-  char* demangled =
-      abi::__cxa_demangle(name.c_str(), nullptr, nullptr, &status);
-  if (status == 0 && demangled)
-    name = demangled;
-  std::free(demangled);
-#endif
+  std::string name = detail::readableTypeName(type);
   if (name.rfind("sfs::", 0) == 0)
     name = name.substr(5);
   return name;

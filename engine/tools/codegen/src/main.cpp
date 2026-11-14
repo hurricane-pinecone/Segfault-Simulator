@@ -68,6 +68,14 @@ bool generateScripts(const std::vector<std::filesystem::path>& headers,
     }
     if (result.type)
       types.push_back(std::move(*result.type));
+    for (sfs::codegen::TypeModel& type : result.components)
+      types.push_back(std::move(type));
+  }
+  for (const sfs::codegen::Diagnostic& diagnostic :
+       sfs::codegen::checkNames(types))
+  {
+    print(diagnostic);
+    failed = true;
   }
   if (failed)
     return false;

@@ -6,11 +6,15 @@ namespace sfs
 {
 
 /**
- * Flattens grass (GrassComponent) it moves through, as a sphere: for things
- * without a rigid body (a character moved by script, a cart on rails, a
- * tractor's wheels). Rigid bodies flatten grass by themselves
- * (RigidBody3DComponent::bendsGrass).
+ * Flattens grass (GrassComponent) it moves through, as a sphere: anything
+ * that should (a character, a crate knocked about, a tractor's wheels). The
+ * one way grass is bent: nothing else (a rigid body, a collider) bends it.
  *
+ * @param bool fitColliders - a sphere for each of the entity's own solid
+ *                            colliders (a sphere as itself; a box or capsule
+ *                            as a sphere as wide as its footprint, its bottom
+ *                            where theirs is): a physics prop. Takes
+ *                            precedence over fitMesh
  * @param bool fitMesh - the sphere around the entity's own mesh (its
  *                       MeshRendererComponent's), as it's placed: put one on
  *                       each wheel and only the wheels bend grass. Without a
@@ -22,7 +26,8 @@ namespace sfs
  */
 struct GrassBenderComponent
 {
-  bool fitMesh = true;
+  bool fitColliders = false;
+  [[sfs::showIf(!fitColliders)]] bool fitMesh = true;
   [[sfs::range(0.05, 20)]] [[sfs::showIf(!fitMesh)]] float radius = 0.5f;
   glm::vec3 offset{0.0f};
 };

@@ -72,12 +72,15 @@ add_dependencies(SfsEditor SfsEditorNvimConfig)
 # and engine it was built with: bake those into editorBuildConfig.h.
 
 # An installed copy of this engine (headers, import libraries, CMake package)
-# for projects to build against. Refreshed whenever the engine changes.
+# for projects to build against. Refreshed whenever the engine changes; what
+# changed is stamped with the time it's installed (installSdk.cmake), so game
+# modules compiled before it are rebuilt against it.
 set(SFS_EDITOR_ENGINE_PREFIX "${CMAKE_BINARY_DIR}/sdk")
 if(TARGET engine-core) # in-tree: install the engine we just built
     add_custom_target(engine-sdk
-        COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${SFS_EDITOR_ENGINE_PREFIX}"
-        COMMENT "Installing the engine SDK for game modules"
+        COMMAND ${CMAKE_COMMAND} -DBUILD=${CMAKE_BINARY_DIR} -DPREFIX=${SFS_EDITOR_ENGINE_PREFIX}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/installSdk.cmake"
+        COMMENT "Installing the engine SDK for game modules (changed files stamped now: modules rebuild against them)"
         VERBATIM)
     add_dependencies(engine-sdk engine-core engine engine-webgpu)
     add_dependencies(SfsEditor engine-sdk)

@@ -26,7 +26,8 @@ ComponentOps componentOps()
   return ops;
 }
 
-/** A TypeInfo for component T, ready for fields to be appended. */
+/** A TypeInfo for component T, ready for fields to be appended. An empty T
+ * is a tag (TypeInfo::tag). */
 template <typename T>
 TypeInfo
 componentType(std::string name, std::string displayName, std::string module)
@@ -36,6 +37,7 @@ componentType(std::string name, std::string displayName, std::string module)
   type.displayName = std::move(displayName);
   type.module = std::move(module);
   type.kind = TypeKind::Component;
+  type.tag = std::is_empty_v<T>;
   type.component = componentOps<T>();
   return type;
 }

@@ -21,6 +21,7 @@
 #include "engine/core/components/particleEmitterComponent.h"
 #include "engine/core/components/pointLightComponent.h"
 #include "engine/core/components/renderLayerComponent.h"
+#include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/rigidBody2DComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/scriptComponent.h"

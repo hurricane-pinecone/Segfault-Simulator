@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"
@@ -60,8 +61,11 @@ public:
 
   // A frame: the systems (in game time: see Registry::setTimeScale() and
   // System::TimeStep), then the game objects and onUpdate() (real time:
-  // they're the player's, input and cameras).
+  // they're the player's, input and cameras), then the systems' lateUpdate().
   void update(double deltaTime);
+  // The frame's input: filterInput(), then each game object (without the
+  // keys that input contexts outranking its own claim: see
+  // InputContextComponent), then onProcessInput().
   void processInput(const sfs::Input& input);
   void render();
 
@@ -87,16 +91,29 @@ public:
   // Every entity with this name, parents before children.
   std::vector<Entity> findEntities(std::string_view name);
 
-  // Every living entity, in id order (e.g. for an editor's hierarchy).
+  // Every living entity, in id order.
   std::vector<Entity> entities() { return m_registry.entities(); }
 
-  // Every living entity with all these components, in id order: a query for
-  // scripts (a System keeps its own list of the entities it works on).
-  template <typename... TComponents>
-  std::vector<Entity> view()
+  /**
+   * Every living entity, parents before children, roots and siblings in id
+   * order (the order scenes save in), each with its parent's place in the
+   * list: hierarchy::preorder() of the scene's registry. Rebuilt only after
+   * the hierarchy or the set of entities changed, in place by the first call
+   * after, so while iterating it, call nothing that may call preorder() (a
+   * save, findEntity). Main thread only.
+   * @return the index
+   */
+  const std::vector<HierarchyLinks::Placed>& preorder()
   {
-    return m_registry.view<TComponents...>();
+    return m_registry.preorder();
   }
+
+  /**
+   * The root entities (those with no parent), in id order: hierarchy::roots()
+   * of the scene's registry.
+   * @return a range of Entity, read from the registry as it goes
+   */
+  hierarchy::RootRange roots() { return hierarchy::roots(m_registry); }
 
   // Apply pending entity creation/destruction now instead of at the start of
   // the next update (e.g. after an editor replaces the scene's contents).
@@ -156,6 +173,37 @@ public:
   // physics, not by game code.
   void notifyContact(const Contact3D& contact, bool begun);
   void notifyContact(const Contact2D& contact, bool begun);
+
+  /** Game seconds since play began: the time handed to the scene's systems
+   * (Registry::gameTime()). */
+  double gameTime() const { return m_registry.gameTime(); }
+
+  /** Whether the game is paused (Registry::paused()). */
+  bool paused() const { return m_registry.paused(); }
+
+  /**
+   * The flushed, living entities that match these terms (components, one
+   * Any<...> group, Excluding<...> groups), in id order: the registry's
+   * shared list, kept up to date (Registry::query()). To add or remove these
+   * component types while going through it, go through a copy.
+   * @return the shared list, read-only
+   */
+  template <typename... TTerms>
+  const std::vector<Entity>& query()
+  {
+    return m_registry.query<TTerms...>();
+  }
+
+  /**
+   * The scene's one TComponent (a world clock, the weather), in constant
+   * time: Registry::singleton().
+   * @return the component, or null when no living entity has one
+   */
+  template <typename TComponent>
+  TComponent* singleton()
+  {
+    return m_registry.singleton<TComponent>();
+  }
 
   template <typename TSystem, typename... TArgs>
   TSystem& addSystem(TArgs&&... args);

@@ -40,7 +40,7 @@ struct Goal
 };
 
 /** The gear the last stretch of a way is driven in (0: none). */
-inline int lastGear(const std::vector<Segment>& segments)
+inline int lastGear(std::span<const Segment> segments)
 {
   for (auto it = segments.rbegin(); it != segments.rend(); ++it)
     if (it->length > 0.0f)
@@ -49,7 +49,7 @@ inline int lastGear(const std::vector<Segment>& segments)
 }
 
 /** How far the last stretch of a way runs in its gear (m). */
-inline float lastRun(const std::vector<Segment>& segments)
+inline float lastRun(std::span<const Segment> segments)
 {
   const int gear = lastGear(segments);
   float run = 0.0f;
@@ -68,9 +68,8 @@ inline float lastRun(const std::vector<Segment>& segments)
  * Whether a way's last stretch is driven as the goal asks (`run`: the least
  * it must run in that gear, the rig's length).
  */
-inline bool arrivesAsAsked(const Goal& goal,
-                           const std::vector<Segment>& segments,
-                           float run)
+inline bool
+arrivesAsAsked(const Goal& goal, std::span<const Segment> segments, float run)
 {
   return goal.arriveGear == 0 || (lastGear(segments) == goal.arriveGear &&
                                   lastRun(segments) >= run - 1e-3f);

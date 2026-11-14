@@ -4,6 +4,8 @@
 #include "engine/runtime/rendering/standardScene.h"
 #include "engine/runtime/rendering/space2D.h"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 
 // The scene the editor edits: the engine's standard scene, in any style
@@ -42,6 +44,20 @@ public:
 
   /** Remove every entity (applied immediately). */
   void clear();
+
+  /**
+   * An entity's place in save order (parents first, siblings in id order):
+   * how undo and reloads keep a selection, since a reloaded scene's entities
+   * come back in that order.
+   * @return its index, or nothing for a destroyed or invalid entity
+   */
+  std::optional<std::size_t> saveOrderOf(const sfs::Entity& entity);
+
+  /**
+   * The entity at a place in save order (see saveOrderOf()).
+   * @return it, or an invalid entity past the end
+   */
+  sfs::Entity atSaveOrder(std::size_t index);
 
   /** The styles a new scene can start in. */
   enum class Style

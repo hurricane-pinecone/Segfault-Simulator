@@ -35,9 +35,12 @@ private:
 ```
 
 A layer is a script: put it on an entity (Add Component → Script, as for any
-game object), and it shows while the scene plays. Its state is just its
-members, or the game's systems it reads; `body()` runs every frame, so the UI
-always shows the game as it is, with nothing to keep in sync. What it drew is
+game object), and it shows while the scene plays. Its own state is just its
+members. What it shows of the game it reads from components, and what a click
+asks for it writes into a component's request field for the system that owns
+it to act on: a layer never reads or calls a game system, the same rule as for
+systems. `body()` runs every frame, so the UI always shows the game as it is,
+with nothing to keep in sync. What it drew is
 kept, though: a frame whose `body()` comes out the same isn't laid out or
 drawn again, and one that's changed is only where it changed (see
 [Retained drawing](#retained-drawing)), so writing it this way costs next to
@@ -250,15 +253,16 @@ grey checker.
 A camera feed films the scene into a small picture: a tractor's rear camera, a
 combine's grain tank. Put a `CameraFeedComponent` on an entity (a child of the
 machine, so it rides along); it looks along the entity's +X with +Z up, like a
-camera entity. Ask the render system for its picture, a
-`std::shared_ptr<const RenderTexture>`, and show it:
+camera entity. Its `picture`, a `std::shared_ptr<RenderTexture>` (as Unity's
+`Camera.targetTexture`), is what it films: the render system makes it at its
+first update after the feed appears, sized `width` by `height`, and resizes it
+when they change. A layer reads it from the component and shows it:
 
 ```cpp
-auto& render = scene().getSystem<sfs::RenderSystem>();
-m_rear = render.cameraFeed(rearCameraEntity); // made the first time
-
 // in a view
-Image(m_rear).resizable().frame(320, 180)
+const auto& feed = rearCamera.getComponent<sfs::CameraFeedComponent>();
+if (feed.picture)
+  Image(feed.picture).resizable().frame(320, 180)
 ```
 
 The GPU draws it, and its pixels never come back to the CPU. Each new picture

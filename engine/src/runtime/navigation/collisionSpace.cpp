@@ -28,15 +28,26 @@ glm::vec2 rotate(glm::vec2 v, float a)
 
 namespace
 {
-// (A query timed into this thread's CheckStats.)
+// (A query timed into this thread's CheckStats: one in 8, counted for 8
+// (reading the clock twice a query cost about as much as a broad-phase
+// answer).)
 struct Timed
 {
-  std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+  bool on;
+  std::chrono::steady_clock::time_point t0;
+  Timed()
+  {
+    const CheckStats& stats = checkStats();
+    on = ((stats.exact + stats.broad) & 7u) == 0;
+    if (on)
+      t0 = std::chrono::steady_clock::now();
+  }
   ~Timed()
   {
-    checkStats().ms += std::chrono::duration<double, std::milli>(
-                           std::chrono::steady_clock::now() - t0)
-                           .count();
+    if (on)
+      checkStats().ms += 8.0 * std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - t0)
+                                   .count();
   }
 };
 // (What prepare() hands back: the probe, the span it stands on, and its

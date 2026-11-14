@@ -2,6 +2,7 @@
 #include "../rendering/mockRenderer.h"
 
 #include <engine/core/components/boxCollider3DComponent.h>
+#include <engine/core/components/contactReportComponent.h>
 #include <engine/core/components/nameComponent.h>
 #include <engine/core/components/rigidBody3DComponent.h>
 #include <engine/core/components/sphereCollider3DComponent.h>
@@ -76,6 +77,65 @@ struct World
   }
 
   float z(const Entity& entity) { return hierarchy::worldPosition(entity).z; }
+
+  // A kinematic box that reports touching static ones, under `parent`.
+  Entity cart(const glm::vec3& position, const Entity& parent = {})
+  {
+    Entity entity = box(position, {1.0f, 1.0f, 1.0f}, false);
+    RigidBody3DComponent body;
+    body.kinematic = true;
+    body.touchStatic = true;
+    entity.addComponent<RigidBody3DComponent>(body);
+    if (parent)
+      hierarchy::setParentKeepWorld(entity, parent);
+    return entity;
+  }
+
+  // An entity with a ContactReportComponent and nothing to collide with.
+  Entity reporter(const Entity& parent = {})
+  {
+    Entity entity = scene.createEntity();
+    entity.addComponent<TransformComponent>();
+    entity.addComponent<ContactReportComponent>();
+    if (parent)
+      hierarchy::setParent(entity, parent);
+    return entity;
+  }
+
+  // Runs one frame, adding what `report` heard to the lists.
+  void step(const Entity& report,
+            std::vector<Contact3D>* begun,
+            std::vector<Contact3D>* ended = nullptr)
+  {
+    scene.update(kFrame);
+    const auto& heard = report.getComponent<ContactReportComponent>();
+    if (begun)
+      begun->insert(begun->end(), heard.begun.begin(), heard.begun.end());
+    if (ended)
+      ended->insert(ended->end(), heard.ended.begin(), heard.ended.end());
+  }
+
+  // Moves a body from `from` to `to` in 60 frames, adding what `report`
+  // heard to the lists.
+  void slide(const Entity& entity,
+             const glm::vec3& from,
+             const glm::vec3& to,
+             const Entity& report,
+             std::vector<Contact3D>* begun,
+             std::vector<Contact3D>* ended = nullptr)
+  {
+    for (int i = 1; i <= 60; ++i)
+    {
+      place(entity, from + (to - from) * (static_cast<float>(i) / 60.0f));
+      step(report, begun, ended);
+    }
+  }
+
+  // Teleports a body to `position`.
+  static void place(const Entity& entity, const glm::vec3& position)
+  {
+    hierarchy::setWorldMatrix(entity, TransformComponent(position).matrix());
+  }
 };
 
 bool involves(const Contact3D& contact, const Entity& a, const Entity& b)
@@ -306,6 +366,39 @@ int main()
     const auto hit =
         world.physics.raycast(Ray{{10.0f, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
     CHECK(hit.has_value() && hit->entity == wall);
+  }
+
+  TEST("reparenting a body, or an ancestor of it, should move the body")
+  {
+    World world;
+    Entity left = world.scene.createEntity();
+    left.addComponent<TransformComponent>(
+        TransformComponent{{10.0f, 0.0f, 0.0f}});
+    Entity right = world.scene.createEntity();
+    right.addComponent<TransformComponent>(
+        TransformComponent{{20.0f, 0.0f, 0.0f}});
+    Entity group = world.scene.createEntity(); // only groups: no transform
+    Entity wall = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
+    hierarchy::setParent(wall, group);
+    world.run(kFrame);
+    const auto hitAt = [&](float x)
+    {
+      const auto hit =
+          world.physics.raycast(Ray{{x, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
+      return hit.has_value() && hit->entity == wall;
+    };
+    CHECK(hitAt(0.0f));
+
+    hierarchy::setParent(group, left); // an ancestor gains a parent
+    world.run(kFrame);
+    CHECK(hitAt(10.0f));
+    hierarchy::setParent(group, right); // and moves to another
+    world.run(kFrame);
+    CHECK(hitAt(20.0f));
+    CHECK(!hitAt(10.0f));
+    hierarchy::setParent(wall, {}); // the body itself becomes a root
+    world.run(kFrame);
+    CHECK(hitAt(0.0f));
   }
 
   TEST("a kinematic body should follow its transform and not fall")
@@ -764,6 +857,108 @@ int main()
                         [&](const Contact3D& c)
                         { return involves(c, post, spinner); }) == 1);
     CHECK(ended.empty());
+  }
+
+  TEST("a contact report on a parent should hear its child collider begin and "
+       "end a contact, with `a` set to the child")
+  {
+    World world;
+    Entity post = world.box({3.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    Entity root = world.reporter();
+    Entity cart = world.cart({0.0f, 0.0f, 0.5f}, root);
+    std::vector<Contact3D> begun, ended;
+    world.step(root, &begun, &ended);
+    world.slide(cart, {0.0f, 0.0f, 0.5f}, {3.0f, 0.0f, 0.5f}, root, &begun);
+    CHECK(begun.size() == 1);
+    CHECK(!begun.empty() && begun[0].a == cart && begun[0].b == post &&
+          !begun[0].trigger);
+    world.slide(
+        cart, {3.0f, 0.0f, 0.5f}, {0.0f, 0.0f, 0.5f}, root, nullptr, &ended);
+    CHECK(ended.size() == 1);
+    CHECK(!ended.empty() && ended[0].a == cart && ended[0].b == post);
+  }
+
+  TEST("a nested contact report should take its own subtree from the one "
+       "above it")
+  {
+    World world;
+    world.box({3.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    world.box({3.0f, 5.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    Entity root = world.reporter();
+    Entity inner = world.reporter(root);
+    Entity outerCart = world.cart({0.0f, 0.0f, 0.5f}, root);
+    Entity innerCart = world.cart({0.0f, 5.0f, 0.5f}, inner);
+    std::vector<Contact3D> rootHeard, innerHeard;
+    world.step(root, &rootHeard);
+    world.slide(
+        outerCart, {0.0f, 0.0f, 0.5f}, {3.0f, 0.0f, 0.5f}, root, &rootHeard);
+    world.slide(
+        innerCart, {0.0f, 5.0f, 0.5f}, {3.0f, 5.0f, 0.5f}, inner, &innerHeard);
+    CHECK(rootHeard.size() == 1 && rootHeard[0].a == outerCart);
+    CHECK(innerHeard.size() == 1 && innerHeard[0].a == innerCart);
+  }
+
+  TEST("a contact report should be cleared by an update with no contacts")
+  {
+    World world;
+    world.box({3.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    Entity root = world.reporter();
+    Entity cart = world.cart({0.0f, 0.0f, 0.5f}, root);
+    const auto& report = root.getComponent<ContactReportComponent>();
+    bool heard = false;
+    for (int i = 1; i <= 60 && !heard; ++i)
+    {
+      World::place(cart, {0.05f * i, 0.0f, 0.5f});
+      world.scene.update(kFrame);
+      heard = !report.begun.empty();
+    }
+    CHECK(heard);
+    world.scene.update(kFrame);
+    CHECK(report.begun.empty() && report.ended.empty() &&
+          report.deepened.empty());
+  }
+
+  TEST("two reported bodies should each hear the one contact, from their own "
+       "side")
+  {
+    World world;
+    Entity post = world.box({3.0f, 0.0f, 0.5f}, {0.2f, 0.2f, 1.0f}, false);
+    post.addComponent<ContactReportComponent>();
+    Entity cart = world.cart({0.0f, 0.0f, 0.5f});
+    cart.addComponent<ContactReportComponent>();
+    std::vector<Contact3D> postHeard, cartHeard;
+    world.step(post, &postHeard);
+    for (int i = 1; i <= 60; ++i)
+    {
+      World::place(cart, {0.05f * i, 0.0f, 0.5f});
+      world.step(post, &postHeard);
+      const auto& own = cart.getComponent<ContactReportComponent>().begun;
+      cartHeard.insert(cartHeard.end(), own.begin(), own.end());
+    }
+    CHECK(postHeard.size() == 1 && postHeard[0].a == post &&
+          postHeard[0].b == cart);
+    CHECK(cartHeard.size() == 1 && cartHeard[0].a == cart &&
+          cartHeard[0].b == post);
+  }
+
+  TEST("a contact report should flag a trigger contact")
+  {
+    World world;
+    world.ground();
+    Entity zone =
+        world.box({0.0f, 0.0f, 3.0f}, {4.0f, 4.0f, 1.0f}, false, true);
+    zone.addComponent<ContactReportComponent>();
+    Entity ball = world.scene.createEntity();
+    ball.addComponent<TransformComponent>(
+        TransformComponent{{0.0f, 0.0f, 6.0f}});
+    ball.addComponent<SphereCollider3DComponent>();
+    ball.addComponent<RigidBody3DComponent>();
+    std::vector<Contact3D> begun;
+    for (double t = 0.0; t < 3.0; t += kFrame)
+      world.step(zone, &begun);
+    CHECK(begun.size() == 1);
+    CHECK(!begun.empty() && begun[0].trigger && begun[0].a == zone &&
+          begun[0].b == ball);
   }
 
   return testing::report("physicsSystem3DTests");

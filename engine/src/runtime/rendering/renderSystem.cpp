@@ -193,9 +193,8 @@ BloomSettings RenderSystem::effectiveBloom() const
   if (m_style && m_style->bloom)
     return *m_style->bloom;
   const Entity camera = sceneCamera();
-  return camera.isValid()
-             ? camera.getComponent<CameraComponent>().bloomSettings()
-             : m_bloom;
+  return camera.isValid() ? bloomOf(camera.getComponent<CameraComponent>())
+                          : m_bloom;
 }
 
 HazeSettings RenderSystem::effectiveHaze() const
@@ -307,7 +306,7 @@ void RenderSystem::render()
       const auto& lens = camera.getComponent<CameraComponent>();
       glm::vec2 point = hierarchy::worldTransform(camera).position2D();
       if (camera.hasComponent<CameraFollowComponent>())
-        point += camera.getComponent<CameraFollowComponent>().shakeOffset() *
+        point += camera.getComponent<CameraFollowComponent>().shakeOffset *
                  glm::vec2(1.0f, m_space2D->ySign());
       const glm::vec3 centre = m_space2D->place(point);
       const float back = std::max(lens.farPlane * 0.5f, 1.0f);
@@ -340,15 +339,16 @@ void RenderSystem::render()
   else if (m_followSceneCamera)
     if (const Entity camera = sceneCamera(); camera.isValid())
     {
-      camera.getComponent<CameraComponent>().applyTo(
-          m_camera, hierarchy::worldMatrix(camera));
+      viewThrough(camera.getComponent<CameraComponent>(),
+                  hierarchy::worldMatrix(camera),
+                  m_camera);
 
       // A follow's shake moves the view across itself (as it moves a flat
       // or isometric camera across the ground).
       if (camera.hasComponent<CameraFollowComponent>())
       {
         const glm::vec2 shake =
-            camera.getComponent<CameraFollowComponent>().shakeOffset();
+            camera.getComponent<CameraFollowComponent>().shakeOffset;
         const glm::vec3 right = m_camera.groundRight();
         const glm::vec3 up = glm::cross(right, m_camera.viewDirection());
         m_camera.target += right * shake.x + up * shake.y;
@@ -437,8 +437,7 @@ void RenderSystem::render()
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
   if (camera.isValid())
-    frame.depthOfField =
-        camera.getComponent<CameraComponent>().depthOfFieldSettings();
+    frame.depthOfField = depthOfFieldOf(camera.getComponent<CameraComponent>());
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = effectiveShadows();
@@ -483,23 +482,67 @@ void RenderSystem::render()
   m_stats.pointLights = m_pointLights.size();
 }
 
+namespace
+{
+// A camera feed's picture, at its size.
+std::shared_ptr<RenderTexture> pictureFor(const CameraFeedComponent& feed)
+{
+  return std::make_shared<RenderTexture>(glm::ivec2(feed.width, feed.height));
+}
+} // namespace
+
 std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
 {
   if (!entity.isValid() || !entity.hasComponent<CameraFeedComponent>())
     return nullptr;
-  const auto& lens = entity.getComponent<CameraFeedComponent>();
-  Feed& feed = m_feeds[entity.getId()];
-  if (!feed.texture)
-    feed.texture =
-        std::make_shared<RenderTexture>(glm::ivec2(lens.width, lens.height));
-  return feed.texture;
+  auto& lens = entity.getComponent<CameraFeedComponent>();
+  if (!lens.picture)
+    lens.picture = pictureFor(lens);
+  return lens.picture;
+}
+
+void RenderSystem::makeFeedPictures()
+{
+  if (!registry)
+    return;
+  for (const Entity& entity : registry->query<CameraFeedComponent>())
+  {
+    auto& feed = entity.getComponent<CameraFeedComponent>();
+    if (!feed.picture)
+      feed.picture = pictureFor(feed);
+  }
+}
+
+void RenderSystem::refreshMeshBounds()
+{
+  if (!registry)
+    return;
+  for (const Entity& entity : registry->query<MeshRendererComponent>())
+  {
+    auto& renderer = entity.getComponent<MeshRendererComponent>();
+    if (renderer.mesh == renderer.boundsOf)
+      continue;
+    if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
+    {
+      renderer.bounds = *bounds;
+      renderer.boundsOf = renderer.mesh;
+    }
+    else
+    {
+      // Not loaded yet: tried again next update.
+      renderer.bounds = Aabb{};
+      renderer.boundsOf = MeshHandle{};
+    }
+  }
 }
 
 std::optional<FeedView> RenderSystem::chooseFeed()
 {
   m_context.feedOn = false;
   m_feedFilming = nullptr;
-  if (m_feeds.empty() || m_space2D || !registry)
+  if (!registry)
+    return std::nullopt;
+  if (m_space2D)
     return std::nullopt;
   SFS_CPU_SCOPE("render/camera feed");
   const double now = std::chrono::duration<double>(
@@ -508,20 +551,19 @@ std::optional<FeedView> RenderSystem::chooseFeed()
 
   // The one most overdue of those shown (each due `rate` times a second).
   Entity chosen;
-  Feed* chosenFeed = nullptr;
+  CameraFeedComponent* chosenFeed = nullptr;
   double mostLate = -1.0;
   for (const Entity& entity :
-       registry->view<TransformComponent, CameraFeedComponent>())
+       registry->query<TransformComponent, CameraFeedComponent>())
   {
-    const auto found = m_feeds.find(entity.getId());
-    if (found == m_feeds.end() || !found->second.texture)
+    auto& feed = entity.getComponent<CameraFeedComponent>();
+    if (!feed.picture)
       continue;
-    Feed& feed = found->second;
-    const auto& lens = entity.getComponent<CameraFeedComponent>();
+    const auto& lens = feed;
     const glm::ivec2 size = glm::max(glm::ivec2(lens.width, lens.height), 1);
-    if (feed.texture->size() != size)
-      feed.texture->resize(size);
-    if (!lens.enabled || !m_renderer.textureShown(feed.texture->texture().id))
+    if (feed.picture->size() != size)
+      feed.picture->resize(size);
+    if (!lens.enabled || !m_renderer.textureShown(feed.picture->texture().id))
       continue;
     const double late =
         now - feed.filmed - 1.0 / std::max(double(lens.rate), 0.1);
@@ -539,7 +581,7 @@ std::optional<FeedView> RenderSystem::chooseFeed()
   const auto& lens = chosen.getComponent<CameraFeedComponent>();
   const double period = 1.0 / std::max(double(lens.rate), 0.1);
   chosenFeed->filmed = mostLate > period ? now : now - mostLate;
-  m_feedFilming = chosenFeed->texture.get();
+  m_feedFilming = chosenFeed->picture.get();
 
   // Its view: along the entity's +X, +Z up, as a camera entity's.
   const glm::mat4 world = hierarchy::worldMatrix(chosen);
@@ -1029,7 +1071,7 @@ void RenderSystem::gatherEmissionLights()
   };
 
   for (const Entity& entity :
-       registry->view<TransformComponent, MeshRendererComponent>())
+       registry->query<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
@@ -1131,7 +1173,7 @@ void RenderSystem::gatherPointLights()
     return;
 
   for (const Entity& entity :
-       registry->view<TransformComponent, PointLightComponent>())
+       registry->query<TransformComponent, PointLightComponent>())
   {
     const auto& light = entity.getComponent<PointLightComponent>();
     if (light.intensity <= 0.0f || light.radius <= 0.0f)

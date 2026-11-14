@@ -289,6 +289,13 @@ int main()
     const FieldModel* loot = findField(*chest.type, "loot");
     CHECK(loot && loot->kind == "AssetRef" && loot->assetType == "ItemDef");
 
+    // A list of them.
+    const ParseResult bag = parseHeader(
+        "struct Bag { sfs::AssetRefList<ItemDef> items; };", "Bag.h");
+    const FieldModel* items = findField(*bag.type, "items");
+    CHECK(items && items->kind == "AssetRefList" &&
+          items->assetType == "ItemDef");
+
     GeneratorOptions options;
     options.module = "game";
     options.function = "sfsRegisterModule";
@@ -300,6 +307,11 @@ int main()
                     "ItemDef>") != std::string::npos);
     CHECK(code.find("sfs::AssetRef<ItemDef>>") != std::string::npos);
     CHECK(code.find("field.attributes.assetType = \"ItemDef\";") !=
+          std::string::npos);
+    const std::string bagCode = generateRegistration({*bag.type}, options);
+    CHECK(bagCode.find("sfs::AssetRefList<ItemDef>>") != std::string::npos);
+    CHECK(bagCode.find("FieldKind::AssetRefList") != std::string::npos);
+    CHECK(bagCode.find("field.attributes.assetType = \"ItemDef\";") !=
           std::string::npos);
   }
 
@@ -540,6 +552,160 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(code.find("sfs::AssetRef<sfs::VehicleSpec>>") != std::string::npos);
     CHECK(code.find("field.attributes.assetType = \"VehicleSpec\";") !=
           std::string::npos);
+  }
+
+  TEST("[[sfs::component]] types beside the file's type should be components")
+  {
+    const ParseResult result = parseHeader(R"(
+      namespace game::parts {
+      struct Tipper { float angle = 0.0f; };
+      struct [[sfs::component]] TipBody {};
+      struct NotMarked { int a = 0; };
+      class [[sfs::component]] TipPivot { public: float lift = 1.0f; };
+      }
+    )",
+                                           "Tipper.h");
+    CHECK(result.diagnostics.empty());
+    CHECK(result.type && result.type->name == "Tipper");
+    CHECK(result.components.size() == 2);
+    CHECK(result.components[0].name == "TipBody");
+    CHECK(result.components[0].qualifiedName == "game::parts::TipBody");
+    CHECK(result.components[0].kind == TypeKind::Component);
+    CHECK(result.components[1].name == "TipPivot");
+    CHECK(findField(result.components[1], "lift") != nullptr);
+  }
+
+  TEST("a header of only [[sfs::component]] types should not warn")
+  {
+    const ParseResult result = parseHeader(R"(
+      namespace game { inline namespace v1 {
+      struct [[sfs::component]] Body {};
+      class [[sfs::component]] Pivot {};
+      } }
+    )",
+                                           "TipParts.h");
+    CHECK(result.diagnostics.empty());
+    CHECK(!result.type.has_value());
+    CHECK(result.components.size() == 2);
+    CHECK(result.components[0].qualifiedName == "game::v1::Body");
+    // A marked class is a component even with nothing in it.
+    CHECK(result.components[1].name == "Pivot");
+  }
+
+  TEST("the file's type may be marked too, and stays the file's type")
+  {
+    const ParseResult result =
+        parseHeader("struct [[sfs::component]] Body {};", "Body.h");
+    CHECK(result.diagnostics.empty());
+    CHECK(result.type && result.type->name == "Body");
+    CHECK(result.components.empty());
+  }
+
+  TEST("nested and template [[sfs::component]] types should warn, not register")
+  {
+    const ParseResult result = parseHeader(R"(
+      struct Outer { struct [[sfs::component]] Inner {}; int a = 0; };
+      template <typename T> struct [[sfs::component]] Box { T value; };
+      void make() { struct [[sfs::component]] Local {}; }
+    )",
+                                           "Outer.h");
+    CHECK(result.type && result.type->name == "Outer");
+    CHECK(result.components.empty());
+    CHECK(hasDiagnostic(
+        result, Diagnostic::Severity::Warning, "'Inner' is nested"));
+    CHECK(hasDiagnostic(
+        result, Diagnostic::Severity::Warning, "'Box' is nested"));
+    CHECK(hasDiagnostic(
+        result, Diagnostic::Severity::Warning, "'Local' is nested"));
+  }
+
+  TEST("a [[sfs::component]] type with a base should be an error")
+  {
+    const ParseResult result =
+        parseHeader("struct Spec : sfs::ScriptableObject {};\n"
+                    "struct [[sfs::component]] Bad : Other {};",
+                    "Spec.h");
+    CHECK(hasDiagnostic(result,
+                        Diagnostic::Severity::Error,
+                        "[[sfs::component]] is for components; Bad derives "
+                        "from Other"));
+    CHECK(result.components.empty());
+  }
+
+  TEST("an unknown [[sfs::...]] attribute on a type should warn")
+  {
+    const ParseResult result =
+        parseHeader("struct [[sfs::compnent]] Body {};", "Body.h");
+    CHECK(hasDiagnostic(result,
+                        Diagnostic::Severity::Warning,
+                        "unknown attribute [[sfs::compnent]]"));
+  }
+
+  TEST("two types of one name should be an error, in a header or across them")
+  {
+    const ParseResult inOne = parseHeader(R"(
+      namespace a { struct [[sfs::component]] Body {}; }
+      namespace b { struct [[sfs::component]] Body {}; }
+    )",
+                                          "Parts.h");
+    CHECK(inOne.components.size() == 1);
+    CHECK(hasDiagnostic(
+        inOne, Diagnostic::Severity::Error, "more than one type named 'Body'"));
+
+    const ParseResult first = parseHeader("struct Body {};", "/p/Body.h");
+    const ParseResult second =
+        parseHeader("struct [[sfs::component]] Body {};", "/p/Parts.h");
+    const std::vector<Diagnostic> clash =
+        checkNames({*first.type, second.components[0]});
+    CHECK(clash.size() == 1);
+    CHECK(clash[0].severity == Diagnostic::Severity::Error);
+    CHECK(clash[0].file == std::filesystem::path("/p/Parts.h"));
+    CHECK(clash[0].message.find("/p/Body.h") != std::string::npos);
+    CHECK(checkNames({*first.type}).empty());
+  }
+
+  TEST("a header's several types should be included once, the file's first")
+  {
+    const ParseResult result = parseHeader(R"(
+      struct [[sfs::component]] TipBody {};
+      struct Tipper { float angle = 0.0f; };
+    )",
+                                           "/project/scripts/Tipper.h");
+    std::vector<TypeModel> types{*result.type};
+    types.insert(
+        types.end(), result.components.begin(), result.components.end());
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "registerTypes";
+    options.includeRoot = "/project/scripts";
+    const std::string code = generateRegistration(types, options);
+    const std::size_t include = code.find("#include \"Tipper.h\"");
+    CHECK(include != std::string::npos);
+    CHECK(code.find("#include \"Tipper.h\"", include + 1) == std::string::npos);
+    const std::size_t tipper = code.find("componentType<Tipper>");
+    const std::size_t body = code.find(
+        "componentType<TipBody>(\"TipBody\", \"Tip Body\", \"game\")");
+    CHECK(tipper != std::string::npos && body != std::string::npos &&
+          tipper < body);
+  }
+
+  TEST("a single-type header's generated code should be unchanged")
+  {
+    const ParseResult result =
+        parseHeader("struct Health { int hp = 3; };", "/s/Health.h");
+    GeneratorOptions options;
+    options.module = "game";
+    options.function = "registerTypes";
+    options.includeRoot = "/s";
+    const std::string code = generateRegistration({*result.type}, options);
+    const std::string expected =
+        "// Generated by sfs-codegen -- do not edit.\n"
+        "#include \"engine/core/reflection/reflection.h\"\n"
+        "#include \"engine/core/reflection/registration.h\"\n\n"
+        "\n"
+        "#include \"Health.h\"\n"
+        "\n#include <cstdint>\n";
+    CHECK(code.starts_with(expected));
   }
 
   return testing::report("codegenTests");

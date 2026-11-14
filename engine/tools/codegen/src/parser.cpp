@@ -55,12 +55,17 @@ std::string lowercase(std::string_view text)
 }
 
 // Collapse runs of whitespace to one space and drop spaces around "::".
-// T, for a (normalised) "sfs::AssetRef<T>" or "AssetRef<T>".
-std::optional<std::string> assetRefType(std::string_view type)
+// T, for a (normalised) "sfs::<wrapper><T>" or "<wrapper><T>" (wrapper:
+// "AssetRef", "AssetRefList").
+std::optional<std::string> assetRefType(std::string_view type,
+                                        std::string_view wrapper)
 {
   if (type.starts_with("sfs::"))
     type.remove_prefix(5);
-  constexpr std::string_view open = "AssetRef<";
+  if (!type.starts_with(wrapper))
+    return std::nullopt;
+  type.remove_prefix(wrapper.size());
+  constexpr std::string_view open = "<";
   if (!type.starts_with(open) || !type.ends_with('>'))
     return std::nullopt;
   std::string inner(type.substr(open.size(), type.size() - open.size() - 1));
@@ -115,7 +120,7 @@ public:
 
     visit(ts_tree_root_node(tree.get()));
 
-    if (!m_result.type && !m_helper)
+    if (!m_result.type && !m_helper && m_result.components.empty())
       warn(ts_tree_root_node(tree.get()),
            "no class or struct named after the file ('" +
                m_path.stem().string() + "')");
@@ -174,17 +179,69 @@ private:
         !ts_node_is_null(field(node, "body")))
     {
       const TSNode name = field(node, "name");
-      if (!ts_node_is_null(name) && lowercase(text(name)) == m_target)
+      const bool marked = isMarkedComponent(node);
+      if (m_classDepth == 0 && !ts_node_is_null(name) &&
+          lowercase(text(name)) == m_target)
       {
         if (m_result.type)
           error(node, "more than one type named '" + text(name) + "'");
         else
-          parseType(node, kind == "struct_specifier");
+          parseType(node, kind == "struct_specifier", marked);
       }
-      return; // nested types are never the script type
+      else if (marked && ts_node_is_null(name))
+        warn(node, "[[sfs::component]] on an unnamed type: not registered");
+      else if (marked && (m_classDepth > 0 || m_localDepth > 0))
+        warn(node,
+             "[[sfs::component]] '" + text(name) +
+                 "' is nested (or a template): not registered");
+      else if (marked)
+        parseType(node, kind == "struct_specifier", marked);
+
+      // Nested types are never registered, but a marked one is warned about.
+      ++m_classDepth;
+      visitChildren(field(node, "body"));
+      --m_classDepth;
+      return;
+    }
+
+    // Types in a template or a function aren't at namespace scope.
+    if (kind == "template_declaration" || kind == "function_definition")
+    {
+      ++m_localDepth;
+      visitChildren(node);
+      --m_localDepth;
+      return;
     }
 
     visitChildren(node);
+  }
+
+  // Whether a class specifier carries [[sfs::component]]; warns about any
+  // other [[sfs::...]] attribute on it.
+  bool isMarkedComponent(TSNode node)
+  {
+    bool marked = false;
+    const uint32_t count = ts_node_named_child_count(node);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      const TSNode declaration = ts_node_named_child(node, i);
+      if (type(declaration) != "attribute_declaration")
+        continue;
+      const uint32_t attributes = ts_node_named_child_count(declaration);
+      for (uint32_t a = 0; a < attributes; ++a)
+      {
+        const TSNode attribute = ts_node_named_child(declaration, a);
+        const TSNode prefix = field(attribute, "prefix");
+        if (ts_node_is_null(prefix) || text(prefix) != "sfs")
+          continue;
+        const std::string name = text(field(attribute, "name"));
+        if (name == "component")
+          marked = true;
+        else
+          warn(attribute, "unknown attribute [[sfs::" + name + "]]");
+      }
+    }
+    return marked;
   }
 
   void visitChildren(TSNode node)
@@ -194,15 +251,32 @@ private:
       visit(ts_node_named_child(node, i));
   }
 
-  void parseType(TSNode node, bool isStruct)
+  // Registers a class specifier: the file's type, or (marked) one of the
+  // header's [[sfs::component]] types.
+  void parseType(TSNode node, bool isStruct, bool marked)
   {
     TypeModel model;
     model.name = text(field(node, "name"));
     model.header = m_path;
+    model.line = ts_node_start_point(node).row + 1;
     for (const std::string& ns : m_namespaces)
       model.qualifiedName += ns + "::";
     model.qualifiedName += model.name;
     model.kind = classify(node, model);
+
+    const bool fileType = lowercase(model.name) == m_target;
+    if (marked && model.kind != TypeKind::Component)
+    {
+      error(node,
+            "[[sfs::component]] is for components; " + model.name +
+                " derives from " + baseOf(node));
+      return;
+    }
+    if (!fileType && registered(model.name))
+    {
+      error(node, "more than one type named '" + model.name + "'");
+      return;
+    }
 
     // struct members default to public, class members to private.
     bool isPublic = isStruct;
@@ -221,12 +295,47 @@ private:
     // A class with no engine base and nothing to edit (e.g. FieldMap, a
     // helper a script uses) isn't a component: it's left alone. Components
     // are structs, or classes with public fields.
-    if (!isStruct && model.kind == TypeKind::Component && model.fields.empty())
+    if (!marked && !isStruct && model.kind == TypeKind::Component &&
+        model.fields.empty())
     {
       m_helper = true;
       return;
     }
-    m_result.type = std::move(model);
+    if (fileType)
+      m_result.type = std::move(model);
+    else
+      m_result.components.push_back(std::move(model));
+  }
+
+  // Whether the header already registers a type with this (unqualified) name.
+  bool registered(std::string_view name) const
+  {
+    if (m_result.type && m_result.type->name == name)
+      return true;
+    return std::any_of(m_result.components.begin(),
+                       m_result.components.end(),
+                       [&](const TypeModel& type)
+                       { return type.name == name; });
+  }
+
+  // A class specifier's first base, as written.
+  std::string baseOf(TSNode node) const
+  {
+    const uint32_t count = ts_node_named_child_count(node);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      const TSNode clause = ts_node_named_child(node, i);
+      if (type(clause) != "base_class_clause")
+        continue;
+      const uint32_t baseCount = ts_node_named_child_count(clause);
+      for (uint32_t b = 0; b < baseCount; ++b)
+      {
+        const TSNode base = ts_node_named_child(clause, b);
+        if (type(base) != "access_specifier" && type(base) != "virtual")
+          return normaliseType(text(base));
+      }
+    }
+    return {};
   }
 
   TypeKind classify(TSNode node, TypeModel& model)
@@ -338,10 +447,17 @@ private:
     // A reference to a scriptable object, sfs::AssetRef<T>; otherwise a fixed
     // type.
     std::optional<std::string> kind;
-    if (const std::optional<std::string> data = assetRefType(base.type))
+    if (const std::optional<std::string> data =
+            assetRefType(base.type, "AssetRef"))
     {
       kind = "AssetRef";
       base.assetType = *data;
+    }
+    else if (const std::optional<std::string> list =
+                 assetRefType(base.type, "AssetRefList"))
+    {
+      kind = "AssetRefList";
+      base.assetType = *list;
     }
     else if (const auto known = fieldKinds().find(base.type);
              known != fieldKinds().end())
@@ -469,6 +585,8 @@ private:
   std::vector<std::string> m_namespaces;
   ParseResult m_result;
   bool m_helper = false; // the file's class is a helper (no type, no warning)
+  int m_classDepth = 0;  // class bodies entered
+  int m_localDepth = 0;  // templates and function bodies entered
 };
 
 // Walks a UI header's syntax tree for its structs (see parseUiHeader).
@@ -626,6 +744,25 @@ UiParseResult parseUiHeader(std::string_view source,
                             const std::filesystem::path& path)
 {
   return UiHeaderParser(source, path).run();
+}
+
+std::vector<Diagnostic> checkNames(const std::vector<TypeModel>& types)
+{
+  std::vector<Diagnostic> diagnostics;
+  std::map<std::string_view, const TypeModel*, std::less<>> first;
+  for (const TypeModel& type : types)
+  {
+    const auto [it, added] = first.emplace(type.name, &type);
+    if (added)
+      continue;
+    diagnostics.push_back({Diagnostic::Severity::Error,
+                           type.header,
+                           type.line,
+                           "more than one type named '" + type.name +
+                               "': also declared in " +
+                               it->second->header.string()});
+  }
+  return diagnostics;
 }
 
 } // namespace sfs::codegen

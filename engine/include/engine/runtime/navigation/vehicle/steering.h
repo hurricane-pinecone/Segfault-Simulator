@@ -3,6 +3,7 @@
 #include "engine/runtime/navigation/vehicle/vehicleModel.h"
 #include "engine/runtime/navigation/vehicle/vehiclePath.h"
 
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -57,6 +58,12 @@ public:
   /** Every word it knows from `from` to `to` (each ends there exactly). */
   std::vector<std::vector<Segment>>
   paths(Pose2 from, Pose2 to, const Words& words) const;
+  /**
+   * The same words, in the same order, each handed to `each` as it's made
+   * (nothing allocated: a search pricing thousands of them a second).
+   */
+  using Each = std::function<void(std::span<const Segment>)>;
+  void paths(Pose2 from, Pose2 to, const Words& words, const Each& each) const;
 
   /**
    * One CC turn of `deflection` radians (>= 0) in `sense` (+1 the motion
@@ -83,24 +90,19 @@ private:
     Lock,  // a full-lock end, at a cusp (the arc's own circle)
   };
   glm::vec2 centre(Motion m, int sense, End end) const;
-  void csc(Motion a,
-           Motion b,
-           int gear,
-           std::vector<std::vector<Segment>>& out,
-           bool ccStart = true) const;
-  void ccc(Motion a,
-           Motion b,
-           int gear,
-           std::vector<std::vector<Segment>>& out) const;
-  void threePoint(Motion a,
-                  Motion b,
-                  int gear,
-                  std::vector<std::vector<Segment>>& out) const;
-  void cuspFirst(Motion a,
-                 Motion b,
-                 int gear,
-                 int samples,
-                 std::vector<std::vector<Segment>>& out) const;
+  template <class Out>
+  bool turnInto(float deflection,
+                int sense,
+                int gear,
+                bool ccStart,
+                bool ccEnd,
+                Out& out) const;
+  void
+  csc(Motion a, Motion b, int gear, const Each& out, bool ccStart = true) const;
+  void ccc(Motion a, Motion b, int gear, const Each& out) const;
+  void threePoint(Motion a, Motion b, int gear, const Each& out) const;
+  void
+  cuspFirst(Motion a, Motion b, int gear, int samples, const Each& out) const;
 
   float m_kappa, m_sigma, m_thetaC, m_r, m_mu, m_R;
   std::vector<float> m_elementary; // (clothoid lengths by deflection)

@@ -2,6 +2,7 @@
 
 #include "glm/glm/ext/matrix_float4x4.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
+#include "glm/glm/ext/vector_float4.hpp"
 
 #include <limits>
 
@@ -37,5 +38,24 @@ struct Aabb
   /** Whether any of the box is within `radius` of `center`. */
   bool intersectsSphere(const glm::vec3& center, float radius) const;
 };
+
+/**
+ * The largest of an affine transform's scales along its axes: how much a
+ * sphere's radius grows under it.
+ * @param transform the transform, e.g. a model matrix
+ * @return the length of its longest axis
+ */
+float largestScale(const glm::mat4& transform);
+
+/**
+ * A sphere in a model's own space, placed by its model matrix: its centre
+ * moved, its radius grown by largestScale().
+ * @param model the model matrix
+ * @param center the sphere's centre in the model's space
+ * @param radius its radius in the model's space
+ * @return the placed sphere, xyz its centre and w its radius
+ */
+glm::vec4
+placedSphere(const glm::mat4& model, const glm::vec3& center, float radius);
 
 } // namespace sfs

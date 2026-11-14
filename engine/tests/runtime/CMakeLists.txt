@@ -30,6 +30,7 @@ add_runtime_test(prefabSystemTests systems/prefabSystemTests.cpp)
 # navigation/
 add_runtime_test(steeringTests navigation/vehicle/steeringTests.cpp)
 add_runtime_test(plannerTests navigation/vehicle/plannerTests.cpp)
+add_runtime_test(plannerBenchTests navigation/vehicle/plannerBenchTests.cpp)
 add_runtime_test(trafficTests navigation/trafficTests.cpp)
 add_runtime_test(coarseGraphTests navigation/coarseGraphTests.cpp)
 add_runtime_test(laneGraphTests navigation/laneGraphTests.cpp)

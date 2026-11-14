@@ -155,7 +155,8 @@ private:
     lighting.skyColor = glm::mix(night, glm::mix(noon, dusk, low), day);
     render->setLighting(lighting);
 
-    for (sfs::Entity& lamp : scene().view<Lantern, sfs::PointLightComponent>())
+    for (const sfs::Entity& lamp :
+         scene().query<Lantern, sfs::PointLightComponent>())
     {
       const Lantern& lantern = lamp.getComponent<Lantern>();
       lamp.getComponent<sfs::PointLightComponent>().intensity =
@@ -175,7 +176,7 @@ private:
     int down = 0;
     glm::vec3 where(0.0f);
     int count = 0;
-    for (sfs::Entity& pin : scene().view<Pin, sfs::TransformComponent>())
+    for (const sfs::Entity& pin : scene().query<Pin, sfs::TransformComponent>())
     {
       const auto& transform = pin.getComponent<sfs::TransformComponent>();
       const glm::vec3 up = transform.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
@@ -228,7 +229,8 @@ private:
     const glm::vec3 hero =
         m_hero.getComponent<sfs::TransformComponent>().position;
     float best = 1e9f;
-    for (sfs::Entity& sign : scene().view<Station, sfs::TransformComponent>())
+    for (const sfs::Entity& sign :
+         scene().query<Station, sfs::TransformComponent>())
     {
       const Station& station = sign.getComponent<Station>();
       const float d = glm::length(
@@ -273,7 +275,7 @@ inline void IslandDirector::onCreate(sfs::Scene& scene)
   registerEffects();
 
   // The sparks to find: those in the scene, and the strike spark to come.
-  for (sfs::Entity& spark : scene.view<Spark>())
+  for (const sfs::Entity& spark : scene.query<Spark>())
     m_total += spark.getComponent<Spark>().value;
   for (sfs::Entity& glow : scene.findEntities("Spark Glow"))
     if (glow.hasComponent<sfs::MeshRendererComponent>())
@@ -281,7 +283,7 @@ inline void IslandDirector::onCreate(sfs::Scene& scene)
       m_sparkLook = glow.getComponent<sfs::MeshRendererComponent>();
       break;
     }
-  if (!scene.view<Pin>().empty())
+  if (!scene.query<Pin>().empty())
     ++m_total;
 
   say("Find the " + std::to_string(m_total) + " sparks!", 4.0f);

@@ -97,8 +97,7 @@ public:
   {
     if (m_camera.isValid() &&
         m_camera.hasComponent<sfs::CameraFollowComponent>())
-      m_camera.getComponent<sfs::CameraFollowComponent>().shake(
-          strength, seconds);
+      sfs::CameraSystem::shake(m_camera, strength, seconds);
   }
 
   // The runner hit something (or fell, or the wall caught it): the run ends.
@@ -385,14 +384,15 @@ private:
 
   void animate(float step)
   {
-    for (sfs::Entity& entity : scene().view<Orb, sfs::SpriteComponent>())
+    for (const sfs::Entity& entity : scene().query<Orb, sfs::SpriteComponent>())
     {
       Orb& orb = entity.getComponent<Orb>();
       orb.spin += step * 10.0f;
       entity.getComponent<sfs::SpriteComponent>().frame =
           3 + static_cast<int>(orb.spin) % 4;
     }
-    for (sfs::Entity& entity : scene().view<Drone, sfs::TransformComponent>())
+    for (const sfs::Entity& entity :
+         scene().query<Drone, sfs::TransformComponent>())
     {
       Drone& drone = entity.getComponent<Drone>();
       drone.clock += step;

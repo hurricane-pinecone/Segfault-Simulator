@@ -32,10 +32,6 @@ namespace sfs
 namespace
 {
 
-// Bumped when the file layout changes incompatibly. 2: hierarchies (nested
-// "children"); format 1 files still load.
-constexpr int kFormatVersion = 2;
-
 // The key an entity's children are nested under, beside its components.
 constexpr const char* kChildrenKey = "children";
 
@@ -145,6 +141,8 @@ json fieldToJson(const reflect::FieldInfo& field,
     return field.in<std::vector<std::string>>(object);
   case Kind::AssetRef:
     return field.in<AssetRefBase>(object).asset;
+  case Kind::AssetRefList:
+    return field.in<AssetRefListBase>(object).assets;
   case Kind::Mesh:
   {
     const MeshHandle mesh = field.in<MeshHandle>(object);
@@ -216,6 +214,7 @@ bool fieldFromJson(const reflect::FieldInfo& field,
     field.in<AssetRefBase>(object).asset = value.get<std::string>();
     return true;
   case Kind::StringList:
+  case Kind::AssetRefList:
   {
     if (!value.is_array())
       return false;
@@ -226,7 +225,10 @@ bool fieldFromJson(const reflect::FieldInfo& field,
         return false;
       strings.push_back(item.get<std::string>());
     }
-    field.in<std::vector<std::string>>(object) = std::move(strings);
+    if (field.kind == Kind::AssetRefList)
+      field.in<AssetRefListBase>(object).assets = std::move(strings);
+    else
+      field.in<std::vector<std::string>>(object) = std::move(strings);
     return true;
   }
   case Kind::Mesh:
@@ -599,9 +601,9 @@ void SceneSerializer::loadObject(const reflect::TypeInfo& type,
   }
 }
 
-json SceneSerializer::saveEntity(Scene& scene, const Entity& entity) const
+json SceneSerializer::saveEntity(const Entity& entity) const
 {
-  return saveSubtree(entity, hierarchy::EntityTree(scene.entities()));
+  return saveSubtree(entity);
 }
 
 json SceneSerializer::saveComponents(const Entity& entity) const
@@ -627,9 +629,7 @@ json SceneSerializer::saveComponents(const Entity& entity) const
   return components;
 }
 
-json SceneSerializer::saveSubtree(const Entity& entity,
-                                  const hierarchy::EntityTree& tree,
-                                  bool ids) const
+json SceneSerializer::saveSubtree(const Entity& entity, SavedIds ids) const
 {
   // An instance whose prefab didn't load goes back out as it was read.
   if (entity.hasComponent<MissingPrefabComponent>())
@@ -637,18 +637,23 @@ json SceneSerializer::saveSubtree(const Entity& entity,
 
   json entry;
   if (entity.hasComponent<PrefabInstanceComponent>())
-    entry = instanceEntry(entity, tree); // the prefab, and how this one differs
+    entry = instanceEntry(entity); // the prefab, and how this one differs
   else
   {
     entry = saveComponents(entity);
     json children = json::array();
-    for (const Entity& child : tree.children(entity))
-      children.push_back(saveSubtree(child, tree, ids));
+    for (const Entity& child : hierarchy::childrenOf(entity))
+      children.push_back(saveSubtree(child, ids));
     if (!children.empty())
       entry[kChildrenKey] = std::move(children);
   }
-  if (ids && entity.hasComponent<PrefabLinkComponent>())
-    entry["$id"] = entity.getComponent<PrefabLinkComponent>().id;
+  if (ids != SavedIds::None && entity.hasComponent<PrefabLinkComponent>())
+  {
+    const uint32_t id = entity.getComponent<PrefabLinkComponent>().id;
+    if (ids == SavedIds::All ||
+        ((id & kAddedNodeIdBit) != 0 && (id & kModelNodeIdBit) == 0))
+      entry["$id"] = id;
+  }
   return entry;
 }
 
@@ -719,12 +724,11 @@ void SceneSerializer::loadComponents(
 json SceneSerializer::save(Scene& scene,
                            const std::vector<std::string>& gameSystems) const
 {
-  const hierarchy::EntityTree tree(scene.entities());
   json entities = json::array();
-  for (const Entity& root : tree.roots())
-    entities.push_back(saveSubtree(root, tree));
+  for (const Entity& root : scene.roots())
+    entities.push_back(saveSubtree(root));
 
-  json out = {{"formatVersion", kFormatVersion},
+  json out = {{"formatVersion", kSceneFormatVersion},
               {"systems", gameSystems},
               {"entities", std::move(entities)}};
   if (const RenderSystem* render = scene.tryGetSystem<RenderSystem>())
@@ -741,7 +745,7 @@ bool SceneSerializer::load(const json& in,
     LOG_ERROR("Scene data has no entity list");
     return false;
   }
-  if (valueOr(in, "formatVersion", 0) > kFormatVersion)
+  if (valueOr(in, "formatVersion", 0) > kSceneFormatVersion)
   {
     LOG_ERROR("Scene was saved by a newer engine (format " +
               std::to_string(valueOr(in, "formatVersion", 0)) + ")");

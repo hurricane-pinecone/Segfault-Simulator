@@ -3,6 +3,7 @@
 #include "engine/core/ecs/entity.h"
 #include "nlohmann/json.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -17,11 +18,6 @@ namespace sfs
 
 class MeshLibrary;
 class Scene;
-
-namespace hierarchy
-{
-class EntityTree;
-}
 
 namespace reflect
 {
@@ -44,25 +40,31 @@ struct TypeInfo;
  * saved by name; the caller keeps that list, since edit-mode scenes don't
  * instantiate them.
  *
- * The parent/child hierarchy (ParentComponent) is saved as nesting: an
+ * The parent/child hierarchy (see hierarchy.h) is saved as nesting: an
  * entity's children are listed under its "children" key, so "children" is
  * never a component name. Entities are saved parents first, siblings in id
  * order, so loading into an empty scene recreates them in that order.
  *
  * Layout:
- *   { "formatVersion": 2,
+ *   { "formatVersion": 3,
  *     "systems": [ "GrowthSystem", ... ],
  *     "render": { "style": { "kind": "3d" | "flat" | "isometric", ... },
  *                 "lighting": {...}, "shadows": {...}, "camera": {...} },
  *     "entities": [ { "TypeName": { "field": value, ... }, ...,
  *                     "children": [ { ... }, ... ] }, ... ] }
  *
- * Format 1 (before hierarchies) is the same without "children".
+ * Format 1 (before hierarchies) is the same without "children". Format 2 is
+ * format 3 with model nodes' old ids (see below).
  *
- * Prefabs: a .prefab file is { "formatVersion": 1, "root": <entry> }, entries
+ * Prefabs: a .prefab file is { "formatVersion": 2, "root": <entry> }, entries
  * as in scenes plus a "$id" on each (unique in the file; the root's isn't
- * used). An instance of a prefab, in a scene or a prefab, is saved as the
- * prefab and how it differs from it:
+ * used). A model's prefab (made from the model file, see AssetStore) also has
+ * "model": true, which gives each entity it makes a RestPoseComponent: its
+ * transform as loaded, after the instance's overrides. Its nodes' "$id"s are
+ * their stable ids (ModelNode::id, made from their name paths, with bit 31
+ * set), so reordering the model file's nodes moves nothing. An instance of a
+ * prefab, in a scene or a prefab, is saved as the prefab and how it differs
+ * from it:
  *
  *   { "$prefab": "asset:<id>",
  *     "$overrides": { "<path>": { "Component": { "field": value } }, ... },
@@ -74,10 +76,33 @@ struct TypeInfo;
  * that is entity 3). Overrides are JSON merge patches of the entity's
  * components (null removes one). They're found on save by comparing each
  * entity with what the prefab alone gives, so any change is kept.
+ *
+ * Older files (prefab format 1, scene format 2) named a model's nodes by
+ * their place in the model file's node order (1, 2, ...). Such a path segment
+ * into a model is told apart by its value (stable ids have bit 31 set) and
+ * read as the node in that place, so older files load onto the same nodes;
+ * nodeIdEdits() gives the edits that upgrade a file for good. One past the
+ * model's nodes is read and saved as "old:<id>", which names nothing.
+ *
+ * An entity a prefab adds inside one of its nested instances (an "$added" of
+ * a nested instance's entry) belongs to that prefab: it has a "$id" with
+ * kAddedNodeIdBit set (made from its place in the entry when the file has
+ * none) and is named, like the nested instance's own entities, by a path
+ * through it ("3/1073741907"), so instances of the prefab know it as theirs.
+ *
+ * An override, removed path or added entity's "$parent" naming an entity the
+ * prefab no longer has (a model node renamed or deleted in the source file)
+ * is kept, unused, in the instance root's UnresolvedComponents::overrides,
+ * logged once at load, and saved back unchanged.
  */
 class SceneSerializer
 {
 public:
+  /** The scene file format this engine writes (and the newest it reads). */
+  static constexpr int kSceneFormatVersion = 3;
+  /** The prefab file format this engine writes. */
+  static constexpr int kPrefabFormatVersion = 2;
+
   /**
    * @param types  the reflected types to save/load (usually reflect::types())
    * @param meshes resolves mesh fields to names and back (loading adds a
@@ -116,15 +141,14 @@ public:
    * the instance's; otherwise the root is moved to the origin, unless
    * `keepRootPlacement` (saving a prefab edited on its own).
    */
-  nlohmann::json savePrefab(Scene& scene,
-                            const Entity& root,
+  nlohmann::json savePrefab(const Entity& root,
                             bool keepRootPlacement = false) const;
 
   /**
    * How an instance differs from its prefab: its scene entry ($prefab,
    * $overrides, $removed, $added). `root` must have a PrefabInstanceComponent.
    */
-  nlohmann::json instanceEntry(Scene& scene, const Entity& root) const;
+  nlohmann::json instanceEntry(const Entity& root) const;
 
   /**
    * An entity's path in the instance under `root` (see above): "" for the
@@ -153,6 +177,57 @@ public:
    * draw a preview. Empty if the prefab can't be read.
    */
   std::vector<ExpandedEntity> expandPrefab(std::string_view prefab) const;
+
+  /**
+   * The entities a scene or prefab file entry makes (as expandPrefab(), for
+   * an instance entry with its own overrides, or a plain entry and the
+   * instances under it), parents first, without making them.
+   *
+   * @param entry an entry of a scene's "entities", or a prefab's "root"
+   */
+  std::vector<ExpandedEntity> expandEntry(const nlohmann::json& entry) const;
+
+  /**
+   * One string in a prefab or scene file that names a model node by its old
+   * id (its place in the model file's node order), and what it becomes with
+   * the node's stable id (see nodeIdEdits()).
+   */
+  struct NodeIdEdit
+  {
+    /** The JSON pointer of the string in the file. */
+    std::string pointer;
+    /** It's an object key (an "$overrides" path), not a string value. */
+    bool key = false;
+    /** The path as the file has it. */
+    std::string from;
+    /** The path with the stable id. */
+    std::string to;
+    /** The model ("asset:<id>") whose node the path names. */
+    std::string model;
+    /** The node's old id (its place in the model's node order, from 1). */
+    uint32_t fromId = 0;
+    /** The node's stable id (ModelNode::id); 0 if the model has none there. */
+    uint32_t toId = 0;
+  };
+
+  /**
+   * The edits that upgrade a prefab or scene file to stable model node ids:
+   * each "$overrides" key, "$removed" path and "$added" "$parent" that names
+   * a model node by its old id, in any instance entry of the file (nested
+   * ones included). An old id past the model's nodes becomes "old:<id>", so
+   * it stays unused (and logged) and never names a node again. Empty for a
+   * file that's up to date.
+   *
+   * @param file       a parsed prefab ({ "root": ... }) or scene
+   *                   ({ "entities": ... }) file
+   * @param unreadable when given, gets the name of each prefab an instance in
+   *                   the file names that can't be read (its paths can't be
+   *                   upgraded)
+   * @return the edits, in the order they appear in the file's instances
+   */
+  std::vector<NodeIdEdit>
+  nodeIdEdits(const nlohmann::json& file,
+              std::vector<std::string>* unreadable = nullptr) const;
 
   // One entity of an expanded instance (internal to the serializer).
   struct PrefabNode;
@@ -190,7 +265,7 @@ public:
    * One entity and everything below it, in the same form as a scene file's
    * entries (its children nested under "children").
    */
-  nlohmann::json saveEntity(Scene& scene, const Entity& entity) const;
+  nlohmann::json saveEntity(const Entity& entity) const;
 
   /**
    * Create an entity, and the children nested in it, in `scene` from
@@ -225,10 +300,17 @@ public:
   readJsonFile(const std::filesystem::path& path);
 
 private:
-  // `ids`: write each entity's prefab "$id" (inside a prefab file).
+  // Which entities a saved branch writes the prefab "$id" of: none, all (a
+  // prefab file's own content), or only those a prefab added inside a nested
+  // instance (kAddedNodeIdBit), saved in that instance's "$added".
+  enum class SavedIds
+  {
+    None,
+    All,
+    Added,
+  };
   nlohmann::json saveSubtree(const Entity& entity,
-                             const hierarchy::EntityTree& tree,
-                             bool ids = false) const;
+                             SavedIds ids = SavedIds::None) const;
   // An entity's components (reflected and unresolved), without children.
   nlohmann::json saveComponents(const Entity& entity) const;
   void loadComponents(const nlohmann::json& components,
@@ -240,11 +322,10 @@ private:
                       const Entity& parent,
                       std::set<std::string>* unresolvedTypes,
                       std::vector<Entity>* made = nullptr) const;
-  // What a prefab alone gives: path -> (parent path, components), with every
-  // known component's fields filled in, for comparing an instance against.
-  std::vector<PrefabNode> expandBase(std::string_view prefab) const;
-  nlohmann::json instanceEntry(const Entity& root,
-                               const hierarchy::EntityTree& tree) const;
+  // What an entry alone gives (for an instance entry, its prefab and its own
+  // overrides): path -> (parent path, components), with every known
+  // component's fields filled in, for comparing an instance against.
+  std::vector<PrefabNode> expandBase(const nlohmann::json& entry) const;
 
   Entity loadEntity(const nlohmann::json& entry,
                     Scene& scene,

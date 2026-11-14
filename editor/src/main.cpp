@@ -1,4 +1,5 @@
 #include "build/headlessExport.h"
+#include "build/nodeIdUpgrade.h"
 #include "editorApp.h"
 
 #include "engine/core/logger/logger.h"
@@ -12,6 +13,8 @@
 // SfsEditor [project-folder]
 // SfsEditor --export [--development] <project-folder> [output-folder]
 // SfsEditor --export-web <project-folder> [output-folder]
+// SfsEditor --upgrade-node-ids <project-folder> [--check]
+// SfsEditor --list-node-ids <model-file>
 int main(int argc, char* argv[])
 {
   if (argc >= 3 && std::string_view(argv[1]) == "--export")
@@ -31,13 +34,20 @@ int main(int argc, char* argv[])
   if (argc >= 3 && std::string_view(argv[1]) == "--export-web")
     return exportWebHeadless(argv[2], argc >= 4 ? std::filesystem::path(argv[3])
                                                 : std::filesystem::path());
+  if (argc >= 3 && std::string_view(argv[1]) == "--upgrade-node-ids")
+    return upgradeNodeIdsHeadless(
+        argv[2], argc >= 4 && std::string_view(argv[3]) == "--check");
+  if (argc >= 3 && std::string_view(argv[1]) == "--list-node-ids")
+    return listNodeIdsHeadless(argv[2]);
 
   // The engine's physics is built for AVX2 (see missingCpuFeatures): say so,
   // rather than crash at the first physics step.
   if (const std::string missing = sfs::missingCpuFeatures(); !missing.empty())
   {
-    const std::string message = "SfsEditor needs a processor with " + missing +
-                                " support, which this computer's doesn't have (or its operating system doesn't enable).";
+    const std::string message =
+        "SfsEditor needs a processor with " + missing +
+        " support, which this computer's doesn't have (or its operating "
+        "system doesn't enable).";
     LOG_ERROR(message);
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SfsEditor", message.c_str(), nullptr);
     return 1;

@@ -385,6 +385,7 @@ PlanResult planOnce(const PlanRequest& q,
       if (st == ISearch::Status::Found)
       {
         const Way c = s.found();
+        s.describe(r.stats);
         r.stats.plain = c.links.size() <= 1;
         r.goal = c.goal;
         const auto tf = std::chrono::steady_clock::now();

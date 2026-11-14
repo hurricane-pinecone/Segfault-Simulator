@@ -5,6 +5,7 @@
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/rendering/aabb.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "glm/glm/ext/matrix_transform.hpp"
 #include "glm/glm/ext/scalar_constants.hpp"
@@ -17,6 +18,13 @@
 namespace sfs
 {
 
+namespace
+{
+// Seconds without being drawn with levels after which an entity's levels
+// start afresh (no cross-fade from where it was long ago).
+constexpr double kLevelsForgotten = 4.0;
+} // namespace
+
 void MeshModule::computeCommands(const RenderContext& context)
 {
   flush();
@@ -25,17 +33,13 @@ void MeshModule::computeCommands(const RenderContext& context)
   m_now = std::chrono::duration<double>(
               std::chrono::steady_clock::now().time_since_epoch())
               .count();
-  forgetLevels();
 
   if (!m_registry || !context.meshes)
     return;
 
-  // Without making a list of them: this runs every frame.
-  m_registry->each<TransformComponent, MeshRendererComponent>(
-      [&](const Entity& entity,
-          const TransformComponent&,
-          const MeshRendererComponent& renderer)
-      { addEntity(context, entity, renderer); });
+  for (const Entity& entity :
+       m_registry->query<TransformComponent, MeshRendererComponent>())
+    addEntity(context, entity, entity.getComponent<MeshRendererComponent>());
 }
 
 void MeshModule::addEntity(const RenderContext& context,
@@ -100,7 +104,6 @@ void MeshModule::addEntity(const RenderContext& context,
   if (!skin && context.camera && entity.hasComponent<MeshLodComponent>())
   {
     addLevels(context,
-              entity.getId(),
               entity.getComponent<MeshLodComponent>(),
               drawn,
               model,
@@ -154,8 +157,7 @@ void MeshModule::addInstance(MeshHandle mesh,
 }
 
 void MeshModule::addLevels(const RenderContext& context,
-                           uint32_t id,
-                           const MeshLodComponent& lod,
+                           MeshLodComponent& lod,
                            MeshHandle mesh,
                            const glm::mat4& model,
                            const MeshInstance& instance,
@@ -185,10 +187,7 @@ void MeshModule::addLevels(const RenderContext& context,
   // How far, in the model's own size.
   const glm::vec3 origin(model[3]);
   const glm::vec3 eye = context.camera->position();
-  const float scale = std::max({glm::length(glm::vec3(model[0])),
-                                glm::length(glm::vec3(model[1])),
-                                glm::length(glm::vec3(model[2])),
-                                1e-4f});
+  const float scale = std::max(largestScale(model), 1e-4f);
   const float distance = glm::distance(eye, origin) / scale;
   if (lod.cullDistance > 0.0f && distance > lod.cullDistance)
     return;
@@ -199,33 +198,31 @@ void MeshModule::addLevels(const RenderContext& context,
   std::size_t wanted = 0;
   while (wanted + 1 < count && distance >= levels[wanted + 1].from)
     ++wanted;
-  LodState& state = m_lods[id];
-  state.seen = m_frame;
-  if (!state.started)
-  {
-    state = {static_cast<uint8_t>(wanted), static_cast<uint8_t>(wanted)};
-    state.started = true;
-    state.seen = m_frame;
-  }
-  const std::size_t at = std::min<std::size_t>(state.level, count - 1);
+  if (m_now - lod.levelSeen > kLevelsForgotten)
+    lod.level = lod.previousLevel = static_cast<uint8_t>(wanted);
+  lod.levelSeen = m_now;
+  const std::size_t at = std::min<std::size_t>(lod.level, count - 1);
   const float margin = std::max(lod.hysteresis, 0.0f);
   const bool beyondNear = at > 0 && distance < levels[at].from - margin;
   const bool beyondFar =
       at + 1 < count && distance >= levels[at + 1].from + margin;
-  if (wanted != at && (beyondNear || beyondFar || state.level >= count))
+  if (wanted != at && (beyondNear || beyondFar || lod.level >= count))
   {
-    state.previous = static_cast<uint8_t>(at);
-    state.level = static_cast<uint8_t>(wanted);
-    state.since = m_now;
+    lod.previousLevel = static_cast<uint8_t>(at);
+    lod.level = static_cast<uint8_t>(wanted);
+    lod.levelSince = m_now;
   }
-  const std::size_t level = std::min<std::size_t>(state.level, count - 1);
-  const std::size_t previous = std::min<std::size_t>(state.previous, count - 1);
+  const std::size_t level = std::min<std::size_t>(lod.level, count - 1);
+  const std::size_t previous =
+      std::min<std::size_t>(lod.previousLevel, count - 1);
   float fade = 1.0f; // how far in it's faded (1: done)
   if (previous != level && lod.fadeSeconds > 0.0f)
-    fade = std::clamp(
-        static_cast<float>(m_now - state.since) / lod.fadeSeconds, 0.0f, 1.0f);
+    fade =
+        std::clamp(static_cast<float>(m_now - lod.levelSince) / lod.fadeSeconds,
+                   0.0f,
+                   1.0f);
   if (fade >= 1.0f)
-    state.previous = state.level;
+    lod.previousLevel = lod.level;
 
   // Shadows from the coarser of its level and the shadow level (none from
   // impostors, unless asked for: then the last mesh level's).
@@ -284,16 +281,6 @@ void MeshModule::addLevels(const RenderContext& context,
   // Crossing over: the old level giving way to the new, pixel for pixel.
   draw(previous, fade);
   draw(level, -fade);
-}
-
-void MeshModule::forgetLevels()
-{
-  // Entities not drawn with levels lately (gone, or out of range a while).
-  if (m_frame % 256 != 0)
-    return;
-  std::erase_if(m_lods,
-                [&](const auto& entry)
-                { return m_frame - entry.second.seen > 256; });
 }
 
 } // namespace sfs

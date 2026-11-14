@@ -46,7 +46,7 @@ std::string source(Kind kind, const std::string& name)
            "\n"
            "  void update(double deltaTime) override\n"
            "  {\n"
-           "    for (sfs::Entity& entity : getEntities())\n"
+           "    for (const sfs::Entity& entity : getEntities())\n"
            "    {\n"
            "    }\n"
            "  }\n"

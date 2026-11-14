@@ -2,10 +2,11 @@
 
 #include "engine/core/ecs/registry.h"
 #include "engine/core/logger/logger.h"
+#include "engine/core/util/debugFeatures.h"
 #include "engine/core/util/fatalError.h"
 #include <algorithm>
 #include <string>
-#include <tuple>
+#include <typeinfo>
 
 namespace sfs
 {
@@ -47,7 +48,7 @@ void Registry::addComponent(const Entity& entity, TArgs&&... args)
   const Signature before = entityComponentSignatures[entityId];
   entityComponentSignatures[entityId].set(componentId, true);
   if (!before.test(componentId))
-    componentsChanged(entity, before);
+    componentsChanged(entity, before, static_cast<std::size_t>(componentId));
 }
 
 template <typename TComponent>
@@ -62,9 +63,34 @@ void Registry::removeComponent(const Entity& entity)
     return;
 
   entityComponentSignatures[entityId].set(componentId, false);
-  componentsChanged(entity, before);
+  componentsChanged(entity, before, static_cast<std::size_t>(componentId));
   if (Pool<TComponent>* pool = poolOf<TComponent>())
     pool->remove(static_cast<std::size_t>(entityId));
+}
+
+template <typename... TTerms>
+const std::vector<Entity>& Registry::query()
+{
+  static const QuerySignature signature =
+      detail::makeQuerySignature<TTerms...>();
+  return m_queryLists[listOf(signature)];
+}
+
+template <typename TComponent>
+TComponent* Registry::singleton()
+{
+  const std::size_t id =
+      static_cast<std::size_t>(Component<TComponent>::getId());
+  if (m_holderCount[id] == 0)
+    return nullptr;
+  if (m_holderCount[id] > 1 && !m_warnedNotSingle[id])
+    warnNotSingle(id, detail::componentTypeKey<TComponent>());
+  if (m_holder[id] == kNoHolder)
+    m_holder[id] = findHolder(id);
+  if (m_holder[id] == kNoHolder)
+    return nullptr;
+  Pool<TComponent>* pool = poolOf<TComponent>();
+  return pool ? pool->find(m_holder[id]) : nullptr;
 }
 
 template <typename TComponent>
@@ -103,10 +129,11 @@ TSystem& Registry::addSystem(TArgs&&... args)
   TSystem* ptr = system.get();
 
   systems.emplace_back(std::move(system));
+  forgetSystemLookups();
 
   System* base = ptr;
   base->create();
-  addExistingEntities(*base);
+  attach(*base);
 
   return *ptr;
 }
@@ -114,6 +141,9 @@ TSystem& Registry::addSystem(TArgs&&... args)
 template <typename TSystem>
 void Registry::removeSystem()
 {
+  // Forgotten before as well as after: a destructor that looks a system up
+  // mustn't be handed the one being destroyed.
+  forgetSystemLookups();
   systems.erase(std::remove_if(systems.begin(),
                                systems.end(),
                                [](const std::unique_ptr<System>& system) {
@@ -121,16 +151,13 @@ void Registry::removeSystem()
                                         nullptr;
                                }),
                 systems.end());
+  forgetSystemLookups();
 }
 
 template <typename TSystem>
 bool Registry::hasSystem() const
 {
-  return std::any_of(systems.begin(),
-                     systems.end(),
-                     [](const std::unique_ptr<System>& system) {
-                       return dynamic_cast<TSystem*>(system.get()) != nullptr;
-                     });
+  return tryGetSystem<TSystem>() != nullptr;
 }
 
 template <typename TSystem>
@@ -153,65 +180,56 @@ TSystem& Registry::getSystem() const
 template <typename TSystem>
 TSystem* Registry::tryGetSystem() const
 {
-  if (!this->hasSystem<TSystem>())
-    return nullptr;
+  const auto id = static_cast<std::size_t>(detail::systemLookupId<TSystem>());
+  if (id >= kSystemSlots)
+    return findSystem<TSystem>();
 
+  std::atomic<std::uintptr_t>& slot = m_systemSlots[id];
+  const std::uintptr_t known = slot.load(std::memory_order_acquire);
+  if (known != kNotLookedUp)
+  {
+    // Two system types with one name share a slot: the answer may be the
+    // other's.
+    const std::type_info* foundFor =
+        debugFeatures::compiled() && debugFeatures::enabled()
+            ? m_systemSlotTypes[id].load(std::memory_order_acquire)
+            : nullptr;
+    if (foundFor && *foundFor != typeid(TSystem))
+    {
+      static std::atomic<bool> logged{false};
+      if (!logged.exchange(true))
+        LOG_ERROR(
+            "tryGetSystem: two system types are named " +
+            detail::readableTypeName(detail::componentTypeKey<TSystem>()) +
+            "; give them distinct names (looked up by a scan instead)");
+      return findSystem<TSystem>();
+    }
+    return known == kNoSuchSystem ? nullptr : reinterpret_cast<TSystem*>(known);
+  }
+
+  // Remembered only if the systems didn't change while they were scanned,
+  // and taken back if they changed as it was stored.
+  const uint64_t changed = m_systemsChanged.load();
+  TSystem* found = findSystem<TSystem>();
+  std::uintptr_t answer =
+      found ? reinterpret_cast<std::uintptr_t>(found) : kNoSuchSystem;
+  if (m_systemsChanged.load() == changed)
+  {
+    m_systemSlotTypes[id].store(&typeid(TSystem));
+    slot.store(answer);
+    if (m_systemsChanged.load() != changed)
+      slot.compare_exchange_strong(answer, kNotLookedUp);
+  }
+  return found;
+}
+
+template <typename TSystem>
+TSystem* Registry::findSystem() const
+{
   for (const auto& system : systems)
-  {
     if (auto* casted = dynamic_cast<TSystem*>(system.get()))
-    {
       return casted;
-    }
-  }
-
   return nullptr;
-}
-
-template <typename... TComponents, typename Fn>
-void Registry::each(Fn&& fn)
-{
-  Signature requiredSignature;
-  (requiredSignature.set(Component<TComponents>::getId()), ...);
-
-  const auto pools = std::make_tuple(poolOf<TComponents>()...);
-  if (((std::get<Pool<TComponents>*>(pools) == nullptr) || ...))
-    return; // a type no entity has had
-
-  for (Entity::EntityId entityId = 0;
-       entityId < entityComponentSignatures.size();
-       entityId++)
-  {
-    if (!entityAlive[entityId] || (entityComponentSignatures[entityId] &
-                                   requiredSignature) != requiredSignature)
-      continue;
-    Entity entity{entityId, generations[entityId], entityDebugIds[entityId]};
-    entity.setRegistry(this);
-    fn(entity, std::get<Pool<TComponents>*>(pools)->get(entityId)...);
-  }
-}
-
-template <typename... TComponents>
-std::vector<Entity> Registry::view()
-{
-  Signature requiredSignature;
-
-  (requiredSignature.set(Component<TComponents>::getId()), ...);
-
-  std::vector<Entity> result;
-
-  for (Entity::EntityId entityId = 0;
-       entityId < entityComponentSignatures.size();
-       entityId++)
-  {
-    const Signature& entitySignature = entityComponentSignatures[entityId];
-
-    if ((entitySignature & requiredSignature) == requiredSignature)
-    {
-      result.push_back(getEntity(entityId));
-    }
-  }
-
-  return result;
 }
 
 template <typename Fn>

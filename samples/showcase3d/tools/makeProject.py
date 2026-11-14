@@ -302,7 +302,12 @@ def box(size, offset=(0, 0, 0), trigger=False):
 def body(mass=1.0, kinematic=False, friction=0.5, bounce=0.0, lock=False):
     return {'mass': mass, 'kinematic': kinematic, 'friction': friction, 'bounciness': bounce,
             'linearDamping': 0.05, 'angularDamping': 0.05, 'gravityScale': 1.0,
-            'lockRotation': lock, 'bendsGrass': True}
+            'lockRotation': lock}
+
+
+def bender():
+    # Flattens grass it moves through, sized by its colliders.
+    return {'fitColliders': True, 'fitMesh': True, 'offset': [0.0, 0.0, 0.0], 'radius': 0.5}
 
 
 def entity(name, tf, **components):
@@ -368,13 +373,13 @@ def main():
         'Crate', transform(0, 0, 0),
         MeshRendererComponent=mesh('builtin:cube', [m['crate']]),
         BoxCollider3DComponent=box((1, 1, 1), (0, 0, 0.5)),
-        RigidBody3DComponent=body(mass=0.7, friction=0.6))})
+        GrassBenderComponent=bender(), RigidBody3DComponent=body(mass=0.7, friction=0.6))})
     pin = asset('prefabs/pin.prefab', contents={'formatVersion': 1, 'root': entity(
         'Pin', transform(0, 0, 0),
         MeshRendererComponent=mesh('glowfall:pin'),
         CapsuleCollider3DComponent={'radius': 0.17, 'height': 0.95, 'offset': [0, 0, 0.475],
                                     'trigger': False},
-        RigidBody3DComponent=body(mass=0.6, friction=0.4, bounce=0.2),
+        GrassBenderComponent=bender(), RigidBody3DComponent=body(mass=0.6, friction=0.4, bounce=0.2),
         Pin={})})
     lantern = asset('prefabs/lantern.prefab', contents={'formatVersion': 1, 'root': dict(
         entity('Lantern', transform(0, 0, 0),
@@ -415,7 +420,7 @@ def main():
     E.append(dict(entity('Hero', transform(0, -18, 0.05),
                          CapsuleCollider3DComponent={'radius': 0.4, 'height': 1.7,
                                                      'offset': [0, 0, 0.85], 'trigger': False},
-                         RigidBody3DComponent=body(mass=2.0, friction=0.0, lock=True),
+                         GrassBenderComponent=bender(), RigidBody3DComponent=body(mass=2.0, friction=0.0, lock=True),
                          PointLightComponent=light((0.6, 0.85, 1.0), 0.6, 4.0, (0, 0, 1.4)),
                          ScriptComponent={'script': 'Hero', 'fields': {'tuning': tuning,
                                                                        'fallLimit': -3.0}}),
@@ -482,7 +487,7 @@ def main():
                     MeshRendererComponent=mesh('glowfall:ball', [m['rubber']]),
                     SphereCollider3DComponent={'radius': 0.45, 'offset': [0, 0, 0.45],
                                                'trigger': False},
-                    RigidBody3DComponent=body(mass=4.0, friction=0.6, bounce=0.3)))
+                    GrassBenderComponent=bender(), RigidBody3DComponent=body(mass=4.0, friction=0.6, bounce=0.3)))
     sign('Physics Yard', 1, 10, -12, 'Shove the crates, roll the ball into the pins!', radius=6.0)
 
     # The grove: lanterns casting shadows through the trees; fireflies at night.
@@ -568,7 +573,7 @@ def main():
     E.append(entity('Lift', transform(6.5, -2, 0.3, 2.4, 2.4, 0.35),
                     MeshRendererComponent=mesh('builtin:cube', [m['steel']]),
                     BoxCollider3DComponent=box((1, 1, 1), (0, 0, 0.5)),
-                    RigidBody3DComponent=body(mass=50.0, kinematic=True, friction=1.0),
+                    GrassBenderComponent=bender(), RigidBody3DComponent=body(mass=50.0, kinematic=True, friction=1.0),
                     Bob=bob(amplitude=2.2, speed=0.55, spin=0.0),
                     Station={'title': 'The Lift',
                              'hint': 'A kinematic platform: ride it up to the ledge.',

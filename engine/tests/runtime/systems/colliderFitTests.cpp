@@ -61,12 +61,6 @@ struct World
       hierarchy::setParent(entity, parent);
     return entity;
   }
-
-  hierarchy::EntityTree tree()
-  {
-    scene.flushEntities();
-    return hierarchy::EntityTree(scene.entities());
-  }
 };
 } // namespace
 
@@ -125,15 +119,12 @@ int main()
     Entity root = world.spawn(&body);
     world.spawn(&arm, TransformComponent{glm::vec3(3, 0, 0.5f)}, root);
     root.addComponent<BoxCollider3DComponent>();
-    const hierarchy::EntityTree tree = world.tree();
-
-    CHECK(fitColliderToMesh<BoxCollider3DComponent>(root, world.meshes, tree));
+    CHECK(fitColliderToMesh<BoxCollider3DComponent>(root, world.meshes));
     const auto& collider = root.getComponent<BoxCollider3DComponent>();
     CHECK(near(collider.size, {2, 1, 1}));
     CHECK(near(collider.offset, {0, 0, 0.5f}));
 
-    CHECK(fitColliderToMesh<BoxCollider3DComponent>(
-        root, world.meshes, tree, true));
+    CHECK(fitColliderToMesh<BoxCollider3DComponent>(root, world.meshes, true));
     CHECK(near(collider.size, {4.5f, 1, 1})); // x from -1 to 3.5
     CHECK(near(collider.offset, {1.25f, 0, 0.5f}));
   }
@@ -153,13 +144,10 @@ int main()
     world.spawn(&cube, TransformComponent{glm::vec3(-1, 0, 0)}, group);
     world.spawn(&cube, TransformComponent{glm::vec3(1, 0, 0)}, group);
     group.addComponent<SphereCollider3DComponent>();
-    const hierarchy::EntityTree tree = world.tree();
-
-    const Aabb bounds = entityMeshBounds(group, world.meshes, tree);
+    const Aabb bounds = entityMeshBounds(group, world.meshes);
     CHECK(near(bounds.min, {-1.5f, -0.5f, -0.5f}));
     CHECK(near(bounds.max, {1.5f, 0.5f, 0.5f}));
-    CHECK(fitColliderToMesh<SphereCollider3DComponent>(
-        group, world.meshes, tree));
+    CHECK(fitColliderToMesh<SphereCollider3DComponent>(group, world.meshes));
     CHECK(testing::approx(
         group.getComponent<SphereCollider3DComponent>().radius, 1.5f));
   }
@@ -171,11 +159,8 @@ int main()
     Entity meshed = world.spawn(&cube);
     Entity empty = world.spawn(nullptr);
     empty.addComponent<CapsuleCollider3DComponent>();
-    const hierarchy::EntityTree tree = world.tree();
-    CHECK(
-        !fitColliderToMesh<BoxCollider3DComponent>(meshed, world.meshes, tree));
-    CHECK(!fitColliderToMesh<CapsuleCollider3DComponent>(
-        empty, world.meshes, tree));
+    CHECK(!fitColliderToMesh<BoxCollider3DComponent>(meshed, world.meshes));
+    CHECK(!fitColliderToMesh<CapsuleCollider3DComponent>(empty, world.meshes));
     CHECK(testing::approx(
         empty.getComponent<CapsuleCollider3DComponent>().height, 1.8f));
   }

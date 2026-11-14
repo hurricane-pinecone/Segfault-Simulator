@@ -26,8 +26,6 @@ namespace sfs
  * @param bool touchStatic - kinematic: its contacts with static and other
  *                          kinematic bodies are reported too (a machine
  *                          driven by script that must know what it touches)
- * @param bool bendsGrass - flattens grass it moves through (GrassComponent),
- *                          sized by its colliders
  */
 struct RigidBody3DComponent
 {
@@ -39,7 +37,6 @@ struct RigidBody3DComponent
   [[sfs::range(0, 1)]] float angularDamping = 0.05f;
   [[sfs::range(-2, 2)]] float gravityScale = 1.0f;
   bool lockRotation = false;
-  bool bendsGrass = true;
   bool touchStatic = false;
 };
 

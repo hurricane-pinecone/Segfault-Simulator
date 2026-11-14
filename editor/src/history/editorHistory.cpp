@@ -4,10 +4,7 @@
 #include "scene/editorScene.h"
 #include "scene/sceneDocument.h"
 
-#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/rendering/renderSystem.h"
-
-#include <algorithm>
 
 void EditorHistory::beginChange()
 {
@@ -99,12 +96,7 @@ EditorHistory::Selection EditorHistory::currentSelection() const
 {
   if (!m_context.hasSelection() || !m_context.scene)
     return std::nullopt;
-  const std::vector<sfs::Entity> order =
-      sfs::hierarchy::EntityTree(m_context.scene->entities()).preOrder();
-  const auto it = std::find(order.begin(), order.end(), m_context.selection);
-  if (it == order.end())
-    return std::nullopt;
-  return static_cast<std::size_t>(it - order.begin());
+  return m_context.scene->saveOrderOf(m_context.selection);
 }
 
 void EditorHistory::apply(const nlohmann::json& snapshot, Selection selection)
@@ -119,10 +111,5 @@ void EditorHistory::apply(const nlohmann::json& snapshot, Selection selection)
 
   m_context.selection = {};
   if (selection)
-  {
-    const std::vector<sfs::Entity> order =
-        sfs::hierarchy::EntityTree(m_context.scene->entities()).preOrder();
-    if (*selection < order.size())
-      m_context.selection = order[*selection];
-  }
+    m_context.selection = m_context.scene->atSaveOrder(*selection);
 }

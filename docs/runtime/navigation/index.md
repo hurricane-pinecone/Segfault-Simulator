@@ -6,6 +6,10 @@ You tell an agent where to go; it finds the way round the scene's colliders on
 the [planning scheduler](scheduler.md) (one worker pool, deadline first), drives it, and keeps out of the others' way by priority when they meet. Only
 vehicles are built so far; the code leaves room for walkers later.
 
+> **Library candidate.** The vehicle stack (`navigation/vehicle/`, towed rigs, fleet, traffic, lanes) is more than a
+> general engine ships in its core: it is to become an opt-in library once SFS has them. Until then, keep it general
+> and self-contained (nothing game-specific, no new ties from core code into it) so it can move out cleanly.
+
 It's the standard textbook stack, so nothing in it is specific to one game:
 
 1. a **coarse graph** of the open ground (gateways, aisles) picks the corridor
@@ -56,8 +60,11 @@ It's the standard textbook stack, so nothing in it is specific to one game:
    flooding the small one. Where a pose is further from anything solid (or
    ground barred to the body) than its outline's circle reaches, the outline
    isn't looked at point by point (a distance map built with the raster):
-   the same answer, open ground passed at a glance. Its moves are worked out
-   once per plan,
+   the same answer, open ground passed at a glance; likewise each move's discs
+   are looked at one by one only where something they can't be on (a solid
+   cell, ground barred to the reference point, the raster's edge) is within
+   the move's reach of where it starts (a second distance map). Its moves are
+   worked out once per plan,
    and its bins are coarser (1 m, 10 degrees) where nothing solid is near. It
    first tries a plain shot to the goal; then the heuristic maps (and the
    cost layer's raster) are built only if the search must go on, so a plain
@@ -176,8 +183,11 @@ struct TractorSpec : sfs::VehicleSpec
 };
 ```
 
-Hitching is live, not data: `hitch(agent, {towed, hitchBehind, drawbar,
-axle, forwardLimit, reverseLimit})` and `unhitch(agent)`. `drawbar` runs
+Hitching is live state, not authored data: `hitch(agent, {towed,
+hitchBehind, drawbar, axle, forwardLimit, reverseLimit})` and
+`unhitch(agent)` set the agent's `NavAgentComponent::hitch` (a hidden field,
+a `NavHitch`, alongside `speedCap` and `active`: `setSpeedCap()`,
+`setActive()`), so it goes with the entity. `drawbar` runs
 from the hitch to the towed thing's axle (where it pivots) and `axle` says
 how far that axle is ahead of the towed entity's origin (negative: behind);
 its colliders are its box, measured from the axle. The system plans the rig
@@ -584,7 +594,31 @@ shots (and the steering words worked out for them), the near-goal words, the
 smoother, the final exact check, the speed profile, and its collision queries
 (`nav::checkStats()`, per thread: answered exactly, settled by the broad
 phase, their milliseconds) and the cost layer's prices (asked, milliseconds).
-Each `planNow()` is a CPU timing scope (`nav/plan (workers)`).
+Each `planNow()` is a CPU timing scope (`nav/plan (workers)`). It also says
+how the search got to its way: how many ways it found (each quicker than the
+last), the first one's time and the poses grown when it and the one taken
+were found (`ways`, `firstSeconds`/`firstAt`, `bestSeconds`/`bestAt`).
+
+The steering words are handed out as they're laid
+(`Steering::paths(from, to, words, each)`, nothing allocated per word) and
+a search's shots take them laid out flat (`Motions::wordsInto()`, a
+`WordList`): the same words in the same order as `paths()` and `words()`.
+
+`heuristicAt(request, poses)` (`vehicleSearch.h`) gives the built-in search's
+heuristic parts at some poses. Only the 2D map is a true lower bound of the
+time any way takes (a test checks it against found ways, and its consistency,
+on random cases). The turning map and the heading-aware map are guides that
+can overstate: on that test's 12 ways the turning map was over the time left
+at 30 of 928 points and the heading-aware map at 332 (up to 6x, in tight
+spots). The search prunes by them all the same once it has grown its first
+300 poses. Taking the heading-aware map as soon as a shot finds a way (tried:
+headland turns twice as fast) pruned better ways the 300 poses would have
+found, and the game's coverage got worse, so it isn't done.
+
+`plannerBenchTests` is the planner's benchmark: a fixed set of headland
+turns in a fenced field and trips about a yard, each planned and timed
+(p50/p95 ms per kind), every way's time, cusps and metres backing held to the
+ones recorded before the speed work (`plannerBenchBefore.inc`): no worse.
 
 ## Adding a kind or a search
 

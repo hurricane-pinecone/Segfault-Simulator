@@ -35,8 +35,8 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
 // A field's C++ type, as its static_assert and member pointer spell it.
 std::string cppTypeOf(const FieldModel& field)
 {
-  if (field.kind == "AssetRef")
-    return "sfs::AssetRef<" + field.assetType + ">";
+  if (field.kind == "AssetRef" || field.kind == "AssetRefList")
+    return "sfs::" + field.kind + "<" + field.assetType + ">";
   return canonicalTypes().at(field.kind);
 }
 
@@ -151,7 +151,7 @@ void emitField(std::ostringstream& out,
     out << "      field.attributes.emissionLight = true;\n";
   if (!field.showIf.empty())
     out << "      field.attributes.showIf = \"" << field.showIf << "\";\n";
-  if (field.kind == "AssetRef")
+  if (field.kind == "AssetRef" || field.kind == "AssetRefList")
   {
     // By the registered (unqualified) name: AssetRef<sfs::VehicleSpec> refers
     // to "VehicleSpec".
@@ -340,9 +340,19 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
         << "#include \"engine/runtime/sceneManager/scene.h\"\n"
         << "#include \"engine/runtime/scripting/scriptRegistry.h\"\n";
   out << "\n";
+  // A header declaring several types is included once.
+  std::vector<const std::filesystem::path*> headers;
   for (const TypeModel& type : types)
+  {
+    if (std::any_of(headers.begin(),
+                    headers.end(),
+                    [&](const std::filesystem::path* header)
+                    { return *header == type.header; }))
+      continue;
+    headers.push_back(&type.header);
     out << "#include \"" << includePath(type.header, options.includeRoot)
         << "\"\n";
+  }
   out << "\n#include <cstdint>\n#include <memory>\n#include <string>\n#include "
          "<type_traits>\n"
       << "#include <utility>\n#include <vector>\n\n";

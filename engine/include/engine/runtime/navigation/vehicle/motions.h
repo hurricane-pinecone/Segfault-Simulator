@@ -31,16 +31,19 @@ inline float bendSpeed(const VehicleModel& v, float k)
 }
 
 // The cost layer's price at a pose, counted and timed into this thread's
-// CheckStats (diagnostics: how much of a plan the ground's costs take).
+// CheckStats (diagnostics: how much of a plan the ground's costs take). One
+// call in 8 is timed and counted for 8 (reading the clock twice a call cost
+// about as much as a cheap price).
 inline float priceAt(const CostLayer& cost, Pose2 at, int mode)
 {
+  CheckStats& stats = checkStats();
+  if ((stats.costs++ & 7u) != 0)
+    return cost.factor(at, mode);
   const auto t0 = std::chrono::steady_clock::now();
   const float f = cost.factor(at, mode);
-  CheckStats& stats = checkStats();
-  ++stats.costs;
-  stats.costMs += std::chrono::duration<double, std::milli>(
-                      std::chrono::steady_clock::now() - t0)
-                      .count();
+  stats.costMs += 8.0 * std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
   return f;
 }
 
@@ -454,29 +457,64 @@ public:
     }
     return c * (cost ? cost->floor() : 1.0f);
   }
+  // Words laid out flat (no allocation per word once its buffers have
+  // grown): word i is at(i), cheapest first.
+  struct WordList
+  {
+    std::vector<Segment> segs;
+    struct Entry
+    {
+      float estimate;
+      uint32_t first, count;
+    };
+    std::vector<Entry> order;
+    std::size_t size() const { return order.size(); }
+    std::span<const Segment> at(std::size_t i) const
+    {
+      return {segs.data() + order[i].first, order[i].count};
+    }
+  };
   // Every word from a to b at every curvature level, cheapest first (with
   // cusps: the three-point turns and `cuspSamples` C|CSC / CSC|C first
-  // turns each way, at full lock).
-  std::vector<std::vector<Segment>>
-  words(Pose2 a, Pose2 b, bool cusps, int cuspSamples = 10) const
+  // turns each way, at full lock), into `out`.
+  void
+  wordsInto(Pose2 a, Pose2 b, bool cusps, int cuspSamples, WordList& out) const
   {
-    std::vector<std::pair<float, std::vector<Segment>>> all;
+    out.segs.clear();
+    out.order.clear();
     for (std::size_t i = 0; i < levels.size(); ++i)
     {
       Steering::Words w;
       w.reverse = !forwardOnly;
       w.cusps = cusps && !forwardOnly && i == 0;
       w.cuspSamples = cuspSamples;
-      for (std::vector<Segment>& p : levels[i].paths(a, b, w))
-        all.emplace_back(estimate(p), std::move(p));
+      levels[i].paths(
+          a,
+          b,
+          w,
+          [&](std::span<const Segment> p)
+          {
+            out.order.push_back({estimate(p),
+                                 static_cast<uint32_t>(out.segs.size()),
+                                 static_cast<uint32_t>(p.size())});
+            out.segs.insert(out.segs.end(), p.begin(), p.end());
+          });
     }
-    std::stable_sort(all.begin(),
-                     all.end(),
-                     [](const auto& x, const auto& y)
-                     { return x.first < y.first; });
+    std::stable_sort(out.order.begin(),
+                     out.order.end(),
+                     [](const WordList::Entry& x, const WordList::Entry& y)
+                     { return x.estimate < y.estimate; });
+  }
+  // The same as vectors.
+  std::vector<std::vector<Segment>>
+  words(Pose2 a, Pose2 b, bool cusps, int cuspSamples = 10) const
+  {
+    WordList list;
+    wordsInto(a, b, cusps, cuspSamples, list);
     std::vector<std::vector<Segment>> out;
-    for (auto& [c, p] : all)
-      out.push_back(std::move(p));
+    out.reserve(list.size());
+    for (std::size_t i = 0; i < list.size(); ++i)
+      out.emplace_back(list.at(i).begin(), list.at(i).end());
     return out;
   }
 };

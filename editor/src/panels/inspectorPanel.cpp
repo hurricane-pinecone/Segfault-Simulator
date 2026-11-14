@@ -51,6 +51,7 @@
 #include <cctype>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -296,6 +297,55 @@ bool assetRefCombo(const char* label,
     ImGui::EndDragDropTarget();
   }
   return picked;
+}
+
+// A list of the project's scriptable objects of `type`, in order: a row each,
+// picked (or dropped) as an AssetRef is, taken out with its "x", and one more
+// added at the end with "+". Each change is an undo step. True when it's
+// changed.
+bool assetRefList(const char* label,
+                  const std::string& type,
+                  std::vector<std::string>& assets,
+                  EditorHistory* history)
+{
+  bool changed = false;
+  std::optional<std::size_t> remove;
+  const float button = ImGui::GetFrameHeight();
+  for (std::size_t i = 0; i < assets.size(); ++i)
+  {
+    ImGui::PushID(static_cast<int>(i));
+    widgets::propertyLabel(i == 0 ? label : "##item");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - button -
+                            ImGui::GetStyle().ItemInnerSpacing.x);
+    changed |= widgets::undoable(history,
+                                 assets[i],
+                                 [&](std::string& asset) {
+                                   return assetRefCombo("##asset", type, asset);
+                                 });
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::Button("x", ImVec2(button, button)))
+      remove = i;
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Take it out of the list");
+    ImGui::PopID();
+  }
+  widgets::propertyLabel(assets.empty() ? label : "##add");
+  const bool add = ImGui::Button("+");
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Add one to the end");
+  if (remove || add)
+  {
+    if (history)
+      history->beginChange();
+    if (remove)
+      assets.erase(assets.begin() + static_cast<std::ptrdiff_t>(*remove));
+    else
+      assets.emplace_back();
+    if (history)
+      history->endChange();
+    changed = true;
+  }
+  return changed;
 }
 
 // What a material slot's icons do with its material asset: edit it (a graph
@@ -591,6 +641,12 @@ void fieldWidget(const FieldInfo& field,
                return assetRefCombo(id, attributes.assetType, asset);
              });
     break;
+  case FieldKind::AssetRefList:
+    assetRefList(label,
+                 attributes.assetType,
+                 field.in<sfs::AssetRefListBase>(object).assets,
+                 history);
+    break;
   }
 }
 
@@ -639,6 +695,8 @@ nlohmann::json fieldValue(const FieldInfo& field, void* object)
     return field.in<std::vector<std::string>>(object);
   case Kind::AssetRef:
     return field.in<sfs::AssetRefBase>(object).asset;
+  case Kind::AssetRefList:
+    return field.in<sfs::AssetRefListBase>(object).assets;
   }
   return nullptr;
 }
@@ -688,6 +746,9 @@ void copyField(const FieldInfo& field, void* from, void* to)
     break;
   case Kind::AssetRef:
     field.in<sfs::AssetRefBase>(to) = field.in<sfs::AssetRefBase>(from);
+    break;
+  case Kind::AssetRefList:
+    field.in<sfs::AssetRefListBase>(to) = field.in<sfs::AssetRefListBase>(from);
     break;
   }
 }
@@ -971,7 +1032,6 @@ bool materialsCanGlow(const TypeInfo& type,
 struct MeshScene
 {
   const sfs::MeshLibrary* meshes = nullptr;
-  const sfs::hierarchy::EntityTree* tree = nullptr;
   sfs::AssetDatabase* assets = nullptr; // where Extract writes materials
   const sfs::RenderSystem* render = nullptr;
   sfs::AssetStore* store = nullptr; // sprites' images
@@ -982,10 +1042,13 @@ struct MeshScene
 // model's clips (listed once it has loaded).
 void animatorClipField(const FieldInfo& field,
                        void* object,
+                       const sfs::Entity& entity,
+                       const MeshScene& scene,
                        EditorHistory* history)
 {
-  const auto& animator = *static_cast<sfs::AnimatorComponent*>(object);
-  const std::vector<std::string> clips = animator.clipNames();
+  const std::vector<std::string> clips =
+      scene.animation ? scene.animation->clipNames(entity)
+                      : std::vector<std::string>{};
   widgets::propertyLabel(field.displayName.c_str());
   widgets::undoable(history,
                     field.in<std::string>(object),
@@ -1013,7 +1076,9 @@ void animatorClipField(const FieldInfo& field,
                       }
                       return changed;
                     });
-  if (const float length = animator.length(); length > 0.0f)
+  if (const float length =
+          scene.animation ? scene.animation->length(entity) : 0.0f;
+      length > 0.0f)
     ImGui::SetItemTooltip("%.2f s", length);
 }
 
@@ -1132,9 +1197,9 @@ std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& enti
 // group covers the group). Empty if there are none (or only stand-ins).
 sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene, bool includeChildren = false)
 {
-  if (!scene.meshes || !scene.tree)
+  if (!scene.meshes)
     return {};
-  return sfs::entityMeshBounds(entity, *scene.meshes, *scene.tree, includeChildren);
+  return sfs::entityMeshBounds(entity, *scene.meshes, includeChildren);
 }
 
 bool isCollider(const TypeInfo& type)
@@ -1162,14 +1227,14 @@ void fitCollider(const TypeInfo& type,
     }
     return;
   }
-  if (!scene.meshes || !scene.tree)
+  if (!scene.meshes)
     return;
   if (type.name == "BoxCollider3DComponent")
-    sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+    sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, *scene.meshes, includeChildren);
   else if (type.name == "SphereCollider3DComponent")
-    sfs::fitColliderToMesh<sfs::SphereCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+    sfs::fitColliderToMesh<sfs::SphereCollider3DComponent>(entity, *scene.meshes, includeChildren);
   else if (type.name == "CapsuleCollider3DComponent")
-    sfs::fitColliderToMesh<sfs::CapsuleCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+    sfs::fitColliderToMesh<sfs::CapsuleCollider3DComponent>(entity, *scene.meshes, includeChildren);
 }
 
 // A 3D collider's Fit to Mesh row (one undo step, on every selected object),
@@ -1185,7 +1250,7 @@ void colliderFitRows(const TypeInfo& type,
   const bool hasOwn =
       entity.hasComponent<sfs::MeshRendererComponent>() && scene.meshes &&
       scene.meshes->bounds(entity.getComponent<sfs::MeshRendererComponent>().mesh);
-  if (hasOwn && scene.tree && !scene.tree->children(entity).empty())
+  if (hasOwn && sfs::hierarchy::hasChildren(entity))
   {
     widgets::propertyCheckbox("Include Children", &includeChildren);
     ImGui::SetItemTooltip("Fit around the children's meshes too, not just this object's");
@@ -1381,7 +1446,7 @@ void componentSection(
                             ImGui::GetStyle().Alpha * 0.55f);
       ImGui::BeginGroup();
       if (type.name == "AnimatorComponent" && field.name == "clip")
-        animatorClipField(field, object, history);
+        animatorClipField(field, object, entity, scene, history);
       else if (type.name == "AnimatorComponent" && field.name == "source")
         animatorSourceField(field, object, scene, history);
       else if (field.attributes.materials && field.kind == FieldKind::StringList)
@@ -1478,22 +1543,39 @@ std::string lowercase(std::string text)
   return text;
 }
 
-// The components that can be added, grouped by the module that registered
-// them (the engine's first, then the game's), narrowed by a search box.
-// A collider starts out fitted to the entity's meshes.
-void addComponentButton(const sfs::Entity& entity,
-                        const MeshScene& scene,
-                        EditorHistory* history,
-                        std::string& filter,
-                        std::span<const sfs::Entity> others = {})
+/**
+ * A button opening a picker of the components (or, with `tags`, the tags) that
+ * can be added, grouped by the module that registered them (the engine's
+ * first, then the game's), narrowed by a search box. A collider starts out
+ * fitted to the entity's meshes.
+ *
+ * @param label The button's text.
+ * @param popup The picker popup's ID.
+ * @param tags List tags (TypeInfo::tag) instead of the other components.
+ * @param size The button's size (ImGui's: 0 fits, -1 fills).
+ * @param entity The entity to add to.
+ * @param scene What fitting a collider needs.
+ * @param history Takes the addition as one undo step.
+ * @param filter The search box's text, kept between frames.
+ * @param others The rest of a multi-selection, given the type too.
+ */
+void addTypeButton(const char* label,
+                   const char* popup,
+                   bool tags,
+                   ImVec2 size,
+                   const sfs::Entity& entity,
+                   const MeshScene& scene,
+                   EditorHistory* history,
+                   std::string& filter,
+                   std::span<const sfs::Entity> others = {})
 {
-  if (ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f)))
+  if (ImGui::Button(label, size))
   {
     filter.clear();
-    ImGui::OpenPopup("AddComponent");
+    ImGui::OpenPopup(popup);
   }
 
-  if (!ImGui::BeginPopup("AddComponent"))
+  if (!ImGui::BeginPopup(popup))
     return;
 
   if (ImGui::IsWindowAppearing())
@@ -1503,7 +1585,7 @@ void addComponentButton(const sfs::Entity& entity,
 
   std::vector<const TypeInfo*> candidates;
   for (const TypeInfo& type : sfs::reflect::types().types())
-    if (type.kind == sfs::reflect::TypeKind::Component &&
+    if (type.kind == sfs::reflect::TypeKind::Component && type.tag == tags &&
         type.name != kNameType &&
         (!type.component.has(entity) ||
          std::any_of(others.begin(),
@@ -1552,9 +1634,108 @@ void addComponentButton(const sfs::Entity& entity,
           });
   }
   if (candidates.empty())
-    ImGui::TextDisabled(search.empty() ? "Every component is already added"
-                                       : "No component matches");
+  {
+    if (tags)
+      ImGui::TextDisabled(search.empty() ? "Every tag is already added"
+                                         : "No tag matches");
+    else
+      ImGui::TextDisabled(search.empty() ? "Every component is already added"
+                                         : "No component matches");
+  }
   ImGui::EndPopup();
+}
+
+/**
+ * The Tags row: a chip per tag the entity (and every other selected one) has,
+ * with an x that removes it, then the Add Tag picker.
+ *
+ * @param entity The entity shown.
+ * @param others The rest of a multi-selection.
+ * @param overrides What its prefab instance overrides (prefabs::overridesOf):
+ * a tag it adds is drawn in the override colour.
+ * @param scene What adding a type needs.
+ * @param history Takes each change as one undo step.
+ * @param filter The Add Tag search box's text, kept between frames.
+ */
+void tagsSection(const sfs::Entity& entity,
+                 std::span<const sfs::Entity> others,
+                 const std::map<std::string, std::set<std::string>>& overrides,
+                 const MeshScene& scene,
+                 EditorHistory* history,
+                 std::string& filter)
+{
+  ImGui::TextUnformatted("Tags");
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float right =
+      ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+  bool first = true;
+  // The next item on this line if it fits, else on a new one.
+  const auto flow = [&](float width)
+  {
+    if (first)
+      ImGui::SameLine();
+    else if (ImGui::GetItemRectMax().x + style.ItemSpacing.x + width <= right)
+      ImGui::SameLine();
+    first = false;
+  };
+
+  for (const TypeInfo& type : sfs::reflect::types().types())
+  {
+    if (type.kind != sfs::reflect::TypeKind::Component || !type.tag ||
+        !type.component.has(entity) ||
+        !std::all_of(others.begin(),
+                     others.end(),
+                     [&](const sfs::Entity& other)
+                     { return type.component.has(other); }))
+      continue;
+
+    ImGui::PushID(type.name.c_str());
+    const bool overridden = overrides.contains(type.name);
+    const float width = ImGui::CalcTextSize(type.displayName.c_str()).x +
+                        ImGui::CalcTextSize("x").x +
+                        style.FramePadding.x * 4.0f;
+    flow(width);
+    ImGui::BeginGroup();
+    const ImU32 fill = overridden ? theme::kAccentSoft : theme::kTile;
+    ImGui::PushStyleColor(ImGuiCol_Button, fill);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, fill);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, fill);
+    if (overridden)
+      ImGui::PushStyleColor(ImGuiCol_Text, theme::kAccent);
+    ImGui::SmallButton(type.displayName.c_str());
+    if (overridden)
+      ImGui::PopStyleColor();
+    ImGui::PopStyleColor(3);
+    if (overridden)
+      ImGui::SetItemTooltip("Added on this copy of the prefab");
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, fill);
+    const bool remove = ImGui::SmallButton("x");
+    ImGui::PopStyleColor();
+    ImGui::SetItemTooltip("Remove the tag");
+    ImGui::EndGroup();
+    ImGui::PopID();
+
+    if (remove)
+      history->change(
+          [&]
+          {
+            type.component.remove(entity);
+            for (const sfs::Entity& other : others)
+              type.component.remove(other);
+          });
+  }
+
+  flow(ImGui::CalcTextSize("+ Add Tag").x + style.FramePadding.x * 2.0f);
+  addTypeButton("+ Add Tag",
+                "AddTag",
+                true,
+                ImVec2(0.0f, 0.0f),
+                entity,
+                scene,
+                history,
+                filter,
+                others);
 }
 
 } // namespace
@@ -2275,9 +2456,7 @@ void InspectorPanel::drawContents(EditorContext& context)
   const sfs::Entity entity = context.selection;
   sfs::MeshLibrary* meshes =
       context.render ? &context.render->meshes() : nullptr;
-  const sfs::hierarchy::EntityTree tree(context.scene->entities());
   const MeshScene scene{meshes,
-                        &tree,
                         context.assets,
                         context.render,
                         context.scene ? &context.scene->assetStore() : nullptr,
@@ -2358,8 +2537,11 @@ void InspectorPanel::drawContents(EditorContext& context)
       }};
 
   const auto overrides = prefabs::overridesOf(context, entity);
+  tagsSection(entity, others, overrides, scene, history, m_tagFilter);
+  ImGui::Separator();
+
   for (const TypeInfo& type : sfs::reflect::types().types())
-    if (type.kind == sfs::reflect::TypeKind::Component &&
+    if (type.kind == sfs::reflect::TypeKind::Component && !type.tag &&
         type.name != kNameType && type.component.has(entity) &&
         std::all_of(others.begin(),
                     others.end(),
@@ -2383,7 +2565,15 @@ void InspectorPanel::drawContents(EditorContext& context)
     }
 
   ImGui::Spacing();
-  addComponentButton(entity, scene, history, m_componentFilter, others);
+  addTypeButton("Add Component",
+                "AddComponent",
+                false,
+                ImVec2(-1.0f, 0.0f),
+                entity,
+                scene,
+                history,
+                m_componentFilter,
+                others);
 
   // Prefab actions rebuild entities: after drawing, not mid-way.
   if (m_pendingRevert)

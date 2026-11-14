@@ -17,7 +17,7 @@ protected:
 
   void update(double deltaTime) override
   {
-    for (sfs::Entity& entity : getEntities())
+    for (const sfs::Entity& entity : getEntities())
     {
       Bob& bob = entity.getComponent<Bob>();
       auto& transform = entity.getComponent<sfs::TransformComponent>();

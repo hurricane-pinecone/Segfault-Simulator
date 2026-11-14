@@ -61,7 +61,7 @@ void PuddleModule::emit(const RenderContext& context,
   for (auto& [key, field] : m_fields)
     field.seen = false;
   for (const Entity& entity :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.materials.empty())
@@ -76,7 +76,7 @@ void PuddleModule::emit(const RenderContext& context,
     // A fill rate set before its puddles were first found goes with them.
     if (const auto rate = m_fillRates.find(key);
         rate != m_fillRates.end() && field.sent.empty())
-      field.sent.fillRate = rate->second;
+      field.sent.fillRate = rate->second.rate;
     // Drawn with another material now (a style's variant): its puddles go
     // over to it.
     if (field.material != material)
@@ -92,6 +92,10 @@ void PuddleModule::emit(const RenderContext& context,
     field.terrain = drawn->terrain;
     refresh(entity, field);
   }
+
+  std::erase_if(m_fillRates,
+                [&](const auto& entry)
+                { return !m_registry->isAlive(entry.second.ground); });
 
   // Terrains gone, or without puddles now.
   for (auto it = m_fields.begin(); it != m_fields.end();)
@@ -190,7 +194,7 @@ void PuddleModule::setFillRate(const Entity& ground,
                                std::shared_ptr<const TextureData> fillRate)
 {
   const uint64_t key = keyOf(ground);
-  m_fillRates[key] = fillRate;
+  m_fillRates[key] = {ground, fillRate};
   if (const auto it = m_fields.find(key); it != m_fields.end() &&
                                           !it->second.sent.empty() &&
                                           it->second.sent.fillRate != fillRate)

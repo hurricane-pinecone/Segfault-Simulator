@@ -148,6 +148,23 @@ if (const ItemDef* item = chest.loot.get())
   LOG_INFO("A " + item->displayName);
 ```
 
+An `sfs::AssetRefList<T>` field holds several, in an order that means
+something (a crafting recipe's ingredients, a vehicle's tyre setups). The
+Inspector shows a row per entry, each a picker like `AssetRef<T>`'s, with a
+button to add another row and one to remove a row. In code, `get(i)` gives
+one entry and `all()` every entry that's there (unset, missing or wrong-type
+entries left out):
+
+```cpp
+struct Recipe
+{
+  sfs::AssetRefList<ItemDef> ingredients;
+};
+...
+for (const ItemDef* ingredient : recipe.ingredients.all())
+  consume(*ingredient);
+```
+
 #### Deriving from another scriptable object type
 
 A scriptable object type may derive from another reflected one, the engine's

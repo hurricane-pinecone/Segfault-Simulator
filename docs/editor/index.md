@@ -75,7 +75,7 @@ of one.
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
-| Inspector | The selected entity's name and components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
+| Inspector | The selected entity's name, its tags (as chips, with **+ Add Tag**) and its components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), the game camera, sun, sky colour (hidden under a physical sky, which works it out), ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
@@ -288,7 +288,22 @@ where another copy changed the same thing), and **Revert** drops them all
 Prefabs can contain other prefabs. A model placed in the scene is a prefab of
 its own node tree (so a part can be animated or given a script), but can't be
 changed itself: make a prefab containing it (as with `Windmill.prefab` in the
-sample farm) to keep changes.
+sample farm) to keep changes. Changes to a model's nodes follow them by name,
+so reordering the nodes in Blender moves nothing; renaming one leaves its old
+changes unused but kept (see
+[Model node ids](../runtime/serialization/index.md#model-node-ids)).
+
+Prefabs and scenes saved by an older engine name model nodes by their place in
+the file. They still load onto the same nodes; to upgrade a whole project's
+files at once:
+
+```
+SfsEditor --upgrade-node-ids <project-folder> [--check]
+SfsEditor --list-node-ids <model-file>
+```
+
+The first checks every change before writing anything (`--check` only
+checks); the second lists a model's nodes with their ids.
 
 ## Animated characters
 
@@ -355,8 +370,8 @@ outlined, the one clicked last a little bolder.
   script they all run. Changing a field sets
   it on every one of them. A field whose values differ between them is dimmed
   until you set it. **Add Component** adds one to each that hasn't one, and
-  right-click → **Remove Component** removes it from them all. Each of these is
-  one undo step.
+  right-click → **Remove Component** removes it from them all; tags the same,
+  with **+ Add Tag** and a chip's **x**. Each of these is one undo step.
 - The **gizmo** sits in the middle of them (the average of where they are).
   Moving it moves them all as far; rotating or scaling it turns or scales
   each one as much, about its own origin. To turn a set of objects about
@@ -390,6 +405,14 @@ pass 256 MB.
 The inspector is generated from [reflection](../core/reflection/index.md). Every
 reflected component gets an editor built from its fields and attributes, so a
 component you write appears in **Add Component** with no editor code.
+
+A [tag](../core/reflection/index.md#tags) (a component with no data, such as
+Solid Object) isn't a section: it's a chip in the **Tags** row under the name,
+its **x** removing it, drawn in the override colour when a prefab instance adds
+it. **+ Add Tag** lists only tags, and **Add Component** only the others, both
+grouped by module with a search box. On a prefab instance a tag is overridden
+like any component: adding one saves `"TipBody": {}` in its `$overrides`, and
+removing one of the prefab's saves `null`.
 
 ## Code panel
 
@@ -603,11 +626,10 @@ camera, in a window that follows it, so it costs no more than a small field.
 Set a field into a hole in the land (with its edge on a whole number of
 quarter units) and give both the same grass, and they meet with no seam.
 
-**What flattens grass:** anything with a Rigid Body, sized by its colliders,
-unless its **Bends Grass** is off. A **Grass Bender** component does the same
-for things without physics, such as a character moved by a script or a
-vehicle's wheels. With **Fit Mesh** on (the default) it's sized to its entity's
-own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
+**What flattens grass:** anything with a **Grass Bender** component, and
+nothing else (a Rigid Body alone doesn't). With **Fit Colliders** on it's sized
+by its entity's own colliders: a physics prop, a crate knocked about. With
+**Fit Mesh** on (the default) it's sized to its entity's own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
 or use it on something without a mesh, to set its **Radius** yourself. Grass is pressed the way a thing is moving, or outward under one
 standing still, and springs back afterwards.
 

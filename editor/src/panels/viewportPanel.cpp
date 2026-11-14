@@ -23,6 +23,7 @@
 #include "engine/runtime/rendering/modules/grassModule.h"
 #include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/util/activeCamera.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "glm/glm/gtc/matrix_transform.hpp"
 #include "glm/glm/gtc/quaternion.hpp"
@@ -1138,10 +1139,15 @@ std::optional<sfs::Aabb> ViewportPanel::branchBounds(const EditorContext& contex
   // those of the meshes in its branch.
   const sfs::MeshLibrary& meshes = context.render->meshes();
   sfs::Aabb meshBounds;
-  for (const sfs::Entity& part : sfs::hierarchy::EntityTree(context.scene->entities()).subtree(entity))
+  const auto add = [&](const sfs::Entity& part)
+  {
     if (part.hasComponent<sfs::MeshRendererComponent>())
       if (const auto bounds = sfs::entityBounds(part, meshes, context.render))
         meshBounds.expand(*bounds);
+  };
+  add(entity);
+  for (const sfs::Entity& part : sfs::hierarchy::descendants(entity))
+    add(part);
   if (!meshBounds.empty())
     return meshBounds;
   return sfs::entityBounds(entity, meshes, context.render);
@@ -1253,8 +1259,9 @@ void ViewportPanel::drawCameraIcons(const EditorContext& context, const View& vi
 
     // The camera's view, as the game would set it up.
     sfs::Camera camera;
-    entity.getComponent<sfs::CameraComponent>().applyTo(
-        camera, sfs::hierarchy::worldMatrix(entity));
+    sfs::viewThrough(entity.getComponent<sfs::CameraComponent>(),
+                     sfs::hierarchy::worldMatrix(entity),
+                     camera);
     const glm::vec3 eye = camera.position();
     const glm::vec3 forward = camera.viewDirection();
     const glm::vec3 right = camera.orientation() * glm::vec3(0.0f, -1.0f, 0.0f);

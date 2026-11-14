@@ -18,6 +18,7 @@
 
 #include "engine/core/components/cameraComponent.h"
 #include "engine/core/components/nameComponent.h"
+#include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
@@ -26,6 +27,7 @@
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/rendering/meshLibrary.h"
 #include "engine/runtime/rendering/renderSystem.h"
+#include "engine/runtime/rendering/util/activeCamera.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
@@ -862,7 +864,7 @@ void EditorApp::duplicateSelection()
         for (const sfs::Entity& original : branches)
         {
           sfs::Entity copy = serializer.loadEntity(
-              serializer.saveEntity(*m_context.scene, original),
+              serializer.saveEntity(original),
               *m_context.scene,
               sfs::hierarchy::parentOf(original));
           if (copy.hasComponent<sfs::NameComponent>())
@@ -928,7 +930,7 @@ void EditorApp::alignViewWithSelection()
   const glm::mat4 world = sfs::hierarchy::worldMatrix(entity);
   sfs::Camera& view = m_context.render->camera();
   if (entity.hasComponent<sfs::CameraComponent>())
-    entity.getComponent<sfs::CameraComponent>().applyTo(view, world);
+    sfs::viewThrough(entity.getComponent<sfs::CameraComponent>(), world, view);
   else
     view.setPose(glm::vec3(world[3]), glm::vec3(world[0]), view.distance);
 }
@@ -1654,28 +1656,18 @@ nlohmann::json asStored(nlohmann::json json)
   return json;
 }
 
-// A selected entity by its position in save order (as EditorHistory keeps
-// it): a reloaded scene's entities come back in that order.
-std::optional<std::size_t> orderOf(EditorScene& scene,
-                                   const sfs::Entity& entity)
+// The scene's one root entity (a prefab's top object), or an invalid entity
+// if it has none or several.
+sfs::Entity onlyRoot(EditorScene& scene)
 {
-  if (!entity.isValid() || !entity.isAlive())
-    return std::nullopt;
-  const std::vector<sfs::Entity> order =
-      sfs::hierarchy::EntityTree(scene.entities()).preOrder();
-  const auto it = std::find(order.begin(), order.end(), entity);
-  if (it == order.end())
-    return std::nullopt;
-  return static_cast<std::size_t>(it - order.begin());
-}
-
-sfs::Entity atOrder(EditorScene& scene, std::optional<std::size_t> index)
-{
-  if (!index)
-    return {};
-  const std::vector<sfs::Entity> order =
-      sfs::hierarchy::EntityTree(scene.entities()).preOrder();
-  return *index < order.size() ? order[*index] : sfs::Entity();
+  sfs::Entity root;
+  for (const sfs::Entity& each : scene.roots())
+  {
+    if (root.isValid())
+      return {};
+    root = each;
+  }
+  return root;
 }
 
 // A prefab's content alone in a scene: its root no longer an instance, so it
@@ -1684,8 +1676,9 @@ sfs::Entity loadPrefabContent(EditorScene& scene,
                               SceneDocument& document,
                               const sfs::AssetId& prefab)
 {
-  document.restore(nlohmann::json{
-      {"formatVersion", 2}, {"entities", nlohmann::json::array()}});
+  document.restore(
+      nlohmann::json{{"formatVersion", sfs::SceneSerializer::kSceneFormatVersion},
+                     {"entities", nlohmann::json::array()}});
   sfs::Entity root =
       scene.serializer().instantiate(prefabs::nameOf(prefab), scene);
   scene.flushEntities();
@@ -1811,14 +1804,13 @@ bool EditorApp::applyPrefab(Workspace& workspace)
       m_assets ? m_assets->find(workspace.prefab) : nullptr;
   if (!record)
     return false;
-  const sfs::hierarchy::EntityTree tree(workspace.scene->entities());
-  if (tree.roots().size() != 1)
+  const sfs::Entity root = onlyRoot(*workspace.scene);
+  if (!root.isValid())
   {
     LOG_ERROR("A prefab has one top object: put the others under it to apply");
     return false;
   }
-  const nlohmann::json prefab = workspace.scene->serializer().savePrefab(
-      *workspace.scene, tree.roots().front(), true);
+  const nlohmann::json prefab = workspace.scene->serializer().savePrefab(root, true);
   const bool written = rewritePrefab(
       workspace.prefab,
       [&]
@@ -1843,14 +1835,13 @@ bool EditorApp::prefabChanged(Workspace& workspace)
       m_assets ? m_assets->find(workspace.prefab) : nullptr;
   if (!record)
     return false; // nothing left to apply it to
-  const sfs::hierarchy::EntityTree tree(workspace.scene->entities());
-  if (tree.roots().size() != 1)
+  const sfs::Entity root = onlyRoot(*workspace.scene);
+  if (!root.isValid())
     return true;
   const std::optional<nlohmann::json> file =
       sfs::SceneSerializer::readJsonFile(m_assets->absolutePath(*record));
   return !file ||
-         asStored(*file) != asStored(workspace.scene->serializer().savePrefab(
-                                *workspace.scene, tree.roots().front(), true));
+         asStored(*file) != asStored(workspace.scene->serializer().savePrefab(root, true));
 }
 
 void EditorApp::closePrefab(Workspace& workspace)
@@ -1890,7 +1881,7 @@ bool EditorApp::rewritePrefab(const sfs::AssetId& prefab,
                                       ? m_context.selection
                                       : workspace->selection;
     Reload reload{
-        workspace.get(), std::nullopt, orderOf(*workspace->scene, selected)};
+        workspace.get(), std::nullopt, workspace->scene->saveOrderOf(selected)};
     if (workspace->prefab == prefab)
     {
       if (workspace->history->revision() != workspace->appliedRevision)
@@ -1931,7 +1922,8 @@ bool EditorApp::rewritePrefab(const sfs::AssetId& prefab,
     }
     workspace.scene->renderSystem().camera() = camera;
     (&workspace == m_active ? m_context.selection : workspace.selection) =
-        atOrder(*workspace.scene, reload.selection);
+        reload.selection ? workspace.scene->atSaveOrder(*reload.selection)
+                         : sfs::Entity();
   }
   return true;
 }
@@ -2334,6 +2326,11 @@ void EditorApp::play()
   m_context.render->setFollowSceneCamera(true);
   // Scriptable objects load into the playing scene's meshes, fresh each Play.
   sfs::scriptableObjects().setMeshes(&m_context.scene->renderSystem().meshes());
+  // The scene plays as edited, not reloaded: a model node moved by hand since
+  // it loaded rests where it now is.
+  for (const sfs::Entity& entity :
+       m_context.scene->query<sfs::RestPoseComponent>())
+    sfs::hierarchy::recordRestPose(entity);
   sfs::startScripts(*m_context.scene,
                     m_context.scene->gameSystems(),
                     &m_context.scene->renderSystem().meshes());

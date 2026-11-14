@@ -341,9 +341,11 @@ public:
   const RenderStats& stats() const { return m_stats; }
 
   /**
-   * The picture an entity's camera feed (CameraFeedComponent) films, made the
-   * first time it's asked for (null without one): show it with ui::Image. It's
-   * filmed only while it's shown, at the feed's rate, one feed a frame.
+   * The picture an entity's camera feed (CameraFeedComponent) films (null
+   * without one), made now if update() hasn't made it yet: show it with
+   * ui::Image. It's filmed only while it's shown, at the feed's rate, one feed
+   * a frame. Prefer reading CameraFeedComponent::picture, which update()
+   * makes for every feed.
    */
   std::shared_ptr<const RenderTexture> cameraFeed(Entity entity);
 
@@ -382,6 +384,8 @@ protected:
           m_weather.clamped().wind, static_cast<float>(deltaTime));
       advanceLightning(static_cast<float>(deltaTime));
     }
+    refreshMeshBounds();
+    makeFeedPictures();
     updateModules(deltaTime);
   }
   void render() override;
@@ -389,6 +393,13 @@ protected:
   ModuleInit moduleInit() override { return {registry, nullptr}; }
 
 private:
+  // Set each MeshRendererComponent's bounds from the library when its mesh
+  // has changed since they were taken (a handle compare each).
+  void refreshMeshBounds();
+
+  // Give every CameraFeedComponent without a picture its picture.
+  void makeFeedPictures();
+
   // Age the strikes, dropping (and freeing) those that have faded.
   void advanceLightning(float seconds);
 
@@ -507,14 +518,7 @@ private:
   std::vector<GlowPoint> m_glow;
 
   RenderContext m_context;
-  // Camera feeds asked for (cameraFeed()), by entity id: their pictures, when
-  // each was last filmed (seconds of a steady clock), and the one this frame.
-  struct Feed
-  {
-    std::shared_ptr<RenderTexture> texture;
-    double filmed = -1.0e9;
-  };
-  std::unordered_map<uint32_t, Feed> m_feeds;
+  // The camera feed being filmed this frame.
   const RenderTexture* m_feedFilming = nullptr;
   glm::mat4 m_lightViewProjection{1.0f};
   SunCascades m_cascades;

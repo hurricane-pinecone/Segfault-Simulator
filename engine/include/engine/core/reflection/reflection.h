@@ -24,9 +24,10 @@ enum class FieldKind : uint8_t
   Quat,   // glm::quat
   Mesh,   // MeshHandle (saved by mesh name)
   Json,   // nlohmann::json: free-form data, saved as-is; not edited directly
-  StringList, // std::vector<std::string>
-  AssetRef,   // sfs::AssetRef<T>: a scriptable object of type T (saved as
-              // "asset:<id>"; see scriptableObject.h)
+  StringList,   // std::vector<std::string>
+  AssetRef,     // sfs::AssetRef<T>: a scriptable object of type T (saved as
+                // "asset:<id>"; see scriptableObject.h)
+  AssetRefList, // sfs::AssetRefList<T>: a list of them (saved as an array)
 };
 
 /** Editor hints for a field, from its [[sfs::...]] attributes. */
@@ -48,8 +49,9 @@ struct FieldAttributes
   // blooms; "!field": only while it's off
   std::string showIf;
   bool hasRange = false; // [[sfs::range(min, max)]]
-  std::string assetType; // AssetRef: the scriptable object type it refers to,
-                         // e.g. "ItemDef"
+  // AssetRef, AssetRefList: the scriptable object type it refers to, e.g.
+  // "ItemDef"
+  std::string assetType;
   float min = 0.0f;
   float max = 0.0f;
 };
@@ -119,6 +121,9 @@ struct TypeInfo
   std::string displayName; // for the editor, e.g. "Transform"
   std::string module;      // which module registered it (e.g. "engine")
   TypeKind kind = TypeKind::Component;
+  /** A component with no data (an empty struct): it marks an entity; the
+   * editor lists it under Tags. */
+  bool tag = false;
   std::string base; // the reflected type it derives from (empty: none)
   std::vector<FieldInfo> fields;
   ComponentOps component;   // valid when kind == Component

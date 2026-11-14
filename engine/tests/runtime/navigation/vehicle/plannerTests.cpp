@@ -6,6 +6,7 @@
 #include <engine/runtime/navigation/vehicle/planner.h>
 #include <engine/runtime/navigation/vehicle/speedProfile.h>
 #include <engine/runtime/navigation/vehicle/steering.h>
+#include <engine/runtime/navigation/vehicle/vehicleSearch.h>
 
 #include <atomic>
 #include <cmath>
@@ -1066,6 +1067,115 @@ int main()
     std::printf("  %d of %d words' least times under their walked times\n",
                 under,
                 words);
+  }
+
+  // (A1: the heuristic. Its 2D map is a true lower bound; the turning and
+  // heading-aware maps are guides that can overstate (counted, printed).)
+  TEST("the heuristic's 2D map should never be more than the time a found "
+       "way takes from there, and should be consistent")
+  {
+    std::vector<BoxSpace::Solid> s = {
+        {{20, 20}, {8, 5}, 0, 0, 5, false, 1},
+        {{-15, 25}, {6, 9}, 0.3f, 0, 5, false, 2},
+        {{30, -20}, {10, 4}, 0, 0, 5, false, 3},
+        {{-19.25f, 0}, {20.75f, 0.15f}, 0, 0, 1.4f, false, 4},
+        {{34.25f, 0}, {25.75f, 0.15f}, 0, 0, 1.4f, false, 5},
+        {{-30, -12}, {0.5f, 0.5f}, 0, 0, 8, true, 6},
+        {{-12, -12}, {0.5f, 0.5f}, 0, 0, 8, true, 7},
+        {{6, -9}, {0.5f, 0.5f}, 0, 0, 8, true, 8}};
+    const auto space = std::make_shared<BoxSpace>(s);
+    uint32_t seed = 11;
+    const auto next = [&]
+    {
+      seed = seed * 1664525u + 1013904223u;
+      return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    int cases = 0, points = 0, over2d = 0, overTurning = 0, overHeading = 0;
+    int pairs = 0, inconsistent = 0;
+    float worstHeading = 0.0f;
+    while (cases < 12)
+    {
+      PlanRequest q;
+      q.vehicle = tractor();
+      if (cases % 3 == 2)
+      {
+        Trailer t;
+        t.hitchBehind = 1.0f;
+        t.drawbar = 4.26f;
+        t.box = {-2.2f, 3.4f, 1.24f, 0.0f, 0.3f, 2.1f};
+        q.vehicle.trailer = t;
+        q.vehicle.minRadius = 6.5f;
+      }
+      q.space = space;
+      q.from = {{90 * next() - 35, 75 * next() - 35}, 6.2832f * next()};
+      const Pose2 to{{90 * next() - 35, 75 * next() - 35}, 6.2832f * next()};
+      if (glm::length(to.position - q.from.position) < 10.0f ||
+          touches(q, q.from, 0.0f) || touches(q, to, 0.0f))
+        continue;
+      q.goals = {{to}};
+      const PlanResult r = planNow(q);
+      if (r.state != PlanState::Found)
+        continue;
+      ++cases;
+      std::vector<Pose2> at;
+      std::vector<float> left;
+      for (std::size_t i = 0; i < r.path.points.size(); i += 20)
+      {
+        at.push_back(r.path.points[i].pose);
+        left.push_back(r.path.duration() - r.path.points[i].time);
+      }
+      const std::vector<HeuristicParts> h = heuristicAt(q, at);
+      for (std::size_t i = 0; i < at.size(); ++i)
+      {
+        if (h[i].twoD >= kUnknown)
+          continue;
+        ++points;
+        over2d += h[i].twoD > left[i] + 1e-3f;
+        overTurning += h[i].turning > left[i] + 1e-3f;
+        overHeading += h[i].heading > left[i] + 1e-3f;
+        if (left[i] > 1.0f)
+          worstHeading = std::max(worstHeading, h[i].heading / left[i]);
+      }
+      // Consistency of the 2D map: between poses a metre or less apart its
+      // values differ by no more than going straight between them flat out
+      // (and a cell either end: it's a raster).
+      std::vector<Pose2> near;
+      for (int k = 0; k < 60; ++k)
+      {
+        const Pose2 a{{90 * next() - 35, 75 * next() - 35}, 0.0f};
+        const float ang = 6.2832f * next(), d = next();
+        near.push_back(a);
+        near.push_back(
+            {a.position + d * glm::vec2(std::cos(ang), std::sin(ang)), 0.0f});
+      }
+      const std::vector<HeuristicParts> hn = heuristicAt(q, near);
+      const float top = q.vehicle.topSpeed;
+      const float cell = q.tunables.heuristicCell;
+      for (std::size_t k = 0; k + 1 < near.size(); k += 2)
+      {
+        if (hn[k].twoD >= kUnknown || hn[k + 1].twoD >= kUnknown)
+          continue;
+        ++pairs;
+        const float d = glm::length(near[k].position - near[k + 1].position);
+        inconsistent += std::abs(hn[k].twoD - hn[k + 1].twoD) >
+                        (1.0824f * d + 2.0f * 1.4143f * cell) / top + 1e-4f;
+      }
+    }
+    std::printf("  %d ways, %d points: over the time left: 2D %d, turning %d, "
+                "heading-aware %d (at most x%.2f); 2D pairs %d, %d "
+                "inconsistent\n",
+                cases,
+                points,
+                over2d,
+                overTurning,
+                overHeading,
+                worstHeading,
+                pairs,
+                inconsistent);
+    CHECK(points > 100);
+    CHECK(over2d == 0);
+    CHECK(pairs > 300);
+    CHECK(inconsistent == 0);
   }
 
   return testing::report("plannerTests");

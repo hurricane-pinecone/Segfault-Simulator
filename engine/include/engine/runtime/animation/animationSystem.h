@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/animation/animation.h"
+#include "engine/core/components/animatorComponent.h"
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/system.h"
 #include "engine/core/rendering/mesh.h"
@@ -9,8 +10,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace sfs
@@ -18,7 +19,6 @@ namespace sfs
 
 class AssetStore;
 class MeshLibrary;
-struct AnimatorComponent;
 
 /**
  * Plays every AnimatorComponent's clips (see animatorComponent.h), each
@@ -59,6 +59,25 @@ public:
   void setLive(bool live) { m_live = live; }
   bool live() const { return m_live; }
 
+  /**
+   * Play a clip from its start, cross-fading from what's playing over `fade`
+   * seconds (0: at once). Playing the clip that's playing just carries on
+   * (restart() goes back to its start).
+   */
+  void play(const Entity& animator, std::string_view clip, float fade = 0.0f);
+  /** Back to the start of the clip playing (and playing). */
+  void restart(const Entity& animator);
+  /**
+   * A clip's length in seconds (the one playing if `clip` is empty); 0 if
+   * there's no such clip or its model hasn't loaded yet (it's loaded the
+   * first time it updates).
+   */
+  float length(const Entity& animator, std::string_view clip = {}) const;
+  /** Every clip it can play, by name (empty until its model has loaded). */
+  std::vector<std::string> clipNames(const Entity& animator) const;
+  /** Its clips, once loaded (null before, or if its model has none). */
+  const AnimationSet* clips(const Entity& animator) const;
+
   /** While editing: play an animator's clip (its time runs), or stop. */
   void setPreview(const Entity& animator, bool preview);
   bool previewing(const Entity& animator) const;
@@ -86,40 +105,11 @@ protected:
   void update(double deltaTime) override;
 
 private:
-  // An animator's entities: those below it (down to another animator),
-  // parents first, the animator itself first of all.
-  struct SkinBinding
-  {
-    Entity mesh;
-    std::size_t node = 0;    // its place in nodes
-    MeshHandle base;         // its MeshRendererComponent's mesh
-    std::vector<int> joints; // each skin joint's node (-1: none found)
-  };
-  struct Binding
-  {
-    Entity animator;
-    std::vector<Entity> nodes;
-    std::vector<int> parents; // -1 for the animator
-    std::unordered_map<std::string, int> byName;
-    std::vector<SkinBinding> skins;
-    bool complete = true; // false while a mesh below it is still loading
-    // Each node's rest pose (as it was first found) and whether its clips
-    // move it at all; each clip's channels' nodes (-1: none).
-    std::vector<JointPose> rest;
-    std::vector<char> animated;
-    const AnimationSet* targetsOf = nullptr;
-    std::unordered_map<const AnimationClip*, std::vector<int>> targets;
-    uint32_t framesSinceBind = 0;
-    bool stale = true;
-    // Scratch, kept to reuse.
-    std::vector<JointPose> pose;
-    std::vector<JointPose> layerPose;
-    std::vector<glm::mat4> models;
-    std::vector<glm::mat4> jointModels;
-    std::vector<glm::mat4> palette;
-  };
+  using SkinBinding = AnimatorSkin;
+  using Binding = AnimatorComponent;
 
-  void bind(Binding& binding, AnimatorComponent& animator);
+  void
+  bind(const Entity& entity, Binding& binding, AnimatorComponent& animator);
   std::shared_ptr<const AnimationSet>
   clipsFor(const Binding& binding,
            const AnimatorComponent& animator,
@@ -140,8 +130,16 @@ private:
   bool m_live = true;
   float m_timeScale = 1.0f;
   uint64_t m_frame = 0;
-  std::unordered_map<Entity::EntityId, Binding> m_bindings;
-  std::unordered_set<Entity::EntityId> m_previews;
+  // An animator's (null: not one).
+  Binding* bindingOf(const Entity& animator) const;
+  // Scratch, kept to reuse (one animator posed at a time).
+  std::vector<JointPose> m_pose;
+  std::vector<JointPose> m_layerPose;
+  std::vector<glm::mat4> m_models;
+  std::vector<glm::mat4> m_jointModels;
+  std::vector<glm::mat4> m_palette;
+  AnimatorComponent* animatorOf(const Entity& animator);
+
   Stats m_stats;
 };
 

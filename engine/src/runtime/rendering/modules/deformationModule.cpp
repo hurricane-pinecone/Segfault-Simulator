@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 namespace sfs
@@ -187,17 +188,11 @@ void DeformationModule::computeCommands(const RenderContext& context)
   m_meshes = context.meshes;
 
   // The deformable terrains, as placed.
-  struct Seen
-  {
-    Field* field;
-    MaterialHandle material;
-    const MeshMaterial* drawn;
-  };
-  std::vector<Seen> seen;
+  m_seen.clear();
   for (auto& [key, field] : m_fields)
     field.seen = false;
   for (const Entity& entity :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
     const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.materials.empty())
@@ -210,7 +205,7 @@ void DeformationModule::computeCommands(const RenderContext& context)
     field.entity = entity;
     field.seen = true;
     prepare(entity, field);
-    seen.push_back({&field, material, drawn});
+    m_seen.push_back({&field, material, drawn});
   }
   // Not deformable now (or gone): drawn plain again. A map asked for before
   // its terrain's drawn is kept while the entity lives.
@@ -236,7 +231,7 @@ void DeformationModule::computeCommands(const RenderContext& context)
   }
 
   PuddleModule* puddles = m_host ? m_host->module<PuddleModule>() : nullptr;
-  for (const Seen& terrain : seen)
+  for (const Seen& terrain : m_seen)
   {
     {
       SFS_CPU_SCOPE("deformation/draw");
@@ -341,14 +336,7 @@ void DeformationModule::draw(const RenderContext& context,
 
   // Nothing pressed in near it: the ground's drawn as it is (and costs
   // nothing more).
-  bool any = false;
-  for (const glm::ivec2 tile : field.map.tiles())
-    if (inWindow(tile))
-    {
-      any = true;
-      break;
-    }
-  if (!any)
+  if (!field.map.anyTileIn(firstTile, glm::ivec2(windowTiles)))
   {
     if (!field.sent.empty())
       m_renderer.setTerrainDeformation(material, {});
@@ -447,7 +435,7 @@ void DeformationModule::draw(const RenderContext& context,
 
 void DeformationModule::deform()
 {
-  if (m_fields.empty() || m_registry->view<DeformerComponent>().empty())
+  if (m_fields.empty() || m_registry->query<DeformerComponent>().empty())
   {
     m_placed.clear();
     return;
@@ -456,9 +444,14 @@ void DeformationModule::deform()
   const float farthest = std::max(
       kFarthestSweep,
       kFastest * m_frameSeconds * static_cast<float>(m_registry->timeScale()));
+  // Only a mesh with a deformer of its own, or with a parent, can have one,
+  // so only those are walked up from.
   for (const Entity& mesh :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
+    if (!mesh.hasComponent<DeformerComponent>() &&
+        !hierarchy::parentOf(mesh).isValid())
+      continue;
     // Its deformer: its own, or an ancestor's that covers its children.
     const DeformerComponent* deformer = nullptr;
     Entity at = mesh;

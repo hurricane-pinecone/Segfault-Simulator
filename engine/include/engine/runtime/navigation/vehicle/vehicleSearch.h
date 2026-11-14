@@ -45,9 +45,28 @@ class ISearch : public SearchBase
 public:
   virtual Way found() const = 0;
   virtual Way bestSoFar() const = 0;
+  /** How it got to its way (PlanStats' ways, first and best; diagnostics). */
+  virtual void describe(PlanStats&) const {}
 };
 
 using Searches = SearchRegistry<SearchContext, ISearch>;
+
+/**
+ * The built-in search's heuristic at some poses, for a request (tests and
+ * diagnostics): its parts, each in seconds to the request's nearest goal,
+ * built over the area its first search covers (round the start and goals,
+ * Planner's margin), as a plan of the request builds them. `twoD` (the 2D
+ * map round the solids at top speed over the cheapest ground) is a lower
+ * bound of the time any way takes; `turning` (cells x 8 directions, turning
+ * charged) and `heading` (the heading-aware map, hybrid A* run back from the
+ * goals over coarse bins) are better-informed guides that can overstate.
+ */
+struct HeuristicParts
+{
+  float twoD = 0.0f, turning = 0.0f, heading = 0.0f;
+};
+std::vector<HeuristicParts> heuristicAt(const PlanRequest& request,
+                                        std::span<const Pose2> poses);
 /** The vehicle kind's searches: "hybridAStar" built in. */
 Searches& searches();
 

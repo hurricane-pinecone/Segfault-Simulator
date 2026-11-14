@@ -1,7 +1,20 @@
 # Segfault Simulator (SFS): rules for AI agents
 
 SFS is a general game engine. Nothing game-specific goes in it. Read README.md and docs/ before changing an area.
+Engine bar: a feature belongs in SFS only if a production-ready general engine (Unity, Unreal, Godot) would ship it
+(in the engine itself, or as a first-party library once SFS has them). Anything narrower is game code, even if more
+than one game could use it.
 These rules are the owner's; when a task seems to need breaking one, stop and ask.
+Consult on structure, decide within it: the approved architecture is the design. Within it, split responsibilities
+the best-practice way without asking, and split properly from the start. Ask the owner only when a change would alter
+the architecture or these rules, or how a game behaves for the player.
+**Blazingly fast, by design.** SFS is built for speed at the memory level from the start, not optimised later. Data
+lives in one place and is read where it lives: no copies, no parallel or mirrored structures, no per-frame
+allocation (reuse buffers, pools and arenas). Hot data is contiguous and cache-friendly (dense arrays of plain data,
+struct-of-arrays where systems stream one field, no pointer chasing or node-based containers on hot paths). Work is
+incremental (dirty flags, change versions: only what changed is recomputed) and parallel where it's independent.
+Every new engine design states its memory layout, what it allocates and when, and its per-frame cost; reviews check
+it. The standard engine approach is the baseline; do better where the data allows.
 
 ## Architecture
 
@@ -16,13 +29,33 @@ These rules are the owner's; when a task seems to need breaking one, stop and as
 - `engine-webgpu` is the render backend. The editor (`editor/`) consumes the engine like any game does.
 
 ### Components
-- Components are DATA ONLY: no logic, and no live or runtime state. Live state lives inside the system, keyed by
-  entity.
+- Components hold ALL per-entity data, and NO logic: its state, including what changes in play (a transform's
+  position, a machine's speed or fuel), and anything a system works out or keeps about that entity (a plan or
+  search in progress for it, a cache derived from it, a handle to its engine-side job, a logged-once flag). Systems
+  hold the logic and update it. A system never keeps per-entity data of its own: no map or struct keyed by entity.
+- A system's own data is only what isn't about any one entity it iterates: shared caches and indexes, scratch
+  buffers, handles to engine internals, settings, debug views. Iterate `getEntities()`; use `onEntityAdded()` /
+  `onEntityRemoved()` to set up or release what an entity joining or leaving needs, never to keep a parallel copy.
+- The data's types belong to the components (their headers, or plain data headers), never to a system: no
+  system-defined struct held from a component by pointer.
+- Systems are single-purpose and never read other systems: what a system needs from another concern comes through
+  components.
+- How systems communicate: a system reads and writes only components. It hands work on by writing a component a
+  later system reads, in the registered update order. A request is a component field the serving system fills in
+  later (a plan request and its result). When two systems feed each other, the earlier one reads what the later one
+  wrote last frame. No `getSystem` for data, and no callbacks between systems.
+- Lists of entities by component: a system's own are `getEntities()` (its `registerComponent`s); any other kind is
+  `registry->query<Ts...>()` (scripts: `scene().query<Ts...>()`: cached, kept current, shared). A system that must
+  react as another kind joins or leaves uses `observe<Ts...>(added, removed)`. No system keeps its own entity list.
+- A component a scene has exactly one of (a world clock, the weather) is read with `registry->singleton<T>()`
+  (scripts: `scene().singleton<T>()`), never a query of one.
+- Component fields the editor can't edit (or that shouldn't be saved or shown) are `[[sfs::hide]]`.
 - A component describes its own concern only. It never holds references to another feature's data or assets: e.g.
   `NavAgentComponent` does not reference a `VehicleSpec`. A system that needs several concerns views the entities
   that have all of those components. A component may reference an asset that IS its own concern (MeshRenderer ->
   mesh, VehicleComponent -> VehicleSpec).
-- Don't multiply components per entity. Shared per-model data goes in a ScriptableObject asset, not a component.
+- One concern per component: a component holds one concern's data. Add a component for a new concern rather than
+  adding its fields to an existing one. Shared per-model data goes in a ScriptableObject asset, not a component.
 - Components are never extended by inheritance (ECS lookups are by exact type).
 
 ### Data and assets
@@ -81,3 +114,10 @@ These rules are the owner's; when a task seems to need breaking one, stop and as
 - clang-format 17.0.6, on `.cpp`/`.h` files only (never md, yml, wgsl or CMake). Some files in HEAD aren't
   formatted: don't reformat code you didn't touch.
 - Screenshots: only the game's or editor's own windows, never the desktop.
+- Comments: plain, human-readable sentences, and only where the logic is complicated or not obvious. Don't narrate
+  what the code does, keep history, or add parenthetical asides. Every public and util function gets a proper
+  docstring (`/** ... */`: what it does, its parameters, its result). Fields other code reads (a component's fields
+  read by systems, a shared struct's) each get a docstring. Applies to all code written or changed.
+- Optimise as you go when it's simple and doesn't change behaviour: take by const reference instead of copying
+  (maps, vectors, strings, components), move instead of copy, reserve when the size is known, hoist repeated lookups
+  out of loops. Leave larger optimisations for a measured change.

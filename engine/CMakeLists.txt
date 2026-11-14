@@ -152,7 +152,13 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/particleEmitterComponent.h"
             "${ENGINE_COMPONENT_DIR}/renderLayerComponent.h"
             "${ENGINE_COMPONENT_DIR}/spriteComponent.h"
-            "${ENGINE_COMPONENT_DIR}/tags/solidObject.h")
+            "${ENGINE_COMPONENT_DIR}/tags/solidObject.h"
+            "${ENGINE_COMPONENT_DIR}/contactReportComponent.h"
+            "${ENGINE_COMPONENT_DIR}/pickableComponent.h"
+            "${ENGINE_COMPONENT_DIR}/cursorPickComponent.h"
+            "${ENGINE_COMPONENT_DIR}/windZoneComponent.h"
+            "${ENGINE_COMPONENT_DIR}/inputContextComponent.h"
+            "${ENGINE_COMPONENT_DIR}/cameraCollisionComponent.h")
 else()
     target_sources(engine-core PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineReflection.cpp")
