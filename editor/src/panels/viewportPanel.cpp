@@ -1139,10 +1139,15 @@ std::optional<sfs::Aabb> ViewportPanel::branchBounds(const EditorContext& contex
   // those of the meshes in its branch.
   const sfs::MeshLibrary& meshes = context.render->meshes();
   sfs::Aabb meshBounds;
-  for (const sfs::Entity& part : sfs::hierarchy::EntityTree(context.scene->entities()).subtree(entity))
+  const auto add = [&](const sfs::Entity& part)
+  {
     if (part.hasComponent<sfs::MeshRendererComponent>())
       if (const auto bounds = sfs::entityBounds(part, meshes, context.render))
         meshBounds.expand(*bounds);
+  };
+  add(entity);
+  for (const sfs::Entity& part : sfs::hierarchy::descendants(entity))
+    add(part);
   if (!meshBounds.empty())
     return meshBounds;
   return sfs::entityBounds(entity, meshes, context.render);

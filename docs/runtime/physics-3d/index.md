@@ -75,7 +75,7 @@ stands upright with the bounds' height. A flat mesh, such as the built-in
 plane, gets a 0.1 m thick slab under its surface. A 2D `BoxCollider2D` fits
 its sprite the same way (**Fit to Sprite**).
 
-Code can do the same with `sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, meshes, tree)`
+Code can do the same with `sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, meshes)`
 or size a collider to any box with `sfs::fitCollider(collider, bounds)` (in
 `engine/runtime/systems/colliderFit.h`).
 

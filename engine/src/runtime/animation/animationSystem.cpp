@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <optional>
 
 namespace sfs
@@ -198,21 +197,33 @@ void AnimationSystem::bind(const Entity& entity,
   binding.framesSinceBind = 0;
 
   // Everything below it, down to another animator (whose entities are its).
-  const hierarchy::EntityTree tree(registry->entities());
-  const std::function<void(const Entity&, int)> add =
-      [&](const Entity& entity, int parent)
+  const auto add = [&](const Entity& node, int parent)
   {
     const int index = static_cast<int>(binding.nodes.size());
-    binding.nodes.push_back(entity);
+    binding.nodes.push_back(node);
     binding.parents.push_back(parent);
-    if (entity.hasComponent<NameComponent>())
+    if (node.hasComponent<NameComponent>())
       binding.byName.try_emplace(
-          entity.getComponent<NameComponent>().name, index);
-    for (const Entity& child : tree.children(entity))
-      if (!child.hasComponent<AnimatorComponent>())
-        add(child, index);
+          node.getComponent<NameComponent>().name, index);
   };
   add(entity, -1);
+  const hierarchy::DescendantRange below = hierarchy::descendants(entity);
+  for (auto it = below.begin(); it != below.end(); ++it)
+  {
+    const Entity node = *it;
+    if (node.hasComponent<AnimatorComponent>())
+    {
+      it.skipChildren();
+      continue;
+    }
+    // In preorder, its parent is the last node added or one of its
+    // ancestors.
+    const Entity parent = hierarchy::parentOf(node);
+    int above = static_cast<int>(binding.nodes.size()) - 1;
+    while (above >= 0 && binding.nodes[above] != parent)
+      above = binding.parents[above];
+    add(node, above);
+  }
 
   for (std::size_t i = 0; i < binding.nodes.size(); ++i)
   {

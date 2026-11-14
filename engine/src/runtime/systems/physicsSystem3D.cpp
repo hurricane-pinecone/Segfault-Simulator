@@ -5,7 +5,6 @@
 #include "engine/core/components/boxCollider3DComponent.h"
 #include "engine/core/components/capsuleCollider3DComponent.h"
 #include "engine/core/components/contactReportComponent.h"
-#include "engine/core/components/parentComponent.h"
 #include "engine/core/components/rigidBody3DComponent.h"
 #include "engine/core/components/sphereCollider3DComponent.h"
 #include "engine/core/components/transformComponent.h"
@@ -356,7 +355,6 @@ bool sameWords(const std::byte* a, const std::byte* b, std::uint32_t size)
   return true;
 }
 static_assert(sizeof(TransformComponent) % 4 == 0 &&
-              sizeof(ParentComponent) % 4 == 0 &&
               sizeof(BoxCollider3DComponent) % 4 == 0 &&
               sizeof(SphereCollider3DComponent) % 4 == 0 &&
               sizeof(CapsuleCollider3DComponent) % 4 == 0 &&
@@ -370,7 +368,7 @@ struct Chain
   {
     const TransformComponent* transform = nullptr; // (none: identity)
     TransformComponent value;
-    const ParentComponent* parent = nullptr;
+    Entity at;
     Entity up; // the parent then
   };
   std::vector<Link> links;
@@ -394,13 +392,10 @@ struct Chain
         link.transform = &at.getComponent<TransformComponent>();
         link.value = *link.transform;
       }
-      if (at.hasComponent<ParentComponent>())
-      {
-        link.parent = &at.getComponent<ParentComponent>();
-        link.up = link.parent->parent;
-      }
+      link.at = at;
+      link.up = hierarchy::parentOf(at);
       links.push_back(link);
-      at = hierarchy::parentOf(at);
+      at = link.up;
     }
   }
 
@@ -409,7 +404,7 @@ struct Chain
     State result = State::Same;
     for (const Link& link : links)
     {
-      if (link.parent && !(link.parent->parent == link.up))
+      if (hierarchy::parentOf(link.at) != link.up)
         return State::Relinked;
       if (link.transform && !sameTransform(*link.transform, link.value))
         result = State::Moved;
@@ -417,14 +412,15 @@ struct Chain
     return result;
   }
 
-  // Whether `other` is made of the same components (whatever their values).
+  // Whether `other` is made of the same entities and components (whatever
+  // their values).
   bool sameLinks(const Chain& other) const
   {
     if (links.size() != other.links.size())
       return false;
     for (std::size_t i = 0; i < links.size(); ++i)
       if (links[i].transform != other.links[i].transform ||
-          links[i].parent != other.links[i].parent)
+          links[i].at != other.links[i].at)
         return false;
     return true;
   }
@@ -672,22 +668,22 @@ struct PhysicsSystem3D::Impl
   bool optimised = false;
   uint64_t revision = 1; // (bodies added, removed or rebuilt, statics moved)
 
-  // The registry's component changes as of the last update, and whether any
-  // collider was on an entity without a transform when it last looked for
-  // new bodies (which gaining one would make a body).
+  // The registry's component and hierarchy link changes as of the last
+  // update, and whether any collider was on an entity without a transform
+  // when it last looked for new bodies (which gaining one would make a body).
   struct Seen
   {
     uint64_t box = ~0ull, sphere = ~0ull, capsule = ~0ull, rigid = ~0ull,
-             transform = ~0ull, parent = ~0ull;
+             transform = ~0ull, links = ~0ull;
     bool operator==(const Seen&) const = default;
   } seen;
   bool orphans = false;
   bool lookAgain = false; // a body couldn't be made: try again next update
 
   // Every component the bodies are made from or placed by (their own, and
-  // their ancestors' transforms and parent links), each once, with a copy of
-  // its bytes as last seen and the bodies it's part of: what the updates
-  // compare, all in one go, while no entity has gained or lost one.
+  // their ancestors' transforms), each once, with a copy of its bytes as last
+  // seen and the bodies it's part of: what the updates compare, all in one
+  // go, while no entity has gained or lost one and no link has changed.
   struct Watch
   {
     const std::byte* at = nullptr;
@@ -915,7 +911,7 @@ struct PhysicsSystem3D::Impl
                    registry.componentChanges<CapsuleCollider3DComponent>(),
                    registry.componentChanges<RigidBody3DComponent>(),
                    registry.componentChanges<TransformComponent>(),
-                   registry.componentChanges<ParentComponent>()};
+                   registry.links().linkVersion};
     const bool settled = now == seen;
 
     // Backwards: a removed body's place is taken by one already checked.
@@ -986,10 +982,7 @@ struct PhysicsSystem3D::Impl
     {
       const Record& record = records[slot];
       for (const Chain::Link& link : record.chain.links)
-      {
         watch(link.transform, sizeof(TransformComponent), slot);
-        watch(link.parent, sizeof(ParentComponent), slot);
-      }
       watch(record.parts.box, sizeof(BoxCollider3DComponent), slot);
       watch(record.parts.sphere, sizeof(SphereCollider3DComponent), slot);
       watch(record.parts.capsule, sizeof(CapsuleCollider3DComponent), slot);

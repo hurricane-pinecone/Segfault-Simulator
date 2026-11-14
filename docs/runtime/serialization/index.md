@@ -94,13 +94,13 @@ there were styles, loads as 3D. `StandardScene` plays a file in any style.
 
 ## Saving part of a scene
 
-`saveEntity(scene, entity)` saves one entity and everything below it, in the
+`saveEntity(entity)` saves one entity and everything below it, in the
 same form as an entry in `"entities"`. `loadEntity(entry, scene, parent)`
 creates it again, under `parent` or as a root. The editor duplicates a branch
 this way:
 
 ```cpp
-sfs::Entity copy = serializer.loadEntity(serializer.saveEntity(scene, lamp),
+sfs::Entity copy = serializer.loadEntity(serializer.saveEntity(lamp),
                                          scene,
                                          sfs::hierarchy::parentOf(lamp));
 ```

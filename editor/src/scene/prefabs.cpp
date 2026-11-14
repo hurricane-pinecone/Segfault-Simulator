@@ -118,7 +118,7 @@ std::optional<sfs::AssetId> create(EditorContext& context, sfs::Entity entity, c
       [&]
       {
         // Saving gives the entities their prefab ids; then it's an instance.
-        const json prefab = context.scene->serializer().savePrefab(*context.scene, entity);
+        const json prefab = context.scene->serializer().savePrefab(entity);
         if (!sfs::SceneSerializer::writeJsonFile(prefab, context.assets->root() / relative))
           return;
         context.assets->refresh();
@@ -196,7 +196,7 @@ void apply(EditorContext& context, const sfs::Entity& root)
         // Every instance as it is now, against the prefab as it was: reloaded
         // against the new prefab, each keeps its own changes and takes the
         // applied ones (this one's become the prefab's, so no longer differ).
-        const json prefab = context.scene->serializer().savePrefab(*context.scene, root);
+        const json prefab = context.scene->serializer().savePrefab(root);
         const auto write = [&]
         {
           if (!sfs::SceneSerializer::writeJsonFile(prefab, context.assets->absolutePath(*record)))
@@ -224,7 +224,7 @@ void revert(EditorContext& context, const sfs::Entity& root)
   context.history->change(
       [&]
       {
-        json entry = context.scene->serializer().instanceEntry(*context.scene, root);
+        json entry = context.scene->serializer().instanceEntry(root);
         // Keep where it is: its root's transform, nothing else.
         json kept = json::object();
         if (entry.contains("$overrides") && entry["$overrides"].contains("") &&
@@ -251,7 +251,7 @@ void revertField(EditorContext& context,
   context.history->change(
       [&]
       {
-        json entry = context.scene->serializer().instanceEntry(*context.scene, root);
+        json entry = context.scene->serializer().instanceEntry(root);
         json& overrides = entry["$overrides"];
         if (!overrides.contains(path) || !overrides[path].contains(component))
           return;
@@ -281,7 +281,7 @@ std::map<std::string, std::set<std::string>> overridesOf(EditorContext& context,
   if (!where || !context.scene)
     return out;
   const auto& [root, path] = *where;
-  const json entry = context.scene->serializer().instanceEntry(*context.scene, root);
+  const json entry = context.scene->serializer().instanceEntry(root);
   const auto overrides = entry.find("$overrides");
   if (overrides == entry.end() || !overrides->contains(path))
     return out;

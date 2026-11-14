@@ -32,8 +32,9 @@ struct Velocity { glm::vec2 value{0.0f, 0.0f}; };
 The engine also ships components such as `TransformComponent` (position / scale /
 rotation), `SpriteComponent`, `ParticleEmitterComponent`, and `NameComponent` (an
 optional display name, useful for lookups and for showing entities in a tool's
-hierarchy view). Up to 128 distinct component types can be registered across the
-engine and your game (`MAX_COMPONENTS`).
+hierarchy view). Up to 256 distinct component types can be registered across the
+engine and your game (`MAX_COMPONENTS`). A development build logs a warning as
+the ids come within 8 of that, so there's time to raise it.
 
 ## Entities
 
@@ -70,7 +71,14 @@ below) naming the component and why, instead of reading another entity's data.
 
 `scene.entities()` returns every living entity, in id order (`registry.entities()`
 in headless use). This is handy for a tool that needs to list every entity
-regardless of which components it carries, such as a hierarchy panel.
+regardless of which components it carries.
+
+The registry also keeps the parent/child hierarchy, beside its other per-id
+arrays: 16 bytes of links per entity (parent, first child, next and previous
+sibling), changed by `hierarchy::setParent` and by the flush that removes an
+entity. There's no component for it. `scene.preorder()` lists every entity
+parents first, the way a hierarchy panel shows them. See
+[Parents & children](../hierarchy/index.md).
 
 ## Systems
 
@@ -256,8 +264,8 @@ losing one makes it join.
 
 #### What lists cost
 
-The registry keeps each list's `sfs::QuerySignature` (three 128-bit sets: all,
-any and excluding, 48 bytes) in one dense array, the lists themselves by the
+The registry keeps each list's `sfs::QuerySignature` (three 256-bit sets: all,
+any and excluding, 96 bytes) in one dense array, the lists themselves by the
 same index, and, for each component type, the indices of the lists that name
 it (4 bytes per list per component it names). It stores nothing per entity
 beyond the lists. Reading a list is a hash lookup on the signature, which each
@@ -271,7 +279,7 @@ list, streaming the dense signatures. `ecsBenchTests` times this with 106
 query lists, 60 systems and 2000 entities: a component no list names costs
 about 20 ns to add or remove, one a few lists name about 0.7 µs, and one about
 half the lists name about 3 µs, most of it moving list entries to keep them in
-id order (an optimised build).
+id order (an optimised build, the same with 128- and 256-bit signatures).
 
 ### Observing joins and leaves
 
@@ -308,7 +316,7 @@ added and, within a system, its `onEntityAdded()`/`onEntityRemoved()` first
 and then its observe callbacks in the order they were declared. Observe only
 where a reaction is needed: to just read a list, query it.
 
-A program can have at most `MAX_COMPONENTS` (128) component types; one more is
+A program can have at most `MAX_COMPONENTS` (256) component types; one more is
 a fatal error when it's first used.
 
 `setEnabled(false)` skips a system's update/render (handy for debug toggles).

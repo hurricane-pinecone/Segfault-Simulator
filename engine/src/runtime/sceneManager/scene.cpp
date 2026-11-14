@@ -93,7 +93,8 @@ void Scene::destroyEntity(const Entity& entity)
 
 void Scene::destroyBranch(const Entity& entity)
 {
-  for (const Entity& doomed : hierarchy::EntityTree(entities()).subtree(entity))
+  m_registry.destroyEntity(entity);
+  for (const Entity& doomed : hierarchy::descendants(entity))
     m_registry.destroyEntity(doomed);
 }
 
@@ -108,42 +109,51 @@ bool named(const Entity& entity, std::string_view name)
 
 Entity Scene::findEntity(std::string_view nameOrPath)
 {
-  const hierarchy::EntityTree tree(entities());
-  if (nameOrPath.find('/') == std::string_view::npos)
+  const std::size_t slash = nameOrPath.find('/');
+  const std::string_view first = nameOrPath.substr(0, slash);
+  Entity found;
+  if (slash == std::string_view::npos)
   {
-    for (const Entity& entity : tree.preOrder())
-      if (named(entity, nameOrPath))
+    for (const HierarchyLinks::Placed& placed : hierarchy::preorder(m_registry))
+      if (const Entity entity = m_registry.getEntity(placed.id);
+          named(entity, first))
         return entity;
     return {};
   }
 
-  // A path: match each part among the previous match's children.
-  const std::vector<Entity>* candidates = &tree.roots();
-  Entity found;
+  // A path: its first part is matched among the roots, the rest down from it.
+  for (const Entity& root : hierarchy::roots(m_registry))
+    if (named(root, first))
+    {
+      found = root;
+      break;
+    }
+
   std::string_view rest = nameOrPath;
-  while (true)
+  for (std::size_t next = slash;
+       found.isValid() && next != std::string_view::npos;)
   {
-    const std::size_t slash = rest.find('/');
-    const std::string_view part = rest.substr(0, slash);
+    rest = rest.substr(next + 1);
+    next = rest.find('/');
+    const std::string_view part = rest.substr(0, next);
+    const Entity parent = found;
     found = {};
-    for (const Entity& entity : *candidates)
-      if (named(entity, part))
+    for (const Entity& child : hierarchy::childrenOf(parent))
+      if (named(child, part))
       {
-        found = entity;
+        found = child;
         break;
       }
-    if (!found.isValid() || slash == std::string_view::npos)
-      return found;
-    candidates = &tree.children(found);
-    rest = rest.substr(slash + 1);
   }
+  return found;
 }
 
 std::vector<Entity> Scene::findEntities(std::string_view name)
 {
   std::vector<Entity> found;
-  for (const Entity& entity : hierarchy::EntityTree(entities()).preOrder())
-    if (named(entity, name))
+  for (const HierarchyLinks::Placed& placed : hierarchy::preorder(m_registry))
+    if (const Entity entity = m_registry.getEntity(placed.id);
+        named(entity, name))
       found.push_back(entity);
   return found;
 }

@@ -11,7 +11,7 @@ namespace sfs
 // number of distinct component types the ECS can register. Each component type
 // claims one id (Component<T>::getId), used as a bit index here; registering
 // more types than this is a hard misconfiguration (see component.h guard).
-const unsigned int MAX_COMPONENTS = 128;
+const unsigned int MAX_COMPONENTS = 256;
 typedef std::bitset<MAX_COMPONENTS> Signature;
 
 class Registry;
@@ -44,6 +44,8 @@ public:
   bool isValid() const { return id != InvalidId && registry != nullptr; }
 
   void setRegistry(Registry* registry) { this->registry = registry; }
+  /** The registry the entity belongs to; null for a default-made handle. */
+  Registry* registryOf() const { return registry; }
 
   template <typename TComponent, typename... TArgs>
   Entity& addComponent(TArgs&&... args);

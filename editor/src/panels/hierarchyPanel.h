@@ -11,11 +11,6 @@
 #include <unordered_set>
 #include <vector>
 
-namespace sfs::hierarchy
-{
-class EntityTree;
-}
-
 // Shows the scene's entities as a tree of parents and children; click to
 // select. Drag an entity onto another to make it a child (it keeps its place
 // in the world), or onto the empty space below the list to make it a root.
@@ -50,9 +45,7 @@ private:
     std::string prefab;
   };
 
-  void drawTree(EditorContext& context,
-                const sfs::hierarchy::EntityTree& tree,
-                const sfs::Entity& entity);
+  void drawTree(EditorContext& context, const sfs::Entity& entity);
 
   // One row: the entity's tree node, plus its drag and drop and context menu.
   // @return true if it's open with children to draw (the caller pops it).

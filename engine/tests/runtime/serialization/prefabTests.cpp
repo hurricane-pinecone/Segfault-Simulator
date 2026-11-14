@@ -376,7 +376,7 @@ int main()
         w.serializer().instantiate("asset:fence", w.scene, barn);
     w.find("Rail A").getComponent<MeshRendererComponent>().tint = {0, 1, 1, 1};
 
-    const json prefab = w.serializer().savePrefab(w.scene, barn);
+    const json prefab = w.serializer().savePrefab(barn);
     const json& root = prefab["root"];
     CHECK(root["TransformComponent"]["position"] ==
           json::array({0.0, 0.0, 0.0}));
@@ -406,7 +406,7 @@ int main()
     const Entity root = w.serializer().instantiate("asset:fence", w.scene);
     root.getComponent<TransformComponent>().position = {9, 9, 0};
     w.find("Rail A").getComponent<MeshRendererComponent>().tint = {0, 0, 0, 1};
-    const json applied = w.serializer().savePrefab(w.scene, root);
+    const json applied = w.serializer().savePrefab(root);
     CHECK(applied["root"]["TransformComponent"]["position"] ==
           json::array({0, 0, 0}));
     CHECK(applied["root"]["children"][0]["MeshRendererComponent"]["tint"][0] ==
@@ -611,7 +611,7 @@ int main()
     strap.addComponent<NameComponent>("Strap");
     hierarchy::setParent(strap, w.find("Hand"));
     w.scene.flushEntities();
-    const json applied = w.serializer().savePrefab(w.scene, cart);
+    const json applied = w.serializer().savePrefab(cart);
     const json& added = applied["root"]["children"][0]["$added"];
     CHECK(added.size() == 2u);
     CHECK(added[0]["$id"] == id);
@@ -664,7 +664,7 @@ int main()
     hierarchy::setParent(fresh, root);
     w.scene.flushEntities();
 
-    const json saved = w.serializer().savePrefab(w.scene, root);
+    const json saved = w.serializer().savePrefab(root);
     CHECK(saved["formatVersion"] == SceneSerializer::kPrefabFormatVersion);
     CHECK(saved["root"]["children"][0]["$id"] == std::stoul(kArm));
     CHECK(saved["root"]["children"][1]["$id"] == 4);

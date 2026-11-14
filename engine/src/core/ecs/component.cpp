@@ -1,5 +1,7 @@
 #include "engine/core/ecs/component.h"
 
+#include "engine/core/logger/logger.h"
+#include "engine/core/util/debugFeatures.h"
 #include "engine/core/util/fatalError.h"
 
 #include <cstdlib>
@@ -20,11 +22,14 @@ namespace
 class TypeIds
 {
 public:
-  int idOf(std::string_view typeKey)
+  // `added`, if given, says whether the id was assigned by this call.
+  int idOf(std::string_view typeKey, bool* added = nullptr)
   {
     const std::lock_guard lock(m_mutex);
     const auto [it, inserted] =
         m_ids.try_emplace(std::string(typeKey), static_cast<int>(m_ids.size()));
+    if (added)
+      *added = inserted;
     return it->second;
   }
 
@@ -38,7 +43,17 @@ private:
 int componentTypeId(std::string_view typeKey)
 {
   static TypeIds ids;
-  const int id = ids.idOf(typeKey);
+  bool added = false;
+  const int id = ids.idOf(typeKey, &added);
+
+  // Development builds warn while there's still room to raise the limit.
+  constexpr int kHeadroom = 8;
+  const int limit = static_cast<int>(MAX_COMPONENTS);
+  if (added && debugFeatures::compiled() && id >= limit - kHeadroom &&
+      id < limit)
+    LOG_WARN("Component type " + readableTypeName(typeKey) + " is number " +
+             std::to_string(id + 1) + " of MAX_COMPONENTS (" +
+             std::to_string(limit) + "); raise MAX_COMPONENTS in entity.h");
 
   // The id is a bit index into a fixed-width Signature; an id at or past the
   // ceiling has no bit to represent it. Stop here, where the type is known,
