@@ -368,6 +368,39 @@ int main()
     CHECK(hit.has_value() && hit->entity == wall);
   }
 
+  TEST("reparenting a body, or an ancestor of it, should move the body")
+  {
+    World world;
+    Entity left = world.scene.createEntity();
+    left.addComponent<TransformComponent>(
+        TransformComponent{{10.0f, 0.0f, 0.0f}});
+    Entity right = world.scene.createEntity();
+    right.addComponent<TransformComponent>(
+        TransformComponent{{20.0f, 0.0f, 0.0f}});
+    Entity group = world.scene.createEntity(); // only groups: no transform
+    Entity wall = world.box({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, false);
+    hierarchy::setParent(wall, group);
+    world.run(kFrame);
+    const auto hitAt = [&](float x)
+    {
+      const auto hit =
+          world.physics.raycast(Ray{{x, 0.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
+      return hit.has_value() && hit->entity == wall;
+    };
+    CHECK(hitAt(0.0f));
+
+    hierarchy::setParent(group, left); // an ancestor gains a parent
+    world.run(kFrame);
+    CHECK(hitAt(10.0f));
+    hierarchy::setParent(group, right); // and moves to another
+    world.run(kFrame);
+    CHECK(hitAt(20.0f));
+    CHECK(!hitAt(10.0f));
+    hierarchy::setParent(wall, {}); // the body itself becomes a root
+    world.run(kFrame);
+    CHECK(hitAt(0.0f));
+  }
+
   TEST("a kinematic body should follow its transform and not fall")
   {
     World world;

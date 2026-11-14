@@ -10,7 +10,7 @@ namespace sfs
  * A model node's local pose as built: its TransformComponent as its model
  * instance was made (after the prefab's and scene's overrides), before anything
  * moved it. Recorded by the engine (see hierarchy::recordRestPose); not
- * reflected (never saved, shown or added by hand), as ParentComponent.
+ * reflected (never saved, shown or added by hand).
  *
  * Its fields mirror TransformComponent's, so a part turned from its rest reads
  * `transform.rotation = turn * rest.rotation`.

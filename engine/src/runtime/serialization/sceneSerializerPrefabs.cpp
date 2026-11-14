@@ -759,13 +759,7 @@ SceneSerializer::nodeIdEdits(const json& file,
   return edits;
 }
 
-json SceneSerializer::instanceEntry(Scene& scene, const Entity& root) const
-{
-  return instanceEntry(root, hierarchy::EntityTree(scene.entities()));
-}
-
-json SceneSerializer::instanceEntry(const Entity& root,
-                                    const hierarchy::EntityTree& tree) const
+json SceneSerializer::instanceEntry(const Entity& root) const
 {
   const std::string prefab =
       root.getComponent<PrefabInstanceComponent>().prefab;
@@ -796,10 +790,8 @@ json SceneSerializer::instanceEntry(const Entity& root,
     {
       // What a prefab added here keeps its ids; one moved from elsewhere in
       // the prefab is a copy (the original is removed) and gets none.
-      json extra =
-          saveSubtree(entity,
-                      tree,
-                      node == byPath.end() ? SavedIds::Added : SavedIds::None);
+      json extra = saveSubtree(
+          entity, node == byPath.end() ? SavedIds::Added : SavedIds::None);
       extra["$parent"] = parentPath;
       added.push_back(std::move(extra));
       return;
@@ -814,7 +806,7 @@ json SceneSerializer::instanceEntry(const Entity& root,
       if (!patch.empty())
         overrides[*path] = std::move(patch);
     }
-    for (const Entity& child : tree.children(entity))
+    for (const Entity& child : hierarchy::childrenOf(entity))
       walk(child, *path);
   };
   walk(root, std::string());
@@ -866,12 +858,9 @@ json SceneSerializer::instanceEntry(const Entity& root,
   return entry;
 }
 
-json SceneSerializer::savePrefab(Scene& scene,
-                                 const Entity& root,
+json SceneSerializer::savePrefab(const Entity& root,
                                  bool keepRootPlacement) const
 {
-  const hierarchy::EntityTree tree(scene.entities());
-
   // Give the entities that will belong to the prefab ids: kept where they
   // have them (from the prefab they came from), new ones past the highest.
   // A nested instance's inside belongs to its own prefab, so isn't visited.
@@ -892,7 +881,7 @@ json SceneSerializer::savePrefab(Scene& scene,
           entity.hasComponent<MissingPrefabComponent>())
         return;
     }
-    for (const Entity& child : tree.children(entity))
+    for (const Entity& child : hierarchy::childrenOf(entity))
       collect(child);
   };
   collect(root);
@@ -919,7 +908,7 @@ json SceneSerializer::savePrefab(Scene& scene,
   const std::function<void(const Entity&, uint32_t)> inside =
       [&](const Entity& entity, uint32_t holder)
   {
-    for (const Entity& child : tree.children(entity))
+    for (const Entity& child : hierarchy::childrenOf(entity))
     {
       if (child.hasComponent<MissingPrefabComponent>())
         continue;
@@ -970,8 +959,8 @@ json SceneSerializer::savePrefab(Scene& scene,
   }
 
   json children = json::array();
-  for (const Entity& child : tree.children(root))
-    children.push_back(saveSubtree(child, tree, SavedIds::All));
+  for (const Entity& child : hierarchy::childrenOf(root))
+    children.push_back(saveSubtree(child, SavedIds::All));
   if (!children.empty())
     rootEntry[kChildrenKey] = std::move(children);
   return {

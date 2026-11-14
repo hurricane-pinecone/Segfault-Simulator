@@ -48,10 +48,14 @@ Entity Registry::createEntity()
     generations.resize(entityCount, 0);
     entityDebugIds.resize(entityCount, 0);
     entityAlive.resize(entityCount, false);
+    m_links.nodes.resize(entityCount);
   }
 
   entityAlive[id] = true;
   entityDebugIds[id] = nextDebugId++;
+  constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
+  m_links.nodes[id] = {kNone, kNone, kNone, kNone};
+  ++m_entitySetVersion;
 
   Entity entity{id, generations[id], entityDebugIds[id]};
   entity.setRegistry(this);
@@ -151,11 +155,20 @@ void Registry::countChanges(Entity::EntityId entity,
                             const Signature& after)
 {
   const Signature changed = before ^ after;
-  if (changed.none())
-    return;
-  for (std::size_t id = 0; id < m_componentChanges.size(); ++id)
+#if defined(__GLIBCXX__)
+  // Straight from set bit to set bit.
+  for (std::size_t id = changed._Find_first(); id < changed.size();
+       id = changed._Find_next(id))
+    countChange(entity, id, after.test(id));
+#else
+  // Stops after the last set bit.
+  for (std::size_t id = 0, left = changed.count(); left > 0; ++id)
     if (changed.test(id))
+    {
+      --left;
       countChange(entity, id, after.test(id));
+    }
+#endif
 }
 
 uint32_t Registry::listOf(const QuerySignature& signature)
@@ -316,6 +329,8 @@ void Registry::flushEntities()
       entityComponentSignatures[id].reset();
     }
 
+    unlinkRemoved(id);
+
     for (auto& pool : componentPools)
     {
       if (pool)
@@ -326,6 +341,7 @@ void Registry::flushEntities()
 
     entityAlive[id] = false;
     generations[id]++;
+    ++m_entitySetVersion;
 
     freeEntityIds.insert(id);
   }
@@ -354,6 +370,142 @@ void Registry::destroyEntity(const Entity& entity)
     return;
 
   entitiesToBeRemoved.insert(entity);
+}
+
+void Registry::unlink(Entity::EntityId id)
+{
+  constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
+  std::vector<HierarchyNode>& nodes = m_links.nodes;
+  HierarchyNode& node = nodes[id];
+  if (node.parent == kNone)
+    return;
+  HierarchyNode& parent = nodes[node.parent];
+  if (parent.firstChild == id)
+  {
+    // The first child's prevSibling is the last child, which stays so.
+    parent.firstChild = node.nextSibling;
+    if (node.nextSibling != kNone)
+      nodes[node.nextSibling].prevSibling = node.prevSibling;
+  }
+  else
+  {
+    nodes[node.prevSibling].nextSibling = node.nextSibling;
+    if (node.nextSibling != kNone)
+      nodes[node.nextSibling].prevSibling = node.prevSibling;
+    else
+      nodes[parent.firstChild].prevSibling = node.prevSibling;
+  }
+  node.parent = kNone;
+  node.nextSibling = kNone;
+  node.prevSibling = kNone;
+}
+
+void Registry::relink(Entity::EntityId child, Entity::EntityId parent)
+{
+  constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
+  std::vector<HierarchyNode>& nodes = m_links.nodes;
+  if (nodes[child].parent == parent)
+    return;
+  unlink(child);
+  ++m_links.linkVersion;
+  if (parent == kNone)
+    return;
+
+  HierarchyNode& node = nodes[child];
+  HierarchyNode& above = nodes[parent];
+  node.parent = parent;
+  if (above.firstChild == kNone)
+  {
+    above.firstChild = child;
+    node.prevSibling = child;
+    return;
+  }
+  const Entity::EntityId first = above.firstChild;
+  const Entity::EntityId last = nodes[first].prevSibling;
+  if (child < first)
+  {
+    node.nextSibling = first;
+    node.prevSibling = last;
+    nodes[first].prevSibling = child;
+    above.firstChild = child;
+    return;
+  }
+  // Loads and spawns make children in rising id order, so the tail is
+  // nearly always the place; a reused lower id walks back to its own.
+  Entity::EntityId before = last;
+  while (before > child)
+    before = nodes[before].prevSibling;
+  node.prevSibling = before;
+  node.nextSibling = nodes[before].nextSibling;
+  if (node.nextSibling != kNone)
+    nodes[node.nextSibling].prevSibling = child;
+  else
+    nodes[first].prevSibling = child;
+  nodes[before].nextSibling = child;
+}
+
+void Registry::unlinkRemoved(Entity::EntityId id)
+{
+  constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
+  std::vector<HierarchyNode>& nodes = m_links.nodes;
+  HierarchyNode& node = nodes[id];
+  if (node.parent == kNone && node.firstChild == kNone)
+    return;
+  unlink(id);
+  for (Entity::EntityId child = node.firstChild; child != kNone;)
+  {
+    HierarchyNode& orphan = nodes[child];
+    child = orphan.nextSibling;
+    orphan.parent = kNone;
+    orphan.nextSibling = kNone;
+    orphan.prevSibling = kNone;
+  }
+  node.firstChild = kNone;
+  ++m_links.linkVersion;
+}
+
+const std::vector<HierarchyLinks::Placed>& Registry::preorder()
+{
+  constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
+  const uint64_t now = m_links.linkVersion + m_entitySetVersion;
+  std::vector<HierarchyLinks::Placed>& out = m_links.preorder;
+  if (m_links.preorderBuiltAt == now)
+    return out;
+  m_links.preorderBuiltAt = now;
+  out.clear();
+  out.reserve(entityCount);
+  const std::vector<HierarchyNode>& nodes = m_links.nodes;
+  for (Entity::EntityId root = 0; root < entityCount; ++root)
+  {
+    if (!entityAlive[root] || nodes[root].parent != kNone)
+      continue;
+    // Down to the first child, else across to the next sibling of the
+    // nearest entity on the way back up that has one.
+    out.push_back({root, kNone});
+    Entity::EntityId at = root;
+    uint32_t atPos = static_cast<uint32_t>(out.size() - 1);
+    while (true)
+    {
+      if (const Entity::EntityId child = nodes[at].firstChild; child != kNone)
+      {
+        out.push_back({child, atPos});
+        at = child;
+        atPos = static_cast<uint32_t>(out.size() - 1);
+        continue;
+      }
+      while (at != root && nodes[at].nextSibling == kNone)
+      {
+        atPos = out[atPos].parentPos;
+        at = out[atPos].id;
+      }
+      if (at == root)
+        break;
+      at = nodes[at].nextSibling;
+      out.push_back({at, out[atPos].parentPos});
+      atPos = static_cast<uint32_t>(out.size() - 1);
+    }
+  }
+  return out;
 }
 
 std::vector<Entity> Registry::entities()

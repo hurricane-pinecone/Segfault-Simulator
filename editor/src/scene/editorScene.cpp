@@ -9,6 +9,8 @@
 #include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/rendering/renderSystem.h"
 
+#include <algorithm>
+
 void EditorScene::onInit()
 {
   sfs::StandardScene::onInit();
@@ -83,6 +85,24 @@ void EditorScene::destroyBranch(const sfs::Entity& entity)
 {
   sfs::Scene::destroyBranch(entity);
   flushEntities();
+}
+
+std::optional<std::size_t> EditorScene::saveOrderOf(const sfs::Entity& entity)
+{
+  if (!entity.isAlive())
+    return std::nullopt;
+  const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
+  const sfs::Entity::EntityId id = entity.getId();
+  const auto it = std::find_if(order.begin(), order.end(), [id](const auto& placed) { return placed.id == id; });
+  if (it == order.end())
+    return std::nullopt;
+  return static_cast<std::size_t>(it - order.begin());
+}
+
+sfs::Entity EditorScene::atSaveOrder(std::size_t index)
+{
+  const std::vector<sfs::HierarchyLinks::Placed>& order = preorder();
+  return index < order.size() ? getEntity(order[index].id) : sfs::Entity();
 }
 
 void EditorScene::clear()

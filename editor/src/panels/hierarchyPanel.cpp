@@ -107,18 +107,16 @@ void HierarchyPanel::drawContents(EditorContext& context)
 
   m_lastRows = std::move(m_rows);
   m_rows.clear();
-  const std::vector<sfs::Entity> entities = context.scene->entities();
   if (m_filter.empty())
   {
-    const sfs::hierarchy::EntityTree tree(entities);
-    for (const sfs::Entity& root : tree.roots())
-      drawTree(context, tree, root);
+    for (const sfs::Entity& root : context.scene->roots())
+      drawTree(context, root);
   }
   else
   {
     // Matches anywhere in the tree, as a flat list.
     const std::string filter = lowercase(m_filter);
-    for (const sfs::Entity& entity : entities)
+    for (const sfs::Entity& entity : context.scene->entities())
       if (lowercase(displayName(entity)).find(filter) != std::string::npos)
         drawRow(context, entity, false);
   }
@@ -129,15 +127,12 @@ void HierarchyPanel::drawContents(EditorContext& context)
   applyPendingEdit(context);
 }
 
-void HierarchyPanel::drawTree(EditorContext& context,
-                              const sfs::hierarchy::EntityTree& tree,
-                              const sfs::Entity& entity)
+void HierarchyPanel::drawTree(EditorContext& context, const sfs::Entity& entity)
 {
-  const std::vector<sfs::Entity>& children = tree.children(entity);
-  if (!drawRow(context, entity, !children.empty()))
+  if (!drawRow(context, entity, sfs::hierarchy::hasChildren(entity)))
     return;
-  for (const sfs::Entity& child : children)
-    drawTree(context, tree, child);
+  for (const sfs::Entity& child : sfs::hierarchy::childrenOf(entity))
+    drawTree(context, child);
   ImGui::TreePop();
 }
 

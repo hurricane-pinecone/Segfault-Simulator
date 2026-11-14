@@ -601,9 +601,9 @@ void SceneSerializer::loadObject(const reflect::TypeInfo& type,
   }
 }
 
-json SceneSerializer::saveEntity(Scene& scene, const Entity& entity) const
+json SceneSerializer::saveEntity(const Entity& entity) const
 {
-  return saveSubtree(entity, hierarchy::EntityTree(scene.entities()));
+  return saveSubtree(entity);
 }
 
 json SceneSerializer::saveComponents(const Entity& entity) const
@@ -629,9 +629,7 @@ json SceneSerializer::saveComponents(const Entity& entity) const
   return components;
 }
 
-json SceneSerializer::saveSubtree(const Entity& entity,
-                                  const hierarchy::EntityTree& tree,
-                                  SavedIds ids) const
+json SceneSerializer::saveSubtree(const Entity& entity, SavedIds ids) const
 {
   // An instance whose prefab didn't load goes back out as it was read.
   if (entity.hasComponent<MissingPrefabComponent>())
@@ -639,13 +637,13 @@ json SceneSerializer::saveSubtree(const Entity& entity,
 
   json entry;
   if (entity.hasComponent<PrefabInstanceComponent>())
-    entry = instanceEntry(entity, tree); // the prefab, and how this one differs
+    entry = instanceEntry(entity); // the prefab, and how this one differs
   else
   {
     entry = saveComponents(entity);
     json children = json::array();
-    for (const Entity& child : tree.children(entity))
-      children.push_back(saveSubtree(child, tree, ids));
+    for (const Entity& child : hierarchy::childrenOf(entity))
+      children.push_back(saveSubtree(child, ids));
     if (!children.empty())
       entry[kChildrenKey] = std::move(children);
   }
@@ -726,10 +724,9 @@ void SceneSerializer::loadComponents(
 json SceneSerializer::save(Scene& scene,
                            const std::vector<std::string>& gameSystems) const
 {
-  const hierarchy::EntityTree tree(scene.entities());
   json entities = json::array();
-  for (const Entity& root : tree.roots())
-    entities.push_back(saveSubtree(root, tree));
+  for (const Entity& root : scene.roots())
+    entities.push_back(saveSubtree(root));
 
   json out = {{"formatVersion", kSceneFormatVersion},
               {"systems", gameSystems},

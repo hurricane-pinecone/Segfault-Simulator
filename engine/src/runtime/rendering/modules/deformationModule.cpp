@@ -3,7 +3,6 @@
 #include "engine/core/components/deformerComponent.h"
 #include "engine/core/components/grassComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
-#include "engine/core/components/parentComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h"
 #include "engine/core/hierarchy/hierarchy.h"
@@ -446,24 +445,13 @@ void DeformationModule::deform()
       kFarthestSweep,
       kFastest * m_frameSeconds * static_cast<float>(m_registry->timeScale()));
   // Only a mesh with a deformer of its own, or with a parent, can have one,
-  // so only those are walked up from. Both lists are in id order, so their
-  // union is too.
-  const std::vector<Entity>& own = m_registry->query<TransformComponent,
-                                                     MeshRendererComponent,
-                                                     DeformerComponent>();
-  const std::vector<Entity>& children =
-      m_registry
-          ->query<TransformComponent, MeshRendererComponent, ParentComponent>();
-  m_mayDeform.clear();
-  std::set_union(own.begin(),
-                 own.end(),
-                 children.begin(),
-                 children.end(),
-                 std::back_inserter(m_mayDeform),
-                 [](const Entity& a, const Entity& b)
-                 { return a.getId() < b.getId(); });
-  for (const Entity& mesh : m_mayDeform)
+  // so only those are walked up from.
+  for (const Entity& mesh :
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
+    if (!mesh.hasComponent<DeformerComponent>() &&
+        !hierarchy::parentOf(mesh).isValid())
+      continue;
     // Its deformer: its own, or an ancestor's that covers its children.
     const DeformerComponent* deformer = nullptr;
     Entity at = mesh;

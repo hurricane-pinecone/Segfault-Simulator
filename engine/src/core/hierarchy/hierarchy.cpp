@@ -1,21 +1,19 @@
 #include "engine/core/hierarchy/hierarchy.h"
 
-#include "engine/core/components/parentComponent.h"
 #include "engine/core/components/restPoseComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
+#include "engine/core/logger/logger.h"
 #include "glm/glm/matrix.hpp"
 
-#include <unordered_set>
+#include <string>
 
 namespace sfs::hierarchy
 {
 
 namespace
 {
-// Guards walks up the parent chain against a loop made by writing
-// ParentComponent directly (setParent refuses them).
-constexpr int kMaxDepth = 1024;
+constexpr Entity::EntityId kNone = HierarchyLinks::kNone;
 
 glm::mat4 localMatrix(const Entity& entity)
 {
@@ -23,25 +21,34 @@ glm::mat4 localMatrix(const Entity& entity)
              ? entity.getComponent<TransformComponent>().matrix()
              : glm::mat4(1.0f);
 }
+
+// The entity's links, or null for a destroyed or stale handle.
+const HierarchyNode* nodeOf(const Entity& entity)
+{
+  if (!entity.isAlive())
+    return nullptr;
+  return &entity.registryOf()->links().nodes[entity.getId()];
+}
 } // namespace
 
 Entity parentOf(const Entity& entity)
 {
-  if (!entity.hasComponent<ParentComponent>())
+  const HierarchyNode* node = nodeOf(entity);
+  if (!node || node->parent == kNone)
     return {};
-  const Entity parent = entity.getComponent<ParentComponent>().parent;
-  return parent.isValid() && parent.isAlive() ? parent : Entity();
+  return entity.registryOf()->getEntity(node->parent);
 }
 
 bool isAncestor(const Entity& ancestor, const Entity& entity)
 {
-  Entity current = parentOf(entity);
-  for (int depth = 0; current.isValid() && depth < kMaxDepth; ++depth)
-  {
-    if (current == ancestor)
+  if (!entity.isAlive() || !ancestor.isAlive() ||
+      ancestor.registryOf() != entity.registryOf())
+    return false;
+  const std::vector<HierarchyNode>& nodes = entity.registryOf()->links().nodes;
+  for (Entity::EntityId at = nodes[entity.getId()].parent; at != kNone;
+       at = nodes[at].parent)
+    if (at == ancestor.getId())
       return true;
-    current = parentOf(current);
-  }
   return false;
 }
 
@@ -49,25 +56,26 @@ bool canParent(const Entity& child, const Entity& parent)
 {
   if (!parent.isValid())
     return true;
-  return parent != child && !isAncestor(child, parent);
+  return child.isAlive() && parent.registryOf() == child.registryOf() &&
+         parent != child && !isAncestor(child, parent);
 }
 
 bool setParent(Entity child, const Entity& parent)
 {
   if (!canParent(child, parent))
-    return false;
-
-  if (!parent.isValid())
   {
-    if (child.hasComponent<ParentComponent>())
-      child.removeComponent<ParentComponent>();
-    return true;
+    const std::string which =
+        "hierarchy::setParent: entity " + std::to_string(child.getId());
+    if (!child.isAlive())
+      LOG_ERROR(which + " was destroyed, so it can't be put under a parent");
+    else if (parent.registryOf() != child.registryOf())
+      LOG_ERROR(which + " and its new parent are in different registries");
+    return false;
   }
-
-  if (child.hasComponent<ParentComponent>())
-    child.getComponent<ParentComponent>().parent = parent;
-  else
-    child.addComponent<ParentComponent>(parent);
+  if (!child.isAlive())
+    return true; // made a root: there's nothing to take it out of
+  child.registryOf()->relink(
+      child.getId(), parent.isAlive() ? parent.getId() : kNone);
   return true;
 }
 
@@ -81,15 +89,93 @@ bool setParentKeepWorld(Entity child, const Entity& parent)
   return true;
 }
 
+bool hasChildren(const Entity& entity)
+{
+  const HierarchyNode* node = nodeOf(entity);
+  return node && node->firstChild != kNone;
+}
+
+ChildRange childrenOf(const Entity& entity)
+{
+  const HierarchyNode* node = nodeOf(entity);
+  return node ? ChildRange(entity.registryOf(), node->firstChild)
+              : ChildRange();
+}
+
+DescendantRange::iterator& DescendantRange::iterator::operator++()
+{
+  const std::vector<HierarchyNode>& nodes = m_registry->links().nodes;
+  if (!m_skipChildren && nodes[m_id].firstChild != kNone)
+  {
+    m_id = nodes[m_id].firstChild;
+    return *this;
+  }
+  m_skipChildren = false;
+  // An entity reparented out of the walk, or removed, during it ends the
+  // climb at a root (kNone above it) instead of at m_root.
+  for (Entity::EntityId at = m_id; at != m_root && at != kNone;
+       at = nodes[at].parent)
+    if (nodes[at].nextSibling != kNone)
+    {
+      m_id = nodes[at].nextSibling;
+      return *this;
+    }
+  m_id = kNone;
+  return *this;
+}
+
+DescendantRange::iterator DescendantRange::begin() const
+{
+  return {m_registry,
+          m_root,
+          m_registry ? m_registry->links().nodes[m_root].firstChild : kNone};
+}
+
+DescendantRange descendants(const Entity& root)
+{
+  return root.isAlive() ? DescendantRange(root.registryOf(), root.getId())
+                        : DescendantRange();
+}
+
+RootRange::iterator::iterator(Registry* registry, Entity::EntityId id)
+    : m_registry(registry), m_id(id)
+{
+  settle();
+}
+
+RootRange::iterator& RootRange::iterator::operator++()
+{
+  ++m_id;
+  settle();
+  return *this;
+}
+
+void RootRange::iterator::settle()
+{
+  if (m_id == kNone)
+    return;
+  const std::vector<HierarchyNode>& nodes = m_registry->links().nodes;
+  // A free id's node is all kNone too: getEntity() tells it isn't alive.
+  while (m_id < nodes.size() && (nodes[m_id].parent != kNone ||
+                                 !m_registry->getEntity(m_id).isValid()))
+    ++m_id;
+  if (m_id >= nodes.size())
+    m_id = kNone;
+}
+
+RootRange roots(Registry& registry) { return RootRange(registry); }
+
+const std::vector<HierarchyLinks::Placed>& preorder(Registry& registry)
+{
+  return registry.preorder();
+}
+
 glm::mat4 worldMatrix(const Entity& entity)
 {
   glm::mat4 world = localMatrix(entity);
-  Entity current = parentOf(entity);
-  for (int depth = 0; current.isValid() && depth < kMaxDepth; ++depth)
-  {
+  for (Entity current = parentOf(entity); current.isValid();
+       current = parentOf(current))
     world = localMatrix(current) * world;
-    current = parentOf(current);
-  }
   return world;
 }
 
@@ -138,55 +224,6 @@ void recordRestPose(Entity entity)
   rest.position = transform.position;
   rest.rotation = transform.rotation;
   rest.scale = transform.scale;
-}
-
-EntityTree::EntityTree(const std::vector<Entity>& entities)
-{
-  std::unordered_set<Entity::EntityId> listed;
-  for (const Entity& entity : entities)
-    listed.insert(entity.getId());
-
-  for (const Entity& entity : entities)
-  {
-    const Entity parent = parentOf(entity);
-    // A parent outside the list, or a loop, makes it a root so it's still
-    // reached from the top.
-    if (parent.isValid() && listed.contains(parent.getId()) &&
-        !isAncestor(entity, entity))
-      m_children[parent.getId()].push_back(entity);
-    else
-      m_roots.push_back(entity);
-  }
-}
-
-const std::vector<Entity>& EntityTree::children(const Entity& entity) const
-{
-  static const std::vector<Entity> kNone;
-  const auto it = m_children.find(entity.getId());
-  return it == m_children.end() ? kNone : it->second;
-}
-
-std::vector<Entity> EntityTree::preOrder() const
-{
-  std::vector<Entity> out;
-  for (const Entity& root : m_roots)
-    appendSubtree(root, out);
-  return out;
-}
-
-std::vector<Entity> EntityTree::subtree(const Entity& root) const
-{
-  std::vector<Entity> out;
-  appendSubtree(root, out);
-  return out;
-}
-
-void EntityTree::appendSubtree(const Entity& root,
-                               std::vector<Entity>& out) const
-{
-  out.push_back(root);
-  for (const Entity& child : children(root))
-    appendSubtree(child, out);
 }
 
 } // namespace sfs::hierarchy

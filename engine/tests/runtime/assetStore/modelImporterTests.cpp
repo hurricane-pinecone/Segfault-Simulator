@@ -1047,8 +1047,8 @@ int main()
       const nlohmann::json resaved = serializer.save(scene);
       CHECK(resaved["entities"][0]["$overrides"].contains(
           "1/" + std::to_string((*nodes)[4].id)));
-      const nlohmann::json upgraded = serializer.savePrefab(
-          scene, find("Machine"), true)["root"]["children"][0];
+      const nlohmann::json upgraded =
+          serializer.savePrefab(find("Machine"), true)["root"]["children"][0];
       CHECK(upgraded["$overrides"].contains(std::to_string((*nodes)[1].id)));
       CHECK(upgraded["$removed"] ==
             nlohmann::json::array({std::to_string((*nodes)[3].id)}));

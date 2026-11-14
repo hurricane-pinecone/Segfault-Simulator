@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/registry.h"
+#include "engine/core/hierarchy/hierarchy.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/input/input.h"
@@ -90,8 +91,29 @@ public:
   // Every entity with this name, parents before children.
   std::vector<Entity> findEntities(std::string_view name);
 
-  // Every living entity, in id order (e.g. for an editor's hierarchy).
+  // Every living entity, in id order.
   std::vector<Entity> entities() { return m_registry.entities(); }
+
+  /**
+   * Every living entity, parents before children, roots and siblings in id
+   * order (the order scenes save in), each with its parent's place in the
+   * list: hierarchy::preorder() of the scene's registry. Rebuilt only after
+   * the hierarchy or the set of entities changed, in place by the first call
+   * after, so while iterating it, call nothing that may call preorder() (a
+   * save, findEntity). Main thread only.
+   * @return the index
+   */
+  const std::vector<HierarchyLinks::Placed>& preorder()
+  {
+    return m_registry.preorder();
+  }
+
+  /**
+   * The root entities (those with no parent), in id order: hierarchy::roots()
+   * of the scene's registry.
+   * @return a range of Entity, read from the registry as it goes
+   */
+  hierarchy::RootRange roots() { return hierarchy::roots(m_registry); }
 
   // Apply pending entity creation/destruction now instead of at the start of
   // the next update (e.g. after an editor replaces the scene's contents).

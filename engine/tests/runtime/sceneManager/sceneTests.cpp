@@ -5,7 +5,6 @@
 #include <engine/core/components/animatorComponent.h>
 #include <engine/core/components/inputContextComponent.h>
 #include <engine/core/components/nameComponent.h>
-#include <engine/core/components/parentComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/particles/particleEffect.h>
@@ -32,6 +31,10 @@ using namespace sfs;
 
 namespace
 {
+struct Tagged
+{
+};
+
 struct World
 {
   AssetStore store;
@@ -265,13 +268,13 @@ int main()
     World world;
     Entity named = world.named("Farm");
     Entity tagged = world.named("Gate");
-    tagged.addComponent<ParentComponent>();
+    tagged.addComponent<Tagged>();
     CHECK(world.scene.query<NameComponent>().empty()); // (until the flush)
     world.scene.flushEntities();
 
     CHECK(world.scene.query<NameComponent>().size() == 2u);
     const std::vector<Entity>& both =
-        world.scene.query<NameComponent, ParentComponent>();
+        world.scene.query<NameComponent, Tagged>();
     CHECK(both.size() == 1u && both[0] == tagged);
     CHECK(named.isValid());
   }
@@ -290,7 +293,10 @@ int main()
     CHECK(
         !world.scene.findEntity("North/Gate").isValid()); // North isn't a root
     CHECK(!world.scene.findEntity("Fences/South/Gate").isValid());
-    (void)strayGate;
+    CHECK(world.scene.findEntity("Gate") == gate); // the first in preorder
+    // A reparent counts at once, with no flush.
+    hierarchy::setParent(strayGate, fences);
+    CHECK(world.scene.findEntity("Fences/Gate") == strayGate);
   }
 
   TEST("destroyBranch should destroy an entity and everything below it")
@@ -307,6 +313,10 @@ int main()
     CHECK(!cart.isAlive());
     CHECK(!crate.isAlive());
     CHECK(!lid.isAlive());
+    CHECK(ball.isAlive());
+    CHECK(world.scene.entities().size() == 1u);
+    world.scene.destroyBranch(cart); // already gone: nothing happens
+    world.scene.flushEntities();
     CHECK(ball.isAlive());
   }
 

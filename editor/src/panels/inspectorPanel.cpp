@@ -1032,7 +1032,6 @@ bool materialsCanGlow(const TypeInfo& type,
 struct MeshScene
 {
   const sfs::MeshLibrary* meshes = nullptr;
-  const sfs::hierarchy::EntityTree* tree = nullptr;
   sfs::AssetDatabase* assets = nullptr; // where Extract writes materials
   const sfs::RenderSystem* render = nullptr;
   sfs::AssetStore* store = nullptr; // sprites' images
@@ -1198,9 +1197,9 @@ std::optional<std::pair<glm::vec2, glm::vec2>> spriteBox(const sfs::Entity& enti
 // group covers the group). Empty if there are none (or only stand-ins).
 sfs::Aabb meshBounds(const sfs::Entity& entity, const MeshScene& scene, bool includeChildren = false)
 {
-  if (!scene.meshes || !scene.tree)
+  if (!scene.meshes)
     return {};
-  return sfs::entityMeshBounds(entity, *scene.meshes, *scene.tree, includeChildren);
+  return sfs::entityMeshBounds(entity, *scene.meshes, includeChildren);
 }
 
 bool isCollider(const TypeInfo& type)
@@ -1228,14 +1227,14 @@ void fitCollider(const TypeInfo& type,
     }
     return;
   }
-  if (!scene.meshes || !scene.tree)
+  if (!scene.meshes)
     return;
   if (type.name == "BoxCollider3DComponent")
-    sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+    sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, *scene.meshes, includeChildren);
   else if (type.name == "SphereCollider3DComponent")
-    sfs::fitColliderToMesh<sfs::SphereCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+    sfs::fitColliderToMesh<sfs::SphereCollider3DComponent>(entity, *scene.meshes, includeChildren);
   else if (type.name == "CapsuleCollider3DComponent")
-    sfs::fitColliderToMesh<sfs::CapsuleCollider3DComponent>(entity, *scene.meshes, *scene.tree, includeChildren);
+    sfs::fitColliderToMesh<sfs::CapsuleCollider3DComponent>(entity, *scene.meshes, includeChildren);
 }
 
 // A 3D collider's Fit to Mesh row (one undo step, on every selected object),
@@ -1251,7 +1250,7 @@ void colliderFitRows(const TypeInfo& type,
   const bool hasOwn =
       entity.hasComponent<sfs::MeshRendererComponent>() && scene.meshes &&
       scene.meshes->bounds(entity.getComponent<sfs::MeshRendererComponent>().mesh);
-  if (hasOwn && scene.tree && !scene.tree->children(entity).empty())
+  if (hasOwn && sfs::hierarchy::hasChildren(entity))
   {
     widgets::propertyCheckbox("Include Children", &includeChildren);
     ImGui::SetItemTooltip("Fit around the children's meshes too, not just this object's");
@@ -2457,9 +2456,7 @@ void InspectorPanel::drawContents(EditorContext& context)
   const sfs::Entity entity = context.selection;
   sfs::MeshLibrary* meshes =
       context.render ? &context.render->meshes() : nullptr;
-  const sfs::hierarchy::EntityTree tree(context.scene->entities());
   const MeshScene scene{meshes,
-                        &tree,
                         context.assets,
                         context.render,
                         context.scene ? &context.scene->assetStore() : nullptr,

@@ -19,11 +19,6 @@ namespace sfs
 class MeshLibrary;
 class Scene;
 
-namespace hierarchy
-{
-class EntityTree;
-}
-
 namespace reflect
 {
 class TypeRegistry;
@@ -45,7 +40,7 @@ struct TypeInfo;
  * saved by name; the caller keeps that list, since edit-mode scenes don't
  * instantiate them.
  *
- * The parent/child hierarchy (ParentComponent) is saved as nesting: an
+ * The parent/child hierarchy (see hierarchy.h) is saved as nesting: an
  * entity's children are listed under its "children" key, so "children" is
  * never a component name. Entities are saved parents first, siblings in id
  * order, so loading into an empty scene recreates them in that order.
@@ -146,15 +141,14 @@ public:
    * the instance's; otherwise the root is moved to the origin, unless
    * `keepRootPlacement` (saving a prefab edited on its own).
    */
-  nlohmann::json savePrefab(Scene& scene,
-                            const Entity& root,
+  nlohmann::json savePrefab(const Entity& root,
                             bool keepRootPlacement = false) const;
 
   /**
    * How an instance differs from its prefab: its scene entry ($prefab,
    * $overrides, $removed, $added). `root` must have a PrefabInstanceComponent.
    */
-  nlohmann::json instanceEntry(Scene& scene, const Entity& root) const;
+  nlohmann::json instanceEntry(const Entity& root) const;
 
   /**
    * An entity's path in the instance under `root` (see above): "" for the
@@ -271,7 +265,7 @@ public:
    * One entity and everything below it, in the same form as a scene file's
    * entries (its children nested under "children").
    */
-  nlohmann::json saveEntity(Scene& scene, const Entity& entity) const;
+  nlohmann::json saveEntity(const Entity& entity) const;
 
   /**
    * Create an entity, and the children nested in it, in `scene` from
@@ -316,7 +310,6 @@ private:
     Added,
   };
   nlohmann::json saveSubtree(const Entity& entity,
-                             const hierarchy::EntityTree& tree,
                              SavedIds ids = SavedIds::None) const;
   // An entity's components (reflected and unresolved), without children.
   nlohmann::json saveComponents(const Entity& entity) const;
@@ -333,8 +326,6 @@ private:
   // overrides): path -> (parent path, components), with every known
   // component's fields filled in, for comparing an instance against.
   std::vector<PrefabNode> expandBase(const nlohmann::json& entry) const;
-  nlohmann::json instanceEntry(const Entity& root,
-                               const hierarchy::EntityTree& tree) const;
 
   Entity loadEntity(const nlohmann::json& entry,
                     Scene& scene,

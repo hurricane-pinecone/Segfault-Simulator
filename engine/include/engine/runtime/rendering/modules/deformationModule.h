@@ -331,10 +331,8 @@ private:
   std::vector<float> m_groundSoftness;
   MeshHandle m_patchMesh;
   std::vector<uint16_t> m_halves; // scratch: a tile's
-  // Scratch: the frame's deformable terrains, and the meshes that may be a
-  // deformer's, their own or an ancestor's, in id order.
+  // Scratch: the frame's deformable terrains.
   std::vector<Seen> m_seen;
-  std::vector<Entity> m_mayDeform;
 };
 
 } // namespace sfs

@@ -16,6 +16,7 @@
 // those instantiations happen.
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/ecs/hierarchyLinks.h"
 #include "pool.h"
 #include "query.h"
 #include "system.h"
@@ -35,6 +36,11 @@
 namespace sfs
 {
 
+namespace hierarchy
+{
+bool setParent(Entity child, const Entity& parent);
+}
+
 class Registry
 {
 public:
@@ -51,10 +57,28 @@ public:
   void destroyEntity(const Entity& entity);
   bool isAlive(const Entity& entity) const;
 
-  /** Every living entity, in id order (e.g. for an editor's hierarchy). */
+  /** Every living entity, in id order. */
   std::vector<Entity> entities();
 
   void flushEntities();
+
+  /**
+   * The parent/child links of the entities, by id (see hierarchy.h, which
+   * reads them). Only hierarchy::setParent and the flush that removes an
+   * entity change them.
+   */
+  const HierarchyLinks& links() const { return m_links; }
+
+  /**
+   * Every living entity, parents before children, roots and siblings in id
+   * order (HierarchyLinks::preorder). It's rebuilt first if a link changed or
+   * an entity was created or removed since it was last built: O(entities)
+   * then, and a read otherwise. The first call after such a change rewrites
+   * it in place, so while iterating it, call nothing that may call
+   * preorder() (a save, findEntity). Main thread only.
+   * @return the index
+   */
+  const std::vector<HierarchyLinks::Placed>& preorder();
 
   template <typename TComponent, typename... TArgs>
   void addComponent(const Entity& entity, TArgs&&... args);
@@ -242,9 +266,20 @@ private:
   template <typename TComponent>
   Pool<TComponent>* poolOf();
 
+  // Puts `child` under `parent` (HierarchyLinks::kNone: makes it a root), in
+  // id order among its new siblings. Both are living ids, and the caller has
+  // refused loops (hierarchy::setParent, the one caller).
+  void relink(Entity::EntityId child, Entity::EntityId parent);
+  // Takes `id` out of its parent's children, leaving it a root.
+  void unlink(Entity::EntityId id);
+  // A removed entity's links go: it leaves its parent, and its children
+  // become roots.
+  void unlinkRemoved(Entity::EntityId id);
+
 private:
   friend class Scene;
   friend class System;
+  friend bool hierarchy::setParent(Entity child, const Entity& parent);
 
   // Scene adds each step's game time before that step's systems run.
   void advanceGameTime(double seconds) { m_gameTime += seconds; }
@@ -259,6 +294,11 @@ private:
   std::vector<uint64_t> entityDebugIds;
   std::vector<uint32_t> generations;
   std::vector<bool> entityAlive;
+  // The hierarchy, its nodes sized with the arrays above.
+  HierarchyLinks m_links;
+  // Goes up when an entity is created or removed: with the links' version,
+  // what tells whether the preorder index is out of date.
+  uint64_t m_entitySetVersion = 0;
   std::set<Entity> entitiesToBeAdded;
   std::set<Entity> entitiesToBeRemoved;
 

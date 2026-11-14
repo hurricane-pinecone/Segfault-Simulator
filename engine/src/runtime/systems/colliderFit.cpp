@@ -60,7 +60,6 @@ const Aabb* ownMeshBounds(const Entity& entity, const MeshLibrary& meshes)
 
 Aabb entityMeshBounds(const Entity& entity,
                       const MeshLibrary& meshes,
-                      const hierarchy::EntityTree& tree,
                       bool includeChildren)
 {
   Aabb bounds;
@@ -71,43 +70,34 @@ Aabb entityMeshBounds(const Entity& entity,
       return bounds;
   }
   const glm::mat4 toLocal = glm::inverse(hierarchy::worldMatrix(entity));
-  for (const Entity& part : tree.subtree(entity))
-    if (part != entity)
-      if (const Aabb* mesh = ownMeshBounds(part, meshes))
-        bounds.expand(
-            mesh->transformed(toLocal * hierarchy::worldMatrix(part)));
+  for (const Entity& part : hierarchy::descendants(entity))
+    if (const Aabb* mesh = ownMeshBounds(part, meshes))
+      bounds.expand(mesh->transformed(toLocal * hierarchy::worldMatrix(part)));
   return bounds;
 }
 
 template <typename Collider>
 bool fitColliderToMesh(const Entity& entity,
                        const MeshLibrary& meshes,
-                       const hierarchy::EntityTree& tree,
                        bool includeChildren)
 {
   if (!entity.hasComponent<Collider>())
     return false;
-  const Aabb bounds = entityMeshBounds(entity, meshes, tree, includeChildren);
+  const Aabb bounds = entityMeshBounds(entity, meshes, includeChildren);
   if (bounds.empty())
     return false;
   fitCollider(entity.getComponent<Collider>(), bounds);
   return true;
 }
 
-template bool
-fitColliderToMesh<BoxCollider3DComponent>(const Entity&,
-                                          const MeshLibrary&,
-                                          const hierarchy::EntityTree&,
-                                          bool);
-template bool
-fitColliderToMesh<SphereCollider3DComponent>(const Entity&,
-                                             const MeshLibrary&,
-                                             const hierarchy::EntityTree&,
-                                             bool);
-template bool
-fitColliderToMesh<CapsuleCollider3DComponent>(const Entity&,
-                                              const MeshLibrary&,
-                                              const hierarchy::EntityTree&,
-                                              bool);
+template bool fitColliderToMesh<BoxCollider3DComponent>(const Entity&,
+                                                        const MeshLibrary&,
+                                                        bool);
+template bool fitColliderToMesh<SphereCollider3DComponent>(const Entity&,
+                                                           const MeshLibrary&,
+                                                           bool);
+template bool fitColliderToMesh<CapsuleCollider3DComponent>(const Entity&,
+                                                            const MeshLibrary&,
+                                                            bool);
 
 } // namespace sfs
