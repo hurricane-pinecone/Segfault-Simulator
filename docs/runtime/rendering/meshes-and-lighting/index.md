@@ -1138,8 +1138,8 @@ something touching a glowing object can't shadow it either.
 a light surrounded by static scenery doesn't earn that cost back every frame.
 A caster that's held still for 30 frames moves into the light's own still
 cube, drawn once and then just copied into the cube the lit pass reads from
-each frame, with only the casters still moving drawn over the copy (so a farm
-hand paused mid step for a moment isn't mistaken for furniture). The whole
+each frame, with only the casters still moving drawn over the copy (so a
+character paused mid step for a moment isn't mistaken for furniture). The whole
 cube redraws when the light itself moves or its reach changes, nearby ground
 is deformed, a still caster's mesh or material changes or it's removed, or a
 caster's material graph reads `Time` (its shadow can change without it
