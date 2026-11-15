@@ -94,7 +94,7 @@ public:
   void destroyBranch(const Entity& entity);
 
   // The first entity with this name (NameComponent), parents before children;
-  // invalid if none. A path such as "Farm/Barn/Door" starts from a root
+  // invalid if none. A path such as "Town/House/Door" starts from a root
   // entity's name and follows children's names down.
   Entity findEntity(std::string_view nameOrPath);
 
@@ -296,6 +296,10 @@ private:
   // are under way.
   void deleteDestroyedObjects();
 
+  // Runs a new object's onCreate, as a call to it (so it isn't deleted under
+  // itself), owning the event handles it makes there.
+  void create(GameObject& object);
+
   std::vector<std::unique_ptr<GameObject>> m_gameObjects;
   int m_objectCalls = 0;
   bool m_objectsDestroyed = false; // some in m_gameObjects are destroyed
@@ -309,31 +313,15 @@ TObject& Scene::createObject(TArgs&&... args)
 
   static_cast<GameObject&>(ref).m_scene = this;
   m_gameObjects.push_back(std::move(object));
-  // Through the base, where Scene is a friend: scripts override onCreate as
-  // protected, which would otherwise be inaccessible here. As a call to the
-  // object, so it isn't deleted under itself (destroying itself, say).
-  const ObjectCalls calls(*this);
-  static_cast<GameObject&>(ref).onCreate(*this);
-
+  create(ref);
   return ref;
 }
 
 template <typename TObject>
 TObject& Scene::attachObject(const Entity& entity)
 {
-  auto object = std::make_unique<TObject>();
-  TObject& ref = *object;
-  static_cast<GameObject&>(ref).m_entity = entity;
-  static_cast<GameObject&>(ref).m_scene = this;
-
-  m_gameObjects.push_back(std::move(object));
-  // Through the base, where Scene is a friend: scripts override onCreate as
-  // protected, which would otherwise be inaccessible here. As a call to the
-  // object, so it isn't deleted under itself (destroying itself, say).
-  const ObjectCalls calls(*this);
-  static_cast<GameObject&>(ref).onCreate(*this);
-
-  return ref;
+  return static_cast<TObject&>(
+      adoptObject(std::make_unique<TObject>(), entity));
 }
 
 template <typename TObject>

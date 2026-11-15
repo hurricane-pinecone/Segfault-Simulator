@@ -148,10 +148,24 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      false,
      false,
-     "A type should not be marked both `[[sfs::event]]` and "
-     "`[[sfs::component]]`, since an event is what one system tells another "
-     "and a component is state; it's taken as an event. Remove one of the "
-     "two marks."},
+     "A type should not be marked both as an event (`[[sfs::event_news]]` "
+     "and the like) and `[[sfs::component]]`, since an event is what one "
+     "system tells another and a component is state; it's taken as an "
+     "event. Remove one of the two marks."},
+    {EventDeclaration,
+     "event-declaration",
+     E,
+     C,
+     false,
+     false,
+     false,
+     "An event type must be declared so the compiler can check it: one "
+     "event attribute, on a named struct at namespace scope outside inline "
+     "namespaces; a request listing only `[[sfs::event_response]]` types; "
+     "news deriving only from news of its own kind, each base once, and "
+     "requests and responses deriving from nothing; and no name declared "
+     "twice differently. An attribute on an enum can't be read, so it isn't "
+     "checked."},
     {SingleAny,
      "single-any",
      W,
@@ -360,26 +374,16 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      "A query loop should not copy a row's component only to read it. Read "
      "it in place with `const T&`, or, for a copy it changes, keep it as "
      "scratch or use `T&`."},
-    {EventUnmarked,
-     "event-unmarked",
+    {EventHandleOutsideCreate,
+     "event-handle-outside-create",
      W,
      L,
      false,
      false,
      false,
-     "An event should be a struct marked `[[sfs::event]]`, not a component "
-     "or another script type. Send and read a struct marked "
-     "`[[sfs::event]]`, and keep state on components."},
-    {ReaderNotKept,
-     "reader-not-kept",
-     W,
-     L,
-     false,
-     false,
-     false,
-     "An event reader should not be made in `update()`, a hook or an "
-     "`observe` callback, where each new one reads the kept events again. "
-     "Make it once in `create()` and keep it as a member."},
+     "An event consumer or requester should be made in `create()` (an "
+     "object's in `onCreate`) and kept as a member. Made anywhere else it "
+     "receives nothing, or has no owner to run its handlers."},
     {ReaderOnComponent,
      "reader-on-component",
      W,
@@ -387,9 +391,19 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      false,
      false,
-     "A component should not hold an `sfs::EventReader` or "
-     "`sfs::EventSender`, which are the reading or sending system's own "
-     "data. Keep it as a member of that system, made in `create()`."},
+     "A component should not hold an `sfs::EventConsumer`, "
+     "`sfs::EventRequester`, `sfs::EventBroadcast` or `sfs::Responder`, "
+     "which belong to whoever reads, asks, sends or responds. Keep it in "
+     "that system, object or job."},
+    {ResponseSentTwice,
+     "response-sent-twice",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A response type should be sent by one system, the one that consumes "
+     "its request. Give each system's responses a type of their own."},
     {BadIgnore,
      "bad-ignore",
      W,

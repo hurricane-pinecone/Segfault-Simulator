@@ -155,7 +155,7 @@ float priceOf(const PlanRequest& request,
               bool check);
 
 /**
- * THE check of a way a game laid itself (a field pass, its own sampled
+ * THE check of a way a game laid itself (a patrol route, its own sampled
  * curve, a straight onto a hitch): the planner's final check (its boxes and
  * the gap, `Tunables::exactStep`, the trailer swung on its hitch from
  * `hitch` and kept within its limits), either gear allowed. Getting out of a

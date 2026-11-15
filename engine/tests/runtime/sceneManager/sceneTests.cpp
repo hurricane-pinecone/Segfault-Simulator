@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -115,12 +116,12 @@ private:
   TimeStep m_kind;
 };
 
-struct Beat
+struct [[sfs::event_news]] BeatEvent
 {
   int number = 0;
 };
 
-// Sends a Beat, numbered from 1, on each update.
+// Sends a BeatEvent, numbered from 1, on each update.
 class BeatWriter : public System
 {
 public:
@@ -132,7 +133,7 @@ public:
 
 protected:
   void create() override { setTimeStep(m_kind); }
-  void update(double) override { registry->events().send(Beat{++sent}); }
+  void update(double) override { registry->events().send(BeatEvent{++sent}); }
 
 private:
   TimeStep m_kind;
@@ -150,28 +151,129 @@ protected:
   void create() override
   {
     setTimeStep(m_kind);
-    m_beats = registry->events().reader<Beat>();
+    m_beats = consumer<BeatEvent>();
   }
   void update(double) override
   {
     std::vector<int>& now = seen.emplace_back();
-    for (const Beat& beat : m_beats.read())
+    for (const BeatEvent& beat : m_beats.read())
       now.push_back(beat.number);
   }
 
 private:
   TimeStep m_kind;
-  EventReader<Beat> m_beats;
+  EventConsumer<BeatEvent> m_beats;
 };
 
-// Sends a Beat when it's destroyed, numbered by `number`.
+// A request and its response, for the responses taken in between steps.
+struct [[sfs::event_response]] ToldResponse
+{
+  int value = 0;
+};
+struct [[sfs::event_request(ToldResponse)]] AskRequest
+{
+};
+
+// Asks once for its entity, then notes the responses each step.
+class Asker : public System
+{
+public:
+  Entity asking;
+  std::vector<std::vector<int>> seen;
+
+protected:
+  void create() override
+  {
+    m_asks = requester<AskRequest>().onResponse<ToldResponse>(
+        [this](const Entity&, const ToldResponse& told)
+        { m_told.push_back(told.value); });
+  }
+  void update(double) override
+  {
+    seen.push_back(std::move(m_told));
+    m_told.clear();
+    if (seen.size() == 1)
+      m_asks.request(asking, AskRequest{});
+  }
+
+private:
+  EventRequester<AskRequest> m_asks;
+  // The responses its handler got before this update.
+  std::vector<int> m_told;
+};
+
+// Consumes each request and responds from a worker thread.
+class Answerer : public System
+{
+protected:
+  void create() override { m_asks = consumer<AskRequest>(); }
+  void update(double) override
+  {
+    for (auto [entity, ask, responder] : m_asks.read())
+    {
+      std::thread worker([held = responder] { held.respond(ToldResponse{5}); });
+      worker.join();
+    }
+  }
+
+private:
+  EventConsumer<AskRequest> m_asks;
+};
+
+// Sends a BeatEvent when it's destroyed, numbered by `number`.
 class BeatOnDestroy : public GameObject
 {
 public:
   int number = 0;
 
 protected:
-  void onDestroy() override { scene().events().send(Beat{number}); }
+  void onDestroy() override { scene().events().send(BeatEvent{number}); }
+};
+
+// Destroys itself from a beat handler; counts its onUpdates where told (it's
+// deleted once the frame's updates are done).
+class BeatQuitter : public GameObject
+{
+public:
+  int* updates = nullptr;
+
+protected:
+  void onCreate(Scene& scene) override
+  {
+    m_beats = scene.events().consumer<BeatEvent>().onEvent(
+        [this](const BeatEvent&) { this->scene().destroyObject(this); });
+  }
+  void onUpdate(double) override
+  {
+    if (updates)
+      ++*updates;
+  }
+
+private:
+  EventConsumer<BeatEvent> m_beats;
+};
+
+// Counts beats with a handler (before its onUpdate) and reads them again in
+// onUpdate: the same span.
+class BeatCounter : public GameObject
+{
+public:
+  std::vector<int> handled;
+  std::vector<std::size_t> readInUpdate;
+
+protected:
+  void onCreate(Scene& scene) override
+  {
+    m_beats = scene.events().consumer<BeatEvent>().onEvent(
+        [this](const BeatEvent& beat) { handled.push_back(beat.number); });
+  }
+  void onUpdate(double) override
+  {
+    readInUpdate.push_back(m_beats.read().size());
+  }
+
+private:
+  EventConsumer<BeatEvent> m_beats;
 };
 
 // Notes whether it saw Space and Up pressed, and its turn among the calls.
@@ -314,14 +416,14 @@ int main()
   TEST("findEntity should find by name, parents before children")
   {
     World world;
-    Entity farm = world.named("Farm");
-    Entity gate = world.named("Gate", farm);
+    Entity town = world.named("Town");
+    Entity gate = world.named("Gate", town);
     Entity loose = world.named("Gate"); // a second Gate, a root made later
     world.scene.flushEntities();
 
-    CHECK(world.scene.findEntity("Farm") == farm);
-    CHECK(world.scene.findEntity("Gate") == gate); // Farm's subtree comes first
-    CHECK(!world.scene.findEntity("Barn").isValid());
+    CHECK(world.scene.findEntity("Town") == town);
+    CHECK(world.scene.findEntity("Gate") == gate); // Town's subtree comes first
+    CHECK(!world.scene.findEntity("House").isValid());
     CHECK(world.scene.findEntities("Gate").size() == 2u);
     CHECK(world.scene.findEntities("Gate")[1] == loose);
   }
@@ -329,7 +431,7 @@ int main()
   TEST("query should list the flushed entities with all the given components")
   {
     World world;
-    Entity named = world.named("Farm");
+    Entity named = world.named("Town");
     Entity tagged = world.named("Gate");
     tagged.addComponent<Tagged>();
     CHECK(world.scene.query<NameComponent>().empty()); // (until the flush)
@@ -708,6 +810,26 @@ int main()
     }
   }
 
+  TEST("a worker's response should be read at the next step, not the next "
+       "frame")
+  {
+    World world;
+    Asker& asker = world.scene.addSystem<Asker>();
+    world.scene.addSystem<Answerer>();
+    asker.asking = world.scene.createEntity();
+    BeatWriter& writer =
+        world.scene.addSystem<BeatWriter>(System::TimeStep::Frame);
+    writer.world().setMaxTimeStep(1.0 / 180.0);
+    world.scene.update(1.0 / 60.0);
+    CHECK(asker.seen.size() == 3u);
+    if (asker.seen.size() == 3u)
+    {
+      CHECK(asker.seen[0].empty());
+      CHECK((asker.seen[1] == std::vector<int>{5}));
+      CHECK(asker.seen[2].empty());
+    }
+  }
+
   TEST("the frame's events should start after the flush")
   {
     World world;
@@ -722,10 +844,39 @@ int main()
     CHECK(reader.seen.size() == 2u);
     if (reader.seen.size() == 2u)
       CHECK((reader.seen[1] == std::vector<int>{7}));
-    // Sent before this frame's boundary: it belonged to the frame before,
-    // so the next boundary drops it, and a new reader finds nothing.
+    // Its one consumer read it, so the next boundary drops it, and a new
+    // consumer finds nothing.
     world.scene.update(0.1);
-    CHECK(world.scene.events().reader<Beat>().unread() == 0u);
+    CHECK(world.scene.events().consumer<BeatEvent>().unread() == 0u);
+  }
+
+  TEST("an object that destroys itself from a handler should get no "
+       "onUpdate")
+  {
+    World world;
+    world.scene.addSystem<BeatWriter>(System::TimeStep::Frame);
+    int updates = 0;
+    world.scene.attachObject<BeatQuitter>(world.scene.createEntity()).updates =
+        &updates;
+    world.scene.update(0.1);
+    CHECK(updates == 0);
+  }
+
+  TEST("an object's consumer made in onCreate should run its handlers before "
+       "onUpdate, which reads the same span")
+  {
+    World world;
+    BeatWriter& writer =
+        world.scene.addSystem<BeatWriter>(System::TimeStep::Frame);
+    BeatCounter& counter =
+        world.scene.attachObject<BeatCounter>(world.scene.createEntity());
+    world.scene.update(0.1);
+    world.scene.update(0.1);
+    world.scene.update(0.1);
+    CHECK(writer.sent == 3);
+    // Systems update before objects: each frame's beat is new to it.
+    CHECK((counter.handled == std::vector<int>{1, 2, 3}));
+    CHECK((counter.readInUpdate == std::vector<std::size_t>{1, 1, 1}));
   }
 
   TEST("events should flow while paused, at time scale 0")

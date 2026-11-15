@@ -902,17 +902,17 @@ int main()
   {
     World w;
     w.prefabs["asset:fence"] = fencePrefab();
-    Entity barn = w.scene.createEntity();
-    barn.addComponent<NameComponent>("Barn");
-    barn.addComponent<TransformComponent>(TransformComponent{{3, 4, 0}});
+    Entity house = w.scene.createEntity();
+    house.addComponent<NameComponent>("House");
+    house.addComponent<TransformComponent>(TransformComponent{{3, 4, 0}});
     Entity door = w.scene.createEntity();
     door.addComponent<NameComponent>("Door");
-    hierarchy::setParent(door, barn);
+    hierarchy::setParent(door, house);
     const Entity fence =
-        w.serializer().instantiate("asset:fence", w.scene, barn);
+        w.serializer().instantiate("asset:fence", w.scene, house);
     w.find("Rail A").getComponent<MeshRendererComponent>()->tint = {0, 1, 1, 1};
 
-    const json prefab = w.serializer().savePrefab(barn);
+    const json prefab = w.serializer().savePrefab(house);
     const json& root = prefab["root"];
     CHECK(root["TransformComponent"]["position"] ==
           json::array({0.0, 0.0, 0.0}));
@@ -926,11 +926,11 @@ int main()
           fence.getComponent<PrefabLinkComponent>()->id);
 
     // It loads as a prefab of its own.
-    w.prefabs["asset:barn"] = prefab;
+    w.prefabs["asset:house"] = prefab;
     for (Entity entity : w.scene.entities())
       w.scene.destroyEntity(entity);
     w.scene.update(0.0);
-    w.serializer().instantiate("asset:barn", w.scene);
+    w.serializer().instantiate("asset:house", w.scene);
     CHECK(w.find("Door").isValid());
     CHECK(w.tint("Rail A").g == 1.0f);
   }

@@ -23,10 +23,10 @@
 // out and drawn again (ui::Cache).
 //
 //   return VStack{
-//     Text("Day 3").font(Font::title()),
+//     Text("Level 3").font(Font::title()),
 //     HStack{
-//       Button("Till", [this] { till(); }),
-//       Button("Sow", [this] { sow(); }).disabled(!canSow),
+//       Button("Attack", [this] { attack(); }),
+//       Button("Heal", [this] { heal(); }).disabled(!canHeal),
 //     }.spacing(8),
 //   }.padding(12).background(Panel()).align(Alignment::TopLeading);
 //
@@ -132,7 +132,7 @@ inline constexpr float infinity = std::numeric_limits<float>::infinity();
 enum class Interpolation : uint8_t
 {
   Linear,  // blended between (smooth: photos, icons)
-  Nearest, // each pixel a sharp square (a yield map, pixel art)
+  Nearest, // each pixel a sharp square (a minimap, pixel art)
 };
 
 struct Node;
@@ -155,7 +155,7 @@ class View;
  *     sfs::ui::View body() const { return
  * Text(text).padding(6).background(...); }
  *   };
- *   HStack{ Badge{.text = "New"}, Text("Wheat") }
+ *   HStack{ Badge{.text = "New"}, Text("Sword") }
  */
 template <typename T>
 concept ViewStruct = requires(const T& view) {
@@ -375,7 +375,7 @@ private:
  * A picture: an image file ("asset:<id>", or a path in the project's folder:
  * PNG, JPG...), at its own size in points (a pixel each), or a mesh drawn as
  * an icon (Image::mesh). Framed smaller, it shrinks to fit, keeping its shape:
- * Image::mesh("farm:wheat").frame(24, 24).
+ * Image::mesh("game:coin").frame(24, 24).
  */
 class Image : public View
 {
@@ -393,7 +393,7 @@ public:
    */
   explicit Image(std::shared_ptr<const RenderTexture> texture);
   /**
-   * A mesh (by its name in the scene's MeshLibrary, e.g. "farm:wheat") as an
+   * A mesh (by its name in the scene's MeshLibrary, e.g. "game:coin") as an
    * icon: from a three-quarter view, lit, on nothing; 32 points by default.
    */
   static View mesh(std::string name);

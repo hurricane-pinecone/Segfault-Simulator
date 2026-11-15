@@ -58,7 +58,7 @@ const std::vector<const Preview*>& previews();
  * and its declared previews): in the look the game puts them in, such as its
  * font. Declare one in a .ui.cpp:
  *
- *   static const sfs::ui::PreviewStyle farmLook{
+ *   static const sfs::ui::PreviewStyle hudLook{
  *       [](sfs::ui::View view) { return look(view); }};
  */
 class PreviewStyle

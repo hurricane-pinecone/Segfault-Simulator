@@ -7,7 +7,10 @@ target_include_directories(codegenTests PRIVATE "${PROJECT_SOURCE_DIR}/engine/li
 # The CLI test runs the built sfs-codegen; the docs tests read the docs pages.
 target_compile_definitions(codegenTests PRIVATE
     SFS_CODEGEN_PATH="$<TARGET_FILE:sfs-codegen>"
-    SFS_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs")
+    SFS_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
+    # A traits test compiles generated traits against the engine's header.
+    SFS_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
+    SFS_ENGINE_INCLUDE_DIR="${PROJECT_SOURCE_DIR}/engine/include")
 add_dependencies(codegenTests sfs-codegen)
 add_test(NAME codegenTests COMMAND codegenTests)
 set_tests_properties(codegenTests PROPERTIES LABELS tools)
@@ -31,3 +34,13 @@ add_lsp_test(lspLintTests)
 if(NOT WIN32)
     add_lsp_test(lspProtocolTests)
 endif()
+
+# sfsCodegen.cmake's commands: no stale traits header, no needless reruns.
+add_test(NAME codegenBuildTests
+         COMMAND ${CMAKE_COMMAND}
+                 -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/codegenBuild
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/codegenBuildWork
+                 -DSFS_CODEGEN_CMAKE=${PROJECT_SOURCE_DIR}/engine/cmake/sfsCodegen.cmake
+                 -DGENERATOR=${CMAKE_GENERATOR}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/codegenBuildTest.cmake)
+set_tests_properties(codegenBuildTests PROPERTIES LABELS tools)

@@ -32,8 +32,8 @@ void openExternally(const std::filesystem::path& path)
 {
   const std::wstring target = std::filesystem::path(path).make_preferred().wstring();
   // A folder in Explorer, by name: "open" on a path with no extension runs a
-  // program beside it of that name first (builds\windows\CozyFarm opened an
-  // old builds\windows\CozyFarm.exe, not the folder).
+  // program beside it of that name first (builds\windows\MyGame opened an
+  // old builds\windows\MyGame.exe, not the folder).
   std::error_code error;
   if (std::filesystem::is_directory(path, error))
   {

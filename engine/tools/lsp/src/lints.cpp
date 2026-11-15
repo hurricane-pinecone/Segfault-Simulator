@@ -4,6 +4,7 @@
 #include "projectIndex.h"
 
 #include <sfs/codegen/attributes.h>
+#include <sfs/codegen/generator.h>
 #include <sfs/codegen/parser.h>
 
 #include <tree_sitter/tree-sitter-cpp.h>
@@ -74,6 +75,37 @@ constexpr std::array<std::string_view, 3> kOwnEntityChanges = {
     "addTag",
     "removeComponent"};
 
+// Calls that keep what they're given in the container they're made on.
+constexpr std::array<std::string_view, 6> kContainerAdds = {"push_back",
+                                                            "emplace_back",
+                                                            "insert",
+                                                            "emplace",
+                                                            "try_emplace",
+                                                            "push"};
+
+// An event consumer's and requester's handler setters: what they're given
+// runs later, before the owner's update.
+constexpr std::array<std::string_view, 6> kHandlerSetters = {"onEvent",
+                                                             "onEvents",
+                                                             "onLatest",
+                                                             "onLatestEvents",
+                                                             "onResponse",
+                                                             "onResponses"};
+
+// Game object methods that run once the object is in a scene.
+constexpr std::array<std::string_view, 11> kObjectLateMethods = {
+    "onUpdate",
+    "onDestroy",
+    "onProcessInput",
+    "onCollisionEnter",
+    "onCollisionExit",
+    "onTriggerEnter",
+    "onTriggerExit",
+    "onCollisionEnter2D",
+    "onCollisionExit2D",
+    "onTriggerEnter2D",
+    "onTriggerExit2D"};
+
 // System methods that only run once the system is in a registry.
 constexpr std::array<std::string_view, 5> kLateMethods = {"update",
                                                           "lateUpdate",
@@ -98,327 +130,6 @@ enum Leave : uint8_t
 };
 
 } // namespace
-
-namespace lint
-{
-
-bool isSpace(char c)
-{
-  return std::isspace(static_cast<unsigned char>(c)) != 0;
-}
-
-bool spelledAs(std::string_view text,
-               std::initializer_list<std::string_view> parts,
-               bool whole)
-{
-  std::size_t at = 0;
-  for (const std::string_view part : parts)
-    for (const char c : part)
-    {
-      while (at < text.size() && isSpace(text[at]))
-        ++at;
-      if (at >= text.size() || text[at] != c)
-        return false;
-      ++at;
-    }
-  if (!whole)
-    return true;
-  while (at < text.size() && isSpace(text[at]))
-    ++at;
-  return at == text.size();
-}
-
-bool sameSpelling(std::string_view a, std::string_view b)
-{
-  return spelledAs(a, {b});
-}
-
-std::string tidy(std::string_view text)
-{
-  std::string out;
-  out.reserve(text.size());
-  bool space = false;
-  for (const char c : text)
-  {
-    if (isSpace(c))
-    {
-      space = !out.empty();
-      continue;
-    }
-    if (space)
-      out += ' ';
-    space = false;
-    out += c;
-  }
-  return out;
-}
-
-std::string_view trimmed(std::string_view text)
-{
-  while (!text.empty() && isSpace(text.front()))
-    text.remove_prefix(1);
-  while (!text.empty() && isSpace(text.back()))
-    text.remove_suffix(1);
-  return text;
-}
-
-std::string_view lastName(std::string_view spelled)
-{
-  spelled = trimmed(spelled);
-  const std::size_t colons = spelled.rfind("::");
-  if (colons != std::string_view::npos)
-    spelled.remove_prefix(colons + 2);
-  return trimmed(spelled);
-}
-
-std::vector<std::string_view> splitTerms(std::string_view list)
-{
-  std::vector<std::string_view> items;
-  int depth = 0;
-  std::size_t start = 0;
-  for (std::size_t i = 0; i <= list.size(); ++i)
-  {
-    const char c = i < list.size() ? list[i] : ',';
-    if (c == '<' || c == '(' || c == '[' || c == '{')
-      ++depth;
-    else if (c == '>' || c == ')' || c == ']' || c == '}')
-      --depth;
-    else if (c == ',' && depth <= 0)
-    {
-      const std::string_view item = trimmed(list.substr(start, i - start));
-      if (!item.empty())
-        items.push_back(item);
-      start = i + 1;
-    }
-  }
-  return items;
-}
-
-SourceRange between(TSPoint start, TSPoint end)
-{
-  return {start.row, start.column, end.row, end.column};
-}
-
-void LintFile::resetFile()
-{
-  usingSfs = false;
-  sfsDepth = 0;
-  usingNames.clear();
-  fileClasses.clear();
-  registrations.clear();
-  aliases.clear();
-  hasCalls.clear();
-  aliveCalls.clear();
-  lookups.clear();
-  loops.clear();
-  constructors.clear();
-}
-
-std::string_view LintFile::text(TSNode node) const
-{
-  return codegen::nodeText(source, node);
-}
-
-TSNode LintFile::field(TSNode node, std::string_view name)
-{
-  return ts_node_is_null(node) ? TSNode{} : codegen::childField(node, name);
-}
-
-void LintFile::report(RuleId rule,
-                      TSNode node,
-                      std::string message,
-                      std::string fixTitle,
-                      std::vector<TextEdit> fix)
-{
-  out->push_back({rule,
-                  *path,
-                  codegen::rangeOf(node),
-                  std::move(message),
-                  std::move(fixTitle),
-                  std::move(fix)});
-}
-
-bool LintFile::visible(std::string_view name) const
-{
-  return sfsDepth > 0 || usingSfs ||
-         std::find(usingNames.begin(), usingNames.end(), name) !=
-             usingNames.end();
-}
-
-bool LintFile::isSfsName(std::string_view spelled,
-                         std::string_view name,
-                         std::string_view visibleAs) const
-{
-  return spelledAs(spelled, {"sfs::", name}) ||
-         (spelledAs(spelled, {name}) &&
-          visible(visibleAs.empty() ? name : visibleAs));
-}
-
-bool LintFile::isSfsNameAt(TSNode at,
-                           std::string_view spelled,
-                           std::string_view name) const
-{
-  if (spelledAs(spelled, {"sfs::", name}))
-    return true;
-  if (!spelledAs(spelled, {name}))
-    return false;
-  if (usingSfs ||
-      std::find(usingNames.begin(), usingNames.end(), name) != usingNames.end())
-    return true;
-  for (TSNode node = at; !ts_node_is_null(node); node = ts_node_parent(node))
-    if (kind(node) == Kind::NamespaceDefinition &&
-        codegen::isSfsNamespace(text(field(node, "name"))))
-      return true;
-  return false;
-}
-
-std::string_view LintFile::declaredName(TSNode declarator) const
-{
-  while (!ts_node_is_null(declarator))
-  {
-    switch (kind(declarator))
-    {
-    case Kind::Identifier:
-    case Kind::FieldIdentifier:
-      return text(declarator);
-    case Kind::InitDeclarator:
-      declarator = field(declarator, "declarator");
-      break;
-    case Kind::ReferenceDeclarator:
-    case Kind::PointerDeclarator:
-    {
-      const uint32_t count = ts_node_named_child_count(declarator);
-      declarator =
-          count > 0 ? ts_node_named_child(declarator, count - 1) : TSNode{};
-      break;
-    }
-    default:
-      return {};
-    }
-  }
-  return {};
-}
-
-std::string_view LintFile::firstParameter(TSNode parameters) const
-{
-  if (ts_node_is_null(parameters))
-    return {};
-  const uint32_t count = ts_node_named_child_count(parameters);
-  for (uint32_t i = 0; i < count; ++i)
-  {
-    const TSNode parameter = ts_node_named_child(parameters, i);
-    if (kind(parameter) == Kind::ParameterDeclaration)
-      return declaredName(field(parameter, "declarator"));
-  }
-  return {};
-}
-
-std::string_view LintFile::calleeName(TSNode call,
-                                      TSNode& templateArguments) const
-{
-  templateArguments = TSNode{};
-  TSNode function = field(call, "function");
-  if (kind(function) == Kind::FieldExpression)
-    function = field(function, "field");
-  if (ts_node_is_null(function))
-    return {};
-  const Kind k = kind(function);
-  if (k == Kind::TemplateFunction || k == Kind::TemplateMethod)
-  {
-    templateArguments = field(function, "arguments");
-    return text(field(function, "name"));
-  }
-  if (k == Kind::QualifiedIdentifier)
-    return {};
-  return text(function);
-}
-
-TSNode LintFile::receiverOf(TSNode call) const
-{
-  const TSNode function = field(call, "function");
-  return kind(function) == Kind::FieldExpression ? field(function, "argument")
-                                                 : TSNode{};
-}
-
-bool LintFile::isSystemClass(std::string_view name) const
-{
-  const FileClass* found = fileClass(name);
-  return (found && found->system) || index->isSystem(name);
-}
-
-const FileClass* LintFile::fileClass(std::string_view name) const
-{
-  if (name.empty())
-    return nullptr;
-  for (const FileClass& found : fileClasses)
-    if (found.name == name)
-      return &found;
-  return nullptr;
-}
-
-std::string_view LintFile::ownerAt(TSNode node) const
-{
-  for (TSNode at = ts_node_parent(node); !ts_node_is_null(at);
-       at = ts_node_parent(at))
-  {
-    const Kind k = kind(at);
-    if (k == Kind::ClassSpecifier)
-      return text(field(at, "name"));
-    if (k != Kind::FunctionDefinition)
-      continue;
-    TSNode declarator = field(at, "declarator");
-    while (!ts_node_is_null(declarator) &&
-           kind(declarator) != Kind::FunctionDeclarator)
-      declarator = field(declarator, "declarator");
-    TSNode name = field(declarator, "declarator");
-    std::string_view owner;
-    while (kind(name) == Kind::QualifiedIdentifier)
-    {
-      owner = text(field(name, "scope"));
-      name = field(name, "name");
-    }
-    if (!owner.empty())
-      return owner;
-  }
-  return {};
-}
-
-const QueryAlias* LintFile::alias(std::string_view owner,
-                                  std::string_view name) const
-{
-  for (const std::string_view scope : {owner, std::string_view{}})
-  {
-    for (const QueryAlias& found : aliases)
-      if (found.owner == scope && found.name == name)
-        return &found;
-    if (scope.empty())
-      break;
-  }
-  return index->findAlias(owner, name);
-}
-
-Wrapper LintFile::wrapperOfText(TSNode at,
-                                std::string_view spelled,
-                                std::string_view& inner) const
-{
-  inner = {};
-  spelled = trimmed(spelled);
-  const std::size_t open = spelled.find('<');
-  if (open == std::string_view::npos || !spelled.ends_with('>'))
-    return Wrapper::None;
-  const std::string_view name = trimmed(spelled.substr(0, open));
-  const std::string_view last = lastName(name);
-  const Wrapper wrapper = last == "Any"         ? Wrapper::Any
-                          : last == "Excluding" ? Wrapper::Excluding
-                          : last == "Query"     ? Wrapper::Query
-                                                : Wrapper::None;
-  if (wrapper == Wrapper::None || !isSfsNameAt(at, name, last))
-    return Wrapper::None;
-  inner = spelled.substr(open + 1, spelled.size() - open - 2);
-  return wrapper;
-}
-
-} // namespace lint
 
 // One run's walk, kept between runs so its containers keep their capacity.
 struct Linter::Walk : lint::LintFile
@@ -497,6 +208,12 @@ struct Linter::Walk : lint::LintFile
   std::vector<std::string_view> checkedSystems;
   std::vector<Term> terms;
   std::vector<Group> groups;
+  // The file's responses and response types, for response-sent-twice.
+  std::vector<ResponseSend> responseSends;
+  std::vector<ResponseType> responseTypes;
+  std::vector<UsingName> usings;
+  // The file's aliases of event handle types, and the handle each names.
+  std::vector<std::pair<std::string_view, std::string_view>> handleAliases;
   std::vector<uint8_t>
       leaves; // per node being walked: what to undo on leaving it
 
@@ -512,6 +229,10 @@ struct Linter::Walk : lint::LintFile
     checkedSystems.clear();
     terms.clear();
     groups.clear();
+    responseSends.clear();
+    responseTypes.clear();
+    usings.clear();
+    handleAliases.clear();
     leaves.clear();
   }
 
@@ -547,6 +268,7 @@ struct Linter::Walk : lint::LintFile
       return LeaveSfs;
     case Kind::UsingDeclaration:
       readUsing(node);
+      noteUsing(node, source, *path, usings);
       return 0;
     case Kind::ClassSpecifier:
       return enterClass(node) ? PopClass : 0;
@@ -587,6 +309,14 @@ struct Linter::Walk : lint::LintFile
       return 0;
     case Kind::Attribute:
       checkAttribute(node);
+      return 0;
+    case Kind::NamespaceAliasDefinition:
+      noteUsing(node, source, *path, usings);
+      return 0;
+    case Kind::AliasDeclaration:
+    case Kind::TypeDefinition:
+      readHandleAlias(node);
+      noteUsing(node, source, *path, usings);
       return 0;
     default:
       return 0;
@@ -635,17 +365,21 @@ struct Linter::Walk : lint::LintFile
       if (kind(child) == Kind::AttributeDeclaration)
       {
         scope.component = scope.component || marks(child, "component");
-        event = event || marks(child, "event");
+        event = event || marksEvent(child);
       }
       if (kind(child) != Kind::BaseClassClause)
         continue;
       based = true;
       for (uint32_t b = 0; b < namedCount(child); ++b)
-        scope.system =
-            scope.system || isSfsName(text(namedChild(child, b)), "System");
+      {
+        const std::string_view base = text(namedChild(child, b));
+        scope.system = scope.system || isSfsName(base, "System") ||
+                       (lastName(base) != scope.name &&
+                        isSystemClass(lastName(base)));
+      }
     }
-    // Codegen takes a type marked both [[sfs::component]] and [[sfs::event]]
-    // as an event. It registers the baseless
+    // Codegen takes a type marked both [[sfs::component]] and an event
+    // attribute as an event. It registers the baseless
     // namespace-scope class named after a script header as a component,
     // which the index has for that header.
     if (event)
@@ -659,6 +393,23 @@ struct Linter::Walk : lint::LintFile
     fileClasses.push_back({scope.name, node, scope.system, scope.component});
     classes.push_back(scope);
     return true;
+  }
+
+  // Whether an attribute declaration on a class holds an event attribute.
+  bool marksEvent(TSNode declaration) const
+  {
+    for (uint32_t i = 0; i < namedCount(declaration); ++i)
+    {
+      const TSNode attribute = namedChild(declaration, i);
+      if (kind(attribute) != Kind::Attribute ||
+          text(field(attribute, "prefix")) != "sfs")
+        continue;
+      const codegen::AttributeInfo* info =
+          codegen::findAttribute(text(field(attribute, "name")));
+      if (info && codegen::isEventAttribute(info->id))
+        return true;
+    }
+    return false;
   }
 
   // Whether an attribute declaration on a class holds [[sfs::`name`]].
@@ -816,7 +567,10 @@ struct Linter::Walk : lint::LintFile
     TSNode arguments;
     const std::string_view name = calleeName(call, arguments);
     if (name.empty())
+    {
+      readQualifiedCall(call);
       return;
+    }
     const FunctionScope* function =
         functions.empty() ? nullptr : &functions.back();
     const bool hasArguments = !ts_node_is_null(arguments);
@@ -835,10 +589,21 @@ struct Linter::Walk : lint::LintFile
       return;
     }
 
-    if ((name == "send" || name == "reader" || name == "sender") &&
-        !ts_node_is_null(receiverOf(call)))
+    if ((name == "consumer" || name == "requester") && hasArguments &&
+        namedCount(arguments) == 1)
     {
-      checkEventCall(call, name, arguments);
+      const TSNode receiver = receiverOf(call);
+      checkEventHandle(call,
+                       name,
+                       namedChild(arguments, 0),
+                       ts_node_is_null(receiver) ||
+                           kind(receiver) == Kind::This);
+      return;
+    }
+
+    if (name == "respond" || name == "progress")
+    {
+      noteResponseSend(call, source, *path, responseSends);
       return;
     }
 
@@ -917,24 +682,42 @@ struct Linter::Walk : lint::LintFile
   }
 
   // Whether `name` is a game object class: of the file, deriving from SFS's
-  // GameObject, or one of the project's.
+  // GameObject or another game object class, or one of the project's.
   bool isGameObjectClass(std::string_view name) const
   {
-    if (const lint::FileClass* found = fileClass(name))
+    // Each class is looked at once, so a cycle of bases (code being typed
+    // may have one, branching too) ends the walk.
+    std::vector<std::string_view> pending{name};
+    std::vector<std::string_view> seen;
+    while (!pending.empty())
     {
+      const std::string_view at = pending.back();
+      pending.pop_back();
+      if (at.empty() || std::find(seen.begin(), seen.end(), at) != seen.end())
+        continue;
+      seen.push_back(at);
+      const lint::FileClass* found = fileClass(at);
+      if (!found)
+      {
+        if (index->isGameObject(at))
+          return true;
+        continue;
+      }
       for (uint32_t i = 0; i < namedCount(found->node); ++i)
       {
         const TSNode clause = namedChild(found->node, i);
         if (kind(clause) != Kind::BaseClassClause)
           continue;
         for (uint32_t b = 0; b < namedCount(clause); ++b)
-          if (isSfsName(text(namedChild(clause, b)), "GameObject"))
+        {
+          const std::string_view base = text(namedChild(clause, b));
+          if (isSfsName(base, "GameObject"))
             return true;
+          pending.push_back(lastName(base));
+        }
       }
-      return false;
     }
-    const IndexEntry* entry = name.empty() ? nullptr : index->find(name);
-    return entry && entry->kind == codegen::TypeKind::GameObject;
+    return false;
   }
 
   // The code the walk is in, for a message: "This observe() callback" or
@@ -948,55 +731,297 @@ struct Linter::Walk : lint::LintFile
 
   // ---------------------------------------------------------------- events
 
-  // `x.send(T{...})`, `x.send(T(...))`, `x.send<T>(...)`, `x.reader<T>()` and
-  // `x.sender<T>()` on an Events or an EventSender: event-unmarked for a T
-  // that isn't an event, and reader-not-kept for a reader made anew in code
-  // that runs again and again.
-  void checkEventCall(TSNode call, std::string_view name, TSNode arguments)
+  // A call through a qualified name: `sfs::EventVerbs::consumer<E>()` is a
+  // system's own consumer<E>().
+  void readQualifiedCall(TSNode call)
   {
-    if (!eventsReceiver(receiverOf(call)))
+    TSNode name = field(call, "function");
+    std::string_view scope;
+    while (kind(name) == Kind::QualifiedIdentifier)
+    {
+      scope = text(field(name, "scope"));
+      name = field(name, "name");
+    }
+    if (kind(name) != Kind::TemplateFunction || lastName(scope) != "EventVerbs")
       return;
-    TSNode type{};
-    if (!ts_node_is_null(arguments))
-    {
-      if (namedCount(arguments) == 1)
-        type = namedChild(arguments, 0);
-    }
-    else if (name == "send")
-      type = constructedType(field(call, "arguments"));
-    else
-      return; // reader() or sender() with no type yet, as it's typed
-    std::string_view what;
-    if (!ts_node_is_null(type) && notAnEvent(type, what))
-    {
-      const std::string written = tidy(text(type));
-      if (what == "component")
-        report(RuleId::EventUnmarked,
-               type,
-               "The type " + written +
-                   " is a component, which is state, not an event. Send "
-                   "and read a struct marked [[sfs::event]] instead, and keep "
-                   "state on components.");
-      else
-        report(RuleId::EventUnmarked,
-               type,
-               "The type " + written + " is a " + std::string(what) +
-                   ", not an event. Send and read a struct marked "
-                   "[[sfs::event]] instead.");
-    }
-    if (name == "reader" && namedCount(arguments) == 1 && inLateCode() &&
-        dropped(call))
-      report(RuleId::ReaderNotKept,
-             call,
-             runningCode() +
-                 " makes a new event reader each time it runs, and each new "
-                 "one reads the kept events again. Make the reader once in "
-                 "create() and keep it as a member.");
+    const std::string_view called = text(field(name, "name"));
+    const TSNode arguments = field(name, "arguments");
+    if ((called == "consumer" || called == "requester") &&
+        namedCount(arguments) == 1)
+      checkEventHandle(call, called, namedChild(arguments, 0), true);
   }
 
-  // Whether a call's receiver is an Events or an EventSender: an `events()`
-  // call (`registry->events()`, `scene().events()`), or a name that ends in
-  // events or sender (`m_events`, `sender`, `m_plannedSender`).
+  // A consumer<E>() or requester<R>() call in a system or a game object:
+  // event-handle-outside-create when a system makes it through events(), when
+  // it's made in code that runs once the class is set up, or when it isn't
+  // kept. `own` says it's the system's own (no receiver, `this`, or
+  // EventVerbs::); otherwise its receiver must be an Events.
+  void checkEventHandle(TSNode call,
+                        std::string_view name,
+                        TSNode type,
+                        bool own)
+  {
+    if (!own && !eventsReceiver(receiverOf(call)))
+      return;
+    std::string_view owner;
+    std::string_view method;
+    if (!functions.empty())
+    {
+      owner = functions.back().owner;
+      method = functions.back().method;
+    }
+    else if (!classes.empty())
+      owner = classes.back().name; // a member's initialiser
+    const bool system = isSystemClass(owner);
+    if (!system && (own || !isGameObjectClass(owner)))
+      return;
+    const std::string handle =
+        std::string(name) + "<" + tidy(text(type)) + ">()";
+    const std::string made = "This " + handle;
+    const std::string setup = system ? "create()" : "onCreate()";
+    if (system && !own)
+    {
+      report(RuleId::EventHandleOutsideCreate,
+             call,
+             made + " is made through events(), which gives a system's "
+                    "handle no owner, so its handlers never run. A system "
+                    "makes its handles with its own " +
+                 handle + " in create().");
+      return;
+    }
+    const std::string later = laterCode(call, owner, method, system);
+    if (!later.empty())
+    {
+      report(RuleId::EventHandleOutsideCreate,
+             call,
+             made + " is made in " + later + ", outside " + setup + ", so " +
+                 (system ? "it's refused and receives nothing"
+                         : "it has no owner to run its handlers") +
+                 ". Make it in " + setup + " and keep it as a member.");
+      return;
+    }
+    if (!kept(call, owner, 0))
+      report(RuleId::EventHandleOutsideCreate,
+             call,
+             made + " isn't kept as a member, so it's dropped when " +
+                 std::string(method) + "() returns and receives nothing. " +
+                 "Assign it to a data member of the " +
+                 (system ? "system." : "object."));
+  }
+
+  // The code a call is in when that code runs once its class is set up, for
+  // a message ("update()", "an event handler"); empty for create() or
+  // onCreate() and the helpers they may call.
+  std::string laterCode(TSNode call,
+                        std::string_view owner,
+                        std::string_view method,
+                        bool system) const
+  {
+    if (inHandler(call))
+      return "an event handler";
+    if (!observeEntities.empty())
+      return "an observe() callback";
+    if (method.empty())
+      return "a member's initialiser";
+    if (method == lastName(owner))
+      return "the constructor";
+    if (method.starts_with('~'))
+      return "the destructor";
+    if (system ? contains(kLateMethods, method)
+               : contains(kObjectLateMethods, method))
+      return std::string(method) + "()";
+    return {};
+  }
+
+  // Whether a call is in a lambda given to a handler setter
+  // (`consumer<E>().onEvent([this](...) { ... })`), which runs later.
+  bool inHandler(TSNode call) const
+  {
+    for (TSNode at = lint::parent(call); !ts_node_is_null(at);
+         at = lint::parent(at))
+    {
+      if (kind(at) == Kind::FunctionDefinition)
+        return false;
+      if (kind(at) != Kind::LambdaExpression)
+        continue;
+      const TSNode list = lint::parent(at);
+      const TSNode setter = lint::parent(list);
+      TSNode templateArguments;
+      if (kind(list) == Kind::ArgumentList &&
+          kind(setter) == Kind::CallExpression &&
+          contains(kHandlerSetters, calleeName(setter, templateArguments)))
+        return true;
+    }
+    return false;
+  }
+
+  // Whether the handle an expression gives outlives the function making it:
+  // assigned to a data member of `owner` (perhaps through a builder chain, a
+  // `?:`, a cast or braces), added to a member container, returned, passed
+  // to another function, or held by a local that one of those then takes.
+  bool kept(TSNode value, std::string_view owner, int depth) const
+  {
+    TSNode at = value;
+    for (;;)
+    {
+      const TSNode holder = lint::parent(at);
+      const Kind k = kind(holder);
+      if (k == Kind::ParenthesizedExpression ||
+          (k == Kind::ConditionalExpression &&
+           !same(field(holder, "condition"), at)) ||
+          lint::isType(holder, "initializer_list") ||
+          lint::isType(holder, "compound_literal_expression"))
+      {
+        at = holder;
+        continue;
+      }
+      if (k == Kind::FieldExpression)
+      {
+        // A builder chain: requester<R>().onResponse<A>(f).ignore<B>().
+        const TSNode outer = lint::parent(holder);
+        if (!same(field(holder, "argument"), at) ||
+            kind(outer) != Kind::CallExpression ||
+            !same(field(outer, "function"), holder))
+          return false;
+        at = outer;
+        continue;
+      }
+      if (k == Kind::ArgumentList)
+      {
+        const TSNode outer = lint::parent(holder);
+        if (passesOn(outer))
+        {
+          at = outer;
+          continue;
+        }
+        TSNode templateArguments;
+        if (!contains(kContainerAdds, calleeName(outer, templateArguments)))
+          return true;
+        const TSNode receiver = receiverOf(outer);
+        return ts_node_is_null(receiver) || memberTarget(receiver, owner);
+      }
+      if (k == Kind::AssignmentExpression)
+        return same(field(holder, "right"), at) &&
+               memberTarget(field(holder, "left"), owner);
+      if (k == Kind::ReturnStatement)
+        return true;
+      if (k == Kind::InitDeclarator && same(field(holder, "value"), at))
+        return depth < 2 && localKept(holder, owner, depth);
+      return false;
+    }
+  }
+
+  // Whether a call gives back the handle it's given: `std::move(h)`, or a
+  // handle type's constructor, `sfs::EventConsumer<E>(h)`.
+  bool passesOn(TSNode call) const
+  {
+    const std::string_view function = text(field(call, "function"));
+    if (function == "std::move" || function == "move")
+      return true;
+    const std::size_t open = function.find('<');
+    const std::string_view type =
+        lastName(open == std::string_view::npos ? function
+                                                : function.substr(0, open));
+    return contains(codegen::kEventHandleTypes, type);
+  }
+
+  // Whether a local initialised with a handle hands it on later in its
+  // block (kept()), or is static and so outlives the function.
+  bool localKept(TSNode declarator, std::string_view owner, int depth) const
+  {
+    const std::string_view name = declaredName(declarator);
+    const TSNode declaration = lint::parent(declarator);
+    if (name.empty() || kind(declaration) != Kind::Declaration)
+      return false;
+    for (uint32_t i = 0; i < namedCount(declaration); ++i)
+    {
+      const TSNode child = namedChild(declaration, i);
+      if (kind(child) == Kind::StorageClassSpecifier &&
+          (text(child) == "static" || text(child) == "thread_local"))
+        return true;
+    }
+    bool handed = false;
+    const uint32_t after = lint::end(declaration);
+    lint::walkTree(lint::parent(declaration),
+                   [&](TSNode node)
+                   {
+                     if (handed)
+                       return lint::Next::Stop;
+                     if (lint::end(node) <= after)
+                       return lint::Next::Skip;
+                     if (kind(node) == Kind::Identifier &&
+                         text(node) == name &&
+                         same(localDeclarator(node, name),
+                              declarator) &&
+                         kept(node, owner, depth + 1))
+                       handed = true;
+                     return lint::Next::Descend;
+                   });
+    return handed;
+  }
+
+  // Whether an expression names a data member of `owner`, or a part of one:
+  // `m_x`, `this->x`, `x` as a member, `m_x.y`, `m_x[i]`, or a local
+  // reference bound to one of those.
+  bool memberTarget(TSNode node, std::string_view owner) const
+  {
+    switch (kind(node))
+    {
+    case Kind::Identifier:
+    {
+      const std::string_view name = text(node);
+      const TSNode local = localDeclarator(node, name);
+      if (!ts_node_is_null(local))
+        return kind(local) == Kind::InitDeclarator &&
+               kind(field(local, "declarator")) == Kind::ReferenceDeclarator &&
+               memberTarget(field(local, "value"), owner);
+      if (name.starts_with("m_"))
+        return true;
+      // A class the file doesn't declare may have it: taken as a member.
+      const lint::FileClass* found = fileClass(owner);
+      return !found || !ts_node_is_null(
+                           lint::memberDeclaration(found->node, name, source));
+    }
+    case Kind::FieldExpression:
+    {
+      const TSNode argument = field(node, "argument");
+      return kind(argument) == Kind::This || memberTarget(argument, owner);
+    }
+    case Kind::SubscriptExpression:
+    case Kind::PointerExpression:
+      return memberTarget(field(node, "argument"), owner);
+    case Kind::ParenthesizedExpression:
+      return namedCount(node) == 1 && memberTarget(namedChild(node, 0), owner);
+    case Kind::ConditionalExpression:
+      return memberTarget(field(node, "consequence"), owner) &&
+             memberTarget(field(node, "alternative"), owner);
+    case Kind::CallExpression:
+    {
+      // A member's element by reference: m_map.at(k), m_list.back(), or
+      // std::get<I>(m_tuple).
+      const TSNode receiver = receiverOf(node);
+      if (!ts_node_is_null(receiver))
+        return memberTarget(receiver, owner);
+      const TSNode arguments = field(node, "arguments");
+      return lastName(text(field(node, "function"))).starts_with("get<") &&
+             namedCount(arguments) == 1 &&
+             memberTarget(namedChild(arguments, 0), owner);
+    }
+    default:
+      return false;
+    }
+  }
+
+  // The local or parameter `name` seen at `at` (lint::localDeclarator()).
+  TSNode localDeclarator(TSNode at, std::string_view name) const
+  {
+    return lint::localDeclarator(at, name, source);
+  }
+
+  // Whether a call's receiver is an Events: an `events()` call
+  // (`registry->events()`, `scene().events()`), a local declared as one
+  // (`sfs::Events& ev`) or made from one (`auto& ev = scene.events()`), or
+  // another name that ends in events (`m_events`).
   bool eventsReceiver(TSNode receiver) const
   {
     if (kind(receiver) == Kind::CallExpression)
@@ -1004,6 +1029,20 @@ struct Linter::Walk : lint::LintFile
       TSNode templateArguments;
       return calleeName(receiver, templateArguments) == "events" &&
              ts_node_is_null(templateArguments);
+    }
+    if (kind(receiver) == Kind::Identifier)
+    {
+      const TSNode local = localDeclarator(receiver, text(receiver));
+      if (!ts_node_is_null(local))
+      {
+        const std::string_view type =
+            lint::trimmed(text(field(lint::parent(local), "type")));
+        if (lastName(type) == "Events")
+          return true;
+        if (kind(local) == Kind::InitDeclarator &&
+            eventsReceiver(field(local, "value")))
+          return true;
+      }
     }
     if (kind(receiver) == Kind::FieldExpression)
       receiver = field(receiver, "field");
@@ -1013,119 +1052,92 @@ struct Linter::Walk : lint::LintFile
     std::string lower(text(receiver));
     for (char& c : lower)
       c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return lower.ends_with("events") || lower.ends_with("sender");
+    return lower.ends_with("events");
   }
 
-  // The type a send's one argument makes: `T{...}`, or `T(...)` where T names
-  // a type; null for anything else.
-  TSNode constructedType(TSNode callArguments) const
+  // response-sent-twice, once the walk has seen the whole file: a response
+  // a system of the file sends that another system sends too, of the file
+  // or another file of the project. Each send's type is resolved once, and
+  // the project's senders are looked up by type.
+  void checkResponses()
   {
-    if (namedCount(callArguments) != 1)
-      return TSNode{};
-    const TSNode value = namedChild(callArguments, 0);
-    if (std::strcmp(lint::typeName(value), "compound_literal_expression") == 0)
-      return field(value, "type");
-    if (kind(value) == Kind::CallExpression)
+    if (responseSends.empty())
+      return;
+    const auto kindOf = [&](std::string_view name)
     {
-      const TSNode function = field(value, "function");
-      if (kind(function) == Kind::Identifier ||
-          kind(function) == Kind::QualifiedIdentifier)
-        return function;
+      ResponseKind kind = index->responseKind(name);
+      for (const ResponseType& type : responseTypes)
+        if (type.qualifiedName == name)
+          kind = std::max(kind,
+                          type.declared ? ResponseKind::Declared
+                                        : ResponseKind::Listed);
+      return kind;
+    };
+    const std::string_view fileSystem = onlySystem();
+    std::vector<std::pair<std::string, std::string_view>> sent; // type, by
+    sent.reserve(responseSends.size());
+    for (const ResponseSend& send : responseSends)
+      sent.emplace_back(
+          resolveResponse(send, usings, kindOf),
+          isSystemClass(send.owner) ? std::string_view(send.owner)
+                                    : fileSystem);
+    const std::filesystem::path normal = path->lexically_normal();
+    for (std::size_t i = 0; i < responseSends.size(); ++i)
+    {
+      const auto& [type, sender] = sent[i];
+      if (type.empty() || sender.empty())
+        continue;
+      std::string_view other;
+      for (const auto& [otherType, by] : sent)
+        if (!by.empty() && by != sender && otherType == type)
+        {
+          other = by;
+          break;
+        }
+      for (const ResponseSender& found : index->sendersOf(type))
+      {
+        if (!other.empty())
+          break;
+        if (*found.file != normal && found.system != sender)
+          other = found.system;
+      }
+      if (other.empty())
+        continue;
+      out->push_back(
+          {RuleId::ResponseSentTwice,
+           *path,
+           responseSends[i].range,
+           "The response type " + type +
+               " is sent by one system, the one that consumes its request, "
+               "and " + std::string(other) +
+               " already sends it. Give this system's responses a type of "
+               "their own.",
+           {},
+           {}});
     }
-    return TSNode{};
   }
 
-  // Whether a written type is known not to be an event, and what it is
-  // instead: a class of the file that's a component or a system, else a type
-  // the project's script headers register (codegen skips [[sfs::event]]
-  // types, so none of those is one), spelled with its own namespaces if any.
-  // A template's spelling is never one.
-  bool notAnEvent(TSNode type, std::string_view& what) const
+  // The file's one system, which its jobs and free functions send for: of
+  // its system classes and the system owners of its sends; empty when it has
+  // none or several.
+  std::string_view onlySystem() const
   {
-    std::string_view spelled = lint::trimmed(text(type));
-    if (spelled.empty() || spelled.find('<') != std::string_view::npos)
-      return false;
-    if (spelled.starts_with("::"))
-      spelled.remove_prefix(2);
-    const std::string_view name = lastName(spelled);
-    if (const lint::FileClass* found = fileClass(name))
+    std::string_view only;
+    bool several = false;
+    const auto consider = [&](std::string_view name)
     {
-      what = found->component ? "component" : "system";
-      return found->component || found->system;
-    }
-    const IndexEntry* entry = index->find(name);
-    if (!entry)
-      return false;
-    if (spelled.size() != name.size())
-    {
-      const std::string_view qualified = entry->qualifiedName;
-      const bool matches =
-          qualified == spelled ||
-          (qualified.size() > spelled.size() && qualified.ends_with(spelled) &&
-           qualified.substr(0, qualified.size() - spelled.size())
-               .ends_with("::"));
-      if (!matches)
-        return false;
-    }
-    switch (entry->kind)
-    {
-    case codegen::TypeKind::Component:
-      what = "component";
-      break;
-    case codegen::TypeKind::System:
-      what = "system";
-      break;
-    case codegen::TypeKind::GameObject:
-      what = "game object";
-      break;
-    case codegen::TypeKind::MeshSource:
-      what = "mesh source";
-      break;
-    case codegen::TypeKind::ScriptableObject:
-      what = "scriptable object";
-      break;
-    case codegen::TypeKind::Derived:
-      what = "reflected type";
-      break;
-    }
-    return true;
-  }
-
-  // Whether the reader a reader<T>() call makes is gone once the code around
-  // it ends: read at once (`reader<T>().read()`) or held by a local that isn't
-  // static. One assigned or passed on may be kept, and isn't counted.
-  bool dropped(TSNode call) const
-  {
-    TSNode at = call;
-    TSNode holder = lint::parent(at);
-    while (kind(holder) == Kind::ParenthesizedExpression)
-    {
-      at = holder;
-      holder = lint::parent(holder);
-    }
-    if (kind(holder) == Kind::FieldExpression)
-      return same(field(holder, "argument"), at);
-    TSNode declaration = holder;
-    if (kind(holder) == Kind::InitDeclarator)
-    {
-      if (!same(field(holder, "value"), at))
-        return false;
-      declaration = lint::parent(holder);
-    }
-    else if (kind(holder) != Kind::Declaration ||
-             !same(field(holder, "value"), at))
-      return false;
-    if (kind(declaration) != Kind::Declaration)
-      return false;
-    for (uint32_t i = 0; i < namedCount(declaration); ++i)
-    {
-      const TSNode child = namedChild(declaration, i);
-      if (kind(child) == Kind::StorageClassSpecifier &&
-          (text(child) == "static" || text(child) == "thread_local" ||
-           text(child) == "extern"))
-        return false;
-    }
-    return true;
+      if (only.empty())
+        only = name;
+      else if (only != name)
+        several = true;
+    };
+    for (const lint::FileClass& found : fileClasses)
+      if (found.system)
+        consider(found.name);
+    for (const ResponseSend& send : responseSends)
+      if (isSystemClass(send.owner))
+        consider(send.owner);
+    return several ? std::string_view{} : only;
   }
 
   // Whether a query or observe call is the registry's: made inside a system
@@ -1560,47 +1572,90 @@ struct Linter::Walk : lint::LintFile
            "entity. Put the data on a component, in a hidden field.");
   }
 
+  // SFS's EventConsumer, EventRequester, EventBroadcast or Responder in a
+  // written type, in a wrapper too (`std::vector<sfs::Responder<R>>`), or an
+  // alias of the file for one: its name, or empty. A function type's
+  // parameters (`std::function<void(sfs::Responder<R>)>`) don't hold one.
+  std::string_view eventHandleIn(TSNode written) const
+  {
+    std::string_view handle;
+    lint::walkTree(
+        written,
+        [&](TSNode type)
+        {
+          if (lint::isType(type, "abstract_function_declarator"))
+            return lint::Next::Skip;
+          if (lint::isType(type, "type_identifier"))
+          {
+            for (const auto& [alias, aliased] : handleAliases)
+              if (alias == text(type))
+              {
+                handle = aliased;
+                return lint::Next::Stop;
+              }
+            return lint::Next::Skip;
+          }
+          if (kind(type) != Kind::TemplateType)
+            return lint::Next::Descend;
+          const std::string_view name = text(field(type, "name"));
+          if (!contains(codegen::kEventHandleTypes, name))
+            return lint::Next::Descend;
+          const TSNode scope = lint::parent(type);
+          const bool sfs = kind(scope) == Kind::QualifiedIdentifier
+                               ? text(field(scope, "scope")) == "sfs"
+                               : visible(name);
+          if (!sfs)
+            return lint::Next::Descend;
+          handle = name;
+          return lint::Next::Stop;
+        });
+    return handle;
+  }
+
+  // `using X = sfs::EventConsumer<E>;`, `typedef sfs::EventConsumer<E> X;`
+  // and the like: remembered, so a member of type X holds a handle too.
+  void readHandleAlias(TSNode node)
+  {
+    const std::string_view handle = eventHandleIn(field(node, "type"));
+    const TSNode name = field(
+        node, kind(node) == Kind::TypeDefinition ? "declarator" : "name");
+    if (!handle.empty() && !ts_node_is_null(name))
+      handleAliases.emplace_back(text(name), handle);
+  }
+
   void checkReaderOnComponent(TSNode node)
   {
     if (kind(field(node, "declarator")) == Kind::FunctionDeclarator)
       return;
-    // SFS's EventReader or EventSender anywhere in the member's type:
-    // `std::vector<sfs::EventSender<A>>` too.
-    std::string_view handle;
-    lint::walkTree(field(node, "type"),
-                   [&](TSNode type)
-                   {
-                     if (kind(type) != Kind::TemplateType)
-                       return lint::Next::Descend;
-                     const std::string_view name = text(field(type, "name"));
-                     if (name != "EventReader" && name != "EventSender")
-                       return lint::Next::Descend;
-                     const TSNode scope = lint::parent(type);
-                     const bool sfs = kind(scope) == Kind::QualifiedIdentifier
-                                          ? text(field(scope, "scope")) == "sfs"
-                                          : visible(name);
-                     if (!sfs)
-                       return lint::Next::Descend;
-                     handle = name;
-                     return lint::Next::Stop;
-                   });
+    const std::string_view handle = eventHandleIn(field(node, "type"));
     if (handle.empty())
       return;
-    const std::string owner(classes.back().name);
-    if (handle == "EventReader")
+    const std::string start =
+        "The component " + std::string(classes.back().name) + " holds ";
+    if (handle == "EventConsumer")
       report(RuleId::ReaderOnComponent,
              node,
-             "The component " + owner +
-                 " holds an event reader, which is the reading system's own "
-                 "data, not a component's. Make the reader in that system's "
-                 "create() and keep it as a member there.");
+             start + "an event consumer, which belongs to the system or "
+                     "object that reads, not a component. Keep it as a "
+                     "member of that system or object.");
+    else if (handle == "EventRequester")
+      report(RuleId::ReaderOnComponent,
+             node,
+             start + "an event requester, which belongs to the system or "
+                     "object that asks, not a component. Keep it as a "
+                     "member of that system or object.");
+    else if (handle == "EventBroadcast")
+      report(RuleId::ReaderOnComponent,
+             node,
+             start + "an event broadcast, which belongs to the system that "
+                     "sends and the job it hands it to, not a component. "
+                     "Keep it in that system or job.");
     else
       report(RuleId::ReaderOnComponent,
              node,
-             "The component " + owner +
-                 " holds an event sender, which is the sending system's own "
-                 "data, not a component's. Take the sender in that system "
-                 "and give it to the job that sends.");
+             start + "a responder, which belongs to the system or job that "
+                     "responds to the request, not a component. Keep it in "
+                     "that system's work list or in the job.");
   }
 
   // ----------------------------------------------------------- own-entity
@@ -1838,6 +1893,8 @@ Linter::Linter() : m_walk(std::make_unique<Walk>())
       {"declaration", Kind::Declaration},
       {"this", Kind::This},
       {"alias_declaration", Kind::AliasDeclaration},
+      {"type_definition", Kind::TypeDefinition},
+      {"namespace_alias_definition", Kind::NamespaceAliasDefinition},
       {"if_statement", Kind::IfStatement},
       {"while_statement", Kind::WhileStatement},
       {"for_statement", Kind::ForStatement},
@@ -1904,7 +1961,8 @@ void Linter::run(std::string_view source,
                  const std::filesystem::path& path,
                  const ProjectIndex& index,
                  std::vector<Diagnostic>& out,
-                 const FileReader* read)
+                 const FileReader* read,
+                 const std::vector<codegen::EventModel>* events)
 {
   if (!tree)
     return;
@@ -1922,6 +1980,9 @@ void Linter::run(std::string_view source,
   findQueryAliases(tree, source, path, walk.aliases);
   walk.walk(ts_tree_root_node(tree));
   walk.checkRegistrations();
+  if (events)
+    responseTypesOf(*events, path, walk.responseTypes);
+  walk.checkResponses();
   lint::runEntityRules(walk);
 }
 

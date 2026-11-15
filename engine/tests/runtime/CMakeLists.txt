@@ -50,6 +50,8 @@ add_runtime_test(mouseInputTests input/mouseInputTests.cpp)
 
 # sceneManager/
 add_runtime_test(sceneTests sceneManager/sceneTests.cpp)
+sfs_event_traits(sceneTests FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/sceneManager/sceneTests.cpp")
 
 # rendering/
 
@@ -97,6 +99,27 @@ add_dependencies(moduleHostTests moduleHostCurrentModule moduleHostStaleModule)
 target_compile_definitions(moduleHostTests PRIVATE
     SFS_CURRENT_MODULE="$<TARGET_FILE:moduleHostCurrentModule>"
     SFS_STALE_MODULE="$<TARGET_FILE:moduleHostStaleModule>")
+
+# Scripts declaring an event type in a .cpp, which must get its traits (the
+# build failing is the test): compiled as a game module's scripts are, and,
+# where the engine is a shared library, as a game module.
+if(SFS_CODEGEN_AVAILABLE)
+    set(event_scripts "${CMAKE_CURRENT_SOURCE_DIR}/eventModule/scripts")
+    add_library(eventSourcesFixture OBJECT "${event_scripts}/SparkSystem.cpp")
+    target_link_libraries(eventSourcesFixture PRIVATE engine)
+    target_include_directories(eventSourcesFixture PRIVATE "${event_scripts}")
+    target_compile_definitions(eventSourcesFixture PRIVATE SFS_GAME_MODULE)
+    sfs_generate_reflection(eventSourcesFixture
+        MODULE EventSourcesFixture
+        FUNCTION sfsRegisterModule
+        FUNCTION_HEADER engine/runtime/scripting/gameModule.h
+        INCLUDE_ROOT "${event_scripts}"
+        HEADERS "${event_scripts}/SparkSystem.h"
+        EVENT_SOURCES "${event_scripts}/SparkSystem.cpp")
+    if(ENGINE_LIBRARY_TYPE STREQUAL "SHARED")
+        sfs_add_game_module(EventModuleFixture SCRIPTS_DIR "${event_scripts}")
+    endif()
+endif()
 
 # scriptableObjects/
 add_runtime_test(scriptableObjectsTests scriptableObjects/scriptableObjectsTests.cpp)

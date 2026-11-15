@@ -7,7 +7,7 @@ namespace sfs
 
 /**
  * Flattens grass (GrassComponent) it moves through, as a sphere: anything
- * that should (a character, a crate knocked about, a tractor's wheels). The
+ * that should (a character, a crate knocked about, a car's wheels). The
  * one way grass is bent: nothing else (a rigid body, a collider) bends it.
  *
  * @param bool fitColliders - a sphere for each of the entity's own solid

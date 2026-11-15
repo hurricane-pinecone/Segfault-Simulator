@@ -44,7 +44,7 @@ struct FillPartsReport
  *
  * @param project the project's folder
  * @param which   "all", or one prefab's path relative to the project
- *                ("prefabs/Tractor.prefab")
+ *                ("prefabs/Truck.prefab")
  * @param write   false: a dry run that writes nothing
  * @return what was found and done
  */

@@ -21,58 +21,66 @@ using namespace sfs;
 namespace
 {
 
-struct Ping
+struct [[sfs::event_news]] PingEvent
 {
   int value = 0;
 };
 
-struct Named
+struct [[sfs::event_news]] NamedEvent
 {
   std::string text;
 };
 
-struct Gone
+struct [[sfs::event_news]] GoneEvent
 {
   Entity entity;
 };
 
 // Can be moved into place, but not assigned to.
-struct Fixed
+struct [[sfs::event_news]] FixedEvent
 {
   const int id;
 };
 
 // One type per test that needs its log line (they're logged once per type).
-struct OffThread
+struct [[sfs::event_news]] OffThreadEvent
 {
   int value = 0;
 };
-struct OffThreadReader
+struct [[sfs::event_news]] OffThreadConsumerEvent
 {
   int value = 0;
 };
-struct OffThreadRace
+struct [[sfs::event_news]] OffThreadRaceEvent
 {
   int value = 0;
 };
-struct WhileRead
+struct [[sfs::event_news]] WhileReadEvent
 {
   int value = 0;
 };
-struct Missed
+struct [[sfs::event_news]] MissedEvent
 {
   int value = 0;
 };
-struct Logged
+struct [[sfs::event_news]] LoggedEvent
 {
   int value = 0;
 };
-struct Flood
+struct [[sfs::event_news]] IdleRangeEvent
+{
+  int value = 0;
+};
+struct [[sfs::event_news]] KeptRangeEvent
+{
+  int value = 0;
+};
+struct [[sfs::event_news]] FloodEvent
 {
   int value = 0;
 };
 
-struct FromWorker
+struct [[sfs::event_news]] FromWorkerEvent
 {
   int thread = 0;
   int index = 0;
@@ -111,11 +119,11 @@ struct LogCapture
   }
 };
 
-// The values a reader reads now.
-std::vector<int> readValues(EventReader<Ping>& reader)
+// The values a consumer reads now.
+std::vector<int> readValues(EventConsumer<PingEvent>& consumer)
 {
   std::vector<int> values;
-  for (const Ping& ping : reader.read())
+  for (const PingEvent& ping : consumer.read())
     values.push_back(ping.value);
   return values;
 }
@@ -137,72 +145,116 @@ bool tracking()
 
 int main()
 {
-  TEST("a reader should read events in send order, each once")
+  TEST("a consumer should read events in send order, each once")
   {
     Events events;
-    EventReader<Ping> reader = events.reader<Ping>();
-    CHECK(reader.read().empty());
+    EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+    CHECK(consumer.read().empty());
     for (int i = 0; i < 5; ++i)
-      events.send(Ping{i});
-    CHECK((readValues(reader) == std::vector<int>{0, 1, 2, 3, 4}));
-    CHECK(reader.read().empty());
-    events.send(Ping{5});
-    CHECK((readValues(reader) == std::vector<int>{5}));
+      events.send(PingEvent{i});
+    CHECK((readValues(consumer) == std::vector<int>{0, 1, 2, 3, 4}));
+    CHECK(consumer.read().empty());
+    events.send(PingEvent{5});
+    CHECK((readValues(consumer) == std::vector<int>{5}));
     events.update();
-    events.send(Ping{6});
-    CHECK((readValues(reader) == std::vector<int>{6}));
+    events.send(PingEvent{6});
+    CHECK((readValues(consumer) == std::vector<int>{6}));
   }
 
-  TEST("two readers should each read every event")
+  TEST("two consumers should each read every event")
   {
     Events events;
-    EventReader<Ping> first = events.reader<Ping>();
-    EventReader<Ping> second = events.reader<Ping>();
-    events.send(Ping{1});
-    events.send(Ping{2});
+    EventConsumer<PingEvent> first = events.consumer<PingEvent>();
+    EventConsumer<PingEvent> second = events.consumer<PingEvent>();
+    events.send(PingEvent{1});
+    events.send(PingEvent{2});
     CHECK((readValues(first) == std::vector<int>{1, 2}));
-    events.send(Ping{3});
+    events.send(PingEvent{3});
     events.update();
-    events.send(Ping{4});
+    events.send(PingEvent{4});
     CHECK((readValues(first) == std::vector<int>{3, 4}));
     CHECK((readValues(second) == std::vector<int>{1, 2, 3, 4}));
   }
 
-  TEST("a reader made after sends should read the events kept")
+  TEST("a consumer made after sends should read the events kept")
   {
     Events events;
-    events.send(Ping{1});
+    events.send(PingEvent{1});
     events.update();
-    events.send(Ping{2});
-    EventReader<Ping> late = events.reader<Ping>();
+    events.send(PingEvent{2});
+    EventConsumer<PingEvent> late = events.consumer<PingEvent>();
     CHECK(late.unread() == 2u);
     CHECK((readValues(late) == std::vector<int>{1, 2}));
   }
 
-  TEST("an event should be kept through one swap and dropped at the second")
+  TEST("an event should be kept until every consumer has read it")
   {
     Events events;
-    EventReader<Ping> reader = events.reader<Ping>();
-    events.send(Ping{1});
+    EventConsumer<PingEvent> first = events.consumer<PingEvent>();
+    EventConsumer<PingEvent> second = events.consumer<PingEvent>();
+    events.send(PingEvent{1});
+    for (int i = 0; i < 5; ++i)
+      events.update();
+    CHECK(first.unread() == 1u);
+    CHECK((readValues(first) == std::vector<int>{1}));
     events.update();
-    CHECK(reader.unread() == 1u);
+    CHECK(second.unread() == 1u);
+    CHECK((readValues(second) == std::vector<int>{1}));
     events.update();
-    CHECK(reader.unread() == 0u);
-    CHECK(reader.read().empty());
-    CHECK(events.reader<Ping>().read().empty());
+    // Every consumer has read it: a new consumer finds nothing kept.
+    CHECK(events.consumer<PingEvent>().read().empty());
   }
 
-  TEST("a reader should go through the last frame's tail, then this frame's")
+  TEST("a type with no consumers should keep an event through one frame "
+       "boundary and drop it at the second")
   {
     Events events;
-    EventReader<Ping> reader = events.reader<Ping>();
-    events.send(Ping{1});
-    CHECK((readValues(reader) == std::vector<int>{1}));
-    events.send(Ping{2});
-    events.send(Ping{3});
+    events.send(PingEvent{1});
     events.update();
-    events.send(Ping{4});
-    const EventRange<Ping> range = reader.read();
+    EventConsumer<PingEvent> late = events.consumer<PingEvent>();
+    CHECK(late.unread() == 1u);
+    late = {};
+    events.update();
+    CHECK(events.consumer<PingEvent>().read().empty());
+  }
+
+  TEST("a consumer should deregister as it goes, and a moved one carry on")
+  {
+    Events events;
+    std::vector<EventStats> stats;
+    {
+      EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+      events.send(PingEvent{1});
+      events.update();
+      events.update();
+      events.stats(stats);
+      CHECK((stats.size() == 1u && stats[0].kept == 1u &&
+             stats[0].consumers == 1u));
+      EventConsumer<PingEvent> moved = std::move(consumer);
+      CHECK(consumer.read().empty());
+      CHECK((readValues(moved) == std::vector<int>{1}));
+      events.send(PingEvent{2});
+    }
+    events.update();
+    events.stats(stats);
+    CHECK((stats.size() == 1u && stats[0].consumers == 0u));
+    events.update();
+    events.stats(stats);
+    CHECK((stats.size() == 1u && stats[0].kept == 0u));
+  }
+
+  TEST("a consumer should go through the last frame's events, then this "
+       "frame's, as one range")
+  {
+    Events events;
+    EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+    events.send(PingEvent{1});
+    CHECK((readValues(consumer) == std::vector<int>{1}));
+    events.send(PingEvent{2});
+    events.send(PingEvent{3});
+    events.update();
+    events.send(PingEvent{4});
+    const EventRange<PingEvent> range = consumer.read();
     CHECK(range.size() == 3u);
     std::vector<int> values;
     for (auto it = range.begin(); it != range.end(); ++it)
@@ -210,83 +262,90 @@ int main()
     CHECK((values == std::vector<int>{2, 3, 4}));
   }
 
-  TEST("a reader that missed events should count them and log once, in "
-       "every build")
+  TEST("a consumer that never reads should be dropped past the cap, named, "
+       "and count its misses once it reads, in every build")
   {
     Events events;
-    EventReader<Missed> reader = events.reader<Missed>();
+    events.setMaxKept(2);
+    EventConsumer<MissedEvent> consumer = events.consumer<MissedEvent>();
     LogCapture log;
-    events.send(Missed{1});
-    events.send(Missed{2});
+    for (int i = 1; i <= 5; ++i)
+      events.send(MissedEvent{i});
     events.update();
-    events.update();
-    events.send(Missed{3});
+    CHECK(log.count(Logger::Level::ERROR,
+                    "so its oldest 3 were dropped. They were held by a "
+                    "consumer") == 1);
     std::vector<int> values;
-    for (const Missed& missed : reader.read())
+    for (const MissedEvent& missed : consumer.read())
       values.push_back(missed.value);
-    CHECK((values == std::vector<int>{3}));
+    CHECK((values == std::vector<int>{4, 5}));
     std::vector<EventStats> stats;
     events.stats(stats);
     CHECK(stats.size() == 1u);
     if (!stats.empty())
-      CHECK(stats[0].missed == 2u);
-
-    events.send(Missed{4});
-    events.update();
-    events.update();
-    CHECK(reader.read().empty());
-    events.stats(stats);
-    if (!stats.empty())
       CHECK(stats[0].missed == 3u);
-    CHECK(log.count(Logger::Level::WARN, "missed 2 events") == 1);
-    CHECK(log.count(Logger::Level::WARN, "missed 1 events") == 0);
+    CHECK(log.count(Logger::Level::WARN, "a consumer missed 3") == 1);
+  }
+
+  TEST("a consumer outliving its events should read nothing, and let go "
+       "safely")
+  {
+    EventConsumer<PingEvent> consumer;
+    {
+      Events events;
+      consumer = events.consumer<PingEvent>();
+      events.send(PingEvent{1});
+    }
+    CHECK(consumer.read().empty());
+    CHECK(consumer.unread() == 0u);
+    consumer.skip();
   }
 
   TEST("unread should count without marking read, and skip mark all read")
   {
     Events events;
-    EventReader<Ping> reader = events.reader<Ping>();
-    events.send(Ping{1});
-    events.send(Ping{2});
-    CHECK(reader.unread() == 2u);
-    CHECK(reader.unread() == 2u);
-    reader.skip();
-    CHECK(reader.unread() == 0u);
-    events.send(Ping{3});
-    CHECK((readValues(reader) == std::vector<int>{3}));
+    EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+    events.send(PingEvent{1});
+    events.send(PingEvent{2});
+    CHECK(consumer.unread() == 2u);
+    CHECK(consumer.unread() == 2u);
+    consumer.skip();
+    CHECK(consumer.unread() == 0u);
+    events.send(PingEvent{3});
+    CHECK((readValues(consumer) == std::vector<int>{3}));
   }
 
   TEST("a loop that breaks early should still mark every event read")
   {
     Events events;
-    EventReader<Ping> reader = events.reader<Ping>();
+    EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
     for (int i = 0; i < 4; ++i)
-      events.send(Ping{i});
-    for (const Ping& ping : reader.read())
+      events.send(PingEvent{i});
+    for (const PingEvent& ping : consumer.read())
       if (ping.value == 1)
         break;
-    CHECK(reader.unread() == 0u);
+    CHECK(consumer.unread() == 0u);
   }
 
-  TEST("a default reader should read nothing")
+  TEST("a default consumer should read nothing")
   {
-    EventReader<Ping> reader;
-    CHECK(reader.read().empty());
-    CHECK(reader.unread() == 0u);
-    reader.skip();
-    CHECK(sizeof(EventReader<Ping>) == 24u);
+    EventConsumer<PingEvent> consumer;
+    CHECK(consumer.read().empty());
+    CHECK(consumer.unread() == 0u);
+    consumer.skip();
+    CHECK(sizeof(EventConsumer<PingEvent>) == 32u);
   }
 
   TEST("events should move in and keep what they hold")
   {
     Events events;
-    EventReader<Named> reader = events.reader<Named>();
-    Named named{std::string(100, 'x')};
+    EventConsumer<NamedEvent> consumer = events.consumer<NamedEvent>();
+    NamedEvent named{std::string(100, 'x')};
     events.send(std::move(named));
-    const Named copied{"copied"};
+    const NamedEvent copied{"copied"};
     events.send(copied);
     std::vector<std::string> texts;
-    for (const Named& event : reader.read())
+    for (const NamedEvent& event : consumer.read())
       texts.push_back(event.text);
     CHECK(texts.size() == 2u);
     if (texts.size() == 2u)
@@ -300,47 +359,112 @@ int main()
        "staged")
   {
     Events events;
-    EventReader<Fixed> reader = events.reader<Fixed>();
-    EventSender<Fixed> sender = events.sender<Fixed>();
-    events.send(Fixed{1});
-    CHECK(sender.send(Fixed{2}));
+    EventConsumer<FixedEvent> consumer = events.consumer<FixedEvent>();
+    EventBroadcast<FixedEvent> broadcast = events.broadcast<FixedEvent>();
+    events.send(FixedEvent{1});
+    CHECK(broadcast.send(FixedEvent{2}));
     events.update();
-    events.send(Fixed{3});
+    events.send(FixedEvent{3});
     std::vector<int> ids;
-    for (const Fixed& fixed : reader.read())
+    for (const FixedEvent& fixed : consumer.read())
       ids.push_back(fixed.id);
     CHECK((ids == std::vector<int>{1, 2, 3}));
   }
 
-#ifndef NDEBUG
-  TEST("sending a type while going through its events should log and end the "
-       "loop (debug builds)")
+  TEST("sending a type while going through its events should keep the rows "
+       "where they are and give the new ones next")
   {
     Events events;
-    EventReader<WhileRead> reader = events.reader<WhileRead>();
+    EventConsumer<WhileReadEvent> consumer = events.consumer<WhileReadEvent>();
     for (int i = 0; i < 3; ++i)
-      events.send(WhileRead{i});
-    LogCapture log;
-    int seen = 0;
-    for (const WhileRead& event : reader.read())
+      events.send(WhileReadEvent{i});
+    std::vector<int> seen;
+    for (const WhileReadEvent& event : consumer.read())
     {
-      ++seen;
-      events.send(WhileRead{event.value + 10});
+      // Enough sends to move a buffer that wasn't held still.
+      for (int i = 0; i < 64; ++i)
+        events.send(WhileReadEvent{100 + event.value});
+      seen.push_back(event.value);
     }
-    CHECK(seen == 1);
-    CHECK(log.count(Logger::Level::ERROR, "was sent while a loop") == 1);
-    CHECK(reader.unread() == 1u);
+    CHECK((seen == std::vector<int>{0, 1, 2}));
+    CHECK(consumer.unread() == 192u);
+    std::vector<int> next;
+    for (const WhileReadEvent& event : consumer.read())
+      next.push_back(event.value);
+    CHECK(next.size() == 192u);
+    CHECK((next.size() == 192u && next.front() == 100 && next[64] == 101 &&
+           next.back() == 102));
   }
-#endif
+
+  TEST("a range kept past its frame should be warned about once, count what "
+       "waits behind it, and let it all through when it goes")
+  {
+    Events events;
+    events.setMaxKept(8);
+    EventConsumer<KeptRangeEvent> keeper = events.consumer<KeptRangeEvent>();
+    EventConsumer<KeptRangeEvent> other = events.consumer<KeptRangeEvent>();
+    events.send(KeptRangeEvent{0});
+    LogCapture log;
+    {
+      std::optional<EventRange<KeptRangeEvent>> kept(keeper.read());
+      for (int frame = 0; frame < 5; ++frame)
+      {
+        events.send(KeptRangeEvent{frame + 1});
+        events.send(KeptRangeEvent{frame + 1});
+        events.update();
+      }
+      std::vector<EventStats> stats;
+      events.stats(stats);
+      // The cap covers the buffer and the lane together.
+      CHECK((stats.size() == 1u && stats[0].kept == 8u));
+      events.update();
+      CHECK(log.count(Logger::Level::WARN, "was kept past its frame") == 1);
+      CHECK(log.count(Logger::Level::ERROR, "behind a range kept past") == 1);
+    }
+    // The cap left the first event and the newest 7 sent behind the range.
+    CHECK(other.read().size() == 8u);
+  }
+
+  TEST("a range first taken on an idle queue and taken again each frame "
+       "should still be warned about and capped, workers' events with it")
+  {
+    Events events;
+    events.setMaxKept(16);
+    EventConsumer<IdleRangeEvent> keeper = events.consumer<IdleRangeEvent>();
+    EventConsumer<IdleRangeEvent> other = events.consumer<IdleRangeEvent>();
+    EventBroadcast<IdleRangeEvent> broadcast =
+        events.broadcast<IdleRangeEvent>();
+    LogCapture log;
+    {
+      // A member re-read each update: the new range begins before the old
+      // one ends, so a range is always alive.
+      EventRange<IdleRangeEvent> last = keeper.read();
+      for (int frame = 0; frame < 20; ++frame)
+      {
+        events.send(IdleRangeEvent{frame});
+        std::thread worker([&] { broadcast.send(IdleRangeEvent{-frame}); });
+        worker.join();
+        events.update();
+        last = keeper.read();
+      }
+      std::vector<EventStats> stats;
+      events.stats(stats);
+      CHECK((stats.size() == 1u && stats[0].kept == 16u));
+      CHECK((stats.size() == 1u && stats[0].staged == 0u));
+      CHECK(log.count(Logger::Level::WARN, "was kept past its frame") == 1);
+      CHECK(log.count(Logger::Level::ERROR, "behind a range kept past") == 1);
+    }
+    CHECK(other.read().size() == 16u);
+  }
 
   TEST("events naming destroyed or reused-id entities should read invalid")
   {
     Registry registry;
     Events& events = registry.events();
-    EventReader<Gone> reader = events.reader<Gone>();
+    EventConsumer<GoneEvent> consumer = events.consumer<GoneEvent>();
     const Entity doomed = registry.createEntity();
     registry.flushEntities();
-    events.send(Gone{doomed});
+    events.send(GoneEvent{doomed});
     registry.destroyEntity(doomed);
     registry.flushEntities();
     events.update();
@@ -348,7 +472,7 @@ int main()
     registry.flushEntities();
     CHECK(reused.getId() == doomed.getId());
     int read = 0;
-    for (const Gone& gone : reader.read())
+    for (const GoneEvent& gone : consumer.read())
     {
       ++read;
       CHECK(!gone.entity.isValid());
@@ -360,25 +484,26 @@ int main()
   TEST("a send off the owning thread should be logged once and dropped")
   {
     Events events;
-    EventReader<OffThread> reader = events.reader<OffThread>();
+    EventConsumer<OffThreadEvent> consumer = events.consumer<OffThreadEvent>();
     LogCapture log;
     std::thread worker(
         [&]
         {
-          events.send(OffThread{1});
-          events.send(OffThread{2});
+          events.send(OffThreadEvent{1});
+          events.send(OffThreadEvent{2});
         });
     worker.join();
     events.update();
-    CHECK(reader.unread() == 0u);
-    CHECK(log.count(Logger::Level::ERROR, "::OffThread>() was called off") ==
-          1);
+    CHECK(consumer.unread() == 0u);
+    CHECK(log.count(
+              Logger::Level::ERROR, "::OffThreadEvent>() was called off") == 1);
 
-    std::optional<EventReader<OffThreadReader>> made;
-    std::thread asker([&] { made = events.reader<OffThreadReader>(); });
+    std::optional<EventConsumer<OffThreadConsumerEvent>> made;
+    std::thread asker([&]
+                      { made = events.consumer<OffThreadConsumerEvent>(); });
     asker.join();
     CHECK(log.count(Logger::Level::ERROR,
-                    "::OffThreadReader>() was called off") == 1);
+                    "::OffThreadConsumerEvent>() was called off") == 1);
     if (made)
       CHECK(made->unread() == 0u);
   }
@@ -387,7 +512,8 @@ int main()
        "refused without a data race")
   {
     Events events;
-    EventReader<OffThreadRace> reader = events.reader<OffThreadRace>();
+    EventConsumer<OffThreadRaceEvent> consumer =
+        events.consumer<OffThreadRaceEvent>();
     LogCapture log;
     std::atomic<bool> stop{false};
     std::atomic<int> tries{0};
@@ -396,7 +522,7 @@ int main()
         {
           while (!stop.load())
           {
-            events.send(OffThreadRace{1});
+            events.send(OffThreadRaceEvent{1});
             tries.fetch_add(1);
           }
         });
@@ -405,9 +531,9 @@ int main()
     stop.store(true);
     worker.join();
     events.update();
-    CHECK(reader.unread() == 0u);
-    CHECK(log.count(
-              Logger::Level::ERROR, "::OffThreadRace>() was called off") == 1);
+    CHECK(consumer.unread() == 0u);
+    CHECK(log.count(Logger::Level::ERROR,
+                    "::OffThreadRaceEvent>() was called off") == 1);
   }
 
   TEST("update should make the calling thread the owner")
@@ -417,49 +543,51 @@ int main()
         [&]
         {
           events.update();
-          EventReader<Ping> reader = events.reader<Ping>();
-          events.send(Ping{7});
-          CHECK(reader.unread() == 1u);
+          EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+          events.send(PingEvent{7});
+          CHECK(consumer.unread() == 1u);
         });
     other.join();
     events.update();
-    EventReader<Ping> reader = events.reader<Ping>();
-    CHECK((readValues(reader) == std::vector<int>{7}));
+    EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+    CHECK((readValues(consumer) == std::vector<int>{7}));
   }
 
-  TEST("4 threads' events through senders should all arrive at the next "
+  TEST("4 threads' events through broadcasts should all arrive at the next "
        "swap, each thread's in order, ahead of the main thread's")
   {
     constexpr int kThreads = 4;
     constexpr int kEach = 10000;
     Events events;
-    EventReader<FromWorker> reader = events.reader<FromWorker>();
-    const EventSender<FromWorker> sender = events.sender<FromWorker>();
+    EventConsumer<FromWorkerEvent> consumer =
+        events.consumer<FromWorkerEvent>();
+    const EventBroadcast<FromWorkerEvent> broadcast =
+        events.broadcast<FromWorkerEvent>();
     std::vector<std::thread> workers;
     std::vector<int> failed(kThreads, 0);
     for (int t = 0; t < kThreads; ++t)
       workers.emplace_back(
-          [sender, t, &failed]() mutable
+          [broadcast, t, &failed]() mutable
           {
             for (int i = 0; i < kEach; ++i)
-              if (!sender.send(FromWorker{t, i}))
+              if (!broadcast.send(FromWorkerEvent{t, i}))
                 ++failed[t];
           });
     for (std::thread& worker : workers)
       worker.join();
-    CHECK(reader.unread() == 0u);
+    CHECK(consumer.unread() == 0u);
     std::vector<EventStats> stats;
     events.stats(stats);
     if (!stats.empty())
       CHECK(stats[0].staged == static_cast<std::size_t>(kThreads * kEach));
 
     events.update();
-    events.send(FromWorker{-1, 0});
+    events.send(FromWorkerEvent{-1, 0});
     std::vector<int> next(kThreads, 0);
     bool ordered = true;
     int count = 0;
     bool mainLast = false;
-    for (const FromWorker& event : reader.read())
+    for (const FromWorkerEvent& event : consumer.read())
     {
       ++count;
       if (event.thread < 0)
@@ -477,27 +605,29 @@ int main()
       CHECK(failed[t] == 0);
   }
 
-  TEST("senders sending while the owner swaps should lose nothing")
+  TEST("broadcasts sending while the owner swaps should lose nothing")
   {
     constexpr int kThreads = 4;
     constexpr int kEach = 5000;
     Events events;
-    EventReader<FromWorker> reader = events.reader<FromWorker>();
-    const EventSender<FromWorker> sender = events.sender<FromWorker>();
+    EventConsumer<FromWorkerEvent> consumer =
+        events.consumer<FromWorkerEvent>();
+    const EventBroadcast<FromWorkerEvent> broadcast =
+        events.broadcast<FromWorkerEvent>();
     std::vector<std::thread> workers;
     for (int t = 0; t < kThreads; ++t)
       workers.emplace_back(
-          [sender, t]() mutable
+          [broadcast, t]() mutable
           {
             for (int i = 0; i < kEach; ++i)
-              sender.send(FromWorker{t, i});
+              broadcast.send(FromWorkerEvent{t, i});
           });
     std::vector<int> next(kThreads, 0);
     bool ordered = true;
     int count = 0;
     const auto drain = [&]
     {
-      for (const FromWorker& event : reader.read())
+      for (const FromWorkerEvent& event : consumer.read())
       {
         ordered = ordered && event.index == next[event.thread];
         ++next[event.thread];
@@ -517,35 +647,35 @@ int main()
     CHECK(ordered);
   }
 
-  TEST("a sender outliving its Events should return false")
+  TEST("a broadcast outliving its Events should return false")
   {
-    EventSender<Ping> sender;
-    CHECK(!sender.send(Ping{1}));
+    EventBroadcast<PingEvent> broadcast;
+    CHECK(!broadcast.send(PingEvent{1}));
     {
       Events events;
-      sender = events.sender<Ping>();
-      CHECK(sender.send(Ping{1}));
+      broadcast = events.broadcast<PingEvent>();
+      CHECK(broadcast.send(PingEvent{1}));
     }
-    CHECK(!sender.send(Ping{2}));
+    CHECK(!broadcast.send(PingEvent{2}));
   }
 
   TEST("stats should count each type's sent, kept, staged and capacity")
   {
     Events events;
-    EventReader<Ping> reader = events.reader<Ping>();
-    EventSender<Ping> sender = events.sender<Ping>();
-    events.send(Ping{1});
-    events.send(Ping{2});
+    EventConsumer<PingEvent> consumer = events.consumer<PingEvent>();
+    EventBroadcast<PingEvent> broadcast = events.broadcast<PingEvent>();
+    events.send(PingEvent{1});
+    events.send(PingEvent{2});
     events.update();
-    events.send(Ping{3});
-    sender.send(Ping{4});
+    events.send(PingEvent{3});
+    broadcast.send(PingEvent{4});
     std::vector<EventStats> stats;
     events.stats(stats);
     CHECK(stats.size() == 1u);
     if (!stats.empty())
     {
-      CHECK(stats[0].type == "{anonymous}::Ping" ||
-            stats[0].type.ends_with("Ping"));
+      CHECK(stats[0].type == "{anonymous}::PingEvent" ||
+            stats[0].type.ends_with("PingEvent"));
       CHECK(stats[0].sentLastFrame == 2u);
       CHECK(stats[0].kept == 3u);
       CHECK(stats[0].staged == 1u);
@@ -555,49 +685,55 @@ int main()
 
   TEST("logEvents should log the listed types' sends and workers' events")
   {
-    debugFeatures::setLogEvents("Ping, Logged");
-    CHECK(debugFeatures::logEvents("farm::Logged") == debugFeatures::enabled());
-    CHECK(!debugFeatures::logEvents("farm::NotLogged"));
+    debugFeatures::setLogEvents("PingEvent, LoggedEvent");
+    CHECK(debugFeatures::logEvents("game::LoggedEvent") ==
+          debugFeatures::enabled());
+    CHECK(!debugFeatures::logEvents("game::NotLogged"));
     CHECK(!debugFeatures::logEvents("Unlogged"));
     Events events;
     LogCapture log;
-    EventSender<Logged> sender = events.sender<Logged>();
-    events.send(Logged{1});
-    sender.send(Logged{2});
+    EventBroadcast<LoggedEvent> broadcast = events.broadcast<LoggedEvent>();
+    events.send(LoggedEvent{1});
+    broadcast.send(LoggedEvent{2});
     events.update();
-    events.send(Flood{1});
+    events.send(FloodEvent{1});
     debugFeatures::setLogEvents("");
     if (debugFeatures::enabled())
     {
-      CHECK(log.count(Logger::Level::INFO, "Logged #0 sent in frame 0") == 1);
+      CHECK(log.count(Logger::Level::INFO,
+                      "LoggedEvent [news] #0 sent in frame 0") == 1);
       CHECK(log.count(Logger::Level::INFO, "sent by thread") == 1);
       CHECK(log.count(Logger::Level::INFO,
                       "#1 to #1 taken in from workers "
                       "in frame 1") == 1);
     }
-    CHECK(log.count(Logger::Level::INFO, "Flood") == 0);
+    CHECK(log.count(Logger::Level::INFO, "FloodEvent") == 0);
     debugFeatures::setLogEvents("*");
     CHECK(debugFeatures::logEvents("Anything") == debugFeatures::enabled());
     debugFeatures::setLogEvents("");
   }
 
-  TEST("a queue past 65,536 kept events should warn once")
+  TEST("a queue past 65,536 kept events should warn once, naming who holds "
+       "them")
   {
     Events events;
+    EventConsumer<FloodEvent> consumer = events.consumer<FloodEvent>();
     LogCapture log;
     for (int i = 0; i < 70000; ++i)
-      events.send(Flood{i});
+      events.send(FloodEvent{i});
+    events.update();
     events.update();
     if (debugFeatures::enabled())
-      CHECK(log.count(Logger::Level::WARN, "Flood events are kept") == 1);
+      CHECK(log.count(Logger::Level::WARN,
+                      "FloodEvent events are kept, held by a consumer") == 1);
   }
 
   TEST("event type ids should be shared and distinct")
   {
-    const int ping = detail::moduleTypeId<Ping, &detail::eventTypeId>();
-    const int named = detail::moduleTypeId<Named, &detail::eventTypeId>();
+    const int ping = detail::moduleTypeId<PingEvent, &detail::eventTypeId>();
+    const int named = detail::moduleTypeId<NamedEvent, &detail::eventTypeId>();
     CHECK(ping != named);
-    CHECK(detail::eventTypeId(detail::componentTypeKey<Ping>()) == ping);
+    CHECK(detail::eventTypeId(detail::componentTypeKey<PingEvent>()) == ping);
   }
 
   TEST("steady traffic should allocate nothing once warm (static build)")
@@ -610,21 +746,21 @@ int main()
       continue;
     }
     Events events;
-    EventReader<Ping> first = events.reader<Ping>();
-    EventReader<Ping> second = events.reader<Ping>();
-    EventSender<Ping> sender = events.sender<Ping>();
+    EventConsumer<PingEvent> first = events.consumer<PingEvent>();
+    EventConsumer<PingEvent> second = events.consumer<PingEvent>();
+    EventBroadcast<PingEvent> broadcast = events.broadcast<PingEvent>();
     std::vector<EventStats> stats;
     long sum = 0;
     const auto frame = [&]
     {
       events.update();
       for (int i = 0; i < 64; ++i)
-        events.send(Ping{i});
+        events.send(PingEvent{i});
       for (int i = 0; i < 8; ++i)
-        sender.send(Ping{i});
-      for (const Ping& ping : first.read())
+        broadcast.send(PingEvent{i});
+      for (const PingEvent& ping : first.read())
         sum += ping.value;
-      for (const Ping& ping : second.read())
+      for (const PingEvent& ping : second.read())
         sum += ping.value;
       events.stats(stats);
     };

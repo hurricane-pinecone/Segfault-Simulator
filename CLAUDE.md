@@ -2,7 +2,7 @@
 
 SFS is a general game engine. Nothing game-specific goes in it. Read README.md and docs/ before changing an area.
 That includes its words: docs, docstrings, comments, log lines and test names use generic examples (`Player`,
-`Enemy`, `Health`, `Door`, `Pickup`), never a game's terms (no farms, farm hands, tractors or crops) or its types.
+`Enemy`, `Health`, `Door`, `Pickup`), never a game's terms or its types.
 Engine bar: a feature belongs in SFS only if a production-ready general engine (Unity, Unreal, Godot) would ship it
 (in the engine itself, or as a first-party library once SFS has them). Anything narrower is game code, even if more
 than one game could use it.
@@ -21,6 +21,7 @@ it. The standard engine approach is the baseline; do better where the data allow
 ## Architecture
 
 ### Layers
+
 - `engine-core` is the ECS (entities, components, systems, reflection, scripting, assets core) and has ZERO
   dependencies. Components (plain data) live in `engine/include/engine/core/components/`.
 - Features go in `engine-runtime` (`engine/include/engine/runtime/...`, `engine/src/runtime/...`). A feature is an
@@ -31,6 +32,7 @@ it. The standard engine approach is the baseline; do better where the data allow
 - `engine-webgpu` is the render backend. The editor (`editor/`) consumes the engine like any game does.
 
 ### Components
+
 - Components hold ALL per-entity data, and NO logic: its state, including what changes in play (a transform's
   position, a machine's speed or fuel), and anything a system works out or keeps about that entity (a plan or
   search in progress for it, a cache derived from it, a handle to its engine-side job, a logged-once flag). Systems
@@ -42,10 +44,14 @@ it. The standard engine approach is the baseline; do better where the data allow
   system-defined struct held from a component by pointer.
 - Systems are single-purpose and never read other systems: what a system needs from another concern comes through
   components.
-- How systems communicate: a system reads and writes only components. It hands work on by writing a component a
-  later system reads, in the registered update order. A request is a component field the serving system fills in
-  later (a plan request and its result). When two systems feed each other, the earlier one reads what the later one
-  wrote last frame. No `getSystem` for data, and no callbacks between systems.
+- How systems communicate: a component holds its entity's state; any system may read it, and one system writes each
+  field. Everything a system tells another is an event (docs/core/events), never a flag, message or request field on
+  a component, a `getSystem` call or a callback. News (`[[sfs::event_news]]`, named `...Event`) says something
+  happened; entity news (`[[sfs::event_entity_news]]`) says it of one entity. A request (`[[sfs::event_request(...)]]`,
+  `...Request`) is asked through an `EventRequester` and answered with responses (`...Response`) that only that
+  requester gets. Consumers and requesters are made in `create()` and kept as members. What must outlast the moment is
+  state, written by its owner. Work that can't be done now goes to a job (WorkerPool, PlanScheduler), never an event
+  queue. Gameplay never depends on system order: a consumer earlier in the order hears an event a step later.
 - Lists of entities by component: a system's own are `getEntities()` (its `registerComponent`s); any other kind is
   `registry->query<Ts...>()` (scripts: `scene().query<Ts...>()`: cached, kept current, shared). A system that must
   react as another kind joins or leaves uses `observe<Ts...>(added, removed)`. No system keeps its own entity list.
@@ -63,6 +69,7 @@ it. The standard engine approach is the baseline; do better where the data allow
 - Components are never extended by inheritance (ECS lookups are by exact type).
 
 ### Data and assets
+
 - Data shared by many entities (a vehicle model's specs, a crop type) is a ScriptableObject (`.asset`), referenced
   with `sfs::AssetRef<T>`. Games may extend engine ScriptableObject types (`TractorSpec : sfs::VehicleSpec`).
 - Store PROPERTIES, never physics OUTCOMES. Power, mass, brake force, wheelbase and tyre sizes are properties.
@@ -75,6 +82,7 @@ it. The standard engine approach is the baseline; do better where the data allow
   planner physics. No local copies, constants or fudge factors (e.g. "brake * 2") anywhere else.
 
 ### Extensibility
+
 - Pluggable implementations are registered by name through a factory/registry (pattern: `RenderBackends::add`).
   Examples: navigation agent kinds ("vehicle", later "walker") and path searches ("hybridAStar").
 - Build one implementation and one interface. No speculative abstraction beyond that.
@@ -84,18 +92,27 @@ it. The standard engine approach is the baseline; do better where the data allow
 - Standard problems get the textbook solution (e.g. vehicle travel: coarse graph -> hybrid A* -> curvature-
   continuous path -> speed profile -> path follower). Bespoke logic belongs in the game.
 
+### Event names
+
+- Event types are named by their kind: news ends in `Event` (`EnemyDiedEvent`), requests in `Request`
+  (`PathRequest`), responses in `Response` (`PathFoundResponse`). This is SFS's and its games' house style, not an
+  engine rule: games built on SFS may name theirs as they like, so nothing enforces it.
+
 ### Debug features
+
 - Everything debug (debug drawing, debug env vars, runtime toggles) goes through `debugFeatures.h`. It works in the
   editor, Debug builds and development exports only, and is compiled out or forced off in release exports.
 - Draw with `RenderSystem::debugLines()`. Colliders: Scene Settings > Debug > Draw Colliders / `SFS_DRAW_COLLIDERS`.
 
 ### Collision
+
 - Collision uses engine colliders (BoxCollider3D etc., Jolt). There are no hand-rolled footprints.
 - Colliders are authored data in scenes and prefabs (auto-fit on add, Fit to Mesh, `*-collider` model nodes). Code
   never generates them at runtime.
 - Simple shapes are fine: tiny clipping is acceptable. Mesh colliders are a possible later feature.
 
 ### Errors
+
 - Never throw fatal exceptions, and never abort or crash on bad input or state. Log it with `LOG_ERROR` /
   `LOG_WARN` (`engine/core/logger/logger.h`; logs will also be written to a file), then carry on in a safe fallback:
   skip the item, use a default, or return an empty/failed result the caller can check.
@@ -103,6 +120,7 @@ it. The standard engine approach is the baseline; do better where the data allow
 - No error popups in test runs (`SFS_NO_ERROR_DIALOG=1`).
 
 ## Reflection and the editor
+
 - Codegen (`engine/tools/codegen`, tree-sitter) finds types by base class. There are no registration macros.
   Attributes: `[[sfs::hide]]`, `[[sfs::show]]`, `[[sfs::showIf]]`, `[[sfs::range(a,b)]]`, `[[sfs::color]]`, etc.
   See `parser.cpp parseAttributes()`. Never use comment annotations (`sfs-ignore` directives aside).
@@ -110,6 +128,7 @@ it. The standard engine approach is the baseline; do better where the data allow
   Hide settings that don't apply.
 
 ## Workflow
+
 - The OWNER commits. Never commit, stash, reset, revert or push.
 - Every engine feature gets engine unit tests (`engine/tests/...`) and a docs page (`docs/`, `mkdocs.yml`). Run only
   the tests your change touches.

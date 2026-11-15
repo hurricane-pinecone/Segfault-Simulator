@@ -30,7 +30,10 @@ enum class AttributeId : uint8_t
   ShowIf,
   Part,
   Component,
-  Event,
+  EventNews,
+  EventEntityNews,
+  EventRequest,
+  EventResponse,
 };
 
 /** Where an attribute is written. */
@@ -47,6 +50,7 @@ enum class AttributeArgs : uint8_t
   MinMax,    // (min, max): two expressions
   BoolField, // (field) or (!field): a bool field of the same type
   String,    // ("text"): one non-empty string literal
+  Types,     // (A, B): one or more type names
 };
 
 /**
@@ -87,6 +91,14 @@ std::span<const AttributeInfo> attributes();
 
 /** The attribute called `name`, or null. */
 const AttributeInfo* findAttribute(std::string_view name);
+
+/**
+ * Whether an attribute makes its type an event: `event_news`,
+ * `event_entity_news`, `event_request` or `event_response`.
+ * @param id the attribute
+ * @return whether it's one of the event attributes
+ */
+bool isEventAttribute(AttributeId id);
 
 /**
  * The attribute a misspelt `name` most likely meant (case-insensitive, at most

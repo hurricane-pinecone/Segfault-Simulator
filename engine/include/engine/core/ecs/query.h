@@ -32,10 +32,10 @@ struct Excluding;
 /**
  * A list of query terms that stands for those terms written out, so a long
  * list can be named once, e.g. in a system:
- * `using Served = sfs::Query<Hitch, WorkOrder, sfs::Excluding<Hidden>>;` and
+ * `using Served = sfs::Query<Health, Enemy, sfs::Excluding<Hidden>>;` and
  * then `registry->query<Served>()`. It takes components, one Any<...> group
  * at most and Excluding<...> groups, and may hold or sit beside other terms,
- * Query lists included: query<Served, Motion>() is query<Hitch, WorkOrder,
+ * Query lists included: query<Served, Motion>() is query<Health, Enemy,
  * Excluding<Hidden>, Motion>(), the same signature and the same list. It is
  * flattened at compile time and costs nothing at run time.
  */
@@ -157,7 +157,7 @@ struct QueryList
  * How one query term adds itself to a QuerySignature. This one is a
  * component, which the entity must have; the specialisations below, for Any
  * and Excluding groups and Query lists, have the same two members. A
- * component may be written const (`const Hitch`): it is the same component,
+ * component may be written const (`const Health`): it is the same component,
  * and a query's rows bind it as const.
  */
 template <typename TComponent>

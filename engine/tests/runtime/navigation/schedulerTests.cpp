@@ -284,6 +284,49 @@ int main()
     CHECK(s.pending() == 0u);
   }
 
+  TEST("wanted: a job that's no longer wanted runs no further step")
+  {
+    PlanScheduler::Settings settings;
+    settings.threads = 2;
+    PlanScheduler s(settings);
+    std::atomic<bool> wanted{true};
+    std::atomic<int> steps{0};
+    PlanScheduler::Request r;
+    r.owner = 1;
+    r.wanted = [&] { return wanted.load(); };
+    r.step = [&](PlanScheduler::Context& ctx)
+    {
+      ctx.publish(++steps);
+      std::this_thread::sleep_for(5ms);
+      return steps < 1000 ? PlanScheduler::Step::More
+                          : PlanScheduler::Step::Done;
+    };
+    const auto job = s.submit(r);
+    while (steps < 3)
+      std::this_thread::sleep_for(1ms);
+    wanted = false;
+    std::this_thread::sleep_for(50ms);
+    const int stopped = steps;
+    std::this_thread::sleep_for(100ms);
+    CHECK(steps == stopped);
+    CHECK(stopped < 1000);
+    CHECK(s.state(job) == PlanScheduler::State::Unknown);
+    CHECK(s.pending() == 0u);
+    // One never wanted never runs.
+    std::atomic<int> ran{0};
+    PlanScheduler::Request never;
+    never.owner = 2;
+    never.wanted = [] { return false; };
+    never.step = [&](PlanScheduler::Context&)
+    {
+      ++ran;
+      return PlanScheduler::Step::Done;
+    };
+    s.submit(never);
+    std::this_thread::sleep_for(50ms);
+    CHECK(ran == 0);
+  }
+
   TEST("under load, look-ahead work with plenty of slack is deferred first; "
        "it runs once the load drops, or when its deadline comes close")
   {
@@ -454,12 +497,12 @@ int main()
     }
     {
       PlanScheduler s(settings);
-      // Long: a field plan's shape: as many layout candidates as there are
+      // Long: a coverage plan's shape: as many layout candidates as there are
       // workers, 1.5 s each, in parallel, then 10 passes of 150 ms.
       auto phase = std::make_shared<int>(0);
       PlanScheduler::Request r;
       r.owner = 1;
-      r.label = "field";
+      r.label = "coverage";
       r.deadline = Clock::now();
       const unsigned forks = s.threads();
       r.step = [phase, forks](PlanScheduler::Context& ctx)
@@ -476,12 +519,12 @@ int main()
                             : PlanScheduler::Step::Done;
       };
       const auto t0 = Clock::now();
-      const auto field = s.submit(r);
+      const auto coverage = s.submit(r);
       std::this_thread::sleep_for(50ms);
       const std::vector<double> l = shorts(s);
       with50 = percentile(l, 0.5);
       with95 = percentile(l, 0.95);
-      CHECK(waitFor(s, field, 30.0));
+      CHECK(waitFor(s, coverage, 30.0));
       std::printf("    (long job: %.2f s on %u workers)\n",
                   ms(t0, Clock::now()) / 1000.0,
                   s.threads());

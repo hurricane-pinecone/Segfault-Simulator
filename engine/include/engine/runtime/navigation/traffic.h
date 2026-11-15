@@ -127,7 +127,7 @@ public:
   /** ...then every agent's schedule, in rank order. */
   void schedule();
   void remove(AgentId id);
-  /** A pair that keep their own spacing (a cart alongside its combine). */
+  /** A pair that keep their own spacing (a truck alongside its loader). */
   void cooperate(AgentId a, AgentId b, bool on);
   void setNoWait(std::function<bool(glm::vec2)> noWait)
   {

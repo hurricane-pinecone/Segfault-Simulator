@@ -63,7 +63,7 @@ public:
   /**
    * How fast water rises in `ground`'s puddles, over its mesh's UVs (see
    * TerrainPuddles::fillRate: red 0 none stands .. 1 as fast as the
-   * weather's), e.g. a game's soil: loose tilled earth soaks rain up, packed
+   * weather's), e.g. a game's ground: loose sand soaks rain up, packed
    * tracks pond at once. Null: 1 everywhere (as it starts). Its puddles are
    * found again with it, so set it when it's changed, not every frame.
    */

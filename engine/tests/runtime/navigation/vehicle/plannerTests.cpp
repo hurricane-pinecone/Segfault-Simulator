@@ -19,7 +19,7 @@ using namespace sfs::nav::vehicle;
 
 namespace
 {
-VehicleModel tractor()
+VehicleModel truck()
 {
   VehicleModel v;
   v.boxes = {{-1.11f, 3.87f, 1.31f, 0.0f, 0.0f, 3.0f}};
@@ -47,7 +47,7 @@ std::vector<BoxSpace::Solid> fenceWithGap(float gap)
 PlanRequest request(std::vector<BoxSpace::Solid> solids, Pose2 from, Pose2 to)
 {
   PlanRequest q;
-  q.vehicle = tractor();
+  q.vehicle = truck();
   q.space = std::make_shared<BoxSpace>(std::move(solids));
   q.from = from;
   q.goals = {{to}};
@@ -121,7 +121,7 @@ int main()
     CHECK(cost->rasters.load() == before + 1);
   }
 
-  TEST("a gate 15 cm wider than the tractor should be threaded")
+  TEST("a gate 15 cm wider than the truck should be threaded")
   {
     const PlanRequest q =
         request(fenceWithGap(2.62f + 0.15f), {{0, 6}, 0.0f}, {{40, -4}, 0.0f});
@@ -132,9 +132,9 @@ int main()
     CHECK(!r.stats.exactMiss);
   }
 
-  TEST("a gate narrower than the tractor should be proven blocked")
+  TEST("a gate narrower than the truck should be proven blocked")
   {
-    // A pen 16 x 16 round the start, its one gap 2.5 m (the tractor's 2.66).
+    // A pen 16 x 16 round the start, its one gap 2.5 m (the truck's 2.66).
     std::vector<BoxSpace::Solid> s = {
         {{0, 8}, {8, 0.1f}, 0, 0, 1.2f, false, 1},
         {{0, -8}, {8, 0.1f}, 0, 0, 1.2f, false, 2},
@@ -177,7 +177,7 @@ int main()
 
   TEST("touches() should be the planner's own goal check, gap included")
   {
-    // The tractor's left side at y 1.31; a wall's face 1 cm past it (inside
+    // The truck's left side at y 1.31; a wall's face 1 cm past it (inside
     // the 2 cm gap), then 5 cm past it.
     const auto wallAt = [](float face)
     {
@@ -196,7 +196,7 @@ int main()
 
   TEST("touchesAlong() should say where a game's own way first touches")
   {
-    // A post 1 m across at x = 20 on the line; the tractor's nose 3.87 m
+    // A post 1 m across at x = 20 on the line; the truck's nose 3.87 m
     // ahead of its reference point (and the 2 cm gap).
     const std::vector<BoxSpace::Solid> post = {
         {{20.0f, 0.0f}, {0.5f, 0.5f}, 0.0f, 0.0f, 2.0f, false, 7}};
@@ -263,10 +263,10 @@ int main()
   TEST("a short reposition should take the quickest way: backing up, not "
        "a ring")
   {
-    // (A field's lap corner (a fence 4 m ahead and 3 m to the right; the
-    // next leg starts 2.5 m off, turned 60 degrees left), a pass starting
-    // half a metre behind where the last ended, and a lane change of half a
-    // metre (the b8 field's ringing legs). Nothing caps the turning: the way
+    // (A corner of a lap round a fenced area (a fence 4 m ahead and 3 m to
+    // the right; the next leg starts 2.5 m off, turned 60 degrees left), a
+    // pass starting half a metre behind where the last ended, and a lane
+    // change of half a metre. Nothing caps the turning: the way
     // found is the quickest by its speed profile, at least as quick as any
     // clear analytic word there, and none of those is a loop.)
     std::vector<BoxSpace::Solid> s = {
@@ -372,7 +372,7 @@ int main()
 
   TEST("a trailer should be backed into a bay within its reversing limit")
   {
-    VehicleModel v = tractor();
+    VehicleModel v = truck();
     Trailer t;
     t.hitchBehind = 1.0f;
     t.drawbar = 4.26f;
@@ -397,7 +397,7 @@ int main()
     CHECK(worst <= t.reverseLimit + 0.02f);
   }
 
-  // (D3e: one way, one answer. A game checks the points it's handed (its
+  // (One way, one answer. A game checks the points it's handed (its
   // look-ahead) as drivenSteps(); the planner's final check takes a path in
   // that same form, so what it found is clear when checked so.)
   TEST("a path's driven steps should lay it again where its samples are")
@@ -425,7 +425,7 @@ int main()
   TEST("a trailer backed past a post should be clear checked as it's driven "
        "(its points' steps), the very check a game's look-ahead makes")
   {
-    VehicleModel v = tractor();
+    VehicleModel v = truck();
     Trailer t;
     t.hitchBehind = 1.0f;
     t.drawbar = 3.3f;
@@ -451,12 +451,12 @@ int main()
     CHECK(!touchesAlong(check, q.from, q.hitch, drivenSteps(r.path), false));
   }
 
-  // (A2t: a goal may say how it's come to (Goal::arriveGear): a parking spot
+  // (A goal may say how it's come to (Goal::arriveGear): a parking spot
   // a rig is reversed into.)
   TEST("a towing rig told to arrive backing should reverse into a drive-"
        "through bay it would otherwise drive straight into")
   {
-    VehicleModel v = tractor();
+    VehicleModel v = truck();
     Trailer t;
     t.hitchBehind = 1.0f;
     t.drawbar = 4.26f;
@@ -636,7 +636,7 @@ int main()
   TEST("a cusp should be priced at its real time: the shuttle standing plus "
        "the time lost braking and pulling away")
   {
-    VehicleModel m = tractor();
+    VehicleModel m = truck();
     m.shuttleSeconds = 0.5f;
     m.accel = 1.0f;
     m.brake = 2.0f;
@@ -749,7 +749,7 @@ int main()
        "lined-up pose, found within a small search")
   {
     // A shed bay 4 m wide, 8 m deep, open to the east; the goal facing east
-    // in it (backed in), the tractor coming from the south facing north.
+    // in it (backed in), the truck coming from the south facing north.
     std::vector<BoxSpace::Solid> bay = {
         {{-4.0f, 2.1f}, {4.1f, 0.1f}, 0.0f, 0.0f, 3.0f, false, 1},
         {{-4.0f, -2.1f}, {4.1f, 0.1f}, 0.0f, 0.0f, 3.0f, false, 2},
@@ -797,15 +797,15 @@ int main()
     std::printf("    (most turned %.0f deg)\n", most * 57.2958f);
   }
 
-  // The search's flood (A2r): goals that face back, or are reached only by
+  // The search's flood: goals that face back, or are reached only by
   // going round, priced by the heading-aware heuristic (its motions with
   // obstacles), the search grows few poses.
   TEST("a towing rig whose goal faces back behind buildings should find its "
        "way round them within a small search")
   {
-    // (The cart meet: a forward-only tractor and trailer heading west, the
-    // goal 60 m west facing east; buildings north of the goal's lane, a
-    // fence 9 m south of it: no room to turn round there.)
+    // (A forward-only truck and trailer heading west, the goal 60 m west
+    // facing east; buildings north of the goal's lane, a fence 9 m south of
+    // it: no room to turn round there.)
     std::vector<BoxSpace::Solid> yard = {
         {{-12.0f, -1.0f}, {6.0f, 9.0f}, 0.0f, 0.0f, 4.0f, false, 1},
         {{5.0f, -19.0f}, {45.0f, 0.2f}, 0.0f, 0.0f, 1.2f, false, 2}};
@@ -830,15 +830,15 @@ int main()
                 r.path.length());
   }
 
-  // (A2s: the heading-aware heuristic turns as the search's own turns do (in
+  // (The heading-aware heuristic turns as the search's own turns do (in
   // and out of lock, not held at full lock), checks the rig's outline (its
   // corners) and the trailer's, swung as a turn leaves it.)
   TEST("a towing rig turning round in a yard too narrow for its turns should "
        "go round where there's room within a small search")
   {
-    // (Tractor 05 to the field: heading west in a lane 10 m wide between a
-    // shed (north) and a thin fence (south); the goal 26 m east facing east:
-    // a U-turn there looks as if it fits at full lock, not as it's driven.)
+    // (Heading west in a lane 10 m wide between a shed (north) and a thin
+    // fence (south); the goal 26 m east facing east: a U-turn there looks as
+    // if it fits at full lock, not as it's driven.)
     std::vector<BoxSpace::Solid> yard = {
         {{-30.0f, 10.0f}, {14.0f, 6.0f}, 0.0f, 0.0f, 4.0f, false, 1},
         {{-20.0f, -6.05f}, {34.0f, 0.05f}, 0.0f, 0.0f, 1.2f, false, 2}};
@@ -866,8 +866,8 @@ int main()
   TEST("a goal in a shed facing away from the start should be found within a "
        "small search")
   {
-    // (The combine home: a shed open to the west, the goal nose in facing
-    // east; the start 50 m south facing east, a wall between with one gap.)
+    // (A shed open to the west, the goal nose in facing east; the start 50 m
+    // south facing east, a wall between with one gap.)
     std::vector<BoxSpace::Solid> shed = {
         {{10.0f, 31.5f}, {5.0f, 0.2f}, 0.0f, 0.0f, 4.0f, false, 1},
         {{10.0f, 25.0f}, {5.0f, 0.2f}, 0.0f, 0.0f, 4.0f, false, 2},
@@ -988,7 +988,7 @@ int main()
     for (const auto& [from, to] : trips)
     {
       PlanRequest q;
-      q.vehicle = tractor();
+      q.vehicle = truck();
       q.from = from;
       q.goals = {{to}};
       q.space = broad;
@@ -1074,7 +1074,7 @@ int main()
                 words);
   }
 
-  // (A1: the heuristic. Its 2D map is a true lower bound; the turning and
+  // (The heuristic: its 2D map is a true lower bound; the turning and
   // heading-aware maps are guides that can overstate (counted, printed).)
   TEST("the heuristic's 2D map should never be more than the time a found "
        "way takes from there, and should be consistent")
@@ -1101,7 +1101,7 @@ int main()
     while (cases < 12)
     {
       PlanRequest q;
-      q.vehicle = tractor();
+      q.vehicle = truck();
       if (cases % 3 == 2)
       {
         Trailer t;

@@ -74,7 +74,7 @@ public:
   // paste, duplicate).
   bool canUndo() const { return !m_undo.empty(); }
   bool canRedo() const { return !m_redo.empty(); }
-  /** e.g. "Rename Wheat.asset" (empty: nothing). */
+  /** e.g. "Rename Sword.asset" (empty: nothing). */
   std::string undoLabel() const { return m_undo.empty() ? std::string() : m_undo.back().label; }
   std::string redoLabel() const { return m_redo.empty() ? std::string() : m_redo.back().label; }
   void undo(EditorContext& context);

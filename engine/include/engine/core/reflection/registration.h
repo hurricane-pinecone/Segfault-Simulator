@@ -80,7 +80,7 @@ T* objectAs(void* object)
 
 /**
  * A TypeInfo for T, which derives from the reflected type `base` (a game's
- * TractorSpec from the engine's VehicleSpec, say): its kind is its base's.
+ * TruckSpec from the engine's VehicleSpec, say): its kind is its base's.
  * For now only scriptable objects may derive from a reflected type.
  */
 template <typename T>

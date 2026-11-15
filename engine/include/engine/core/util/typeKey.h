@@ -25,14 +25,14 @@ constexpr std::string_view componentTypeKey()
 }
 
 /**
- * The type a type key names, for people ("Health", "farm::Seed"); the whole
+ * The type a type key names, for people ("Health", "game::Door"); the whole
  * key if it can't be picked out.
  */
 std::string readableTypeName(std::string_view typeKey);
 
 /**
  * A run-time type's name, for people: demangled where the compiler mangles
- * it ("farm::HarvestSystem"), else as the compiler gives it.
+ * it ("game::SpawnSystem"), else as the compiler gives it.
  * @param type the type, e.g. typeid(*this) for an object's own type
  * @return its name
  */

@@ -11,16 +11,16 @@ struct Color;
 
 /**
  * Pixels the game draws and changes, shown by an Image (Image(picture)): a
- * yield map, a minimap. RGBA8, rows from the top, colours as they look on
+ * minimap, a heat map. RGBA8, rows from the top, colours as they look on
  * screen (sRGB). Make one shared (std::make_shared<ui::Picture>(w, h)), keep
  * it, write its pixels and call changed(): the next frame shows them. A
  * change only uploads the pixels again; nothing's laid out again (a resize
  * lays out the views showing it). Keep it alive while it's shown.
  *
- *   m_yield->set(x, y, Color::rgb(90, 160, 60));
- *   m_yield->changed();
+ *   m_map->set(x, y, Color::rgb(90, 160, 60));
+ *   m_map->changed();
  *   ...
- *   Image(m_yield).resizable().interpolation(Interpolation::Nearest)
+ *   Image(m_map).resizable().interpolation(Interpolation::Nearest)
  */
 class Picture
 {

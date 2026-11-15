@@ -121,7 +121,7 @@ private:
   std::size_t m_previewLoads = 0; // how many times it's been loaded
   bool m_buildFailed = false;
 
-  std::string m_unit; // the file shown ("objects/FarmHud": its .h, .cpp...)
+  std::string m_unit; // the file shown ("objects/Hud": its .h, .cpp...)
   std::string m_layerName; // its UI layer, if it's one
   bool m_follow = true;    // show the file the Code panel has open
   std::filesystem::path m_followed;

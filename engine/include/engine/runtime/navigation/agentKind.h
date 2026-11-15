@@ -72,7 +72,7 @@ struct AgentSpec
     float forwardLimit = 1.45f, reverseLimit = 0.61f;
   };
   std::optional<Towed> trailer;
-  /** Working modes 1.. (an implement down): their boxes and tightest turn. */
+  /** Working modes 1.. (a tool lowered): their boxes and tightest turn. */
   struct Mode
   {
     std::vector<Box3> boxes;

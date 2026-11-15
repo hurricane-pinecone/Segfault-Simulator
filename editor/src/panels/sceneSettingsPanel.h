@@ -18,7 +18,8 @@ protected:
   void drawContents(EditorContext& context) override;
 
 private:
-  // The Events view's rows, refilled each frame: kept so it allocates nothing
-  // once it has room.
+  // The Events view's rows, refilled each frame: kept so they allocate
+  // nothing once they have room.
   std::vector<sfs::EventStats> m_eventStats;
+  std::vector<sfs::EventConsumerStats> m_eventConsumers;
 };

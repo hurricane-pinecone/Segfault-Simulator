@@ -361,8 +361,9 @@ std::vector<glm::vec2> CoarseGraph::route(glm::vec2 from,
     const float dy = static_cast<float>(std::abs(i / m_w - ty));
     return (std::max(dx, dy) + 0.41421356f * std::min(dx, dy)) * c * least;
   };
-  // (Only the cells it reaches, never the whole grid's worth per trip: a farm
-  // and its town at a quarter metre is millions of cells, 80 ms to lay out.)
+  // (Only the cells it reaches, never the whole grid's worth per trip: a
+  // town and its outskirts at a quarter metre is millions of cells, 80 ms
+  // to lay out.)
   struct Reached
   {
     float g = kFar;

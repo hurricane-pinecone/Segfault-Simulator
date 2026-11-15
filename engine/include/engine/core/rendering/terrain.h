@@ -101,7 +101,7 @@ struct TerrainLayer
  * over it where its layers' `puddles` let them.
  *
  * A `deformable` terrain is pressed in where things go over it (tyre tracks,
- * furrows, footprints; see DeformerComponent and DeformationModule): near
+ * ruts, footprints; see DeformerComponent and DeformationModule): near
  * the camera as real geometry, further off parallax-mapped.
  */
 struct TerrainMaterial
@@ -110,7 +110,7 @@ struct TerrainMaterial
   // the edges); null: the first layer only.
   std::shared_ptr<const TextureData> splat;
   // A colour over the mesh's UVs multiplying the layers (sRGB; null: none):
-  // what a game paints on its ground (e.g. tilled fields), kept when the
+  // what a game paints on its ground (e.g. paths, scorch marks), kept when the
   // terrain stands in for the game's material (MeshLibrary sets it). Its
   // alpha is how dry the ground is: below 1 soaked (darker and glossier, as
   // rain wets it), so wet soil can stay wet after the rain.

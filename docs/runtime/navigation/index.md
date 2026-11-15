@@ -228,7 +228,7 @@ nav->requestGoal(truck, {{{40.0f, 12.0f}, 1.57f}}); // position, heading
 
 `requestGoals` takes several goals (it goes to the quickest) and an optional
 goal test ("anywhere clear of the gate"). Each request has an id; the last one
-counts. Then read `events()` each frame:
+counts. How it goes comes back as news (below).
 
 A goal may also say how it's come to: `arriveGear` (`AgentGoal`'s, the
 planner's `vehicle::Goal`'s) is 0 (either way, the
@@ -246,7 +246,35 @@ spot.arriveGear = -1; // reversed in, its trailer straight behind
 nav->requestGoal(semi, spot);
 ```
 
-| Event | When |
+The system tells how its agents are getting on with
+`sfs::nav::AgentEvent` (`engine/runtime/navigation/agentEvent.h`), an
+[event](../../core/events/index.md) about one agent, sent with its entity as
+it happens during the system's update. Its `what` is the fleet's
+`nav::Fleet::Event`: its `kind`, the `request` it's about, the `other` agent
+and the `blockers`. A system that wants it makes a consumer in `create()`:
+
+```cpp
+class TaxiSystem : public sfs::System
+{
+protected:
+  void create() override { m_agents = consumer<sfs::nav::AgentEvent>(); }
+
+  void update(double) override
+  {
+    for (auto [taxi, news] : m_agents.read())
+      if (news.what.kind == sfs::nav::Fleet::Event::Kind::Arrived)
+        dropOff(taxi);
+  }
+
+private:
+  sfs::EventConsumer<sfs::nav::AgentEvent> m_agents;
+};
+```
+
+A system after NavigationSystem in the update order hears it the same step,
+one before it the next.
+
+| `what.kind` | When |
 | --- | --- |
 | `Arrived` | it's there |
 | `Blocked` | proven: no way exists. `blockers` says what hems it in; the debug view marks them |

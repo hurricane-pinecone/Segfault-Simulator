@@ -878,7 +878,6 @@ void NavigationSystem::draw()
 
 void NavigationSystem::update(double deltaTime)
 {
-  m_events.clear();
   if (!registry)
     return;
   {
@@ -893,7 +892,7 @@ void NavigationSystem::update(double deltaTime)
   for (nav::Fleet::Event& e : m_fleet->takeEvents())
     if (const std::optional<Tracked> t =
             trackedById(static_cast<Entity::EntityId>(e.agent)))
-      m_events.push_back({t->entity, std::move(e)});
+      send(t->entity, nav::AgentEvent{std::move(e)});
   writeBack();
   draw();
 }

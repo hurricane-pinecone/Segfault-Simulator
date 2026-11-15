@@ -3,6 +3,7 @@
 #include "lints.h"
 #include "projectIndex.h"
 
+#include <sfs/codegen/generator.h>
 #include <sfs/codegen/parser.h>
 #include <sfs/codegen/suppressions.h>
 
@@ -55,27 +56,42 @@ void analyse(Document& document,
   document.role = isCodegenHeader(document, index) ? FileRole::CodegenHeader
                   : isHeader(document.path)        ? FileRole::Header
                                                    : FileRole::Source;
+  codegen::ParseResult result;
   if (document.role == FileRole::CodegenHeader)
   {
-    codegen::ParseResult result =
+    result =
         codegen::parseHeader(document.text, document.path, document.tree.get());
+    // The build checks the event declarations across a target's headers;
+    // the header's own are checked here as it's typed.
+    if (!result.events.empty())
+      codegen::generateEventTraits(
+          result.events, result.plainTypes, result.diagnostics);
     document.diagnostics = std::move(result.diagnostics);
     document.suppressions = std::move(result.suppressions);
-    if (parsed)
-      *parsed = std::move(result);
   }
   else
+  {
     document.suppressions = codegen::findSuppressions(document.tree.get(),
                                                       document.text,
                                                       document.path,
                                                       document.diagnostics);
+    // A source's event types, for the response types it declares.
+    if (document.text.find("sfs::event_") != std::string::npos)
+      result.events = codegen::parseHeader(document.text,
+                                           document.path,
+                                           document.tree.get())
+                          .events;
+  }
 
   linter.run(document.text,
              document.tree.get(),
              document.path,
              index,
              document.diagnostics,
-             read);
+             read,
+             &result.events);
+  if (parsed && document.role == FileRole::CodegenHeader)
+    *parsed = std::move(result);
   codegen::applySuppressions(document.suppressions, document.diagnostics);
   if (disabled.any())
     std::erase_if(

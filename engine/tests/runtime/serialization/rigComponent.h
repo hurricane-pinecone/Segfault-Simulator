@@ -19,7 +19,7 @@ struct RigComponent
 {
   /** One entity, e.g. a model's arm. */
   Entity arm;
-  /** Several, e.g. a mower's blades. */
+  /** Several, e.g. a fan's blades. */
   std::vector<Entity> blades;
 };
 

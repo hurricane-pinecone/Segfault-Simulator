@@ -13,7 +13,7 @@ namespace sfs::nav
 /**
  * What ground costs to drive over, as a factor on time (1: ordinary ground;
  * a worn track 0.85; rough ground more; infinity: never, for that mode: a
- * combine's body over standing crop). Thread-safe and fixed for a plan, as
+ * vehicle's body over a flowerbed). Thread-safe and fixed for a plan, as
  * Space is. `mode` is the VehicleModel mode the pose is driven in.
  */
 class CostLayer

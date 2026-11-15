@@ -120,6 +120,7 @@ TSystem& Registry::addSystem(TArgs&&... args)
 {
   auto system = std::make_unique<TSystem>(std::forward<TArgs>(args)...);
   system->setRegistry(this);
+  detail::EventHost::attach(*system, &m_events);
 
   TSystem* ptr = system.get();
 
@@ -127,7 +128,9 @@ TSystem& Registry::addSystem(TArgs&&... args)
   forgetSystemLookups();
 
   System* base = ptr;
+  detail::EventHost::declaring(*base, true);
   base->create();
+  detail::EventHost::declaring(*base, false);
   attach(*base);
 
   return *ptr;

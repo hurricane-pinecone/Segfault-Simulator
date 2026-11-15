@@ -71,14 +71,14 @@ bool listedIn(const std::array<std::string_view, N>& list,
   return std::find(list.begin(), list.end(), name) != list.end();
 }
 
-// `name` in lower camel case: "CFVehicle" gives "cfVehicle", "Hitch" "hitch".
+// `name` in lower camel case: "UIWidget" gives "uiWidget", "Door" "door".
 std::string lowerCamel(std::string_view name)
 {
   std::string out(name);
   std::size_t upper = 0;
   while (upper < out.size() && out[upper] >= 'A' && out[upper] <= 'Z')
     ++upper;
-  // Keep the last capital of a run that starts the next word: CFVehicle.
+  // Keep the last capital of a run that starts the next word: UIWidget.
   const bool word =
       upper > 1 && upper < out.size() && out[upper] >= 'a' && out[upper] <= 'z';
   for (std::size_t i = 0; i < (word ? upper - 1 : upper); ++i)
@@ -330,7 +330,7 @@ struct Rules
   }
 
   // An identifier, `this`, or a chain of fields of one (`hitch.implement`,
-  // `this->m_x`, `wheel->dual`): an entity expression that names the same
+  // `this->m_x`, `door->open`): an entity expression that names the same
   // handle each time it's read.
   bool plainChain(TSNode node) const
   {
@@ -2320,7 +2320,7 @@ struct Rules
   }
 
   // Whether two spellings name one type: the same, or with the same last
-  // name (`sfs::Hitch` and `Hitch`), a leading `const` aside.
+  // name (`sfs::Door` and `Door`), a leading `const` aside.
   static bool sameType(std::string_view a, std::string_view b)
   {
     a = unconst(a);
@@ -2877,8 +2877,8 @@ struct Rules
   // -------------------------------------------------------- filter-in-loop
 
   // Whether a row names a component, bound, as an Any member or excluded.
-  // Spellings match whole or by their last names, so `sfs::Hitch` and
-  // `Hitch` are taken for one type.
+  // Spellings match whole or by their last names, so `sfs::Door` and
+  // `Door` are taken for one type.
   bool rowNames(const Row& row, std::string_view type) const
   {
     const auto alike = [&](std::string_view term)

@@ -23,7 +23,7 @@ namespace sfs
 struct TextureData;
 
 /**
- * Ground pressed in and pushed up: tyre tracks, ruts, furrows, footprints on
+ * Ground pressed in and pushed up: tyre tracks, ruts, grooves, footprints on
  * a deformable terrain (TerrainMaterial::deformable; see DeformationModule,
  * which draws it and feeds it from DeformerComponent entities).
  *
@@ -151,7 +151,7 @@ public:
   void relax(std::span<const glm::ivec2> tiles,
              std::span<const glm::vec4> corners);
 
-  /** Flatten a world XY rectangle (e.g. where a field's been tilled). */
+  /** Flatten a world XY rectangle (e.g. where the ground's been levelled). */
   void clear(glm::vec2 low, glm::vec2 high);
   /** Flatten inside a world XY polygon (its corners in order). */
   void clear(std::span<const glm::vec2> polygon);
@@ -304,8 +304,8 @@ private:
  * The lowest point of a mesh's surface, as placed, over each texel of a
  * deformation map's grid, where it reaches below `below` (world Z): a
  * deformer's underside, seen from under the ground. NaN where nothing is.
- * Triangles entirely above `below` are skipped, so a tractor's body costs
- * nothing; its tyres' lugs and an implement's tines show texel by texel.
+ * Triangles entirely above `below` are skipped, so a truck's body costs
+ * nothing; its tyres' lugs and a dozer blade's edge show texel by texel.
  * Each texel is looked at in sixteen places: its bottom is theirs averaged
  * (where there's any), its coverage how many of them the mesh is over, so
  * edges are smooth, not stepped.
@@ -330,7 +330,7 @@ Underside underside(std::span<const glm::vec3> positions,
  * A mesh made ready to find its underside often (a deformer's, each time it
  * moves): its triangles in small groups of neighbours, each group's bounds
  * in the mesh's own space, so underside() passes over the groups nowhere
- * near `below` (a tyre's top, a tractor's body) without placing them, and
+ * near `below` (a tyre's top, a truck's body) without placing them, and
  * which of them face up on a closed solid (one facing down is always under
  * those). The underside's the same as from the mesh itself, but for a hair
  * where a solid's cut by `below`. Made once for a mesh.

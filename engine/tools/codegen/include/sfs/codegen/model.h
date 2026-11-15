@@ -2,6 +2,7 @@
 
 #include "sfs/codegen/rules.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -21,7 +22,7 @@ enum class TypeKind
   MeshSource,
   ScriptableObject, // derives from sfs::ScriptableObject
   // Derives from another reflected type (the engine's or the module's own,
-  // e.g. `struct TractorSpec : sfs::VehicleSpec`): its kind is its base's,
+  // e.g. `struct TruckSpec : sfs::VehicleSpec`): its kind is its base's,
   // decided when the generated code compiles; for now a scriptable object.
   Derived,
 };
@@ -87,6 +88,91 @@ struct TypeModel
   SourceRange nameRange;
 };
 
+/** What an event type is, by its attribute. */
+enum class EventKind
+{
+  /** News, `[[sfs::event_news]]`: read by every consumer of it. */
+  News,
+  /** News about one entity, `[[sfs::event_entity_news]]`, keyed by it. */
+  EntityNews,
+  /** A request, `[[sfs::event_request(A, B)]]`, listing its responses. */
+  Request,
+  /** A response, `[[sfs::event_response]]`, sent through a responder. */
+  Response,
+};
+
+/** One direct base of an event type. */
+struct EventBase
+{
+  /** The base type as written, e.g. "DamageEvent". */
+  std::string name;
+  /** Whether it's a virtual base (`: virtual DamageEvent`). */
+  bool isVirtual = false;
+
+  bool operator==(const EventBase&) const = default;
+};
+
+/**
+ * A name a file brings into scope: `using game::Found;`, a type alias
+ * (`using Found = game::Found;`, `typedef game::Found Found;`), a namespace
+ * alias (`namespace g = game;`) or a using-directive (`using namespace
+ * game;`). Event declarations and sfs-lsp's response lint look names up
+ * through them (lookUpName()).
+ */
+struct UsingName
+{
+  /** The file it's written in. */
+  std::filesystem::path file;
+  /** The name it brings in; empty for a using-directive. */
+  std::string name;
+  /** What it names as written, e.g. "game::Found", or the namespace. */
+  std::string target;
+  /** Whether the target is a namespace: a namespace alias or a directive. */
+  bool isNamespace = false;
+  /** The namespaces around it, outermost first. */
+  std::vector<std::string> scopes;
+  /** Its first byte: code after it sees it. */
+  uint32_t offset = 0;
+  /**
+   * The byte after the block it's written in (a function body's), past
+   * which it isn't seen; the end of the file at namespace scope.
+   */
+  uint32_t end = UINT32_MAX;
+};
+
+/**
+ * An event type a header declares: what codegen writes its compile-time
+ * traits from (generateEventTraits()).
+ */
+struct EventModel
+{
+  /** Unqualified, e.g. "EnemyDied". */
+  std::string name;
+  /** With its named namespaces, e.g. "game::EnemyDied". */
+  std::string qualifiedName;
+  /** Its enclosing namespaces, outermost first; "" for an unnamed one. */
+  std::vector<std::string> scopes;
+  /** Which attribute marks it. */
+  EventKind kind = EventKind::News;
+  /** "struct" or "class", as declared. */
+  std::string classKey = "struct";
+  /** A request's response types, as written. */
+  std::vector<std::string> responses;
+  /** Its direct base types, as written. */
+  std::vector<EventBase> bases;
+  /** The file it's in. */
+  std::filesystem::path header;
+  /** Where its name is written. */
+  SourceRange nameRange;
+  /** Its name's first byte in the header. */
+  uint32_t offset = 0;
+  /**
+   * The using names the header's code sees at the event, which its
+   * responses and bases are looked up through.
+   */
+  std::vector<UsingName> usings;
+};
+
 /**
  * A problem codegen or an sfs-lsp lint found. Its severity, source and tags
  * are its rule's (ruleInfo(rule)).
@@ -133,6 +219,13 @@ struct ParseResult
   std::optional<TypeModel> type; // the header's script type, if found
   /** [[sfs::component]] types besides the file's, in declaration order. */
   std::vector<TypeModel> components;
+  /** The event types it declares, in declaration order. */
+  std::vector<EventModel> events;
+  /**
+   * The qualified names of the structs and classes at namespace scope that
+   * aren't events, so a request listing one can be told so.
+   */
+  std::vector<std::string> plainTypes;
   std::vector<Diagnostic> diagnostics;
   /** The header's sfs-ignore comments, already applied to `diagnostics`. */
   Suppressions suppressions;
@@ -144,7 +237,7 @@ struct ParseResult
 struct UiTypeModel
 {
   std::string name;                // unqualified, e.g. "ClockPanel"
-  std::string qualifiedName;       // with namespaces, e.g. "farm::ClockPanel"
+  std::string qualifiedName;       // with namespaces, e.g. "game::ClockPanel"
   bool view = false;               // it has a body()
   std::vector<std::string> fields; // public data members, in order
   std::filesystem::path header;

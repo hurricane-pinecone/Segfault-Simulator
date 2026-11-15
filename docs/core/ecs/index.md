@@ -240,15 +240,14 @@ null.
 
 Components hold only an entity's state: what is so about it, written by the
 system that owns that concern and read by any other. Everything one system
-tells another (news that something happened, a notice, a request, an answer)
-is an [event](../events/index.md), sent and consumed with the event verbs a
-system inherits: `send(E{...})`, `read<E>()` (every reader sees each event
-once), `take<E>()` (one system takes each), `takeShared<E>()`,
-`readLatest<E>()` and `takeLatest<E>()` (each entity's newest), and
-`request(entity, R{...})`, answered through a `Reply`. Each event is kept
-until every consumer of its type has consumed it. Workers send through an
-`EventSender`. No request fields, one-frame flags or message fields go on
-components.
+tells another (news that something happened, a request, a response) is an
+[event](../events/index.md). A system sends with `send(E{...})`, and in
+`create()`, as it registers its components, makes the consumers it reads
+with (`consumer<E>()`, whose handlers run before its `update()`) and the
+requesters it asks with (`requester<R>()`), kept as members. Every consumer
+sees each event once, and each event is kept until every consumer of its
+type has passed it. Workers send through an `EventBroadcast`. No request
+fields, one-frame flags or message fields go on components.
 
 `registry->componentChanges<A>()` goes up whenever an entity gains or loses an
 `A` (a destroyed entity loses all of its components). Code that works
@@ -720,7 +719,8 @@ reg.events().update();           // once a frame, after the flush
 A headless host starts each frame's [events](../events/index.md) itself, with
 `events().update()` after the flush, as `Scene::update()` does, and runs its
 systems' updates through `reg.updateSystem(system, dt)` (and
-`lateUpdateSystem()`), which start each update's span of events.
+`lateUpdateSystem()`), which start each update's span of events and run the
+system's event handlers first.
 
 Entity destruction is deferred: a destroyed entity stays alive (and its
 components remain readable) until the next `flushEntities()` call. New

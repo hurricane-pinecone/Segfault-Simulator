@@ -117,7 +117,7 @@ struct ScriptableOps
  * A reflected type: its names, kind, fields and (for components) ops.
  *
  * A type may derive from another reflected type (for now a scriptable object
- * from another one: `struct TractorSpec : sfs::VehicleSpec`), the engine's or
+ * from another one: `struct TruckSpec : sfs::VehicleSpec`), the engine's or
  * a game's. `base` names it, and `fields` holds every level's fields, the
  * base's first (each FieldInfo::owner says which level declares it); the
  * registry fills the inherited ones in, whichever of the two is added first,

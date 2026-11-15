@@ -36,12 +36,19 @@ message(STATUS "ENGINE_LIBRARY_TYPE=${ENGINE_LIBRARY_TYPE}")
 # machine, so a native build builds it, while a cross-build (Windows from WSL,
 # or the web) uses a host copy given in SFS_CODEGEN_EXECUTABLE. Core-only builds
 # have no codegen (no tree-sitter), and register no engine types; nor does a
-# web build without a host codegen (it can't load scene files). A Windows cross
-# build still builds codegen's library, for its sfs-lsp.
+# web build without a host codegen (it can't load scene files). Given a host
+# codegen, a core-only build still uses it for event traits (its event tests
+# need them). A Windows cross build still builds codegen's library, for its
+# sfs-lsp.
 set(SFS_CODEGEN_EXECUTABLE "" CACHE FILEPATH
     "Host sfs-codegen to use when cross-compiling (e.g. from a native build's bin/)")
 if(ENGINE_CORE_ONLY)
     set(SFS_CODEGEN_AVAILABLE FALSE)
+    # Event types still need their traits: a host codegen writes them.
+    if(SFS_CODEGEN_EXECUTABLE)
+        set(SFS_CODEGEN_COMMAND "${SFS_CODEGEN_EXECUTABLE}")
+        set(SFS_CODEGEN_DEPENDS "${SFS_CODEGEN_EXECUTABLE}")
+    endif()
 elseif(ENGINE_WEB_BUILD AND NOT SFS_CODEGEN_EXECUTABLE)
     message(STATUS "Web build without SFS_CODEGEN_EXECUTABLE: no reflection, "
                    "so scene files and editor projects can't be built")
@@ -165,11 +172,10 @@ target_compile_options(engine-core PUBLIC
 # is. Without codegen a stub registers nothing.
 if(SFS_CODEGEN_AVAILABLE)
     set(ENGINE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/core/components")
-    sfs_generate_reflection(engine-core
-        MODULE engine
-        FUNCTION sfs::reflect::registerEngineTypes
-        INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        HEADERS
+    # The engine's own event types' traits go where eventTraits.h includes
+    # them, for the engine and the games built on it alike.
+    set(ENGINE_GENERATED_INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+    set(ENGINE_COMPONENT_HEADERS
             "${ENGINE_COMPONENT_DIR}/nameComponent.h"
             "${ENGINE_COMPONENT_DIR}/transformComponent.h"
             "${ENGINE_COMPONENT_DIR}/meshRendererComponent.h"
@@ -201,6 +207,20 @@ if(SFS_CODEGEN_AVAILABLE)
             "${ENGINE_COMPONENT_DIR}/windZoneComponent.h"
             "${ENGINE_COMPONENT_DIR}/inputContextComponent.h"
             "${ENGINE_COMPONENT_DIR}/cameraCollisionComponent.h")
+    # Every other engine header is scanned for event types alone, so an event
+    # type is seen wherever in the engine it's declared. Codegen rewrites the
+    # traits header only when it changes: a header edited without changing
+    # an event recompiles nothing.
+    file(GLOB_RECURSE ENGINE_EVENT_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/*.h")
+    list(REMOVE_ITEM ENGINE_EVENT_SOURCES ${ENGINE_COMPONENT_HEADERS})
+    sfs_generate_reflection(engine-core
+        MODULE engine
+        FUNCTION sfs::reflect::registerEngineTypes
+        INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        EVENT_TRAITS "${ENGINE_GENERATED_INCLUDE}/engine/generated/engineEventTraits.gen.h"
+        HEADERS ${ENGINE_COMPONENT_HEADERS}
+        EVENT_SOURCES ${ENGINE_EVENT_SOURCES})
 else()
     target_sources(engine-core PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/stubs/noEngineReflection.cpp")
@@ -270,6 +290,7 @@ add_library(sfs::engine-core ALIAS engine-core)
 target_include_directories(engine-core
     PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated/include>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/glm>"
         "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
@@ -338,6 +359,7 @@ if(SFS_CODEGEN_AVAILABLE)
         FUNCTION sfs::reflect::registerEngineRuntimeTypes
         FUNCTION_HEADER "engine/runtime/scripting/scriptRegistry.h"
         INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        NO_EVENT_TRAITS
         HEADERS
             "${CMAKE_CURRENT_SOURCE_DIR}/include/engine/runtime/navigation/vehicle/vehicleSpec.h")
 else()
@@ -675,6 +697,13 @@ if(NOT ENGINE_WEB_BUILD)
             PATTERN "*.h"
             PATTERN "*.hpp"
             PATTERN "*.inl"
+    )
+
+    # The engine's generated public headers (its event traits).
+    install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/include/"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        OPTIONAL
+        FILES_MATCHING PATTERN "*.h"
     )
 
     # Vendored header-only dependencies the public headers expose (glm, imgui,

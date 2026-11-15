@@ -156,7 +156,7 @@ public:
   uint64_t requestGoals(AgentId id,
                         std::vector<AgentGoal> goals,
                         std::function<bool(Pose2)> goalTest = {});
-  /** Drive a path made elsewhere (a field pass): claimed as any. */
+  /** Drive a path made elsewhere (a patrol route): claimed as any. */
   void setPath(AgentId id, std::shared_ptr<const AgentPath> path);
   /**
    * Drive no faster than this (m/s; 0 stands it where it is, braking): a
@@ -184,7 +184,7 @@ public:
   void setControls(AgentId id, const Controls& controls);
   void handBack(AgentId id);
   bool handDriven(AgentId id) const;
-  /** A pair that keep their own spacing (a cart beside its combine). */
+  /** A pair that keep their own spacing (a truck beside its loader). */
   void cooperate(AgentId a, AgentId b, bool on);
 
   /**

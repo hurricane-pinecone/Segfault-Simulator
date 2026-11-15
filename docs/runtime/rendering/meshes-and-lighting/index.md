@@ -380,7 +380,7 @@ when the rain stops: drying it is the game's job, by lowering `puddles`.
 water rises in the puddles over the mesh's UVs (read as data, red 0 to 1;
 null, the default, is 1 everywhere): the line there is risen to `puddles` x
 that too, so where it's low water only stands in the deepest part of a
-hollow, if at all. A game's soil, say: loose tilled earth soaks rain up (0.1),
+hollow, if at all. A game's ground, say: loose sand soaks rain up (0.1),
 packed tracks pond at once (1). Setting it finds the puddles again, so set it
 when it changes (every few seconds at most), not every frame. The map keeps
 it per texel (its blue).
@@ -477,8 +477,8 @@ game's grid cell, slopes over a block).
   amount: `corners` (one per tile) is the smoothing at its four corners,
   blended across it, so wet ground can weather while dry ground beside it
   stays as it is (no fade). `map(ground)->tiles()` lists the tiles that exist.
-- `clearRegion(ground, polygon)` (or a rectangle) flattens it, e.g. where a
-  field's been tilled.
+- `clearRegion(ground, polygon)` (or a rectangle) flattens it, e.g. where the
+  ground's been levelled.
 - `offsetAt(ground, point)` and `heightAt(ground, point)` read it (the
   latter the surface's height, pressed in: to settle a vehicle into its ruts).
 - `save(ground)` packs the map small (millimetres, runs of flat ground and
@@ -492,7 +492,7 @@ game's grid cell, slopes over a block).
 ```cpp
 auto* deformation = render.module<sfs::DeformationModule>();
 deformation->setSoftness(ground, [&](glm::vec2 at) { return soil.wetness(at); });
-deformation->clearRegion(ground, field.outline); // tilled
+deformation->clearRegion(ground, plot.outline); // levelled
 ```
 
 **Drawing.** Near the camera it's real geometry: a patch of fine rings (4 cm

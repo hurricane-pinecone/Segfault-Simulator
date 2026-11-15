@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdlib>
 #include <fstream>
+#include <initializer_list>
 #include <set>
 #include <sstream>
 #include <string>
@@ -102,20 +103,20 @@ std::string docsBlock(const std::filesystem::path& page, std::string_view name)
   return text.substr(from + begin.size(), to - from - begin.size());
 }
 
-constexpr std::string_view kCrop = R"(
+constexpr std::string_view kShield = R"(
 #pragma once
 namespace game {
 struct Helper { float notMe = 0.0f; };
-struct Crop
+struct Shield
 {
-  [[sfs::range(0, 1)]] float growth = 0.5f;
+  [[sfs::range(0, 1)]] float strength = 0.5f;
   [[sfs::color]] glm::vec3 tint{1.0f};
-  std::string kind = "wheat";
+  std::string kind = "steel";
   float a, b;
   [[sfs::hide]] int debug = 0;
   static constexpr int kMax = 4;
   const int fixed = 1;
-  void grow(float dt) { growth += dt; }
+  void charge(float dt) { strength += dt; }
   void declaredOnly();
 private:
   [[sfs::show]] int secret = 3;
@@ -141,23 +142,23 @@ int main()
 {
   TEST("the type named after the file should be the script type")
   {
-    const ParseResult result = parseHeader(kCrop, "scripts/crop.h");
+    const ParseResult result = parseHeader(kShield, "scripts/shield.h");
     CHECK(result.type.has_value());
-    CHECK(result.type->name == std::string("Crop"));
-    CHECK(result.type->qualifiedName == std::string("game::Crop"));
+    CHECK(result.type->name == std::string("Shield"));
+    CHECK(result.type->qualifiedName == std::string("game::Shield"));
     CHECK(result.type->kind == TypeKind::Component);
   }
 
   TEST("public fields, attributes and [[sfs::show]] should be collected")
   {
-    const TypeModel type = *parseHeader(kCrop, "crop.h").type;
+    const TypeModel type = *parseHeader(kShield, "shield.h").type;
 
-    const FieldModel* growth = findField(type, "growth");
-    CHECK(growth != nullptr);
-    CHECK(growth->kind == std::string("Float"));
-    CHECK(growth->range.has_value());
-    CHECK(growth->range->first == std::string("0"));
-    CHECK(growth->range->second == std::string("1"));
+    const FieldModel* strength = findField(type, "strength");
+    CHECK(strength != nullptr);
+    CHECK(strength->kind == std::string("Float"));
+    CHECK(strength->range.has_value());
+    CHECK(strength->range->first == std::string("0"));
+    CHECK(strength->range->second == std::string("1"));
 
     const FieldModel* tint = findField(type, "tint");
     CHECK(tint != nullptr);
@@ -175,12 +176,12 @@ int main()
 
   TEST("hidden, private, static, const fields and methods should be skipped")
   {
-    const TypeModel type = *parseHeader(kCrop, "crop.h").type;
+    const TypeModel type = *parseHeader(kShield, "shield.h").type;
     CHECK(findField(type, "debug") == nullptr);
     CHECK(findField(type, "hidden") == nullptr);
     CHECK(findField(type, "kMax") == nullptr);
     CHECK(findField(type, "fixed") == nullptr);
-    CHECK(findField(type, "grow") == nullptr);
+    CHECK(findField(type, "charge") == nullptr);
     CHECK(findField(type, "declaredOnly") == nullptr);
     CHECK(findField(type, "notMe") == nullptr); // other types in the header
     CHECK(type.fields.size() == 6u);
@@ -196,7 +197,7 @@ int main()
   TEST("a plain class with nothing to edit should be a helper, not a component")
   {
     const ParseResult helper = parseHeader(R"(
-      class FieldMap
+      class TileMap
       {
       public:
         int width() const { return m_width; }
@@ -204,13 +205,12 @@ int main()
         int m_width = 0;
       };
     )",
-                                           "FieldMap.h");
+                                           "TileMap.h");
     CHECK(!helper.type.has_value());
     CHECK(helper.diagnostics.empty()); // and no "no class named after the file"
 
     // A struct is a component even with nothing in it (a tag)...
-    const ParseResult tag =
-        parseHeader("struct Harvestable {};", "Harvestable.h");
+    const ParseResult tag = parseHeader("struct Pickable {};", "Pickable.h");
     CHECK(tag.type.has_value() && tag.type->kind == TypeKind::Component);
     // ...and so is a class with public fields.
     const ParseResult withFields =
@@ -273,9 +273,9 @@ int main()
   TEST("systems should be recognised and nested namespaces kept")
   {
     const ParseResult result = parseHeader(
-        "namespace a::b { class Growth : public sfs::System {}; }", "growth.h");
+        "namespace a::b { class Regen : public sfs::System {}; }", "regen.h");
     CHECK(result.type->kind == TypeKind::System);
-    CHECK(result.type->qualifiedName == std::string("a::b::Growth"));
+    CHECK(result.type->qualifiedName == std::string("a::b::Regen"));
   }
 
   TEST("display names should split words, acronyms and numbers")
@@ -292,7 +292,7 @@ int main()
   TEST("generated code should register fields and use access tags for private "
        "ones")
   {
-    TypeModel type = *parseHeader(kCrop, "/project/scripts/crop.h").type;
+    TypeModel type = *parseHeader(kShield, "/project/scripts/shield.h").type;
     GeneratorOptions options;
     options.module = "game";
     options.function = "game::registerTypes";
@@ -300,32 +300,31 @@ int main()
     options.includeRoot = "/project";
 
     const std::string code = generateRegistration({type}, options);
-    CHECK(code.find("#include \"scripts/crop.h\"") != std::string::npos);
+    CHECK(code.find("#include \"scripts/shield.h\"") != std::string::npos);
     CHECK(code.find("void game::registerTypes(") != std::string::npos);
-    CHECK(
-        code.find("componentType<game::Crop>(\"Crop\", \"Crop\", \"game\")") !=
-        std::string::npos);
+    CHECK(code.find("componentType<game::Shield>(\"Shield\", \"Shield\", "
+                    "\"game\")") != std::string::npos);
     CHECK(code.find("field.attributes.hasRange = true;") != std::string::npos);
-    CHECK(code.find("template struct MemberAccess<Access_game_Crop_secret, "
-                    "&game::Crop::secret>;") != std::string::npos);
+    CHECK(code.find("template struct MemberAccess<Access_game_Shield_secret, "
+                    "&game::Shield::secret>;") != std::string::npos);
   }
 
   TEST("systems and game objects should register how to instantiate them")
   {
     TypeModel player = *parseHeader(kPlayer, "/project/scripts/Player.h").type;
-    TypeModel growth = *parseHeader("class Growth : public sfs::System {};",
-                                    "/project/scripts/Growth.h")
-                            .type;
+    TypeModel regen = *parseHeader("class Regen : public sfs::System {};",
+                                   "/project/scripts/Regen.h")
+                           .type;
     GeneratorOptions options;
     options.module = "game";
     options.function = "sfsRegisterModule";
     options.includeRoot = "/project/scripts";
 
-    const std::string code = generateRegistration({player, growth}, options);
+    const std::string code = generateRegistration({player, regen}, options);
     CHECK(code.find("#include \"engine/runtime/scripting/scriptRegistry.h\"") !=
           std::string::npos);
     CHECK(code.find("std::make_unique<Player>()") != std::string::npos);
-    CHECK(code.find("scene.addSystem<Growth>()") != std::string::npos);
+    CHECK(code.find("scene.addSystem<Regen>()") != std::string::npos);
     CHECK(code.find("sfs::scripts().add(std::move(script));") !=
           std::string::npos);
     CHECK(
@@ -407,11 +406,11 @@ int main()
 
   TEST("a components-only module should not depend on the runtime")
   {
-    TypeModel crop = *parseHeader(kCrop, "/project/scripts/crop.h").type;
+    TypeModel shield = *parseHeader(kShield, "/project/scripts/shield.h").type;
     GeneratorOptions options;
     options.module = "game";
     options.function = "registerTypes";
-    const std::string code = generateRegistration({crop}, options);
+    const std::string code = generateRegistration({shield}, options);
     CHECK(code.find("scriptRegistry.h") == std::string::npos);
   }
 
@@ -502,7 +501,7 @@ int main()
   {
     const UiParseResult result = parseUiHeader(R"(
 #pragma once
-namespace farm {
+namespace town {
 struct JobRow { std::string id, what; std::string who; };
 struct JobBoard
 {
@@ -520,13 +519,13 @@ template <typename T> struct Box { T value; sfs::ui::View body() const; };
 }
 sfs::ui::View look(sfs::ui::View view);
 )",
-                                               "ui/Farm.ui.h");
+                                               "ui/Town.ui.h");
     CHECK(result.diagnostics.empty());
     CHECK(result.types.size() == 3u);
     if (result.types.size() == 3u)
     {
       const UiTypeModel& row = result.types[0];
-      CHECK(row.qualifiedName == "farm::JobRow" && !row.view &&
+      CHECK(row.qualifiedName == "town::JobRow" && !row.view &&
             row.fields == std::vector<std::string>{"id", "what", "who"});
       const UiTypeModel& board = result.types[1];
       CHECK(board.name == "JobBoard" && board.view &&
@@ -539,23 +538,23 @@ sfs::ui::View look(sfs::ui::View view);
   TEST("UI previews should fill every type's fields and preview its views")
   {
     UiTypeModel row{
-        "JobRow", "farm::JobRow", false, {"what"}, "/p/scripts/ui/Farm.ui.h"};
+        "JobRow", "town::JobRow", false, {"what"}, "/p/scripts/ui/Town.ui.h"};
     UiTypeModel board{"JobBoard",
-                      "farm::JobBoard",
+                      "town::JobBoard",
                       true,
-                      {"jobs", "canSow"},
-                      "/p/scripts/ui/Farm.ui.h"};
+                      {"jobs", "canBuild"},
+                      "/p/scripts/ui/Town.ui.h"};
     GeneratorOptions options;
     options.module = "GameUiPreview";
     options.function = "sfsRegisterModule";
     options.includeRoot = "/p/scripts";
     const std::string code = generateUiPreviews({row, board}, options);
-    CHECK(code.find("#include \"ui/Farm.ui.h\"") != std::string::npos);
-    CHECK(code.find("struct Placeholder<farm::JobRow>") != std::string::npos);
-    CHECK(code.find("placeholder(value.canSow, \"Can Sow\", item);") !=
+    CHECK(code.find("#include \"ui/Town.ui.h\"") != std::string::npos);
+    CHECK(code.find("struct Placeholder<town::JobRow>") != std::string::npos);
+    CHECK(code.find("placeholder(value.canBuild, \"Can Build\", item);") !=
           std::string::npos);
-    CHECK(code.find("placeholderView<farm::JobBoard>") != std::string::npos);
-    CHECK(code.find("placeholderView<farm::JobRow>") == std::string::npos);
+    CHECK(code.find("placeholderView<town::JobBoard>") != std::string::npos);
+    CHECK(code.find("placeholderView<town::JobRow>") == std::string::npos);
     CHECK(code.find("void sfsRegisterModule(sfs::reflect::TypeRegistry&) {}") !=
           std::string::npos);
   }
@@ -563,17 +562,17 @@ sfs::ui::View look(sfs::ui::View view);
   TEST("a scriptable object may derive from another reflected type, the "
        "engine's or the game's")
   {
-    const ParseResult tractor = parseHeader(R"(
-      struct TractorSpec : public sfs::VehicleSpec
+    const ParseResult truck = parseHeader(R"(
+      struct TruckSpec : public sfs::VehicleSpec
       {
         float hitchHeight = 0.5f;
       };
     )",
-                                            "/project/scripts/TractorSpec.h");
-    CHECK(tractor.type.has_value() && tractor.type->kind == TypeKind::Derived);
-    CHECK(tractor.diagnostics.empty());
-    CHECK(tractor.type->base == "VehicleSpec");
-    CHECK(findField(*tractor.type, "hitchHeight") != nullptr);
+                                          "/project/scripts/TruckSpec.h");
+    CHECK(truck.type.has_value() && truck.type->kind == TypeKind::Derived);
+    CHECK(truck.diagnostics.empty());
+    CHECK(truck.type->base == "VehicleSpec");
+    CHECK(findField(*truck.type, "hitchHeight") != nullptr);
 
     const ParseResult fancy = parseHeader(
         "namespace game { struct FancyItem : ItemDef { int sparkle = 1; }; }",
@@ -585,10 +584,10 @@ sfs::ui::View look(sfs::ui::View view);
     options.module = "game";
     options.function = "sfsRegisterModule";
     options.includeRoot = "/project/scripts";
-    const std::string code = generateRegistration({*tractor.type}, options);
-    CHECK(code.find("derivedType<TractorSpec>(\"TractorSpec\", \"Tractor "
+    const std::string code = generateRegistration({*truck.type}, options);
+    CHECK(code.find("derivedType<TruckSpec>(\"TruckSpec\", \"Truck "
                     "Spec\", \"game\", \"VehicleSpec\")") != std::string::npos);
-    CHECK(code.find("objectAs<TractorSpec>(object)->hitchHeight") !=
+    CHECK(code.find("objectAs<TruckSpec>(object)->hitchHeight") !=
           std::string::npos);
     // Scriptable objects need nothing of the scripting runtime.
     CHECK(code.find("scriptRegistry.h") == std::string::npos);
@@ -670,48 +669,535 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(result.components.empty());
   }
 
-  TEST("an [[sfs::event]] type should not be a component, and may be named "
-       "after its header")
+  TEST("an event type should not be a component, and may be named after its "
+       "header")
   {
     const ParseResult named = parseHeader(R"(
-      namespace farm {
-      struct [[sfs::event]] FieldCellChanged { int x = 0; int y = 0; };
+      namespace game {
+      struct [[sfs::event_news]] DoorOpened { int x = 0; int y = 0; };
       }
     )",
-                                          "FieldCellChanged.h");
+                                          "DoorOpened.h");
     CHECK(named.diagnostics.empty());
     CHECK(!named.type.has_value());
     CHECK(named.components.empty());
 
     const ParseResult beside = parseHeader(R"(
-      struct Crop { float growth = 0.0f; };
-      struct [[sfs::event]] CropRipened { int field = 0; };
-      struct [[sfs::event]] CropCut { int field = 0; };
+      struct Shield { float strength = 0.0f; };
+      struct [[sfs::event_entity_news]] ShieldBroken { int amount = 0; };
+      struct [[sfs::event_response]] ShieldRestored { int amount = 0; };
     )",
-                                           "Crop.h");
+                                           "Shield.h");
     CHECK(beside.diagnostics.empty());
-    CHECK(beside.type && beside.type->name == "Crop");
+    CHECK(beside.type && beside.type->name == "Shield");
     CHECK(beside.components.empty());
 
-    const ParseResult onlyEvents = parseHeader(
-        "struct [[sfs::event]] Planted {};\nstruct [[sfs::event]] Cut {};",
-        "FieldEvents.h");
+    const ParseResult onlyEvents =
+        parseHeader("struct [[sfs::event_news]] Opened {};\n"
+                    "struct [[sfs::event_request(Closed)]] Closing {};",
+                    "DoorEvents.h");
     CHECK(onlyEvents.diagnostics.empty());
     CHECK(!onlyEvents.type.has_value());
     CHECK(onlyEvents.components.empty());
   }
 
-  TEST("a type marked both [[sfs::component]] and [[sfs::event]] should warn "
-       "and be an event")
+  TEST("a type marked both [[sfs::component]] and an event attribute should "
+       "warn and be an event")
   {
     const ParseResult result = parseHeader(
-        "struct [[sfs::component, sfs::event]] Planted { int cell = 0; };",
-        "Planted.h");
+        "struct [[sfs::component, sfs::event_news]] Opened { int door = 0; };",
+        "Opened.h");
     CHECK(!result.type.has_value());
     CHECK(result.components.empty());
     CHECK(hasDiagnostic(result,
                         Severity::Warning,
-                        "The event Planted can't be a component too"));
+                        "The event Opened can't be a component too"));
+  }
+
+  TEST("event traits should give each kind, a request's responses by "
+       "qualified name and the ancestors nearest first")
+  {
+    const ParseResult parsed = parseHeader(R"(
+      namespace game {
+      struct [[sfs::event_news]] HitEvent { int amount = 0; };
+      struct [[sfs::event_news]] DamageEvent : HitEvent {};
+      struct [[sfs::event_news]] FireDamageEvent : public DamageEvent {};
+      struct [[sfs::event_entity_news]] AlertedEvent { float level = 0; };
+      class [[sfs::event_response]] PathFoundResponse {};
+      namespace nav { struct [[sfs::event_response]] PathFailedResponse {}; }
+      struct [[sfs::event_request(PathFoundResponse, nav::PathFailedResponse,
+                                  OtherResponse)]] PathRequest {};
+      }
+      namespace { struct [[sfs::event_news]] LocalEvent {}; }
+    )",
+                                           "Events.h");
+    CHECK(parsed.diagnostics.empty());
+    CHECK(parsed.events.size() == 8u);
+    std::vector<Diagnostic> problems;
+    const std::string traits =
+        generateEventTraits(parsed.events, parsed.plainTypes, problems);
+    CHECK(problems.empty());
+    const auto has = [&](std::string_view text)
+    {
+      const bool found = traits.find(text) != std::string::npos;
+      if (!found)
+        std::fprintf(
+            stderr, "the traits lack:\n%s\n", std::string(text).c_str());
+      return found;
+    };
+    CHECK(has("#pragma once\n\n#include <engine/core/events/eventTraits.h>\n"));
+    CHECK(has("namespace game { struct HitEvent; }\n"));
+    CHECK(has("namespace game { class PathFoundResponse; }\n"));
+    CHECK(has("namespace game { namespace nav { struct PathFailedResponse; } "
+              "}\n"));
+    CHECK(has("namespace { struct LocalEvent; }\n"));
+    CHECK(has("template <>\nstruct EventTraits<::game::HitEvent>\n{\n"
+              "  static constexpr EventKind kind = EventKind::News;\n"
+              "  using Responses = TypeList<>;\n"
+              "  using Ancestors = TypeList<>;\n};\n"));
+    CHECK(has("struct EventTraits<::game::DamageEvent>\n{\n"
+              "  static constexpr EventKind kind = EventKind::News;\n"
+              "  using Responses = TypeList<>;\n"
+              "  using Ancestors = TypeList<::game::HitEvent>;\n};\n"));
+    CHECK(has("struct EventTraits<::game::FireDamageEvent>\n{\n"
+              "  static constexpr EventKind kind = EventKind::News;\n"
+              "  using Responses = TypeList<>;\n"
+              "  using Ancestors = TypeList<::game::DamageEvent, "
+              "::game::HitEvent>;\n};\n"));
+    CHECK(has("struct EventTraits<::game::AlertedEvent>\n{\n"
+              "  static constexpr EventKind kind = EventKind::EntityNews;\n"));
+    CHECK(has("struct EventTraits<::game::PathFoundResponse>\n{\n"
+              "  static constexpr EventKind kind = EventKind::Response;\n"));
+    // A response codegen doesn't see (the engine's, or one the compiler
+    // will report) is named in the request's namespaces.
+    CHECK(has("struct EventTraits<::game::PathRequest>\n{\n"
+              "  static constexpr EventKind kind = EventKind::Request;\n"
+              "  using Responses = TypeList<::game::PathFoundResponse, "
+              "::game::nav::PathFailedResponse, ::game::OtherResponse>;\n"
+              "  using Ancestors = TypeList<>;\n};\n"));
+    CHECK(has("struct EventTraits<::LocalEvent>\n{\n"));
+    CHECK(has("} // namespace sfs::detail\n"));
+
+    // No events: only the include.
+    std::vector<Diagnostic> none;
+    CHECK(generateEventTraits({}, {}, none) ==
+          "// Generated by sfs-codegen from the event attributes: what the "
+          "compiler\n// checks each event type against "
+          "(engine/core/events/eventTraits.h).\n// Every file of the target "
+          "includes it first.\n#pragma once\n\n"
+          "#include <engine/core/events/eventTraits.h>\n");
+    CHECK(none.empty());
+  }
+
+  TEST("lookupCandidates should give the names a spelling may mean, "
+       "innermost first")
+  {
+    CHECK(
+        (lookupCandidates("Found", {"game", "", "nav"}) ==
+         std::vector<std::string>{"game::nav::Found", "game::Found", "Found"}));
+    CHECK((lookupCandidates("nav::Found", {"game"}) ==
+           std::vector<std::string>{"game::nav::Found", "nav::Found"}));
+    CHECK((lookupCandidates("::Found", {"game"}) ==
+           std::vector<std::string>{"Found"}));
+    CHECK((lookupCandidates("Found", {}) == std::vector<std::string>{"Found"}));
+    // A nested namespace's parts are each a scope.
+    CHECK((lookupCandidates("Found", {"a::b"}) ==
+           std::vector<std::string>{"a::b::Found", "a::Found", "Found"}));
+    CHECK((lookupCandidates("Found", {"game", "a::inline b"}) ==
+           std::vector<std::string>{
+               "game::a::b::Found", "game::a::Found", "game::Found", "Found"}));
+  }
+
+  TEST("a virtual event base should be read as a base, its ancestors each "
+       "once")
+  {
+    const ParseResult parsed = parseHeader(
+        "struct [[sfs::event_news]] HitEvent {};\n"
+        "struct [[sfs::event_news]] FireEvent : virtual HitEvent {};\n"
+        "struct [[sfs::event_news]] IceEvent : virtual public HitEvent {};\n"
+        "struct [[sfs::event_news]] SteamEvent : FireEvent, IceEvent {};",
+        "Events.h");
+    CHECK(parsed.events.size() == 4u);
+    CHECK(parsed.events.size() == 4u &&
+          (parsed.events[1].bases ==
+           std::vector<EventBase>{{"HitEvent", true}}) &&
+          (parsed.events[3].bases ==
+           std::vector<EventBase>{{"FireEvent", false}, {"IceEvent", false}}));
+    std::vector<Diagnostic> problems;
+    const std::string traits =
+        generateEventTraits(parsed.events, parsed.plainTypes, problems);
+    CHECK(problems.empty());
+    CHECK(traits.find("struct EventTraits<::SteamEvent>\n{\n"
+                      "  static constexpr EventKind kind = EventKind::News;\n"
+                      "  using Responses = TypeList<>;\n"
+                      "  using Ancestors = TypeList<::FireEvent, ::IceEvent, "
+                      "::HitEvent>;\n") != std::string::npos);
+  }
+
+  TEST("a script type's event handle members should be skipped without a "
+       "field-type warning")
+  {
+    // Unqualified where SFS's names are visible, and through an alias.
+    const ParseResult open = parseHeader(R"(
+      using namespace sfs;
+      using Moves = EventConsumer<Moved>;
+      class Mover : public System
+      {
+      public:
+        EventConsumer<Moved> moved;
+        std::vector<Responder<PathRequest>> working;
+        Moves aliased;
+        MyResponder<Thing> other;
+      };
+    )",
+                                         "Mover.h");
+    CHECK(open.type && open.type->fields.empty());
+    CHECK(ofRule(open, RuleId::FieldType).size() == 1u);
+    CHECK(hasRule(open, RuleId::FieldType, "MyResponder"));
+    // A typedef, and a name brought in with `using sfs::X;`; without either,
+    // an unqualified Responder may be anyone's, so it's warned about.
+    const ParseResult named = parseHeader(R"(
+      typedef sfs::EventConsumer<Moved> Moves;
+      using sfs::EventRequester;
+      class Mover : public sfs::System
+      {
+      public:
+        Moves moved;
+        EventRequester<PathRequest> paths;
+        Responder<PathRequest> notSfs;
+      };
+    )",
+                                          "Mover.h");
+    CHECK(ofRule(named, RuleId::FieldType).size() == 1u);
+    CHECK(hasRule(named, RuleId::FieldType, "Responder<PathRequest>"));
+    const ParseResult result = parseHeader(R"(
+      class Mover : public sfs::System
+      {
+      public:
+        sfs::EventConsumer<Moved> moved;
+        sfs::EventRequester<PathRequest> paths;
+        sfs::EventBroadcast<Moved> news;
+        std::vector<sfs::Responder<PathRequest>> working;
+        Thing other;
+      };
+    )",
+                                           "Mover.h");
+    CHECK(result.type && result.type->fields.empty());
+    CHECK(ofRule(result, RuleId::FieldType).size() == 1u);
+    CHECK(hasRule(result, RuleId::FieldType, "Thing"));
+  }
+
+  TEST("a request in a nested namespace should find a response in an outer "
+       "one")
+  {
+    const ParseResult parsed = parseHeader(
+        "namespace game { struct [[sfs::event_response]] Upper {}; }\n"
+        "namespace game::nav { struct [[sfs::event_request(Upper)]] "
+        "AskUpper {}; }\n",
+        "Nested.h");
+    std::vector<Diagnostic> problems;
+    const std::string traits =
+        generateEventTraits(parsed.events, parsed.plainTypes, problems);
+    CHECK(problems.empty());
+    CHECK(traits.find("using Responses = TypeList<::game::Upper>;") !=
+          std::string::npos);
+  }
+
+  TEST("a request's responses should be looked up through namespace "
+       "aliases, using-declarations and using-directives")
+  {
+    const std::string header = R"(
+namespace a::b
+{
+struct [[sfs::event_response]] Mid { int m = 0; };
+struct [[sfs::event_response]] Other { int o = 0; };
+}
+namespace ab = a::b;
+struct [[sfs::event_request(ab::Mid)]] AskAlias { int g = 0; };
+namespace q
+{
+using a::b::Mid;
+struct [[sfs::event_request(Mid)]] AskUsingDecl { int g = 0; };
+}
+namespace r
+{
+using namespace a::b;
+struct [[sfs::event_request(Other)]] AskUsingDir { int g = 0; };
+}
+using namespace sfs;
+struct [[sfs::event_request(sfs::EngineResponse)]] AskEngine { int g = 0; };
+)";
+    const ParseResult parsed = parseHeader(header, "Asks.h");
+    std::vector<Diagnostic> problems = parsed.diagnostics;
+    const std::string traits =
+        generateEventTraits(parsed.events, parsed.plainTypes, problems);
+    CHECK(problems.empty());
+    for (const Diagnostic& d : problems)
+      std::fprintf(stderr, "%s\n", d.message.c_str());
+    const auto responsesOf = [&](std::string_view request)
+    {
+      const std::size_t at =
+          traits.find("EventTraits<::" + std::string(request) + ">");
+      const std::size_t from = traits.find("Responses = ", at);
+      return at == std::string::npos
+                 ? std::string()
+                 : traits.substr(from, traits.find(';', from) - from);
+    };
+    CHECK(responsesOf("AskAlias") == "Responses = TypeList<::a::b::Mid>");
+    CHECK(responsesOf("q::AskUsingDecl") ==
+          "Responses = TypeList<::a::b::Mid>");
+    CHECK(responsesOf("r::AskUsingDir") ==
+          "Responses = TypeList<::a::b::Other>");
+    CHECK(responsesOf("AskEngine") ==
+          "Responses = TypeList<::sfs::EngineResponse>");
+
+    // The traits compile against the engine's header, forced in before the
+    // declarations as a build does, and name the real types.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "sfsCodegenTraitsCompile";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "Asks.cpp")
+        << header.substr(0, header.find("using namespace sfs;")) +
+               "#include <type_traits>\n"
+               "template <typename R, typename... A>\n"
+               "constexpr bool lists = std::is_same_v<\n"
+               "    typename sfs::detail::EventTraits<R>::Responses,\n"
+               "    sfs::detail::TypeList<A...>>;\n"
+               "static_assert(lists<AskAlias, a::b::Mid>);\n"
+               "static_assert(lists<q::AskUsingDecl, a::b::Mid>);\n"
+               "static_assert(lists<r::AskUsingDir, a::b::Other>);\n";
+    // Without the engine-type request, which needs the engine's types.
+    std::ofstream(dir / "traits.h")
+        << traits.substr(0,
+                         traits.find("template <>\nstruct "
+                                     "EventTraits<::AskEngine>")) +
+               "} // namespace sfs::detail\n";
+    const std::string command =
+        "\"" SFS_CXX_COMPILER "\" -std=c++23 -fsyntax-only "
+        "-Wno-attributes -I\"" SFS_ENGINE_INCLUDE_DIR "\" -include \"" +
+        (dir / "traits.h").string() + "\" \"" + (dir / "Asks.cpp").string() +
+        "\" 2> \"" + (dir / "errors.txt").string() + "\"";
+    const int status = std::system(command.c_str());
+    CHECK(status == 0);
+    if (status != 0)
+      std::fprintf(stderr, "%s\n", readText(dir / "errors.txt").c_str());
+    std::filesystem::remove_all(dir);
+  }
+
+  TEST("a request's response named through a using name no scanned header "
+       "declares should be an event-declaration error")
+  {
+    const auto problemsOf = [](std::string_view header)
+    {
+      const ParseResult parsed = parseHeader(header, "Asks.h");
+      std::vector<Diagnostic> problems;
+      generateEventTraits(parsed.events, parsed.plainTypes, problems);
+      return problems;
+    };
+    const auto declared =
+        problemsOf("namespace q { using a::b::Missing; struct "
+                   "[[sfs::event_request(Missing)]] AskMissing {}; }\n");
+    CHECK(declared.size() == 1u &&
+          declared[0].rule == RuleId::EventDeclaration &&
+          declared[0].message ==
+              "AskMissing lists Missing, which a using-declaration, alias or "
+              "using-directive names but no scanned header declares, so its "
+              "traits can't name it. Write its full name, with its "
+              "namespaces.");
+    CHECK(problemsOf("namespace ab = a::b;\nstruct "
+                     "[[sfs::event_request(ab::Missing)]] AskAlias {};\n")
+              .size() == 1u);
+    CHECK(problemsOf("namespace r { using namespace a; struct "
+                     "[[sfs::event_request(Missing)]] AskDir {}; }\n")
+              .size() == 1u);
+    // Qualified, or with no using names, it's left to the compiler.
+    CHECK(problemsOf("namespace r { using namespace a; struct "
+                     "[[sfs::event_request(sfs::Missing)]] AskDir {}; }\n")
+              .empty());
+    CHECK(
+        problemsOf("struct [[sfs::event_request(Missing)]] Ask {};\n").empty());
+  }
+
+  TEST("event traits should resolve responses and bases across headers, and "
+       "take one type declared twice alike as one")
+  {
+    const ParseResult responses = parseHeader(
+        "namespace game { struct [[sfs::event_response]] DoneResponse {}; "
+        "struct [[sfs::event_news]] PingEvent {}; }",
+        "Responses.h");
+    const ParseResult requests = parseHeader(
+        "namespace game { struct [[sfs::event_request(DoneResponse)]] "
+        "WorkRequest {}; struct [[sfs::event_news]] PingEvent {}; "
+        "struct [[sfs::event_news]] LoudPingEvent : PingEvent {}; }",
+        "Requests.h");
+    std::vector<EventModel> events = responses.events;
+    events.insert(events.end(), requests.events.begin(), requests.events.end());
+    std::vector<Diagnostic> problems;
+    const std::string traits = generateEventTraits(events, {}, problems);
+    CHECK(problems.empty());
+    CHECK(traits.find("using Responses = TypeList<::game::DoneResponse>;") !=
+          std::string::npos);
+    CHECK(traits.find("using Ancestors = TypeList<::game::PingEvent>;") !=
+          std::string::npos);
+    std::size_t pings = 0;
+    for (std::size_t at = traits.find("EventTraits<::game::PingEvent>");
+         at != std::string::npos;
+         at = traits.find("EventTraits<::game::PingEvent>", at + 1))
+      ++pings;
+    CHECK(pings == 1u);
+  }
+
+  TEST("event-declaration should be an error for each badly declared event")
+  {
+    // The event-declaration messages for `sources`, each a header of its own,
+    // from parsing them and writing their traits. Other rules' are left out.
+    const auto errors = [](std::initializer_list<std::string_view> sources)
+    {
+      std::vector<EventModel> events;
+      std::vector<std::string> plainTypes;
+      std::vector<Diagnostic> found;
+      int n = 0;
+      for (const std::string_view source : sources)
+      {
+        ParseResult result =
+            parseHeader(source, "Events" + std::to_string(n++) + ".h");
+        events.insert(events.end(), result.events.begin(), result.events.end());
+        plainTypes.insert(plainTypes.end(),
+                          result.plainTypes.begin(),
+                          result.plainTypes.end());
+        found.insert(
+            found.end(), result.diagnostics.begin(), result.diagnostics.end());
+      }
+      generateEventTraits(events, plainTypes, found);
+      std::vector<std::string> messages;
+      for (const Diagnostic& d : found)
+        if (d.rule == RuleId::EventDeclaration)
+        {
+          CHECK(severityOf(d) == Severity::Error);
+          messages.push_back(d.message);
+        }
+      return messages;
+    };
+    const auto says =
+        [](const std::vector<std::string>& messages, std::string_view text)
+    {
+      const bool found =
+          messages.size() == 1u && messages[0].find(text) != std::string::npos;
+      if (!found)
+        std::fprintf(stderr,
+                     "expected one message with: %s\n",
+                     std::string(text).c_str());
+      return found;
+    };
+    CHECK(says(errors({"struct [[sfs::event_news, sfs::event_response]] Twice "
+                       "{};"}),
+               "A type takes one event attribute, so this one is a second."));
+    // tree-sitter's C++ grammar can't read an attribute on an enum, so only
+    // a union is checked.
+    CHECK(says(errors({"union [[sfs::event_news]] Value { int a; float b; };"}),
+               "An event attribute goes on a struct, not a union."));
+    CHECK(says(errors({"struct [[sfs::component]] Holder { "
+                       "[[sfs::event_news]] int a = 0; };"}),
+               "The attribute [[sfs::event_news]] goes on a struct, not a "
+               "field."));
+    const std::string_view scope = "An event is a named struct at namespace "
+                                   "scope";
+    CHECK(says(errors({"struct Outer { struct [[sfs::event_news]] InnerEvent "
+                       "{}; int a = 0; };"}),
+               scope));
+    CHECK(says(errors({"void spawn() { struct [[sfs::event_news]] LocalEvent "
+                       "{}; }"}),
+               scope));
+    CHECK(says(errors({"template <typename T> struct [[sfs::event_news]] "
+                       "BoxEvent { T value; };"}),
+               scope));
+    CHECK(says(
+        errors({"struct [[sfs::event_news]] { int a; } unnamed;"}), scope));
+    CHECK(says(errors({"struct Plain {};\nstruct "
+                       "[[sfs::event_request(Plain)]] AskRequest {};"}),
+               "AskRequest lists Plain, which isn't marked "
+               "[[sfs::event_response]]. A request lists only response types: "
+               "mark it."));
+    CHECK(says(errors({"struct [[sfs::event_news]] HitEvent {};",
+                       "struct [[sfs::event_request(HitEvent)]] AskRequest "
+                       "{};"}),
+               "AskRequest lists HitEvent, which isn't marked "
+               "[[sfs::event_response]]."));
+    CHECK(says(errors({"struct [[sfs::event_news]] HitEvent {};\n"
+                       "struct [[sfs::event_entity_news]] AimedEvent : "
+                       "HitEvent {};"}),
+               "AimedEvent is [[sfs::event_entity_news]] but derives from "
+               "HitEvent, which is [[sfs::event_news]]. An event is the kind "
+               "its event bases are."));
+    CHECK(says(errors({"struct [[sfs::event_response]] DoneResponse {};\n"
+                       "struct [[sfs::event_request(DoneResponse)]] "
+                       "BaseRequest {};\n"
+                       "struct [[sfs::event_request(DoneResponse)]] "
+                       "MoreRequest : BaseRequest {};"}),
+               "MoreRequest derives from BaseRequest, but requests and "
+               "responses take no part in event families. Give MoreRequest "
+               "the fields itself."));
+    CHECK(says(errors({"struct [[sfs::event_response]] DoneResponse {};\n"
+                       "struct [[sfs::event_news]] DoneEvent : DoneResponse "
+                       "{};"}),
+               "DoneEvent derives from DoneResponse, but requests and "
+               "responses take no part in event families."));
+    CHECK(says(errors({"namespace game { struct [[sfs::event_news]] PingEvent "
+                       "{}; }",
+                       "namespace game { struct [[sfs::event_entity_news]] "
+                       "PingEvent {}; }"}),
+               "The event game::PingEvent is declared twice, differently. "
+               "Give each its own name."));
+    CHECK(says(errors({"inline namespace v1 { struct [[sfs::event_news]] "
+                       "PingEvent {}; }"}),
+               "The event PingEvent is in an inline namespace, which its "
+               "traits can't name. Declare it in a plain namespace."));
+    CHECK(says(errors({"namespace game::inline v2 { struct "
+                       "[[sfs::event_news]] PingEvent {}; }"}),
+               "is in an inline namespace"));
+    CHECK(says(errors({"struct [[sfs::event_news]] HitEvent {};\n"
+                       "struct [[sfs::event_news]] FireEvent : HitEvent {};\n"
+                       "struct [[sfs::event_news]] IceEvent : HitEvent {};\n"
+                       "struct [[sfs::event_news]] SteamEvent : FireEvent, "
+                       "IceEvent {};"}),
+               "SteamEvent reaches the event base HitEvent twice, through two "
+               "of its bases, so it can't be sent as one HitEvent. Derive "
+               "from HitEvent along one path only, or as a virtual base on "
+               "every path."));
+    // Reached as a virtual base on every path, there's one HitEvent; a
+    // plain base beside a virtual one makes two.
+    CHECK(errors({"struct [[sfs::event_news]] HitEvent {};\n"
+                  "struct [[sfs::event_news]] FireEvent : virtual HitEvent "
+                  "{};\n"
+                  "struct [[sfs::event_news]] IceEvent : public virtual "
+                  "HitEvent {};\n"
+                  "struct [[sfs::event_news]] SteamEvent : FireEvent, "
+                  "IceEvent {};"})
+              .empty());
+    CHECK(says(errors({"struct [[sfs::event_news]] HitEvent {};\n"
+                       "struct [[sfs::event_news]] FireEvent : virtual "
+                       "HitEvent {};\n"
+                       "struct [[sfs::event_news]] TwiceEvent : FireEvent, "
+                       "HitEvent {};"}),
+               "TwiceEvent reaches the event base HitEvent twice"));
+    // A cycle of bases is reported on each of its events, as a cycle.
+    const std::vector<std::string> loop =
+        errors({"struct [[sfs::event_news]] LoopA : LoopB {};\n"
+                "struct [[sfs::event_news]] LoopB : LoopA {};"});
+    CHECK(loop.size() == 2u);
+    CHECK(loop.size() == 2u &&
+          loop[0] == "LoopA derives from itself through its event bases, "
+                     "which C++ doesn't allow. Remove the base that closes "
+                     "the loop." &&
+          loop[1].starts_with("LoopB derives from itself"));
+    CHECK(says(errors({"struct [[sfs::event_news]] Self : Self {};"}),
+               "Self derives from itself through its event bases"));
+    // Fine: a response the scanned headers don't know, a plain base.
+    CHECK(errors({"struct [[sfs::event_request(EngineResponse)]] AskRequest "
+                  "{};\nstruct Fields { int a; };\n"
+                  "struct [[sfs::event_news]] FieldsEvent : Fields {};"})
+              .empty());
   }
 
   TEST("nested and template [[sfs::component]] types should warn, not register")
@@ -965,7 +1451,10 @@ sfs::ui::View look(sfs::ui::View view);
                      std::string(info.name).c_str(),
                      result.diagnostics[0].message.c_str());
       // An event registers nothing; the other type attributes a component.
-      if (info.id == AttributeId::Event)
+      if (info.id == AttributeId::EventNews ||
+          info.id == AttributeId::EventEntityNews ||
+          info.id == AttributeId::EventRequest ||
+          info.id == AttributeId::EventResponse)
         CHECK(result.components.empty() && !result.type.has_value());
       else
         CHECK(
@@ -1043,17 +1532,18 @@ sfs::ui::View look(sfs::ui::View view);
        "and ignorable")
   {
     // After stale-saved-name, in this order, before bad-ignore.
-    const std::array<std::string_view, 11> names = {"has-then-get",
-                                                    "is-alive",
-                                                    "row-lookup",
-                                                    "setup-in-constructor",
-                                                    "component-pointer",
-                                                    "filter-in-loop",
-                                                    "unused-row-entity",
-                                                    "row-component-copy",
-                                                    "event-unmarked",
-                                                    "reader-not-kept",
-                                                    "reader-on-component"};
+    const std::array<std::string_view, 11> names = {
+        "has-then-get",
+        "is-alive",
+        "row-lookup",
+        "setup-in-constructor",
+        "component-pointer",
+        "filter-in-loop",
+        "unused-row-entity",
+        "row-component-copy",
+        "event-handle-outside-create",
+        "reader-on-component",
+        "response-sent-twice"};
     std::size_t at = static_cast<std::size_t>(RuleId::StaleSavedName);
     for (const std::string_view name : names)
     {
@@ -1115,9 +1605,12 @@ sfs::ui::View look(sfs::ui::View view);
         {"struct S { [[sfs::showIf(nope)]] float a; };",
          "S.h",
          RuleId::ShowIfTarget},
-        {"struct [[sfs::component, sfs::event]] S {};",
+        {"struct [[sfs::component, sfs::event_news]] S {};",
          "S.h",
          RuleId::EventAndComponent},
+        {"struct [[sfs::event_news, sfs::event_response]] S {};",
+         "S.h",
+         RuleId::EventDeclaration},
         {"// sfs-ignore-file(nope)\nstruct S {};", "S.h", RuleId::BadIgnore},
     };
     for (const Case& c : cases)

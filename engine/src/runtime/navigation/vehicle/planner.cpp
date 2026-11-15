@@ -59,8 +59,7 @@ void finish(const Motions& rig,
   // checks a stretch by. Its segments walked a step apart put the poses (and a
   // trailer's angle, integrated over other steps) a little elsewhere: a way
   // backing a trailer past a tree by a hair was clear by its segments and
-  // touching by its points, planned and refused again for ever (D3e, Paddock
-  // Gum 4).
+  // touching by its points, planned and refused again for ever.
   const std::vector<Segment> driven = drivenSteps(r.path);
   const auto te = std::chrono::steady_clock::now();
   const bool clear =
@@ -263,8 +262,8 @@ PlanResult planOnce(const PlanRequest& q,
   r.stats.setupMs = msSince(t0);
   // A goal nothing can stand at (something stands on it) is never reached:
   // that's proof at once, not after growing every pose it could reach (a
-  // parked truck's corner on a combine's put-away spot: millions of poses
-  // across a farm). Not when it starts touching something and the goal is
+  // parked truck's corner on another vehicle's parking spot: millions of
+  // poses across a town). Not when it starts touching something and the goal is
   // within getting out of that (the way out is let off its touch).
   if (!q.goals.empty() && !q.goalTest)
   {

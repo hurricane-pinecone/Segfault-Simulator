@@ -77,7 +77,8 @@ function(sfs_add_web_game target)
         FUNCTION sfsRegisterModule
         FUNCTION_HEADER engine/runtime/scripting/gameModule.h
         INCLUDE_ROOT "${scripts}"
-        HEADERS ${headers})
+        HEADERS ${headers}
+        EVENT_SOURCES ${sources})
 
     # game.json, as an export writes it (no module: it's compiled in).
     set(staging "${CMAKE_CURRENT_BINARY_DIR}/${target}-web")

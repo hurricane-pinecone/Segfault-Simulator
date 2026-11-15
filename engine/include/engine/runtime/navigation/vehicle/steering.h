@@ -117,11 +117,11 @@ float lengthOf(std::span<const Segment> segments);
 std::vector<Segment> reversed(std::span<const Segment> segments);
 
 /**
- * A trailer's new angle on the hitch after its tractor's reference point has
- * gone `ds` (signed: backing up below 0) on curvature `k`.
+ * A trailer's new angle on the hitch after its towing vehicle's reference
+ * point has gone `ds` (signed: backing up below 0) on curvature `k`.
  */
 float hitchStep(const Trailer& trailer, float hitch, float ds, float k);
-/** The trailer's axle pose for the tractor at `pose`, at `hitch`. */
+/** The trailer's axle pose for the towing vehicle at `pose`, at `hitch`. */
 Pose2 trailerPose(const Trailer& trailer, Pose2 pose, float hitch);
 
 /**

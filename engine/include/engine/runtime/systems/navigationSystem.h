@@ -2,6 +2,7 @@
 
 #include "engine/core/components/navAgentComponent.h"
 #include "engine/core/ecs/system.h"
+#include "engine/runtime/navigation/agentEvent.h"
 #include "engine/runtime/navigation/agentKind.h"
 #include "engine/runtime/navigation/coarseGraph.h"
 #include "engine/runtime/navigation/costLayer.h"
@@ -27,9 +28,9 @@ namespace sfs
  * the scene's colliders on its planning scheduler (nav::PlanScheduler: one
  * worker pool, deadline first, a fair turn per agent), drives them along and
  * settles who gives way when they meet. A game sends an agent somewhere
- * (requestGoal) and hears how it went (events()); it never moves the agent
- * itself meanwhile: the system writes the agent's transform (and its
- * trailer's) each update.
+ * (requestGoal) and hears how it went (nav::AgentEvent, sent with the agent
+ * as it happens); it never moves the agent itself meanwhile: the system
+ * writes the agent's transform (and its trailer's) each update.
  *
  * What's solid comes from PhysicsSystem3D: a frozen copy of the static
  * colliders (PhysicsSystem3D::snapshot()), rebuilt when its revision
@@ -38,7 +39,7 @@ namespace sfs
  * held by its game) is solid to the others' plans, one moving never is (they
  * keep out of each other's reservations by rank instead: see nav::Fleet and
  * nav::Traffic). A game adds what ground costs (setCostLayer:
- * crop, worn tracks; layers multiply) and who goes first
+ * flowerbeds, worn tracks; layers multiply) and who goes first
  * (setPriorityProvider: a working machine).
  *
  * An agent of kind "vehicle" also needs a VehicleComponent: its motion is
@@ -98,7 +99,7 @@ public:
   void setControls(const Entity& agent, const nav::Controls& controls);
   void handBack(const Entity& agent);
   bool handDriven(const Entity& agent) const;
-  /** Drive a path the game made (a field pass), claimed like any other. */
+  /** Drive a path the game made (a patrol route), claimed like any other. */
   void setPath(const Entity& agent, std::shared_ptr<const nav::AgentPath> path);
   /**
    * Plan now on this thread: only for a check that truly needs its answer
@@ -151,7 +152,7 @@ public:
                     std::shared_ptr<const nav::CostLayer> layer);
   /** Right of way per agent (none: the component's priority). */
   void setPriorityProvider(std::function<int(const Entity&)> priority);
-  /** A pair that keep their own spacing (a cart beside its combine). */
+  /** A pair that keep their own spacing (a truck beside its loader). */
   void cooperate(const Entity& a, const Entity& b, bool on);
   /** A towed thing on an agent's hitch (NavAgentComponent::hitch). */
   using Hitch = NavHitch;
@@ -187,13 +188,6 @@ public:
   void refresh(const Entity& agent);
 
   nav::Fleet::State state(const Entity& agent) const;
-  struct Event
-  {
-    Entity agent;
-    nav::Fleet::Event what;
-  };
-  /** What happened to agents during the last update. */
-  const std::vector<Event>& events() const { return m_events; }
   /** Everything about the agents (paths, claims, counters). */
   const nav::Fleet& fleet() const { return *m_fleet; }
 
@@ -259,7 +253,6 @@ private:
   bool m_edgesDirty = false;
   uint64_t m_revision = ~0ull;
   bool m_worldDirty = true;
-  std::vector<Event> m_events;
   bool m_drawPaths = false, m_drawClaims = false, m_drawBlocked = true;
 };
 

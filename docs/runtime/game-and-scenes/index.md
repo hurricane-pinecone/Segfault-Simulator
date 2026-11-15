@@ -124,8 +124,9 @@ protected:
 
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
 `getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, `events()` (the
-scene's [events](../../core/events/index.md): `events().send(E{...})`, and a
-reader made in an object's `onCreate` and kept; not SDL's `Game::onEvent`),
+scene's [events](../../core/events/index.md): `events().send(E{...})`, and
+consumers and requesters made in an object's `onCreate` and kept, whose
+handlers run before its `onUpdate`; not SDL's `Game::onEvent`),
 plus the engine services: `assetStore()` and `renderer()`, the backend's renderer. Without a
 renderer (a headless host) `renderer()` is a fatal error (logged, and the game
 ends with a message); `tryRenderer()` returns null instead. See [Rendering](../rendering/index.md#scene-services).

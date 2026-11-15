@@ -92,7 +92,7 @@ Its mesh isn't drawn. The suffix may be in any case, and Blender's `.001`
 numbering on a copy is fine (`Boom-collider.001`).
 
 Because the collider is its own entity in the model's tree, a collider under a
-moving part follows that part, for example the folding arms of a sprayer
+moving part follows that part, for example the folding sections of a crane's
 boom. Model one rough box per moving part and parent it to that part.
 
 The colliders come from the file each time the model is placed or the scene

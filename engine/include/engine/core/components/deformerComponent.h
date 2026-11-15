@@ -8,10 +8,10 @@ namespace sfs
 /**
  * Presses into deformable ground (a terrain with TerrainMaterial::
  * deformable) wherever its meshes touch it: tyres leave tracks with their
- * lugs in them, an implement's tines cut furrows, a roller flattens. It
- * covers the entity's own mesh (its MeshRendererComponent's) and, with
- * `children`, its children's: put one on a tractor prefab's root and its
- * wheels and implement all deform the ground (its body never reaches it).
+ * lugs in them, a dozer blade cuts a groove, a roller flattens. It covers
+ * the entity's own mesh (its MeshRendererComponent's) and, with `children`,
+ * its children's: put one on a bulldozer prefab's root and its tracks and
+ * blade all deform the ground (its body never reaches it).
  *
  * Each frame it moves, its meshes' undersides (seen from below the ground)
  * press the ground under them down to `sinkDepth` below where they are
@@ -20,8 +20,8 @@ namespace sfs
  * in a low ridge along them. Rest a vehicle on the ground's surface as it
  * is (don't lower it by its sink: it would only sink further each pass).
  *
- * @param bool enabled - whether it deforms the ground now (e.g. off while an
- *        implement's raised)
+ * @param bool enabled - whether it deforms the ground now (e.g. off while a
+ *        blade's raised)
  * @param float sinkDepth - how far it sinks into the softest ground
  *        (metres): about its weight on its footprint
  * @param float softnessResponse - how much the soil's softness (see

@@ -55,11 +55,11 @@ void setCheckTransforms(bool on);
  * Whether the sends of an event type are logged (sfs::Events: each send's
  * type, number and frame, and a worker's with its thread). The environment's
  * SFS_LOG_EVENTS lists the types, comma separated, by name with or without
- * their namespaces (`FieldCellChanged,AgentEvent`), or `*` for every type;
+ * their namespaces (`DamageTaken,AgentEvent`), or `*` for every type;
  * setLogEvents() replaces the list. Asked as a type's queue is made, so a
  * change applies to queues made after it. Always false when enabled() is
  * false.
- * @param typeName the event type's name, for people ("farm::FieldCellChanged")
+ * @param typeName the event type's name, for people ("game::DamageTaken")
  * @return whether its sends are logged
  */
 bool logEvents(std::string_view typeName);

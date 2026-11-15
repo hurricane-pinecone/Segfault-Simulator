@@ -14,7 +14,10 @@
 #include "engine/runtime/scripting/scriptRegistry.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 #include "imgui.h"
@@ -346,14 +349,18 @@ void sceneWeather(sfs::RenderSystem& render, EditorHistory& history)
 
 // The scene's event queues, one row per type (Events::stats()). Only a playing
 // scene sends: an edited one isn't updated.
-void sceneEvents(EditorScene& scene, std::vector<sfs::EventStats>& stats)
+void sceneEvents(EditorScene& scene,
+                 std::vector<sfs::EventStats>& stats,
+                 std::vector<sfs::EventConsumerStats>& consumers)
 {
   const bool open = ImGui::TreeNodeEx("Events", ImGuiTreeNodeFlags_DefaultOpen);
   ImGui::SetItemTooltip(
-      "Each event type's queue: sent last frame, kept (last frame's and this\n"
-      "one's), staged by workers for the next frame, room in its buffers,\n"
-      "and events readers missed. SFS_LOG_EVENTS=Type,Other (or *) logs\n"
-      "each send.");
+      "Each event type's queue: its kind, sent last frame, kept (until\n"
+      "every consumer has passed them), staged by workers for the next\n"
+      "frame, room in its buffer, consumers, events dropped at the kept\n"
+      "cap before a consumer had them, keyed events superseded, and\n"
+      "responses dropped as their request was superseded.\n"
+      "SFS_LOG_EVENTS=Type,Other (or *) logs each send.");
   if (!open)
     return;
   scene.events().stats(stats);
@@ -361,29 +368,76 @@ void sceneEvents(EditorScene& scene, std::vector<sfs::EventStats>& stats)
     ImGui::TextDisabled("No events yet (the scene sends while it plays)");
   else if (ImGui::BeginTable(
                "events",
-               6,
+               10,
                ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit))
   {
-    for (const char* heading :
-         {"Type", "Sent", "Kept", "Staged", "Room", "Missed"})
+    for (const char* heading : {"Type",
+                                "Kind",
+                                "Sent",
+                                "Kept",
+                                "Staged",
+                                "Room",
+                                "Consumers",
+                                "Missed",
+                                "Superseded",
+                                "Dropped"})
       ImGui::TableSetupColumn(heading);
     ImGui::TableHeadersRow();
     for (const sfs::EventStats& type : stats)
     {
       ImGui::TableNextRow();
-      ImGui::TableNextColumn();
-      ImGui::TextUnformatted(
-          type.type.data(), type.type.data() + type.type.size());
-      for (const std::size_t count :
-           {type.sentLastFrame, type.kept, type.staged, type.capacity})
+      for (const std::string_view text : {type.type, type.kind})
+      {
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(text.data(), text.data() + text.size());
+      }
+      for (const std::size_t count : {type.sentLastFrame,
+                                      type.kept,
+                                      type.staged,
+                                      type.capacity,
+                                      std::size_t{type.consumers}})
       {
         ImGui::TableNextColumn();
         ImGui::Text("%zu", count);
       }
-      ImGui::TableNextColumn();
-      ImGui::Text("%llu", static_cast<unsigned long long>(type.missed));
+      for (const uint64_t count : {type.missed, type.superseded, type.dropped})
+      {
+        ImGui::TableNextColumn();
+        ImGui::Text("%llu", static_cast<unsigned long long>(count));
+      }
     }
     ImGui::EndTable();
+  }
+  scene.events().consumerStats(consumers);
+  const bool listed = !consumers.empty() && ImGui::TreeNode("Consumers");
+  if (!consumers.empty())
+    ImGui::SetItemTooltip("Each type's consumers: the system or object that "
+                          "owns each, how it\nreads, and the kept events it "
+                          "hasn't read yet.");
+  if (listed)
+  {
+    if (ImGui::BeginTable(
+            "consumers",
+            4,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit))
+    {
+      for (const char* heading : {"Type", "Consumer", "How", "Unread"})
+        ImGui::TableSetupColumn(heading);
+      ImGui::TableHeadersRow();
+      for (const sfs::EventConsumerStats& row : consumers)
+      {
+        ImGui::TableNextRow();
+        for (const std::string_view text : {row.type, row.consumer, row.how})
+        {
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted(text.data(), text.data() + text.size());
+        }
+        ImGui::TableNextColumn();
+        ImGui::Text("%zu", row.unconsumed);
+      }
+      ImGui::EndTable();
+    }
+    ImGui::TreePop();
   }
   ImGui::TreePop();
 }
@@ -393,7 +447,8 @@ void sceneEvents(EditorScene& scene, std::vector<sfs::EventStats>& stats)
 void sceneDebug(EditorScene& scene,
                 sfs::RenderSystem& render,
                 EditorHistory& history,
-                std::vector<sfs::EventStats>& eventStats)
+                std::vector<sfs::EventStats>& eventStats,
+                std::vector<sfs::EventConsumerStats>& eventConsumers)
 {
   if (!ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
     return;
@@ -413,7 +468,7 @@ void sceneDebug(EditorScene& scene,
     ImGui::TextDisabled("Colliders drawn: %zu (%zu lines)",
                         render.stats().colliders,
                         render.stats().debugLines);
-  sceneEvents(scene, eventStats);
+  sceneEvents(scene, eventStats, eventConsumers);
   ImGui::PopID();
 }
 } // namespace
@@ -431,7 +486,8 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   sceneSkyAndShadows(render, history);
   sceneAtmosphere(render, history);
   sceneWeather(render, history);
-  sceneDebug(*context.scene, render, history, m_eventStats);
+  sceneDebug(
+      *context.scene, render, history, m_eventStats, m_eventConsumers);
   ImGui::Separator();
 
   // Which view the game starts from.

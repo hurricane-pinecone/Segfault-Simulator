@@ -149,16 +149,17 @@ public:
   }
 
   void initialize(
-      json capabilities = {
-          {"general", {{"positionEncodings", {"utf-8", "utf-16"}}}},
-          {"textDocument",
-           {{"completion", {{"completionItem", {{"snippetSupport", true}}}}}}},
-          {"workspace", {{"workspaceEdit", {{"documentChanges", true}}}}}})
+      json capabilities =
+          {{"general", {{"positionEncodings", {"utf-8", "utf-16"}}}},
+           {"textDocument",
+            {{"completion", {{"completionItem", {{"snippetSupport", true}}}}}}},
+           {"workspace", {{"workspaceEdit", {{"documentChanges", true}}}}}},
+      json rootUri = nullptr)
   {
-    send(request(
-        1,
-        "initialize",
-        {{"rootUri", nullptr}, {"capabilities", std::move(capabilities)}}));
+    send(request(1,
+                 "initialize",
+                 {{"rootUri", std::move(rootUri)},
+                  {"capabilities", std::move(capabilities)}}));
     m_initializeResult = response(1);
     send(notification("initialized", json::object()));
   }
@@ -387,6 +388,81 @@ int main()
     CHECK(again.is_object() && again["edit"]["documentChanges"].size() == 2u &&
           again["edit"]["documentChanges"][1]["textDocument"]["version"] == 7);
     std::filesystem::remove_all(folder);
+  }
+
+  TEST("the project index should follow a script source as it's opened and "
+       "saved")
+  {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sfsLspIndexSources";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "scripts/systems");
+    std::filesystem::create_directories(root / "scripts/events");
+    std::ofstream(root / "project.sfsproj") << "{}";
+    std::ofstream(root / "scripts/systems/RouteSystem.h")
+        << "#pragma once\nclass RouteSystem : public sfs::System { void "
+           "update(double) override; };\n";
+    // On disk RouteSystem sends nothing: what it sends is in its open buffer.
+    std::ofstream(root / "scripts/systems/RouteSystem.cpp") << "\n";
+    std::ofstream(root / "scripts/events/DoneResponse.h")
+        << "#pragma once\nstruct [[sfs::event_response]] DoneResponse {};\n";
+    LspProcess server;
+    server.initialize(
+        {{"general", {{"positionEncodings", {"utf-8"}}}}}, pathToUri(root));
+    const std::string route =
+        pathToUri(root / "scripts/systems/RouteSystem.cpp");
+    const std::string plan = pathToUri(root / "scripts/systems/PlanSystem.cpp");
+    const std::string planText =
+        "class PlanSystem : public sfs::System { void update(double) override "
+        "{ r.respond(DoneResponse{}); } };\n";
+    const auto open = [&](const std::string& uri, const std::string& text)
+    {
+      server.send(notification("textDocument/didOpen",
+                               {{"textDocument",
+                                 {{"uri", uri},
+                                  {"languageId", "cpp"},
+                                  {"version", 1},
+                                  {"text", text}}}}));
+    };
+    const auto edit = [&](const std::string& uri, int version, std::string text)
+    {
+      server.send(
+          notification("textDocument/didChange",
+                       {{"textDocument", {{"uri", uri}, {"version", version}}},
+                        {"contentChanges", {{{"text", std::move(text)}}}}}));
+    };
+    // The response-sent-twice diagnostics published for PlanSystem.cpp next.
+    const auto twice = [&](bool wanted)
+    {
+      return server.waitFor(
+          [&](const json& m)
+          {
+            if (m.value("method", "") != "textDocument/publishDiagnostics" ||
+                m["params"]["uri"] != plan)
+              return false;
+            bool found = false;
+            for (const json& d : m["params"]["diagnostics"])
+              found = found || d["code"] == "response-sent-twice";
+            return found == wanted;
+          },
+          5.0);
+    };
+    open(route,
+         "void RouteSystem::update(double) { r.respond(DoneResponse{}); }\n");
+    open(plan, planText);
+    const std::optional<json> reported = twice(true);
+    CHECK(reported.has_value());
+    CHECK(reported && reported->dump().find("RouteSystem already sends it") !=
+                          std::string::npos);
+    // An unsaved change isn't in the index; once saved, it is.
+    edit(route, 2, "void RouteSystem::update(double) {}\n");
+    edit(plan, 2, planText);
+    CHECK(twice(true).has_value());
+    server.send(notification(
+        "textDocument/didSave", {{"textDocument", {{"uri", route}}}}));
+    edit(plan, 3, planText);
+    CHECK(twice(false).has_value());
+    std::filesystem::remove_all(root);
   }
 
   TEST("malformed JSON should get ParseError and the server should carry on")

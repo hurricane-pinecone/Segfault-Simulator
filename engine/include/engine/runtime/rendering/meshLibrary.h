@@ -75,7 +75,7 @@ public:
     std::function<MeshHandle(MeshLibrary& library, std::string_view name)> load;
     // Names it could load, each with a label for people, e.g. for a picker.
     std::function<std::vector<std::pair<std::string, std::string>>()> available;
-    // A label for one of its names ("models/barn.glb"); empty if it isn't one.
+    // A label for one of its names ("models/door.glb"); empty if it isn't one.
     std::function<std::string(std::string_view name)> label;
     // A named material (e.g. a material asset), or null.
     std::function<std::shared_ptr<const MeshMaterial>(std::string_view name)>

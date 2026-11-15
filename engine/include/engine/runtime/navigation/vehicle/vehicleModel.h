@@ -7,7 +7,7 @@
 #include <vector>
 
 /**
- * sfs::nav::vehicle: the "vehicle" agent kind (cars, tractors, rigs towing a
+ * sfs::nav::vehicle: the "vehicle" agent kind (cars, trucks, rigs towing a
  * trailer). The textbook stack: continuous-curvature steering (HC/CC
  * Reeds-Shepp), a path search over those motions (hybrid A* built in), a
  * smoother, a speed profile and a follower that drives the path exactly. A
@@ -24,9 +24,9 @@ constexpr float kEscapeReach = 3.0f;
 /**
  * A trailer on a hitch `hitchBehind` behind the reference point, its own axle
  * `drawbar` behind the hitch; its box is in the frame of its axle. Its angle
- * on the hitch (+: the tractor turned left of it) never passes forwardLimit
- * going forward nor reverseLimit backing up (backing, it stays tight so the
- * rig never jack-knifes).
+ * on the hitch (+: the towing vehicle turned left of it) never passes
+ * forwardLimit going forward nor reverseLimit backing up (backing, it stays
+ * tight so the rig never jack-knifes).
  */
 struct Trailer
 {
@@ -39,7 +39,7 @@ struct Trailer
 /**
  * The costs a plan is priced by, all in SECONDS (the time the motion takes,
  * so a three-point turn and a loop are compared by how long each takes), in
- * one place. The defaults are the farm-helper ones; a game sets its own.
+ * one place. The defaults are general ones; a game sets its own.
  */
 struct Tunables
 {
@@ -55,7 +55,7 @@ struct Tunables
   float heuristicCell = 0.5f; // m, the 2D heuristic's raster
   float goalShotEvery = 6.0f; // m: an analytic shot about this often
   // Poses grown at most, once a shot has found a way, looking for a quicker
-  // one before that way is taken (a field turn's whole budget): a long trip
+  // one before that way is taken (a U-turn's whole budget): a long trip
   // grew its whole first budget proving the way it had (3.5 s a plan).
   uint32_t improveNodes = 4000;
 };
@@ -80,7 +80,7 @@ struct VehicleModel
   bool mayReverse = true;
   std::optional<Trailer> trailer;
   /**
-   * A working mode (an implement down): its own boxes and tightest turn,
+   * A working mode (a tool lowered): its own boxes and tightest turn,
    * forward only if it must be. Mode 0 is plain travel (the fields above);
    * the CostLayer is told which mode a pose is driven in.
    */

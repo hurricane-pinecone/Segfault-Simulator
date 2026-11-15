@@ -12,7 +12,7 @@ namespace sfs::nav::vehicle
 /**
  * Following a path exactly (AI vehicles): the vehicle IS its path, its pose
  * the path's at the distance it's come, moved on at its profile's speed. The
- * caller may cap the speed (a traffic hold, the farm's working speed) and
+ * caller may cap the speed (a traffic hold, a working speed) and
  * name where to stop (`stopAt`, metres along): it brakes to stand there (at
  * its derived rate, the one its speed profile is priced with; never past a
  * stop named too late: stood there, told as a hard stop). Its

@@ -11,17 +11,17 @@
 #include <string>
 #include <vector>
 
-// The planner's benchmark: a fixed set of headland turns and yard trips (the
-// kinds a farm game asks most), each planned and timed. Every way's time, cusps
-// and metres backing are held to the ones the planner found before its speed
-// work (kBefore): no worse. Its p50/p95 ms are printed per kind.
+// The planner's benchmark: a fixed set of turns at the ends of rows and trips
+// about a yard, each planned and timed. Every way's time, cusps and metres
+// backing are held to the ones the planner found before its speed work
+// (kBefore): no worse. Its p50/p95 ms are printed per kind.
 
 using namespace sfs::nav;
 using namespace sfs::nav::vehicle;
 
 namespace
 {
-VehicleModel tractor()
+VehicleModel truck()
 {
   VehicleModel v;
   v.boxes = {{-1.11f, 3.87f, 1.31f, 0.0f, 0.0f, 3.0f}};
@@ -33,7 +33,7 @@ VehicleModel tractor()
 }
 VehicleModel towing()
 {
-  VehicleModel v = tractor();
+  VehicleModel v = truck();
   Trailer t;
   t.hitchBehind = 1.0f;
   t.drawbar = 4.26f;
@@ -42,25 +42,25 @@ VehicleModel towing()
   v.minRadius = 6.5f;
   return v;
 }
-// A tractor with a wide tool behind (a field rig).
+// A truck with a wide tool mounted behind it.
 VehicleModel rig()
 {
-  VehicleModel v = tractor();
+  VehicleModel v = truck();
   v.boxes.push_back({-4.5f, -1.0f, 1.9f, 0.0f, 0.2f, 1.5f});
   v.minRadius = 6.0f;
   return v;
 }
 
-// Standing crop: the reference point may not be over it (a field's
-// unworked lanes), cut ground and the headland are ordinary.
-class Crop : public CostLayer
+// A no-go zone: the reference point may not be over it (the rows not yet
+// covered); covered rows and the turning margins are ordinary ground.
+class NoGo : public CostLayer
 {
 public:
-  Rect crop;
-  explicit Crop(Rect r) : crop(r) {}
+  Rect zone;
+  explicit NoGo(Rect r) : zone(r) {}
   float factor(Pose2 p, int) const override
   {
-    return crop.contains(p.position) ? kInf : 1.0f;
+    return zone.contains(p.position) ? kInf : 1.0f;
   }
   void raster(glm::vec2 origin,
               float cell,
@@ -74,7 +74,7 @@ public:
       for (int x = 0; x < width; ++x)
       {
         const glm::vec2 lo = origin + glm::vec2(x, y) * cell;
-        if (crop.contains(lo) && crop.contains(lo + cell))
+        if (zone.contains(lo) && zone.contains(lo + cell))
           out[static_cast<std::size_t>(y) * width + x] = kInf;
       }
   }
@@ -98,36 +98,36 @@ struct Case
   PlanRequest q;
 };
 
-// Headland turns in a fenced field 90 x 60: lanes along x, 4 m apart, the
-// crop beyond the lanes worked so far, a 10 m headland at each end, the
-// fence 1 m outside the field.
+// Turns at the ends of rows in a fenced area 90 x 60: rows along x, 4 m
+// apart, the ground beyond the rows covered so far a no-go zone, a 10 m
+// turning margin at each end, the fence 1 m outside the area.
 std::vector<Case> turns()
 {
   std::vector<Case> out;
-  const Rect field{{0.0f, 0.0f}, {90.0f, 60.0f}};
+  const Rect area{{0.0f, 0.0f}, {90.0f, 60.0f}};
   std::vector<BoxSpace::Solid> fence;
   uint64_t id = 1;
-  const glm::vec2 lo = field.lo - 1.0f, hi = field.hi + 1.0f;
+  const glm::vec2 lo = area.lo - 1.0f, hi = area.hi + 1.0f;
   fence.push_back(wall(lo, {hi.x, lo.y}, id++));
   fence.push_back(wall({hi.x, lo.y}, hi, id++));
   fence.push_back(wall(hi, {lo.x, hi.y}, id++));
   fence.push_back(wall({lo.x, hi.y}, lo, id++));
   fence.push_back({{45.0f, 30.0f}, {0.4f, 0.4f}, 0.0f, 0.0f, 3.0f, true, id++});
   const auto space = std::make_shared<BoxSpace>(fence);
-  // (Each turn its own: lane spacing 3..6 m, a headland 8..14 m wide,
-  // either end, the field rig or the bare tractor.)
+  // (Each turn its own: row spacing 3..6 m, a margin 8..14 m wide,
+  // either end, the rig or the bare truck.)
   float y = 2.5f;
   for (int lane = 0; lane < 12; ++lane)
   {
     const float spacing = 3.0f + static_cast<float>(lane % 4);
-    const float headland = 8.0f + 3.0f * static_cast<float>(lane % 3);
+    const float margin = 8.0f + 3.0f * static_cast<float>(lane % 3);
     const bool east = lane % 2 == 0; // (working east, turning at the east end)
-    const float end = east ? field.hi.x - headland : headland;
+    const float end = east ? area.hi.x - margin : margin;
     PlanRequest q;
-    q.vehicle = (lane % 5 == 4) ? tractor() : rig();
+    q.vehicle = (lane % 5 == 4) ? truck() : rig();
     q.space = space;
-    q.cost = std::make_shared<Crop>(Rect{
-        {headland, y + spacing + 2.0f}, {field.hi.x - headland, field.hi.y}});
+    q.cost = std::make_shared<NoGo>(
+        Rect{{margin, y + spacing + 2.0f}, {area.hi.x - margin, area.hi.y}});
     q.from = {{end, y}, east ? 0.0f : kPi};
     q.goals = {{{{end, y + spacing}, east ? kPi : 0.0f}}};
     out.push_back({"turn", q});
@@ -165,7 +165,7 @@ std::vector<Case> trips()
   while (made < 16)
   {
     PlanRequest q;
-    q.vehicle = made % 2 ? towing() : tractor();
+    q.vehicle = made % 2 ? towing() : truck();
     q.space = space;
     q.from = {{x(rng), y(rng)}, h(rng)};
     const Pose2 to{{x(rng), y(rng)}, h(rng)};

@@ -22,7 +22,7 @@ namespace sfs
  *
  * Navigation only: how it searches, what it collides with, its right of
  * way and how it prices a route. How it moves comes from elsewhere: a
- * "vehicle" (a car, a tractor, a rig towing a trailer: it turns on a
+ * "vehicle" (a car, a truck, a rig towing a trailer: it turns on a
  * circle, backs up at its reverse speed, follows its planned path exactly,
  * every way priced by the time it takes) needs a
  * VehicleComponent with its VehicleSpec.
@@ -37,7 +37,7 @@ namespace sfs
  * machine)
  */
 /**
- * A towed thing on an agent's hitch (a trailer, an implement on its
+ * A towed thing on an agent's hitch (a trailer, a towed tool on its
  * drawbar): the game hitches and unhitches (NavigationSystem::hitch()), the
  * system then plans and drives the rig and writes the towed entity's
  * transform. Angles are degrees its drawbar may swing going forward /
@@ -53,13 +53,13 @@ struct NavHitch
   // transform written at that much behind the axle's place.
   float axle = 0.0f;
   float forwardLimit = 83.0f, reverseLimit = 35.0f;
-  // Mounted (on a linkage or front mount): it moves with the agent, its
+  // Mounted (on a rear or front mount): it moves with the agent, its
   // colliders part of the agent's boxes, never swinging (the hitch numbers
   // unused), measured by NavigationSystem::mountedBox().
   bool rigid = false;
   // A mounted part's pose (its root's) in the agent's own frame (the
   // agent entity's origin and axes, level: no body pitch or roll), as its
-  // mount holds it in the state it's driven in now (a header raised for
+  // mount holds it in the state it's driven in now (a blade raised for
   // travel, lowered working): the game sets it from its authored mount
   // and hitches again when the state changes. None: where the part is held
   // now, relative to the agent (still in the agent's own frame).

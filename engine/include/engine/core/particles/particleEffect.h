@@ -159,7 +159,7 @@ struct ParticleEffectDesc
   BlendMode blend = BlendMode::Alpha;
   // Lit by the scene's light as matter is (the sun, the sky, lamps; shaded
   // like a surface facing up and toward the camera), rather than shown as its
-  // own colour. For dust, grain, spray in a lit 3D world, which unlit would
+  // own colour. For dust, sand, spray in a lit 3D world, which unlit would
   // glow at night and look dim by day. Off for light (sparks, embers).
   bool lit = false;
   GroundBehavior ground = GroundBehavior::None;

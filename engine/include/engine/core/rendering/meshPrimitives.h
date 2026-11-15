@@ -49,7 +49,7 @@ MeshData prism(const glm::vec3& size, const glm::vec3& color = glm::vec3(1.0f));
 /**
  * Append `source` to `target` with every vertex transformed. Normals use the
  * inverse-transpose, so non-uniform scales stay lit correctly. Use it to build
- * a compound model (a barn = box + prism) into a single mesh, and so one draw.
+ * a compound model (a house = box + prism) into a single mesh, and so one draw.
  */
 void append(MeshData& target,
             const MeshData& source,

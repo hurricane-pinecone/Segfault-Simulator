@@ -5,7 +5,9 @@
 
 #include <sfs/codegen/parser.h>
 
+#include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 
 using namespace sfs::lsp;
@@ -26,14 +28,34 @@ struct Project
   {
     std::filesystem::remove_all(root);
     lspTest::writeFile(root / "project.sfsproj", "{}");
-    lspTest::writeFile(root / "scripts/systems/FieldSystem.h",
-                       "#pragma once\nclass FieldSystem : public sfs::System { "
+    lspTest::writeFile(root / "scripts/systems/SpawnSystem.h",
+                       "#pragma once\nclass SpawnSystem : public sfs::System { "
                        "public: int map(); };\n");
-    lspTest::writeFile(root / "scripts/systems/CropSystem.h",
-                       "#pragma once\nclass CropSystem : public sfs::System { "
-                       "public: void update(double) override; };\n");
-    lspTest::writeFile(root / "scripts/components/Crop.h",
-                       "#pragma once\nstruct Crop { float growth = 0; };\n");
+    lspTest::writeFile(root / "scripts/systems/HealthSystem.h",
+                       "#pragma once\nclass HealthSystem : public "
+                       "sfs::System { public: void update(double) override; "
+                       "};\n");
+    lspTest::writeFile(root / "scripts/components/Health.h",
+                       "#pragma once\nstruct Health { float points = 0; };\n");
+    // A system that consumes a request and responds to it, for
+    // response-sent-twice.
+    lspTest::writeFile(root / "scripts/systems/CombatSystem.h",
+                       "#pragma once\nclass CombatSystem : public "
+                       "sfs::System { void update(double) override; };\n");
+    lspTest::writeFile(
+        root / "scripts/systems/CombatSystem.cpp",
+        "void CombatSystem::create() { m_paths = consumer<PathRequest>(); "
+        "}\n"
+        "void CombatSystem::update(double)\n{\n"
+        "  for (auto [e, request, responder] : m_paths.read())\n"
+        "    responder.respond(PathFoundResponse{1});\n}\n");
+    lspTest::writeFile(
+        root / "scripts/events/PathEvents.h",
+        "#pragma once\n"
+        "struct [[sfs::event_response]] PathFoundResponse { int outcome = 0; "
+        "};\n"
+        "struct [[sfs::event_request(PathFoundResponse, PathFailedResponse)]] "
+        "PathRequest { int goal = 0; };\n");
     index.start(root);
     index.indexAll(lspTest::parser());
   }
@@ -64,14 +86,16 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "struct S { [[sfs::hide]] int a; };\nnamespace b { struct S {}; }\n"},
       {"t/Spec.h", "struct [[sfs::component]] Spec : Other {};\n"},
       {"t/Boss.h", "struct Boss : A, B { [[sfs::hide]] int y; };\n"},
-      {"t/Crop.h",
-       "struct Crop\n{\n  [[sfs::hdie]] int a;\n  [[sfs::component]] int b;\n"
+      {"t/Health.h",
+       "struct Health\n{\n  [[sfs::hdie]] int a;\n  [[sfs::component]] int b;\n"
        "  [[sfs::range(1)]] float c;\n  [[sfs::color]] float d;\n"
        "  [[sfs::showIf(nope)]] int e;\n  int* f;\n  sfs::Entity g;\n};\n"
        "struct [[sfs::component]] Outer { struct [[sfs::component]] Inner "
        "{}; };\n"},
       {"t/Helper.h", "struct Other { [[sfs::hide]] int a; };\n"},
-      {"t/Both.h", "struct [[sfs::component, sfs::event]] Both {};\n"},
+      {"t/Both.h", "struct [[sfs::component, sfs::event_news]] Both {};\n"},
+      {"t/Twice.h",
+       "struct [[sfs::event_news, sfs::event_response]] Twice {};\n"},
       {"t/Rig.h",
        "struct Rig : sfs::GameObject { "
        "[[sfs::hide]] int a; sfs::Entity target; "
@@ -86,29 +110,37 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "    query<A, Any<B>>();\n    query<A, Any<A, B>>();\n"
        "    query<A, A>();\n    query<Any<A, B>, Excluding<A>>();\n"
        "    query<A, Excluding<A>>();\n"
-       "    registry->events().send(Crop{});\n"
-       "    registry->events().reader<Moved>().read();\n"
+       "    m_moved = consumer<Moved>();\n"
+       "    for (auto [v, r, responder] : m_paths.read())\n"
+       "      responder.respond(PathFoundResponse{});\n"
        "    for (const sfs::Entity& e : registry->query<A>())\n"
        "      e.getComponent<A>().x = 1;\n"
        "    for (const sfs::Entity& e : registry->query<A>())\n"
        "      if (e.hasComponent<B>())\n"
        "        e.getComponent<B>()->y = 1;\n  }\n"
        "  void onEntityAdded(sfs::Entity e) override { "
-       "registry->destroyEntity(e); }\n};\n"
+       "registry->destroyEntity(e); }\n"
+       "};\n"
        "void take(Tree& tree);\n"
        "void f(sfs::Entity entity)\n{\n  auto& s = entity.getComponent<S>();\n"
        "  s.entity = entity;\n  if (entity.isAlive()) {}\n"
        "  if (entity.hasComponent<B>())\n    entity.getComponent<B>().y = 1;\n"
        "  take(entity.getComponent<Tree>());\n}\n"
        "[[nodiscrad]] int g();\n// sfs-ignore(own-entiy)\n"
-       "struct [[sfs::component]] Holder { sfs::EventReader<Moved> moved; "
+       "struct [[sfs::component]] Holder { sfs::EventConsumer<Moved> moved; "
        "};\n"},
       {"t/rows.cpp",
        "void g()\n{\n  for (auto [e, a] : registry->query<A>())\n"
        "    a.x = 1;\n  for (A a : registry->query<A>())\n    n += a.x;\n}\n"},
-      {"systems/CropSystem.cpp",
-       "void CropSystem::update(double) { registry->getSystem<FieldSystem>(); "
-       "}\n"},
+      {"t/events.cpp",
+       "class Spinner : public sfs::GameObject\n{\n"
+       "  void onCreate(sfs::Scene& scene) override { auto once = "
+       "scene.events().consumer<Moved>(); }\n"
+       "  void onUpdate(double) override { m_moved = "
+       "scene().events().consumer<Moved>(); }\n};\n"},
+      {"systems/HealthSystem.cpp",
+       "void HealthSystem::update(double) { "
+       "registry->getSystem<SpawnSystem>(); }\n"},
   };
 }
 
@@ -290,20 +322,20 @@ int main()
   TEST("system-reads-system should flag the project's systems, in systems only")
   {
     Project project;
-    CHECK(project.index.isSystem("FieldSystem"));
-    CHECK(!project.index.isSystem("Crop"));
+    CHECK(project.index.isSystem("SpawnSystem"));
+    CHECK(!project.index.isSystem("Health"));
     const std::string source =
-        "class CropSystem : public sfs::System { void update(double) override; "
-        "};\n"
-        "void CropSystem::update(double)\n{\n  auto& fields = "
-        "registry->getSystem<FieldSystem>();\n"
+        "class HealthSystem : public sfs::System { void update(double) "
+        "override; };\n"
+        "void HealthSystem::update(double)\n{\n  auto& spawns = "
+        "registry->getSystem<SpawnSystem>();\n"
         "  auto* render = registry->tryGetSystem<sfs::RenderSystem>();\n  "
-        "registry->hasSystem<CropSystem>();\n}\n"
+        "registry->hasSystem<HealthSystem>();\n}\n"
         "void freeFunction(sfs::Registry* registry) { "
-        "registry->getSystem<FieldSystem>(); }\n";
+        "registry->getSystem<SpawnSystem>(); }\n";
     const auto doc =
         lspTest::analysed(source,
-                          project.root / "scripts/systems/CropSystem.cpp",
+                          project.root / "scripts/systems/HealthSystem.cpp",
                           &project.index);
     CHECK(lspTest::count(*doc, RuleId::SystemReadsSystem) == 1u);
     const auto* found = lspTest::first(*doc, RuleId::SystemReadsSystem);
@@ -311,9 +343,9 @@ int main()
     // An out-of-line method of a system the index knows, with no class in the
     // file.
     const auto split =
-        lspTest::analysed("void CropSystem::lateUpdate() { "
-                          "registry->getSystem<game::FieldSystem>(); }\n",
-                          project.root / "scripts/systems/CropUpdate.cpp",
+        lspTest::analysed("void HealthSystem::lateUpdate() { "
+                          "registry->getSystem<game::SpawnSystem>(); }\n",
+                          project.root / "scripts/systems/HealthUpdate.cpp",
                           &project.index);
     CHECK(lspTest::count(*split, RuleId::SystemReadsSystem) == 1u);
     // Without an index (no project), the lint is off.
@@ -334,71 +366,118 @@ int main()
     CHECK(lspTest::count(*doc, RuleId::PerEntityMap) == 2u);
   }
 
-  TEST("event-unmarked should flag a component or script type sent or read "
-       "as an event")
+  TEST("event-handle-outside-create should flag a system's consumer or "
+       "requester made outside create() or not kept")
   {
-    Project project;
-    const std::string source =
-        "struct [[sfs::component]] Spec { int a; };\n"
-        "struct [[sfs::event]] Moved { int a; };\n"
-        "class Mover : public sfs::System {};\n"
-        "void f(sfs::Registry* registry, sfs::EventSender<Moved>& sender)\n{\n"
-        "  registry->events().send(Crop{1});\n"
-        "  registry->events().send(game::Spec{});\n"
-        "  registry->events().send<Spec>(make());\n"
-        "  scene().events().send(Crop(2));\n"
-        "  auto r = registry->events().reader<CropSystem>();\n"
-        "  auto s = registry->events().sender<Mover>();\n"
-        "  registry->events().send(Moved{1});\n"
-        "  sender.send(Moved{2});\n"
-        "  registry->events().send(std::move(m));\n"
-        "  registry->events().send(Holder<Crop>{});\n"
-        "  send(Crop{});\n"
-        "  // sfs-ignore-next-line(event-unmarked)\n"
-        "  registry->events().send(Crop{3});\n}\n";
     const auto doc = lspTest::analysed(
-        source, project.root / "scripts/t/file.cpp", &project.index);
-    CHECK(lspTest::count(*doc, RuleId::EventUnmarked) == 6u);
-    const auto* first = lspTest::first(*doc, RuleId::EventUnmarked);
-    CHECK(first && first->range.startRow == 5u &&
+        "class Mover : public sfs::System\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  sfs::EventRequester<PathRequest> m_paths;\n"
+        "  std::vector<sfs::EventConsumer<Hit>> m_hits;\n"
+        "  sfs::EventConsumer<Moved> kept;\n"
+        "  Mover() { m_moved = consumer<Moved>(); }\n"
+        "  void create() override\n  {\n"
+        "    m_moved = consumer<Moved>();\n"
+        "    m_paths = requester<PathRequest>()\n"
+        "                  .onResponse<PathFoundResponse>(found)\n"
+        "                  .ignore<PathFailedResponse>();\n"
+        "    this->kept = consumer<Moved>();\n"
+        "    kept = this->consumer<Moved>();\n"
+        "    m_hits.push_back(consumer<Hit>());\n"
+        "    auto local = consumer<Moved>();\n"
+        "    consumer<Moved>().onEvent(moved);\n"
+        "    observe<A>([this](sfs::Entity e) { m_moved = consumer<Moved>(); "
+        "});\n"
+        "    m_pool.consumer<Moved>();\n"
+        "    // sfs-ignore-next-line(event-handle-outside-create): a test\n"
+        "    auto ignored = consumer<Moved>();\n  }\n"
+        "  void update(double) override { m_moved = consumer<Moved>(); }\n"
+        "};\n");
+    CHECK(lspTest::count(*doc, RuleId::EventHandleOutsideCreate) == 5u);
+    const auto* first = lspTest::first(*doc, RuleId::EventHandleOutsideCreate);
+    CHECK(first && first->range.startRow == 6u &&
           first->message ==
-              "The type Crop is a component, which is state, not an event. "
-              "Send and read a struct marked [[sfs::event]] instead, and keep "
-              "state on components.");
-    bool system = false;
+              "This consumer<Moved>() is made in the constructor, outside "
+              "create(), so it's refused and receives nothing. Make it in "
+              "create() and keep it as a member.");
+    bool local = false;
+    bool observed = false;
+    bool update = false;
     for (const auto& d : doc->diagnostics)
-      system = system || d.message ==
-                             "The type CropSystem is a system, not an event. "
-                             "Send and read a struct marked [[sfs::event]] "
-                             "instead.";
-    CHECK(system);
-    // Without the index only the file's own component and system are known.
-    CHECK(lspTest::count(*lspTest::analysed(source), RuleId::EventUnmarked) ==
-          3u);
-    // A class of the file that's neither, though named like a project type.
-    CHECK(lspTest::count(
-              *lspTest::analysed("namespace n { struct Crop : Base {}; }\n"
-                                 "void f() { events().send(Crop{}); }\n",
-                                 project.root / "scripts/t/other.cpp",
-                                 &project.index),
-              RuleId::EventUnmarked) == 0u);
-    // Another namespace's Crop, a qualifier the project's Crop doesn't have,
-    // and receivers that aren't an Events or an EventSender.
-    CHECK(lspTest::count(
-              *lspTest::analysed(
-                  "namespace other { struct Crop { int x; }; }\n"
-                  "void f() { registry->events().send(other::Crop{}); }\n",
-                  project.root / "scripts/t/other.cpp",
-                  &project.index),
-              RuleId::EventUnmarked) == 0u);
-    CHECK(
-        lspTest::count(*lspTest::analysed(
-                           "void f(Socket& sock)\n{\n"
-                           "  registry->events().send(farm::Crop{});\n"
-                           "  sock.send(Crop{1});\n  net.reader<Crop>();\n}\n",
-                           project.root / "scripts/t/other.cpp",
-                           &project.index),
-                       RuleId::EventUnmarked) == 0u);
+    {
+      local = local ||
+              (d.range.startRow == 16u &&
+               d.message == "This consumer<Moved>() isn't kept as a member, "
+                            "so it's dropped when create() returns and "
+                            "receives nothing. Assign it to a data member of "
+                            "the system.");
+      observed = observed ||
+                 d.message.starts_with("This consumer<Moved>() is made in an "
+                                       "observe() callback, outside create()");
+      update = update || (d.range.startRow == 23u &&
+                          d.message.starts_with("This consumer<Moved>() is "
+                                                "made in update()"));
+    }
+    CHECK(local);
+    CHECK(observed);
+    CHECK(update);
+    // A local of the same name hides the member; out of line, the class's
+    // members are found in the file, or taken as members when it isn't.
+    const auto lines = lspTest::analysed(
+        "class Mover : public sfs::System { sfs::EventConsumer<Moved> kept; "
+        "void create() override; void lateUpdate() override; };\n"
+        "void Mover::create()\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  m_moved = consumer<Moved>();\n"
+        "  kept = consumer<Moved>();\n"
+        "  other = consumer<Moved>();\n}\n"
+        "void Mover::lateUpdate() { kept = consumer<Moved>(); }\n");
+    CHECK(lspTest::count(*lines, RuleId::EventHandleOutsideCreate) == 3u);
+    Project project;
+    const auto split = lspTest::analysed(
+        "void HealthSystem::create() { handle = consumer<Moved>(); }\n"
+        "void HealthSystem::update(double) { handle = consumer<Moved>(); }\n",
+        project.root / "scripts/systems/HealthSystem.cpp",
+        &project.index);
+    CHECK(lspTest::count(*split, RuleId::EventHandleOutsideCreate) == 1u);
+  }
+
+  TEST("event-handle-outside-create should flag an object's consumer made "
+       "outside onCreate or not kept, and leave other code alone")
+  {
+    const auto doc = lspTest::analysed(
+        "class Spinner : public sfs::GameObject\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  sfs::EventRequester<PathRequest> m_paths;\n"
+        "  void onCreate(sfs::Scene& scene) override\n  {\n"
+        "    m_moved = scene.events().consumer<Moved>();\n"
+        "    m_paths = scene.events().requester<PathRequest>().ignore<A>();\n"
+        "    auto once = scene.events().consumer<Moved>();\n  }\n"
+        "  void onUpdate(double) override\n  {\n"
+        "    m_moved = scene().events().consumer<Moved>();\n"
+        "    // sfs-ignore-next-line(event-handle-outside-create)\n"
+        "    m_moved = scene().events().consumer<Moved>();\n"
+        "    m_moved = consumer<Moved>();\n  }\n};\n"
+        "class Panel { void update() { auto r = "
+        "scene().events().consumer<Moved>(); } };\n"
+        "void helper(sfs::Events& events) { auto c = "
+        "events.consumer<Moved>(); }\n");
+    CHECK(lspTest::count(*doc, RuleId::EventHandleOutsideCreate) == 2u);
+    const auto* first = lspTest::first(*doc, RuleId::EventHandleOutsideCreate);
+    CHECK(first && first->range.startRow == 8u &&
+          first->message ==
+              "This consumer<Moved>() isn't kept as a member, so it's dropped "
+              "when onCreate() returns and receives nothing. Assign it to a "
+              "data member of the object.");
+    bool update = false;
+    for (const auto& d : doc->diagnostics)
+      update = update ||
+               (d.range.startRow == 12u &&
+                d.message == "This consumer<Moved>() is made in onUpdate(), "
+                             "outside onCreate(), so it has no owner to run "
+                             "its handlers. Make it in onCreate() and keep it "
+                             "as a member.");
+    CHECK(update);
   }
 
   TEST("the event rules should take calls still being typed")
@@ -408,96 +487,663 @@ int main()
     const auto doc =
         lspTest::analysed("class Mover : public sfs::System\n{\n"
                           "  void update(double) override\n  {\n"
-                          "    auto a = registry->events().reader();\n"
-                          "    auto b = registry->events().sender();\n"
-                          "    registry->events().send<Crop, Crop>(v);\n"
-                          "    auto c = registry->events().reader<>();\n"
-                          "    registry->events().send();\n"
-                          "    registry->events().send<>(Crop{});\n  }\n};\n",
+                          "    auto a = consumer();\n"
+                          "    auto b = requester<>();\n"
+                          "    auto c = scene().events().consumer<A, B>();\n"
+                          "    responder.respond();\n"
+                          "    responder.respond(PathFoundResponse);\n"
+                          "    responder.progress(, x);\n  }\n};\n",
                           project.root / "scripts/t/typing.cpp",
                           &project.index);
-    CHECK(lspTest::count(*doc, RuleId::EventUnmarked) == 0u);
-    CHECK(lspTest::count(*doc, RuleId::ReaderNotKept) == 0u);
+    CHECK(lspTest::count(*doc, RuleId::EventHandleOutsideCreate) == 0u);
+    CHECK(lspTest::count(*doc, RuleId::ResponseSentTwice) == 0u);
   }
 
-  TEST("reader-not-kept should flag a reader made and dropped in code that "
-       "runs again and again")
+  TEST("response-sent-twice should flag a response type a second system "
+       "sends")
   {
+    Project project;
+    CHECK(project.index.responseKind("PathFoundResponse") ==
+          ResponseKind::Declared);
+    CHECK(project.index.responseKind("PathFailedResponse") ==
+          ResponseKind::Listed);
+    CHECK(project.index.responseKind("PathRequest") == ResponseKind::None);
+    const auto doc = lspTest::analysed(
+        "class Pathfinder : public sfs::System\n{\n"
+        "  void update(double) override\n  {\n"
+        "    for (auto [e, request, responder] : m_paths.read())\n    {\n"
+        "      responder.respond(PathFoundResponse{1});\n"
+        "      responder.progress(PathFoundResponse{});\n"
+        "      responder.respond(PathFailedResponse{});\n"
+        "      send(DamageTakenEvent{});\n"
+        "      responder.respond(OwnResponse{});\n"
+        "      PathFoundResponse done{};\n"
+        "      responder.respond(done);\n"
+        "      responder.progress(std::move(done));\n"
+        "      auto unknown = make();\n"
+        "      responder.respond(unknown);\n"
+        "      // sfs-ignore-next-line(response-sent-twice): moving\n"
+        "      responder.respond(PathFoundResponse{2});\n    }\n  }\n};\n"
+        "struct [[sfs::event_response]] OwnResponse {};\n"
+        "void helper(sfs::Responder<PathRequest> responder) { "
+        "responder.respond(PathFoundResponse{}); }\n"
+        "struct PlanJob { void run() { "
+        "responder.respond(PathFoundResponse{}); } };\n",
+        project.root / "scripts/systems/Pathfinder.cpp",
+        &project.index);
+    // The free helper and the job send for Pathfinder, the file's one system.
+    CHECK(lspTest::count(*doc, RuleId::ResponseSentTwice) == 6u);
+    const auto* first = lspTest::first(*doc, RuleId::ResponseSentTwice);
+    CHECK(first && first->range.startRow == 6u &&
+          first->message ==
+              "The response type PathFoundResponse is sent by one system, the "
+              "one that consumes its request, and CombatSystem already sends "
+              "it. Give this system's responses a type of their own.");
+    // The sender itself isn't its own second sender.
+    const auto own =
+        lspTest::analysed("void CombatSystem::update(double) { "
+                          "responder.respond(PathFoundResponse{}); }\n",
+                          project.root / "scripts/systems/CombatSystem.cpp",
+                          &project.index);
+    CHECK(lspTest::count(*own, RuleId::ResponseSentTwice) == 0u);
+    // Two systems of one file, with the file's own response type, and a
+    // type not marked as one.
+    const std::string both =
+        "struct [[sfs::event_response]] Done {};\n"
+        "struct Plain {};\n"
+        "class A : public sfs::System { void update(double) override { "
+        "r.respond(Done{}); r.respond(Plain{}); } };\n"
+        "class B : public sfs::System { void update(double) override { "
+        "r.respond(Done{}); r.respond(Plain{}); } };\n";
+    CHECK(lspTest::count(
+              *lspTest::analysed(both,
+                                 project.root / "scripts/systems/Both.cpp",
+                                 &project.index),
+              RuleId::ResponseSentTwice) == 2u);
+    // Two types of one name in different namespaces aren't one.
+    CHECK(lspTest::count(
+              *lspTest::analysed(
+                  "class A : public sfs::System { void update(double) "
+                  "override { r.respond(a::Done{}); } };\n"
+                  "class B : public sfs::System { void update(double) "
+                  "override { r.respond(b::Done{}); } };\n"
+                  "namespace a { struct [[sfs::event_response]] Done {}; }\n"
+                  "namespace b { struct [[sfs::event_response]] Done {}; }\n",
+                  project.root / "scripts/systems/Apart.cpp",
+                  &project.index),
+              RuleId::ResponseSentTwice) == 0u);
+    // Without an index only the file's own systems are compared.
+    CHECK(lspTest::count(*lspTest::analysed(both), RuleId::ResponseSentTwice) ==
+          2u);
+    CHECK(lspTest::count(
+              *lspTest::analysed(doc->text), RuleId::ResponseSentTwice) == 0u);
+  }
+
+  TEST("event-handle-outside-create should take set-up helpers, and flag "
+       "events() in a system and handles made in handlers")
+  {
+    // A helper create() or onCreate() calls runs during set-up.
+    const auto helpers = lspTest::analysed(
+        "class Mover : public sfs::System\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  void create() override { setUp(); }\n"
+        "  void setUp() { m_moved = consumer<Moved>(); }\n};\n"
+        "class Spinner : public sfs::GameObject\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  void onCreate(sfs::Scene& scene) override { subscribe(scene); }\n"
+        "  void subscribe(sfs::Scene& scene) { m_moved = "
+        "scene.events().consumer<Moved>(); }\n};\n");
+    CHECK(lspTest::count(*helpers, RuleId::EventHandleOutsideCreate) == 0u);
     const auto doc = lspTest::analysed(
         "class Mover : public sfs::System\n{\n"
-        "  sfs::EventReader<Moved> m_moved;\n"
-        "  sfs::EventReader<Moved> m_late;\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  sfs::EventRequester<PathRequest> m_paths;\n"
         "  void create() override\n  {\n"
-        "    m_moved = registry->events().reader<Moved>();\n"
-        "    auto once = registry->events().reader<Moved>();\n"
-        "    observe<A>([this](sfs::Entity e) { "
-        "registry->events().reader<Moved>().skip(); });\n  }\n"
-        "  void update(double) override\n  {\n"
-        "    for (const Moved& m : registry->events().reader<Moved>().read()) "
-        "{}\n"
-        "    auto each = registry->events().reader<Moved>();\n"
-        "    static auto kept = registry->events().reader<Moved>();\n"
-        "    if (!m_late.unread()) m_late = "
-        "registry->events().reader<Moved>();\n"
-        "    take(registry->events().reader<Moved>());\n"
-        "    // sfs-ignore-next-line(reader-not-kept)\n"
-        "    auto ignored = registry->events().reader<Moved>();\n  }\n"
-        "  void onEntityAdded(sfs::Entity e) override { auto r = "
-        "scene().events().reader<Moved>(); }\n"
-        "  void render() override;\n};\n"
-        "void Mover::render() { auto r = (registry->events().reader<Moved>()); "
-        "}\n"
-        "class Panel { void update() { auto r = "
-        "scene().events().reader<Moved>(); } };\n"
+        "    m_moved = registry->events().consumer<Moved>();\n"
+        "    m_moved = consumer<Moved>().onEvent(\n"
+        "        [this](const Moved& m)\n"
+        "        { m_paths = requester<PathRequest>().ignore<Found>(); });\n"
+        "    m_paths = requester<PathRequest>().onResponse<Found>(\n"
+        "        [this](const sfs::Entity& e, const Found& f)\n"
+        "        { auto more = consumer<Hit>(); });\n"
+        "    auto later = [this] { m_moved = consumer<Moved>(); };\n"
+        "  }\n"
+        "  ~Mover() { m_moved = consumer<Moved>(); }\n};\n"
         "class Spinner : public sfs::GameObject\n{\n"
-        "  void onUpdate(double) override { auto r = "
-        "scene().events().reader<Moved>(); }\n"
-        "  void onCreate(sfs::Scene& scene) override { auto r = "
-        "scene.events().reader<Moved>(); }\n};\n");
-    CHECK(lspTest::count(*doc, RuleId::ReaderNotKept) == 6u);
-    const auto* first = lspTest::first(*doc, RuleId::ReaderNotKept);
-    CHECK(first && first->range.startRow == 8u &&
-          first->message.starts_with("This observe() callback makes a new "
-                                     "event reader each time it runs"));
-    bool update = false;
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  void onDestroy() override { m_moved = "
+        "scene().events().consumer<Moved>(); }\n"
+        "  void onTriggerEnter(const sfs::Collision3D& c) override { m_moved "
+        "= scene().events().consumer<Moved>(); }\n};\n");
+    CHECK(lspTest::count(*doc, RuleId::EventHandleOutsideCreate) == 6u);
+    const auto* first = lspTest::first(*doc, RuleId::EventHandleOutsideCreate);
+    CHECK(first && first->range.startRow == 6u &&
+          first->message ==
+              "This consumer<Moved>() is made through events(), which gives a "
+              "system's handle no owner, so its handlers never run. A system "
+              "makes its handles with its own consumer<Moved>() in create().");
+    std::size_t handlers = 0;
+    bool destructor = false;
+    bool trigger = false;
     for (const auto& d : doc->diagnostics)
-      update = update || d.message.starts_with("This update() makes");
-    CHECK(update);
+    {
+      handlers +=
+          d.message.find("is made in an event handler, outside "
+                         "create(), so it's refused") != std::string::npos;
+      destructor = destructor || d.message.find("made in the destructor") !=
+                                     std::string::npos;
+      trigger = trigger || d.message.find("made in onTriggerEnter(), outside "
+                                          "onCreate(), so it has no owner") !=
+                               std::string::npos;
+    }
+    CHECK(handlers == 2u);
+    CHECK(destructor);
+    CHECK(trigger);
   }
 
-  TEST("reader-on-component should flag event readers and senders held by "
-       "components")
+  TEST("event-handle-outside-create should take each way of keeping a handle, "
+       "and see each way of making one")
+  {
+    const auto kept = lspTest::analysed(
+        "class Mover : public sfs::System\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  sfs::EventConsumer<Moved> m_other;\n"
+        "  std::map<int, sfs::EventConsumer<Moved>> m_byId;\n"
+        "  std::optional<sfs::EventConsumer<Moved>> m_maybe;\n"
+        "  void create() override\n  {\n"
+        "    m_moved = flag ? consumer<Moved>() : consumer<Moved>();\n"
+        "    m_moved = sfs::EventConsumer<Moved>(consumer<Moved>());\n"
+        "    m_moved = {consumer<Moved>()};\n"
+        "    m_byId.insert({1, consumer<Moved>()});\n"
+        "    m_byId.try_emplace(2, consumer<Moved>());\n"
+        "    m_byId[3] = consumer<Moved>();\n"
+        "    m_maybe.emplace(consumer<Moved>());\n"
+        "    sfs::EventConsumer<Moved>& slot = m_other;\n"
+        "    slot = consumer<Moved>();\n"
+        "    auto local = consumer<Moved>();\n"
+        "    m_moved = std::move(local);\n"
+        "    m_moved = consumer<Hit>().onEvent([this](const Hit& m_other) "
+        "{});\n"
+        "    m_other = consumer<Moved>();\n"
+        "    m_moved = sfs::EventVerbs::consumer<Moved>();\n"
+        "    m_moved = this->template consumer<Moved>();\n"
+        "    keep(consumer<Moved>());\n  }\n"
+        "  sfs::EventConsumer<Moved> make() { return consumer<Moved>(); }\n"
+        "};\n");
+    CHECK(lspTest::count(*kept, RuleId::EventHandleOutsideCreate) == 0u);
+    const auto missed = lspTest::analysed(
+        "class Mover : public sfs::System\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  void update(double) override\n  {\n"
+        "    m_moved = sfs::EventVerbs::consumer<Moved>();\n"
+        "    m_moved = this->template consumer<Moved>();\n  }\n"
+        "  void create() override\n  {\n"
+        "    sfs::EventConsumer<Moved>& slot = local;\n"
+        "    slot = consumer<Moved>();\n"
+        "    if (auto m_moved = consumer<Moved>()) {}\n  }\n};\n"
+        "class Faster : public Mover\n{\n"
+        "  void update(double) override { m_moved = consumer<Moved>(); }\n"
+        "};\n"
+        "class Spinner : public sfs::GameObject\n{\n"
+        "  sfs::EventConsumer<Moved> m_moved;\n"
+        "  void onUpdate(double) override\n  {\n"
+        "    sfs::Events& queue = scene().events();\n"
+        "    m_moved = queue.consumer<Moved>();\n  }\n};\n"
+        "class Twirler : public Spinner\n{\n"
+        "  void onUpdate(double) override { m_moved = "
+        "scene().events().consumer<Moved>(); }\n};\n");
+    CHECK(lspTest::count(*missed, RuleId::EventHandleOutsideCreate) == 7u);
+    // A class deriving from a system or object the project index knows.
+    Project project;
+    const auto derived = lspTest::analysed(
+        "class Hurt : public HealthSystem { void update(double) override { "
+        "m_x = consumer<Moved>(); } };\n",
+        project.root / "scripts/systems/Hurt.cpp",
+        &project.index);
+    CHECK(lspTest::count(*derived, RuleId::EventHandleOutsideCreate) == 1u);
+  }
+
+  TEST("response-sent-twice should match types by qualified name, and count a "
+       "job's or helper's responses for the system of its file")
+  {
+    Project project;
+    // Found in nav and Found in ai are two types; a spelling is looked up
+    // from the namespaces it's written in.
+    const std::string events =
+        "namespace nav { struct [[sfs::event_response]] Found {}; }\n"
+        "namespace ai { struct [[sfs::event_response]] Found {}; }\n";
+    CHECK(lspTest::count(
+              *lspTest::analysed(
+                  events +
+                      "namespace nav { class NavSystem : public sfs::System { "
+                      "void update(double) override { r.respond(Found{}); } "
+                      "}; }\n"
+                      "namespace ai { class AiSystem : public sfs::System { "
+                      "void update(double) override { r.respond(Found{}); } "
+                      "}; }\n",
+                  project.root / "scripts/systems/Apart.cpp",
+                  &project.index),
+              RuleId::ResponseSentTwice) == 0u);
+    CHECK(lspTest::count(
+              *lspTest::analysed(
+                  events +
+                      "namespace nav { class NavSystem : public sfs::System { "
+                      "void update(double) override { r.respond(Found{}); } "
+                      "}; }\n"
+                      "class Planner : public sfs::System { void "
+                      "update(double) override { r.respond(nav::Found{}); } "
+                      "};\n",
+                  project.root / "scripts/systems/Same.cpp",
+                  &project.index),
+              RuleId::ResponseSentTwice) == 2u);
+    // A job, a free helper and a data member, in a file of one system.
+    const std::string jobs =
+        "struct [[sfs::event_response]] Done {};\n"
+        "struct PlanJob { sfs::Responder<Ask> r; void run() { "
+        "r.respond(Done{}); } };\n"
+        "void finish(sfs::Responder<Ask>& r) { r.respond(Done{}); }\n"
+        "class Worker : public sfs::System\n{\n"
+        "  Done m_done;\n"
+        "  void update(double) override { m_held.respond(m_done); }\n};\n";
+    const auto one = lspTest::analysed(
+        jobs + "class Other : public sfs::Thing { void run() { "
+               "r.respond(Done{}); } };\n",
+        project.root / "scripts/systems/Worker.cpp",
+        &project.index);
+    CHECK(lspTest::count(*one, RuleId::ResponseSentTwice) == 0u);
+    const auto two = lspTest::analysed(
+        jobs + "class Helper : public sfs::System { void update(double) "
+               "override { r.respond(Done{}); } };\n",
+        project.root / "scripts/systems/Workers.cpp",
+        &project.index);
+    // With two systems in the file, the job's and helper's responses are
+    // nobody's: Worker's member and Helper's own are reported.
+    CHECK(lspTest::count(*two, RuleId::ResponseSentTwice) == 2u);
+  }
+
+  TEST("a cycle of base classes should neither crash nor hang the lints")
+  {
+    // Code being typed may have one: Ping and Pong derive from each other.
+    const auto cycle = lspTest::analysed(
+        "class Ping : public Pong { void onUpdate(double) override; };\n"
+        "class Pong : public Ping {};\n"
+        "void Ping::onUpdate(double) { m_x = "
+        "scene().events().consumer<Moved>(); }\n");
+    CHECK(lspTest::count(*cycle, RuleId::EventHandleOutsideCreate) == 0u);
+    Project project;
+    lspTest::writeFile(project.root / "scripts/systems/Ping.h",
+                       "#pragma once\nclass Ping : public Pong {};\n");
+    lspTest::writeFile(project.root / "scripts/systems/Pong.h",
+                       "#pragma once\nclass Pong : public Ping {};\n");
+    project.index.rescan();
+    project.index.indexAll(lspTest::parser());
+    CHECK(!project.index.isSystem("Ping"));
+    CHECK(!project.index.isGameObject("Pong"));
+    // Branching cycles: four classes each deriving from the other three,
+    // and a base written three times.
+    const auto start = std::chrono::steady_clock::now();
+    std::string dense;
+    for (int i = 0; i < 4; ++i)
+    {
+      dense += "class D" + std::to_string(i) + " :";
+      for (int j = 0, n = 0; j < 4; ++j)
+        if (j != i)
+          dense +=
+              std::string(n++ ? "," : "") + " public D" + std::to_string(j);
+      dense += " { void onUpdate(double) override; };\n";
+    }
+    dense += "void D0::onUpdate(double) { m_x = "
+             "scene().events().consumer<Moved>(); }\n";
+    CHECK(lspTest::count(*lspTest::analysed(dense),
+                         RuleId::EventHandleOutsideCreate) == 0u);
+    CHECK(lspTest::count(*lspTest::analysed(
+                             "class P : public Q, public Q, public Q { void "
+                             "onUpdate(double) override; };\n"
+                             "class Q : public P, public P, public P {};\n"
+                             "void P::onUpdate(double) { m_x = "
+                             "scene().events().consumer<Moved>(); }\n"),
+                         RuleId::EventHandleOutsideCreate) == 0u);
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
+  }
+
+  TEST("response-sent-twice should resolve out-of-line qualifiers, using "
+       "names and aliases, declared types first")
+  {
+    Project project;
+    lspTest::writeFile(
+        project.root / "scripts/events/Found.h",
+        "#pragma once\n"
+        "struct [[sfs::event_response]] Found {};\n"
+        "namespace nav { struct [[sfs::event_response]] Found {}; }\n"
+        "namespace ai { struct [[sfs::event_response]] Found {}; }\n"
+        "namespace game { struct [[sfs::event_request(Found)]] Ask {}; }\n"
+        "struct [[sfs::event_request(sfs::EngineResponse)]] Use {};\n");
+    lspTest::writeFile(project.root / "scripts/systems/NavSystem.h",
+                       "#pragma once\nnamespace nav { class NavSystem : "
+                       "public sfs::System { void update(double) override; "
+                       "}; }\n");
+    lspTest::writeFile(project.root / "scripts/systems/NavSystem.cpp",
+                       "void nav::NavSystem::update(double) { "
+                       "r.respond(Found{}); }\n");
+    lspTest::writeFile(project.root / "scripts/systems/TopSystem.h",
+                       "#pragma once\nclass TopSystem : public sfs::System { "
+                       "void update(double) override { r.respond(Found{}); } "
+                       "};\n");
+    project.index.rescan();
+    project.index.indexAll(lspTest::parser());
+    // ai::AiSystem's Found is ai::Found, not NavSystem's nav::Found.
+    CHECK(lspTest::count(
+              *lspTest::analysed("void ai::AiSystem::update(double) { "
+                                 "r.respond(Found{}); }\n"
+                                 "namespace ai { class AiSystem : public "
+                                 "sfs::System {}; }\n",
+                                 project.root / "scripts/systems/AiSystem.cpp",
+                                 &project.index),
+              RuleId::ResponseSentTwice) == 0u);
+    // A using-declaration and an alias name nav::Found; a using-directive
+    // adds its namespace to the lookup.
+    const auto named = [&](std::string_view head)
+    {
+      const auto doc = lspTest::analysed(
+          std::string(head) +
+              "class Sender : public sfs::System { void update(double) "
+              "override { r.respond(Name{}); } };\n",
+          project.root / "scripts/systems/Sender.cpp",
+          &project.index);
+      const auto* found = lspTest::first(*doc, RuleId::ResponseSentTwice);
+      return found ? found->message : std::string();
+    };
+    CHECK(named("using nav::Found;\nusing Name = Found;\n")
+              .starts_with("The response type nav::Found is sent by one "
+                           "system, the one that consumes its request, and "
+                           "NavSystem already sends it."));
+    CHECK(named("using Name = nav::Found;\n").find("NavSystem") !=
+          std::string::npos);
+    CHECK(named("using Name = ::Found;\n").find("TopSystem") !=
+          std::string::npos);
+    CHECK(named("namespace nav { using Name = Found; }\n").empty());
+    CHECK(named("using namespace nav;\nusing Name = ai::Found;\n").empty());
+    // A name a request lists but nothing declares (game::Found) loses to
+    // a declared one (::Found): game's Found is TopSystem's.
+    CHECK(lspTest::count(
+              *lspTest::analysed("namespace game { class Lister : public "
+                                 "sfs::System { void update(double) override { "
+                                 "r.respond(Found{}); } }; }\n",
+                                 project.root / "scripts/systems/Lister.cpp",
+                                 &project.index),
+              RuleId::ResponseSentTwice) == 1u);
+    // A listed type nothing declares (an engine type) is still one.
+    CHECK(lspTest::count(
+              *lspTest::analysed("class One : public sfs::System { void "
+                                 "update(double) override { "
+                                 "r.respond(sfs::EngineResponse{}); } };\n"
+                                 "class Two : public sfs::System { void "
+                                 "update(double) override { "
+                                 "r.respond(sfs::EngineResponse{}); } };\n",
+                                 project.root / "scripts/systems/Engine.cpp",
+                                 &project.index),
+              RuleId::ResponseSentTwice) == 2u);
+  }
+
+  TEST("response-sent-twice should read nested namespaces, namespace "
+       "aliases, and using-declarations only in their own block")
+  {
+    Project project;
+    lspTest::writeFile(
+        project.root / "scripts/events/Nested.h",
+        "#pragma once\n"
+        "struct [[sfs::event_response]] Found {};\n"
+        "namespace a { struct [[sfs::event_response]] Found {}; }\n"
+        "namespace a::b { struct [[sfs::event_response]] OnlyB {}; }\n"
+        "namespace game { struct [[sfs::event_response]] Upper {}; }\n");
+    lspTest::writeFile(project.root / "scripts/systems/UpperSystem.h",
+                       "#pragma once\nclass UpperSystem : public sfs::System "
+                       "{ void update(double) override { "
+                       "r.respond(game::Upper{}); } };\n");
+    lspTest::writeFile(project.root / "scripts/systems/OnlySystem.h",
+                       "#pragma once\nclass OnlySystem : public sfs::System "
+                       "{ void update(double) override { "
+                       "r.respond(a::b::OnlyB{}); } };\n");
+    lspTest::writeFile(project.root / "scripts/systems/TopSystem.h",
+                       "#pragma once\nclass TopSystem : public sfs::System "
+                       "{ void update(double) override { "
+                       "r.respond(Found{}); } };\n");
+    lspTest::writeFile(project.root / "scripts/systems/ASystem.h",
+                       "#pragma once\nclass ASystem : public sfs::System "
+                       "{ void update(double) override { "
+                       "r.respond(a::Found{}); } };\n");
+    project.index.rescan();
+    project.index.indexAll(lspTest::parser());
+    const auto other = [&](std::string text)
+    {
+      const auto doc =
+          lspTest::analysed(std::move(text),
+                            project.root / "scripts/systems/Sender.cpp",
+                            &project.index);
+      const auto* found = lspTest::first(*doc, RuleId::ResponseSentTwice);
+      if (!found)
+        return std::string();
+      const std::size_t by = found->message.find(", and ");
+      const std::size_t end = found->message.find(" already");
+      return found->message.substr(by + 6, end - by - 6);
+    };
+    // Inside `namespace game::nav`, Upper is game::Upper.
+    CHECK(other("namespace game::nav { class S : public sfs::System { void "
+                "update(double) override { r.respond(Upper{}); } }; }\n") ==
+          "UpperSystem");
+    // `namespace ab = a::b;` names a::b.
+    CHECK(other("namespace ab = a::b;\nclass S : public sfs::System { void "
+                "update(double) override { r.respond(ab::OnlyB{}); } };\n") ==
+          "OnlySystem");
+    // A using-declaration in one function isn't seen in another: Found
+    // there is ::Found, TopSystem's, not a::Found.
+    CHECK(other("class S : public sfs::System\n{\n"
+                "  void helper() { using a::Found; }\n"
+                "  void update(double) override { r.respond(Found{}); }\n"
+                "};\n") == "TopSystem");
+    CHECK(other("class S : public sfs::System\n{\n"
+                "  void update(double) override { using a::Found; "
+                "r.respond(Found{}); }\n};\n") == "ASystem");
+    // A using-declaration in another namespace, reached through it.
+    CHECK(other("namespace z { using a::Found; }\n"
+                "class S : public sfs::System { void update(double) "
+                "override { r.respond(z::Found{}); } };\n") == "ASystem");
+  }
+
+  TEST("response-sent-twice should scale with the project")
+  {
+    // 400 systems of 1,600 sends: the lint looks the senders up by type, so
+    // checking every file takes about as long as reading them.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sfsLspManySenders";
+    std::filesystem::remove_all(root);
+    lspTest::writeFile(root / "project.sfsproj", "{}");
+    std::string events = "#pragma once\n";
+    for (int i = 0; i <= 400; ++i)
+      events += "struct [[sfs::event_response]] R" + std::to_string(i) +
+                "Response {};\n";
+    lspTest::writeFile(root / "scripts/events/Responses.h", events);
+    for (int i = 0; i < 400; ++i)
+    {
+      const std::string n = std::to_string(i);
+      const std::string next = std::to_string(i + 1);
+      lspTest::writeFile(root / ("scripts/systems/S" + n + "System.h"),
+                         "#pragma once\nclass S" + n +
+                             "System : public sfs::System { void "
+                             "update(double) override; };\n");
+      lspTest::writeFile(root / ("scripts/systems/S" + n + "System.cpp"),
+                         "struct Job" + n + " { void run() { r.respond(R" + n +
+                             "Response{}); } };\nvoid S" + n +
+                             "System::update(double) { r.respond(R" + n +
+                             "Response{}); r.progress(R" + n +
+                             "Response{}); r.respond(R" + next +
+                             "Response{}); }\n");
+    }
+    const std::filesystem::path output = root / "out.txt";
+    const auto start = std::chrono::steady_clock::now();
+    // Warnings only: it exits with 0.
+    CHECK(std::system(("\"" SFS_LSP_PATH "\" --check --root \"" +
+                       root.string() + "\" \"" + (root / "scripts").string() +
+                       "\" > \"" + output.string() + "\"")
+                          .c_str()) == 0);
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+            .count();
+    std::ifstream in(output);
+    std::stringstream printed;
+    printed << in.rdbuf();
+    std::size_t reported = 0;
+    for (std::size_t at = printed.str().find("[response-sent-twice]");
+         at != std::string::npos;
+         at = printed.str().find("[response-sent-twice]", at + 1))
+      ++reported;
+    // Each S<n> sends R<n+1>, which S<n+1> sends too (S0's R0 and the last
+    // R400 have one sender each).
+    CHECK(reported == 1596u);
+    CHECK(seconds < 15.0);
+    if (seconds >= 15.0)
+      std::printf("      --check took %.1f s\n", seconds);
+    std::filesystem::remove_all(root);
+  }
+
+  TEST("re-reading one script file should cost that file, not the index")
+  {
+    // 4,000 sources of 4 sends: each file read replaces its own entries
+    // only, so reading them all takes about as long as parsing them.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sfsLspManyFiles";
+    std::filesystem::remove_all(root);
+    lspTest::writeFile(root / "project.sfsproj", "{}");
+    for (int i = 0; i < 4000; ++i)
+      lspTest::writeFile(
+          root / ("scripts/jobs/Job" + std::to_string(i) + ".cpp"),
+          "void Job::run() { r.respond(A{}); r.respond(B{}); "
+          "r.progress(A{}); r.respond(C{}); }\n");
+    ProjectIndex index;
+    index.start(root);
+    const auto start = std::chrono::steady_clock::now();
+    index.indexAll(lspTest::parser());
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+            .count();
+    CHECK(seconds < 8.0);
+    if (seconds >= 8.0)
+      std::printf("      indexing took %.1f s\n", seconds);
+    std::filesystem::remove_all(root);
+  }
+
+  TEST("the project index should follow script sources")
+  {
+    Project project;
+    lspTest::writeFile(project.root / "scripts/systems/RouteSystem.h",
+                       "#pragma once\nclass RouteSystem : public sfs::System "
+                       "{ void update(double) override; };\n");
+    lspTest::writeFile(project.root / "scripts/systems/RouteSystem.cpp",
+                       "void RouteSystem::update(double) { "
+                       "r.respond(PathFoundResponse{}); }\n");
+    project.index.rescan();
+    project.index.indexAll(lspTest::parser());
+    const auto sendsFrom = [&](std::string_view system)
+    {
+      std::size_t n = 0;
+      for (const auto& send : project.index.sendersOf("PathFoundResponse"))
+        n += send.system == system;
+      return n;
+    };
+    CHECK(sendsFrom("RouteSystem") == 1u);
+    CHECK(project.index.isSystem("RouteSystem"));
+    const auto edited =
+        lspTest::document("void RouteSystem::update(double) {}\n",
+                          project.root / "scripts/systems/RouteSystem.cpp");
+    project.index.updateSource(edited->path, edited->tree.get(), edited->text);
+    CHECK(sendsFrom("RouteSystem") == 0u);
+    std::filesystem::remove(project.root / "scripts/systems/RouteSystem.cpp");
+    project.index.rescan();
+    CHECK(sendsFrom("RouteSystem") == 0u);
+  }
+
+  TEST("event-declaration errors should show in a header as it's typed")
+  {
+    const auto twice = lspTest::analysed(
+        "struct [[sfs::event_news, sfs::event_response]] Twice {};\n",
+        "/t/Twice.h");
+    CHECK(lspTest::count(*twice, RuleId::EventDeclaration) == 1u);
+    // The header's own types are resolved: a request listing a plain struct.
+    const auto plain = lspTest::analysed(
+        "struct Plain {};\n"
+        "// sfs-ignore-next-line(event-declaration)\n"
+        "struct [[sfs::event_request(Plain, Elsewhere)]] AskRequest {};\n",
+        "/t/AskRequest.h");
+    CHECK(lspTest::count(*plain, RuleId::EventDeclaration) == 1u);
+  }
+
+  TEST("reader-on-component should flag event consumers, requesters, "
+       "broadcasts and responders held by components")
   {
     const auto doc = lspTest::analysed(
-        "using sfs::EventSender;\n"
+        "using sfs::EventRequester;\n"
         "struct [[sfs::component]] Holder\n{\n"
-        "  sfs::EventReader<Moved> moved;\n"
-        "  std::vector<EventSender<Moved>> senders;\n"
-        "  static sfs::EventReader<Moved> shared;\n"
+        "  sfs::EventConsumer<Moved> moved;\n"
+        "  std::vector<EventRequester<PathRequest>> asks;\n"
+        "  static sfs::EventConsumer<Moved> shared;\n"
         "  int count;\n"
-        "  sfs::EventReader<Moved> reader() const;\n"
+        "  sfs::EventConsumer<Moved> consumer() const;\n"
         "  // sfs-ignore-next-line(reader-on-component)\n"
-        "  sfs::EventReader<Moved> ignored;\n};\n"
-        "struct [[sfs::component]] Own { EventReader<Moved> mine; };\n"
-        "class Mover : public sfs::System { sfs::EventReader<Moved> m_moved; "
-        "};\n"
-        "struct Plain { sfs::EventReader<Moved> moved; };\n"
-        "struct [[sfs::component, sfs::event]] Both { sfs::EventReader<Moved> "
-        "moved; };\n");
-    CHECK(lspTest::count(*doc, RuleId::ReaderOnComponent) == 2u);
+        "  sfs::EventConsumer<Moved> ignored;\n};\n"
+        "struct [[sfs::component]] Own { EventConsumer<Moved> mine; };\n"
+        "struct [[sfs::component]] Sent { sfs::EventBroadcast<Moved> out; };\n"
+        "struct [[sfs::component]] Asked { sfs::Responder<PathRequest> r; };\n"
+        "class Mover : public sfs::System { sfs::EventConsumer<Moved> "
+        "m_moved; };\n"
+        "struct Plain { sfs::EventConsumer<Moved> moved; };\n"
+        "struct [[sfs::component, sfs::event_news]] Both { "
+        "sfs::EventConsumer<Moved> moved; };\n");
+    CHECK(lspTest::count(*doc, RuleId::ReaderOnComponent) == 4u);
     const auto* first = lspTest::first(*doc, RuleId::ReaderOnComponent);
     CHECK(first && first->range.startRow == 3u &&
-          first->message.starts_with(
-              "The component Holder holds an event reader"));
+          first->message ==
+              "The component Holder holds an event consumer, which belongs to "
+              "the system or object that reads, not a component. Keep it as a "
+              "member of that system or object.");
+    bool requester = false;
+    bool broadcast = false;
+    bool responder = false;
+    for (const auto& d : doc->diagnostics)
+    {
+      requester = requester ||
+                  d.message.starts_with("The component Holder holds an event "
+                                        "requester");
+      broadcast = broadcast ||
+                  d.message.starts_with("The component Sent holds an event "
+                                        "broadcast");
+      responder = responder || d.message.starts_with(
+                                   "The component Asked holds a responder");
+    }
+    CHECK(requester);
+    CHECK(broadcast);
+    CHECK(responder);
+    // Other wrappers and the file's aliases hold one too; a function type's
+    // parameter doesn't.
+    const auto wrapped = lspTest::analysed(
+        "using MovedConsumer = sfs::EventConsumer<Moved>;\n"
+        "typedef sfs::EventRequester<PathRequest> Asks;\n"
+        "struct [[sfs::component]] Store\n{\n"
+        "  std::optional<sfs::Responder<PathRequest>> a;\n"
+        "  std::unique_ptr<sfs::EventRequester<PathRequest>> b;\n"
+        "  std::array<sfs::EventBroadcast<Moved>, 2> c;\n"
+        "  MovedConsumer d;\n"
+        "  std::function<void(sfs::Responder<PathRequest>)> e;\n"
+        "  std::function<void(MovedConsumer&)> f;\n  Asks g;\n};\n");
+    CHECK(lspTest::count(*wrapped, RuleId::ReaderOnComponent) == 5u);
     // The component a project header registers, unmarked.
     Project project;
     const auto header =
-        lspTest::analysed("#pragma once\nstruct Crop { float growth = 0; "
-                          "sfs::EventSender<Grown> grown; };\n",
-                          project.root / "scripts/components/Crop.h",
+        lspTest::analysed("#pragma once\nstruct Health { float points = 0; "
+                          "sfs::EventBroadcast<Grown> grown; };\n",
+                          project.root / "scripts/components/Health.h",
                           &project.index);
     CHECK(lspTest::count(*header, RuleId::ReaderOnComponent) == 1u);
-    CHECK(lspTest::count(*lspTest::analysed(header->text, "/t/Crop.h"),
+    CHECK(lspTest::count(*lspTest::analysed(header->text, "/t/Health.h"),
                          RuleId::ReaderOnComponent) == 0u);
   }
 
@@ -688,7 +1334,7 @@ int main()
   {
     Project project;
     CHECK(project.index.isScriptHeader(project.root /
-                                       "scripts/systems/FieldSystem.h"));
+                                       "scripts/systems/SpawnSystem.h"));
     CHECK(!project.index.isScriptHeader(project.root / "other/X.h"));
     lspTest::writeFile(project.root / "scripts/systems/NewSystem.h",
                        "#pragma once\nstruct NewSystem : sfs::System {};\n");
@@ -700,22 +1346,22 @@ int main()
     project.index.rescan();
     CHECK(!project.index.isSystem("NewSystem"));
     const auto edited =
-        lspTest::document("#pragma once\nstruct FieldSystem {};\n",
-                          project.root / "scripts/systems/FieldSystem.h");
+        lspTest::document("#pragma once\nstruct SpawnSystem {};\n",
+                          project.root / "scripts/systems/SpawnSystem.h");
     project.index.update(edited->path,
                          sfs::codegen::parseHeader(
                              edited->text, edited->path, edited->tree.get()),
                          edited->tree.get(),
                          edited->text);
-    CHECK(!project.index.isSystem("FieldSystem"));
+    CHECK(!project.index.isSystem("SpawnSystem"));
   }
 
   TEST("--check over a fixture tree should print the golden listing")
   {
     Project project;
-    lspTest::writeFile(project.root / "scripts/systems/CropSystem.cpp",
-                       "void CropSystem::update(double)\n{\n  "
-                       "registry->getSystem<FieldSystem>();\n}\n");
+    lspTest::writeFile(project.root / "scripts/systems/HealthSystem.cpp",
+                       "void HealthSystem::update(double)\n{\n  "
+                       "registry->getSystem<SpawnSystem>();\n}\n");
     lspTest::writeFile(project.root / "scripts/utils/Helpers.h",
                        "#pragma once\nint helper();\n");
     const std::filesystem::path output = project.root / "out.txt";
@@ -729,8 +1375,8 @@ int main()
     const std::string scripts = (project.root / "scripts").string();
     const std::string golden =
         scripts +
-        "/systems/CropSystem.cpp:3:3: warning: Systems should not read other "
-        "systems. Have CropSystem read the state FieldSystem writes on "
+        "/systems/HealthSystem.cpp:3:3: warning: Systems should not read other "
+        "systems. Have HealthSystem read the state SpawnSystem writes on "
         "components, and send what one tells the other as an event. "
         "[system-reads-system]\n" +
         scripts +
@@ -746,32 +1392,31 @@ int main()
   {
     // (b) if (E.has<T>()) S
     const auto plain = lspTest::analysed(
-        "void f(sfs::Entity e)\n{\n  if (e.hasComponent<Hitch>())\n"
-        "    e.getComponent<Hitch>().x = 1;\n}\n");
+        "void f(sfs::Entity e)\n{\n  if (e.hasComponent<Door>())\n"
+        "    e.getComponent<Door>().x = 1;\n}\n");
     CHECK(lspTest::count(*plain, RuleId::HasThenGet) == 1u);
     const auto* found = lspTest::first(*plain, RuleId::HasThenGet);
     CHECK(found && found->range.startRow == 2u &&
           found->message ==
-              "This looks Hitch up twice, with hasComponent<Hitch>() and then "
-              "getComponent<Hitch>(). Use getComponent<Hitch>() alone, which "
-              "gives null when Hitch is missing.");
+              "This looks Door up twice, with hasComponent<Door>() and then "
+              "getComponent<Door>(). Use getComponent<Door>() alone, which "
+              "gives null when Door is missing.");
     const auto plainFixed = fixed(*plain, RuleId::HasThenGet);
-    CHECK(plainFixed->text ==
-          "void f(sfs::Entity e)\n{\n  if (Hitch* hitch = "
-          "e.getComponent<Hitch>())\n    hitch->x = 1;\n}\n");
+    CHECK(plainFixed->text == "void f(sfs::Entity e)\n{\n  if (Door* door = "
+                              "e.getComponent<Door>())\n    door->x = 1;\n}\n");
     CHECK(plainFixed->diagnostics.empty());
 
     // (c) the test first, or after E.isValid(); a bound reference lends its
     // name.
     const auto chained = lspTest::analysed(
         "void f(sfs::Entity e)\n{\n"
-        "  if (e.isValid() && e.hasComponent<Hitch>() && ready)\n  {\n"
-        "    const Hitch& h = e.getComponent<Hitch>();\n    use(h.y, &h);\n"
+        "  if (e.isValid() && e.hasComponent<Door>() && ready)\n  {\n"
+        "    const Door& h = e.getComponent<Door>();\n    use(h.y, &h);\n"
         "  }\n}\n");
     const auto chainedFixed = fixed(*chained, RuleId::HasThenGet);
     CHECK(chainedFixed->text ==
           "void f(sfs::Entity e)\n{\n"
-          "  if (const Hitch* h = e.getComponent<Hitch>(); h && ready)\n  {\n"
+          "  if (const Door* h = e.getComponent<Door>(); h && ready)\n  {\n"
           "    use(h->y, h);\n  }\n}\n");
     CHECK(chainedFixed->diagnostics.empty());
 
@@ -1046,44 +1691,44 @@ int main()
     const auto declared = lspTest::analysed(
         "void f()\n{\n"
         "  for (const sfs::Entity& e : registry->query<A, B>())\n"
-        "    if (Booking* booking = e.getComponent<Booking>())\n"
-        "    {\n      booking->x = 1;\n      use(booking);\n"
-        "      (*booking).y = 2;\n    }\n}\n");
+        "    if (Ticket* ticket = e.getComponent<Ticket>())\n"
+        "    {\n      ticket->x = 1;\n      use(ticket);\n"
+        "      (*ticket).y = 2;\n    }\n}\n");
     CHECK(lspTest::count(*declared, RuleId::FilterInLoop) == 1u);
     const auto* found = lspTest::first(*declared, RuleId::FilterInLoop);
     CHECK(found && found->message ==
                        "This loop goes through every entity in the query and "
-                       "skips those without a Booking. Add Booking to the "
+                       "skips those without a Ticket. Add Ticket to the "
                        "query so it only visits the entities that have one.");
     const auto declaredFixed = fixed(*declared, RuleId::FilterInLoop);
     CHECK(declaredFixed->text ==
           "void f()\n{\n"
-          "  for (auto [a, b, booking] : "
-          "registry->query<A, B, Booking>().components())\n"
-          "  {\n    booking.x = 1;\n    use(&booking);\n"
-          "    (booking).y = 2;\n  }\n}\n");
+          "  for (auto [a, b, ticket] : "
+          "registry->query<A, B, Ticket>().components())\n"
+          "  {\n    ticket.x = 1;\n    use(&ticket);\n"
+          "    (ticket).y = 2;\n  }\n}\n");
     CHECK(declaredFixed->diagnostics.empty());
 
     // A loop that unpacks its row already gains a binding.
     const auto unpacked = lspTest::analysed(
         "void f()\n{\n  for (auto [e, a] : registry->query<A>())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n"
-        "      hitch->n += a.n;\n}\n");
+        "    if (Door* door = e.getComponent<Door>())\n"
+        "      door->n += a.n;\n}\n");
     CHECK(lspTest::count(*unpacked, RuleId::FilterInLoop) == 1u);
     const auto unpackedFixed = fixed(*unpacked, RuleId::FilterInLoop);
     CHECK(unpackedFixed->text ==
-          "void f()\n{\n  for (auto [a, hitch] : registry->query<A, "
-          "Hitch>().components())\n    hitch.n += a.n;\n}\n");
+          "void f()\n{\n  for (auto [a, door] : registry->query<A, "
+          "Door>().components())\n    door.n += a.n;\n}\n");
     CHECK(unpackedFixed->diagnostics.empty());
     // The entity stays when what's left of the body reads it.
     const auto kept = fixed(
         *lspTest::analysed("void f()\n{\n  for (auto [e, a] : "
                            "registry->query<A>())\n"
-                           "    if (Hitch* hitch = e.getComponent<Hitch>())\n"
-                           "      hitch->n += a.n + e.getId();\n}\n"),
+                           "    if (Door* door = e.getComponent<Door>())\n"
+                           "      door->n += a.n + e.getId();\n}\n"),
         RuleId::FilterInLoop);
-    CHECK(kept->text == "void f()\n{\n  for (auto [e, a, hitch] : "
-                        "registry->query<A, Hitch>())\n    hitch.n += a.n + "
+    CHECK(kept->text == "void f()\n{\n  for (auto [e, a, door] : "
+                        "registry->query<A, Door>())\n    door.n += a.n + "
                         "e.getId();\n}\n");
     CHECK(kept->diagnostics.empty());
 
@@ -1112,22 +1757,22 @@ int main()
         "  void update(double) override\n  {\n"
         "    const std::vector<sfs::Entity>& list = registry->query<A>();\n"
         "    for (const sfs::Entity& e : list)\n"
-        "      if (const Booking* booking = e.getComponent<Booking>(); booking "
-        "&& booking->x == y)\n        hit();\n"
+        "      if (const Ticket* ticket = e.getComponent<Ticket>(); ticket "
+        "&& ticket->x == y)\n        hit();\n"
         "    for (const sfs::Entity& e : getEntities())\n"
-        "      if (Booking* booking = e.getComponent<Booking>())\n"
-        "        booking->x = 1;\n"
+        "      if (Ticket* ticket = e.getComponent<Ticket>())\n"
+        "        ticket->x = 1;\n"
         "    for (const sfs::Entity& e : registry->query<A>())\n"
-        "      if (e.getComponent<Booking>() && ready)\n        go(e);\n"
+        "      if (e.getComponent<Ticket>() && ready)\n        go(e);\n"
         "    for (sfs::Entity e : registry->query<A>())\n"
-        "      if (Booking* booking = e.getComponent<Booking>())\n"
+        "      if (Ticket* ticket = e.getComponent<Ticket>())\n"
         "        take(e);\n"
         "    for (const sfs::Entity& e : registry->query<A>())\n"
-        "      if (Booking* booking = e.getComponent<Booking>())\n"
-        "        booking = next(booking);\n"
+        "      if (Ticket* ticket = e.getComponent<Ticket>())\n"
+        "        ticket = next(ticket);\n"
         "    for (const sfs::Entity& e : registry->query<A>())\n"
-        "      if (const Booking* booking = e.getComponent<Booking>())\n"
-        "        show(booking);\n  }\n};\n");
+        "      if (const Ticket* ticket = e.getComponent<Ticket>())\n"
+        "        show(ticket);\n  }\n};\n");
     CHECK(lspTest::count(*reported, RuleId::FilterInLoop) == 6u);
     for (const auto& d : reported->diagnostics)
       if (d.rule == RuleId::FilterInLoop)
@@ -1137,16 +1782,16 @@ int main()
       systemMessage =
           systemMessage ||
           d.message == "This loop goes through every entity of the system and "
-                       "skips those without a Booking. Go through a query "
-                       "that also lists Booking so it only visits the "
+                       "skips those without a Ticket. Go through a query "
+                       "that also lists Ticket so it only visits the "
                        "entities that have one.";
     CHECK(systemMessage);
 
     // Reported on the loop's `for`, so a comment beside or above the loop
     // hides it, with or without a reason.
     const std::string loop = "  for (auto [e, a] : registry->query<A>())";
-    const std::string body = "    if (Hitch* hitch = e.getComponent<Hitch>())\n"
-                             "      hitch->n = 1;\n}\n";
+    const std::string body = "    if (Door* door = e.getComponent<Door>())\n"
+                             "      door->n = 1;\n}\n";
     CHECK(
         lspTest::first(*lspTest::analysed("void f()\n{\n" + loop + "\n" + body),
                        RuleId::FilterInLoop)
@@ -1169,47 +1814,47 @@ int main()
         // Not a query: a parameter, a braced list, another type's entities(),
         // a query view's own list.
         "  for (const sfs::Entity& e : list)\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         "  for (const sfs::Entity& m : {a, b})\n"
-        "    if (Hitch* hitch = m.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "    if (Door* door = m.getComponent<Door>())\n      door->n = 1;\n"
         "  for (const sfs::Entity& e : history->entities())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         "  for (const sfs::Entity& e : registry->query<A>().entities())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         // More than the if, or an else.
         "  for (const sfs::Entity& e : registry->query<A>())\n  {\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         "    e.getComponent<A>()->x = 2;\n  }\n"
         "  for (const sfs::Entity& e : registry->query<A>())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         "    else\n      lost(e);\n"
         // A guaranteed component, not a filter.
         "  for (const sfs::Entity& e : registry->query<A>())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>(); sfs::expect(hitch, "
-        "e))\n      hitch->n = 1;\n"
+        "    if (Door* door = e.getComponent<Door>(); sfs::expect(door, "
+        "e))\n      door->n = 1;\n"
         // Another entity's component.
         "  for (const sfs::Entity& e : registry->query<A>())\n"
-        "    if (Hitch* hitch = other.getComponent<Hitch>())\n"
-        "      hitch->n = 1;\n"
+        "    if (Door* door = other.getComponent<Door>())\n"
+        "      door->n = 1;\n"
         "  for (auto [e, a] : registry->query<A>())\n"
-        "    if (Hitch* hitch = a.target.getComponent<Hitch>())\n"
-        "      hitch->n = 1;\n"
+        "    if (Door* door = a.target.getComponent<Door>())\n"
+        "      door->n = 1;\n"
         // Runs when it's missing.
         "  for (const sfs::Entity& e : registry->query<A>())\n"
-        "    if (!e.hasComponent<Hitch>())\n      add(e);\n"
+        "    if (!e.hasComponent<Door>())\n      add(e);\n"
         "  for (const sfs::Entity& e : registry->query<A>())\n"
-        "    if (const Hitch* hitch = e.getComponent<Hitch>(); !hitch || "
-        "hitch->n)\n      add(e);\n"
+        "    if (const Door* door = e.getComponent<Door>(); !door || "
+        "door->n)\n      add(e);\n"
         // Named by the query: required, excluded.
-        "  for (const sfs::Entity& e : registry->query<A, sfs::Hitch>())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "  for (const sfs::Entity& e : registry->query<A, sfs::Door>())\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         "  for (const sfs::Entity& e : registry->query<A, "
-        "sfs::Excluding<Hitch>>())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n      hitch->n = 1;\n"
+        "sfs::Excluding<Door>>())\n"
+        "    if (Door* door = e.getComponent<Door>())\n      door->n = 1;\n"
         // A list naming it couldn't be gone through as the body removes it.
         "  for (const sfs::Entity& e : registry->query<A>())\n"
-        "    if (Hitch* hitch = e.getComponent<Hitch>())\n"
-        "      e.removeComponent<Hitch>();\n}\n");
+        "    if (Door* door = e.getComponent<Door>())\n"
+        "      e.removeComponent<Door>();\n}\n");
     CHECK(lspTest::count(*doc, RuleId::FilterInLoop) == 0u);
   }
 
@@ -1219,30 +1864,30 @@ int main()
     // One required component: the row converts to it, const as the term is.
     const auto one = lspTest::analysed(
         "void f()\n{\n"
-        "  for (auto [e, booking] : registry->query<Booking>())\n"
-        "    booking.wait += 1;\n}\n");
+        "  for (auto [e, ticket] : registry->query<Ticket>())\n"
+        "    ticket.wait += 1;\n}\n");
     CHECK(lspTest::count(*one, RuleId::UnusedRowEntity) == 1u);
     const auto* found = lspTest::first(*one, RuleId::UnusedRowEntity);
     CHECK(found &&
           found->message ==
               "This loop unpacks each row's entity but never uses it. Loop "
-              "over the Booking alone: `Booking& booking`.");
+              "over the Ticket alone: `Ticket& ticket`.");
     CHECK(found && found->range.startRow == 2u &&
           found->range.startColumn == 13u);
     const auto oneFixed = fixed(*one, RuleId::UnusedRowEntity);
     CHECK(oneFixed->text ==
           "void f()\n{\n"
-          "  for (Booking& booking : registry->query<Booking>())\n"
-          "    booking.wait += 1;\n}\n");
+          "  for (Ticket& ticket : registry->query<Ticket>())\n"
+          "    ticket.wait += 1;\n}\n");
     CHECK(oneFixed->diagnostics.empty());
     CHECK(fixed(*lspTest::analysed(
-                    "void f()\n{\n  for (const auto& [e, hitch] : "
-                    "registry->query<const sfs::Hitch, "
-                    "sfs::Excluding<Done>>())\n    use(hitch);\n}\n"),
+                    "void f()\n{\n  for (const auto& [e, door] : "
+                    "registry->query<const sfs::Door, "
+                    "sfs::Excluding<Done>>())\n    use(door);\n}\n"),
                 RuleId::UnusedRowEntity)
-              ->text == "void f()\n{\n  for (const sfs::Hitch& hitch : "
-                        "registry->query<const sfs::Hitch, "
-                        "sfs::Excluding<Done>>())\n    use(hitch);\n}\n");
+              ->text == "void f()\n{\n  for (const sfs::Door& door : "
+                        "registry->query<const sfs::Door, "
+                        "sfs::Excluding<Done>>())\n    use(door);\n}\n");
     // A typed hierarchy walk, and `_`, a name like any other.
     CHECK(fixed(*lspTest::analysed(
                     "void f(sfs::Entity root)\n{\n  for (auto&& [_, leaf] : "
@@ -1427,8 +2072,8 @@ int main()
           "  for (auto pos : registry->query<Pos>())\n",
           "  for (sfs::Entity pos : registry->query<Pos>())\n",
           "  for (Other pos : registry->query<Pos>())\n",
-          "  for (Pos pos : registry->query<Pos, Hitch>())\n",
-          "  for (Pos pos : registry->query<sfs::Any<Pos, Hitch>>())\n",
+          "  for (Pos pos : registry->query<Pos, Door>())\n",
+          "  for (Pos pos : registry->query<sfs::Any<Pos, Door>>())\n",
           "  const std::vector<sfs::Entity>& list = registry->query<Pos>();\n"
           "  for (Pos pos : list)\n"})
       CHECK(lspTest::count(*lspTest::analysed("void f()\n{\n" + loop +
@@ -1439,20 +2084,20 @@ int main()
   TEST("filter-in-loop and row-lookup should follow helpers that return a "
        "query")
   {
-    const auto doc = lspTest::analysed(
-        "class S : public sfs::System\n{\n"
-        "  const std::vector<sfs::Entity>& vehicles();\n"
-        "  const std::vector<sfs::Entity>& tools() { return "
-        "registry->query<Tool>(); }\n"
-        "  void update(double) override;\n};\n"
-        "const std::vector<sfs::Entity>& S::vehicles()\n{\n"
-        "  return registry->query<A, B>();\n}\n"
-        "void S::update(double)\n{\n"
-        "  for (const sfs::Entity& v : vehicles())\n"
-        "    if (Booking* booking = v.getComponent<Booking>())\n"
-        "      booking->x = 1;\n"
-        "  for (const sfs::Entity& v : this->tools())\n"
-        "    v.getComponent<Tool>()->x = 1;\n}\n");
+    const auto doc =
+        lspTest::analysed("class S : public sfs::System\n{\n"
+                          "  const std::vector<sfs::Entity>& vehicles();\n"
+                          "  const std::vector<sfs::Entity>& tools() { return "
+                          "registry->query<Tool>(); }\n"
+                          "  void update(double) override;\n};\n"
+                          "const std::vector<sfs::Entity>& S::vehicles()\n{\n"
+                          "  return registry->query<A, B>();\n}\n"
+                          "void S::update(double)\n{\n"
+                          "  for (const sfs::Entity& v : vehicles())\n"
+                          "    if (Ticket* ticket = v.getComponent<Ticket>())\n"
+                          "      ticket->x = 1;\n"
+                          "  for (const sfs::Entity& v : this->tools())\n"
+                          "    v.getComponent<Tool>()->x = 1;\n}\n");
     CHECK(lspTest::count(*doc, RuleId::FilterInLoop) == 1u);
     CHECK(lspTest::count(*doc, RuleId::RowLookup) == 1u);
     for (const auto& d : doc->diagnostics)
@@ -1645,8 +2290,8 @@ int main()
         "        [](const sfs::Entity&) {});\n  }\n"
         "  void onEntityRemoved(sfs::Entity) override\n  {\n"
         "    for (const sfs::Entity& e : registry->query<A>())\n"
-        "      if (Hitch* hitch = e.getComponent<Hitch>())\n"
-        "        hitch->n = 1;\n"
+        "      if (Door* door = e.getComponent<Door>())\n"
+        "        door->n = 1;\n"
         "    for (const sfs::Entity& e : registry->query<A>())\n"
         "      if (e.hasComponent<Tag>())\n        count(e);\n  }\n};\n");
     // Only the hasComponent test, which reads the component's bit.
@@ -1814,17 +2459,20 @@ int main()
         "  for (A a : registry->query<A>())\n    n += a.x;\n"
         "  for (auto [a, b, c] : list.components())\n    n += a.x;\n"
         "}\n",
-        "struct [[sfs::component]] Holder { sfs::EventReader<Moved> moved; };\n"
+        "struct [[sfs::component]] Holder { sfs::Responder<Ask> r; };\n"
+        "struct [[sfs::event_response]] Done {};\n"
         "class S : public sfs::System\n{\n"
+        "  void create() override\n  {\n"
+        "    m_asks = requester<Ask>().onResponse<Done>(f).ignore<No>();\n"
+        "    auto c = (consumer<Moved>());\n  }\n"
         "  void update(double) override\n  {\n"
-        "    registry->events().send(Holder{1});\n"
-        "    registry->events().send<Moved, Moved>(m);\n"
-        "    for (const Moved& m : registry->events().reader<Moved>().read())\n"
+        "    for (const Moved& m : m_moved.read())\n"
         "      use(m);\n"
-        "    auto r = (scene().events().reader<Holder>());\n"
-        "    m_sender.send(Holder(2));\n"
-        "    auto a = registry->events().reader();\n"
-        "    auto b = registry->events().reader<>();\n  }\n};\n"};
+        "    auto r = (scene().events().consumer<Holder>());\n"
+        "    for (auto [e, ask, responder] : m_asks.read())\n"
+        "      responder.respond(std::move(done));\n"
+        "    auto a = consumer();\n"
+        "    auto b = requester<>();\n  }\n};\n"};
     std::size_t runs = 0;
     for (const std::string& source : sources)
       for (std::size_t cut = 0; cut <= source.size(); ++cut)
@@ -2044,22 +2692,22 @@ int main()
        "callee takes T&, and fix whole assignments")
   {
     const auto doc = lspTest::analysed(
-        "namespace Rigs\n{\nbool free(const Booking& booking);\n"
+        "namespace Rigs\n{\nbool free(const Ticket& ticket);\n"
         "bool free(const sfs::Entity& machine)\n{\n"
-        "  return free(e.getComponent<Booking>());\n}\n}\n"
+        "  return free(e.getComponent<Ticket>());\n}\n}\n"
         "void dress(Tree& tree, int level);\nvoid pick(Tree* tree);\n"
-        "void spill(Grain& grain);\nvoid spill(void* anything);\n"
+        "void spill(Water& water);\nvoid spill(void* anything);\n"
         "template <typename T> void show(const T& value);\n"
         "void f(sfs::Entity e)\n{\n"
         "  dress(e.getComponent<Tree>(), 1);\n"
         "  pick(e.getComponent<Tree>());\n"
-        "  spill(e.getComponent<Grain>());\n"
+        "  spill(e.getComponent<Water>());\n"
         "  show(e.getComponent<Tree>());\n"
         "  unknown(e.getComponent<Tree>());\n"
         "  e.getComponent<A>() = A{};\n"
         "  if (!sfs::expect(e.getComponent<A>(), e)) return;\n}\n");
     // Warned: Rigs::free (beside free(Entity)), dress (Tree& at that place)
-    // and spill (a void* overload beside Grain&). Silent: pick takes Tree*,
+    // and spill (a void* overload beside Water&). Silent: pick takes Tree*,
     // show is generic, unknown() can't be seen, sfs::expect checks it.
     CHECK(lspTest::count(*doc, RuleId::ComponentPointer) == 4u);
     std::vector<std::string> passed;
@@ -2073,8 +2721,8 @@ int main()
       }
     CHECK(passed.size() == 3u);
     CHECK(passed.size() == 3u &&
-          passed[0] == "This passes getComponent<Booking>() to free(), which "
-                       "takes Booking& here, but the lookup now gives a "
+          passed[0] == "This passes getComponent<Ticket>() to free(), which "
+                       "takes Ticket& here, but the lookup now gives a "
                        "pointer. Check it for null, then pass what it points "
                        "to.");
     CHECK(passed.size() == 3u &&

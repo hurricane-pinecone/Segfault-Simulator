@@ -23,7 +23,7 @@ int TypeIds::idOf(std::string_view typeKey, bool* added)
 std::string readableTypeName(std::string_view typeKey)
 {
 #if defined(_MSC_VER) && !defined(__clang__)
-  // "... componentTypeKey<struct farm::Seed>(void)"
+  // "... componentTypeKey<struct game::Door>(void)"
   constexpr std::string_view open = "componentTypeKey<";
   const std::size_t start = typeKey.find(open);
   const std::size_t end = typeKey.rfind(">(");
@@ -37,8 +37,8 @@ std::string readableTypeName(std::string_view typeKey)
       name.remove_prefix(prefix.size());
   return std::string(name);
 #else
-  // "... componentTypeKey() [with T = farm::Seed; ...]" (GCC) or
-  // "... componentTypeKey() [T = farm::Seed]" (Clang)
+  // "... componentTypeKey() [with T = game::Door; ...]" (GCC) or
+  // "... componentTypeKey() [T = game::Door]" (Clang)
   constexpr std::string_view open = "T = ";
   const std::size_t start = typeKey.find(open);
   if (start == std::string_view::npos)

@@ -6,9 +6,11 @@
 #include <engine/core/components/rigidBody3DComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/components/vehicleComponent.h>
+#include <engine/core/events/eventRules.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/reflection/registration.h>
 #include <engine/runtime/assetStore/assetStore.h>
+#include <engine/runtime/navigation/agentEvent.h>
 #include <engine/runtime/navigation/vehicle/vehicleKind.h>
 #include <engine/runtime/navigation/vehicle/vehicleSpec.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -25,39 +27,71 @@
 
 using namespace sfs;
 
+// The engine's own event types get their traits from its build's scan.
+static_assert(detail::kKind<nav::AgentEvent> == detail::EventKind::EntityNews);
+
 namespace
 {
 namespace fs = std::filesystem;
 constexpr double kFrame = 1.0 / 30.0;
 
-// A game's extension of the spec (as CozyFarm's TractorSpec), registered as
+// News about an agent as a test keeps it.
+struct Heard
+{
+  Entity agent;
+  nav::Fleet::Event::Kind kind = nav::Fleet::Event::Kind::Arrived;
+  std::size_t blockers = 0;
+};
+
+// A system after the navigation in the update order: what it heard in its
+// last update.
+class AgentListener : public System
+{
+public:
+  std::vector<Heard> heard;
+
+protected:
+  void create() override { m_news = consumer<nav::AgentEvent>(); }
+
+  void update(double) override
+  {
+    heard.clear();
+    for (auto [agent, news] : m_news.read())
+      heard.push_back({agent, news.what.kind, news.what.blockers.size()});
+  }
+
+private:
+  EventConsumer<nav::AgentEvent> m_news;
+};
+
+// A game's extension of the spec (a game's TruckSpec, say), registered as
 // its generated code would.
-struct TestTractorSpec : VehicleSpec
+struct TestTruckSpec : VehicleSpec
 {
   float hitchHeight = 0.5f;
 };
 
-void registerTractorSpec()
+void registerTruckSpec()
 {
   using namespace reflect;
-  TypeInfo type = derivedType<TestTractorSpec>(
-      "TestTractorSpec", "Test Tractor Spec", "navTests", "VehicleSpec");
+  TypeInfo type = derivedType<TestTruckSpec>(
+      "TestTruckSpec", "Test Truck Spec", "navTests", "VehicleSpec");
   FieldInfo field;
   field.name = "hitchHeight";
   field.kind = FieldKind::Float;
   field.address = [](void* o) -> void*
-  { return &objectAs<TestTractorSpec>(o)->hitchHeight; };
+  { return &objectAs<TestTruckSpec>(o)->hitchHeight; };
   type.fields.push_back(field);
   types().add(type);
 }
 
-// The project's vehicle specs: a car (a VehicleSpec) and a tractor (a
-// TestTractorSpec), as .asset files the process-wide assets read.
+// The project's vehicle specs: a car (a VehicleSpec) and a truck (a
+// TestTruckSpec), as .asset files the process-wide assets read.
 struct Specs
 {
   fs::path root = fs::temp_directory_path() / "sfs_nav_specs";
   std::unique_ptr<AssetDatabase> catalogue;
-  std::string car, tractor;
+  std::string car, truck;
 
   Specs()
   {
@@ -71,8 +105,8 @@ struct Specs
            {"roadSpeed", 6.0f},
            {"mass", 1400.0f},
            {"power", 60.0f}});
-    write("Tractor",
-          "TestTractorSpec",
+    write("Truck",
+          "TestTruckSpec",
           {{"wheelbase", 2.7f},
            {"maxSteerAngle", 28.4f},
            {"topSpeed", 6.0f},
@@ -84,7 +118,7 @@ struct Specs
         root, AssetDatabase::Mode::ReadWrite, std::vector<fs::path>{"assets"});
     scriptableObjects().setCatalogue(catalogue.get());
     car = refOf("Car");
-    tractor = refOf("Tractor");
+    truck = refOf("Truck");
   }
   ~Specs()
   {
@@ -112,6 +146,9 @@ struct World
   Scene scene{0, SceneServices{.assetStore = store}};
   PhysicsSystem3D& physics = scene.addSystem<PhysicsSystem3D>();
   NavigationSystem& navigation = scene.addSystem<NavigationSystem>();
+  // What the navigation's agents heard, read after each frame.
+  EventConsumer<nav::AgentEvent> agentNews =
+      scene.events().consumer<nav::AgentEvent>();
 
   Entity solid(const glm::vec3& position, const glm::vec3& size)
   {
@@ -145,14 +182,14 @@ struct World
   }
 
   // Run till `agent` arrives or is blocked (or `seconds` pass).
-  std::vector<NavigationSystem::Event> run(const Entity& agent, double seconds)
+  std::vector<Heard> run(const Entity& agent, double seconds)
   {
-    std::vector<NavigationSystem::Event> events;
+    std::vector<Heard> events;
     for (double t = 0.0; t < seconds; t += kFrame)
     {
       scene.update(kFrame);
-      events.insert(
-          events.end(), navigation.events().begin(), navigation.events().end());
+      for (auto [about, news] : agentNews.read())
+        events.push_back({about, news.what.kind, news.what.blockers.size()});
       const nav::Fleet::State st = navigation.state(agent);
       // (Plans run on worker threads: while it plans, wait for real.)
       if (st == nav::Fleet::State::Planning)
@@ -167,7 +204,7 @@ struct World
 
 int main()
 {
-  registerTractorSpec();
+  registerTruckSpec();
 
   TEST("VehicleSpec should be reflected as the engine's, and a game's spec "
        "derived from it should have its fields first")
@@ -175,11 +212,11 @@ int main()
     const reflect::TypeInfo* spec = reflect::types().find("VehicleSpec");
     CHECK(spec && spec->kind == reflect::TypeKind::ScriptableObject &&
           spec->module == "engine");
-    const reflect::TypeInfo* tractor = reflect::types().find("TestTractorSpec");
-    CHECK(tractor && spec && tractor->fields.size() == spec->fields.size() + 1);
-    CHECK(tractor && tractor->fields.front().name == "wheelbase" &&
-          tractor->fields.back().name == "hitchHeight");
-    CHECK(reflect::types().isA("TestTractorSpec", "VehicleSpec"));
+    const reflect::TypeInfo* truck = reflect::types().find("TestTruckSpec");
+    CHECK(truck && spec && truck->fields.size() == spec->fields.size() + 1);
+    CHECK(truck && truck->fields.front().name == "wheelbase" &&
+          truck->fields.back().name == "hitchHeight");
+    CHECK(reflect::types().isA("TestTruckSpec", "VehicleSpec"));
   }
 
   TEST("a scene should be able to list NavigationSystem by name")
@@ -231,10 +268,71 @@ int main()
     const glm::vec3 at = hierarchy::worldPosition(car);
     CHECK(glm::length(glm::vec2(at) - glm::vec2(24.0f, 0.0f)) < 0.1f);
     bool arrived = false;
-    for (const auto& e : events)
-      arrived = arrived || (e.agent == car &&
-                            e.what.kind == nav::Fleet::Event::Kind::Arrived);
+    for (const Heard& e : events)
+      arrived = arrived ||
+                (e.agent == car && e.kind == nav::Fleet::Event::Kind::Arrived);
     CHECK(arrived);
+  }
+
+  TEST("an agent's news should be sent as nav::AgentEvent about its entity, "
+       "and a system after the navigation should hear it in the same update")
+  {
+    Specs specs;
+    World world;
+    AgentListener& listener = world.scene.addSystem<AgentListener>();
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    world.scene.update(kFrame);
+    world.navigation.requestGoal(car, {{{10.0f, 0.0f}, 0.0f}});
+    bool heardOnArrival = false;
+    int arrivals = 0;
+    for (double t = 0.0; t < 60.0; t += kFrame)
+    {
+      const bool before =
+          world.navigation.state(car) == nav::Fleet::State::Arrived;
+      world.scene.update(kFrame);
+      for (const Heard& e : listener.heard)
+        if (e.agent == car && e.kind == nav::Fleet::Event::Kind::Arrived)
+        {
+          ++arrivals;
+          heardOnArrival = !before && world.navigation.state(car) ==
+                                          nav::Fleet::State::Arrived;
+        }
+      if (world.navigation.state(car) == nav::Fleet::State::Planning)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      if (arrivals > 0)
+        break;
+    }
+    CHECK(arrivals == 1);
+    CHECK(heardOnArrival);
+    // Each event is heard once: not again at the next update.
+    world.scene.update(kFrame);
+    bool again = false;
+    for (const Heard& e : listener.heard)
+      again = again || e.kind == nav::Fleet::Event::Kind::Arrived;
+    CHECK(!again);
+  }
+
+  TEST("an agent sent into a solid should be proven blocked, its AgentEvent "
+       "about the agent bringing what stands on its goal")
+  {
+    Specs specs;
+    World world;
+    world.solid({12.0f, 0.0f, 1.0f}, {6.0f, 6.0f, 2.0f});
+    Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    world.scene.update(kFrame);
+    world.navigation.requestGoal(car, {{{12.0f, 0.0f}, 0.0f}});
+    const std::vector<Heard> events = world.run(car, 30.0);
+    CHECK(world.navigation.state(car) == nav::Fleet::State::Blocked);
+    int blocked = 0;
+    std::size_t blockers = 0;
+    for (const Heard& e : events)
+      if (e.agent == car && e.kind == nav::Fleet::Event::Kind::Blocked)
+      {
+        ++blocked;
+        blockers = e.blockers;
+      }
+    CHECK(blocked == 1);
+    CHECK(blockers > 0u);
   }
 
   TEST("a game's coarse edges (its worn tracks) should be put on the coarse "
@@ -245,9 +343,13 @@ int main()
     World world;
     world.solid({12.0f, 0.0f, 1.0f}, {1.0f, 8.0f, 2.0f});
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
+    // Waits by the clock, not a count of frames: the graph is built on the
+    // scheduler's workers, which a busy machine runs late.
     const auto graphWith = [&](std::size_t edges)
     {
-      for (int k = 0; k < 400; ++k)
+      const auto waitUntil =
+          std::chrono::steady_clock::now() + std::chrono::seconds(60);
+      while (std::chrono::steady_clock::now() < waitUntil)
       {
         world.scene.update(kFrame);
         const auto& g = world.navigation.fleet().world().graph;
@@ -299,22 +401,22 @@ int main()
   }
 
   TEST("a vehicle agent should drive by a derived spec (a game's "
-       "TractorSpec) through its VehicleComponent, and one without a "
+       "TruckSpec) through its VehicleComponent, and one without a "
        "VehicleComponent should be left out")
   {
     Specs specs;
     World world;
-    Entity tractor = world.car({0.0f, 0.0f}, 0.0f, specs.tractor);
+    Entity truck = world.car({0.0f, 0.0f}, 0.0f, specs.truck);
     Entity bare = world.car({0.0f, 10.0f}, 0.0f, {});
     world.scene.update(kFrame);
     AssetRef<VehicleSpec> ref;
-    ref.asset = specs.tractor;
-    CHECK(dynamic_cast<const TestTractorSpec*>(ref.get()) != nullptr);
+    ref.asset = specs.truck;
+    CHECK(dynamic_cast<const TestTruckSpec*>(ref.get()) != nullptr);
     CHECK(scriptableObjects().list("VehicleSpec").size() == 2u);
-    world.navigation.requestGoal(tractor, {{{15.0f, 0.0f}, 0.0f}});
+    world.navigation.requestGoal(truck, {{{15.0f, 0.0f}, 0.0f}});
     world.navigation.requestGoal(bare, {{{15.0f, 10.0f}, 0.0f}});
-    world.run(tractor, 60.0);
-    CHECK(world.navigation.state(tractor) == nav::Fleet::State::Arrived);
+    world.run(truck, 60.0);
+    CHECK(world.navigation.state(truck) == nav::Fleet::State::Arrived);
     CHECK(world.navigation.state(bare) != nav::Fleet::State::Arrived);
     const glm::vec3 at = hierarchy::worldPosition(bare);
     CHECK(glm::length(glm::vec2(at) - glm::vec2(0.0f, 10.0f)) < 1.0e-3f);
@@ -349,7 +451,7 @@ int main()
   {
     Specs specs;
     World world;
-    Entity tractor = world.car({0.0f, 0.0f}, 0.0f, specs.tractor);
+    Entity truck = world.car({0.0f, 0.0f}, 0.0f, specs.truck);
     nav::vehicle::Rig given;
     given.extraMass = 1234.5f;
     given.grip = 0.437f;
@@ -358,10 +460,10 @@ int main()
     world.navigation.setRigProvider([&](const Entity&) { return given; });
     world.scene.update(kFrame);
     const nav::AgentSpec* driven =
-        world.navigation.fleet().spec(static_cast<uint64_t>(tractor.getId()));
+        world.navigation.fleet().spec(static_cast<uint64_t>(truck.getId()));
     CHECK(driven != nullptr);
     AssetRef<VehicleSpec> ref;
-    ref.asset = specs.tractor;
+    ref.asset = specs.truck;
     nav::vehicle::Rig rig = given;
     rig.effort = NavAgentComponent{}.effort;
     nav::AgentSpec planned;
@@ -379,15 +481,15 @@ int main()
     rig.extraMass = given.extraMass;
     nav::vehicle::applySpec(planned, *ref.get(), rig);
     CHECK(world.navigation.fleet()
-              .spec(static_cast<uint64_t>(tractor.getId()))
+              .spec(static_cast<uint64_t>(truck.getId()))
               ->accel == planned.accel);
     // (A spec whose wheelbase is 0, "measure it": the measured one.)
     VehicleSpec measure;
     measure.wheelbase = 0.0f;
-    nav::AgentSpec mower;
-    nav::vehicle::applySpec(mower, measure, given);
-    CHECK(mower.wheelbase == 1.1f);
-    CHECK(std::abs(mower.minRadius -
+    nav::AgentSpec measured;
+    nav::vehicle::applySpec(measured, measure, given);
+    CHECK(measured.wheelbase == 1.1f);
+    CHECK(std::abs(measured.minRadius -
                    1.1f / std::tan(glm::radians(measure.maxSteerAngle))) <
           1.0e-4f);
   }
@@ -398,17 +500,17 @@ int main()
   {
     Specs specs;
     World world;
-    Entity tractor = world.car({4.0f, 2.0f}, 0.5f * nav::kPi, specs.tractor);
+    Entity truck = world.car({4.0f, 2.0f}, 0.5f * nav::kPi, specs.truck);
     nav::vehicle::Rig given;
     given.axle = -1.5f; // (behind its origin)
     world.navigation.setRigProvider([&](const Entity&) { return given; });
     world.scene.update(kFrame);
     const nav::Pose2 pose =
-        world.navigation.fleet().pose(static_cast<uint64_t>(tractor.getId()));
+        world.navigation.fleet().pose(static_cast<uint64_t>(truck.getId()));
     CHECK(glm::length(pose.position - glm::vec2(4.0f, 0.5f)) < 1.0e-3f);
     CHECK(std::abs(pose.heading - 0.5f * nav::kPi) < 1.0e-3f);
     world.scene.update(kFrame);
-    CHECK(glm::length(glm::vec2(hierarchy::worldTransform(tractor).position) -
+    CHECK(glm::length(glm::vec2(hierarchy::worldTransform(truck).position) -
                       glm::vec2(4.0f, 2.0f)) < 1.0e-3f);
   }
 
@@ -421,7 +523,7 @@ int main()
     CHECK(paths);
   }
 
-  TEST("a mounted implement (rigid hitch) should join the agent's boxes; one "
+  TEST("a mounted tool (rigid hitch) should join the agent's boxes; one "
        "left out (setActive false) should leave the fleet till it's back")
   {
     Specs specs;
@@ -483,7 +585,7 @@ int main()
     Specs specs;
     World world;
     Entity car = world.car({0.0f, 0.0f}, 0.0f, specs.car);
-    // (A 3 m x 4 m x 1 m header ahead of the car, pitched 14 degrees up by
+    // (A 3 m x 4 m x 1 m blade ahead of the car, pitched 14 degrees up by
     // its lift, the car's body pitched 5 degrees nose down on the ground.)
     Entity tool = world.solid({5.0f, 0.0f, 1.5f}, {3.0f, 4.0f, 1.0f});
     const glm::quat lifted =

@@ -20,6 +20,7 @@ add_library(sfs-lsp-lib STATIC
     src/document.cpp
     src/entityLints.cpp
     src/hover.cpp
+    src/lintSupport.cpp
     src/lints.cpp
     src/projectIndex.cpp
     src/server.cpp

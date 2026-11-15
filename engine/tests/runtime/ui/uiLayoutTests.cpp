@@ -497,7 +497,7 @@ int main()
           near(framed.quads[0].rect.w, 16.0f) &&
           near(framed.quads[0].rect.y, 8.0f));
     // A mesh's icon, at twice the scale; one in a button beside its label.
-    Laid icon = lay(Image::mesh("farm:wheat").align(Alignment::TopLeading),
+    Laid icon = lay(Image::mesh("game:coin").align(Alignment::TopLeading),
                     screen,
                     2.0f,
                     {},
@@ -505,7 +505,7 @@ int main()
     CHECK(icon.quads.size() == 1u && near(icon.quads[0].rect.z, 64.0f));
     Laid button = lay(
         Button(
-            HStack{Image::mesh("farm:wheat").frame(20.0f, 20.0f), Text("Sow")},
+            HStack{Image::mesh("game:coin").frame(20.0f, 20.0f), Text("Buy")},
             [] {}),
         screen,
         1.0f,
@@ -529,7 +529,7 @@ int main()
        "modifier's subject")
   {
     Laid laid = lay(VStack(Alignment::Leading,
-                           {Badge{.text = "New", .count = 3}, Text("Wheat")})
+                           {Badge{.text = "New", .count = 3}, Text("Sword")})
                         .align(Alignment::TopLeading));
     const UiQuad* label = textQuad(laid, "New");
     const UiQuad* count = textQuad(laid, "3");
@@ -1141,37 +1141,37 @@ int main()
   {
     Kept kept;
     int clicks = 0;
-    const Cache::Stats& first = kept.lay(hud("6:40 pm", "Plough", &clicks));
+    const Cache::Stats& first = kept.lay(hud("6:40 pm", "Patrol", &clicks));
     CHECK(!first.kept && first.placed > 0 && first.reused == 0);
     CHECK(kept.text.drawn.size() == 4u);
     CHECK(sameAsFresh(kept));
     const auto quads = kept.cache.quads();
 
     // Made again, the same: nothing laid out, nothing drawn, nothing copied.
-    const Cache::Stats& same = kept.lay(hud("6:40 pm", "Plough", &clicks));
+    const Cache::Stats& same = kept.lay(hud("6:40 pm", "Patrol", &clicks));
     CHECK(same.kept && same.placed == 0);
     CHECK(kept.text.drawn.empty());
     CHECK(kept.cache.quads() == quads);
 
     // The clock's text changed (as wide): only it drawn again, the rest kept.
-    const Cache::Stats& tick = kept.lay(hud("6:41 pm", "Plough", &clicks));
+    const Cache::Stats& tick = kept.lay(hud("6:41 pm", "Patrol", &clicks));
     CHECK(!tick.kept && tick.reused > 0);
     CHECK(kept.text.drawn.size() == 1u &&
           (kept.text.drawn.empty() || kept.text.drawn[0] == "6:41 pm"));
     CHECK(sameAsFresh(kept));
 
     // A wider text moves what's after it: drawn again, still right.
-    kept.lay(hud("12:41 pm", "Plough", &clicks));
+    kept.lay(hud("12:41 pm", "Patrol", &clicks));
     CHECK(sameAsFresh(kept));
     // And the board's job changed (as wide): the clock kept.
-    kept.lay(hud("12:41 pm", "Harrow", &clicks));
+    kept.lay(hud("12:41 pm", "Defend", &clicks));
     CHECK(kept.text.drawn.size() == 1u &&
-          (kept.text.drawn.empty() || kept.text.drawn[0] == "Harrow"));
+          (kept.text.drawn.empty() || kept.text.drawn[0] == "Defend"));
     CHECK(sameAsFresh(kept));
 
     // Its button calls the newest tree's function, though its drawing's kept.
     int newer = 0;
-    kept.lay(hud("12:41 pm", "Harrow", &newer));
+    kept.lay(hud("12:41 pm", "Defend", &newer));
     CHECK(kept.cache.stats().kept);
     const Hit* pause = kept.clickable(Node::Kind::Button);
     CHECK(pause != nullptr);
@@ -1185,7 +1185,7 @@ int main()
   {
     Kept kept;
     int clicks = 0;
-    kept.lay(hud("6:40 pm", "Plough", &clicks));
+    kept.lay(hud("6:40 pm", "Patrol", &clicks));
     const Hit* eye = kept.clickable(Node::Kind::Button, 1);
     CHECK(eye != nullptr);
     if (!eye)
@@ -1196,19 +1196,19 @@ int main()
     Pointer pointer;
     pointer.hovered = eye->id;
     const Cache::Stats& over =
-        kept.lay(hud("6:40 pm", "Plough", &clicks), pointer);
+        kept.lay(hud("6:40 pm", "Patrol", &clicks), pointer);
     CHECK(!over.kept && over.reused > 0 && kept.text.drawn.empty());
     CHECK(sameAsFresh(kept, pointer));
     CHECK(!sameAsFresh(kept)); // (its hovered colour)
     // Still over it: kept. The pointer over the panel, not a button: the
     // button drawn again as it was.
-    CHECK(kept.lay(hud("6:40 pm", "Plough", &clicks), pointer).kept);
+    CHECK(kept.lay(hud("6:40 pm", "Patrol", &clicks), pointer).kept);
     pointer.hovered = 12345;
     const Cache::Stats& off =
-        kept.lay(hud("6:40 pm", "Plough", &clicks), pointer);
+        kept.lay(hud("6:40 pm", "Patrol", &clicks), pointer);
     CHECK(!off.kept && kept.text.drawn.empty());
     CHECK(sameAsFresh(kept));
-    CHECK(kept.lay(hud("6:40 pm", "Plough", &clicks), pointer).kept);
+    CHECK(kept.lay(hud("6:40 pm", "Patrol", &clicks), pointer).kept);
 
     // A scroll view scrolled: drawn again as it eases, then kept.
     Kept scroller;

@@ -35,12 +35,12 @@ void forgetExpectFailures();
  * Whether a component the code needs is there, as Unreal's ensure: loud in
  * development, a log line and a fallback in release, never a crash (unless
  * asked for). When `component` is null it returns false, so the code takes
- * its fallback: `if (!sfs::expect(hitch, vehicle)) return;`. For lookups the
+ * its fallback: `if (!sfs::expect(health, enemy)) return;`. For lookups the
  * scene's data should always satisfy: a prefab's own components, a
  * relationship's other side.
  *
  * The first failure at each call site in a run logs an error naming it, the
- * entity and the type ("HitchSystem.cpp:122: entity 812 has no Hitch"); later
+ * entity and the type ("HealthSystem.cpp:122: entity 812 has no Health"); later
  * ones there say nothing more. In development and editor builds (the debug
  * guard, debugFeatures::enabled()) that first failure also breaks into an
  * attached debugger and shows the engine's error dialog, which the game

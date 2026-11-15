@@ -11,8 +11,68 @@ endfunction()
 add_core_test(luaTests scripting/luaTests.cpp)
 add_core_test(ecsTests ecs/ecsTests.cpp)
 add_core_test(ecsBenchTests ecs/ecsBenchTests.cpp)
-add_core_test(eventsTests events/eventsTests.cpp)
-add_core_test(eventsBenchTests events/eventsBenchTests.cpp)
+# Tests that declare event types get their compile-time traits, as a game
+# module does (sfs_event_traits). Without a codegen to write them (a core-only
+# build given no SFS_CODEGEN_EXECUTABLE) they're left out.
+function(add_core_event_test name source)
+    if(NOT SFS_CODEGEN_COMMAND)
+        return()
+    endif()
+    add_core_test(${name} ${source})
+    sfs_event_traits(${name} FILES "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+endfunction()
+if(NOT SFS_CODEGEN_COMMAND)
+    message(STATUS "No sfs-codegen: the event tests are left out (pass "
+                   "SFS_CODEGEN_EXECUTABLE=<native-build>/bin/sfs-codegen)")
+endif()
+
+add_core_event_test(eventsTests events/eventsTests.cpp)
+add_core_event_test(eventsBenchTests events/eventsBenchTests.cpp)
+add_core_event_test(eventKindsTests events/eventKindsTests.cpp)
+add_core_event_test(systemEventsTests ecs/systemEventsTests.cpp)
+# Compile-fail tests: each case of eventCompileFail.cpp is its own target,
+# left out of the build, which the test builds and expects to fail with its
+# static_assert's message (or the failing template's name, which a message
+# can't hold). Case 0 holds the allowed uses and must build.
+function(add_event_compile_test number expected)
+    if(NOT SFS_CODEGEN_COMMAND)
+        return()
+    endif()
+    set(target eventCompileFail${number})
+    add_library(${target} OBJECT EXCLUDE_FROM_ALL events/eventCompileFail.cpp)
+    target_link_libraries(${target} PRIVATE engine-core)
+    target_compile_definitions(${target} PRIVATE SFS_COMPILE_FAIL_CASE=${number})
+    sfs_event_traits(${target} FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/events/eventCompileFail.cpp")
+    add_test(NAME ${target}
+             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                     --target ${target} --config $<CONFIG>)
+    set_tests_properties(${target} PROPERTIES LABELS core
+                         RESOURCE_LOCK eventCompileFail)
+    if(number EQUAL 0)
+        return()
+    endif()
+    set_tests_properties(${target} PROPERTIES
+                         PASS_REGULAR_EXPRESSION "${expected}")
+endfunction()
+add_event_compile_test(0 "")
+add_event_compile_test(1 "ResponseHasNoHandler")
+add_event_compile_test(2 "ResponseNotInRequest")
+add_event_compile_test(3 "ResponseHandledTwice")
+add_event_compile_test(4 "onEvent.. takes fn")
+add_event_compile_test(5 "ResponderResponseNotListed")
+add_event_compile_test(6 "is a response: send it with responder.respond..")
+add_event_compile_test(7 "is a response: send it with responder.respond..")
+add_event_compile_test(8 "NotAnEvent")
+add_event_compile_test(9 "is sent with send.entity, event.")
+add_event_compile_test(10 "send.entity, event. sends an ..sfs::event_entity_news")
+add_event_compile_test(11 "is sent with a requester's request.entity, event.")
+add_event_compile_test(12 "readLatest.. reads ..sfs::event_entity_news")
+add_event_compile_test(13 "A Responder responds to a request")
+add_event_compile_test(14 "Requests are sent on the owning thread")
+add_event_compile_test(15 "An EventRequester asks for a request")
+add_event_compile_test(16 "cancel<E>.. cancels")
+add_event_compile_test(17 "NotAnEvent")
 add_core_test(assetDatabaseTests assets/assetDatabaseTests.cpp)
 add_core_test(workerPoolTests jobs/workerPoolTests.cpp)
 add_core_test(hierarchyTests hierarchy/hierarchyTests.cpp)

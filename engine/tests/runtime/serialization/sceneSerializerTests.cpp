@@ -451,17 +451,17 @@ int main()
     const nlohmann::json data = {
         {"formatVersion", 1},
         {"entities",
-         {{{"NameComponent", {{"name", "Field"}}},
-           {"CropComponent", {{"growth", 0.75}, {"variety", "wheat"}}}}}}};
+         {{{"NameComponent", {{"name", "Cave"}}},
+           {"SpawnerComponent", {{"rate", 0.75}, {"enemy", "goblin"}}}}}}};
 
     World world;
     world.serializer().load(data, world.scene);
     const nlohmann::json saved = world.serializer().save(world.scene);
 
     const nlohmann::json& entity = saved["entities"][0];
-    CHECK(entity.contains("CropComponent"));
-    CHECK(entity["CropComponent"]["variety"] == "wheat");
-    CHECK(entity["CropComponent"]["growth"] == 0.75);
+    CHECK(entity.contains("SpawnerComponent"));
+    CHECK(entity["SpawnerComponent"]["enemy"] == "goblin");
+    CHECK(entity["SpawnerComponent"]["rate"] == 0.75);
     CHECK(entity.contains("NameComponent"));
   }
 
@@ -630,19 +630,19 @@ int main()
   TEST("a hierarchy should save nested and load back with the same parents")
   {
     World source;
-    Entity farm = source.named("Farm", {10.0f, 0.0f, 0.0f});
+    Entity town = source.named("Town", {10.0f, 0.0f, 0.0f});
     Entity loose = source.named("Loose");
-    Entity barn = source.named("Barn", {1.0f, 0.0f, 0.0f});
+    Entity house = source.named("House", {1.0f, 0.0f, 0.0f});
     Entity door = source.named("Door", {0.0f, 0.0f, 2.0f});
-    hierarchy::setParent(barn, farm);
-    hierarchy::setParent(door, barn);
+    hierarchy::setParent(house, town);
+    hierarchy::setParent(door, house);
     source.scene.flushEntities();
 
     const nlohmann::json saved = source.serializer().save(source.scene);
     CHECK(saved["formatVersion"] == SceneSerializer::kSceneFormatVersion);
-    CHECK(saved["entities"].size() == 2u); // roots: Farm, Loose
+    CHECK(saved["entities"].size() == 2u); // roots: Town, Loose
     CHECK(saved["entities"][0]["children"][0]["NameComponent"]["name"] ==
-          "Barn");
+          "House");
     CHECK(saved["entities"][0]["children"][0]["children"][0]["NameComponent"]
                ["name"] == "Door");
     CHECK(!saved["entities"][1].contains("children"));
@@ -653,9 +653,9 @@ int main()
     target.scene.flushEntities();
     CHECK(target.scene.entities().size() == 4u);
     CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Door"))) ==
-          "Barn");
-    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("Barn"))) ==
-          "Farm");
+          "House");
+    CHECK(target.nameOf(hierarchy::parentOf(target.findByName("House"))) ==
+          "Town");
     CHECK(!hierarchy::parentOf(target.findByName("Loose")).isValid());
     const glm::vec3 doorAt =
         hierarchy::worldPosition(target.findByName("Door"));

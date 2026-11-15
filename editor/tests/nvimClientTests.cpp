@@ -175,7 +175,7 @@ int main()
       std::fclose(out);
     };
     write(work / "Game/project.sfsproj", "{}\n");
-    write(work / "Game/scripts/Crop.h", "struct Crop { int a; };\n");
+    write(work / "Game/scripts/Enemy.h", "struct Enemy { int a; };\n");
     write(work / "Engine/.sfs-engine",
           "# Marks the SFS source tree as a root for sfs-lsp.\n");
     write(work / "Engine/include/thing.h", "struct Thing { int a; };\n");
@@ -212,7 +212,7 @@ int main()
       const std::string count =
           ":lua print('sfs_lsp=' .. #vim.lsp.get_clients({ bufnr = 0, name = "
           "'sfs_lsp' }))<CR>";
-      lsp.open(work / "Game/scripts/Crop.h");
+      lsp.open(work / "Game/scripts/Enemy.h");
       CHECK(shows(count, "sfs_lsp=1"));
       lsp.open(work / "Engine/include/thing.h");
       CHECK(shows(count, "sfs_lsp=1"));

@@ -12,10 +12,16 @@
 //
 //   sfs-codegen --module <name> --function <qualified-name> --output <file.cpp>
 //               [--function-header <header>] [--include-root <dir>]
+//               [--event-traits <file.h> [--event-source <file.cpp>]...]
 //               [--ui-previews] <header>...
+//   sfs-codegen --events-only --event-traits <file.h> <file>...
 //
 // With --ui-previews, the headers are UI headers (*.ui.h) and the output is
 // the editor's UI preview module: their views, filled with placeholders.
+// --event-traits also writes the event traits header of the files' event
+// types (generateEventTraits()), which the target includes first, with those
+// of each --event-source file (scanned for events alone); --events-only
+// writes only that, from any source files (a test's .cpp).
 //
 // Diagnostics print as `file:line: severity: message [rule]`; a header's
 // sfs-ignore comments hide the warnings they name. Exits non-zero (and writes
@@ -29,7 +35,10 @@ void usage()
 {
   std::cerr << "usage: sfs-codegen --module <name> --function <qualified-name> "
                "--output <file.cpp> [--function-header <header>] "
-               "[--include-root <dir>] [--ui-previews] <header>...\n";
+               "[--include-root <dir>] [--event-traits <file.h> "
+               "[--event-source <file>]...] [--ui-previews] <header>...\n"
+               "       sfs-codegen --events-only --event-traits <file.h> "
+               "<file>...\n";
 }
 
 bool isError(const sfs::codegen::Diagnostic& diagnostic)
@@ -44,17 +53,82 @@ void print(const sfs::codegen::Diagnostic& diagnostic)
   std::cerr << sfs::codegen::formatDiagnostic(diagnostic, false) << '\n';
 }
 
-// The script registration for `headers`; false if one has an error.
+// Writes `text` to `path` unless it already holds it, so an unchanged scan
+// doesn't trigger a rebuild.
+void writeIfChanged(const std::filesystem::path& path, const std::string& text)
+{
+  if (std::filesystem::exists(path) && sfs::codegen::readFile(path) == text)
+    return;
+  if (path.has_parent_path())
+    std::filesystem::create_directories(path.parent_path());
+  std::ofstream(path, std::ios::binary) << text;
+}
+
+// Whether a diagnostic is about event declarations: all that a file scanned
+// for events alone shows.
+bool aboutEvents(const sfs::codegen::Diagnostic& diagnostic)
+{
+  using sfs::codegen::RuleId;
+  return diagnostic.rule == RuleId::EventDeclaration ||
+         diagnostic.rule == RuleId::EventAndComponent;
+}
+
+// The event traits header for the event types `results` declare; false if a
+// declaration is wrong.
+bool generateTraits(const std::vector<sfs::codegen::ParseResult>& results,
+                    std::string& generated)
+{
+  std::vector<sfs::codegen::EventModel> events;
+  std::vector<std::string> plainTypes;
+  for (const sfs::codegen::ParseResult& result : results)
+  {
+    events.insert(events.end(), result.events.begin(), result.events.end());
+    plainTypes.insert(
+        plainTypes.end(), result.plainTypes.begin(), result.plainTypes.end());
+  }
+  std::vector<sfs::codegen::Diagnostic> diagnostics;
+  generated =
+      sfs::codegen::generateEventTraits(events, plainTypes, diagnostics);
+  for (const sfs::codegen::Diagnostic& diagnostic : diagnostics)
+    print(diagnostic);
+  return diagnostics.empty();
+}
+
+// Parses each of `files` for its event types alone into `results`, printing
+// its event diagnostics; false if one is an error.
+bool scanEvents(const std::vector<std::filesystem::path>& files,
+                std::vector<sfs::codegen::ParseResult>& results)
+{
+  bool failed = false;
+  for (const std::filesystem::path& file : files)
+  {
+    sfs::codegen::ParseResult& result = results.emplace_back(
+        sfs::codegen::parseHeader(sfs::codegen::readFile(file), file));
+    for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
+      if (aboutEvents(diagnostic))
+      {
+        print(diagnostic);
+        failed |= isError(diagnostic);
+      }
+  }
+  return !failed;
+}
+
+// The script registration for `headers`, and their and `eventSources`'
+// event traits; false if one has an error.
 bool generateScripts(const std::vector<std::filesystem::path>& headers,
+                     const std::vector<std::filesystem::path>& eventSources,
                      const sfs::codegen::GeneratorOptions& options,
-                     std::string& generated)
+                     std::string& generated,
+                     std::string* traits)
 {
   std::vector<sfs::codegen::TypeModel> types;
+  std::vector<sfs::codegen::ParseResult> results;
   bool failed = false;
   for (const std::filesystem::path& header : headers)
   {
-    sfs::codegen::ParseResult result =
-        sfs::codegen::parseHeader(sfs::codegen::readFile(header), header);
+    sfs::codegen::ParseResult& result = results.emplace_back(
+        sfs::codegen::parseHeader(sfs::codegen::readFile(header), header));
     for (const sfs::codegen::Diagnostic& diagnostic : result.diagnostics)
     {
       print(diagnostic);
@@ -65,6 +139,9 @@ bool generateScripts(const std::vector<std::filesystem::path>& headers,
     for (sfs::codegen::TypeModel& type : result.components)
       types.push_back(std::move(type));
   }
+  if (traits && (!scanEvents(eventSources, results) ||
+                 !generateTraits(results, *traits)))
+    failed = true;
   for (const sfs::codegen::Diagnostic& diagnostic :
        sfs::codegen::checkNames(types))
   {
@@ -83,8 +160,11 @@ int main(int argc, char* argv[])
 {
   sfs::codegen::GeneratorOptions options;
   std::filesystem::path output;
+  std::filesystem::path traitsOutput;
   std::vector<std::filesystem::path> headers;
+  std::vector<std::filesystem::path> eventSources;
   bool uiPreviews = false;
+  bool eventsOnly = false;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -111,6 +191,12 @@ int main(int argc, char* argv[])
       output = value();
     else if (arg == "--ui-previews")
       uiPreviews = true;
+    else if (arg == "--event-traits")
+      traitsOutput = value();
+    else if (arg == "--events-only")
+      eventsOnly = true;
+    else if (arg == "--event-source")
+      eventSources.emplace_back(value());
     else if (arg.starts_with("--"))
     {
       usage();
@@ -118,6 +204,22 @@ int main(int argc, char* argv[])
     }
     else
       headers.emplace_back(arg);
+  }
+
+  if (eventsOnly)
+  {
+    if (traitsOutput.empty())
+    {
+      usage();
+      return 2;
+    }
+    std::vector<sfs::codegen::ParseResult> results;
+    const bool scanned = scanEvents(headers, results);
+    std::string traits;
+    if (!generateTraits(results, traits) || !scanned)
+      return 1;
+    writeIfChanged(traitsOutput, traits);
+    return 0;
   }
 
   if (options.module.empty() || options.function.empty() || output.empty())
@@ -141,15 +243,19 @@ int main(int argc, char* argv[])
     }
     generated = sfs::codegen::generateUiPreviews(types, options);
   }
-  else if (!generateScripts(headers, options, generated))
-    return 1;
+  else
+  {
+    std::string traits;
+    if (!generateScripts(headers,
+                         eventSources,
+                         options,
+                         generated,
+                         traitsOutput.empty() ? nullptr : &traits))
+      return 1;
+    if (!traitsOutput.empty())
+      writeIfChanged(traitsOutput, traits);
+  }
 
-  if (std::filesystem::exists(output) &&
-      sfs::codegen::readFile(output) == generated)
-    return 0;
-
-  if (output.has_parent_path())
-    std::filesystem::create_directories(output.parent_path());
-  std::ofstream(output, std::ios::binary) << generated;
+  writeIfChanged(output, generated);
   return 0;
 }

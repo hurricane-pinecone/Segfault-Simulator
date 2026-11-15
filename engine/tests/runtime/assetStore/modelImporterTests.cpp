@@ -688,16 +688,16 @@ int main()
         "project";
     std::filesystem::create_directories(project / "assets");
     std::filesystem::copy_file(
-        writeColliderModel("sprayer.gltf"),
-        project / "assets" / "sprayer.gltf",
+        writeColliderModel("crane.gltf"),
+        project / "assets" / "crane.gltf",
         std::filesystem::copy_options::overwrite_existing);
-    std::ofstream(project / "assets" / "sprayer.gltf.meta")
+    std::ofstream(project / "assets" / "crane.gltf.meta")
         << R"({"formatVersion": 1, "id": "0123456789abcdef0123456789abcdef",
                "settings": {"scale": 2}})";
     const AssetDatabase database(project,
                                  AssetDatabase::Mode::ReadOnly,
                                  AssetDatabase::projectFolders());
-    const AssetRecord* record = database.findByPath("assets/sprayer.gltf");
+    const AssetRecord* record = database.findByPath("assets/crane.gltf");
     CHECK(record != nullptr);
     if (record)
     {

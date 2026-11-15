@@ -2,6 +2,7 @@
 
 #include "sfs/codegen/model.h"
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -63,6 +64,41 @@ std::string_view nodeText(std::string_view source, TSNode node);
 
 /** A node's child by field name (tree-sitter's), e.g. "name". */
 TSNode childField(TSNode node, std::string_view name);
+
+/**
+ * A type as written, with whitespace made canonical the way codegen compares
+ * types: runs of spaces made one, none around `::`.
+ * @param text the type as written, e.g. "game :: Found"
+ * @return e.g. "game::Found"
+ */
+std::string normaliseType(std::string_view text);
+
+/**
+ * SFS's event handle types, unqualified: what a system or object keeps as a
+ * member, and a component shouldn't hold.
+ */
+inline constexpr std::array<std::string_view, 4> kEventHandleTypes = {
+    "EventConsumer",
+    "EventRequester",
+    "EventBroadcast",
+    "Responder"};
+
+/**
+ * Reads a using-declaration, using-directive, type alias (`using` or
+ * `typedef`) or namespace alias into the names a file brings into scope; any
+ * other node adds nothing.
+ *
+ * @param node the declaration
+ * @param source the file's text
+ * @param file the file
+ * @param scopes the namespaces around it, outermost first
+ * @param out gains the name
+ */
+void readUsingName(TSNode node,
+                   std::string_view source,
+                   const std::filesystem::path& file,
+                   std::vector<std::string> scopes,
+                   std::vector<UsingName>& out);
 
 /** Whether a namespace name is SFS's or inside it: "sfs" or "sfs::...". */
 bool isSfsNamespace(std::string_view name);

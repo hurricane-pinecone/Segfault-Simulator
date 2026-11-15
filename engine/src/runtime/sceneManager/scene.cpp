@@ -191,6 +191,10 @@ void Scene::updateObjects(double deltaTime)
     for (int i = 0; i < steps; ++i)
     {
       const bool last = i + 1 == steps;
+      // Responses workers sent during the last step are read at this one, as
+      // a plan that finishes mid-frame would be by polling.
+      if (i > 0)
+        m_registry.events().takeIn();
       m_registry.advanceGameTime(step);
       m_registry.forEachSystem(
           [&](System& system)
@@ -204,9 +208,11 @@ void Scene::updateObjects(double deltaTime)
                 cpuTiming::enabled()
                     ? cpuTiming::label("update/", typeid(system))
                     : nullptr);
-            system.update(kind == System::TimeStep::Stepped ? step
-                          : kind == System::TimeStep::Frame ? gameTime
-                                                            : deltaTime);
+            m_registry.updateSystem(system,
+                                    kind == System::TimeStep::Stepped ? step
+                                    : kind == System::TimeStep::Frame
+                                        ? gameTime
+                                        : deltaTime);
           });
     }
   }
@@ -221,7 +227,14 @@ void Scene::updateObjects(double deltaTime)
     const cpuTiming::Scope timed(
         cpuTiming::enabled() ? cpuTiming::label("update/", typeid(object))
                              : nullptr);
-    object.onUpdate(deltaTime);
+    // Its event handlers run first, with the span its onUpdate reads.
+    detail::EventOwner& owner = object.m_eventOwner;
+    owner.begin();
+    owner.dispatch();
+    // A handler may have destroyed it.
+    if (!object.m_destroyed)
+      object.onUpdate(deltaTime);
+    owner.end();
   }
 
   {
@@ -239,7 +252,8 @@ void Scene::updateObjects(double deltaTime)
             cpuTiming::enabled()
                 ? cpuTiming::label("lateUpdate/", typeid(system))
                 : nullptr);
-        system.lateUpdate(
+        m_registry.lateUpdateSystem(
+            system,
             system.timeStep() == System::TimeStep::Real ? deltaTime : gameTime);
       });
 }
@@ -258,9 +272,21 @@ GameObject& Scene::adoptObject(std::unique_ptr<GameObject> object,
   ref.m_entity = entity;
   ref.m_scene = this;
   m_gameObjects.push_back(std::move(object));
-  const ObjectCalls calls(*this); // not deleted under its own onCreate
-  ref.onCreate(*this);
+  create(ref);
   return ref;
+}
+
+void Scene::create(GameObject& object)
+{
+  const ObjectCalls calls(*this); // not deleted under its own onCreate
+  // The handles it makes in onCreate are its own (an onCreate may make
+  // other objects, so the one before is put back after).
+  Events& events = m_registry.events();
+  detail::EventOwner* const before = events.settingUpOwner();
+  const std::type_info* const beforeType = events.settingUpType();
+  detail::EventHost::settingUp(events, &object.m_eventOwner, &typeid(object));
+  object.onCreate(*this);
+  detail::EventHost::settingUp(events, before, beforeType);
 }
 
 void Scene::processInput(const Input& input)

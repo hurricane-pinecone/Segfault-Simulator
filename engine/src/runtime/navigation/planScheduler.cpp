@@ -198,15 +198,20 @@ PlanScheduler::State PlanScheduler::state(JobId id) const
 void PlanScheduler::cancel(JobId id)
 {
   const std::lock_guard lock(m_mutex);
-  const auto it = m_jobs.find(id);
-  if (it == m_jobs.end())
-    return;
-  it->second->cancel = true;
+  cancelLocked(id);
+}
+
+void PlanScheduler::cancelLocked(JobId id)
+{
   m_queue.erase(std::remove_if(m_queue.begin(),
                                m_queue.end(),
                                [&](const std::shared_ptr<Task>& t)
                                { return t->job->id == id; }),
                 m_queue.end());
+  const auto it = m_jobs.find(id);
+  if (it == m_jobs.end())
+    return;
+  it->second->cancel = true;
   m_releases.push_back(std::move(it->second));
   m_jobs.erase(it);
   m_wake.notify_one();
@@ -240,6 +245,13 @@ std::shared_ptr<PlanScheduler::Task>
 PlanScheduler::pick(Clock::time_point now, Clock::time_point& wake)
 {
   wake = Clock::time_point::max();
+  // Jobs no longer wanted are found in one pass, then cancelled.
+  m_unwanted.clear();
+  for (const std::shared_ptr<Task>& task : m_queue)
+    if (!wanted(*task->job))
+      m_unwanted.push_back(task->job->id);
+  for (const JobId id : m_unwanted)
+    cancelLocked(id);
   if (m_queue.empty())
     return nullptr;
   const std::size_t free = m_threads.size() - m_busy; // (this one included)
@@ -476,6 +488,28 @@ void PlanScheduler::fork(Job& job,
     m_queue.push_back(std::move(task));
   }
   m_wake.notify_one();
+}
+
+bool PlanScheduler::wanted(const Job& job)
+{
+  const std::function<bool()>& check = job.request.wanted;
+  if (!check)
+    return true;
+  try
+  {
+    return check();
+  }
+  catch (const std::exception& error)
+  {
+    LOG_ERROR("Planning: '" + job.request.label +
+              "' is cancelled: its wanted check threw: " + error.what());
+  }
+  catch (...)
+  {
+    LOG_ERROR("Planning: '" + job.request.label +
+              "' is cancelled: its wanted check threw");
+  }
+  return false;
 }
 
 void PlanScheduler::fail(Job& job, const std::string& what)

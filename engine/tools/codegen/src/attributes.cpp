@@ -16,7 +16,7 @@ using enum AttributeId;
 constexpr AttributeTarget F = AttributeTarget::Field;
 constexpr AttributeTarget T = AttributeTarget::Type;
 
-constexpr std::array<AttributeInfo, 13> kAttributes = {{
+constexpr std::array<AttributeInfo, 16> kAttributes = {{
     {Range,
      "range",
      F,
@@ -53,7 +53,7 @@ constexpr std::array<AttributeInfo, 13> kAttributes = {{
      "",
      "Reflect this private or protected field.",
      "private:\n"
-     "  [[sfs::show]] float waterLevel = 0.5f;"},
+     "  [[sfs::show]] float aggression = 0.5f;"},
     {Script,
      "script",
      F,
@@ -137,16 +137,52 @@ constexpr std::array<AttributeInfo, 13> kAttributes = {{
      "",
      "Register the type as a component besides the file's type.",
      "struct [[sfs::component]] TipBody {};"},
-    {Event,
-     "event",
+    {EventNews,
+     "event_news",
      T,
      AttributeArgs::None,
      {},
      "",
      "",
-     "Mark the type as an event (sent and read through `Events`): never a "
-     "component or reflected, and it may be named after its header.",
-     "struct [[sfs::event]] FieldCellChanged { glm::ivec2 cell; };"},
+     "Mark the type as news, an event sent with `send(event)` and read by "
+     "every consumer of it or of its news bases: never a component or "
+     "reflected, and it may be named after its header.",
+     "struct [[sfs::event_news]] EnemyDiedEvent { sfs::Entity enemy; };"},
+    {EventEntityNews,
+     "event_entity_news",
+     T,
+     AttributeArgs::None,
+     {},
+     "",
+     "",
+     "Mark the type as news about one entity, sent with "
+     "`send(entity, event)`: rows give the entity, and `readLatest()` its "
+     "newest.",
+     "struct [[sfs::event_entity_news]] AlertedEvent { float level; };"},
+    {EventRequest,
+     "event_request",
+     T,
+     AttributeArgs::Types,
+     {},
+     "(Response, ...)",
+     "(${1:Response})",
+     "Mark the type as a request about one entity, asked with a requester "
+     "and answered through a `Responder` with one of the response types "
+     "listed.",
+     "struct [[sfs::event_request(PathFoundResponse, PathFailedResponse)]]\n"
+     "PathRequest { glm::vec3 goal; };"},
+    {EventResponse,
+     "event_response",
+     T,
+     AttributeArgs::None,
+     {},
+     "",
+     "",
+     "Mark the type as a response, which a request lists and a `Responder` "
+     "sends (`respond()`, `progress()`); others may watch it with a "
+     "consumer, keyed by the request's entity.",
+     "struct [[sfs::event_response]] PathFoundResponse\n"
+     "{\n  std::vector<glm::vec3> points;\n};"},
 }};
 
 constexpr bool inOrder()
@@ -168,6 +204,12 @@ const AttributeInfo* findAttribute(std::string_view name)
     if (info.name == name)
       return &info;
   return nullptr;
+}
+
+bool isEventAttribute(AttributeId id)
+{
+  return id == EventNews || id == EventEntityNews || id == EventRequest ||
+         id == EventResponse;
 }
 
 const AttributeInfo* closestAttribute(std::string_view name)

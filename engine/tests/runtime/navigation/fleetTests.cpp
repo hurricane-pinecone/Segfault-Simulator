@@ -352,9 +352,9 @@ int main()
     CHECK(!touching(f, 1, 2));
   }
 
-  // Item 0 (A2z): one with nothing to do (parked, put away, idle) is a static
-  // solid from the moment it stops, never traffic: no giving way to it, no
-  // waiting on it.
+  // One with nothing to do (parked, put away, idle) is a static solid from
+  // the moment it stops, never traffic: no giving way to it, no waiting on
+  // it.
   TEST("one standing with nothing to do on the only lane: the other plans "
        "round it at once, nobody gives way")
   {
@@ -494,12 +494,12 @@ int main()
   }
 
   // Two machines on their games' paths, both heading for the same ground,
-  // one with a wide header on its front: each new stretch a game hands over
+  // one with a wide bucket on its front: each new stretch a game hands over
   // is a new claim, and either may be handed back (NeedsPlan) and planned
   // again from where it stands. However often the right of way changes
   // hands, they never close in on each other.
   TEST("two game-led machines giving way to each other (fresh stretches, "
-       "handed back and planned again) never touch, a front header too")
+       "handed back and planned again) never touch, a front bucket too")
   {
     for (int variant = 0; variant < 6; ++variant)
     {
@@ -507,9 +507,9 @@ int main()
       f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
                   nullptr,
                   nullptr});
-      AgentSpec combine = car();
-      combine.boxes.push_back({3.6f, 4.8f, 2.0f, 0.0f, 0.6f, 1.6f});
-      f.add(1, combine, {{-25.0f, 0.0f}, 0.0f});
+      AgentSpec loader = car();
+      loader.boxes.push_back({3.6f, 4.8f, 2.0f, 0.0f, 0.6f, 1.6f});
+      f.add(1, loader, {{-25.0f, 0.0f}, 0.0f});
       f.add(2, car(), {{0.0f, -22.0f + 1.5f * variant}, kPi / 2});
       const std::map<Fleet::AgentId, AgentGoal> goals{
           {1, {{{25.0f, 0.0f}, 0.0f}}}, {2, {{{0.0f, 22.0f}, kPi / 2}}}};
@@ -556,14 +556,14 @@ int main()
     }
   }
 
-  // A combine with a wide header stands waiting for its route; a tractor's
-  // game path runs along its way, just clear of the header's side (the
-  // planner passes one standing at its own small gap). The combine then
-  // sets off along its way with the tractor still beside it (the a2x yard
-  // clash): it may pass the tractor once it stands, but never nearer than
-  // the planners' own gap (2 cm), header included.
+  // A loader with a wide bucket stands waiting for its route; a truck's
+  // game path runs along its way, just clear of the bucket's side (the
+  // planner passes one standing at its own small gap). The loader then
+  // sets off along its way with the truck still beside it: it may pass the
+  // truck once it stands, but never nearer than the planners' own gap
+  // (2 cm), bucket included.
   TEST("one setting off beside another's body passes it no nearer than the "
-       "planners' gap, a front header too")
+       "planners' gap, a front bucket too")
   {
     for (int variant = 0; variant < 4; ++variant)
     {
@@ -571,15 +571,15 @@ int main()
       f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
                   nullptr,
                   nullptr});
-      AgentSpec combine = car();
-      combine.boxes = {{-6.38f, 2.34f, 1.76f, 0.1f, 0.0f, 4.0f},
-                       {2.09f, 4.78f, 3.17f, 0.0f, 0.6f, 1.6f}};
-      AgentSpec tractor = car();
-      tractor.boxes = {{-1.0f, 3.96f, 1.31f, 0.0f, 0.0f, 3.5f}};
-      f.add(1, combine, {{7.8f, 28.3f}, 0.0f});
-      // (Its side 2..5 cm off the header's side.)
+      AgentSpec loader = car();
+      loader.boxes = {{-6.38f, 2.34f, 1.76f, 0.1f, 0.0f, 4.0f},
+                      {2.09f, 4.78f, 3.17f, 0.0f, 0.6f, 1.6f}};
+      AgentSpec truck = car();
+      truck.boxes = {{-1.0f, 3.96f, 1.31f, 0.0f, 0.0f, 3.5f}};
+      f.add(1, loader, {{7.8f, 28.3f}, 0.0f});
+      // (Its side 2..5 cm off the bucket's side.)
       const float y = 28.3f - 3.17f - 1.31f - 0.02f - 0.01f * variant;
-      f.add(2, tractor, {{-5.0f, y}, 0.0f});
+      f.add(2, truck, {{-5.0f, y}, 0.0f});
       f.setPath(2, linePath({-5.0f, y}, 0.0f, 19.0f));
       float least = 1.0e9f;
       bool set = false, arrived1 = false;
@@ -591,7 +591,7 @@ int main()
             arrived1 = true;
         if (!set && f.pose(2).position.x > 2.0f)
         {
-          // (Its route comes as the tractor's front draws level.)
+          // (Its route comes as the truck's front draws level.)
           set = true;
           f.setPath(1, straightPath(7.8f, 40.0f, 28.3f));
         }
@@ -602,15 +602,15 @@ int main()
     }
   }
 
-  // The a3a yard: a combine (a header on its front) stands waiting for its
-  // route while a tractor's game path crosses in front of it; the route
-  // comes with the tractor's front in its way. The combine ranks higher but
-  // stands for the tractor's body, so it reserves only up to there: the
-  // tractor (already in front of it) carries on through, never stands in
-  // front of the header, is never a solid there; the combine is never
+  // A loader (a bucket on its front) stands waiting for its
+  // route while a truck's game path crosses in front of it; the route
+  // comes with the truck's front in its way. The loader ranks higher but
+  // stands for the truck's body, so it reserves only up to there: the
+  // truck (already in front of it) carries on through, never stands in
+  // front of the bucket, is never a solid there; the loader is never
   // handed back to plan round it and never stands for a reservation.
-  TEST("a tractor crossing in front of a header carries on through: the "
-       "combine stands for its body only, nobody plans round anybody")
+  TEST("a truck crossing in front of a bucket carries on through: the "
+       "loader stands for its body only, nobody plans round anybody")
   {
     Fleet::Settings settings = deterministic();
     settings.parkedAfter = 0.05f;
@@ -618,23 +618,23 @@ int main()
     f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
                 nullptr,
                 nullptr});
-    AgentSpec combine = car();
-    combine.boxes = {{-6.38f, 2.34f, 1.76f, 0.1f, 0.0f, 4.0f},
-                     {1.92f, 4.96f, 3.17f, 0.0f, 0.25f, 2.97f}};
-    AgentSpec tractor = car();
-    tractor.boxes = {{-1.0f, 3.96f, 1.31f, 0.0f, 0.0f, 3.5f}};
-    f.add(1, combine, {{7.8f, 28.3f}, 0.0f});
-    f.setPriority(1, 1); // (the combine going about first)
+    AgentSpec loader = car();
+    loader.boxes = {{-6.38f, 2.34f, 1.76f, 0.1f, 0.0f, 4.0f},
+                    {1.92f, 4.96f, 3.17f, 0.0f, 0.25f, 2.97f}};
+    AgentSpec truck = car();
+    truck.boxes = {{-1.0f, 3.96f, 1.31f, 0.0f, 0.0f, 3.5f}};
+    f.add(1, loader, {{7.8f, 28.3f}, 0.0f});
+    f.setPriority(1, 1); // (the loader going about first)
     const glm::vec2 from{10.0f, 15.0f};
     const float heading = 1.05f;
-    f.add(2, tractor, {from, heading});
+    f.add(2, truck, {from, heading});
     f.setPath(2, linePath(from, heading, 26.0f));
     const std::map<Fleet::AgentId, AgentGoal> goals{
         {1, {{{40.0f, 28.3f}, 0.0f}}},
         {2, {{from + 26.0f * unit(heading), heading}}}};
     bool set = false, arrived1 = false, arrived2 = false;
-    bool solidWhileGiving = false, combineHanded = false;
-    int combineYields = 0, tractorYields = 0;
+    bool solidWhileGiving = false, loaderHanded = false;
+    int loaderYields = 0, truckYields = 0;
     float least = 1.0e9f;
     for (int i = 0; i < 30 * 120 && !(arrived1 && arrived2); ++i)
     {
@@ -643,7 +643,7 @@ int main()
       {
         if (e.kind == Fleet::Event::Kind::NeedsPlan)
         {
-          combineHanded = combineHanded || (e.agent == 1 && e.other == 2);
+          loaderHanded = loaderHanded || (e.agent == 1 && e.other == 2);
           PlanAsk ask;
           ask.from = f.pose(e.agent);
           ask.goals = {goals.at(e.agent)};
@@ -652,13 +652,13 @@ int main()
             f.setPath(e.agent, plan.path);
         }
         if (e.kind == Fleet::Event::Kind::Yielding)
-          ++(e.agent == 1 ? combineYields : tractorYields);
+          ++(e.agent == 1 ? loaderYields : truckYields);
         if (e.kind == Fleet::Event::Kind::Arrived)
           (e.agent == 1 ? arrived1 : arrived2) = true;
       }
       if (!set && f.pose(2).position.y > 22.0f)
       {
-        // (Its route comes with the tractor's front in its way.)
+        // (Its route comes with the truck's front in its way.)
         set = true;
         f.setPath(1, straightPath(7.8f, 40.0f, 28.3f));
       }
@@ -668,11 +668,11 @@ int main()
     }
     CHECK(set);
     CHECK(!solidWhileGiving);
-    CHECK(!combineHanded);
+    CHECK(!loaderHanded);
     CHECK(f.counters(1).roundSolid == 0);
     CHECK(f.counters(1).waitSpots == 0);
     CHECK(f.counters(2).waitSpots == 0);
-    CHECK(combineYields == 0);
+    CHECK(loaderYields == 0);
     CHECK(least >= 0.02f);
     CHECK(arrived1 && arrived2);
   }
@@ -718,19 +718,19 @@ int main()
     CHECK(yields <= 2); // (stood for the other once or twice, no flip-flop)
   }
 
-  // A cart coming to meet a working combine (its game path along a pass):
-  // it keeps out of the combine's reservation, crossing behind it, and
-  // arrives beside the way the combine has passed.
-  TEST("a cart meeting a working combine keeps out of its reservation: "
-       "the combine never stands, nobody touches")
+  // A truck coming to meet a working loader (its game path along a pass):
+  // it keeps out of the loader's reservation, crossing behind it, and
+  // arrives beside the way the loader has passed.
+  TEST("a truck meeting a working loader keeps out of its reservation: "
+       "the loader never stands, nobody touches")
   {
     Fleet f(deterministic());
     f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
                 nullptr,
                 nullptr});
-    AgentSpec combine = car();
-    combine.boxes.push_back({3.6f, 4.8f, 3.0f, 0.0f, 0.6f, 1.6f});
-    f.add(1, combine, {{-20.0f, 0.0f}, 0.0f});
+    AgentSpec loader = car();
+    loader.boxes.push_back({3.6f, 4.8f, 3.0f, 0.0f, 0.6f, 1.6f});
+    f.add(1, loader, {{-20.0f, 0.0f}, 0.0f});
     f.setPriority(1, 4);
     f.setPath(1, straightPath(-20.0f, 30.0f, 0.0f));
     f.add(2, car(), {{0.0f, -25.0f}, kPi / 2});
@@ -744,7 +744,7 @@ int main()
     CHECK(f.counters(1).hardStops == 0);
   }
 
-  // A semi parks half across a lane after the combine coming along it was
+  // A semi parks half across a lane after the loader coming along it was
   // planned: a static obstacle, planned round at once, never waited on.
   TEST("a semi parked on the lane after the other was planned: planned "
        "round, never waited on, nobody touches")
@@ -773,14 +773,14 @@ int main()
     CHECK(f.counters(1).waitSpots == 0);
   }
 
-  // Deadlocks (D3b). A one-lane yard lane, closed at its east end, a bay off
+  // Deadlocks. A one-lane yard lane, closed at its east end, a bay off
   // its north side near its west end and a shed bay off its south side at
   // its east end (where the higher one is going). Two coming head-on along
   // it can't pass: the lower one has nowhere clear of the higher one's way
   // (all the lane on east of it, and the shed bay), so each stands for the
   // other: a wait-for cycle. The next lowest that can (the higher one)
   // backs into the north bay clear of the other's way, lets it through, and
-  // goes on: the farm hands in a yard, one backs off to somewhere actually
+  // goes on: two drivers in a yard, one backs off to somewhere actually
   // clear.
   const auto yardLane = []
   {
@@ -1272,44 +1272,44 @@ int main()
     CHECK(warned == 1);
   }
 
-  TEST("a cart standing in a working machine's way, head-on: it goes to a "
+  TEST("a truck standing in a working machine's way, head-on: it goes to a "
        "wait spot across the machine's turn; held in its way on the way "
        "there it would only be in its way, so it goes on out and the "
        "machine stands short of its way out: nobody touches or comes closer "
        "than the gap, nobody's stood at once, the machine never gives way, "
        "no deadlock")
   {
-    // (The yard near-miss: a combine (a wide header ahead of its body)
-    // coming east and turning right, south; a cart in its way facing it.
-    // Its way to a wait spot crossed the combine's turn; held by the
-    // combine's reservation half way out, it was stood at once in its way
-    // and the combine's header came within cm of it.)
-    AgentSpec combine = car();
-    combine.boxes = {{-3.0f, 2.35f, 1.75f, 0.0f, 0.0f, 4.0f},
-                     {1.9f, 4.4f, 3.17f, 0.0f, 0.6f, 2.8f}};
-    combine.minRadius = 6.0f;
-    combine.wheelbase = 3.5f;
-    combine.topSpeed = 4.0f;
-    AgentSpec cart = car();
-    cart.boxes = {{-1.1f, 3.86f, 1.31f, 0.0f, 0.0f, 3.56f}};
-    cart.topSpeed = 2.5f;
+    // (The yard near-miss: a loader (a wide bucket ahead of its body)
+    // coming east and turning right, south; a truck in its way facing it.
+    // Its way to a wait spot crossed the loader's turn; held by the
+    // loader's reservation half way out, it was stood at once in its way
+    // and the loader's bucket came within cm of it.)
+    AgentSpec loader = car();
+    loader.boxes = {{-3.0f, 2.35f, 1.75f, 0.0f, 0.0f, 4.0f},
+                    {1.9f, 4.4f, 3.17f, 0.0f, 0.6f, 2.8f}};
+    loader.minRadius = 6.0f;
+    loader.wheelbase = 3.5f;
+    loader.topSpeed = 4.0f;
+    AgentSpec truck = car();
+    truck.boxes = {{-1.1f, 3.86f, 1.31f, 0.0f, 0.0f, 3.56f}};
+    truck.topSpeed = 2.5f;
     for (const float from : {1.0f, 3.0f})
     {
       Fleet f(deterministic());
-      // (Walled in to the south but for the combine's way south.)
+      // (Walled in to the south but for the loader's way south.)
       f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{
                       wall({-40.0f, -40.0f}, {2.0f, -5.0f}, 1),
                       wall({12.0f, -40.0f}, {40.0f, -5.0f}, 2)}),
                   nullptr,
                   nullptr});
-      f.add(1, combine, {{-from, 0.0f}, 0.0f});
+      f.add(1, loader, {{-from, 0.0f}, 0.0f});
       f.setPriority(1, 5);
-      f.add(2, cart, {{10.0f, -1.0f}, kPi});
+      f.add(2, truck, {{10.0f, -1.0f}, kPi});
       f.setPath(
           1,
-          turnPath(combine, {-from, 0.0f}, 0.0f, from, 7.0f, -kPi / 2, 30.0f));
+          turnPath(loader, {-from, 0.0f}, 0.0f, from, 7.0f, -kPi / 2, 30.0f));
       f.setPath(
-          2, turnPath(cart, {10.0f, -1.0f}, kPi, 20.0f, 6.0f, 0.0f, 0.0f));
+          2, turnPath(truck, {10.0f, -1.0f}, kPi, 20.0f, 6.0f, 0.0f, 0.0f));
       float least = std::numeric_limits<float>::infinity();
       int touches = 0;
       for (float t = 0.0f; t < 60.0f; t += 1.0f / 30.0f)
@@ -1321,8 +1321,8 @@ int main()
         if (f.state(1) == Fleet::State::Arrived)
           break;
       }
-      std::printf("yard near-miss (combine %.0f m off): least gap %.3f m, "
-                  "cart wait spots %d, hard stops %d/%d, combine held "
+      std::printf("yard near-miss (loader %.0f m off): least gap %.3f m, "
+                  "truck wait spots %d, hard stops %d/%d, loader held "
                   "%.1f s\n",
                   from,
                   least,

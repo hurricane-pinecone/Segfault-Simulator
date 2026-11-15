@@ -46,13 +46,16 @@ public:
    * @param index the project's types, to tell its systems
    * @param out gains a diagnostic for each finding, with its fix if it has one
    * @param read gives other files' text (a class's header); null: from disk
+   * @param events codegen's event models of the file, for the response types
+   *        it declares; null: none
    */
   void run(std::string_view source,
            const TSTree* tree,
            const std::filesystem::path& path,
            const ProjectIndex& index,
            std::vector<codegen::Diagnostic>& out,
-           const FileReader* read = nullptr);
+           const FileReader* read = nullptr,
+           const std::vector<codegen::EventModel>* events = nullptr);
 
   /** The node kinds the walk tells apart. */
   enum class Kind : uint8_t
@@ -92,6 +95,8 @@ public:
     Declaration,
     This,
     AliasDeclaration,
+    TypeDefinition,
+    NamespaceAliasDefinition,
     IfStatement,
     WhileStatement,
     ForStatement,

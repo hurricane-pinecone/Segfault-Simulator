@@ -41,7 +41,7 @@ float headingOf(const LaneGraph::Stretch& s)
 {
   return s.poses[s.poses.size() / 2].heading;
 }
-VehicleModel tractor()
+VehicleModel truck()
 {
   VehicleModel v;
   v.boxes = {{-1.11f, 3.87f, 1.31f, 0.0f, 0.0f, 3.0f}};
@@ -185,7 +185,7 @@ int main()
     road(g, a, b, 1.5f);
     road(g, b, c, 1.5f);
     LaneTripRequest q;
-    q.plan.vehicle = tractor();
+    q.plan.vehicle = truck();
     q.plan.space = std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{});
     q.plan.from = {{10, -6}, 0.0f};
     q.plan.goals = {{{{206, 180}, 1.5708f}}};
@@ -254,7 +254,7 @@ int main()
     road(g, a, b, 1.5f);
     road(g, b, c, 1.5f);
     LaneTripRequest q;
-    q.plan.vehicle = tractor();
+    q.plan.vehicle = truck();
     // (A tree beside the lane going east: its trunk 0.1 m into the rig's
     // side as the rig drives the lane's line.)
     q.plan.space = std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{

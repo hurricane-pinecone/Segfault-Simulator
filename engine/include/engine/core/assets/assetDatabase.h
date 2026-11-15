@@ -69,7 +69,7 @@ struct AssetRecord
 {
   AssetId id;
   std::filesystem::path
-      path; // relative to the database's root, e.g. "assets/models/barn.glb"
+      path; // relative to the database's root, e.g. "assets/models/door.glb"
   AssetKind kind = AssetKind::Other;
   nlohmann::json settings =
       nlohmann::json::object(); // import settings, from the .meta

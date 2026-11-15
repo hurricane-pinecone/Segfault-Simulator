@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/ecs/entity.h"
+#include "engine/core/events/eventOwner.h"
 #include "engine/runtime/input/input.h"
 #include "engine/runtime/systems/collision2D.h"
 #include "engine/runtime/systems/collision3D.h"
@@ -59,6 +60,10 @@ protected:
 private:
   Scene* m_scene = nullptr;
   bool m_destroyed = false;
+  // The owner of the event handles it makes in onCreate
+  // (scene().events().consumer<E>(), requester<R>()): the scene runs their
+  // handlers before its onUpdate.
+  detail::EventOwner m_eventOwner;
 };
 
 } // namespace sfs

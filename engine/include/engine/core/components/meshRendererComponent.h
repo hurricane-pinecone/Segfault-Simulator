@@ -12,7 +12,7 @@ namespace sfs
 
 /**
  * Draws a mesh at the entity's TransformComponent. Entities sharing a mesh
- * are batched into one instanced draw, so a field of identical crops costs
+ * are batched into one instanced draw, so a forest of identical trees costs
  * one draw call however many there are.
  *
  * @param MeshHandle mesh - the uploaded mesh (see MeshLibrary)

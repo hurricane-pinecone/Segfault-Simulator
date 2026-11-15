@@ -121,7 +121,7 @@ ScriptableObjects::list(std::string_view type)
     const std::string asset = std::string(kPrefix) + record.id.toString();
     const std::string& recordType = typeOf(asset);
     // A type's own assets and those of the types derived from it (a
-    // TractorSpec is a VehicleSpec).
+    // TruckSpec is a VehicleSpec).
     if (type.empty() || recordType == type ||
         reflect::types().isA(recordType, type))
       entries.push_back({asset, record.path.stem().string(), recordType});

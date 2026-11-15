@@ -47,7 +47,7 @@ int main()
   TEST("kinds should come from extensions, ignoring case")
   {
     CHECK(assetKindOf("a/tree.PNG") == AssetKind::Texture);
-    CHECK(assetKindOf("barn.glb") == AssetKind::Model);
+    CHECK(assetKindOf("door.glb") == AssetKind::Model);
     CHECK(assetKindOf("ui.ttf") == AssetKind::Font);
     CHECK(assetKindOf("hit.wav") == AssetKind::Audio);
     CHECK(assetKindOf("atlas.json") == AssetKind::Data);
@@ -60,36 +60,36 @@ int main()
   {
     TempFolder root("sfs_assets_scan");
     touch(root.path / "tree.png");
-    touch(root.path / "models/barn.glb");
+    touch(root.path / "models/door.glb");
     touch(root.path / ".hidden/skip.png");
 
     AssetDatabase database(root.path);
     CHECK(database.records().size() == 2u);
     CHECK(fs::exists(root.path / "tree.png.meta"));
-    const AssetRecord* barn = database.findByPath("models/barn.glb");
-    CHECK(barn && barn->kind == AssetKind::Model);
+    const AssetRecord* door = database.findByPath("models/door.glb");
+    CHECK(door && door->kind == AssetKind::Model);
     CHECK(database.folders() == std::vector<fs::path>{"models"});
-    const AssetId barnId = barn->id;
+    const AssetId doorId = door->id;
 
     AssetDatabase reopened(root.path);
-    CHECK(reopened.findByPath("models/barn.glb")->id == barnId);
-    CHECK(reopened.find(barnId)->path == fs::path("models/barn.glb"));
+    CHECK(reopened.findByPath("models/door.glb")->id == doorId);
+    CHECK(reopened.find(doorId)->path == fs::path("models/door.glb"));
     CHECK(!reopened.refresh()); // nothing changed
   }
 
   TEST("a project catalogue should cover only its assets/ and prefabs/ folders")
   {
     TempFolder root("sfs_assets_project");
-    touch(root.path / "assets/models/barn.glb");
+    touch(root.path / "assets/models/door.glb");
     touch(root.path / "prefabs/Fence.prefab");
     touch(root.path / "scripts/Spin.cpp");
-    touch(root.path / "scenes/farm.scene");
+    touch(root.path / "scenes/level1.scene");
 
     AssetDatabase database(root.path,
                            AssetDatabase::Mode::ReadWrite,
                            AssetDatabase::projectFolders());
     CHECK(database.records().size() == 2u);
-    CHECK(database.findByPath("assets/models/barn.glb") != nullptr);
+    CHECK(database.findByPath("assets/models/door.glb") != nullptr);
     const AssetRecord* fence = database.findByPath("prefabs/Fence.prefab");
     CHECK(fence && fence->kind == AssetKind::Prefab);
     CHECK(!fs::exists(root.path / "scripts/Spin.cpp.meta")); // not catalogued

@@ -127,7 +127,7 @@ fs::path writeProject()
   writeMeta(project / "prefabs" / "Fence.prefab", "6123456789abcdef0123456789abcdef");
 
   // A scene moving one machine's cab, and a shed overriding only its own root.
-  writeFile(project / "scenes" / "farm.scene",
+  writeFile(project / "scenes" / "level1.scene",
             {{"formatVersion", 2},
              {"systems", json::array()},
              {"entities",
@@ -169,7 +169,7 @@ int main()
   const std::vector<std::string> names = {"prefabs/Machine.prefab",
                                           "prefabs/Shed.prefab",
                                           "prefabs/Fence.prefab",
-                                          "scenes/farm.scene",
+                                          "scenes/level1.scene",
                                           "scenes/empty.scene"};
   std::vector<std::string> original;
   for (const std::string& name : names)
@@ -193,7 +193,7 @@ int main()
       CHECK(report.changed[0].path == "prefabs/Machine.prefab");
       CHECK(report.changed[0].edits == 5u);
       CHECK(report.changed[1].path == "prefabs/Shed.prefab");
-      CHECK(report.changed[2].path == "scenes/farm.scene");
+      CHECK(report.changed[2].path == "scenes/level1.scene");
     }
     CHECK(report.overrideKeys == 5u);
     CHECK(report.removedPaths == 1u);

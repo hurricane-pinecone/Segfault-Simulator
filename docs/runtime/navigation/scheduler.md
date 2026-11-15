@@ -68,10 +68,10 @@ for (const std::any& leg : c.legs)
   nothing more is published.
 - **Wanted.** `Request::wanted`, if set, is asked (under the scheduler's
   lock) before each of the job's tasks is taken; once it says no, the job is
-  cancelled and runs no further step. A job answering a keyed request keeps
-  its [Reply](../../core/events/index.md#requests-and-answers) and sets
-  `r.wanted = [reply] { return !reply.superseded(); };`, so a newer request,
-  a cancel or the entity's destruction stops it. Keep it a cheap check.
+  cancelled and runs no further step. A job responding to a request keeps
+  its [Responder](../../core/events/index.md#requests-and-responses) and sets
+  `r.wanted = [responder] { return !responder.superseded(); };`, so a newer
+  request, a cancel or the entity's destruction stops it. Keep it a cheap check.
 - **Errors.** A step that throws is caught and logged (`LOG_ERROR`), its job
   ends `Failed`; nothing escapes into the game loop.
 - **Letting go off the game thread.** `release(object)` hands something heavy

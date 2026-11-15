@@ -1108,7 +1108,7 @@ Underside lowestOf(std::span<const glm::vec3> low,
   for (std::size_t t = 0; t + 2 < low.size(); t += 3)
   {
     const glm::vec3* p = &low[t];
-    // Its corners, so thin parts (a tine's edge, seen from below) still
+    // Its corners, so thin parts (a blade's edge, seen from below) still
     // show.
     for (int k = 0; k < 3; ++k)
       if (p[k].z < below)

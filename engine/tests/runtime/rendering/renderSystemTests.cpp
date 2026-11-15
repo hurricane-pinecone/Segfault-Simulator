@@ -2365,8 +2365,8 @@ int main()
     MeshMaterial red;
     red.baseColor = {1, 0, 0, 1};
     model.sections = {{0, 18, MeshMaterial{}, "Wood"}, {18, 18, red, "Roof"}};
-    const MeshHandle barn = h.system.meshes().add(model);
-    const std::vector<MeshSection> slots = h.system.meshes().sections(barn);
+    const MeshHandle house = h.system.meshes().add(model);
+    const std::vector<MeshSection> slots = h.system.meshes().sections(house);
     CHECK(slots.size() == 2u);
     if (slots.size() == 2u)
     {

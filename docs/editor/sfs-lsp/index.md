@@ -45,7 +45,8 @@ ignored; everything else is a warning.
 | `attribute-arguments` | sfs-codegen | warning | An attribute's arguments should have the shape it takes. Write them as the attribute table shows. |
 | `attribute-field-type` | sfs-codegen | warning | An attribute should only be on the field types it applies to. Remove it, or change the field's type. |
 | `show-if-target` | sfs-codegen | warning | `[[sfs::showIf]]` should name a reflected `bool` field of its type. Name one of the type's bool fields. |
-| `event-and-component` | sfs-codegen | warning | A type should not be marked both `[[sfs::event]]` and `[[sfs::component]]`, since an event is what one system tells another and a component is state; it's taken as an event. Remove one of the two marks. |
+| `event-and-component` | sfs-codegen | warning | A type should not be marked both as an event (`[[sfs::event_news]]` and the like) and `[[sfs::component]]`, since an event is what one system tells another and a component is state; it's taken as an event. Remove one of the two marks. |
+| `event-declaration` | sfs-codegen | error | An event type must be declared so the compiler can check it: one event attribute, on a named struct at namespace scope outside inline namespaces; a request listing only `[[sfs::event_response]]` types; news deriving only from news of its own kind, each base once, and requests and responses deriving from nothing; and no name declared twice differently. An attribute on an enum can't be read, so it isn't checked. |
 | `single-any` | sfs-lsp | warning | An `sfs::Any` group of one component is just that component. Write the component instead. |
 | `any-always-met` | sfs-lsp | warning | An `sfs::Any` group that shares a component with the required ones is always met. Remove the group. |
 | `duplicate-term` | sfs-lsp | warning | A term list should not name a component twice in one role. Remove the repeat. |
@@ -66,13 +67,9 @@ ignored; everything else is a warning.
 | `filter-in-loop` | sfs-lsp | warning | A loop should not go through a query, or every entity, only to skip the entities that lack a component. Go through a query that lists the component, so the loop only visits those that have it. |
 | `unused-row-entity` | sfs-lsp | warning | A query loop should not unpack an entity it never uses. Loop over the components alone, with `T& t` for one or `.components()` for several. |
 | `row-component-copy` | sfs-lsp | warning | A query loop should not copy a row's component only to read it. Read it in place with `const T&`, or, for a copy it changes, keep it as scratch or use `T&`. |
-| `event-unmarked` | sfs-lsp | warning | An event should be a struct marked `[[sfs::event]]`, not a component or another script type. Send and read a struct marked `[[sfs::event]]`, and keep state on components. |
-| `reader-not-kept` | sfs-lsp | warning | An event reader should not be made in `update()`, a hook or an `observe` callback, where each new one reads the kept events again. Make it once in `create()` and keep it as a member. |
-| `reader-on-component` | sfs-lsp | warning | A component should not hold an `sfs::EventReader`, `sfs::EventSender` or `sfs::Reply`, which belong to whoever reads, sends or answers. Keep it in that system, object or job. |
-| `second-consumer` | sfs-lsp | warning | An event type should have one taker, or several that all call `takeShared()`. Have one system take it, make every taker call `takeShared()`, or `read()` it to only watch it. |
-| `answer-sent-twice` | sfs-lsp | warning | An answer type should be sent by one system, the one that takes its request. Give each system's answers a type of their own. |
-| `reader-in-system` | sfs-lsp | warning | A system should not hold an `sfs::EventReader` or make one with `reader<T>()`. Consume with `read<T>()`, which keeps the system's cursor itself. |
-| `read-after-early-return` | sfs-lsp | warning | A service should consume each event type at the top of `update()`, before any return and outside conditions and loops. After a return, its unconsumed input wakes it every frame; in a condition, its cursor may never be made, so the type can't wake it. |
+| `event-handle-outside-create` | sfs-lsp | warning | An event consumer or requester should be made in `create()` (an object's in `onCreate`) and kept as a member. Made anywhere else it receives nothing, or has no owner to run its handlers. |
+| `reader-on-component` | sfs-lsp | warning | A component should not hold an `sfs::EventConsumer`, `sfs::EventRequester`, `sfs::EventBroadcast` or `sfs::Responder`, which belong to whoever reads, asks, sends or responds. Keep it in that system, object or job. |
+| `response-sent-twice` | sfs-lsp | warning | A response type should be sent by one system, the one that consumes its request. Give each system's responses a type of their own. |
 | `bad-ignore` | sfs-codegen, sfs-lsp | warning | An `sfs-ignore` comment should name known warning rules in the right form. Fix the comment. |
 <!-- sfs-rules:end -->
 
@@ -156,63 +153,95 @@ redundant; `is-alive` and `component-pointer` strike out the old form.
 
 ### Events
 
-These follow [events](../../core/events/index.md): an event is what one
-system tells others (news, a command, a request or an answer), a struct
-marked `[[sfs::event]]`, consumed by a system's event verbs (`read`, `take`,
-`takeShared`, `readLatest`, `takeLatest`) or by a reader a game object makes
-once and keeps. None has a fix. `second-consumer` and `answer-sent-twice`
-look across the project: the index reads every `.h` and `.cpp` under
-`scripts/` for the event verbs each class calls.
+These check how you declare and use [events](../../core/events/index.md).
+None has a fix. Mistakes the compiler already catches aren't linted: sending,
+reading or asking for a type that has no event attribute is a compile error,
+and so is responding with a type the request doesn't list.
 
-- `event-unmarked`: `send(T{...})`, `send(T(...))`, `send<T>(...)`,
-  `reader<T>()` or `sender<T>()` on an `events()` call
-  (`registry->events()`, `scene().events()`) or a name ending in `events` or
-  `sender` (`m_events`, `m_sender`), where `T` is:
-    - one of the project's script types: a component, a system or another
-      type sfs-codegen registers (it skips `[[sfs::event]]` types, so none of
-      those is one). A qualified spelling must be the type's own namespaces
-      (`game::Health` isn't the project's global `Health`);
-    - or a class of the file that's a component (marked `[[sfs::component]]`,
-      or the one its project header registers) or a system. A class of the
-      file that's neither, though named like a project type, isn't flagged.
+- `event-declaration` (an error): an event type the engine can't be told the
+  kind of. Give each event one attribute, on a named struct at namespace
+  scope:
 
-  A component is state: keep it on the entity, and send a struct marked
-  `[[sfs::event]]` to tell another system something. A call still being
-  typed (`reader()`, `reader<>()`) isn't checked.
-- `reader-not-kept`: `reader<T>()` in an `observe` callback or a game
-  object's `onUpdate()`, whose reader is read at once (`reader<T>().read()`)
-  or held by a local that isn't `static`. A new reader starts at the oldest
-  kept events, so it reads them again each time. A reader assigned there (to
-  a member, the first time) or passed on isn't flagged. In a system it's
-  `reader-in-system` instead.
-- `reader-on-component`: a data member of a component (marked
-  `[[sfs::component]]` and not `[[sfs::event]]`, or the class its project
-  header registers) whose type holds an `sfs::EventReader`,
-  `sfs::EventSender` or `sfs::Reply`, in a container too. They belong to
-  whoever reads, sends or answers.
-- `second-consumer`: `take<E>()`, `takeLatest<E>()` or `takeShared<E>()` in
-  a system or service when another system or service of the project takes
-  `E` too (matched by the type's last name), unless both call
-  `takeShared<E>()`. A type has one taker (one class may call both `take`
-  and `takeLatest`) or several shared ones; at run time the second is
-  logged and gets nothing. Classes that only watch a type `read()` it.
-- `answer-sent-twice`: `x.send(A{...})`, `x.progress(A{...})` or
-  `x.send<A>(...)` in a system or service, where `A` is one of the
-  project's answer types (it says `using Request = R;`), when another system
-  or service sends `A` too. Each answer type has one sender, the request's
-  taker.
-- `reader-in-system`: an `sfs::EventReader` data member of a system, or a
-  `reader<T>()` call in one of its methods. A system consumes with
-  `read<T>()`, which keeps its cursor itself.
-- `read-after-early-return`: in the `update()` of a class deriving from
-  `sfs::Service` (an event-only class), a consuming verb after a `return`
-  in that body, or one that runs only in a condition, a loop's body, a
-  `?:` branch, the right of `&&` or `||`, or a lambda. A service runs when
-  its queues hold events past its cursors: after a return its input stays
-  unconsumed and wakes it every frame; in a condition its cursor may never be
-  made, so the type can't wake it. A loop's range (`for (auto e :
-  read<E>())`) and a condition itself are fine. Systems aren't checked: with
-  events kept until consumed, a system may consume late on purpose.
+  ```cpp
+  // Wrong: two kinds at once. Keep the one that says what it is.
+  struct [[sfs::event_news, sfs::event_response]] EnemyDiedEvent {};
+
+  // Wrong: PathRequest lists a type that isn't a response.
+  struct PathPoint { glm::vec3 position; };
+  struct [[sfs::event_request(PathPoint)]] PathRequest { glm::vec3 goal; };
+  ```
+
+  It also catches an event nested in a class or a function, a template or
+  unnamed event, an event in an inline namespace, news deriving from news of
+  another kind, from one base twice or from itself, a request or response
+  that derives from an event (or that an event derives from), and one name
+  declared twice in two different ways. An event attribute on a field is
+  caught on components and script types (the types the editor reads fields
+  of). An attribute on an enum isn't checked, so make sure every event is a
+  struct.
+  Your editor shows the problems within one header as you type; the build
+  checks all of a module's headers together.
+- `event-handle-outside-create`: a consumer or requester made where it can't
+  work. A system makes its handles once, in `create()` (or a helper that
+  `create()` calls), with its own `consumer<E>()` and `requester<R>()`, and
+  keeps them as members:
+
+  ```cpp
+  void DamageSystem::update(double dt)
+  {
+    // Wrong: made every frame, and refused outside create().
+    for (const HitEvent& hit : consumer<HitEvent>().read())
+      applyDamage(hit);
+  }
+
+  // Right: made once, kept as a member, read every frame.
+  void DamageSystem::create() { m_hits = consumer<HitEvent>(); }
+  void DamageSystem::update(double dt)
+  {
+    for (const HitEvent& hit : m_hits.read())
+      applyDamage(hit);
+  }
+  ```
+
+  It's reported when a system makes a handle in `update()`, `lateUpdate()`,
+  `render()`, `onEntityAdded()`, `onEntityRemoved()`, an `observe` callback,
+  an event handler (a lambda given to `onEvent()`, `onResponse()` and the
+  like), its constructor, its destructor or a member's initialiser: there
+  the engine refuses it. It's reported too when a system makes one through
+  `registry->events()`, which gives it no owner, so its handlers never run.
+  A game object makes its handles with `scene().events()` in `onCreate()`;
+  made in `onUpdate()`, `onDestroy()` or another callback, a handle has no
+  owner to run its handlers. And a handle made in the right place but not
+  kept (held by a local, or never stored) is dropped when the function
+  returns, so it receives nothing.
+- `reader-on-component`: a component that holds an `sfs::EventConsumer`,
+  `sfs::EventRequester`, `sfs::EventBroadcast` or `sfs::Responder`, even
+  inside a container. A component is an entity's state; the handle belongs to
+  the system or object that reads, asks, sends or responds:
+
+  ```cpp
+  // Wrong: the consumer is the AI system's, not each enemy's.
+  struct [[sfs::component]] EnemyBrain
+  {
+    sfs::EventConsumer<NoiseEvent> heard;
+  };
+  ```
+
+  Keep the consumer as a member of the system, and put what each enemy
+  remembers (the last noise it heard) on the component.
+- `response-sent-twice`: one response type sent by two systems. A response
+  type belongs to the system that consumes its request, so a requester knows
+  who answered:
+
+  ```cpp
+  // In NavigationSystem and in FlightSystem: two senders of one type.
+  responder.respond(PathFoundResponse{path});
+  ```
+
+  Give each system's responses a type of its own (`PathFoundResponse` and
+  `FlightPathFoundResponse`). Responses a job or a free function sends count
+  as sent by its file's system, when the file has just one. It looks at every
+  script of the project, so the second sender may be in another file.
 
 ### Attributes outside codegen
 

@@ -19,12 +19,12 @@ namespace sfs
  *
  * A game extends it with its own kinds of machine:
  *
- *   struct TractorSpec : sfs::VehicleSpec
+ *   struct TruckSpec : sfs::VehicleSpec
  *   {
  *     float hitchHeight = 0.5f; // ...
  *   };
  *
- * and an AssetRef<sfs::VehicleSpec> takes a TractorSpec asset too.
+ * and an AssetRef<sfs::VehicleSpec> takes a TruckSpec asset too.
  *
  * @param float wheelbase - m, fixed (rear) axle to the steered axle
  * @param float maxSteerAngle - degrees the steered wheels turn at most

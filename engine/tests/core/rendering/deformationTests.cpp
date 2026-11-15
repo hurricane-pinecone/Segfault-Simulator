@@ -200,7 +200,7 @@ int main()
 
   TEST("a press should change the ground only around what it pressed")
   {
-    // A wide footprint (a tine sliding on: most of it on ground it's pressed
+    // A wide footprint (a blade sliding on: most of it on ground it's pressed
     // already) pressing two texels: the ridge and slumping stay round those,
     // and an old wall elsewhere under it is left as it stands.
     DeformationMap map(0.03f);

@@ -36,6 +36,7 @@
 #include "engine/core/ecs/query.h"
 #include "engine/core/ecs/registry.h"
 #include "engine/core/ecs/system.h"
+#include "engine/core/util/typeList.h"
 
 #include <cstddef>
 #include <iterator>
@@ -50,11 +51,6 @@ namespace sfs
 
 namespace detail
 {
-
-template <typename... Ts>
-struct TypeList
-{
-};
 
 /** A required component of a row: bound by reference, read from its slot. */
 template <typename T>

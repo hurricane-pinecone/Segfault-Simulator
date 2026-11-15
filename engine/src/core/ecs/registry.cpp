@@ -351,6 +351,7 @@ void Registry::flushEntities()
       }
     }
 
+    m_events.entityRemoved(id, m_generations[id]);
     m_generations[id] = (m_generations[id] + 1) | kDead;
     ++m_entitySetVersion;
 
@@ -370,6 +371,25 @@ void Registry::flushEntities()
     const Signature& components = entityComponentSignatures[entity.getId()];
     syncQueries(entity.getId(), components, false, components, true);
   }
+}
+
+void Registry::updateSystem(System& system, double deltaTime)
+{
+  detail::EventOwner& owner = detail::EventHost::owner(system);
+  owner.begin();
+  owner.dispatch();
+  // A handler may have disabled it.
+  if (system.enabled())
+    system.update(deltaTime);
+  owner.end();
+}
+
+void Registry::lateUpdateSystem(System& system, double deltaTime)
+{
+  detail::EventOwner& owner = detail::EventHost::owner(system);
+  owner.begin();
+  system.lateUpdate(deltaTime);
+  owner.end();
 }
 
 void Registry::destroyEntity(const Entity& entity)

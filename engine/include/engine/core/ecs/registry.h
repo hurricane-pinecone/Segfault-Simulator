@@ -281,6 +281,23 @@ public:
   void forEachSystem(Fn&& fn);
 
   /**
+   * Runs a system's update() as Scene::update() does: its event handles get
+   * a new span (what arrived since its last update), its handlers run with
+   * it, then the call. A headless host runs its systems through this.
+   * @param system a system of this registry
+   * @param deltaTime the time its update is given
+   */
+  void updateSystem(System& system, double deltaTime);
+
+  /**
+   * Runs a system's lateUpdate() as Scene::update() does, with a new span
+   * for its event handles (its handlers run only before update()).
+   * @param system a system of this registry
+   * @param deltaTime the time its lateUpdate is given
+   */
+  void lateUpdateSystem(System& system, double deltaTime);
+
+  /**
    * Game time: how fast the systems' time runs against real time (2: twice
    * as fast, 0: stopped; see System::TimeStep). Scene::update() reads it once
    * a frame, so a change made during one takes effect from the next.
@@ -362,11 +379,12 @@ public:
 
   /**
    * The registry's event queues (docs/core/events): what one system tells
-   * others, sent with events().send(E{...}) and read through a reader a
-   * system makes in create() and keeps. Scene::update() starts each frame's
-   * events after the flush (Events::update()); a headless host calls
-   * events().update() once a frame, after flushEntities(). The systems (and
-   * their readers) are destroyed before it.
+   * others. Systems send them and make their consumers and requesters with
+   * EventVerbs; objects and UI do both here. Scene::update() starts each
+   * frame's events after the flush (Events::update()); a headless host calls
+   * events().update() once a frame, after flushEntities(). The flush
+   * supersedes a destroyed entity's keyed events. The systems are destroyed
+   * before it.
    * @return the events
    */
   Events& events() { return m_events; }

@@ -38,7 +38,7 @@ constexpr float kMaxTarget = 8192.0f;
 constexpr sfs::SceneId kPreviewSceneId = 0xFFFF;
 
 // What a file's part of: its folder and name, without extensions, so a
-// view's .h, .ui.h and .cpp are one ("objects/FarmHud").
+// view's .h, .ui.h and .cpp are one ("objects/Hud").
 std::string unitOf(const std::filesystem::path& file)
 {
   std::string name = file.filename().string();

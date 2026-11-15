@@ -87,11 +87,11 @@ int main()
     TempFolder root("sfs_gltf_rename");
     writeModel(root.path);
     sfs::AssetDatabase assets(root.path, sfs::AssetDatabase::Mode::ReadWrite, sfs::AssetDatabase::projectFolders());
-    CHECK(gltfFiles::move(assets, assets.findByPath("assets/models/a.gltf")->id, "assets/models/barn.gltf"));
-    const json gltf = readJson(root.path / "assets/models/barn.gltf");
-    CHECK(gltf["buffers"][0]["uri"] == "barn.bin");
+    CHECK(gltfFiles::move(assets, assets.findByPath("assets/models/a.gltf")->id, "assets/models/house.gltf"));
+    const json gltf = readJson(root.path / "assets/models/house.gltf");
+    CHECK(gltf["buffers"][0]["uri"] == "house.bin");
     CHECK(gltf["images"][0]["uri"] == "tex.png");
-    CHECK(assets.findByPath("assets/models/barn.bin") != nullptr);
+    CHECK(assets.findByPath("assets/models/house.bin") != nullptr);
   }
 
   TEST("deleting a .gltf should delete its .bin, not other files")

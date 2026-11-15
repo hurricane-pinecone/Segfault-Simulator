@@ -4,6 +4,7 @@
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/moduleSettings.h"
 #include "engine/core/ecs/query.h"
+#include "engine/core/events/eventVerbs.h"
 
 #include <cstdint>
 #include <functional>
@@ -31,7 +32,15 @@ int systemLookupId()
 
 } // namespace detail
 
-class System
+/**
+ * A system: the logic that updates entities from their components. It works
+ * on the entities its registered terms list (getEntities()), reacts as other
+ * kinds join and leave (observe()), and talks to other systems through
+ * events with what it inherits from EventVerbs: send() and send(key, event),
+ * and the consumers and requesters it makes in create() (consumer<E>(),
+ * requester<R>()), whose handlers run before its update().
+ */
+class System : public EventVerbs
 {
 public:
   System() = default;
@@ -43,7 +52,7 @@ public:
    * view of the registry's shared list for that signature
    * (Registry::query()), so the system keeps no copy. With terms, its rows
    * unpack them: getEntities<Entities>() for the system's own
-   * `using Entities = sfs::Query<...>`, getEntities<Hitch, Motion>() for
+   * `using Entities = sfs::Query<...>`, getEntities<Health, Motion>() for
    * fewer. The terms must be implied by what the system registered (every
    * entity it lists matches them); otherwise it logs an error once and gives
    * an empty view. Empty until the system is added to a registry. The list
@@ -61,7 +70,12 @@ public:
   // providers. Intended for debug toggling; the render system is never
   // disabled.
   bool enabled() const { return m_enabled; }
-  void setEnabled(bool enabled) { m_enabled = enabled; }
+  inline void setEnabled(bool enabled)
+  {
+    m_enabled = enabled;
+    if (!enabled)
+      detail::EventHost::owner(*this).wasDisabled = true;
+  }
 
   // How the scene's game time (Registry::timeScale()) reaches update().
   // Stepped, the default: game time, in steps no longer than the registry's

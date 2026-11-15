@@ -883,7 +883,7 @@ struct Heuristic
                           !std::isfinite(factor[static_cast<std::size_t>(c)]);
           }
           // (The body over it: the cost layer may bar the whole pose (a body
-          // kept off a crop); it says, for this pose.)
+          // kept off a flowerbed); it says, for this pose.)
           if (clear && barredUnder && rig.cost &&
               !std::isfinite(
                   priceAt(*rig.cost, {a, std::atan2(d.y, d.x)}, rig.q.mode)))

@@ -8,6 +8,7 @@
 #include <tree_sitter/api.h>
 
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <initializer_list>
 #include <string>
@@ -42,8 +43,8 @@ std::string tidy(std::string_view text);
 std::string_view trimmed(std::string_view text);
 
 /**
- * The last name of a qualified spelling: "game::FieldSystem" gives
- * "FieldSystem".
+ * The last name of a qualified spelling: "game::SpawnSystem" gives
+ * "SpawnSystem".
  */
 std::string_view lastName(std::string_view spelled);
 
@@ -191,6 +192,100 @@ void walkTree(TSNode root, Visit&& visit)
   walkTree(root, std::forward<Visit>(visit), [](TSNode) {});
 }
 
+/** Whether `node` has the tree-sitter type `type`; false for a null node. */
+inline bool isType(TSNode node, const char* type)
+{
+  return std::strcmp(typeName(node), type) == 0;
+}
+
+/**
+ * The name a call calls and its template arguments: `f<T>()`, `x.f<T>()`,
+ * `x->template f<T>()` or `x.f(...)`.
+ * @param call a call expression
+ * @param source the file's text
+ * @param templateArguments set to the template argument list, or null
+ * @return the name; empty for a qualified callee (`ns::f()`)
+ */
+std::string_view
+calleeName(TSNode call, std::string_view source, TSNode& templateArguments);
+
+/**
+ * The name a declarator declares, through init, reference and pointer
+ * declarators.
+ * @param declarator the declarator
+ * @param source the file's text
+ * @return the name, or empty for another form
+ */
+std::string_view declaredName(TSNode declarator, std::string_view source);
+
+/**
+ * The class a node is written in: the class body around it, or the class an
+ * out-of-line method around it belongs to (`ns::X::f` gives "X").
+ * @param node the node
+ * @param source the file's text
+ * @return the class's unqualified name; empty outside classes
+ */
+std::string_view ownerOf(TSNode node, std::string_view source);
+
+/**
+ * The namespaces code at a node is in, outermost first (codegen's
+ * lookupCandidates() takes them): those around it ("a::b" for a nested one,
+ * "" for an unnamed one), then the qualifier of the out-of-line definition
+ * around it (`void nav::NavSystem::update()` adds "nav" and "NavSystem").
+ * @param node the node
+ * @param source the file's text
+ * @param out cleared, then gains each namespace
+ */
+void namespacesOf(TSNode node,
+                  std::string_view source,
+                  std::vector<std::string>& out);
+
+/**
+ * Where a local or parameter called `name` that `at` sees is declared: in a
+ * block, a statement's init or condition, a range-for, or the parameters of
+ * a function or lambda around `at`, before it. A class's members aren't
+ * looked at.
+ * @param at where the name is used
+ * @param name the name
+ * @param source the file's text
+ * @return its declarator (an init declarator when it has a value), or null
+ */
+TSNode
+localDeclarator(TSNode at, std::string_view name, std::string_view source);
+
+/**
+ * The declaration of a data member `name` in a class's body.
+ * @param classNode a class or struct specifier
+ * @param name the member's name
+ * @param source the file's text
+ * @return the field declaration, or null when the body has none
+ */
+TSNode
+memberDeclaration(TSNode classNode,
+                  std::string_view name,
+                  std::string_view source);
+
+/**
+ * The type an expression makes: `T{...}`'s or `T(...)`'s, where T names a
+ * type.
+ * @param value the expression
+ * @param source the file's text
+ * @return the type as written, or empty for anything else
+ */
+std::string_view madeType(TSNode value, std::string_view source);
+
+/**
+ * The type of a local or parameter `name` that `at` sees, as its declaration
+ * writes it (`const` and references aside); for `auto`, the type its value
+ * makes (`auto done = R{}`).
+ * @param at where the name is used
+ * @param name the name
+ * @param source the file's text
+ * @return the type as written, or empty when it can't be read
+ */
+std::string_view
+localTypeOf(TSNode at, std::string_view name, std::string_view source);
+
 /** An SFS wrapper a query term may be written in. */
 enum class Wrapper : uint8_t
 {
@@ -207,12 +302,15 @@ struct FileClass
   std::string_view name;
   /** Its class_specifier (or struct_specifier) node. */
   TSNode node;
-  /** Whether its base clause names SFS's System. */
+  /**
+   * Whether it's a system: its base clause names SFS's System, or another
+   * system class of the file or the project.
+   */
   bool system;
   /**
-   * Whether it's a component: marked [[sfs::component]] (and not
-   * [[sfs::event]]), or the baseless namespace-scope class the project index
-   * has as a component.
+   * Whether it's a component: marked [[sfs::component]] (and no event
+   * attribute), or the baseless namespace-scope class the project index has
+   * as a component.
    */
   bool component;
 };
@@ -338,8 +436,8 @@ struct LintFile
   const FileClass* fileClass(std::string_view name) const;
 
   /**
-   * The class a node is written in: the class body around it, or the class an
-   * out-of-line method around it belongs to. Empty outside classes.
+   * The class a node is written in (ownerOf(), unqualified). Empty outside
+   * classes.
    */
   std::string_view ownerAt(TSNode node) const;
 

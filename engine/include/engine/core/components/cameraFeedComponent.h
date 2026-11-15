@@ -9,8 +9,8 @@ namespace sfs
 class RenderTexture;
 
 /**
- * A camera that films the scene into a small picture a UI shows (a tractor
- * terminal's rear camera, a combine's grain tank camera): its `picture` is
+ * A camera that films the scene into a small picture a UI shows (a car's
+ * rear-view camera, a security camera): its `picture` is
  * what it films, and ui::Image(feed.picture) shows it. The
  * entity's TransformComponent places it, looking along its +X axis with +Z
  * up, as a CameraComponent's: make it a child of a vehicle (or of one of its
@@ -19,7 +19,7 @@ class RenderTexture;
  * It's filmed only while something on screen shows its picture, `rate`
  * times a second (one feed a frame), through a cheaper view than the
  * scene's: the scene's lighting, sun and lamp shadows, terrain, its
- * deformation (ruts, furrows) and grass's ground, without bloom, depth of
+ * deformation (ruts, footprints) and grass's ground, without bloom, depth of
  * field, ambient occlusion, anti-aliasing over time or rain's drops.
  * Nothing shows it: it costs nothing.
  *

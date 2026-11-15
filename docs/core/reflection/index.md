@@ -60,12 +60,15 @@ These rules decide what is reflected:
   that's an error), and one nested in a class or a function, or a template, is
   warned about and not registered. Two types with the same name, in one header
   or across a build's headers, are an error.
-- **Events:** a class or struct marked `[[sfs::event]]` is an
-  [event](../events/index.md) type: codegen skips it (it's neither a component
-  nor reflected), so it may be the type named after its file, and a header of
-  only events needs no other type. Unmarked, a struct named after its header
-  would be registered as a component. Marked both `[[sfs::component]]` and
-  `[[sfs::event]]` is warned about, and the type is taken as an event.
+- **Events:** a struct marked `[[sfs::event_news]]`,
+  `[[sfs::event_entity_news]]`, `[[sfs::event_request(...)]]` or
+  `[[sfs::event_response]]` is an [event](../events/index.md) type: codegen
+  writes its compile-time traits instead of registering it (it's neither a
+  component nor reflected), so it may be the type named after its file, and
+  a header of only events needs no other type. Unmarked, a struct named
+  after its header would be registered as a component. Marked both
+  `[[sfs::component]]` and an event attribute is warned about, and the type
+  is taken as an event.
 
 ```cpp
 // TipParts.h: the parts a tipping trailer's model is made of.
@@ -116,7 +119,10 @@ completion and hovers also read:
 | `[[sfs::showIf(field)]]` | Any field | The Inspector shows it only while the named `bool` field of the same object is on; `showIf(!field)` shows it only while that field is off. | `bool orthographic = false;`<br>`[[sfs::showIf(orthographic)]] float orthoHeight = 20.0f;`<br>`[[sfs::showIf(!orthographic)]] float fieldOfView = 46.0f;` |
 | `[[sfs::part("node-name")]]` | `sfs::Entity` and `std::vector<sfs::Entity>` fields | The model node the editor fills it from, by name; on a list, a glob pattern (`"blade-*"`) for every node it takes. In development, a reference to a node not named so logs a warning. Never used at runtime. | `[[sfs::part("deck")]] sfs::Entity deck;`<br>`[[sfs::part("blade-*")]] std::vector<sfs::Entity> blades;` |
 | `[[sfs::component]]` | A type | Register the type as a component besides the file's type. | `struct [[sfs::component]] TipBody {};` |
-| `[[sfs::event]]` | A type | Mark the type as an event (sent and read through `Events`): never a component or reflected, and it may be named after its header. | `struct [[sfs::event]] DamageTaken { float amount; };` |
+| `[[sfs::event_news]]` | A type | Mark the type as news, an event sent with `send(event)` and read by every consumer of it or of its news bases: never a component or reflected, and it may be named after its header. | `struct [[sfs::event_news]] EnemyDiedEvent { sfs::Entity enemy; };` |
+| `[[sfs::event_entity_news]]` | A type | Mark the type as news about one entity, sent with `send(entity, event)`: rows give the entity, and `readLatest()` its newest. | `struct [[sfs::event_entity_news]] AlertedEvent { float level; };` |
+| `[[sfs::event_request(Response, ...)]]` | A type | Mark the type as a request about one entity, asked with a requester and answered through a `Responder` with one of the response types listed. | `struct [[sfs::event_request(PathFoundResponse, PathFailedResponse)]]`<br>`PathRequest { glm::vec3 goal; };` |
+| `[[sfs::event_response]]` | A type | Mark the type as a response, which a request lists and a `Responder` sends (`respond()`, `progress()`); others may watch it with a consumer, keyed by the request's entity. | `struct [[sfs::event_response]] PathFoundResponse`<br>`{`<br>`std::vector<glm::vec3> points;`<br>`};` |
 <!-- sfs-attributes:end -->
 
 An attribute is checked where it's written. One sfs-codegen doesn't know, one

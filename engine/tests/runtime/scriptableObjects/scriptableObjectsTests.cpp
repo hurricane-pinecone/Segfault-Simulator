@@ -33,7 +33,7 @@ struct OtherDef : ScriptableObject
 {
 };
 
-// A type derived from another reflected one (as a game's TractorSpec from
+// A type derived from another reflected one (as a game's TruckSpec from
 // the engine's VehicleSpec), registered as generated code would.
 struct MagicItemDef : ItemDef
 {

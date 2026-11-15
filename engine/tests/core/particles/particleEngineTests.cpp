@@ -218,8 +218,8 @@ int main()
     registry.flushEntities();
     ParticleEngine engine;
     engine.setRegistry(&registry);
-    engine.registerEffect("chaff", driftEffect(0.5f));
-    engine.spawnBurst("chaff", {0.0f, 0.0f});
+    engine.registerEffect("dust", driftEffect(0.5f));
+    engine.spawnBurst("dust", {0.0f, 0.0f});
     const glm::vec2 velocity = settledVelocity(engine, 5.0f);
     // A step's damping keeps it a hair (d * dt) under.
     CHECK(testing::approx(velocity.x, 2.5f, 0.07f));
@@ -231,8 +231,8 @@ int main()
     Registry registry;
     ParticleEngine engine;
     engine.setRegistry(&registry);
-    engine.registerEffect("chaff", driftEffect(0.5f));
-    engine.spawnBurst("chaff", {1.0f, 2.0f});
+    engine.registerEffect("dust", driftEffect(0.5f));
+    engine.spawnBurst("dust", {1.0f, 2.0f});
     CHECK(glm::length(settledVelocity(engine, 1.0f)) < 1e-4f);
 
     Registry windy;
@@ -240,8 +240,8 @@ int main()
     windy.flushEntities();
     ParticleEngine still;
     still.setRegistry(&windy);
-    still.registerEffect("chaff", driftEffect(0.0f));
-    still.spawnBurst("chaff", {1.0f, 2.0f});
+    still.registerEffect("dust", driftEffect(0.0f));
+    still.spawnBurst("dust", {1.0f, 2.0f});
     CHECK(glm::length(settledVelocity(still, 1.0f)) < 1e-4f);
   }
 
@@ -255,8 +255,8 @@ int main()
     registry.flushEntities();
     ParticleEngine engine;
     engine.setRegistry(&registry);
-    engine.registerEffect("chaff", driftEffect(1.0f));
-    engine.spawnBurst("chaff", {0.0f, 0.0f});
+    engine.registerEffect("dust", driftEffect(1.0f));
+    engine.spawnBurst("dust", {0.0f, 0.0f});
     const glm::vec2 velocity = settledVelocity(engine, 5.0f);
     CHECK(testing::approx(velocity.x, 3.0f, 0.08f));
     CHECK(testing::approx(velocity.y, 4.0f, 0.1f));

@@ -59,7 +59,7 @@ namespace sfs
  *     "fog": { ...FogSettings::toJson()... },
  *     "rain": { ...RainSettings::toJson()... },
  *     "materialVariant": "realistic",
- *     "materials": {"farm:ground-paint": "asset:<id>"}
+ *     "materials": {"game:ground-paint": "asset:<id>"}
  *   }
  */
 struct VisualStyle

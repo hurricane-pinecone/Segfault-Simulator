@@ -161,7 +161,7 @@ int main()
           (t.scheduleOf(2).why == Why::Body && t.scheduleOf(2).stopAt > 10));
   }
 
-  TEST("a cooperating pair (cart alongside) is left to keep its own spacing")
+  TEST("a cooperating pair (an escort) is left to keep its own spacing")
   {
     Traffic t;
     t.update(1, along(0, 0, 1, 2));

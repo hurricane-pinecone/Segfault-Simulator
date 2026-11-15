@@ -90,6 +90,8 @@ std::optional<std::string> assetRefType(std::string_view type,
   return inner.empty() ? std::nullopt : std::optional(inner);
 }
 
+} // namespace
+
 std::string normaliseType(std::string_view text)
 {
   std::string out;
@@ -108,6 +110,67 @@ std::string normaliseType(std::string_view text)
   }
   return out;
 }
+
+void readUsingName(TSNode node,
+                   std::string_view source,
+                   const std::filesystem::path& file,
+                   std::vector<std::string> scopes,
+                   std::vector<UsingName>& out)
+{
+  const std::string_view kind =
+      ts_node_is_null(node) ? std::string_view{} : ts_node_type(node);
+  UsingName found{
+      file, {}, {}, false, std::move(scopes), ts_node_start_byte(node)};
+  if (kind == "alias_declaration" || kind == "type_definition")
+  {
+    found.name = nodeText(
+        source,
+        childField(node, kind == "alias_declaration" ? "name" : "declarator"));
+    found.target = normaliseType(nodeText(source, childField(node, "type")));
+  }
+  else if (kind == "namespace_alias_definition")
+  {
+    const uint32_t count = ts_node_named_child_count(node);
+    if (count < 2)
+      return;
+    found.name = nodeText(source, childField(node, "name"));
+    found.target = normaliseType(
+        nodeText(source, ts_node_named_child(node, count - 1)));
+    found.isNamespace = true;
+  }
+  else if (kind == "using_declaration")
+  {
+    if (ts_node_named_child_count(node) != 1)
+      return;
+    found.target =
+        normaliseType(nodeText(source, ts_node_named_child(node, 0)));
+    found.isNamespace =
+        normaliseType(nodeText(source, node)).starts_with("using namespace");
+    if (!found.isNamespace)
+    {
+      const std::size_t colons = found.target.rfind("::");
+      found.name = colons == std::string::npos
+                       ? found.target
+                       : found.target.substr(colons + 2);
+    }
+  }
+  else
+    return;
+  if (found.target.empty() || (found.name.empty() && !found.isNamespace))
+    return;
+  // In a block (a function body), it's seen only to the block's end.
+  for (TSNode at = ts_node_parent(node); !ts_node_is_null(at);
+       at = ts_node_parent(at))
+    if (std::string_view(ts_node_type(at)) == "compound_statement")
+    {
+      found.end = ts_node_end_byte(at);
+      break;
+    }
+  out.push_back(std::move(found));
+}
+
+namespace
+{
 
 // How deep a walk of the tree has gone. Declarations never nest deeply; only
 // generated or hostile code (an expression of thousands of terms) does, and
@@ -149,6 +212,7 @@ struct AttributeValue
 {
   std::string first;
   std::string second;
+  std::vector<std::string> types; // Types: each, as written
 };
 
 // A field's [[sfs::...]] attribute, read but waiting for the field's kind.
@@ -235,8 +299,26 @@ private:
       const std::size_t depth = m_namespaces.size();
       if (!ts_node_is_null(name))
         m_namespaces.push_back(text(name)); // "a" or nested "a::b"
+      m_scopes.push_back(ts_node_is_null(name) ? std::string() : text(name));
+      const bool inlined = isInlineNamespace(node);
+      m_inlineDepth += inlined ? 1 : 0;
       visitChildren(node);
+      m_inlineDepth -= inlined ? 1 : 0;
       m_namespaces.resize(depth);
+      m_scopes.pop_back();
+      return;
+    }
+
+    // tree-sitter's grammar can't read an attribute on an enum, so only a
+    // union is checked.
+    if (kind == "union_specifier")
+    {
+      if (typeMarks(node).events != 0)
+        report(RuleId::EventDeclaration,
+               node,
+               "An event attribute goes on a struct, not a union. Make the "
+               "event a struct.");
+      visitChildren(node);
       return;
     }
 
@@ -246,7 +328,7 @@ private:
       const TSNode name = field(node, "name");
       const TypeMarks marks = typeMarks(node);
       const bool marked = marks.component;
-      if (marks.event)
+      if (marks.events != 0)
       {
         // An event is sent and read, never registered: no component, no
         // reflection, and it may be named after its header.
@@ -257,7 +339,8 @@ private:
                  "The event " + text(name) +
                      " can't be a component too, since a component is state "
                      "and an event is what one system tells another. Remove "
-                     "[[sfs::component]] or [[sfs::event]].");
+                     "[[sfs::component]] or the event attribute.");
+        parseEvent(node, marks);
       }
       else if (m_classDepth == 0 && !ts_node_is_null(name) &&
                lowercase(text(name)) == m_target)
@@ -283,12 +366,36 @@ private:
                    "it as a plain type at namespace scope.");
       else if (marked)
         parseType(node, kind == "struct_specifier", marked);
+      if (marks.events == 0 && !ts_node_is_null(name) && m_classDepth == 0 &&
+          m_localDepth == 0)
+        m_result.plainTypes.push_back(qualified(text(name)));
 
       // Nested types are never registered, but a marked one is warned about.
       ++m_classDepth;
       visitChildren(field(node, "body"));
       --m_classDepth;
       return;
+    }
+
+    if (kind == "using_declaration" || kind == "alias_declaration" ||
+        kind == "type_definition" || kind == "namespace_alias_definition")
+      readUsingName(node, m_source, m_path, m_scopes, m_usings);
+    if (kind == "using_declaration")
+    {
+      const std::string written = normaliseType(text(node));
+      if (written.starts_with("using namespace sfs;"))
+        m_usingSfs = true;
+      else if (written.starts_with("using sfs::"))
+        m_usingSfsNames.push_back(written.substr(11, written.size() - 12));
+    }
+    // `using X = ...;` and `typedef ... X;` alike.
+    else if (kind == "alias_declaration" || kind == "type_definition")
+    {
+      const TSNode name =
+          field(node, kind == "alias_declaration" ? "name" : "declarator");
+      if (!ts_node_is_null(name) &&
+          holdsEventHandle(normaliseType(text(field(node, "type")))))
+        m_handleAliases.push_back(text(name));
     }
 
     // Types in a template or a function aren't at namespace scope.
@@ -307,10 +414,12 @@ private:
   struct TypeMarks
   {
     bool component = false; // [[sfs::component]]
-    bool event = false;     // [[sfs::event]]
+    int events = 0;         // event attributes ([[sfs::event_news]], ...)
+    EventKind event = EventKind::News; // the first one's kind
+    std::vector<std::string> responses; // [[sfs::event_request(A, B)]]'s
   };
 
-  // Which of [[sfs::component]] and [[sfs::event]] a class specifier
+  // Which of [[sfs::component]] and the event attributes a class specifier
   // carries; warns about any other [[sfs::...]] attribute on it.
   TypeMarks typeMarks(TSNode node)
   {
@@ -337,9 +446,29 @@ private:
         if (!attributeArguments(*info, attribute, value))
           continue;
         if (info->id == AttributeId::Component)
+        {
           marks.component = true;
-        else if (info->id == AttributeId::Event)
-          marks.event = true;
+          continue;
+        }
+        EventKind event = EventKind::News;
+        if (info->id == AttributeId::EventEntityNews)
+          event = EventKind::EntityNews;
+        else if (info->id == AttributeId::EventRequest)
+          event = EventKind::Request;
+        else if (info->id == AttributeId::EventResponse)
+          event = EventKind::Response;
+        else if (info->id != AttributeId::EventNews)
+          continue;
+        if (++marks.events == 2)
+          report(RuleId::EventDeclaration,
+                 attribute,
+                 "A type takes one event attribute, so this one is a second. "
+                 "Keep the one that says what the event is.");
+        if (marks.events == 1)
+        {
+          marks.event = event;
+          marks.responses = std::move(value.types);
+        }
       }
     }
     return marks;
@@ -375,6 +504,14 @@ private:
 
   void wrongTarget(const AttributeInfo& info, TSNode attribute)
   {
+    if (isEventAttribute(info.id))
+    {
+      report(RuleId::EventDeclaration,
+             attribute,
+             "The attribute [[sfs::" + std::string(info.name) +
+                 "]] goes on a struct, not a field. Move it to the struct.");
+      return;
+    }
     const bool onType = info.target == AttributeTarget::Type;
     report(RuleId::AttributeTarget,
            attribute,
@@ -442,6 +579,35 @@ private:
       }
       value.first = negated ? "!" + text(ts_node_named_child(argument, 0))
                             : text(argument);
+      return true;
+    }
+    case AttributeArgs::Types:
+    {
+      for (uint32_t i = 0; i < count; ++i)
+      {
+        const TSNode listed = ts_node_named_child(arguments, i);
+        const std::string kind = type(listed);
+        if (kind != "identifier" && kind != "qualified_identifier" &&
+            kind != "type_identifier")
+        {
+          report(RuleId::AttributeArguments,
+                 listed,
+                 "The attribute " + written +
+                     " lists type names, but this isn't one. Write " +
+                     std::string(info.arguments) + ".");
+          return false;
+        }
+        value.types.push_back(normaliseType(text(listed)));
+      }
+      if (value.types.empty())
+      {
+        report(RuleId::AttributeArguments,
+               attribute,
+               "The attribute " + written +
+                   " needs at least one response type. Write " +
+                   std::string(info.arguments) + ".");
+        return false;
+      }
       return true;
     }
     case AttributeArgs::String:
@@ -563,24 +729,103 @@ private:
                        { return type.name == name; });
   }
 
-  // A class specifier's first base, as written.
-  std::string baseOf(TSNode node) const
+  // A class specifier's base types, as written, and which are virtual.
+  std::vector<EventBase> basesOf(TSNode node) const
   {
+    std::vector<EventBase> bases;
     const uint32_t count = ts_node_named_child_count(node);
     for (uint32_t i = 0; i < count; ++i)
     {
       const TSNode clause = ts_node_named_child(node, i);
       if (type(clause) != "base_class_clause")
         continue;
-      const uint32_t baseCount = ts_node_named_child_count(clause);
-      for (uint32_t b = 0; b < baseCount; ++b)
+      // `virtual` is an unnamed token before its base, up to the next comma.
+      bool isVirtual = false;
+      const uint32_t children = ts_node_child_count(clause);
+      for (uint32_t c = 0; c < children; ++c)
       {
-        const TSNode base = ts_node_named_child(clause, b);
-        if (type(base) != "access_specifier" && type(base) != "virtual")
-          return normaliseType(text(base));
+        const TSNode base = ts_node_child(clause, c);
+        const std::string kind = type(base);
+        if (kind == "virtual")
+          isVirtual = true;
+        else if (kind == ",")
+          isVirtual = false;
+        else if (ts_node_is_named(base) && kind != "access_specifier")
+          bases.push_back({normaliseType(text(base)), isVirtual});
       }
     }
-    return {};
+    return bases;
+  }
+
+  // Its first base type, as written; empty with none.
+  std::string baseOf(TSNode node) const
+  {
+    std::vector<EventBase> bases = basesOf(node);
+    return bases.empty() ? std::string() : std::move(bases.front().name);
+  }
+
+  // `name` with the enclosing named namespaces.
+  std::string qualified(const std::string& name) const
+  {
+    std::string out;
+    for (const std::string& ns : m_namespaces)
+      out += ns + "::";
+    return out + name;
+  }
+
+  // Whether a namespace definition is inline: `inline namespace v1`, or an
+  // inline part of a nested one, `namespace a::inline v1`.
+  bool isInlineNamespace(TSNode node) const
+  {
+    const TSNode first = ts_node_child(node, 0);
+    if (!ts_node_is_null(first) && type(first) == "inline")
+      return true;
+    const TSNode name = field(node, "name");
+    return !ts_node_is_null(name) &&
+           type(name) == "nested_namespace_specifier" &&
+           text(name).find("inline ") != std::string::npos;
+  }
+
+  // Records an event type, which must be a named struct at namespace scope.
+  void parseEvent(TSNode node, const TypeMarks& marks)
+  {
+    const TSNode name = field(node, "name");
+    if (ts_node_is_null(name) || m_classDepth > 0 || m_localDepth > 0)
+    {
+      report(RuleId::EventDeclaration,
+             node,
+             "An event is a named struct at namespace scope, not nested in a "
+             "class, a function or a template, so the compiler can be told "
+             "what it is. Move it out and name it.");
+      return;
+    }
+    // The traits header declares each event before naming it, and a
+    // declaration outside the inline namespace would be another type.
+    if (m_inlineDepth > 0)
+    {
+      report(RuleId::EventDeclaration,
+             name,
+             "The event " + text(name) +
+                 " is in an inline namespace, which its traits can't name. "
+                 "Declare it in a plain namespace.");
+      return;
+    }
+    EventModel event;
+    event.name = text(name);
+    event.qualifiedName = qualified(event.name);
+    event.scopes = m_scopes;
+    event.kind = marks.event;
+    event.classKey = type(node) == "class_specifier" ? "class" : "struct";
+    event.responses = marks.responses;
+    event.bases = basesOf(node);
+    event.header = m_path;
+    event.nameRange = rangeOf(name);
+    event.offset = ts_node_start_byte(name);
+    // Those written before it; lookUpName() tells which it sees.
+    for (const UsingName& using_ : m_usings)
+      if (using_.offset < event.offset)
+        event.usings.push_back(using_);
+    m_result.events.push_back(std::move(event));
   }
 
   TypeKind classify(TSNode node, TypeModel& model)
@@ -691,6 +936,10 @@ private:
 
     const TSNode typeNode = field(node, "type");
     base.type = normaliseType(text(typeNode));
+    // A system's or object's event handles are kept as members on purpose:
+    // they're never edited, and not worth a warning.
+    if (holdsEventHandle(base.type))
+      return;
     const std::string kindName = fieldKindOf(base.type, insideSfs());
     std::optional<std::string> kind;
     if (!kindName.empty())
@@ -830,7 +1079,10 @@ private:
     case AttributeId::Hide:
     case AttributeId::Show:
     case AttributeId::Component:
-    case AttributeId::Event:
+    case AttributeId::EventNews:
+    case AttributeId::EventEntityNews:
+    case AttributeId::EventRequest:
+    case AttributeId::EventResponse:
       break; // read by parseAttributes, or not a field's
     }
   }
@@ -860,6 +1112,45 @@ private:
     }
   }
 
+  // Whether a field type holds one of SFS's event handles, perhaps in a
+  // container: `sfs::EventConsumer<E>`, `std::vector<sfs::Responder<R>>`,
+  // unqualified where SFS's names are visible, or an alias this header
+  // declares for one.
+  bool holdsEventHandle(std::string_view type) const
+  {
+    // Whether the name at `at` stands alone: not part of a longer name, and
+    // either qualified by sfs:: or, unqualified, where it's visible.
+    const auto alone = [&](std::size_t at, std::size_t size, bool visible)
+    {
+      const auto part = [](char c)
+      { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+      if (at + size < type.size() && part(type[at + size]))
+        return false;
+      const std::string_view before = type.substr(0, at);
+      if (before.ends_with("sfs::"))
+        return before.size() == 5 || !part(before[before.size() - 6]);
+      return visible && (before.empty() || (!part(before.back()) &&
+                                            before.back() != ':'));
+    };
+    for (const std::string_view handle : kEventHandleTypes)
+    {
+      const bool visible =
+          insideSfs() || m_usingSfs ||
+          std::find(m_usingSfsNames.begin(), m_usingSfsNames.end(), handle) !=
+              m_usingSfsNames.end();
+      for (std::size_t at = type.find(handle); at != std::string_view::npos;
+           at = type.find(handle, at + 1))
+        if (alone(at, handle.size(), visible))
+          return true;
+    }
+    for (const std::string& alias : m_handleAliases)
+      for (std::size_t at = type.find(alias); at != std::string_view::npos;
+           at = type.find(alias, at + 1))
+        if (alone(at, alias.size(), true))
+          return true;
+    return false;
+  }
+
   // Whether the declarations being read are inside namespace sfs.
   bool insideSfs() const
   {
@@ -872,10 +1163,17 @@ private:
   std::vector<std::string> m_namespaces;
   ParseResult m_result;
   bool m_helper = false; // the file's class is a helper (no type, no warning)
-  bool m_events = false; // the header declares [[sfs::event]] types
+  bool m_events = false; // the header declares event types
+  int m_inlineDepth = 0; // how many inline namespaces the walk is in
+  bool m_usingSfs = false; // the header says `using namespace sfs;`
+  std::vector<std::string> m_handleAliases; // its aliases of handle types
+  std::vector<std::string> m_usingSfsNames; // `using sfs::X;`'s X
+  std::vector<UsingName> m_usings; // every using name, in the order written
   std::vector<FieldAttribute> m_fieldAttributes; // the field being read's
   // The showIf attributes of the type being read, with their argument.
   std::vector<std::pair<TSNode, std::string>> m_showIfs;
+  // The enclosing namespaces, "" for an unnamed one: where events live.
+  std::vector<std::string> m_scopes;
   int m_classDepth = 0; // class bodies entered
   int m_localDepth = 0; // templates and function bodies entered
   NestingLimit m_depth;

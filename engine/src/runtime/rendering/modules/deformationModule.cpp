@@ -57,7 +57,7 @@ constexpr float kFastest = 25.0f;
 // the ground under each lug is pressed within kRollError of as deep as
 // pressing it each frame would (a wheel of radius r, pressed each s, is at
 // most s * s / 8r above its lowest: 8 cm on one of 80 cm, 5 cm on one of
-// 30); one sliding (a tine) is swept along the way it went, each
+// 30); one sliding (a blade) is swept along the way it went, each
 // kSlideStride, or sooner once it's sunk or risen (lowered) kRiseStride or
 // turned enough to move any of it a texel.
 constexpr float kRollError = 0.001f;
@@ -576,8 +576,8 @@ void DeformationModule::pressMesh(const Entity& mesh,
     if (bottom.empty())
       continue;
     // Pressed all along the way it went since it last pressed, its
-    // underside moved back along it: sliding (a tine's point), at each texel,
-    // so each tine cuts a furrow, not a row of dimples, and the soil it
+    // underside moved back along it: sliding (a blade's edge), at each texel,
+    // so each blade cuts a groove, not a row of dimples, and the soil it
     // pushes aside rises evenly along it; rolling, at each stride, where it
     // went further than two in a frame (the game going fast), so its track's
     // unbroken. At most kMostSweeps (kMostRolls) presses, each of an even

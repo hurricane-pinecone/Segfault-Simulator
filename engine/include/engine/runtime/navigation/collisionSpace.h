@@ -47,7 +47,7 @@ Stance stanceOf(Pose2 pose,
  * under its middle: `ground`, default 0) and its body's id. Only bodies in
  * `layers` and not in `ignore`. THE one place a collider's 2D outline is
  * worked out: CollisionSpace::raster() and anything that traces what's solid
- * in 2D (a field planner's obstacle outlines, a game's cells) take it from
+ * in 2D (a coverage planner's obstacle outlines, a game's cells) take it from
  * here, never from a copy of their own.
  */
 std::vector<BoxSpace::Solid>
@@ -62,7 +62,7 @@ footprints(const CollisionWorld3D& world,
  * PhysicsSystem3D::snapshot(), parked machines in another), queried with the
  * vehicle's boxes as exact Jolt shapes, so a plan touches exactly what the
  * physics would. Heights count: a box only meets what its bottom..top
- * reaches (a raised header clears a low rail). Safe from any thread.
+ * reaches (a raised blade clears a low rail). Safe from any thread.
  *
  * A broad phase first (the textbook distance-field test): each world's
  * clearance (how far each point is at least from its nearest collider, at

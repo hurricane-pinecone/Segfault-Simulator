@@ -448,6 +448,8 @@ void Server::open(const nlohmann::json& params)
   if (document->role == FileRole::CodegenHeader)
     m_index.update(
         document->path, parsed, document->tree.get(), document->text);
+  else
+    m_index.updateSource(document->path, document->tree.get(), document->text);
 }
 
 void Server::change(const nlohmann::json& params)
@@ -483,7 +485,8 @@ void Server::change(const nlohmann::json& params)
 void Server::save(const nlohmann::json& params)
 {
   Document* document = find(at(params, {"textDocument"}));
-  // A saved script header's types go into the index from its analysis.
+  // A saved script header's types, responses and response types go into the
+  // index from its analysis.
   if (document && document->text.size() <= kMaxAnalysedSize &&
       m_index.isScriptHeader(document->path))
   {
@@ -491,6 +494,14 @@ void Server::save(const nlohmann::json& params)
     analyseAndPublish(*document, &parsed);
     m_index.update(
         document->path, parsed, document->tree.get(), document->text);
+  }
+  // A saved script source's responses and response types go into the index
+  // likewise.
+  else if (document && document->text.size() <= kMaxAnalysedSize &&
+           m_index.isScriptSource(document->path))
+  {
+    analyseAndPublish(*document);
+    m_index.updateSource(document->path, document->tree.get(), document->text);
   }
   m_index.rescan();
 }

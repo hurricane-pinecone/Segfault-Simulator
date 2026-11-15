@@ -1347,7 +1347,7 @@ void materialsField(const TypeInfo& type,
       apply();
   };
 
-  // "models/barn.glb : Roof" -> "barn", to name extracted materials.
+  // "models/house.glb : Roof" -> "house", to name extracted materials.
   const std::string meshLabel = meshes->label(meshes->nameOf(mesh));
   const std::string modelName =
       std::filesystem::path(meshLabel.substr(0, meshLabel.find(" : ")))
@@ -2579,7 +2579,7 @@ void InspectorPanel::drawVisualStyle(EditorContext& context,
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
   widgets::inputText("##overrideName", m_newOverrideName);
   ImGui::SetItemTooltip("The material's name, as an entity's material slot has it (e.g. asset:..., or a game's "
-                        "own such as farm:field-paint)");
+                        "own such as game:ground-paint)");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(-FLT_MIN);
   ImGui::BeginDisabled(m_newOverrideName.empty() || m_style->materials.contains(m_newOverrideName));
@@ -2682,7 +2682,7 @@ bool InspectorPanel::drawTerrain(EditorContext& context,
     }
   }
   changed |= widgets::propertyCheckbox("Deformable", &terrain.deformable);
-  ImGui::SetItemTooltip("Pressed in where things with a Deformer go over it (tyre tracks, furrows, footprints): real "
+  ImGui::SetItemTooltip("Pressed in where things with a Deformer go over it (tyre tracks, ruts, footprints): real "
                         "geometry near the camera, parallax further off");
 
   std::optional<std::size_t> removed;

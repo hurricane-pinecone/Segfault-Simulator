@@ -45,7 +45,7 @@ int main()
     const json snapshot = {{"position", {0.1, -2.5e-7, 1.0 / 3.0}},
                            {"count", 7},
                            {"negative", -3},
-                           {"name", "Barn \"big\""},
+                           {"name", "House \"big\""},
                            {"flags", {true, false, nullptr}}};
     HistorySteps steps;
     steps.push(snapshot, scene(1), std::nullopt, std::nullopt);

@@ -49,7 +49,7 @@ namespace sfs::nav
  * was late (an agent stood that long at the end of what it had) once that's
  * over Settings::logLateAfter.
  *
- * A step may fork tasks that run in parallel (a field plan's layout
+ * A step may fork tasks that run in parallel (a coverage plan's layout
  * candidates): the job's next step runs once they've all finished. Errors
  * thrown by a step or a forked task are caught, logged and end the job
  * (Failed); nothing escapes into the game loop.
@@ -102,11 +102,20 @@ public:
   struct Request
   {
     uint64_t owner = 0; // whose (an agent's id): the fair turn is per owner
-    std::string label;  // for the log ("Combine 1: travel")
+    std::string label;  // for the log ("Sweeper 1: travel")
     Clock::time_point deadline = Clock::now();
     bool lookAhead = false; // shed first under load
     float estimate = 0.05f; // s a step is expected to take (then measured)
     std::function<Step(Context&)> step;
+    /**
+     * Whether the job is still wanted, asked (under the scheduler's lock,
+     * on a worker) for each of its queued tasks whenever a worker looks for
+     * a task; once it says no, or throws (logged), the job is cancelled and
+     * runs no further step. Keep it to a cheap check, such as
+     * `[responder] { return !responder.superseded(); }` for a job
+     * responding to a request. Empty: always wanted.
+     */
+    std::function<bool()> wanted;
   };
 
   enum class State
@@ -183,6 +192,11 @@ private:
   // again for a deferred one). Under m_mutex.
   std::shared_ptr<Task> pick(Clock::time_point now, Clock::time_point& wake);
   void finishStep(const std::shared_ptr<Job>& job, bool more, double seconds);
+  // cancel() under m_mutex.
+  void cancelLocked(JobId job);
+  // The job's Request::wanted, its throw caught and logged as unwanted.
+  // Under m_mutex.
+  static bool wanted(const Job& job);
   void publish(Job& job, std::any leg);
   void fork(Job& job, std::function<void(const std::atomic<bool>&)> task);
   void fail(Job& job, const std::string& what);
@@ -193,8 +207,9 @@ private:
   std::map<JobId, std::shared_ptr<Job>> m_jobs;
   std::vector<std::shared_ptr<Task>> m_queue;
   std::vector<std::shared_ptr<const void>> m_releases; // (release())
-  std::map<uint64_t, unsigned> m_running;              // per owner
-  std::size_t m_busy = 0;                              // workers running a task
+  std::vector<JobId> m_unwanted;          // pick()'s scratch: jobs to cancel
+  std::map<uint64_t, unsigned> m_running; // per owner
+  std::size_t m_busy = 0;                 // workers running a task
   JobId m_next = 1;
   uint64_t m_order = 0;
   bool m_stopping = false;

@@ -38,14 +38,14 @@ struct TerrainMaterial;
  * - DeformerComponent entities (with their children's meshes): as one
  *   moves, each few centimetres (not each frame, so a fast frame rate costs
  *   no more), its meshes' undersides near the ground (what's seen of them
- *   from below, lugs, tines and all) press it down to their sink depth below
+ *   from below, lugs, blades and all) press it down to their sink depth below
  *   them, deeper on softer soil (setSoftness()), and the soil they push out
- *   rises alongside. One sliding rather than rolling (a tine's point) is
+ *   rises alongside. One sliding rather than rolling (a blade's edge) is
  *   pressed all along the way it went since it last pressed, so its
- *   furrow's unbroken; so is one rolling that went further in a frame than
+ *   groove's unbroken; so is one rolling that went further in a frame than
  *   it presses at (the game going fast: Registry::timeScale()).
  * - stamp(): a footprint, a hoof, a dropped crate's corner.
- * - relax() and clearRegion(): weather softening tracks, tilling wiping them.
+ * - relax() and clearRegion(): weather softening tracks, levelling wiping them.
  *
  * It's drawn as real geometry near the camera: a patch of fine rings (4 cm
  * between vertices at its middle, coarser outwards, kPatchHalf either side)
@@ -163,7 +163,7 @@ public:
   struct Contact
   {
     Entity deformer; // the entity with the DeformerComponent
-    Entity mesh;     // its mesh that touched (a wheel, a tine)
+    Entity mesh;     // its mesh that touched (a wheel, a blade)
     glm::vec2 low{0.0f}, high{0.0f};
     glm::vec2 motion{0.0f};
     float sinkDepth = 0.0f; // the deformer's
