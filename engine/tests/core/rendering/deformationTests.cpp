@@ -88,6 +88,40 @@ int main()
     CHECK(near(map.deepest(), -0.2f));
   }
 
+  TEST("a block of tiles should hold one of the map's only if it covers it")
+  {
+    DeformationMap map(0.5f);
+    CHECK(!map.anyTileIn({-4, -4}, {8, 8})); // empty
+    map.set({-1, -1}, -0.1f);                // tile (-1, -1)
+    map.set({64, 0}, -0.2f);                 // tile (1, 0)
+    CHECK(map.anyTileIn({-1, -1}, {1, 1}));
+    CHECK(map.anyTileIn({1, 0}, {1, 1}));
+    CHECK(map.anyTileIn({-4, -4}, {8, 8}));
+    CHECK(!map.anyTileIn({0, 0}, {1, 1}));
+    CHECK(!map.anyTileIn({2, 0}, {4, 4}));
+    CHECK(!map.anyTileIn({-1, -1}, {0, 4})); // spans nothing
+    // Blocks smaller than the map (looked up tile by tile) as well as bigger
+    // (the map's tiles checked), with the same answers as listing tiles().
+    for (int i = 0; i < 6; ++i)
+      map.set({i * 64 + 1, 200}, -0.05f); // tiles (0..5, 3)
+    for (const glm::ivec2 first :
+         {glm::ivec2(-2, -2), glm::ivec2(0, 0), glm::ivec2(3, 3)})
+      for (const glm::ivec2 count : {glm::ivec2(1, 1),
+                                     glm::ivec2(2, 1),
+                                     glm::ivec2(1, 4),
+                                     glm::ivec2(10, 10)})
+      {
+        bool listed = false;
+        for (const glm::ivec2 tile : map.tiles())
+        {
+          const glm::ivec2 at = tile - first;
+          listed = listed ||
+                   (at.x >= 0 && at.y >= 0 && at.x < count.x && at.y < count.y);
+        }
+        CHECK(map.anyTileIn(first, count) == listed);
+      }
+  }
+
   TEST("sampling should be bilinear between texel centres")
   {
     DeformationMap map(1.0f);

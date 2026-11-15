@@ -3,8 +3,24 @@
 #include "glm/glm/common.hpp"
 #include "glm/glm/geometric.hpp"
 
+#include <algorithm>
+
 namespace sfs
 {
+
+float largestScale(const glm::mat4& transform)
+{
+  return std::max({glm::length(glm::vec3(transform[0])),
+                   glm::length(glm::vec3(transform[1])),
+                   glm::length(glm::vec3(transform[2]))});
+}
+
+glm::vec4
+placedSphere(const glm::mat4& model, const glm::vec3& center, float radius)
+{
+  return glm::vec4(
+      glm::vec3(model * glm::vec4(center, 1.0f)), radius * largestScale(model));
+}
 
 void Aabb::expand(const glm::vec3& point)
 {

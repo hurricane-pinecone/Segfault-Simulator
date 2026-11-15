@@ -45,6 +45,9 @@ public:
   void update(double deltaTime) override;
   void computeCommands(const RenderContext& context) override;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   struct Decal
   {

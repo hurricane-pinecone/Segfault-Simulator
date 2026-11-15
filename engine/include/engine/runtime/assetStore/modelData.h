@@ -5,6 +5,7 @@
 #include "engine/core/rendering/mesh.h"
 #include "glm/glm/ext/matrix_float4x4.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +33,16 @@ struct ModelNode
   int parent = -1;       // index into ModelData::nodes; -1: a top node
   glm::mat4 local{1.0f}; // relative to its parent
   std::string part;      // the ModelPart it draws; empty: none
+  // A collider node (isColliderNodeName()): placed as a BoxCollider3D fitted
+  // to `bounds`, its mesh not drawn (so `part` is empty).
+  bool collider = false;
+  Aabb bounds; // its mesh's, in its own space; empty: it has none
+  /**
+   * Its stable id: its "$id" in the model's prefab, made from its name path
+   * (stableNodeId()), so it stays the same when the file's nodes are
+   * reordered. Bit 31 is always set.
+   */
+  uint32_t id = 0;
 };
 
 /**

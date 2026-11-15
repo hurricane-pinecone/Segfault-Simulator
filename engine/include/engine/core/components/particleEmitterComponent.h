@@ -1,5 +1,6 @@
 #pragma once
 
+#include "glm/glm/ext/vector_float2.hpp"
 #include "glm/glm/ext/vector_float3.hpp"
 #include "glm/glm/ext/vector_float4.hpp"
 #include <string>
@@ -32,6 +33,13 @@ namespace sfs
  *                                moves on with it)
  * @param glm::vec4 tint - multiplies the effect's colour (rgb) and alpha,
  *                         default white: one effect in many colours
+ * @param glm::vec2 shapeScale - scales where the effect's emission shape
+ *                               spawns particles, per axis (before it turns
+ *                               with the entity), default 1: one effect over
+ *                               any width, e.g. a box as wide as a machine
+ * @param int maxParticles - how many particles this emitter may have alive
+ *                           at once (0, the default: the effect's own
+ *                           maxParticles)
  */
 struct ParticleEmitterComponent
 {
@@ -42,6 +50,8 @@ struct ParticleEmitterComponent
   bool turnWithEntity = false;
   [[sfs::range(0, 1)]] float inheritVelocity = 0.0f;
   [[sfs::color]] glm::vec4 tint{1.0f};
+  glm::vec2 shapeScale{1.0f};
+  int maxParticles = 0;
 
   ParticleEmitterComponent() = default;
 

@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/modules/particleModule.h"
 
+#include "engine/core/ecs/registry.h"
 #include "engine/core/particles/decal.h"
 #include "engine/core/rendering/meshPrimitives.h"
 #include "engine/runtime/assetStore/assetStore.h"
@@ -40,6 +41,16 @@ void ParticleModule::init(const ModuleInit& init)
 {
   m_registry = init.registry;
   setRegistry(init.registry);
+}
+
+void ParticleModule::update(double deltaTime)
+{
+  if (!m_registry)
+  {
+    simulate(deltaTime);
+    return;
+  }
+  simulate(m_registry->paused() ? 0.0 : deltaTime * m_registry->timeScale());
 }
 
 void ParticleModule::enableStains(IDecalSink& decals,

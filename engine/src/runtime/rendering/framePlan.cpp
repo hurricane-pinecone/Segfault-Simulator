@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/framePlan.h"
 
+#include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/frustum.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "glm/glm/common.hpp"
@@ -90,6 +91,20 @@ std::optional<glm::vec2> viewBearings(const FrameParams& frame,
   if (span.y - span.x >= glm::pi<float>())
     return std::nullopt;
   return span + middle;
+}
+
+// Appends each instance's bounding sphere, as `mesh` bounds it, placed in the
+// world: xyz its centre, w its radius, below zero for each if the mesh has
+// gone.
+void placeSpheres(std::span<const MeshInstance> instances,
+                  const PlannedMesh* mesh,
+                  std::vector<glm::vec4>& out)
+{
+  for (const MeshInstance& instance : instances)
+    out.push_back(mesh ? placedSphere(instance.model,
+                                      mesh->boundsCenter,
+                                      mesh->boundsRadius)
+                       : glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
 }
 } // namespace
 
@@ -411,33 +426,35 @@ void FramePlan::finish(
     if (m_pointLights[i].castsShadow &&
         (!strikeShadowed || i != static_cast<std::size_t>(strikeShadow)))
       m_shadowedLights.push_back({i, {}});
-  for (ShadowedLight& shadowed : m_shadowedLights)
+  if (!m_shadowedLights.empty())
   {
-    const PointLight& light = m_pointLights[shadowed.light];
+    m_casterSpheres.clear();
     for (const CasterBatch& batch : m_casterBatches)
+      placeSpheres(std::span<const MeshInstance>(m_casters).subspan(
+                       batch.first, batch.count),
+                   meshes(batch.base.meshSlot),
+                   m_casterSpheres);
+    for (ShadowedLight& shadowed : m_shadowedLights)
     {
-      const PlannedMesh* mesh = meshes(batch.base.meshSlot);
-      if (!mesh)
-        continue;
-      Draw draw = batch.base;
-      draw.firstInstance = static_cast<uint32_t>(m_instances.size());
-      for (std::size_t k = 0; k < batch.count; ++k)
+      const PointLight& light = m_pointLights[shadowed.light];
+      for (const CasterBatch& batch : m_casterBatches)
       {
-        const MeshInstance& instance = m_casters[batch.first + k];
-        const glm::vec3 center(instance.model *
-                               glm::vec4(mesh->boundsCenter, 1.0f));
-        const float scale =
-            std::max({glm::length(glm::vec3(instance.model[0])),
-                      glm::length(glm::vec3(instance.model[1])),
-                      glm::length(glm::vec3(instance.model[2]))});
-        // (A spot's: those in its cone.)
-        if (!lightReaches(light, center, mesh->boundsRadius * scale))
+        if (batch.count == 0 || m_casterSpheres[batch.first].w < 0.0f)
           continue;
-        m_instances.push_back(instance);
-        ++draw.instanceCount;
+        Draw draw = batch.base;
+        draw.firstInstance = static_cast<uint32_t>(m_instances.size());
+        for (std::size_t k = 0; k < batch.count; ++k)
+        {
+          const glm::vec4& sphere = m_casterSpheres[batch.first + k];
+          // (A spot's: those in its cone.)
+          if (!lightReaches(light, glm::vec3(sphere), sphere.w))
+            continue;
+          m_instances.push_back(m_casters[batch.first + k]);
+          ++draw.instanceCount;
+        }
+        if (draw.instanceCount > 0)
+          shadowed.draws.push_back(draw);
       }
-      if (draw.instanceCount > 0)
-        shadowed.draws.push_back(draw);
     }
   }
 
@@ -445,41 +462,48 @@ void FramePlan::finish(
   // reaches into its box (or beyond it toward the sun, within its depth).
   const SunCascades& cascades = m_frame.cascades;
   if (m_frame.shadows.enabled && cascades.count > 1)
+  {
+    m_casterSpheres.clear();
+    for (const Draw& shadow : m_shadowDraws)
+      placeSpheres(std::span<const MeshInstance>(m_instances)
+                       .subspan(shadow.firstInstance, shadow.instanceCount),
+                   meshes(shadow.meshSlot),
+                   m_casterSpheres);
     for (uint32_t c = 0; c < cascades.count && c < kMaxShadowCascades; ++c)
     {
       const SunCascade& cascade = cascades.cascades[c];
       const float toClip = 1.0f / std::max(cascade.radius, 1e-4f);
       const float toDepth = 1.0f / std::max(cascade.depthRange, 1e-4f);
+      std::size_t sphere = 0;
       for (const Draw& shadow : m_shadowDraws)
       {
-        const PlannedMesh* mesh = meshes(shadow.meshSlot);
-        if (!mesh)
+        const std::size_t first = sphere;
+        sphere += shadow.instanceCount;
+        if (shadow.instanceCount == 0 || m_casterSpheres[first].w < 0.0f)
           continue;
         Draw draw = shadow;
         draw.firstInstance = static_cast<uint32_t>(m_instances.size());
         draw.instanceCount = 0;
         for (uint32_t k = 0; k < shadow.instanceCount; ++k)
         {
-          const MeshInstance instance = m_instances[shadow.firstInstance + k];
-          const glm::vec4 center = cascade.viewProjection * instance.model *
-                                   glm::vec4(mesh->boundsCenter, 1.0f);
-          const float scale =
-              std::max({glm::length(glm::vec3(instance.model[0])),
-                        glm::length(glm::vec3(instance.model[1])),
-                        glm::length(glm::vec3(instance.model[2]))});
-          const float radius = mesh->boundsRadius * scale;
+          const glm::vec4& world = m_casterSpheres[first + k];
+          const glm::vec4 center =
+              cascade.viewProjection * glm::vec4(glm::vec3(world), 1.0f);
+          const float radius = world.w;
           const float across = 1.0f + radius * toClip;
           const float deep = radius * toDepth;
           if (std::abs(center.x) > across || std::abs(center.y) > across ||
               center.z < -deep || center.z > 1.0f + deep)
             continue;
-          m_instances.push_back(instance);
+          // push_back copes with an element of the vector itself.
+          m_instances.push_back(m_instances[shadow.firstInstance + k]);
           ++draw.instanceCount;
         }
         if (draw.instanceCount > 0)
           m_cascadeDraws[c].push_back(draw);
       }
     }
+  }
 
   // Each shadowed light's cube faces.
   m_faces.clear();

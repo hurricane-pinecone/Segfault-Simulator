@@ -201,6 +201,14 @@ private:
     std::vector<glm::vec2> uvs;
     glm::vec2 min{0.0f}, max{0.0f}; // its own XY
   };
+  // All of a grid's maps as sent up (GrassMapsImage's shape, data, now and
+  // cut), worked out with a window in the background so a new window costs
+  // the frame that puts it in place only the upload.
+  struct MapImages
+  {
+    GrassGrid grid;
+    std::vector<uint8_t> shape, data, now, cut;
+  };
   // A window of it, built.
   struct Window
   {
@@ -212,6 +220,7 @@ private:
     GrassTrample trample;
     GrassMaps maps;
     std::vector<uint8_t> cover; // with a terrain under it
+    MapImages images;           // its maps', all of them
   };
 
   struct Patch
@@ -262,6 +271,7 @@ private:
     std::shared_ptr<const Source> source;
     std::shared_ptr<const GrassMaps> painted; // `paint`, over all of it
     std::future<Window> nextWindow;           // being built
+    MapImages ready; // the window's maps' images, till they're sent up
   };
 
   static uint64_t keyOf(const Entity& entity);
@@ -289,7 +299,8 @@ private:
                             float half,
                             float trampleHeight,
                             const GrassMaps* painted,
-                            const TerrainMaterial* terrain);
+                            const TerrainMaterial* terrain,
+                            std::optional<double> clock);
   // A windowed patch's window: built around the camera if it's moved on (in
   // the background, but for the first), and put in place once it's ready.
   void windowAround(Patch& patch, const GrassComponent& grass);
@@ -298,11 +309,16 @@ private:
 
   // How it's now, of a rectangle of its maps (GrassMaps::nowPixels()), as
   // much as the terrain under it lets grow.
-  static void nowOf(const Patch& patch,
+  static void nowOf(const GrassMaps& maps,
+                    const std::vector<uint8_t>& cover,
                     glm::ivec2 from,
                     glm::ivec2 to,
                     std::vector<uint8_t>& now,
                     std::vector<uint8_t>& cut);
+  // The cover a patch's maps are drawn with (empty: none).
+  static const std::vector<uint8_t>& coverFor(const Patch& patch);
+  // All of the maps' images (MapImages), their band kept (keepBand()).
+  static MapImages imagesOf(GrassMaps& maps, const std::vector<uint8_t>& cover);
   void uploadVigour(Patch& patch);
 
   IRenderer& m_renderer;

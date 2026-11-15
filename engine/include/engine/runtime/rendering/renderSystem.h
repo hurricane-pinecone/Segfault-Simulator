@@ -2,6 +2,7 @@
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep
 #include "engine/core/rendering/camera.h"
+#include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/lighting.h"
 #include "engine/core/rendering/lightning.h"
 #include "engine/core/rendering/rain.h"
@@ -44,6 +45,8 @@ struct RenderStats
   std::size_t shadowedLights = 0;       // point lights casting shadows
   std::size_t lightShadowInstances = 0; // casters for them
   std::size_t grassFields = 0;
+  std::size_t colliders = 0;  // drawn as debug lines (drawColliders)
+  std::size_t debugLines = 0; // every debug line, colliders' included
 };
 
 /**
@@ -302,12 +305,47 @@ public:
   ContactShadowSettings effectiveContactShadows() const;
   RainSettings effectiveRain() const;
 
+  // --- debug drawing (debug features: see debugFeatures.h) -----------------
+
+  /**
+   * Lines to draw over the next frame (see DebugLines), for debugging: add
+   * to it while updating; the frame draws them and empties it. Drawn only
+   * while debug features are enabled (the editor, a Debug build, a
+   * development export); otherwise emptied undrawn.
+   */
+  DebugLines& debugLines() { return m_debugLines; }
+
+  /**
+   * The scene's "Draw Colliders" debug setting (saved with it): every
+   * collider drawn as lines in the game and the editor's viewport (see
+   * colliderLines.h). Off by default.
+   */
+  void setDrawColliders(bool on) { m_drawColliders = on; }
+  bool drawColliders() const { return m_drawColliders; }
+  /**
+   * Over the scene's setting while the game runs (game code, a development
+   * key); none: the scene's (the default). SFS_DRAW_COLLIDERS=1 (or 0) in
+   * the environment forces it too, below this.
+   */
+  void forceDrawColliders(std::optional<bool> on)
+  {
+    m_forcedDrawColliders = on;
+  }
+  /**
+   * Whether this frame draws colliders: forced, else SFS_DRAW_COLLIDERS,
+   * else the scene's setting; always false while debug features are off (a
+   * release export), whatever those say.
+   */
+  bool effectiveDrawColliders() const;
+
   const RenderStats& stats() const { return m_stats; }
 
   /**
-   * The picture an entity's camera feed (CameraFeedComponent) films, made the
-   * first time it's asked for (null without one): show it with ui::Image. It's
-   * filmed only while it's shown, at the feed's rate, one feed a frame.
+   * The picture an entity's camera feed (CameraFeedComponent) films (null
+   * without one), made now if update() hasn't made it yet: show it with
+   * ui::Image. It's filmed only while it's shown, at the feed's rate, one feed
+   * a frame. Prefer reading CameraFeedComponent::picture, which update()
+   * makes for every feed.
    */
   std::shared_ptr<const RenderTexture> cameraFeed(Entity entity);
 
@@ -334,6 +372,7 @@ public:
   bool animating() const { return m_animating; }
 
 protected:
+  void create() override;
   void update(double deltaTime) override
   {
     if (m_animating)
@@ -346,6 +385,8 @@ protected:
           m_weather.clamped().wind, static_cast<float>(deltaTime));
       advanceLightning(static_cast<float>(deltaTime));
     }
+    refreshMeshBounds();
+    makeFeedPictures();
     updateModules(deltaTime);
   }
   void render() override;
@@ -353,6 +394,13 @@ protected:
   ModuleInit moduleInit() override { return {registry, nullptr}; }
 
 private:
+  // Set each MeshRendererComponent's bounds from the library when its mesh
+  // has changed since they were taken (a handle compare each).
+  void refreshMeshBounds();
+
+  // Give every CameraFeedComponent without a picture its picture.
+  void makeFeedPictures();
+
   // Age the strikes, dropping (and freeing) those that have faded.
   void advanceLightning(float seconds);
 
@@ -440,6 +488,9 @@ private:
   RainSettings m_rain;
   bool m_temporalAntiAliasing = false;
   std::optional<bool> m_forcedTemporalAntiAliasing;
+  DebugLines m_debugLines;
+  bool m_drawColliders = false;
+  std::optional<bool> m_forcedDrawColliders;
   SkySettings m_sky;
   ColorGrading m_grading;
   StyleSource m_styleSource;
@@ -468,14 +519,7 @@ private:
   std::vector<GlowPoint> m_glow;
 
   RenderContext m_context;
-  // Camera feeds asked for (cameraFeed()), by entity id: their pictures, when
-  // each was last filmed (seconds of a steady clock), and the one this frame.
-  struct Feed
-  {
-    std::shared_ptr<RenderTexture> texture;
-    double filmed = -1.0e9;
-  };
-  std::unordered_map<uint32_t, Feed> m_feeds;
+  // The camera feed being filmed this frame.
   const RenderTexture* m_feedFilming = nullptr;
   glm::mat4 m_lightViewProjection{1.0f};
   SunCascades m_cascades;
