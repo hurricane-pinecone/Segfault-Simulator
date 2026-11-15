@@ -141,6 +141,17 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      "`[[sfs::showIf]]` should name a reflected `bool` field of its "
      "type. Name one of the type's bool fields."},
+    {EventAndComponent,
+     "event-and-component",
+     W,
+     C,
+     false,
+     false,
+     false,
+     "A type should not be marked both `[[sfs::event]]` and "
+     "`[[sfs::component]]`, since an event is what one system tells another "
+     "and a component is state; it's taken as an event. Remove one of the "
+     "two marks."},
     {SingleAny,
      "single-any",
      W,
@@ -223,9 +234,9 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      false,
      false,
      false,
-     "Systems should not read other systems. Put what one system needs "
-     "on a component, which the other writes and it reads, or have it "
-     "write a request field there that the other fills in."},
+     "Systems should not read other systems. Read the state another "
+     "system writes on components, and send what one system tells another "
+     "as an event."},
     {PerEntityMap,
      "per-entity-map",
      W,
@@ -349,6 +360,36 @@ constexpr std::array<RuleInfo, static_cast<std::size_t>(Count)> kRules = {{
      "A query loop should not copy a row's component only to read it. Read "
      "it in place with `const T&`, or, for a copy it changes, keep it as "
      "scratch or use `T&`."},
+    {EventUnmarked,
+     "event-unmarked",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "An event should be a struct marked `[[sfs::event]]`, not a component "
+     "or another script type. Send and read a struct marked "
+     "`[[sfs::event]]`, and keep state on components."},
+    {ReaderNotKept,
+     "reader-not-kept",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "An event reader should not be made in `update()`, a hook or an "
+     "`observe` callback, where each new one reads the kept events again. "
+     "Make it once in `create()` and keep it as a member."},
+    {ReaderOnComponent,
+     "reader-on-component",
+     W,
+     L,
+     false,
+     false,
+     false,
+     "A component should not hold an `sfs::EventReader` or "
+     "`sfs::EventSender`, which are the reading or sending system's own "
+     "data. Keep it as a member of that system, made in `create()`."},
     {BadIgnore,
      "bad-ignore",
      W,

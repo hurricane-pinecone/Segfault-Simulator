@@ -62,7 +62,8 @@ public:
   SceneId id() const;
   const std::string& name() const;
 
-  // A frame: the systems (in game time: see Registry::setTimeScale() and
+  // A frame: the flush, the events' frame boundary (Events::update()), the
+  // systems (in game time: see Registry::setTimeScale() and
   // System::TimeStep), then the game objects and onUpdate() (real time:
   // they're the player's, input and cameras), then the systems' lateUpdate().
   void update(double deltaTime);
@@ -189,6 +190,15 @@ public:
 
   /** Whether the game is paused (Registry::paused()). */
   bool paused() const { return m_registry.paused(); }
+
+  /**
+   * The scene's event queues (Registry::events()): send what one system tells
+   * others with events().send(E{...}); read it through a reader made once
+   * (an object's onCreate) and kept. Each frame's events start after the
+   * flush, before the systems update.
+   * @return the events
+   */
+  Events& events() { return m_registry.events(); }
 
   /**
    * The flushed, living entities that match these terms (components, one

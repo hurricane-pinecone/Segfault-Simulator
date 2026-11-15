@@ -53,6 +53,7 @@ enum class RuleId : uint8_t
   AttributeArguments,
   AttributeFieldType,
   ShowIfTarget,
+  EventAndComponent,
   SingleAny,
   AnyAlwaysMet,
   DuplicateTerm,
@@ -75,6 +76,9 @@ enum class RuleId : uint8_t
   FilterInLoop,
   UnusedRowEntity,
   RowComponentCopy,
+  EventUnmarked,
+  ReaderNotKept,
+  ReaderOnComponent,
   BadIgnore,
   Count,
 };

@@ -20,6 +20,8 @@ struct IndexEntry
   std::filesystem::path header;
   /** Its unqualified name, e.g. "FieldSystem". */
   std::string name;
+  /** Its name with its namespaces, e.g. "game::FieldSystem". */
+  std::string qualifiedName;
   /** Component, System, GameObject... */
   codegen::TypeKind kind = codegen::TypeKind::Component;
 };
@@ -111,6 +113,12 @@ public:
 
   /** Whether `name` (unqualified) is one of the project's systems. */
   bool isSystem(std::string_view name) const;
+
+  /**
+   * The type `name` (unqualified) a script header declares, as codegen
+   * registers it; null when there's none.
+   */
+  const IndexEntry* find(std::string_view name) const;
 
   /** Whether `path` is a script header of the project (codegen reads it). */
   bool isScriptHeader(const std::filesystem::path& path) const;

@@ -173,7 +173,7 @@ public:
   {
     visit(ts_tree_root_node(tree));
 
-    if (!m_result.type && !m_helper && m_result.components.empty())
+    if (!m_result.type && !m_helper && !m_events && m_result.components.empty())
     {
       // On the first line, so an editor doesn't underline the whole file.
       const std::size_t lineEnd = m_source.find_first_of("\r\n");
@@ -244,9 +244,23 @@ private:
         !ts_node_is_null(field(node, "body")))
     {
       const TSNode name = field(node, "name");
-      const bool marked = isMarkedComponent(node);
-      if (m_classDepth == 0 && !ts_node_is_null(name) &&
-          lowercase(text(name)) == m_target)
+      const TypeMarks marks = typeMarks(node);
+      const bool marked = marks.component;
+      if (marks.event)
+      {
+        // An event is sent and read, never registered: no component, no
+        // reflection, and it may be named after its header.
+        m_events = true;
+        if (marks.component)
+          report(RuleId::EventAndComponent,
+                 node,
+                 "The event " + text(name) +
+                     " can't be a component too, since a component is state "
+                     "and an event is what one system tells another. Remove "
+                     "[[sfs::component]] or [[sfs::event]].");
+      }
+      else if (m_classDepth == 0 && !ts_node_is_null(name) &&
+               lowercase(text(name)) == m_target)
       {
         if (m_result.type)
           report(RuleId::DuplicateType,
@@ -289,11 +303,18 @@ private:
     visitChildren(node);
   }
 
-  // Whether a class specifier carries [[sfs::component]]; warns about any
-  // other [[sfs::...]] attribute on it.
-  bool isMarkedComponent(TSNode node)
+  // The type attributes a class specifier carries.
+  struct TypeMarks
   {
-    bool marked = false;
+    bool component = false; // [[sfs::component]]
+    bool event = false;     // [[sfs::event]]
+  };
+
+  // Which of [[sfs::component]] and [[sfs::event]] a class specifier
+  // carries; warns about any other [[sfs::...]] attribute on it.
+  TypeMarks typeMarks(TSNode node)
+  {
+    TypeMarks marks;
     const uint32_t count = ts_node_named_child_count(node);
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -313,12 +334,15 @@ private:
           continue;
         }
         AttributeValue value;
-        if (attributeArguments(*info, attribute, value) &&
-            info->id == AttributeId::Component)
-          marked = true;
+        if (!attributeArguments(*info, attribute, value))
+          continue;
+        if (info->id == AttributeId::Component)
+          marks.component = true;
+        else if (info->id == AttributeId::Event)
+          marks.event = true;
       }
     }
-    return marked;
+    return marks;
   }
 
   // The table entry of an [[sfs::...]] attribute; null for someone else's
@@ -806,6 +830,7 @@ private:
     case AttributeId::Hide:
     case AttributeId::Show:
     case AttributeId::Component:
+    case AttributeId::Event:
       break; // read by parseAttributes, or not a field's
     }
   }
@@ -847,6 +872,7 @@ private:
   std::vector<std::string> m_namespaces;
   ParseResult m_result;
   bool m_helper = false; // the file's class is a helper (no type, no warning)
+  bool m_events = false; // the header declares [[sfs::event]] types
   std::vector<FieldAttribute> m_fieldAttributes; // the field being read's
   // The showIf attributes of the type being read, with their argument.
   std::vector<std::pair<TSNode, std::string>> m_showIfs;

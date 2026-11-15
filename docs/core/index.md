@@ -12,6 +12,8 @@ What lives here:
   the GameObject layer over it.
 - **[Reflection & codegen](./reflection/index.md)**: how components describe
   their fields, for the editor and scene files.
+- **[Events](./events/index.md)**: typed events one system sends and others
+  read, each once, in their own update: how systems tell each other things.
 - **[Parents & children](./hierarchy/index.md)**: the entity hierarchy.
 - **[Asset database](./assets/index.md)**: the project's asset files and their
   ids and import settings.

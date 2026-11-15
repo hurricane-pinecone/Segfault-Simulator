@@ -60,6 +60,12 @@ These rules decide what is reflected:
   that's an error), and one nested in a class or a function, or a template, is
   warned about and not registered. Two types with the same name, in one header
   or across a build's headers, are an error.
+- **Events:** a class or struct marked `[[sfs::event]]` is an
+  [event](../events/index.md) type: codegen skips it (it's neither a component
+  nor reflected), so it may be the type named after its file, and a header of
+  only events needs no other type. Unmarked, a struct named after its header
+  would be registered as a component. Marked both `[[sfs::component]]` and
+  `[[sfs::event]]` is warned about, and the type is taken as an event.
 
 ```cpp
 // TipParts.h: the parts a tipping trailer's model is made of.
@@ -110,6 +116,7 @@ completion and hovers also read:
 | `[[sfs::showIf(field)]]` | Any field | The Inspector shows it only while the named `bool` field of the same object is on; `showIf(!field)` shows it only while that field is off. | `bool orthographic = false;`<br>`[[sfs::showIf(orthographic)]] float orthoHeight = 20.0f;`<br>`[[sfs::showIf(!orthographic)]] float fieldOfView = 46.0f;` |
 | `[[sfs::part("node-name")]]` | `sfs::Entity` and `std::vector<sfs::Entity>` fields | The model node the editor fills it from, by name; on a list, a glob pattern (`"blade-*"`) for every node it takes. In development, a reference to a node not named so logs a warning. Never used at runtime. | `[[sfs::part("deck")]] sfs::Entity deck;`<br>`[[sfs::part("blade-*")]] std::vector<sfs::Entity> blades;` |
 | `[[sfs::component]]` | A type | Register the type as a component besides the file's type. | `struct [[sfs::component]] TipBody {};` |
+| `[[sfs::event]]` | A type | Mark the type as an event (sent and read through `Events`): never a component or reflected, and it may be named after its header. | `struct [[sfs::event]] FieldCellChanged { glm::ivec2 cell; };` |
 <!-- sfs-attributes:end -->
 
 An attribute is checked where it's written. One sfs-codegen doesn't know, one

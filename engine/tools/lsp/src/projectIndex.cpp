@@ -213,10 +213,14 @@ void ProjectIndex::replace(const std::filesystem::path& header,
       [](const IndexEntry& entry, const std::filesystem::path& path)
       { return entry.header < path; });
   if (result.type)
-    at = std::next(
-        m_entries.insert(at, {header, result.type->name, result.type->kind}));
+    at = std::next(m_entries.insert(at,
+                                    {header,
+                                     result.type->name,
+                                     result.type->qualifiedName,
+                                     result.type->kind}));
   for (const codegen::TypeModel& type : result.components)
-    at = std::next(m_entries.insert(at, {header, type.name, type.kind}));
+    at = std::next(m_entries.insert(
+        at, {header, type.name, type.qualifiedName, type.kind}));
 }
 
 bool ProjectIndex::isSystem(std::string_view name) const
@@ -244,12 +248,18 @@ const QueryAlias* ProjectIndex::findAlias(std::string_view owner,
   return outer;
 }
 
-std::filesystem::path ProjectIndex::headerOf(std::string_view name) const
+const IndexEntry* ProjectIndex::find(std::string_view name) const
 {
   for (const IndexEntry& entry : m_entries)
     if (entry.name == name)
-      return entry.header;
-  return {};
+      return &entry;
+  return nullptr;
+}
+
+std::filesystem::path ProjectIndex::headerOf(std::string_view name) const
+{
+  const IndexEntry* entry = find(name);
+  return entry ? entry->header : std::filesystem::path{};
 }
 
 bool ProjectIndex::isScriptHeader(const std::filesystem::path& path) const

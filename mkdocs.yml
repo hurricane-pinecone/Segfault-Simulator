@@ -62,6 +62,7 @@ nav:
       - core/index.md
       - Entities, components & systems: core/ecs/index.md
       - Reflection & codegen: core/reflection/index.md
+      - Events: core/events/index.md
       - Parents & children: core/hierarchy/index.md
       - Asset database: core/assets/index.md
       - Rendering data:

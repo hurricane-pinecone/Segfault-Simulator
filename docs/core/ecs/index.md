@@ -233,6 +233,17 @@ flush what it leaves (as Unity's `OnDestroy` and Unreal's `EndPlay` run with
 the world intact). Systems are no longer found then: `tryGetSystem()` returns
 null.
 
+Components hold only an entity's state: what is so about it, written by the
+system that owns that concern and read by any other. Everything one system
+tells another (news that something happened, a notice, a request, an answer)
+is an [event](../events/index.md): `registry->events().send(E{...})`, read
+through an `EventReader` the reading system makes in `create()` and keeps
+(each reader sees each event once, and it's gone after the next frame).
+Workers send through an `EventSender`. No request fields, one-frame flags or
+message fields go on components. Requests and answers are plain events for
+now; delivery policies for them (one consumer, the latest per key) are
+coming.
+
 `registry->componentChanges<A>()` goes up whenever an entity gains or loses an
 `A` (a destroyed entity loses all of its components). Code that works
 something out from the entities with an `A` can redo it only when it has
@@ -697,7 +708,11 @@ reg.flushEntities();             // new entities join queries and systems
 
 reg.destroyEntity(e);
 reg.flushEntities();             // destruction is deferred until flush
+reg.events().update();           // once a frame, after the flush
 ```
+
+A headless host starts each frame's [events](../events/index.md) itself, with
+`events().update()` after the flush, as `Scene::update()` does.
 
 Entity destruction is deferred: a destroyed entity stays alive (and its
 components remain readable) until the next `flushEntities()` call. New

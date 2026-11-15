@@ -123,8 +123,10 @@ protected:
 ```
 
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
-`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, plus the engine
-services: `assetStore()` and `renderer()`, the backend's renderer. Without a
+`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, `events()` (the
+scene's [events](../../core/events/index.md): `events().send(E{...})`, and a
+reader made in an object's `onCreate` and kept; not SDL's `Game::onEvent`),
+plus the engine services: `assetStore()` and `renderer()`, the backend's renderer. Without a
 renderer (a headless host) `renderer()` is a fatal error (logged, and the game
 ends with a message); `tryRenderer()` returns null instead. See [Rendering](../rendering/index.md#scene-services).
 Without a `Space2D` the render system draws a 3D world; see
@@ -146,7 +148,9 @@ processInput → update(dt) → render
 - **processInput** — `Game::onProcessInput`, then each GameObject's
   `onProcessInput` (without the keys other objects' input contexts claim; see
   [Input contexts](#input-contexts)), then the scene's.
-- **update** — `Game::onUpdate`, every enabled `System`'s `update(dt)`, each
+- **update** — `Game::onUpdate`, the scene's flush (entities made or
+  destroyed last frame join or leave), the frame boundary of its
+  [events](../../core/events/index.md), every enabled `System`'s `update(dt)`, each
   GameObject's `onUpdate`, the scene's `onUpdate`, and then every enabled
   `System`'s `lateUpdate(dt)` (see
   [ECS](../../core/ecs/index.md#late-update)).

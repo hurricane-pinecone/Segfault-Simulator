@@ -17,6 +17,7 @@
 
 #include "engine/core/ecs/entity.h"
 #include "engine/core/ecs/hierarchyLinks.h"
+#include "engine/core/events/events.h"
 #include "pool.h"
 #include "query.h"
 #include "system.h"
@@ -359,6 +360,17 @@ public:
   template <typename... TTerms>
   QueryView<TTerms...> query();
 
+  /**
+   * The registry's event queues (docs/core/events): what one system tells
+   * others, sent with events().send(E{...}) and read through a reader a
+   * system makes in create() and keeps. Scene::update() starts each frame's
+   * events after the flush (Events::update()); a headless host calls
+   * events().update() once a frame, after flushEntities(). The systems (and
+   * their readers) are destroyed before it.
+   * @return the events
+   */
+  Events& events() { return m_events; }
+
 private:
   // A query list an entity just joined (or left), for the hooks.
   struct QueryChange
@@ -553,6 +565,10 @@ private:
   int m_mostTimeSteps = 16;
   double m_gameTime = 0.0;
   bool m_paused = false;
+
+  // Outlives the systems, and their readers, because ~Registry() destroys
+  // the systems in its body, before any member.
+  Events m_events;
 };
 
 } // namespace sfs
