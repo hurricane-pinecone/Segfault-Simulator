@@ -45,6 +45,7 @@ ignored; everything else is a warning.
 | `attribute-arguments` | sfs-codegen | warning | An attribute's arguments should have the shape it takes. Write them as the attribute table shows. |
 | `attribute-field-type` | sfs-codegen | warning | An attribute should only be on the field types it applies to. Remove it, or change the field's type. |
 | `show-if-target` | sfs-codegen | warning | `[[sfs::showIf]]` should name a reflected `bool` field of its type. Name one of the type's bool fields. |
+| `event-and-component` | sfs-codegen | warning | A type should not be marked both `[[sfs::event]]` and `[[sfs::component]]`, since an event is what one system tells another and a component is state; it's taken as an event. Remove one of the two marks. |
 | `single-any` | sfs-lsp | warning | An `sfs::Any` group of one component is just that component. Write the component instead. |
 | `any-always-met` | sfs-lsp | warning | An `sfs::Any` group that shares a component with the required ones is always met. Remove the group. |
 | `duplicate-term` | sfs-lsp | warning | A term list should not name a component twice in one role. Remove the repeat. |
@@ -53,7 +54,7 @@ ignored; everything else is a warning.
 | `second-any` | sfs-lsp | warning | A system takes one `sfs::Any` group, and a second one is ignored at run time. List every alternative in one group. |
 | `late-register` | sfs-lsp | warning | `registerComponent()` should not run once the system is in a registry, where it's ignored. Register components in `create()`. |
 | `hook-mutates` | sfs-lsp | warning | `onEntityAdded()`, `onEntityRemoved()` and `observe` callbacks should change only their own entity's components. Change other entities, and create or destroy entities and systems, in `update()`. |
-| `system-reads-system` | sfs-lsp | warning | Systems should not read other systems. Put what one system needs on a component, which the other writes and it reads, or have it write a request field there that the other fills in. |
+| `system-reads-system` | sfs-lsp | warning | Systems should not read other systems. Read the state another system writes on components, and send what one system tells another as an event. |
 | `per-entity-map` | sfs-lsp | warning | A system should not keep per-entity data in a map or set keyed by entity. Put the data on a component, in a hidden field. |
 | `own-entity` | sfs-lsp | warning | A component should not store the entity it's on. Drop the field, and use the entity the system already has. |
 | `unknown-attribute` | sfs-lsp | warning | An attribute should be standard C++, an `sfs::` one, or in a vendor's namespace. Fix the name or the namespace. |
@@ -65,6 +66,9 @@ ignored; everything else is a warning.
 | `filter-in-loop` | sfs-lsp | warning | A loop should not go through a query, or every entity, only to skip the entities that lack a component. Go through a query that lists the component, so the loop only visits those that have it. |
 | `unused-row-entity` | sfs-lsp | warning | A query loop should not unpack an entity it never uses. Loop over the components alone, with `T& t` for one or `.components()` for several. |
 | `row-component-copy` | sfs-lsp | warning | A query loop should not copy a row's component only to read it. Read it in place with `const T&`, or, for a copy it changes, keep it as scratch or use `T&`. |
+| `event-unmarked` | sfs-lsp | warning | An event should be a struct marked `[[sfs::event]]`, not a component or another script type. Send and read a struct marked `[[sfs::event]]`, and keep state on components. |
+| `reader-not-kept` | sfs-lsp | warning | An event reader should not be made in `update()`, a hook or an `observe` callback, where each new one reads the kept events again. Make it once in `create()` and keep it as a member. |
+| `reader-on-component` | sfs-lsp | warning | A component should not hold an `sfs::EventReader` or `sfs::EventSender`, which are the reading or sending system's own data. Keep it as a member of that system, made in `create()`. |
 | `bad-ignore` | sfs-codegen, sfs-lsp | warning | An `sfs-ignore` comment should name known warning rules in the right form. Fix the comment. |
 <!-- sfs-rules:end -->
 
@@ -112,7 +116,9 @@ taken for SFS's.
   systems, belong in `update()`.
 - `system-reads-system`: `getSystem<T>()`, `tryGetSystem<T>()` or
   `hasSystem<T>()` in a system's method, where `T` is one of the project's
-  systems. Systems hand data on through components. The engine's own systems
+  systems. A system reads the state others write on components, and what one
+  system tells another goes through [events](../../core/events/index.md).
+  The engine's own systems
   (`RenderSystem::debugLines()`, raycasts) are its service API and aren't
   flagged, and game objects and UI may read systems.
 - `per-entity-map`: a system member that's a map or set keyed by `sfs::Entity`
@@ -143,6 +149,41 @@ warning stands without it.
 
 `has-then-get`, `row-lookup` and `unused-row-entity` fade the code they call
 redundant; `is-alive` and `component-pointer` strike out the old form.
+
+### Events
+
+These follow [events](../../core/events/index.md): an event is what one
+system tells others (news, a command, a request or an answer), a struct
+marked `[[sfs::event]]`, read through a reader its system makes once in
+`create()` and keeps. None has a fix.
+
+- `event-unmarked`: `send(T{...})`, `send(T(...))`, `send<T>(...)`,
+  `reader<T>()` or `sender<T>()` on an `events()` call
+  (`registry->events()`, `scene().events()`) or a name ending in `events` or
+  `sender` (`m_events`, `m_sender`), where `T` is:
+    - one of the project's script types: a component, a system or another
+      type sfs-codegen registers (it skips `[[sfs::event]]` types, so none of
+      those is one). A qualified spelling must be the type's own namespaces
+      (`farm::Crop` isn't the project's global `Crop`);
+    - or a class of the file that's a component (marked `[[sfs::component]]`,
+      or the one its project header registers) or a system. A class of the
+      file that's neither, though named like a project type, isn't flagged.
+
+  A component is state: keep it on the entity, and send a struct marked
+  `[[sfs::event]]` to tell another system something. A call still being
+  typed (`reader()`, `reader<>()`) isn't checked.
+- `reader-not-kept`: `reader<T>()` in a system's `update()`, `lateUpdate()`,
+  `render()`, `onEntityAdded()` or `onEntityRemoved()`, in an `observe`
+  callback, or in a game object's `onUpdate()`, whose reader is read at once
+  (`reader<T>().read()`) or held by a local that isn't `static`. A new reader
+  starts at the oldest kept events, so it reads them again each time. A
+  reader assigned there (to a member, the first time) or passed on isn't
+  flagged.
+- `reader-on-component`: a data member of a component (marked
+  `[[sfs::component]]` and not `[[sfs::event]]`, or the class its project
+  header registers) whose type holds an `sfs::EventReader` or
+  `sfs::EventSender`, in a container too. Readers and senders are the
+  reading or sending system's own data: members of that system.
 
 ### Attributes outside codegen
 

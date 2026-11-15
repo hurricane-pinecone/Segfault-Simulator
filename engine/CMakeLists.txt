@@ -106,6 +106,22 @@ if(ENGINE_SANITIZE)
     endforeach()
 endif()
 
+# ThreadSanitizer build, for the engine-core tests that run threads (events,
+# the worker pool). Core-only: Conan's prebuilt libraries aren't instrumented,
+# and TSan can't see the synchronisation in code it doesn't instrument. It
+# can't be combined with ENGINE_SANITIZE (AddressSanitizer).
+option(ENGINE_TSAN "Build engine-core and its tests with ThreadSanitizer" OFF)
+if(ENGINE_TSAN)
+    if(ENGINE_SANITIZE)
+        message(FATAL_ERROR "ENGINE_TSAN and ENGINE_SANITIZE can't be combined: configure one or the other")
+    endif()
+    if(NOT ENGINE_CORE_ONLY)
+        message(FATAL_ERROR "ENGINE_TSAN builds engine-core and its tests only: configure with -DENGINE_CORE_ONLY=ON")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # __FILE__ (in log lines, asserts, profiler zones) relative to the engine's
 # folder, not the build machine's full path, which a shipped binary would
 # otherwise carry. (The logger prints only the file name anyway.) For the

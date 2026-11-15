@@ -25,9 +25,9 @@ using FileReader = std::function<std::string(const std::filesystem::path&)>;
 
 /**
  * sfs-lsp's lints of the SFS API and architecture rules: query terms, system
- * rules, attributes outside codegen and the entity API. One cursor walk of a
- * file's tree that dispatches on node kinds; ERROR subtrees are skipped, so a
- * misparse means a missed finding, never a false one. The entity API rules
+ * rules, events, attributes outside codegen and the entity API. One cursor walk
+ * of a file's tree that dispatches on node kinds; ERROR subtrees are skipped,
+ * so a misparse means a missed finding, never a false one. The entity API rules
  * then look around the sites the walk found. Holds only scratch reused from
  * file to file.
  */

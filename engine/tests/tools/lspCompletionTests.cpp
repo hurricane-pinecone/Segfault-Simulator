@@ -107,7 +107,7 @@ int main()
   TEST("a class head should list the type attributes; a private field show")
   {
     const auto head = complete("struct [[sfs::|]] Thing\n{\n  int a;\n};\n");
-    CHECK(head == std::vector<std::string>{"component"});
+    CHECK((head == std::vector<std::string>{"component", "event"}));
     const auto hidden =
         complete("class Thing\n{\n  [[sfs::|]] int a = 0;\n};\n");
     CHECK(has(hidden, "show"));

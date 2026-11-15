@@ -252,63 +252,6 @@ struct Rules
   {
     return LintFile::field(node, name);
   }
-  static TSNode parent(TSNode node)
-  {
-    return ts_node_is_null(node) ? TSNode{} : ts_node_parent(node);
-  }
-  static uint32_t start(TSNode node)
-  {
-    return ts_node_is_null(node) ? 0 : ts_node_start_byte(node);
-  }
-  static uint32_t end(TSNode node)
-  {
-    return ts_node_is_null(node) ? 0 : ts_node_end_byte(node);
-  }
-  // Tree-sitter's node accessors, made safe on a null node (which they would
-  // dereference): no children, no siblings, an empty type.
-  static uint32_t namedCount(TSNode node)
-  {
-    return ts_node_is_null(node) ? 0 : ts_node_named_child_count(node);
-  }
-  static TSNode namedChild(TSNode node, uint32_t index)
-  {
-    return index < namedCount(node) ? ts_node_named_child(node, index)
-                                    : TSNode{};
-  }
-  static uint32_t childCountOf(TSNode node)
-  {
-    return ts_node_is_null(node) ? 0 : ts_node_child_count(node);
-  }
-  static TSNode nthChild(TSNode node, uint32_t index)
-  {
-    return index < childCountOf(node) ? ts_node_child(node, index) : TSNode{};
-  }
-  static TSNode nextNamed(TSNode node)
-  {
-    return ts_node_is_null(node) ? TSNode{} : ts_node_next_named_sibling(node);
-  }
-  static TSNode prevNamed(TSNode node)
-  {
-    return ts_node_is_null(node) ? TSNode{} : ts_node_prev_named_sibling(node);
-  }
-  static TSNode prevToken(TSNode node)
-  {
-    return ts_node_is_null(node) ? TSNode{} : ts_node_prev_sibling(node);
-  }
-  static const char* typeName(TSNode node)
-  {
-    return ts_node_is_null(node) ? "" : ts_node_type(node);
-  }
-  static bool same(TSNode a, TSNode b)
-  {
-    return !ts_node_is_null(a) && !ts_node_is_null(b) && ts_node_eq(a, b);
-  }
-  static bool within(TSNode inner, TSNode outer)
-  {
-    return !ts_node_is_null(outer) && start(outer) <= start(inner) &&
-           end(inner) <= end(outer);
-  }
-
   const Lines& fileLines()
   {
     if (!linesReady)

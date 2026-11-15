@@ -30,6 +30,7 @@ enum class AttributeId : uint8_t
   ShowIf,
   Part,
   Component,
+  Event,
 };
 
 /** Where an attribute is written. */

@@ -16,7 +16,7 @@ using enum AttributeId;
 constexpr AttributeTarget F = AttributeTarget::Field;
 constexpr AttributeTarget T = AttributeTarget::Type;
 
-constexpr std::array<AttributeInfo, 12> kAttributes = {{
+constexpr std::array<AttributeInfo, 13> kAttributes = {{
     {Range,
      "range",
      F,
@@ -137,6 +137,16 @@ constexpr std::array<AttributeInfo, 12> kAttributes = {{
      "",
      "Register the type as a component besides the file's type.",
      "struct [[sfs::component]] TipBody {};"},
+    {Event,
+     "event",
+     T,
+     AttributeArgs::None,
+     {},
+     "",
+     "",
+     "Mark the type as an event (sent and read through `Events`): never a "
+     "component or reflected, and it may be named after its header.",
+     "struct [[sfs::event]] FieldCellChanged { glm::ivec2 cell; };"},
 }};
 
 constexpr bool inOrder()

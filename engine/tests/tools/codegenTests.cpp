@@ -670,6 +670,50 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(result.components.empty());
   }
 
+  TEST("an [[sfs::event]] type should not be a component, and may be named "
+       "after its header")
+  {
+    const ParseResult named = parseHeader(R"(
+      namespace farm {
+      struct [[sfs::event]] FieldCellChanged { int x = 0; int y = 0; };
+      }
+    )",
+                                          "FieldCellChanged.h");
+    CHECK(named.diagnostics.empty());
+    CHECK(!named.type.has_value());
+    CHECK(named.components.empty());
+
+    const ParseResult beside = parseHeader(R"(
+      struct Crop { float growth = 0.0f; };
+      struct [[sfs::event]] CropRipened { int field = 0; };
+      struct [[sfs::event]] CropCut { int field = 0; };
+    )",
+                                           "Crop.h");
+    CHECK(beside.diagnostics.empty());
+    CHECK(beside.type && beside.type->name == "Crop");
+    CHECK(beside.components.empty());
+
+    const ParseResult onlyEvents = parseHeader(
+        "struct [[sfs::event]] Planted {};\nstruct [[sfs::event]] Cut {};",
+        "FieldEvents.h");
+    CHECK(onlyEvents.diagnostics.empty());
+    CHECK(!onlyEvents.type.has_value());
+    CHECK(onlyEvents.components.empty());
+  }
+
+  TEST("a type marked both [[sfs::component]] and [[sfs::event]] should warn "
+       "and be an event")
+  {
+    const ParseResult result = parseHeader(
+        "struct [[sfs::component, sfs::event]] Planted { int cell = 0; };",
+        "Planted.h");
+    CHECK(!result.type.has_value());
+    CHECK(result.components.empty());
+    CHECK(hasDiagnostic(result,
+                        Severity::Warning,
+                        "The event Planted can't be a component too"));
+  }
+
   TEST("nested and template [[sfs::component]] types should warn, not register")
   {
     const ParseResult result = parseHeader(R"(
@@ -920,7 +964,12 @@ sfs::ui::View look(sfs::ui::View view);
                      "%s: %s\n",
                      std::string(info.name).c_str(),
                      result.diagnostics[0].message.c_str());
-      CHECK(type ? result.components.size() == 1u : result.type.has_value());
+      // An event registers nothing; the other type attributes a component.
+      if (info.id == AttributeId::Event)
+        CHECK(result.components.empty() && !result.type.has_value());
+      else
+        CHECK(
+            (type ? result.components.size() == 1u : result.type.has_value()));
     }
   }
 
@@ -990,17 +1039,21 @@ sfs::ui::View look(sfs::ui::View view);
     CHECK(closestRule("something-else") == nullptr);
   }
 
-  TEST("the entity API rules should follow the lint rows, tagged and ignorable")
+  TEST("the entity API and event rules should follow the lint rows, tagged "
+       "and ignorable")
   {
     // After stale-saved-name, in this order, before bad-ignore.
-    const std::array<std::string_view, 8> names = {"has-then-get",
-                                                   "is-alive",
-                                                   "row-lookup",
-                                                   "setup-in-constructor",
-                                                   "component-pointer",
-                                                   "filter-in-loop",
-                                                   "unused-row-entity",
-                                                   "row-component-copy"};
+    const std::array<std::string_view, 11> names = {"has-then-get",
+                                                    "is-alive",
+                                                    "row-lookup",
+                                                    "setup-in-constructor",
+                                                    "component-pointer",
+                                                    "filter-in-loop",
+                                                    "unused-row-entity",
+                                                    "row-component-copy",
+                                                    "event-unmarked",
+                                                    "reader-not-kept",
+                                                    "reader-on-component"};
     std::size_t at = static_cast<std::size_t>(RuleId::StaleSavedName);
     for (const std::string_view name : names)
     {
@@ -1062,6 +1115,9 @@ sfs::ui::View look(sfs::ui::View view);
         {"struct S { [[sfs::showIf(nope)]] float a; };",
          "S.h",
          RuleId::ShowIfTarget},
+        {"struct [[sfs::component, sfs::event]] S {};",
+         "S.h",
+         RuleId::EventAndComponent},
         {"// sfs-ignore-file(nope)\nstruct S {};", "S.h", RuleId::BadIgnore},
     };
     for (const Case& c : cases)

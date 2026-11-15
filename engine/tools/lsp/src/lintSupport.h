@@ -56,6 +56,88 @@ std::vector<std::string_view> splitTerms(std::string_view list);
 /** The source range between two points. */
 codegen::SourceRange between(TSPoint start, TSPoint end);
 
+// Tree-sitter's node accessors, made safe on a null node (which they would
+// dereference): no parent, children or siblings, an empty type, byte 0.
+
+/** The node's parent, or null. */
+inline TSNode parent(TSNode node)
+{
+  return ts_node_is_null(node) ? TSNode{} : ts_node_parent(node);
+}
+
+/** The node's first byte, or 0. */
+inline uint32_t start(TSNode node)
+{
+  return ts_node_is_null(node) ? 0 : ts_node_start_byte(node);
+}
+
+/** The byte after the node, or 0. */
+inline uint32_t end(TSNode node)
+{
+  return ts_node_is_null(node) ? 0 : ts_node_end_byte(node);
+}
+
+/** How many named children the node has. */
+inline uint32_t namedCount(TSNode node)
+{
+  return ts_node_is_null(node) ? 0 : ts_node_named_child_count(node);
+}
+
+/** The node's named child `index`, or null past the last. */
+inline TSNode namedChild(TSNode node, uint32_t index)
+{
+  return index < namedCount(node) ? ts_node_named_child(node, index) : TSNode{};
+}
+
+/** How many children, named or not, the node has. */
+inline uint32_t childCountOf(TSNode node)
+{
+  return ts_node_is_null(node) ? 0 : ts_node_child_count(node);
+}
+
+/** The node's child `index`, named or not, or null past the last. */
+inline TSNode nthChild(TSNode node, uint32_t index)
+{
+  return index < childCountOf(node) ? ts_node_child(node, index) : TSNode{};
+}
+
+/** The next named sibling, or null. */
+inline TSNode nextNamed(TSNode node)
+{
+  return ts_node_is_null(node) ? TSNode{} : ts_node_next_named_sibling(node);
+}
+
+/** The previous named sibling, or null. */
+inline TSNode prevNamed(TSNode node)
+{
+  return ts_node_is_null(node) ? TSNode{} : ts_node_prev_named_sibling(node);
+}
+
+/** The previous sibling, named or not (a token), or null. */
+inline TSNode prevToken(TSNode node)
+{
+  return ts_node_is_null(node) ? TSNode{} : ts_node_prev_sibling(node);
+}
+
+/** The node's tree-sitter type name; empty for a null node. */
+inline const char* typeName(TSNode node)
+{
+  return ts_node_is_null(node) ? "" : ts_node_type(node);
+}
+
+/** Whether two nodes are the same node, neither null. */
+inline bool same(TSNode a, TSNode b)
+{
+  return !ts_node_is_null(a) && !ts_node_is_null(b) && ts_node_eq(a, b);
+}
+
+/** Whether `inner` lies within `outer`'s bytes. */
+inline bool within(TSNode inner, TSNode outer)
+{
+  return !ts_node_is_null(outer) && start(outer) <= start(inner) &&
+         end(inner) <= end(outer);
+}
+
 /** What a tree walk does after visiting a node. */
 enum class Next : uint8_t
 {
@@ -127,6 +209,12 @@ struct FileClass
   TSNode node;
   /** Whether its base clause names SFS's System. */
   bool system;
+  /**
+   * Whether it's a component: marked [[sfs::component]] (and not
+   * [[sfs::event]]), or the baseless namespace-scope class the project index
+   * has as a component.
+   */
+  bool component;
 };
 
 /** A registerComponent<T>() in a system's constructor or create(). */

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <vector>
 
 #include "imgui.h"
 
@@ -343,9 +344,56 @@ void sceneWeather(sfs::RenderSystem& render, EditorHistory& history)
   ImGui::PopID();
 }
 
-// Debug drawing (the engine's debug features: the editor, Debug builds and
-// development exports only; a release export ignores these).
-void sceneDebug(sfs::RenderSystem& render, EditorHistory& history)
+// The scene's event queues, one row per type (Events::stats()). Only a playing
+// scene sends: an edited one isn't updated.
+void sceneEvents(EditorScene& scene, std::vector<sfs::EventStats>& stats)
+{
+  const bool open = ImGui::TreeNodeEx("Events", ImGuiTreeNodeFlags_DefaultOpen);
+  ImGui::SetItemTooltip(
+      "Each event type's queue: sent last frame, kept (last frame's and this\n"
+      "one's), staged by workers for the next frame, room in its buffers,\n"
+      "and events readers missed. SFS_LOG_EVENTS=Type,Other (or *) logs\n"
+      "each send.");
+  if (!open)
+    return;
+  scene.events().stats(stats);
+  if (stats.empty())
+    ImGui::TextDisabled("No events yet (the scene sends while it plays)");
+  else if (ImGui::BeginTable(
+               "events",
+               6,
+               ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit))
+  {
+    for (const char* heading :
+         {"Type", "Sent", "Kept", "Staged", "Room", "Missed"})
+      ImGui::TableSetupColumn(heading);
+    ImGui::TableHeadersRow();
+    for (const sfs::EventStats& type : stats)
+    {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(
+          type.type.data(), type.type.data() + type.type.size());
+      for (const std::size_t count :
+           {type.sentLastFrame, type.kept, type.staged, type.capacity})
+      {
+        ImGui::TableNextColumn();
+        ImGui::Text("%zu", count);
+      }
+      ImGui::TableNextColumn();
+      ImGui::Text("%llu", static_cast<unsigned long long>(type.missed));
+    }
+    ImGui::EndTable();
+  }
+  ImGui::TreePop();
+}
+
+// Debug drawing and views (the engine's debug features: the editor, Debug
+// builds and development exports only; a release export ignores these).
+void sceneDebug(EditorScene& scene,
+                sfs::RenderSystem& render,
+                EditorHistory& history,
+                std::vector<sfs::EventStats>& eventStats)
 {
   if (!ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
     return;
@@ -365,6 +413,7 @@ void sceneDebug(sfs::RenderSystem& render, EditorHistory& history)
     ImGui::TextDisabled("Colliders drawn: %zu (%zu lines)",
                         render.stats().colliders,
                         render.stats().debugLines);
+  sceneEvents(scene, eventStats);
   ImGui::PopID();
 }
 } // namespace
@@ -382,7 +431,7 @@ void SceneSettingsPanel::drawContents(EditorContext& context)
   sceneSkyAndShadows(render, history);
   sceneAtmosphere(render, history);
   sceneWeather(render, history);
-  sceneDebug(render, history);
+  sceneDebug(*context.scene, render, history, m_eventStats);
   ImGui::Separator();
 
   // Which view the game starts from.

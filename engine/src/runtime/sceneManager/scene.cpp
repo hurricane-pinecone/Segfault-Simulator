@@ -162,6 +162,9 @@ void Scene::update(double deltaTime)
   ZoneScopedN("Scene::update");
 
   flushEntities();
+  // The events' frame starts here: what the flush sent (objects' onDestroy)
+  // belongs to the frame before, what's sent from now on to this one.
+  m_registry.events().update();
   {
     const ObjectCalls calls(*this);
     updateObjects(deltaTime);

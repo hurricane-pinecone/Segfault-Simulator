@@ -115,6 +115,65 @@ private:
   TimeStep m_kind;
 };
 
+struct Beat
+{
+  int number = 0;
+};
+
+// Sends a Beat, numbered from 1, on each update.
+class BeatWriter : public System
+{
+public:
+  explicit BeatWriter(TimeStep kind) : m_kind(kind) {}
+
+  Registry& world() { return *registry; }
+
+  int sent = 0;
+
+protected:
+  void create() override { setTimeStep(m_kind); }
+  void update(double) override { registry->events().send(Beat{++sent}); }
+
+private:
+  TimeStep m_kind;
+};
+
+// Reads the Beats on each update, noting each update's.
+class BeatReader : public System
+{
+public:
+  explicit BeatReader(TimeStep kind) : m_kind(kind) {}
+
+  std::vector<std::vector<int>> seen;
+
+protected:
+  void create() override
+  {
+    setTimeStep(m_kind);
+    m_beats = registry->events().reader<Beat>();
+  }
+  void update(double) override
+  {
+    std::vector<int>& now = seen.emplace_back();
+    for (const Beat& beat : m_beats.read())
+      now.push_back(beat.number);
+  }
+
+private:
+  TimeStep m_kind;
+  EventReader<Beat> m_beats;
+};
+
+// Sends a Beat when it's destroyed, numbered by `number`.
+class BeatOnDestroy : public GameObject
+{
+public:
+  int number = 0;
+
+protected:
+  void onDestroy() override { scene().events().send(Beat{number}); }
+};
+
 // Notes whether it saw Space and Up pressed, and its turn among the calls.
 class Listener : public GameObject
 {
@@ -528,72 +587,7 @@ int main()
     ParticleModule* particles = scene.renderSystem().module<ParticleModule>();
     CHECK(particles != nullptr);
     if (!particles)
-      TEST("an input context should take its keys from lower contexts and from "
-           "objects with none, but not from its own object")
-      {
-        World world;
-        Listener& driver =
-            world.scene.attachObject<Listener>(world.scene.createEntity());
-        Listener& camera =
-            world.scene.attachObject<Listener>(world.scene.createEntity());
-        Listener& planner =
-            world.scene.attachObject<Listener>(world.scene.createEntity());
-        driver.claim({"Space", "Up"}, 2);
-        planner.claim({"Up"}, 1);
-        world.scene.flushEntities();
-        world.scene.processInput(spaceAndUp());
-        CHECK(driver.space && driver.up);
-        CHECK(!camera.space && !camera.up);
-        CHECK(!planner.space && !planner.up);
-      }
-
-    TEST("an inactive input context should withhold nothing, and equal "
-         "priorities should share")
-    {
-      World world;
-      Listener& driver =
-          world.scene.attachObject<Listener>(world.scene.createEntity());
-      Listener& camera =
-          world.scene.attachObject<Listener>(world.scene.createEntity());
-      Listener& planner =
-          world.scene.attachObject<Listener>(world.scene.createEntity());
-      driver.claim({"Space"}, 2, /*active*/ false);
-      planner.claim({"Up", "Nonsense"}, 1);
-      camera.claim({"Up"}, 1);
-      world.scene.flushEntities();
-      world.scene.processInput(spaceAndUp());
-      CHECK(camera.space && planner.space); // the driver's is off
-      CHECK(camera.up && planner.up);       // shared at priority 1
-      CHECK(driver.space && !driver.up);    // its own is off: it ranks lowest
-      CHECK(planner.entity()
-                .getComponent<InputContextComponent>()
-                ->loggedUnknown);
-    }
-
-    TEST("lateUpdate should run on enabled systems in order, after every "
-         "object's update")
-    {
-      World world;
-      std::vector<std::string> order;
-      Late& first = world.scene.addSystem<Late>(order, "first");
-      Late& second = world.scene.addSystem<Late>(order, "second");
-      Late& off = world.scene.addSystem<Late>(order, "off");
-      off.setEnabled(false);
-      Listener& object = world.scene.createObject<Listener>();
-      object.order = &order;
-      object.name = "object";
-      world.scene.update(0.5);
-      const std::vector<std::string> expected = {"first.update",
-                                                 "second.update",
-                                                 "object",
-                                                 "first.late",
-                                                 "second.late"};
-      CHECK(order == expected);
-      CHECK(testing::approx(first.lateGiven, 0.5));
-      CHECK(testing::approx(second.lateGiven, 0.5));
-    }
-
-    return testing::report("sceneTests");
+      continue;
     ParticleEffectDesc spark;
     spark.burstCount = 3;
     spark.lifetime = {10.0f, 10.0f};
@@ -621,6 +615,138 @@ int main()
     scene.update(0.1);
     CHECK(rig.getComponent<AnimatorComponent>()->time > playedTo);
     CHECK(particlePlaces(*particles) != flown);
+  }
+
+  TEST("an input context should take its keys from lower contexts and from "
+       "objects with none, but not from its own object")
+  {
+    World world;
+    Listener& driver =
+        world.scene.attachObject<Listener>(world.scene.createEntity());
+    Listener& camera =
+        world.scene.attachObject<Listener>(world.scene.createEntity());
+    Listener& planner =
+        world.scene.attachObject<Listener>(world.scene.createEntity());
+    driver.claim({"Space", "Up"}, 2);
+    planner.claim({"Up"}, 1);
+    world.scene.flushEntities();
+    world.scene.processInput(spaceAndUp());
+    CHECK(driver.space && driver.up);
+    CHECK(!camera.space && !camera.up);
+    CHECK(!planner.space && !planner.up);
+  }
+
+  TEST("an inactive input context should withhold nothing, and equal "
+       "priorities should share")
+  {
+    World world;
+    Listener& driver =
+        world.scene.attachObject<Listener>(world.scene.createEntity());
+    Listener& camera =
+        world.scene.attachObject<Listener>(world.scene.createEntity());
+    Listener& planner =
+        world.scene.attachObject<Listener>(world.scene.createEntity());
+    driver.claim({"Space"}, 2, /*active*/ false);
+    planner.claim({"Up", "Nonsense"}, 1);
+    camera.claim({"Up"}, 1);
+    world.scene.flushEntities();
+    world.scene.processInput(spaceAndUp());
+    CHECK(camera.space && planner.space); // the driver's is off
+    CHECK(camera.up && planner.up);       // shared at priority 1
+    CHECK(driver.space && !driver.up);    // its own is off: it ranks lowest
+    CHECK(
+        planner.entity().getComponent<InputContextComponent>()->loggedUnknown);
+  }
+
+  TEST("lateUpdate should run on enabled systems in order, after every "
+       "object's update")
+  {
+    World world;
+    std::vector<std::string> order;
+    Late& first = world.scene.addSystem<Late>(order, "first");
+    Late& second = world.scene.addSystem<Late>(order, "second");
+    Late& off = world.scene.addSystem<Late>(order, "off");
+    off.setEnabled(false);
+    Listener& object = world.scene.createObject<Listener>();
+    object.order = &order;
+    object.name = "object";
+    world.scene.update(0.5);
+    const std::vector<std::string> expected = {
+        "first.update", "second.update", "object", "first.late", "second.late"};
+    CHECK(order == expected);
+    CHECK(testing::approx(first.lateGiven, 0.5));
+    CHECK(testing::approx(second.lateGiven, 0.5));
+  }
+
+  TEST("events from 3 steps a frame should reach a Frame reader once each, "
+       "and a Stepped reader before the writer a step later")
+  {
+    World world;
+    BeatReader& early =
+        world.scene.addSystem<BeatReader>(System::TimeStep::Stepped);
+    BeatWriter& writer =
+        world.scene.addSystem<BeatWriter>(System::TimeStep::Stepped);
+    BeatReader& frame =
+        world.scene.addSystem<BeatReader>(System::TimeStep::Frame);
+    Registry& registry = writer.world();
+    registry.setMaxTimeStep(1.0 / 180.0);
+    world.scene.update(1.0 / 60.0);
+    world.scene.update(1.0 / 60.0);
+    CHECK(writer.sent == 6);
+    CHECK(frame.seen.size() == 2u);
+    if (frame.seen.size() == 2u)
+    {
+      CHECK((frame.seen[0] == std::vector<int>{1, 2, 3}));
+      CHECK((frame.seen[1] == std::vector<int>{4, 5, 6}));
+    }
+    CHECK(early.seen.size() == 6u);
+    if (early.seen.size() == 6u)
+    {
+      CHECK(early.seen[0].empty());
+      for (int step = 1; step < 6; ++step)
+        CHECK((early.seen[step] == std::vector<int>{step}));
+    }
+  }
+
+  TEST("the frame's events should start after the flush")
+  {
+    World world;
+    BeatReader& reader =
+        world.scene.addSystem<BeatReader>(System::TimeStep::Frame);
+    Entity doomed = world.scene.createEntity();
+    world.scene.attachObject<BeatOnDestroy>(doomed).number = 7;
+    world.scene.update(0.1);
+    world.scene.destroyEntity(doomed);
+    // The flush that starts this frame destroys the object, which sends.
+    world.scene.update(0.1);
+    CHECK(reader.seen.size() == 2u);
+    if (reader.seen.size() == 2u)
+      CHECK((reader.seen[1] == std::vector<int>{7}));
+    // Sent before this frame's boundary: it belonged to the frame before,
+    // so the next boundary drops it, and a new reader finds nothing.
+    world.scene.update(0.1);
+    CHECK(world.scene.events().reader<Beat>().unread() == 0u);
+  }
+
+  TEST("events should flow while paused, at time scale 0")
+  {
+    World world;
+    BeatWriter& writer =
+        world.scene.addSystem<BeatWriter>(System::TimeStep::Frame);
+    BeatReader& reader =
+        world.scene.addSystem<BeatReader>(System::TimeStep::Stepped);
+    Registry& registry = writer.world();
+    registry.setPaused(true);
+    registry.setTimeScale(0.0);
+    world.scene.update(0.1);
+    world.scene.update(0.1);
+    CHECK(writer.sent == 2);
+    CHECK(reader.seen.size() == 2u);
+    if (reader.seen.size() == 2u)
+    {
+      CHECK((reader.seen[0] == std::vector<int>{1}));
+      CHECK((reader.seen[1] == std::vector<int>{2}));
+    }
   }
 
   return testing::report("sceneTests");

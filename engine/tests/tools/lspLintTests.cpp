@@ -71,6 +71,7 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "struct [[sfs::component]] Outer { struct [[sfs::component]] Inner "
        "{}; };\n"},
       {"t/Helper.h", "struct Other { [[sfs::hide]] int a; };\n"},
+      {"t/Both.h", "struct [[sfs::component, sfs::event]] Both {};\n"},
       {"t/Rig.h",
        "struct Rig : sfs::GameObject { "
        "[[sfs::hide]] int a; sfs::Entity target; "
@@ -85,6 +86,8 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "    query<A, Any<B>>();\n    query<A, Any<A, B>>();\n"
        "    query<A, A>();\n    query<Any<A, B>, Excluding<A>>();\n"
        "    query<A, Excluding<A>>();\n"
+       "    registry->events().send(Crop{});\n"
+       "    registry->events().reader<Moved>().read();\n"
        "    for (const sfs::Entity& e : registry->query<A>())\n"
        "      e.getComponent<A>().x = 1;\n"
        "    for (const sfs::Entity& e : registry->query<A>())\n"
@@ -97,7 +100,9 @@ std::vector<std::pair<std::string, std::string>> everyRuleFixtures()
        "  s.entity = entity;\n  if (entity.isAlive()) {}\n"
        "  if (entity.hasComponent<B>())\n    entity.getComponent<B>().y = 1;\n"
        "  take(entity.getComponent<Tree>());\n}\n"
-       "[[nodiscrad]] int g();\n// sfs-ignore(own-entiy)\n"},
+       "[[nodiscrad]] int g();\n// sfs-ignore(own-entiy)\n"
+       "struct [[sfs::component]] Holder { sfs::EventReader<Moved> moved; "
+       "};\n"},
       {"t/rows.cpp",
        "void g()\n{\n  for (auto [e, a] : registry->query<A>())\n"
        "    a.x = 1;\n  for (A a : registry->query<A>())\n    n += a.x;\n}\n"},
@@ -329,6 +334,173 @@ int main()
     CHECK(lspTest::count(*doc, RuleId::PerEntityMap) == 2u);
   }
 
+  TEST("event-unmarked should flag a component or script type sent or read "
+       "as an event")
+  {
+    Project project;
+    const std::string source =
+        "struct [[sfs::component]] Spec { int a; };\n"
+        "struct [[sfs::event]] Moved { int a; };\n"
+        "class Mover : public sfs::System {};\n"
+        "void f(sfs::Registry* registry, sfs::EventSender<Moved>& sender)\n{\n"
+        "  registry->events().send(Crop{1});\n"
+        "  registry->events().send(game::Spec{});\n"
+        "  registry->events().send<Spec>(make());\n"
+        "  scene().events().send(Crop(2));\n"
+        "  auto r = registry->events().reader<CropSystem>();\n"
+        "  auto s = registry->events().sender<Mover>();\n"
+        "  registry->events().send(Moved{1});\n"
+        "  sender.send(Moved{2});\n"
+        "  registry->events().send(std::move(m));\n"
+        "  registry->events().send(Holder<Crop>{});\n"
+        "  send(Crop{});\n"
+        "  // sfs-ignore-next-line(event-unmarked)\n"
+        "  registry->events().send(Crop{3});\n}\n";
+    const auto doc = lspTest::analysed(
+        source, project.root / "scripts/t/file.cpp", &project.index);
+    CHECK(lspTest::count(*doc, RuleId::EventUnmarked) == 6u);
+    const auto* first = lspTest::first(*doc, RuleId::EventUnmarked);
+    CHECK(first && first->range.startRow == 5u &&
+          first->message ==
+              "The type Crop is a component, which is state, not an event. "
+              "Send and read a struct marked [[sfs::event]] instead, and keep "
+              "state on components.");
+    bool system = false;
+    for (const auto& d : doc->diagnostics)
+      system = system || d.message ==
+                             "The type CropSystem is a system, not an event. "
+                             "Send and read a struct marked [[sfs::event]] "
+                             "instead.";
+    CHECK(system);
+    // Without the index only the file's own component and system are known.
+    CHECK(lspTest::count(*lspTest::analysed(source), RuleId::EventUnmarked) ==
+          3u);
+    // A class of the file that's neither, though named like a project type.
+    CHECK(lspTest::count(
+              *lspTest::analysed("namespace n { struct Crop : Base {}; }\n"
+                                 "void f() { events().send(Crop{}); }\n",
+                                 project.root / "scripts/t/other.cpp",
+                                 &project.index),
+              RuleId::EventUnmarked) == 0u);
+    // Another namespace's Crop, a qualifier the project's Crop doesn't have,
+    // and receivers that aren't an Events or an EventSender.
+    CHECK(lspTest::count(
+              *lspTest::analysed(
+                  "namespace other { struct Crop { int x; }; }\n"
+                  "void f() { registry->events().send(other::Crop{}); }\n",
+                  project.root / "scripts/t/other.cpp",
+                  &project.index),
+              RuleId::EventUnmarked) == 0u);
+    CHECK(
+        lspTest::count(*lspTest::analysed(
+                           "void f(Socket& sock)\n{\n"
+                           "  registry->events().send(farm::Crop{});\n"
+                           "  sock.send(Crop{1});\n  net.reader<Crop>();\n}\n",
+                           project.root / "scripts/t/other.cpp",
+                           &project.index),
+                       RuleId::EventUnmarked) == 0u);
+  }
+
+  TEST("the event rules should take calls still being typed")
+  {
+    // An editor pairs the parentheses before the type is written.
+    Project project;
+    const auto doc =
+        lspTest::analysed("class Mover : public sfs::System\n{\n"
+                          "  void update(double) override\n  {\n"
+                          "    auto a = registry->events().reader();\n"
+                          "    auto b = registry->events().sender();\n"
+                          "    registry->events().send<Crop, Crop>(v);\n"
+                          "    auto c = registry->events().reader<>();\n"
+                          "    registry->events().send();\n"
+                          "    registry->events().send<>(Crop{});\n  }\n};\n",
+                          project.root / "scripts/t/typing.cpp",
+                          &project.index);
+    CHECK(lspTest::count(*doc, RuleId::EventUnmarked) == 0u);
+    CHECK(lspTest::count(*doc, RuleId::ReaderNotKept) == 0u);
+  }
+
+  TEST("reader-not-kept should flag a reader made and dropped in code that "
+       "runs again and again")
+  {
+    const auto doc = lspTest::analysed(
+        "class Mover : public sfs::System\n{\n"
+        "  sfs::EventReader<Moved> m_moved;\n"
+        "  sfs::EventReader<Moved> m_late;\n"
+        "  void create() override\n  {\n"
+        "    m_moved = registry->events().reader<Moved>();\n"
+        "    auto once = registry->events().reader<Moved>();\n"
+        "    observe<A>([this](sfs::Entity e) { "
+        "registry->events().reader<Moved>().skip(); });\n  }\n"
+        "  void update(double) override\n  {\n"
+        "    for (const Moved& m : registry->events().reader<Moved>().read()) "
+        "{}\n"
+        "    auto each = registry->events().reader<Moved>();\n"
+        "    static auto kept = registry->events().reader<Moved>();\n"
+        "    if (!m_late.unread()) m_late = "
+        "registry->events().reader<Moved>();\n"
+        "    take(registry->events().reader<Moved>());\n"
+        "    // sfs-ignore-next-line(reader-not-kept)\n"
+        "    auto ignored = registry->events().reader<Moved>();\n  }\n"
+        "  void onEntityAdded(sfs::Entity e) override { auto r = "
+        "scene().events().reader<Moved>(); }\n"
+        "  void render() override;\n};\n"
+        "void Mover::render() { auto r = (registry->events().reader<Moved>()); "
+        "}\n"
+        "class Panel { void update() { auto r = "
+        "scene().events().reader<Moved>(); } };\n"
+        "class Spinner : public sfs::GameObject\n{\n"
+        "  void onUpdate(double) override { auto r = "
+        "scene().events().reader<Moved>(); }\n"
+        "  void onCreate(sfs::Scene& scene) override { auto r = "
+        "scene.events().reader<Moved>(); }\n};\n");
+    CHECK(lspTest::count(*doc, RuleId::ReaderNotKept) == 6u);
+    const auto* first = lspTest::first(*doc, RuleId::ReaderNotKept);
+    CHECK(first && first->range.startRow == 8u &&
+          first->message.starts_with("This observe() callback makes a new "
+                                     "event reader each time it runs"));
+    bool update = false;
+    for (const auto& d : doc->diagnostics)
+      update = update || d.message.starts_with("This update() makes");
+    CHECK(update);
+  }
+
+  TEST("reader-on-component should flag event readers and senders held by "
+       "components")
+  {
+    const auto doc = lspTest::analysed(
+        "using sfs::EventSender;\n"
+        "struct [[sfs::component]] Holder\n{\n"
+        "  sfs::EventReader<Moved> moved;\n"
+        "  std::vector<EventSender<Moved>> senders;\n"
+        "  static sfs::EventReader<Moved> shared;\n"
+        "  int count;\n"
+        "  sfs::EventReader<Moved> reader() const;\n"
+        "  // sfs-ignore-next-line(reader-on-component)\n"
+        "  sfs::EventReader<Moved> ignored;\n};\n"
+        "struct [[sfs::component]] Own { EventReader<Moved> mine; };\n"
+        "class Mover : public sfs::System { sfs::EventReader<Moved> m_moved; "
+        "};\n"
+        "struct Plain { sfs::EventReader<Moved> moved; };\n"
+        "struct [[sfs::component, sfs::event]] Both { sfs::EventReader<Moved> "
+        "moved; };\n");
+    CHECK(lspTest::count(*doc, RuleId::ReaderOnComponent) == 2u);
+    const auto* first = lspTest::first(*doc, RuleId::ReaderOnComponent);
+    CHECK(first && first->range.startRow == 3u &&
+          first->message.starts_with(
+              "The component Holder holds an event reader"));
+    // The component a project header registers, unmarked.
+    Project project;
+    const auto header =
+        lspTest::analysed("#pragma once\nstruct Crop { float growth = 0; "
+                          "sfs::EventSender<Grown> grown; };\n",
+                          project.root / "scripts/components/Crop.h",
+                          &project.index);
+    CHECK(lspTest::count(*header, RuleId::ReaderOnComponent) == 1u);
+    CHECK(lspTest::count(*lspTest::analysed(header->text, "/t/Crop.h"),
+                         RuleId::ReaderOnComponent) == 0u);
+  }
+
   TEST("own-entity should flag a component given its own entity")
   {
     const auto doc = lspTest::analysed(
@@ -558,9 +730,8 @@ int main()
     const std::string golden =
         scripts +
         "/systems/CropSystem.cpp:3:3: warning: Systems should not read other "
-        "systems. Put what CropSystem needs from FieldSystem on a component, "
-        "which FieldSystem writes and CropSystem reads, or have CropSystem "
-        "write a request field there that FieldSystem fills in. "
+        "systems. Have CropSystem read the state FieldSystem writes on "
+        "components, and send what one tells the other as an event. "
         "[system-reads-system]\n" +
         scripts +
         "/utils/Helpers.h:1:1: warning: No class or struct in this header is "
@@ -1642,7 +1813,18 @@ int main()
         "    if (e.hasComponent<T>())\n      e.getComponent<T>()->x = 1;\n"
         "  for (A a : registry->query<A>())\n    n += a.x;\n"
         "  for (auto [a, b, c] : list.components())\n    n += a.x;\n"
-        "}\n"};
+        "}\n",
+        "struct [[sfs::component]] Holder { sfs::EventReader<Moved> moved; };\n"
+        "class S : public sfs::System\n{\n"
+        "  void update(double) override\n  {\n"
+        "    registry->events().send(Holder{1});\n"
+        "    registry->events().send<Moved, Moved>(m);\n"
+        "    for (const Moved& m : registry->events().reader<Moved>().read())\n"
+        "      use(m);\n"
+        "    auto r = (scene().events().reader<Holder>());\n"
+        "    m_sender.send(Holder(2));\n"
+        "    auto a = registry->events().reader();\n"
+        "    auto b = registry->events().reader<>();\n  }\n};\n"};
     std::size_t runs = 0;
     for (const std::string& source : sources)
       for (std::size_t cut = 0; cut <= source.size(); ++cut)
