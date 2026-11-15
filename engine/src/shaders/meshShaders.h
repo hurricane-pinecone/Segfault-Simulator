@@ -100,6 +100,17 @@ inline std::string rainPass()
   return meshPass(meshStandardSurfaceWgsl, litPass(rainWgsl));
 }
 
+/**
+ * Debug lines (debugLines.wgsl), drawn in the lit pass: the shared
+ * declarations (the frame's view) and the sky's helpers they use, then the
+ * lines' own stages.
+ */
+inline std::string debugLinePass()
+{
+  return std::string(meshCommonWgsl) + std::string(skyCommonWgsl) +
+         std::string(debugLinesWgsl);
+}
+
 /** The standard surface's WGSL (for materials without a graph). */
 inline std::string standardSurface()
 {

@@ -219,6 +219,24 @@ struct GrassTrampleImage
  * texels: xy min, zw max exclusive; GrassMaps::takeGrownChanged()); without
  * it, all of `from` to `to`.
  */
+struct GrassMapsTileImage
+{
+  glm::ivec2 from{0, 0};
+  glm::ivec2 to{0, 0};
+  std::span<const uint8_t> now; // RGBA8 (GrassMaps::nowPixels())
+  std::span<const uint8_t> cut; // RGBA8 (GrassMaps::cutPixels())
+};
+
+/**
+ * With grass growing (GrassMaps' growth), how it is now as well as what it
+ * grows to (`shape`): `now` (RGBA8, GrassMaps::nowPixels()) and `cut` (RGBA8,
+ * GrassMaps::cutPixels()) over the same rectangle; and, a few at a time as
+ * they grow, `tiles` of them alone. The blades the renderer keeps are kept as
+ * `shape` has them; those over tiles `active` marks (GrassMaps::activeTiles(),
+ * `activeTiles` across and down; sent when `activeChanged`) are grown as
+ * they are now each frame. With `shape` empty, only `data` changed (and
+ * nothing's grown again).
+ */
 struct GrassMapsImage
 {
   GrassGrid grid;
@@ -227,6 +245,25 @@ struct GrassMapsImage
   std::span<const uint8_t> shape;
   std::span<const uint8_t> data;
   std::optional<std::span<const glm::ivec4>> regrow;
+  std::span<const uint8_t> now;
+  std::span<const uint8_t> cut;
+  std::span<const GrassMapsTileImage> tiles;
+  bool activeChanged = false;
+  glm::ivec2 activeTiles{0, 0};
+  std::span<const uint8_t> active;
+};
+
+/**
+ * A field over the world that grass grows by (GrassVigourField): `size`
+ * values over the world XY rectangle `min` to `max`, rows from its min y.
+ * Empty: none.
+ */
+struct GrassVigourImage
+{
+  glm::vec2 min{0.0f};
+  glm::vec2 max{0.0f};
+  glm::ivec2 size{0, 0};
+  std::span<const float> values;
 };
 
 /**
@@ -250,6 +287,8 @@ struct GrassBatch
   // Its ground's own material: a terrain's meadow layers carry its ground's
   // look on past its maps (see grassFarGround()).
   MaterialHandle ground;
+  // How its vigour field (IRenderer::updateGrassVigour()) makes it grow.
+  GrassVigourSettings vigour;
 };
 
 /**

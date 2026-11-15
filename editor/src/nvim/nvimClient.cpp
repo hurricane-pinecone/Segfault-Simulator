@@ -79,11 +79,15 @@ bool NvimClient::start(const LaunchOptions& options, int columns, int rows)
       " | let g:sfs_project_root = " +
       vimString(m_environment.toBuildPath(options.workingDirectory));
 
-  std::vector<std::string> args;
-  // The engine config gets its own config/data folders, so the user's plugins
-  // (~/.config/nvim/plugin, lazy.nvim's data) never leak into it.
+  // SFS_LSP names the sfs-lsp matching this engine, for any config to start
+  // beside clangd. The engine config gets its own config/data folders, so the
+  // user's plugins (~/.config/nvim/plugin, lazy.nvim's data) never leak into
+  // it.
+  std::vector<std::string> args = {"env"};
+  if (!m_environment.lsp().empty())
+    args.push_back("SFS_LSP=" + m_environment.lsp());
   if (options.mode == ConfigMode::Engine)
-    args = {"env", "NVIM_APPNAME=sfs-editor"};
+    args.push_back("NVIM_APPNAME=sfs-editor");
   args.insert(args.end(), {"nvim", "--embed", "--cmd", globals});
   if (options.mode != ConfigMode::User)
     args.insert(args.end(), {"-u", m_environment.toBuildPath(options.engineConfig / "init.lua")});

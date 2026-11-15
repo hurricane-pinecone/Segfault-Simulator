@@ -36,6 +36,10 @@ struct EditorContext
   // Every scene edit goes through here so it can be undone.
   EditorHistory* history = nullptr;
 
+  // The scene is a prefab's content, edited on its own (a prefab's tab), not
+  // a scene: its references can only name its own entities.
+  bool editingPrefab = false;
+
   // While playing, edits are temporary (Stop restores the scene).
   bool playing = false;
 
@@ -103,10 +107,7 @@ struct EditorContext
   // shows it while no entity is selected; selecting an entity clears it.
   sfs::AssetId selectedAsset;
 
-  bool hasSelection() const
-  {
-    return selection.isValid() && selection.isAlive();
-  }
+  bool hasSelection() const { return selection.isValid(); }
 
   /** Everything selected (alive), `selection` first; empty if nothing is. */
   std::vector<sfs::Entity> selected() const
@@ -119,7 +120,7 @@ struct EditorContext
         selectionGroup.end())
       return all;
     for (const sfs::Entity& entity : selectionGroup)
-      if (entity != selection && entity.isValid() && entity.isAlive())
+      if (entity != selection && entity.isValid())
         all.push_back(entity);
     return all;
   }

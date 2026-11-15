@@ -163,8 +163,21 @@ public:
   std::vector<glm::ivec2> takeChanged();
   /** Whether anything's changed since takeChanged(). */
   bool changed() const { return !m_changed.empty(); }
+  /**
+   * The tiles changed since the last call to this (as takeChanged(), but
+   * kept apart from it: for a game to follow what changes, while its module
+   * uploads it), and forget them.
+   */
+  std::vector<glm::ivec2> takeRevised();
   /** Every tile it has (tile indices). */
   std::vector<glm::ivec2> tiles() const;
+  /**
+   * Whether it has any tile in a block of tiles, without listing them.
+   * @param first the block's lowest tile, as a tile index
+   * @param count how many tiles the block spans in x and y
+   * @return true if one of its tiles is in the block
+   */
+  bool anyTileIn(glm::ivec2 first, glm::ivec2 count) const;
 
   /**
    * A tile's offsets as half floats (rows from its lowest y, kTile x kTile),
@@ -228,6 +241,8 @@ private:
   float m_deepest = 0.0f;
   std::unordered_map<int64_t, Tile> m_tiles;
   std::unordered_set<int64_t> m_changed;
+  std::unordered_set<int64_t> m_revised; // takeRevised()'s
+  void markChanged(int64_t key);
 };
 
 /**

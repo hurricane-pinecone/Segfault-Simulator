@@ -35,6 +35,10 @@ struct Grass {
   deform: vec4f,
   deformWindow: vec4f,
   deformPatch: vec4f,
+  // Its vigour, as meshGrassGrow.wgsl's Grow has it.
+  vigour: vec4f,
+  vigourRect: vec4f,
+  vigourDetail: vec4f,
 }
 
 // How far the ground's pressed in (below 0) or pushed up under a blade's root (m), as the
@@ -100,8 +104,9 @@ fn bladeAt(blade: GrownBlade, stiffness: f32, pressed: vec4f) -> Blade {
   b.across = vec3f(-facing.y, facing.x, 0.0);
   b.up = normalize(vec3f(0.0, 0.0, 1.0) + b.ground * 0.35);
 
-  // How it bends (direction and radians, as one vector): its own lean...
-  var bend = facing * (b.shape.y * b.shape.y * 0.6);
+  // How it bends (direction and radians, as one vector): its own lean (a
+  // rolled blade's, up to 1.2: laid over the way it was rolled)...
+  var bend = facing * (b.shape.y * b.shape.y * 1.2);
   // ...the wind: gusts rolling across the field the way it blows, and each
   // blade's own flutter, less for stiffer grass...
   let wind = frame.wind;

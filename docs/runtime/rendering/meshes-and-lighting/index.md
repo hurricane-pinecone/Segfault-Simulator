@@ -112,6 +112,26 @@ onto visible ground.
 | `lightCastsShadows` | Whether things block its emission's light |
 | `emissionColor`, `emission` | A glow of its own, all over it, on top of its materials' emission (0: none; above 1 blooms). For a lamp switched on and off from a script, without a material for each state. It lights nothing round it: give the lamp a light for that. |
 
+### Mesh bounds
+
+A system that needs a mesh's size, or a box around an entity in the world,
+reads the renderer's `bounds` (Unity's `Renderer.localBounds`, Godot's
+`get_aabb()`): the mesh's bounds in its own space, which the render system
+fills in at the start of its update once the mesh is in its library.
+
+```cpp
+const auto* renderer = entity.getComponent<sfs::MeshRendererComponent>();
+if (!renderer || renderer->bounds.empty())
+  return; // none, or still loading: try again next frame
+const sfs::Aabb world = renderer->bounds.transformed(sfs::hierarchy::worldMatrix(entity));
+```
+
+They are empty until the mesh has loaded, and for a handle the library doesn't
+know. A mesh assigned during a frame gets its bounds at the next update (the
+render system updates first in a `StandardScene`), and a changed `mesh` gets
+new ones then. A skinned mesh's bounds are as bound, not as posed. `boundsOf`
+is the mesh they were taken from.
+
 Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
 solid, back to front, one at a time, so keep their numbers modest.
@@ -395,35 +415,37 @@ it's driven over; it's plain data on the CPU.
 **Deformers.** A `DeformerComponent` presses in wherever its meshes touch the
 ground: the entity's own and, with `children`, its children's (put one on a
 tractor prefab's root and its wheels and implement all deform; its body never
-reaches the ground). As one of its meshes moves, the mesh's underside (what's
-seen of it from below, near the ground: lugs, tines, a roller), looked at
-sixteen times a texel so edges slope rather than step, presses the ground down
-to `sinkDepth` below it. It presses again once it's gone a little way, not
-each frame, so what it costs goes with the distance driven, not the frame
-rate, and a parked one costs nothing: one rolling (a wheel, a disc) pressed
-where it is, often enough that its ruts come within a millimetre of as deep
-(each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30); one sliding (a
-tine, a plough body) each 6 cm (its underside found afresh, as it bobs), or as
-soon as it's lowered or turned enough to move any of it a texel, pressed all
-along the way it went, a texel at a time (its underside moved back along it),
-so it cuts an unbroken furrow rather than a row of dimples, its ridges even
-along it. With the game going fast (`Registry::timeScale()`), a mesh goes
-further between frames: a rolling one is pressed each stride along the way it
-went too, and either is pressed at most 16 times a frame (4 rolling), each
+reaches the ground). Each frame only meshes with a deformer of their own, or
+with a parent, are looked at, in id order: a mesh with neither, such as a lone
+tree or the ground, costs the deformation nothing. As one of its meshes moves,
+the mesh's underside (what's seen of it from below, near the ground: lugs,
+tines, a roller), looked at sixteen times a texel so edges slope rather than
+step, presses the ground down to `sinkDepth` below it. It presses again once
+it's gone a little way, not each frame, so what it costs goes with the distance
+driven, not the frame rate, and a parked one costs nothing: one rolling (a
+wheel, a disc) pressed where it is, often enough that its ruts come within a
+millimetre of as deep (each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30);
+one sliding (a tine, a plough body) each 6 cm (its underside found afresh, as it
+bobs), or as soon as it's lowered or turned enough to move any of it a texel,
+pressed all along the way it went, a texel at a time (its underside moved back
+along it), so it cuts an unbroken furrow rather than a row of dimples, its
+ridges even along it. With the game going fast (`Registry::timeScale()`), a mesh
+goes further between frames: a rolling one is pressed each stride along the way
+it went too, and either is pressed at most 16 times a frame (4 rolling), each
 press the lowest of its share of the places, so tracks stay unbroken at any
-speed; one that went further than 25 m/s of game time could take it (or a
-metre) was put there, not driven, and is pressed only where it lands. A
-mesh is made ready for this once (its triangles grouped, so those nowhere
-near the ground aren't looked at, nor, on a closed solid, those facing up); a
-skinned one is taken as it's posed. The soil pressed out rises
-in a low ridge to the sides (`ridge`: the share of it; the rest compacts), at
-most 0.4 x `sinkDepth` high, or 0.4 x the rut a wheel's pressing, if deeper,
-and walls steeper than soil stands slump, around what it pressed. Nothing
-goes deeper than 0.5 m. Rest vehicles on the ground as it is: lowering one by
-its sink only presses it further each pass. In deep mud a game can let one
-sit down into the ground (say by how muddy it is there and how heavy the
-vehicle is, not by the rut it's making): its ruts go as deep as it sits plus
-its sink, its ridges higher, and its wheels sit in them.
+speed; one that went further than 25 m/s of game time could take it (or a metre)
+was put there, not driven, and is pressed only where it lands. A mesh is made
+ready for this once (its triangles grouped, so those nowhere near the ground
+aren't looked at, nor, on a closed solid, those facing up); a skinned one is
+taken as it's posed. The soil pressed out rises in a low ridge to the sides
+(`ridge`: the share of it; the rest compacts), at most 0.4 x `sinkDepth` high,
+or 0.4 x the rut a wheel's pressing, if deeper, and walls steeper than soil
+stands slump, around what it pressed. Nothing goes deeper than 0.5 m. Rest
+vehicles on the ground as it is: lowering one by its sink only presses it
+further each pass. In deep mud a game can let one sit down into the ground (say
+by how muddy it is there and how heavy the vehicle is, not by the rut it's
+making): its ruts go as deep as it sits plus its sink, its ridges higher, and
+its wheels sit in them.
 
 | DeformerComponent | Meaning (default) |
 | --- | --- |
@@ -463,6 +485,9 @@ game's grid cell, slopes over a block).
   small steps between neighbours in few bytes) to keep with a saved game;
   `load(ground, bytes)` takes it back. It isn't saved with the scene.
 - `map(ground)` is the `DeformationMap` itself, to read or change directly.
+  `DeformationMap::takeRevised()` is its own list of tiles changed, kept apart
+  from the renderer's upload tracking, so a game can watch for changes (to
+  save, to replicate, to react to) without disturbing the GPU's.
 
 ```cpp
 auto* deformation = render.module<sfs::DeformationModule>();
@@ -1176,6 +1201,57 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   `fill()` (and `terrainPainted()` after painting the terrain under it):
   anything else won't be seen**, since the blades grown from the maps are kept
   until the module says where they changed.
+- **Growth (grass growing back, mowing):** `Coverage` and `Length` are what
+  grass grows to. `set()`, `stamp()` and `fill()` put it there at once;
+  `GrassMaps::setTarget()` has it grow (or die back) toward a new value, and
+  `tear()` (coverage torn out, a rut), `flatten()` (laid flat, standing up
+  again) and `cut()` (a mower's strip) set it back. A texel changed that way
+  keeps an anchor (`GrassAnchor`, 8 bytes: when, and how it was then), and
+  how it is at any time is worked out from that, up or down toward its
+  target at its rates' class (`setRates()`, 16 classes, per day of growth;
+  `setGrowthScale()` per texel), by the maps' clock
+  (`GrassModule::setClock()`: days of growth as a game counts them, slower in
+  a drought; kept as whole ticks of 1/1024 day, so years of play never
+  drift). Nothing's done a frame for grass that's growing: each growing
+  16-texel tile is brought on and sent up only when it's changed by a step
+  the GPU would show (`update()`), and let go once it's grown. The GPU keeps
+  the blades as the maps grow to; the tiles over growing maps are grown each
+  frame as they are now (`GrassMapsImage::now`, `kGrassTileActive`).
+  `SFS_GRASS_NOW` grows every tile that way, to check it looks the same as the
+  blades kept.
+  A **cut** keeps its edge finer than a texel, as bounds are (a distance from
+  the strip's edge, read between texels and cut at a half): a blade takes its
+  length only from the texels on its own side of the line, so a mown edge is
+  a ruler-straight line at any angle, to the blade. `GrassCut::join` carries
+  a mower's strips on from frame to frame as one; mown blades grow level at
+  the cut (a little either way) till they're grown back past it.
+  `GrassModule::roll()` (`GrassRoll`) lays mown grass over the way a strip
+  runs, by how hard (a striping roller's 1): its blades face that way and
+  lean over it, so passes run back and forth are lit as lawn stripes are,
+  light leaning away, dark toward you. Each texel keeps its lean (blended
+  over a texel at a strip's edge, so it stays straight) with how long it was
+  then, and it stands up as it grows back (`setLeanFade()`: gone once it's
+  grown that much more, 0.25 of full length at first). The cut map the GPU
+  reads is RGBA8: the cut's edge, the lean now (x, y) and the cut's length.
+  Short grass (mown) sits on its own turf: the ground under the blades is
+  drawn the grass's colour (finely mottled) by how short it is, instead of
+  letting the soil show between them, and short blades grow wider (up to
+  1.8 times), stubbier tufts covering more ground with as many blades; worn
+  grass (less coverage) shows its soil again. `SFS_GRASS_NO_TURF` turns the
+  turf off, for a before and after.
+  `GrassModule::lengthAt()` is how long the blades are at a point now.
+- **Sparse maps:** `GrassMaps` keeps each grid in 16 x 16 tiles
+  (`GrassTiles`): a tile that's one value all over keeps just that, so wide
+  ground costs little but where something crosses it.
+- **Vigour:** `GrassModule::setVigour(entity, field, settings)` grows grass
+  by a coarse field over the world (`GrassVigourField`: how wet the ground
+  is, say). A blade's vigour is `smoothstep(0, 1, w * scale + bias)`, `w` the
+  field where it grows plus a little smooth noise of the ground's
+  (`GrassVigourSettings`); where it's low the grass is shorter
+  (`lengthLeast`) and a little sparser (`densityLeast`), and with
+  `drivesData0` the material's Data 0 is `1 - vigour`. Only the settings
+  change a frame (a game eases them with the weather); the field goes up to
+  the GPU when it's another one.
 - **Growing blades:** blades are grown on the GPU (`meshGrassGrow.wgsl`), in
   tiles kept from frame to frame (`GrassTileCache`, `grassTiles.h`). The
   ground is split into fixed tiles, 64 by 64 cells of each lattice (below), so
@@ -1326,8 +1402,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
 - **Trampling:** `GrassTrample` is a grid over the field's ground in the
   world. It's pressed by `GrassBender` spheres where they reach into the
   grass, and springs back over `recovery` seconds. Each update the module
-  gathers benders (rigid bodies that bend grass, as their colliders, and
-  `GrassBenderComponent`s). When the map changes, it sends it to the renderer
+  gathers benders (`GrassBenderComponent`s: fitted to their colliders, their
+  mesh, or a radius; nothing else bends grass). When the map changes, it sends it to the renderer
   as an image (`IRenderer::updateGrassTrample`).
 
 - **Shadows:** grass grows before the sun's shadow pass. Blades within
@@ -1359,7 +1435,9 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   frames read back, with the tiles' (grown from, built, kept, hidden, and
   their blades' buffer in use and in all). `SFS_GRASS_STATS=2` also counts the fragments drawn at
   each pixel (overdraw; it keeps the GPU from skipping hidden ones early, so
-  it's slower).
+  it's slower). `SFS_GRASS_GROWTH` logs each map's growth every 240 frames
+  instead: how many tiles are growing, how many are grown as they are now,
+  how many tiles that sends up, and how much memory the maps take.
 
 ## Debug settings
 

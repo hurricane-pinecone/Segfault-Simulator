@@ -70,7 +70,8 @@ protected:
 
   void onUpdate(double deltaTime) override
   {
-    if (!m_hero.isValid() || !entity().hasComponent<sfs::TransformComponent>())
+    auto* transform = entity().getComponent<sfs::TransformComponent>();
+    if (!m_hero.isValid() || !transform)
       return;
     const float dt = static_cast<float>(deltaTime);
 
@@ -108,31 +109,30 @@ protected:
                                        std::sin(m_shakeClock * 53.0f + 2.1f)) *
                              (m_shake * m_shake);
 
-    auto& transform = entity().getComponent<sfs::TransformComponent>();
-    transform.position = m_eye + jitter;
-    transform.rotation = lookRotation(m_focus - m_eye);
-    if (entity().hasComponent<sfs::CameraComponent>())
-      entity().getComponent<sfs::CameraComponent>().focusDistance =
-          std::max(glm::length(m_focus - m_eye), 0.5f);
+    transform->position = m_eye + jitter;
+    transform->rotation = lookRotation(m_focus - m_eye);
+    if (auto* camera = entity().getComponent<sfs::CameraComponent>())
+      camera->focusDistance = std::max(glm::length(m_focus - m_eye), 0.5f);
   }
 
 private:
   // Which way the hero faces across the ground (its model's turn).
   float heroFacing() const
   {
-    if (!m_heroModel.isValid() ||
-        !m_heroModel.hasComponent<sfs::TransformComponent>())
+    sfs::TransformComponent* transform =
+        m_heroModel.getComponent<sfs::TransformComponent>();
+    if (!transform)
       return 1.5707963f;
-    const glm::vec3 forward =
-        m_heroModel.getComponent<sfs::TransformComponent>().rotation *
-        glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 forward = transform->rotation * glm::vec3(1.0f, 0.0f, 0.0f);
     return std::atan2(forward.y, forward.x);
   }
 
   glm::vec3 heroFocus() const
   {
-    return m_hero.getComponent<sfs::TransformComponent>().position +
-           glm::vec3(0.0f, 0.0f, lookHeight);
+    const auto* hero = m_hero.getComponent<sfs::TransformComponent>();
+    if (!sfs::expect(hero, m_hero))
+      return m_focus;
+    return hero->position + glm::vec3(0.0f, 0.0f, lookHeight);
   }
 
   // Where the eye goes `reach` metres back from the focus.

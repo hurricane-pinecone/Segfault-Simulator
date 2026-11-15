@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -147,11 +148,14 @@ public:
   GrassHandle createGrass(const GrassGround& ground) override;
   void updateGrassGround(GrassHandle grass, const GrassGround& ground) override;
   void updateGrassMaps(GrassHandle grass, const GrassMapsImage& image) override;
+  void updateGrassVigour(GrassHandle grass,
+                         const GrassVigourImage& image) override;
   void updateGrassTrample(GrassHandle grass,
                           const GrassTrampleImage& image) override;
   void destroyGrass(GrassHandle grass) override;
   void drawGrass(const GrassBatch& batch) override;
   void drawUi(const UiDrawList& list) override;
+  void drawLines(std::span<const DebugLineVertex> vertices) override;
   void beginFeed(const FeedView& view, const UiTexture& into) override;
   bool textureShown(uint32_t id) const override;
   void endFrame() override;
@@ -230,6 +234,11 @@ private:
     GpuImage shape;
     GpuImage data;
     GpuImage trample;
+    // Its maps as they are now (growing: GrassMaps::nowPixels()), where
+    // they've been cut (cutPixels()), and its vigour field.
+    GpuImage now;
+    GpuImage cut;
+    GpuImage vigour;
     // Its ground's terrain's splat map, for its ground past the maps (null:
     // none, a stand-in bound).
     std::shared_ptr<GpuTexture> farSplat;
@@ -473,6 +482,10 @@ private:
   // pipeline a surface draws it with (null if it doesn't build), growing the
   // frame's blades (a compute pass, before the lit pass), and drawing them.
   void rebuildGrassBindings(GpuGrass& grass);
+  // The grow pass's images past its first bindings (13 to 16: its maps as
+  // they are now, where they're cut, their data, its vigour field).
+  void growImages(const GpuGrass& grass,
+                  std::span<WGPUBindGroupEntry> entries) const;
   // An RGBA texture to sample (and fill from the CPU); pixels into a
   // rectangle of one, from `origin`, `size` of them.
   static GpuImage
@@ -576,6 +589,11 @@ private:
   WGPURenderPipeline rainMapPipeline(const Surface& surface);
   WGPURenderPipeline rainPipeline();
   void encodeRain(WGPURenderPassEncoder pass);
+  // Debug lines (drawLines): the frame's uploaded (false if there are
+  // none, or their pipeline doesn't build), then drawn last in the lit pass.
+  bool uploadDebugLines();
+  WGPURenderPipeline debugLinePipeline();
+  void encodeDebugLines(WGPURenderPassEncoder pass);
   void encodeLitPass();
   // Temporal anti-aliasing's resolve (taa.wgsl) of the lit scene with its
   // history, into m_taa[m_taaIndex], copied back over the scene.
@@ -594,6 +612,10 @@ private:
     CutOutDepth,  // the lit pass's masked sections' depth, before the rest
     RainMap,      // rain's overhead map (as All)
   };
+  // Encodes a draw's sections for `which` pass, setting only the state that
+  // differs from what it set last (m_boundPipeline and the rest). A pass that
+  // calls it starts with forgetBound(), and so does any code that sets a
+  // pipeline, vertex slot 0, the index buffer or bind group 1 between calls.
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
   // A masked section's pipeline in the lit pass: its cut-out depth (drawn
   // before anything's lit), or lit where that depth is (testing for equal,
@@ -811,6 +833,19 @@ private:
   bool m_rained = false;
   wgpu::RenderPipeline m_rainPipeline;
   bool m_rainBroken = false;
+
+  // Debug lines (drawLines): this frame's, their buffer (grown as needed),
+  // how many are uploaded this frame; their pipeline (debugLines.wgsl, built
+  // the first time, or failed: logged) and its bindings (the exposure).
+  std::vector<DebugLineVertex> m_debugLines;
+  wgpu::Buffer m_debugLineBuffer;
+  std::size_t m_debugLineCapacity = 0; // vertices
+  uint32_t m_debugLineVertices = 0;
+  wgpu::RenderPipeline m_debugLinePipeline;
+  wgpu::BindGroupLayout m_debugLineLayout;
+  wgpu::Buffer m_debugLineParams;
+  wgpu::BindGroup m_debugLineBindings;
+  bool m_debugLineBroken = false;
 
   // A physical sky (sky.wgsl): its transmittance table (from the CPU's
   // PhysicalSky), the sky rendered octahedrally (the background and haze
@@ -1083,8 +1118,22 @@ private:
   std::unordered_map<std::string, std::weak_ptr<const Surface>> m_surfaces;
   // Ones that didn't build (already logged), so they aren't tried again.
   std::unordered_set<std::string> m_brokenSurfaces;
-  // The surface whose pipeline the pass being encoded has set.
+  // What encodeDraw() last set on the pass being encoded: the surface's
+  // pipeline, the mesh's vertex buffer in slot 0 and index buffer, and the
+  // material's bind group 1, so a draw sets only what differs.
   WGPURenderPipeline m_boundPipeline = nullptr;
+  WGPUBuffer m_boundVertices = nullptr;
+  WGPUBuffer m_boundIndices = nullptr;
+  WGPUBindGroup m_boundMaterial = nullptr;
+  // A new pass, or something else set its state: encodeDraw() sets
+  // everything again.
+  void forgetBound()
+  {
+    m_boundPipeline = nullptr;
+    m_boundVertices = nullptr;
+    m_boundIndices = nullptr;
+    m_boundMaterial = nullptr;
+  }
 
   // This frame's target, set by the backend.
   WGPUCommandEncoder m_encoder = nullptr;

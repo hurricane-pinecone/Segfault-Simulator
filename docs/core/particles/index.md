@@ -48,6 +48,7 @@ sfs::ParticleEffectDesc makeSparkEffect()
   d.gravity = {0.0f, 0.0f};           // planar acceleration
   d.gravityZ = -9.0f;                 // vertical; negative falls
   d.drag = 2.0f;                      // velocity damping per second
+  d.windInfluence = 0.0f;             // share of the wind carried toward (WindZoneComponent)
 
   // Appearance over normalized life (0 = born, 1 = death).
   d.colorOverLife = sfs::Gradient::twoStop({1.0f, 0.9f, 0.4f}, {1.0f, 0.2f, 0.0f});
@@ -70,7 +71,7 @@ Field groups, in brief:
 | Emission | `shape`, `shapeRadius`, `coneAngleDegrees`, `boxExtents` |
 | Rate | `emitRate` (continuous), `burstCount`, `burstInterval` |
 | Per-particle | `lifetime`, `speed`, `launchHeightSpeed`, `startHeight`, `size`, `rotation`, `angularVelocity`, `directionSpread` |
-| Forces | `gravity`, `gravityZ`, `drag` |
+| Forces | `gravity`, `gravityZ`, `drag`, `windInfluence` (the share of a `WindZoneComponent`'s wind its drag carries it toward) |
 | Over life | `sizeOverLife`, `colorOverLife`, `alphaOverLife` |
 | Look | `look`, `texture`, `frameCols`/`frameRows`/`frameFps`/`frameOverLife` (sprite-sheet animation) |
 | Render / sim | `blend`, `lit`, `ground`, `stickDuration`, `landsOnPlane` |

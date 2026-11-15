@@ -1655,6 +1655,24 @@ private:
         if (source.action)
           source.action();
       };
+    // Its look (a label, a style's face) is placed over it, and what that
+    // makes hit (a background covering the scene, a help) would be found
+    // first, in front of it, and take its clicks: so it's made hit again, in
+    // front of its look, once that's placed.
+    const std::size_t own = m_hits.size() - 1;
+    struct InFront
+    {
+      std::vector<Hit>& hits;
+      std::size_t own;
+      ~InFront()
+      {
+        if (hits.size() > own + 1)
+        {
+          Hit copy = hits[own];
+          hits.push_back(std::move(copy));
+        }
+      }
+    } inFront{m_hits, own};
     const bool over = enabled && hovered(path);
     const bool down = over && pressed(path);
     if (node.buttonStyle == ButtonStyle::Kind::Plain)

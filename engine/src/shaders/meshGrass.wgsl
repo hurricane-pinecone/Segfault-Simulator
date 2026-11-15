@@ -80,7 +80,9 @@ struct BladeOut {
 @group(2) @binding(2) var trampleMap: texture_2d<f32>; // rg direction, b how flat
 @group(2) @binding(3) var trampleSampler: sampler;
 @group(2) @binding(4) var dataMap: texture_2d<f32>; // the maps' data channels
-@group(2) @binding(5) var shapeMap: texture_2d<f32>; // r coverage, g length
+// As they are now (growing, GrassMaps::nowPixels()): r coverage, g length, b
+// the band, a bounds.
+@group(2) @binding(5) var shapeMap: texture_2d<f32>;
 // Counting the blades' work (SFS_GRASS_STATS): the fragments each pixel
 // shades (fs_counted), a row grass.shadow.w long.
 @group(2) @binding(6) var<storage, read_write> fragmentCounts: array<atomic<u32>>;
@@ -91,6 +93,8 @@ struct BladeOut {
 @group(2) @binding(8) var farSplat: texture_2d<f32>;
 // Its ground's deformation window (r: the offset, m; see grassDeformAt()).
 @group(2) @binding(9) var grassDeformMap: texture_2d<f32>;
+// The field it grows by (vigour; its ground's, at its vertices).
+@group(2) @binding(10) var vigourMap: texture_2d<f32>;
 
 // A blade's vertex as placed (bladePoint()): the blade, how far up it, which
 // side, where, which way along it, and how shut in.
@@ -230,7 +234,7 @@ fn bladeVertexOut(in: BladeOut) -> VertexOut {
   // For its material (the Grass node): its length, how far up it, its own
   // random number, and the maps' data where it grows.
   out.grass = vec4f(grown.root.w / max(grass.blade.w, 1e-4), t, shape.z, in.along.z);
-  out.grassData = textureSampleLevel(dataMap, trampleSampler, unpack2x16unorm(grown.look.w), 0.0);
+  out.grassData = unpack4x8unorm(grown.look.w);
   out.rain = vec2f(in.along.w, in.dripped);
   return out;
 }
@@ -249,6 +253,28 @@ struct GroundOut {
   @location(1) normal: vec3f,
   @location(2) uv: vec2f,
   @location(3) data: vec4f,
+  @location(4) vigour: f32, // groundVigour()
+}
+
+// The ground's vigour at a world point, as meshGrassGrow.wgsl's vigourOf()
+// grows its blades (with its detail noise).
+fn groundVigour(world: vec2f) -> f32 {
+  if (grass.vigour.x == 0.0) {
+    return smoothstep(0.0, 1.0, grass.vigour.y);
+  }
+  var w = grass.vigourDetail.w;
+  if (grass.vigourRect.z > 0.0) {
+    let uv = (world - grass.vigourRect.xy) * grass.vigourRect.zw;
+    let edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+    if (edge > 0.0) {
+      let field = textureSampleLevel(vigourMap, trampleSampler, uv, 0.0).r;
+      w = mix(w, field, smoothstep(0.0, 0.03, edge));
+    }
+  }
+  let size = grass.vigourDetail.y;
+  let detail = groundNoise(world / size + 17.3) * 0.65 + groundNoise(world / (size * 0.37) - 5.1) * 0.35;
+  w += (detail - 0.5) * grass.vigourDetail.x;
+  return smoothstep(0.0, 1.0, w * grass.vigour.x + grass.vigour.y);
 }
 
 // Where a point of the ground's own XY is on the maps, and how far in from
@@ -268,6 +294,7 @@ fn vs_ground(in: VertexIn) -> GroundOut {
   out.normal = normalize((grass.normalMatrix * vec4f(in.normal, 0.0)).xyz);
   out.uv = in.uv;
   out.data = vec4f(0.0);
+  out.vigour = groundVigour(world.xy);
   if (groundOnMaps(in.position.xy).z < kGroundMapsEdge) {
     for (var y = 0; y < 4; y++) {
       for (var x = 0; x < 4; x++) {
@@ -402,11 +429,12 @@ const kGroundFrom = 0.75;
 fn grassShape(uv: vec2f) -> vec4f {
   let maps = textureSampleLevel(shapeMap, trampleSampler, uv, 0.0);
   if (min(maps.r, maps.b) >= 0.999) {
-    return vec4f(1.0, maps.g, maps.a, 0.0);
+    return vec4f(1.0, maps.g, maps.a, 1.0);
   }
   let edge = smoothstep(0.25, 1.0, maps.b / max(maps.r, 1e-3));
   let density = maps.r * edge;
-  return vec4f(smoothstep(kGroundFrom, 1.0, density), maps.g * mix(0.45, 1.0, edge), maps.a, 0.0);
+  return vec4f(smoothstep(kGroundFrom, 1.0, density), maps.g * mix(0.45, 1.0, edge), maps.a,
+               smoothstep(0.15, 0.6, density));
 }
 
 @fragment
@@ -421,6 +449,8 @@ fn fs_ground(in: GroundOut) -> LitOut {
   // To the blade at the maps' bounds: cut at a half, smoothed over a pixel.
   let cut = max(fwidth(maps.b), 1e-4) * 0.5;
   var coverage = maps.r * smoothstep(0.5 - cut, 0.5 + cut, maps.b);
+  // (Short grass's turf covers part-worn ground too, thinning with it: maps.w its density, not cut at kGroundFrom.)
+  let turfCover = maps.w * smoothstep(0.5 - cut, 0.5 + cut, maps.b);
   var tall = maps.g;
   var data = textureSampleLevel(dataMap, trampleSampler, onMaps.xy, 0.0);
   // Past them, grass where its terrain's layers are meadow, long, with the
@@ -438,10 +468,21 @@ fn fs_ground(in: GroundOut) -> LitOut {
     tall = mix(1.0, tall, inside);
     data = mix(in.data, data, inside);
   }
+  // As the blades grow by their vigour: fewer and shorter where it's low, and
+  // its Data 0, if it drives that.
+  coverage *= mix(grass.vigour.w, 1.0, in.vigour);
+  tall *= mix(grass.vigour.z, 1.0, in.vigour);
+  if (grass.vigourDetail.z > 0.5) {
+    data.x = 1.0 - in.vigour;
+  }
   // Over a rut (the ground pressed in under it, drawn lower by its terrain's
   // patch) it's left to the blades standing in it: this is the ground's own
   // surface, above the rut's floor.
   coverage *= 1.0 - smoothstep(0.015, 0.04, -grassDeformAt(in.worldPosition.xy));
+  // Short grass (mown) sits on its own turf: a dense mat of leaves and thatch under the blades, the grass's colour,
+  // where long grass shows the ground down between its stems. By how short it is; worn grass (sparse: less
+  // coverage) shows the soil again.
+  let short = (1.0 - smoothstep(0.15, 0.55, tall)) * grass.far.w;
 
   let normal = normalize(in.normal);
   let toCamera = frame.cameraPosition.xyz - in.worldPosition;
@@ -453,6 +494,9 @@ fn fs_ground(in: GroundOut) -> LitOut {
   // thinning out, as dark as they look together there (their lower parts,
   // and the shade between them, show among their tops).
   var tone = vec3f(0.62 * mix(1.0, 0.84, smoothstep(0.3, 0.9, away) * coverage));
+  // (The turf a little lighter than the shade down in long grass, and mottled finely.)
+  let mottle = groundNoise(in.worldPosition.xy * 5.0 + 17.0) - 0.5 + 0.5 * (groundNoise(in.worldPosition.xy * 13.0) - 0.5);
+  tone = mix(tone, vec3f(0.74 * (1.0 + mottle * 0.22)), short);
   var deep = deepIn(tall * grass.blade.w, mix(0.15, 0.45, smoothstep(0.2, 1.0, away)));
   var facing = normal;
   // As the blades thin out to none (from grass.far.z to the draw distance),
@@ -508,8 +552,16 @@ fn fs_ground(in: GroundOut) -> LitOut {
   // ground's own material shows through, but none once they're gone (it'd
   // keep its own colour, not the grass's, through the seasons).
   let up = smoothstep(0.45, 0.55, normal.z);
-  let amount = coverage * up * mix(grass.blade.z, 1.0, gone);
-  return LitOut(vec4f(lit.color.rgb, amount), vec4f(lit.glow.rgb, amount));
+  var amount = coverage * up * mix(grass.blade.z, 1.0, gone);
+  // Short grass's turf: right under the blades' bases, as much as it covers (worn: browner, and gaps of soil).
+  var colour = lit.color.rgb;
+  let turf = mix(coverage, max(coverage, turfCover), short) * up;
+  if (short > 0.0) {
+    let worn = clamp(1.0 - maps.w, 0.0, 1.0) * short;
+    colour = mix(colour, colour * vec3f(1.25, 1.0, 0.55), worn * 0.8);
+    amount = max(amount, turf * short);
+  }
+  return LitOut(vec4f(colour, amount), vec4f(lit.glow.rgb, amount));
 }
 
 // The depth pre-pass's fragments (vs_depth): depth only, nothing written.

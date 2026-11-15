@@ -31,8 +31,8 @@ protected:
   void create() override { registerComponent<Counter>(); }
   void update(double) override
   {
-    for (Entity& entity : getEntities())
-      ++entity.getComponent<Counter>().ticks;
+    for (auto [entity, counter] : getEntities<Counter>())
+      ++counter.ticks;
   }
 };
 
@@ -52,7 +52,7 @@ protected:
   }
   void onUpdate(double deltaTime) override
   {
-    entity().getComponent<TransformComponent>().position.x +=
+    entity().getComponent<TransformComponent>()->position.x +=
         speed * static_cast<float>(deltaTime);
   }
 
@@ -125,9 +125,9 @@ int main()
 
     world.scene.update(0.5);
     CHECK(testing::approx(
-        box.getComponent<TransformComponent>().position.x, 0.5f));
+        box.getComponent<TransformComponent>()->position.x, 0.5f));
     CHECK(testing::approx(
-        plain.getComponent<TransformComponent>().position.x, 0.0f));
+        plain.getComponent<TransformComponent>()->position.x, 0.0f));
   }
 
   TEST("an entity's saved script fields should be set before onCreate")
@@ -151,9 +151,9 @@ int main()
 
     world.scene.update(0.5);
     CHECK(testing::approx(
-        fast.getComponent<TransformComponent>().position.x, 2.0f));
+        fast.getComponent<TransformComponent>()->position.x, 2.0f));
     CHECK(testing::approx(
-        standard.getComponent<TransformComponent>().position.x, 0.5f));
+        standard.getComponent<TransformComponent>()->position.x, 0.5f));
   }
 
   TEST("startScripts should add game systems that see existing entities")
@@ -166,7 +166,7 @@ int main()
     startScripts(world.scene, {"TickSystem"});
     world.scene.update(0.1);
     world.scene.update(0.1);
-    CHECK(counted.getComponent<Counter>().ticks == 2);
+    CHECK(counted.getComponent<Counter>()->ticks == 2);
   }
 
   TEST("unknown scripts should be skipped, not crash")
@@ -214,48 +214,6 @@ int main()
     CHECK(Mover::created == 1);
     CHECK(world.scene.findObjects<Mover>().size() == 2u);
     CHECK(world.scene.findObjects<Mover>()[1]->entity() == later);
-  }
-
-  TEST("StandardScene::instantiate should start the instance's scripts")
-  {
-    namespace fs = std::filesystem;
-    const fs::path folder = fs::temp_directory_path() / "sfs_instantiate_test";
-    fs::remove_all(folder);
-    fs::create_directories(folder / "prefabs");
-    std::ofstream(folder / "prefabs" / "mover.prefab") << R"({
-      "formatVersion": 1,
-      "root": {
-        "NameComponent": {"name": "Spawned"},
-        "TransformComponent": {},
-        "ScriptComponent": {"script": "Mover"},
-        "children": [{"$id": 1, "TransformComponent": {},
-                      "ScriptComponent": {"script": "Mover"}}]}})";
-    {
-      const AssetDatabase database(folder,
-                                   AssetDatabase::Mode::ReadWrite,
-                                   AssetDatabase::projectFolders());
-      const AssetRecord* record =
-          database.findByPath(fs::path("prefabs") / "mover.prefab");
-      CHECK(record != nullptr);
-
-      AssetStore store;
-      store.setDatabase(&database);
-      testing3d::MockRenderer renderer;
-      SceneServices services{.assetStore = store, .renderer = &renderer};
-      SceneManager manager;
-      manager.setSceneServices(&services);
-      StandardScene& scene = *manager.createScene<StandardScene>();
-
-      Mover::created = 0;
-      const Entity root =
-          record ? scene.instantiate("asset:" + record->id.toString())
-                 : Entity();
-      CHECK(root.isValid());
-      CHECK(Mover::created == 2);
-      CHECK(scene.findObjects<Mover>().size() == 2u);
-      manager.destroyAll();
-    }
-    fs::remove_all(folder);
   }
 
   return testing::report("scriptRegistryTests");

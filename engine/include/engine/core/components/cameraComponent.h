@@ -1,12 +1,5 @@
 #pragma once
 
-#include "engine/core/rendering/camera.h"
-#include "engine/core/rendering/lighting.h"
-#include "glm/glm/common.hpp"
-#include "glm/glm/ext/matrix_float4x4.hpp"
-#include "glm/glm/geometric.hpp"
-#include "glm/glm/trigonometric.hpp"
-
 namespace sfs
 {
 
@@ -74,35 +67,6 @@ struct CameraComponent
   [[sfs::range(0, 3)]] [[sfs::showIf(depthOfField)]] float focusBlur = 1.0f;
   [[sfs::range(0, 500)]] [[sfs::showIf(depthOfField)]] float focusHyperfocal =
       80.0f;
-
-  /** The bloom seen through this camera. */
-  BloomSettings bloomSettings() const
-  {
-    return {bloom, bloomIntensity, bloomThreshold, bloomSoftness, bloomRadius};
-  }
-
-  /** The depth of field seen through this camera. */
-  DepthOfFieldSettings depthOfFieldSettings() const
-  {
-    return {depthOfField, focusRange, focusBlur, focusHyperfocal};
-  }
-
-  /** Point `camera` the way this camera, with world matrix `world`, looks. */
-  void applyTo(Camera& camera, const glm::mat4& world) const
-  {
-    camera.setPose(glm::vec3(world[3]),
-                   glm::vec3(world[0]),
-                   focusDistance,
-                   glm::vec3(world[2]));
-    camera.projection = orthographic ? Camera::Projection::Orthographic
-                                     : Camera::Projection::Perspective;
-    const float magnify = glm::max(zoom, 0.01f);
-    camera.fieldOfView =
-        2.0f * glm::atan(glm::tan(glm::radians(fieldOfView) * 0.5f) / magnify);
-    camera.orthoHeight = orthoHeight / magnify;
-    camera.nearPlane = nearPlane;
-    camera.farPlane = farPlane;
-  }
 };
 
 } // namespace sfs

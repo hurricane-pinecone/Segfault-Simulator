@@ -199,6 +199,9 @@ public:
   // again on the GPU).
   static constexpr double kPuddleInterval = 0.5;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   struct Field
   {
@@ -229,19 +232,29 @@ private:
     bool seen = false; // this frame
   };
 
+  // A deformable terrain drawn this frame: its field, and its material as
+  // drawn.
+  struct Seen
+  {
+    Field* field = nullptr;
+    MaterialHandle material;
+    const MeshMaterial* drawn = nullptr;
+  };
   static uint64_t keyOf(const Entity& entity);
   Field* fieldOf(const Entity& entity);
   const Field* fieldOf(const Entity& entity) const;
-  // A deformable terrain this frame: its mesh as placed (to press into),
-  // then its patch and window (to draw).
-  void prepare(const Entity& entity, Field& field);
+  // A deformable terrain this frame (`mesh` its renderer's): its mesh as
+  // placed (to press into), then its patch and window (to draw).
+  void prepare(const Entity& entity, MeshHandle mesh, Field& field);
   void draw(const RenderContext& context,
             MaterialHandle material,
             const MeshMaterial& drawn,
             Field& field);
   // Press the frame's deformers into the fields they're over.
   void deform();
+  // Presses `mesh` (its renderer's `handle`) into the fields it's over.
   void pressMesh(const Entity& mesh,
+                 MeshHandle handle,
                  const glm::mat4& model,
                  const Entity& owner,
                  const DeformerComponent& deformer,
@@ -320,6 +333,8 @@ private:
   std::vector<float> m_groundSoftness;
   MeshHandle m_patchMesh;
   std::vector<uint16_t> m_halves; // scratch: a tile's
+  // Scratch: the frame's deformable terrains.
+  std::vector<Seen> m_seen;
 };
 
 } // namespace sfs
