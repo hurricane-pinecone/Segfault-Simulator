@@ -1,7 +1,8 @@
 #pragma once
 
+// Contact3D lives with ContactReportComponent, which hands contacts to games.
+#include "engine/core/components/contactReportComponent.h"
 #include "engine/core/ecs/entity.h"
-#include "glm/glm/ext/vector_float3.hpp"
 
 namespace sfs
 {
@@ -11,21 +12,6 @@ namespace sfs
 struct Collision3D
 {
   Entity other; // the entity it touched
-};
-
-/**
- * A contact between two physics bodies that began, went deeper or ended during
- * a step.
- */
-struct Contact3D
-{
-  Entity a;
-  Entity b;
-  bool trigger = false;  // one of them is a trigger (nothing was blocked)
-  glm::vec3 point{0.0f}; // where they first touched (began contacts)
-  // How far they overlap, in world units: as they began touching (began), or
-  // the deepest since then (deepened, ended). 0 for triggers.
-  float depth = 0.0f;
 };
 
 } // namespace sfs

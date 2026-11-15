@@ -6,6 +6,7 @@
 
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -110,6 +111,34 @@ bool writeIfMissing(const fs::path& path, const std::string& contents)
   LOG_INFO("Created " + path.filename().string());
   return true;
 }
+
+// Writes `contents` to a missing file, or over one still exactly as an earlier
+// editor wrote it (`previous`); a file someone edited is left alone.
+bool writeOrUpdate(const fs::path& path,
+                   const std::string& contents,
+                   const std::string& previous)
+{
+  if (!fs::exists(path))
+    return writeIfMissing(path, contents);
+  std::ifstream in(path, std::ios::binary);
+  const std::string current{
+      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  if (current != previous)
+    return true;
+  in.close();
+  if (!sfs::writeFileAtomically(path, contents))
+    return false;
+  LOG_INFO("Updated " + path.filename().string());
+  return true;
+}
+
+// The .clangd editors before sfs-lsp wrote.
+const std::string kPreviousClangd =
+    "# clangd (the editor's Code panel, and most editors): the game module's\n"
+    "# compile database, linked into .sfs/ by every build.\n"
+    "CompileFlags:\n"
+    "  CompilationDatabase: .sfs\n"
+    "  Remove: [-fno-keep-inline-dllexport] # GCC-only (MinGW builds)\n";
 } // namespace
 
 bool Project::ensureBuildFiles() const
@@ -134,18 +163,20 @@ bool Project::ensureBuildFiles() const
       "compile_commands.json\n"
       "imgui.ini\n";
 
-  const std::string clangd =
-      "# clangd (the editor's Code panel, and most editors): the game module's\n"
-      "# compile database, linked into .sfs/ by every build.\n"
-      "CompileFlags:\n"
-      "  CompilationDatabase: .sfs\n"
-      "  Remove: [-fno-keep-inline-dllexport] # GCC-only (MinGW builds)\n";
+  const std::string clangd = kPreviousClangd +
+                             "# [[sfs::...]] attributes are the engine's: "
+                             "sfs-codegen reads them and sfs-lsp\n"
+                             "# checks them. Clang can only silence unknown "
+                             "attributes all together; sfs-lsp\n"
+                             "# reports misspelt standard ones instead.\n"
+                             "Diagnostics:\n"
+                             "  Suppress: [unknown-attributes]\n";
 
   std::error_code error;
   fs::create_directories(scriptsFolder(), error);
   return writeIfMissing(m_root / "CMakeLists.txt", cmake) &&
          writeIfMissing(m_root / ".gitignore", gitignore) &&
-         writeIfMissing(m_root / ".clangd", clangd);
+         writeOrUpdate(m_root / ".clangd", clangd, kPreviousClangd);
 }
 
 std::optional<Project> Project::create(const fs::path& folder,

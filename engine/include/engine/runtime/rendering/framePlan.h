@@ -617,6 +617,10 @@ private:
   };
   std::vector<CasterBatch> m_casterBatches;
   std::vector<MeshInstance> m_casters;
+  // Scratch for the cascades' casters: each sun shadow caster's bounding
+  // sphere in the world, xyz its centre and w its radius, in shadowDraws()
+  // order.
+  std::vector<glm::vec4> m_casterSpheres;
   std::vector<ShadowedLight> m_shadowedLights;
   std::vector<GrassBatch> m_grassDraws;
   std::vector<UiQuad> m_uiQuads;

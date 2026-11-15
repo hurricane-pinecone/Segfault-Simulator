@@ -18,7 +18,7 @@ Entity PrefabSystem::spawn(std::string_view prefab,
                            const TransformComponent& transform,
                            const Entity& parent)
 {
-  if (parent.isValid() && !parent.isAlive())
+  if (parent != Entity{} && !parent.isValid())
   {
     LOG_ERROR("PrefabSystem: can't spawn " + std::string(prefab) +
               " under a destroyed parent; nothing spawned");
@@ -36,8 +36,8 @@ Entity PrefabSystem::spawn(std::string_view prefab,
       m_scene.destroyEntity(entity);
     return {};
   }
-  if (root.hasComponent<TransformComponent>())
-    root.getComponent<TransformComponent>() = transform;
+  if (TransformComponent* placed = root.getComponent<TransformComponent>())
+    *placed = transform;
   else
     root.addComponent<TransformComponent>(transform);
   startObjects(m_scene, m_made, &m_scene.renderSystem().meshes());
@@ -46,7 +46,7 @@ Entity PrefabSystem::spawn(std::string_view prefab,
 
 void PrefabSystem::despawn(const Entity& root)
 {
-  if (root.isValid() && root.isAlive())
+  if (root.isValid())
     m_scene.destroyBranch(root);
 }
 

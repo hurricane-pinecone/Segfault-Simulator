@@ -8,6 +8,12 @@
 namespace sfs::nav
 {
 
+CheckStats& checkStats()
+{
+  thread_local CheckStats stats;
+  return stats;
+}
+
 void CostLayer::raster(glm::vec2,
                        float,
                        int width,

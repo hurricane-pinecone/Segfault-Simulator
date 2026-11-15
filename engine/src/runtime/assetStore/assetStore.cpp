@@ -9,6 +9,7 @@
 #include "engine/runtime/assetStore/modelImporter.h"
 #include "engine/runtime/assetStore/textureImporter.h"
 #include "engine/runtime/serialization/legacyComponentNames.h"
+#include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/colliderFit.h"
 #include "glm/glm/exponential.hpp"
 
@@ -475,18 +476,23 @@ nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes,
   if (nodes.empty())
   {
     root["MeshRendererComponent"] = {{"mesh", assetMeshName(id)}};
-    return {{"formatVersion", 1}, {"root", std::move(root)}};
+    return {{"formatVersion", SceneSerializer::kPrefabFormatVersion},
+            {"model", true},
+            {"root", std::move(root)}};
   }
 
-  // Each node an entity with its part, its $id the node's place in the file's
-  // order (stable while the file's node order is).
+  // Each node an entity with its part, its $id the node's stable id (from its
+  // name path, see stableNodeId()), so instances' overrides stay on their
+  // nodes when the file's nodes are reordered. The entries must stay one per
+  // node, in readNodes() order: older files name nodes by their place in it
+  // (see SceneSerializer).
   std::vector<nlohmann::json> entries(nodes.size());
   std::vector<std::vector<std::size_t>> children(nodes.size());
   std::vector<std::size_t> tops;
   for (std::size_t i = 0; i < nodes.size(); ++i)
   {
     const ModelNode& node = nodes[i];
-    entries[i] = {{"$id", i + 1},
+    entries[i] = {{"$id", node.id},
                   {"NameComponent", {{"name", node.name}}},
                   {"TransformComponent", transformJson(node.local)}};
     if (!node.part.empty())
@@ -514,7 +520,9 @@ nlohmann::json AssetStore::modelPrefab(const std::vector<ModelNode>& nodes,
   };
   for (const std::size_t top : tops)
     root["children"].push_back(build(top));
-  return {{"formatVersion", 1}, {"root", std::move(root)}};
+  return {{"formatVersion", SceneSerializer::kPrefabFormatVersion},
+          {"model", true},
+          {"root", std::move(root)}};
 }
 
 void AssetStore::addTexture(const std::string& assetId,

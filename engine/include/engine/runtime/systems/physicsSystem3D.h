@@ -47,7 +47,10 @@ struct RaycastHit3D
  * Contacts that begin or end (touching, or passing through a trigger) are
  * told to the game objects on both entities (GameObject::onCollisionEnter and
  * the rest) when it knows its scene, and kept as contactsBegun() and
- * contactsEnded(); contacts that go deeper as contactsDeepened().
+ * contactsEnded(); contacts that go deeper as contactsDeepened(). Each update
+ * also fills every ContactReportComponent with the contacts of the colliders
+ * it reports (its entity's and its descendants'), after clearing it: that is
+ * how a game system reads contacts. The getters are for tools and tests.
  *
  * A scene lists it by name ("PhysicsSystem3D") to have physics. The editor
  * keeps it disabled while editing, so nothing falls until Play.
@@ -111,7 +114,10 @@ public:
   };
   const UpdateStats& lastUpdateStats() const;
 
-  /** Contacts that began and ended during the last update. */
+  /**
+   * Contacts that began and ended during the last update, scene-wide. Games
+   * read their own through a ContactReportComponent instead.
+   */
   const std::vector<Contact3D>& contactsBegun() const;
   const std::vector<Contact3D>& contactsEnded() const;
   /**

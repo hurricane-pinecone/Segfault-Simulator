@@ -48,7 +48,9 @@ public:
    * Start building `project`'s module (or its UI Preview module). A UI
    * Preview build only logs its output if it fails: it runs on every save.
    *
-   * @return false (logged) if a build is already running or can't start.
+   * @return false (logged) if a build is already running or can't start
+   *         (an editor on a static engine can't build one at all, see
+   *         BuildEnvironment::engineShared()).
    */
   bool start(const Project& project, Target target = Target::Module);
 

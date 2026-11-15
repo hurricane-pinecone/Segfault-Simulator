@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 namespace sfs
@@ -187,19 +188,12 @@ void DeformationModule::computeCommands(const RenderContext& context)
   m_meshes = context.meshes;
 
   // The deformable terrains, as placed.
-  struct Seen
-  {
-    Field* field;
-    MaterialHandle material;
-    const MeshMaterial* drawn;
-  };
-  std::vector<Seen> seen;
+  m_seen.clear();
   for (auto& [key, field] : m_fields)
     field.seen = false;
-  for (const Entity& entity :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+  for (auto [entity, transform, renderer] :
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
-    const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.materials.empty())
       continue;
     const MaterialHandle material = m_meshes->material(renderer.materials[0]);
@@ -209,8 +203,8 @@ void DeformationModule::computeCommands(const RenderContext& context)
     Field& field = m_fields[keyOf(entity)];
     field.entity = entity;
     field.seen = true;
-    prepare(entity, field);
-    seen.push_back({&field, material, drawn});
+    prepare(entity, renderer.mesh, field);
+    m_seen.push_back({&field, material, drawn});
   }
   // Not deformable now (or gone): drawn plain again. A map asked for before
   // its terrain's drawn is kept while the entity lives.
@@ -224,7 +218,7 @@ void DeformationModule::computeCommands(const RenderContext& context)
       field.windowed = false;
       field.sent = {};
     }
-    if (!field.seen && !field.entity.isAlive())
+    if (!field.seen && !field.entity.isValid())
       it = m_fields.erase(it);
     else
       ++it;
@@ -236,7 +230,7 @@ void DeformationModule::computeCommands(const RenderContext& context)
   }
 
   PuddleModule* puddles = m_host ? m_host->module<PuddleModule>() : nullptr;
-  for (const Seen& terrain : seen)
+  for (const Seen& terrain : m_seen)
   {
     {
       SFS_CPU_SCOPE("deformation/draw");
@@ -252,13 +246,14 @@ void DeformationModule::computeCommands(const RenderContext& context)
   }
 }
 
-void DeformationModule::prepare(const Entity& entity, Field& field)
+void DeformationModule::prepare(const Entity& entity,
+                                MeshHandle mesh,
+                                Field& field)
 {
-  const MeshHandle mesh = entity.getComponent<MeshRendererComponent>().mesh;
   const Aabb* bounds = m_meshes->bounds(mesh);
   if (m_meshes->isMissing(mesh) || !bounds || bounds->empty())
     return; // not loaded (yet)
-  const glm::mat4 model = hierarchy::worldMatrix(entity);
+  const glm::mat4 model = hierarchy::cachedWorldMatrix(entity);
   if (field.surface && field.mesh == mesh.id && field.model == model)
     return;
   field.surface =
@@ -341,14 +336,7 @@ void DeformationModule::draw(const RenderContext& context,
 
   // Nothing pressed in near it: the ground's drawn as it is (and costs
   // nothing more).
-  bool any = false;
-  for (const glm::ivec2 tile : field.map.tiles())
-    if (inWindow(tile))
-    {
-      any = true;
-      break;
-    }
-  if (!any)
+  if (!field.map.anyTileIn(firstTile, glm::ivec2(windowTiles)))
   {
     if (!field.sent.empty())
       m_renderer.setTerrainDeformation(material, {});
@@ -447,7 +435,7 @@ void DeformationModule::draw(const RenderContext& context,
 
 void DeformationModule::deform()
 {
-  if (m_fields.empty() || m_registry->view<DeformerComponent>().empty())
+  if (m_fields.empty() || m_registry->query<DeformerComponent>().empty())
   {
     m_placed.clear();
     return;
@@ -456,19 +444,23 @@ void DeformationModule::deform()
   const float farthest = std::max(
       kFarthestSweep,
       kFastest * m_frameSeconds * static_cast<float>(m_registry->timeScale()));
-  for (const Entity& mesh :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+  // Only a mesh with a deformer of its own, or with a parent, can have one,
+  // so only those are walked up from.
+  for (auto [mesh, transform, meshRenderer] :
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
+    if (!mesh.hasComponent<DeformerComponent>() &&
+        !hierarchy::parentOf(mesh).isValid())
+      continue;
     // Its deformer: its own, or an ancestor's that covers its children.
     const DeformerComponent* deformer = nullptr;
     Entity at = mesh;
-    for (bool own = true; at.isValid() && at.isAlive(); own = false)
+    for (bool own = true; at.isValid(); own = false)
     {
-      if (at.hasComponent<DeformerComponent>())
+      if (const DeformerComponent* found = at.getComponent<DeformerComponent>())
       {
-        const auto& found = at.getComponent<DeformerComponent>();
-        if (own || found.children)
-          deformer = &found;
+        if (own || found->children)
+          deformer = found;
         break;
       }
       at = hierarchy::parentOf(at);
@@ -477,7 +469,7 @@ void DeformationModule::deform()
       continue;
     // Only once it's gone far enough since it last pressed (pressing again
     // where it stands changes nothing).
-    const glm::mat4 model = hierarchy::worldMatrix(mesh);
+    const glm::mat4 model = hierarchy::cachedWorldMatrix(mesh);
     const uint64_t key = keyOf(mesh);
     const auto last = m_placed.find(key);
     glm::vec2 motion(0.0f);
@@ -485,7 +477,7 @@ void DeformationModule::deform()
     float stride = kSlideStride;
     if (last != m_placed.end())
     {
-      const MeshHandle handle = mesh.getComponent<MeshRendererComponent>().mesh;
+      const MeshHandle handle = meshRenderer.mesh;
       const Aabb* bounds = m_meshes->posedBounds(handle, mesh.getId());
       const float radius =
           bounds && !bounds->empty()
@@ -517,12 +509,21 @@ void DeformationModule::deform()
       motion = glm::vec2(model[3] - last->second.model[3]);
     }
     m_stillPlaced[key] = Placed{model, rolled};
-    pressMesh(mesh, model, at, *deformer, motion, rolled, stride, farthest);
+    pressMesh(mesh,
+              meshRenderer.mesh,
+              model,
+              at,
+              *deformer,
+              motion,
+              rolled,
+              stride,
+              farthest);
   }
   std::swap(m_placed, m_stillPlaced);
 }
 
 void DeformationModule::pressMesh(const Entity& mesh,
+                                  MeshHandle handle,
                                   const glm::mat4& model,
                                   const Entity& owner,
                                   const DeformerComponent& deformer,
@@ -531,7 +532,6 @@ void DeformationModule::pressMesh(const Entity& mesh,
                                   float stride,
                                   float farthest)
 {
-  const MeshHandle handle = mesh.getComponent<MeshRendererComponent>().mesh;
   // A skinned mesh as an animator poses it (a foot down where it steps).
   const Aabb* bounds = m_meshes->posedBounds(handle, mesh.getId());
   if (!bounds || bounds->empty())
@@ -947,7 +947,7 @@ void DeformationModule::buildPatchMesh()
 
 DeformationMap* DeformationModule::map(const Entity& ground)
 {
-  if (!ground.isValid() || !ground.isAlive())
+  if (!ground.isValid())
     return nullptr;
   Field& field = m_fields[keyOf(ground)];
   field.entity = ground;

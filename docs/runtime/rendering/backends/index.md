@@ -164,7 +164,7 @@ draws through, for flat, isometric and 3D games alike:
 | --- | --- |
 | `createMesh` / `destroyMesh` | Upload or free a mesh (`MeshHandle`) |
 | `createMaterial` / `updateMaterial` / `destroyMaterial` | Upload, change or free a material and its textures (`MaterialHandle`) |
-| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `destroyGrass` | A grass field's ground and maps (a backend may keep the blades it grows from them, and grow them again only where `GrassMapsImage::regrow` says they changed) |
+| `createGrass`, `updateGrassMaps`, `updateGrassTrample`, `updateGrassVigour`, `destroyGrass` | A grass field's ground and maps (a backend may keep the blades it grows from them, and grow them again only where `GrassMapsImage::regrow` says they changed); `updateGrassVigour` is optional, a backend without it grows grass as its maps say |
 | `beginFrame(FrameParams)` | Start a frame: camera, lighting, shadows, wind, time |
 | `drawMesh(MeshBatch)` | Queue one mesh's instances (lit, shadow-casting) |
 | `drawGrass(GrassBatch)` | Queue a grass field |

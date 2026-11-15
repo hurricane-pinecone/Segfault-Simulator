@@ -2,6 +2,7 @@
 
 #include "engine/runtime/navigation/coarseGraph.h"
 #include "engine/runtime/navigation/costLayer.h"
+#include "engine/runtime/navigation/planScheduler.h"
 #include "engine/runtime/navigation/planState.h"
 #include "engine/runtime/navigation/space.h"
 #include "engine/runtime/navigation/vehicle/vehicleModel.h"
@@ -17,13 +18,10 @@
 #include <string>
 #include <vector>
 
-namespace sfs
-{
-class WorkerPool;
-}
-
 namespace sfs::nav::vehicle
 {
+
+class Motions;
 
 /**
  * A pose to get to (and, towing, the trailer's angle there, if it matters).
@@ -42,7 +40,7 @@ struct Goal
 };
 
 /** The gear the last stretch of a way is driven in (0: none). */
-inline int lastGear(const std::vector<Segment>& segments)
+inline int lastGear(std::span<const Segment> segments)
 {
   for (auto it = segments.rbegin(); it != segments.rend(); ++it)
     if (it->length > 0.0f)
@@ -51,7 +49,7 @@ inline int lastGear(const std::vector<Segment>& segments)
 }
 
 /** How far the last stretch of a way runs in its gear (m). */
-inline float lastRun(const std::vector<Segment>& segments)
+inline float lastRun(std::span<const Segment> segments)
 {
   const int gear = lastGear(segments);
   float run = 0.0f;
@@ -70,9 +68,8 @@ inline float lastRun(const std::vector<Segment>& segments)
  * Whether a way's last stretch is driven as the goal asks (`run`: the least
  * it must run in that gear, the rig's length).
  */
-inline bool arrivesAsAsked(const Goal& goal,
-                           const std::vector<Segment>& segments,
-                           float run)
+inline bool
+arrivesAsAsked(const Goal& goal, std::span<const Segment> segments, float run)
 {
   return goal.arriveGear == 0 || (lastGear(segments) == goal.arriveGear &&
                                   lastRun(segments) >= run - 1e-3f);
@@ -172,35 +169,30 @@ std::optional<float> touchesAlong(const PlanRequest& request,
                                   float hitch,
                                   std::span<const Segment> segments,
                                   bool endIn = false);
+/**
+ * The same with a check made once and kept (its probes prepared once: a
+ * live look-ahead's, every frame), stepping `step` metres (the motion between
+ * two steps swept, as the search's check: nothing slips between). `rig` is
+ * made from a request whose vehicle may reverse (the way's the game's).
+ */
+std::optional<float> touchesAlong(const Motions& rig,
+                                  Pose2 from,
+                                  float hitch,
+                                  std::span<const Segment> segments,
+                                  bool endIn,
+                                  float step);
 
 /**
- * Plans in the background (a few worker threads): submit() returns at once,
- * poll() hands back the latest (Partial while it searches on, then Found or
- * Blocked). Thread-safe for one caller thread.
+ * Plan on the planning scheduler (nav::PlanScheduler): a one-step job whose
+ * one leg is the PlanResult planNow() gives (never the clear way so far: no
+ * partial leg is published). Its cancel is the job's. `deadline`: when the
+ * vehicle needs it (now standing, else when it runs out of path).
  */
-class Planner
-{
-public:
-  explicit Planner(unsigned threads = 2);
-  ~Planner();
-  Planner(const Planner&) = delete;
-  Planner& operator=(const Planner&) = delete;
-
-  using Ticket = uint64_t;
-  Ticket submit(PlanRequest request);
-  /** The latest result (Pending till the first); final ones are kept till
-   * taken. */
-  PlanResult poll(Ticket ticket);
-  /** Forget a ticket (cancelling it if it's still searching). */
-  void cancel(Ticket ticket);
-  std::size_t busy() const;
-
-private:
-  struct Job;
-  std::unique_ptr<WorkerPool> m_pool;
-  struct Jobs;
-  std::shared_ptr<Jobs> m_jobs;
-  Ticket m_next = 1;
-};
+PlanScheduler::JobId submitPlan(PlanScheduler& scheduler,
+                                uint64_t owner,
+                                std::string label,
+                                PlanScheduler::Clock::time_point deadline,
+                                PlanRequest request,
+                                bool lookAhead = false);
 
 } // namespace sfs::nav::vehicle

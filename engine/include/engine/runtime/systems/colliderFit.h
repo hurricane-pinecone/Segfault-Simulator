@@ -11,11 +11,6 @@ namespace sfs
 class Entity;
 class MeshLibrary;
 
-namespace hierarchy
-{
-class EntityTree;
-}
-
 /**
  * Size and centre a collider to a box in its entity's local space (e.g. its
  * mesh's bounds). The other fields (trigger, layer) are left alone. An empty
@@ -40,12 +35,9 @@ inline constexpr float kMinColliderThickness = 0.1f;
  * space. Its own mesh only, unless `includeChildren` or it has no mesh of its
  * own: then its descendants' too (so a collider on a group covers the group).
  * Empty if there are none, or their meshes haven't loaded.
- *
- * @param tree - the entity's scene's tree, for its descendants
  */
 Aabb entityMeshBounds(const Entity& entity,
                       const MeshLibrary& meshes,
-                      const hierarchy::EntityTree& tree,
                       bool includeChildren = false);
 
 /**
@@ -58,7 +50,6 @@ Aabb entityMeshBounds(const Entity& entity,
 template <typename Collider>
 bool fitColliderToMesh(const Entity& entity,
                        const MeshLibrary& meshes,
-                       const hierarchy::EntityTree& tree,
                        bool includeChildren = false);
 
 } // namespace sfs

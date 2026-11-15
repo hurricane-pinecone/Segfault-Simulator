@@ -15,14 +15,14 @@ It catalogues files; it doesn't load them. Loading is the
 // The editor, read-write; paths are relative to the project.
 sfs::AssetDatabase assets("MyGame", sfs::AssetDatabase::Mode::ReadWrite,
                           sfs::AssetDatabase::projectFolders()); // assets/, prefabs/
-const sfs::AssetRecord* barn = assets.findByPath("assets/models/barn.glb");
-sfs::AssetId id = barn->id;                             // keep this, not the path
+const sfs::AssetRecord* door = assets.findByPath("assets/models/door.glb");
+sfs::AssetId id = door->id;                             // keep this, not the path
 assets.absolutePath(*assets.find(id));                  // wherever it is now
 ```
 
 ## .meta files
 
-`barn.glb` gets `barn.glb.meta`:
+`door.glb` gets `door.glb.meta`:
 
 ```json
 {
@@ -71,7 +71,7 @@ nothing of the database itself.
 | Lookup | Returns |
 | --- | --- |
 | `find(id)` | The asset with that id, or null |
-| `findByPath("assets/models/barn.glb")` | The asset at that path (relative to the root), or null |
+| `findByPath("assets/models/door.glb")` | The asset at that path (relative to the root), or null |
 | `absolutePath(record)` | Where its file is on disk |
 
 Each `AssetRecord` has its `id`, `path`, `kind` and `settings`. The kind comes

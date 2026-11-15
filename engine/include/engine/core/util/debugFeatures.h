@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 namespace sfs::debugFeatures
 {
 
@@ -34,5 +36,39 @@ void allow(bool allowed);
 
 /** Whether debug features may run: compiled in and allowed. */
 bool enabled();
+
+/**
+ * Whether the transform check runs: after the transform pass, every cached
+ * world matrix (WorldTransformComponent) is compared with one composed afresh,
+ * as is each cached read in the render phase (hierarchy::cachedWorldMatrix());
+ * a mismatch is logged once per entity. It catches a transform written after
+ * the pass, and any bug in the cache. Off unless the environment sets
+ * SFS_CHECK_TRANSFORMS=1 or setCheckTransforms() turns it on, and always off
+ * when enabled() is false. Costs a full recompute a frame while on.
+ */
+bool checkTransforms();
+
+/** Turn the transform check (checkTransforms()) on or off, as tests do. */
+void setCheckTransforms(bool on);
+
+/**
+ * Whether the sends of an event type are logged (sfs::Events: each send's
+ * type, number and frame, and a worker's with its thread). The environment's
+ * SFS_LOG_EVENTS lists the types, comma separated, by name with or without
+ * their namespaces (`FieldCellChanged,AgentEvent`), or `*` for every type;
+ * setLogEvents() replaces the list. Asked as a type's queue is made, so a
+ * change applies to queues made after it. Always false when enabled() is
+ * false.
+ * @param typeName the event type's name, for people ("farm::FieldCellChanged")
+ * @return whether its sends are logged
+ */
+bool logEvents(std::string_view typeName);
+
+/**
+ * Replace the list of event types logEvents() logs, as SFS_LOG_EVENTS would
+ * (tests do).
+ * @param types the types, comma separated, or `*`; empty: none
+ */
+void setLogEvents(std::string_view types);
 
 } // namespace sfs::debugFeatures

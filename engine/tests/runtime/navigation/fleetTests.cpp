@@ -1,15 +1,19 @@
 #include "../../testHarness.h"
 
+#include <engine/core/logger/logger.h>
 #include <engine/runtime/navigation/fleet.h>
 #include <engine/runtime/navigation/vehicle/follower.h>
 #include <engine/runtime/navigation/vehicle/speedProfile.h>
 #include <engine/runtime/navigation/vehicle/vehicleKind.h>
+#include <engine/runtime/navigation/vehicle/vehicleModel.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <memory>
+#include <thread>
 
 using namespace sfs::nav;
 
@@ -32,12 +36,8 @@ BoxSpace::Solid wall(glm::vec2 lo, glm::vec2 hi, uint64_t id)
   return {0.5f * (lo + hi), 0.5f * (hi - lo), 0.0f, 0.0f, 2.0f, false, id};
 }
 
-Fleet::Settings deterministic()
-{
-  Fleet::Settings s;
-  s.threads = 0; // (plans in update(): the same every run)
-  return s;
-}
+// (No scheduler: plans run in update(), the same every run.)
+Fleet::Settings deterministic() { return Fleet::Settings{}; }
 
 bool touching(const Fleet& f, Fleet::AgentId a, Fleet::AgentId b)
 {
@@ -132,6 +132,49 @@ restOf(const AgentPath& path, const AgentSpec& spec, float s, float speed)
                    vehicle::modelOf(spec),
                    std::numeric_limits<float>::infinity(),
                    std::abs(speed));
+  return std::make_shared<vehicle::VehicleAgentPath>(std::move(p));
+}
+
+// A game's path for `spec`: `first` m straight from `from` along `heading`
+// (backing up, < 0), a turn of `angle` rad (+ left) at `radius`, then
+// `then` m straight.
+std::shared_ptr<const AgentPath> turnPath(const AgentSpec& spec,
+                                          glm::vec2 from,
+                                          float heading,
+                                          float first,
+                                          float radius,
+                                          float angle,
+                                          float then)
+{
+  vehicle::VehiclePath p;
+  glm::vec2 at = from;
+  float h = heading, s = 0.0f;
+  const float step = 0.1f;
+  const int gear = first < 0.0f ? -1 : 1;
+  first = std::abs(first);
+  const auto put = [&](float curvature)
+  {
+    vehicle::PathPoint q;
+    q.s = s;
+    q.pose = {at, h};
+    q.curvature = curvature;
+    q.gear = gear;
+    p.points.push_back(q);
+  };
+  put(0.0f);
+  const float turn = std::abs(angle) * radius;
+  const float k = (angle < 0.0f ? -1.0f : 1.0f) / radius;
+  for (float d = step; d <= first + turn + then + 1.0e-4f; d += step)
+  {
+    const bool turning = d > first && d <= first + turn;
+    if (turning)
+      h += k * step;
+    at += float(gear) * step * glm::vec2(std::cos(h), std::sin(h));
+    s += step;
+    put(turning ? k : 0.0f);
+  }
+  p.start = p.points.front().pose;
+  vehicle::profile(p, vehicle::modelOf(spec));
   return std::make_shared<vehicle::VehicleAgentPath>(std::move(p));
 }
 
@@ -729,6 +772,174 @@ int main()
     CHECK(f.counters(1).waitSpots == 0);
   }
 
+  // Deadlocks (D3b). A one-lane yard lane, closed at its east end, a bay off
+  // its north side near its west end and a shed bay off its south side at
+  // its east end (where the higher one is going). Two coming head-on along
+  // it can't pass: the lower one has nowhere clear of the higher one's way
+  // (all the lane on east of it, and the shed bay), so each stands for the
+  // other: a wait-for cycle. The next lowest that can (the higher one)
+  // backs into the north bay clear of the other's way, lets it through, and
+  // goes on: the farm hands in a yard, one backs off to somewhere actually
+  // clear.
+  const auto yardLane = []
+  {
+    return std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{
+        wall({-61.0f, -3.2f}, {30.0f, -2.2f}, 1), // south side, west of shed
+        wall({38.0f, -3.2f}, {40.0f, -2.2f}, 9),  // south side, east of shed
+        wall({-61.0f, 2.2f}, {-32.0f, 3.2f}, 2),  // north side, west of bay
+        wall({-22.0f, 2.2f}, {40.0f, 3.2f}, 3),   // north side, east of bay
+        wall({39.0f, -3.2f}, {40.0f, 3.2f}, 5),   // east end (the west's open)
+        wall({-33.0f, 2.2f}, {-32.0f, 11.0f}, 6), // the north bay
+        wall({-22.0f, 2.2f}, {-21.0f, 11.0f}, 7),
+        wall({-33.0f, 10.0f}, {-21.0f, 11.0f}, 8),
+        wall({29.0f, -12.0f}, {30.0f, -2.2f}, 10), // the shed bay: one wide
+        wall({38.0f, -12.0f}, {39.0f, -2.2f}, 11),
+        wall({29.0f, -12.0f}, {39.0f, -11.0f}, 12)});
+  };
+  // (The higher one's goal: in the shed bay, facing in.)
+  const AgentGoal shed{{{34.0f, -5.0f}, -kPi / 2}};
+  // Runs till all arrive (or `seconds`): touches, and whether all arrived.
+  const auto runAll = [](Fleet& f, float seconds, int& touches)
+  {
+    touches = 0;
+    const std::vector<Fleet::AgentId> ids = f.ids();
+    for (float t = 0.0f; t < seconds; t += 1.0f / 30.0f)
+    {
+      f.update(1.0 / 30.0);
+      f.takeEvents();
+      bool all = true;
+      for (std::size_t i = 0; i < ids.size(); ++i)
+      {
+        all = all && f.state(ids[i]) == Fleet::State::Arrived;
+        for (std::size_t j = i + 1; j < ids.size(); ++j)
+          touches += touching(f, ids[i], ids[j]);
+      }
+      if (all)
+        return true;
+    }
+    return false;
+  };
+
+  TEST("a 2-agent yard deadlock (head-on in a closed lane, the lower one "
+       "with nowhere to go): the higher backs into the bay, both arrive")
+  {
+    Fleet f(deterministic());
+    f.setWorld({yardLane(), nullptr, nullptr});
+    f.add(1, car(), {{-10.0f, 0.0f}, 0.0f});
+    f.setPriority(1, 5);
+    f.add(2, car(), {{10.0f, 0.0f}, kPi});
+    f.requestGoal(1, shed);
+    f.requestGoal(2, {{{-72.0f, 0.0f}, kPi}});
+    int touches = 0;
+    const bool arrived = runAll(f, 240.0f, touches);
+    CHECK(arrived);
+    CHECK(touches == 0);
+    const Fleet::DeadlockStats d = f.deadlockStats();
+    CHECK(d.found >= 1);
+    CHECK(d.broken == d.found);
+    CHECK(d.longest <= 10.0f);
+    // (The lower one tried first and couldn't; the higher one gave way once.)
+    CHECK(f.counters(2).waitSpots >= 1);
+    CHECK(f.counters(2).deadlockYields == 0);
+    CHECK(f.counters(1).deadlockYields == 1);
+  }
+
+  TEST("a 3-agent yard deadlock (two in a queue meeting one head-on): the "
+       "lowest in the cycle can't, the next yields clear of the whole "
+       "queue, all arrive, nobody touches")
+  {
+    Fleet f(deterministic());
+    f.setWorld({yardLane(), nullptr, nullptr});
+    f.add(1, car(), {{-10.0f, 0.0f}, 0.0f});
+    f.setPriority(1, 5);
+    f.add(2, car(), {{8.0f, 0.0f}, kPi});
+    f.setPriority(2, 3);
+    f.add(3, car(), {{18.0f, 0.0f}, kPi});
+    f.requestGoal(1, shed);
+    f.requestGoal(2, {{{-72.0f, 5.0f}, kPi}});
+    f.requestGoal(3, {{{-72.0f, -5.0f}, kPi}});
+    int touches = 0;
+    const bool arrived = runAll(f, 300.0f, touches);
+    CHECK(arrived);
+    CHECK(touches == 0);
+    const Fleet::DeadlockStats d = f.deadlockStats();
+    CHECK(d.found >= 1);
+    CHECK(d.broken == d.found);
+    CHECK(d.longest <= 10.0f);
+    CHECK(f.counters(1).deadlockYields == 1);
+    CHECK(f.counters(2).deadlockYields == 0);
+    CHECK(f.counters(3).deadlockYields == 0);
+  }
+
+  TEST("a 2-agent yard deadlock where the lowest can get out of the way: "
+       "it yields, the higher one never does")
+  {
+    // (The bay is east of both: the lower one, coming from the east, can
+    // back into it; the higher one, west of the lower one, can't reach it.)
+    Fleet f(deterministic());
+    f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{
+                    wall({-46.0f, -3.2f}, {61.0f, -2.2f}, 1),
+                    wall({-46.0f, 2.2f}, {22.0f, 3.2f}, 2),
+                    wall({32.0f, 2.2f}, {61.0f, 3.2f}, 3),
+                    wall({-46.0f, -3.2f}, {-45.0f, 3.2f}, 4),
+                    wall({60.0f, -3.2f}, {61.0f, 3.2f}, 5),
+                    wall({21.0f, 2.2f}, {22.0f, 11.0f}, 6),
+                    wall({32.0f, 2.2f}, {33.0f, 11.0f}, 7),
+                    wall({21.0f, 10.0f}, {33.0f, 11.0f}, 8)}),
+                nullptr,
+                nullptr});
+    f.add(1, car(), {{-10.0f, 0.0f}, 0.0f});
+    f.setPriority(1, 5);
+    f.add(2, car(), {{10.0f, 0.0f}, kPi});
+    f.requestGoal(1, {{{50.0f, 0.0f}, 0.0f}});
+    f.requestGoal(2, {{{-35.0f, 0.0f}, kPi}});
+    int touches = 0;
+    const bool arrived = runAll(f, 240.0f, touches);
+    CHECK(arrived);
+    CHECK(touches == 0);
+    CHECK(f.counters(1).deadlockYields == 0);
+    CHECK(f.counters(1).waitSpots == 0);
+    CHECK(f.counters(2).waitSpots >= 1);
+    CHECK(f.deadlockStats().longest <= 10.0f);
+  }
+
+  TEST("crossing a higher one's way it will have cleared in time: the lower "
+       "one eases off and drives through behind it, never standing")
+  {
+    Fleet f(deterministic());
+    f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
+                nullptr,
+                nullptr});
+    f.add(1, car(), {{-30.0f, 0.0f}, 0.0f});
+    f.setPriority(1, 5);
+    f.setPath(1, straightPath(-30.0f, 40.0f, 0.0f));
+    f.add(2, car(), {{0.0f, -30.0f}, kPi / 2});
+    f.setPath(2, linePath({0.0f, -30.0f}, kPi / 2, 60.0f));
+    float slowest = 1.0e9f, fastest = 0.0f;
+    bool eased = false;
+    int touches = 0;
+    for (int i = 0; i < 30 * 60; ++i)
+    {
+      f.update(1.0 / 30.0);
+      f.takeEvents();
+      touches += touching(f, 1, 2);
+      const float v = std::abs(f.speed(2));
+      eased = eased || std::isfinite(f.traffic().scheduleOf(2).easeTo);
+      if (fastest > 1.0f && f.pose(2).position.y < 5.0f)
+        slowest = std::min(slowest, v);
+      fastest = std::max(fastest, v);
+      if (f.state(1) == Fleet::State::Arrived &&
+          f.state(2) == Fleet::State::Arrived)
+        break;
+    }
+    CHECK(eased);
+    CHECK(touches == 0);
+    CHECK(slowest > 0.5f);
+    // (Only its first frame, at rest before it set off.)
+    CHECK(f.counters(2).heldSeconds < 0.05f);
+    CHECK(f.state(2) == Fleet::State::Arrived);
+  }
+
   TEST("the speed profile should keep to a caller's limit per point")
   {
     vehicle::VehiclePath p;
@@ -898,6 +1109,232 @@ int main()
     f.requestGoal(1, {{{at.position.x + 10.0f, 0.0f}, 0.0f}});
     run(f, 60.0f);
     CHECK(f.state(1) == Fleet::State::Arrived);
+  }
+
+  TEST("on the planning scheduler, an agent should never drive the clear way "
+       "so far: it stands till its finished plan is in, then drives that")
+  {
+    auto scheduler = std::make_shared<PlanScheduler>();
+    Fleet::Settings settings;
+    settings.nodeBudget = 300; // (searches on past several partial rounds)
+    Fleet f(settings, scheduler);
+    const World world{std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{
+                          wall({10.0f, -8.0f}, {11.0f, 8.0f}, 7)}),
+                      nullptr,
+                      nullptr};
+    f.setWorld(world);
+    f.add(1, car(), {{0.0f, 0.0f}, 0.0f});
+    PlanAsk ask;
+    ask.world = world;
+    ask.from = {{0.0f, 0.0f}, 0.0f};
+    ask.goals = {{{{22.0f, 0.0f}, 0.0f}}};
+    ask.nodeBudget = settings.nodeBudget;
+    ask.budgetCap = settings.budgetCap;
+    int partials = 0;
+    const AgentPlan whole = AgentKinds::find("vehicle")->plan(
+        car(), ask, [&](const AgentPlan&) { ++partials; });
+    CHECK(whole.state == PlanState::Found);
+    CHECK(partials > 0); // (the search did hand over clear ways so far)
+    f.requestGoal(1, {{{22.0f, 0.0f}, 0.0f}});
+    bool movedEarly = false, planned = false;
+    for (int i = 0; i < 4000 && !f.path(1); ++i)
+    {
+      f.update(1.0 / 60.0);
+      planned = planned || f.state(1) == Fleet::State::Planning;
+      if (!f.path(1)) // (no finished plan yet: it hasn't moved)
+        movedEarly = movedEarly || std::abs(f.speed(1)) > 0.0f ||
+                     glm::length(f.pose(1).position) > 1e-4f;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(planned);
+    CHECK(!movedEarly);
+    CHECK(f.path(1) != nullptr);
+    if (f.path(1) && whole.path)
+      CHECK(std::abs(f.path(1)->length() - whole.path->length()) < 1e-4f);
+    run(f, 60.0f);
+    CHECK(f.state(1) == Fleet::State::Arrived);
+  }
+
+  TEST("look-ahead: the next way should be planned from where its path ends, "
+       "needed by when it gets there")
+  {
+    auto scheduler = std::make_shared<PlanScheduler>();
+    Fleet f(Fleet::Settings{}, scheduler);
+    f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
+                nullptr,
+                nullptr});
+    f.add(1, car(), {{0.0f, 0.0f}, 0.0f});
+    f.setPath(1, straightPath(0.0f, 30.0f, 0.0f));
+    f.update(1.0 / 60.0);
+    PlanAsk ask;
+    ask.goals = {{{{30.0f, 20.0f}, 1.5708f}}};
+    CHECK(f.planAhead(1, ask));
+    CHECK(f.planningAhead(1));
+    std::optional<AgentPlan> next;
+    for (int i = 0; i < 4000 && !next; ++i)
+    {
+      next = f.ahead(1);
+      if (!next)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(next.has_value());
+    CHECK(!f.planningAhead(1));
+    if (next && next->path && !next->path->samples.empty())
+    {
+      CHECK(next->state == PlanState::Found);
+      CHECK(glm::length(next->path->samples.front().pose.position -
+                        glm::vec2(30.0f, 0.0f)) < 1e-3f);
+    }
+    // (It drives the first to its end, then the one planned ahead.)
+    run(f, 30.0f);
+    CHECK(f.state(1) == Fleet::State::Arrived);
+    if (next && next->path)
+      f.setPath(1, next->path);
+    run(f, 60.0f);
+    CHECK(glm::length(f.pose(1).position - glm::vec2(30.0f, 20.0f)) < 0.1f);
+  }
+
+  TEST("a game's way handed back for a static obstacle, back the same from "
+       "its game: not handed back again (no identical re-plan), stood short "
+       "of it; a different way is")
+  {
+    Fleet f(deterministic());
+    f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
+                nullptr,
+                nullptr});
+    f.add(1, car(), {{0.0f, 0.0f}, 0.0f});
+    f.add(2, car(), {{20.0f, 0.0f}, 0.0f});
+    const auto handBacks = [&](int frames)
+    {
+      int n = 0;
+      for (int frame = 0; frame < frames; ++frame)
+      {
+        f.update(1.0 / 30.0);
+        for (const Fleet::Event& e : f.takeEvents())
+          n += e.kind == Fleet::Event::Kind::NeedsPlan && e.agent == 1 &&
+               e.other == 2;
+        CHECK(!touching(f, 1, 2));
+      }
+      return n;
+    };
+    f.setPath(1, straightPath(0.0f, 40.0f, 0.0f));
+    CHECK(handBacks(30 * 10) == 1);
+    // (Its game planned it again and got the same way: once only.)
+    f.setPath(1, straightPath(0.0f, 40.0f, 0.0f));
+    CHECK(handBacks(30 * 10) == 0);
+    CHECK(f.pose(1).position.x < 20.0f - 4.6f);
+    // (A different way into it: handed back again.)
+    f.setPath(1, straightPath(f.pose(1).position.x, 30.0f, 0.0f));
+    CHECK(handBacks(30 * 10) == 1);
+  }
+
+  TEST("a deadlock nobody can get out of: the lowest stands, a static "
+       "obstacle; the same ones forming it again aren't news (logged once)")
+  {
+    // (Nose to nose 0.1 m apart, each a game's way on into the other, their
+    // games holding them (speed cap 0): neither can go to a wait spot.)
+    Fleet f(deterministic());
+    f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{}),
+                nullptr,
+                nullptr});
+    f.add(1, car(), {{0.0f, 0.0f}, 0.0f});
+    f.add(2, car(), {{7.3f, 0.0f}, kPi});
+    f.setSpeedCap(1, 0.0f);
+    f.setSpeedCap(2, 0.0f);
+    int warned = 0;
+    const sfs::Logger::SinkId sink = sfs::Logger::addSink(
+        [&](sfs::Logger::Level level, const std::string& message)
+        {
+          if (level == sfs::Logger::Level::WARN &&
+              message.find("nobody in it can get out") != std::string::npos)
+            ++warned;
+        });
+    for (int round = 0; round < 3; ++round)
+    {
+      f.setPath(1, straightPath(0.0f, 30.0f, 0.0f));
+      f.setPath(2, linePath({7.3f, 0.0f}, kPi, 30.0f));
+      for (int frame = 0; frame < 30 * 8; ++frame)
+      {
+        f.update(1.0 / 30.0);
+        f.takeEvents();
+      }
+      CHECK(!touching(f, 1, 2));
+    }
+    sfs::Logger::removeSink(sink);
+    // (Its members planned again each round (stuck no more), the same ones
+    // stand nobody able to give way again: no news.)
+    CHECK(f.deadlockStats().found >= 1u);
+    CHECK(warned == 1);
+  }
+
+  TEST("a cart standing in a working machine's way, head-on: it goes to a "
+       "wait spot across the machine's turn; held in its way on the way "
+       "there it would only be in its way, so it goes on out and the "
+       "machine stands short of its way out: nobody touches or comes closer "
+       "than the gap, nobody's stood at once, the machine never gives way, "
+       "no deadlock")
+  {
+    // (The yard near-miss: a combine (a wide header ahead of its body)
+    // coming east and turning right, south; a cart in its way facing it.
+    // Its way to a wait spot crossed the combine's turn; held by the
+    // combine's reservation half way out, it was stood at once in its way
+    // and the combine's header came within cm of it.)
+    AgentSpec combine = car();
+    combine.boxes = {{-3.0f, 2.35f, 1.75f, 0.0f, 0.0f, 4.0f},
+                     {1.9f, 4.4f, 3.17f, 0.0f, 0.6f, 2.8f}};
+    combine.minRadius = 6.0f;
+    combine.wheelbase = 3.5f;
+    combine.topSpeed = 4.0f;
+    AgentSpec cart = car();
+    cart.boxes = {{-1.1f, 3.86f, 1.31f, 0.0f, 0.0f, 3.56f}};
+    cart.topSpeed = 2.5f;
+    for (const float from : {1.0f, 3.0f})
+    {
+      Fleet f(deterministic());
+      // (Walled in to the south but for the combine's way south.)
+      f.setWorld({std::make_shared<BoxSpace>(std::vector<BoxSpace::Solid>{
+                      wall({-40.0f, -40.0f}, {2.0f, -5.0f}, 1),
+                      wall({12.0f, -40.0f}, {40.0f, -5.0f}, 2)}),
+                  nullptr,
+                  nullptr});
+      f.add(1, combine, {{-from, 0.0f}, 0.0f});
+      f.setPriority(1, 5);
+      f.add(2, cart, {{10.0f, -1.0f}, kPi});
+      f.setPath(
+          1,
+          turnPath(combine, {-from, 0.0f}, 0.0f, from, 7.0f, -kPi / 2, 30.0f));
+      f.setPath(
+          2, turnPath(cart, {10.0f, -1.0f}, kPi, 20.0f, 6.0f, 0.0f, 0.0f));
+      float least = std::numeric_limits<float>::infinity();
+      int touches = 0;
+      for (float t = 0.0f; t < 60.0f; t += 1.0f / 30.0f)
+      {
+        f.update(1.0 / 30.0);
+        f.takeEvents();
+        least = std::min(least, gapBetween(f, 1, 2));
+        touches += touching(f, 1, 2);
+        if (f.state(1) == Fleet::State::Arrived)
+          break;
+      }
+      std::printf("yard near-miss (combine %.0f m off): least gap %.3f m, "
+                  "cart wait spots %d, hard stops %d/%d, combine held "
+                  "%.1f s\n",
+                  from,
+                  least,
+                  f.counters(2).waitSpots,
+                  f.counters(1).hardStops,
+                  f.counters(2).hardStops,
+                  f.counters(1).heldSeconds);
+      CHECK(f.state(1) == Fleet::State::Arrived);
+      CHECK(touches == 0);
+      CHECK(least >= vehicle::Tunables{}.gap);
+      CHECK(f.counters(1).waitSpots == 0);
+      CHECK(f.counters(1).deadlockYields == 0);
+      CHECK(f.counters(2).waitSpots >= 1);
+      CHECK(f.counters(1).hardStops == 0);
+      CHECK(f.counters(2).hardStops == 0);
+      CHECK(f.deadlockStats().found == 0);
+    }
   }
 
   return testing::report("fleetTests");

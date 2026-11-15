@@ -23,10 +23,10 @@ into one mesh with `meshes::append`:
 ```cpp
 #include "engine/core/rendering/meshPrimitives.h"
 
-sfs::MeshData barn = sfs::meshes::box({8, 6, 4}, red);
-sfs::meshes::append(barn,
-                    sfs::meshes::prism({8.8f, 7, 2.6f}, slate),
-                    glm::translate(glm::mat4(1.0f), {0, 0, 4}));
+sfs::MeshData house = sfs::meshes::box({8, 6, 4}, red);
+sfs::meshes::append(house,
+                     sfs::meshes::prism({8.8f, 7, 2.6f}, slate),
+                     glm::translate(glm::mat4(1.0f), {0, 0, 4}));
 ```
 
 Primitives sit on the Z = 0 plane: a box's base is at Z = 0, not its centre. So
@@ -51,7 +51,7 @@ Upload a mesh through the render system's `MeshLibrary`. It returns a
 render system.
 
 ```cpp
-const sfs::MeshHandle barnMesh = render.meshes().add(barn);
+const sfs::MeshHandle houseMesh = render.meshes().add(house);
 ```
 
 ### Loading models in the background
@@ -86,16 +86,16 @@ Give an entity a `TransformComponent` and a `MeshRendererComponent`:
 sfs::TransformComponent transform{{-12.0f, 5.0f, 0.0f}};
 transform.setYaw(0.3f);
 
-sfs::Entity barn = scene.createEntity();
-barn.addComponent<sfs::TransformComponent>(transform);
-barn.addComponent<sfs::MeshRendererComponent>(sfs::MeshRendererComponent{barnMesh});
+sfs::Entity house = scene.createEntity();
+house.addComponent<sfs::TransformComponent>(transform);
+house.addComponent<sfs::MeshRendererComponent>(sfs::MeshRendererComponent{houseMesh});
 ```
 
 A child entity draws relative to its parent; see
 [Parents & children](../../../core/hierarchy/index.md).
 
 `MeshModule` batches every entity that shares a mesh into one instanced draw. A
-field of 200 crops of one kind costs one draw call. Each instance is culled
+forest of 200 trees of one kind costs one draw call. Each instance is culled
 twice: against the camera, for the lit pass, and against the sun's shadow
 volume, for the shadow pass. An object just off screen can still cast a shadow
 onto visible ground.
@@ -111,6 +111,26 @@ onto visible ground.
 | `lightRange` | How far its emission lights things (1: as far as that much glow reaches) |
 | `lightCastsShadows` | Whether things block its emission's light |
 | `emissionColor`, `emission` | A glow of its own, all over it, on top of its materials' emission (0: none; above 1 blooms). For a lamp switched on and off from a script, without a material for each state. It lights nothing round it: give the lamp a light for that. |
+
+### Mesh bounds
+
+A system that needs a mesh's size, or a box around an entity in the world,
+reads the renderer's `bounds` (Unity's `Renderer.localBounds`, Godot's
+`get_aabb()`): the mesh's bounds in its own space, which the render system
+fills in at the start of its update once the mesh is in its library.
+
+```cpp
+const auto* renderer = entity.getComponent<sfs::MeshRendererComponent>();
+if (!renderer || renderer->bounds.empty())
+  return; // none, or still loading: try again next frame
+const sfs::Aabb world = renderer->bounds.transformed(sfs::hierarchy::worldMatrix(entity));
+```
+
+They are empty until the mesh has loaded, and for a handle the library doesn't
+know. A mesh assigned during a frame gets its bounds at the next update (the
+render system updates first in a `StandardScene`), and a changed `mesh` gets
+new ones then. A skinned mesh's bounds are as bound, not as posed. `boundsOf`
+is the mesh they were taken from.
 
 Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
@@ -149,7 +169,7 @@ model's +x turned 360 k / frames degrees anticlockwise. `MeshModule` turns it to
 the camera and shows the frame nearest the view's direction through the
 instance's `uvRect`. Bake its normals in the frame's
 own tangent space (x the view's right, y up, z toward the viewer), and it's lit
-like the model. CozyFarm's `tools/trees` generator writes trees this way.
+like the model.
 
 ## Materials
 
@@ -265,7 +285,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `puddleDepth` | How deep water stands in a low spot at full, in metres above its lowest point (or to its brim, if shallower) (0.05) |
 | `microRelief` | Shallow dips this deep (metres) scattered over the ground, drawn only, so flat ground has low spots too (0) |
 | `microReliefSize` | About how wide those dips are, in metres (3) |
-| `deformable` | Pressed in where things go over it: tyre tracks, furrows, footprints (false). See [Deformation](#deformation) |
+| `deformable` | Pressed in where things go over it: tyre tracks, ruts, footprints (false). See [Deformation](#deformation) |
 
 How it draws (`meshTerrainSurface.wgsl`): each layer's textures lie over the
 world's XY from above, `tileSize` across, so ground of any size keeps its
@@ -372,7 +392,7 @@ textures) by Fresnel, and catches the sun's glint. Rain's ripples ring it. The
 ground shows through browner and murkier the deeper the water is, and a band
 just above the water line is soaked darker (Surface's `soak`). Grass blades
 aren't kept out of puddles: give the layers grass grows on a low `puddles`
-(the farm's dirt and paths have no grass anyway).
+(dirt and paths usually have no grass anyway).
 
 The renderer gets each window with `IRenderer::setTerrainPuddles(material,
 TerrainPuddles)` (the ground under it and the settings), kept with the
@@ -384,7 +404,7 @@ mesh its own terrain material. The CPU side is in
 #### Deformation
 
 A `deformable` terrain is pressed in where things go over it, and stays so:
-tyre tracks with their lugs in them, an implement's furrows, footprints.
+tyre tracks with their lugs in them, a sledge's runners, footprints.
 `DeformationModule` (one of a standard scene's render modules) keeps a
 **deformation map** for each such entity (`engine/core/rendering/deformation.h`):
 how far its ground is pressed in (negative) or pushed up, 3 cm a texel, in
@@ -394,40 +414,42 @@ it's driven over; it's plain data on the CPU.
 
 **Deformers.** A `DeformerComponent` presses in wherever its meshes touch the
 ground: the entity's own and, with `children`, its children's (put one on a
-tractor prefab's root and its wheels and implement all deform; its body never
-reaches the ground). As one of its meshes moves, the mesh's underside (what's
-seen of it from below, near the ground: lugs, tines, a roller), looked at
-sixteen times a texel so edges slope rather than step, presses the ground down
-to `sinkDepth` below it. It presses again once it's gone a little way, not
-each frame, so what it costs goes with the distance driven, not the frame
-rate, and a parked one costs nothing: one rolling (a wheel, a disc) pressed
-where it is, often enough that its ruts come within a millimetre of as deep
-(each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30); one sliding (a
-tine, a plough body) each 6 cm (its underside found afresh, as it bobs), or as
-soon as it's lowered or turned enough to move any of it a texel, pressed all
-along the way it went, a texel at a time (its underside moved back along it),
-so it cuts an unbroken furrow rather than a row of dimples, its ridges even
-along it. With the game going fast (`Registry::timeScale()`), a mesh goes
-further between frames: a rolling one is pressed each stride along the way it
-went too, and either is pressed at most 16 times a frame (4 rolling), each
+bulldozer prefab's root and its tracks and blade all deform; its body never
+reaches the ground). Each frame only meshes with a deformer of their own, or
+with a parent, are looked at, in id order: a mesh with neither, such as a lone
+tree or the ground, costs the deformation nothing. As one of its meshes moves,
+the mesh's underside (what's seen of it from below, near the ground: lugs,
+treads, a roller), looked at sixteen times a texel so edges slope rather than
+step, presses the ground down to `sinkDepth` below it. It presses again once
+it's gone a little way, not each frame, so what it costs goes with the distance
+driven, not the frame rate, and a parked one costs nothing: one rolling (a
+wheel, a disc) pressed where it is, often enough that its ruts come within a
+millimetre of as deep (each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30);
+one sliding (a blade, a sledge's runner) each 6 cm (its underside found afresh,
+as it bobs), or as soon as it's lowered or turned enough to move any of it a
+texel, pressed all along the way it went, a texel at a time (its underside moved
+back along it), so it cuts an unbroken groove rather than a row of dimples, its
+ridges even along it. With the game going fast (`Registry::timeScale()`), a mesh
+goes further between frames: a rolling one is pressed each stride along the way
+it went too, and either is pressed at most 16 times a frame (4 rolling), each
 press the lowest of its share of the places, so tracks stay unbroken at any
-speed; one that went further than 25 m/s of game time could take it (or a
-metre) was put there, not driven, and is pressed only where it lands. A
-mesh is made ready for this once (its triangles grouped, so those nowhere
-near the ground aren't looked at, nor, on a closed solid, those facing up); a
-skinned one is taken as it's posed. The soil pressed out rises
-in a low ridge to the sides (`ridge`: the share of it; the rest compacts), at
-most 0.4 x `sinkDepth` high, or 0.4 x the rut a wheel's pressing, if deeper,
-and walls steeper than soil stands slump, around what it pressed. Nothing
-goes deeper than 0.5 m. Rest vehicles on the ground as it is: lowering one by
-its sink only presses it further each pass. In deep mud a game can let one
-sit down into the ground (say by how muddy it is there and how heavy the
-vehicle is, not by the rut it's making): its ruts go as deep as it sits plus
-its sink, its ridges higher, and its wheels sit in them.
+speed; one that went further than 25 m/s of game time could take it (or a metre)
+was put there, not driven, and is pressed only where it lands. A mesh is made
+ready for this once (its triangles grouped, so those nowhere near the ground
+aren't looked at, nor, on a closed solid, those facing up); a skinned one is
+taken as it's posed. The soil pressed out rises in a low ridge to the sides
+(`ridge`: the share of it; the rest compacts), at most 0.4 x `sinkDepth` high,
+or 0.4 x the rut a wheel's pressing, if deeper, and walls steeper than soil
+stands slump, around what it pressed. Nothing goes deeper than 0.5 m. Rest
+vehicles on the ground as it is: lowering one by its sink only presses it
+further each pass. In deep mud a game can let one sit down into the ground (say
+by how muddy it is there and how heavy the vehicle is, not by the rut it's
+making): its ruts go as deep as it sits plus its sink, its ridges higher, and
+its wheels sit in them.
 
 | DeformerComponent | Meaning (default) |
 | --- | --- |
-| `enabled` | Whether it deforms now, e.g. off while an implement's raised (true) |
+| `enabled` | Whether it deforms now, e.g. off while a blade's raised (true) |
 | `sinkDepth` | How far it sinks into the softest ground, metres: about its weight on its footprint (0.05) |
 | `softnessResponse` | How much the soil's softness changes that: 0 always `sinkDepth`, 1 `sinkDepth` x the softness (0.8) |
 | `ridge` | The share of the soil it presses out that's pushed up alongside (0.5) |
@@ -451,6 +473,10 @@ game's grid cell, slopes over a block).
 - `relax(ground, smooth, fade)` weathers the tracks: edges round off and
   ridges slump into ruts by `smooth`, and `fade` of what's left goes (call it
   after rain, or once a day).
+- `relax(ground, tiles, corners)` weathers only some tiles, each by its own
+  amount: `corners` (one per tile) is the smoothing at its four corners,
+  blended across it, so wet ground can weather while dry ground beside it
+  stays as it is (no fade). `map(ground)->tiles()` lists the tiles that exist.
 - `clearRegion(ground, polygon)` (or a rectangle) flattens it, e.g. where a
   field's been tilled.
 - `offsetAt(ground, point)` and `heightAt(ground, point)` read it (the
@@ -459,6 +485,9 @@ game's grid cell, slopes over a block).
   small steps between neighbours in few bytes) to keep with a saved game;
   `load(ground, bytes)` takes it back. It isn't saved with the scene.
 - `map(ground)` is the `DeformationMap` itself, to read or change directly.
+  `DeformationMap::takeRevised()` is its own list of tiles changed, kept apart
+  from the renderer's upload tracking, so a game can watch for changes (to
+  save, to replicate, to react to) without disturbing the GPU's.
 
 ```cpp
 auto* deformation = render.module<sfs::DeformationModule>();
@@ -960,7 +989,7 @@ its history, which would otherwise smear them away.
 #### Lightning
 
 `strikeLightning(LightningStrike)` sets off a strike (a 3D scene's). A game
-does it during storms (CozyFarm's weather does, more at a storm's height).
+does it during storms, more often at a storm's height.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -1128,7 +1157,7 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   (`IRenderer::updateGrassGround`), so there's no hitch. A window's texels sit
   on multiples of `kGrassTexel` from the mesh's origin, and blades are placed
   from the origin too, so they don't move when the window does. A field set
-  into a hole in the land (farmland in a landscape, say) meets the land's
+  into a hole in the land (a park in a landscape, say) meets the land's
   grass with no seam, as long as their edge lies on that lattice. Each window's
   maps start from `paint`; a game's changes to them last as long as the
   window.
@@ -1188,6 +1217,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   the GPU would show (`update()`), and let go once it's grown. The GPU keeps
   the blades as the maps grow to; the tiles over growing maps are grown each
   frame as they are now (`GrassMapsImage::now`, `kGrassTileActive`).
+  `SFS_GRASS_NOW` grows every tile that way, to check it looks the same as the
+  blades kept.
   A **cut** keeps its edge finer than a texel, as bounds are (a distance from
   the strip's edge, read between texels and cut at a half): a blade takes its
   length only from the texels on its own side of the line, so a mown edge is
@@ -1206,7 +1237,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   drawn the grass's colour (finely mottled) by how short it is, instead of
   letting the soil show between them, and short blades grow wider (up to
   1.8 times), stubbier tufts covering more ground with as many blades; worn
-  grass (less coverage) shows its soil again.
+  grass (less coverage) shows its soil again. `SFS_GRASS_NO_TURF` turns the
+  turf off, for a before and after.
   `GrassModule::lengthAt()` is how long the blades are at a point now.
 - **Sparse maps:** `GrassMaps` keeps each grid in 16 x 16 tiles
   (`GrassTiles`): a tile that's one value all over keeps just that, so wide
@@ -1370,8 +1402,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
 - **Trampling:** `GrassTrample` is a grid over the field's ground in the
   world. It's pressed by `GrassBender` spheres where they reach into the
   grass, and springs back over `recovery` seconds. Each update the module
-  gathers benders (rigid bodies that bend grass, as their colliders, and
-  `GrassBenderComponent`s). When the map changes, it sends it to the renderer
+  gathers benders (`GrassBenderComponent`s: fitted to their colliders, their
+  mesh, or a radius; nothing else bends grass). When the map changes, it sends it to the renderer
   as an image (`IRenderer::updateGrassTrample`).
 
 - **Shadows:** grass grows before the sun's shadow pass. Blades within
@@ -1403,7 +1435,9 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   frames read back, with the tiles' (grown from, built, kept, hidden, and
   their blades' buffer in use and in all). `SFS_GRASS_STATS=2` also counts the fragments drawn at
   each pixel (overdraw; it keeps the GPU from skipping hidden ones early, so
-  it's slower).
+  it's slower). `SFS_GRASS_GROWTH` logs each map's growth every 240 frames
+  instead: how many tiles are growing, how many are grown as they are now,
+  how many tiles that sends up, and how much memory the maps take.
 
 ## Debug settings
 
@@ -1416,6 +1450,13 @@ milliseconds every few seconds (the puddles' over the frames they ran in;
 0 when they didn't). `stats()` reports the last frame's draw calls,
 instances, shadow instances, point lights, and how many of those came from
 emission and cast shadows.
+
+`SFS_CPU_TIMING` does the same for the CPU side, logging named scopes'
+(`SFS_CPU_SCOPE("name")`, `engine/core/util/cpuTiming.h`) time and call count
+every few seconds; nested scopes count inside the ones around them. To catch a
+hitch rather than wait for the periodic log, `SFS_SLOW_FRAME_MS=<ms>` (with or
+without `SFS_CPU_TIMING`) logs a single "Slow frame" line, with its biggest
+scopes, for any frame that takes longer than that end to end.
 
 ## Read more
 

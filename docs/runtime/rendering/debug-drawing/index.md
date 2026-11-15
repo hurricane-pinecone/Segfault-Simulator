@@ -21,6 +21,10 @@ build)` or `off (release build)`). Configuring the engine with
 `-DSFS_DEBUG_FEATURES=OFF` compiles them out altogether. Engine code adding a
 debug feature checks `sfs::debugFeatures::enabled()` first.
 
+Besides the drawing below, `SFS_CHECK_TRANSFORMS=1` checks the cached world
+matrices against fresh ones every frame (see
+[Parents & children](../../../core/hierarchy/index.md#world-matrices)).
+
 ## Drawing colliders
 
 Tick **Scene Settings > Debug > Draw Colliders**. The scene saves it

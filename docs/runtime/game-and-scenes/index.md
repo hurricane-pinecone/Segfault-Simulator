@@ -123,8 +123,10 @@ protected:
 ```
 
 Inside a scene you have `createEntity()`, `createObject<T>()`, `addSystem<T>()` /
-`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, plus the engine
-services: `assetStore()` and `renderer()`, the backend's renderer. Without a
+`getSystem<T>()` / `tryGetSystem<T>()` / `hasSystem<T>()`, `events()` (the
+scene's [events](../../core/events/index.md): `events().send(E{...})`, and a
+reader made in an object's `onCreate` and kept; not SDL's `Game::onEvent`),
+plus the engine services: `assetStore()` and `renderer()`, the backend's renderer. Without a
 renderer (a headless host) `renderer()` is a fatal error (logged, and the game
 ends with a message); `tryRenderer()` returns null instead. See [Rendering](../rendering/index.md#scene-services).
 Without a `Space2D` the render system draws a 3D world; see
@@ -143,12 +145,55 @@ to its systems and game objects:
 processInput → update(dt) → render
 ```
 
-- **processInput** — `Game::onProcessInput`, then the scene's, then each
-  GameObject's `onProcessInput`.
-- **update** — `Game::onUpdate`, the scene's `onUpdate`, every enabled `System`'s
-  `update(dt)`, and each GameObject's `onUpdate`.
-- **render** — every `System`'s `render()` (this is where `RenderSystem` draws),
-  then `onRender`.
+- **processInput** — `Game::onProcessInput`, then each GameObject's
+  `onProcessInput` (without the keys other objects' input contexts claim; see
+  [Input contexts](#input-contexts)), then the scene's.
+- **update** — `Game::onUpdate`, the scene's flush (entities made or
+  destroyed last frame join or leave), the frame boundary of its
+  [events](../../core/events/index.md), every enabled `System`'s `update(dt)`, each
+  GameObject's `onUpdate`, the scene's `onUpdate`, and then every enabled
+  `System`'s `lateUpdate(dt)` (see
+  [ECS](../../core/ecs/index.md#late-update)).
+- **render** — every `System`'s `render()`, in the order they were added:
+  first the `TransformSystem`'s transform pass, which every scene has (it
+  caches each entity's world matrix; see
+  [World matrices](../../core/hierarchy/index.md#world-matrices)), then the
+  rest (this is where `RenderSystem` draws), then `onRender`. Nothing in the
+  render phase should write a `TransformComponent`.
+
+## Input contexts
+
+When several objects listen to the same keys (a driving mode wants the
+arrows, and so does a menu), an **`InputContextComponent`** on an object's
+entity says which keys are its own while it's active, as Unreal's input
+mapping contexts do:
+
+| Field | Meaning |
+| --- | --- |
+| `keys` | The keys it claims, by name as the `sfs::Key` enumerators are spelled: `"Space"`, `"Up"`, `"F8"`, `"W"`, `"Num1"` (case doesn't matter). An unknown name is logged once and skipped. |
+| `priority` | Higher wins a key. Contexts of equal priority share it. |
+| `active` | Whether it claims its keys now (turn it on as the mode starts) |
+
+```cpp
+// Driving: these keys are the drive's while the player is at the wheel.
+auto& context = entity().addComponent<sfs::InputContextComponent>();
+context.keys = {"W", "A", "S", "D", "Space", "Up", "Down"};
+context.priority = 2;
+context.active = false; // set while driving
+```
+
+Before input reaches the objects, the scene reads the active contexts once.
+Each object gets its own copy of the keyboard, without the keys claimed by an
+active context on another entity whose priority is higher than its own
+active context's. An object with no active context ranks below every context,
+so it loses every claimed key. An object always keeps its own context's keys.
+A withheld key reads as untouched: not held, pressed or released
+(`KeyboardInput::withhold()`). The scene's own `onProcessInput` sees every
+key, and the mouse is unaffected (the UI takes it first, as before).
+
+The contexts are read as they stand after the last frame, so a mode switch
+(getting into a machine) withholds keys from the next frame on.
+`sfs::keyFromName("Space")` turns a key's name into its `Key`.
 
 ## Putting it together
 

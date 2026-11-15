@@ -20,13 +20,16 @@ ComponentOps componentOps()
   ComponentOps ops;
   ops.has = [](const Entity& entity) { return entity.hasComponent<T>(); };
   ops.get = [](const Entity& entity) -> void*
-  { return entity.hasComponent<T>() ? &entity.getComponent<T>() : nullptr; };
+  { return entity.getComponent<T>(); };
   ops.add = [](const Entity& entity) { Entity(entity).addComponent<T>(); };
   ops.remove = [](const Entity& entity) { entity.removeComponent<T>(); };
+  ops.holders = [](Registry& registry) -> const std::vector<Entity>&
+  { return registry.query<T>(); };
   return ops;
 }
 
-/** A TypeInfo for component T, ready for fields to be appended. */
+/** A TypeInfo for component T, ready for fields to be appended. An empty T
+ * is a tag (TypeInfo::tag). */
 template <typename T>
 TypeInfo
 componentType(std::string name, std::string displayName, std::string module)
@@ -36,6 +39,7 @@ componentType(std::string name, std::string displayName, std::string module)
   type.displayName = std::move(displayName);
   type.module = std::move(module);
   type.kind = TypeKind::Component;
+  type.tag = std::is_empty_v<T>;
   type.component = componentOps<T>();
   return type;
 }

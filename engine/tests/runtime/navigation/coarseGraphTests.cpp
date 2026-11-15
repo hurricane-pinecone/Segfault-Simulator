@@ -115,5 +115,43 @@ int main()
     CHECK(far > 5.0f);
   }
 
+  TEST("withEdges should make the graph with new edges (worn tracks come "
+       "and go) as one built with them would be, leaving the old graph as it "
+       "was")
+  {
+    const BoxSpace s(std::vector<BoxSpace::Solid>{});
+    const auto g0 = CoarseGraph::build(s, {{-10.0f, -20.0f}, {50.0f, 20.0f}});
+    const CoarseGraph::Edge up{{0.0f, 0.0f}, {20.0f, 8.0f}, 0.3f, 3.0f};
+    const CoarseGraph::Edge down{{20.0f, 8.0f}, {40.0f, 0.0f}, 0.3f, 3.0f};
+    const CoarseGraph::Edge under{{0.0f, 0.0f}, {20.0f, -9.0f}, 0.25f, 3.0f};
+    const CoarseGraph::Edge back{{20.0f, -9.0f}, {40.0f, 0.0f}, 0.25f, 3.0f};
+    const auto g1 = g0->withEdges({up, down});
+    const auto g2 = g1->withEdges({down, under, back}); // (`up` gone)
+    const auto fresh =
+        CoarseGraph::build(s, {{-10.0f, -20.0f}, {50.0f, 20.0f}});
+    fresh->addEdge(down.a, down.b, down.factor, down.width);
+    fresh->addEdge(under.a, under.b, under.factor, under.width);
+    fresh->addEdge(back.a, back.b, back.factor, back.width);
+    const auto viaUp = g1->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f);
+    const auto viaUnder = g2->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f);
+    const auto built = fresh->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f);
+    float most = 0.0f, least = 0.0f;
+    for (const glm::vec2& p : viaUp)
+      most = std::max(most, p.y);
+    for (const glm::vec2& p : viaUnder)
+      least = std::min(least, p.y);
+    CHECK(most > 5.0f);
+    CHECK(least < -5.0f);
+    CHECK(viaUnder.size() == built.size());
+    bool same = viaUnder.size() == built.size();
+    for (std::size_t k = 0; same && k < built.size(); ++k)
+      same = glm::length(viaUnder[k] - built[k]) < 1e-5f;
+    CHECK(same);
+    CHECK(g2->edges().size() == 3u);
+    // (The one it was made from as it was: open ground, straight there.)
+    CHECK(g0->route({0.0f, 0.0f}, {40.0f, 0.0f}, 1.0f).size() == 2u);
+    CHECK(g1->edges().size() == 2u);
+  }
+
   return testing::report("coarseGraphTests");
 }

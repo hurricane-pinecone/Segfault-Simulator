@@ -17,7 +17,7 @@ public:
     return VStack(Alignment::Leading, {
                Text("Coins: " + std::to_string(coins)).font(Font::title()),
                HStack{
-                   Button("Buy seeds", [this] { buy(); }).disabled(coins < 10),
+                   Button("Buy potion", [this] { buy(); }).disabled(coins < 10),
                    Button("Sell", [this] { sell(); }),
                },
            })
@@ -35,9 +35,12 @@ private:
 ```
 
 A layer is a script: put it on an entity (Add Component → Script, as for any
-game object), and it shows while the scene plays. Its state is just its
-members, or the game's systems it reads; `body()` runs every frame, so the UI
-always shows the game as it is, with nothing to keep in sync. What it drew is
+game object), and it shows while the scene plays. Its own state is just its
+members. What it shows of the game it reads from components, and what a click
+asks for it writes into a component's request field for the system that owns
+it to act on: a layer never reads or calls a game system, the same rule as for
+systems. `body()` runs every frame, so the UI always shows the game as it is,
+with nothing to keep in sync. What it drew is
 kept, though: a frame whose `body()` comes out the same isn't laid out or
 drawn again, and one that's changed is only where it changed (see
 [Retained drawing](#retained-drawing)), so writing it this way costs next to
@@ -49,7 +52,7 @@ nothing while the UI stands still.
 | --- | --- |
 | `Text("…")` | A line of text, or several split at `\n` |
 | `Button("label", action)`, `Button(view, action)` | A button calling `action` when clicked |
-| `Image("file.png")`, `Image::mesh("farm:wheat")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit (see [Icons](#icons-and-tints)) |
+| `Image("file.png")`, `Image::mesh("game:coin")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit (see [Icons](#icons-and-tints)) |
 | `Image(picture)` | Pixels the game draws and changes, a `ui::Picture` (see [Pictures](#pictures)) |
 | `Image(texture)` | A picture the GPU draws, a `RenderTexture` such as a camera feed (see [Camera feeds](#camera-feeds)) |
 | `Image::placeholder()` | A soft box where a picture will be |
@@ -217,26 +220,23 @@ sharp squares.
 Image("icons/road_lights.png").tint(lamp.on ? kGreen : kUnlit).frame(16, 16)
 ```
 
-CozyFarm's tell-tale icons are in its `assets/icons/`, drawn by
-`tools/icons/make_icons.py`.
-
 ## Pictures
 
-A `ui::Picture` is pixels the game draws and changes, such as a combine's
-yield map: RGBA8, rows from the top, colours as they look on screen. Make one
-shared and keep it. Write its pixels (`set(x, y, color)`, `fill()`, or
+A `ui::Picture` is pixels the game draws and changes, such as a minimap:
+RGBA8, rows from the top, colours as they look on screen. Make one shared and
+keep it. Write its pixels (`set(x, y, color)`, `fill()`, or
 `pixels()` directly), then call `changed()`, and the next frame shows them:
 
 ```cpp
 // in the layer
-std::shared_ptr<sfs::ui::Picture> m_yield =
+std::shared_ptr<sfs::ui::Picture> m_map =
     std::make_shared<sfs::ui::Picture>(128, 128);
 
-m_yield->set(cellX, cellY, colourFor(yield));
-m_yield->changed();
+m_map->set(cellX, cellY, colourFor(tile));
+m_map->changed();
 
 // in a view
-Image(m_yield).resizable().interpolation(Interpolation::Nearest).frame(240, 240)
+Image(m_map).resizable().interpolation(Interpolation::Nearest).frame(240, 240)
 ```
 
 A change uploads its pixels again (all of them) and lays nothing out: the
@@ -247,18 +247,19 @@ grey checker.
 
 ## Camera feeds
 
-A camera feed films the scene into a small picture: a tractor's rear camera, a
-combine's grain tank. Put a `CameraFeedComponent` on an entity (a child of the
-machine, so it rides along); it looks along the entity's +X with +Z up, like a
-camera entity. Ask the render system for its picture, a
-`std::shared_ptr<const RenderTexture>`, and show it:
+A camera feed films the scene into a small picture: a car's rear-view camera, a
+security camera. Put a `CameraFeedComponent` on an entity (a child of the
+vehicle, so it rides along); it looks along the entity's +X with +Z up, like a
+camera entity. Its `picture`, a `std::shared_ptr<RenderTexture>` (as Unity's
+`Camera.targetTexture`), is what it films: the render system makes it at its
+first update after the feed appears, sized `width` by `height`, and resizes it
+when they change. A layer reads it from the component and shows it:
 
 ```cpp
-auto& render = scene().getSystem<sfs::RenderSystem>();
-m_rear = render.cameraFeed(rearCameraEntity); // made the first time
-
 // in a view
-Image(m_rear).resizable().frame(320, 180)
+const auto* feed = rearCamera.getComponent<sfs::CameraFeedComponent>();
+if (feed && feed->picture)
+  Image(feed->picture).resizable().frame(320, 180)
 ```
 
 The GPU draws it, and its pixels never come back to the CPU. Each new picture
@@ -266,7 +267,7 @@ lays nothing out, as with a `Picture`. It's filmed only while a UI shows it,
 at the component's `rate` (15 a second by default), one feed a frame. A feed
 nothing shows costs nothing. It's filmed in a cheaper way than the scene: the
 same light, sun and lamp shadows, sky, terrain and its deformation (ruts,
-furrows) and grass's ground. It has no bloom, depth of field, ambient
+footprints) and grass's ground. It has no bloom, depth of field, ambient
 occlusion, anti-aliasing over time or rain drops. Grass blades are left out
 unless its `grassBlades` is on, which grows them again for the feed, out to
 `grassReach`. Its first frame shown is dark grey, and filming starts on the
@@ -276,15 +277,15 @@ next one.
 
 A view of the game's own is a struct with a `View body() const`, made from its
 fields, like SwiftUI's `struct Badge: View`. Use it anywhere a view goes:
-`HStack{ Badge{.text = "New"}, Text("Wheat") }`. Keep such views in UI files:
+`HStack{ Badge{.text = "New"}, Text("Sword") }`. Keep such views in UI files:
 a header ending `.ui.h` and its source ending `.ui.cpp`, for example
-`scripts/ui/FarmViews.ui.h` and `FarmViews.ui.cpp`. The script compiler skips
+`scripts/ui/HudViews.ui.h` and `HudViews.ui.cpp`. The script compiler skips
 `.ui.h` headers, as nothing in them is a component. UI files should use only
 the engine and other UI files, never the game's scripts: a layer fills views in
 from the game, and views only show what they're given.
 
 ```cpp
-// scripts/ui/FarmViews.ui.h
+// scripts/ui/HudViews.ui.h
 struct ClockPanel
 {
   std::string time; // "9:19 am"
@@ -310,7 +311,7 @@ To see a view with real-looking values, or in another state, declare a
 preview beside it. It shows after the placeholders:
 
 ```cpp
-// scripts/ui/FarmViews.ui.cpp
+// scripts/ui/HudViews.ui.cpp
 static const sfs::ui::Preview pausedClock{
     "Paused", [] { return ClockPanel{.time = "6:00 pm", .day = 12}; }};
 ```
@@ -320,7 +321,7 @@ whole HUD, declare a preview style in the `.ui.cpp`. Every preview of that
 file is then shown in it, placeholders included:
 
 ```cpp
-static const sfs::ui::PreviewStyle farmLook{
+static const sfs::ui::PreviewStyle hudLook{
     [](sfs::ui::View view) { return view.font(Font::named("assets/fonts/Fredoka.ttf", 20)); }};
 ```
 
@@ -443,6 +444,10 @@ kept.
 For screenshots of a hover or press, `SFS_UI_POINTER=x,y` pins the UI's
 pointer at that point (in points from the top left), and `x,y,down` holds it
 down there too.
+
+For testing clicks, `SFS_UI_CLICK=help,frame` presses the middle of whatever
+has that text in its help, from that frame on, through the same hit testing
+the mouse uses, then lets go two frames later. It logs what it found there.
 
 Writing views stays as it was, with one thing to keep in mind: a view's look
 must come from its node, what it inherits, the theme, the State and the

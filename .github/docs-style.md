@@ -29,6 +29,16 @@ feedback once instead of repeating it on each PR.
 
 ## Snippets
 
-- Keep examples game-agnostic. Never reference the sample projects' code
-  (`samples/showcase3d`, `samples/platformer2d`, their scripts and scenes) in
-  snippets. Use neutral placeholders.
+- Keep every example generic: snippets, type and field names, log lines, and
+  the examples given in the prose. The engine serves any kind of game, so its
+  docs never use one genre's vocabulary or a particular game's types.
+  - Never use farming or any other game's terms: no farms, farm hands,
+    tractors, crops, fields of crops, harvests or seeds, and no types from a
+    game built on the engine.
+  - Never reference the sample projects' code (`samples/showcase3d`,
+    `samples/platformer2d`, their scripts and scenes).
+  - Use neutral names any game could have: `Player`, `Enemy`, `Health`,
+    `Door`, `Pickup`, `Projectile`, `Spawner`, `Inventory`, `DamageTaken`,
+    `ItemPicked`, `Vehicle`, `Trailer`.
+  - Existing pages may still hold game-specific examples. Don't copy them:
+    replace any you touch with generic ones.
