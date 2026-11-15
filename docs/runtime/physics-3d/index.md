@@ -54,11 +54,11 @@ entity may have one of each kind; they combine into one shape.
 
 `RigidBody3DComponent` fields: `mass` (kg), `kinematic`, `friction`,
 `bounciness`, `linearDamping`, `angularDamping`, `gravityScale` (0 floats),
-`lockRotation` (never tips over, e.g. a character), `bendsGrass` (flattens
-[grass](../../editor/index.md#grass) it moves through, sized by its colliders;
-on by default) and `touchStatic` (a kinematic body's contacts with static and
-other kinematic bodies are reported too; see
-[Collisions and triggers](#collisions-and-triggers)).
+`lockRotation` (never tips over, e.g. a character) and `touchStatic` (a
+kinematic body's contacts with static and other kinematic bodies are reported
+too; see [Collisions and triggers](#collisions-and-triggers)). A body flattens
+[grass](../../editor/index.md#grass) only with a `GrassBenderComponent`
+(`fitColliders` sizes it by its colliders).
 
 The world is Z-up, in metres. Gravity defaults to (0, 0, −9.81);
 `physics.setGravity` changes it.
@@ -79,7 +79,7 @@ stands upright with the bounds' height. A flat mesh, such as the built-in
 plane, gets a 0.1 m thick slab under its surface. A 2D `BoxCollider2D` fits
 its sprite the same way (**Fit to Sprite**).
 
-Code can do the same with `sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, meshes, tree)`
+Code can do the same with `sfs::fitColliderToMesh<sfs::BoxCollider3DComponent>(entity, meshes)`
 or size a collider to any box with `sfs::fitCollider(collider, bounds)` (in
 `engine/runtime/systems/colliderFit.h`).
 
@@ -160,20 +160,48 @@ other kinematic ones. Tick **Touch Static** on its `RigidBody3DComponent` for
 one that must know what it touches regardless, such as a machine driven by
 script.
 
-`physics.contactsBegun()` and `contactsEnded()` list the same contacts
-(`Contact3D`) for code that isn't a game object, such as a System script, each
-with the `point` where the bodies first touched. Each also has a `depth`: how
-far the shapes overlap, in metres. A begun contact gives the depth when it
-began, and an ended one gives the deepest it reached. `contactsDeepened()`
-lists the contacts that went deeper during the last update, once each, with
-their deepest depth so far. Use it to tell a graze from a real hit while the
-contact lasts:
+### Contact reports
+
+A system reads contacts through a **`ContactReportComponent`** (Unity sends a
+rigidbody the collisions of its child colliders the same way). Put one on an
+entity and it hears the contacts of the colliders on itself and on its
+descendants, except those under a nearer `ContactReportComponent`, which
+reports its own part of the tree. On a machine's root it hears every part of
+the machine touch something:
 
 ```cpp
-for (const sfs::Contact3D& c : physics.contactsDeepened())
+// The system registered Machine and ContactReportComponent.
+for (const sfs::ContactReportComponent& report :
+     getEntities<sfs::ContactReportComponent>())
+{
+  for (const sfs::Contact3D& c : report.begun)
+    LOG_INFO("%s touched %s", name(c.a).c_str(), name(c.b).c_str());
+}
+```
+
+`PhysicsSystem3D` clears every report at the start of its update and fills it
+with that update's contacts: `begun`, `ended` and `deepened`. In each
+`Contact3D`, `a` is the report's own collider (the entity it is on, or a
+descendant) and `b` the other body. A contact between two of its own colliders
+is reported once; when both sides have reports, each hears it from its own
+side. A system that runs before the physics in the scene's list reads the
+previous update's contacts.
+
+Each `Contact3D` has a `depth`: how far the shapes overlap, in metres. A begun
+contact gives the depth when it began, and an ended one gives the deepest it
+reached. `deepened` lists the contacts that went deeper during the last update,
+once each, with their deepest depth so far. Use it to tell a graze from a real
+hit while the contact lasts:
+
+```cpp
+for (const sfs::Contact3D& c : report.deepened)
   if (c.depth > 0.05f)
     LOG_WARN("hit hard");
 ```
+
+`physics.contactsBegun()`, `contactsEnded()` and `contactsDeepened()` list
+every contact in the scene, for tools and tests. A game system reads its own
+through a report instead of reading the physics system.
 
 ## Raycasts
 

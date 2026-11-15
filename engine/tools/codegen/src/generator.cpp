@@ -28,6 +28,8 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
       {"Mesh", "sfs::MeshHandle"},
       {"Json", "nlohmann::json"},
       {"StringList", "std::vector<std::string>"},
+      {"Entity", "sfs::Entity"},
+      {"EntityList", "std::vector<sfs::Entity>"},
   };
   return types;
 }
@@ -35,9 +37,9 @@ const std::map<std::string, std::string, std::less<>>& canonicalTypes()
 // A field's C++ type, as its static_assert and member pointer spell it.
 std::string cppTypeOf(const FieldModel& field)
 {
-  if (field.kind == "AssetRef")
-    return "sfs::AssetRef<" + field.assetType + ">";
-  return canonicalTypes().at(field.kind);
+  if (field.kind == "AssetRef" || field.kind == "AssetRefList")
+    return "sfs::" + field.kind + "<" + field.assetType + ">";
+  return std::string(cppTypeOfKind(field.kind));
 }
 
 // A C++ string literal for `text`.
@@ -151,7 +153,7 @@ void emitField(std::ostringstream& out,
     out << "      field.attributes.emissionLight = true;\n";
   if (!field.showIf.empty())
     out << "      field.attributes.showIf = \"" << field.showIf << "\";\n";
-  if (field.kind == "AssetRef")
+  if (field.kind == "AssetRef" || field.kind == "AssetRefList")
   {
     // By the registered (unqualified) name: AssetRef<sfs::VehicleSpec> refers
     // to "VehicleSpec".
@@ -162,6 +164,8 @@ void emitField(std::ostringstream& out,
                        : field.assetType.substr(colons + 2))
         << ";\n";
   }
+  if (!field.part.empty())
+    out << "      field.attributes.part = " << literal(field.part) << ";\n";
   if (field.range)
     out << "      field.attributes.hasRange = true;\n"
         << "      field.attributes.min = static_cast<float>("
@@ -285,6 +289,13 @@ void emitType(std::ostringstream& out,
 
 } // namespace
 
+std::string_view cppTypeOfKind(std::string_view kind)
+{
+  const auto it = canonicalTypes().find(kind);
+  return it != canonicalTypes().end() ? std::string_view(it->second)
+                                      : std::string_view();
+}
+
 std::string displayName(std::string_view identifier, bool stripComponentSuffix)
 {
   std::string_view base = identifier;
@@ -340,9 +351,19 @@ std::string generateRegistration(const std::vector<TypeModel>& types,
         << "#include \"engine/runtime/sceneManager/scene.h\"\n"
         << "#include \"engine/runtime/scripting/scriptRegistry.h\"\n";
   out << "\n";
+  // A header declaring several types is included once.
+  std::vector<const std::filesystem::path*> headers;
   for (const TypeModel& type : types)
+  {
+    if (std::any_of(headers.begin(),
+                    headers.end(),
+                    [&](const std::filesystem::path* header)
+                    { return *header == type.header; }))
+      continue;
+    headers.push_back(&type.header);
     out << "#include \"" << includePath(type.header, options.includeRoot)
         << "\"\n";
+  }
   out << "\n#include <cstdint>\n#include <memory>\n#include <string>\n#include "
          "<type_traits>\n"
       << "#include <utility>\n#include <vector>\n\n";

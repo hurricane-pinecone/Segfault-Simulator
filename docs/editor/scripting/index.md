@@ -148,6 +148,23 @@ if (const ItemDef* item = chest.loot.get())
   LOG_INFO("A " + item->displayName);
 ```
 
+An `sfs::AssetRefList<T>` field holds several, in an order that means
+something (a crafting recipe's ingredients, a vehicle's tyre setups). The
+Inspector shows a row per entry, each a picker like `AssetRef<T>`'s, with a
+button to add another row and one to remove a row. In code, `get(i)` gives
+one entry and `all()` every entry that's there (unset, missing or wrong-type
+entries left out):
+
+```cpp
+struct Recipe
+{
+  sfs::AssetRefList<ItemDef> ingredients;
+};
+...
+for (const ItemDef* ingredient : recipe.ingredients.all())
+  consume(*ingredient);
+```
+
 #### Deriving from another scriptable object type
 
 A scriptable object type may derive from another reflected one, the engine's
@@ -264,7 +281,9 @@ in any CMake-aware IDE to work on scripts outside the editor.
 
 The editor builds the module in `.sfs/build/<platform>/`, which `.gitignore`
 excludes. Each build links its compile database at `.sfs/compile_commands.json`,
-where the project's `.clangd` points clangd. It uses the toolchain and engine it was built with, so the module
+where the project's `.clangd` points clangd (it also silences clang's warnings
+about the engine's `[[sfs::...]]` attributes, which
+[sfs-lsp](../sfs-lsp/index.md) checks instead). It uses the toolchain and engine it was built with, so the module
 always matches the engine it runs in. A Windows editor cross-built from WSL runs
 these builds back in WSL.
 

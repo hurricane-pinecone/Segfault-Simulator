@@ -612,6 +612,10 @@ private:
     CutOutDepth,  // the lit pass's masked sections' depth, before the rest
     RainMap,      // rain's overhead map (as All)
   };
+  // Encodes a draw's sections for `which` pass, setting only the state that
+  // differs from what it set last (m_boundPipeline and the rest). A pass that
+  // calls it starts with forgetBound(), and so does any code that sets a
+  // pipeline, vertex slot 0, the index buffer or bind group 1 between calls.
   void encodeDraw(WGPURenderPassEncoder pass, const Draw& draw, Sections which);
   // A masked section's pipeline in the lit pass: its cut-out depth (drawn
   // before anything's lit), or lit where that depth is (testing for equal,
@@ -1114,8 +1118,22 @@ private:
   std::unordered_map<std::string, std::weak_ptr<const Surface>> m_surfaces;
   // Ones that didn't build (already logged), so they aren't tried again.
   std::unordered_set<std::string> m_brokenSurfaces;
-  // The surface whose pipeline the pass being encoded has set.
+  // What encodeDraw() last set on the pass being encoded: the surface's
+  // pipeline, the mesh's vertex buffer in slot 0 and index buffer, and the
+  // material's bind group 1, so a draw sets only what differs.
   WGPURenderPipeline m_boundPipeline = nullptr;
+  WGPUBuffer m_boundVertices = nullptr;
+  WGPUBuffer m_boundIndices = nullptr;
+  WGPUBindGroup m_boundMaterial = nullptr;
+  // A new pass, or something else set its state: encodeDraw() sets
+  // everything again.
+  void forgetBound()
+  {
+    m_boundPipeline = nullptr;
+    m_boundVertices = nullptr;
+    m_boundIndices = nullptr;
+    m_boundMaterial = nullptr;
+  }
 
   // This frame's target, set by the backend.
   WGPUCommandEncoder m_encoder = nullptr;

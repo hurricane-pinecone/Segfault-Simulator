@@ -62,6 +62,7 @@ nav:
       - core/index.md
       - Entities, components & systems: core/ecs/index.md
       - Reflection & codegen: core/reflection/index.md
+      - Events: core/events/index.md
       - Parents & children: core/hierarchy/index.md
       - Asset database: core/assets/index.md
       - Rendering data:
@@ -79,6 +80,7 @@ nav:
   - Editor:
       - editor/index.md
       - Game scripts: editor/scripting/index.md
+      - "Code checks: sfs-lsp": editor/sfs-lsp/index.md
       - Material graphs:
           - editor/material-graphs/index.md
           - Recipes: editor/material-graphs/recipes/index.md
@@ -100,7 +102,10 @@ nav:
           - Camera system: runtime/systems/camera-system/index.md
           - Prefab system: runtime/systems/prefab-system/index.md
       - 3D physics: runtime/physics-3d/index.md
-      - Navigation (AI agents): runtime/navigation/index.md
+      - Navigation (AI agents):
+          - runtime/navigation/index.md
+          - Planning scheduler: runtime/navigation/scheduler.md
+          - Lane graphs (roads): runtime/navigation/lanes.md
       - Skeletal animation: runtime/animation/index.md
       - Game UI: runtime/ui/index.md
       - Particles in your game: runtime/particles/index.md

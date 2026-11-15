@@ -1,0 +1,5 @@
+# [[sfs::...]] attributes are the engine's: sfs-codegen reads them and sfs-lsp
+# checks them. Clang can only silence unknown attributes all together; sfs-lsp
+# reports misspelt standard ones instead.
+Diagnostics:
+  Suppress: [unknown-attributes]

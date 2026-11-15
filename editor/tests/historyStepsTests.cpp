@@ -140,5 +140,45 @@ int main()
     CHECK(steps.bytes() >= 64u);
   }
 
+  TEST("undoing back to a state should give its state again, so a saved "
+       "mark matches; a new edit never does")
+  {
+    HistorySteps steps(3);
+    const uint64_t saved = steps.state();
+    steps.push(scene(0), scene(1), std::nullopt, std::nullopt);
+    const uint64_t one = steps.state();
+    CHECK(one != saved);
+    steps.push(scene(1), scene(2), std::nullopt, std::nullopt);
+    CHECK(steps.state() != one);
+    steps.undo();
+    CHECK(steps.state() == one);
+    steps.undo();
+    CHECK(steps.state() == saved);
+    steps.redo();
+    CHECK(steps.state() == one);
+    // A different edit from there is a new state, not the one redone away.
+    const uint64_t two = (steps.redo(), steps.state());
+    steps.undo();
+    steps.push(scene(1), scene(5), std::nullopt, std::nullopt);
+    CHECK(steps.state() != two);
+    CHECK(steps.state() != saved);
+    // An amendment changes the scene after the step: a new state.
+    const uint64_t before = steps.state();
+    steps.amendLast(scene(6), std::nullopt);
+    CHECK(steps.state() != before);
+    // Steps dropped past the limit keep undo's states right.
+    steps.push(scene(6), scene(7), std::nullopt, std::nullopt);
+    const uint64_t seven = steps.state();
+    steps.push(scene(7), scene(8), std::nullopt, std::nullopt);
+    steps.push(scene(8), scene(9), std::nullopt, std::nullopt);
+    CHECK(steps.undoSteps() == 3u);
+    steps.undo();
+    steps.undo();
+    CHECK(steps.state() == seven);
+    // Cleared: a new state, matching no mark made before.
+    steps.clear();
+    CHECK(steps.state() != saved && steps.state() != seven);
+  }
+
   return testing::report("historyStepsTests");
 }

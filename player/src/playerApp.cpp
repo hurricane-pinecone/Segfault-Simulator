@@ -77,7 +77,7 @@ PlayerApp::~PlayerApp()
   if (m_logSink >= 0)
     sfs::Logger::removeSink(m_logSink);
   if (m_log)
-    m_log->out.flush();
+    m_log->stop();
 }
 
 bool PlayerApp::load()
@@ -151,17 +151,17 @@ void PlayerApp::openLog(const std::vector<std::string>& early)
   }
   for (const std::string& line : early)
     m_log->out << line << '\n';
+  m_log->start();
 
-  // Written out on a warning or an error (what comes before a crash), and at
-  // least every second, rather than on every line.
+  // Written out on a warning or an error (what comes before a crash: an error
+  // is on disk before the call returns), and at least every second, rather
+  // than on every line; by the log file's own thread.
   m_logSink = sfs::Logger::addSink(
       [log = m_log.get()](sfs::Logger::Level level, const std::string& message)
       {
-        {
-          const std::lock_guard lock(log->mutex);
-          log->out << message << '\n';
-        }
-        log->flushIfDue(level >= sfs::Logger::Level::WARN);
+        log->push(message, level >= sfs::Logger::Level::WARN);
+        if (level > sfs::Logger::Level::WARN) // (an error)
+          log->sync();
       });
   LOG_INFO("Logging to " + m_logPath.string());
 }
@@ -254,7 +254,86 @@ void PlayerApp::onUpdate(double)
     return;
   m_logFlushed = now;
   sfs::Logger::flush();
-  m_log->flushIfDue(true);
+  m_log->flushSoon();
+}
+
+void PlayerApp::LogFile::start()
+{
+  writer = std::thread(
+      [this]
+      {
+        std::unique_lock lock(mutex);
+        auto flushed = std::chrono::steady_clock::now();
+        while (true)
+        {
+          wake.wait_for(lock,
+                        std::chrono::seconds(1),
+                        [this] { return stopping || flushWanted || queued.size() >= 256; });
+          std::vector<std::string> lines;
+          lines.swap(queued);
+          const uint64_t upTo = pushed;
+          const bool now = flushWanted || stopping;
+          flushWanted = false;
+          const bool last = stopping;
+          lock.unlock();
+          for (const std::string& line : lines)
+            out << line << '\n';
+          const auto time = std::chrono::steady_clock::now();
+          if (now || time - flushed >= std::chrono::seconds(1))
+          {
+            out.flush();
+            flushed = time;
+          }
+          lock.lock();
+          if (now)
+            done = upTo;
+          written.notify_all();
+          if (last && queued.empty())
+            return;
+        }
+      });
+}
+
+void PlayerApp::LogFile::push(std::string line, bool soon)
+{
+  {
+    const std::lock_guard lock(mutex);
+    queued.push_back(std::move(line));
+    ++pushed;
+    flushWanted = flushWanted || soon;
+  }
+  if (soon)
+    wake.notify_one();
+}
+
+void PlayerApp::LogFile::sync()
+{
+  std::unique_lock lock(mutex);
+  const uint64_t upTo = pushed;
+  flushWanted = true;
+  wake.notify_one();
+  written.wait(lock, [&] { return done >= upTo || !writer.joinable(); });
+}
+
+void PlayerApp::LogFile::flushSoon()
+{
+  {
+    const std::lock_guard lock(mutex);
+    flushWanted = true;
+  }
+  wake.notify_one();
+}
+
+void PlayerApp::LogFile::stop()
+{
+  {
+    const std::lock_guard lock(mutex);
+    stopping = true;
+  }
+  wake.notify_one();
+  if (writer.joinable())
+    writer.join();
+  out.flush();
 }
 
 void PlayerApp::onLoadScene(const std::filesystem::path& scene)

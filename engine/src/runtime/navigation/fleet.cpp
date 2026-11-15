@@ -1,13 +1,16 @@
 #include "engine/runtime/navigation/fleet.h"
 
-#include "engine/core/jobs/workerPool.h"
+#include "engine/core/util/cpuTiming.h"
+
+#include "engine/core/logger/logger.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <limits>
-#include <mutex>
 #include <span>
+#include <string>
 
 namespace sfs::nav
 {
@@ -15,16 +18,21 @@ namespace sfs::nav
 namespace
 {
 constexpr float kForever = std::numeric_limits<float>::infinity();
+// s at most one that gave way in a deadlock ranks below those it gave way to.
+constexpr float kDeferAtMost = 60.0f;
+// s a deadlock nobody could get out of is logged once for (the same ones).
+constexpr double kHopelessFor = 120.0;
+// Times a way it plans on its own is planned again round a higher one's
+// way it would be held standing in (Fleet::planRound()).
+constexpr int kAvoidTries = 2;
 } // namespace
 
-// One plan on its way: the latest it has (a partial while it searches on).
+// One plan on its way: its scheduler job, or (planned in update(), or
+// collected) the finished plan.
 struct Fleet::Job
 {
-  std::mutex mutex;
-  AgentPlan latest;
-  uint64_t seq = 0;
-  bool final = false;
-  std::atomic<bool> cancel{false};
+  PlanScheduler::JobId id = 0;
+  std::optional<AgentPlan> plan;
 };
 
 struct Fleet::Agent
@@ -45,16 +53,14 @@ struct Fleet::Agent
   bool forTraffic = false; // (that plan is for traffic)
   std::shared_ptr<Job> job;
   Want jobFor = Want::None;
-  uint64_t seen = 0;
+  std::shared_ptr<Job> aheadJob; // its look-ahead plan (planAhead())
   float capScale = 1.0f; // (a plan out of its cap: the next one's bigger)
 
   uint64_t pathId = 0;
-  bool done = true;           // at its path's end (or none)
-  bool onTrip = false;        // its path ends at its goal
-  bool partial = false;       // the clear part only: plan on at its end
-  bool drivenPartial = false; // (its job's clear part followed)
-  bool toWaitSpot = false;    // driving to a wait spot (or planning it)
-  bool stuck = false;         // in a higher one's way, no wait spot: solid
+  bool done = true;        // at its path's end (or none)
+  bool onTrip = false;     // its path ends at its goal
+  bool toWaitSpot = false; // driving to a wait spot (or planning it)
+  bool stuck = false;      // in a higher one's way, no wait spot: solid
   bool blockedAtEnd = false;
   bool arrived = false, blocked = false;
   AgentId waitFrom = 0;   // whose way it went to a wait spot off
@@ -66,8 +72,35 @@ struct Fleet::Agent
   float stopAt = std::numeric_limits<float>::infinity(); // (last told)
   bool replanning = false;   // (stood for the game to plan it again)
   bool gamePlanning = false; // (its game planning its next path: setPlanning())
+  float waitedFor = 0.0f;    // s stood held by another (Traffic::waitsOn())
+  // Yielding to break a deadlock: the others whose claimed ground its wait
+  // spot is clear of.
+  std::vector<AgentId> yieldTo;
+  bool yieldFailed = false; // (no wait spot, or held on its way: next one)
+  // Gave way in a deadlock: ranked below these till it's on its way free of
+  // them (they go through first, never stood for it again at once).
+  std::vector<AgentId> deferTo;
+  float deferredFor = 0.0f;
   std::vector<Space::Hit> blockers;
   Counters counters;
+  // Its way planned again round these: the ground of those ranked above it
+  // that its last plan would have held it standing in (planRound()).
+  std::vector<Footprint> avoid;
+  int avoided = 0;
+  std::optional<AgentPlan> firstTry; // (a trip's, if planned round fails)
+  void avoidNone()
+  {
+    avoid.clear();
+    avoided = 0;
+    firstTry.reset();
+  }
+  // The way last handed back for running into a static obstacle (whose, and
+  // where that way went): the same way back from its game for the same one
+  // isn't handed back again (planned again, it'd come back the same).
+  AgentId solidBy = 0;
+  Pose2 solidEnd;
+  float solidLength = -1.0f;
+  bool solidHeld = false; // (standing short of it for that: logged once)
 
   // Its narrow stretches (m along its path), for the path they're of.
   uint64_t narrowsOf = 0;
@@ -107,18 +140,21 @@ struct Fleet::Agent
 
 Fleet::Fleet() : Fleet(Settings{}) {}
 
-Fleet::Fleet(Settings settings) : m_settings(settings)
+Fleet::Fleet(Settings settings, std::shared_ptr<PlanScheduler> scheduler)
+    : m_settings(settings), m_scheduler(std::move(scheduler))
 {
-  if (m_settings.threads > 0)
-    m_pool = std::make_unique<WorkerPool>(m_settings.threads);
 }
 
 Fleet::~Fleet()
 {
-  for (auto& [id, a] : m_agents)
-    if (a->job)
-      a->job->cancel = true;
-  m_pool.reset(); // (waits for the running plans)
+  if (m_scheduler)
+    for (auto& [id, a] : m_agents)
+    {
+      if (a->job && a->job->id)
+        m_scheduler->cancel(a->job->id);
+      if (a->aheadJob && a->aheadJob->id)
+        m_scheduler->cancel(a->aheadJob->id);
+    }
 }
 
 void Fleet::setWorld(World world)
@@ -154,8 +190,11 @@ void Fleet::remove(AgentId id)
   const auto it = m_agents.find(id);
   if (it == m_agents.end())
     return;
-  if (it->second->job)
-    it->second->job->cancel = true;
+  if (m_scheduler)
+    for (const std::shared_ptr<Job>& job :
+         {it->second->job, it->second->aheadJob})
+      if (job && job->id)
+        m_scheduler->cancel(job->id);
   m_agents.erase(it);
   m_traffic.remove(id);
 }
@@ -190,6 +229,14 @@ void Fleet::setPriority(AgentId id, int priority)
 {
   if (const auto it = m_agents.find(id); it != m_agents.end())
     it->second->priority = priority;
+}
+
+void Fleet::setHitch(AgentId id, float hitch)
+{
+  const auto it = m_agents.find(id);
+  if (it == m_agents.end() || it->second->moved())
+    return;
+  it->second->hitch = hitch;
 }
 
 void Fleet::place(AgentId id, Pose2 pose, float hitch)
@@ -232,8 +279,10 @@ uint64_t Fleet::requestGoals(AgentId id,
   a.request = m_nextRequest++;
   a.replanning = false;
   a.arrived = a.blocked = a.blockedAtEnd = false;
-  a.partial = a.onTrip = a.toWaitSpot = a.stuck = false;
+  a.onTrip = a.toWaitSpot = a.stuck = false;
+  a.yieldTo.clear();
   a.blockers.clear();
+  a.avoidNone();
   a.capScale = 1.0f;
   ask(id, a, Want::Trip);
   return a.request;
@@ -272,15 +321,16 @@ void Fleet::cancel(AgentId id)
   if (it == m_agents.end())
     return;
   Agent& a = *it->second;
-  if (a.job)
-    a.job->cancel = true;
+  if (a.job && a.job->id && m_scheduler)
+    m_scheduler->cancel(a.job->id);
   a.job = nullptr;
   a.want = Want::None;
   // (Kept: a game that cancels while it plans the one handed back (NeedsPlan)
   // still has work for it; its next path or goal ends that.)
   a.goals.clear();
   a.goalTest = {};
-  a.onTrip = a.partial = a.toWaitSpot = a.stuck = false;
+  a.onTrip = a.toWaitSpot = a.stuck = false;
+  a.yieldTo.clear();
   a.blocked = a.blockedAtEnd = a.arrived = false;
   if (a.hasPath() && !a.done)
     a.stand();
@@ -400,10 +450,115 @@ AgentPlan Fleet::planNow(AgentId id, PlanAsk ask) const
   return a.kind->plan(a.spec, ask, {});
 }
 
+bool Fleet::planAhead(AgentId id, PlanAsk ask)
+{
+  const auto it = m_agents.find(id);
+  if (it == m_agents.end())
+    return false;
+  Agent& a = *it->second;
+  if (a.aheadJob && a.aheadJob->id && m_scheduler)
+    m_scheduler->cancel(a.aheadJob->id);
+  a.aheadJob = nullptr;
+  // From where its path ends, needed by when it gets there (real seconds:
+  // its speed profile's time left, at the game's pace).
+  double left = 0.0;
+  if (a.hasPath() && !a.done)
+  {
+    const AgentPath& path = *a.motion->path();
+    const AgentPath::Sample& end = path.samples.back();
+    ask.from = end.pose;
+    ask.hitch = end.hitch;
+    const std::size_t i = std::min(a.motion->index(), path.samples.size() - 1);
+    left = std::max(0.0f, end.time - path.samples[i].time) /
+           std::max(m_simPerReal, 1e-3);
+  }
+  else
+  {
+    ask.from = a.where();
+    ask.hitch = a.hitchNow();
+  }
+  if (!ask.world.space)
+    ask.world = planWorld(id, {});
+  const auto deadline =
+      PlanScheduler::Clock::now() +
+      std::chrono::duration_cast<PlanScheduler::Clock::duration>(
+          std::chrono::duration<double>(left));
+  a.aheadJob = start(id, a, std::move(ask), "next way", deadline, true);
+  return true;
+}
+
+std::optional<AgentPlan> Fleet::ahead(AgentId id)
+{
+  const auto it = m_agents.find(id);
+  if (it == m_agents.end() || !it->second->aheadJob)
+    return std::nullopt;
+  Agent& a = *it->second;
+  std::optional<AgentPlan> plan = finished(m_scheduler.get(), *a.aheadJob);
+  if (plan)
+    a.aheadJob = nullptr;
+  return plan;
+}
+
+bool Fleet::planningAhead(AgentId id) const
+{
+  const auto it = m_agents.find(id);
+  return it != m_agents.end() && it->second->aheadJob != nullptr;
+}
+
+std::shared_ptr<Fleet::Job>
+Fleet::start(AgentId id,
+             const Agent& a,
+             PlanAsk ask,
+             const char* what,
+             PlanScheduler::Clock::time_point deadline,
+             bool lookAhead)
+{
+  auto job = std::make_shared<Job>();
+  if (!m_scheduler)
+  {
+    job->plan = a.kind->plan(a.spec, ask, {});
+    return job;
+  }
+  // (Only the finished plan: the clear way so far is never driven.)
+  job->id = m_scheduler->submitOne(
+      id,
+      "agent " + std::to_string(id) + ": " + what,
+      deadline,
+      [kind = a.kind, spec = a.spec, ask = std::move(ask)](
+          const std::atomic<bool>& cancel) mutable
+      {
+        ask.cancel = &cancel;
+        return std::any(kind->plan(spec, ask, {}));
+      },
+      lookAhead);
+  return job;
+}
+
+std::optional<AgentPlan> Fleet::finished(PlanScheduler* scheduler, Job& job)
+{
+  if (job.plan || !scheduler)
+    return job.plan;
+  PlanScheduler::Collected c = scheduler->collect(job.id);
+  for (const std::any& leg : c.legs)
+    if (const AgentPlan* p = std::any_cast<AgentPlan>(&leg))
+      job.plan = *p;
+  if (!job.plan && (c.state == PlanScheduler::State::Failed ||
+                    c.state == PlanScheduler::State::Unknown ||
+                    c.state == PlanScheduler::State::Done))
+  {
+    // (Failed, logged: nothing clear, as a search that found nothing.)
+    AgentPlan none;
+    none.state = PlanState::Partial;
+    none.why = "its plan failed";
+    job.plan = std::move(none);
+  }
+  return job.plan;
+}
+
 void Fleet::ask(AgentId, Agent& a, Want want)
 {
-  if (a.job)
-    a.job->cancel = true;
+  if (a.job && a.job->id && m_scheduler)
+    m_scheduler->cancel(a.job->id);
   a.job = nullptr;
   a.want = want;
 }
@@ -421,16 +576,38 @@ void Fleet::submit(AgentId id, Agent& a)
     // (Not ground it's in already: it goes out through that.)
     const std::vector<Footprint> here =
         a.kind->footprint(a.spec, a.where(), a.hitchNow());
-    std::vector<Footprint> solids;
-    for (const Footprint& f : m_traffic.heldBesides(id))
-      if (!hits(here, {f}))
-        solids.push_back(f);
-    if (const auto o = m_agents.find(a.waitFrom); o != m_agents.end())
-      for (const Footprint& f : o->second->kind->footprint(
-               o->second->spec, o->second->where(), o->second->hitchNow()))
-        solids.push_back(f);
+    // (Each held stretch it's in left out whole, not just the part under
+    // it: backing out along a lane another holds, all of it behind it was
+    // a solid.)
+    std::vector<Footprint> solids = m_traffic.heldBesides(id, here);
+    // (Breaking a deadlock: every other member's body a solid on the way, and
+    // all the ground each claims to be clear of, whatever their ranks.)
+    std::vector<AgentId> others = a.yieldTo;
+    if (std::find(others.begin(), others.end(), a.waitFrom) == others.end())
+      others.push_back(a.waitFrom);
+    // (Those it yields to in a deadlock kept the traffic margin off, not
+    // just the planners' gap: going by them it's never in their way, so
+    // none of them goes off to a wait spot too.)
+    for (const AgentId oid : others)
+      if (const auto o = m_agents.find(oid); o != m_agents.end())
+      {
+        const bool yieldingTo =
+            std::find(a.yieldTo.begin(), a.yieldTo.end(), oid) !=
+            a.yieldTo.end();
+        for (Footprint f : o->second->kind->footprint(
+                 o->second->spec, o->second->where(), o->second->hitchNow()))
+        {
+          if (yieldingTo)
+            f.half += glm::vec2(m_traffic.margin());
+          solids.push_back(f);
+        }
+      }
+    solids.insert(solids.end(), a.avoid.begin(), a.avoid.end());
     ask.world = planWorld(id, solids);
     std::vector<Footprint> reserved = m_traffic.reservedAbove(id);
+    for (const AgentId oid : a.yieldTo)
+      for (const Footprint& f : m_traffic.claimed(oid))
+        reserved.push_back(f);
     // (A little more room than Traffic asks: it waits clear, not on the
     // edge of the other's way.)
     const float margin = m_traffic.margin() + 0.25f;
@@ -447,7 +624,7 @@ void Fleet::submit(AgentId id, Agent& a)
   }
   else
   {
-    ask.world = planWorld(id, {});
+    ask.world = planWorld(id, a.avoid);
     ask.goals = a.goals;
     ask.goalTest = a.goalTest;
     ask.mode = a.goals.empty() ? 0 : a.goals.front().mode;
@@ -455,92 +632,173 @@ void Fleet::submit(AgentId id, Agent& a)
     ask.budgetCap = static_cast<uint32_t>(
         std::min(4.0e9, double(m_settings.budgetCap) * a.capScale));
   }
-  auto job = std::make_shared<Job>();
-  a.job = job;
   a.jobFor = a.want;
   a.want = Want::None;
-  a.seen = 0;
-  a.drivenPartial = false;
   ++a.counters.plans;
   if (a.forTraffic)
     ++a.counters.replans;
   a.forTraffic = false;
-  auto run = [job, kind = a.kind, spec = a.spec, ask]() mutable
-  {
-    ask.cancel = &job->cancel;
-    AgentPlan r = kind->plan(spec,
-                             ask,
-                             [&job](const AgentPlan& p)
-                             {
-                               std::lock_guard lock(job->mutex);
-                               job->latest = p;
-                               ++job->seq;
-                             });
-    std::lock_guard lock(job->mutex);
-    job->latest = std::move(r);
-    job->final = true;
-  };
-  if (m_pool)
-    m_pool->submit(std::move(run));
-  else
-    run();
+  // (Asked standing: needed now.)
+  a.job = start(id,
+                a,
+                std::move(ask),
+                a.jobFor == Want::WaitSpot ? "wait spot" : "trip",
+                PlanScheduler::Clock::now(),
+                false);
 }
 
 void Fleet::poll(AgentId id, Agent& a)
 {
   if (!a.job)
     return;
-  AgentPlan plan;
-  bool final = false, fresh = false;
-  {
-    std::lock_guard lock(a.job->mutex);
-    final = a.job->final;
-    fresh = a.job->seq > a.seen;
-    if (final || fresh)
-      plan = a.job->latest;
-    a.seen = a.job->seq;
-  }
-  if (final)
-    a.job = nullptr;
-  if (final || fresh)
-    take(id, a, plan, final);
+  std::optional<AgentPlan> plan = finished(m_scheduler.get(), *a.job);
+  if (!plan)
+    return;
+  a.job = nullptr;
+  take(id, a, *plan);
 }
 
-void Fleet::take(AgentId id, Agent& a, const AgentPlan& plan, bool final)
+Fleet::Round Fleet::planRound(AgentId id, Agent& a, const AgentPlan& plan)
+{
+  // Its way as it will claim it, all of it, times from now (it stands).
+  Traffic::Claim way;
+  way.priority = a.priority;
+  way.body = a.kind->footprint(a.spec, a.where(), a.hitchNow());
+  way.here = way.body.size();
+  way.still = true;
+  way.leaving = a.toWaitSpot ? a.waitFrom : 0;
+  way.leavingAll = a.toWaitSpot && !a.yieldTo.empty();
+  const std::vector<AgentPath::Sample>& p = plan.path->samples;
+  long last = -1;
+  for (std::size_t k = 0; k < p.size(); ++k)
+  {
+    const long cell = static_cast<long>(p[k].s / m_settings.claimEvery);
+    if (cell == last && k + 1 != p.size())
+      continue;
+    last = cell;
+    way.ahead.push_back({p[k].s,
+                         p[k].time - 0.5f,
+                         p[k].time + 0.5f,
+                         a.kind->footprint(a.spec, p[k].pose, p[k].hitch)});
+  }
+  // (A trip may wait anywhere clear short of a meeting; one going to a wait
+  // spot only where it stands now: it's off to wait clear of them.)
+  const Traffic::Crossing x =
+      m_traffic.crossing(id, way, a.jobFor == Want::Trip);
+  if (x.at < 0)
+    return Round::Clear;
+  const Pose2 at = p[std::min<std::size_t>(
+                         std::lower_bound(p.begin(),
+                                          p.end(),
+                                          way.ahead[x.at].s,
+                                          [](const AgentPath::Sample& q,
+                                             float s) { return q.s < s; }) -
+                             p.begin(),
+                         p.size() - 1)]
+                       .pose;
+  char where[96];
+  std::snprintf(
+      where, sizeof(where), " at (%.1f, %.1f)", at.position.x, at.position.y);
+  const char* what = a.jobFor == Want::WaitSpot ? "wait spot" : "trip";
+  if (a.avoided >= kAvoidTries)
+  {
+    LOG_INFO("Navigation: " + nameOf(id) + "'s way to its " + what +
+             " would still hold it in " + nameOf(x.by) + "'s way" + where);
+    return Round::Held;
+  }
+  ++a.avoided;
+  // (That one's way a solid on the next one, the traffic margin kept off
+  // it, but for the ground it's in now: it goes out through that.)
+  for (Footprint f : m_traffic.claimed(x.by))
+  {
+    f.half += glm::vec2(m_traffic.margin());
+    if (!hits({f}, way.body))
+      a.avoid.push_back(f);
+  }
+  if (!a.firstTry)
+    a.firstTry = plan;
+  LOG_INFO("Navigation: " + nameOf(id) + "'s way to its " + what +
+           " would hold it standing in " + nameOf(x.by) + "'s way" + where +
+           ": planned again round that one's way");
+  ++a.counters.replans;
+  ask(id, a, a.jobFor);
+  return Round::Again;
+}
+
+void Fleet::take(AgentId id, Agent& a, const AgentPlan& plan)
 {
   const bool usable = plan.path && plan.path->length() > 0.05f;
-  if (!final)
+  const bool found =
+      usable && (a.jobFor == Want::WaitSpot || plan.state == PlanState::Found);
+  // (No way round that one's way: the first way after all. It waits where
+  // it's held (clear of them), or it's in the way: a wait spot.)
+  const auto takeFirst = [&]
   {
-    // The clear part so far: driven while it searches on.
-    if (a.jobFor == Want::Trip && usable && plan.path->length() > 0.5f &&
-        standing(a))
-    {
-      a.follow(plan.path);
-      a.partial = true;
-      a.drivenPartial = true;
-      a.onTrip = false;
-      event(Event::Kind::Partial, id, a.request);
-    }
+    const AgentPlan first = std::move(*a.firstTry);
+    a.firstTry.reset();
+    a.avoided = kAvoidTries + 1; // (checked: not again)
+    take(id, a, first);
+  };
+  if (a.firstTry && !found)
+  {
+    takeFirst();
     return;
   }
+  if (found && a.avoided <= kAvoidTries)
+    switch (planRound(id, a, plan))
+    {
+    case Round::Clear:
+      break;
+    case Round::Again:
+      return;
+    case Round::Held:
+      if (a.firstTry)
+      {
+        takeFirst();
+        return;
+      }
+      break;
+    }
   if (a.jobFor == Want::WaitSpot)
   {
     // (No wait spot, or it's as clear as it gets where it stands: it can't
     // get out of the way; a static obstacle the others plan round.)
     if (!usable)
     {
+      // (It stands where it is: if the other then stands for it, a deadlock
+      // the next one in it breaks; nobody able to, it's stuck then.)
       a.toWaitSpot = false;
-      a.stuck = true;
+      if (!a.yieldTo.empty())
+        LOG_INFO("Navigation: " + nameOf(id) +
+                 " found no wait spot clear of the others' ways (" + plan.why +
+                 "): the next one yields");
+      a.yieldTo.clear();
+      a.deferTo.clear();
+      a.yieldFailed = true;
       return;
+    }
+    if (!a.yieldTo.empty())
+    {
+      const Pose2 to = plan.path->samples.back().pose;
+      char text[160];
+      std::snprintf(text,
+                    sizeof(text),
+                    " to a wait spot at (%.1f, %.1f), %.1f m",
+                    to.position.x,
+                    to.position.y,
+                    plan.path->length());
+      LOG_INFO("Navigation: " + nameOf(id) + text +
+               ", clear of the others' ways (breaking a deadlock)");
     }
     a.follow(plan.path);
     a.toWaitSpot = true;
+    a.avoidNone();
     return;
   }
   if (plan.state == PlanState::Blocked)
   {
     a.blockers = plan.blockers;
-    a.partial = a.onTrip = false;
+    a.onTrip = false;
     if (standing(a))
     {
       a.blocked = true;
@@ -550,58 +808,31 @@ void Fleet::take(AgentId id, Agent& a, const AgentPlan& plan, bool final)
       a.blockedAtEnd = true;
     return;
   }
-  if (!usable)
+  if (plan.state == PlanState::Found && !usable)
   {
-    if (plan.state == PlanState::Found)
-    {
-      // (There already.)
-      a.arrived = true;
-      event(Event::Kind::Arrived, id, a.request);
-      return;
-    }
-    // Out of its cap with nothing clear yet: on with a bigger one.
+    // (There already.)
+    a.arrived = true;
+    event(Event::Kind::Arrived, id, a.request);
+    return;
+  }
+  if (plan.state != PlanState::Found)
+  {
+    // Out of its cap short of its goal: the clear way so far is never
+    // driven (a partial leg); searched again with a bigger cap, standing.
     if (a.capScale < 8.0f)
     {
       a.capScale *= 2.0f;
       ask(id, a, Want::Trip);
-    }
-    return;
-  }
-  const bool found = plan.state == PlanState::Found;
-  if (a.drivenPartial)
-  {
-    // It drove the clear part: on along the whole way from where it is, if
-    // that passes there (it does unless the search changed its mind).
-    a.drivenPartial = false;
-    const Pose2 at = a.where();
-    const int gear = a.speed() < 0.0f ? -1 : 1;
-    std::optional<float> s;
-    float best = 0.05f;
-    for (const AgentPath::Sample& p : plan.path->samples)
-    {
-      const float d = glm::length(p.pose.position - at.position);
-      if (d < best && (p.gear == gear || standing(a)) &&
-          std::abs(wrapAngle(p.pose.heading - at.heading)) < 0.03f)
-      {
-        best = d;
-        s = p.s;
-      }
-    }
-    if (!s)
-    {
-      // (Not there: planned on from the clear part's end.)
-      if (standing(a))
-        ask(id, a, Want::Trip);
-      else
-        a.partial = true;
       return;
     }
-    a.follow(plan.path, *s);
+    LOG_WARN("Navigation: agent " + std::to_string(id) +
+             " found no way to its goal within its search budget (" + plan.why +
+             "): standing");
+    return;
   }
-  else
-    a.follow(plan.path);
-  a.onTrip = found;
-  a.partial = !found;
+  a.follow(plan.path);
+  a.onTrip = true;
+  a.avoidNone();
 }
 
 // Its narrow stretches from `s` on (to wayReach), each the ground its body
@@ -683,10 +914,21 @@ void Fleet::claim(AgentId id, Agent& a, float dt)
 {
   Traffic::Claim c;
   c.priority = a.priority;
+  // Giving way in a deadlock: above those it gives way to while it goes to
+  // its wait spot (they let it in), below them once there, till it's on its
+  // way free of them (they go through first).
+  for (const AgentId m : a.deferTo)
+    if (const auto o = m_agents.find(m); o != m_agents.end())
+      c.priority = a.toWaitSpot && !a.yieldTo.empty()
+                       ? std::max(c.priority, o->second->priority + 1)
+                       : std::min(c.priority, o->second->priority - 1);
   c.body = a.kind->footprint(a.spec, a.where(), a.hitchNow());
+  c.here = c.body.size();
   c.standing = standing(a);
   c.solid = solid(a);
+  c.still = std::abs(a.speed()) < kStill;
   c.leaving = a.toWaitSpot ? a.waitFrom : 0;
+  c.leavingAll = a.toWaitSpot && !a.yieldTo.empty();
   if (!c.standing)
   {
     c.s = a.motion->s();
@@ -781,7 +1023,25 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
     event(Event::Kind::Resumed, id, a.request, a.waitingFor);
   a.waitingFor = waitingFor;
   if (std::abs(a.speed()) >= kStill)
+  {
+    a.solidBy = 0;   // (on its way again: a new meeting's handed back afresh)
     a.stuck = false; // (moving: out of the way after all)
+    if (!a.toWaitSpot)
+      a.yieldFailed = false;
+  }
+  // Gave way in a deadlock: back to its own rank once it's on its way, free
+  // of those it gave way to (they've gone through).
+  if (!a.deferTo.empty())
+  {
+    a.deferredFor += dt;
+    const bool heldByThem =
+        sched.why != Why::None &&
+        std::find(a.deferTo.begin(), a.deferTo.end(), sched.by) !=
+            a.deferTo.end();
+    if ((!a.toWaitSpot && std::abs(a.speed()) >= kStill && !heldByThem) ||
+        a.deferredFor > kDeferAtMost)
+      a.deferTo.clear();
+  }
   if (sched.why == Why::Solid)
   {
     // A static obstacle on its way (it stopped there after this path was
@@ -797,6 +1057,35 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
         finish();
         return;
       }
+      // (The way it was handed back for already, back the same from its
+      // game for the same one: no use planning it again. It stands short of
+      // that one, waiting for it to move; logged once.)
+      const AgentPath* p = a.motion->path();
+      const Pose2 end = p ? p->samples.back().pose : a.where();
+      const float length = p ? p->length() : 0.0f;
+      if (p && a.solidBy == sched.by &&
+          glm::distance(end.position, a.solidEnd.position) < 0.1f &&
+          std::abs(wrapAngle(end.heading - a.solidEnd.heading)) < 0.05f &&
+          std::abs(length - a.solidLength) < 0.25f)
+      {
+        if (!a.solidHeld)
+        {
+          a.solidHeld = true;
+          LOG_INFO("Navigation: " + nameOf(id) +
+                   "'s way planned again still "
+                   "runs into " +
+                   nameOf(sched.by) +
+                   " (a static obstacle): standing short of it till it moves");
+        }
+        a.stopAt = sched.stopAt;
+        a.motion->step(dt, 0.0f, sched.stopAt);
+        finish();
+        return;
+      }
+      a.solidBy = sched.by;
+      a.solidEnd = end;
+      a.solidLength = length;
+      a.solidHeld = false;
       ++a.counters.roundSolid;
       a.stand();
       a.replanning = true;
@@ -818,7 +1107,8 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
     finish();
     return;
   }
-  if (sched.inTheWay && !a.toWaitSpot && !a.stuck && a.speedCap > 0.0f)
+  if (sched.inTheWay && !a.toWaitSpot && !a.stuck && !a.yieldFailed &&
+      a.speedCap > 0.0f)
   {
     // In a higher one's way with nowhere clear on its path: to a wait spot.
     a.waitFrom = sched.by;
@@ -828,6 +1118,7 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
     a.waitingFor = sched.by;
     a.forTraffic = true;
     a.toWaitSpot = true;
+    a.avoidNone();
     ask(id, a, Want::WaitSpot);
     a.stopAt = sched.stopAt;
     a.motion->step(dt, 0.0f, sched.stopAt); // (stands, then plans)
@@ -838,6 +1129,8 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
   for (const AgentGoal& g : a.goals)
     cap = std::min(cap, g.speedCap);
   cap = std::min(cap, a.speedCap);
+  // (Easing off to reach its stop as the crossing there clears.)
+  cap = std::min(cap, sched.easeTo);
   a.stopAt = sched.stopAt;
   if (sched.why != Why::None && std::abs(a.speed()) < kStill)
     a.counters.heldSeconds += dt;
@@ -856,6 +1149,8 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
       // handed back), held there by the reservations till they've passed.
       a.toWaitSpot = false;
       a.forTraffic = true;
+      a.yieldTo.clear();
+      a.yieldFailed = false;
       if (a.gameLed())
       {
         a.replanning = true;
@@ -869,12 +1164,6 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
       a.blockedAtEnd = false;
       a.blocked = true;
       event(Event::Kind::Blocked, id, a.request, 0, a.blockers);
-    }
-    else if (a.partial)
-    {
-      a.partial = false;
-      if (!a.job)
-        ask(id, a, Want::Trip); // (its search ended short: on from here)
     }
     else if (a.onTrip)
     {
@@ -892,13 +1181,337 @@ void Fleet::drive(AgentId id, Agent& a, float dt)
 void Fleet::update(double deltaTime)
 {
   const float dt = static_cast<float>(deltaTime);
+  {
+    // (The game's pace, sim seconds per real one: look-ahead deadlines.)
+    const auto now = PlanScheduler::Clock::now();
+    if (m_lastUpdate != PlanScheduler::Clock::time_point{})
+    {
+      const double real =
+          std::chrono::duration<double>(now - m_lastUpdate).count();
+      if (real > 1e-4 && deltaTime > 0.0)
+        m_simPerReal = std::clamp(
+            0.9 * m_simPerReal + 0.1 * (deltaTime / real), 0.05, 64.0);
+    }
+    m_lastUpdate = now;
+  }
+  {
+    SFS_CPU_SCOPE("navigation/poll");
+    for (auto& [id, a] : m_agents)
+      poll(id, *a);
+  }
+  {
+    SFS_CPU_SCOPE("navigation/claims");
+    for (auto& [id, a] : m_agents)
+      claim(id, *a, dt);
+  }
+  {
+    SFS_CPU_SCOPE("navigation/traffic");
+    m_traffic.schedule();
+  }
+  {
+    SFS_CPU_SCOPE("navigation/drive");
+    for (auto& [id, a] : m_agents)
+      drive(id, *a, dt);
+  }
+  SFS_CPU_SCOPE("navigation/deadlocks");
+  // The wait-for graph: who stands held by whom (not one planning its way).
+  std::map<AgentId, AgentId> waits;
   for (auto& [id, a] : m_agents)
-    poll(id, *a);
-  for (auto& [id, a] : m_agents)
-    claim(id, *a, dt);
-  m_traffic.schedule();
-  for (auto& [id, a] : m_agents)
-    drive(id, *a, dt);
+  {
+    AgentId on = 0;
+    if (!a->motion->handDriven() && a->want == Want::None && !a->job)
+      on = m_traffic.waitsOn(id);
+    if (on && !m_agents.contains(on))
+      on = 0;
+    a->waitedFor = on ? a->waitedFor + dt : 0.0f;
+    if (on)
+      waits[id] = on;
+  }
+  breakDeadlocks(dt, waits);
+}
+
+std::string Fleet::nameOf(AgentId id) const
+{
+  return m_namer ? m_namer(id) : "agent " + std::to_string(id);
+}
+
+// Who, where, and what it stands for (a deadlock's log line).
+std::string Fleet::describe(AgentId id) const
+{
+  using Why = Traffic::Schedule::Why;
+  const auto it = m_agents.find(id);
+  if (it == m_agents.end())
+    return nameOf(id);
+  const Agent& a = *it->second;
+  const Traffic::Schedule sc = m_traffic.scheduleOf(id);
+  const AgentId on = m_traffic.waitsOn(id);
+  char text[200];
+  const Pose2 p = a.where();
+  std::snprintf(
+      text, sizeof(text), " at (%.1f, %.1f)", p.position.x, p.position.y);
+  std::string out = nameOf(id) + text;
+  if (on)
+    out += std::string(" waits for ") + nameOf(on) +
+           (sc.why == Why::Reserved ? "'s reservation"
+            : sc.why == Why::Zone   ? "'s narrow place"
+                                    : "'s body");
+  else if (standing(a))
+    out += a.job || a.want != Want::None ? " standing, its plan on the way"
+           : a.gamePlanning || a.replanning
+               ? " standing, its game planning its way"
+               : " standing";
+  if (a.toWaitSpot)
+    out += " (on its way to a wait spot)";
+  return out;
+}
+
+void Fleet::breakDeadlocks(float dt, const std::map<AgentId, AgentId>& waits)
+{
+  m_clock += dt;
+  const auto agentOf = [&](AgentId id) -> Agent*
+  {
+    const auto it = m_agents.find(id);
+    return it == m_agents.end() ? nullptr : it->second.get();
+  };
+  const auto planningWaitSpot = [](const Agent& a)
+  { return a.want == Want::WaitSpot || (a.job && a.jobFor == Want::WaitSpot); };
+  const auto names = [&](const std::vector<AgentId>& ids)
+  {
+    std::string out;
+    for (const AgentId m : ids)
+      out += (out.empty() ? "" : ", ") + nameOf(m);
+    return out;
+  };
+  // Broken: none of its members waits on another of them any more (and
+  // none is planning its way out).
+  for (auto it = m_deadlocks.begin(); it != m_deadlocks.end();)
+  {
+    bool on = false;
+    for (const AgentId m : it->members)
+    {
+      const auto w = waits.find(m);
+      if (w != waits.end() &&
+          std::find(it->members.begin(), it->members.end(), w->second) !=
+              it->members.end())
+        on = true;
+      if (const Agent* a = agentOf(m); a && planningWaitSpot(*a))
+        on = true;
+    }
+    if (on)
+    {
+      ++it;
+      continue;
+    }
+    const float took = static_cast<float>(m_clock - it->since);
+    ++m_deadlockStats.broken;
+    m_deadlockStats.longest = std::max(m_deadlockStats.longest, took);
+    char text[120];
+    std::snprintf(text, sizeof(text), " broken %.1f s after they stood", took);
+    LOG_INFO("Navigation: deadlock of " + names(it->members) + text +
+             (it->yielder ? " (" + nameOf(it->yielder) + " gave way)"
+                          : std::string()));
+    for (const AgentId m : it->members)
+      if (Agent* a = agentOf(m))
+        a->yieldFailed = false;
+    it = m_deadlocks.erase(it);
+  }
+  // Found: the deadlock it's part of (members shared), or a new one.
+  const auto record = [&](const std::vector<AgentId>& members,
+                          float stood,
+                          const char* what) -> Deadlock&
+  {
+    for (Deadlock& d : m_deadlocks)
+      for (const AgentId m : members)
+        if (std::find(d.members.begin(), d.members.end(), m) != d.members.end())
+        {
+          for (const AgentId n : members)
+            if (std::find(d.members.begin(), d.members.end(), n) ==
+                d.members.end())
+              d.members.push_back(n);
+          return d;
+        }
+    Deadlock d;
+    d.members = members;
+    d.since = m_clock - stood;
+    ++m_deadlockStats.found;
+    std::string text;
+    for (const AgentId m : members)
+      text += (text.empty() ? "" : "; ") + describe(m);
+    char stoodText[80];
+    std::snprintf(stoodText, sizeof(stoodText), ", stood %.1f s", stood);
+    LOG_INFO(std::string("Navigation: deadlock (") + what + "): " + text +
+             stoodText);
+    m_deadlocks.push_back(std::move(d));
+    return m_deadlocks.back();
+  };
+
+  // Those and every one whose wait chain leads to them (a queue behind).
+  const auto feeding = [&](std::vector<AgentId> group)
+  {
+    for (bool grew = true; grew;)
+    {
+      grew = false;
+      for (const auto& [id, on] : waits)
+        if (std::find(group.begin(), group.end(), on) != group.end() &&
+            std::find(group.begin(), group.end(), id) == group.end())
+        {
+          group.push_back(id);
+          grew = true;
+        }
+    }
+    return group;
+  };
+  // Cycles: each held still by the next, all of them deadlockAfter.
+  for (const std::vector<AgentId>& cycle : Traffic::cycles(waits))
+  {
+    float stood = kForever;
+    for (const AgentId m : cycle)
+      if (const Agent* a = agentOf(m))
+        stood = std::min(stood, a->waitedFor);
+    if (stood < m_settings.deadlockAfter)
+      continue;
+    const std::vector<AgentId> group = feeding(cycle);
+    resolveCycle(
+        record(group, stood, "each waiting on the next"), cycle, group);
+  }
+  // Chains ending in one standing with no path to drive that isn't moving
+  // off (its plan, or its game's, long in coming): it never moves for them.
+  for (const auto& [id, on] : waits)
+  {
+    if (waits.contains(on))
+      continue; // (not the chain's end)
+    const Agent* w = agentOf(id);
+    const Agent* b = agentOf(on);
+    if (!w || !b || w->waitedFor < 2.0f * m_settings.parkedAfter ||
+        b->standingFor < 2.0f * m_settings.parkedAfter || !standing(*b) ||
+        std::abs(b->speed()) >= kStill || solid(*b) || b->motion->handDriven())
+      continue;
+    const std::vector<AgentId> group = feeding({on});
+    resolveChain(record(group, w->waitedFor, "waiting on one not moving"),
+                 id,
+                 on,
+                 group);
+  }
+}
+
+void Fleet::resolveCycle(Deadlock& d,
+                         const std::vector<AgentId>& cycle,
+                         const std::vector<AgentId>& group)
+{
+  // (A way out under way: its wait spot being planned.)
+  for (const AgentId m : cycle)
+  {
+    const Agent& a = *m_agents.at(m);
+    if (a.want == Want::WaitSpot || (a.job && a.jobFor == Want::WaitSpot))
+      return;
+  }
+  // One on its way to a wait spot but held on it: that way out failed.
+  for (const AgentId m : cycle)
+    if (Agent& a = *m_agents.at(m); a.toWaitSpot)
+      a.yieldFailed = true;
+  // The lowest ranked yields (one at a time); failing that, the next.
+  std::vector<AgentId> order = cycle;
+  std::sort(order.begin(),
+            order.end(),
+            [&](AgentId x, AgentId y) { return m_traffic.ranksAbove(y, x); });
+  for (const AgentId y : order)
+  {
+    Agent& a = *m_agents.at(y);
+    if (a.yieldFailed || a.stuck)
+      continue;
+    // (Clear of all of them: the cycle and any queued behind it.)
+    std::vector<AgentId> others;
+    for (const AgentId m : group)
+      if (m != y)
+        others.push_back(m);
+    if (yieldFor(y, a, others))
+    {
+      d.yielder = y;
+      LOG_INFO("Navigation: deadlock: " + nameOf(y) +
+               " yields (the lowest ranked that can), to a wait spot clear "
+               "of the others' ways");
+      return;
+    }
+  }
+  // Nobody can: the lowest stands for good, a static obstacle the others
+  // plan round.
+  // (Logged once: the same ones forming it again (a member planned again,
+  // taking the others as they stand) isn't news; the others carry on round
+  // the one that stands.)
+  Agent& lowest = *m_agents.at(order.front());
+  if (!lowest.stuck)
+  {
+    lowest.stuck = true;
+    std::vector<AgentId> members = cycle;
+    std::sort(members.begin(), members.end());
+    std::erase_if(m_hopeless,
+                  [&](const auto& h)
+                  { return m_clock - h.second > kHopelessFor; });
+    const bool known =
+        std::any_of(m_hopeless.begin(),
+                    m_hopeless.end(),
+                    [&](const auto& h) { return h.first == members; });
+    if (!known)
+    {
+      m_hopeless.emplace_back(members, m_clock);
+      LOG_WARN("Navigation: deadlock: nobody in it can get out of the way: " +
+               nameOf(order.front()) +
+               " stands for good, the others planned round it");
+    }
+  }
+}
+
+void Fleet::resolveChain(Deadlock& d,
+                         AgentId waiter,
+                         AgentId end,
+                         const std::vector<AgentId>& group)
+{
+  Agent& b = *m_agents.at(end);
+  if (b.want == Want::WaitSpot || (b.job && b.jobFor == Want::WaitSpot) ||
+      b.toWaitSpot)
+    return; // (on its way out)
+  // Lower: it moves off to a wait spot clear of the waiter's way (not while
+  // its game plans its way: that path is coming from where it stands).
+  if (m_traffic.ranksAbove(waiter, end) && !b.gamePlanning && !b.yieldFailed &&
+      !b.stuck &&
+      yieldFor(end, b, std::vector<AgentId>(group.begin() + 1, group.end())))
+  {
+    d.yielder = end;
+    LOG_INFO("Navigation: deadlock: " + nameOf(end) + " yields to " +
+             nameOf(waiter) + ", to a wait spot clear of its way");
+    return;
+  }
+  // Otherwise it's a static obstacle for now: the waiter plans round it.
+  if (!b.stuck)
+  {
+    b.stuck = true;
+    LOG_INFO("Navigation: deadlock: " + nameOf(end) +
+             " isn't moving off: a static obstacle " + nameOf(waiter) +
+             " plans round");
+  }
+}
+
+bool Fleet::yieldFor(AgentId id, Agent& a, const std::vector<AgentId>& members)
+{
+  if (a.motion->handDriven() || a.speedCap <= 0.0f || !m_world.space)
+    return false;
+  AgentId from = m_traffic.waitsOn(id);
+  if (!from || std::find(members.begin(), members.end(), from) == members.end())
+    from = members.front();
+  a.yieldTo = members;
+  a.deferTo = members;
+  a.deferredFor = 0.0f;
+  a.waitFrom = from;
+  ++a.counters.waitSpots;
+  ++a.counters.deadlockYields;
+  if (a.waitingFor != from)
+    event(Event::Kind::Yielding, id, a.request, from);
+  a.waitingFor = from;
+  a.forTraffic = true;
+  a.toWaitSpot = true;
+  a.avoidNone();
+  ask(id, a, Want::WaitSpot);
+  return true;
 }
 
 Fleet::State Fleet::state(AgentId id) const

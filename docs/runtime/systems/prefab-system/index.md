@@ -18,8 +18,8 @@ where.rotation = glm::angleAxis(0.4f, glm::vec3(0, 0, 1));
 where.scale = glm::vec3(1.1f);
 
 sfs::Entity tree = prefabs->spawn("asset:b87c181ec21487542704a4ebe5ed1339", where, group);
-if (tree.isValid())
-  tree.getComponent<sfs::MeshRendererComponent>().tint = {0.9f, 1.0f, 0.9f, 1.0f};
+if (auto* renderer = tree.getComponent<sfs::MeshRendererComponent>())
+  renderer->tint = {0.9f, 1.0f, 0.9f, 1.0f};
 
 prefabs->despawn(tree); // it and everything below it, at the next flush
 ```

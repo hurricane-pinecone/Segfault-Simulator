@@ -343,6 +343,79 @@ int main()
     CHECK(reportErrors());
   }
 
+  TEST("draws in a row sharing a mesh or a material should each draw with "
+       "their own")
+  {
+    // Two meshes alike but for their buffers, and two glowing materials:
+    // drawn mesh A red, A green, B green, B red, one to a quarter of the
+    // view, so each draw shares its mesh or its material with the last.
+    const auto glowing = [&](glm::vec3 color)
+    {
+      graph::Graph g;
+      const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
+      g.find(out)->inputs[graph::kBaseColor] = glm::vec4(0.0f);
+      g.find(out)->inputs[graph::kEmission] = glm::vec4(color, 1.0f);
+      return harness.renderer.createMaterial(
+          graphMaterial(g, AlphaMode::Opaque));
+    };
+    const MaterialHandle red = glowing({0.8f, 0.0f, 0.0f});
+    const MaterialHandle green = glowing({0.0f, 0.8f, 0.0f});
+    const MeshHandle a =
+        harness.renderer.createMesh(meshes::plane({1.0f, 1.0f}));
+    const MeshHandle b =
+        harness.renderer.createMesh(meshes::plane({1.0f, 1.0f}));
+    const auto at = [](float x, float y)
+    {
+      MeshInstance instance;
+      instance.model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));
+      return instance;
+    };
+    const MeshInstance topRight = at(0.5f, 0.5f);
+    const MeshInstance bottomLeft = at(-0.5f, -0.5f);
+    const MeshInstance bottomRight = at(0.5f, -0.5f);
+    const MaterialHandle redOnly[] = {red};
+    const MaterialHandle greenOnly[] = {green};
+    MeshBatch more[3];
+    more[0].mesh = a;
+    more[0].materials = greenOnly;
+    more[0].instances = {&topRight, 1};
+    more[1].mesh = b;
+    more[1].materials = greenOnly;
+    more[1].instances = {&bottomLeft, 1};
+    more[2].mesh = b;
+    more[2].materials = redOnly;
+    more[2].instances = {&bottomRight, 1};
+    const std::vector<uint8_t> pixels = drawPlane(
+        harness,
+        a,
+        red,
+        0.0f,
+        [](FrameParams& frame) { frame.bloom.enabled = false; },
+        at(-0.5f, 0.5f),
+        more);
+    // A pixel's red and green, the target RGBA or BGRA.
+    const auto colorAt = [&](int x, int y)
+    {
+      const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+      return glm::ivec2(std::max(pixels[i], pixels[i + 2]), pixels[i + 1]);
+    };
+    const auto isRed = [](glm::ivec2 c) { return c.x > c.y + 60; };
+    const auto isGreen = [](glm::ivec2 c) { return c.y > c.x + 60; };
+    CHECK(pixels.size() == std::size_t(kSize.x) * kSize.y * 4);
+    if (pixels.size() == std::size_t(kSize.x) * kSize.y * 4)
+    {
+      CHECK(isRed(colorAt(16, 16)));
+      CHECK(isGreen(colorAt(48, 16)));
+      CHECK(isGreen(colorAt(16, 48)));
+      CHECK(isRed(colorAt(48, 48)));
+    }
+    harness.renderer.destroyMesh(a);
+    harness.renderer.destroyMesh(b);
+    harness.renderer.destroyMaterial(red);
+    harness.renderer.destroyMaterial(green);
+    CHECK(reportErrors());
+  }
+
   TEST("every node should draw on the GPU what it works out on the CPU")
   {
     // Each output as pure emission: base colour black, matte, not metal, so

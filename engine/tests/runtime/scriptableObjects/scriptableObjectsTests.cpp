@@ -22,6 +22,7 @@ struct ItemDef : ScriptableObject
   std::string displayName;
   int value = 10;
   AssetRef<ItemDef> upgradesTo;
+  AssetRefList<ItemDef> parts;
 
   static inline int alive = 0; // live objects, to see them freed
   ItemDef() { ++alive; }
@@ -89,6 +90,10 @@ void registerTypes()
   add("upgradesTo",
       FieldKind::AssetRef,
       [](void* o) -> void* { return &objectAs<ItemDef>(o)->upgradesTo; });
+  item.fields.back().attributes.assetType = "ItemDef";
+  add("parts",
+      FieldKind::AssetRefList,
+      [](void* o) -> void* { return &objectAs<ItemDef>(o)->parts; });
   item.fields.back().attributes.assetType = "ItemDef";
   types().add(item);
   types().add(scriptableObjectType<OtherDef>("OtherDef", "Other Def", "test"));
@@ -182,24 +187,69 @@ int main()
     CHECK(ItemDef::alive == 0);
   }
 
+  TEST("AssetRefList should load, save and get its assets in order")
+  {
+    Project project;
+    project.write("Blade", "ItemDef", {{"value", 3}});
+    project.write("Hilt", "ItemDef", {{"value", 1}});
+    AssetDatabase catalogue(
+        project.root, AssetDatabase::Mode::ReadWrite, {"assets"});
+    const std::string blade = refOf(catalogue, "Blade");
+    const std::string hilt = refOf(catalogue, "Hilt");
+    const std::string gone = "asset:00000000000000000000000000000001";
+    project.write("Sword",
+                  "ItemDef",
+                  {{"parts", nlohmann::json::array({hilt, "", gone, blade})}});
+    catalogue.refresh();
+    scriptableObjects().setCatalogue(&catalogue);
+
+    const auto* sword =
+        scriptableObjects().get<ItemDef>(refOf(catalogue, "Sword"));
+    CHECK(sword && sword->parts.size() == 4u);
+    CHECK(sword->parts.get(0) && sword->parts.get(0)->value == 1);
+    CHECK(sword->parts.get(1) == nullptr); // unset
+    CHECK(sword->parts.get(2) == nullptr); // missing
+    CHECK(sword->parts.get(9) == nullptr); // past the end
+    const std::vector<const ItemDef*> all = sword->parts.all();
+    CHECK(all.size() == 2u && all[0]->value == 1 && all[1]->value == 3);
+
+    // Saved as an array of its assets, unset and missing ones kept; loaded
+    // back, the same.
+    const reflect::TypeInfo& type = *reflect::types().find("ItemDef");
+    const SceneSerializer serializer(reflect::types(), nullptr);
+    const nlohmann::json saved =
+        serializer.saveObject(type, const_cast<ItemDef*>(sword));
+    CHECK(saved["parts"] == nlohmann::json::array({hilt, "", gone, blade}));
+    ItemDef copy;
+    serializer.loadObject(type, &copy, saved);
+    CHECK(copy.parts == sword->parts);
+
+    // Not an array of strings: left as it was.
+    ItemDef bad;
+    bad.parts.assets = {blade};
+    serializer.loadObject(type, &bad, {{"parts", 3}});
+    CHECK(bad.parts.size() == 1u);
+    scriptableObjects().setCatalogue(nullptr);
+  }
+
   TEST("a derived type should have its bases' fields first, then its own, "
        "and know what it is")
   {
     registerDerived();
     const reflect::TypeInfo* magic = reflect::types().find("MagicItemDef");
     CHECK(magic && magic->kind == reflect::TypeKind::ScriptableObject);
-    CHECK(magic && magic->fields.size() == 4u);
+    CHECK(magic && magic->fields.size() == 5u);
     CHECK(magic && magic->fields[0].name == "displayName" &&
           magic->fields[0].owner == "ItemDef");
-    CHECK(magic && magic->fields[3].name == "charge" &&
-          magic->fields[3].owner == "MagicItemDef");
+    CHECK(magic && magic->fields[4].name == "charge" &&
+          magic->fields[4].owner == "MagicItemDef");
     CHECK(reflect::types().isA("MagicItemDef", "ItemDef"));
     CHECK(reflect::types().isA("MagicItemDef", "MagicItemDef"));
     CHECK(!reflect::types().isA("ItemDef", "MagicItemDef"));
     CHECK(reflect::types().chain("MagicItemDef") ==
           std::vector<std::string>({"MagicItemDef", "ItemDef"}));
     // The base's own list is untouched.
-    CHECK(reflect::types().find("ItemDef")->fields.size() == 3u);
+    CHECK(reflect::types().find("ItemDef")->fields.size() == 4u);
   }
 
   TEST("a derived asset should load and save every level's fields, and an "
