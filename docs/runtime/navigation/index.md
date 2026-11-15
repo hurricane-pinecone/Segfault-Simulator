@@ -1,7 +1,7 @@
 # Navigation (AI agents)
 
 `NavigationSystem` plans and drives AI agents round a 3D scene: a car going
-to the shed, a tractor fetching a trailer, several machines meeting in a yard.
+to the shed, a truck fetching a trailer, several machines meeting in a yard.
 You tell an agent where to go; it finds the way round the scene's colliders on
 the [planning scheduler](scheduler.md) (one worker pool, deadline first), drives it, and keeps out of the others' way by priority when they meet. Only
 vehicles are built so far; the code leaves room for walkers later.
@@ -39,7 +39,7 @@ It's the standard textbook stack, so nothing in it is specific to one game:
    the body (discs of its inscribed radius along it) off the solids, and,
    where each move starts, the rig's whole outline (its corners) off them,
    asking the cost layer about the pose where the outline is over barred
-   ground (a body kept off a crop). A trailer's outline is checked too, once
+   ground (a body kept off a flowerbed). A trailer's outline is checked too, once
    the move is as far from the goal as the trailer reaches back (nearer, its
    angle is whatever the way in made it), swung to the angle one arc leaves
    it at. So a rig facing away from the goal knows it has turning to do *and
@@ -151,7 +151,7 @@ what it depends on changes:
 
 The rig (`nav::vehicle::Rig`) comes from the game's
 `setRigProvider(fn(entity) -> Rig)`, asked every update: the mass it moves
-besides its own (what it tows and carries: a tractor towing a full trailer
+besides its own (what it tows and carries: a truck towing a full trailer
 speeds up and stops more slowly), the grip under it (friction coefficient:
 tyres x surface), and its wheelbase and fixed axle as measured from its
 model, each used only where the spec's (`wheelbase`, `axle`) is 0. The axle
@@ -176,10 +176,10 @@ A game extends the spec with its own kinds of machine, and a VehicleComponent
 takes their assets:
 
 ```cpp
-struct TractorSpec : sfs::VehicleSpec
+struct TruckSpec : sfs::VehicleSpec
 {
   float hitchHeight = 0.5f;
-  float linkageLiftRate = 0.3f;
+  float cargoCapacity = 2000.0f;
 };
 ```
 
@@ -199,7 +199,7 @@ thing reads that angle (`Fleet::hitch()`) rather than swinging its own
 copy. While nothing moves the agent, the system takes the angle the towed
 thing was left at (`Fleet::setHitch()`).
 
-A mounted part (`rigid = true`: a linkage tool, a combine's header) joins
+A mounted part (`rigid = true`: a front blade, a forklift's mast) joins
 the agent's own boxes. Each of its colliders is measured by
 `NavigationSystem::mountedBox()`: its corners bounded in the agent's own
 frame, level (x from the reference point, heights up from the agent's
@@ -207,7 +207,7 @@ origin), so the box is its true size whatever the body's pitch or roll when
 it's measured. The tilt is never baked into a size: every check stands the
 boxes on the ground per pose with `nav::stanceOf()`. `Hitch::mount` is the
 part's pose in the agent's frame as its mount holds it in the state it's
-driven in (a header raised for travel, lowered working): the game sets it
+driven in (a blade raised for travel, lowered working): the game sets it
 from its authored mount and hitches again when the state changes (without
 one, the part is measured where it's held now relative to the agent). The
 box is planned exactly where the part is held: no allowance is added for
@@ -223,7 +223,7 @@ there next time.
 
 ```cpp
 auto* nav = scene().tryGetSystem<sfs::NavigationSystem>();
-nav->requestGoal(tractor, {{{40.0f, 12.0f}, 1.57f}}); // position, heading
+nav->requestGoal(truck, {{{40.0f, 12.0f}, 1.57f}}); // position, heading
 ```
 
 `requestGoals` takes several goals (it goes to the quickest) and an optional
@@ -284,7 +284,7 @@ milliseconds), so a stand check or a short plan doesn't pay for it again.
 
 A game says what ground costs with `setCostLayer(name, layer)`: a
 `nav::CostLayer` gives a factor on time for a pose (1 ordinary ground, a worn
-track 0.85, infinity for never, e.g. a combine's body over standing crop) and
+track 0.85, infinity for never, e.g. a vehicle's body over a flowerbed) and
 where nothing may stop (`noWait`: gateways). Layers multiply.
 `setPriorityProvider` overrides each agent's priority.
 
@@ -295,12 +295,12 @@ per meeting:
 
 1. **Fixed priorities.** Agents are ranked by priority, then by id: one total
    order. A game sets priorities from a named table of tasks (a working
-   combine above the cart serving it, above other field work, above
+   loader above the truck it fills, above other work, above
    travelling); the rank of a pair never flips while their tasks stand.
 2. **Reservations.** Each frame, in rank order, each moving agent reserves
    the ground its body sweeps along its path, every `claimEvery` metres for
    `claimSeconds`, each sample in the time window its speed profile has it
-   there; its body includes all its boxes (front header, trailer) and its
+   there; its body includes all its boxes (front blade, trailer) and its
    **stopping stretch** (`AgentMotion::stoppingDistance()`, the vehicle's
    `Follower::stoppingDistance()`), and its reservation ends where it will
    stand. A lower agent checks its own samples against every higher
@@ -345,7 +345,7 @@ per meeting:
    so a higher agent waiting for it gets it. One in a narrow place that a
    higher agent waits for goes first: the waiting one's reservation doesn't
    stop it, only its body does, and then it is in that one's way and goes to
-   a wait spot (two carts meeting head-on in a farm lane: never both
+   a wait spot (two trucks meeting head-on in a narrow lane: never both
    standing for good).
 5. **Static obstacles.** An agent with nothing to do (no path, or at its
    end, and no plan on the way), one stood `parkedAfter` not for traffic (a
@@ -397,7 +397,7 @@ per meeting:
    Each deadlock is logged with who, where, what each waits for and how
    long they stood, which agent gave way and where to, and how many seconds
    after they stood it broke (`Fleet::deadlockStats()` counts them; a
-   game's agents are named by their `NameComponent`). The farm hands in a
+   game's agents are named by their `NameComponent`). Two drivers in a
    yard: one backs off to somewhere actually clear and lets the other
    through.
 
@@ -432,15 +432,15 @@ rather than stopping in front of it.
 ```cpp
 fleet.add(2, spec, parkedPose);  // nothing to do: fleet.solid(2) is true
 fleet.requestGoal(1, goal);      // planned round it, no waiting on it
-fleet.setPriority(3, 4);         // a working combine: everyone keeps out
+fleet.setPriority(3, 4);         // a working loader: everyone keeps out
 ```
 
-`cooperate(a, b, true)` exempts a pair that keep their own spacing (a cart
-running beside a combine).
+`cooperate(a, b, true)` exempts a pair that keep their own spacing (a truck
+running beside the loader filling it).
 
 ## A game's own paths and checks
 
-- `setPath(entity, path)` drives a path the game laid itself (a field pass),
+- `setPath(entity, path)` drives a path the game laid itself (a patrol route),
   claimed and given way to like any other.
 - `planNow(entity, ask)` plans synchronously on the calling thread: only for
   a check that truly needs its answer this frame. Everything else goes through
@@ -462,7 +462,7 @@ running beside a combine).
   stop at asks this with the request it plans with, never a check of its own:
   a spot it passes is one the plan can reach.
 - `nav::vehicle::touchesAlong(request, from, hitch, segments, endIn)` is THE
-  check of a way the game laid itself (a field pass, its own eased curves
+  check of a way the game laid itself (a patrol route, its own eased curves
   sampled into segments, a straight onto a hitch): the planner's own final
   check (its boxes plus `Tunables::gap`, a pose every `Tunables::exactStep`,
   the trailer swung on its hitch and kept within its limits), either gear.
@@ -487,9 +487,9 @@ running beside a combine).
   little elsewhere: a way backing a trailer past a tree by a hair came out
   clear for the planner and touching for the game's look-ahead, planned and
   refused again for ever.)
-- A game's bespoke manoeuvres (a field's headland turns, going round what
+- A game's bespoke manoeuvres (turns at the end of a row, going round what
   stands on a pass) are planned with `planNow()` too, with their own
-  `CostLayer` (stay on the headland, keep near the pass's line) and a small
+  `CostLayer` (stay in the turning area, keep near the pass's line) and a small
   first `nodeBudget`: a shot (a U-turn, a bulb turn, a three-point turn) where
   one's clear, else the search. Plan and drive the same request and both get
   the same way.
@@ -505,15 +505,15 @@ system, so the player's vehicle moves by exactly the physics the AI's paths
 are driven by:
 
 ```cpp
-nav.takeWheel(tractor);                 // its goal or path dropped
+nav.takeWheel(truck);                   // its goal or path dropped
 nav::Controls c;
 c.throttle = 1.0f;                      // 0..1
 c.brake = 0.0f;                         // 0..1
 c.steer = 0.5f;                         // -1..1 of full lock, + left
 c.gear = 1;                             // 1 forward, -1 backing up
-nav.setControls(tractor, c);            // each frame
-nav.setSpeedCap(tractor, workingPace);  // still holds
-nav.handBack(tractor);                  // stands where it is
+nav.setControls(truck, c);              // each frame
+nav.setSpeedCap(truck, workingPace);    // still holds
+nav.handBack(truck);                    // stands where it is
 ```
 
 Each update the system moves it by the last controls given, by its kind's own
@@ -553,7 +553,7 @@ exports, never in a release export.
 
 `nav::CollisionSpace` answers "would these boxes touch anything?" from the
 frozen colliders exactly. When something needs the colliders as outlines
-instead (a field planner tracing obstacles, a game's cells, a 2D heuristic),
+instead (a coverage planner tracing obstacles, a game's cells, a 2D heuristic),
 it takes them from `nav::footprints(world, layers, ignore, ground)` or
 `CollisionSpace::footprints()`: each collider's exact footprint as a
 `BoxSpace::Solid` (a box's outline yawed as it's turned, the upright box round
@@ -612,11 +612,11 @@ can overstate: on that test's 12 ways the turning map was over the time left
 at 30 of 928 points and the heading-aware map at 332 (up to 6x, in tight
 spots). The search prunes by them all the same once it has grown its first
 300 poses. Taking the heading-aware map as soon as a shot finds a way (tried:
-headland turns twice as fast) pruned better ways the 300 poses would have
-found, and the game's coverage got worse, so it isn't done.
+end-of-row turns twice as fast) pruned better ways the 300 poses would have
+found, and the coverage paths got worse, so it isn't done.
 
-`plannerBenchTests` is the planner's benchmark: a fixed set of headland
-turns in a fenced field and trips about a yard, each planned and timed
+`plannerBenchTests` is the planner's benchmark: a fixed set of turns at the
+ends of rows in a fenced area and trips about a yard, each planned and timed
 (p50/p95 ms per kind), every way's time, cusps and metres backing held to the
 ones recorded before the speed work (`plannerBenchBefore.inc`): no worse.
 

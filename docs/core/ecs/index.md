@@ -236,13 +236,14 @@ null.
 Components hold only an entity's state: what is so about it, written by the
 system that owns that concern and read by any other. Everything one system
 tells another (news that something happened, a notice, a request, an answer)
-is an [event](../events/index.md): `registry->events().send(E{...})`, read
-through an `EventReader` the reading system makes in `create()` and keeps
-(each reader sees each event once, and it's gone after the next frame).
-Workers send through an `EventSender`. No request fields, one-frame flags or
-message fields go on components. Requests and answers are plain events for
-now; delivery policies for them (one consumer, the latest per key) are
-coming.
+is an [event](../events/index.md), sent and consumed with the event verbs a
+system inherits: `send(E{...})`, `read<E>()` (every reader sees each event
+once), `take<E>()` (one system takes each), `takeShared<E>()`,
+`readLatest<E>()` and `takeLatest<E>()` (each entity's newest), and
+`request(entity, R{...})`, answered through a `Reply`. Each event is kept
+until every consumer of its type has consumed it. Workers send through an
+`EventSender`. No request fields, one-frame flags or message fields go on
+components.
 
 `registry->componentChanges<A>()` goes up whenever an entity gains or loses an
 `A` (a destroyed entity loses all of its components). Code that works
@@ -386,7 +387,7 @@ the loop only reads it.
 `size()`, `empty()`, `[i]`, `front()` and `back()` give entities.
 `entities()` gives the registry's `const std::vector<sfs::Entity>&` itself,
 and the view converts to it, so code that stores or passes the list
-(`const std::vector<sfs::Entity>& hands = registry->query<FarmHand>();`)
+(`const std::vector<sfs::Entity>& enemies = registry->query<Enemy>();`)
 takes the view as it is. `auto list = registry->query<...>()` holds a view,
 not a copy; write `std::vector<sfs::Entity>(registry->query<...>())` for a
 copy. Standard algorithms over the entities take `entities()`.
@@ -712,7 +713,9 @@ reg.events().update();           // once a frame, after the flush
 ```
 
 A headless host starts each frame's [events](../events/index.md) itself, with
-`events().update()` after the flush, as `Scene::update()` does.
+`events().update()` after the flush, as `Scene::update()` does, and runs its
+systems' updates through `reg.updateSystem(system, dt)` (and
+`lateUpdateSystem()`), which start each update's span of events.
 
 Entity destruction is deferred: a destroyed entity stays alive (and its
 components remain readable) until the next `flushEntities()` call. New

@@ -9,6 +9,8 @@ name: Docs
 #             review that requests changes (or mentions @claude) -- has Claude
 #             bring the branch up to date with master (resolving conflicts),
 #             apply the request and push it back, so the PR updates in place.
+#             It replies to each comment (in its thread, for a line comment)
+#             as it starts, and again with what it changed for that comment.
 #             A "/conflicts" comment in the PR's conversation only brings it up
 #             to date with master, with Claude resolving any conflicts. GitHub
 #             runs no review or line-comment workflow while a PR has conflicts
@@ -189,8 +191,8 @@ jobs:
             close this PR — no harm done. To have Claude change it, comment
             `@claude <what to change>`, or leave comments on lines and submit a review
             requesting changes: Claude gets the review's text and every line comment with
-            its place. (Don't write `@claude` on lines inside a review: each would also
-            start a run of its own.) If it conflicts with master, comment `/conflicts`
+            its place. Claude replies to each comment as it starts, and again with what it
+            changed for it. If it conflicts with master, comment `/conflicts`
             here in the conversation first: GitHub runs nothing for reviews while a PR
             has conflicts.
 
@@ -236,6 +238,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       # "/conflicts": bring the branch up to date with master and nothing else.
       CONFLICTS_ONLY: ${{ github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/conflicts') }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -243,6 +246,8 @@ jobs:
 
       - name: Check out the PR branch (docs PRs only)
         id: pr
+        env:
+          COMMENT_REVIEW_ID: ${{ github.event_name == 'pull_request_review_comment' && github.event.comment.pull_request_review_id || '' }}
         run: |
           branch="$(gh pr view "$PR" --json headRefName --jq .headRefName)"
           if [[ "$branch" != docs/* ]]; then
@@ -250,8 +255,63 @@ jobs:
             echo "docs=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # A line comment in a review that starts a run of its own (it requests
+          # changes, or its text mentions @claude) is answered by that run, with
+          # the review's other comments.
+          if [ -n "$COMMENT_REVIEW_ID" ]; then
+            review="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews/$COMMENT_REVIEW_ID")"
+            if [ "$(jq -r .state <<< "$review")" = "CHANGES_REQUESTED" ] \
+              || jq -e '(.body // "") | contains("@claude")' <<< "$review" > /dev/null; then
+              echo "This line comment is answered by its review's run."
+              echo "docs=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           echo "docs=true" >> "$GITHUB_OUTPUT"
           gh pr checkout "$PR"
+
+      # The line comments to answer, each with its id, the thread to reply in,
+      # its place and its text: a submitted review's (they aren't in the event),
+      # or the one line comment that started the run.
+      - name: Gather the line comments
+        id: req
+        if: steps.pr.outputs.docs == 'true'
+        env:
+          REVIEW_ID: ${{ github.event.review.id }}
+          COMMENT_ID: ${{ github.event_name == 'pull_request_review_comment' && github.event.comment.id || '' }}
+        run: |
+          comments="$RUNNER_TEMP/comments.json"
+          fields='{id, thread: (.in_reply_to_id // .id), path, line: (.line // .original_line), body, hunk: .diff_hunk}'
+          if [ -n "$REVIEW_ID" ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews/$REVIEW_ID/comments" \
+              --jq ".[] | $fields" | jq -s . > "$comments"
+          elif [ -n "$COMMENT_ID" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/pulls/comments/$COMMENT_ID" --jq "[$fields]" > "$comments"
+          else
+            echo '[]' > "$comments"
+          fi
+          echo "comments=$comments" >> "$GITHUB_OUTPUT"
+
+      # Says the request was picked up: a reply in each line comment's thread,
+      # and in the conversation for a comment there or a review's own text.
+      - name: Say it's started
+        if: steps.pr.outputs.docs == 'true'
+        env:
+          COMMENTS: ${{ steps.req.outputs.comments }}
+          EVENT: ${{ github.event_name }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+        run: |
+          if [ "$CONFLICTS_ONLY" = "true" ]; then
+            started="Working on it ([follow the run]($RUN_URL))."
+          else
+            started="Working on it. I'll reply again with what I changed ([follow the run]($RUN_URL))."
+          fi
+          for thread in $(jq -r '.[].thread' "$COMMENTS" | sort -u); do
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments/$thread/replies" -f body="$started" > /dev/null
+          done
+          if [ "$EVENT" = "issue_comment" ] || [ -n "$REVIEW_BODY" ] || [ "$(jq length "$COMMENTS")" = "0" ]; then
+            gh pr comment "$PR" --body "$started"
+          fi
 
       - name: Bring the branch up to date with master
         id: merge
@@ -283,38 +343,29 @@ jobs:
         env:
           # Same subscription token the sync job uses.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          REQUEST: ${{ github.event.comment.body || github.event.review.body }}
+          # A line comment's text is in comments.json, with its place.
+          REQUEST: ${{ github.event_name != 'pull_request_review_comment' && (github.event.comment.body || github.event.review.body) || '' }}
           CONFLICTS: ${{ steps.merge.outputs.conflicts }}
-          REVIEW_ID: ${{ github.event.review.id }}
-          COMMENT_PATH: ${{ github.event.comment.path }}
-          COMMENT_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
-          COMMENT_HUNK: ${{ github.event.comment.diff_hunk }}
+          COMMENTS: ${{ steps.req.outputs.comments }}
         run: |
           # Strip whitespace so a stray newline in the secret can't make the auth
           # header invalid (see the sync job for the full note).
           export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
-          # A submitted review's line comments aren't in the event: fetch them, each
-          # with its file, line and the diff it was left on. A single line comment
-          # carries its own place in the event.
-          LINE_COMMENTS=""
-          if [ -n "$REVIEW_ID" ]; then
-            LINE_COMMENTS="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews/$REVIEW_ID/comments" \
-              --jq '.[] | "- \(.path), line \(.line // .original_line):\n\(.body)\nIt was left on this part of the diff:\n\(.diff_hunk)\n"')"
-          elif [ -n "$COMMENT_PATH" ]; then
-            LINE_COMMENTS="- $COMMENT_PATH, line $COMMENT_LINE:
-          $REQUEST
-          It was left on this part of the diff:
-          $COMMENT_HUNK"
-            REQUEST=""
-          fi
+          LINE_COMMENTS="$(jq -r '.[] | "- Comment \(.id), on \(.path) line \(.line):\n\(.body)\nIt was left on this part of the diff:\n\(.hunk)\n"' "$COMMENTS")"
+          REPLIES_NOTE=""
           if [ -n "$LINE_COMMENTS" ]; then
             REQUEST="${REQUEST:+$REQUEST
 
           }Comments on lines of the pull request (each is part of the request):
           $LINE_COMMENTS"
+            REPLIES_NOTE=" Use each line comment's number (as a string) as its key"
+          fi
+          if [ -n "$REQUEST" ] && [ "${REQUEST#Comments on lines}" = "$REQUEST" ]; then
+            REPLIES_NOTE="${REPLIES_NOTE:+$REPLIES_NOTE, and}${REPLIES_NOTE:- Use} \"request\" for the feedback's own text"
           fi
           if [ -z "$REQUEST" ]; then
             REQUEST="(A review requested changes without saying what: bring the PR up to date with master and make sure it's still accurate.)"
+            REPLIES_NOTE=" Use \"request\" as the key"
           fi
           CONFLICT_NOTE=""
           if [ -n "$CONFLICTS" ]; then
@@ -336,19 +387,21 @@ jobs:
 
           Do what it asks. The whole repository is checked out on the PR branch, so Read/Grep/Glob any source or doc file you need. Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) first, and follow both.
 
-          Make the smallest change that satisfies the request and do not touch anything it didn't ask about. If the request is unclear, or is not a documentation change you should make here, make no edits (beyond resolving any conflicts)."
+          Make the smallest change that satisfies the request and do not touch anything it didn't ask about. If the request is unclear, or is not a documentation change you should make here, make no edits (beyond resolving any conflicts).
+
+          When you're done, write docs-replies.json at the repository root: a JSON object answering each part of the feedback, read by the workflow and posted as your replies.${REPLIES_NOTE}. Map each key to one or two plain sentences, written to the reviewer, saying what you changed for it, or why you changed nothing. Write nothing else to that file."
           fi
           printf '%s' "$PROMPT" | claude -p \
             --permission-mode acceptEdits --max-turns 60 \
             --allowedTools "Read,Edit,Write,Grep,Glob"
 
       - name: Push the changes back to the PR
+        id: push
         if: steps.pr.outputs.docs == 'true'
-        env:
-          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
         run: |
           if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs mkdocs.yml; then
             gh pr comment "$PR" --body "I couldn't resolve the conflicts with master (markers are left in the files above), so I haven't pushed anything. Resolve them by hand, or ask again with more to go on."
+            echo "reported=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           git add -A -- docs mkdocs.yml
@@ -358,23 +411,54 @@ jobs:
             git commit -m "docs: address review feedback"
           fi
           if [ "$(git rev-parse HEAD)" = "$(git rev-parse '@{u}')" ]; then
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
             if [ "$CONFLICTS_ONLY" = "true" ]; then
               gh pr comment "$PR" --body "Already up to date with master, with no conflicts: nothing to push."
-            else
-              gh pr comment "$PR" --body "I didn't change anything. The request looked already satisfied, or it was outside the docs I should edit here."
             fi
             exit 0
           fi
           git push
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
           # The push makes a new head commit with no statuses: report them again.
           bash .github/scripts/mark-docs-checks.sh "$(git rev-parse HEAD)"
-          if [ "$CONFLICTS_ONLY" = "true" ]; then
-            gh pr comment "$PR" --body "Merged master in${CONFLICTS:+ (resolving the conflicts)} and pushed it."
-          elif [ -n "$CONFLICTS" ]; then
-            gh pr comment "$PR" --body "Merged master in (resolving the conflicts) and pushed an update addressing your feedback."
-          else
-            gh pr comment "$PR" --body "Pushed an update addressing your feedback."
+
+      # Claude's answer to each part of the feedback: in each line comment's
+      # thread, and in the conversation for the feedback's own text.
+      - name: Reply with what changed
+        if: steps.pr.outputs.docs == 'true' && env.CONFLICTS_ONLY != 'true'
+        env:
+          COMMENTS: ${{ steps.req.outputs.comments }}
+          PUSHED: ${{ steps.push.outputs.pushed }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          replies=docs-replies.json
+          if ! jq -e 'type == "object"' "$replies" > /dev/null 2>&1; then
+            echo '{}' > "$replies"
           fi
+          if [ "$PUSHED" = "true" ]; then
+            where="In $(git rev-parse --short HEAD)${CONFLICTS:+ (master merged in first, its conflicts resolved)}:"
+          else
+            where="No change pushed:"
+          fi
+          answered=false
+          for id in $(jq -r '.[].id' "$COMMENTS"); do
+            thread="$(jq -r --argjson id "$id" '.[] | select(.id == $id) | .thread' "$COMMENTS")"
+            text="$(jq -r --arg id "$id" '.[$id] // empty' "$replies")"
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments/$thread/replies" \
+              -f body="$where ${text:-I made no change for this comment.}" > /dev/null
+            answered=true
+          done
+          text="$(jq -r '.request // empty' "$replies")"
+          if [ -n "$text" ] || [ "$answered" = "false" ]; then
+            gh pr comment "$PR" --body "$where ${text:-the request looked already satisfied, or it was outside the docs I should edit here.}"
+          fi
+
+      # Any other failure (Claude erroring or running out of turns, a push
+      # refused) would otherwise end the run silently after "Working on it".
+      - name: Say it failed
+        if: failure() && steps.pr.outputs.docs == 'true' && steps.push.outputs.reported != 'true'
+        run: |
+          gh pr comment "$PR" --body "Something went wrong, so I haven't pushed anything. [See the run]($RUN_URL) for what happened, then ask again."
 
   # Keep open docs PRs current: bring each up to date with master, and have
   # Claude check it against the source as it is now -- updated, or flagged for

@@ -1,6 +1,8 @@
 # Segfault Simulator (SFS): rules for AI agents
 
 SFS is a general game engine. Nothing game-specific goes in it. Read README.md and docs/ before changing an area.
+That includes its words: docs, docstrings, comments, log lines and test names use generic examples (`Player`,
+`Enemy`, `Health`, `Door`, `Pickup`), never a game's terms (no farms, farm hands, tractors or crops) or its types.
 Engine bar: a feature belongs in SFS only if a production-ready general engine (Unity, Unreal, Godot) would ship it
 (in the engine itself, or as a first-party library once SFS has them). Anything narrower is game code, even if more
 than one game could use it.

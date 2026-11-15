@@ -3,14 +3,14 @@
 Every path job of a scene runs on ONE worker pool: `sfs::nav::PlanScheduler`
 (`engine/runtime/navigation/planScheduler.h`). `NavigationSystem` owns it
 (`nav->scheduler()`); its fleet's plans (trips, wait spots, look-ahead), the
-coarse graph build and a game's own planning (field plans, turns, line-ups)
+coarse graph build and a game's own planning (coverage plans, turns, line-ups)
 all go through it. There are no other planning pools. A game that keeps job
-handles beyond a frame (a route's job, a field plan's) holds the scheduler by
+handles beyond a frame (a route's job, a coverage plan's) holds the scheduler by
 `nav->sharedScheduler()` (a `std::shared_ptr`; keep it as a `weak_ptr`), so a
 handle dropped after the scene's gone cancels nothing that isn't there.
 
 The problem it solves: with separate first-in-first-out pools, one vehicle's
-long job (a 20 s field plan) held a thread while another vehicle's 50 ms turn
+long job (a 20 s coverage plan) held a thread while another vehicle's 50 ms turn
 waited behind it. The scheduler runs everything at once, splits work into
 small tasks, and serves whatever is needed soonest, with a fair turn per
 vehicle.
@@ -36,7 +36,7 @@ worker may take another job's task, so a long job never blocks a short one.
 nav::PlanScheduler& s = nav->scheduler();
 nav::PlanScheduler::Request r;
 r.owner = agentId;                 // the fair turn is per owner
-r.label = "Combine 1: field 3";    // for the log
+r.label = "Sweeper 1: area 3";     // for the log
 r.deadline = whenItRunsOutOfPath;  // needed by (Clock::now(): standing)
 r.step = [state](nav::PlanScheduler::Context& ctx) {
   ctx.publish(planNextPass(*state)); // a leg: streamed, never changed
@@ -60,12 +60,18 @@ for (const std::any& leg : c.legs)
   deadline, PlanRequest)` is one vehicle plan: its leg is the `PlanResult`
   `planNow()` gives (same function, same answer), never the clear way so far.
 - **Parallel tasks inside a job.** A step may `fork()` tasks that run on any
-  free workers (a field plan's layout candidates); the job's next step runs
+  free workers (a coverage plan's layout candidates); the job's next step runs
   once they have all finished (and picks the best, exactly as it would one
   after another).
 - **Cancel.** `cancel(job)`: its queued tasks never run, a running step sees
   `ctx.cancelled()` (pass `ctx.cancelFlag()` as a `PlanRequest::cancel`) and
   nothing more is published.
+- **Wanted.** `Request::wanted`, if set, is asked (under the scheduler's
+  lock) before each of the job's tasks is taken; once it says no, the job is
+  cancelled and runs no further step. A job answering a keyed request keeps
+  its [Reply](../../core/events/index.md#requests-and-answers) and sets
+  `r.wanted = [reply] { return !reply.superseded(); };`, so a newer request,
+  a cancel or the entity's destruction stops it. Keep it a cheap check.
 - **Errors.** A step that throws is caught and logged (`LOG_ERROR`), its job
   ends `Failed`; nothing escapes into the game loop.
 - **Letting go off the game thread.** `release(object)` hands something heavy

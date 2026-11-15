@@ -251,7 +251,7 @@ onto a slot in the Inspector. That makes a material for the texture in
 `materials/` (or reuses the one it made before) and puts it in the slot.
 Dragging a material works the same way.
 
-A model's own materials live inside its file. To change one (make the barn's
+A model's own materials live inside its file. To change one (make the house's
 roof red, say), right-click its slot → **Extract to Edit**: that saves it,
 with its textures, as a material asset in `materials/` and uses it there.
 
@@ -294,8 +294,8 @@ where another copy changed the same thing), and **Revert** drops them all
 
 Prefabs can contain other prefabs. A model placed in the scene is a prefab of
 its own node tree (so a part can be animated or given a script), but can't be
-changed itself: make a prefab containing it (as with `Windmill.prefab` in the
-sample farm) to keep changes. Changes to a model's nodes follow them by name,
+changed itself: make a prefab containing it (a `Windmill.prefab` holding the
+windmill model, say) to keep changes. Changes to a model's nodes follow them by name,
 so reordering the nodes in Blender moves nothing; renaming one leaves its old
 changes unused but kept (see
 [Model node ids](../runtime/serialization/index.md#model-node-ids)).
@@ -375,7 +375,7 @@ over a project's prefabs (it builds and loads the game module first):
 SfsEditor --fill-parts <project-folder> <prefab|all> [--dry-run]
 ```
 
-`<prefab>` is a path from the project folder (`prefabs/Tractor.prefab`). A
+`<prefab>` is a path from the project folder (`prefabs/Truck.prefab`). A
 prefab whose fields change is edited in place: only the part values' text is
 replaced (or added, in the editor's key order, where the file has none), so
 its diff is just those values. Each edited file must open to exactly what was
@@ -455,7 +455,7 @@ outlined, the one clicked last a little bolder.
   with **+ Add Tag** and a chip's **x**. Each of these is one undo step.
 - An **entity reference** set on several is set relatively: a target in the
   first one's own prefab copy becomes the same part of each one's copy (each
-  tractor gets its own arm), and any other target (an entity of the scene
+  crane gets its own arm), and any other target (an entity of the scene
   itself) is the same entity for all. Where a copy has no such part, its field
   is left as it was (logged). Clearing one, or a list's item, clears the saved
   value a **Missing** reference keeps on each of them too, and a Missing

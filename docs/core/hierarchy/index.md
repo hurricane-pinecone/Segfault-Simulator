@@ -136,7 +136,7 @@ is a frame behind. The engine's render code writes none.
 feature, so in the editor, Debug builds and development exports only) checks
 every cache against a world matrix composed afresh, after each pass, and every
 cached read in the render phase. A mismatch logs one warning per entity
-("SFS_CHECK_TRANSFORMS: entity 12 'Plough': its cached world matrix, read in
+("SFS_CHECK_TRANSFORMS: entity 12 'Door': its cached world matrix, read in
 the render phase, differs from one composed afresh ..."). It catches a
 transform written after the pass and any bug in the cache, at the cost of a
 full recompute every frame. Tests turn it on with
@@ -147,28 +147,28 @@ full recompute every frame. Tests turn it on with
 The walks read the registry's links where they are, and allocate nothing:
 
 ```cpp
-for (const sfs::Entity& wheel : sfs::hierarchy::childrenOf(tractor))
+for (const sfs::Entity& wheel : sfs::hierarchy::childrenOf(truck))
   ...;
 
 // The children with a Wheel: a row of one component converts to it, as a
 // query's does; `auto [wheel, spin]` unpacks the entity too.
-for (Wheel& spin : sfs::hierarchy::childrenOf<Wheel>(tractor))
+for (Wheel& spin : sfs::hierarchy::childrenOf<Wheel>(truck))
   spin.angle += spin.speed * dt;
 
 // A part by its tag component, one level down or anywhere below. A finder
 // takes several terms, as a query does.
-const sfs::Entity cab = sfs::hierarchy::findChild<Cab>(tractor);
-const sfs::Entity hitch = sfs::hierarchy::findDescendant<HitchPoint>(tractor);
-const sfs::Entity lamp = sfs::hierarchy::findChild<Lamp, sfs::Excluding<Broken>>(tractor);
-if (auto* animator = sfs::hierarchy::findChild<sfs::AnimatorComponent>(hand)
+const sfs::Entity cab = sfs::hierarchy::findChild<Cab>(truck);
+const sfs::Entity hitch = sfs::hierarchy::findDescendant<HitchPoint>(truck);
+const sfs::Entity lamp = sfs::hierarchy::findChild<Lamp, sfs::Excluding<Broken>>(truck);
+if (auto* animator = sfs::hierarchy::findChild<sfs::AnimatorComponent>(guard)
                          .getComponent<sfs::AnimatorComponent>())
   animator->play("wave");
 
 // Into a buffer you keep, so walking again allocates nothing.
-sfs::hierarchy::findChildren<Wheel>(tractor, m_wheels);
+sfs::hierarchy::findChildren<Wheel>(truck, m_wheels);
 
 // Everything below, parents first, leaving out what's below a nested machine.
-const sfs::hierarchy::DescendantRange parts = sfs::hierarchy::descendants(tractor);
+const sfs::hierarchy::DescendantRange parts = sfs::hierarchy::descendants(truck);
 for (auto it = parts.begin(); it != parts.end(); ++it)
   if ((*it).hasComponent<Machine>())
     it.skipChildren(); // its parts are its own
@@ -235,7 +235,7 @@ in world space. `scene.destroyBranch(entity)` destroys the entity and
 everything below it.
 
 Scenes can also find entities by name, or by a path of names from a root:
-`scene.findEntity("Farm/Barn/Door")`.
+`scene.findEntity("Town/House/Door")`.
 
 ## Saving
 

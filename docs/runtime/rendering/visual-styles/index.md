@@ -112,7 +112,7 @@ While a style is on (precedence, simply):
 | --- | --- |
 | **Replaces** | The scene's grading and tone mapping, always. Bloom (the scene camera's), haze, the sky, each shadow setting (`softness`, `cascades`, `cascadeDistance`, `cascadeSplit`), ambient occlusion, contact shadows, fog and rain, only when the style has them (`bloom`, `haze`, `sky`, `ambientOcclusion`, `contactShadows`, `fog`, `rain` (see [Rain](../meshes-and-lighting/index.md#rain)), and each key of `shadows`, are optional; left out, the scene's stay). A style's section with `"enabled": false` turns the scene's off while it's on. |
 | **Multiplies** | The scene's light: the sun's share of each surface's light (what shadow and turning away take) by `sunIntensity` x `sunTint`; the ambient rest by `ambientIntensity` x `ambientTint`; the sky colour (background, haze, reflections) by `skyIntensity` x `skyTint`. A day/night cycle that sets the lighting every frame keeps working underneath. Under a [physical sky](#physical-sky-and-image-based-lighting): the sun's light by the sun balance, the sky's diffuse light and reflections by the ambient balance, the background and haze by the sky balance. |
-| **Switches** | Materials with a variant for its `materialVariant` tag draw as it (below); and any material named in its `"materials"` (name -> material) draws as that one, including materials a game makes in code, which have no variants (e.g. `{"farm:field-paint": "asset:<terrain>"}`). A terrain standing in for a material with a base texture is tinted by that texture, so what the game paints there still shows; one with a `terrainPaint` (and `terrainTint`) has its layers painted by the game (see [terrain](../meshes-and-lighting/index.md)). |
+| **Switches** | Materials with a variant for its `materialVariant` tag draw as it (below); and any material named in its `"materials"` (name -> material) draws as that one, including materials a game makes in code, which have no variants (e.g. `{"game:ground-paint": "asset:<terrain>"}`). A terrain standing in for a material with a base texture is tinted by that texture, so what the game paints there still shows; one with a `terrainPaint` (and `terrainTint`) has its layers painted by the game (see [terrain](../meshes-and-lighting/index.md)). |
 
 The scene's own settings are never changed: switch the style off and they're
 back. With no style (`""`), the scene's own settings are the look.
@@ -151,8 +151,8 @@ lights the scene in turn:
   noon, orange then red as it sets, none once it's down. The scene's sun
   *direction* is all that's used: its colour, strength and the sky colour are
   worked out instead (so a day/night cycle that only moves the sun is enough;
-  one that also sets the colours, as CozyFarm's does, keeps working, its
-  colours simply unused).
+  one that also sets the colours keeps working, its colours simply
+  unused).
 - **The sky's diffuse light** (what lights shade and the sides turned away):
   the whole sky, and the ground's bounce below, as nine spherical harmonics
   (worked out on the CPU from the same model).
@@ -293,7 +293,7 @@ so what moved or came into view doesn't smear, and a tenth of the new frame is
 mixed in. The result replaces the scene for bloom, depth of field and the
 composite. Not on OpenGL (it reads the lit pass's depth samples, as depth of
 field does), nor in 2D. Things that move on their own (swaying grass, a
-driving tractor) are reprojected as if still, so the clamp is what keeps them
+driving car) are reprojected as if still, so the clamp is what keeps them
 from ghosting.
 
 ### Height fog
