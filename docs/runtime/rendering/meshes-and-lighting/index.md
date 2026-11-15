@@ -23,10 +23,10 @@ into one mesh with `meshes::append`:
 ```cpp
 #include "engine/core/rendering/meshPrimitives.h"
 
-sfs::MeshData barn = sfs::meshes::box({8, 6, 4}, red);
-sfs::meshes::append(barn,
-                    sfs::meshes::prism({8.8f, 7, 2.6f}, slate),
-                    glm::translate(glm::mat4(1.0f), {0, 0, 4}));
+sfs::MeshData house = sfs::meshes::box({8, 6, 4}, red);
+sfs::meshes::append(house,
+                     sfs::meshes::prism({8.8f, 7, 2.6f}, slate),
+                     glm::translate(glm::mat4(1.0f), {0, 0, 4}));
 ```
 
 Primitives sit on the Z = 0 plane: a box's base is at Z = 0, not its centre. So
@@ -51,7 +51,7 @@ Upload a mesh through the render system's `MeshLibrary`. It returns a
 render system.
 
 ```cpp
-const sfs::MeshHandle barnMesh = render.meshes().add(barn);
+const sfs::MeshHandle houseMesh = render.meshes().add(house);
 ```
 
 ### Loading models in the background
@@ -86,16 +86,16 @@ Give an entity a `TransformComponent` and a `MeshRendererComponent`:
 sfs::TransformComponent transform{{-12.0f, 5.0f, 0.0f}};
 transform.setYaw(0.3f);
 
-sfs::Entity barn = scene.createEntity();
-barn.addComponent<sfs::TransformComponent>(transform);
-barn.addComponent<sfs::MeshRendererComponent>(sfs::MeshRendererComponent{barnMesh});
+sfs::Entity house = scene.createEntity();
+house.addComponent<sfs::TransformComponent>(transform);
+house.addComponent<sfs::MeshRendererComponent>(sfs::MeshRendererComponent{houseMesh});
 ```
 
 A child entity draws relative to its parent; see
 [Parents & children](../../../core/hierarchy/index.md).
 
 `MeshModule` batches every entity that shares a mesh into one instanced draw. A
-field of 200 crops of one kind costs one draw call. Each instance is culled
+forest of 200 trees of one kind costs one draw call. Each instance is culled
 twice: against the camera, for the lit pass, and against the sun's shadow
 volume, for the shadow pass. An object just off screen can still cast a shadow
 onto visible ground.
@@ -169,7 +169,7 @@ model's +x turned 360 k / frames degrees anticlockwise. `MeshModule` turns it to
 the camera and shows the frame nearest the view's direction through the
 instance's `uvRect`. Bake its normals in the frame's
 own tangent space (x the view's right, y up, z toward the viewer), and it's lit
-like the model. CozyFarm's `tools/trees` generator writes trees this way.
+like the model.
 
 ## Materials
 
@@ -285,7 +285,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `puddleDepth` | How deep water stands in a low spot at full, in metres above its lowest point (or to its brim, if shallower) (0.05) |
 | `microRelief` | Shallow dips this deep (metres) scattered over the ground, drawn only, so flat ground has low spots too (0) |
 | `microReliefSize` | About how wide those dips are, in metres (3) |
-| `deformable` | Pressed in where things go over it: tyre tracks, furrows, footprints (false). See [Deformation](#deformation) |
+| `deformable` | Pressed in where things go over it: tyre tracks, ruts, footprints (false). See [Deformation](#deformation) |
 
 How it draws (`meshTerrainSurface.wgsl`): each layer's textures lie over the
 world's XY from above, `tileSize` across, so ground of any size keeps its
@@ -392,7 +392,7 @@ textures) by Fresnel, and catches the sun's glint. Rain's ripples ring it. The
 ground shows through browner and murkier the deeper the water is, and a band
 just above the water line is soaked darker (Surface's `soak`). Grass blades
 aren't kept out of puddles: give the layers grass grows on a low `puddles`
-(the farm's dirt and paths have no grass anyway).
+(dirt and paths usually have no grass anyway).
 
 The renderer gets each window with `IRenderer::setTerrainPuddles(material,
 TerrainPuddles)` (the ground under it and the settings), kept with the
@@ -404,7 +404,7 @@ mesh its own terrain material. The CPU side is in
 #### Deformation
 
 A `deformable` terrain is pressed in where things go over it, and stays so:
-tyre tracks with their lugs in them, an implement's furrows, footprints.
+tyre tracks with their lugs in them, a sledge's runners, footprints.
 `DeformationModule` (one of a standard scene's render modules) keeps a
 **deformation map** for each such entity (`engine/core/rendering/deformation.h`):
 how far its ground is pressed in (negative) or pushed up, 3 cm a texel, in
@@ -414,21 +414,21 @@ it's driven over; it's plain data on the CPU.
 
 **Deformers.** A `DeformerComponent` presses in wherever its meshes touch the
 ground: the entity's own and, with `children`, its children's (put one on a
-tractor prefab's root and its wheels and implement all deform; its body never
+bulldozer prefab's root and its tracks and blade all deform; its body never
 reaches the ground). Each frame only meshes with a deformer of their own, or
 with a parent, are looked at, in id order: a mesh with neither, such as a lone
 tree or the ground, costs the deformation nothing. As one of its meshes moves,
 the mesh's underside (what's seen of it from below, near the ground: lugs,
-tines, a roller), looked at sixteen times a texel so edges slope rather than
+treads, a roller), looked at sixteen times a texel so edges slope rather than
 step, presses the ground down to `sinkDepth` below it. It presses again once
 it's gone a little way, not each frame, so what it costs goes with the distance
 driven, not the frame rate, and a parked one costs nothing: one rolling (a
 wheel, a disc) pressed where it is, often enough that its ruts come within a
 millimetre of as deep (each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30);
-one sliding (a tine, a plough body) each 6 cm (its underside found afresh, as it
-bobs), or as soon as it's lowered or turned enough to move any of it a texel,
-pressed all along the way it went, a texel at a time (its underside moved back
-along it), so it cuts an unbroken furrow rather than a row of dimples, its
+one sliding (a blade, a sledge's runner) each 6 cm (its underside found afresh,
+as it bobs), or as soon as it's lowered or turned enough to move any of it a
+texel, pressed all along the way it went, a texel at a time (its underside moved
+back along it), so it cuts an unbroken groove rather than a row of dimples, its
 ridges even along it. With the game going fast (`Registry::timeScale()`), a mesh
 goes further between frames: a rolling one is pressed each stride along the way
 it went too, and either is pressed at most 16 times a frame (4 rolling), each
@@ -449,7 +449,7 @@ its wheels sit in them.
 
 | DeformerComponent | Meaning (default) |
 | --- | --- |
-| `enabled` | Whether it deforms now, e.g. off while an implement's raised (true) |
+| `enabled` | Whether it deforms now, e.g. off while a blade's raised (true) |
 | `sinkDepth` | How far it sinks into the softest ground, metres: about its weight on its footprint (0.05) |
 | `softnessResponse` | How much the soil's softness changes that: 0 always `sinkDepth`, 1 `sinkDepth` x the softness (0.8) |
 | `ridge` | The share of the soil it presses out that's pushed up alongside (0.5) |
@@ -989,7 +989,7 @@ its history, which would otherwise smear them away.
 #### Lightning
 
 `strikeLightning(LightningStrike)` sets off a strike (a 3D scene's). A game
-does it during storms (CozyFarm's weather does, more at a storm's height).
+does it during storms, more often at a storm's height.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -1157,7 +1157,7 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   (`IRenderer::updateGrassGround`), so there's no hitch. A window's texels sit
   on multiples of `kGrassTexel` from the mesh's origin, and blades are placed
   from the origin too, so they don't move when the window does. A field set
-  into a hole in the land (farmland in a landscape, say) meets the land's
+  into a hole in the land (a park in a landscape, say) meets the land's
   grass with no seam, as long as their edge lies on that lattice. Each window's
   maps start from `paint`; a game's changes to them last as long as the
   window.

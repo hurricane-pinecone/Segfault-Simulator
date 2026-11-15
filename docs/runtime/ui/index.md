@@ -17,7 +17,7 @@ public:
     return VStack(Alignment::Leading, {
                Text("Coins: " + std::to_string(coins)).font(Font::title()),
                HStack{
-                   Button("Buy seeds", [this] { buy(); }).disabled(coins < 10),
+                   Button("Buy potion", [this] { buy(); }).disabled(coins < 10),
                    Button("Sell", [this] { sell(); }),
                },
            })
@@ -52,7 +52,7 @@ nothing while the UI stands still.
 | --- | --- |
 | `Text("…")` | A line of text, or several split at `\n` |
 | `Button("label", action)`, `Button(view, action)` | A button calling `action` when clicked |
-| `Image("file.png")`, `Image::mesh("farm:wheat")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit (see [Icons](#icons-and-tints)) |
+| `Image("file.png")`, `Image::mesh("game:coin")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit (see [Icons](#icons-and-tints)) |
 | `Image(picture)` | Pixels the game draws and changes, a `ui::Picture` (see [Pictures](#pictures)) |
 | `Image(texture)` | A picture the GPU draws, a `RenderTexture` such as a camera feed (see [Camera feeds](#camera-feeds)) |
 | `Image::placeholder()` | A soft box where a picture will be |
@@ -220,26 +220,23 @@ sharp squares.
 Image("icons/road_lights.png").tint(lamp.on ? kGreen : kUnlit).frame(16, 16)
 ```
 
-CozyFarm's tell-tale icons are in its `assets/icons/`, drawn by
-`tools/icons/make_icons.py`.
-
 ## Pictures
 
-A `ui::Picture` is pixels the game draws and changes, such as a combine's
-yield map: RGBA8, rows from the top, colours as they look on screen. Make one
-shared and keep it. Write its pixels (`set(x, y, color)`, `fill()`, or
+A `ui::Picture` is pixels the game draws and changes, such as a minimap:
+RGBA8, rows from the top, colours as they look on screen. Make one shared and
+keep it. Write its pixels (`set(x, y, color)`, `fill()`, or
 `pixels()` directly), then call `changed()`, and the next frame shows them:
 
 ```cpp
 // in the layer
-std::shared_ptr<sfs::ui::Picture> m_yield =
+std::shared_ptr<sfs::ui::Picture> m_map =
     std::make_shared<sfs::ui::Picture>(128, 128);
 
-m_yield->set(cellX, cellY, colourFor(yield));
-m_yield->changed();
+m_map->set(cellX, cellY, colourFor(tile));
+m_map->changed();
 
 // in a view
-Image(m_yield).resizable().interpolation(Interpolation::Nearest).frame(240, 240)
+Image(m_map).resizable().interpolation(Interpolation::Nearest).frame(240, 240)
 ```
 
 A change uploads its pixels again (all of them) and lays nothing out: the
@@ -250,9 +247,9 @@ grey checker.
 
 ## Camera feeds
 
-A camera feed films the scene into a small picture: a tractor's rear camera, a
-combine's grain tank. Put a `CameraFeedComponent` on an entity (a child of the
-machine, so it rides along); it looks along the entity's +X with +Z up, like a
+A camera feed films the scene into a small picture: a car's rear-view camera, a
+security camera. Put a `CameraFeedComponent` on an entity (a child of the
+vehicle, so it rides along); it looks along the entity's +X with +Z up, like a
 camera entity. Its `picture`, a `std::shared_ptr<RenderTexture>` (as Unity's
 `Camera.targetTexture`), is what it films: the render system makes it at its
 first update after the feed appears, sized `width` by `height`, and resizes it
@@ -270,7 +267,7 @@ lays nothing out, as with a `Picture`. It's filmed only while a UI shows it,
 at the component's `rate` (15 a second by default), one feed a frame. A feed
 nothing shows costs nothing. It's filmed in a cheaper way than the scene: the
 same light, sun and lamp shadows, sky, terrain and its deformation (ruts,
-furrows) and grass's ground. It has no bloom, depth of field, ambient
+footprints) and grass's ground. It has no bloom, depth of field, ambient
 occlusion, anti-aliasing over time or rain drops. Grass blades are left out
 unless its `grassBlades` is on, which grows them again for the feed, out to
 `grassReach`. Its first frame shown is dark grey, and filming starts on the
@@ -280,15 +277,15 @@ next one.
 
 A view of the game's own is a struct with a `View body() const`, made from its
 fields, like SwiftUI's `struct Badge: View`. Use it anywhere a view goes:
-`HStack{ Badge{.text = "New"}, Text("Wheat") }`. Keep such views in UI files:
+`HStack{ Badge{.text = "New"}, Text("Sword") }`. Keep such views in UI files:
 a header ending `.ui.h` and its source ending `.ui.cpp`, for example
-`scripts/ui/FarmViews.ui.h` and `FarmViews.ui.cpp`. The script compiler skips
+`scripts/ui/HudViews.ui.h` and `HudViews.ui.cpp`. The script compiler skips
 `.ui.h` headers, as nothing in them is a component. UI files should use only
 the engine and other UI files, never the game's scripts: a layer fills views in
 from the game, and views only show what they're given.
 
 ```cpp
-// scripts/ui/FarmViews.ui.h
+// scripts/ui/HudViews.ui.h
 struct ClockPanel
 {
   std::string time; // "9:19 am"
@@ -314,7 +311,7 @@ To see a view with real-looking values, or in another state, declare a
 preview beside it. It shows after the placeholders:
 
 ```cpp
-// scripts/ui/FarmViews.ui.cpp
+// scripts/ui/HudViews.ui.cpp
 static const sfs::ui::Preview pausedClock{
     "Paused", [] { return ClockPanel{.time = "6:00 pm", .day = 12}; }};
 ```
@@ -324,7 +321,7 @@ whole HUD, declare a preview style in the `.ui.cpp`. Every preview of that
 file is then shown in it, placeholders included:
 
 ```cpp
-static const sfs::ui::PreviewStyle farmLook{
+static const sfs::ui::PreviewStyle hudLook{
     [](sfs::ui::View view) { return view.font(Font::named("assets/fonts/Fredoka.ttf", 20)); }};
 ```
 

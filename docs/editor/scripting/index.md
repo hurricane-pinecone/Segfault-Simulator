@@ -114,7 +114,7 @@ and loads it once the module exists. See
 
 A scriptable object holds data many things share, kept in an asset file rather
 than on an entity, like Unity's ScriptableObjects: item definitions, enemy
-stats, crop types. Declare its type like a component, deriving from
+stats, spell types. Declare its type like a component, deriving from
 `sfs::ScriptableObject` (or **Scripts → New Scriptable Object Template**):
 
 ```cpp
@@ -168,20 +168,20 @@ for (const ItemDef* ingredient : recipe.ingredients.all())
 #### Deriving from another scriptable object type
 
 A scriptable object type may derive from another reflected one, the engine's
-or your own, to add fields to it: a game's tractors are vehicles with a hitch.
+or your own, to add fields to it: a game's trucks are vehicles with a hitch.
 
 ```cpp
 #include "engine/runtime/navigation/vehicle/vehicleSpec.h"
 
-struct TractorSpec : sfs::VehicleSpec
+struct TruckSpec : sfs::VehicleSpec
 {
   float hitchHeight = 0.5f;
 };
 ```
 
-A `Tractor Spec.asset` holds every level's fields; the Inspector shows the
+A `Truck Spec.asset` holds every level's fields; the Inspector shows the
 base's first, each level under its type's name. An `sfs::AssetRef<sfs::VehicleSpec>`
-field lists and takes `TractorSpec` assets too, and `get()` gives one as a
+field lists and takes `TruckSpec` assets too, and `get()` gives one as a
 `VehicleSpec` (`dynamic_cast` it to reach the extra fields). The base must be
 a reflected type with one plain name (no templates, one base only). If its
 module isn't loaded the derived type keeps its own fields, and gets the
@@ -190,7 +190,7 @@ reflected type for now; a component or script deriving from one fails to
 compile with a message saying so.
 
 Every asset of a type is listed by `sfs::scriptableObjects().all<ItemDef>()`, which is
-handy for "every crop in the game". Edits made while playing are picked up the
+handy for "every item in the game". Edits made while playing are picked up the
 next time the asset is asked for. Renaming a scriptable object type or its fields
 updates its `.asset` files, as for components.
 
@@ -204,7 +204,7 @@ void Menu::onProcessInput(const sfs::Input& input)
   if (input.keyboard().keyPressed(sfs::Key::Escape))
     scene().game().quit();
   if (input.keyboard().keyPressed(sfs::Key::Enter))
-    scene().game().loadScene("scenes/farm.scene");
+    scene().game().loadScene("scenes/level1.scene");
 }
 ```
 
@@ -213,8 +213,8 @@ void Menu::onProcessInput(const sfs::Input& input)
 | `game().quit()` | Ends the game once the frame is done. In the editor, it stops Play. |
 | `game().loadScene(path)` | Once the frame is done, replaces the scene with another scene file, relative to the project (and to the export folder in a shipped game), and starts its scripts. In the editor, Stop still returns to the scene you were editing. |
 | `game().setWindowTitle(text)`, `setFullscreen(on)`, `setWindowSize(w, h)` | Change the game's window. The editor's window isn't the game's, so it ignores these and logs that it did; they apply in the exported game. |
-| `scene().findEntity("Barn")` | The first entity with that name, parents before children; invalid if none |
-| `scene().findEntity("Farm/Barn/Door")` | Follows names down from a root entity |
+| `scene().findEntity("House")` | The first entity with that name, parents before children; invalid if none |
+| `scene().findEntity("Town/House/Door")` | Follows names down from a root entity |
 | `scene().findEntities("Lantern")` | Every entity with that name |
 | `scene().destroyBranch(entity)` | Destroys an entity and everything below it. `destroyEntity` destroys only the entity; its children become roots. |
 

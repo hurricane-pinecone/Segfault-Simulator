@@ -126,7 +126,7 @@ dispatched:
   below it counts as it, through the nearest pickable entity above the mesh:
   on a machine's root, a click on its wheel picks the machine. Meshes with no
   pickable entity above them (or under one with `enabled` off) are skipped and
-  don't block the ray, so a roof over a tractor doesn't hide it.
+  don't block the ray, so a roof over a car doesn't hide it.
 - **`CursorPickComponent`** goes on the camera entity. A `StandardScene` fills
   it on the scene camera every frame, after its UI has taken the mouse and
   before any game object sees the input, so a click is picked in the frame it

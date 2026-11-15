@@ -14,21 +14,21 @@ There are no macros and no registration calls. A header is picked up when it
 declares a class named after the file:
 
 ```cpp
-// Crop.h
+// Enemy.h
 #pragma once
 #include <glm/glm/ext/vector_float3.hpp>
 #include <string>
 
-struct Crop
+struct Enemy
 {
-  [[sfs::range(0, 1)]] float growth = 0.0f;
+  [[sfs::range(0, 1)]] float health = 1.0f;
   [[sfs::color]] glm::vec3 tint{1.0f};
-  std::string variety = "wheat";
+  std::string kind = "goblin";
 
   [[sfs::hide]] int debugCounter = 0;   // public, but not shown or saved
 
 private:
-  [[sfs::show]] float waterLevel = 0.5f; // private, but shown and saved
+  [[sfs::show]] float aggression = 0.5f; // private, but shown and saved
   float cache = 0.0f;                    // private: ignored
 };
 ```
@@ -42,7 +42,7 @@ These rules decide what is reflected:
   `sfs::MeshSource` is a mesh source, and one deriving from
   `sfs::ScriptableObject` is a [scriptable object
   type](../../editor/scripting/index.md#scriptable-objects). A type deriving
-  from another reflected type (`struct TractorSpec : sfs::VehicleSpec`) is
+  from another reflected type (`struct TruckSpec : sfs::VehicleSpec`) is
   that type's kind with the base's fields first (`TypeInfo::base`, each
   `FieldInfo::owner`, `TypeRegistry::isA()` / `chain()`); for now only
   scriptable objects may. A type with no
@@ -107,7 +107,7 @@ completion and hovers also read:
 | `[[sfs::range(min, max)]]` | `std::int32_t`, `std::uint32_t` and `float` fields | Edit as a slider between `min` and `max`. | `[[sfs::range(10, 120)]] float fieldOfView = 46.0f;` |
 | `[[sfs::color]]` | `glm::vec3` and `glm::vec4` fields | Edit with a colour picker. | `[[sfs::color]] glm::vec3 color{1.0f, 0.85f, 0.6f};` |
 | `[[sfs::hide]]` | Any field | Don't reflect this public field. | `[[sfs::hide]] int debugCounter = 0;` |
-| `[[sfs::show]]` | Any field | Reflect this private or protected field. | `private:`<br>`[[sfs::show]] float waterLevel = 0.5f;` |
+| `[[sfs::show]]` | Any field | Reflect this private or protected field. | `private:`<br>`[[sfs::show]] float aggression = 0.5f;` |
 | `[[sfs::script]]` | `std::string` fields | Edit as a picker of game object scripts. | `[[sfs::script]] std::string script;` |
 | `[[sfs::texture]]` | `std::string` fields | Edit as a picker of the project's texture assets, saved as `asset:<id>`. | `[[sfs::texture]] std::string normalMap;` |
 | `[[sfs::materials]]` | `std::vector<std::string>` fields | Edit as a material picker for each section of the component's mesh field. | `[[sfs::materials]] std::vector<std::string> materials;` |
@@ -116,7 +116,7 @@ completion and hovers also read:
 | `[[sfs::showIf(field)]]` | Any field | The Inspector shows it only while the named `bool` field of the same object is on; `showIf(!field)` shows it only while that field is off. | `bool orthographic = false;`<br>`[[sfs::showIf(orthographic)]] float orthoHeight = 20.0f;`<br>`[[sfs::showIf(!orthographic)]] float fieldOfView = 46.0f;` |
 | `[[sfs::part("node-name")]]` | `sfs::Entity` and `std::vector<sfs::Entity>` fields | The model node the editor fills it from, by name; on a list, a glob pattern (`"blade-*"`) for every node it takes. In development, a reference to a node not named so logs a warning. Never used at runtime. | `[[sfs::part("deck")]] sfs::Entity deck;`<br>`[[sfs::part("blade-*")]] std::vector<sfs::Entity> blades;` |
 | `[[sfs::component]]` | A type | Register the type as a component besides the file's type. | `struct [[sfs::component]] TipBody {};` |
-| `[[sfs::event]]` | A type | Mark the type as an event (sent and read through `Events`): never a component or reflected, and it may be named after its header. | `struct [[sfs::event]] FieldCellChanged { glm::ivec2 cell; };` |
+| `[[sfs::event]]` | A type | Mark the type as an event (sent and read through `Events`): never a component or reflected, and it may be named after its header. | `struct [[sfs::event]] DamageTaken { float amount; };` |
 <!-- sfs-attributes:end -->
 
 An attribute is checked where it's written. One sfs-codegen doesn't know, one
@@ -168,8 +168,8 @@ editors and IDEs can jump to them:
 
 ```
 scripts/Boss.h:3: error: Monster<int> isn't a base a script type can have. Derive from sfs::GameObject, sfs::ui::Layer, sfs::System, sfs::MeshSource, sfs::ScriptableObject or another reflected type, or from nothing for a component. [script-base]
-scripts/Crop.h:9: warning: The editor can't edit fields of type std::vector<int> yet, so the field items is skipped. Use a type the editor can edit. [field-type]
-scripts/Crop.h:12: warning: There is no attribute [[sfs::hdie]]. Use [[sfs::hide]] if that's what you meant. [unknown-sfs-attribute]
+scripts/Enemy.h:9: warning: The editor can't edit fields of type std::vector<int> yet, so the field items is skipped. Use a type the editor can edit. [field-type]
+scripts/Enemy.h:12: warning: There is no attribute [[sfs::hdie]]. Use [[sfs::hide]] if that's what you meant. [unknown-sfs-attribute]
 ```
 
 An error fails the build. A warning never does: the field or attribute it
@@ -224,7 +224,7 @@ sfs_generate_reflection(myGame
     FUNCTION game::registerTypes          # function the generated code defines
     FUNCTION_HEADER game/registration.h   # declares that function
     INCLUDE_ROOT "${CMAKE_SOURCE_DIR}/src"
-    HEADERS src/Crop.h src/Player.h)
+    HEADERS src/Enemy.h src/Player.h)
 ```
 
 `sfs-codegen` runs on the build machine. A native build builds it. A

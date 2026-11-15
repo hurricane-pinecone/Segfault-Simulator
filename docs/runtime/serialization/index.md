@@ -135,10 +135,10 @@ instance of a prefab resolves to its own parts. A scene's plain entries have
 none: their references are scene-absolute. For example:
 
 ```json
-// Tractor.prefab, the root's components: its model instance is $id 1
-"Linkage": { "lowerLeft": "1/2318043377", "arms": ["1/3051889210", "1/2694101533"] }
-// a scene: one entry's weighbridge is another entry
-{ "SellPoint": { "weighbridge": "/7" } }    { "$sceneId": 7, "NameComponent": { "name": "Weighbridge" } }
+// Crane.prefab, the root's components: its model instance is $id 1
+"Boom": { "pivot": "1/2318043377", "arms": ["1/3051889210", "1/2694101533"] }
+// a scene: one entry's door is another entry
+{ "Lever": { "door": "/7" } }    { "$sceneId": 7, "NameComponent": { "name": "Door" } }
 ```
 
 - Paths use the engine's own ids, never names: renaming or moving an entity in

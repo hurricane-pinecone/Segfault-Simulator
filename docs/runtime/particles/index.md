@@ -63,11 +63,11 @@ Set `enabled = false` on the component to stop emitting; existing particles drai
 out naturally. The component is reflected, so emitters can be placed in the
 editor.
 
-An emitter on a machine that turns and moves, fed by something that varies (a
-combine's straw spreader, a grain auger's spout):
+An emitter on a vehicle that turns and moves, fed by something that varies (a
+dirt bike's rear wheel, a fire truck's hose):
 
 ```cpp
-auto& emitter = entity.addComponent<sfs::ParticleEmitterComponent>("chaff");
+auto& emitter = entity.addComponent<sfs::ParticleEmitterComponent>("dust");
 emitter.turnWithEntity = true; // offset, shape and launch direction turn with
                                // the entity's heading: the effect's +X is its +x
 emitter.inheritVelocity = 1.0f; // particles leave with the entity's velocity
@@ -82,7 +82,7 @@ emitter.tint = {0.9f, 0.75f, 0.45f, 1.0f}; // multiplies the effect's colour
 | `turnWithEntity` | the offset, emission shape and launch direction turn with the entity's heading |
 | `inheritVelocity` | how much of the entity's own velocity (from how far it moved last frame) its particles leave with |
 | `tint` | multiplies the effect's colour and alpha: one effect in many colours |
-| `shapeScale` | scales where the effect's emission shape spawns, per axis, before it turns with the entity (Unity's `ShapeModule.scale`): one dust effect as wide as each machine's header |
+| `shapeScale` | scales where the effect's emission shape spawns, per axis, before it turns with the entity (Unity's `ShapeModule.scale`): one dust effect as wide as each vehicle |
 | `maxParticles` | this emitter's own capacity (0: the effect's `maxParticles`), e.g. scaled with `shapeScale` |
 
 An entity emitter that moved since last frame spreads that frame's particles
@@ -166,7 +166,7 @@ custom shaping — is authoring; see [Decals & splatter](../../core/particles/de
 - **Lit or not.** By default a particle shows its own colour (light: sparks,
   embers, magic). An effect with `lit = true` is lit by the scene as matter is
   (sun, sky, lamps, shadows), shaded as a surface facing up and toward the
-  camera: dust, grain, spray in a lit 3D world, which unlit would look dim by
+  camera: dust, sand, spray in a lit 3D world, which unlit would look dim by
   day under a physical sky and glow at night.
 - **Landing cheaply.** With stains enabled, every colliding particle sweeps the
   collision source each step. An effect with `landsOnPlane = true` lands on its
