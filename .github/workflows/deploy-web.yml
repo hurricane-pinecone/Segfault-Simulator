@@ -19,6 +19,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# A failed sfs::expect or a fatal error opens a modal dialog unless this is set;
+# on a CI runner nobody can close it, and the job hangs until GitHub kills it.
+env:
+  SFS_NO_ERROR_DIALOG: "1"
+
 jobs:
   # Whether anything but documentation changed. Docs-only changes (docs/,
   # mkdocs.yml, Markdown) can't break the code, so the code jobs below skip
@@ -94,7 +99,7 @@ jobs:
         run: cmake --build build-core -j "$(nproc)"
 
       - name: Run tests
-        run: ctest --test-dir build-core --output-on-failure --parallel "$(nproc)"
+        run: ctest --timeout 900 --test-dir build-core --output-on-failure --parallel "$(nproc)"
 
   # The core-only build instrumented with ASan + UBSan. Pairs with test-core so a
   # standalone engine-core release gates on sanitized core tests too, without
@@ -126,7 +131,7 @@ jobs:
         run: cmake --build build-core -j "$(nproc)"
 
       - name: Run tests under sanitizers
-        run: ctest --test-dir build-core --output-on-failure --parallel "$(nproc)"
+        run: ctest --timeout 900 --test-dir build-core --output-on-failure --parallel "$(nproc)"
 
   # Runtime tests link the full engine (SDL/imgui), so this job restores the
   # Conan dependency closure and runs a native build. They drive systems and
@@ -194,7 +199,7 @@ jobs:
         run: cmake --build build/Debug -j "$(nproc)"
 
       - name: Run runtime tests
-        run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
+        run: ctest --timeout 900 --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
   # The runtime build instrumented with ASan + UBSan, running the runtime tests
   # under them so memory errors and UB the functional job passes over still fail
@@ -260,7 +265,7 @@ jobs:
         run: cmake --build build/Debug -j "$(nproc)"
 
       - name: Run runtime tests under sanitizers
-        run: ctest --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
+        run: ctest --timeout 900 --test-dir build/Debug -L runtime --output-on-failure --parallel "$(nproc)"
 
   # Native Windows build with MSVC. The dev machines and every other job are
   # GCC/Clang (Linux + macOS) or emcc (web); this is the only thing that
@@ -277,6 +282,7 @@ jobs:
     # version ConanCenter has no prebuilt binaries for, so every dependency was
     # built from source and their CMake configures failed. VS 2022 has binaries.
     runs-on: windows-2022
+    timeout-minutes: 90 # a hang shows as a timeout, not hours of "running"
 
     steps:
       - name: Checkout
@@ -324,7 +330,7 @@ jobs:
         run: cmake --build --preset conan-release
 
       - name: Run tests
-        run: ctest --preset conan-release --output-on-failure
+        run: ctest --timeout 900 --preset conan-release --output-on-failure
 
   # Enforce .clang-format on the engine sources. Pinned to the same
   # clang-format version the pre-commit hook uses, so local formatting and CI
