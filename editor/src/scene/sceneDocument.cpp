@@ -63,6 +63,7 @@ bool SceneDocument::continueOpening(std::chrono::milliseconds budget)
   {
     if (m_opening->next >= m_opening->entities.size())
     {
+      serializer.finish(m_opening->session, *m_scene);
       m_opening.reset();
       m_scene->flushEntities();
       LOG_INFO("Opened scene " + m_path.filename().string());
@@ -70,7 +71,7 @@ bool SceneDocument::continueOpening(std::chrono::milliseconds budget)
     }
     const nlohmann::json& entry = m_opening->entities[m_opening->next++];
     if (entry.is_object())
-      serializer.loadEntity(entry, *m_scene);
+      serializer.loadEntity(entry, *m_scene, {}, &m_opening->session);
   } while (std::chrono::steady_clock::now() < until);
   m_scene->flushEntities();
   return false;
@@ -113,7 +114,7 @@ bool SceneDocument::saveAs(const std::filesystem::path& path)
 nlohmann::json SceneDocument::snapshot()
 {
   finishOpening();
-  return serializerFor(*m_scene).save(*m_scene, m_scene->gameSystems());
+  return serializerFor(*m_scene).save(*m_scene, m_scene->gameSystems(), m_prefabContent);
 }
 
 void SceneDocument::restore(const nlohmann::json& snapshot)

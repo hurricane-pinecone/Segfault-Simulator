@@ -315,7 +315,25 @@ bool WebGpuContext::init(SDL_Window* window)
     if (caps.presentModes[i] == WGPUPresentMode_Immediate)
       m_unsynced = WGPUPresentMode_Immediate;
   }
-  m_present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
+  if (const char* forced = std::getenv("SFS_PRESENT_MODE"))
+  {
+    const std::string name = forced;
+    const WGPUPresentMode wanted = name == "immediate"
+                                       ? WGPUPresentMode_Immediate
+                                   : name == "mailbox" ? WGPUPresentMode_Mailbox
+                                   : name == "fifo"    ? WGPUPresentMode_Fifo
+                                                    : WGPUPresentMode_Undefined;
+    for (size_t i = 0; i < caps.presentModeCount; ++i)
+      if (wanted != WGPUPresentMode_Undefined && caps.presentModes[i] == wanted)
+        m_forcedPresent = wanted;
+    if (m_forcedPresent != WGPUPresentMode_Undefined)
+      LOG_INFO("Presenting with " + name + " (SFS_PRESENT_MODE)");
+    else
+      LOG_WARN("SFS_PRESENT_MODE=" + name +
+               ": not a present mode this window has (immediate, mailbox, "
+               "fifo); ignored");
+  }
+  m_present = mainPresentMode();
   wgpuSurfaceCapabilitiesFreeMembers(caps);
 
   return true;
@@ -333,12 +351,19 @@ void WebGpuContext::readLimits()
 void WebGpuContext::setVsync(bool vsync)
 {
   m_vsync = vsync;
-  const WGPUPresentMode present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
+  const WGPUPresentMode present = mainPresentMode();
   if (present == m_present)
     return;
   m_present = present;
   if (m_surface && m_width > 0 && m_height > 0)
     configure(m_width, m_height);
+}
+
+WGPUPresentMode WebGpuContext::mainPresentMode() const
+{
+  if (m_forcedPresent != WGPUPresentMode_Undefined)
+    return m_forcedPresent;
+  return m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
 }
 
 bool WebGpuContext::deviceLost() const

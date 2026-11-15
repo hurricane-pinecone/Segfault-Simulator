@@ -25,11 +25,15 @@ inline std::string meshPass(std::string_view surface, std::string_view pass)
   source += skyCommonWgsl;
   source += meshSurfaceWgsl;
   source += surface;
-  // Vertices where they are, unless the surface places them itself; how
-  // solid it is from the surface, unless it says more cheaply.
+  // Vertices where they are, unless the surface places them itself; back
+  // faces' normals turned round, unless it keeps them; how solid it is from
+  // the surface, unless it says more cheaply.
   if (surface.find("fn surfaceVertex(") == std::string_view::npos)
     source += "\nfn surfaceVertex(v: SurfaceVertex) -> SurfaceVertex {\n"
               "  return v;\n}\n";
+  if (surface.find("fn surfaceFlipsBackFaces(") == std::string_view::npos)
+    source += "\nfn surfaceFlipsBackFaces() -> bool {\n"
+              "  return true;\n}\n";
   if (surface.find("fn surfaceAlpha(") == std::string_view::npos)
     source += "\nfn surfaceAlpha(in: SurfaceIn) -> vec2f {\n"
               "  let s = surface(in);\n"
@@ -94,6 +98,17 @@ inline std::string occlusionPasses()
 inline std::string rainPass()
 {
   return meshPass(meshStandardSurfaceWgsl, litPass(rainWgsl));
+}
+
+/**
+ * Debug lines (debugLines.wgsl), drawn in the lit pass: the shared
+ * declarations (the frame's view) and the sky's helpers they use, then the
+ * lines' own stages.
+ */
+inline std::string debugLinePass()
+{
+  return std::string(meshCommonWgsl) + std::string(skyCommonWgsl) +
+         std::string(debugLinesWgsl);
 }
 
 /** The standard surface's WGSL (for materials without a graph). */

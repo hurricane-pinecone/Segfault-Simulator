@@ -69,6 +69,27 @@ std::string shownTab(const char* window);
 void showTab(const std::string& window);
 
 /**
+ * Keep `owns` saying whether the current window, or a window inside it, was
+ * the last one focused (menus, popups and tooltips don't count): whose the
+ * Edit menu and shortcuts are. Its own window, not its dock: panels docked
+ * together are told apart. Call while the window is being drawn.
+ *
+ * @param owns kept between frames; changed only when a window counts
+ */
+void trackFocus(bool& owns);
+
+/**
+ * Whether the last item was clicked: the mouse released over it, pressed on
+ * it, and not dragged past the drag threshold in between (a drag from the
+ * item, to drop it somewhere, is no click). Select on this, as Unity does,
+ * so dragging an item doesn't select it.
+ *
+ * @param button the mouse button
+ * @return true on the frame of such a release
+ */
+bool itemReleasedWithoutDrag(ImGuiMouseButton button = ImGuiMouseButton_Left);
+
+/**
  * Run an editing widget on a copy of `value`, recording the edit for undo.
  * The scene is snapshotted when the interaction starts and before the copy is
  * written back, so even a widget that changes the value on its first frame

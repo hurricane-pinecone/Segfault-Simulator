@@ -5,7 +5,8 @@
 // copies on a hexagonal grid, blended (Mikkelsen's hex-tiling, after Heitz
 // and Neyret's triangle grid), with a gentle brightness variation over tens
 // of metres. Layers blend by their heights (the colour's alpha); a tint over
-// the mesh's UVs multiplies the result (white without one). Layers marked as
+// the mesh's UVs multiplies the result (white without one), and a game may
+// paint layers over the splat map's (see paintedUv). Layers marked as
 // meadow look like grass seen from afar (see meadowLook). Triplanar layers
 // are also laid from the sides on steep ground (see terrainProjections).
 // Water stands in its low spots as the weather's puddles rise (see
@@ -36,6 +37,7 @@ struct Terrain {
 @group(1) @binding(7) var puddleMap: texture_2d<f32>;   // data: r level, g depth, b fill rate (see puddleImage)
 @group(1) @binding(8) var deformMap: texture_2d<f32>;   // data: r the ground's offset (m), wrapping
 @group(1) @binding(9) var deformGround: texture_2d<f32>; // data: height, uv, 1 on the mesh (loaded)
+@group(1) @binding(10) var paintMap: texture_2d<f32>;   // data: rgba layers 2-5's weights a game paints
 
 // A point's random 2D offset (0..1) for a hex-grid vertex.
 fn terrainHash(p: vec2f) -> vec2f {
@@ -53,6 +55,17 @@ fn terrainNoise(p: vec2f) -> f32 {
   let c = terrainHash(cell + vec2f(0.0, 1.0)).x;
   let d = terrainHash(cell + vec2f(1.0, 1.0)).x;
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Where a game's paint (or tint) `size` texels across is read for a point at
+// `uv`: wobbled by up to about a texel, in a pattern fixed to the texture
+// (so to the ground: it holds still as the camera moves), so its texels
+// never show as squares, nor the edge of what it paints as a straight line.
+fn paintedUv(uv: vec2f, size: vec2f) -> vec2f {
+  let t = uv * size;
+  let wobble = vec2f(terrainNoise(t * 0.33 + 3.1), terrainNoise(t * 0.33 + 17.7)) - 0.5;
+  let fine = vec2f(terrainNoise(t * 0.9 + 41.3), terrainNoise(t * 0.9 + 9.2)) - 0.5;
+  return uv + (wobble * 1.7 + fine * 0.7) / size;
 }
 
 // One layer sampled: colour (rgb, a height), and its detail (rg the normal's
@@ -419,7 +432,9 @@ fn surface(in: SurfaceIn) -> Surface {
   // In uniform control flow: the splat map, and the derivatives every
   // layer's sampling uses (so the layers can be skipped where they're not).
   let splat = textureSample(splatMap, splatSampler, in.uv);
-  let tint = textureSample(tintMap, splatSampler, in.uv).rgb;
+  let tintTexel = textureSample(tintMap, splatSampler, paintedUv(in.uv, vec2f(textureDimensions(tintMap))));
+  let tint = tintTexel.rgb;
+  let paint = textureSample(paintMap, splatSampler, paintedUv(in.uv, vec2f(textureDimensions(paintMap))));
   let world = deformed.position.xy;
   // Its puddle map over the world's XY (v down the image: its +y up it).
   let puddleAt = (world - terrain.puddleMap.xy) * terrain.puddleMap.zw;
@@ -428,10 +443,16 @@ fn surface(in: SurfaceIn) -> Surface {
   let dy3 = dpdy(in.position);
   let dx = dx3.xy;
   let dy = dy3.xy;
-  let projections = terrainProjections(in.normal);
+  // By the pressed ground's own slope too: a rut's steep walls are laid from
+  // the side (triplanar layers), not stretched down them.
+  let pressedNormal = normalize(in.normal + deformed.tilt - in.normal * dot(in.normal, deformed.tilt));
+  let projections = terrainProjections(pressedNormal);
 
-  // Each layer's weight: the splat map's four over the first, sharing past 1.
-  let painted = clamp(splat, vec4f(0.0), vec4f(1.0));
+  // Each layer's weight: the splat map's four (giving way to what the game
+  // paints over them) over the first, sharing past 1.
+  let byGame = clamp(paint, vec4f(0.0), vec4f(1.0));
+  let given = min(byGame.x + byGame.y + byGame.z + byGame.w, 1.0);
+  let painted = clamp(splat, vec4f(0.0), vec4f(1.0)) * (1.0 - given) + byGame;
   let sum = painted.x + painted.y + painted.z + painted.w;
   let normalized = select(painted, painted / sum, sum > 1.0);
   var weights = array<f32, 5>(max(1.0 - min(sum, 1.0), 0.0), normalized.x, normalized.y, normalized.z, normalized.w);
@@ -509,7 +530,10 @@ fn surface(in: SurfaceIn) -> Surface {
   result.alphaClip = 0.5;
   result.bloom = 1.0;
   result.water = puddle.x;
-  result.soak = puddle.z;
+  // Soaked by the puddles' rims, and where the tint says the ground's wet:
+  // the more so down in a rut (its walls and floor wet mud).
+  let pressedIn = select(0.0, clamp(-deformAt(world) * 5.0, 0.0, 1.0), terrain.deformMap.x > 0.5);
+  result.soak = max(puddle.z, min((1.0 - tintTexel.a) * (1.0 + 0.4 * pressedIn), 1.0));
   return result;
 }
 

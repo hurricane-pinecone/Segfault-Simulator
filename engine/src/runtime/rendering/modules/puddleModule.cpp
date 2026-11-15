@@ -60,10 +60,9 @@ void PuddleModule::emit(const RenderContext& context,
 
   for (auto& [key, field] : m_fields)
     field.seen = false;
-  for (const Entity& entity :
-       m_registry->view<TransformComponent, MeshRendererComponent>())
+  for (auto [entity, transform, renderer] :
+       m_registry->query<TransformComponent, MeshRendererComponent>())
   {
-    const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (renderer.materials.empty())
       continue;
     const MaterialHandle material = m_meshes->material(renderer.materials[0]);
@@ -76,7 +75,7 @@ void PuddleModule::emit(const RenderContext& context,
     // A fill rate set before its puddles were first found goes with them.
     if (const auto rate = m_fillRates.find(key);
         rate != m_fillRates.end() && field.sent.empty())
-      field.sent.fillRate = rate->second;
+      field.sent.fillRate = rate->second.rate;
     // Drawn with another material now (a style's variant): its puddles go
     // over to it.
     if (field.material != material)
@@ -90,8 +89,12 @@ void PuddleModule::emit(const RenderContext& context,
     if (!field.terrain || !samePuddles(*field.terrain, *drawn->terrain))
       field.stale = true;
     field.terrain = drawn->terrain;
-    refresh(entity, field);
+    refresh(entity, renderer.mesh, field);
   }
+
+  std::erase_if(m_fillRates,
+                [&](const auto& entry)
+                { return !m_registry->isValid(entry.second.ground); });
 
   // Terrains gone, or without puddles now.
   for (auto it = m_fields.begin(); it != m_fields.end();)
@@ -107,18 +110,17 @@ void PuddleModule::emit(const RenderContext& context,
       ++it;
 }
 
-void PuddleModule::refresh(const Entity& entity, Field& field)
+void PuddleModule::refresh(const Entity& entity, MeshHandle mesh, Field& field)
 {
   // Its ground laid in the background, ready: its puddles found with it.
   if (field.next.valid() &&
       field.next.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
     use(field, field.next.get());
 
-  const MeshHandle mesh = entity.getComponent<MeshRendererComponent>().mesh;
   const Aabb* bounds = m_meshes->bounds(mesh);
   if (m_meshes->isMissing(mesh) || !bounds || bounds->empty())
     return; // not loaded (yet)
-  const glm::mat4 model = hierarchy::worldMatrix(entity);
+  const glm::mat4 model = hierarchy::cachedWorldMatrix(entity);
   if (field.mesh != mesh.id || field.model != model || !field.surface)
   {
     field.surface =
@@ -149,6 +151,7 @@ void PuddleModule::refresh(const Entity& entity, Field& field)
   // place as it's read).
   auto terrain = std::make_shared<TerrainMaterial>(*field.terrain);
   terrain->tint.reset();
+  terrain->paint.reset(); // (changed in place by the game as it's read)
   if (terrain->splat)
     terrain->splat = std::make_shared<const TextureData>(*terrain->splat);
   if (!m_worker)
@@ -189,7 +192,7 @@ void PuddleModule::setFillRate(const Entity& ground,
                                std::shared_ptr<const TextureData> fillRate)
 {
   const uint64_t key = keyOf(ground);
-  m_fillRates[key] = fillRate;
+  m_fillRates[key] = {ground, fillRate};
   if (const auto it = m_fields.find(key); it != m_fields.end() &&
                                           !it->second.sent.empty() &&
                                           it->second.sent.fillRate != fillRate)

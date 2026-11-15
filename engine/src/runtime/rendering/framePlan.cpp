@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/framePlan.h"
 
+#include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/frustum.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "glm/glm/common.hpp"
@@ -10,6 +11,7 @@
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <span>
@@ -90,6 +92,20 @@ std::optional<glm::vec2> viewBearings(const FrameParams& frame,
     return std::nullopt;
   return span + middle;
 }
+
+// Appends each instance's bounding sphere, as `mesh` bounds it, placed in the
+// world: xyz its centre, w its radius, below zero for each if the mesh has
+// gone.
+void placeSpheres(std::span<const MeshInstance> instances,
+                  const PlannedMesh* mesh,
+                  std::vector<glm::vec4>& out)
+{
+  for (const MeshInstance& instance : instances)
+    out.push_back(mesh ? placedSphere(instance.model,
+                                      mesh->boundsCenter,
+                                      mesh->boundsRadius)
+                       : glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
+}
 } // namespace
 
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
@@ -102,8 +118,18 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
           glm::vec4(material.tiling, material.offset),
           glm::uvec4(static_cast<uint32_t>(material.alphaMode),
                      material.unlit ? 1u : 0u,
-                     0,
+                     std::bit_cast<uint32_t>(material.fadeNearCamera),
                      0)};
+}
+
+FoliageUniforms foliageMaterialUniforms(const MeshMaterial& material)
+{
+  const FoliageSettings& foliage = material.foliage;
+  return {standardMaterialUniforms(material),
+          glm::vec4(std::max(foliage.translucency, 0.0f),
+                    foliage.bend,
+                    foliage.sway,
+                    foliage.flutter)};
 }
 
 TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain,
@@ -357,8 +383,11 @@ void FramePlan::addGrass(const GrassBatch& batch)
 
 void FramePlan::addUi(const UiDrawList& list)
 {
-  if (m_open)
-    m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
+  if (!m_open)
+    return;
+  for (const auto& part : list.parts)
+    m_uiQuads.insert(m_uiQuads.end(), part->begin(), part->end());
+  m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
 }
 
 void FramePlan::finish(
@@ -397,33 +426,35 @@ void FramePlan::finish(
     if (m_pointLights[i].castsShadow &&
         (!strikeShadowed || i != static_cast<std::size_t>(strikeShadow)))
       m_shadowedLights.push_back({i, {}});
-  for (ShadowedLight& shadowed : m_shadowedLights)
+  if (!m_shadowedLights.empty())
   {
-    const PointLight& light = m_pointLights[shadowed.light];
+    m_casterSpheres.clear();
     for (const CasterBatch& batch : m_casterBatches)
+      placeSpheres(std::span<const MeshInstance>(m_casters).subspan(
+                       batch.first, batch.count),
+                   meshes(batch.base.meshSlot),
+                   m_casterSpheres);
+    for (ShadowedLight& shadowed : m_shadowedLights)
     {
-      const PlannedMesh* mesh = meshes(batch.base.meshSlot);
-      if (!mesh)
-        continue;
-      Draw draw = batch.base;
-      draw.firstInstance = static_cast<uint32_t>(m_instances.size());
-      for (std::size_t k = 0; k < batch.count; ++k)
+      const PointLight& light = m_pointLights[shadowed.light];
+      for (const CasterBatch& batch : m_casterBatches)
       {
-        const MeshInstance& instance = m_casters[batch.first + k];
-        const glm::vec3 center(instance.model *
-                               glm::vec4(mesh->boundsCenter, 1.0f));
-        const float scale =
-            std::max({glm::length(glm::vec3(instance.model[0])),
-                      glm::length(glm::vec3(instance.model[1])),
-                      glm::length(glm::vec3(instance.model[2]))});
-        // (A spot's: those in its cone.)
-        if (!lightReaches(light, center, mesh->boundsRadius * scale))
+        if (batch.count == 0 || m_casterSpheres[batch.first].w < 0.0f)
           continue;
-        m_instances.push_back(instance);
-        ++draw.instanceCount;
+        Draw draw = batch.base;
+        draw.firstInstance = static_cast<uint32_t>(m_instances.size());
+        for (std::size_t k = 0; k < batch.count; ++k)
+        {
+          const glm::vec4& sphere = m_casterSpheres[batch.first + k];
+          // (A spot's: those in its cone.)
+          if (!lightReaches(light, glm::vec3(sphere), sphere.w))
+            continue;
+          m_instances.push_back(m_casters[batch.first + k]);
+          ++draw.instanceCount;
+        }
+        if (draw.instanceCount > 0)
+          shadowed.draws.push_back(draw);
       }
-      if (draw.instanceCount > 0)
-        shadowed.draws.push_back(draw);
     }
   }
 
@@ -431,41 +462,48 @@ void FramePlan::finish(
   // reaches into its box (or beyond it toward the sun, within its depth).
   const SunCascades& cascades = m_frame.cascades;
   if (m_frame.shadows.enabled && cascades.count > 1)
+  {
+    m_casterSpheres.clear();
+    for (const Draw& shadow : m_shadowDraws)
+      placeSpheres(std::span<const MeshInstance>(m_instances)
+                       .subspan(shadow.firstInstance, shadow.instanceCount),
+                   meshes(shadow.meshSlot),
+                   m_casterSpheres);
     for (uint32_t c = 0; c < cascades.count && c < kMaxShadowCascades; ++c)
     {
       const SunCascade& cascade = cascades.cascades[c];
       const float toClip = 1.0f / std::max(cascade.radius, 1e-4f);
       const float toDepth = 1.0f / std::max(cascade.depthRange, 1e-4f);
+      std::size_t sphere = 0;
       for (const Draw& shadow : m_shadowDraws)
       {
-        const PlannedMesh* mesh = meshes(shadow.meshSlot);
-        if (!mesh)
+        const std::size_t first = sphere;
+        sphere += shadow.instanceCount;
+        if (shadow.instanceCount == 0 || m_casterSpheres[first].w < 0.0f)
           continue;
         Draw draw = shadow;
         draw.firstInstance = static_cast<uint32_t>(m_instances.size());
         draw.instanceCount = 0;
         for (uint32_t k = 0; k < shadow.instanceCount; ++k)
         {
-          const MeshInstance instance = m_instances[shadow.firstInstance + k];
-          const glm::vec4 center = cascade.viewProjection * instance.model *
-                                   glm::vec4(mesh->boundsCenter, 1.0f);
-          const float scale =
-              std::max({glm::length(glm::vec3(instance.model[0])),
-                        glm::length(glm::vec3(instance.model[1])),
-                        glm::length(glm::vec3(instance.model[2]))});
-          const float radius = mesh->boundsRadius * scale;
+          const glm::vec4& world = m_casterSpheres[first + k];
+          const glm::vec4 center =
+              cascade.viewProjection * glm::vec4(glm::vec3(world), 1.0f);
+          const float radius = world.w;
           const float across = 1.0f + radius * toClip;
           const float deep = radius * toDepth;
           if (std::abs(center.x) > across || std::abs(center.y) > across ||
               center.z < -deep || center.z > 1.0f + deep)
             continue;
-          m_instances.push_back(instance);
+          // push_back copes with an element of the vector itself.
+          m_instances.push_back(m_instances[shadow.firstInstance + k]);
           ++draw.instanceCount;
         }
         if (draw.instanceCount > 0)
           m_cascadeDraws[c].push_back(draw);
       }
     }
+  }
 
   // Each shadowed light's cube faces.
   m_faces.clear();
@@ -508,6 +546,8 @@ void FramePlan::finish(
   m_uniforms.sky = glm::vec4(lighting.skyColor, 1.0f);
   m_uniforms.time = glm::vec4(m_frame.time, 0.0f, 0.0f, 0.0f);
   m_uniforms.cameraForward = glm::vec4(m_frame.cameraForward, 0.0f);
+  m_uniforms.cameraTarget =
+      glm::vec4(m_frame.cameraTarget, std::max(m_frame.lineOfSight, 0.0f));
   const float windAngle = glm::radians(m_frame.wind.direction);
   m_uniforms.wind = glm::vec4(std::cos(windAngle),
                               std::sin(windAngle),
@@ -732,18 +772,34 @@ void FramePlan::finish(
   for (std::size_t i = 0; i < m_shadowedLights.size(); ++i)
     m_gpuLights[m_shadowedLights[i].light].shadow.x = static_cast<float>(i);
 
-  // The UI quads as instances, in batches sharing a texture. Boxes don't read
-  // their texture, so they needn't break a run of glyphs.
+  // The UI quads as instances, in batches sharing their textures: a glyph
+  // texture and an image's (an atlas page), bound side by side. A batch goes
+  // on until a quad needs another texture where one's bound; boxes and
+  // chevrons read neither, so they never break one.
   m_uiInstances.clear();
   m_uiBatches.clear();
   for (const UiQuad& quad : m_uiQuads)
   {
-    const UiTexture* texture =
-        quad.kind == UiQuad::Box ? nullptr : quad.texture;
-    if (m_uiBatches.empty() ||
-        (m_uiBatches.back().texture != texture && quad.kind != UiQuad::Box))
+    const bool glyph = quad.kind == UiQuad::Glyph;
+    const bool image = quad.kind == UiQuad::Image || quad.kind == UiQuad::Mask;
+    if (m_uiBatches.empty())
       m_uiBatches.push_back(
-          {texture, static_cast<uint32_t>(m_uiInstances.size()), 0});
+          {nullptr, nullptr, static_cast<uint32_t>(m_uiInstances.size()), 0});
+    if (glyph || image)
+    {
+      const UiTexture*& bound =
+          glyph ? m_uiBatches.back().glyphs : m_uiBatches.back().image;
+      if (bound && bound != quad.texture)
+      {
+        UiBatch next = m_uiBatches.back();
+        next.first = static_cast<uint32_t>(m_uiInstances.size());
+        next.count = 0;
+        (glyph ? next.glyphs : next.image) = quad.texture;
+        m_uiBatches.push_back(next);
+      }
+      else
+        bound = quad.texture;
+    }
     ++m_uiBatches.back().count;
     m_uiInstances.push_back({quad.rect,
                              quad.uv,
@@ -752,7 +808,9 @@ void FramePlan::finish(
                              glm::vec4(quad.radius,
                                        quad.softness,
                                        quad.border,
-                                       static_cast<float>(quad.kind))});
+                                       static_cast<float>(quad.kind) +
+                                           (quad.nearest ? 8.0f : 0.0f)),
+                             quad.clip});
   }
   m_uiQuads.clear();
 }
@@ -990,6 +1048,30 @@ void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain)
     uniforms.farMeadow[channel] = meadow(std::size_t(channel) + 1);
 }
 
+void grassVigourUniforms(const GrassVigourSettings& settings,
+                         glm::vec4 rect,
+                         glm::vec4& vigour,
+                         glm::vec4& vigourRect,
+                         glm::vec4& vigourDetail)
+{
+  if (!settings.on)
+  {
+    vigour = glm::vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    vigourRect = glm::vec4(0.0f);
+    vigourDetail = glm::vec4(0.0f, 8.0f, 0.0f, 0.5f);
+    return;
+  }
+  vigour = glm::vec4(settings.scale,
+                     settings.bias,
+                     std::clamp(settings.lengthLeast, 0.0f, 1.0f),
+                     std::clamp(settings.densityLeast, 0.0f, 1.0f));
+  vigourRect = rect;
+  vigourDetail = glm::vec4(settings.detail,
+                           std::max(settings.detailSize, 1e-3f),
+                           settings.drivesData0 ? 1.0f : 0.0f,
+                           settings.outside);
+}
+
 std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                                    const GrassFieldState& field,
                                    const FrameParams& frame)
@@ -1040,6 +1122,15 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                          0.0f,
                          0.0f)};
   plan.draw.far.z = kGrassFadeFrom * distance;
+  // Short grass's turf under it (meshGrass.wgsl; for a before and after,
+  // SFS_GRASS_NO_TURF=1: none).
+  static const bool noTurf = std::getenv("SFS_GRASS_NO_TURF") != nullptr;
+  plan.draw.far.w = noTurf ? 0.0f : 1.0f;
+  grassVigourUniforms(batch.vigour,
+                      field.vigourRect,
+                      plan.draw.vigour,
+                      plan.draw.vigourRect,
+                      plan.draw.vigourDetail);
 
   GrassGrowUniforms& uniforms = plan.grow;
   uniforms.model = model;
@@ -1064,6 +1155,9 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
   uniforms.ground = glm::vec4(ground.min, ground.texelSize());
   uniforms.groundSize = glm::ivec4(ground.size, 0, 0);
   uniforms.maps = maps;
+  uniforms.vigour = plan.draw.vigour;
+  uniforms.vigourRect = plan.draw.vigourRect;
+  uniforms.vigourDetail = plan.draw.vigourDetail;
   uniforms.shape =
       glm::vec4(shape.height, shape.heightVariation, shape.width, cell);
   uniforms.detail = glm::vec4(distance * kGrassFineDetail,

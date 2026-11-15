@@ -5,18 +5,20 @@
 namespace sfs
 {
 
-namespace detail
+inline bool Entity::isValid() const
 {
-// An entity handle with no registry: default-made, never an entity.
-[[noreturn]] void invalidEntity(const char* action);
-} // namespace detail
+  return registry && registry->isValid(*this);
+}
 
 template <typename TComponent, typename... TArgs>
 Entity& Entity::addComponent(TArgs&&... args)
 {
   if (!registry)
-    detail::invalidEntity("addComponent");
-  registry->addComponent<TComponent>(*this, std::forward<TArgs>(args)...);
+    Registry::refuseAdd(
+        *this, "addComponent", detail::componentTypeKey<TComponent>());
+  else
+    registry->add<TComponent>(
+        "addComponent", *this, std::forward<TArgs>(args)...);
   return *this;
 }
 
@@ -24,8 +26,10 @@ template <typename TComponent, typename... TArgs>
 Entity& Entity::addTag(TArgs&&... args)
 {
   if (!registry)
-    detail::invalidEntity("addTag");
-  registry->addComponent<TComponent>(*this, std::forward<TArgs>(args)...);
+    Registry::refuseAdd(
+        *this, "addTag", detail::componentTypeKey<TComponent>());
+  else
+    registry->add<TComponent>("addTag", *this, std::forward<TArgs>(args)...);
   return *this;
 }
 
@@ -42,12 +46,17 @@ bool Entity::hasComponent() const
   return registry && registry->hasComponent<TComponent>(*this);
 };
 
-template <typename TComponent>
-TComponent& Entity::getComponent() const
+template <typename... TTerms>
+bool Entity::matches() const
 {
-  if (!registry)
-    detail::invalidEntity("getComponent");
-  return registry->getComponent<TComponent>(*this);
+  return isValid() &&
+         registry->matches(id, detail::querySignature<TTerms...>());
+}
+
+template <typename TComponent>
+TComponent* Entity::getComponent() const
+{
+  return registry ? registry->getComponent<TComponent>(*this) : nullptr;
 }
 
 } // namespace sfs

@@ -11,6 +11,7 @@ struct DepthOut {
   @location(2) worldPosition: vec3f,
   @location(3) normal: vec3f,
   @location(4) vertexColor: vec3f,
+  @location(5) fade: f32, // its instance's dithered fade (see SurfaceIn)
 }
 
 @vertex
@@ -18,7 +19,8 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> DepthOut {
   let model = instanceModel(instance);
   let world = model * vec4f(vertex.position, 1.0);
   let placed = surfaceVertex(SurfaceVertex(world.xyz, normalMatrix(model) * vertex.normal,
-                                            instanceUv(vertex, instance), 1.0));
+                                            instanceUv(vertex, instance), 1.0, vertex.color,
+                                            model[3].xyz));
   var out: DepthOut;
   out.clip = frame.viewProjection * vec4f(placed.position, 1.0);
   out.uv = placed.uv;
@@ -26,17 +28,22 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> DepthOut {
   out.worldPosition = placed.position;
   out.normal = placed.normal;
   out.vertexColor = vertex.color;
+  out.fade = instance.emission.w;
   return out;
 }
 
 @fragment
 fn fs_main(in: DepthOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   // A back face (drawn only for a double-sided material) faces the view.
-  let normal = normalize(select(-in.normal, in.normal, front));
+  // (Unless the surface's normals mean the same from either side.)
+  let normal = normalize(select(-in.normal, in.normal, front || !surfaceFlipsBackFaces()));
   // Cut-out materials only where they're solid, as the lit pass draws them.
   // (The mode is the material's: the same across the draw.)
   if (surfaceAlphaMode() == ALPHA_MASK) {
-    let solid = surfaceAlpha(surfaceInput(in.uv, in.worldPosition, normal, in.vertexColor));
+    var point = surfaceInput(in.uv, in.worldPosition, normal, in.vertexColor);
+    point.fade = in.fade;
+    point.pixel = in.clip.xy;
+    let solid = surfaceAlpha(point);
     if (solid.x * in.tintAlpha < solid.y) {
       discard;
     }

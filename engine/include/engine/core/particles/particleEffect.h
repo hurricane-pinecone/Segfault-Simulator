@@ -135,6 +135,10 @@ struct ParticleEffectDesc
   glm::vec2 gravity{0.0f, 0.0f}; // planar acceleration (tiles/sec^2)
   float gravityZ = 0.0f;         // vertical acceleration; negative = falls
   float drag = 0.0f; // linear velocity damping per second (0 = none)
+  // The share of the wind (WindZoneComponent) its particles are carried
+  // toward by their drag: drag * windInfluence * wind is added to the planar
+  // acceleration, so they settle at windInfluence times the wind. 0: none.
+  float windInfluence = 0.0f;
 
   // --- appearance over normalized life (age / lifetime) ---
   Curve sizeOverLife = Curve::constant(1.0f);
@@ -153,9 +157,19 @@ struct ParticleEffectDesc
 
   // --- rendering / simulation ---
   BlendMode blend = BlendMode::Alpha;
+  // Lit by the scene's light as matter is (the sun, the sky, lamps; shaded
+  // like a surface facing up and toward the camera), rather than shown as its
+  // own colour. For dust, grain, spray in a lit 3D world, which unlit would
+  // glow at night and look dim by day. Off for light (sparks, embers).
+  bool lit = false;
   GroundBehavior ground = GroundBehavior::None;
   float stickDuration =
       0.0f; // Stick: extra seconds a grounded particle lingers
+  // The ground is its emitter's own plane (the emitter's height), not the
+  // collision source's surface: for ground the source doesn't know (a 3D
+  // world's fields, a trailer's load) and to skip its sweeps. Set the
+  // emitter on that ground and its offset's z to the height it emits from.
+  bool landsOnPlane = false;
 
   // --- persistent decals ---
   // When true (and a decal sink + terrain source are wired), a particle leaves

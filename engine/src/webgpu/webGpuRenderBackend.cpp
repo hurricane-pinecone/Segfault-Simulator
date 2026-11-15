@@ -54,6 +54,12 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
   SDL_GetWindowSizeInPixels(m_window, &m_width, &m_height);
   m_context.configure(m_width, m_height);
 
+  // Measured on Windows (RTX 3070, 2026-11-04): no faster than acquiring at
+  // the frame's start, so it's a switch, off by default.
+  m_lateAcquire = std::getenv("SFS_LATE_ACQUIRE") != nullptr;
+  if (m_lateAcquire)
+    LOG_INFO("Acquiring the window's picture late (SFS_LATE_ACQUIRE)");
+
   m_renderer = std::make_unique<WebGpuRenderer>(m_context);
   if (!m_renderer->initialize())
     return false;
@@ -187,7 +193,7 @@ void WebGpuRenderBackend::imguiRenderDrawData()
   m_imguiRendered = true;
 
   // The main window's panels draw over the scene in this frame's encoder.
-  if (!m_encoder || !m_view)
+  if (!acquire(true))
     return;
 
   WGPURenderPassColorAttachment color = {};
@@ -224,57 +230,113 @@ void WebGpuRenderBackend::beginFrame(int width, int height)
 {
   m_width = width;
   m_height = height;
+  m_acquired = false;
+  m_view = nullptr;
+  m_surfTex = {};
 
   // Nothing to draw into (a window of no size): the frame is skipped.
   if (width <= 0 || height <= 0)
   {
-    m_surfTex = {};
-    m_view = nullptr;
     m_encoder = nullptr;
     m_renderer->setTarget(nullptr, nullptr, {0, 0});
     return;
   }
 
+  m_encoder = wgpuDeviceCreateCommandEncoder(m_context.device(), nullptr);
+  // The window's next picture, now, unless asked for late (SFS_LATE_ACQUIRE:
+  // see acquire()); then the callbacks below find it already acquired.
+  const bool offscreen = (m_screenshotTarget && screenshotDue(m_frame + 1)) ||
+                         (m_sceneTarget && m_sceneTarget->valid());
+  if (!m_lateAcquire)
+    acquire(offscreen);
+
+  // The screenshot's frame draws offscreen, to be read back; every other
+  // frame still shows in the window. It takes the window's path (the
+  // composite after the wait), only into its own picture, so it shows what
+  // the window would.
+  if (m_screenshotTarget && screenshotDue(m_frame + 1))
   {
-    SFS_CPU_SCOPE("backend/acquire");
+    m_screenshotTarget->resize({width, height});
+    m_renderer->setLateTarget(m_encoder,
+                              m_screenshotTarget->size(),
+                              [this]
+                              {
+                                acquire(true);
+                                m_renderer->setTarget(
+                                    m_encoder,
+                                    m_screenshotTarget->view(),
+                                    m_screenshotTarget->size());
+                              });
+  }
+  else if (m_sceneTarget && m_sceneTarget->valid())
+  {
+    // The scene draws offscreen; the window only shows ImGui (cleared when
+    // it's acquired, for ImGui).
+    m_renderer->setTarget(
+        m_encoder, m_sceneTarget->view(), m_sceneTarget->size());
+  }
+  else
+  {
+    // Into the window, which the renderer asks for only for its last passes.
+    m_renderer->setLateTarget(
+        m_encoder,
+        {width, height},
+        [this]
+        {
+          acquire(false);
+          m_renderer->setTarget(m_encoder, m_view, {m_width, m_height});
+        });
+  }
+}
+
+bool WebGpuRenderBackend::acquire(bool clear)
+{
+  if (m_acquired)
+    return m_view != nullptr;
+  m_acquired = true;
+  if (!m_encoder)
+    return false;
+
+  // What's recorded so far doesn't draw into the window (the scene's
+  // offscreen passes): submitted now, so the GPU works on it while the next
+  // picture is waited for, rather than idling until it's encoded. Queue
+  // writes after this submit are ordered after it, so the next frame's
+  // uploads can't change what this one reads.
+  submit();
+  m_encoder = wgpuDeviceCreateCommandEncoder(m_context.device(), nullptr);
+
+  {
+    SFS_CPU_SCOPE("backend/acquire (late)");
     wgpuSurfaceGetCurrentTexture(m_context.surface(), &m_surfTex);
   }
   if (m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
       m_surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal)
   {
-    // Lost/outdated surface: reconfigure and skip recording this frame.
+    // Lost/outdated surface: reconfigure, and draw nothing into the window
+    // this frame.
     if (m_surfTex.texture)
       wgpuTextureRelease(m_surfTex.texture);
     m_surfTex = {};
-    m_context.configure(width, height);
+    m_context.configure(m_width, m_height);
     m_view = nullptr;
-    m_encoder = nullptr;
-    m_renderer->setTarget(nullptr, nullptr, {width, height});
-    return;
+    return false;
   }
-
   m_view = m_context.surfaceView(m_surfTex.texture);
-  m_encoder = wgpuDeviceCreateCommandEncoder(m_context.device(), nullptr);
-
-  // The screenshot's frame draws offscreen, to be read back; every other
-  // frame still shows in the window.
-  WebGpuRenderTarget* target = m_sceneTarget;
-  if (m_screenshotTarget && screenshotDue(m_frame + 1))
-  {
-    m_screenshotTarget->resize({width, height});
-    target = m_screenshotTarget.get();
-  }
-
-  if (target && target->valid())
-  {
-    // The scene draws offscreen; the window only shows ImGui, so clear it.
-    m_renderer->setTarget(m_encoder, target->view(), target->size());
+  if (clear)
     clearWindow();
-  }
-  else
+  return true;
+}
+
+void WebGpuRenderBackend::submit()
+{
+  const WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(m_encoder, nullptr);
   {
-    m_renderer->setTarget(m_encoder, m_view, {width, height});
+    SFS_CPU_SCOPE("backend/submit");
+    wgpuQueueSubmit(m_context.queue(), 1, &cmd);
   }
+  wgpuCommandBufferRelease(cmd);
+  wgpuCommandEncoderRelease(m_encoder);
+  m_encoder = nullptr;
 }
 
 void WebGpuRenderBackend::endFrame()
@@ -285,18 +347,17 @@ void WebGpuRenderBackend::endFrame()
 
   if (m_encoder)
   {
-    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(m_encoder, nullptr);
-    {
-      SFS_CPU_SCOPE("backend/submit");
-      wgpuQueueSubmit(m_context.queue(), 1, &cmd);
-    }
+    // A frame that didn't draw into the window (no scene, or drawn
+    // offscreen without ImGui) still shows one, cleared.
+    const bool shows = acquire(true);
+    submit();
 #ifndef __EMSCRIPTEN__ // the browser shows the canvas itself
-    SFS_CPU_SCOPE("backend/present");
-    wgpuSurfacePresent(m_context.surface());
+    if (shows)
+    {
+      SFS_CPU_SCOPE("backend/present");
+      wgpuSurfacePresent(m_context.surface());
+    }
 #endif
-    wgpuCommandBufferRelease(cmd);
-    wgpuCommandEncoderRelease(m_encoder);
-    m_encoder = nullptr;
   }
   if (m_screenshotTarget && screenshotDue(++m_frame))
     saveScreenshot();

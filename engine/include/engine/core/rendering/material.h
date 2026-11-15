@@ -30,8 +30,11 @@ namespace sfs
  *     "normalTexture": "", "normalScale": 1,
  *     "tiling": [1, 1], "offset": [0, 0],
  *     "metallic": 0, "roughness": 1,
- *     "alphaMode": "opaque", "alphaCutoff": 0.5
+ *     "alphaMode": "opaque", "alphaCutoff": 0.5,
+ *     "doubleSided": false
  *   }
+ *
+ * (and "foliage": {...} for a tree's parts, see FoliageSettings).
  *
  * A node-graph material (format version 2) has its graph instead of the
  * standard fields, which it doesn't use:
@@ -71,6 +74,14 @@ struct MaterialAsset
   float roughness = 1.0f;
   AlphaMode alphaMode = AlphaMode::Opaque;
   float alphaCutoff = 0.5f;
+  bool doubleSided = false; // both its sides drawn (MeshMaterial's)
+  // A tree's or a plant's (see FoliageSettings): in the file as
+  // "foliage": {"translucency": 0.6, "bend": 1, "sway": 1, "flutter": 1},
+  // only when enabled.
+  FoliageSettings foliage;
+  // Fades away near the camera and round its line of sight (MeshMaterial's):
+  // "fadeNearCamera": 0.4, only when set.
+  float fadeNearCamera = 0.0f;
 
   // Set for a node-graph material: its surface comes from the graph, and only
   // alphaMode is read from the fields above (a graph's cut-out threshold is

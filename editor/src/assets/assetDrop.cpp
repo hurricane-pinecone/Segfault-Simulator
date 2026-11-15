@@ -51,9 +51,10 @@ std::string materialFor(sfs::AssetDatabase& assets, const sfs::AssetRecord& reco
 
 void setSlot(const sfs::Entity& entity, std::size_t slot, const std::string& material, EditorHistory* history)
 {
-  if (!entity.hasComponent<sfs::MeshRendererComponent>())
+  sfs::MeshRendererComponent* meshRenderer = entity.getComponent<sfs::MeshRendererComponent>();
+  if (!meshRenderer)
     return;
-  std::vector<std::string>& list = entity.getComponent<sfs::MeshRendererComponent>().materials;
+  std::vector<std::string>& list = meshRenderer->materials;
   const auto apply = [&]
   {
     if (list.size() <= slot)

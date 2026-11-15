@@ -580,6 +580,11 @@ GrassTileCache::plan(const GrassGrowUniforms& grow, uint64_t frame, bool debug)
             // side first, if that's the camera's.)
             if (eye.y > (static_cast<float>(y) + 0.5f) * side)
               entry.lattice |= kGrassTileReversed;
+            if (m_allActive ||
+                (m_anyActive &&
+                 activeOver(glm::vec2(at) * side, glm::vec2(at + 1) * side)))
+              entry.lattice |= kGrassTileActive |
+                               (debug ? kGrassTileFresh | kGrassTileEdited : 0);
             m_frame.drawn.push_back(entry);
             m_away.push_back(glm::length(camera - middle));
           }
@@ -605,6 +610,47 @@ GrassTileCache::plan(const GrassGrowUniforms& grow, uint64_t frame, bool debug)
   }
   std::swap(m_frame.drawn, m_sorted);
   return m_frame;
+}
+
+void GrassTileCache::setActive(const GrassGrid& grid,
+                               glm::ivec2 tiles,
+                               std::span<const uint8_t> active)
+{
+  m_activeGrid = grid;
+  m_activeTiles = tiles;
+  m_active.assign(active.begin(), active.end());
+  m_anyActive = std::any_of(
+      m_active.begin(), m_active.end(), [](uint8_t a) { return a != 0; });
+  if (m_active.size() <
+      std::size_t(std::max(tiles.x, 0)) * std::max(tiles.y, 0))
+    m_anyActive = false;
+}
+
+bool GrassTileCache::activeOver(glm::vec2 low, glm::vec2 high) const
+{
+  if (m_activeGrid.empty() || m_activeTiles.x <= 0 || m_activeTiles.y <= 0)
+    return false;
+  // (A texel more round it: blades are grown from the maps between texels.)
+  const glm::ivec2 from =
+      glm::clamp(glm::ivec2(glm::floor((m_activeGrid.toTexels(low) - 1.0f) /
+                                       float(kGrassMapTile))),
+                 glm::ivec2(0),
+                 m_activeTiles - 1);
+  const glm::ivec2 to =
+      glm::clamp(glm::ivec2(glm::floor((m_activeGrid.toTexels(high) + 1.0f) /
+                                       float(kGrassMapTile))),
+                 glm::ivec2(0),
+                 m_activeTiles - 1);
+  if (m_activeGrid.toTexels(high).x < -1.0f ||
+      m_activeGrid.toTexels(high).y < -1.0f ||
+      m_activeGrid.toTexels(low).x > float(m_activeGrid.size.x) + 1.0f ||
+      m_activeGrid.toTexels(low).y > float(m_activeGrid.size.y) + 1.0f)
+    return false;
+  for (int y = from.y; y <= to.y; ++y)
+    for (int x = from.x; x <= to.x; ++x)
+      if (m_active[std::size_t(y) * m_activeTiles.x + x])
+        return true;
+  return false;
 }
 
 } // namespace sfs

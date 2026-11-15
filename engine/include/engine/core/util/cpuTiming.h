@@ -11,6 +11,8 @@ namespace sfs::cpuTiming
 // SFS_CPU_TIMING set, each scope's time (milliseconds a frame, and calls)
 // is logged every few seconds. Scopes nest (a scope's time includes those
 // inside it); same-named scopes add up. Off, a scope costs a branch.
+// SFS_SLOW_FRAME_MS=<ms> (with or without SFS_CPU_TIMING): each frame longer
+// than that logs a "Slow frame" line with its biggest scopes.
 
 bool enabled();
 

@@ -23,9 +23,23 @@ struct PrefabInstanceComponent
 };
 
 /**
+ * The bit set in every model node's stable id (ModelNode::id). A prefab gives
+ * its own entities ids below kAddedNodeIdBit, so they never clash.
+ */
+inline constexpr uint32_t kModelNodeIdBit = 0x80000000u;
+
+/**
+ * The bit set (and kModelNodeIdBit clear) in the id of an entity a prefab adds
+ * inside one of its nested instances: keyed beside that instance's own
+ * entities, it can't clash with their ids.
+ */
+inline constexpr uint32_t kAddedNodeIdBit = 0x40000000u;
+
+/**
  * On an entity made from a prefab: its id in the prefab file that made it, so
  * an instance can tell which of its entities are which when it's saved. A
- * nested instance's root carries its id in the prefab containing it.
+ * nested instance's root carries its id in the prefab containing it. A model
+ * node's is its stable id (kModelNodeIdBit set).
  */
 struct PrefabLinkComponent
 {

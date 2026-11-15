@@ -292,8 +292,9 @@ sfs::ui::Layer* UiPreviewPanel::layer(EditorContext& context)
     for (sfs::ui::Layer* layer : context.scene->findObjects<sfs::ui::Layer>())
     {
       const sfs::Entity& entity = layer->entity();
-      if (entity.isValid() && entity.hasComponent<sfs::ScriptComponent>() &&
-          entity.getComponent<sfs::ScriptComponent>().script == m_layerName)
+      if (sfs::ScriptComponent* script =
+              entity.getComponent<sfs::ScriptComponent>();
+          script && script->script == m_layerName)
         return layer;
     }
 
@@ -315,14 +316,11 @@ sfs::ui::Layer* UiPreviewPanel::layer(EditorContext& context)
     const sfs::SceneSerializer serializer(
         sfs::reflect::types(),
         context.render ? &context.render->meshes() : nullptr);
-    for (const sfs::Entity& entity : context.scene->entities())
-      if (entity.hasComponent<sfs::ScriptComponent>() &&
-          entity.getComponent<sfs::ScriptComponent>().script == m_layerName)
+    for (sfs::ScriptComponent& script :
+         context.scene->query<sfs::ScriptComponent>())
+      if (script.script == m_layerName)
       {
-        serializer.loadObject(
-            *info,
-            object.get(),
-            entity.getComponent<sfs::ScriptComponent>().fields);
+        serializer.loadObject(*info, object.get(), script.fields);
         break;
       }
   }
@@ -607,6 +605,7 @@ void UiPreviewPanel::drawUi(EditorContext& context,
       {
         quad.rect.x += room;
         quad.rect.y += room;
+        quad.clip += glm::vec4(room);
         list.quads.push_back(quad);
       }
 

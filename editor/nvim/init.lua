@@ -1,7 +1,8 @@
 -- SfsEditor's Neovim config: what the editor's Code panel starts Neovim with
 -- when you don't have a config of your own (or choose "Engine config").
 -- Deliberately small: no plugin manager, no plugins; only what ships with
--- Neovim (0.11+), plus clangd when it is installed.
+-- Neovim (0.11+), plus clangd when it is installed and sfs-lsp, the engine's
+-- checks of SFS code.
 --
 -- The editor sets, before this runs:
 --   g:sfs_editor                1 (also visible to your own config)
@@ -127,7 +128,7 @@ map("n", "<leader>e", "<Cmd>Explore<CR>", { desc = "File explorer" })
 map("n", "<leader>d", vim.diagnostic.open_float, { desc = "Show diagnostic" })
 map("n", "<leader>h", "<Cmd>LspClangdSwitchSourceHeader<CR>", { desc = "Switch header/source" })
 
--- C++: clangd ------------------------------------------------------------------
+-- C++: clangd and sfs-lsp ------------------------------------------------------
 -- Go to definition (gd / Ctrl-]), hover (K), rename (grn), code actions (gra),
 -- references (grr) and completion come from Neovim's built-in LSP client.
 
@@ -139,16 +140,6 @@ if vim.fn.executable("clangd") == 1 then
     root_markers = { "project.sfsproj", ".clangd", ".git" },
   })
   vim.lsp.enable("clangd")
-
-  vim.api.nvim_create_autocmd("LspAttach", {
-    callback = function(args)
-      local client = vim.lsp.get_client_by_id(args.data.client_id)
-      if client and client:supports_method("textDocument/completion") then
-        vim.lsp.completion.enable(true, client.id, args.buf, { autotrigger = true })
-      end
-      map("n", "gd", vim.lsp.buf.definition, { buffer = args.buf, desc = "Go to definition" })
-    end,
-  })
 
   vim.api.nvim_create_user_command("LspClangdSwitchSourceHeader", function()
     local client = vim.lsp.get_clients({ bufnr = 0, name = "clangd" })[1]
@@ -163,6 +154,36 @@ if vim.fn.executable("clangd") == 1 then
       end)
   end, {})
 end
+
+-- sfs-lsp: [[sfs::...]] completion and checks, and SFS API lints, beside clangd.
+-- Inside SfsEditor, SFS_LSP names the sfs-lsp matching the engine; elsewhere it's found on PATH.
+local sfs_lsp = vim.env.SFS_LSP or "sfs-lsp"
+if vim.fn.executable(sfs_lsp) == 1 then
+  vim.lsp.config("sfs_lsp", {
+    cmd = { sfs_lsp },
+    filetypes = { "c", "cpp" },
+    root_dir = function(bufnr, on_dir)
+      -- An SFS project, or else the SFS source tree.
+      local root = vim.fs.root(bufnr, { "project.sfsproj", ".sfs-engine" })
+      if root then
+        on_dir(root)
+      end
+    end,
+  })
+  vim.lsp.enable("sfs_lsp")
+end
+
+-- Completion as you type, and gd, from whichever servers attach (clangd,
+-- sfs-lsp): Neovim merges their items.
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    if client and client:supports_method("textDocument/completion") then
+      vim.lsp.completion.enable(true, client.id, args.buf, { autotrigger = true })
+    end
+    map("n", "gd", vim.lsp.buf.definition, { buffer = args.buf, desc = "Go to definition" })
+  end,
+})
 
 vim.diagnostic.config({ virtual_text = true, severity_sort = true })
 

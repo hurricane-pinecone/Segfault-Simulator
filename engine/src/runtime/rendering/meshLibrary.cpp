@@ -616,15 +616,18 @@ MaterialHandle MeshLibrary::drawnFor(const std::string& name)
 
   // A terrain standing in for a textured material: drawn tinted by that
   // texture (a copy of it, kept in the slot), so what a game paints on its
-  // ground still shows.
+  // ground still shows; and with its layers as the game paints them.
   MaterialSlot& slot = m_materials.at(name); // loading may have rehashed
   const MeshMaterial* ownData = materialData(own);
   const MeshMaterial* drawnData = drawn != own ? materialData(drawn) : nullptr;
-  if (drawnData && drawnData->terrain && ownData && ownData->baseTexture)
+  if (drawnData && drawnData->terrain && ownData &&
+      (ownData->baseTexture || ownData->terrainTint || ownData->terrainPaint))
   {
     MeshMaterial standIn = *drawnData;
     auto terrain = std::make_shared<TerrainMaterial>(*drawnData->terrain);
-    terrain->tint = ownData->baseTexture;
+    terrain->tint =
+        ownData->terrainTint ? ownData->terrainTint : ownData->baseTexture;
+    terrain->paint = ownData->terrainPaint;
     standIn.terrain = std::move(terrain);
     standIn.variants.clear();
     if (slot.standIn.valid())

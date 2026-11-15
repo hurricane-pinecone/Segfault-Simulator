@@ -72,14 +72,20 @@ add_dependencies(SfsEditor SfsEditorNvimConfig)
 # and engine it was built with: bake those into editorBuildConfig.h.
 
 # An installed copy of this engine (headers, import libraries, CMake package)
-# for projects to build against. Refreshed whenever the engine changes.
+# for projects to build against. Refreshed whenever the engine changes; what
+# changed is stamped with the time it's installed (installSdk.cmake), so game
+# modules compiled before it are rebuilt against it.
 set(SFS_EDITOR_ENGINE_PREFIX "${CMAKE_BINARY_DIR}/sdk")
 if(TARGET engine-core) # in-tree: install the engine we just built
     add_custom_target(engine-sdk
-        COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${SFS_EDITOR_ENGINE_PREFIX}"
-        COMMENT "Installing the engine SDK for game modules"
+        COMMAND ${CMAKE_COMMAND} -DBUILD=${CMAKE_BINARY_DIR} -DPREFIX=${SFS_EDITOR_ENGINE_PREFIX}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/installSdk.cmake"
+        COMMENT "Installing the engine SDK for game modules (changed files stamped now: modules rebuild against them)"
         VERBATIM)
     add_dependencies(engine-sdk engine-core engine engine-webgpu)
+    if(TARGET sfs-lsp)
+        add_dependencies(engine-sdk sfs-lsp) # the SDK's bin/ carries it
+    endif()
     add_dependencies(SfsEditor engine-sdk)
 else() # against an installed engine: build modules against that same install
     get_filename_component(SFS_EDITOR_ENGINE_PREFIX "${engine_DIR}/../../.." ABSOLUTE)
@@ -102,6 +108,10 @@ if(SFS_CODEGEN_EXECUTABLE)
 else()
     set(SFS_EDITOR_CODEGEN "${CMAKE_BINARY_DIR}/bin/sfs-codegen")
 endif()
+# sfs-lsp sits beside sfs-codegen: the host tools are kept together. A Windows
+# editor's Code panel runs Neovim in WSL, so it gets the WSL host build's.
+get_filename_component(SFS_EDITOR_TOOLS_DIR "${SFS_EDITOR_CODEGEN}" DIRECTORY)
+set(SFS_EDITOR_LSP "${SFS_EDITOR_TOOLS_DIR}/sfs-lsp")
 set(SFS_EDITOR_TOOLCHAIN_FILE "${CMAKE_TOOLCHAIN_FILE}")
 # The engine's source, which a web export builds for the browser (in-tree only:
 # an installed engine has no sources, and can't export for the web).
@@ -111,6 +121,15 @@ else()
     set(SFS_EDITOR_SOURCE_DIR "")
 endif()
 set(SFS_EDITOR_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+# A game module is a shared library: it needs a shared engine, whose one copy
+# the editor and the module share. A static engine (ENGINE_SHARED=OFF, a tree
+# for engine tests) can't host one.
+get_target_property(SFS_EDITOR_ENGINE_TYPE sfs::engine TYPE)
+if(SFS_EDITOR_ENGINE_TYPE STREQUAL "STATIC_LIBRARY")
+    set(SFS_EDITOR_ENGINE_SHARED 0)
+else()
+    set(SFS_EDITOR_ENGINE_SHARED 1)
+endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/build/editorBuildConfig.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/generated/editorBuildConfig.h")

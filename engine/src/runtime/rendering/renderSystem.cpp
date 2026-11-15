@@ -1,6 +1,7 @@
 #include "engine/runtime/rendering/renderSystem.h"
 
 #include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFeedComponent.h"
 #include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/pointLightComponent.h"
@@ -11,6 +12,8 @@
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
 #include "engine/core/util/cpuTiming.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/runtime/rendering/debug/colliderLines.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/ext/matrix_transform.hpp"
@@ -24,8 +27,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <variant>
+#include <vector>
 
 namespace
 {
@@ -50,6 +56,13 @@ RenderSystem::RenderSystem(IRenderer& renderer)
 {
 }
 
+void RenderSystem::create()
+{
+  // What's on screen moves on in real time, however fast the game's going
+  // (its particles keep the game's time with their own time scale).
+  setTimeStep(TimeStep::Real);
+}
+
 RenderSystem::~RenderSystem() = default;
 
 Entity RenderSystem::sceneCamera() const
@@ -67,9 +80,14 @@ glm::vec3 RenderSystem::stepCamera()
   // way between them, so it's settled by each. With a sixth value of 1,
   // only grass's camera moves (where it's grown and thinned from), the view
   // held still: what changes is only how grass changes as the camera moves.
+  //
+  // Or with SFS_CAMERA_TOUR="eye x,y,z,target x,y,z;..." (or '|' between) the
+  // view for each shot of the sequence, from each eye looking at its target
+  // (the last held), likewise half way between them.
   static const char* const kStep = std::getenv("SFS_CAMERA_STEP");
+  static const char* const kTour = std::getenv("SFS_CAMERA_TOUR");
   ++m_renderedFrames;
-  if (!kStep || m_space2D)
+  if ((!kStep && !kTour) || m_space2D)
     return glm::vec3(0.0f);
   static const auto setting = [](const char* name, int fallback)
   {
@@ -79,6 +97,41 @@ glm::vec3 RenderSystem::stepCamera()
   static const int first = setting("SFS_SCREENSHOT_FRAME", 60);
   static const int every = std::max(setting("SFS_SCREENSHOT_EVERY", 0), 1);
   static const int count = std::max(setting("SFS_SCREENSHOT_COUNT", 1), 1);
+  if (kTour)
+  {
+    static const std::vector<std::pair<glm::vec3, glm::vec3>> tour = []
+    {
+      std::vector<std::pair<glm::vec3, glm::vec3>> views;
+      std::string text(kTour);
+      std::size_t at = 0;
+      while (at <= text.size())
+      {
+        const std::size_t end =
+            std::min(text.find_first_of(";|", at), text.size());
+        glm::vec3 eye(0.0f), target(0.0f);
+        if (std::sscanf(text.substr(at, end - at).c_str(),
+                        "%f,%f,%f,%f,%f,%f",
+                        &eye.x,
+                        &eye.y,
+                        &eye.z,
+                        &target.x,
+                        &target.y,
+                        &target.z) == 6)
+          views.emplace_back(eye, target);
+        at = end + 1;
+      }
+      return views;
+    }();
+    if (tour.empty())
+      return glm::vec3(0.0f);
+    const int shot = std::clamp((m_renderedFrames - first + every / 2) / every,
+                                0,
+                                static_cast<int>(tour.size()) - 1);
+    const auto& [eye, target] = tour[std::size_t(shot)];
+    m_camera.setPose(
+        eye, target - eye, glm::max(glm::distance(eye, target), 0.1f));
+    return glm::vec3(0.0f);
+  }
   float step[6] = {};
   std::sscanf(kStep,
               "%f,%f,%f,%f,%f,%f",
@@ -143,10 +196,8 @@ BloomSettings RenderSystem::effectiveBloom() const
 {
   if (m_style && m_style->bloom)
     return *m_style->bloom;
-  const Entity camera = sceneCamera();
-  return camera.isValid()
-             ? camera.getComponent<CameraComponent>().bloomSettings()
-             : m_bloom;
+  const CameraComponent* camera = sceneCamera().getComponent<CameraComponent>();
+  return camera ? bloomOf(*camera) : m_bloom;
 }
 
 HazeSettings RenderSystem::effectiveHaze() const
@@ -173,6 +224,44 @@ AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
 {
   return m_style && m_style->ambientOcclusion ? *m_style->ambientOcclusion
                                               : m_ambientOcclusion;
+}
+
+namespace
+{
+// SFS_DRAW_COLLIDERS=1 (or 0): over the scene's setting, for test runs.
+// Read once; a release export ignores it, and says so once.
+std::optional<bool> drawCollidersFromEnvironment()
+{
+  static const std::optional<bool> value = []() -> std::optional<bool>
+  {
+    const char* text = std::getenv("SFS_DRAW_COLLIDERS");
+    if (!text || !*text)
+      return std::nullopt;
+    return std::string_view(text) != "0";
+  }();
+  return value;
+}
+} // namespace
+
+bool RenderSystem::effectiveDrawColliders() const
+{
+  if (!debugFeatures::enabled())
+  {
+    static bool told = false;
+    if (!told && (drawCollidersFromEnvironment().value_or(false) ||
+                  m_forcedDrawColliders.value_or(false) || m_drawColliders))
+    {
+      told = true;
+      LOG_INFO("Draw colliders ignored: debug features are off in a release "
+               "build");
+    }
+    return false;
+  }
+  if (m_forcedDrawColliders)
+    return *m_forcedDrawColliders;
+  if (const std::optional<bool> environment = drawCollidersFromEnvironment())
+    return *environment;
+  return m_drawColliders;
 }
 
 bool RenderSystem::effectiveTemporalAntiAliasing() const
@@ -215,26 +304,28 @@ void RenderSystem::render()
   {
     // A 2D game's camera: over its point of the plane, looking straight at
     // it (up the screen: the plane's up), shaken across it.
-    if (const Entity camera = sceneCamera(); camera.isValid())
+    if (const Entity camera = sceneCamera();
+        const auto* lens = camera.getComponent<CameraComponent>())
     {
-      const auto& lens = camera.getComponent<CameraComponent>();
-      glm::vec2 point = hierarchy::worldTransform(camera).position2D();
-      if (camera.hasComponent<CameraFollowComponent>())
-        point += camera.getComponent<CameraFollowComponent>().shakeOffset() *
-                 glm::vec2(1.0f, m_space2D->ySign());
+      glm::vec2 point = hierarchy::cachedWorldTransform(camera).position2D();
+      if (CameraFollowComponent* cameraFollow =
+              camera.getComponent<CameraFollowComponent>())
+        point +=
+            cameraFollow->shakeOffset * glm::vec2(1.0f, m_space2D->ySign());
       const glm::vec3 centre = m_space2D->place(point);
-      const float back = std::max(lens.farPlane * 0.5f, 1.0f);
+      const float back = std::max(lens->farPlane * 0.5f, 1.0f);
       m_camera.setPose(glm::vec3(centre.x, centre.y, back),
                        glm::vec3(0.0f, 0.0f, -1.0f),
                        back,
                        glm::vec3(0.0f, 1.0f, 0.0f));
-      m_camera.projection = lens.orthographic ? Camera::Projection::Orthographic
-                                              : Camera::Projection::Perspective;
-      const float magnify = std::max(lens.zoom, 0.01f);
-      m_camera.orthoHeight = lens.orthoHeight / magnify;
-      m_camera.fieldOfView = glm::radians(lens.fieldOfView);
-      m_camera.nearPlane = lens.nearPlane;
-      m_camera.farPlane = lens.farPlane;
+      m_camera.projection = lens->orthographic
+                                ? Camera::Projection::Orthographic
+                                : Camera::Projection::Perspective;
+      const float magnify = std::max(lens->zoom, 0.01f);
+      m_camera.orthoHeight = lens->orthoHeight / magnify;
+      m_camera.fieldOfView = glm::radians(lens->fieldOfView);
+      m_camera.nearPlane = lens->nearPlane;
+      m_camera.farPlane = lens->farPlane;
     }
     else
     {
@@ -251,17 +342,17 @@ void RenderSystem::render()
     }
   }
   else if (m_followSceneCamera)
-    if (const Entity camera = sceneCamera(); camera.isValid())
+    if (const Entity camera = sceneCamera();
+        const CameraComponent* lens = camera.getComponent<CameraComponent>())
     {
-      camera.getComponent<CameraComponent>().applyTo(
-          m_camera, hierarchy::worldMatrix(camera));
+      viewThrough(*lens, hierarchy::cachedWorldMatrix(camera), m_camera);
 
       // A follow's shake moves the view across itself (as it moves a flat
       // or isometric camera across the ground).
-      if (camera.hasComponent<CameraFollowComponent>())
+      if (CameraFollowComponent* cameraFollow =
+              camera.getComponent<CameraFollowComponent>())
       {
-        const glm::vec2 shake =
-            camera.getComponent<CameraFollowComponent>().shakeOffset();
+        const glm::vec2 shake = cameraFollow->shakeOffset;
         const glm::vec3 right = m_camera.groundRight();
         const glm::vec3 up = glm::cross(right, m_camera.viewDirection());
         m_camera.target += right * shake.x + up * shake.y;
@@ -270,7 +361,11 @@ void RenderSystem::render()
   const glm::vec3 grassCameraOffset = stepCamera();
 
   if (!buildContext(m_renderer.viewportSize()))
+  {
+    m_debugLines.clear();
     return;
+  }
+  const std::optional<FeedView> feed = chooseFeed();
 
   m_commands.clear();
   for (auto& [type, module] : m_modules)
@@ -312,6 +407,7 @@ void RenderSystem::render()
   frame.cameraPosition = m_camera.position();
   frame.grassCameraOffset = grassCameraOffset;
   frame.cameraForward = m_camera.viewDirection();
+  frame.cameraTarget = m_camera.target;
   frame.nearPlane = m_camera.nearPlane;
   frame.farPlane = m_camera.farPlane;
   const Entity camera = sceneCamera();
@@ -344,9 +440,8 @@ void RenderSystem::render()
   }
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
-  if (camera.isValid())
-    frame.depthOfField =
-        camera.getComponent<CameraComponent>().depthOfFieldSettings();
+  if (const CameraComponent* lens = camera.getComponent<CameraComponent>())
+    frame.depthOfField = depthOfFieldOf(*lens);
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = effectiveShadows();
@@ -362,17 +457,161 @@ void RenderSystem::render()
   frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
+  if (feed && m_feedFilming)
+    m_renderer.beginFeed(*feed, m_feedFilming->texture());
   {
     SFS_CPU_SCOPE("render/submit commands");
     for (const AnyRenderCommand& command : m_commands)
       std::visit([this](const auto& concrete) { submit(concrete); }, command);
   }
+  // Debug lines (debug features only): the game's, and the colliders.
+  if (debugFeatures::enabled())
+  {
+    SFS_CPU_SCOPE("render/debug lines");
+    if (effectiveDrawColliders() && registry)
+      m_stats.colliders =
+          colliderLines::appendAll(*registry, m_space2D, m_debugLines);
+    m_stats.debugLines = m_debugLines.lineCount();
+    if (!m_debugLines.empty())
+      m_renderer.drawLines(m_debugLines.vertices());
+  }
+  else
+    effectiveDrawColliders(); // says once that it's ignored, if it's asked for
+  m_debugLines.clear();
   {
     SFS_CPU_SCOPE("render/renderer end frame");
     m_renderer.endFrame();
   }
 
   m_stats.pointLights = m_pointLights.size();
+}
+
+namespace
+{
+// A camera feed's picture, at its size.
+std::shared_ptr<RenderTexture> pictureFor(const CameraFeedComponent& feed)
+{
+  return std::make_shared<RenderTexture>(glm::ivec2(feed.width, feed.height));
+}
+} // namespace
+
+std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
+{
+  CameraFeedComponent* lens = entity.getComponent<CameraFeedComponent>();
+  if (!lens)
+    return nullptr;
+  if (!lens->picture)
+    lens->picture = pictureFor(*lens);
+  return lens->picture;
+}
+
+void RenderSystem::makeFeedPictures()
+{
+  if (!registry)
+    return;
+  for (CameraFeedComponent& feed : registry->query<CameraFeedComponent>())
+  {
+    if (!feed.picture)
+      feed.picture = pictureFor(feed);
+  }
+}
+
+void RenderSystem::refreshMeshBounds()
+{
+  if (!registry)
+    return;
+  for (MeshRendererComponent& renderer :
+       registry->query<MeshRendererComponent>())
+  {
+    if (renderer.mesh == renderer.boundsOf)
+      continue;
+    if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
+    {
+      renderer.bounds = *bounds;
+      renderer.boundsOf = renderer.mesh;
+    }
+    else
+    {
+      // Not loaded yet: tried again next update.
+      renderer.bounds = Aabb{};
+      renderer.boundsOf = MeshHandle{};
+    }
+  }
+}
+
+std::optional<FeedView> RenderSystem::chooseFeed()
+{
+  m_context.feedOn = false;
+  m_feedFilming = nullptr;
+  if (!registry)
+    return std::nullopt;
+  if (m_space2D)
+    return std::nullopt;
+  SFS_CPU_SCOPE("render/camera feed");
+  const double now = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+
+  // The one most overdue of those shown (each due `rate` times a second).
+  Entity chosen;
+  CameraFeedComponent* chosenFeed = nullptr;
+  double mostLate = -1.0;
+  for (auto [entity, transform, feed] :
+       registry->query<TransformComponent, CameraFeedComponent>())
+  {
+    if (!feed.picture)
+      continue;
+    const auto& lens = feed;
+    const glm::ivec2 size = glm::max(glm::ivec2(lens.width, lens.height), 1);
+    if (feed.picture->size() != size)
+      feed.picture->resize(size);
+    if (!lens.enabled || !m_renderer.textureShown(feed.picture->texture().id))
+      continue;
+    const double late =
+        now - feed.filmed - 1.0 / std::max(double(lens.rate), 0.1);
+    if (late >= 0.0 && late > mostLate)
+    {
+      mostLate = late;
+      chosen = entity;
+      chosenFeed = &feed;
+    }
+  }
+  if (!chosenFeed)
+    return std::nullopt;
+  // (Not let fall behind further than a frame: a feed shown again after a
+  // while starts its beat afresh.)
+  const CameraFeedComponent* lens = chosenFeed;
+  const double period = 1.0 / std::max(double(lens->rate), 0.1);
+  chosenFeed->filmed = mostLate > period ? now : now - mostLate;
+  m_feedFilming = chosenFeed->picture.get();
+
+  // Its view: along the entity's +X, +Z up, as a camera entity's.
+  const glm::mat4 world = hierarchy::cachedWorldMatrix(chosen);
+  Camera camera;
+  camera.setPose(
+      glm::vec3(world[3]), glm::vec3(world[0]), 10.0f, glm::vec3(world[2]));
+  camera.projection = Camera::Projection::Perspective;
+  camera.fieldOfView =
+      glm::radians(std::clamp(lens->fieldOfView, 1.0f, 170.0f));
+  camera.nearPlane = std::max(lens->nearPlane, 0.001f);
+  camera.farPlane = std::max(lens->farPlane, camera.nearPlane * 2.0f);
+  const glm::ivec2 size = m_feedFilming->size();
+  const float aspect = static_cast<float>(size.x) / static_cast<float>(size.y);
+
+  FeedView view;
+  view.view = camera.viewMatrix();
+  view.projection = camera.projectionMatrix(aspect);
+  view.viewProjection = camera.viewProjection(aspect);
+  view.cameraPosition = camera.position();
+  view.cameraForward = camera.viewDirection();
+  view.nearPlane = camera.nearPlane;
+  view.farPlane = camera.farPlane;
+  view.size = size;
+  view.grassBlades = lens->grassBlades;
+  view.grassReach = std::max(lens->grassReach, 1.0f);
+  m_context.feedOn = true;
+  m_context.feedFrustum = Frustum::fromViewProjection(view.viewProjection);
+  return view;
 }
 
 bool RenderSystem::buildContext(const glm::ivec2& viewport)
@@ -834,10 +1073,9 @@ void RenderSystem::gatherEmissionLights()
     return point;
   };
 
-  for (const Entity& entity :
-       registry->view<TransformComponent, MeshRendererComponent>())
+  for (auto [entity, transform, renderer] :
+       registry->query<TransformComponent, MeshRendererComponent>())
   {
-    const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
         renderer.lightStrength <= 0.0f || renderer.lightRange <= 0.0f)
       continue;
@@ -900,7 +1138,7 @@ void RenderSystem::gatherEmissionLights()
       if (!placed)
       {
         placed = true;
-        model = hierarchy::worldMatrix(entity);
+        model = hierarchy::cachedWorldMatrix(entity);
         normals = glm::transpose(glm::inverse(glm::mat3(model)));
         areaScale = std::abs(glm::determinant(glm::mat3(model)));
       }
@@ -936,10 +1174,9 @@ void RenderSystem::gatherPointLights()
   if (!registry)
     return;
 
-  for (const Entity& entity :
-       registry->view<TransformComponent, PointLightComponent>())
+  for (auto [entity, local, light] :
+       registry->query<TransformComponent, PointLightComponent>())
   {
-    const auto& light = entity.getComponent<PointLightComponent>();
     if (light.intensity <= 0.0f || light.radius <= 0.0f)
       continue;
 
@@ -950,7 +1187,8 @@ void RenderSystem::gatherPointLights()
     if (m_space2D)
     {
       radius *= m_space2D->scale();
-      const TransformComponent transform = hierarchy::worldTransform(entity);
+      const TransformComponent transform =
+          hierarchy::cachedWorldTransform(entity);
       const glm::vec2 offset(light.offset.x, light.offset.y);
       if (m_space2D->projection == Space2D::Projection::Isometric)
         position = m_space2D->place(transform.position2D() + offset,
@@ -965,7 +1203,7 @@ void RenderSystem::gatherPointLights()
     glm::vec3 spotDirection(0.0f);
     if (!m_space2D)
     {
-      const glm::mat4 world = hierarchy::worldMatrix(entity);
+      const glm::mat4 world = hierarchy::cachedWorldMatrix(entity);
       position = glm::vec3(world * glm::vec4(light.offset, 1.0f));
       if (light.spot)
         spotDirection = glm::vec3(world[0]);
@@ -1243,7 +1481,8 @@ void RenderSystem::emitLightning()
 
 void RenderSystem::submit(const UiDrawCommand& command)
 {
-  if (command.list && !command.list->quads.empty())
+  if (command.list &&
+      (!command.list->quads.empty() || !command.list->parts.empty()))
     m_renderer.drawUi(*command.list);
 }
 
@@ -1260,14 +1499,15 @@ void RenderSystem::submit(const GrassDrawCommand& command)
                                   command.drawDistance,
                                   command.castsShadows,
                                   command.selfShadow,
-                                  command.ground});
+                                  command.ground,
+                                  command.vigour});
   m_stats.grassFields += 1;
 }
 
 void RenderSystem::submit(const MeshDrawCommand& command)
 {
   if (command.instances.empty() && command.shadowInstances.empty() &&
-      command.lightShadowInstances.empty())
+      command.lightShadowInstances.empty() && command.feedInstances.empty())
     return;
 
   // Commands name meshes by library handle; a stand-in that has loaded since
@@ -1277,7 +1517,8 @@ void RenderSystem::submit(const MeshDrawCommand& command)
                                 command.materials,
                                 command.instances,
                                 command.shadowInstances,
-                                command.lightShadowInstances});
+                                command.lightShadowInstances,
+                                command.feedInstances});
 
   m_stats.drawCalls += 1;
   m_stats.instances += command.instances.size();

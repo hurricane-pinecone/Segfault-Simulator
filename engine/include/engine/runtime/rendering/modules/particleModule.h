@@ -40,15 +40,23 @@ public:
                     const ITerrainSurfaceSource* terrain = nullptr);
 
   void init(const ModuleInit& init) override;
-  void update(double deltaTime) override { simulate(deltaTime); }
+  /**
+   * Simulate `deltaTime` real seconds at the registry's time scale, or not at
+   * all while it is paused (Registry::paused()).
+   */
+  void update(double deltaTime) override;
   void computeCommands(const RenderContext& context) override;
   std::vector<ModuleSetting> settings(const RenderContext&) override;
+
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
 
 private:
   AssetStore& m_assets;
   Registry* m_registry = nullptr;
   std::unique_ptr<IParticleCollisionSource> m_collision;
   MeshHandle m_quad;
+  MeshHandle m_litQuad; // a lit effect's (ParticleEffectDesc::lit)
   std::unordered_map<std::string, MaterialHandle> m_materials;
 };
 

@@ -2,6 +2,8 @@
 
 #include <SDL_scancode.h>
 #include <array>
+#include <optional>
+#include <string_view>
 
 namespace sfs
 {
@@ -59,6 +61,19 @@ enum class Key : int
   PageUp = SDL_SCANCODE_PAGEUP,
   PageDown = SDL_SCANCODE_PAGEDOWN,
 
+  // By where they are on a US keyboard (the key, whatever it types).
+  Minus = SDL_SCANCODE_MINUS,
+  Equals = SDL_SCANCODE_EQUALS,
+  LeftBracket = SDL_SCANCODE_LEFTBRACKET,
+  RightBracket = SDL_SCANCODE_RIGHTBRACKET,
+  Backslash = SDL_SCANCODE_BACKSLASH,
+  Semicolon = SDL_SCANCODE_SEMICOLON,
+  Apostrophe = SDL_SCANCODE_APOSTROPHE,
+  Grave = SDL_SCANCODE_GRAVE,
+  Comma = SDL_SCANCODE_COMMA,
+  Period = SDL_SCANCODE_PERIOD,
+  Slash = SDL_SCANCODE_SLASH,
+
   LeftShift = SDL_SCANCODE_LSHIFT,
   RightShift = SDL_SCANCODE_RSHIFT,
   LeftCtrl = SDL_SCANCODE_LCTRL,
@@ -85,6 +100,15 @@ enum class Key : int
   Right = SDL_SCANCODE_RIGHT,
 };
 
+/**
+ * The key with a name, as the Key enumerator is spelled ("Space", "Up", "F8",
+ * "A", "Num1"), ignoring case: for keys named in data, such as an
+ * InputContextComponent's.
+ * @param name the key's name
+ * @return the key, or nothing for a name no key has
+ */
+std::optional<Key> keyFromName(std::string_view name);
+
 class KeyboardInput
 {
 public:
@@ -103,6 +127,14 @@ public:
   bool keyHeld(Key key) const;
   bool keyPressed(Key key) const;
   bool keyReleased(Key key) const;
+
+  /**
+   * Makes a key read as untouched from now on in this copy of the keyboard:
+   * not held, pressed or released. A scene withholds the keys an input
+   * context claims from the objects it outranks.
+   * @param key the key to withhold
+   */
+  void withhold(Key key);
 
 private:
   std::array<bool, SDL_NUM_SCANCODES> currentKeys{};
