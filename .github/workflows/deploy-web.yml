@@ -10,6 +10,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read # the site job finds the last web build's artifact
 
 # One run per branch or pull request: a new push supersedes an in-flight run of
 # the same ref, but a master push never cancels a pull request's run (and vice
@@ -355,12 +356,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: [changes, test-core, sanitize-core, test-runtime, sanitize-runtime]
-    # After the tests pass, or -- docs only -- on master, where the site (the
-    # web build and the docs together) is redeployed. A docs-only pull request
-    # just checks the docs build (the `docs` job).
+    # After the tests pass, for a code change. The site job publishes the docs
+    # on master whether or not this runs or succeeds, so a broken game build
+    # never holds the docs back.
     if: >-
       !cancelled() && !contains(needs.*.result, 'failure')
-      && (needs.changes.outputs.code == 'true' || github.ref == 'refs/heads/master')
+      && needs.changes.outputs.code == 'true'
 
     steps:
       - name: Checkout
@@ -399,10 +400,21 @@ jobs:
             -DENGINE_BUILD_EDITOR=OFF
           cmake --build build/Debug --target sfs-codegen -j "$(nproc)"
 
+      # Pinned: "latest" moves under us. Emscripten 7.0.0 fails to compile
+      # Jolt (std::is_trivial). Move this on deliberately, with Jolt.
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
-          version: latest
+          version: 6.0.13
+
+      # Builds the SDL ports and their libraries up front. Built on the fly in
+      # a parallel build, a port that needs another (SDL_ttf needs FreeType)
+      # can fail to lock emcc's cache while its parent holds it.
+      - name: Build Emscripten ports
+        run: >
+          embuilder build sdl2 sdl2-mt sdl2_image-png sdl2_image-png-mt
+          sdl2_ttf sdl2_ttf-mt sdl2_mixer freetype harfbuzz harfbuzz-mt
+          libpng libpng-mt
 
       # ccache also fronts emcc, so the wasm build reuses object files (vendored
       # libs + engine + both sample games) across runs.
@@ -420,20 +432,15 @@ jobs:
       - name: Build web
         run: cmake --build build-web --config Release -j "$(nproc)"
 
-      # Docs share the game's single Pages site: the game at the root, the MkDocs
-      # site under /docs. --strict fails the deploy on a broken link or nav entry.
-      - name: Build docs (into /docs)
-        run: |
-          pip install "mkdocs-material==9.*"
-          mkdocs build --strict --site-dir build-web/bin/docs
-
-      - name: Add nojekyll
-        run: touch build-web/bin/.nojekyll
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      # The site job puts it at the site's root, now or on a later docs-only
+      # push or a run whose game build fails (it takes the newest one there is).
+      - name: Upload the web build
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          name: web-game
           path: build-web/bin
+          retention-days: 90
 
   # A docs-only pull request: no code to build, so just check the docs site
   # builds (strict: broken links and nav entries fail it).
@@ -455,8 +462,55 @@ jobs:
           pip install "mkdocs-material==9.*"
           mkdocs build --strict --site-dir site
 
+  # The Pages site on master: the docs under /docs, built from this commit
+  # every time, and the game at the root: this run's web build, or else the
+  # newest one an earlier run uploaded. So the docs go out even when the game
+  # build fails or doesn't run.
+  site:
+    needs: [changes, build]
+    if: "!cancelled() && github.ref == 'refs/heads/master'"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.x"
+
+      - name: Get the web build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p site
+          id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=web-game&per_page=20" \
+            --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')"
+          if [ -z "$id" ]; then
+            echo "::warning::No web build to publish yet: the site has only the docs."
+            echo '<meta http-equiv="refresh" content="0; url=docs/">' > site/index.html
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > web-game.zip
+          unzip -q web-game.zip -d site
+          rm -rf site/docs
+
+      # --strict fails the deploy on a broken link or nav entry.
+      - name: Build docs (into /docs)
+        run: |
+          pip install "mkdocs-material==9.*"
+          mkdocs build --strict --site-dir site/docs
+
+      - name: Add nojekyll
+        run: touch site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
   deploy:
-    if: "!cancelled() && needs.build.result == 'success' && github.ref == 'refs/heads/master'"
+    if: "!cancelled() && needs.site.result == 'success' && github.ref == 'refs/heads/master'"
 
     # Serialize Pages deployments. Queue rather than cancel, since interrupting a
     # deploy mid-flight can leave the site half-published.
@@ -469,7 +523,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     runs-on: ubuntu-latest
-    needs: build
+    needs: site
 
     steps:
       - name: Deploy to GitHub Pages

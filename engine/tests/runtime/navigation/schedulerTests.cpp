@@ -336,7 +336,11 @@ int main()
 
   TEST("parallel tasks inside a job: its next step waits for all of them")
   {
-    PlanScheduler s;
+    // A worker for each task whatever the machine (the tasks only sleep), so
+    // the time shows they ran side by side.
+    PlanScheduler::Settings settings;
+    settings.threads = 4;
+    PlanScheduler s(settings);
     auto results = std::make_shared<std::vector<int>>(3, 0);
     auto phase = std::make_shared<int>(0);
     PlanScheduler::Request r;

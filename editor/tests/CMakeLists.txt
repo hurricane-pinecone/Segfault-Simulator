@@ -7,6 +7,14 @@ function(add_editor_test name source)
     target_include_directories(${name} PRIVATE
         "${EDITOR_SRC_DIR}"
         "${PROJECT_SOURCE_DIR}/engine/lib/glm")
+    # Console programs with their own main(), as the runtime tests are (see
+    # engine/tests/runtime/CMakeLists.txt): an engine header that includes SDL
+    # would otherwise rename main for SDL2main's wrapper on Windows.
+    target_compile_definitions(${name} PRIVATE SDL_MAIN_HANDLED)
+    if(WIN32)
+        target_sources(${name} PRIVATE
+            "${PROJECT_SOURCE_DIR}/engine/tests/runtime/sdlMainStub.cpp")
+    endif()
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES LABELS editor)
 endfunction()

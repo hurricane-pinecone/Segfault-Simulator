@@ -84,7 +84,7 @@ int main()
     CHECK(quoted != nullptr);
     if (quoted)
       CHECK(text.substr(quoted->begin, quoted->end - quoted->begin) ==
-            R"("a\"b")");
+            "\"a\\\"b\"");
     const JsonToken* slashes = find(*tokens, "/a\"b", JsonToken::Kind::String);
     CHECK(slashes != nullptr && slashes->text == "x\\y/z");
     const JsonToken* unicode = find(*tokens, "/~0k", JsonToken::Kind::String);
