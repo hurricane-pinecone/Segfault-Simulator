@@ -1134,6 +1134,18 @@ all of its own light. Instead, anything within a box around the light holding
 the glowing surface (`PointLight::shadowNear`) doesn't block it. So
 something touching a glowing object can't shadow it either.
 
+**Caching:** a cube's six faces cost a draw of everything near the light, so
+a light surrounded by static scenery doesn't earn that cost back every frame.
+A caster that's held still for 30 frames moves into the light's own still
+cube, drawn once and then just copied into the cube the lit pass reads from
+each frame, with only the casters still moving drawn over the copy (so a
+character paused mid step for a moment isn't mistaken for furniture). The whole
+cube redraws when the light itself moves or its reach changes, nearby ground
+is deformed, a still caster's mesh or material changes or it's removed, or a
+caster's material graph reads `Time` (its shadow can change without it
+moving, so it's always drawn as if it were). A light with nothing left moving
+near it, once settled, costs nothing further that frame.
+
 ## Grass
 
 `GrassComponent` grows grass on an entity's mesh; `GrassModule` (registered by
@@ -1403,8 +1415,9 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   world. It's pressed by `GrassBender` spheres where they reach into the
   grass, and springs back over `recovery` seconds. Each update the module
   gathers benders (`GrassBenderComponent`s: fitted to their colliders, their
-  mesh, or a radius; nothing else bends grass). When the map changes, it sends it to the renderer
-  as an image (`IRenderer::updateGrassTrample`).
+  mesh, or a radius; nothing else bends grass). Only the texels that changed
+  go up to the GPU (`IRenderer::updateGrassTrample`); a bender holding grass
+  down that's already as flat as it'll get sends nothing more.
 
 - **Shadows:** grass grows before the sun's shadow pass. Blades within
   `grassShadowReach()` of the camera cast into the nearest
