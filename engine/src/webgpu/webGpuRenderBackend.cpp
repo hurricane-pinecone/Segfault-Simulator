@@ -55,10 +55,17 @@ bool WebGpuRenderBackend::init(const char* title, int width, int height)
   m_context.configure(m_width, m_height);
 
   // Measured on Windows (RTX 3070, 2026-11-04): no faster than acquiring at
-  // the frame's start, so it's a switch, off by default.
+  // the frame's start, so it's a switch, off by default. Always late in a
+  // browser: the canvas's picture lasts only until the page's event loop next
+  // runs, which the renderer yields to while it checks a pipeline it builds
+  // in the scene's passes (see WebGpuContext::endValidation()).
+#ifdef __EMSCRIPTEN__
+  m_lateAcquire = true;
+#else
   m_lateAcquire = std::getenv("SFS_LATE_ACQUIRE") != nullptr;
   if (m_lateAcquire)
     LOG_INFO("Acquiring the window's picture late (SFS_LATE_ACQUIRE)");
+#endif
 
   m_renderer = std::make_unique<WebGpuRenderer>(m_context);
   if (!m_renderer->initialize())

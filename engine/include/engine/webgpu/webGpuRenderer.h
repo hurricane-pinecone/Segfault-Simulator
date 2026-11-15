@@ -174,6 +174,9 @@ private:
   // Each binds its materials as group 1, laid out by materialLayout.
   struct Surface
   {
+    // What it is ("standard", "foliage", "terrain", "material graph"): its
+    // pipelines' and shaders' labels, and the log, name it.
+    std::string name;
     wgpu::BindGroupLayout materialLayout;
     wgpu::RenderPipeline shadow;
     wgpu::RenderPipeline lit;
@@ -405,9 +408,10 @@ private:
   // A 1x1 texture of one value (read as data), kept for reuse: what a graph's
   // texture reads without an image.
   std::shared_ptr<GpuTexture> solidTexture(const glm::vec4& value);
-  // Build a surface's pipelines from its WGSL (see meshSurface.wgsl); null
-  // (logged) if they don't build.
-  std::shared_ptr<Surface> buildSurface(const std::string& surfaceWgsl,
+  // Build a surface's pipelines from its WGSL (see meshSurface.wgsl), named
+  // `name` (Surface::name); null (logged) if they don't build.
+  std::shared_ptr<Surface> buildSurface(std::string name,
+                                        const std::string& surfaceWgsl,
                                         wgpu::BindGroupLayout materialLayout);
   // Group 1's layout for the standard surface's material bindings, its
   // parameters seen by the vertex stage too if `vertexToo` (foliage's).

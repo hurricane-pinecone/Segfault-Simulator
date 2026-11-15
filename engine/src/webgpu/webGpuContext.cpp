@@ -1,6 +1,7 @@
 #include "engine/webgpu/webGpuContext.h"
 
 #include "engine/core/logger/logger.h"
+#include "engine/webgpu/wgpuUtil.h"
 
 #ifdef __EMSCRIPTEN__
   #include <emscripten/emscripten.h>
@@ -27,8 +28,7 @@ namespace
 {
 void logStr(const char* label, WGPUStringView s)
 {
-  LOG_ERROR(std::string(label) + ": " +
-            std::string(s.data ? s.data : "", s.data ? s.length : 0));
+  LOG_ERROR(std::string(label) + ": " + wgpu::str(s));
 }
 
 // In a browser, requests answer once the page's event loop runs, so wait for
@@ -128,9 +128,7 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
     limits.maxBufferSize = WGPU_LIMIT_U64_UNDEFINED - 1;
   WGPUAdapterInfo info = {};
   wgpuAdapterGetInfo(adapter, &info);
-  LOG_INFO("WebGPU adapter: " +
-           std::string(info.device.data ? info.device.data : "",
-                       info.device.data ? info.device.length : 0) +
+  LOG_INFO("WebGPU adapter: " + wgpu::str(info.device) +
            ", maxStorageBufferBindingSize " +
            std::to_string(limits.maxStorageBufferBindingSize));
   wgpuAdapterInfoFreeMembers(info);
@@ -179,9 +177,7 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
                                                  void*)
   {
     LOG_ERROR("WebGPU error (" + std::to_string(static_cast<int>(type)) +
-              "): " +
-              std::string(message.data ? message.data : "",
-                          message.data ? message.length : 0));
+              "): " + wgpu::str(message));
   };
   // Losing the device (a driver crash or update, the GPU removed) ends the
   // game: Game asks deviceLost() after each frame.
@@ -463,6 +459,38 @@ void WebGpuContext::poll(bool wait) const
 #else
   wgpuDevicePoll(m_device, wait, nullptr);
 #endif
+}
+
+void WebGpuContext::beginValidation() const
+{
+  wgpuDevicePushErrorScope(m_device, WGPUErrorFilter_Validation);
+}
+
+std::optional<std::string> WebGpuContext::endValidation() const
+{
+  struct Out
+  {
+    std::optional<std::string> error;
+    bool answered = false;
+  } out;
+  WGPUPopErrorScopeCallbackInfo cb = {};
+  cb.mode = kRequestMode;
+  cb.callback = [](WGPUPopErrorScopeStatus status,
+                   WGPUErrorType type,
+                   WGPUStringView message,
+                   void* ud1,
+                   void*)
+  {
+    Out& out = *static_cast<Out*>(ud1);
+    if (status == WGPUPopErrorScopeStatus_Success &&
+        type != WGPUErrorType_NoError)
+      out.error = wgpu::str(message);
+    out.answered = true;
+  };
+  cb.userdata1 = &out;
+  wgpuDevicePopErrorScope(m_device, cb);
+  waitFor(out.answered);
+  return out.error;
 }
 
 void WebGpuContext::release()

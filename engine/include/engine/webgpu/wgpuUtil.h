@@ -3,6 +3,7 @@
 #include <webgpu/webgpu.h>
 
 #include <cstdint>
+#include <string>
 
 namespace sfs::wgpu
 {
@@ -13,16 +14,26 @@ inline WGPUStringView sv(const char* s)
   return WGPUStringView{s, WGPU_STRLEN};
 }
 
-// Compile a WGSL source string into a shader module.
-inline WGPUShaderModule makeShader(WGPUDevice device, const char* code)
-{
-  WGPUShaderSourceWGSL wgsl = {};
-  wgsl.chain.sType = WGPUSType_ShaderSourceWGSL;
-  wgsl.code = sv(code);
-  WGPUShaderModuleDescriptor desc = {};
-  desc.nextInChain = &wgsl.chain;
-  return wgpuDeviceCreateShaderModule(device, &desc);
-}
+/**
+ * Copies a string WebGPU hands back (a message, a name) into a std::string.
+ * @param s The view; a null one (no string) reads as empty.
+ * @return Its characters.
+ */
+std::string str(WGPUStringView s);
+
+/**
+ * Compiles WGSL into a shader module.
+ * @param device The device to make it on.
+ * @param code The WGSL source, null-terminated.
+ * @param label The module's name, which WebGPU's messages about it carry. In a
+ *   browser the compiler's errors and warnings are logged under it too, with
+ *   their lines in `code`.
+ * @return The module. One whose source doesn't compile is still returned, but
+ *   invalid: the error is raised on the device (see
+ *   WebGpuContext::beginValidation()).
+ */
+WGPUShaderModule
+makeShader(WGPUDevice device, const char* code, const char* label);
 
 inline WGPUBuffer
 makeBuffer(WGPUDevice device, uint64_t size, WGPUBufferUsage usage)

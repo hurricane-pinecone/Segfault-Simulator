@@ -2,6 +2,9 @@
 
 #include <webgpu/webgpu.h>
 
+#include <optional>
+#include <string>
+
 struct SDL_Window;
 
 namespace sfs
@@ -63,6 +66,21 @@ public:
   // Run the device's finished async work's callbacks (buffer maps, timestamp
   // readbacks); with `wait`, first wait a little for some to finish.
   void poll(bool wait = false) const;
+
+  /**
+   * Starts catching the device's validation errors (how WebGPU reports a
+   * shader or pipeline that doesn't build) until the matching
+   * endValidation(). Scopes nest.
+   */
+  void beginValidation() const;
+
+  /**
+   * Ends the innermost scope beginValidation() started.
+   * @return The first validation error raised inside it, or nothing if there
+   *   was none. A browser answers once the page's event loop runs, which this
+   *   yields to until it has.
+   */
+  std::optional<std::string> endValidation() const;
 
   // Whether the device was created with GPU timestamp queries (benchmark HUD).
   bool hasTimestamps() const { return m_hasTimestamps; }

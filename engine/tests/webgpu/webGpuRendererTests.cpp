@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -261,6 +262,25 @@ int main()
     CHECK(false);
     return testing::report("webGpuRendererTests");
   }
+  TEST("a shader that doesn't build should be caught by a validation scope, "
+       "named by its label, and one that builds should not")
+  {
+    context.beginValidation();
+    const wgpu::ShaderModule broken(wgpu::makeShader(
+        context.device(), "fn missingBrace( {", "a broken shader"));
+    const std::optional<std::string> error = context.endValidation();
+    CHECK(error.has_value());
+    CHECK(error && error->find("a broken shader") != std::string::npos);
+    // A browser logs the compiler's messages for it too.
+    errors.clear();
+
+    context.beginValidation();
+    const wgpu::ShaderModule fine(wgpu::makeShader(
+        context.device(), "fn nothing() {}", "a working shader"));
+    CHECK(!context.endValidation().has_value());
+    CHECK(reportErrors());
+  }
+
   TEST("the standard surface should build and draw")
   {
     MeshMaterial standard;

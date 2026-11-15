@@ -125,9 +125,13 @@ the CPU hands the GPU goes through queue writes (`wgpuQueueWriteBuffer`,
 double-buffering for it. It's off by default because on Windows (RTX 3070,
 DX12) it measured no faster: the GPU's idle time each frame in a window comes
 from Mailbox's presenting, not from the order the CPU records in. With
-`SFS_PRESENT_MODE=immediate` the GPU is busy ~98% of the frame either way. The surface is sized in pixels, which on a
-high-DPI screen is more than the window's size in points; mouse positions are
-given in the same pixels.
+`SFS_PRESENT_MODE=immediate` the GPU is busy ~98% of the frame either way. In
+a browser it's always late: the canvas's picture lasts only until the page's
+event loop next runs, and the renderer yields to it while it checks a pipeline
+it builds during the scene's passes (see below).
+
+The surface is sized in pixels, which on a high-DPI screen is more than the
+window's size in points; mouse positions are given in the same pixels.
 
 `SFS_SCREENSHOT=<file.png>` draws the scene offscreen and saves frame
 `SFS_SCREENSHOT_FRAME` (60 by default) there, for checking how a game looks
@@ -143,6 +147,31 @@ view for each shot instead, from each eye looking at its target (the last
 held), likewise half way between shots: one run's shots of several places.
 `SFS_HOLD_TIME=<seconds>` holds the scene's time for
 the renderer (the wind stays still), so shots compare.
+
+### When a shader or pipeline doesn't build
+
+The renderer builds each pipeline inside a validation error scope
+(`WebGpuContext::beginValidation()` and `endValidation()`), so it knows at once
+whether it built, on every backend: a browser answers through the page's event
+loop, which `endValidation()` yields to until it has (the build uses
+ASYNCIFY). One that doesn't build is logged with its name and WebGPU's reason,
+then left out: what it draws falls back (a material to magenta or the
+standard surface, an optional pass such as temporal anti-aliasing or depth of
+field is skipped), so one bad pipeline never blanks the frame. Without the
+ones everything needs (the standard surface, the composite, the UI) the
+renderer doesn't start, and says why.
+
+Every shader module and pipeline is labelled ("standard surface: lit",
+"post: fs_composite", ...), so WebGPU's own messages name it too. In a
+browser each shader module's compiler messages
+(`wgpuShaderModuleGetCompilationInfo`) are logged as well, with their line
+and column in the composed WGSL; wgpu-native doesn't offer them, and its
+validation error carries the same.
+
+Browsers check WGSL more strictly than wgpu-native does: Dawn (Chrome, Edge)
+applies the full uniformity analysis and the template-list rule, under which
+`select(a > b, a < c, c > 0.0)` reads `a < c, c >` as a template list (bracket
+the comparison). So check a shader change in a browser too.
 
 ### What each graphics API can do
 

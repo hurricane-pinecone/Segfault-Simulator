@@ -19,10 +19,10 @@ class AssetStore;
 
 // WebGPU render backend: an SDL window (no GL context) plus a WebGPU device and
 // surface. Each frame it opens a command encoder and acquires the window's
-// next picture (with SFS_LATE_ACQUIRE, only for the renderer's last passes,
-// once its offscreen passes are submitted); scenes draw through the renderer
-// it provides (SceneServices::renderer). For tools
-// it also makes render targets, preview renderers and images (see
+// next picture (with SFS_LATE_ACQUIRE, and in a browser, only for the
+// renderer's last passes, once its offscreen passes are submitted); scenes draw
+// through the renderer it provides (SceneServices::renderer). For tools it
+// also makes render targets, preview renderers and images (see
 // IRenderBackend).
 //
 // It also hosts Dear ImGui with docking and multi-viewport enabled: panels dock
@@ -87,8 +87,9 @@ private:
   WGPUTextureView m_view = nullptr;
   WGPUCommandEncoder m_encoder = nullptr;
   bool m_acquired = false; // acquire() has run this frame
-  // SFS_LATE_ACQUIRE: acquire just before the first pass into the window,
-  // with the offscreen passes submitted; else at beginFrame, as before.
+  // SFS_LATE_ACQUIRE (and always in a browser): acquire just before the first
+  // pass into the window, with the offscreen passes submitted; else at
+  // beginFrame, as before.
   bool m_lateAcquire = false;
 
   std::unique_ptr<AssetStore> m_assetStore;

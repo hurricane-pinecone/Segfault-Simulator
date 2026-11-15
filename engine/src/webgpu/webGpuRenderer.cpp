@@ -108,42 +108,21 @@ wgpu::Buffer sharedBuffer(const wgpu::Buffer& buffer)
 }
 
 // Errors raised between a ValidationScope's construction and end(): how
-// WebGPU reports a shader or pipeline that doesn't build.
+// WebGPU reports a shader or pipeline that doesn't build. The answer is known
+// at end() on every backend, so what doesn't build is never drawn with.
 class ValidationScope
 {
 public:
-  explicit ValidationScope(WGPUDevice device) : m_device(device)
+  explicit ValidationScope(const WebGpuContext& context) : m_context(context)
   {
-    wgpuDevicePushErrorScope(device, WGPUErrorFilter_Validation);
+    context.beginValidation();
   }
 
   /** The first error's message; nothing if there was none. */
-  std::optional<std::string> end()
-  {
-    std::optional<std::string> error;
-    WGPUPopErrorScopeCallbackInfo callback = {};
-    // wgpu-native answers before returning, as it does adapter and device
-    // requests (see WebGpuContext).
-    callback.mode = WGPUCallbackMode_AllowProcessEvents;
-    callback.callback = [](WGPUPopErrorScopeStatus status,
-                           WGPUErrorType type,
-                           WGPUStringView message,
-                           void* out,
-                           void*)
-    {
-      if (status == WGPUPopErrorScopeStatus_Success &&
-          type != WGPUErrorType_NoError)
-        *static_cast<std::optional<std::string>*>(out) =
-            std::string(message.data ? message.data : "",
-                        message.data ? message.length : 0);
-    };
-    callback.userdata1 = &error;
-    wgpuDevicePopErrorScope(m_device, callback);
-    return error;
-  }
+  std::optional<std::string> end() { return m_context.endValidation(); }
 
 private:
-  WGPUDevice m_device;
+  const WebGpuContext& m_context;
 };
 
 // A material graph's group 1: its parameters, then each texture and its
@@ -2063,12 +2042,21 @@ WGPURenderPipeline WebGpuRenderer::grassPipeline(const Surface& surface,
   const bool equal =
       draw == GrassDraw::NearBladesEqual || draw == GrassDraw::BladesEqual;
   const WGPUDevice device = m_context.device();
-  ValidationScope scope(device);
+  static constexpr std::array<const char*, 6> kDraws = {"ground",
+                                                        "near blades",
+                                                        "blades",
+                                                        "depth",
+                                                        "near blades (equal)",
+                                                        "blades (equal)"};
+  const std::string label =
+      surface.name + " surface: grass " + kDraws[std::size_t(draw)];
+  ValidationScope scope(m_context);
 
   const wgpu::ShaderModule module(wgpu::makeShader(
       device,
       shaders::meshPass(surface.wgsl, shaders::litPass(shaders::grassPass()))
-          .c_str()));
+          .c_str(),
+      (surface.name + " surface: grass").c_str()));
   const std::array<WGPUBindGroupLayout, 3> groups = {
       m_litLayout.get(), surface.materialLayout.get(), m_grassLayout.get()};
   WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -2149,11 +2137,12 @@ WGPURenderPipeline WebGpuRenderer::grassPipeline(const Surface& surface,
   desc.multisample.count = m_sampleCount;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv(label.c_str());
   built.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
 
   if (const std::optional<std::string> error = scope.end())
   {
-    LOG_ERROR("A material's shader doesn't build for grass: " + *error);
+    LOG_ERROR("The \"" + label + "\" pipeline doesn't build: " + *error);
     built.reset();
   }
   broken = !built;
@@ -3472,7 +3461,8 @@ WebGpuRenderer::makeTerrainMaterial(const MeshMaterial& material, uint32_t id)
     layout.entryCount = entries.size();
     layout.entries = entries.data();
     m_terrain =
-        buildSurface(std::string(shaders::meshTerrainSurfaceWgsl),
+        buildSurface("terrain",
+                     std::string(shaders::meshTerrainSurfaceWgsl),
                      wgpu::BindGroupLayout(
                          wgpuDeviceCreateBindGroupLayout(device, &layout)));
     if (!m_terrain)
@@ -3837,9 +3827,9 @@ bool WebGpuRenderer::createPipelines()
     desc.entries = entries.data();
     m_grassGrowLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
 
-    ValidationScope scope(device);
+    ValidationScope scope(m_context);
     const wgpu::ShaderModule module(wgpu::makeShader(
-        device, std::string(shaders::meshGrassGrowWgsl).c_str()));
+        device, std::string(shaders::meshGrassGrowWgsl).c_str(), "grass grow"));
     const WGPUBindGroupLayout groups[] = {m_grassGrowLayout.get()};
     WGPUPipelineLayoutDescriptor layoutDesc = {};
     layoutDesc.bindGroupLayoutCount = 1;
@@ -3850,11 +3840,12 @@ bool WebGpuRenderer::createPipelines()
     pipeline.layout = layout.get();
     pipeline.compute.module = module.get();
     pipeline.compute.entryPoint = wgpu::sv("cs_main");
+    pipeline.label = wgpu::sv("grass grow");
     m_grassGrowPipeline.reset(
         wgpuDeviceCreateComputePipeline(device, &pipeline));
     if (const std::optional<std::string> error = scope.end())
     {
-      LOG_ERROR("Grass's grow pass doesn't build: " + *error);
+      LOG_ERROR("The \"grass grow\" pipeline doesn't build: " + *error);
       m_grassGrowPipeline.reset();
     }
 
@@ -3879,27 +3870,31 @@ bool WebGpuRenderer::createPipelines()
     desc.entryCount = tiled.size();
     desc.entries = tiled.data();
     m_grassTileLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
-    ValidationScope tileScope(device);
+    ValidationScope tileScope(m_context);
     const WGPUBindGroupLayout tileGroups[] = {m_grassTileLayout.get()};
     layoutDesc.bindGroupLayouts = tileGroups;
     const wgpu::PipelineLayout tileLayout(
         wgpuDeviceCreatePipelineLayout(device, &layoutDesc));
     pipeline.layout = tileLayout.get();
     pipeline.compute.entryPoint = wgpu::sv("cs_build");
+    pipeline.label = wgpu::sv("grass tiles: build");
     m_grassBuildPipeline.reset(
         wgpuDeviceCreateComputePipeline(device, &pipeline));
     pipeline.compute.entryPoint = wgpu::sv("cs_count");
+    pipeline.label = wgpu::sv("grass tiles: count");
     m_grassCountPipeline.reset(
         wgpuDeviceCreateComputePipeline(device, &pipeline));
     pipeline.compute.entryPoint = wgpu::sv("cs_order");
+    pipeline.label = wgpu::sv("grass tiles: order");
     m_grassOrderPipeline.reset(
         wgpuDeviceCreateComputePipeline(device, &pipeline));
     pipeline.compute.entryPoint = wgpu::sv("cs_grow");
+    pipeline.label = wgpu::sv("grass tiles: grow");
     m_grassTilePipeline.reset(
         wgpuDeviceCreateComputePipeline(device, &pipeline));
     if (const std::optional<std::string> error = tileScope.end())
     {
-      LOG_ERROR("Grass's tile passes don't build: " + *error);
+      LOG_ERROR("The \"grass tiles\" pipelines don't build: " + *error);
       m_grassBuildPipeline.reset();
       m_grassCountPipeline.reset();
       m_grassOrderPipeline.reset();
@@ -3927,9 +3922,11 @@ bool WebGpuRenderer::createPipelines()
     desc.entries = entries.data();
     m_grassCullingLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
 
-    ValidationScope scope(device);
-    const wgpu::ShaderModule module(wgpu::makeShader(
-        device, std::string(shaders::grassCullingWgsl).c_str()));
+    ValidationScope scope(m_context);
+    const wgpu::ShaderModule module(
+        wgpu::makeShader(device,
+                         std::string(shaders::grassCullingWgsl).c_str(),
+                         "grass culling"));
     const WGPUBindGroupLayout groups[] = {m_grassCullingLayout.get()};
     WGPUPipelineLayoutDescriptor layoutDesc = {};
     layoutDesc.bindGroupLayoutCount = 1;
@@ -3953,11 +3950,12 @@ bool WebGpuRenderer::createPipelines()
     pipeline.multisample.count = 1;
     pipeline.multisample.mask = 0xFFFFFFFFu;
     pipeline.fragment = &fragment;
+    pipeline.label = wgpu::sv("grass culling");
     m_grassCullingPipeline.reset(
         wgpuDeviceCreateRenderPipeline(device, &pipeline));
     if (const std::optional<std::string> error = scope.end())
     {
-      LOG_ERROR("Grass's culling passes don't build: " + *error);
+      LOG_ERROR("The \"grass culling\" pipeline doesn't build: " + *error);
       m_grassCullingPipeline.reset();
     }
 
@@ -4022,9 +4020,9 @@ bool WebGpuRenderer::createPipelines()
     desc.entries = entries.data();
     m_puddleLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
 
-    ValidationScope scope(device);
-    const wgpu::ShaderModule module(
-        wgpu::makeShader(device, std::string(shaders::puddlesWgsl).c_str()));
+    ValidationScope scope(m_context);
+    const wgpu::ShaderModule module(wgpu::makeShader(
+        device, std::string(shaders::puddlesWgsl).c_str(), "puddles"));
     const WGPUBindGroupLayout groups[] = {m_puddleLayout.get()};
     WGPUPipelineLayoutDescriptor layoutDesc = {};
     layoutDesc.bindGroupLayoutCount = 1;
@@ -4043,12 +4041,14 @@ bool WebGpuRenderer::createPipelines()
       pipeline.layout = layout.get();
       pipeline.compute.module = module.get();
       pipeline.compute.entryPoint = wgpu::sv(kPasses[i]);
+      const std::string label = std::string("puddles: ") + kPasses[i];
+      pipeline.label = wgpu::sv(label.c_str());
       m_puddlePipelines[i].reset(
           wgpuDeviceCreateComputePipeline(device, &pipeline));
     }
     if (const std::optional<std::string> error = scope.end())
     {
-      LOG_ERROR("The puddles' passes don't build: " + *error);
+      LOG_ERROR("The \"puddles\" pipelines don't build: " + *error);
       for (wgpu::ComputePipeline& pipeline : m_puddlePipelines)
         pipeline.reset();
     }
@@ -4081,9 +4081,9 @@ bool WebGpuRenderer::createPipelines()
     desc.entries = entries.data();
     m_grassShadowLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
 
-    ValidationScope scope(device);
-    const wgpu::ShaderModule module(
-        wgpu::makeShader(device, shaders::grassShadowPass().c_str()));
+    ValidationScope scope(m_context);
+    const wgpu::ShaderModule module(wgpu::makeShader(
+        device, shaders::grassShadowPass().c_str(), "grass shadow"));
     const std::array<WGPUBindGroupLayout, 2> groups = {
         m_shadowLayout.get(), m_grassShadowLayout.get()};
     WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -4104,11 +4104,12 @@ bool WebGpuRenderer::createPipelines()
     pipeline.depthStencil = &depth;
     pipeline.multisample.count = 1;
     pipeline.multisample.mask = 0xFFFFFFFFu;
+    pipeline.label = wgpu::sv("grass shadow");
     m_grassShadowPipeline.reset(
         wgpuDeviceCreateRenderPipeline(device, &pipeline));
     if (const std::optional<std::string> error = scope.end())
     {
-      LOG_ERROR("Grass's shadow pass doesn't build: " + *error);
+      LOG_ERROR("The \"grass shadow\" pipeline doesn't build: " + *error);
       m_grassShadowPipeline.reset();
     }
   }
@@ -4122,7 +4123,8 @@ bool WebGpuRenderer::createPipelines()
   if (!createPostPipelines() || !createUiPipeline())
     return false;
 
-  m_standard = buildSurface(std::string(shaders::meshStandardSurfaceWgsl),
+  m_standard = buildSurface("standard",
+                            std::string(shaders::meshStandardSurfaceWgsl),
                             standardMaterialLayout(false));
 
   return m_shadowLayout && m_litLayout && m_shadowBindings && m_litBindings &&
@@ -4167,7 +4169,8 @@ bool WebGpuRenderer::foliageSurface()
 {
   if (!m_foliage && !m_foliageBroken)
   {
-    m_foliage = buildSurface(std::string(shaders::meshFoliageSurfaceWgsl),
+    m_foliage = buildSurface("foliage",
+                             std::string(shaders::meshFoliageSurfaceWgsl),
                              standardMaterialLayout(true));
     if (!m_foliage)
     {
@@ -4180,13 +4183,14 @@ bool WebGpuRenderer::foliageSurface()
 }
 
 std::shared_ptr<WebGpuRenderer::Surface>
-WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
+WebGpuRenderer::buildSurface(std::string name,
+                             const std::string& surfaceWgsl,
                              wgpu::BindGroupLayout materialLayout)
 {
   const WGPUDevice device = m_context.device();
   if (!materialLayout)
     return nullptr;
-  ValidationScope scope(device);
+  ValidationScope scope(m_context);
 
   const MeshVertexLayouts layouts;
   // Group 0: the frame (and, lit, the shadow map); group 1: the section's
@@ -4202,17 +4206,22 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
   };
 
   auto surface = std::make_shared<Surface>();
+  surface->name = std::move(name);
   surface->wgsl = surfaceWgsl;
   surface->timed = surfaceWgsl.find("time") != std::string::npos;
+  const auto label = [&](const char* what)
+  { return surface->name + " surface: " + what; };
 
   // Shadow pipeline: depth only, with a fragment stage that cuts out where a
   // masked or see-through material isn't solid. No culling, so open meshes
   // (planes, roof undersides) still cast; slope-scaled bias keeps sloped faces
   // clean.
   {
+    const std::string shadowLabel = label("shadow");
     const wgpu::ShaderModule module(wgpu::makeShader(
         device,
-        shaders::meshPass(surfaceWgsl, shaders::meshShadowWgsl).c_str()));
+        shaders::meshPass(surfaceWgsl, shaders::meshShadowWgsl).c_str(),
+        shadowLabel.c_str()));
     const wgpu::PipelineLayout layout = pipelineLayout(m_shadowLayout.get());
 
     WGPUDepthStencilState depth = depthState(true, WGPUCompareFunction_Less);
@@ -4237,6 +4246,7 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
     desc.multisample.count = 1;
     desc.multisample.mask = 0xFFFFFFFFu;
     desc.fragment = &fragment;
+    desc.label = wgpu::sv(shadowLabel.c_str());
     surface->shadow.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   }
 
@@ -4244,9 +4254,11 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
   // distance from the light as its depth (so no depth bias: the lit pass
   // offsets instead).
   {
+    const std::string shadowLabel = label("point shadow");
     const wgpu::ShaderModule module(wgpu::makeShader(
         device,
-        shaders::meshPass(surfaceWgsl, shaders::meshPointShadowWgsl).c_str()));
+        shaders::meshPass(surfaceWgsl, shaders::meshPointShadowWgsl).c_str(),
+        shadowLabel.c_str()));
     const wgpu::PipelineLayout layout =
         pipelineLayout(m_pointShadowLayout.get());
 
@@ -4271,6 +4283,7 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
     desc.multisample.count = 1;
     desc.multisample.mask = 0xFFFFFFFFu;
     desc.fragment = &fragment;
+    desc.label = wgpu::sv(shadowLabel.c_str());
     surface->pointShadow.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   }
 
@@ -4282,7 +4295,8 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
         device,
         shaders::meshPass(
             surfaceWgsl, shaders::litPass(shaders::meshLitVertexWgsl))
-            .c_str()));
+            .c_str(),
+        label("lit").c_str()));
     const wgpu::PipelineLayout layout = pipelineLayout(m_litLayout.get());
 
     // How a pipeline puts its colour down: over what's there, blended by
@@ -4293,7 +4307,7 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
       Alpha,
       Add,
     };
-    const auto build = [&](Blending kind, WGPUCullMode cull)
+    const auto build = [&](Blending kind, WGPUCullMode cull, const char* what)
     {
       const bool blend = kind != Blending::None;
       const WGPUDepthStencilState depth =
@@ -4338,20 +4352,26 @@ WebGpuRenderer::buildSurface(const std::string& surfaceWgsl,
       desc.multisample.count = m_sampleCount;
       desc.multisample.mask = 0xFFFFFFFFu;
       desc.fragment = &fragment;
+      const std::string pipelineLabel = label(what);
+      desc.label = wgpu::sv(pipelineLabel.c_str());
       return wgpu::RenderPipeline(
           wgpuDeviceCreateRenderPipeline(device, &desc));
     };
-    surface->lit = build(Blending::None, WGPUCullMode_Back);
-    surface->blend = build(Blending::Alpha, WGPUCullMode_Back);
-    surface->additive = build(Blending::Add, WGPUCullMode_Back);
-    surface->litTwoSided = build(Blending::None, WGPUCullMode_None);
-    surface->blendTwoSided = build(Blending::Alpha, WGPUCullMode_None);
-    surface->additiveTwoSided = build(Blending::Add, WGPUCullMode_None);
+    surface->lit = build(Blending::None, WGPUCullMode_Back, "lit");
+    surface->blend = build(Blending::Alpha, WGPUCullMode_Back, "blend");
+    surface->additive = build(Blending::Add, WGPUCullMode_Back, "additive");
+    surface->litTwoSided =
+        build(Blending::None, WGPUCullMode_None, "lit two-sided");
+    surface->blendTwoSided =
+        build(Blending::Alpha, WGPUCullMode_None, "blend two-sided");
+    surface->additiveTwoSided =
+        build(Blending::Add, WGPUCullMode_None, "additive two-sided");
   }
 
   if (const std::optional<std::string> error = scope.end())
   {
-    LOG_ERROR("A material's shader doesn't build: " + *error);
+    LOG_ERROR("The " + surface->name +
+              " surface's pipelines don't build: " + *error);
     return nullptr;
   }
   if (!surface->shadow || !surface->lit || !surface->blend ||
@@ -4374,7 +4394,9 @@ WebGpuRenderer::graphSurface(const materialGraph::MaterialShader& shader,
     return nullptr;
 
   std::shared_ptr<const Surface> surface = buildSurface(
-      wgsl, graphMaterialLayout(m_context.device(), shader.textureCount()));
+      "material graph",
+      wgsl,
+      graphMaterialLayout(m_context.device(), shader.textureCount()));
   if (!surface)
   {
     m_brokenSurfaces.insert(wgsl);
@@ -4789,7 +4811,7 @@ void hashInto(uint64_t& hash, const T& value)
 }
 
 // How many frames a point light's shadow caster stays as it is before it's
-// drawn into its light's still cube (so one that's only paused, a farm hand
+// drawn into its light's still cube (so one that's only paused, a character
 // between steps, isn't).
 constexpr uint32_t kStillFrames = 30;
 } // namespace
@@ -5113,10 +5135,11 @@ bool WebGpuRenderer::createPostPipelines()
   WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
   pipelineLayoutDesc.bindGroupLayoutCount = 1;
   pipelineLayoutDesc.bindGroupLayouts = groups;
+  ValidationScope scope(m_context);
   const wgpu::PipelineLayout layout(
       wgpuDeviceCreatePipelineLayout(device, &pipelineLayoutDesc));
   const wgpu::ShaderModule module(
-      wgpu::makeShader(device, std::string(shaders::postWgsl).c_str()));
+      wgpu::makeShader(device, std::string(shaders::postWgsl).c_str(), "post"));
 
   const auto build = [&](const char* entry, WGPUTextureFormat format, bool add)
   {
@@ -5146,12 +5169,20 @@ bool WebGpuRenderer::createPostPipelines()
     desc.multisample.count = 1;
     desc.multisample.mask = 0xFFFFFFFFu;
     desc.fragment = &fragment;
+    const std::string label = std::string("post: ") + entry;
+    desc.label = wgpu::sv(label.c_str());
     return wgpu::RenderPipeline(wgpuDeviceCreateRenderPipeline(device, &desc));
   };
   m_prefilterPipeline = build("fs_prefilter", kSceneFormat, false);
   m_downsamplePipeline = build("fs_downsample", kSceneFormat, false);
   m_upsamplePipeline = build("fs_upsample", kSceneFormat, true);
   m_compositePipeline = build("fs_composite", m_context.format(), false);
+  if (const std::optional<std::string> error = scope.end())
+  {
+    LOG_ERROR("The \"post\" pipelines (bloom and the composite) don't build: " +
+              *error);
+    return false;
+  }
 
   // Auto exposure: its two pixels (cleared to no correction), and the pass
   // metering into the first from the scene and the second.
@@ -5188,10 +5219,11 @@ bool WebGpuRenderer::createPostPipelines()
     WGPUPipelineLayoutDescriptor meterLayoutDesc = {};
     meterLayoutDesc.bindGroupLayoutCount = 1;
     meterLayoutDesc.bindGroupLayouts = meterGroups;
+    ValidationScope meterScope(m_context);
     const wgpu::PipelineLayout meterLayout(
         wgpuDeviceCreatePipelineLayout(device, &meterLayoutDesc));
-    const wgpu::ShaderModule meterModule(
-        wgpu::makeShader(device, std::string(shaders::exposureWgsl).c_str()));
+    const wgpu::ShaderModule meterModule(wgpu::makeShader(
+        device, std::string(shaders::exposureWgsl).c_str(), "auto exposure"));
     WGPUColorTargetState color = {};
     color.format = kSceneFormat;
     color.writeMask = WGPUColorWriteMask_All;
@@ -5209,7 +5241,13 @@ bool WebGpuRenderer::createPostPipelines()
     desc.multisample.count = 1;
     desc.multisample.mask = 0xFFFFFFFFu;
     desc.fragment = &fragment;
+    desc.label = wgpu::sv("auto exposure");
     m_exposurePipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+    if (const std::optional<std::string> error = meterScope.end())
+    {
+      LOG_ERROR("The \"auto exposure\" pipeline doesn't build: " + *error);
+      return false;
+    }
     m_exposureParams =
         makeBuffer(device,
                    sizeof(ExposureUniforms),
@@ -5245,10 +5283,11 @@ bool WebGpuRenderer::createPostPipelines()
     WGPUPipelineLayoutDescriptor resolveLayoutDesc = {};
     resolveLayoutDesc.bindGroupLayoutCount = 1;
     resolveLayoutDesc.bindGroupLayouts = resolveGroups;
+    ValidationScope resolveScope(m_context);
     const wgpu::PipelineLayout resolveLayout(
         wgpuDeviceCreatePipelineLayout(device, &resolveLayoutDesc));
-    const wgpu::ShaderModule resolveModule(
-        wgpu::makeShader(device, std::string(shaders::taaWgsl).c_str()));
+    const wgpu::ShaderModule resolveModule(wgpu::makeShader(
+        device, std::string(shaders::taaWgsl).c_str(), "temporal AA"));
     WGPUColorTargetState color = {};
     color.format = kSceneFormat;
     color.writeMask = WGPUColorWriteMask_All;
@@ -5266,7 +5305,15 @@ bool WebGpuRenderer::createPostPipelines()
     desc.multisample.count = 1;
     desc.multisample.mask = 0xFFFFFFFFu;
     desc.fragment = &fragment;
+    desc.label = wgpu::sv("temporal AA");
     m_taaPipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+    if (const std::optional<std::string> error = resolveScope.end())
+    {
+      LOG_ERROR("The \"temporal AA\" pipeline doesn't build: frames draw "
+                "without it: " +
+                *error);
+      m_taaPipeline.reset();
+    }
     m_taaParams = makeBuffer(device,
                              sizeof(TaaUniforms),
                              WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
@@ -5298,10 +5345,11 @@ bool WebGpuRenderer::createPostPipelines()
     WGPUPipelineLayoutDescriptor focusLayoutDesc = {};
     focusLayoutDesc.bindGroupLayoutCount = 1;
     focusLayoutDesc.bindGroupLayouts = focusGroups;
+    ValidationScope focusScope(m_context);
     const wgpu::PipelineLayout focusLayout(
         wgpuDeviceCreatePipelineLayout(device, &focusLayoutDesc));
-    const wgpu::ShaderModule focusModule(
-        wgpu::makeShader(device, std::string(shaders::postFocusWgsl).c_str()));
+    const wgpu::ShaderModule focusModule(wgpu::makeShader(
+        device, std::string(shaders::postFocusWgsl).c_str(), "depth of field"));
     const auto focusPipeline = [&](const char* entry)
     {
       WGPUColorTargetState color = {};
@@ -5321,12 +5369,24 @@ bool WebGpuRenderer::createPostPipelines()
       desc.multisample.count = 1;
       desc.multisample.mask = 0xFFFFFFFFu;
       desc.fragment = &fragment;
+      const std::string label = std::string("depth of field: ") + entry;
+      desc.label = wgpu::sv(label.c_str());
       return wgpu::RenderPipeline(
           wgpuDeviceCreateRenderPipeline(device, &desc));
     };
     m_focusPreparePipeline = focusPipeline("fs_prepare");
     m_focusBlurPipeline = focusPipeline("fs_blur");
     m_focusCombinePipeline = focusPipeline("fs_combine");
+    if (const std::optional<std::string> error = focusScope.end())
+    {
+      LOG_ERROR("The \"depth of field\" pipelines don't build: frames draw "
+                "without it: " +
+                *error);
+      m_focusPreparePipeline.reset();
+      m_focusBlurPipeline.reset();
+      m_focusCombinePipeline.reset();
+      m_capabilities.depthOfField = false;
+    }
   }
   return m_clampSampler && m_postLayout && m_prefilterPipeline &&
          m_downsamplePipeline && m_upsamplePipeline && m_compositePipeline &&
@@ -6264,7 +6324,7 @@ bool WebGpuRenderer::createSkyResources()
     m_skyPassBindings.emplace_back(wgpuDeviceCreateBindGroup(device, &desc));
   }
 
-  ValidationScope scope(device);
+  ValidationScope scope(m_context);
   {
     const WGPUBindGroupLayout groups[] = {m_skyLayout.get()};
     WGPUPipelineLayoutDescriptor pipelineLayout = {};
@@ -6273,7 +6333,7 @@ bool WebGpuRenderer::createSkyResources()
     const wgpu::PipelineLayout layout(
         wgpuDeviceCreatePipelineLayout(device, &pipelineLayout));
     const wgpu::ShaderModule module(
-        wgpu::makeShader(device, shaders::skyPasses().c_str()));
+        wgpu::makeShader(device, shaders::skyPasses().c_str(), "sky"));
     const auto build = [&](const char* entry)
     {
       WGPUColorTargetState color = {};
@@ -6293,6 +6353,8 @@ bool WebGpuRenderer::createSkyResources()
       desc.multisample.count = 1;
       desc.multisample.mask = 0xFFFFFFFFu;
       desc.fragment = &fragment;
+      const std::string label = std::string("sky: ") + entry;
+      desc.label = wgpu::sv(label.c_str());
       return wgpu::RenderPipeline(
           wgpuDeviceCreateRenderPipeline(device, &desc));
     };
@@ -6308,8 +6370,8 @@ bool WebGpuRenderer::createSkyResources()
     pipelineLayout.bindGroupLayouts = groups;
     const wgpu::PipelineLayout layout(
         wgpuDeviceCreatePipelineLayout(device, &pipelineLayout));
-    const wgpu::ShaderModule module(
-        wgpu::makeShader(device, shaders::skyBackground().c_str()));
+    const wgpu::ShaderModule module(wgpu::makeShader(
+        device, shaders::skyBackground().c_str(), "sky background"));
     std::array<WGPUColorTargetState, 2> colors{};
     for (WGPUColorTargetState& color : colors)
     {
@@ -6333,12 +6395,13 @@ bool WebGpuRenderer::createSkyResources()
     desc.multisample.count = m_sampleCount;
     desc.multisample.mask = 0xFFFFFFFFu;
     desc.fragment = &fragment;
+    desc.label = wgpu::sv("sky background");
     m_skyBackgroundPipeline.reset(
         wgpuDeviceCreateRenderPipeline(device, &desc));
   }
   if (const std::optional<std::string> error = scope.end())
   {
-    LOG_ERROR("A physical sky's shaders don't build: " + *error);
+    LOG_ERROR("The \"sky\" pipelines don't build: " + *error);
     m_skyRadiancePipeline.reset();
     m_skyCloudsPipeline.reset();
     m_skyPrefilterPipeline.reset();
@@ -6446,10 +6509,11 @@ bool WebGpuRenderer::createUiPipeline()
   WGPUPipelineLayoutDescriptor layoutDesc = {};
   layoutDesc.bindGroupLayoutCount = groups.size();
   layoutDesc.bindGroupLayouts = groups.data();
+  ValidationScope scope(m_context);
   const wgpu::PipelineLayout layout(
       wgpuDeviceCreatePipelineLayout(device, &layoutDesc));
   const wgpu::ShaderModule module(
-      wgpu::makeShader(device, std::string(shaders::uiWgsl).c_str()));
+      wgpu::makeShader(device, std::string(shaders::uiWgsl).c_str(), "ui"));
 
   // One instance a quad: its six vec4s.
   std::array<WGPUVertexAttribute, 6> attributes{};
@@ -6490,7 +6554,13 @@ bool WebGpuRenderer::createUiPipeline()
   desc.multisample.count = 1;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv("ui");
   m_uiPipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
+  if (const std::optional<std::string> error = scope.end())
+  {
+    LOG_ERROR("The \"ui\" pipeline doesn't build: " + *error);
+    m_uiPipeline.reset();
+  }
 
   m_uiUniforms = makeBuffer(device,
                             sizeof(glm::vec4),
@@ -6715,9 +6785,9 @@ void WebGpuRenderer::createSkinningPipeline()
     m_skinningLayout.reset(wgpuDeviceCreateBindGroupLayout(device, &desc));
   }
 
-  ValidationScope scope(device);
-  const wgpu::ShaderModule module(
-      wgpu::makeShader(device, std::string(shaders::skinningWgsl).c_str()));
+  ValidationScope scope(m_context);
+  const wgpu::ShaderModule module(wgpu::makeShader(
+      device, std::string(shaders::skinningWgsl).c_str(), "skinning"));
   const WGPUBindGroupLayout groups[] = {
       m_skinningSharedLayout.get(), m_skinningLayout.get()};
   WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -6729,11 +6799,12 @@ void WebGpuRenderer::createSkinningPipeline()
   pipeline.layout = layout.get();
   pipeline.compute.module = module.get();
   pipeline.compute.entryPoint = wgpu::sv("cs_main");
+  pipeline.label = wgpu::sv("skinning");
   m_skinningPipeline.reset(wgpuDeviceCreateComputePipeline(device, &pipeline));
   if (const std::optional<std::string> error = scope.end())
   {
-    LOG_ERROR("Skinning's compute pass doesn't build (skinned meshes draw as "
-              "bound): " +
+    LOG_ERROR("The \"skinning\" pipeline doesn't build (skinned meshes draw "
+              "as bound): " +
               *error);
     m_skinningPipeline.reset();
   }
@@ -7154,9 +7225,9 @@ WGPURenderPipeline WebGpuRenderer::rainPipeline()
   if (m_rainPipeline || m_rainBroken)
     return m_rainPipeline.get();
   const WGPUDevice device = m_context.device();
-  ValidationScope scope(device);
+  ValidationScope scope(m_context);
   const wgpu::ShaderModule module(
-      wgpu::makeShader(device, shaders::rainPass().c_str()));
+      wgpu::makeShader(device, shaders::rainPass().c_str(), "rain"));
   // The lit pass's bindings (group 0) only.
   const WGPUBindGroupLayout groups[] = {m_litLayout.get()};
   WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -7198,11 +7269,12 @@ WGPURenderPipeline WebGpuRenderer::rainPipeline()
   desc.multisample.count = m_sampleCount;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv("rain");
   m_rainPipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   const std::optional<std::string> error = scope.end();
   if (error || !m_rainPipeline)
   {
-    LOG_ERROR("Rain's pass doesn't build" +
+    LOG_ERROR("The \"rain\" pipeline doesn't build" +
               (error ? ": " + *error : std::string()));
     m_rainPipeline.reset();
     m_rainBroken = true;
@@ -7276,9 +7348,9 @@ WGPURenderPipeline WebGpuRenderer::debugLinePipeline()
   if (m_debugLinePipeline || m_debugLineBroken)
     return m_debugLinePipeline.get();
   const WGPUDevice device = m_context.device();
-  ValidationScope scope(device);
-  const wgpu::ShaderModule module(
-      wgpu::makeShader(device, shaders::debugLinePass().c_str()));
+  ValidationScope scope(m_context);
+  const wgpu::ShaderModule module(wgpu::makeShader(
+      device, shaders::debugLinePass().c_str(), "debug lines"));
 
   // Group 1: auto exposure's last correction, and the grading's exposure.
   std::array<WGPUBindGroupLayoutEntry, 2> entries{};
@@ -7363,11 +7435,12 @@ WGPURenderPipeline WebGpuRenderer::debugLinePipeline()
   desc.multisample.count = m_sampleCount;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv("debug lines");
   m_debugLinePipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   const std::optional<std::string> error = scope.end();
   if (error || !m_debugLinePipeline || !m_debugLineBindings)
   {
-    LOG_ERROR("Debug lines' pass doesn't build" +
+    LOG_ERROR("The \"debug lines\" pipeline doesn't build" +
               (error ? ": " + *error : std::string()));
     m_debugLinePipeline.reset();
     m_debugLineBroken = true;
@@ -7498,7 +7571,7 @@ bool WebGpuRenderer::prepareOcclusion()
   // texel by texel, with their parameters.
   if (!m_occlusionPipeline)
   {
-    ValidationScope scope(device);
+    ValidationScope scope(m_context);
     std::array<WGPUBindGroupLayoutEntry, 2> entries{};
     entries[0] = wgpu::storageEntry(
         0, WGPUShaderStage_Fragment, WGPUBufferBindingType_Uniform);
@@ -7517,8 +7590,8 @@ bool WebGpuRenderer::prepareOcclusion()
     pipelineLayoutDesc.bindGroupLayouts = groups;
     const wgpu::PipelineLayout layout(
         wgpuDeviceCreatePipelineLayout(device, &pipelineLayoutDesc));
-    const wgpu::ShaderModule module(
-        wgpu::makeShader(device, shaders::occlusionPasses().c_str()));
+    const wgpu::ShaderModule module(wgpu::makeShader(
+        device, shaders::occlusionPasses().c_str(), "ambient occlusion"));
     const auto build = [&](const char* entry)
     {
       WGPUColorTargetState color = {};
@@ -7538,6 +7611,8 @@ bool WebGpuRenderer::prepareOcclusion()
       desc.multisample.count = 1;
       desc.multisample.mask = 0xFFFFFFFFu;
       desc.fragment = &fragment;
+      const std::string label = std::string("ambient occlusion: ") + entry;
+      desc.label = wgpu::sv(label.c_str());
       return wgpu::RenderPipeline(
           wgpuDeviceCreateRenderPipeline(device, &desc));
     };
@@ -7546,7 +7621,7 @@ bool WebGpuRenderer::prepareOcclusion()
     const std::optional<std::string> error = scope.end();
     if (error || !m_occlusionPipeline || !m_occlusionBlurPipeline)
     {
-      LOG_ERROR("Ambient occlusion's passes don't build" +
+      LOG_ERROR("The \"ambient occlusion\" pipelines don't build" +
                 (error ? ": " + *error : std::string()));
       m_occlusionPipeline.reset();
       m_occlusionBlurPipeline.reset();
@@ -7747,10 +7822,13 @@ WGPURenderPipeline WebGpuRenderer::depthNormalsPipeline(const Surface& surface,
   if (pipeline || surface.depthNormalsBroken)
     return pipeline.get();
   const WGPUDevice device = m_context.device();
-  ValidationScope scope(device);
+  const std::string label = surface.name + " surface: depth and normals" +
+                            (twoSided ? " two-sided" : "");
+  ValidationScope scope(m_context);
   const wgpu::ShaderModule module(wgpu::makeShader(
       device,
-      shaders::meshPass(surface.wgsl, shaders::meshDepthNormalsWgsl).c_str()));
+      shaders::meshPass(surface.wgsl, shaders::meshDepthNormalsWgsl).c_str(),
+      label.c_str()));
   const std::array<WGPUBindGroupLayout, 2> groups = {
       m_shadowLayout.get(), surface.materialLayout.get()};
   WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -7783,11 +7861,12 @@ WGPURenderPipeline WebGpuRenderer::depthNormalsPipeline(const Surface& surface,
   desc.multisample.count = 1;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv(label.c_str());
   pipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   const std::optional<std::string> error = scope.end();
   if (error || !pipeline)
   {
-    LOG_ERROR("A material's depth for ambient occlusion doesn't build" +
+    LOG_ERROR("The \"" + label + "\" pipeline doesn't build" +
               (error ? ": " + *error : std::string()));
     pipeline.reset();
     surface.depthNormalsBroken = true;
@@ -7805,14 +7884,18 @@ WGPURenderPipeline WebGpuRenderer::cutOutPipeline(const Surface& surface,
   if (pipeline || surface.cutOutBroken)
     return pipeline.get();
   const WGPUDevice device = m_context.device();
-  ValidationScope scope(device);
+  const std::string label = surface.name + " surface: cut-out " +
+                            (depthOnly ? "depth" : "lit") +
+                            (twoSided ? " two-sided" : "");
+  ValidationScope scope(m_context);
   const wgpu::ShaderModule module(wgpu::makeShader(
       device,
       (depthOnly
            ? shaders::meshPass(surface.wgsl, shaders::meshCutOutDepthWgsl)
            : shaders::meshPass(
                  surface.wgsl, shaders::litPass(shaders::meshLitVertexWgsl)))
-          .c_str()));
+          .c_str(),
+      label.c_str()));
   const std::array<WGPUBindGroupLayout, 2> groups = {
       m_litLayout.get(), surface.materialLayout.get()};
   WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -7852,11 +7935,14 @@ WGPURenderPipeline WebGpuRenderer::cutOutPipeline(const Surface& surface,
   desc.multisample.count = m_sampleCount;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv(label.c_str());
   pipeline.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   const std::optional<std::string> error = scope.end();
   if (error || !pipeline)
   {
-    LOG_ERROR("A material's cut-out depth doesn't build (it's lit without)" +
+    LOG_ERROR("The \"" + label +
+              "\" pipeline doesn't build (it's lit "
+              "without)" +
               (error ? ": " + *error : std::string()));
     surface.cutOutDepth.reset();
     surface.cutOutDepthTwoSided.reset();
@@ -7873,10 +7959,12 @@ WGPURenderPipeline WebGpuRenderer::rainMapPipeline(const Surface& surface)
   if (surface.rainMap || surface.rainMapBroken)
     return surface.rainMap.get();
   const WGPUDevice device = m_context.device();
-  ValidationScope scope(device);
+  const std::string label = surface.name + " surface: rain map";
+  ValidationScope scope(m_context);
   const wgpu::ShaderModule module(wgpu::makeShader(
       device,
-      shaders::meshPass(surface.wgsl, shaders::meshShadowWgsl).c_str()));
+      shaders::meshPass(surface.wgsl, shaders::meshShadowWgsl).c_str(),
+      label.c_str()));
   const std::array<WGPUBindGroupLayout, 2> groups = {
       m_shadowLayout.get(), surface.materialLayout.get()};
   WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -7911,11 +7999,12 @@ WGPURenderPipeline WebGpuRenderer::rainMapPipeline(const Surface& surface)
   desc.multisample.count = 1;
   desc.multisample.mask = 0xFFFFFFFFu;
   desc.fragment = &fragment;
+  desc.label = wgpu::sv(label.c_str());
   surface.rainMap.reset(wgpuDeviceCreateRenderPipeline(device, &desc));
   const std::optional<std::string> error = scope.end();
   if (error || !surface.rainMap)
   {
-    LOG_ERROR("A material's pipeline for rain's overhead map doesn't build" +
+    LOG_ERROR("The \"" + label + "\" pipeline doesn't build" +
               (error ? ": " + *error : std::string()));
     surface.rainMap.reset();
     surface.rainMapBroken = true;

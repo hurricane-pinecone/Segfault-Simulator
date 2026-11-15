@@ -45,8 +45,8 @@ public:
   virtual SceneServices* sceneServices() = 0;
 
   // Per-frame lifecycle: beginFrame acquires the backbuffer and clears it
-  // (WebGPU with SFS_LATE_ACQUIRE: later, once the scene's offscreen passes
-  // are submitted); endFrame presents.
+  // (WebGPU with SFS_LATE_ACQUIRE, and in a browser: later, once the scene's
+  // offscreen passes are submitted); endFrame presents.
   virtual void beginFrame(int width, int height) = 0;
   virtual void endFrame() = 0;
 

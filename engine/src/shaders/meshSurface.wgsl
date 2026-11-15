@@ -86,7 +86,8 @@ fn ditherFaded(fade: f32, pixel: vec2f) -> bool {
     return false;
   }
   let noise = ditherNoise(pixel);
-  return select(noise > -fade, noise < fade, fade > 0.0);
+  // Bracketed, or WGSL reads "noise < fade, fade >" as a template list.
+  return select(noise > -fade, (noise < fade), fade > 0.0);
 }
 
 // Dithering's noise at a pixel, 0..1: interleaved gradient noise, shifted each
