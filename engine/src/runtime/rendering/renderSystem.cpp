@@ -1,6 +1,7 @@
 #include "engine/runtime/rendering/renderSystem.h"
 
 #include "engine/core/components/cameraComponent.h"
+#include "engine/core/components/cameraFeedComponent.h"
 #include "engine/core/components/cameraFollowComponent.h"
 #include "engine/core/components/meshRendererComponent.h"
 #include "engine/core/components/pointLightComponent.h"
@@ -11,6 +12,8 @@
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "engine/core/rendering/sunShadow.h"
 #include "engine/core/util/cpuTiming.h"
+#include "engine/core/util/debugFeatures.h"
+#include "engine/runtime/rendering/debug/colliderLines.h"
 #include "engine/runtime/rendering/iRenderer.h"
 #include "engine/runtime/rendering/util/activeCamera.h"
 #include "glm/glm/ext/matrix_transform.hpp"
@@ -21,9 +24,14 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <variant>
+#include <vector>
 
 namespace
 {
@@ -48,11 +56,108 @@ RenderSystem::RenderSystem(IRenderer& renderer)
 {
 }
 
+void RenderSystem::create()
+{
+  // What's on screen moves on in real time, however fast the game's going
+  // (its particles keep the game's time with their own time scale).
+  setTimeStep(TimeStep::Real);
+}
+
 RenderSystem::~RenderSystem() = default;
 
 Entity RenderSystem::sceneCamera() const
 {
   return registry ? findActiveCamera(*registry) : Entity{};
+}
+
+glm::vec3 RenderSystem::stepCamera()
+{
+  // For checking how a view changes as the camera moves (a 3D one): with
+  // SFS_CAMERA_STEP="forward,right,up,pan,orbit" (metres along the ground,
+  // and degrees: turning where it stands, or round what it looks at), the
+  // view steps that far again for each of a screenshot sequence's shots
+  // (SFS_SCREENSHOT_FRAME, _EVERY, _COUNT; see WebGpuRenderBackend), half
+  // way between them, so it's settled by each. With a sixth value of 1,
+  // only grass's camera moves (where it's grown and thinned from), the view
+  // held still: what changes is only how grass changes as the camera moves.
+  //
+  // Or with SFS_CAMERA_TOUR="eye x,y,z,target x,y,z;..." (or '|' between) the
+  // view for each shot of the sequence, from each eye looking at its target
+  // (the last held), likewise half way between them.
+  static const char* const kStep = std::getenv("SFS_CAMERA_STEP");
+  static const char* const kTour = std::getenv("SFS_CAMERA_TOUR");
+  ++m_renderedFrames;
+  if ((!kStep && !kTour) || m_space2D)
+    return glm::vec3(0.0f);
+  static const auto setting = [](const char* name, int fallback)
+  {
+    const char* value = std::getenv(name);
+    return value ? std::atoi(value) : fallback;
+  };
+  static const int first = setting("SFS_SCREENSHOT_FRAME", 60);
+  static const int every = std::max(setting("SFS_SCREENSHOT_EVERY", 0), 1);
+  static const int count = std::max(setting("SFS_SCREENSHOT_COUNT", 1), 1);
+  if (kTour)
+  {
+    static const std::vector<std::pair<glm::vec3, glm::vec3>> tour = []
+    {
+      std::vector<std::pair<glm::vec3, glm::vec3>> views;
+      std::string text(kTour);
+      std::size_t at = 0;
+      while (at <= text.size())
+      {
+        const std::size_t end =
+            std::min(text.find_first_of(";|", at), text.size());
+        glm::vec3 eye(0.0f), target(0.0f);
+        if (std::sscanf(text.substr(at, end - at).c_str(),
+                        "%f,%f,%f,%f,%f,%f",
+                        &eye.x,
+                        &eye.y,
+                        &eye.z,
+                        &target.x,
+                        &target.y,
+                        &target.z) == 6)
+          views.emplace_back(eye, target);
+        at = end + 1;
+      }
+      return views;
+    }();
+    if (tour.empty())
+      return glm::vec3(0.0f);
+    const int shot = std::clamp((m_renderedFrames - first + every / 2) / every,
+                                0,
+                                static_cast<int>(tour.size()) - 1);
+    const auto& [eye, target] = tour[std::size_t(shot)];
+    m_camera.setPose(
+        eye, target - eye, glm::max(glm::distance(eye, target), 0.1f));
+    return glm::vec3(0.0f);
+  }
+  float step[6] = {};
+  std::sscanf(kStep,
+              "%f,%f,%f,%f,%f,%f",
+              &step[0],
+              &step[1],
+              &step[2],
+              &step[3],
+              &step[4],
+              &step[5]);
+  const Camera held = m_camera;
+  const int steps =
+      std::clamp((m_renderedFrames - first + every / 2) / every, 0, count - 1);
+  const float n = static_cast<float>(steps);
+  // Moved, then orbited round what it looks at, then turned where it stands.
+  m_camera.target += m_camera.groundForward() * (step[0] * n) +
+                     m_camera.groundRight() * (step[1] * n) +
+                     glm::vec3(0.0f, 0.0f, step[2] * n);
+  m_camera.yaw += glm::radians(step[4] * n);
+  const glm::vec3 eye = m_camera.position();
+  m_camera.yaw += glm::radians(step[3] * n);
+  m_camera.target = eye + m_camera.viewDirection() * m_camera.distance;
+  if (step[5] != 1.0f)
+    return glm::vec3(0.0f);
+  const glm::vec3 offset = m_camera.position() - held.position();
+  m_camera = held;
+  return offset;
 }
 
 bool RenderSystem::setVisualStyle(std::string_view name)
@@ -91,10 +196,8 @@ BloomSettings RenderSystem::effectiveBloom() const
 {
   if (m_style && m_style->bloom)
     return *m_style->bloom;
-  const Entity camera = sceneCamera();
-  return camera.isValid()
-             ? camera.getComponent<CameraComponent>().bloomSettings()
-             : m_bloom;
+  const CameraComponent* camera = sceneCamera().getComponent<CameraComponent>();
+  return camera ? bloomOf(*camera) : m_bloom;
 }
 
 HazeSettings RenderSystem::effectiveHaze() const
@@ -121,6 +224,44 @@ AmbientOcclusionSettings RenderSystem::effectiveAmbientOcclusion() const
 {
   return m_style && m_style->ambientOcclusion ? *m_style->ambientOcclusion
                                               : m_ambientOcclusion;
+}
+
+namespace
+{
+// SFS_DRAW_COLLIDERS=1 (or 0): over the scene's setting, for test runs.
+// Read once; a release export ignores it, and says so once.
+std::optional<bool> drawCollidersFromEnvironment()
+{
+  static const std::optional<bool> value = []() -> std::optional<bool>
+  {
+    const char* text = std::getenv("SFS_DRAW_COLLIDERS");
+    if (!text || !*text)
+      return std::nullopt;
+    return std::string_view(text) != "0";
+  }();
+  return value;
+}
+} // namespace
+
+bool RenderSystem::effectiveDrawColliders() const
+{
+  if (!debugFeatures::enabled())
+  {
+    static bool told = false;
+    if (!told && (drawCollidersFromEnvironment().value_or(false) ||
+                  m_forcedDrawColliders.value_or(false) || m_drawColliders))
+    {
+      told = true;
+      LOG_INFO("Draw colliders ignored: debug features are off in a release "
+               "build");
+    }
+    return false;
+  }
+  if (m_forcedDrawColliders)
+    return *m_forcedDrawColliders;
+  if (const std::optional<bool> environment = drawCollidersFromEnvironment())
+    return *environment;
+  return m_drawColliders;
 }
 
 bool RenderSystem::effectiveTemporalAntiAliasing() const
@@ -163,26 +304,28 @@ void RenderSystem::render()
   {
     // A 2D game's camera: over its point of the plane, looking straight at
     // it (up the screen: the plane's up), shaken across it.
-    if (const Entity camera = sceneCamera(); camera.isValid())
+    if (const Entity camera = sceneCamera();
+        const auto* lens = camera.getComponent<CameraComponent>())
     {
-      const auto& lens = camera.getComponent<CameraComponent>();
-      glm::vec2 point = hierarchy::worldTransform(camera).position2D();
-      if (camera.hasComponent<CameraFollowComponent>())
-        point += camera.getComponent<CameraFollowComponent>().shakeOffset() *
-                 glm::vec2(1.0f, m_space2D->ySign());
+      glm::vec2 point = hierarchy::cachedWorldTransform(camera).position2D();
+      if (CameraFollowComponent* cameraFollow =
+              camera.getComponent<CameraFollowComponent>())
+        point +=
+            cameraFollow->shakeOffset * glm::vec2(1.0f, m_space2D->ySign());
       const glm::vec3 centre = m_space2D->place(point);
-      const float back = std::max(lens.farPlane * 0.5f, 1.0f);
+      const float back = std::max(lens->farPlane * 0.5f, 1.0f);
       m_camera.setPose(glm::vec3(centre.x, centre.y, back),
                        glm::vec3(0.0f, 0.0f, -1.0f),
                        back,
                        glm::vec3(0.0f, 1.0f, 0.0f));
-      m_camera.projection = lens.orthographic ? Camera::Projection::Orthographic
-                                              : Camera::Projection::Perspective;
-      const float magnify = std::max(lens.zoom, 0.01f);
-      m_camera.orthoHeight = lens.orthoHeight / magnify;
-      m_camera.fieldOfView = glm::radians(lens.fieldOfView);
-      m_camera.nearPlane = lens.nearPlane;
-      m_camera.farPlane = lens.farPlane;
+      m_camera.projection = lens->orthographic
+                                ? Camera::Projection::Orthographic
+                                : Camera::Projection::Perspective;
+      const float magnify = std::max(lens->zoom, 0.01f);
+      m_camera.orthoHeight = lens->orthoHeight / magnify;
+      m_camera.fieldOfView = glm::radians(lens->fieldOfView);
+      m_camera.nearPlane = lens->nearPlane;
+      m_camera.farPlane = lens->farPlane;
     }
     else
     {
@@ -199,25 +342,30 @@ void RenderSystem::render()
     }
   }
   else if (m_followSceneCamera)
-    if (const Entity camera = sceneCamera(); camera.isValid())
+    if (const Entity camera = sceneCamera();
+        const CameraComponent* lens = camera.getComponent<CameraComponent>())
     {
-      camera.getComponent<CameraComponent>().applyTo(
-          m_camera, hierarchy::worldMatrix(camera));
+      viewThrough(*lens, hierarchy::cachedWorldMatrix(camera), m_camera);
 
       // A follow's shake moves the view across itself (as it moves a flat
       // or isometric camera across the ground).
-      if (camera.hasComponent<CameraFollowComponent>())
+      if (CameraFollowComponent* cameraFollow =
+              camera.getComponent<CameraFollowComponent>())
       {
-        const glm::vec2 shake =
-            camera.getComponent<CameraFollowComponent>().shakeOffset();
+        const glm::vec2 shake = cameraFollow->shakeOffset;
         const glm::vec3 right = m_camera.groundRight();
         const glm::vec3 up = glm::cross(right, m_camera.viewDirection());
         m_camera.target += right * shake.x + up * shake.y;
       }
     }
+  const glm::vec3 grassCameraOffset = stepCamera();
 
   if (!buildContext(m_renderer.viewportSize()))
+  {
+    m_debugLines.clear();
     return;
+  }
+  const std::optional<FeedView> feed = chooseFeed();
 
   m_commands.clear();
   for (auto& [type, module] : m_modules)
@@ -257,7 +405,9 @@ void RenderSystem::render()
                                 static_cast<float>(m_context.viewportSize.y));
   frame.viewProjection = m_context.viewProjection;
   frame.cameraPosition = m_camera.position();
+  frame.grassCameraOffset = grassCameraOffset;
   frame.cameraForward = m_camera.viewDirection();
+  frame.cameraTarget = m_camera.target;
   frame.nearPlane = m_camera.nearPlane;
   frame.farPlane = m_camera.farPlane;
   const Entity camera = sceneCamera();
@@ -290,9 +440,8 @@ void RenderSystem::render()
   }
   // Depth of field, like bloom, is the scene camera's; focused where the view
   // is (the editor's orbit target, while it looks around freely).
-  if (camera.isValid())
-    frame.depthOfField =
-        camera.getComponent<CameraComponent>().depthOfFieldSettings();
+  if (const CameraComponent* lens = camera.getComponent<CameraComponent>())
+    frame.depthOfField = depthOfFieldOf(*lens);
   frame.focusDistance = m_camera.distance;
   frame.pointLights = m_pointLights;
   frame.shadows = effectiveShadows();
@@ -300,20 +449,169 @@ void RenderSystem::render()
   frame.lightViewProjection = m_lightViewProjection;
   frame.cascades = m_cascades;
   frame.time = static_cast<float>(m_time);
+  // Held at a moment (SFS_HOLD_TIME=<seconds>), so the wind's still from
+  // frame to frame: for comparing screenshots.
+  static const char* const kHoldTime = std::getenv("SFS_HOLD_TIME");
+  if (kHoldTime)
+    frame.time = static_cast<float>(std::atof(kHoldTime));
   frame.sky = m_frameSky;
 
   m_renderer.beginFrame(frame);
+  if (feed && m_feedFilming)
+    m_renderer.beginFeed(*feed, m_feedFilming->texture());
   {
     SFS_CPU_SCOPE("render/submit commands");
     for (const AnyRenderCommand& command : m_commands)
       std::visit([this](const auto& concrete) { submit(concrete); }, command);
   }
+  // Debug lines (debug features only): the game's, and the colliders.
+  if (debugFeatures::enabled())
+  {
+    SFS_CPU_SCOPE("render/debug lines");
+    if (effectiveDrawColliders() && registry)
+      m_stats.colliders =
+          colliderLines::appendAll(*registry, m_space2D, m_debugLines);
+    m_stats.debugLines = m_debugLines.lineCount();
+    if (!m_debugLines.empty())
+      m_renderer.drawLines(m_debugLines.vertices());
+  }
+  else
+    effectiveDrawColliders(); // says once that it's ignored, if it's asked for
+  m_debugLines.clear();
   {
     SFS_CPU_SCOPE("render/renderer end frame");
     m_renderer.endFrame();
   }
 
   m_stats.pointLights = m_pointLights.size();
+}
+
+namespace
+{
+// A camera feed's picture, at its size.
+std::shared_ptr<RenderTexture> pictureFor(const CameraFeedComponent& feed)
+{
+  return std::make_shared<RenderTexture>(glm::ivec2(feed.width, feed.height));
+}
+} // namespace
+
+std::shared_ptr<const RenderTexture> RenderSystem::cameraFeed(Entity entity)
+{
+  CameraFeedComponent* lens = entity.getComponent<CameraFeedComponent>();
+  if (!lens)
+    return nullptr;
+  if (!lens->picture)
+    lens->picture = pictureFor(*lens);
+  return lens->picture;
+}
+
+void RenderSystem::makeFeedPictures()
+{
+  if (!registry)
+    return;
+  for (CameraFeedComponent& feed : registry->query<CameraFeedComponent>())
+  {
+    if (!feed.picture)
+      feed.picture = pictureFor(feed);
+  }
+}
+
+void RenderSystem::refreshMeshBounds()
+{
+  if (!registry)
+    return;
+  for (MeshRendererComponent& renderer :
+       registry->query<MeshRendererComponent>())
+  {
+    if (renderer.mesh == renderer.boundsOf)
+      continue;
+    if (const Aabb* bounds = m_meshes.bounds(renderer.mesh))
+    {
+      renderer.bounds = *bounds;
+      renderer.boundsOf = renderer.mesh;
+    }
+    else
+    {
+      // Not loaded yet: tried again next update.
+      renderer.bounds = Aabb{};
+      renderer.boundsOf = MeshHandle{};
+    }
+  }
+}
+
+std::optional<FeedView> RenderSystem::chooseFeed()
+{
+  m_context.feedOn = false;
+  m_feedFilming = nullptr;
+  if (!registry)
+    return std::nullopt;
+  if (m_space2D)
+    return std::nullopt;
+  SFS_CPU_SCOPE("render/camera feed");
+  const double now = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+
+  // The one most overdue of those shown (each due `rate` times a second).
+  Entity chosen;
+  CameraFeedComponent* chosenFeed = nullptr;
+  double mostLate = -1.0;
+  for (auto [entity, transform, feed] :
+       registry->query<TransformComponent, CameraFeedComponent>())
+  {
+    if (!feed.picture)
+      continue;
+    const auto& lens = feed;
+    const glm::ivec2 size = glm::max(glm::ivec2(lens.width, lens.height), 1);
+    if (feed.picture->size() != size)
+      feed.picture->resize(size);
+    if (!lens.enabled || !m_renderer.textureShown(feed.picture->texture().id))
+      continue;
+    const double late =
+        now - feed.filmed - 1.0 / std::max(double(lens.rate), 0.1);
+    if (late >= 0.0 && late > mostLate)
+    {
+      mostLate = late;
+      chosen = entity;
+      chosenFeed = &feed;
+    }
+  }
+  if (!chosenFeed)
+    return std::nullopt;
+  // (Not let fall behind further than a frame: a feed shown again after a
+  // while starts its beat afresh.)
+  const CameraFeedComponent* lens = chosenFeed;
+  const double period = 1.0 / std::max(double(lens->rate), 0.1);
+  chosenFeed->filmed = mostLate > period ? now : now - mostLate;
+  m_feedFilming = chosenFeed->picture.get();
+
+  // Its view: along the entity's +X, +Z up, as a camera entity's.
+  const glm::mat4 world = hierarchy::cachedWorldMatrix(chosen);
+  Camera camera;
+  camera.setPose(
+      glm::vec3(world[3]), glm::vec3(world[0]), 10.0f, glm::vec3(world[2]));
+  camera.projection = Camera::Projection::Perspective;
+  camera.fieldOfView =
+      glm::radians(std::clamp(lens->fieldOfView, 1.0f, 170.0f));
+  camera.nearPlane = std::max(lens->nearPlane, 0.001f);
+  camera.farPlane = std::max(lens->farPlane, camera.nearPlane * 2.0f);
+  const glm::ivec2 size = m_feedFilming->size();
+  const float aspect = static_cast<float>(size.x) / static_cast<float>(size.y);
+
+  FeedView view;
+  view.view = camera.viewMatrix();
+  view.projection = camera.projectionMatrix(aspect);
+  view.viewProjection = camera.viewProjection(aspect);
+  view.cameraPosition = camera.position();
+  view.cameraForward = camera.viewDirection();
+  view.nearPlane = camera.nearPlane;
+  view.farPlane = camera.farPlane;
+  view.size = size;
+  view.grassBlades = lens->grassBlades;
+  view.grassReach = std::max(lens->grassReach, 1.0f);
+  m_context.feedOn = true;
+  m_context.feedFrustum = Frustum::fromViewProjection(view.viewProjection);
+  return view;
 }
 
 bool RenderSystem::buildContext(const glm::ivec2& viewport)
@@ -445,11 +743,12 @@ void RenderSystem::updateSky()
 
   // The sky's diffuse light and reflections change slowly with the sun (and
   // the moon's glow, and the clouds): work them out again once it's moved a
-  // quarter of a degree (a day/night cycle moves it every frame), the glow
-  // changed a few percent or the clouds a little. That takes a couple of
-  // milliseconds (twice that under clouds), so it's done in the background,
-  // the frame keeping the last until it's ready; but a new sky has none to
-  // keep.
+  // quarter of a degree (a tenth near the horizon, where the light changes
+  // fastest; a day/night cycle moves it every frame), the glow changed a few
+  // percent or the clouds a little. That takes a couple of milliseconds
+  // (twice that under clouds), so it's done in the background, the frame
+  // easing toward each as it comes (see m_skyFrom); but a new sky has none
+  // to ease from.
   auto workOut = [](std::shared_ptr<const PhysicalSky> model,
                     glm::vec3 sun,
                     float glow,
@@ -468,17 +767,50 @@ void RenderSystem::updateSky()
     light.clouds = clouds;
     return light;
   };
-  auto use = [this](const SkyLight& light)
+  const double now = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+  // What's shown now: between the two, as far as the easing's got.
+  auto shown = [this](double at)
+  {
+    const float t = m_skyEasing > 0.0
+                        ? static_cast<float>(std::clamp(
+                              (at - m_skyCame) / m_skyEasing, 0.0, 1.0))
+                        : 1.0f;
+    SkyLight light = m_skyTo;
+    for (std::size_t i = 0; i < light.irradiance.coefficients.size(); ++i)
+      light.irradiance.coefficients[i] =
+          glm::mix(m_skyFrom.irradiance.coefficients[i],
+                   m_skyTo.irradiance.coefficients[i],
+                   t);
+    light.groundLight = glm::mix(m_skyFrom.groundLight, m_skyTo.groundLight, t);
+    light.clearSkyLight =
+        glm::mix(m_skyFrom.clearSkyLight, m_skyTo.clearSkyLight, t);
+    light.night = glm::mix(m_skyFrom.night, m_skyTo.night, t);
+    return light;
+  };
+  auto use = [&](const SkyLight& light, bool ease)
   {
     m_skySun = light.toSun;
     m_skyNight = light.night;
     m_skyClouds = light.clouds;
-    m_clearSkyLight = light.clearSkyLight;
-    m_frameSky.toSun = light.toSun;
-    m_frameSky.irradiance = light.irradiance;
-    m_frameSky.groundLight = light.groundLight;
-    m_frameSky.night = light.night;
-    ++m_frameSky.revision;
+    if (ease)
+    {
+      // Over a little longer than it was since the last was asked for (the
+      // sun moved as far as it did over that), so it's still easing when
+      // the next comes (at most half a second: a sudden change, e.g. the
+      // weather forced, goes quickly).
+      m_skyFrom = shown(now);
+      m_skyEasing =
+          std::clamp(1.25 * (light.asked - m_skyTo.asked), 1.0 / 120.0, 0.5);
+    }
+    else
+    {
+      m_skyFrom = light;
+      m_skyEasing = 0.0;
+    }
+    m_skyTo = light;
+    m_skyCame = now;
   };
   if (m_skyJob.valid() &&
       m_skyJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -486,27 +818,70 @@ void RenderSystem::updateSky()
     const SkyLight light = m_skyJob.get();
     // (Unless the sky it was for has gone since.)
     if (light.model == m_physicalSky)
-      use(light);
+      use(light, m_frameSky.physical != nullptr);
   }
-  if (rebuilt || !m_frameSky.physical)
-    use(workOut(m_physicalSky, toSun, night, clouds));
+  // (Waited for: shown at once.)
+  if (m_skyFinished)
+  {
+    m_skyFrom = m_skyTo;
+    m_skyEasing = 0.0;
+    m_skyFinished = false;
+  }
+  const bool fresh = rebuilt || !m_frameSky.physical;
+  if (fresh)
+  {
+    SkyLight light = workOut(m_physicalSky, toSun, night, clouds);
+    light.asked = now;
+    use(light, false);
+  }
   else
   {
-    constexpr float kResky = 0.99999048f; // cos(0.25 degrees)
-    const bool moved = glm::dot(toSun, m_skySun) < kResky ||
-                       std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
-                       std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
-                       std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
+    constexpr float kResky = 0.99999048f;     // cos(0.25 degrees)
+    constexpr float kResskyLow = 0.99999848f; // cos(0.1 degrees)
+    const bool low = std::min(std::abs(toSun.z), std::abs(m_skySun.z)) < 0.17f;
+    const bool moved =
+        glm::dot(toSun, m_skySun) < (low ? kResskyLow : kResky) ||
+        std::abs(night - m_skyNight) > 0.03f * m_skyNight ||
+        std::abs(clouds.cover - m_skyClouds.cover) > 0.01f ||
+        std::abs(clouds.darkness - m_skyClouds.darkness) > 0.01f;
     if (moved && !m_skyJob.valid())
     {
       if (!m_skyWorker)
         m_skyWorker = std::make_unique<WorkerPool>(1);
       auto job = std::make_shared<std::packaged_task<SkyLight()>>(
-          [workOut, model = m_physicalSky, toSun, night, clouds]
-          { return workOut(model, toSun, night, clouds); });
+          [workOut, model = m_physicalSky, toSun, night, clouds, now]
+          {
+            SkyLight light = workOut(model, toSun, night, clouds);
+            light.asked = now;
+            return light;
+          });
       m_skyJob = job->get_future();
       m_skyWorker->submit([job] { (*job)(); });
     }
+  }
+  const SkyLight light = shown(now);
+  m_clearSkyLight = light.clearSkyLight;
+  m_frameSky.toSun = toSun;
+  m_frameSky.irradiance = light.irradiance;
+  m_frameSky.groundLight = light.groundLight;
+  m_frameSky.night = light.night;
+  // The sky's textures, drawn again (on the GPU: a fraction of a
+  // millisecond) once the sun's moved a twentieth of a degree, or their
+  // light or the clouds changed a little: often enough not to step.
+  constexpr float kRedraw = 0.99999962f; // cos(0.05 degrees)
+  auto luminance = [](glm::vec3 c)
+  { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; };
+  const float ground = luminance(light.groundLight);
+  if (fresh || glm::dot(toSun, m_skyDrawnSun) < kRedraw ||
+      std::abs(ground - m_skyDrawnGround) > 0.02f * m_skyDrawnGround ||
+      std::abs(light.night - m_skyDrawnNight) > 0.01f * m_skyDrawnNight ||
+      std::abs(clouds.cover - m_skyDrawnCover) > 0.005f)
+  {
+    m_skyDrawnSun = toSun;
+    m_skyDrawnGround = ground;
+    m_skyDrawnNight = light.night;
+    m_skyDrawnCover = clouds.cover;
+    ++m_frameSky.revision;
   }
   m_frameSky.physical = m_physicalSky;
   // The sun itself, every frame (it's cheap), so it sets smoothly; once it
@@ -536,11 +911,24 @@ void RenderSystem::updateSky()
   // after it has set), or once the moon has taken over, the moon's (above
   // them: not dimmed by them).
   m_frameSky.cloudDarkness = clouds.darkness;
-  m_frameSky.cloudLight =
-      m_moonLit ? m_physicalSky->moonLight(toLight, m_moonShare / clear)
-                : m_physicalSky->cloudSunLight(toSun);
-  m_frameSky.cloudBase = PhysicalSky::cloudBase(
-      m_frameSky.cloudLight, toLight, m_clearSkyLight, clouds);
+  // (The sun's lights them still for a moment after the moon takes over,
+  // from where it is: they don't go dark at once.)
+  const glm::vec3 cloudSun = m_physicalSky->cloudSunLight(toSun);
+  if (m_moonLit)
+  {
+    const glm::vec3 cloudMoon =
+        m_physicalSky->moonLight(toLight, m_moonShare / clear);
+    m_frameSky.cloudLight = cloudMoon + cloudSun;
+    m_frameSky.cloudBase =
+        PhysicalSky::cloudBase(cloudMoon, toLight, m_clearSkyLight, clouds) +
+        PhysicalSky::cloudBase(cloudSun, toSun, glm::vec3(0.0f), clouds);
+  }
+  else
+  {
+    m_frameSky.cloudLight = cloudSun;
+    m_frameSky.cloudBase =
+        PhysicalSky::cloudBase(cloudSun, toSun, m_clearSkyLight, clouds);
+  }
   // The sky's textures draw the clouds as they are where the camera is: again
   // once they've drifted (or it's moved) 30 m.
   if (clouds.cover > 0.0f)
@@ -559,6 +947,7 @@ void RenderSystem::finishSkyWork()
 {
   if (m_skyJob.valid())
     m_skyJob.wait();
+  m_skyFinished = true;
 }
 
 namespace
@@ -684,10 +1073,9 @@ void RenderSystem::gatherEmissionLights()
     return point;
   };
 
-  for (const Entity& entity :
-       registry->view<TransformComponent, MeshRendererComponent>())
+  for (auto [entity, transform, renderer] :
+       registry->query<TransformComponent, MeshRendererComponent>())
   {
-    const auto& renderer = entity.getComponent<MeshRendererComponent>();
     if (!renderer.emitsLight || renderer.tint.a <= 0.0f ||
         renderer.lightStrength <= 0.0f || renderer.lightRange <= 0.0f)
       continue;
@@ -750,7 +1138,7 @@ void RenderSystem::gatherEmissionLights()
       if (!placed)
       {
         placed = true;
-        model = hierarchy::worldMatrix(entity);
+        model = hierarchy::cachedWorldMatrix(entity);
         normals = glm::transpose(glm::inverse(glm::mat3(model)));
         areaScale = std::abs(glm::determinant(glm::mat3(model)));
       }
@@ -786,10 +1174,9 @@ void RenderSystem::gatherPointLights()
   if (!registry)
     return;
 
-  for (const Entity& entity :
-       registry->view<TransformComponent, PointLightComponent>())
+  for (auto [entity, local, light] :
+       registry->query<TransformComponent, PointLightComponent>())
   {
-    const auto& light = entity.getComponent<PointLightComponent>();
     if (light.intensity <= 0.0f || light.radius <= 0.0f)
       continue;
 
@@ -800,7 +1187,8 @@ void RenderSystem::gatherPointLights()
     if (m_space2D)
     {
       radius *= m_space2D->scale();
-      const TransformComponent transform = hierarchy::worldTransform(entity);
+      const TransformComponent transform =
+          hierarchy::cachedWorldTransform(entity);
       const glm::vec2 offset(light.offset.x, light.offset.y);
       if (m_space2D->projection == Space2D::Projection::Isometric)
         position = m_space2D->place(transform.position2D() + offset,
@@ -811,10 +1199,16 @@ void RenderSystem::gatherPointLights()
         position.z += std::max(light.offset.z, radius * 0.25f);
       }
     }
-    else
-      position = glm::vec3(hierarchy::worldMatrix(entity) *
-                           glm::vec4(light.offset, 1.0f));
-    m_pointLights.push_back(PointLight{
+    // A 3D game's spots shine along their entity's +x.
+    glm::vec3 spotDirection(0.0f);
+    if (!m_space2D)
+    {
+      const glm::mat4 world = hierarchy::cachedWorldMatrix(entity);
+      position = glm::vec3(world * glm::vec4(light.offset, 1.0f));
+      if (light.spot)
+        spotDirection = glm::vec3(world[0]);
+    }
+    PointLight gathered{
         position,
         light.color,
         light.intensity,
@@ -822,7 +1216,10 @@ void RenderSystem::gatherPointLights()
         light.castsShadow,
         PointLight{}.shadowNear,
         light.sourceRadius,
-    });
+    };
+    if (light.spot)
+      setSpot(gathered, spotDirection, light.innerAngle, light.outerAngle);
+    m_pointLights.push_back(gathered);
   }
   const std::size_t placed = m_pointLights.size();
   gatherEmissionLights();
@@ -898,9 +1295,10 @@ void RenderSystem::chooseShadowedLights()
       light.castsShadow = false;
       continue;
     }
-    const glm::vec3 reach(light.radius);
+    const glm::vec4 bounds = lightBounds(light);
+    const glm::vec3 reach(bounds.w);
     if (!m_context.frustum.intersects(
-            Aabb{light.position - reach, light.position + reach}))
+            Aabb{glm::vec3(bounds) - reach, glm::vec3(bounds) + reach}))
     {
       light.castsShadow = false;
       continue;
@@ -1083,7 +1481,8 @@ void RenderSystem::emitLightning()
 
 void RenderSystem::submit(const UiDrawCommand& command)
 {
-  if (command.list && !command.list->quads.empty())
+  if (command.list &&
+      (!command.list->quads.empty() || !command.list->parts.empty()))
     m_renderer.drawUi(*command.list);
 }
 
@@ -1099,14 +1498,16 @@ void RenderSystem::submit(const GrassDrawCommand& command)
                                   command.stiffness,
                                   command.drawDistance,
                                   command.castsShadows,
-                                  command.selfShadow});
+                                  command.selfShadow,
+                                  command.ground,
+                                  command.vigour});
   m_stats.grassFields += 1;
 }
 
 void RenderSystem::submit(const MeshDrawCommand& command)
 {
   if (command.instances.empty() && command.shadowInstances.empty() &&
-      command.lightShadowInstances.empty())
+      command.lightShadowInstances.empty() && command.feedInstances.empty())
     return;
 
   // Commands name meshes by library handle; a stand-in that has loaded since
@@ -1116,7 +1517,8 @@ void RenderSystem::submit(const MeshDrawCommand& command)
                                 command.materials,
                                 command.instances,
                                 command.shadowInstances,
-                                command.lightShadowInstances});
+                                command.lightShadowInstances,
+                                command.feedInstances});
 
   m_stats.drawCalls += 1;
   m_stats.instances += command.instances.size();

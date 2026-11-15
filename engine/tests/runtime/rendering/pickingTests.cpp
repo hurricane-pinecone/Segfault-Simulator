@@ -1,11 +1,14 @@
 #include "../../testHarness.h"
 #include "mockRenderer.h"
 
+#include <engine/core/components/cursorPickComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
+#include <engine/core/components/pickableComponent.h>
 #include <engine/core/components/transformComponent.h>
 #include <engine/core/hierarchy/hierarchy.h>
 #include <engine/core/rendering/meshPrimitives.h>
 #include <engine/runtime/assetStore/assetStore.h>
+#include <engine/runtime/input/mouseInput.h>
 #include <engine/runtime/rendering/meshLibrary.h>
 #include <engine/runtime/rendering/picking.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -60,16 +63,32 @@ int main()
                .has_value());
   }
 
-  TEST("inside several boxes, the smallest should win")
+  TEST("hit at the same distance, the smallest should win")
   {
     World world;
-    world.spawn(world.floor, {0, 0, -0.05f});
-    Entity box = world.spawn(world.cube, {0, 0, -0.5f});
+    // A box sunk into the floor, their tops level (z = 0.1).
+    world.spawn(world.floor, {0, 0, 0});
+    Entity box = world.spawn(world.cube, {0, 0, -0.9f});
 
-    // Starts inside both the floor and the box.
-    const Ray ray{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}};
+    // Off the triangles' shared diagonals.
+    const auto hit = pickEntity(world.scene, world.meshes, downAt(0.2f, 0.1f));
+    CHECK(hit && hit->entity.getId() == box.getId());
+  }
+
+  TEST("a camera inside a landscape's bounds should pick what's on it")
+  {
+    World world;
+    // Land whose bounds (mountains far off) reach well over the camera: here
+    // a box 200 tall, its faces far from the camera.
+    MeshHandle land = world.meshes.add(meshes::box({400, 400, 200}));
+    world.spawn(land, {0, 0, 0});
+    Entity box = world.spawn(world.cube, {3, 0, 0}); // its top at 1
+
+    // From 10 up, inside the land's bounds, down onto the box.
+    const Ray ray{{3.0f, 0.0f, 10.0f}, {0.0f, 0.0f, -1.0f}};
     const auto hit = pickEntity(world.scene, world.meshes, ray);
-    CHECK(hit->entity.getId() == box.getId());
+    CHECK(hit && hit->entity.getId() == box.getId());
+    CHECK(testing::approx(hit->distance, 9.0f));
   }
 
   TEST("entities without a mesh should be pickable by a marker")
@@ -87,7 +106,7 @@ int main()
   {
     World world;
     Entity box = world.spawn(world.cube, {1, 2, 3});
-    box.getComponent<TransformComponent>().scale = {2, 2, 2};
+    box.getComponent<TransformComponent>()->scale = {2, 2, 2};
 
     const auto bounds = entityBounds(box, world.meshes);
     CHECK(testing::approx(bounds->min.x, 0.0f));
@@ -137,12 +156,12 @@ int main()
                .has_value());
   }
 
-  TEST("a surface pick should follow the object's transform, and skip "
-       "bounds-only hits")
+  TEST("picks should follow the object's transform, and skip bounds-only "
+       "hits")
   {
     World world;
     Entity moved = world.spawn(world.cube, {5, 0, 0});
-    moved.getComponent<TransformComponent>().scale = {2, 2, 2};
+    moved.getComponent<TransformComponent>()->scale = {2, 2, 2};
     CHECK(pickSurface(world.scene, world.meshes, downAt(5.9f, 0.0f))
               .has_value()); // scaled to +-1
     CHECK(!pickSurface(world.scene, world.meshes, downAt(0.0f, 0.0f))
@@ -153,10 +172,92 @@ int main()
     plane.vertices = {{{0, 0, 0}}, {{1, 0, 0}}, {{0, 1, 1}}};
     plane.indices = {0, 1, 2};
     world.spawn(world.meshes.add(plane), {10, 10, 0});
-    CHECK(pickEntity(world.scene, world.meshes, downAt(10.9f, 10.9f))
-              .has_value());
+    CHECK(!pickEntity(world.scene, world.meshes, downAt(10.9f, 10.9f))
+               .has_value());
     CHECK(!pickSurface(world.scene, world.meshes, downAt(10.9f, 10.9f))
                .has_value());
+  }
+
+  TEST("a pickable pick should resolve a child mesh to its pickable parent")
+  {
+    World world;
+    Entity machine = world.spawn({}, {4, 0, 0});
+    machine.addComponent<PickableComponent>();
+    Entity part = world.spawn(world.cube, {0, 0, 0});
+    hierarchy::setParent(part, machine);
+    world.scene.flushEntities();
+    const auto hit = pickPickable(world.scene, world.meshes, downAt(4, 0));
+    CHECK(hit && hit->entity == machine && hit->part == part);
+    CHECK(hit && testing::approx(hit->distance, 49.0f) &&
+          testing::approx(hit->point.z, 1.0f)); // the cube rests on z = 0
+  }
+
+  TEST("a mesh with no pickable above it shouldn't block a pickable pick")
+  {
+    World world;
+    Entity machine = world.spawn(world.cube, {0, 0, 0});
+    machine.addComponent<PickableComponent>();
+    world.spawn(world.floor, {0, 0, 5}); // a roof over it, not pickable
+    world.scene.flushEntities();
+    const auto hit = pickPickable(world.scene, world.meshes, downAt(0, 0));
+    CHECK(hit && hit->entity == machine);
+
+    machine.getComponent<PickableComponent>()->enabled = false;
+    CHECK(!pickPickable(world.scene, world.meshes, downAt(0, 0)));
+  }
+
+  TEST("the nearer of two pickables should be picked")
+  {
+    World world;
+    Entity low = world.spawn(world.cube, {0, 0, 0});
+    low.addComponent<PickableComponent>();
+    Entity high = world.spawn(world.cube, {0, 0, 3});
+    high.addComponent<PickableComponent>();
+    world.scene.flushEntities();
+    const auto hit = pickPickable(world.scene, world.meshes, downAt(0, 0));
+    CHECK(hit && hit->entity == high);
+  }
+
+  TEST("a cursor pick should pick only on a press unless it hovers, and "
+       "nothing while the UI has the mouse, keeping the ray")
+  {
+    World world;
+    Entity machine = world.spawn(world.cube, {0, 0, 0});
+    machine.addComponent<PickableComponent>();
+    world.scene.flushEntities();
+    const Ray ray = downAt(0, 0);
+    MouseInput mouse;
+    mouse.setViewSize(800, 600);
+    mouse.setPosition(10, 10);
+    CursorPickComponent pick;
+
+    mouse.beginFrame();
+    pickUnderCursor(world.scene, world.meshes, ray, mouse, pick);
+    CHECK(!pick.picked.isValid() && !pick.blocked && pick.inView);
+    CHECK(pick.ray.origin == ray.origin);
+
+    pick.hover = true;
+    pickUnderCursor(world.scene, world.meshes, ray, mouse, pick);
+    CHECK(pick.picked == machine && pick.part == machine);
+    pick.hover = false;
+
+    mouse.beginFrame();
+    mouse.pressButton(MouseButton::Left);
+    pickUnderCursor(world.scene, world.meshes, ray, mouse, pick);
+    CHECK(pick.picked == machine && testing::approx(pick.distance, 49.0f));
+
+    mouse.beginFrame(); // held, not pressed again: picked is cleared
+    pickUnderCursor(world.scene, world.meshes, ray, mouse, pick);
+    CHECK(!pick.picked.isValid());
+
+    mouse.releaseButton(MouseButton::Left);
+    mouse.beginFrame();
+    mouse.pressButton(MouseButton::Right);
+    mouse.block();
+    const Ray other = downAt(1, 0);
+    pickUnderCursor(world.scene, world.meshes, other, mouse, pick);
+    CHECK(pick.blocked && !pick.picked.isValid());
+    CHECK(pick.ray.origin == other.origin);
   }
 
   return testing::report("pickingTests");

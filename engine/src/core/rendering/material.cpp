@@ -17,6 +17,11 @@ void read(const nlohmann::json& json, const char* key, T& out)
       if (it->is_string())
         out = it->get<std::string>();
     }
+    else if constexpr (std::is_same_v<T, bool>)
+    {
+      if (it->is_boolean())
+        out = it->get<bool>();
+    }
     else if (it->is_number())
       out = it->get<T>();
   }
@@ -171,6 +176,15 @@ nlohmann::json MaterialAsset::toJson() const
         {"alphaCutoff", alphaCutoff},
     };
   // Only when it has some, so files without stay as they were.
+  if (!terrain && !graph && doubleSided)
+    out["doubleSided"] = true;
+  if (!terrain && !graph && foliage.enabled)
+    out["foliage"] = {{"translucency", foliage.translucency},
+                      {"bend", foliage.bend},
+                      {"sway", foliage.sway},
+                      {"flutter", foliage.flutter}};
+  if (!terrain && !graph && fadeNearCamera > 0.0f)
+    out["fadeNearCamera"] = fadeNearCamera;
   if (!variants.empty())
     out["variants"] = variants;
   return out;
@@ -204,6 +218,16 @@ std::optional<MaterialAsset> MaterialAsset::fromJson(const nlohmann::json& json)
   read(json, "metallic", material.metallic);
   read(json, "roughness", material.roughness);
   read(json, "alphaCutoff", material.alphaCutoff);
+  read(json, "doubleSided", material.doubleSided);
+  read(json, "fadeNearCamera", material.fadeNearCamera);
+  if (const auto it = json.find("foliage"); it != json.end() && it->is_object())
+  {
+    material.foliage.enabled = true;
+    read(*it, "translucency", material.foliage.translucency);
+    read(*it, "bend", material.foliage.bend);
+    read(*it, "sway", material.foliage.sway);
+    read(*it, "flutter", material.foliage.flutter);
+  }
   if (const auto it = json.find("alphaMode");
       it != json.end() && it->is_string())
     material.alphaMode =

@@ -148,6 +148,47 @@ if (const ItemDef* item = chest.loot.get())
   LOG_INFO("A " + item->displayName);
 ```
 
+An `sfs::AssetRefList<T>` field holds several, in an order that means
+something (a crafting recipe's ingredients, a vehicle's tyre setups). The
+Inspector shows a row per entry, each a picker like `AssetRef<T>`'s, with a
+button to add another row and one to remove a row. In code, `get(i)` gives
+one entry and `all()` every entry that's there (unset, missing or wrong-type
+entries left out):
+
+```cpp
+struct Recipe
+{
+  sfs::AssetRefList<ItemDef> ingredients;
+};
+...
+for (const ItemDef* ingredient : recipe.ingredients.all())
+  consume(*ingredient);
+```
+
+#### Deriving from another scriptable object type
+
+A scriptable object type may derive from another reflected one, the engine's
+or your own, to add fields to it: a game's tractors are vehicles with a hitch.
+
+```cpp
+#include "engine/runtime/navigation/vehicle/vehicleSpec.h"
+
+struct TractorSpec : sfs::VehicleSpec
+{
+  float hitchHeight = 0.5f;
+};
+```
+
+A `Tractor Spec.asset` holds every level's fields; the Inspector shows the
+base's first, each level under its type's name. An `sfs::AssetRef<sfs::VehicleSpec>`
+field lists and takes `TractorSpec` assets too, and `get()` gives one as a
+`VehicleSpec` (`dynamic_cast` it to reach the extra fields). The base must be
+a reflected type with one plain name (no templates, one base only). If its
+module isn't loaded the derived type keeps its own fields, and gets the
+base's again when it comes back. Only scriptable objects may derive from a
+reflected type for now; a component or script deriving from one fails to
+compile with a message saying so.
+
 Every asset of a type is listed by `sfs::scriptableObjects().all<ItemDef>()`, which is
 handy for "every crop in the game". Edits made while playing are picked up the
 next time the asset is asked for. Renaming a scriptable object type or its fields
@@ -194,8 +235,10 @@ if (const auto hit = sfs::pickEntity(scene(), render.meshes(), ray))
 ```
 
 `screenRay` uses the size the scene was last drawn at, so it matches the view
-the player is looking at. To hit what the player sees by physics shape instead of
-bounding box, use `PhysicsSystem3D::raycast` with the same ray; see
+the player is looking at. `pickEntity` hits a mesh where the ray meets its
+triangles, so it already follows what the player sees; to hit by physics
+shape instead (a collider bigger or smaller than the mesh), use
+`PhysicsSystem3D::raycast` with the same ray; see
 [3D physics](../../runtime/physics-3d/index.md), which also covers collision
 callbacks.
 
@@ -212,6 +255,12 @@ build leaves the editor in edit mode with the previous module still loaded.
 A build compiles three files at a time, so the editor (and WSL, building for
 Windows) stays responsive. The **x** at the end of the build's progress bar,
 in the status bar, stops it, compilers and all; it counts as a failed build.
+
+Saving a script while a build is already running is safe: the editor notices
+what changed since the build began and builds again once it finishes, so
+nothing's left compiled from a header that moved on. If scripts keep changing
+while it tries, it gives up after a few tries and asks you to build again once
+they're saved.
 
 Saving is disabled while playing, so a play session can't overwrite the
 scene.
@@ -240,7 +289,9 @@ in any CMake-aware IDE to work on scripts outside the editor.
 
 The editor builds the module in `.sfs/build/<platform>/`, which `.gitignore`
 excludes. Each build links its compile database at `.sfs/compile_commands.json`,
-where the project's `.clangd` points clangd. It uses the toolchain and engine it was built with, so the module
+where the project's `.clangd` points clangd (it also silences clang's warnings
+about the engine's `[[sfs::...]]` attributes, which
+[sfs-lsp](../sfs-lsp/index.md) checks instead). It uses the toolchain and engine it was built with, so the module
 always matches the engine it runs in. A Windows editor cross-built from WSL runs
 these builds back in WSL.
 

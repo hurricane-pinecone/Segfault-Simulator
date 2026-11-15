@@ -76,7 +76,8 @@ struct ClusterLights
 inline constexpr uint32_t kMaxLightsPerCluster = 256;
 
 /**
- * List each light in every cluster its sphere might reach: the tiles its
+ * List each light in every cluster its sphere (lightBounds(): a spot's round
+ * its cone) might reach: the tiles its
  * bounds cover on screen, and the slices its depth range covers. It errs
  * towards listing a light where it can't quite reach (the shader checks the
  * distance); it never leaves one out of a cluster it can reach. Lights

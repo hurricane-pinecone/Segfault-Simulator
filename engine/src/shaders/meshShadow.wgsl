@@ -22,7 +22,8 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> ShadowOut {
   let model = instanceModel(instance);
   let world = model * vec4f(vertex.position, 1.0);
   let placed = surfaceVertex(SurfaceVertex(world.xyz, normalMatrix(model) * vertex.normal,
-                                            instanceUv(vertex, instance), 1.0));
+                                            instanceUv(vertex, instance), 1.0, vertex.color,
+                                            model[3].xyz));
   var out: ShadowOut;
   out.clip = sunCascade.viewProjection * vec4f(placed.position, 1.0);
   out.uv = placed.uv;
@@ -35,8 +36,7 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> ShadowOut {
 
 // Masked and see-through surfaces (and faded objects) cast only where solid:
 // alpha at least the cut-out threshold, or a half for see-through ones.
-@fragment
-fn fs_main(in: ShadowOut) {
+fn cutOut(in: ShadowOut) {
   let mode = surfaceAlphaMode();
   if (mode == ALPHA_ADDITIVE) {
     discard; // light, not a thing: it casts no shadow
@@ -53,4 +53,20 @@ fn fs_main(in: ShadowOut) {
   if (cutsOut && alpha < cutoff) {
     discard;
   }
+}
+
+@fragment
+fn fs_main(in: ShadowOut) {
+  cutOut(in);
+}
+
+// Rain's overhead map (drawn from straight above, see RainMap): as the
+// shadow, and the height of what's drawn beside its depth (OpenGL can't read
+// a depth texture's values: see rainSurfaceHeight()), as its bits: never 0,
+// which is nothing drawn (a height of 0 is -0's).
+@fragment
+fn fs_rainMap(in: ShadowOut) -> @location(0) vec4u {
+  cutOut(in);
+  let bits = bitcast<u32>(in.worldPosition.z);
+  return vec4u(select(bits, 0x80000000u, bits == 0u), 0u, 0u, 0u);
 }

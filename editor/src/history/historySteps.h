@@ -3,6 +3,7 @@
 #include "nlohmann/json.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <functional>
@@ -73,6 +74,14 @@ public:
   /** Change every recorded scene the same way (see EditorHistory::rewrite). */
   void rewrite(const std::function<void(nlohmann::json&)>& edit);
 
+  /**
+   * Which state the history is at: each edit (or amendment) makes a new one,
+   * and undo and redo return to the one that point had. So it equals an
+   * earlier value exactly when the scene is back to how it was then (what a
+   * "saved" mark compares with). clear() starts a new one.
+   */
+  uint64_t state() const { return m_undo.empty() ? m_baseState : m_undo.back().state; }
+
   std::size_t undoSteps() const { return m_undo.size(); }
   std::size_t redoSteps() const { return m_redo.size(); }
   /** The snapshots' text, counted per step (shared text counted each time: an upper bound). */
@@ -88,6 +97,7 @@ private:
     Selection selectionBefore;
     Selection selectionAfter;
     std::shared_ptr<const AssetEdit> asset; // or the scene's, before and after
+    uint64_t state = 0;                     // the history's state after it
 
     std::size_t bytes() const
     {
@@ -104,4 +114,7 @@ private:
   std::deque<Step> m_undo;
   std::deque<Step> m_redo;
   std::size_t m_bytes = 0; // of m_undo and m_redo
+  // The state before the oldest undo step kept, and the next new one.
+  uint64_t m_baseState = 0;
+  uint64_t m_nextState = 1;
 };

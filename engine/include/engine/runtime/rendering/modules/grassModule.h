@@ -31,10 +31,10 @@ class WorkerPool;
  *
  * Each entity's ground (GrassGround) is built from its mesh and how it's
  * turned and scaled, and uploaded once; the renderer grows the blades on it
- * every frame, so moving the entity, or changing its grass's settings, costs
- * nothing. Each update, its trample map springs back and is pressed by the
- * frame's benders: rigid bodies that bend grass (sized by their colliders) and
- * GrassBenderComponent entities.
+ * (keeping them in tiles until what they grow from changes: see
+ * GrassTileCache). Each update, its trample map springs back and is pressed
+ * by the frame's benders: rigid bodies that bend grass (sized by their
+ * colliders) and GrassBenderComponent entities.
  *
  * A big mesh (much wider than twice its grass's draw distance: the land out
  * to the horizon, say) grows grass only in a window around the camera, a
@@ -55,9 +55,11 @@ class WorkerPool;
  * Its maps (GrassMaps: where it grows, how long, and data for its material)
  * start as the component's `paint`, and a game changes them as it plays
  * through maps(), stamp() and the rest, in world space: only what changed goes
- * up to the GPU. Those changes aren't saved in the scene (it holds where grass
- * starts): a game saves them itself (GrassMaps::toJson()) if it wants them
- * kept. Setting the component's `paint` starts them over from it.
+ * up to the GPU, and only the blades over where coverage or length changed
+ * are grown again. Change grass only through these (and terrainPainted()):
+ * anything else isn't seen. Those changes aren't saved in the scene (it holds
+ * where grass starts): a game saves them itself (GrassMaps::toJson()) if it
+ * wants them kept. Setting the component's `paint` starts them over from it.
  */
 class GrassModule : public CommandModule<RenderContext, GrassDrawCommand>
 {
@@ -113,6 +115,53 @@ public:
    */
   void terrainPainted(const Entity& entity);
 
+  // --- growth (see GrassMaps' growth)
+  // ----------------------------------------
+
+  /**
+   * The clock grass grows by: days of growth (GrassMaps::setClock()), for all
+   * its maps, from the next frame (a game runs it slower in a drought).
+   */
+  void setClock(double growthDays);
+
+  /**
+   * How an entity's grass grows by a field over the world (how wet the
+   * ground is, say): its field (null: none; shared, so several grasses can
+   * take one) and how (GrassVigourSettings). Set it as often as it changes
+   * (its settings each frame, if they do: they cost nothing); the field goes
+   * up to the GPU when it's another one.
+   */
+  void setVigour(const Entity& entity,
+                 std::shared_ptr<const GrassVigourField> field,
+                 const GrassVigourSettings& settings);
+
+  /**
+   * Mow a strip (GrassCut, in world space: `a` to `b` world XY, `width` world
+   * units across): its blades cut to the line of its edges.
+   */
+  void cut(const Entity& entity, GrassCut cut);
+  /**
+   * Lay mown grass over the way it was rolled (GrassRoll, in world space, as
+   * cut()'s): its blades leaning that way (a striping roller's stripes).
+   */
+  void roll(const Entity& entity, GrassRoll roll);
+
+  /**
+   * Lay grass flat over a world circle (GrassMaps::flatten()): no longer than
+   * `to` of its length, standing up again over time.
+   */
+  void flatten(const Entity& entity,
+               glm::vec3 center,
+               float radius,
+               float to,
+               float softness = 0.5f);
+
+  /**
+   * How long an entity's blades are at a world point now, of their full
+   * height (GrassComponent::height): as grown, and by its vigour.
+   */
+  float lengthAt(const Entity& entity, glm::vec3 point) const;
+
   // --- for tests and tools
   // ----------------------------------------------------
 
@@ -127,8 +176,9 @@ public:
 
   /**
    * How far a big mesh's grass window reaches either side of the camera
-   * (world units), for grass drawn to `drawDistance`: past it, where the
-   * ground's tint fades out, and by windowSlack() more.
+   * (world units), for grass drawn to `drawDistance`: a little past it, and
+   * by windowSlack() more. (Past the window, the grass's ground carries on
+   * over its terrain's meadow layers, see grassFarGround().)
    */
   static float windowReach(float drawDistance);
   /** How far the camera moves from the window's middle before it's built
@@ -151,6 +201,14 @@ private:
     std::vector<glm::vec2> uvs;
     glm::vec2 min{0.0f}, max{0.0f}; // its own XY
   };
+  // All of a grid's maps as sent up (GrassMapsImage's shape, data, now and
+  // cut), worked out with a window in the background so a new window costs
+  // the frame that puts it in place only the upload.
+  struct MapImages
+  {
+    GrassGrid grid;
+    std::vector<uint8_t> shape, data, now, cut;
+  };
   // A window of it, built.
   struct Window
   {
@@ -162,6 +220,7 @@ private:
     GrassTrample trample;
     GrassMaps maps;
     std::vector<uint8_t> cover; // with a terrain under it
+    MapImages images;           // its maps', all of them
   };
 
   struct Patch
@@ -186,8 +245,22 @@ private:
     std::vector<uint8_t> cover;
     GrassGrid coverGrid;
     bool coverMadeMaps = false; // the maps were made (full) for it
+    bool coverStale = false;    // its terrain was painted: worked out again
+    // Where it changed since the maps were last sent up (texels), and the
+    // blades to grow again for it.
+    glm::ivec2 coverFrom{0, 0}, coverTo{0, 0};
+    std::vector<glm::ivec4> coverRegrow;
     float recovery = 3.0f;
     bool seen = false; // this frame
+
+    // How it grows by a field over the world (setVigour()), and the field the
+    // GPU has (for its handle `vigourGpu`).
+    std::shared_ptr<const GrassVigourField> vigourField;
+    GrassVigourSettings vigour;
+    const GrassVigourField* vigourSent = nullptr;
+    uint32_t vigourGpu = 0;
+    int framesLogged = 0; // SFS_GRASS_GROWTH's
+    std::size_t tilesSent = 0;
 
     // A big mesh's grass: in a window around the camera (its middle and
     // reach, the mesh's own XY), built again as the camera moves on.
@@ -198,6 +271,7 @@ private:
     std::shared_ptr<const Source> source;
     std::shared_ptr<const GrassMaps> painted; // `paint`, over all of it
     std::future<Window> nextWindow;           // being built
+    MapImages ready; // the window's maps' images, till they're sent up
   };
 
   static uint64_t keyOf(const Entity& entity);
@@ -212,6 +286,9 @@ private:
   // it lets grow over the maps' grid.
   std::shared_ptr<const TerrainMaterial> terrainUnder(const Entity& entity);
   static void workOutCover(Patch& patch);
+  // Again, after its terrain was painted: only where it changed is sent up,
+  // and its blades grown again.
+  static void coverRepainted(Patch& patch);
   static std::vector<uint8_t> coverOf(const GrassGround& ground,
                                       const GrassGrid& grid,
                                       const TerrainMaterial& terrain);
@@ -222,15 +299,31 @@ private:
                             float half,
                             float trampleHeight,
                             const GrassMaps* painted,
-                            const TerrainMaterial* terrain);
+                            const TerrainMaterial* terrain,
+                            std::optional<double> clock);
   // A windowed patch's window: built around the camera if it's moved on (in
   // the background, but for the first), and put in place once it's ready.
   void windowAround(Patch& patch, const GrassComponent& grass);
   void useWindow(Patch& patch, Window window);
   const Patch* find(const Entity& entity) const;
 
+  // How it's now, of a rectangle of its maps (GrassMaps::nowPixels()), as
+  // much as the terrain under it lets grow.
+  static void nowOf(const GrassMaps& maps,
+                    const std::vector<uint8_t>& cover,
+                    glm::ivec2 from,
+                    glm::ivec2 to,
+                    std::vector<uint8_t>& now,
+                    std::vector<uint8_t>& cut);
+  // The cover a patch's maps are drawn with (empty: none).
+  static const std::vector<uint8_t>& coverFor(const Patch& patch);
+  // All of the maps' images (MapImages), their band kept (keepBand()).
+  static MapImages imagesOf(GrassMaps& maps, const std::vector<uint8_t>& cover);
+  void uploadVigour(Patch& patch);
+
   IRenderer& m_renderer;
   Registry* m_registry = nullptr;
+  std::optional<double> m_clock;    // setClock()'s
   MeshLibrary* m_meshes = nullptr;  // the last frame's
   MaterialHandle m_defaultMaterial; // plain green, for grass without one
   std::unordered_map<uint64_t, Patch> m_patches;

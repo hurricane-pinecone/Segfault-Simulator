@@ -23,7 +23,9 @@
 const PI: f32 = 3.14159265;
 
 struct VertexOut {
-  @builtin(position) clip: vec4f,
+  // Invariant: grass's ground (meshGrass.wgsl's vs_ground) is the same mesh
+  // drawn again over it, and must land on exactly the same depth.
+  @builtin(position) @invariant clip: vec4f,
   @location(0) worldPosition: vec3f,
   @location(1) normal: vec3f,
   @location(2) vertexColor: vec3f,
@@ -35,6 +37,11 @@ struct VertexOut {
   // dripLineWetness()), found per vertex, as they're thin and drawn over each
   // other (others: x below 0, found at each point).
   @location(7) rain: vec2f,
+  // Light it gives off on top of its material's emission (an instance's:
+  // MeshInstance::emission; others zero).
+  @location(8) emission: vec3f,
+  // Its instance's dithered fade (MeshInstance::emission.w; see SurfaceIn).
+  @location(9) fade: f32,
 }
 
 // A physical sky's (see skyCommon.wgsl and sky.wgsl): its reflections, sharp
@@ -57,8 +64,13 @@ struct VertexOut {
 // the sun's shadow casters (and the opaque things in view that don't cast:
 // the ground), so whatever has something drawn above it is
 // sheltered from the rain. Read only while frame.rainMap.w is 1 (else a 1x1
-// stand-in).
+// stand-in). Compared through shadowSampler only: OpenGL reads a depth
+// texture no other way.
 @group(0) @binding(12) var rainMap: texture_depth_2d;
+// The same map's heights: the world Z of the top of what's drawn at each
+// texel, as its bits (0 where nothing is: see fs_rainMap in meshShadow.wgsl),
+// read texel by texel.
+@group(0) @binding(13) var rainHeights: texture_2d<u32>;
 
 // Where a world XY is on rain's overhead map (uv; outside 0..1: off it).
 fn rainMapUv(p: vec2f) -> vec2f {
@@ -73,12 +85,12 @@ fn rainSurfaceHeight(p: vec2f) -> f32 {
   if (frame.rainMap.w < 0.5 || any(uv <= vec2f(0.0)) || any(uv >= vec2f(1.0))) {
     return -1e9;
   }
-  let size = vec2i(textureDimensions(rainMap));
-  let depth = textureLoad(rainMap, clamp(vec2i(uv * vec2f(size)), vec2i(0), size - vec2i(1)), 0);
-  if (depth >= 1.0) {
+  let size = vec2i(textureDimensions(rainHeights));
+  let bits = textureLoad(rainHeights, clamp(vec2i(uv * vec2f(size)), vec2i(0), size - vec2i(1)), 0).r;
+  if (bits == 0u) {
     return -1e9;
   }
-  return frame.rainDepth.x - depth * frame.rainDepth.y;
+  return bitcast<f32>(bits);
 }
 
 // How open to the rain a point is (0: sheltered, under a roof or a tree; 1:
@@ -317,7 +329,9 @@ struct PointLight {
   positionRadius: vec4f, // xyz world position, w reach
   colorIntensity: vec4f, // rgb tint, w intensity
   shadow: vec4f,         // x its shadow map's layer (-1: none), y 1 / its face size,
-                         // z how big it is (its source's radius)
+                         // z how big it is (its source's radius), w a spot's
+                         // 1 / (cos inner - cos outer) (0: not a spot)
+  spot: vec4f,           // a spot's: xyz its axis, w the cosine of its outer angle
 }
 
 @group(0) @binding(3) var<storage, read> pointLights: array<PointLight>;
@@ -418,9 +432,20 @@ fn pointLighting(pixel: vec2f, worldPosition: vec3f, normal: vec3f, geometryNorm
       continue;
     }
 
-    let reach = clamp(1.0 - dist / radius, 0.0, 1.0);
-    let attenuation = reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0);
     let direction = toLight / max(dist, 1e-4);
+    // A spot lights only its cone, fading out between its inner and outer
+    // angles (a point light's w is 0: all round).
+    var cone = 1.0;
+    if (light.shadow.w > 0.0) {
+      cone = clamp((dot(-direction, light.spot.xyz) - light.spot.w) * light.shadow.w, 0.0, 1.0);
+      if (cone <= 0.0) {
+        continue;
+      }
+      cone = cone * cone * (3.0 - 2.0 * cone);
+    }
+
+    let reach = clamp(1.0 - dist / radius, 0.0, 1.0);
+    let attenuation = reach * reach * reach * (reach * (reach * 6.0 - 15.0) + 10.0) * cone;
     let ndotl = max(dot(normal, direction), 0.0);
     let diffuse = mix(0.12, 1.0, pow(ndotl, 0.8));
     let strength = light.colorIntensity.w * attenuation * pointShadow(light, worldPosition, geometryNormal);
@@ -612,16 +637,31 @@ fn lightningLighting(worldPosition: vec3f, normal: vec3f, geometryNormal: vec3f,
 // sun's light they leave) take only the sun's, as its shadow maps and the
 // clouds' shadows do.
 fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f, albedo: vec3f,
-                 metallic: f32, roughness: f32, alpha: f32, occlusion: f32, contact: f32) -> LitOut {
+                 metallic: f32, roughness: f32, alpha: f32, occlusion: f32, contact: f32, found: Found) -> Lit {
   let toSun = frame.sunDirection.xyz;
   let toView = normalize(frame.cameraPosition.xyz - in.worldPosition);
-  let visibility = sunVisibility(in.worldPosition, geometryNormal) * contact * cloudShadowAt(in.worldPosition);
+  var clouds = found.clouds;
+  if (clouds < 0.0) {
+    clouds = cloudShadowAt(in.worldPosition);
+  }
+  let visibility = sunAt(in.worldPosition, geometryNormal, found) * contact * clouds;
   let sun = frame.sunLight.rgb * frame.sunBalance.rgb;
   let ambient = frame.ambientBalance.rgb;
   let f0 = mix(vec3f(0.04), albedo, metallic);
 
-  let direct = sun * (max(dot(normal, toSun), 0.0) * visibility);
-  let skyLight = skyIrradianceAt(normal) * ambient * occlusion;
+  // (A translucent surface's light wraps round past its edge: a leafy crown
+  // with normals bent out from its middle is lit softly all over.)
+  let wrap = clamp(s.translucency, 0.0, 1.0) * 0.5;
+  let facing = max((dot(normal, toSun) + wrap) / (1.0 + wrap), 0.0);
+  let direct = sun * (facing * visibility) + sun * (translucentLight(s, normal, toView) * visibility);
+  // A translucent surface (a leaf) lets the sky's light through from behind
+  // too, and screen-space occlusion overstates how shut in it is (the gaps
+  // between leaf cards read as creases): a crown seen from below isn't black.
+  let open = mix(occlusion, 1.0, clamp(s.translucency, 0.0, 1.0) * 0.5);
+  var skyLight = skyIrradianceAt(normal) * ambient * open;
+  if (s.translucency > 0.0) {
+    skyLight += skyIrradianceAt(-normal) * ambient * (open * s.translucency * 0.8);
+  }
 
   // Point lights and emission are as bright as they are, lit for eyes
   // adapted to the night: by day those eyes see them dimmer (x lamp), and
@@ -649,18 +689,7 @@ fn shadePhysical(in: VertexOut, s: Surface, normal: vec3f, geometryNormal: vec3f
 
   let lightColor = albedo * (1.0 - metallic) * diffuse + reflection + glint +
                    max(s.emission, vec3f(0.0)) * (in.tint.rgb * lamp);
-  let haze = hazeAt(in.worldPosition);
-  var color = mix(lightColor, hazeSky(in.worldPosition), haze);
-  var clearness = 1.0 - haze;
-  if (frame.fogLight.z > 0.5) {
-    let fogged = fogAt(in.worldPosition);
-    color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), fogged);
-    clearness *= 1.0 - fogged;
-  }
-  let veiled = rainVeilAt(in.worldPosition);
-  color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), veiled);
-  clearness *= 1.0 - veiled;
-  return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * clearness, alpha));
+  return Lit(lightColor, alpha, s.bloom);
 }
 
 // The colour of height fog toward `away` (from the camera): under a physical
@@ -677,11 +706,34 @@ fn fogColor(away: vec3f) -> vec3f {
          lightningGlowAt(frame.cameraPosition.xyz + away * 0.5) * 0.3;
 }
 
+// How much of the sun's light a translucent surface (a leaf) lets through to
+// the eye from behind, as a share of what lighting it head-on gives: diffused
+// through it where the sun is behind its face (wrapped round past its edge, as
+// a crown's bent normals are soft), and brightest looking toward the sun
+// through it.
+fn translucentLight(s: Surface, normal: vec3f, toView: vec3f) -> f32 {
+  if (s.translucency <= 0.0) {
+    return 0.0;
+  }
+  let toSun = frame.sunDirection.xyz;
+  let behind = clamp((dot(-normal, toSun) + 0.35) / 1.35, 0.0, 1.0);
+  let towardSun = pow(clamp(dot(-toView, toSun), 0.0, 1.0), 6.0);
+  return s.translucency * (0.45 * behind + 1.6 * towardSun);
+}
+
 // The lit colour, and the light of it that blooms: the same, x the
 // material's Bloom (post.wgsl's prefilter reads it).
 struct LitOut {
   @location(0) color: vec4f,
   @location(1) glow: vec4f,
+}
+
+// A point's light, before the air between it and the camera: its colour,
+// alpha and the material's Bloom.
+struct Lit {
+  color: vec3f,
+  alpha: f32,
+  bloom: f32,
 }
 
 // How hazed a point is (see HazeSettings), 0 to its strength.
@@ -690,24 +742,85 @@ fn hazeAt(worldPosition: vec3f) -> f32 {
   return frame.haze.x * (1.0 - exp2(-away * away));
 }
 
+// What the air between the camera and a point does to its light: rgb the
+// light it adds, w how much of the point's own gets through. Into the haze,
+// toward the sky (the horizon's, under a physical sky); into height fog (in
+// haze's place, when it's on); and behind rain's veil.
+fn airAt(worldPosition: vec3f) -> vec4f {
+  let haze = hazeAt(worldPosition);
+  var sky = frame.sky.rgb;
+  if (frame.skyMode.x > 0.5) {
+    sky = hazeSky(worldPosition);
+  }
+  var added = sky * haze;
+  var through = 1.0 - haze;
+  let veiled = rainVeilAt(worldPosition);
+  if (frame.fogLight.z > 0.5 || veiled > 0.0) {
+    let fog = fogColor(worldPosition - frame.cameraPosition.xyz);
+    if (frame.fogLight.z > 0.5) {
+      let fogged = fogAt(worldPosition);
+      added = mix(added, fog, fogged);
+      through *= 1.0 - fogged;
+    }
+    added = mix(added, fog, veiled);
+    through *= 1.0 - veiled;
+  }
+  return vec4f(added, through);
+}
+
+// A point's light seen through the air (airAt()), and the light of it that
+// blooms (glowing less, the more it's hidden).
+fn seenThrough(lit: Lit, air: vec4f) -> LitOut {
+  return LitOut(vec4f(lit.color * air.w + air.rgb, lit.alpha),
+                vec4f(lit.color * (max(lit.bloom, 0.0) * air.w), lit.alpha));
+}
+
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> LitOut {
   // A back face (drawn only for a double-sided material) is lit as seen.
+  // (Unless the surface's normals mean the same from either side.)
   var seen = in;
-  seen.normal = select(-in.normal, in.normal, front);
+  seen.normal = select(-in.normal, in.normal, front || !surfaceFlipsBackFaces());
   return shade(seen);
 }
 
 // A surface lit, as the lit pass's fragment stage (others build on it, as
 // grass's ground does).
 fn shade(in: VertexOut) -> LitOut {
+  return shadeSeen(in, Found(airAt(in.worldPosition), -1.0, -1.0));
+}
+
+// What a point's light takes that was found elsewhere (grass's blades find
+// some at their vertices, see meshGrass.wgsl): what the air does (airAt()),
+// the share of the sun's light the clouds let through (cloudShadowAt()) and
+// its shadows do (sunVisibility()); each below 0 (w for the air): found at
+// the point.
+struct Found {
+  air: vec4f,
+  clouds: f32,
+  sun: f32,
+}
+
+// The sun's visibility at a point, as `found` has it, or found here.
+fn sunAt(worldPosition: vec3f, geometryNormal: vec3f, found: Found) -> f32 {
+  if (found.sun >= 0.0) {
+    return found.sun;
+  }
+  return sunVisibility(worldPosition, geometryNormal);
+}
+
+// The same (shade()), with what was `found` elsewhere.
+fn shadeSeen(in: VertexOut, found: Found) -> LitOut {
   // The surface first, where control flow is still uniform (it may sample
   // textures).
-  let geometryNormal = normalize(in.normal);
-  var here = surfaceInput(in.uv, in.worldPosition, geometryNormal, in.vertexColor);
+  var here = surfaceInput(in.uv, in.worldPosition, normalize(in.normal), in.vertexColor);
   here.grass = in.grass;
   here.grassData = in.grassData;
-  let s = surface(here);
+  here.fade = in.fade;
+  here.pixel = in.clip.xy;
+  var s = surface(here);
+  s.emission += in.emission; // the instance's own (a lamp switched on)
+  let geometryNormal = here.normal;
   // The surface's (tangent-space) normal, along the point's tangent frame.
   let bumped = normalize(here.tangent * s.normal.x + here.bitangent * s.normal.y + geometryNormal * s.normal.z);
 
@@ -719,6 +832,10 @@ fn shade(in: VertexOut) -> LitOut {
       discard;
     }
     alpha = in.tint.a; // what's left is solid
+  }
+  var air = found.air;
+  if (air.w < 0.0) {
+    air = airAt(in.worldPosition);
   }
 
   let metallic = clamp(s.metallic, 0.0, 1.0);
@@ -751,8 +868,9 @@ fn shade(in: VertexOut) -> LitOut {
   let occlusion = screen.x * (1.0 - shut);
   let sunShut = 1.0 - shut * 0.5;
   if (frame.skyMode.x > 0.5) {
-    return shadePhysical(in, s, normal, geometryNormal, albedo, metallic, roughness, alpha, occlusion,
-                         screen.y * sunShut);
+    return seenThrough(shadePhysical(in, s, normal, geometryNormal, albedo, metallic, roughness, alpha,
+                                     occlusion, screen.y * sunShut, found),
+                       air);
   }
 
   let toSun = frame.sunDirection.xyz;
@@ -776,8 +894,12 @@ fn shade(in: VertexOut) -> LitOut {
 
   // Cast shadows keep ambient but lose the direct sun.
   // The shadow lookup follows the mesh's own surface, not its bumps.
-  let visibility = sunVisibility(in.worldPosition, geometryNormal) * sunShut;
+  let visibility = sunAt(in.worldPosition, geometryNormal, found) * sunShut;
   lit = mix(shadedLevel, lit, visibility);
+
+  // Light through a translucent surface from behind (leaves).
+  let toEye = normalize(frame.cameraPosition.xyz - in.worldPosition);
+  lit += translucentLight(s, normal, toEye) * diffuseStrength * visibility;
 
   var sunlight = max(vec3f(lit) * frame.sunColor.rgb, vec3f(0.03));
   // A visual style re-balances the light: the sun's own share (what shadow
@@ -822,19 +944,5 @@ fn shade(in: VertexOut) -> LitOut {
 
   // Emission is light of its own: unaffected by the scene's.
   let lightColor = albedo * (1.0 - metallic) * total + reflection + glint + max(s.emission, vec3f(0.0)) * in.tint.rgb;
-  // Into the haze, toward the sky (glowing less, the more it's hidden).
-  let haze = hazeAt(in.worldPosition);
-  var color = mix(lightColor, frame.sky.rgb, haze);
-  var clearness = 1.0 - haze;
-  // Into height fog (in haze's place, when it's on).
-  if (frame.fogLight.z > 0.5) {
-    let fogged = fogAt(in.worldPosition);
-    color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), fogged);
-    clearness *= 1.0 - fogged;
-  }
-  // Behind rain's veil.
-  let veiled = rainVeilAt(in.worldPosition);
-  color = mix(color, fogColor(in.worldPosition - frame.cameraPosition.xyz), veiled);
-  clearness *= 1.0 - veiled;
-  return LitOut(vec4f(color, alpha), vec4f(lightColor * max(s.bloom, 0.0) * clearness, alpha));
+  return seenThrough(Lit(lightColor, alpha, s.bloom), air);
 }

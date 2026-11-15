@@ -4,13 +4,16 @@
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
+#include "scene/entityLabel.h"
 #include "scene/prefabs.h"
 #include "widgets/theme.h"
 #include "widgets/widgets.h"
 
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/components/nameComponent.h"
+#include "engine/core/components/pointLightComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
+#include "engine/core/util/string.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 
@@ -28,24 +31,6 @@ namespace
 {
 // Drag and drop payload: the dragged entity's id.
 using assetDrop::kEntityPayload;
-
-std::string displayName(const sfs::Entity& entity)
-{
-  if (entity.hasComponent<sfs::NameComponent>())
-  {
-    const std::string& name = entity.getComponent<sfs::NameComponent>().name;
-    if (!name.empty())
-      return name;
-  }
-  return "Entity " + std::to_string(entity.getId());
-}
-
-std::string lowercase(std::string text)
-{
-  for (char& c : text)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  return text;
-}
 
 // A prefab dragged from the Assets panel, if that's the drag; else empty.
 std::string draggedPrefab(const EditorContext& context)
@@ -106,19 +91,17 @@ void HierarchyPanel::drawContents(EditorContext& context)
 
   m_lastRows = std::move(m_rows);
   m_rows.clear();
-  const std::vector<sfs::Entity> entities = context.scene->entities();
   if (m_filter.empty())
   {
-    const sfs::hierarchy::EntityTree tree(entities);
-    for (const sfs::Entity& root : tree.roots())
-      drawTree(context, tree, root);
+    for (const sfs::Entity& root : context.scene->roots())
+      drawTree(context, root);
   }
   else
   {
     // Matches anywhere in the tree, as a flat list.
-    const std::string filter = lowercase(m_filter);
-    for (const sfs::Entity& entity : entities)
-      if (lowercase(displayName(entity)).find(filter) != std::string::npos)
+    const std::string filter = toLower(m_filter);
+    for (const sfs::Entity& entity : context.scene->entities())
+      if (toLower(entityLabel(entity)).find(filter) != std::string::npos)
         drawRow(context, entity, false);
   }
 
@@ -128,21 +111,18 @@ void HierarchyPanel::drawContents(EditorContext& context)
   applyPendingEdit(context);
 }
 
-void HierarchyPanel::drawTree(EditorContext& context,
-                              const sfs::hierarchy::EntityTree& tree,
-                              const sfs::Entity& entity)
+void HierarchyPanel::drawTree(EditorContext& context, const sfs::Entity& entity)
 {
-  const std::vector<sfs::Entity>& children = tree.children(entity);
-  if (!drawRow(context, entity, !children.empty()))
+  if (!drawRow(context, entity, sfs::hierarchy::hasChildren(entity)))
     return;
-  for (const sfs::Entity& child : children)
-    drawTree(context, tree, child);
+  for (const sfs::Entity& child : sfs::hierarchy::childrenOf(entity))
+    drawTree(context, child);
   ImGui::TreePop();
 }
 
 bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, bool hasChildren)
 {
-  const std::string name = displayName(entity);
+  const std::string name = entityLabel(entity);
   m_rows.push_back(entity);
   // The one selected (clicked last), and whether it's among several.
   const bool selected = context.hasSelection() && context.selection == entity;
@@ -185,7 +165,24 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
   const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
   const bool rowHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
   const ImGuiIO& io = ImGui::GetIO();
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen() && (io.KeyCtrl || io.KeyShift))
+  // A row is selected when the mouse is released on it, not pressed, as in
+  // Unity: a drag from it (into a reference slot, onto another row) leaves
+  // the selection as it is. A press on its arrow only opens it.
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+  {
+    m_pressToggled = ImGui::IsItemToggledOpen();
+    m_pressDouble = !m_pressToggled && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+    if (m_pressDouble)
+    {
+      // Frames it, and opens (or closes) it to show what's inside.
+      m_slowClick = UINT32_MAX;
+      context.focusRequest = entity;
+      if (hasChildren)
+        ImGui::TreeNodeSetOpen(ImGui::GetItemID(), !open);
+    }
+  }
+  const bool clicked = !m_pressToggled && widgets::itemReleasedWithoutDrag();
+  if (clicked && (io.KeyCtrl || io.KeyShift))
   {
     // Ctrl: add it to the selection or take it out; Shift: every row from
     // the one selected to it.
@@ -214,21 +211,13 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
     m_shownSelection = context.hasSelection() ? context.selection.getId() : UINT32_MAX;
     m_slowClick = UINT32_MAX;
   }
-  else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
+  else if (clicked)
   {
     const bool wasOnlySelected = selected && context.selected().size() == 1;
     context.selection = entity;
     context.selectionGroup.clear();
     m_shownSelection = entity.getId(); // picked here: already in view
-    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-    {
-      // Frames it, and opens (or closes) it to show what's inside.
-      m_slowClick = UINT32_MAX;
-      context.focusRequest = entity;
-      if (hasChildren)
-        ImGui::TreeNodeSetOpen(ImGui::GetItemID(), !open);
-    }
-    else if (wasOnlySelected && !renaming)
+    if (wasOnlySelected && !renaming && !m_pressDouble)
     {
       // A click on the selected row's name renames it, once it's clearly not
       // the start of a double-click.
@@ -308,7 +297,8 @@ bool HierarchyPanel::drawRow(EditorContext& context, const sfs::Entity& entity, 
 void HierarchyPanel::startRename(const sfs::Entity& entity)
 {
   m_renaming = entity.getId();
-  m_renameText = entity.hasComponent<sfs::NameComponent>() ? entity.getComponent<sfs::NameComponent>().name : "";
+  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
+  m_renameText = name ? name->name : "";
   m_renameFocus = true;
 }
 
@@ -343,9 +333,9 @@ void HierarchyPanel::drawRenameBox(EditorContext& context, const sfs::Entity& en
 void HierarchyPanel::finishRename(EditorContext& context, const sfs::Entity& entity)
 {
   m_renaming = UINT32_MAX;
-  const std::string current =
-      entity.hasComponent<sfs::NameComponent>() ? entity.getComponent<sfs::NameComponent>().name : "";
-  if (m_renameText == current || !entity.isAlive())
+  const sfs::NameComponent* name = entity.getComponent<sfs::NameComponent>();
+  const std::string current = name ? name->name : "";
+  if (m_renameText == current || !entity.isValid())
     return;
   context.history->change(
       [&]
@@ -353,7 +343,7 @@ void HierarchyPanel::finishRename(EditorContext& context, const sfs::Entity& ent
         sfs::Entity named = entity;
         if (!named.hasComponent<sfs::NameComponent>())
           named.addComponent<sfs::NameComponent>();
-        named.getComponent<sfs::NameComponent>().name = m_renameText;
+        named.getComponent<sfs::NameComponent>()->name = m_renameText;
       });
 }
 
@@ -418,11 +408,11 @@ void HierarchyPanel::applyPendingEdit(EditorContext& context)
   const PendingEdit edit = std::exchange(m_pending, {});
   if (edit.kind == PendingEdit::Kind::Place)
   {
-    prefabs::place(context, edit.prefab, edit.parent.isValid() && edit.parent.isAlive() ? edit.parent : sfs::Entity());
+    prefabs::place(context, edit.prefab, edit.parent.isValid() ? edit.parent : sfs::Entity());
     m_shownSelection = UINT32_MAX; // reveal it
     return;
   }
-  if (!edit.entity.isValid() || !edit.entity.isAlive())
+  if (!edit.entity.isValid())
     return;
 
   switch (edit.kind)
@@ -458,7 +448,7 @@ void HierarchyPanel::applyPendingEdit(EditorContext& context)
             context.selectionGroup.clear();
           }
           for (const sfs::Entity& entity : doomed)
-            if (entity.isAlive())
+            if (entity.isValid())
               context.scene->destroyBranch(entity);
         });
     break;
@@ -518,6 +508,15 @@ void HierarchyPanel::drawCreateMenu(EditorContext& context, const sfs::Entity& p
   ImGui::Separator();
   if (ImGui::MenuItem("Point Light"))
     create([&] { return scene.createPointLight("Point Light"); });
+  if (ImGui::MenuItem("Spot Light"))
+    create(
+        [&]
+        {
+          sfs::Entity light = scene.createPointLight("Spot Light");
+          light.getComponent<sfs::PointLightComponent>()->spot = true;
+          return light;
+        });
+  ImGui::SetItemTooltip("Shines along its +x: turn it to aim it");
   if (ImGui::MenuItem("Camera"))
     create(
         [&]

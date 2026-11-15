@@ -569,6 +569,30 @@ SkyIrradiance PhysicalSky::irradiance(const glm::vec3& toSun,
   SkyIrradiance out;
   for (std::size_t k = 0; k < band.size(); ++k)
     out.coefficients[k] = light[k] * band[k];
+
+  // Under a closed deck by day, the light the ground reflects (the sun's
+  // through the cloud, and the sky's) is reflected back down by the cloud
+  // base (as much as the cloud doesn't let through), and again: a share of
+  // that series (the deck's lit unevenly) comes down as more diffuse light,
+  // so an overcast day isn't as gloomy as its clouds look. Not by night:
+  // cloudy nights stay dark.
+  const float closed = glm::smoothstep(0.8f, 0.88f, cover);
+  const float day = glm::smoothstep(-0.05f, 0.1f, sun.z);
+  if (closed * day > 0.0f)
+  {
+    auto luminance = [](const glm::vec3& c)
+    { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; };
+    const float reflected =
+        1.0f - 1.0f / (1.0f + 0.25f * cloudThickness(clouds));
+    const float bounced = 0.6f * m_settings.groundAlbedo * reflected;
+    const float sky = luminance(out.at(glm::vec3(0.0f, 0.0f, 1.0f)));
+    const float direct =
+        luminance(sunLight(sun)) * std::max(sun.z, 0.0f) * clearSky(cover);
+    const float extra = (sky + direct) * bounced / (1.0f - bounced);
+    const float scale = 1.0f + closed * day * extra / std::max(sky, 1e-6f);
+    for (glm::vec3& coefficient : out.coefficients)
+      coefficient *= scale;
+  }
   return out;
 }
 

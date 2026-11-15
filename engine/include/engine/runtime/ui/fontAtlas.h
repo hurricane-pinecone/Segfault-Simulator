@@ -50,6 +50,7 @@ public:
   std::size_t faceCount() const { return m_faces.size(); }
 
   float lineHeight(const std::string& font, float pixels) override;
+  /** A line's width: kept from frame to frame (the lines measured lately). */
   float
   width(const std::string& font, float pixels, std::string_view line) override;
   void draw(const std::string& font,
@@ -58,6 +59,11 @@ public:
             glm::vec2 at,
             glm::vec4 color,
             std::vector<UiQuad>& out) override;
+  uint64_t generation() const override { return m_generation; }
+  void keep(const UiTexture* texture) override;
+
+  /** The widths kept, at most, in each of the two generations of them. */
+  static constexpr std::size_t kMostWidths = 4096;
 
 private:
   struct Glyph
@@ -86,6 +92,12 @@ private:
   std::map<std::pair<std::string, int>, std::unique_ptr<Face>> m_faces;
   bool m_initialised = false;
   uint64_t m_frame = 0;
+  // Counted up when a face's texture grows or a face is let go (quads drawn
+  // from it before are wrong).
+  uint64_t m_generation = 1;
+  // Lines' widths by face and text: those measured since the newer filled,
+  // and before (the older, let go as the newer fills again).
+  std::unordered_map<uint64_t, float> m_widths, m_olderWidths;
 };
 
 /** The codepoints of UTF-8 text, one at a time (bad bytes come out as U+FFFD).

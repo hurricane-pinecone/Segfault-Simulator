@@ -1,5 +1,6 @@
 #include "../testHarness.h"
 
+#include <engine/core/animation/animation.h>
 #include <engine/core/logger/logger.h>
 #include <engine/core/rendering/materialGraphCompiler.h>
 #include <engine/core/rendering/meshPrimitives.h>
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <span>
 #include <string>
@@ -338,6 +340,79 @@ int main()
       harness.draw(handle);
       harness.renderer.destroyMaterial(handle);
     }
+    CHECK(reportErrors());
+  }
+
+  TEST("draws in a row sharing a mesh or a material should each draw with "
+       "their own")
+  {
+    // Two meshes alike but for their buffers, and two glowing materials:
+    // drawn mesh A red, A green, B green, B red, one to a quarter of the
+    // view, so each draw shares its mesh or its material with the last.
+    const auto glowing = [&](glm::vec3 color)
+    {
+      graph::Graph g;
+      const graph::NodeId out = g.add(std::string(graph::kOutputType), {});
+      g.find(out)->inputs[graph::kBaseColor] = glm::vec4(0.0f);
+      g.find(out)->inputs[graph::kEmission] = glm::vec4(color, 1.0f);
+      return harness.renderer.createMaterial(
+          graphMaterial(g, AlphaMode::Opaque));
+    };
+    const MaterialHandle red = glowing({0.8f, 0.0f, 0.0f});
+    const MaterialHandle green = glowing({0.0f, 0.8f, 0.0f});
+    const MeshHandle a =
+        harness.renderer.createMesh(meshes::plane({1.0f, 1.0f}));
+    const MeshHandle b =
+        harness.renderer.createMesh(meshes::plane({1.0f, 1.0f}));
+    const auto at = [](float x, float y)
+    {
+      MeshInstance instance;
+      instance.model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));
+      return instance;
+    };
+    const MeshInstance topRight = at(0.5f, 0.5f);
+    const MeshInstance bottomLeft = at(-0.5f, -0.5f);
+    const MeshInstance bottomRight = at(0.5f, -0.5f);
+    const MaterialHandle redOnly[] = {red};
+    const MaterialHandle greenOnly[] = {green};
+    MeshBatch more[3];
+    more[0].mesh = a;
+    more[0].materials = greenOnly;
+    more[0].instances = {&topRight, 1};
+    more[1].mesh = b;
+    more[1].materials = greenOnly;
+    more[1].instances = {&bottomLeft, 1};
+    more[2].mesh = b;
+    more[2].materials = redOnly;
+    more[2].instances = {&bottomRight, 1};
+    const std::vector<uint8_t> pixels = drawPlane(
+        harness,
+        a,
+        red,
+        0.0f,
+        [](FrameParams& frame) { frame.bloom.enabled = false; },
+        at(-0.5f, 0.5f),
+        more);
+    // A pixel's red and green, the target RGBA or BGRA.
+    const auto colorAt = [&](int x, int y)
+    {
+      const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+      return glm::ivec2(std::max(pixels[i], pixels[i + 2]), pixels[i + 1]);
+    };
+    const auto isRed = [](glm::ivec2 c) { return c.x > c.y + 60; };
+    const auto isGreen = [](glm::ivec2 c) { return c.y > c.x + 60; };
+    CHECK(pixels.size() == std::size_t(kSize.x) * kSize.y * 4);
+    if (pixels.size() == std::size_t(kSize.x) * kSize.y * 4)
+    {
+      CHECK(isRed(colorAt(16, 16)));
+      CHECK(isGreen(colorAt(48, 16)));
+      CHECK(isGreen(colorAt(16, 48)));
+      CHECK(isRed(colorAt(48, 48)));
+    }
+    harness.renderer.destroyMesh(a);
+    harness.renderer.destroyMesh(b);
+    harness.renderer.destroyMaterial(red);
+    harness.renderer.destroyMaterial(green);
     CHECK(reportErrors());
   }
 
@@ -1242,6 +1317,111 @@ int main()
     CHECK(reportErrors());
   }
 
+  TEST("grass hidden behind what's drawn opaque should be left out, the "
+       "picture just as it is with it all grown")
+  {
+    // A 20 x 20 lawn seen low down, all but its near end behind a wall, with
+    // ambient occlusion (whose depth shows what's hidden); drawn as ever,
+    // and by a renderer that grows hidden grass too (SFS_GRASS_UNCULLED).
+    const MeshData lawn = meshes::plane({20.0f, 20.0f});
+    std::vector<glm::vec3> positions;
+    for (const MeshVertex& vertex : lawn.vertices)
+      positions.push_back(vertex.position);
+    const GrassGround ground =
+        GrassGround::build(positions, lawn.indices, glm::mat4(1.0f));
+    MeshMaterial green;
+    green.baseColor = {0.3f, 0.7f, 0.2f, 1.0f};
+    MeshInstance wallAt;
+    wallAt.model = glm::translate(glm::mat4(1.0f), {0.0f, -2.0f, 0.0f});
+    const auto picture = [&](Harness& on)
+    {
+      const GrassHandle grass = on.renderer.createGrass(ground);
+      const MeshHandle plane = on.renderer.createMesh(lawn);
+      const MeshHandle wall =
+          on.renderer.createMesh(meshes::box({20.0f, 0.5f, 4.0f}));
+      const MaterialHandle look = on.renderer.createMaterial(green);
+      const MaterialHandle looks[] = {look};
+      MeshBatch wallBatch;
+      wallBatch.mesh = wall;
+      wallBatch.materials = looks;
+      wallBatch.instances = {&wallAt, 1};
+      const GrassBatch batch{grass,
+                             look,
+                             plane,
+                             glm::mat4(1.0f),
+                             {.density = 100.0f, .height = 0.3f},
+                             0.0f,
+                             40.0f};
+      std::vector<uint8_t> pixels;
+      // (A few frames, as a game would draw them.)
+      for (int drawn = 0; drawn < 3; ++drawn)
+        pixels = drawPlane(
+            on,
+            plane,
+            look,
+            1.0f,
+            [&](FrameParams& frame)
+            {
+              frame.cameraPosition = {0.0f, -12.0f, 1.0f};
+              frame.cameraForward =
+                  glm::normalize(glm::vec3(0.0f, 10.0f, -0.6f));
+              frame.view = glm::lookAt(frame.cameraPosition,
+                                       glm::vec3(0.0f, -2.0f, 0.4f),
+                                       glm::vec3(0.0f, 0.0f, 1.0f));
+              frame.projection = glm::perspectiveRH_ZO(0.9f, 1.0f, 0.1f, 50.0f);
+              frame.viewProjection = frame.projection * frame.view;
+              frame.nearPlane = 0.1f;
+              frame.farPlane = 50.0f;
+              frame.bloom.enabled = false;
+              frame.ambientOcclusion.enabled = true;
+            },
+            {},
+            {&wallBatch, 1},
+            {&batch, 1});
+      on.renderer.destroyGrass(grass);
+      on.renderer.destroyMaterial(look);
+      return pixels;
+    };
+    const std::vector<uint8_t> culled = picture(harness);
+    const auto setUnculled = [](bool on)
+    {
+#ifdef _WIN32
+      _putenv_s("SFS_GRASS_UNCULLED", on ? "1" : "");
+#else
+      if (on)
+        setenv("SFS_GRASS_UNCULLED", "1", 1);
+      else
+        unsetenv("SFS_GRASS_UNCULLED");
+#endif
+    };
+    setUnculled(true);
+    Harness all(context);
+    const bool made = all.initialize();
+    setUnculled(false);
+    CHECK(made);
+    const std::vector<uint8_t> grown = made ? picture(all) : culled;
+    CHECK(!culled.empty() && culled.size() == grown.size());
+    if (!culled.empty() && culled.size() == grown.size())
+    {
+      // Grass in front of the wall (low in the view, green), and the same
+      // picture, but for the odd pixel where blades level with each other
+      // were drawn in another order.
+      const uint8_t* front =
+          &culled[(std::size_t(kSize.y - 4) * kSize.x + kSize.x / 2) * 4];
+      CHECK(front[1] > front[0] + 20);
+      std::size_t differ = 0;
+      for (std::size_t i = 0; i < culled.size(); i += 4)
+        for (std::size_t c = 0; c < 3; ++c)
+          if (std::abs(int(culled[i + c]) - int(grown[i + c])) > 8)
+          {
+            ++differ;
+            break;
+          }
+      CHECK(differ * 200 < culled.size() / 4);
+    }
+    CHECK(reportErrors());
+  }
+
   TEST("a grass material should see its maps' data, on the blades and the "
        "ground")
   {
@@ -2116,6 +2296,81 @@ int main()
     CHECK(reportErrors());
   }
 
+  TEST("rain should wet the open ground and not the ground under a roof, and "
+       "its overhead map, streaks, splashes and drips should build")
+  {
+    // A roof over the plane's left half, above the camera (out of view): on
+    // rain's overhead map, but not in the picture.
+    const MeshHandle roof =
+        harness.renderer.createMesh(meshes::box({1.2f, 3.0f, 0.2f}));
+    MeshInstance roofAt;
+    roofAt.model =
+        glm::translate(glm::mat4(1.0f), glm::vec3(-0.6f, 0.0f, 6.0f));
+    const MeshInstance roofs[] = {roofAt};
+    const MaterialHandle materials[] = {matteMaterial};
+    MeshBatch roofBatch;
+    roofBatch.mesh = roof;
+    roofBatch.materials = materials;
+    roofBatch.instances = roofs;
+    roofBatch.shadowInstances = roofs;
+    const MeshBatch batches[] = {roofBatch};
+    const auto draw = [&](float rain, float wetness)
+    {
+      return drawPlane(
+          harness,
+          skyPlane,
+          matteMaterial,
+          1.0f,
+          [&](FrameParams& frame)
+          {
+            frame.bloom.enabled = false;
+            frame.lighting.ambient = 1.0f;
+            // The sun straight down, its shadow map well below the roof.
+            frame.lighting.sun.direction = {0.0f, 0.0f, 1.0f};
+            frame.shadows.enabled = true;
+            frame.lightViewProjection =
+                glm::orthoRH_ZO(-5.0f, 5.0f, -5.0f, 5.0f, 0.1f, 4.0f) *
+                glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f),
+                            glm::vec3(0.0f),
+                            glm::vec3(0.0f, 1.0f, 0.0f));
+            frame.weather.rain = rain;
+            frame.weather.wetness = wetness;
+          },
+          {},
+          batches);
+    };
+    // A column's median green (drips may fall across a few of its pixels).
+    const auto column = [&](const std::vector<uint8_t>& pixels, int x)
+    {
+      std::vector<int> greens;
+      for (int y = 8; y < kSize.y - 8; ++y)
+        greens.push_back(pixelAt(pixels, x, y).g);
+      std::nth_element(
+          greens.begin(), greens.begin() + greens.size() / 2, greens.end());
+      return greens[greens.size() / 2];
+    };
+    const std::vector<uint8_t> dry = draw(0.0f, 0.0f);
+    const std::vector<uint8_t> wet = draw(0.0f, 1.0f);
+    // Under the roof (x -0.5) and in the open (x 0.6).
+    const int shelteredDry = column(dry, 16);
+    const int shelteredWet = column(wet, 16);
+    const int openDry = column(dry, 51);
+    const int openWet = column(wet, 51);
+    CHECK(openDry > 40);
+    CHECK(std::abs(shelteredWet - shelteredDry) <= 3);
+    CHECK(openWet < openDry - 10);
+    if (!(std::abs(shelteredWet - shelteredDry) <= 3 && openWet < openDry - 10))
+      std::printf("    (sheltered %d -> %d, open %d -> %d)\n",
+                  shelteredDry,
+                  shelteredWet,
+                  openDry,
+                  openWet);
+    // A downpour: every part of the rain drawn.
+    CHECK(!draw(1.0f, 1.0f).empty());
+    harness.renderer.destroyMesh(roof);
+    CHECK(reportErrors());
+  }
+
   TEST("a terrain material should blend its layers by its splat map, and show "
        "the map painted")
   {
@@ -2186,6 +2441,92 @@ int main()
       harness.renderer.destroyMaterial(material);
     }
     harness.renderer.destroyMesh(plane);
+    CHECK(reportErrors());
+  }
+
+  TEST("a skinned mesh should draw deformed by its pose, its copy's own")
+  {
+    const MeshHandle plane =
+        harness.renderer.createMesh(meshes::plane({2.0f, 2.0f}));
+    MeshMaterial black;
+    black.baseColor = {0.0f, 0.0f, 0.0f, 1.0f};
+    const MaterialHandle ground = harness.renderer.createMaterial(black);
+
+    // A white square 0.5 across over the middle, every vertex on one joint
+    // bound where the mesh is.
+    MeshData square = meshes::plane({0.5f, 0.5f});
+    for (MeshVertex& vertex : square.vertices)
+      vertex.position.z = 0.1f;
+    MeshMaterial white;
+    white.unlit = true;
+    square.sections = {
+        {0, static_cast<uint32_t>(square.indices.size()), white, ""}};
+    auto skin = std::make_shared<MeshSkin>();
+    skin->joints = {"bone"};
+    skin->inverseBind = {glm::mat4(1.0f)};
+    square.skinWeights.resize(square.vertices.size());
+    for (SkinWeights& weights : square.skinWeights)
+      weights.weights = {1.0f, 0.0f, 0.0f, 0.0f};
+    computeJointBounds(*skin, square.vertices, square.skinWeights);
+    square.skin = skin;
+    const MeshHandle base = harness.renderer.createMesh(square);
+    const MeshHandle copy = harness.renderer.createSkinnedMesh(base);
+    CHECK(base.valid());
+    CHECK(copy.valid());
+    // Only a skinned mesh has copies.
+    CHECK(!harness.renderer.createSkinnedMesh(plane).valid());
+
+    const auto draw = [&]
+    {
+      const MeshInstance instance;
+      MeshBatch batch;
+      batch.mesh = copy;
+      batch.instances = {&instance, 1};
+      return drawPlane(harness,
+                       plane,
+                       ground,
+                       0.0f,
+                       [](FrameParams& frame) { frame.bloom.enabled = false; },
+                       {},
+                       {&batch, 1});
+    };
+    const auto bright = [](const std::vector<uint8_t>& pixels, int x, int y)
+    {
+      const std::size_t i = (std::size_t(y) * kSize.x + x) * 4;
+      return pixels[i] + pixels[i + 1] + pixels[i + 2];
+    };
+
+    // As bound until posed: in the middle.
+    const std::vector<uint8_t> bound = draw();
+    CHECK(!bound.empty());
+    // Posed: its joint half a unit along +x (a quarter of the view), the
+    // square with it. (+x is to the right in this top-down view.)
+    const glm::mat4 moved =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, 0.0f, 0.0f));
+    Aabb posedBounds =
+        skinnedBounds(*skin, std::span<const glm::mat4>(&moved, 1));
+    harness.renderer.setSkinPose(copy, {&moved, 1}, posedBounds);
+    const std::vector<uint8_t> posed = draw();
+    CHECK(!posed.empty());
+    if (!bound.empty() && !posed.empty())
+    {
+      const int middle = kSize.x / 2;
+      const int right = kSize.x / 2 + kSize.x / 4;
+      CHECK(bright(bound, middle, kSize.y / 2) > 300);
+      CHECK(bright(bound, right + 4, kSize.y / 2) < 100);
+      CHECK(bright(posed, right, kSize.y / 2) > 300);
+      CHECK(bright(posed, middle - 6, kSize.y / 2) < 100);
+      if (bright(posed, right, kSize.y / 2) <= 300)
+        std::printf("    (posed: middle %d, right %d)\n",
+                    bright(posed, middle, kSize.y / 2),
+                    bright(posed, right, kSize.y / 2));
+    }
+    // The original is still as bound, and its copy goes with it.
+    harness.renderer.destroyMesh(base);
+    CHECK(!harness.renderer.hasMesh(copy));
+    harness.renderer.destroyMesh(copy); // ignored: already gone
+    harness.renderer.destroyMesh(plane);
+    harness.renderer.destroyMaterial(ground);
     CHECK(reportErrors());
   }
 

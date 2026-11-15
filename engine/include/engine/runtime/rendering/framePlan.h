@@ -125,11 +125,15 @@ struct FrameUniforms
   glm::vec4 lightningHigh;
   glm::vec4 lightningLight;
   glm::vec4 lightningGlow;
+  // What the camera looks at (xyz: FrameParams::cameraTarget), w how far
+  // round the line of sight to it things that clear the view (see
+  // MeshMaterial::fadeNearCamera) fade away (0: none).
+  glm::vec4 cameraTarget;
 };
 static_assert(sizeof(FrameUniforms) == 64 * 2 + 16 * 13 +
                                            64 * (2 + kMaxShadowCascades) +
                                            16 * (2 * kMaxShadowCascades + 4 +
-                                                 9 + 1 + 3 + 3 + 4 + 4 + 6),
+                                                 9 + 1 + 3 + 3 + 4 + 4 + 7),
               "FrameUniforms must match the WGSL Frame layout");
 
 /**
@@ -191,7 +195,9 @@ struct GpuPointLight
 {
   glm::vec4 positionRadius;
   glm::vec4 colorIntensity;
-  glm::vec4 shadow; // its cube's layer (-1: none), 1 / its face size, its size
+  glm::vec4 shadow; // its cube's layer (-1: none), 1 / its face size, its
+                    // size, a spot's 1 / (cos inner - cos outer) (0: none)
+  glm::vec4 spot;   // a spot's axis, cos of its outer angle
 };
 
 /** `ShadowFace` in meshPointShadow.wgsl. */
@@ -213,6 +219,26 @@ struct GrassUniforms
   glm::mat4 model;
   glm::mat4 normalMatrix;
   glm::mat4 inverseModel;
+  glm::vec4 vertexSun; // where blades start finding the sun's shadow at their
+                       // vertices, over how far (see meshGrass.wgsl), 0, 0
+  // Its ground past the maps (grassFarGround()): how much its terrain's
+  // first layer is meadow, 1 with a terrain, where the blades start thinning
+  // out to none (world units), 0; and how much each of the terrain's splat
+  // map's channels' layers is.
+  glm::vec4 far{0.0f};
+  glm::vec4 farMeadow{0.0f};
+  // The ground's deformation (its terrain's, DeformationModule), which blades
+  // stand on, pressed in, over its patch: 1 if it's deformed, a texel (m),
+  // the window's size (texels), 0; the window's valid part (its corner and
+  // size, world); the patch's centre, half its size and the band it hands
+  // over in (see meshTerrainSurface.wgsl).
+  glm::vec4 deform{0.0f};
+  glm::vec4 deformWindow{0.0f};
+  glm::vec4 deformPatch{0.0f};
+  // Its vigour (GrassVigourSettings, see grassVigourUniforms()).
+  glm::vec4 vigour{0.0f, 1.0f, 1.0f, 1.0f};
+  glm::vec4 vigourRect{0.0f};
+  glm::vec4 vigourDetail{0.0f, 8.0f, 0.0f, 0.5f};
 };
 
 /** `Grow` in meshGrassGrow.wgsl. */
@@ -227,11 +253,30 @@ struct GrassGrowUniforms
   glm::vec4 maps;      // the maps' grid min, 1 / its size
   glm::vec4 shape;     // height, variation, width, finest cell
   glm::vec4 reach;     // each lattice's
-  glm::vec4 detail;    // 5 segments to, 2 to, casting shadows to (0: none)
+  glm::vec4 detail;    // 4 segments to, 2 to, casting shadows to (0: none),
+                       // counting (1)
+  glm::vec4 thinning;  // all kept to, how fast fewer past it, fewer still
+                       // from (none at the draw distance), 1 (0: the old
+                       // way, by lattice)
   glm::uvec4 capacity; // each list's, and the shadow casters'
   std::array<glm::ivec4, 4> lattices; // first cell, count
+  // Grown from tiles kept built (GrassTileCache): the tiles to build, where
+  // those drawn from start, how many of those, and their chunks.
+  glm::uvec4 tiles;
+  // Tiles hidden (behind what's drawn opaque) left out: the view, where it's
+  // from and which way it looks (the camera's own, not grass's), and the
+  // farthest depths over the screen's blocks: their finest level's size
+  // (texels) and how many levels (0: none, nothing's left out).
+  glm::mat4 viewProjection{1.0f};
+  glm::vec4 eye{0.0f};
+  glm::vec4 forward{0.0f};
+  glm::vec4 hidden{0.0f};
+  // Its vigour, as GrassUniforms'.
+  glm::vec4 vigour{0.0f, 1.0f, 1.0f, 1.0f};
+  glm::vec4 vigourRect{0.0f};
+  glm::vec4 vigourDetail{0.0f, 8.0f, 0.0f, 0.5f};
 };
-static_assert(sizeof(GrassGrowUniforms) == 416,
+static_assert(sizeof(GrassGrowUniforms) == 608,
               "GrassGrowUniforms must match meshGrassGrow.wgsl's Grow");
 
 /** A grown blade (meshGrassGrow.wgsl's `GrownBlade`), in bytes. */
@@ -244,7 +289,8 @@ struct UiInstance
   glm::vec4 uv;
   glm::vec4 color;
   glm::vec4 borderColor;
-  glm::vec4 shape; // radius, softness, border, kind
+  glm::vec4 shape; // radius, softness, border, kind (+8: nearest texels)
+  glm::vec4 clip;  // left, top, right, bottom: drawn only inside
 };
 
 /**
@@ -274,7 +320,8 @@ static_assert(sizeof(OcclusionUniforms) == 64 * 2 + 16 * 7,
 struct FocusUniforms
 {
   glm::vec4 depth; // projection[2][2], projection[3][2], perspective (1/0)
-  glm::vec4 focus; // distance, half the sharp range, blur radius (texels)
+  glm::vec4 focus; // distance, half the sharp range, blur radius (texels),
+                   // the lens's hyperfocal distance (0: none)
   glm::vec4 texel; // a half-size texel (uv)
 };
 
@@ -302,11 +349,21 @@ struct MaterialUniforms
   glm::vec4 baseColor;
   glm::vec4 params;      // normal scale, metallic, roughness, alpha cutoff
   glm::vec4 uvTransform; // tiling xy, offset zw
-  glm::uvec4 mode;       // x: AlphaMode, y: unlit
+  glm::uvec4 mode;       // x: AlphaMode, y: unlit, z: fadeNearCamera's bits
 };
 
 /** A standard-surface material's uniforms. */
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material);
+
+/** `Material` in meshFoliageSurface.wgsl: the standard's, and its foliage. */
+struct FoliageUniforms
+{
+  MaterialUniforms standard;
+  glm::vec4 foliage; // translucency, bend, sway, flutter
+};
+
+/** A foliage-surface material's uniforms (see FoliageSettings). */
+FoliageUniforms foliageMaterialUniforms(const MeshMaterial& material);
 
 /** `Terrain` in meshTerrainSurface.wgsl: a terrain material's parameters. */
 struct TerrainUniforms
@@ -402,10 +459,14 @@ public:
     std::vector<Draw> draws;
   };
 
-  /** UI quads sharing a texture (null: none, white), drawn in one call. */
+  /**
+   * UI quads sharing their textures, drawn in one call: glyphs' and images'
+   * (null: none, white).
+   */
   struct UiBatch
   {
-    const UiTexture* texture = nullptr;
+    const UiTexture* glyphs = nullptr;
+    const UiTexture* image = nullptr;
     uint32_t first = 0;
     uint32_t count = 0;
   };
@@ -556,6 +617,10 @@ private:
   };
   std::vector<CasterBatch> m_casterBatches;
   std::vector<MeshInstance> m_casters;
+  // Scratch for the cascades' casters: each sun shadow caster's bounding
+  // sphere in the world, xyz its centre and w its radius, in shadowDraws()
+  // order.
+  std::vector<glm::vec4> m_casterSpheres;
   std::vector<ShadowedLight> m_shadowedLights;
   std::vector<GrassBatch> m_grassDraws;
   std::vector<UiQuad> m_uiQuads;
@@ -579,7 +644,22 @@ struct GrassFieldState
   glm::vec4 trampleBounds{0.0f, 0.0f, 1.0f, 1.0f}; // min xy, 1 / size
   std::array<uint32_t, 3> capacity{0, 0, 0};       // blades a list
   uint32_t shadowCapacity = 0; // blades that can cast the sun's shadow
+  // Its vigour field's world min, 1 / its world size (zw 0: none).
+  glm::vec4 vigourRect{0.0f};
 };
+
+/**
+ * A grass field's vigour (GrassVigourSettings) as its shaders take it, over
+ * its field's place (GrassFieldState::vigourRect): x scale, y bias, z the
+ * least length, w the least density; then the field's place; then x how much
+ * detail noise, y its size, z 1 if it drives Data 0, w the field past it.
+ * Off: vigour 1 everywhere (scale 0, bias 1).
+ */
+void grassVigourUniforms(const GrassVigourSettings& settings,
+                         glm::vec4 rect,
+                         glm::vec4& vigour,
+                         glm::vec4& vigourRect,
+                         glm::vec4& vigourDetail);
 
 /** How a grass field grows and draws this frame (see planGrass). */
 struct GrassPlan
@@ -605,12 +685,44 @@ struct GrassPlan
  */
 float grassShadowReach(const GrassBatch& batch, const FrameParams& frame);
 
+/**
+ * The share of a grass field's blades kept at `distance` from the camera, as
+ * its grow pass keeps them (`grassKept` in meshGrassGrow.wgsl, by
+ * `uniforms.thinning` and the draw distance): 1 near the camera, falling
+ * smoothly with distance, to 0 at the draw distance. Each blade has its own
+ * rank, the same every frame (0..1, the coarser its lattice the lower), and
+ * is kept where it's below this: so the blades that are kept are always the
+ * same ones, wherever the camera is.
+ */
+float grassKeptShare(const GrassGrowUniforms& uniforms, float distance);
+
+/**
+ * Whether grass is thinned the old way (SFS_GRASS_LEGACY_THINNING set): each
+ * of its lattices reaching so far from the camera, its blades shrinking away
+ * at its end (for comparing).
+ */
+bool grassLegacyThinning();
+
 /** How many of the sun's nearest cascades grass casts its shadow into. */
 inline constexpr uint32_t kGrassShadowCascades = 2;
 /** The furthest grass casts the sun's shadow, with cascades. */
 inline constexpr float kGrassShadowMostReach = 32.0f;
 /** How far grass casts the sun's shadow with one shadow map. */
 inline constexpr float kGrassShadowOneMapReach = 8.0f;
+/**
+ * The lowest the sun (its direction's Z) can be for grass tiles that cast
+ * shadows to be left out when hidden (their shadows, falling up to about 6
+ * times their height away, allowed for).
+ */
+inline constexpr float kGrassLowestCulledSun = 0.16f;
+
+/**
+ * Where grass's ground carries on past its maps (meshGrass.wgsl's
+ * fs_ground; a big mesh's grass has them only in a window around the
+ * camera): over its terrain's (`terrain`, its ground's material) layers as
+ * much as each is `meadow`, out to the horizon; none without one.
+ */
+void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain);
 
 /**
  * Plan a grass field's frame: its draw's uniforms, and (if any blades are in

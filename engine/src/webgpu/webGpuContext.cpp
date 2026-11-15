@@ -138,7 +138,7 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
   desc.requiredLimits = &limits;
   // Enable GPU timestamp queries when the adapter supports them (benchmark
   // HUD).
-  WGPUFeatureName feats[2] = {WGPUFeatureName_TimestampQuery};
+  WGPUFeatureName feats[3] = {WGPUFeatureName_TimestampQuery};
   *hasTimestamps =
       wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery);
   *hasPassTimestamps = false;
@@ -159,6 +159,19 @@ WGPUDevice requestDeviceSync(WGPUAdapter adapter,
     }
 #endif
   }
+#ifndef __EMSCRIPTEN__
+  // Counting what grass's blades cost to draw (SFS_GRASS_STATS): how many
+  // vertices and fragments they shade, a native extension.
+  const auto statistics =
+      static_cast<WGPUFeatureName>(WGPUNativeFeature_PipelineStatisticsQuery);
+  if (std::getenv("SFS_GRASS_STATS") &&
+      wgpuAdapterHasFeature(adapter, statistics))
+  {
+    feats[desc.requiredFeatureCount] = statistics;
+    desc.requiredFeatureCount += 1;
+    desc.requiredFeatures = feats;
+  }
+#endif
   desc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const*,
                                                  WGPUErrorType type,
                                                  WGPUStringView message,
@@ -302,7 +315,25 @@ bool WebGpuContext::init(SDL_Window* window)
     if (caps.presentModes[i] == WGPUPresentMode_Immediate)
       m_unsynced = WGPUPresentMode_Immediate;
   }
-  m_present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
+  if (const char* forced = std::getenv("SFS_PRESENT_MODE"))
+  {
+    const std::string name = forced;
+    const WGPUPresentMode wanted = name == "immediate"
+                                       ? WGPUPresentMode_Immediate
+                                   : name == "mailbox" ? WGPUPresentMode_Mailbox
+                                   : name == "fifo"    ? WGPUPresentMode_Fifo
+                                                    : WGPUPresentMode_Undefined;
+    for (size_t i = 0; i < caps.presentModeCount; ++i)
+      if (wanted != WGPUPresentMode_Undefined && caps.presentModes[i] == wanted)
+        m_forcedPresent = wanted;
+    if (m_forcedPresent != WGPUPresentMode_Undefined)
+      LOG_INFO("Presenting with " + name + " (SFS_PRESENT_MODE)");
+    else
+      LOG_WARN("SFS_PRESENT_MODE=" + name +
+               ": not a present mode this window has (immediate, mailbox, "
+               "fifo); ignored");
+  }
+  m_present = mainPresentMode();
   wgpuSurfaceCapabilitiesFreeMembers(caps);
 
   return true;
@@ -320,12 +351,19 @@ void WebGpuContext::readLimits()
 void WebGpuContext::setVsync(bool vsync)
 {
   m_vsync = vsync;
-  const WGPUPresentMode present = m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
+  const WGPUPresentMode present = mainPresentMode();
   if (present == m_present)
     return;
   m_present = present;
   if (m_surface && m_width > 0 && m_height > 0)
     configure(m_width, m_height);
+}
+
+WGPUPresentMode WebGpuContext::mainPresentMode() const
+{
+  if (m_forcedPresent != WGPUPresentMode_Undefined)
+    return m_forcedPresent;
+  return m_vsync ? WGPUPresentMode_Fifo : m_unsynced;
 }
 
 bool WebGpuContext::deviceLost() const

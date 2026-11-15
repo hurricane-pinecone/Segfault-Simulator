@@ -3,10 +3,12 @@
 #include "engine/core/components/scriptComponent.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/game/gameObject.h"
 #include "engine/runtime/sceneManager/scene.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/cameraSystem.h"
+#include "engine/runtime/systems/navigationSystem.h"
 #include "engine/runtime/systems/physicsSystem2D.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
 
@@ -44,6 +46,13 @@ const ScriptType* ScriptRegistry::find(std::string_view name) const
 
 namespace
 {
+// The runtime's reflected types join the engine's as soon as it's loaded.
+[[maybe_unused]] const bool g_runtimeTypes = []
+{
+  reflect::registerEngineRuntimeTypes(reflect::types());
+  return true;
+}();
+
 // The engine's own optional systems, offered beside a game's: a scene that
 // wants one lists it by name, like a game system.
 void registerEngineSystems(ScriptRegistry& registry)
@@ -66,6 +75,11 @@ void registerEngineSystems(ScriptRegistry& registry)
                           .addSystem = [](Scene& scene) -> System& {
                             return scene.addSystem<PhysicsSystem3D>(&scene);
                           }});
+  registry.add(ScriptType{.name = "NavigationSystem",
+                          .module = "engine",
+                          .kind = ScriptType::Kind::System,
+                          .addSystem = [](Scene& scene) -> System&
+                          { return scene.addSystem<NavigationSystem>(); }});
 #endif
 }
 } // namespace
@@ -85,6 +99,10 @@ void startScripts(Scene& scene,
                   const std::vector<std::string>& systems,
                   MeshLibrary* meshes)
 {
+  // Playing now: animators move their joints, their time running.
+  if (AnimationSystem* animation = scene.tryGetSystem<AnimationSystem>())
+    animation->setLive(true);
+
   for (const std::string& name : systems)
   {
     const ScriptType* type = scripts().find(name);
@@ -106,28 +124,30 @@ void startObjects(Scene& scene,
   // Entities first, then attach: onCreate may create more entities.
   std::vector<Entity> scripted;
   for (const Entity& entity : entities)
-    if (entity.hasComponent<ScriptComponent>() &&
-        !entity.getComponent<ScriptComponent>().script.empty())
+    if (ScriptComponent* script = entity.getComponent<ScriptComponent>();
+        script && !script->script.empty())
       scripted.push_back(entity);
 
   for (const Entity& entity : scripted)
   {
     // An earlier onCreate may have destroyed it.
-    if (!entity.isAlive())
+    const ScriptComponent* component = entity.getComponent<ScriptComponent>();
+    if (!component)
       continue;
-    const ScriptComponent& component = entity.getComponent<ScriptComponent>();
-    const ScriptType* type = scripts().find(component.script);
+    const ScriptType* type = scripts().find(component->script);
     if (!type || type->kind != ScriptType::Kind::GameObject ||
         !type->createObject)
     {
-      LOG_ERROR("Play: no game object script named '" + component.script + "'");
+      LOG_ERROR("Play: no game object script named '" + component->script +
+                "'");
       continue;
     }
 
     std::unique_ptr<GameObject> object = type->createObject();
     // This entity's field values, from the editor, before onCreate sees them.
-    if (const reflect::TypeInfo* info = reflect::types().find(component.script))
-      serializer.loadObject(*info, object.get(), component.fields);
+    if (const reflect::TypeInfo* info =
+            reflect::types().find(component->script))
+      serializer.loadObject(*info, object.get(), component->fields);
     scene.adoptObject(std::move(object), entity);
   }
 }

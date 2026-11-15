@@ -6,7 +6,8 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> VertexOut {
   let model = instanceModel(instance);
   let world = model * vec4f(vertex.position, 1.0);
   let placed = surfaceVertex(SurfaceVertex(world.xyz, normalMatrix(model) * vertex.normal,
-                                            instanceUv(vertex, instance), 1.0));
+                                            instanceUv(vertex, instance), 1.0, vertex.color,
+                                            model[3].xyz));
 
   var out: VertexOut;
   out.clip = frame.viewProjection * vec4f(placed.position, 1.0);
@@ -18,5 +19,7 @@ fn vs_main(vertex: VertexIn, instance: InstanceIn) -> VertexOut {
   out.grass = vec4f(1.0, 0.0, 0.0, 0.0);
   out.grassData = vec4f(0.0);
   out.rain = vec2f(-1.0, 0.0);
+  out.emission = instance.emission.rgb;
+  out.fade = instance.emission.w;
   return out;
 }

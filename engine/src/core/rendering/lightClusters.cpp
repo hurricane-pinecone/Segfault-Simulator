@@ -68,11 +68,12 @@ void assignLights(const ClusterGrid& grid,
   std::vector<bool> placed(lights.size(), false);
   for (std::size_t i = 0; i < lights.size(); ++i)
   {
-    const PointLight& light = lights[i];
-    const float depth =
-        glm::dot(light.position - view.cameraPosition, view.forward);
-    if (depth + light.radius < grid.nearPlane ||
-        depth - light.radius > grid.farPlane)
+    // Its bounding sphere (a spot's, round its cone).
+    const glm::vec4 bounds = lightBounds(lights[i]);
+    const glm::vec3 position(bounds);
+    const float radius = bounds.w;
+    const float depth = glm::dot(position - view.cameraPosition, view.forward);
+    if (depth + radius < grid.nearPlane || depth - radius > grid.farPlane)
       continue;
 
     // On screen: the bounds of its box's corners; all of it if any corner is
@@ -82,11 +83,11 @@ void assignLights(const ClusterGrid& grid,
     glm::vec2 cornerLow(1e30f), cornerHigh(-1e30f);
     for (int corner = 0; corner < 8 && !behind; ++corner)
     {
-      const glm::vec3 offset((corner & 1) ? light.radius : -light.radius,
-                             (corner & 2) ? light.radius : -light.radius,
-                             (corner & 4) ? light.radius : -light.radius);
+      const glm::vec3 offset((corner & 1) ? radius : -radius,
+                             (corner & 2) ? radius : -radius,
+                             (corner & 4) ? radius : -radius);
       const glm::vec4 clip =
-          view.viewProjection * glm::vec4(light.position + offset, 1.0f);
+          view.viewProjection * glm::vec4(position + offset, 1.0f);
       if (clip.w <= 1e-4f)
       {
         behind = true;
@@ -108,8 +109,8 @@ void assignLights(const ClusterGrid& grid,
     }
     boxes[i] = {grid.tileOf(low),
                 grid.tileOf(high),
-                grid.sliceOf(depth - light.radius),
-                grid.sliceOf(depth + light.radius)};
+                grid.sliceOf(depth - radius),
+                grid.sliceOf(depth + radius)};
     placed[i] = true;
   }
 

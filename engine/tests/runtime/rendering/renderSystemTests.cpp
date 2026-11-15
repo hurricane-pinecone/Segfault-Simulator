@@ -3,7 +3,9 @@
 
 #include <engine/core/components/boxCollider3DComponent.h>
 #include <engine/core/components/cameraComponent.h>
+#include <engine/core/components/cameraFeedComponent.h>
 #include <engine/core/components/cameraFollowComponent.h>
+#include <engine/core/components/deformerComponent.h>
 #include <engine/core/components/grassBenderComponent.h>
 #include <engine/core/components/grassComponent.h>
 #include <engine/core/components/meshRendererComponent.h>
@@ -20,19 +22,24 @@
 #include <engine/runtime/rendering/framePlan.h>
 #include <engine/runtime/rendering/iRenderer.h>
 #include <engine/runtime/rendering/meshLibrary.h>
+#include <engine/runtime/rendering/modules/deformationModule.h>
 #include <engine/runtime/rendering/modules/grassModule.h>
 #include <engine/runtime/rendering/modules/meshModule.h>
 #include <engine/runtime/rendering/modules/uiModule.h>
 #include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/rendering/visualStyles.h>
 #include <engine/runtime/sceneManager/scene.h>
+#include <engine/runtime/systems/cameraSystem.h>
 #include <engine/runtime/ui/layer.h>
 
 #include "glm/glm/ext/matrix_clip_space.hpp"
 #include "glm/glm/ext/matrix_transform.hpp"
+#include "glm/glm/ext/quaternion_trigonometric.hpp"
+#include "glm/glm/ext/scalar_constants.hpp"
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 using namespace sfs;
@@ -120,6 +127,163 @@ int main()
     CHECK(h.system.stats().instances == 5u);
   }
 
+  TEST("modules' commands should draw whole every frame, built afresh or "
+       "kept")
+  {
+    // Built once and emitted again every frame (as a game's module that
+    // takes its draws only when they change does).
+    class Kept : public CommandModule<RenderContext, MeshDrawCommand>
+    {
+    public:
+      MeshHandle mesh;
+      void computeCommands(const RenderContext&) override
+      {
+        if (!m_commands.empty())
+          return;
+        MeshDrawCommand command{.mesh = mesh};
+        command.instances.resize(3);
+        command.instances[0].model =
+            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        m_commands.push_back(std::move(command));
+      }
+    };
+    Harness h;
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    const MeshHandle ball = h.system.meshes().add(meshes::sphere(0.5f, 8, 6));
+    for (int i = 0; i < 4; ++i)
+      h.spawn(box, {0.0f, static_cast<float>(i) - 2.0f, 0.0f});
+    h.system.withModule<Kept>().mesh = ball;
+
+    for (int frame = 0; frame < 3; ++frame)
+    {
+      h.frame();
+      CHECK(h.renderer.batches.size() == 2u);
+      std::size_t boxes = 0, balls = 0;
+      for (const MockRenderer::Batch& batch : h.renderer.batches)
+        (batch.mesh == box ? boxes : balls) += batch.instances;
+      CHECK(boxes == 4u);
+      CHECK(balls == 3u);
+      CHECK(h.renderer.drawn.size() == 7u);
+    }
+  }
+
+  TEST("each shadow cascade should get the casters whose bounds reach it, in "
+       "order")
+  {
+    // Cascade 0 sees x and y within 5 of the origin, cascade 1 within 20;
+    // casters' bounds are a unit sphere at their middle, scaled with them.
+    FrameParams frame;
+    frame.shadows.enabled = true;
+    frame.cascades.count = 2;
+    const auto cascade = [](float radius)
+    {
+      SunCascade c;
+      c.viewProjection =
+          glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.5f)) *
+          glm::scale(
+              glm::mat4(1.0f), glm::vec3(1.0f / radius, 1.0f / radius, 0.05f));
+      c.radius = radius;
+      c.depthRange = 20.0f;
+      return c;
+    };
+    frame.cascades.cascades[0] = cascade(5.0f);
+    frame.cascades.cascades[1] = cascade(20.0f);
+    const auto at = [](float x, float scale)
+    {
+      MeshInstance instance;
+      instance.model =
+          glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(x, 0.0f, 0.0f)),
+                     glm::vec3(scale));
+      return instance;
+    };
+    const MeshInstance casters[] = {
+        at(0.0f, 1.0f), at(8.0f, 1.0f), at(30.0f, 1.0f), at(6.5f, 2.0f)};
+    PlannedMesh planned;
+    planned.sections = 1;
+    planned.boundsRadius = 1.0f;
+
+    FramePlan plan;
+    plan.begin(frame);
+    MeshBatch batch;
+    batch.shadowInstances = casters;
+    plan.addMesh(batch, 1, planned, false);
+    plan.addMesh(batch, 2, planned, false); // its mesh gone by the finish
+    plan.finish({64, 64},
+                1024,
+                256,
+                [&](uint32_t slot) -> const PlannedMesh*
+                { return slot == 1 ? &planned : nullptr; });
+
+    // The x of each instance a cascade's draws draw, in order.
+    const auto drawnX = [&](std::size_t c)
+    {
+      std::vector<float> xs;
+      for (const FramePlan::Draw& draw : plan.cascadeDraws(c))
+      {
+        CHECK(draw.meshSlot == 1u);
+        for (uint32_t k = 0; k < draw.instanceCount; ++k)
+          xs.push_back(plan.instances()[draw.firstInstance + k].model[3].x);
+      }
+      return xs;
+    };
+    CHECK((drawnX(0) == std::vector<float>{0.0f, 6.5f}));
+    CHECK((drawnX(1) == std::vector<float>{0.0f, 8.0f, 6.5f}));
+    CHECK(plan.shadowDraws().size() == 2u);
+  }
+
+  TEST("deformers' meshes should press the ground, theirs and their "
+       "children's, in id order")
+  {
+    Harness h;
+    DeformationModule& deformation =
+        h.system.withModule<DeformationModule>(h.renderer);
+    MeshMaterial soil;
+    auto terrain = std::make_shared<TerrainMaterial>();
+    terrain->deformable = true;
+    soil.terrain = terrain;
+    h.system.meshes().setMaterial("soil", soil);
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    Entity ground = h.spawn(
+        h.system.meshes().add(meshes::plane({40.0f, 40.0f})), {0, 0, 0});
+    ground.getComponent<MeshRendererComponent>()->materials = {"soil"};
+    std::vector<std::pair<Entity::EntityId, Entity::EntityId>> pressed;
+    deformation.setContacts(
+        ground,
+        [&](const DeformationModule::Contact& contact) {
+          pressed.emplace_back(contact.deformer.getId(), contact.mesh.getId());
+        });
+
+    // Boxes (their base at their origin) sat a little into the ground,
+    // apart: a deformer covering its
+    // children and grandchildren, one of whose children has its own covering
+    // only itself, a disabled one, and a mesh with none.
+    const auto boxAt = [&](glm::vec3 at, const Entity& parent)
+    {
+      Entity e = h.spawn(box, at);
+      if (parent.isValid())
+        hierarchy::setParent(e, parent);
+      return e;
+    };
+    boxAt({0.0f, -8.0f, -0.05f}, {});
+    Entity root = boxAt({0.0f, 0.0f, -0.05f}, {});
+    root.addComponent<DeformerComponent>();
+    Entity child = boxAt({3.0f, 0.0f, 0.0f}, root);
+    Entity grandchild = boxAt({0.0f, 3.0f, 0.0f}, child);
+    Entity own = boxAt({-3.0f, 0.0f, 0.0f}, root);
+    own.addComponent<DeformerComponent>(DeformerComponent{.children = false});
+    boxAt({0.0f, -3.0f, 0.0f}, own);
+    Entity off = boxAt({8.0f, 8.0f, -0.05f}, {});
+    off.addComponent<DeformerComponent>(DeformerComponent{.enabled = false});
+
+    h.frame();
+    const std::vector<std::pair<Entity::EntityId, Entity::EntityId>> expected =
+        {{root.getId(), root.getId()},
+         {root.getId(), child.getId()},
+         {root.getId(), grandchild.getId()},
+         {own.getId(), own.getId()}};
+    CHECK((pressed == expected));
+  }
+
   TEST("different meshes should draw separately")
   {
     Harness h;
@@ -196,7 +360,7 @@ int main()
     Harness h;
     const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
     Entity e = h.spawn(box, {1.0f, 2.0f, 3.0f});
-    e.getComponent<MeshRendererComponent>().tint = {1.0f, 0.0f, 0.0f, 1.0f};
+    e.getComponent<MeshRendererComponent>()->tint = {1.0f, 0.0f, 0.0f, 1.0f};
 
     h.frame();
 
@@ -249,14 +413,140 @@ int main()
     CHECK(testing::approx(h.renderer.lights[0].position.z, 1.0f));
   }
 
+  TEST("a camera feed nothing shows should cost nothing; one shown should be "
+       "filmed with what it sees, at its rate")
+  {
+    Harness h;
+    h.system.setShadowSettings({.enabled = false});
+    const MeshHandle box = h.system.meshes().add(meshes::box({1, 1, 1}));
+    // Behind the scene's camera (at x ~ -16, facing +X), in front of the
+    // feed's: at x -40, looking back along -X (turned about Z).
+    h.spawn(box, {-60.0f, 0.0f, 0.0f});
+    Entity mount = h.scene.createEntity();
+    TransformComponent placed{glm::vec3(-40.0f, 0.0f, 1.0f)};
+    placed.rotation = glm::angleAxis(glm::pi<float>(), glm::vec3(0, 0, 1));
+    mount.addComponent<TransformComponent>(placed);
+    mount.addComponent<CameraFeedComponent>();
+    const std::shared_ptr<const RenderTexture> picture =
+        h.system.cameraFeed(mount);
+    CHECK(picture && picture->size() == glm::ivec2(320, 180) &&
+          picture->texture().gpu);
+    CHECK(h.system.cameraFeed(mount) == picture);
+
+    // Not shown: not filmed, nothing gathered for it.
+    h.frame();
+    CHECK(!h.renderer.feed && h.renderer.batches.empty());
+
+    // Shown: filmed, the box among what it sees (and not the scene's).
+    h.renderer.shown = {picture->texture().id};
+    h.frame();
+    CHECK(h.renderer.feed.has_value());
+    CHECK(h.renderer.feedInto == picture->texture().id);
+    CHECK(h.renderer.feed && h.renderer.feed->size == glm::ivec2(320, 180) &&
+          !h.renderer.feed->grassBlades);
+    CHECK(h.renderer.feed && glm::dot(h.renderer.feed->cameraForward,
+                                      glm::vec3(-1, 0, 0)) > 0.99f);
+    CHECK(h.renderer.batches.size() == 1u &&
+          h.renderer.batches[0].instances == 0u &&
+          h.renderer.batches[0].feedInstances == 1u);
+    // Straight after: not due yet (15 a second).
+    h.frame();
+    CHECK(!h.renderer.feed);
+    // Off: not filmed, however long it's been.
+    mount.getComponent<CameraFeedComponent>()->enabled = false;
+    h.frame();
+    CHECK(!h.renderer.feed);
+  }
+
+  TEST("a camera feed should have its picture after one update, with no "
+       "call, resized with it and not filmed while not shown")
+  {
+    Harness h;
+    Entity mount = h.scene.createEntity();
+    mount.addComponent<TransformComponent>();
+    mount.addComponent<CameraFeedComponent>();
+    auto* feed = mount.getComponent<CameraFeedComponent>();
+    CHECK(!feed->picture);
+    h.frame();
+    CHECK(feed->picture && feed->picture->size() == glm::ivec2(320, 180));
+    CHECK(!h.renderer.feed);
+    CHECK(h.system.cameraFeed(mount) == feed->picture);
+
+    const RenderTexture* made = feed->picture.get();
+    feed->width = 200;
+    feed->height = 100;
+    h.frame();
+    CHECK(feed->picture.get() == made);
+    CHECK(feed->picture->size() == glm::ivec2(200, 100));
+    CHECK(!h.renderer.feed);
+  }
+
+  TEST("a mesh renderer's bounds should appear after the update that sees its "
+       "mesh loaded, follow a changed mesh and stay empty for an unknown one")
+  {
+    Harness h;
+    MeshLibrary& meshes = h.system.meshes();
+    const MeshHandle small = meshes.add(meshes::box({1, 1, 1}));
+    const MeshHandle big = meshes.add(meshes::box({4, 2, 6}));
+    Entity entity = h.spawn(small, {0.0f, 0.0f, 0.0f});
+    auto* renderer = entity.getComponent<MeshRendererComponent>();
+    CHECK(renderer->bounds.empty());
+    h.frame();
+    CHECK(!renderer->bounds.empty() && renderer->boundsOf == small);
+    CHECK(testing::approx(renderer->bounds.extents().x, 0.5f, 1e-4f));
+
+    renderer->mesh = big;
+    CHECK(testing::approx(renderer->bounds.extents().x, 0.5f, 1e-4f));
+    h.frame();
+    CHECK(testing::approx(renderer->bounds.extents().x, 2.0f, 1e-4f));
+    CHECK(testing::approx(renderer->bounds.extents().z, 3.0f, 1e-4f));
+
+    renderer->mesh = MeshHandle{999}; // not from this library
+    h.frame();
+    CHECK(renderer->bounds.empty());
+    h.frame();
+    CHECK(renderer->bounds.empty());
+
+    renderer->mesh = big;
+    h.frame();
+    CHECK(testing::approx(renderer->bounds.extents().y, 1.0f, 1e-4f));
+  }
+
+  TEST("a mesh renderer's bounds should stay empty while its mesh loads, and "
+       "appear once it has")
+  {
+    Harness h;
+    MeshLibrary& meshes = h.system.meshes();
+    const MeshData box = meshes::box({2, 2, 2});
+    bool ready = false;
+    MeshLibrary::Provider provider;
+    provider.load = [](MeshLibrary& library, std::string_view name)
+    { return library.pending(name); };
+    provider.loaded = [&](std::string_view, bool& waiting) -> const MeshData*
+    {
+      waiting = !ready;
+      return ready ? &box : nullptr;
+    };
+    meshes.setProvider(provider);
+    Entity entity = h.spawn(meshes.resolve("asset:crate"), {0.0f, 0.0f, 0.0f});
+    const auto* renderer = entity.getComponent<MeshRendererComponent>();
+    h.frame();
+    CHECK(renderer->bounds.empty());
+    ready = true;
+    meshes.fulfilPending();
+    h.frame();
+    CHECK(testing::approx(renderer->bounds.extents().x, 1.0f, 1e-4f));
+  }
+
   TEST("the scene should render through its active camera entity")
   {
     Harness h;
     Entity off = h.scene.createEntity();
     off.addComponent<TransformComponent>(
         TransformComponent{{0.0f, 0.0f, 50.0f}});
-    off.addComponent<CameraComponent>().getComponent<CameraComponent>().active =
-        false;
+    off.addComponent<CameraComponent>()
+        .getComponent<CameraComponent>()
+        ->active = false;
 
     Entity rig = h.scene.createEntity();
     rig.addComponent<TransformComponent>(
@@ -298,16 +588,17 @@ int main()
     eye.addComponent<CameraComponent>(lens);
     CameraFollowComponent follow;
     follow.shakeMaxOffset = 1.0f;
-    follow.shake(1.0f, 1.0f);
-    follow.updateShake(0.1f);
     eye.addComponent<CameraFollowComponent>(follow);
+    CameraSystem::shake(eye, 1.0f, 1.0f);
+    auto* shaken = eye.getComponent<CameraFollowComponent>();
+    CameraSystem::advanceShake(*shaken, 0.1f);
 
     h.frame();
 
     const Camera& camera = h.system.camera();
     CHECK(testing::approx(camera.orthoHeight, 5.0f)); // twice as big
     // Shaken across the view: sideways is -Y here, up is +Z.
-    const glm::vec2 shake = follow.shakeOffset();
+    const glm::vec2 shake = shaken->shakeOffset;
     CHECK(std::abs(shake.x) > 0.0f || std::abs(shake.y) > 0.0f);
     CHECK(testing::approx(camera.target.x, 4.0f));
     CHECK(testing::approx(camera.target.y, -shake.x));
@@ -383,7 +674,7 @@ int main()
     h.system.meshes().setMaterial(
         "glow", glowMaterial(glm::vec3(4.0f, 2.0f, 0.0f)));
     Entity lamp = h.spawn(sphere, {2.0f, 3.0f, 0.0f});
-    lamp.getComponent<MeshRendererComponent>().materials = {"glow"};
+    lamp.getComponent<MeshRendererComponent>()->materials = {"glow"};
 
     h.frame();
 
@@ -400,13 +691,13 @@ int main()
     // Twice the size: four times the glowing area, so it reaches twice as far.
     const float radius =
         h.renderer.lights.empty() ? 0.0f : h.renderer.lights[0].radius;
-    lamp.getComponent<TransformComponent>().scale = glm::vec3(2.0f);
+    lamp.getComponent<TransformComponent>()->scale = glm::vec3(2.0f);
     h.frame();
     CHECK(h.renderer.lights.size() == 1u &&
           testing::approx(h.renderer.lights[0].radius, radius * 2.0f, 1e-2f));
 
     // Half see-through: half the light.
-    lamp.getComponent<MeshRendererComponent>().tint.a = 0.5f;
+    lamp.getComponent<MeshRendererComponent>()->tint.a = 0.5f;
     h.frame();
     CHECK(h.renderer.lights.size() == 1u &&
           testing::approx(h.renderer.lights[0].intensity, 2.0f, 1e-3f));
@@ -426,34 +717,34 @@ int main()
 
     h.spawn(sphere, {0.0f, 0.0f, 0.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"dark"};
+        ->materials = {"dark"};
     h.spawn(sphere, {0.0f, 2.0f, 0.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"standard"};
+        ->materials = {"standard"};
     Entity off = h.spawn(sphere, {0.0f, 4.0f, 0.0f});
-    off.getComponent<MeshRendererComponent>().materials = {"glow"};
-    off.getComponent<MeshRendererComponent>().emitsLight = false;
+    off.getComponent<MeshRendererComponent>()->materials = {"glow"};
+    off.getComponent<MeshRendererComponent>()->emitsLight = false;
     h.spawn(sphere, {0.0f, 6.0f, 0.0f}); // its own (standard) material
     h.frame();
     CHECK(h.renderer.lights.empty());
 
     Entity glowing = h.spawn(sphere, {0.0f, 8.0f, 0.0f});
-    glowing.getComponent<MeshRendererComponent>().materials = {"glow"};
+    glowing.getComponent<MeshRendererComponent>()->materials = {"glow"};
     h.frame();
     CHECK(h.renderer.lights.size() == 1u);
 
     // Its own strength and range: twice as bright, half as far.
     const PointLight normal =
         h.renderer.lights.empty() ? PointLight{} : h.renderer.lights[0];
-    auto& renderer = glowing.getComponent<MeshRendererComponent>();
-    renderer.lightStrength = 2.0f;
-    renderer.lightRange = 0.5f;
+    auto* renderer = glowing.getComponent<MeshRendererComponent>();
+    renderer->lightStrength = 2.0f;
+    renderer->lightRange = 0.5f;
     h.frame();
     CHECK(h.renderer.lights.size() == 1u &&
           testing::approx(
               h.renderer.lights[0].intensity, normal.intensity * 2.0f) &&
           testing::approx(h.renderer.lights[0].radius, normal.radius * 0.5f));
-    renderer.lightStrength = 0.0f;
+    renderer->lightStrength = 0.0f;
     h.frame();
     CHECK(h.renderer.lights.empty());
   }
@@ -491,7 +782,7 @@ int main()
                static_cast<float>(i / 20) * 3.0f,
                0.0f})
           .getComponent<MeshRendererComponent>()
-          .materials = {"glow"};
+          ->materials = {"glow"};
     h.frame();
     CHECK(h.renderer.lights.size() == 300u);
     bool eachAtOne = true;
@@ -520,10 +811,10 @@ int main()
     }
     h.spawn(sphere, {-5.0f, -5.0f, -5.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"where"};
+        ->materials = {"where"};
     h.spawn(sphere, {5.0f, 5.0f, 5.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"where"};
+        ->materials = {"where"};
     h.frame();
     CHECK(h.renderer.lights.size() == 1u &&
           h.renderer.lights[0].position.x > 4.0f);
@@ -546,7 +837,7 @@ int main()
       g.connect(add, 0, out, materialGraph::kEmission);
       h.system.meshes().setMaterial("pulse", graphMaterial(g));
     }
-    h.spawn(sphere, {}).getComponent<MeshRendererComponent>().materials = {
+    h.spawn(sphere, {}).getComponent<MeshRendererComponent>()->materials = {
         "pulse"};
     h.frame(); // time 0: sin 0 + 1 = 1
     CHECK(h.renderer.lights.size() == 1u &&
@@ -567,7 +858,7 @@ int main()
       g.connect(fresnel, 0, out, materialGraph::kEmission);
       rim.system.meshes().setMaterial("rim", graphMaterial(g));
     }
-    rim.spawn(ball, {}).getComponent<MeshRendererComponent>().materials = {
+    rim.spawn(ball, {}).getComponent<MeshRendererComponent>()->materials = {
         "rim"};
     rim.frame();
     CHECK(rim.renderer.lights.size() == 1u);
@@ -696,8 +987,8 @@ int main()
 
     // Denser, or moved: the same ground, drawn as it now is.
     const uint32_t first = h.renderer.liveGrass.begin()->first;
-    lawn.getComponent<GrassComponent>().density = 40.0f;
-    lawn.getComponent<TransformComponent>().position = {10.0f, 0.0f, 0.0f};
+    lawn.getComponent<GrassComponent>()->density = 40.0f;
+    lawn.getComponent<TransformComponent>()->position = {10.0f, 0.0f, 0.0f};
     h.frame();
     CHECK(h.renderer.liveGrass.size() == 1u &&
           h.renderer.liveGrass.begin()->first == first);
@@ -707,7 +998,7 @@ int main()
     CHECK(h.renderer.mapUpdates.size() == 1u); // nothing new
 
     // Scaled: built again (more texels), the old one freed.
-    lawn.getComponent<TransformComponent>().scale = {2.0f, 2.0f, 1.0f};
+    lawn.getComponent<TransformComponent>()->scale = {2.0f, 2.0f, 1.0f};
     h.frame();
     CHECK(h.renderer.liveGrass.size() == 1u &&
           h.renderer.liveGrass.begin()->first != first);
@@ -716,7 +1007,7 @@ int main()
     // Painted: its maps go up, all of them.
     GrassMaps bare(grassModule.ground(lawn)->grid());
     bare.fill(GrassMaps::Coverage, 0.0f);
-    lawn.getComponent<GrassComponent>().paint = bare.toJson();
+    lawn.getComponent<GrassComponent>()->paint = bare.toJson();
     h.frame();
     CHECK(!h.renderer.mapUpdates.empty() &&
           h.renderer.mapUpdates.back().grid == bare.grid() &&
@@ -742,11 +1033,13 @@ int main()
     CHECK(h.renderer.mapUpdates.size() == updates + 1);
     const auto& stamped = h.renderer.mapUpdates.back();
     const glm::ivec2 area = stamped.to - stamped.from;
-    CHECK(area.x > 0 && area.x <= 6 && area.y > 0 && area.y <= 6);
-    CHECK(lawn.getComponent<GrassComponent>().paint == bare.toJson());
+    // (Round it, the band where grass gives out: kGrassEdgeBand more a side.)
+    CHECK(area.x > 0 && area.x <= 6 + 2 * kGrassEdgeBand && area.y > 0 &&
+          area.y <= 6 + 2 * kGrassEdgeBand);
+    CHECK(lawn.getComponent<GrassComponent>()->paint == bare.toJson());
 
     // Painting over it starts the maps over from the paint: unpainted.
-    lawn.getComponent<GrassComponent>().paint = nlohmann::json::object();
+    lawn.getComponent<GrassComponent>()->paint = nlohmann::json::object();
     h.frame();
     CHECK(h.renderer.mapUpdates.back().grid.empty());
     CHECK(grassModule.sample(lawn, GrassMaps::Coverage, {10.0f, 0.0f, 0.0f}) ==
@@ -776,7 +1069,7 @@ int main()
     CHECK(!h.renderer.grassDrawn.empty() &&
           h.renderer.grassDrawn[0].castsShadows &&
           h.renderer.grassDrawn[0].selfShadow == 0.7f);
-    lawn.getComponent<GrassComponent>().castsShadows = false;
+    lawn.getComponent<GrassComponent>()->castsShadows = false;
     h.frame();
     CHECK(!h.renderer.grassDrawn.empty() &&
           !h.renderer.grassDrawn[0].castsShadows);
@@ -834,6 +1127,109 @@ int main()
     const std::optional<GrassPlan> unshadowed = planGrass(batch, field, frame);
     CHECK(unshadowed && unshadowed->grow.detail.z == 0.0f &&
           unshadowed->shadowCapacity == 0u);
+  }
+
+  TEST("grass should keep fewer blades farther away, smoothly, to none at its "
+       "draw distance")
+  {
+    GrassBatch batch;
+    batch.shape.density = 400.0f;
+    batch.drawDistance = 200.0f;
+    FrameParams frame;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 500.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid =
+        GrassGrid::over({-300.0f, -300.0f}, {300.0f, 300.0f}, 1.0f);
+    field.groundArea = 600.0f * 600.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan && plan->grows);
+    if (!plan || grassLegacyThinning())
+      break;
+    const GrassGrowUniforms& grow = plan->grow;
+    // All kept near the camera (out to 770 cells of 0.05), then fewer, with
+    // no step anywhere, and none at the draw distance.
+    CHECK(grow.thinning.w == 1.0f && std::abs(grow.thinning.x - 38.5f) < 0.01f);
+    CHECK(grassKeptShare(grow, 0.0f) == 1.0f);
+    CHECK(grassKeptShare(grow, 38.0f) == 1.0f);
+    float last = 1.0f;
+    for (float away = 38.5f; away <= 200.0f; away += 0.5f)
+    {
+      const float share = grassKeptShare(grow, away);
+      CHECK(share <= last);
+      CHECK(last - share < 0.05f);
+      last = share;
+    }
+    CHECK(grassKeptShare(grow, 200.0f) == 0.0f);
+    // Each lattice grown as far as any of its blades are kept, the coarsest
+    // to the draw distance.
+    for (int k = 0; k < 3; ++k)
+    {
+      CHECK(grow.reach[k] <= grow.reach[k + 1]);
+      const float lowest = std::pow(0.25f, static_cast<float>(k + 1));
+      CHECK(grassKeptShare(grow, grow.reach[k]) * 1.2f <= lowest * 1.001f);
+    }
+    CHECK(grow.reach[3] == 200.0f);
+
+    // Its tiles hidden behind what's drawn opaque can be left out: from the
+    // camera's own view, allowing for its blades' shadows (a blade's as long
+    // as it's tall with the sun at 45 degrees), unless the sun's too low.
+    CHECK(grow.viewProjection == frame.viewProjection);
+    CHECK(glm::vec3(grow.eye) == frame.cameraPosition);
+    frame.lighting.sun.direction = glm::vec3(1.0f, 0.0f, 1.0f);
+    const std::optional<GrassPlan> high = planGrass(batch, field, frame);
+    CHECK(high && std::abs(high->grow.forward.w - 1.0f) < 1e-4f);
+    frame.lighting.sun.direction = glm::vec3(1.0f, 0.0f, 0.1f);
+    const std::optional<GrassPlan> low = planGrass(batch, field, frame);
+    CHECK(low && low->grow.forward.w < 0.0f);
+  }
+
+  TEST("grass's ground should carry on past its maps over its terrain's "
+       "meadow layers, taking over as its blades thin out")
+  {
+    GrassBatch batch;
+    batch.shape.density = 400.0f;
+    batch.drawDistance = 120.0f;
+    FrameParams frame;
+    frame.viewProjection =
+        glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 500.0f) *
+        glm::lookAt(glm::vec3(0.0f, -5.0f, 2.0f),
+                    glm::vec3(0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f));
+    frame.cameraPosition = {0.0f, -5.0f, 2.0f};
+    GrassFieldState field;
+    field.groundGrid =
+        GrassGrid::over({-300.0f, -300.0f}, {300.0f, 300.0f}, 1.0f);
+    field.groundArea = 600.0f * 600.0f;
+    const std::optional<GrassPlan> plan = planGrass(batch, field, frame);
+    CHECK(plan.has_value());
+    if (!plan)
+      break;
+    // Where the blades start thinning out to none: the ground's look hands
+    // over to theirs from afar from there.
+    CHECK(plan->draw.far.z == plan->grow.thinning.z);
+    CHECK(plan->draw.far.z > 0.0f && plan->draw.far.z < 120.0f);
+
+    // Without a terrain, none past the maps.
+    GrassUniforms draw = plan->draw;
+    grassFarGround(draw, nullptr);
+    CHECK(draw.far.y == 0.0f && draw.far.x == 0.0f &&
+          draw.farMeadow == glm::vec4(0.0f));
+    // With one, as much as each of its splat map's channels' layers is
+    // meadow (a channel with no layer: the first's, as the terrain draws).
+    TerrainMaterial terrain;
+    terrain.layers.resize(3);
+    terrain.layers[0].meadow = 1.0f;
+    terrain.layers[1].meadow = 0.0f;
+    terrain.layers[2].meadow = 0.5f;
+    grassFarGround(draw, &terrain);
+    CHECK(draw.far.y == 1.0f && draw.far.x == 1.0f);
+    CHECK(draw.farMeadow == glm::vec4(0.0f, 0.5f, 1.0f, 1.0f));
+    CHECK(draw.far.z == plan->draw.far.z);
   }
 
   TEST("grass on a big mesh should grow in a window around the camera, built "
@@ -916,7 +1312,7 @@ int main()
     MeshMaterial ground;
     ground.terrain = terrain;
     h.system.meshes().setMaterial("ground", ground);
-    lawn.getComponent<MeshRendererComponent>().materials = {"ground"};
+    lawn.getComponent<MeshRendererComponent>()->materials = {"ground"};
 
     h.frame();
     CHECK(!h.renderer.mapUpdates.empty());
@@ -953,8 +1349,8 @@ int main()
           h.renderer.mapUpdates.back().grid.empty());
   }
 
-  TEST("rigid bodies and grass benders should flatten grass, unless they opt "
-       "out")
+  TEST("grass benders should flatten grass (fitted to their colliders, or a "
+       "radius); a rigid body without one never does")
   {
     Harness h;
     GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
@@ -963,22 +1359,25 @@ int main()
     Entity lawn = h.spawn(plane, {0.0f, 0.0f, 0.0f});
     lawn.addComponent<GrassComponent>(GrassComponent{.density = 30.0f});
 
-    // A ball resting at (-3, 0), a crate (box) at (3, 0), a ball that opts
-    // out at (0, 3), and a bender with no physics at (0, -3).
+    // Collider-fitted benders: a ball resting at (-3, 0), a crate (box) at
+    // (3, 0); a ball with no bender at (0, 3); and a bender with no physics
+    // at (0, -3).
     const MeshHandle ballMesh =
         h.system.meshes().add(meshes::sphere(0.5f, 12, 8));
     Entity ball = h.spawn(ballMesh, {-3.0f, 0.0f, 0.0f});
     ball.addComponent<RigidBody3DComponent>();
     ball.addComponent<SphereCollider3DComponent>(
         SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
+    ball.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.fitColliders = true});
     Entity crate = h.spawn(ballMesh, {3.0f, 0.0f, 0.0f});
     crate.addComponent<RigidBody3DComponent>();
     crate.addComponent<BoxCollider3DComponent>(
         BoxCollider3DComponent{{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.5f}});
+    crate.addComponent<GrassBenderComponent>(
+        GrassBenderComponent{.fitColliders = true});
     Entity aloof = h.spawn(ballMesh, {0.0f, 3.0f, 0.0f});
-    RigidBody3DComponent noBending;
-    noBending.bendsGrass = false;
-    aloof.addComponent<RigidBody3DComponent>(noBending);
+    aloof.addComponent<RigidBody3DComponent>();
     aloof.addComponent<SphereCollider3DComponent>(
         SphereCollider3DComponent{0.5f, {0.0f, 0.0f, 0.5f}});
     Entity walker = h.scene.createEntity();
@@ -998,7 +1397,7 @@ int main()
     CHECK(!h.renderer.trampleUpdates.empty());
 
     // The ball rolls away: where it was springs back over its recovery time.
-    ball.getComponent<TransformComponent>().position = {-3.0f, -3.0f, 5.0f};
+    ball.getComponent<TransformComponent>()->position = {-3.0f, -3.0f, 5.0f};
     h.scene.update(1.0);
     h.scene.render();
     const float rising = grassModule.flattened(lawn, {-3.0f, 0.0f});
@@ -1017,7 +1416,7 @@ int main()
     const MeshHandle wheelMesh =
         h.system.meshes().add(meshes::cylinder(0.2f, 0.3f, 12));
     Entity wheel = h.spawn(wheelMesh, {2.0f, 1.0f, 0.0f});
-    wheel.getComponent<TransformComponent>().scale = glm::vec3(1.5f);
+    wheel.getComponent<TransformComponent>()->scale = glm::vec3(1.5f);
     wheel.addComponent<GrassBenderComponent>();
     Entity unfitted = h.spawn(wheelMesh, {-2.0f, 0.0f, 0.0f});
     unfitted.addComponent<GrassBenderComponent>(
@@ -1126,16 +1525,27 @@ int main()
         meshes::box({1.0f, 1.0f, 1.0f}, glm::vec3(0.8f, 0.3f, 0.2f)),
         "test:crate");
     h.frame(); // the module learns the meshes
-    const UiTexture* icon = ui.image("test:crate", true);
-    CHECK(icon != nullptr);
-    if (icon)
+    const ui::SourceImage* icon = ui.image("test:crate", true);
+    CHECK(icon != nullptr && icon->texture != nullptr);
+    if (icon && icon->texture)
     {
-      CHECK(icon->size == glm::ivec2(128, 128));
-      // Drawn, on nothing: some pixels solid, the corners clear.
+      CHECK(icon->size() == glm::ivec2(128, 128));
+      // Drawn, on nothing, into its place on an atlas page: some pixels
+      // solid, its corner clear.
+      const UiTexture& page = *icon->texture;
+      const glm::ivec2 at(
+          glm::round(glm::vec2(icon->level[0].uv.x, icon->level[0].uv.y) *
+                     glm::vec2(page.size)));
+      const auto alpha = [&](int x, int y)
+      {
+        return page
+            .pixels[(std::size_t(at.y + y) * page.size.x + (at.x + x)) * 4 + 3];
+      };
       bool solid = false;
-      for (std::size_t i = 3; i < icon->pixels.size(); i += 4)
-        solid = solid || icon->pixels[i] > 200;
-      CHECK(solid && icon->pixels[3] == 0);
+      for (int y = 0; y < 128; ++y)
+        for (int x = 0; x < 128; ++x)
+          solid = solid || alpha(x, y) > 200;
+      CHECK(solid && alpha(0, 0) == 0);
       CHECK(ui.image("test:crate", true) == icon); // once
       // By handle (Image::mesh(MeshHandle)), the same picture.
       CHECK(ui.image("#" + std::to_string(crate.id), true) != nullptr);
@@ -1334,15 +1744,15 @@ int main()
     for (const float y : {0.0f, 2.0f})
       h.spawn(box, {0.0f, y, 0.0f})
           .getComponent<MeshRendererComponent>()
-          .materials = {"wood"};
+          ->materials = {"wood"};
     // A missing material, or an empty slot, is the mesh's own: batches with the
     // first.
     h.spawn(box, {0.0f, 4.0f, 0.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"missing"};
+        ->materials = {"missing"};
     h.spawn(box, {0.0f, 6.0f, 0.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {""};
+        ->materials = {""};
 
     h.frame();
     h.frame();
@@ -1530,8 +1940,11 @@ int main()
     CHECK(overcast.cloudBase.r > 0.0f);
     CHECK(overcast.cloudBase.r < overcast.cloudLight.r);
     CHECK(overcast.sunLight.r < clear.sunLight.r * 0.5f);
-    CHECK(overcast.irradiance.at({0, 0, 1}).b <
-          clear.irradiance.at({0, 0, 1}).b);
+    // The sky's light greyer (a cloud deck can be as bright overhead as a
+    // clear blue sky, but not as blue).
+    const glm::vec3 overcastSky = overcast.irradiance.at({0, 0, 1});
+    const glm::vec3 clearSky = clear.irradiance.at({0, 0, 1});
+    CHECK(overcastSky.b / overcastSky.r < clearSky.b / clearSky.r);
     CHECK(testing::approx(overcast.adaptation, clear.adaptation));
   }
 
@@ -1815,10 +2228,10 @@ int main()
     const MeshHandle box = library.add(meshes::box({1, 1, 1}));
     h.spawn(box, {0.0f, 0.0f, 0.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"turf"};
+        ->materials = {"turf"};
     h.spawn(box, {0.0f, 2.0f, 0.0f})
         .getComponent<MeshRendererComponent>()
-        .materials = {"stone"};
+        ->materials = {"stone"};
     GrassModule& grassModule = h.system.withModule<GrassModule>(h.renderer);
     (void)grassModule;
     const MeshHandle plane = library.add(meshes::plane({4.0f, 4.0f}));

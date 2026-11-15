@@ -1,9 +1,11 @@
 #include "engine/runtime/rendering/standardScene.h"
 
+#include "engine/core/components/cursorPickComponent.h"
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/core/reflection/reflection.h"
 #include "engine/core/rendering/meshPrimitives.h"
+#include "engine/runtime/animation/animationSystem.h"
 #include "engine/runtime/assetStore/assetStore.h"
 #include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/rendering/modules/decalModule.h"
@@ -14,11 +16,13 @@
 #include "engine/runtime/rendering/modules/puddleModule.h"
 #include "engine/runtime/rendering/modules/spriteModule.h"
 #include "engine/runtime/rendering/modules/uiModule.h"
+#include "engine/runtime/rendering/picking.h"
 #include "engine/runtime/rendering/renderSystem.h"
 #include "engine/runtime/scriptableObjects/scriptableObjects.h"
 #include "engine/runtime/scripting/scriptRegistry.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 #include "engine/runtime/systems/physicsSystem3D.h"
+#include "engine/runtime/systems/prefabSystem.h"
 
 namespace sfs
 {
@@ -81,20 +85,24 @@ bool StandardScene::play(const std::filesystem::path& file)
   return true;
 }
 
-Entity StandardScene::instantiate(std::string_view prefab, const Entity& parent)
-{
-  const Entity root = serializer().instantiate(prefab, *this, parent);
-  if (root.isValid())
-    startObjects(*this,
-                 hierarchy::EntityTree(entities()).subtree(root),
-                 &m_render->meshes());
-  return root;
-}
-
 void StandardScene::filterInput(Input& input)
 {
-  if (UiModule* ui = m_render ? m_render->module<UiModule>() : nullptr)
+  if (!m_render)
+    return;
+  if (UiModule* ui = m_render->module<UiModule>())
     ui->handleInput(input);
+  // What the cursor is over, for the camera that picks: after the UI has had
+  // the mouse, before any object sees the input.
+  if (CursorPickComponent* pick =
+          m_render->sceneCamera().getComponent<CursorPickComponent>())
+  {
+    const MouseInput& mouse = input.mouse();
+    pickUnderCursor(*this,
+                    m_render->meshes(),
+                    m_render->screenRay(mouse.getPosition()),
+                    mouse,
+                    *pick);
+  }
 }
 
 void StandardScene::onInit()
@@ -112,6 +120,10 @@ void StandardScene::onInit()
   auto& decals = m_render->withModule<DecalModule>(assetStore());
   m_render->withModule<ParticleModule>(assetStore()).enableStains(decals);
   m_render->withModule<UiModule>(*this);
+  // Animators pose their joints and skinned meshes (drawn by MeshModule).
+  addSystem<AnimationSystem>(m_render->meshes(), assetStore());
+  // Prefab copies made while the game runs (needs the render system's meshes).
+  addSystem<PrefabSystem>(*this);
 
   MeshLibrary& library = m_render->meshes();
   // Named, so scenes that use them save and load.

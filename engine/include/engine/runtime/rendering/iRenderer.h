@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/deformation.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/puddles.h"
@@ -9,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 
 namespace sfs
 {
@@ -53,6 +55,37 @@ public:
 
   /** Free a mesh. Unknown or invalid handles are ignored. */
   virtual void destroyMesh(MeshHandle mesh) = 0;
+
+  /**
+   * A copy of a skinned mesh (one made from MeshData with a skin) that
+   * deforms by its own pose (setSkinPose()): one per character drawing it.
+   * It draws like any mesh, with the original's sections and materials, in
+   * every pass; destroyMesh() frees it. Until it's posed it draws as bound
+   * (the original's vertices).
+   *
+   * @return its handle, or an invalid one if `mesh` isn't skinned or the
+   * backend can't skin (it then draws the original, undeformed)
+   */
+  virtual MeshHandle createSkinnedMesh(MeshHandle mesh)
+  {
+    (void)mesh;
+    return {};
+  }
+
+  /**
+   * A skinned copy's pose: its palette (a matrix a joint of its skin, see
+   * skinPalette()) and the bounds it has posed (its own space), shown from
+   * the next frame it's drawn in. Its vertices are deformed only in frames
+   * it's drawn in after a new pose.
+   */
+  virtual void setSkinPose(MeshHandle skinned,
+                           std::span<const glm::mat4> palette,
+                           const Aabb& bounds)
+  {
+    (void)skinned;
+    (void)palette;
+    (void)bounds;
+  }
 
   /**
    * Upload a material (and its textures) for objects to use in place of a
@@ -159,6 +192,15 @@ public:
   virtual void updateGrassTrample(GrassHandle grass,
                                   const GrassTrampleImage& image) = 0;
 
+  /**
+   * The field it grows by (GrassVigourField; empty: none), with its batch's
+   * GrassVigourSettings. A backend without it grows grass as its maps say.
+   */
+  virtual void updateGrassVigour(GrassHandle /*grass*/,
+                                 const GrassVigourImage& /*image*/)
+  {
+  }
+
   /** Free a grass field. Unknown or invalid handles are ignored. */
   virtual void destroyGrass(GrassHandle grass) = 0;
 
@@ -186,6 +228,41 @@ public:
    * field), back to front. Its textures must live until endFrame().
    */
   virtual void drawUi(const UiDrawList& list) = 0;
+
+  /**
+   * Queue debug lines (see DebugLines): each pair of vertices a line, drawn
+   * in the scene with what's opaque (hidden behind what's in front of it),
+   * a pixel wide, in its own colour (not lit, and kept as seen through the
+   * frame's exposure). All of a frame's in one draw. The span need only live
+   * until the call returns. A backend without them draws none.
+   */
+  virtual void drawLines(std::span<const DebugLineVertex> vertices)
+  {
+    (void)vertices;
+  }
+
+  /**
+   * Film a camera feed this frame: `view` drawn into `into` (a RenderTexture's,
+   * UiTexture::gpu) with the frame's light, shadows and sky, from the draws'
+   * feedInstances (MeshBatch) and the frame's grass. Between beginFrame() and
+   * the draws. A backend that can't draws nothing (the picture stays as it
+   * was).
+   */
+  virtual void beginFeed(const FeedView& view, const UiTexture& into)
+  {
+    (void)view;
+    (void)into;
+  }
+
+  /**
+   * Whether a UI drew from GPU-drawn texture `id` (UiTexture::gpu) in the
+   * last couple of frames: a camera feed's filmed only while it's shown.
+   */
+  virtual bool textureShown(uint32_t id) const
+  {
+    (void)id;
+    return false;
+  }
 
   /** Render everything queued since beginFrame(). */
   virtual void endFrame() = 0;

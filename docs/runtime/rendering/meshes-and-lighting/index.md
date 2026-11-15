@@ -110,10 +110,66 @@ onto visible ground.
 | `lightStrength` | How brightly its emission lights things (1: as bright as it glows) |
 | `lightRange` | How far its emission lights things (1: as far as that much glow reaches) |
 | `lightCastsShadows` | Whether things block its emission's light |
+| `emissionColor`, `emission` | A glow of its own, all over it, on top of its materials' emission (0: none; above 1 blooms). For a lamp switched on and off from a script, without a material for each state. It lights nothing round it: give the lamp a light for that. |
+
+### Mesh bounds
+
+A system that needs a mesh's size, or a box around an entity in the world,
+reads the renderer's `bounds` (Unity's `Renderer.localBounds`, Godot's
+`get_aabb()`): the mesh's bounds in its own space, which the render system
+fills in at the start of its update once the mesh is in its library.
+
+```cpp
+const auto* renderer = entity.getComponent<sfs::MeshRendererComponent>();
+if (!renderer || renderer->bounds.empty())
+  return; // none, or still loading: try again next frame
+const sfs::Aabb world = renderer->bounds.transformed(sfs::hierarchy::worldMatrix(entity));
+```
+
+They are empty until the mesh has loaded, and for a handle the library doesn't
+know. A mesh assigned during a frame gets its bounds at the next update (the
+render system updates first in a `StandardScene`), and a changed `mesh` gets
+new ones then. A skinned mesh's bounds are as bound, not as posed. `boundsOf`
+is the mesh they were taken from.
 
 Objects sharing a mesh and materials draw as one instanced batch. See-through
 things (glass materials, and objects with a faded tint) draw after everything
 solid, back to front, one at a time, so keep their numbers modest.
+
+### Levels of detail
+
+A `MeshLodComponent` beside the `MeshRendererComponent` draws simpler meshes in
+its mesh's place farther from the camera, and past them a billboard impostor,
+so a wood can reach the horizon as real trees:
+
+| Field | Meaning |
+| --- | --- |
+| `lod1`, `lod2`, `lod3` and their `...Distance` | The next levels' meshes and where each takes over (m from the camera to the entity's origin, x its largest scale axis). A level without a mesh is skipped |
+| `impostor`, `impostorDistance` | A quad drawn past every level, turned about the entity's up axis to face the camera |
+| `impostorFrames` | How many views round the model the impostor's textures hold, in a row |
+| `impostorShadows` | Whether far ones cast (as the last mesh level); off, they cast none |
+| `hysteresis` | How far past a level's ends the camera goes before it changes (no flicking back and forth on a boundary) |
+| `fadeSeconds` | How long a change of level cross-fades over (0: at once) |
+| `shadowLevel` | The level that casts the shadow while a finer one is drawn (a cheaper outline in the shadow map; 0: each its own) |
+| `cullDistance` | Past this, nothing (0: never) |
+
+A change of level cross-fades by dithering for `fadeSeconds` (0.3 s by default):
+the instance's fade (`MeshInstance::emission.w`: above 0 fading out, below 0
+fading in) cuts complementary pixels out of the two levels, then the new one is
+drawn solid. `MeshModule` keeps each entity's level and when it changed; nothing
+stays dithered at any distance. Only cut-out surfaces dither (masked and foliage
+materials, see below); others switch at once, so no shader that draws solid
+things gets a `discard`. Shadows don't fade. The camera is checked against the
+mesh's own bounds, for every level.
+
+The impostor is a quad in the mesh's x = 0 plane, facing +x, its pivot on the
+ground under the middle like the model's. Its material's textures hold
+`impostorFrames` views of the model side by side: frame k seen from the
+model's +x turned 360 k / frames degrees anticlockwise. `MeshModule` turns it to
+the camera and shows the frame nearest the view's direction through the
+instance's `uvRect`. Bake its normals in the frame's
+own tangent space (x the view's right, y up, z toward the viewer), and it's lit
+like the model. CozyFarm's `tools/trees` generator writes trees this way.
 
 ## Materials
 
@@ -134,6 +190,46 @@ Each frame's `FrameParams::time` is the seconds `RenderSystem` has been
 updated, for animated materials (a graph's Time node). The scene updates every
 frame, in a game and in the editor alike, so animated materials move while
 editing too.
+
+### Foliage materials
+
+A material with `foliage.enabled` (`FoliageSettings`; in a material asset
+`"foliage": {"translucency": 0.6, "bend": 1, "sway": 1, "flutter": 1}`, in a
+glTF model its material's `extras`: `{"sfs": {"foliage": {...}}}`) draws with
+the foliage surface: the standard surface's textures and values, for a tree's
+bark and its leaf cards (alpha-tested quads, each a texture of many leaves).
+
+- **Vertex colours are data:** R how open the point is (it multiplies the
+  albedo: darker deep in a crown, baked per vertex), G how much it sways with its
+  branch (0 on the trunk, 1 at the twigs' tips), B how much it flutters (0 on
+  bark, up to 1 at a leaf card's far corners).
+- **Wind** (the scene's, as grass's: gusts rolling across the land the way it
+  blows): the whole plant bends by its height above its instance's origin (x
+  `bend`), its branches sway out of step (x `sway` x G), its leaves flutter
+  (x `flutter` x B). In every pass, so shadows move too; nothing on the CPU.
+- **Translucency:** sunlight shows through from behind (`translucency` x the
+  metallic-roughness texture's red, which glTF leaves unused: a leaf's
+  thinness), brightest looking toward the sun through it.
+- **Normals kept on back faces:** a crown's cards have normals bent out from its
+  middle, so it shades as one soft volume from either side.
+- **Cut-outs kept as it shrinks:** its alpha is raised with the mipmap level, so
+  a far crown doesn't thin away to nothing.
+- It's always drawn cut out (so its bark can cross-fade between levels of
+  detail too), and dithers where its instance fades.
+
+Any foliage material, or a masked standard one, with `fadeNearCamera` (metres;
+in a material asset `"fadeNearCamera": 0.4`, in a glTF's extras
+`{"sfs": {"fadeNearCamera": 0.4}}`; a model's foliage gets 0.4 without it)
+fades away by dithering where the camera would be inside it: gone within that
+far of the eye, back by 1.5 times it, in the camera's view only (its shadow
+stays). So a camera that doesn't collide with trees can pass through a crown
+or a trunk without clipping into it, and a tree a metre in front stays solid.
+`FrameParams::lineOfSight` (off by default) also fades such things within that
+radius of the line from the eye to `cameraTarget`, for a game that wants
+nothing ever in front of what's looked at.
+
+A game tints foliage by season the usual way: a material made in code
+(`MeshLibrary::setMaterial()`) in the leaves' slot, or the entity's `tint`.
 
 ### Terrain materials
 
@@ -174,7 +270,7 @@ and the map's red, green, blue and alpha paint the second to fifth over it
 | `tileSize` | World units across one repeat of its textures (4) |
 | `roughness`, `normalScale` | As a standard material's (1, 1) |
 | `grass` | How much of a [grass](#grass) field on the mesh grows over it: 1 as its maps say, 0 none (1) |
-| `meadow` | How much it looks like grass seen from afar, past where blades are drawn (0): its colour breaks up in patches, a soft sheen shows at low angles, and light and dark bands roll across it with the wind, as over the blades |
+| `meadow` | How much it looks like grass seen from afar, past where blades are drawn (0): grass growing on the terrain carries its ground's look over it out to the horizon (see Grass, The ground); on its own, its colour breaks up in patches, a soft sheen shows at low angles, and light and dark bands roll across it with the wind, as over the blades |
 | `triplanar` | Also lay its textures from the sides where the ground is steep (cliffs, rock, a gorge's walls), so they don't stretch down the slope (false) |
 | `puddles` | How readily water pools on it, 0 to 1: its share of the micro relief's dips, and how full its low spots get. Dirt and paths 1, a meadow hardly (1) |
 
@@ -220,6 +316,21 @@ needs).
 mesh drawn with it, in place: `paintSplat()` changes the `TextureData`, and
 `IRenderer::updateTexture()` sends the changed rectangle up (the splat map is
 uploaded without mipmaps so it can be). A game can do the same.
+
+**What a game paints on it.** A game drawing its own ground (worked fields,
+say) keeps the terrain's splat map as authored and paints over it: a
+material it makes in code (`MeshLibrary::setMaterial()`), stood in for by a
+terrain through a style (`"materials"`, see [visual styles](../visual-styles/index.md)),
+hands its `terrainPaint` (layers 2-5's weights, RGBA, data) and
+`terrainTint` (a colour multiplying the layers, sRGB; its alpha is how dry
+the ground is: below 1 it's soaked, darker and glossier, as rain wets it) to
+the terrain (`TerrainMaterial::paint`, `::tint`). Where the paint gives a
+layer weight, the splat map's weights give way by as much. Both are uploaded
+without mipmaps, so the game changes them in place (`IRenderer::updateTexture()`
+with the rectangle it repainted). Both are read through a gentle wobble fixed
+to the ground (about a texel), so its texels never show as squares nor its
+edges as straight lines. The paint doesn't limit grass: the game's grass maps
+do.
 
 **Grass on it.** `GrassModule` grows grass on a terrain (the mesh's first
 material, as drawn now, so a style's variant counts) only as much as its
@@ -304,14 +415,37 @@ it's driven over; it's plain data on the CPU.
 **Deformers.** A `DeformerComponent` presses in wherever its meshes touch the
 ground: the entity's own and, with `children`, its children's (put one on a
 tractor prefab's root and its wheels and implement all deform; its body never
-reaches the ground). Each frame one of its meshes moves, the mesh's
-underside (what's seen of it from below, near the ground: lugs, tines, a
-roller), looked at sixteen times a texel so edges slope rather than step,
-presses the ground down to `sinkDepth` below it. The soil pressed out rises
-in a low ridge to the sides (`ridge`: the share of it; the rest compacts),
-and walls steeper than soil stands slump. Nothing goes deeper than 0.5 m.
-Rest vehicles on the ground as it is: lowering one by its sink only presses
-it further each pass.
+reaches the ground). Each frame only meshes with a deformer of their own, or
+with a parent, are looked at, in id order: a mesh with neither, such as a lone
+tree or the ground, costs the deformation nothing. As one of its meshes moves,
+the mesh's underside (what's seen of it from below, near the ground: lugs,
+tines, a roller), looked at sixteen times a texel so edges slope rather than
+step, presses the ground down to `sinkDepth` below it. It presses again once
+it's gone a little way, not each frame, so what it costs goes with the distance
+driven, not the frame rate, and a parked one costs nothing: one rolling (a
+wheel, a disc) pressed where it is, often enough that its ruts come within a
+millimetre of as deep (each 8 cm on a wheel of 80 cm radius, 5 cm on one of 30);
+one sliding (a tine, a plough body) each 6 cm (its underside found afresh, as it
+bobs), or as soon as it's lowered or turned enough to move any of it a texel,
+pressed all along the way it went, a texel at a time (its underside moved back
+along it), so it cuts an unbroken furrow rather than a row of dimples, its
+ridges even along it. With the game going fast (`Registry::timeScale()`), a mesh
+goes further between frames: a rolling one is pressed each stride along the way
+it went too, and either is pressed at most 16 times a frame (4 rolling), each
+press the lowest of its share of the places, so tracks stay unbroken at any
+speed; one that went further than 25 m/s of game time could take it (or a metre)
+was put there, not driven, and is pressed only where it lands. A mesh is made
+ready for this once (its triangles grouped, so those nowhere near the ground
+aren't looked at, nor, on a closed solid, those facing up); a skinned one is
+taken as it's posed. The soil pressed out rises in a low ridge to the sides
+(`ridge`: the share of it; the rest compacts), at most 0.4 x `sinkDepth` high,
+or 0.4 x the rut a wheel's pressing, if deeper, and walls steeper than soil
+stands slump, around what it pressed. Nothing goes deeper than 0.5 m. Rest
+vehicles on the ground as it is: lowering one by its sink only presses it
+further each pass. In deep mud a game can let one sit down into the ground (say
+by how muddy it is there and how heavy the vehicle is, not by the rut it's
+making): its ruts go as deep as it sits plus its sink, its ridges higher, and
+its wheels sit in them.
 
 | DeformerComponent | Meaning (default) |
 | --- | --- |
@@ -325,8 +459,10 @@ it further each pass.
 
 **Soil.** `setSoftness(ground, softness)` sets how soft the ground is, 0
 (hard: deformers barely mark it) to 1 (the default, the softest), everywhere
-or as a function of the world XY, asked for each texel a deformer presses
-(e.g. a game's soil moisture: wet mud deep, dry ground shallow).
+or as a function of the world XY (e.g. a game's soil moisture: wet mud deep,
+dry ground shallow), asked where a deformer presses: at the corners of blocks
+of 4 x 4 texels (12 cm), blended between them (a step in it, at the edge of a
+game's grid cell, slopes over a block).
 
 **From a game.** Through `render.module<sfs::DeformationModule>()`:
 
@@ -337,6 +473,10 @@ or as a function of the world XY, asked for each texel a deformer presses
 - `relax(ground, smooth, fade)` weathers the tracks: edges round off and
   ridges slump into ruts by `smooth`, and `fade` of what's left goes (call it
   after rain, or once a day).
+- `relax(ground, tiles, corners)` weathers only some tiles, each by its own
+  amount: `corners` (one per tile) is the smoothing at its four corners,
+  blended across it, so wet ground can weather while dry ground beside it
+  stays as it is (no fade). `map(ground)->tiles()` lists the tiles that exist.
 - `clearRegion(ground, polygon)` (or a rectangle) flattens it, e.g. where a
   field's been tilled.
 - `offsetAt(ground, point)` and `heightAt(ground, point)` read it (the
@@ -345,6 +485,9 @@ or as a function of the world XY, asked for each texel a deformer presses
   small steps between neighbours in few bytes) to keep with a saved game;
   `load(ground, bytes)` takes it back. It isn't saved with the scene.
 - `map(ground)` is the `DeformationMap` itself, to read or change directly.
+  `DeformationMap::takeRevised()` is its own list of tiles changed, kept apart
+  from the renderer's upload tracking, so a game can watch for changes (to
+  save, to replicate, to react to) without disturbing the GPU's.
 
 ```cpp
 auto* deformation = render.module<sfs::DeformationModule>();
@@ -372,9 +515,10 @@ ruts. `setWearsGrass(ground, false)` turns that off, for a game with its own
 rules for what traffic does to grass. `setContacts(ground, callback)` tells
 a game where each deformer touches the ground as it moves (a `Contact`: the
 deformer's entity and the mesh that touched, the underside's world XY
-rectangle, how far it moved since it last pressed, its `sinkDepth`, and how
-much it pressed in, 0 on ground too hard to mark), e.g. to pack its soil or
-wear paths. The callback is called from inside the module, so it notes what
+rectangle, how far it moved since it last pressed, its `sinkDepth`, how
+much it pressed in, 0 on ground too hard to mark, how deep it pressed the
+ground below its own surface, and how soft the ground under it is), e.g. to
+pack its soil, wear paths, or tell a wheel bogging down in mud. The callback is called from inside the module, so it notes what
 it needs and doesn't call the module back. The renderer takes the window with `IRenderer::setTerrainDeformation()`
 and `writeTerrainDeformation()`; a surface places a mesh's vertices itself with
 an optional `surfaceVertex()` (see `meshSurface.wgsl`).
@@ -436,7 +580,7 @@ eye.addComponent<sfs::CameraComponent>();
 | `nearPlane`, `farPlane` | The visible depth range |
 | `focusDistance` | How far ahead the camera's attention is. The sun's shadows are sharpest there, and when there are too many point lights, the ones nearest it are kept. |
 | `bloom` and `bloomIntensity`, `bloomThreshold`, `bloomSoftness`, `bloomRadius` | The camera's [bloom](#bloom) |
-| `depthOfField` and `focusRange`, `focusBlur` | The camera's [depth of field](#depth-of-field) |
+| `depthOfField` and `focusRange`, `focusBlur`, `focusHyperfocal` | The camera's [depth of field](#depth-of-field) |
 
 Roll is ignored, so the view stays level.
 
@@ -541,6 +685,41 @@ cluster's list. What a light costs depends on how much of the screen it covers,
 not on how many lights the scene has. A cluster lists at most 256 lights; past
 that, the ones nearest the camera target win.
 
+### Spot lights
+
+A spot light is a point light that shines only in a cone: a headlamp, a
+torch, a stage light. Turn on `spot` on a `PointLightComponent` (or add
+**Spot Light** from the Hierarchy's menu). It shines along its entity's +x,
+so turn the entity to aim it; a child of a moving thing (a vehicle's lamp
+part) is carried and turned with it.
+
+| Field | Meaning |
+| --- | --- |
+| `spot` | Shine in a cone, not all round |
+| `innerAngle` | Its full-strength core, degrees from its axis |
+| `outerAngle` | Where its light has faded out, degrees from its axis (it fades smoothly between the two) |
+| `radius` | How far along the beam it reaches |
+
+```cpp
+sfs::PointLightComponent headlight{{1.0f, 0.88f, 0.72f}, 4.0f, 50.0f};
+headlight.spot = true;
+headlight.innerAngle = 13.0f;
+headlight.outerAngle = 24.0f;
+lamp.addComponent<sfs::PointLightComponent>(headlight);
+```
+
+Everything else is a point light's: its colour and intensity, its fall-off
+along its reach, its highlights, the daytime dimming under a physical sky, and
+shadows. A spot is clustered by the sphere round its cone (`lightBounds()` in
+`lighting.h`), much smaller than its reach for a narrow beam, so it's listed in
+fewer clusters than a point light reaching as far. Shading it costs one more
+dot product per pixel it might reach, and pixels outside its cone skip it; plain
+point lights cost what they did. Its shadows use the point lights' cube shadow
+maps and budget, but only objects in its cone are drawn into them, and only into
+the faces its cone looks through (a 50 metre headlight usually draws into one or
+two of the six). Spots are for 3D scenes: in a 2D game the light shines all
+round.
+
 ### Emission lights
 
 A material's emission lights the things around it, not just itself: a lava
@@ -593,6 +772,14 @@ but emission can. A material whose
 emission goes above 1 glows past its edges onto what's around it, as bright
 lights do through a real lens. Ordinary surfaces don't bloom at all.
 
+A single very bright pixel (a glint on something thinner than a pixel)
+counts for less as bloom is gathered (Karis's average over its first
+halving), so it can't flash a blob of glow around itself; broad bright light
+blooms as before. `SFS_FIREFLIES=<light>` marks, for finding such pixels,
+each one more than four times as bright as those around it and brighter than
+`<light>` magenta (its brightness in green: log2 x 8 + 64), and any that
+isn't a number cyan.
+
 Bloom belongs to the camera: the scene camera's `CameraComponent` sets it,
 and the editor viewport shows the game camera's even while you look around
 freely. A scene without a camera entity uses `setBloomSettings(BloomSettings)`.
@@ -642,10 +829,20 @@ entity has none.
 | `depthOfField` | Whether to blur at all |
 | `focusRange` | How deep the sharp part around the focus is, in world units (10) |
 | `focusBlur` | How blurred the farthest and nearest things get (1) |
+| `focusHyperfocal` | The lens's hyperfocal distance, in world units: focused this far or farther, everything beyond the focus is sharp (80; 0: only `focusRange`) |
 
 Depth of field is off on wgpu's OpenGL fallback. Blur grows with distance
-beyond the sharp range. It's full a whole focus
-distance past it, and grows by as much toward the camera.
+beyond the sharp range. It's full one and a half focus
+distances past it, and grows by as much toward the camera.
+
+The sharp part also deepens as the focus moves off, as through a real lens.
+A thin lens's blur at distance `d`, focused at `s`, goes as
+`aperture × |d − s| / d`, which is `focusHyperfocal × |1/s − 1/d|` in shares
+of the most that still looks sharp. Each pixel takes the lesser of that blur
+and the sharp range's. Close up, where a real lens keeps very little sharp,
+`focusRange` still is. Zoomed out to an overview, most of the landscape is
+sharp; focused `focusHyperfocal` away or farther, all of it is out to the
+horizon. Raise `focusHyperfocal` to keep far views softer for longer.
 
 It runs between the lit pass and bloom (`postFocus.wgsl`), reading the depth
 buffer:
@@ -960,7 +1157,8 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   quarter of a world unit) across. Each texel keeps the height and normal of
   the highest triangle facing up within 60 degrees there. It's built again
   only when the mesh, or how it's turned or scaled, changes. Moving the
-  entity, or changing its grass's settings, costs nothing.
+  entity, or changing its blades' density, height or variation, grows the
+  blades in view again once (see Growing blades); other settings cost nothing.
 - **Big meshes:** a mesh more than 2.5 times as wide as
   `GrassModule::windowReach()` (1.2 times the draw distance, plus
   `windowSlack()`: 0.15 of it, at least 8) grows grass only in a window that
@@ -975,12 +1173,34 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   grass with no seam, as long as their edge lies on that lattice. Each window's
   maps start from `paint`; a game's changes to them last as long as the
   window.
-- **Maps:** `GrassMaps` holds six channels over a grid: `Coverage` (how much
-  grows), `Length` (how tall it is), and `Data0` to `Data3`, which the engine
-  gives no meaning to, for a material to read. Values run from 0 to 1. A
-  component's `paint` holds them as saved: the grid, plus each changed channel
-  as run-length pairs in base64. With nothing painted, grass grows everywhere
-  at full length.
+- **Maps:** `GrassMaps` holds seven channels over a grid: `Coverage` (how
+  much grows), `Length` (how tall it is), `Data0` to `Data3`, which the engine
+  gives no meaning to, for a material to read, and `Bounds` (where it may grow
+  at all). Values run from 0 to 1. A component's `paint` holds them as saved:
+  the grid, plus each changed channel as run-length pairs in base64. With
+  nothing painted, grass grows everywhere at full length.
+  Grass gives out two ways:
+  - **Softly, where `Coverage` falls** (worn or worked ground): thinner and
+    shorter over a band about `kGrassEdgeBand` (3) texels inside the fall,
+    and where coverage is partial, in clumps with gaps (a worn way's
+    surviving tufts) rather than evenly sparse; the clumps' noise is fixed to
+    the ground and wanders their edge across the band, so neither the texels
+    nor straight edges show. The band is worked out on the CPU as the maps go
+    up (`grassEdgeBand()`: a distance from the fall, into the shape image's
+    blue), so the GPU reads one texel for it; deep in full grass it does
+    nothing more. The grass's green ground under the blades takes their
+    density on average, not the clumps, and is green only where that's
+    nearly full (from 0.75): smooth and fixed to the ground, so it never
+    shimmers as the camera moves, and never green on part-worn ground where
+    blades are few (the terrain's own there: a game paints it as worn
+    soil).
+  - **To the blade, where `Bounds` falls below a half** (a road, a yard, a
+    wall): it's read between texels and cut at a half, with no band. Written
+    as a distance from the edge (`GrassMaps::boundsValue(distance, texel)`: a
+    half at the edge, ramped over two texels either side; take the least of
+    it and what's there to keep grass off several things), the edge is drawn
+    where it really is, finer than a texel. The editor's brush paints it too.
+  A mower, or wear, changes `Coverage` and `Length` and leaves `Bounds` be.
 - **Changing them as a game plays:** `GrassModule::maps(entity)` gives the
   live maps. `stamp()` (with `Toward`, `Add`, `Max` or `Min` blending),
   `fill()` and `sample()` take world positions and radii. Only the texels that
@@ -989,48 +1209,215 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   wants them kept. Setting the component's `paint` starts the maps over from
   it. For example, a game might lower `Coverage` a little wherever wheels go,
   to wear a path, or write moisture into `Data0` for its grass material to
-  turn dry grass yellow.
-- **Growing blades:** nothing is stored per blade. Every frame a compute pass
-  (`meshGrassGrow.wgsl`) grows the blades around the camera:
+  turn dry grass yellow. **Write grass only through `maps()`, `stamp()`,
+  `fill()` (and `terrainPainted()` after painting the terrain under it):
+  anything else won't be seen**, since the blades grown from the maps are kept
+  until the module says where they changed.
+- **Growth (grass growing back, mowing):** `Coverage` and `Length` are what
+  grass grows to. `set()`, `stamp()` and `fill()` put it there at once;
+  `GrassMaps::setTarget()` has it grow (or die back) toward a new value, and
+  `tear()` (coverage torn out, a rut), `flatten()` (laid flat, standing up
+  again) and `cut()` (a mower's strip) set it back. A texel changed that way
+  keeps an anchor (`GrassAnchor`, 8 bytes: when, and how it was then), and
+  how it is at any time is worked out from that, up or down toward its
+  target at its rates' class (`setRates()`, 16 classes, per day of growth;
+  `setGrowthScale()` per texel), by the maps' clock
+  (`GrassModule::setClock()`: days of growth as a game counts them, slower in
+  a drought; kept as whole ticks of 1/1024 day, so years of play never
+  drift). Nothing's done a frame for grass that's growing: each growing
+  16-texel tile is brought on and sent up only when it's changed by a step
+  the GPU would show (`update()`), and let go once it's grown. The GPU keeps
+  the blades as the maps grow to; the tiles over growing maps are grown each
+  frame as they are now (`GrassMapsImage::now`, `kGrassTileActive`).
+  `SFS_GRASS_NOW` grows every tile that way, to check it looks the same as the
+  blades kept.
+  A **cut** keeps its edge finer than a texel, as bounds are (a distance from
+  the strip's edge, read between texels and cut at a half): a blade takes its
+  length only from the texels on its own side of the line, so a mown edge is
+  a ruler-straight line at any angle, to the blade. `GrassCut::join` carries
+  a mower's strips on from frame to frame as one; mown blades grow level at
+  the cut (a little either way) till they're grown back past it.
+  `GrassModule::roll()` (`GrassRoll`) lays mown grass over the way a strip
+  runs, by how hard (a striping roller's 1): its blades face that way and
+  lean over it, so passes run back and forth are lit as lawn stripes are,
+  light leaning away, dark toward you. Each texel keeps its lean (blended
+  over a texel at a strip's edge, so it stays straight) with how long it was
+  then, and it stands up as it grows back (`setLeanFade()`: gone once it's
+  grown that much more, 0.25 of full length at first). The cut map the GPU
+  reads is RGBA8: the cut's edge, the lean now (x, y) and the cut's length.
+  Short grass (mown) sits on its own turf: the ground under the blades is
+  drawn the grass's colour (finely mottled) by how short it is, instead of
+  letting the soil show between them, and short blades grow wider (up to
+  1.8 times), stubbier tufts covering more ground with as many blades; worn
+  grass (less coverage) shows its soil again. `SFS_GRASS_NO_TURF` turns the
+  turf off, for a before and after.
+  `GrassModule::lengthAt()` is how long the blades are at a point now.
+- **Sparse maps:** `GrassMaps` keeps each grid in 16 x 16 tiles
+  (`GrassTiles`): a tile that's one value all over keeps just that, so wide
+  ground costs little but where something crosses it.
+- **Vigour:** `GrassModule::setVigour(entity, field, settings)` grows grass
+  by a coarse field over the world (`GrassVigourField`: how wet the ground
+  is, say). A blade's vigour is `smoothstep(0, 1, w * scale + bias)`, `w` the
+  field where it grows plus a little smooth noise of the ground's
+  (`GrassVigourSettings`); where it's low the grass is shorter
+  (`lengthLeast`) and a little sparser (`densityLeast`), and with
+  `drivesData0` the material's Data 0 is `1 - vigour`. Only the settings
+  change a frame (a game eases them with the weather); the field goes up to
+  the GPU when it's another one.
+- **Growing blades:** blades are grown on the GPU (`meshGrassGrow.wgsl`), in
+  tiles kept from frame to frame (`GrassTileCache`, `grassTiles.h`). The
+  ground is split into fixed tiles, 64 by 64 cells of each lattice (below), so
+  3.2 by 3.2 units for the finest at 400 blades a unit. A tile is built
+  (`cs_build`) the first time it's in view and near enough: every cell's
+  blade worked out from the ground and maps, all that doesn't depend on the
+  camera (where it is, its height from the ground, how tall `Length` lets it
+  grow, whether `Coverage` lets it grow at all, its ground's slope), and kept
+  in 16 bytes. Each frame, the tiles in view and in reach are found on the
+  CPU (by box: nearest distance, frustum) and only the camera's part is done
+  over their kept blades (`cs_grow`): how many are kept at their distance,
+  growing in, width, in view, detail. Wind, trampling and the Data channels
+  are applied as they're drawn, so they never build a tile. A tile coming
+  into view is built that frame, from the same ground and maps, so it looks
+  just as it would have.
+  - A tile keeps only the blades ranked low enough to be drawn nearest the
+    camera, and a step more: it's built again with more as the camera nears,
+    and with fewer once the camera's well away (a few a frame).
+  - It's built again where what it's grown from changes. `GrassMaps` notes
+    the 16-texel blocks whose `Coverage`, `Length` or `Bounds` changed
+    (`takeGrownChanged()`), the module passes them on with the maps
+    (`GrassMapsImage::regrow`), and only the tiles over them are built again:
+    two edits far apart don't build what's between. Painting the terrain
+    under it does the same where its cover changed. A new ground (a big
+    mesh's window moving on), new maps, moving the entity, or changing the
+    blades' density, height or variation builds them all again.
+  - Their blades live in one buffer a field, given out in 64-blade chunks: it
+    grows as needed, and tiles not used for 180 frames (or, past 32 MB, the
+    least lately used) are let go, up to 128 MB at most.
+  - Blades are listed front to back, so the lit pass's depth test hides
+    more of the farther ones behind those drawn first rather than shading
+    them. The tiles in view come nearest first (by their middles), and their
+    blades are listed tile by tile in that order: `cs_count` finds which of
+    each tile's blades are drawn and in which list, and counts them;
+    `cs_order` adds up the counts in the tiles' order, for where each tile's
+    blades go; `cs_grow` grows them into their places, each tile's rows from
+    the end nearer the camera. The three lists sit one after the other, each
+    as long as it needs (the draws read where each starts), so short grass
+    always gets its coarser list.
+  - Tiles hidden behind what's drawn opaque (buildings, hills, trees) are
+    left out, when the frame has ambient occlusion: its depth pass (at half
+    size) runs before the grass grows, and `grassCulling.wgsl` takes the
+    farthest of its depths over blocks of the screen, in levels each with
+    blocks twice the size. `cs_count` tests each tile's box (its ground's
+    height range, with room for its blades to stand, lean and cast their
+    shadows) against the blocks it covers, at the finest level where they're
+    few: hidden only if it's nearer nowhere than the farthest of what's over
+    it. It's this frame's depth, so turning the camera never leaves holes.
+    (Being at half size, a gap between opaque things narrower than about two
+    pixels can go unseen in it: grass seen only through such gaps, all over
+    a tile, could be left out.)
+    Not for a tile that reaches behind the camera, nor, with the sun under
+    `kGrassLowestCulledSun`, for one near enough to cast shadows (they'd fall
+    too far to allow for). `SFS_GRASS_UNCULLED` turns it off, for comparing.
+  - `SFS_GRASS_UNCACHED` grows every blade every frame, as before, for
+    comparing. `SFS_GRASS_TILES` tints tiles for a moment as they're built:
+    blue as they come into view (or need more blades), magenta when built
+    again for an edit, so a missed update is easy to see.
+
+  What's grown each frame:
   - Blades are spread over four lattices, each twice as coarse as the one
-    before and reaching further (0.2, 0.4, 0.65 and 1 of the draw distance).
-    Each lattice cell holds one blade at a hashed spot, so the grass is the
-    same every frame.
-  - Grass is at full density near the camera, thinning to a quarter, then a
-    sixteenth, further out. Where it has thinned, blades are drawn wider (by
-    how many are left, up to 4 times), so the field still reads full. Each
-    blade shrinks away before its lattice's reach ends rather than popping,
-    and the last lattice's shrink down into the ground over the last 45% of
-    the draw distance, so there's no line where the grass ends.
+    before. Each lattice cell holds one blade at a hashed spot, so the grass is
+    the same every frame.
+  - Grass is at full density near the camera, then fewer blades are kept
+    farther out: the share kept falls smoothly with distance (`grassKeptShare()`;
+    all of them out to 770 times the finest cells' spacing, at most 0.3 of the
+    draw distance, then by a power of 2.3 of the distance), down to none at
+    the draw distance (from 0.6 of it on). Each blade has its own fixed rank
+    from its cell's hash (the coarser its lattice, the lower), and is kept
+    where its rank is below that share. So the blades kept are the same ones
+    wherever the camera is: a patch thins out evenly, blade by blade, as the
+    camera draws away, with no ring where it changes. A blade near its cut-off
+    grows in over a short stretch rather than popping, and where fewer are
+    kept blades are drawn wider (up to 4 times), so the field still reads
+    full. Each lattice is grown only as far as any of its blades are kept,
+    and only over the part of its reach in view (seen from above).
+    `SFS_GRASS_LEGACY_THINNING` thins the old way, for comparing: each
+    lattice reaching a set share of the draw distance, its blades shrinking
+    away at its end.
   - The pass drops blades out of view or where the maps leave none. The rest
-    go into three lists by distance, with 5, 2 or 1 segments, and each list is
-    one indirect draw. Short grass (under 0.22 tall, then under 0.1) gets
-    fewer segments near the camera too, since it barely curves. The cost
-    follows what's on screen, not how big the field is.
+    go into three lists by distance, with 4, 2 or 1 segments, and each list is
+    one indirect draw. Short grass (under about 0.22 tall, then under 0.1)
+    gets fewer segments near the camera too, since it barely curves. Over the
+    stretch before each step in detail a blade takes on the coarser blade's
+    shape (its vertices slide onto the coarser strip's), so the step doesn't
+    show. The cost follows what's on screen, not how big the field is.
 - **The ground:** before its blades, the grass draws its mesh again in the
   grass material's colour (shaded as low down in the grass), blended over the
-  ground by `Coverage`, fading out between 1 and 1.15 times the draw
-  distance. The gaps between blades then look like grass, while a bare path
-  shows the ground's own material. Past it, the ground's own material carries
-  on: give a terrain's grassy layers `meadow` so it looks like grass from
-  afar.
+  ground by `Coverage`, so the gaps between blades look like grass while a
+  bare path shows the ground's own material. As the blades thin out to none
+  (from `kGrassFadeFrom` of the draw distance to it), it takes on how they
+  look from afar instead (`fs_ground` in `meshGrass.wgsl`): their tone on
+  average, its normal turned toward the camera as theirs are, a grain fixed to
+  the world about a pixel fine, and the wind's gusts in step with theirs.
+  The grain fades out as pixels grow past 7 to 25 cm and the camera rises
+  past 35 to 110 m. From high or far off it would look like paint run toward
+  the camera. There the field is smooth colour, with gentle lighter, darker,
+  yellower and bluer patches tens of metres across. The ground is drawn at
+  exactly its mesh's depth: both vertex stages' positions are `@invariant`,
+  with no depth bias. A bias would pull the far ground over the trees and
+  streams standing on it, since depth's steps are metres apart a kilometre off.
+  It carries on so out to the horizon, with no draw distance of its own, so
+  far grass takes the same material, maps data, season, wetness and light as
+  the blades. Past the maps (a big mesh's window of them) it covers its
+  terrain's layers as much as each is `meadow` (`grassFarGround()`: the
+  terrain's splat map is bound with the grass), with the maps' data as they
+  hold it on average, handing over over their last 4%. `SFS_GRASS_GROUND_ONLY`
+  draws the ground without the blades, to compare the two.
 - **Drawing:** each blade is a triangle strip built in the vertex shader
   (`meshGrass.wgsl`): a curve from its root, tapering to a point, bent over
   by its own lean, the wind (`FrameParams::wind`) and trampling. How far
   the wind bends a blade grows with its length: grass 0.35 tall or more sways
   fully, and mown grass hardly moves. It's lit
   by the same fragment stage as everything else, so materials, point lights,
-  shadows and bloom all work on grass. A material graph's Grass node reads
+  shadows and bloom all work on grass. There are so many blades, each a few
+  pixels across, that what a vertex hands on to its fragments costs as much
+  as their lighting: a blade's vertex hands on little (where it is, its
+  normal, how far up and across the blade, how shut in and how wet), and its
+  fragments read what's the same all over the blade from the blade itself.
+  It hands them on taken where the blade covers the pixel (centroid), not at
+  the pixel's middle: a far blade is a sliver that often covers some of a
+  pixel's samples but not its middle, and its values carried out to there
+  could be anything, which showed as single pixels flashing bright.
+  What barely changes along a blade is found at its vertices where that
+  pays: on the nearest list's blades (big on the screen) what the air does
+  and the clouds' shadow; on the rest the clouds' shadow, and past
+  `GrassUniforms::vertexSun` (30 m, or the nearest list's end or the blades'
+  shadows' reach if farther) the sun's shadows too, a blade at a time over
+  the 10 m past it (by a number of its own, so it doesn't swim). Out there
+  neither the blades' shadows nor anything else's change much along one.
+  A depth pre-pass for the blades can be turned on (`SFS_GRASS_PREPASS=<1-3>`,
+  the nearest lists it covers, or `alternate`: two frames on and two off, for
+  comparing screenshots). Their depth is drawn first, before the grass's
+  ground (`vs_depth`, depth only), and then they're lit only where their
+  depth is equal to it, writing none: each pixel shades just the nearest
+  blade, and the ground under blades isn't shaded either. Both vertex stages
+  place a blade with the same sums (`bladePoint()`) and their positions are
+  `@invariant`, so the depths match exactly. Only for an opaque grass
+  material (a masked one could cut blades out as it lights them). It's off by
+  default: measured over all three lists on an RTX 3070 it saved about 0.4 ms
+  of the blades' shading and 0.24 ms of the ground's, but placing the blades
+  again cost about 1.05 ms (they're bound by their vertices and tiny
+  triangles more than by their pixels, already drawn near to far).
+  A material graph's Grass node reads
   the blade's length, how far up it the point is, a random number, and the
   Data channels where it grows (`SurfaceIn::grass` and `grassData`; the
   defaults on anything else).
 - **Trampling:** `GrassTrample` is a grid over the field's ground in the
   world. It's pressed by `GrassBender` spheres where they reach into the
   grass, and springs back over `recovery` seconds. Each update the module
-  gathers benders (rigid bodies that bend grass, as their colliders, and
-  `GrassBenderComponent`s). Only the texels that changed go up to the GPU
-  (`IRenderer::updateGrassTrample`); a bender holding grass down that's
-  already as flat as it'll get sends nothing more.
+  gathers benders (`GrassBenderComponent`s: fitted to their colliders, their
+  mesh, or a radius; nothing else bends grass). Only the texels that changed
+  go up to the GPU (`IRenderer::updateGrassTrample`); a bender holding grass
+  down that's already as flat as it'll get sends nothing more.
 
 - **Shadows:** grass grows before the sun's shadow pass. Blades within
   `grassShadowReach()` of the camera cast into the nearest
@@ -1054,6 +1441,17 @@ brush, see the editor's [Grass](../../../editor/index.md#grass). Underneath:
   field reads as deep at any distance, past the reach of its shadows.
   `GrassComponent::selfShadow` sets how strong it is.
 
+- **Measuring:** with `SFS_GRASS_STATS` set (natively), the grow pass counts
+  its blades at each step (looked at, kept by distance, covered, in view,
+  each list, shadow casters) and the device counts the vertices, triangles
+  and fragments the blades' draws shade; the averages are logged every 60
+  frames read back, with the tiles' (grown from, built, kept, hidden, and
+  their blades' buffer in use and in all). `SFS_GRASS_STATS=2` also counts the fragments drawn at
+  each pixel (overdraw; it keeps the GPU from skipping hidden ones early, so
+  it's slower). `SFS_GRASS_GROWTH` logs each map's growth every 240 frames
+  instead: how many tiles are growing, how many are grown as they are now,
+  how many tiles that sends up, and how much memory the maps take.
+
 ## Debug settings
 
 `RenderSystem::settings()` exposes ambient, sun strength, shadow, wind and
@@ -1065,6 +1463,13 @@ milliseconds every few seconds (the puddles' over the frames they ran in;
 0 when they didn't). `stats()` reports the last frame's draw calls,
 instances, shadow instances, point lights, and how many of those came from
 emission and cast shadows.
+
+`SFS_CPU_TIMING` does the same for the CPU side, logging named scopes'
+(`SFS_CPU_SCOPE("name")`, `engine/core/util/cpuTiming.h`) time and call count
+every few seconds; nested scopes count inside the ones around them. To catch a
+hitch rather than wait for the periodic log, `SFS_SLOW_FRAME_MS=<ms>` (with or
+without `SFS_CPU_TIMING`) logs a single "Slow frame" line, with its biggest
+scopes, for any frame that takes longer than that end to end.
 
 ## Read more
 

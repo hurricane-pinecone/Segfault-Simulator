@@ -141,6 +141,11 @@ find_package(engine REQUIRED)
 target_link_libraries(myGame PRIVATE sfs::engine-webgpu)
 ```
 
+The package's `bin/` holds the engine's host tools: `sfs-codegen`, which
+generates reflection from your headers at build time, and `sfs-lsp`, the
+language server editors run beside clangd for `[[sfs::...]]` completion and
+SFS code checks (see `docs/editor/sfs-lsp`).
+
 ### Runtime Assets
 
 The engine loads a few runtime assets of its own (e.g. the default font).

@@ -1,5 +1,6 @@
 #include "engine/runtime/rendering/framePlan.h"
 
+#include "engine/core/rendering/aabb.h"
 #include "engine/core/rendering/frustum.h"
 #include "engine/core/rendering/materialGraphCompiler.h"
 #include "glm/glm/common.hpp"
@@ -10,7 +11,9 @@
 #include "glm/glm/trigonometric.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <span>
 
 namespace sfs
@@ -19,15 +22,34 @@ namespace sfs
 namespace
 {
 // How a grass field's grown, by distance (fractions of its draw distance):
-// each lattice's reach (see meshGrassGrow.wgsl), and to where blades have
-// 5 segments, then 2 (then 1).
+// to where blades have 4 segments, then 2 (then 1); and, thinned the old way
+// (grassLegacyThinning()), each lattice's reach.
 constexpr std::array<float, 4> kGrassReach = {0.2f, 0.4f, 0.65f, 1.0f};
 constexpr float kGrassFineDetail = 0.12f;
 constexpr float kGrassMidDetail = 0.35f;
+// Past here (m), where a blade is a few pixels across (and past the nearest
+// list's blades, and the reach of their shadows), the sun's shadow on it is
+// found at its vertices, a blade at a time over the band past it (see
+// meshGrass.wgsl).
+constexpr float kGrassVertexSunFrom = 30.0f;
+constexpr float kGrassVertexSunBand = 10.0f;
+// How many blades are kept by distance (see grassKeptShare()): all of them
+// out to this many times the spacing of the finest lattice's cells (so
+// denser grass thins out sooner, about where its blades crowd as much on
+// screen), but no further than this share of the draw distance; past it,
+// fewer by this power of the distance; and from this share of the draw
+// distance, fewer still, to none at it.
+constexpr float kGrassFullCells = 770.0f;
+constexpr float kGrassMostFull = 0.3f;
+constexpr float kGrassThinning = 2.3f;
+constexpr float kGrassFadeFrom = 0.6f;
+// Over how much of its rank a blade grows in (meshGrassGrow.wgsl's
+// kGrowIn): the most of a lattice's blades that can be part grown.
+constexpr float kGrassGrowIn = 0.2f;
 // Most blades a field grows a frame (its lists all together), and the most
 // cells a side of a lattice.
 constexpr double kGrassMostBlades = 4.0e6;
-constexpr int kGrassMostCells = 2048;
+constexpr int kGrassMostCells = 3072;
 // How much grass's colour covers the ground it grows on, where it's full.
 constexpr float kGrassGroundTint = 0.9f;
 // How much wider a blade's shadow is than the blade: a little, so a field's
@@ -36,6 +58,54 @@ constexpr float kGrassShadowWidth = 1.6f;
 // How much brighter a physical sky's moon's disk is than its light on a
 // surface facing it.
 constexpr float kMoonDiskGlow = 120.0f;
+
+// The bearings (radians, in a ground's own XY, `toOwn` from the world) the
+// view spans seen from above, from its corners' (the first no more than the
+// second, and less than a half turn apart); nothing if it looks too steeply
+// down or up for them to say, or spans too much.
+std::optional<glm::vec2> viewBearings(const FrameParams& frame,
+                                      const glm::mat4& toOwn)
+{
+  const glm::mat4 toWorld = glm::inverse(frame.viewProjection);
+  const glm::mat3 turn(toOwn);
+  const glm::vec3 ahead = turn * frame.cameraForward;
+  if (glm::length(glm::vec2(ahead)) < 0.2f * glm::length(ahead))
+    return std::nullopt;
+  const float middle = std::atan2(ahead.y, ahead.x);
+  glm::vec2 span(0.0f);
+  for (int corner = 0; corner < 4; ++corner)
+  {
+    const glm::vec4 clip(
+        corner & 1 ? 1.0f : -1.0f, corner & 2 ? 1.0f : -1.0f, 0.5f, 1.0f);
+    const glm::vec4 point = toWorld * clip;
+    const glm::vec3 ray =
+        turn * (glm::vec3(point) / point.w - frame.cameraPosition);
+    if (glm::length(glm::vec2(ray)) < 0.2f * glm::length(ray))
+      return std::nullopt;
+    float off = std::atan2(ray.y, ray.x) - middle;
+    off = std::remainder(off, glm::two_pi<float>());
+    span = glm::vec2(std::min(span.x, off), std::max(span.y, off));
+  }
+  // (A little more, for blades leaning in from either side.)
+  span += glm::vec2(-0.1f, 0.1f);
+  if (span.y - span.x >= glm::pi<float>())
+    return std::nullopt;
+  return span + middle;
+}
+
+// Appends each instance's bounding sphere, as `mesh` bounds it, placed in the
+// world: xyz its centre, w its radius, below zero for each if the mesh has
+// gone.
+void placeSpheres(std::span<const MeshInstance> instances,
+                  const PlannedMesh* mesh,
+                  std::vector<glm::vec4>& out)
+{
+  for (const MeshInstance& instance : instances)
+    out.push_back(mesh ? placedSphere(instance.model,
+                                      mesh->boundsCenter,
+                                      mesh->boundsRadius)
+                       : glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
+}
 } // namespace
 
 MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
@@ -48,8 +118,18 @@ MaterialUniforms standardMaterialUniforms(const MeshMaterial& material)
           glm::vec4(material.tiling, material.offset),
           glm::uvec4(static_cast<uint32_t>(material.alphaMode),
                      material.unlit ? 1u : 0u,
-                     0,
+                     std::bit_cast<uint32_t>(material.fadeNearCamera),
                      0)};
+}
+
+FoliageUniforms foliageMaterialUniforms(const MeshMaterial& material)
+{
+  const FoliageSettings& foliage = material.foliage;
+  return {standardMaterialUniforms(material),
+          glm::vec4(std::max(foliage.translucency, 0.0f),
+                    foliage.bend,
+                    foliage.sway,
+                    foliage.flutter)};
 }
 
 TerrainUniforms terrainMaterialUniforms(const TerrainMaterial& terrain,
@@ -303,8 +383,11 @@ void FramePlan::addGrass(const GrassBatch& batch)
 
 void FramePlan::addUi(const UiDrawList& list)
 {
-  if (m_open)
-    m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
+  if (!m_open)
+    return;
+  for (const auto& part : list.parts)
+    m_uiQuads.insert(m_uiQuads.end(), part->begin(), part->end());
+  m_uiQuads.insert(m_uiQuads.end(), list.quads.begin(), list.quads.end());
 }
 
 void FramePlan::finish(
@@ -343,33 +426,35 @@ void FramePlan::finish(
     if (m_pointLights[i].castsShadow &&
         (!strikeShadowed || i != static_cast<std::size_t>(strikeShadow)))
       m_shadowedLights.push_back({i, {}});
-  for (ShadowedLight& shadowed : m_shadowedLights)
+  if (!m_shadowedLights.empty())
   {
-    const PointLight& light = m_pointLights[shadowed.light];
+    m_casterSpheres.clear();
     for (const CasterBatch& batch : m_casterBatches)
+      placeSpheres(std::span<const MeshInstance>(m_casters).subspan(
+                       batch.first, batch.count),
+                   meshes(batch.base.meshSlot),
+                   m_casterSpheres);
+    for (ShadowedLight& shadowed : m_shadowedLights)
     {
-      const PlannedMesh* mesh = meshes(batch.base.meshSlot);
-      if (!mesh)
-        continue;
-      Draw draw = batch.base;
-      draw.firstInstance = static_cast<uint32_t>(m_instances.size());
-      for (std::size_t k = 0; k < batch.count; ++k)
+      const PointLight& light = m_pointLights[shadowed.light];
+      for (const CasterBatch& batch : m_casterBatches)
       {
-        const MeshInstance& instance = m_casters[batch.first + k];
-        const glm::vec3 center(instance.model *
-                               glm::vec4(mesh->boundsCenter, 1.0f));
-        const float scale =
-            std::max({glm::length(glm::vec3(instance.model[0])),
-                      glm::length(glm::vec3(instance.model[1])),
-                      glm::length(glm::vec3(instance.model[2]))});
-        if (glm::distance(center, light.position) >
-            light.radius + mesh->boundsRadius * scale)
+        if (batch.count == 0 || m_casterSpheres[batch.first].w < 0.0f)
           continue;
-        m_instances.push_back(instance);
-        ++draw.instanceCount;
+        Draw draw = batch.base;
+        draw.firstInstance = static_cast<uint32_t>(m_instances.size());
+        for (std::size_t k = 0; k < batch.count; ++k)
+        {
+          const glm::vec4& sphere = m_casterSpheres[batch.first + k];
+          // (A spot's: those in its cone.)
+          if (!lightReaches(light, glm::vec3(sphere), sphere.w))
+            continue;
+          m_instances.push_back(m_casters[batch.first + k]);
+          ++draw.instanceCount;
+        }
+        if (draw.instanceCount > 0)
+          shadowed.draws.push_back(draw);
       }
-      if (draw.instanceCount > 0)
-        shadowed.draws.push_back(draw);
     }
   }
 
@@ -377,41 +462,48 @@ void FramePlan::finish(
   // reaches into its box (or beyond it toward the sun, within its depth).
   const SunCascades& cascades = m_frame.cascades;
   if (m_frame.shadows.enabled && cascades.count > 1)
+  {
+    m_casterSpheres.clear();
+    for (const Draw& shadow : m_shadowDraws)
+      placeSpheres(std::span<const MeshInstance>(m_instances)
+                       .subspan(shadow.firstInstance, shadow.instanceCount),
+                   meshes(shadow.meshSlot),
+                   m_casterSpheres);
     for (uint32_t c = 0; c < cascades.count && c < kMaxShadowCascades; ++c)
     {
       const SunCascade& cascade = cascades.cascades[c];
       const float toClip = 1.0f / std::max(cascade.radius, 1e-4f);
       const float toDepth = 1.0f / std::max(cascade.depthRange, 1e-4f);
+      std::size_t sphere = 0;
       for (const Draw& shadow : m_shadowDraws)
       {
-        const PlannedMesh* mesh = meshes(shadow.meshSlot);
-        if (!mesh)
+        const std::size_t first = sphere;
+        sphere += shadow.instanceCount;
+        if (shadow.instanceCount == 0 || m_casterSpheres[first].w < 0.0f)
           continue;
         Draw draw = shadow;
         draw.firstInstance = static_cast<uint32_t>(m_instances.size());
         draw.instanceCount = 0;
         for (uint32_t k = 0; k < shadow.instanceCount; ++k)
         {
-          const MeshInstance instance = m_instances[shadow.firstInstance + k];
-          const glm::vec4 center = cascade.viewProjection * instance.model *
-                                   glm::vec4(mesh->boundsCenter, 1.0f);
-          const float scale =
-              std::max({glm::length(glm::vec3(instance.model[0])),
-                        glm::length(glm::vec3(instance.model[1])),
-                        glm::length(glm::vec3(instance.model[2]))});
-          const float radius = mesh->boundsRadius * scale;
+          const glm::vec4& world = m_casterSpheres[first + k];
+          const glm::vec4 center =
+              cascade.viewProjection * glm::vec4(glm::vec3(world), 1.0f);
+          const float radius = world.w;
           const float across = 1.0f + radius * toClip;
           const float deep = radius * toDepth;
           if (std::abs(center.x) > across || std::abs(center.y) > across ||
               center.z < -deep || center.z > 1.0f + deep)
             continue;
-          m_instances.push_back(instance);
+          // push_back copes with an element of the vector itself.
+          m_instances.push_back(m_instances[shadow.firstInstance + k]);
           ++draw.instanceCount;
         }
         if (draw.instanceCount > 0)
           m_cascadeDraws[c].push_back(draw);
       }
     }
+  }
 
   // Each shadowed light's cube faces.
   m_faces.clear();
@@ -454,6 +546,8 @@ void FramePlan::finish(
   m_uniforms.sky = glm::vec4(lighting.skyColor, 1.0f);
   m_uniforms.time = glm::vec4(m_frame.time, 0.0f, 0.0f, 0.0f);
   m_uniforms.cameraForward = glm::vec4(m_frame.cameraForward, 0.0f);
+  m_uniforms.cameraTarget =
+      glm::vec4(m_frame.cameraTarget, std::max(m_frame.lineOfSight, 0.0f));
   const float windAngle = glm::radians(m_frame.wind.direction);
   m_uniforms.wind = glm::vec4(std::cos(windAngle),
                               std::sin(windAngle),
@@ -662,24 +756,50 @@ void FramePlan::finish(
       1.0f / static_cast<float>(std::max(pointShadowResolution, 1u));
   m_gpuLights.resize(count);
   for (std::size_t i = 0; i < count; ++i)
-    m_gpuLights[i] = {glm::vec4(lights[i].position, lights[i].radius),
-                      glm::vec4(lights[i].color, lights[i].intensity),
-                      glm::vec4(-1.0f, texel, lights[i].sourceRadius, 0.0f)};
+  {
+    // A spot: its axis and how its cone fades out (shadow.w, 0 for a point
+    // light, 1 / the cosines' span).
+    const PointLight& light = lights[i];
+    const float fade =
+        light.spot()
+            ? 1.0f / std::max(light.spotCosInner - light.spotCosOuter, 1e-4f)
+            : 0.0f;
+    m_gpuLights[i] = {glm::vec4(light.position, light.radius),
+                      glm::vec4(light.color, light.intensity),
+                      glm::vec4(-1.0f, texel, light.sourceRadius, fade),
+                      glm::vec4(light.spotDirection, light.spotCosOuter)};
+  }
   for (std::size_t i = 0; i < m_shadowedLights.size(); ++i)
     m_gpuLights[m_shadowedLights[i].light].shadow.x = static_cast<float>(i);
 
-  // The UI quads as instances, in batches sharing a texture. Boxes don't read
-  // their texture, so they needn't break a run of glyphs.
+  // The UI quads as instances, in batches sharing their textures: a glyph
+  // texture and an image's (an atlas page), bound side by side. A batch goes
+  // on until a quad needs another texture where one's bound; boxes and
+  // chevrons read neither, so they never break one.
   m_uiInstances.clear();
   m_uiBatches.clear();
   for (const UiQuad& quad : m_uiQuads)
   {
-    const UiTexture* texture =
-        quad.kind == UiQuad::Box ? nullptr : quad.texture;
-    if (m_uiBatches.empty() ||
-        (m_uiBatches.back().texture != texture && quad.kind != UiQuad::Box))
+    const bool glyph = quad.kind == UiQuad::Glyph;
+    const bool image = quad.kind == UiQuad::Image || quad.kind == UiQuad::Mask;
+    if (m_uiBatches.empty())
       m_uiBatches.push_back(
-          {texture, static_cast<uint32_t>(m_uiInstances.size()), 0});
+          {nullptr, nullptr, static_cast<uint32_t>(m_uiInstances.size()), 0});
+    if (glyph || image)
+    {
+      const UiTexture*& bound =
+          glyph ? m_uiBatches.back().glyphs : m_uiBatches.back().image;
+      if (bound && bound != quad.texture)
+      {
+        UiBatch next = m_uiBatches.back();
+        next.first = static_cast<uint32_t>(m_uiInstances.size());
+        next.count = 0;
+        (glyph ? next.glyphs : next.image) = quad.texture;
+        m_uiBatches.push_back(next);
+      }
+      else
+        bound = quad.texture;
+    }
     ++m_uiBatches.back().count;
     m_uiInstances.push_back({quad.rect,
                              quad.uv,
@@ -688,7 +808,9 @@ void FramePlan::finish(
                              glm::vec4(quad.radius,
                                        quad.softness,
                                        quad.border,
-                                       static_cast<float>(quad.kind))});
+                                       static_cast<float>(quad.kind) +
+                                           (quad.nearest ? 8.0f : 0.0f)),
+                             quad.clip});
   }
   m_uiQuads.clear();
 }
@@ -708,8 +830,13 @@ PostUniforms FramePlan::compositeUniforms(glm::ivec2 viewport) const
   const BloomSettings& bloom = m_frame.bloom;
   const ColorGrading& grading = m_frame.grading;
   PostUniforms out{};
-  out.texel = glm::vec4(
-      1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))), 0.0f, 0.0f);
+  // (SFS_FIREFLIES=<least light>: marks the pixels far brighter than
+  // those around them, and above that, magenta.)
+  static const char* const kFireflies = std::getenv("SFS_FIREFLIES");
+  out.texel =
+      glm::vec4(1.0f / glm::vec2(glm::max(viewport, glm::ivec2(1))),
+                kFireflies ? 1.0f : 0.0f,
+                kFireflies ? std::max(std::atof(kFireflies), 0.0) : 0.0);
   out.bloom = glm::vec4(
       0.0f, 0.0f, 0.0f, bloom.enabled ? std::max(bloom.intensity, 0.0f) : 0.0f);
   out.tone = glm::vec4(static_cast<float>(grading.toneMapper),
@@ -863,8 +990,25 @@ std::optional<FocusUniforms> FramePlan::focusUniforms(glm::ivec2 viewport) const
       glm::vec4(std::max(m_frame.focusDistance, 0.01f),
                 std::max(settings.range, 0.0f) * 0.5f,
                 settings.blur * 8.0f * static_cast<float>(viewport.y) / 1080.0f,
-                0.0f),
+                std::max(settings.hyperfocal, 0.0f)),
       glm::vec4(1.0f / glm::vec2(half), 0.0f, 0.0f)};
+}
+
+float grassKeptShare(const GrassGrowUniforms& uniforms, float distance)
+{
+  const glm::vec4& thinning = uniforms.thinning;
+  const float full = std::min(
+      std::pow(thinning.x / std::max(distance, 1e-3f), thinning.y), 1.0f);
+  const float far = uniforms.camera.w;
+  const float t = std::clamp(
+      (distance - thinning.z) / std::max(far - thinning.z, 1e-3f), 0.0f, 1.0f);
+  return full * (1.0f - t * t * (3.0f - 2.0f * t));
+}
+
+bool grassLegacyThinning()
+{
+  static const bool legacy = std::getenv("SFS_GRASS_LEGACY_THINNING");
+  return legacy;
 }
 
 float grassShadowReach(const GrassBatch& batch, const FrameParams& frame)
@@ -881,6 +1025,51 @@ float grassShadowReach(const GrassBatch& batch, const FrameParams& frame)
                      kGrassShadowMostReach)
           : kGrassShadowOneMapReach;
   return std::clamp(reach, 0.0f, std::max(batch.drawDistance, 0.0f));
+}
+
+void grassFarGround(GrassUniforms& uniforms, const TerrainMaterial* terrain)
+{
+  uniforms.far.x = uniforms.far.y = 0.0f;
+  uniforms.farMeadow = glm::vec4(0.0f);
+  if (!terrain || terrain->layers.empty())
+    return;
+  const auto meadow = [&](std::size_t layer)
+  {
+    // (A channel with no layer of its own: the first's, as the terrain
+    // draws it.)
+    return std::clamp(
+        terrain->layers[layer < terrain->layers.size() ? layer : 0].meadow,
+        0.0f,
+        1.0f);
+  };
+  uniforms.far.x = meadow(0);
+  uniforms.far.y = 1.0f;
+  for (int channel = 0; channel < 4; ++channel)
+    uniforms.farMeadow[channel] = meadow(std::size_t(channel) + 1);
+}
+
+void grassVigourUniforms(const GrassVigourSettings& settings,
+                         glm::vec4 rect,
+                         glm::vec4& vigour,
+                         glm::vec4& vigourRect,
+                         glm::vec4& vigourDetail)
+{
+  if (!settings.on)
+  {
+    vigour = glm::vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    vigourRect = glm::vec4(0.0f);
+    vigourDetail = glm::vec4(0.0f, 8.0f, 0.0f, 0.5f);
+    return;
+  }
+  vigour = glm::vec4(settings.scale,
+                     settings.bias,
+                     std::clamp(settings.lengthLeast, 0.0f, 1.0f),
+                     std::clamp(settings.densityLeast, 0.0f, 1.0f));
+  vigourRect = rect;
+  vigourDetail = glm::vec4(settings.detail,
+                           std::max(settings.detailSize, 1e-3f),
+                           settings.drivesData0 ? 1.0f : 0.0f,
+                           settings.outside);
 }
 
 std::optional<GrassPlan> planGrass(const GrassBatch& batch,
@@ -925,37 +1114,116 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
                          0.0f),
                model,
                normalMatrix,
-               glm::inverse(model)};
+               glm::inverse(model),
+               glm::vec4(std::max({kGrassVertexSunFrom,
+                                   distance * kGrassFineDetail,
+                                   shadowReach}),
+                         kGrassVertexSunBand,
+                         0.0f,
+                         0.0f)};
+  plan.draw.far.z = kGrassFadeFrom * distance;
+  // Short grass's turf under it (meshGrass.wgsl; for a before and after,
+  // SFS_GRASS_NO_TURF=1: none).
+  static const bool noTurf = std::getenv("SFS_GRASS_NO_TURF") != nullptr;
+  plan.draw.far.w = noTurf ? 0.0f : 1.0f;
+  grassVigourUniforms(batch.vigour,
+                      field.vigourRect,
+                      plan.draw.vigour,
+                      plan.draw.vigourRect,
+                      plan.draw.vigourDetail);
 
   GrassGrowUniforms& uniforms = plan.grow;
   uniforms.model = model;
   uniforms.normalMatrix = normalMatrix;
   uniforms.planes = Frustum::fromViewProjection(frame.viewProjection).planes();
-  uniforms.camera = glm::vec4(frame.cameraPosition, distance);
+  const glm::vec3 grassCamera = frame.cameraPosition + frame.grassCameraOffset;
+  uniforms.camera = glm::vec4(grassCamera, distance);
+  uniforms.viewProjection = frame.viewProjection;
+  uniforms.eye = glm::vec4(frame.cameraPosition, 1.0f);
+  // How far a blade's shadow falls from it, for its height (none: the sun
+  // so low they'd fall too far to tell, see meshGrassGrow.wgsl's
+  // hiddenTile()).
+  const float sunLength = glm::length(frame.lighting.sun.direction);
+  const float sunUp =
+      sunLength > 1e-4f ? frame.lighting.sun.direction.z / sunLength : 0.0f;
+  uniforms.forward =
+      glm::vec4(frame.cameraForward,
+                sunUp > kGrassLowestCulledSun
+                    ? std::sqrt(std::max(1.0f - sunUp * sunUp, 0.0f)) / sunUp
+                    : -1.0f);
   const GrassGrid& ground = field.groundGrid;
   uniforms.ground = glm::vec4(ground.min, ground.texelSize());
   uniforms.groundSize = glm::ivec4(ground.size, 0, 0);
   uniforms.maps = maps;
+  uniforms.vigour = plan.draw.vigour;
+  uniforms.vigourRect = plan.draw.vigourRect;
+  uniforms.vigourDetail = plan.draw.vigourDetail;
   uniforms.shape =
       glm::vec4(shape.height, shape.heightVariation, shape.width, cell);
   uniforms.detail = glm::vec4(distance * kGrassFineDetail,
                               distance * kGrassMidDetail,
                               shadowReach,
                               0.0f);
+  const bool legacy = grassLegacyThinning();
+  uniforms.thinning = glm::vec4(
+      std::min(kGrassFullCells / std::sqrt(density), kGrassMostFull * distance),
+      kGrassThinning,
+      kGrassFadeFrom * distance,
+      legacy ? 0.0f : 1.0f);
 
   // Each lattice's cells within its reach of the camera, on the ground (from
   // its own origin: see meshGrassGrow.wgsl).
-  const glm::vec2 camera(glm::inverse(model) *
-                         glm::vec4(frame.cameraPosition, 1.0f));
+  // Only those in the view's bearings (seen from above), when it says.
+  const glm::mat4 toOwn = glm::inverse(model);
+  const glm::vec2 camera(toOwn * glm::vec4(grassCamera, 1.0f));
+  const glm::vec2 eye(toOwn * glm::vec4(frame.cameraPosition, 1.0f));
+  const std::optional<glm::vec2> bearings = viewBearings(frame, toOwn);
   glm::ivec2 most(0);
   for (int k = 0; k < 4; ++k)
   {
-    const float reach = distance * kGrassReach[k];
+    // As far as any of its blades are kept: a lattice's blades rank below
+    // a quarter of the next finer's (see meshGrassGrow.wgsl), and the
+    // coarsest's all the way down.
+    const float lowest = std::pow(0.25f, static_cast<float>(k + 1));
+    const float reach =
+        legacy  ? distance * kGrassReach[k]
+        : k < 3 ? std::min(uniforms.thinning.x *
+                               std::pow((1.0f + kGrassGrowIn) / lowest,
+                                        1.0f / kGrassThinning),
+                           distance)
+                : distance;
     uniforms.reach[k] = reach;
     const float size = cell * static_cast<float>(1 << k);
     const float own = reach / least;
-    const glm::vec2 low = glm::max(camera - own, ground.min);
-    const glm::vec2 high = glm::min(camera + own, ground.max);
+    glm::vec2 low = camera - own, high = camera + own;
+    if (bearings)
+    {
+      // The box round the sector from the eye, out to the reach (from the
+      // camera grass grows from: the eye's, but when checking), with room
+      // for a cell and a blade's lean.
+      const float out = own + glm::length(camera - eye);
+      glm::vec2 near = eye, far = eye;
+      const auto take = [&](float bearing)
+      {
+        const glm::vec2 at =
+            eye + out * glm::vec2(std::cos(bearing), std::sin(bearing));
+        near = glm::min(near, at);
+        far = glm::max(far, at);
+      };
+      take(bearings->x);
+      take(bearings->y);
+      for (int quarter = -4; quarter <= 4; ++quarter)
+      {
+        const float bearing = quarter * glm::half_pi<float>();
+        if (bearing > bearings->x && bearing < bearings->y)
+          take(bearing);
+      }
+      const float room = size * 2.0f + 1.5f / least;
+      low = glm::max(low, near - room);
+      high = glm::min(high, far + room);
+    }
+    low = glm::max(low, ground.min);
+    high = glm::min(high, ground.max);
     glm::ivec2 first(glm::floor(low / size));
     glm::ivec2 count =
         glm::max(glm::ivec2(glm::ceil(high / size)) - first, glm::ivec2(0));
@@ -980,11 +1248,27 @@ std::optional<GrassPlan> planGrass(const GrassBatch& batch,
   const auto within = [&](float radius)
   {
     double count = 0.0;
-    for (int k = 0; k < 4; ++k)
+    if (legacy)
+      for (int k = 0; k < 4; ++k)
+      {
+        const double reach = std::min(radius, uniforms.reach[k]);
+        count += density * (k < 3 ? 0.75 : 1.0) / double(1 << (2 * k)) *
+                 glm::pi<double>() * reach * reach;
+      }
+    else
     {
-      const double reach = std::min(radius, uniforms.reach[k]);
-      count += density * (k < 3 ? 0.75 : 1.0) / double(1 << (2 * k)) *
-               glm::pi<double>() * reach * reach;
+      // Those kept in each ring (with those growing in).
+      constexpr int kRings = 128;
+      const double step = std::min(radius, distance) / kRings;
+      for (int ring = 0; ring < kRings; ++ring)
+      {
+        const double middle = (ring + 0.5) * step;
+        const double kept =
+            std::min(grassKeptShare(uniforms, static_cast<float>(middle)) *
+                         (1.0 + kGrassGrowIn),
+                     1.0);
+        count += density * kept * 2.0 * glm::pi<double>() * middle * step;
+      }
     }
     return count;
   };

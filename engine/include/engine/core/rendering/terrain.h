@@ -82,9 +82,10 @@ struct TerrainLayer
  *
  * From above, a layer stretches down steep slopes. A `triplanar` layer is
  * also laid from the sides where the ground is steeper than about 35
- * degrees: from the two axes the surface faces most (biplanar mapping),
- * blended by its normal, toward a crisp switch at `triplanarSharpness` 1.
- * Gentler ground keeps the one projection from above (and its cost).
+ * degrees (the pressed ground's own slope counts: a deep rut's walls): from the
+ * two axes the surface faces most (biplanar mapping), blended by its normal,
+ * toward a crisp switch at `triplanarSharpness` 1. Gentler ground keeps the one
+ * projection from above (and its cost).
  *
  * Grass on the mesh (GrassComponent) grows where its layers' `grass` says,
  * x its own maps. A vertex colour isn't used.
@@ -110,8 +111,21 @@ struct TerrainMaterial
   std::shared_ptr<const TextureData> splat;
   // A colour over the mesh's UVs multiplying the layers (sRGB; null: none):
   // what a game paints on its ground (e.g. tilled fields), kept when the
-  // terrain stands in for the game's material (MeshLibrary sets it).
+  // terrain stands in for the game's material (MeshLibrary sets it). Its
+  // alpha is how dry the ground is: below 1 soaked (darker and glossier, as
+  // rain wets it), so wet soil can stay wet after the rain.
   std::shared_ptr<const TextureData> tint;
+  // Layers 2-5's weights a game paints over the mesh's UVs (RGBA, data;
+  // null: none), laid over the splat map's: where it paints a layer the
+  // splat map's weights give way by as much (all painted: only the paint).
+  // It doesn't limit grass (terrainGrass(): the game's grass maps do).
+  // Kept when the terrain stands in for the game's material (MeshLibrary
+  // sets it, from MeshMaterial::terrainPaint).
+  //
+  // The tint and the paint are sampled through a gentle wobble fixed to the
+  // world (about a texel), so a game's cells never show as squares or its
+  // edges as straight lines.
+  std::shared_ptr<const TextureData> paint;
   std::vector<TerrainLayer> layers;
   float blendSharpness = 0.5f;
   bool antiTiling = true;

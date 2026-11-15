@@ -3,14 +3,20 @@
 #include "editorContext.h"
 #include "history/editorHistory.h"
 #include "scene/editorScene.h"
+#include "scene/parts.h"
+#include "scene/references.h"
 #include "scene/sceneDocument.h"
+#include "scene/unusedOverrides.h"
 
+#include "engine/core/animation/animation.h"
+#include "engine/core/components/animatorComponent.h"
 #include "engine/core/components/nameComponent.h"
 #include "engine/core/components/transformComponent.h"
 #include "engine/core/ecs/ecs.h" // IWYU pragma: keep (Entity templates)
 #include "engine/core/hierarchy/hierarchy.h"
 #include "engine/core/logger/logger.h"
 #include "engine/runtime/assetStore/assetStore.h"
+#include "engine/runtime/assetStore/modelData.h"
 #include "engine/runtime/serialization/prefabComponents.h"
 #include "engine/runtime/serialization/sceneSerializer.h"
 
@@ -34,26 +40,31 @@ std::string safeName(std::string name)
 }
 
 // Replace an instance with one made from `entry` (same parent; the registry
-// reuses the freed ids, so it keeps its place among its siblings).
-sfs::Entity rebuild(EditorContext& context, const sfs::Entity& root, const json& entry)
+// reuses the freed ids, so it keeps its place among its siblings), keeping its
+// id in the prefab around it if it's a nested one. References other entities
+// hold into it are pointed at the new entities. Called within an undoable
+// change, whose snapshot has given each entity a reference names from outside
+// its instance a scene id, so it's found again by that.
+sfs::Entity rebuild(EditorContext& context, const sfs::Entity& root, json entry)
 {
+  const std::vector<references::Inbound> inbound = references::inboundTo(root);
   const sfs::Entity parent = sfs::hierarchy::parentOf(root);
+  if (sfs::PrefabLinkComponent* prefabLink = root.getComponent<sfs::PrefabLinkComponent>())
+    entry["$id"] = prefabLink->id;
   context.scene->destroyBranch(root);
   context.scene->flushEntities();
   const sfs::Entity made = context.scene->serializer().loadEntity(entry, *context.scene, parent);
   context.scene->flushEntities();
+  references::restore(inbound, made, *context.scene);
   return made;
 }
 
-// The outermost instance an entity is part of, and its path in it.
+// The instance whose entry holds an entity's overrides, and its path in it.
 std::optional<std::pair<sfs::Entity, std::string>> outermost(const sfs::Entity& entity)
 {
-  sfs::Entity root = sfs::SceneSerializer::instanceRootOf(entity);
+  const sfs::Entity root = sfs::SceneSerializer::entryRootOf(entity);
   if (!root.isValid())
     return std::nullopt;
-  for (sfs::Entity above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)); above.isValid();
-       above = sfs::SceneSerializer::instanceRootOf(sfs::hierarchy::parentOf(root)))
-    root = above;
   const std::optional<std::string> path = sfs::SceneSerializer::pathInInstance(entity, root);
   if (!path)
     return std::nullopt; // added to the instance: its own, not overriding
@@ -75,6 +86,21 @@ const sfs::AssetRecord* recordOf(const EditorContext& context, const std::string
   return id ? context.assets->find(*id) : nullptr;
 }
 
+// The clip a newly placed animated model starts on: its "idle" (any case), or
+// else its first; empty if it has none.
+std::string startingClip(const sfs::AnimationSet& animations)
+{
+  for (const sfs::AnimationClip& clip : animations.clips)
+  {
+    std::string lower = clip.name;
+    for (char& c : lower)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "idle")
+      return clip.name;
+  }
+  return animations.clips.empty() ? std::string() : animations.clips.front().name;
+}
+
 std::string label(const EditorContext& context, const std::string& name)
 {
   const sfs::AssetRecord* record = recordOf(context, name);
@@ -88,9 +114,8 @@ std::optional<sfs::AssetId> create(EditorContext& context, sfs::Entity entity, c
 
   std::error_code error;
   fs::create_directories(context.assets->root() / folder, error);
-  const std::string stem = safeName(entity.hasComponent<sfs::NameComponent>()
-                                        ? entity.getComponent<sfs::NameComponent>().name
-                                        : std::string("Prefab"));
+  const sfs::NameComponent* named = entity.getComponent<sfs::NameComponent>();
+  const std::string stem = safeName(named ? named->name : std::string("Prefab"));
   fs::path relative = folder / (stem + ".prefab");
   for (int n = 2; fs::exists(context.assets->root() / relative, error); ++n)
     relative = folder / (stem + " " + std::to_string(n) + ".prefab");
@@ -100,7 +125,7 @@ std::optional<sfs::AssetId> create(EditorContext& context, sfs::Entity entity, c
       [&]
       {
         // Saving gives the entities their prefab ids; then it's an instance.
-        const json prefab = context.scene->serializer().savePrefab(*context.scene, entity);
+        const json prefab = context.scene->serializer().savePrefab(entity);
         if (!sfs::SceneSerializer::writeJsonFile(prefab, context.assets->root() / relative))
           return;
         context.assets->refresh();
@@ -108,8 +133,8 @@ std::optional<sfs::AssetId> create(EditorContext& context, sfs::Entity entity, c
         if (!record)
           return;
         id = record->id;
-        if (entity.hasComponent<sfs::PrefabInstanceComponent>())
-          entity.getComponent<sfs::PrefabInstanceComponent>().prefab = nameOf(record->id);
+        if (sfs::PrefabInstanceComponent* prefabInstance = entity.getComponent<sfs::PrefabInstanceComponent>())
+          prefabInstance->prefab = nameOf(record->id);
         else
           entity.addComponent<sfs::PrefabInstanceComponent>(sfs::PrefabInstanceComponent{nameOf(record->id)});
       });
@@ -131,6 +156,18 @@ sfs::Entity place(EditorContext& context,
       {
         root = context.scene->serializer().instantiate(prefab, *context.scene, parent);
         context.scene->flushEntities();
+        // An animated model comes with an Animator, playing its idle (or first)
+        // clip, as a model with clips is placed to be animated.
+        if (const sfs::AssetRecord* record = recordOf(context, prefab);
+            root.isValid() && record && record->kind == sfs::AssetKind::Model &&
+            !root.hasComponent<sfs::AnimatorComponent>())
+          if (const sfs::ModelData* model = context.scene->assetStore().model(record->id);
+              model && model->animations && !model->animations->clips.empty())
+          {
+            sfs::AnimatorComponent animator;
+            animator.clip = startingClip(*model->animations);
+            root.addComponent<sfs::AnimatorComponent>(animator);
+          }
         if (!root.isValid() || !position)
           return;
         if (!root.hasComponent<sfs::TransformComponent>())
@@ -150,9 +187,10 @@ sfs::Entity place(EditorContext& context,
 
 void apply(EditorContext& context, const sfs::Entity& root)
 {
-  if (!root.isValid() || !root.hasComponent<sfs::PrefabInstanceComponent>() || !context.scene)
+  sfs::PrefabInstanceComponent* prefabInstance = root.getComponent<sfs::PrefabInstanceComponent>();
+  if (!prefabInstance || !context.scene)
     return;
-  const std::string name = root.getComponent<sfs::PrefabInstanceComponent>().prefab;
+  const std::string name = prefabInstance->prefab;
   const sfs::AssetRecord* record = recordOf(context, name);
   if (!record || record->kind != sfs::AssetKind::Prefab)
   {
@@ -163,10 +201,11 @@ void apply(EditorContext& context, const sfs::Entity& root)
   context.history->change(
       [&]
       {
+        parts::heal(root, record->path.generic_string());
         // Every instance as it is now, against the prefab as it was: reloaded
         // against the new prefab, each keeps its own changes and takes the
         // applied ones (this one's become the prefab's, so no longer differ).
-        const json prefab = context.scene->serializer().savePrefab(*context.scene, root);
+        const json prefab = context.scene->serializer().savePrefab(root);
         const auto write = [&]
         {
           if (!sfs::SceneSerializer::writeJsonFile(prefab, context.assets->absolutePath(*record)))
@@ -194,7 +233,7 @@ void revert(EditorContext& context, const sfs::Entity& root)
   context.history->change(
       [&]
       {
-        json entry = context.scene->serializer().instanceEntry(*context.scene, root);
+        json entry = context.scene->serializer().instanceEntry(root);
         // Keep where it is: its root's transform, nothing else.
         json kept = json::object();
         if (entry.contains("$overrides") && entry["$overrides"].contains("") &&
@@ -205,7 +244,7 @@ void revert(EditorContext& context, const sfs::Entity& root)
         entry.erase("$overrides");
         if (!kept.empty())
           entry["$overrides"] = kept;
-        context.selection = rebuild(context, root, entry);
+        context.selection = rebuild(context, root, std::move(entry));
       });
 }
 
@@ -221,7 +260,7 @@ void revertField(EditorContext& context,
   context.history->change(
       [&]
       {
-        json entry = context.scene->serializer().instanceEntry(*context.scene, root);
+        json entry = context.scene->serializer().instanceEntry(root);
         json& overrides = entry["$overrides"];
         if (!overrides.contains(path) || !overrides[path].contains(component))
           return;
@@ -235,7 +274,7 @@ void revertField(EditorContext& context,
           overrides.erase(path);
         if (overrides.empty())
           entry.erase("$overrides");
-        const sfs::Entity rebuilt = rebuild(context, root, entry);
+        const sfs::Entity rebuilt = rebuild(context, root, std::move(entry));
         // Select the same entity in the rebuilt instance.
         context.selection = rebuilt;
         for (const sfs::Entity& candidate : context.scene->entities())
@@ -251,7 +290,7 @@ std::map<std::string, std::set<std::string>> overridesOf(EditorContext& context,
   if (!where || !context.scene)
     return out;
   const auto& [root, path] = *where;
-  const json entry = context.scene->serializer().instanceEntry(*context.scene, root);
+  const json entry = context.scene->serializer().instanceEntry(root);
   const auto overrides = entry.find("$overrides");
   if (overrides == entry.end() || !overrides->contains(path))
     return out;
@@ -263,6 +302,32 @@ std::map<std::string, std::set<std::string>> overridesOf(EditorContext& context,
         names.insert(name);
   }
   return out;
+}
+
+void reattachUnused(EditorContext& context, const sfs::Entity& root, const std::map<std::string, std::string>& moves)
+{
+  if (moves.empty() || !context.scene || !root.isValid() || !root.hasComponent<sfs::PrefabInstanceComponent>())
+    return;
+  context.history->change(
+      [&]
+      {
+        json entry = context.scene->serializer().instanceEntry(root);
+        unusedOverrides::move(entry, moves);
+        context.selection = rebuild(context, root, std::move(entry));
+      });
+}
+
+void removeUnused(EditorContext& context, const sfs::Entity& root, const unusedOverrides::Unused& item)
+{
+  if (!context.scene || !root.isValid() || !root.hasComponent<sfs::PrefabInstanceComponent>())
+    return;
+  context.history->change(
+      [&]
+      {
+        json entry = context.scene->serializer().instanceEntry(root);
+        unusedOverrides::remove(entry, item);
+        context.selection = rebuild(context, root, std::move(entry));
+      });
 }
 
 } // namespace prefabs

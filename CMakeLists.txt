@@ -32,6 +32,14 @@ enable_testing()
 
 add_subdirectory(engine)
 
+# A sanitizer build (ENGINE_SANITIZE) instruments the editor and the player as
+# engine/ does its own targets: an uninstrumented executable on the sanitized
+# engine libraries can't start, and its own code would go unchecked.
+if(ENGINE_SANITIZE)
+    add_compile_options(${ENGINE_SANITIZE_COMPILE_OPTIONS})
+    add_link_options(${ENGINE_SANITIZE_LINK_OPTIONS})
+endif()
+
 # Desktop only: the editor and the player (what it exports games as) need the
 # native WebGPU engine, which a web build doesn't have. (The engine sets
 # ENGINE_WEB_BUILD in its own scope, so test the toolchain's flag here.)

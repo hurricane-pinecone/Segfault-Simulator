@@ -14,6 +14,8 @@ namespace sfs
  * @param float height - total height, ends included (at least 2 * radius)
  * @param glm::vec3 offset - centre relative to the entity's origin
  * @param bool trigger - detects bodies passing through instead of blocking them
+ * @param int layer - what it is, for queries that only count some things
+ *                    (CollisionWorld3D: bit n of a mask is layer n)
  */
 struct CapsuleCollider3DComponent
 {
@@ -21,6 +23,7 @@ struct CapsuleCollider3DComponent
   [[sfs::range(0.02, 50)]] float height = 1.8f;
   glm::vec3 offset{0.0f};
   bool trigger = false;
+  [[sfs::range(0, 31)]] int layer = 0;
 };
 
 } // namespace sfs
