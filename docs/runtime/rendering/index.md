@@ -110,10 +110,12 @@ frame, and each cascade tests it against its own box.
 ## Picking
 
 `picking.h` finds what's under a ray (`RenderSystem::screenRay(pixel)` gives
-the ray through a pixel): `pickEntity()` the nearest entity whose bounds it
-enters (a sprite where it was drawn last frame, given the render system), and
-`pickSurface()` the exact mesh triangle. The editor selects with these, in
-every style.
+the ray through a pixel): `pickEntity()` the nearest hit, and `pickSurface()`
+the exact mesh triangle. A mesh entity is hit where the ray meets its
+triangles, not just its bounds, so a camera inside a landscape's bounds still
+picks whatever stands on it; anything without a mesh (a sprite where it was
+drawn last frame, given the render system) is hit where the ray enters its
+bounds. The editor selects with these, in every style.
 
 ### Picking under the cursor
 
