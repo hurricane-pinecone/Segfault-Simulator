@@ -4,6 +4,7 @@
 #include <engine/core/assets/assetDatabase.h>
 #include <engine/core/rendering/visualStyle.h>
 #include <engine/runtime/assetStore/assetStore.h>
+#include <engine/runtime/assetStore/modelImporter.h>
 #include <engine/runtime/rendering/renderSystem.h>
 #include <engine/runtime/rendering/visualStyles.h>
 #include <engine/runtime/sceneManager/scene.h>
@@ -65,6 +66,56 @@ int main()
         CHECK(!store.prefab(a->id).has_value());
         CHECK(store.prefab(b->id).has_value()); // kept: not read again
       }
+    }
+  }
+
+  TEST("a model's prefab should be marked as a model's, with its node tree")
+  {
+    const Project project;
+    fs::create_directories(project.folder / "assets");
+    std::ofstream(project.folder / "assets" / "rig.gltf") << R"({
+      "asset": {"version": "2.0"},
+      "scene": 0,
+      "scenes": [{"nodes": [0]}],
+      "nodes": [{"name": "Hip", "mesh": 0, "children": [1]},
+                {"name": "Knee", "mesh": 1, "translation": [0, 0, 2]}],
+      "meshes": [{"name": "Thigh",
+                  "primitives": [{"attributes": {"POSITION": 0}}]},
+                 {"name": "Shin",
+                  "primitives": [{"attributes": {"POSITION": 0}}]}],
+      "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3,
+                     "type": "VEC3", "min": [0, 0, 0], "max": [0, 0, 0]}],
+      "bufferViews": [{"buffer": 0, "byteLength": 36}],
+      "buffers": [{"byteLength": 36,
+                   "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]
+    })";
+    const AssetDatabase database(project.folder,
+                                 AssetDatabase::Mode::ReadWrite,
+                                 AssetDatabase::projectFolders());
+    const AssetRecord* rig = database.findByPath("assets/rig.gltf");
+    CHECK(rig != nullptr);
+    if (rig)
+    {
+      AssetStore store;
+      store.setDatabase(&database);
+      const std::optional<nlohmann::json> prefab = store.prefab(rig->id);
+      CHECK(prefab.has_value());
+      if (prefab)
+      {
+        CHECK(prefab->value("model", false));
+        const nlohmann::json hip =
+            prefab->value("/root/children/0"_json_pointer, nlohmann::json());
+        CHECK(hip.is_object() &&
+              hip.value("/NameComponent/name"_json_pointer, "") == "Hip");
+        // Its $id: the stable id of its name path.
+        CHECK(hip.is_object() && hip.value("/children/0/$id"_json_pointer,
+                                           0u) == stableNodeId("Hip/Knee"));
+      }
+      // A prefab file isn't a model's.
+      const AssetRecord* a = database.findByPath("prefabs/a.prefab");
+      const std::optional<nlohmann::json> file =
+          a ? store.prefab(a->id) : std::nullopt;
+      CHECK(file && !file->contains("model"));
     }
   }
 

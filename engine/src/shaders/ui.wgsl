@@ -1,7 +1,8 @@
 // The UI (UiModule), over the finished frame: one instance per UiQuad, two
 // triangles each. Boxes are rounded rectangles drawn from their distance
-// field (smooth corners, soft shadows, a border ring); glyphs and images come
-// from the batch's texture; chevrons are drawn from theirs. Each is cut to its
+// field (smooth corners, soft shadows, a border ring); glyphs come from the
+// batch's glyph texture, images and masks (tinted icons) from its image
+// texture (an atlas page); chevrons are drawn from theirs. Each is cut to its
 // clip rect (a scroll view's).
 
 struct Ui {
@@ -10,14 +11,15 @@ struct Ui {
 
 @group(0) @binding(0) var<uniform> ui: Ui;
 @group(0) @binding(1) var uiSampler: sampler;
-@group(1) @binding(0) var uiTexture: texture_2d<f32>;
+@group(1) @binding(0) var uiGlyphs: texture_2d<f32>;
+@group(1) @binding(1) var uiImage: texture_2d<f32>;
 
 struct QuadIn {
   @location(0) rect: vec4f,        // x, y, width, height (pixels)
   @location(1) uv: vec4f,          // u, v, width, height
   @location(2) color: vec4f,       // sRGB, alpha
   @location(3) borderColor: vec4f, // sRGB, alpha
-  @location(4) shape: vec4f,       // radius, softness, border width, kind (0 box, 1 glyph, 2 image, 3 chevron)
+  @location(4) shape: vec4f,       // radius, softness, border width, kind (0 box, 1 glyph, 2 image, 3 chevron, 4 mask; +8 nearest texels)
   @location(5) clip: vec4f,        // left, top, right, bottom (pixels): drawn only inside
 }
 
@@ -39,7 +41,8 @@ fn vs_main(@builtin(vertex_index) index: u32, quad: QuadIn) -> Varyings {
   let corner = corners[index];
   // Boxes grow by their softness (and a pixel), so their fading edge fits;
   // chevrons by a pixel.
-  let pad = select(select(0.0, 1.0, quad.shape.w > 2.5), quad.shape.y + 1.0, quad.shape.w < 0.5);
+  let kind = u32(quad.shape.w + 0.5) & 7u;
+  let pad = select(select(0.0, 1.0, kind == 3u), quad.shape.y + 1.0, kind == 0u);
   let point = quad.rect.xy - pad + corner * (quad.rect.zw + 2.0 * pad);
   var out: Varyings;
   out.position = vec4f(point / ui.screen.xy * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
@@ -67,10 +70,20 @@ fn toLinear(c: vec3f) -> vec3f {
 
 @fragment
 fn fs_main(in: Varyings) -> @location(0) vec4f {
-  let texel = textureSample(uiTexture, uiSampler, in.uv);
+  // (Both sampled here, where the flow's the same for every pixel.)
+  let glyph = textureSample(uiGlyphs, uiSampler, in.uv);
+  var texel = textureSample(uiImage, uiSampler, in.uv);
+  let code = u32(in.shape.w + 0.5);
+  let kind = code & 7u;
+  if ((code & 8u) != 0u) {
+    // The nearest texel, unblended.
+    let size = vec2i(textureDimensions(uiImage));
+    texel = textureLoad(uiImage, clamp(vec2i(floor(in.uv * vec2f(size))), vec2i(0), size - 1), 0);
+  }
   var color = in.color;
-  let kind = in.shape.w;
-  if (kind > 2.5) {
+  if (kind == 4u) {
+    color = vec4f(in.color.rgb, in.color.a * texel.a); // a mask: an icon in its colour
+  } else if (kind == 3u) {
     // A chevron: a '>' turned `shape.x` radians clockwise, its stroke
     // `shape.z` wide.
     let c = cos(in.shape.x);
@@ -80,13 +93,13 @@ fn fs_main(in: Varyings) -> @location(0) vec4f {
     let d = min(segment(p, vec2f(-0.5 * h, -h), vec2f(0.5 * h, 0.0)),
                 segment(p, vec2f(0.5 * h, 0.0), vec2f(-0.5 * h, h))) - in.shape.z * 0.5;
     color.a *= 1.0 - smoothstep(-0.5, 0.5, d);
-  } else if (kind > 1.5) {
+  } else if (kind == 2u) {
     color = texel * in.color; // an image
-  } else if (kind > 0.5) {
+  } else if (kind == 1u) {
     // A glyph. Blending in linear light thins dark text on light ground:
     // dark text's coverage is strengthened to match how it looks light.
     let lightness = dot(in.color.rgb, vec3f(0.299, 0.587, 0.114));
-    let coverage = pow(texel.a, mix(0.6, 1.0, lightness));
+    let coverage = pow(glyph.a, mix(0.6, 1.0, lightness));
     color = vec4f(in.color.rgb, in.color.a * coverage);
   } else {
     // A rounded box: its distance field, faded over its softness (at least a

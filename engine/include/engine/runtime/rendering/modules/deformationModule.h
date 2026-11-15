@@ -118,6 +118,10 @@ public:
 
   /** Weather `ground`'s tracks (see DeformationMap::relax()). */
   void relax(const Entity& ground, float smooth, float fade = 0.0f);
+  /** Weather only some of `ground`'s tiles (see DeformationMap::relax()). */
+  void relax(const Entity& ground,
+             std::span<const glm::ivec2> tiles,
+             std::span<const glm::vec4> corners);
 
   /** Flatten `ground` inside a world XY polygon, or rectangle. */
   void clearRegion(const Entity& ground, std::span<const glm::vec2> polygon);
@@ -195,6 +199,9 @@ public:
   // again on the GPU).
   static constexpr double kPuddleInterval = 0.5;
 
+protected:
+  bool rebuildsEveryFrame() const override { return true; }
+
 private:
   struct Field
   {
@@ -225,19 +232,29 @@ private:
     bool seen = false; // this frame
   };
 
+  // A deformable terrain drawn this frame: its field, and its material as
+  // drawn.
+  struct Seen
+  {
+    Field* field = nullptr;
+    MaterialHandle material;
+    const MeshMaterial* drawn = nullptr;
+  };
   static uint64_t keyOf(const Entity& entity);
   Field* fieldOf(const Entity& entity);
   const Field* fieldOf(const Entity& entity) const;
-  // A deformable terrain this frame: its mesh as placed (to press into),
-  // then its patch and window (to draw).
-  void prepare(const Entity& entity, Field& field);
+  // A deformable terrain this frame (`mesh` its renderer's): its mesh as
+  // placed (to press into), then its patch and window (to draw).
+  void prepare(const Entity& entity, MeshHandle mesh, Field& field);
   void draw(const RenderContext& context,
             MaterialHandle material,
             const MeshMaterial& drawn,
             Field& field);
   // Press the frame's deformers into the fields they're over.
   void deform();
+  // Presses `mesh` (its renderer's `handle`) into the fields it's over.
   void pressMesh(const Entity& mesh,
+                 MeshHandle handle,
                  const glm::mat4& model,
                  const Entity& owner,
                  const DeformerComponent& deformer,
@@ -254,6 +271,16 @@ private:
                         const glm::mat4& model,
                         float below,
                         float texel);
+  // How low a deformer mesh reaches as placed (world Z): its lowest point
+  // (a turning wheel's tyre's, wherever it's turned to; its bounds' corners
+  // swing up to 1.4 x its radius below its axle), or `bound` where that
+  // isn't known (posed by an animator).
+  float lowestPointOf(const Entity& mesh,
+                      MeshHandle handle,
+                      const glm::mat4& model,
+                      float bound);
+  // A mesh made ready for undersideOf() (again if it's changed).
+  const UndersideMesh& readyMesh(MeshHandle handle);
   void upload(Field& field, glm::ivec2 tile);
   // Where the patch goes this frame (world XY), from the camera.
   static glm::vec2 patchCenterFor(const Camera& camera, float ground);
@@ -306,6 +333,8 @@ private:
   std::vector<float> m_groundSoftness;
   MeshHandle m_patchMesh;
   std::vector<uint16_t> m_halves; // scratch: a tile's
+  // Scratch: the frame's deformable terrains.
+  std::vector<Seen> m_seen;
 };
 
 } // namespace sfs

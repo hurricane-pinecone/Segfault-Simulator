@@ -22,7 +22,7 @@ void HistorySteps::push(const nlohmann::json& before,
   Text beforeText = text(before);
   if (!m_undo.empty() && *m_undo.back().after == *beforeText)
     beforeText = m_undo.back().after;
-  m_undo.push_back({std::move(beforeText), text(after), selectionBefore, selectionAfter});
+  m_undo.push_back({std::move(beforeText), text(after), selectionBefore, selectionAfter, nullptr, m_nextState++});
   m_bytes += m_undo.back().bytes();
   trim();
 }
@@ -34,7 +34,7 @@ void HistorySteps::pushAssetEdit(std::shared_ptr<const AssetEdit> edit, Selectio
   m_redo.clear();
   // No scene of its own: an empty one, shared.
   static const Text none = text(nullptr);
-  m_undo.push_back({none, none, selection, selection, std::move(edit)});
+  m_undo.push_back({none, none, selection, selection, std::move(edit), m_nextState++});
   m_bytes += m_undo.back().bytes();
   trim();
 }
@@ -47,6 +47,7 @@ void HistorySteps::amendLast(const nlohmann::json& after, Selection selectionAft
   m_bytes -= last.bytes();
   last.after = text(after);
   last.selectionAfter = selectionAfter;
+  last.state = m_nextState++; // the scene after it isn't what it was
   m_bytes += last.bytes();
   trim();
 }
@@ -82,6 +83,7 @@ void HistorySteps::clear()
   m_undo.clear();
   m_redo.clear();
   m_bytes = 0;
+  m_baseState = m_nextState++;
 }
 
 void HistorySteps::rewrite(const std::function<void(nlohmann::json&)>& edit)
@@ -127,6 +129,7 @@ void HistorySteps::trim()
   while (m_undo.size() > 1 && (m_undo.size() > m_maxSteps || m_bytes > m_maxBytes))
   {
     m_bytes -= m_undo.front().bytes();
+    m_baseState = m_undo.front().state;
     m_undo.pop_front();
   }
 }

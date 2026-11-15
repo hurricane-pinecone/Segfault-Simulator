@@ -55,8 +55,13 @@
    "linearDamping": 0.05,
    "angularDamping": 0.05,
    "gravityScale": 1.0,
-   "lockRotation": false,
-   "bendsGrass": true
+   "lockRotation": false
+  },
+  "GrassBenderComponent": {
+   "fitColliders": true,
+   "fitMesh": true,
+   "offset": [0.0, 0.0, 0.0],
+   "radius": 0.5
   },
   "Pin": {}
  }

@@ -36,6 +36,7 @@ struct MeshDrawCommand
   std::vector<MeshInstance> instances;
   std::vector<MeshInstance> shadowInstances;
   std::vector<MeshInstance> lightShadowInstances; // see MeshBatch
+  std::vector<MeshInstance> feedInstances;        // see MeshBatch
 };
 
 /** A grass field to draw (see GrassBatch), drawn with the opaque things. */
@@ -51,6 +52,7 @@ struct GrassDrawCommand
   bool castsShadows = true;
   float selfShadow = 0.5f;
   MaterialHandle ground; // its mesh's own material (GrassBatch::ground)
+  GrassVigourSettings vigour;
 };
 
 /** A frame's UI (see UiModule), drawn over everything else. */

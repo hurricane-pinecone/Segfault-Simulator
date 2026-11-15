@@ -97,7 +97,9 @@ private:
   static uint64_t keyOf(const Entity& entity);
   // A terrain's puddle settings, and what its layers' are drawn from.
   static bool samePuddles(const TerrainMaterial& a, const TerrainMaterial& b);
-  void refresh(const Entity& entity, Field& field);
+  // A puddled terrain this frame (`mesh` its renderer's): its ground laid,
+  // its puddles found.
+  void refresh(const Entity& entity, MeshHandle mesh, Field& field);
   void use(Field& field, std::shared_ptr<const std::vector<glm::vec4>> ground);
   void send(Field& field);
 
@@ -107,8 +109,14 @@ private:
   std::optional<glm::vec3> m_eye;  // the last frame's camera
   glm::vec3 m_view{1.0f, 0.0f, 0.0f};
   std::unordered_map<uint64_t, Field> m_fields;
-  // setFillRate()'s, by entity (kept for terrains not drawn yet).
-  std::unordered_map<uint64_t, std::shared_ptr<const TextureData>> m_fillRates;
+  // setFillRate()'s, by entity (kept for terrains not drawn yet; dropped
+  // once the entity's gone).
+  struct FillRate
+  {
+    Entity ground;
+    std::shared_ptr<const TextureData> rate;
+  };
+  std::unordered_map<uint64_t, FillRate> m_fillRates;
   std::unique_ptr<WorkerPool> m_worker;
 };
 

@@ -72,14 +72,39 @@ public:
 };
 
 /**
- * The pictures Image views show: a texture for an image file or a mesh's icon
- * (`mesh`), or null if there's none (yet): then nothing's drawn.
+ * A picture an Image shows: where it is in a texture (its own, or a page of
+ * an atlas of small ones), at its own size and smaller (each level half the
+ * last), so it's drawn from the level nearest the size it's shown at and
+ * stays crisp small.
+ */
+struct SourceImage
+{
+  static constexpr int kMostLevels = 8;
+  struct Level
+  {
+    glm::vec4 uv{0.0f, 0.0f, 1.0f, 1.0f}; // u, v, width, height (0 to 1)
+    glm::ivec2 size{0, 0};                // pixels
+  };
+
+  const UiTexture* texture = nullptr;
+  int levels = 1;
+  Level level[kMostLevels];
+
+  /** Its own size, in pixels. */
+  glm::ivec2 size() const { return level[0].size; }
+  /** The level to draw it from `pixels` wide: the smallest at least that. */
+  const Level& levelFor(float pixels) const;
+};
+
+/**
+ * The pictures Image views show: an image file or a mesh's icon (`mesh`), or
+ * null if there's none (yet): then nothing's drawn.
  */
 class ImageSource
 {
 public:
   virtual ~ImageSource() = default;
-  virtual const UiTexture* image(const std::string& source, bool mesh) = 0;
+  virtual const SourceImage* image(const std::string& source, bool mesh) = 0;
 };
 
 /** The colours and default font everything's drawn with. */

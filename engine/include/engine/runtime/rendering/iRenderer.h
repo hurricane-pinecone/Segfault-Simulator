@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/core/rendering/debugLines.h"
 #include "engine/core/rendering/deformation.h"
 #include "engine/core/rendering/mesh.h"
 #include "engine/core/rendering/puddles.h"
@@ -9,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 
 namespace sfs
 {
@@ -190,6 +192,15 @@ public:
   virtual void updateGrassTrample(GrassHandle grass,
                                   const GrassTrampleImage& image) = 0;
 
+  /**
+   * The field it grows by (GrassVigourField; empty: none), with its batch's
+   * GrassVigourSettings. A backend without it grows grass as its maps say.
+   */
+  virtual void updateGrassVigour(GrassHandle /*grass*/,
+                                 const GrassVigourImage& /*image*/)
+  {
+  }
+
   /** Free a grass field. Unknown or invalid handles are ignored. */
   virtual void destroyGrass(GrassHandle grass) = 0;
 
@@ -217,6 +228,41 @@ public:
    * field), back to front. Its textures must live until endFrame().
    */
   virtual void drawUi(const UiDrawList& list) = 0;
+
+  /**
+   * Queue debug lines (see DebugLines): each pair of vertices a line, drawn
+   * in the scene with what's opaque (hidden behind what's in front of it),
+   * a pixel wide, in its own colour (not lit, and kept as seen through the
+   * frame's exposure). All of a frame's in one draw. The span need only live
+   * until the call returns. A backend without them draws none.
+   */
+  virtual void drawLines(std::span<const DebugLineVertex> vertices)
+  {
+    (void)vertices;
+  }
+
+  /**
+   * Film a camera feed this frame: `view` drawn into `into` (a RenderTexture's,
+   * UiTexture::gpu) with the frame's light, shadows and sky, from the draws'
+   * feedInstances (MeshBatch) and the frame's grass. Between beginFrame() and
+   * the draws. A backend that can't draws nothing (the picture stays as it
+   * was).
+   */
+  virtual void beginFeed(const FeedView& view, const UiTexture& into)
+  {
+    (void)view;
+    (void)into;
+  }
+
+  /**
+   * Whether a UI drew from GPU-drawn texture `id` (UiTexture::gpu) in the
+   * last couple of frames: a camera feed's filmed only while it's shown.
+   */
+  virtual bool textureShown(uint32_t id) const
+  {
+    (void)id;
+    return false;
+  }
 
   /** Render everything queued since beginFrame(). */
   virtual void endFrame() = 0;

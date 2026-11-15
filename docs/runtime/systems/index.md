@@ -4,8 +4,15 @@ The runtime ships built-in systems for common mechanics. Add them to a scene
 (in code, or by name in the scene's systems list) and they run each frame in
 the update phase.
 
+- **Transform system**: `TransformSystem`, the transform pass that caches
+  every entity's world matrix at the start of the render phase. Every scene
+  has one, first (see
+  [Parents & children](../../core/hierarchy/index.md#world-matrices)).
 - **[Camera system](./camera-system/index.md)**: makes camera entities follow
   something smoothly, and shake. The same in every style.
+- **[Prefab system](./prefab-system/index.md)**: `PrefabSystem`, copies of
+  prefabs made while the game runs (`spawn`, `despawn`), from systems and
+  scripts. Every `StandardScene` has one.
 - **2D physics** (below): `PhysicsSystem2D`, bodies and boxes on a 2D game's
   plane, with contacts told to game objects.
 - **[3D physics](../physics-3d/index.md)**: `PhysicsSystem3D`, rigid bodies

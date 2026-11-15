@@ -9,6 +9,11 @@ name: Docs
 #             review that requests changes (or mentions @claude) -- has Claude
 #             bring the branch up to date with master (resolving conflicts),
 #             apply the request and push it back, so the PR updates in place.
+#             A "/conflicts" comment in the PR's conversation only brings it up
+#             to date with master, with Claude resolving any conflicts. GitHub
+#             runs no review or line-comment workflow while a PR has conflicts
+#             (there's no merge commit to run on), so conflicts need this
+#             conversation comment.
 #  - revise:  weekly (and on manual runs), every open docs PR is brought up to
 #             date with master and checked against the current source:
 #             conflicts resolved and anything now wrong fixed, or a comment
@@ -182,8 +187,12 @@ jobs:
 
             **Review before merging.** If the docs didn't actually need changing, just
             close this PR — no harm done. To have Claude change it, comment
-            `@claude <what to change>`, or submit a review requesting changes (its text
-            is the request; "fix conflicts" brings it up to date with master).
+            `@claude <what to change>`, or leave comments on lines and submit a review
+            requesting changes: Claude gets the review's text and every line comment with
+            its place. (Don't write `@claude` on lines inside a review: each would also
+            start a run of its own.) If it conflicts with master, comment `/conflicts`
+            here in the conversation first: GitHub runs nothing for reviews while a PR
+            has conflicts.
 
       # Safe: create-pull-request restricts this PR to docs/ + mkdocs.yml (add-paths).
       - name: Mark required checks satisfied (docs-only PR)
@@ -194,18 +203,20 @@ jobs:
 
   # Feedback on a docs PR: Claude brings the branch up to date with master
   # (resolving any conflicts), does what the feedback asks, and pushes the
-  # result back so the PR updates in place.
+  # result back so the PR updates in place. "/conflicts" does only the first
+  # part.
   iterate:
-    # A "@claude" comment, or a submitted review that requests changes or
-    # mentions @claude -- from someone with write access (this runs with repo
-    # secrets, so never an arbitrary commenter), and never from a bot (which
-    # would loop).
+    # A "@claude" comment, a "/conflicts" comment in the PR's conversation, or a
+    # submitted review that requests changes or mentions @claude -- from someone
+    # with write access (this runs with repo secrets, so never an arbitrary
+    # commenter), and never from a bot (which would loop).
     if: >-
       (
         (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment')
         && (github.event.issue.pull_request || github.event.pull_request)
         && github.event.comment.user.type != 'Bot'
-        && contains(github.event.comment.body, '@claude')
+        && (contains(github.event.comment.body, '@claude')
+            || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/conflicts')))
         && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
       ) || (
         github.event_name == 'pull_request_review'
@@ -223,6 +234,8 @@ jobs:
     env:
       PR: ${{ github.event.issue.number || github.event.pull_request.number }}
       GH_TOKEN: ${{ github.token }}
+      # "/conflicts": bring the branch up to date with master and nothing else.
+      CONFLICTS_ONLY: ${{ github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/conflicts') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -255,26 +268,51 @@ jobs:
             { echo "conflicts<<EOF"; git diff --name-only --diff-filter=U; echo "EOF"; } >> "$GITHUB_OUTPUT"
           fi
 
+      # Claude isn't needed for a "/conflicts" whose merge went in cleanly.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        if: steps.pr.outputs.docs == 'true'
+        if: steps.pr.outputs.docs == 'true' && (env.CONFLICTS_ONLY != 'true' || steps.merge.outputs.conflicts != '')
         with:
           node-version: "20"
 
       - name: Install Claude Code
-        if: steps.pr.outputs.docs == 'true'
+        if: steps.pr.outputs.docs == 'true' && (env.CONFLICTS_ONLY != 'true' || steps.merge.outputs.conflicts != '')
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Apply the requested change
-        if: steps.pr.outputs.docs == 'true'
+        if: steps.pr.outputs.docs == 'true' && (env.CONFLICTS_ONLY != 'true' || steps.merge.outputs.conflicts != '')
         env:
           # Same subscription token the sync job uses.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           REQUEST: ${{ github.event.comment.body || github.event.review.body }}
           CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          REVIEW_ID: ${{ github.event.review.id }}
+          COMMENT_PATH: ${{ github.event.comment.path }}
+          COMMENT_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
+          COMMENT_HUNK: ${{ github.event.comment.diff_hunk }}
         run: |
           # Strip whitespace so a stray newline in the secret can't make the auth
           # header invalid (see the sync job for the full note).
           export CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
+          # A submitted review's line comments aren't in the event: fetch them, each
+          # with its file, line and the diff it was left on. A single line comment
+          # carries its own place in the event.
+          LINE_COMMENTS=""
+          if [ -n "$REVIEW_ID" ]; then
+            LINE_COMMENTS="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews/$REVIEW_ID/comments" \
+              --jq '.[] | "- \(.path), line \(.line // .original_line):\n\(.body)\nIt was left on this part of the diff:\n\(.diff_hunk)\n"')"
+          elif [ -n "$COMMENT_PATH" ]; then
+            LINE_COMMENTS="- $COMMENT_PATH, line $COMMENT_LINE:
+          $REQUEST
+          It was left on this part of the diff:
+          $COMMENT_HUNK"
+            REQUEST=""
+          fi
+          if [ -n "$LINE_COMMENTS" ]; then
+            REQUEST="${REQUEST:+$REQUEST
+
+          }Comments on lines of the pull request (each is part of the request):
+          $LINE_COMMENTS"
+          fi
           if [ -z "$REQUEST" ]; then
             REQUEST="(A review requested changes without saying what: bring the PR up to date with master and make sure it's still accurate.)"
           fi
@@ -287,13 +325,19 @@ jobs:
 
           "
           fi
-          PROMPT="${CONFLICT_NOTE}A reviewer left this feedback on a documentation pull request:
+          if [ "$CONFLICTS_ONLY" = "true" ]; then
+            PROMPT="${CONFLICT_NOTE}The whole repository is checked out on the PR branch, so Read/Grep/Glob any source or doc file you need to judge what the current source says. Read .github/docs-style.md and .github/docs-structure.md first, and follow both.
+
+          Resolve the conflicts and make no other change."
+          else
+            PROMPT="${CONFLICT_NOTE}A reviewer left this feedback on a documentation pull request:
 
           $REQUEST
 
           Do what it asks. The whole repository is checked out on the PR branch, so Read/Grep/Glob any source or doc file you need. Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) first, and follow both.
 
           Make the smallest change that satisfies the request and do not touch anything it didn't ask about. If the request is unclear, or is not a documentation change you should make here, make no edits (beyond resolving any conflicts)."
+          fi
           printf '%s' "$PROMPT" | claude -p \
             --permission-mode acceptEdits --max-turns 60 \
             --allowedTools "Read,Edit,Write,Grep,Glob"
@@ -314,13 +358,19 @@ jobs:
             git commit -m "docs: address review feedback"
           fi
           if [ "$(git rev-parse HEAD)" = "$(git rev-parse '@{u}')" ]; then
-            gh pr comment "$PR" --body "I didn't change anything. The request looked already satisfied, or it was outside the docs I should edit here."
+            if [ "$CONFLICTS_ONLY" = "true" ]; then
+              gh pr comment "$PR" --body "Already up to date with master, with no conflicts: nothing to push."
+            else
+              gh pr comment "$PR" --body "I didn't change anything. The request looked already satisfied, or it was outside the docs I should edit here."
+            fi
             exit 0
           fi
           git push
           # The push makes a new head commit with no statuses: report them again.
           bash .github/scripts/mark-docs-checks.sh "$(git rev-parse HEAD)"
-          if [ -n "$CONFLICTS" ]; then
+          if [ "$CONFLICTS_ONLY" = "true" ]; then
+            gh pr comment "$PR" --body "Merged master in${CONFLICTS:+ (resolving the conflicts)} and pushed it."
+          elif [ -n "$CONFLICTS" ]; then
             gh pr comment "$PR" --body "Merged master in (resolving the conflicts) and pushed an update addressing your feedback."
           else
             gh pr comment "$PR" --body "Pushed an update addressing your feedback."

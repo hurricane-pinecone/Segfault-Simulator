@@ -1,6 +1,8 @@
 #include "../../testHarness.h"
 
+#include <engine/runtime/rendering/framePlan.h>
 #include <engine/runtime/ui/fontAtlas.h>
+#include <engine/runtime/ui/imageAtlas.h>
 #include <engine/runtime/ui/layout.h>
 #include <engine/runtime/ui/placeholder.h>
 #include <engine/runtime/ui/preview.h>
@@ -55,7 +57,8 @@ struct Laid
   View view; // what was laid out (its hits' sources are in it)
 };
 
-// Pictures a stand-in has: "crate.png" 64 x 32, every mesh an icon.
+// Pictures a stand-in has: "crate.png" 64 x 32, every mesh an icon, and
+// "lamp.png" 64 x 64 on a page with its levels (32, 16, 8) beside it.
 class FakeImages : public ImageSource
 {
 public:
@@ -63,15 +66,29 @@ public:
   {
     file.size = {64, 32};
     icon.size = {128, 128};
+    page.size = {256, 256};
+    fileImage.texture = &file;
+    fileImage.level[0].size = file.size;
+    iconImage.texture = &icon;
+    iconImage.level[0].size = icon.size;
+    lampImage.texture = &page;
+    lampImage.levels = 4;
+    for (int i = 0; i < 4; ++i)
+      lampImage.level[i] = {
+          glm::vec4(0.1f * static_cast<float>(i)), glm::ivec2(64 >> i)};
   }
-  const UiTexture* image(const std::string& source, bool mesh) override
+  const SourceImage* image(const std::string& source, bool mesh) override
   {
     if (mesh)
-      return &icon;
-    return source == "crate.png" ? &file : nullptr;
+      return &iconImage;
+    return source == "crate.png"  ? &fileImage
+           : source == "lamp.png" ? &lampImage
+                                  : nullptr;
   }
   UiTexture file;
   UiTexture icon;
+  UiTexture page;
+  SourceImage fileImage, iconImage, lampImage;
 };
 
 // A view of the game's own (a ViewStruct).
@@ -1052,14 +1069,22 @@ int main()
     Cache cache;
     FakeText text;
     View view;
+    ImageSource* images = nullptr;
     const Cache::Stats&
     lay(const View& next, Pointer pointer = {}, float seconds = 0.0f)
     {
       view = next;
       text.drawn.clear();
       state.advance(seconds);
-      layout(
-          next, {1000.0f, 500.0f}, 1.0f, Theme(), text, pointer, state, cache);
+      layout(next,
+             {1000.0f, 500.0f},
+             1.0f,
+             Theme(),
+             text,
+             pointer,
+             state,
+             cache,
+             images);
       return cache.stats();
     }
     const Hit* clickable(Node::Kind kind, int which = 0) const
@@ -1258,6 +1283,364 @@ int main()
     kept.lay(panel(true), {}, 1.0f);
     CHECK(std::find(kept.text.drawn.begin(), kept.text.drawn.end(), "rain") !=
           kept.text.drawn.end());
+  }
+
+  // A style of the game's: a face of its own colour in each state.
+  const auto faceOf = [](const ButtonConfiguration& c)
+  {
+    const Color face = c.disabled  ? Color::rgb(10, 10, 10)
+                       : c.pressed ? Color::rgb(200, 0, 0)
+                       : c.hovered ? Color::rgb(0, 200, 0)
+                                   : Color::rgb(0, 0, 200);
+    return c.label.frame(80.0f, 30.0f).background(face);
+  };
+  // Whether a box of `color` was drawn.
+  const auto drewBox = [](const std::vector<UiQuad>& quads, Color color)
+  {
+    for (const UiQuad& quad : quads)
+      if (quad.kind == UiQuad::Box && near(quad.color.r, color.r) &&
+          near(quad.color.g, color.g) && near(quad.color.b, color.b))
+        return true;
+    return false;
+  };
+
+  TEST("a button style should make a button's look from its state: normal, "
+       "hovered, pressed, disabled; no theme face")
+  {
+    int clicks = 0;
+    const View ui = Button("Go", [&] { ++clicks; })
+                        .buttonStyle(ButtonStyle(faceOf))
+                        .align(Alignment::TopLeading);
+    Laid normal = lay(ui);
+    const Hit* hit = clickable(normal, Node::Kind::Button);
+    CHECK(hit != nullptr);
+    if (!hit)
+      break;
+    CHECK(near(hit->rect.width, 80.0f) && near(hit->rect.height, 30.0f));
+    CHECK(drewBox(normal.quads, Color::rgb(0, 0, 200)));
+    CHECK(!drewBox(normal.quads, Theme().button));
+    CHECK(textQuad(normal, "Go") != nullptr);
+    click(normal, hit);
+    CHECK(clicks == 1);
+
+    Pointer pointer;
+    pointer.hovered = hit->id;
+    CHECK(drewBox(lay(ui, {1000.0f, 500.0f}, 1.0f, pointer).quads,
+                  Color::rgb(0, 200, 0)));
+    pointer.pressed = hit->id;
+    Laid pressed = lay(ui, {1000.0f, 500.0f}, 1.0f, pointer);
+    CHECK(drewBox(pressed.quads, Color::rgb(200, 0, 0)));
+    CHECK(!drewBox(pressed.quads, Color::rgb(0, 0, 200)));
+    Laid disabled = lay(ui.disabled(), {1000.0f, 500.0f}, 1.0f, pointer);
+    CHECK(drewBox(disabled.quads, Color::rgb(10, 10, 10)));
+    const Hit* off = clickable(disabled, Node::Kind::Button);
+    CHECK(off && !off->enabled);
+    // A style struct (makeBody) does the same.
+    struct Struct
+    {
+      View makeBody(const ButtonConfiguration& c) const
+      {
+        return c.label.background(c.hovered ? Color::white() : Color::black());
+      }
+    };
+    CHECK(drewBox(lay(Button("Go", [] {})
+                          .buttonStyle(Struct{})
+                          .align(Alignment::TopLeading))
+                      .quads,
+                  Color::black()));
+  }
+
+  TEST("a styled button's hover should lay out only it again; what a style "
+       "captured should be in the hash")
+  {
+    Kept kept;
+    const auto row = [&](Color lit)
+    {
+      return HStack{Button("A", [] {}), Button("B", [] {})}
+          .buttonStyle(ButtonStyle([&, lit](const ButtonConfiguration& c)
+                                   { return faceOf(c).border(lit, 1.0f); }))
+          .align(Alignment::TopLeading);
+    };
+    kept.lay(row(Color::white()));
+    const Hit* a = kept.clickable(Node::Kind::Button);
+    CHECK(a != nullptr);
+    if (!a)
+      break;
+    CHECK(kept.lay(row(Color::white())).kept);
+    Pointer pointer;
+    pointer.hovered = a->id;
+    const Cache::Stats& over = kept.lay(row(Color::white()), pointer);
+    // Its face drawn again; its label (where it was) and B's kept.
+    CHECK(!over.kept && over.reused >= 2 && kept.text.drawn.empty());
+    CHECK(drewBox(*kept.cache.quads(), Color::rgb(0, 200, 0)));
+    CHECK(sameAsFresh(kept, pointer));
+    CHECK(kept.lay(row(Color::white()), pointer).kept);
+    CHECK(row(Color::white()).node()->hash() !=
+          row(Color::black()).node()->hash());
+  }
+
+  TEST("buttonStyle on a stack should style its buttons without one; plain "
+       "should be its label, dimmed pressed")
+  {
+    const View styled =
+        HStack{Button("a", [] {}),
+               Button("b", [] {}).buttonStyle(ButtonStyle::plain())}
+            .buttonStyle(ButtonStyle(faceOf));
+    const Node& stack = *styled.node();
+    CHECK(stack.children.size() == 2u);
+    if (stack.children.size() == 2u)
+    {
+      CHECK(stack.children[0].node()->buttonStyle ==
+                ButtonStyle::Kind::Custom &&
+            stack.children[0].node()->children.size() == 5u);
+      CHECK(stack.children[1].node()->buttonStyle == ButtonStyle::Kind::Plain);
+    }
+    // A view with no buttons is itself, not a copy.
+    const View text = Text("x");
+    CHECK(text.buttonStyle(ButtonStyle(faceOf)).node() == text.node());
+
+    const View plain = Button(Text("xy").color(Color::rgb(255, 0, 0)), [] {})
+                           .buttonStyle(ButtonStyle::plain())
+                           .align(Alignment::TopLeading);
+    Laid laid = lay(plain);
+    CHECK(laid.quads.size() == 1u && laid.quads[0].kind == UiQuad::Glyph);
+    const Hit* hit = clickable(laid, Node::Kind::Button);
+    CHECK(hit && near(hit->rect.width, 20.0f) && near(hit->rect.height, 20.0f));
+    if (!hit || laid.quads.empty())
+      break;
+    CHECK(near(laid.quads[0].color.r, 1.0f) &&
+          near(laid.quads[0].color.a, 1.0f));
+    Pointer pointer;
+    pointer.hovered = pointer.pressed = hit->id;
+    Laid down = lay(plain, {1000.0f, 500.0f}, 1.0f, pointer);
+    CHECK(down.quads.size() == 1u && near(down.quads[0].color.a, 0.6f));
+    // filled(): a face in each state's fill.
+    Fill normal{.color = Color::rgb(1, 2, 3)};
+    Fill hovered{.color = Color::rgb(4, 5, 6)};
+    Fill held{.color = Color::rgb(7, 8, 9)};
+    Laid filled =
+        lay(Button("go", [] {})
+                .buttonStyle(ButtonStyle::filled(normal, hovered, held))
+                .align(Alignment::TopLeading));
+    CHECK(drewBox(filled.quads, normal.color));
+  }
+
+  TEST("tinted images should draw as masks in the tint, from the level their "
+       "size; resizable ones should grow; nearest should be noted")
+  {
+    FakeImages images;
+    const glm::vec2 screen(1000.0f, 500.0f);
+    Laid lit = lay(Image("lamp.png")
+                       .tint(Color::rgb(255, 0, 0))
+                       .frame(16.0f, 16.0f)
+                       .align(Alignment::TopLeading),
+                   screen,
+                   1.0f,
+                   {},
+                   &images);
+    CHECK(lit.quads.size() == 1u);
+    if (lit.quads.size() == 1u)
+    {
+      const UiQuad& quad = lit.quads[0];
+      CHECK(quad.kind == UiQuad::Mask && quad.texture == &images.page);
+      CHECK(near(quad.color.r, 1.0f) && near(quad.color.g, 0.0f));
+      CHECK(near(quad.rect.z, 16.0f) && near(quad.rect.w, 16.0f));
+      CHECK(near(quad.uv.x, 0.2f)); // the 16-pixel level
+      CHECK(!quad.nearest);
+    }
+    // Tinted round it, in the colour it inherits.
+    Laid inherited = lay(HStack{Image("lamp.png").frame(24.0f, 24.0f)}
+                             .tint()
+                             .color(Color::rgb(0, 255, 0))
+                             .align(Alignment::TopLeading),
+                         screen,
+                         1.0f,
+                         {},
+                         &images);
+    CHECK(inherited.quads.size() == 1u &&
+          inherited.quads[0].kind == UiQuad::Mask &&
+          near(inherited.quads[0].color.g, 1.0f) &&
+          near(inherited.quads[0].uv.x, 0.1f)); // 24 pixels: the 32 level
+    // Untinted: an image, white.
+    Laid plain = lay(Image("lamp.png").align(Alignment::TopLeading),
+                     screen,
+                     1.0f,
+                     {},
+                     &images);
+    CHECK(plain.quads.size() == 1u && plain.quads[0].kind == UiQuad::Image &&
+          near(plain.quads[0].uv.x, 0.0f));
+    // Resizable: grows to its frame, keeping its shape; else as it is.
+    Laid grown =
+        lay(VStack{Image("crate.png").resizable().frame(128.0f, 128.0f)}.align(
+                Alignment::TopLeading),
+            screen,
+            1.0f,
+            {},
+            &images);
+    CHECK(grown.quads.size() == 1u && near(grown.quads[0].rect.z, 128.0f) &&
+          near(grown.quads[0].rect.w, 64.0f));
+    Laid same = lay(VStack{Image("crate.png").frame(128.0f, 128.0f)}.align(
+                        Alignment::TopLeading),
+                    screen,
+                    1.0f,
+                    {},
+                    &images);
+    CHECK(same.quads.size() == 1u && near(same.quads[0].rect.z, 64.0f));
+    Laid sharp = lay(Image("crate.png")
+                         .interpolation(Interpolation::Nearest)
+                         .align(Alignment::TopLeading),
+                     screen,
+                     1.0f,
+                     {},
+                     &images);
+    CHECK(sharp.quads.size() == 1u && sharp.quads[0].nearest);
+    CHECK(Image("lamp.png").tint(Color::white()).node()->hash() !=
+          Image("lamp.png").node()->hash());
+  }
+
+  TEST("an image atlas should put small images on one page with their "
+       "levels, averaged by alpha; big ones on their own")
+  {
+    ImageAtlas atlas;
+    // 64 x 64: white, its left half clear.
+    std::vector<uint8_t> icon(64 * 64 * 4, 255);
+    for (int y = 0; y < 64; ++y)
+      for (int x = 0; x < 32; ++x)
+        icon[(std::size_t(y) * 64 + x) * 4 + 3] = 0;
+    const SourceImage* first = atlas.add(icon, {64, 64});
+    const SourceImage* second = atlas.add(icon, {64, 64});
+    CHECK(first && second && atlas.pages() == 1u);
+    if (!first || !second)
+      break;
+    CHECK(first->texture == second->texture);
+    CHECK(first->levels == 4 && first->level[3].size == glm::ivec2(8, 8));
+    CHECK(first->level[1].uv != second->level[1].uv);
+    CHECK(near(first->levelFor(16.0f).uv.z * ImageAtlas::kPageSize, 16.0f));
+    CHECK(first->levelFor(17.0f).size.x == 32);
+    CHECK(first->levelFor(200.0f).size.x == 64);
+    // Halved across the clear edge: half covered, still white.
+    const std::vector<uint8_t> edge = {
+        255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0};
+    const std::vector<uint8_t> half = halved(edge, {2, 2});
+    CHECK(half.size() == 4u && half[0] == 255 && half[3] >= 127 &&
+          half[3] <= 128);
+    // The level copied where it says: the 32 level's right half opaque.
+    const SourceImage& image = *first;
+    const glm::ivec2 at =
+        glm::ivec2(glm::vec2(image.level[1].uv) * float(ImageAtlas::kPageSize));
+    const auto alphaAt = [&](int x, int y)
+    {
+      return image.texture->pixels
+          [(std::size_t(at.y + y) * ImageAtlas::kPageSize + at.x + x) * 4 + 3];
+    };
+    CHECK(alphaAt(4, 4) == 0 && alphaAt(28, 4) == 255);
+    std::vector<uint8_t> big(300 * 10 * 4, 255);
+    const SourceImage* own = atlas.add(big, {300, 10});
+    CHECK(own && own->levels == 1 && own->texture != first->texture &&
+          own->texture->size == glm::ivec2(300, 10));
+  }
+
+  TEST("a picture's new pixels should need nothing laid out again; a resize "
+       "only it")
+  {
+    auto picture = std::make_shared<Picture>(16, 8);
+    Kept kept;
+    const auto ui = [&] {
+      return HStack{Text("map"), Image(picture)}.align(Alignment::TopLeading);
+    };
+    kept.lay(ui());
+    const UiQuad* quad = nullptr;
+    for (const UiQuad& each : *kept.cache.quads())
+      if (each.kind == UiQuad::Image)
+        quad = &each;
+    CHECK(quad && quad->texture == &picture->texture() &&
+          near(quad->rect.z, 16.0f) && near(quad->rect.w, 8.0f));
+    const uint32_t version = picture->version();
+    picture->set(3, 2, Color::rgb(255, 0, 0));
+    picture->changed();
+    CHECK(picture->version() == version + 1);
+    CHECK(picture->pixels()[(2 * 16 + 3) * 4] == 255 &&
+          picture->pixels()[(2 * 16 + 3) * 4 + 3] == 255);
+    CHECK(kept.lay(ui()).kept);
+    picture->resize(32, 16);
+    const Cache::Stats& resized = kept.lay(ui());
+    CHECK(!resized.kept && kept.text.drawn.empty());
+    quad = nullptr;
+    for (const UiQuad& each : *kept.cache.quads())
+      if (each.kind == UiQuad::Image)
+        quad = &each;
+    CHECK(quad && near(quad->rect.z, 32.0f));
+    // Another picture: another view.
+    auto other = std::make_shared<Picture>(32, 16);
+    CHECK(Image(other).node()->hash() != Image(picture).node()->hash());
+  }
+
+  TEST("a render texture (a camera feed) should be shown from the GPU, its "
+       "new pictures needing nothing laid out again")
+  {
+    auto feed = std::make_shared<RenderTexture>(glm::ivec2(32, 18));
+    CHECK(feed->texture().gpu && feed->texture().pixels.empty() &&
+          feed->texture().id != 0);
+    Kept kept;
+    const auto ui = [&] {
+      return HStack{Text("rear"), Image(feed)}.align(Alignment::TopLeading);
+    };
+    kept.lay(ui());
+    const UiQuad* quad = nullptr;
+    for (const UiQuad& each : *kept.cache.quads())
+      if (each.kind == UiQuad::Image)
+        quad = &each;
+    CHECK(quad && quad->texture == &feed->texture() &&
+          near(quad->rect.z, 32.0f) && near(quad->rect.w, 18.0f));
+    // A new picture is the renderer's: the same views, kept.
+    CHECK(kept.lay(ui()).kept);
+    feed->resize({64, 36});
+    CHECK(!kept.lay(ui()).kept);
+    // Another feed, or a Picture: another view.
+    auto other = std::make_shared<RenderTexture>(glm::ivec2(64, 36));
+    CHECK(Image(other).node()->hash() != Image(feed).node()->hash());
+  }
+
+  TEST("UI batches should keep a glyph texture and an image texture bound "
+       "together: icons between text in one draw")
+  {
+    UiTexture glyphs, page, other;
+    glyphs.id = 1;
+    page.id = 2;
+    other.id = 3;
+    UiDrawList list;
+    const auto quad = [](UiQuad::Kind kind, const UiTexture* texture)
+    {
+      UiQuad made;
+      made.kind = kind;
+      made.texture = texture;
+      return made;
+    };
+    list.quads = {quad(UiQuad::Box, nullptr),
+                  quad(UiQuad::Mask, &page),
+                  quad(UiQuad::Glyph, &glyphs),
+                  quad(UiQuad::Image, &page),
+                  quad(UiQuad::Glyph, &glyphs),
+                  quad(UiQuad::Box, nullptr),
+                  quad(UiQuad::Mask, &other),
+                  quad(UiQuad::Glyph, &glyphs)};
+    list.quads[3].nearest = true;
+    FramePlan plan;
+    plan.begin(FrameParams{});
+    plan.addUi(list);
+    plan.finish({1000, 500}, 1024, 256, [](uint32_t) { return nullptr; });
+    const auto& batches = plan.uiBatches();
+    CHECK(batches.size() == 2u);
+    if (batches.size() == 2u)
+    {
+      CHECK(batches[0].glyphs == &glyphs && batches[0].image == &page &&
+            batches[0].first == 0u && batches[0].count == 6u);
+      CHECK(batches[1].glyphs == &glyphs && batches[1].image == &other &&
+            batches[1].count == 2u);
+    }
+    CHECK(plan.uiInstances().size() == 8u &&
+          near(plan.uiInstances()[3].shape.w, 10.0f) &&
+          near(plan.uiInstances()[1].shape.w, 4.0f));
   }
 
   return testing::report("uiLayoutTests");

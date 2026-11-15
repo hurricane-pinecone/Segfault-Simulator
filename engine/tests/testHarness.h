@@ -321,7 +321,7 @@ inline int report(const char* program)
   #define SFS_CHECK_POP
 #endif
 
-// Variadic so a condition containing commas (e.g. view<A, B>()) isn't split
+// Variadic so a condition containing commas (e.g. query<A, B>()) isn't split
 // into multiple macro arguments by the preprocessor.
 #define CHECK(...)                                                             \
   do                                                                           \

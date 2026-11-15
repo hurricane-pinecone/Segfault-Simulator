@@ -42,6 +42,7 @@ public:
   const std::vector<Contact2D>& contactsEnded() const { return m_ended; }
 
 protected:
+  void create() override;
   void update(double deltaTime) override;
 
 private:

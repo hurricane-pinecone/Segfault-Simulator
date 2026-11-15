@@ -22,13 +22,19 @@ struct UiTexture
   glm::ivec2 size{0, 0};
   std::vector<uint8_t> pixels;
   uint32_t revision = 0;
+  // Drawn by the GPU (a RenderTexture: a camera feed), not from `pixels`: the
+  // renderer holds its picture, by `id`, at `size`.
+  bool gpu = false;
 };
+
+/** A new UiTexture id, never given before (fonts' pages count their own). */
+uint32_t nextUiTextureId();
 
 /**
  * One rectangle of UI, in pixels from the target's top left: a rounded box
  * (its colour, corners, edge softness), part of a texture (text, an image)
- * tinted by its colour, or a chevron. Only what's inside its clip is drawn
- * (a scroll view's content).
+ * tinted by its colour, an icon's mask in its colour, or a chevron. Only what's
+ * inside its clip is drawn (a scroll view's content).
  */
 struct UiQuad
 {
@@ -40,6 +46,8 @@ struct UiQuad
     // A '>' in its colour, its stroke `border` wide, turned `radius` radians
     // clockwise (a quarter turn: pointing down).
     Chevron = 3,
+    // The texture's alpha as a mask, in its colour (a tinted icon).
+    Mask = 4,
   };
 
   glm::vec4 rect{0.0f};        // x, y, width, height
@@ -50,7 +58,8 @@ struct UiQuad
   float border = 0.0f;         // Box: a ring this wide inside its edge...
   glm::vec4 borderColor{0.0f}; // ...in this colour (sRGB) and alpha
   Kind kind = Box;
-  const UiTexture* texture = nullptr; // Glyph and Image
+  bool nearest = false; // Image and Mask: the nearest texel, not blended
+  const UiTexture* texture = nullptr; // Glyph, Image and Mask
   // Where it may draw: left, top, right, bottom (pixels); everywhere by
   // default.
   glm::vec4 clip{-1.0e9f, -1.0e9f, 1.0e9f, 1.0e9f};

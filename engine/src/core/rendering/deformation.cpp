@@ -207,7 +207,7 @@ void DeformationMap::set(glm::ivec2 texel, float offset)
   Tile& into = existing ? *existing : makeTile(tile);
   into[indexInTile(texel)] = offset;
   m_deepest = std::min(m_deepest, offset);
-  m_changed.insert(keyOf(tile));
+  markChanged(keyOf(tile));
 }
 
 float DeformationMap::at(glm::ivec2 texel, Cursor& cursor)
@@ -238,7 +238,7 @@ void DeformationMap::set(glm::ivec2 texel, float offset, Cursor& cursor)
   m_deepest = std::min(m_deepest, offset);
   if (cursor.changed != key)
   {
-    m_changed.insert(key);
+    markChanged(key);
     cursor.changed = key;
   }
 }
@@ -563,10 +563,72 @@ void DeformationMap::relax(float smooth, float fade)
   std::vector<glm::ivec2> all;
   for (const auto& [key, tile] : m_tiles)
   {
-    m_changed.insert(key);
+    markChanged(key);
     all.push_back(tileOfKey(key));
   }
   dropFlat(all);
+}
+
+void DeformationMap::relax(std::span<const glm::ivec2> tiles,
+                           std::span<const glm::vec4> corners)
+{
+  const std::size_t count = std::min(tiles.size(), corners.size());
+  std::vector<glm::ivec2> done;
+  Tile out(kTileTexels);
+  for (std::size_t t = 0; t < count; ++t)
+  {
+    const glm::vec4 c =
+        glm::clamp(corners[t], glm::vec4(0.0f), glm::vec4(1.0f));
+    if (std::max(std::max(c.x, c.y), std::max(c.z, c.w)) <= 0.0f)
+      continue;
+    Tile* tile = tileAt(tiles[t]);
+    if (!tile)
+      continue;
+    // Its neighbours, looked up once (null: flat there).
+    const Tile* around[3][3];
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx)
+        around[dy + 1][dx + 1] = tileAt(tiles[t] + glm::ivec2(dx, dy));
+    const auto valueAt = [&](int x, int y)
+    {
+      const int tx = x < 0 ? 0 : (x >= kTile ? 2 : 1);
+      const int ty = y < 0 ? 0 : (y >= kTile ? 2 : 1);
+      const Tile* from = around[ty][tx];
+      if (!from)
+        return 0.0f;
+      return (*from)[std::size_t((y + kTile) % kTile) * kTile +
+                     (x + kTile) % kTile];
+    };
+    const float last = static_cast<float>(kTile - 1);
+    for (int y = 0; y < kTile; ++y)
+    {
+      const float v = static_cast<float>(y) / last;
+      const float left = glm::mix(c.x, c.z, v), right = glm::mix(c.y, c.w, v);
+      for (int x = 0; x < kTile; ++x)
+      {
+        const std::size_t i = std::size_t(y) * kTile + x;
+        const float here = (*tile)[i];
+        const float smooth =
+            glm::mix(left, right, static_cast<float>(x) / last);
+        if (smooth <= 0.0f)
+        {
+          out[i] = here;
+          continue;
+        }
+        const bool inner = x > 0 && y > 0 && x < kTile - 1 && y < kTile - 1;
+        float sum = 0.0f;
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dx = -1; dx <= 1; ++dx)
+            sum +=
+                inner ? (*tile)[i + dy * kTile + dx] : valueAt(x + dx, y + dy);
+        out[i] = glm::mix(here, sum / 9.0f, smooth);
+      }
+    }
+    tile->swap(out);
+    markChanged(keyOf(tiles[t]));
+    done.push_back(tiles[t]);
+  }
+  dropFlat(done);
 }
 
 void DeformationMap::clear(glm::vec2 low, glm::vec2 high)
@@ -622,7 +684,7 @@ void DeformationMap::clear(std::span<const glm::vec2> polygon)
         }
       if (any)
       {
-        m_changed.insert(keyOf({tx, ty}));
+        markChanged(keyOf({tx, ty}));
         touched.push_back({tx, ty});
       }
     }
@@ -632,7 +694,7 @@ void DeformationMap::clear(std::span<const glm::vec2> polygon)
 void DeformationMap::clearAll()
 {
   for (const auto& [key, tile] : m_tiles)
-    m_changed.insert(key);
+    markChanged(key);
   m_tiles.clear();
   m_deepest = 0.0f;
 }
@@ -663,6 +725,22 @@ std::vector<glm::ivec2> DeformationMap::takeChanged()
   return out;
 }
 
+std::vector<glm::ivec2> DeformationMap::takeRevised()
+{
+  std::vector<glm::ivec2> out;
+  out.reserve(m_revised.size());
+  for (const int64_t key : m_revised)
+    out.push_back(tileOfKey(key));
+  m_revised.clear();
+  return out;
+}
+
+void DeformationMap::markChanged(int64_t key)
+{
+  m_changed.insert(key);
+  m_revised.insert(key);
+}
+
 std::vector<glm::ivec2> DeformationMap::tiles() const
 {
   std::vector<glm::ivec2> out;
@@ -670,6 +748,29 @@ std::vector<glm::ivec2> DeformationMap::tiles() const
   for (const auto& [key, tile] : m_tiles)
     out.push_back(tileOfKey(key));
   return out;
+}
+
+bool DeformationMap::anyTileIn(glm::ivec2 first, glm::ivec2 count) const
+{
+  if (count.x <= 0 || count.y <= 0 || m_tiles.empty())
+    return false;
+  // Whichever is fewer: the block's tiles looked up, or the map's checked.
+  if (static_cast<std::size_t>(count.x) * static_cast<std::size_t>(count.y) <
+      m_tiles.size())
+  {
+    for (int y = 0; y < count.y; ++y)
+      for (int x = 0; x < count.x; ++x)
+        if (m_tiles.contains(keyOf(first + glm::ivec2(x, y))))
+          return true;
+    return false;
+  }
+  for (const auto& [key, tile] : m_tiles)
+  {
+    const glm::ivec2 at = tileOfKey(key) - first;
+    if (at.x >= 0 && at.y >= 0 && at.x < count.x && at.y < count.y)
+      return true;
+  }
+  return false;
 }
 
 void DeformationMap::halves(glm::ivec2 tile, std::span<uint16_t> out) const
@@ -799,7 +900,7 @@ bool DeformationMap::load(std::span<const uint8_t> bytes)
   m_deepest = std::min(deepest, 0.0f);
   m_tiles = std::move(read);
   for (const auto& [key, tile] : m_tiles)
-    m_changed.insert(key);
+    markChanged(key);
   return true;
 }
 
@@ -1367,6 +1468,29 @@ Underside underside(const UndersideMesh& mesh,
     }
   }
   return lowestOf(scratch.low, below, texel, scratch.samples);
+}
+
+float lowestPoint(const UndersideMesh& mesh, const glm::mat4& model)
+{
+  const float stretch =
+      glm::length(glm::vec3(model[0][2], model[1][2], model[2][2]));
+  float lowest = std::numeric_limits<float>::infinity();
+  for (const UndersideMesh::Group& group : mesh.m_groups)
+  {
+    const float middle = model[0][2] * group.center.x +
+                         model[1][2] * group.center.y +
+                         model[2][2] * group.center.z + model[3][2];
+    if (middle - group.radius * stretch >= lowest)
+      continue; // none of it lower
+    for (uint32_t v = 0; v < group.vertices; ++v)
+    {
+      const glm::vec3& p = mesh.m_vertices[group.firstVertex + v];
+      lowest = std::min(lowest,
+                        model[0][2] * p.x + model[1][2] * p.y +
+                            model[2][2] * p.z + model[3][2]);
+    }
+  }
+  return lowest;
 }
 
 Underside merged(const Underside& a, const Underside& b)

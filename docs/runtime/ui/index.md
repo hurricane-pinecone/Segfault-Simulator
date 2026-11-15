@@ -35,9 +35,12 @@ private:
 ```
 
 A layer is a script: put it on an entity (Add Component → Script, as for any
-game object), and it shows while the scene plays. Its state is just its
-members, or the game's systems it reads; `body()` runs every frame, so the UI
-always shows the game as it is, with nothing to keep in sync. What it drew is
+game object), and it shows while the scene plays. Its own state is just its
+members. What it shows of the game it reads from components, and what a click
+asks for it writes into a component's request field for the system that owns
+it to act on: a layer never reads or calls a game system, the same rule as for
+systems. `body()` runs every frame, so the UI always shows the game as it is,
+with nothing to keep in sync. What it drew is
 kept, though: a frame whose `body()` comes out the same isn't laid out or
 drawn again, and one that's changed is only where it changed (see
 [Retained drawing](#retained-drawing)), so writing it this way costs next to
@@ -49,7 +52,9 @@ nothing while the UI stands still.
 | --- | --- |
 | `Text("…")` | A line of text, or several split at `\n` |
 | `Button("label", action)`, `Button(view, action)` | A button calling `action` when clicked |
-| `Image("file.png")`, `Image::mesh("farm:wheat")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit |
+| `Image("file.png")`, `Image::mesh("farm:wheat")` | A picture at its own size, or a mesh as a 32-point icon; framed smaller, it shrinks to fit (see [Icons](#icons-and-tints)) |
+| `Image(picture)` | Pixels the game draws and changes, a `ui::Picture` (see [Pictures](#pictures)) |
+| `Image(texture)` | A picture the GPU draws, a `RenderTexture` such as a camera feed (see [Camera feeds](#camera-feeds)) |
 | `Image::placeholder()` | A soft box where a picture will be |
 | `ProgressBar(fraction)` | A bar filled part way (0 to 1) |
 | `Slider(value, change, low, high, step)` | A knob along a track (160 points wide), from `low` to `high` (0 to 1 by default); dragging it, or pressing the track, calls `change` with the new value, in steps of `step` (0: any) |
@@ -80,6 +85,10 @@ Each returns a new view, so they chain, and order matters as in SwiftUI:
 | `.cornerRadius(…)`, `.border(Color, width)` | Its background's corners and edge |
 | `.color(Color)`, `.font(Font)`, `.opacity(…)` | For it and everything inside (passed down until set again) |
 | `.disabled(bool)` | Its buttons can't be pressed, and look it |
+| `.buttonStyle(style)` | How a button looks: the theme's, `ButtonStyle::plain()`, or the game's (see [Button styles](#button-styles)); on a view, every button in it without one |
+| `.tint(Color)`, `.tint()` | Images in it drawn as masks: their alpha in one colour (or the colour they inherit) |
+| `.resizable()` | An image that grows to fill its frame too, keeping its shape (on an `Image`) |
+| `.interpolation(Interpolation::Nearest)` | Images in it drawn with sharp pixels (`Linear`, smooth, by default) |
 | `.help("…")` | A tooltip when hovered for a moment |
 | `.id("…")` | Keeps a button in a changing list itself from frame to frame; a scroll view's offset or a section's open state by name |
 | `.scrollOffset(points)` | Where a scroll view's scrolled to the first frame it's shown |
@@ -153,6 +162,119 @@ VStack(Alignment::Leading, {
 - To keep it open or closed in the game's own state instead,
   `DisclosureGroup("title", open, [this](bool to) { open = to; }, content)`:
   its header calls `change` with the other state, like a toggle.
+
+## Button styles
+
+A button draws the theme's face round its label unless it's given a style,
+as in SwiftUI. `ButtonStyle::plain()` draws no face: the label is the button,
+dimmed while it's pressed, so any view can be clicked with the look it has.
+A style of the game's makes the button's look from its label and state:
+
+```cpp
+struct KeyStyle
+{
+  sfs::ui::View makeBody(const sfs::ui::ButtonConfiguration& c) const
+  {
+    using namespace sfs::ui;
+    const Color face = c.pressed ? kKeyDown : c.hovered ? kKeyHover : kKey;
+    return c.label.frame(90, 30).background(
+        Fill{.color = face, .cornerRadius = 7, .shadow = c.pressed ? 1.0f : 3.0f});
+  }
+};
+
+Button(Text("RUN"), run).buttonStyle(KeyStyle{})
+HStack{...keys...}.buttonStyle(KeyStyle{}) // each button in it
+```
+
+- `ButtonConfiguration` has the `label`, and `hovered`, `pressed` and
+  `disabled`. A lambda taking it works as well as a struct.
+- `ButtonStyle::filled(normal, hovered, pressed, padding)` is a ready-made
+  one: the label padded on a `Fill` for each state (disabled: faded).
+- The style is called when it's given, once for each state (normal, hovered,
+  pressed, disabled), so all four looks are part of the tree: what a style
+  reads (a colour it captured, a lamp's state) is in the tree's hash and kept
+  like any view. A style can't read anything else at layout time. The button
+  is the size of its normal look, and the others are put in that space, so
+  keep them the same size.
+- The pointer coming over a styled button lays out and draws only that
+  button again, as for any button.
+
+## Icons and tints
+
+`Image("icons/beacon.png")` loads a PNG from the project's assets (or
+`asset:<id>`). Small images, up to 256 pixels a side, and mesh icons go on
+shared atlas pages with their smaller levels (each half the last, averaged)
+beside them, so an icon drawn small is drawn from the level nearest its size
+and stays crisp, on whole pixels. Draw a 64-pixel icon at 16, 24 or 32 points
+for the sharpest result. Text and icons from one page draw together in one
+call: the UI binds a glyph texture and an image texture side by side.
+
+`.tint(color)` draws images as masks: their alpha in `color`, for monochrome
+white-on-clear icons such as a lamp's tell-tale, lit or unlit. `.tint()` with
+no colour uses the colour they inherit, so `.tint().color(kAmber)` round a row
+of icons colours them all. `.resizable()` lets an image grow to its frame, not
+only shrink, and `.interpolation(Interpolation::Nearest)` draws its pixels as
+sharp squares.
+
+```cpp
+Image("icons/road_lights.png").tint(lamp.on ? kGreen : kUnlit).frame(16, 16)
+```
+
+CozyFarm's tell-tale icons are in its `assets/icons/`, drawn by
+`tools/icons/make_icons.py`.
+
+## Pictures
+
+A `ui::Picture` is pixels the game draws and changes, such as a combine's
+yield map: RGBA8, rows from the top, colours as they look on screen. Make one
+shared and keep it. Write its pixels (`set(x, y, color)`, `fill()`, or
+`pixels()` directly), then call `changed()`, and the next frame shows them:
+
+```cpp
+// in the layer
+std::shared_ptr<sfs::ui::Picture> m_yield =
+    std::make_shared<sfs::ui::Picture>(128, 128);
+
+m_yield->set(cellX, cellY, colourFor(yield));
+m_yield->changed();
+
+// in a view
+Image(m_yield).resizable().interpolation(Interpolation::Nearest).frame(240, 240)
+```
+
+A change uploads its pixels again (all of them) and lays nothing out: the
+view's hash covers which picture it is and its size, but not its pixels.
+`resize()` lays out the views showing it again. Keep the picture alive while
+it's shown. The UI Preview fills a `std::shared_ptr<Picture>` field with a
+grey checker.
+
+## Camera feeds
+
+A camera feed films the scene into a small picture: a tractor's rear camera, a
+combine's grain tank. Put a `CameraFeedComponent` on an entity (a child of the
+machine, so it rides along); it looks along the entity's +X with +Z up, like a
+camera entity. Its `picture`, a `std::shared_ptr<RenderTexture>` (as Unity's
+`Camera.targetTexture`), is what it films: the render system makes it at its
+first update after the feed appears, sized `width` by `height`, and resizes it
+when they change. A layer reads it from the component and shows it:
+
+```cpp
+// in a view
+const auto* feed = rearCamera.getComponent<sfs::CameraFeedComponent>();
+if (feed && feed->picture)
+  Image(feed->picture).resizable().frame(320, 180)
+```
+
+The GPU draws it, and its pixels never come back to the CPU. Each new picture
+lays nothing out, as with a `Picture`. It's filmed only while a UI shows it,
+at the component's `rate` (15 a second by default), one feed a frame. A feed
+nothing shows costs nothing. It's filmed in a cheaper way than the scene: the
+same light, sun and lamp shadows, sky, terrain and its deformation (ruts,
+furrows) and grass's ground. It has no bloom, depth of field, ambient
+occlusion, anti-aliasing over time or rain drops. Grass blades are left out
+unless its `grassBlades` is on, which grows them again for the feed, out to
+`grassReach`. Its first frame shown is dark grey, and filming starts on the
+next one.
 
 ## Views of your own, and the UI Preview
 
@@ -305,7 +427,12 @@ kept.
   - *Pictures still on their way.* A mesh icon not loaded yet isn't kept, so
     it shows once it comes.
   - *The font atlas.* When a font's texture grows (its glyphs' coordinates
-    move), everything is drawn again (`TextShaper::generation()`).
+    move), everything is drawn again (`TextShaper::generation()`). Images'
+    atlas pages never move what's on them, so they need nothing like it.
+  - *Pictures* (`ui::Picture`) aren't read at all: their pixels changing
+    re-uploads the texture without laying anything out.
+- **Button styles** are called when they're given, so their looks are in the
+  tree and hashed like any view; nothing at layout time calls game code.
 - **Clicks call today's functions.** A hit doesn't hold the action it was
   laid out with. It holds its view's place in the tree (`Hit::source`), and a
   click calls the function of the node at that place in the layer's newest
@@ -316,6 +443,14 @@ kept.
   child is counted among its siblings of the same kind, so putting a `Text`
   above a `DisclosureGroup` doesn't change which section it is. Putting
   another `DisclosureGroup` above it does, unless they have `.id()`s.
+
+For screenshots of a hover or press, `SFS_UI_POINTER=x,y` pins the UI's
+pointer at that point (in points from the top left), and `x,y,down` holds it
+down there too.
+
+For testing clicks, `SFS_UI_CLICK=help,frame` presses the middle of whatever
+has that text in its help, from that frame on, through the same hit testing
+the mouse uses, then lets go two frames later. It logs what it found there.
 
 Writing views stays as it was, with one thing to keep in mind: a view's look
 must come from its node, what it inherits, the theme, the State and the

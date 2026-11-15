@@ -2,6 +2,10 @@
 
 #include "panels/panel.h"
 
+#include "engine/core/events/events.h"
+
+#include <vector>
+
 // Scene-wide settings: lighting, shadows and camera projection, drawn from the
 // render system's ModuleSetting descriptors (the same ones the in-game debug
 // panel shows), plus last frame's render stats.
@@ -12,4 +16,9 @@ public:
 
 protected:
   void drawContents(EditorContext& context) override;
+
+private:
+  // The Events view's rows, refilled each frame: kept so it allocates nothing
+  // once it has room.
+  std::vector<sfs::EventStats> m_eventStats;
 };

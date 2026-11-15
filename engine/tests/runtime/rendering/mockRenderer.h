@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace sfs::testing3d
@@ -94,6 +95,11 @@ public:
     list.forEach([&](const UiQuad& quad) { uiDrawn.push_back(quad); });
   }
 
+  void drawLines(std::span<const DebugLineVertex> vertices) override
+  {
+    linesDrawn.insert(linesDrawn.end(), vertices.begin(), vertices.end());
+  }
+
   glm::ivec2 viewportSize() const override { return viewport; }
   uint32_t shadowMapResolution() const override { return 1024; }
 
@@ -102,9 +108,11 @@ public:
     frame = params;
     lights.assign(params.pointLights.begin(), params.pointLights.end());
     batches.clear();
+    feed.reset();
     drawn.clear();
     grassDrawn.clear();
     uiDrawn.clear();
+    linesDrawn.clear();
     ++frames;
   }
 
@@ -115,7 +123,8 @@ public:
                        batch.shadowInstances.size(),
                        {batch.materials.begin(), batch.materials.end()},
                        batch.lightShadowInstances.size(),
-                       batch.together});
+                       batch.together,
+                       batch.feedInstances.size()});
     drawn.insert(drawn.end(), batch.instances.begin(), batch.instances.end());
   }
 
@@ -129,7 +138,23 @@ public:
     std::vector<MaterialHandle> materials;
     std::size_t lightShadowInstances = 0;
     bool together = false;
+    std::size_t feedInstances = 0;
   };
+
+  // Camera feeds: the textures a UI showed (as the test says), and this
+  // frame's feed (none: nothing filmed).
+  void beginFeed(const FeedView& view, const UiTexture& into) override
+  {
+    feed = view;
+    feedInto = into.id;
+  }
+  bool textureShown(uint32_t id) const override
+  {
+    return std::find(shown.begin(), shown.end(), id) != shown.end();
+  }
+  std::vector<uint32_t> shown;
+  std::optional<FeedView> feed;
+  uint32_t feedInto = 0;
 
   glm::ivec2 viewport{1280, 720};
   uint32_t nextId = 0;
@@ -147,6 +172,7 @@ public:
   std::map<uint32_t, std::size_t> liveGrass; // ground texels, by handle
   std::vector<GrassBatch> grassDrawn;        // this frame
   std::vector<UiQuad> uiDrawn;               // this frame's UI
+  std::vector<DebugLineVertex> linesDrawn;   // this frame's debug lines
   struct MapUpdate
   {
     GrassHandle grass;

@@ -5,6 +5,7 @@
 #include <engine/core/rendering/terrain.h>
 #include <glm/glm/ext/matrix_transform.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -85,6 +86,40 @@ int main()
     CHECK(near(map.at({-1, -1}), -0.1f));
     CHECK(near(map.at({64, 0}), -0.2f));
     CHECK(near(map.deepest(), -0.2f));
+  }
+
+  TEST("a block of tiles should hold one of the map's only if it covers it")
+  {
+    DeformationMap map(0.5f);
+    CHECK(!map.anyTileIn({-4, -4}, {8, 8})); // empty
+    map.set({-1, -1}, -0.1f);                // tile (-1, -1)
+    map.set({64, 0}, -0.2f);                 // tile (1, 0)
+    CHECK(map.anyTileIn({-1, -1}, {1, 1}));
+    CHECK(map.anyTileIn({1, 0}, {1, 1}));
+    CHECK(map.anyTileIn({-4, -4}, {8, 8}));
+    CHECK(!map.anyTileIn({0, 0}, {1, 1}));
+    CHECK(!map.anyTileIn({2, 0}, {4, 4}));
+    CHECK(!map.anyTileIn({-1, -1}, {0, 4})); // spans nothing
+    // Blocks smaller than the map (looked up tile by tile) as well as bigger
+    // (the map's tiles checked), with the same answers as listing tiles().
+    for (int i = 0; i < 6; ++i)
+      map.set({i * 64 + 1, 200}, -0.05f); // tiles (0..5, 3)
+    for (const glm::ivec2 first :
+         {glm::ivec2(-2, -2), glm::ivec2(0, 0), glm::ivec2(3, 3)})
+      for (const glm::ivec2 count : {glm::ivec2(1, 1),
+                                     glm::ivec2(2, 1),
+                                     glm::ivec2(1, 4),
+                                     glm::ivec2(10, 10)})
+      {
+        bool listed = false;
+        for (const glm::ivec2 tile : map.tiles())
+        {
+          const glm::ivec2 at = tile - first;
+          listed = listed ||
+                   (at.x >= 0 && at.y >= 0 && at.x < count.x && at.y < count.y);
+        }
+        CHECK(map.anyTileIn(first, count) == listed);
+      }
   }
 
   TEST("sampling should be bilinear between texel centres")
@@ -221,6 +256,21 @@ int main()
     for (int i = 0; i < 50; ++i)
       map.relax(0.0f, 0.5f);
     CHECK(map.empty()); // all but flat: gone
+  }
+
+  TEST("relaxing some tiles should weather only them, by their corners")
+  {
+    DeformationMap map(0.1f);
+    map.set({0, 0}, -0.09f);
+    map.set({130, 0}, -0.09f); // tile (2, 0)
+    map.set({200, 0}, -0.09f); // tile (3, 0)
+    const glm::ivec2 tiles[] = {{0, 0}, {3, 0}};
+    const glm::vec4 corners[] = {glm::vec4(1.0f), glm::vec4(0.0f)};
+    map.relax(tiles, corners);
+    CHECK(near(map.at({0, 0}), -0.01f));
+    CHECK(near(map.at({1, 1}), -0.01f));
+    CHECK(near(map.at({130, 0}), -0.09f)); // not asked
+    CHECK(near(map.at({200, 0}), -0.09f)); // dry: as it was
   }
 
   TEST("clearing should flatten inside the region only")
@@ -366,6 +416,12 @@ int main()
     CHECK(underside(
               ready, glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 9)), 0.5f)
               .empty());
+    // Its lowest point placed: exactly its lowest vertex's, however it's
+    // turned (not its bounds' corners, which a turned wheel swings lower).
+    float lowest = std::numeric_limits<float>::infinity();
+    for (const glm::vec3& p : positions)
+      lowest = std::min(lowest, glm::vec3(model * glm::vec4(p, 1.0f)).z);
+    CHECK(near(lowestPoint(ready, model), lowest));
   }
 
   TEST("half floats should round-trip the offsets the GPU reads")

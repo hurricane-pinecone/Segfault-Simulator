@@ -4,6 +4,7 @@
 #include "engine/runtime/rendering/modules/renderModule.h"
 #include "engine/runtime/rendering/renderContext.h"
 #include "engine/runtime/ui/fontAtlas.h"
+#include "engine/runtime/ui/imageAtlas.h"
 #include "engine/runtime/ui/layout.h"
 
 #include <chrono>
@@ -108,9 +109,10 @@ public:
 
   /**
    * An Image's picture: an image file (loaded once), or a mesh's icon
-   * (drawn once); null if there's none, or the mesh isn't loaded yet.
+   * (drawn once), in the module's atlas; null if there's none, or the mesh
+   * isn't loaded yet.
    */
-  const UiTexture* image(const std::string& source, bool mesh) override;
+  const ui::SourceImage* image(const std::string& source, bool mesh) override;
 
   /**
    * What was laid out last frame, every layer's, front last (for tests and
@@ -153,8 +155,10 @@ private:
   ui::Theme m_theme;
   ui::FontAtlas m_fonts;
   MeshLibrary* m_meshes = nullptr; // the frame's (for mesh icons)
-  // Images by source ("f:" a file, "m:" a mesh); null: there's none.
-  std::unordered_map<std::string, std::unique_ptr<UiTexture>> m_images;
+  // Images by source ("f:" a file, "m:" a mesh), in the atlas; null: there's
+  // none.
+  ui::ImageAtlas m_atlas;
+  std::unordered_map<std::string, const ui::SourceImage*> m_images;
   float m_scale = 1.0f;
   float m_userScale = 1.0f;
   float m_fixedScale = 0.0f;

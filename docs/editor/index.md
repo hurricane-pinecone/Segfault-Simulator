@@ -75,7 +75,7 @@ of one.
 | --- | --- |
 | Viewport | The scene, with a gizmo on the selection (see below). |
 | Hierarchy | The scene's entities, as a tree of parents and children (see below). Click to select; **Ctrl**+click adds or removes a row, **Shift**+click selects every row from the selected one to it (see [Editing several at once](#editing-several-at-once)); double-click, the row's crosshair button or right-click → Focus frames it in the viewport (as F does there), and a double-click also opens or closes a row with children. To rename, click the selected row's name again, press **F2**, or right-click → **Rename**: a box opens over the row (Enter or clicking away keeps it, Esc cancels). New objects open it straight away, so you can type their name. Use the **+** button or right-click empty space to create entities. The filter box narrows the tree to a flat list of matching names, and picking in the viewport opens the selection's parents and scrolls to it. |
-| Inspector | The selected entity's name and components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
+| Inspector | The selected entity's name, its tags (as chips, with **+ Add Tag**) and its components, with **Add Component** (with several selected: what they share, edited on all of them). Each field's label is on the left and its value on the right. Settings that don't apply are hidden, such as a Mesh Renderer's emission light settings when none of its materials can glow. |
 | Scene Settings | The scene's systems (yours, and the engine's optional ones such as physics), its **Style** (3D, Flat 2D or Isometric 2D), its **Look** (a [visual style](#visual-styles), or its own tone mapping and colour grading), its **Sky & Shadows** (a flat or [physical sky](../runtime/rendering/visual-styles/index.md#physical-sky-and-image-based-lighting), whose atmosphere settings show only when it's physical; and the sun's shadow cascades, whose reach and split show only with more than one), the game camera, sun, sky colour (hidden under a physical sky, which works it out), ambient light, shadows, the viewport's projection and render stats. |
 | Assets | The project's `scenes/`, `scripts/`, `prefabs/` and `assets/` folders: a folder tree, and the open folder's contents (see below). Double-click a scene to open it, a script or other text file to edit it in the Code panel, or anything else to open it in its default app; right-click `scripts` for **New Script**. |
 | Code | Neovim, embedded, for editing scripts (see below). |
@@ -275,7 +275,8 @@ A prefab's tab shows it alone, on a floor grid (metre lines, every tenth
 stronger, the X axis red and Y green). The tab you last clicked is the one being
 edited: the Hierarchy, Inspector and undo follow it, and each tab keeps its own
 selection, undo history and Hierarchy scroll. Unapplied changes put a dot on the
-tab; closing it then asks whether to apply them. Play always plays the scene.
+tab (and undoing back to what was applied takes it off again); closing it then
+asks whether to apply them. Play always plays the scene.
 
 Copies show in sage in the Hierarchy (their parts a little softer). Changing a
 copy (moving it, a tint, a material, a script value, adding or deleting
@@ -288,7 +289,95 @@ where another copy changed the same thing), and **Revert** drops them all
 Prefabs can contain other prefabs. A model placed in the scene is a prefab of
 its own node tree (so a part can be animated or given a script), but can't be
 changed itself: make a prefab containing it (as with `Windmill.prefab` in the
-sample farm) to keep changes.
+sample farm) to keep changes. Changes to a model's nodes follow them by name,
+so reordering the nodes in Blender moves nothing; renaming one leaves its old
+changes unused but kept (see
+[Model node ids](../runtime/serialization/index.md#model-node-ids)).
+
+Selecting a model's node shows its id and name path, dimmed, under its name
+(with a warning when siblings share its name: their ids then follow their
+order in the file). An instance root with changes its prefab no longer has
+lists them under **Unused overrides**, each with:
+
+- **Reattach to...**: pick the entity it's meant for, and the change moves
+  there. When a node was renamed in the source file, type its old name in
+  **Renamed from** and pick the node as it's named now: the changes of that
+  node and of every node below it move at once (their old ids are worked out
+  from the new name paths with the old name put back).
+- **Remove**: drop it.
+
+Both are undoable. A nested instance's unused changes belong to the prefab
+holding it: reattach them in that prefab's tab.
+
+Prefabs and scenes saved by an older engine name model nodes by their place in
+the file. They still load onto the same nodes; to upgrade a whole project's
+files at once:
+
+```
+SfsEditor --upgrade-node-ids <project-folder> [--check]
+SfsEditor --list-node-ids <model-file>
+```
+
+The first checks every change before writing anything (`--check` only
+checks); the second lists a model's nodes with their ids.
+
+## Entity references
+
+A component field of type `sfs::Entity` (or `std::vector<sfs::Entity>`) names
+another entity: a machine's arm, the door a switch opens (see
+[Field types](../core/reflection/index.md#field-types)). The Inspector shows it
+as a slot: the target's name and, dimmed, where it is.
+
+| Action | Result |
+| --- | --- |
+| Drag an entity from the Hierarchy onto the slot | Sets it (a tooltip says why when it can't be named) |
+| The target button beside it | A picker: the part matches first, then the prefab's or instance's entities as a tree and, in a scene, the whole scene, with a search box |
+| Click the name | Selects the target |
+| **x** | Clears it |
+
+A list has a row per item, each with its own **x**, and **+** to add one.
+Every change is an undo step. In a prefab's tab a reference can only name the
+prefab's own entities (a prefab can't point outside itself); in a scene, any
+entity. References are saved as paths (see
+[Entity references](../runtime/serialization/index.md#entity-references)), so
+each copy of a prefab names its own parts, and undo, duplicating and reverting
+keep them.
+
+A reference whose saved target is gone (a model node renamed in its source
+file) shows **Missing (was ...)** until it's set or cleared; its saved value is
+kept until then.
+
+**Parts.** A field marked `[[sfs::part("name")]]` (a glob for a list, such as
+`"blade-*"`) is filled from the names of the nodes below its entity, in
+order, ignoring Blender's `.001` copy numbers: one field takes the first match
+(warned when there are several), a list every match. It's filled:
+
+- when the component is added (its empty fields);
+- by right-click on the component → **Fill Parts** (every part field, again);
+- when a prefab is opened or applied: a part field whose target doesn't
+  match its pattern (renamed in the model, or set by hand to a node named
+  otherwise), or whose saved target didn't resolve, is filled again by name and
+  logged. It's an undo step, so the prefab's tab then has changes to apply. One
+  whose part is gone keeps its value, with a warning; an empty one stays
+  empty.
+
+Parts are never filled while the game runs: what's filled is saved, and loads
+as an authored reference. Without the editor's window, the same filling runs
+over a project's prefabs (it builds and loads the game module first):
+
+```
+SfsEditor --fill-parts <project-folder> <prefab|all> [--dry-run]
+```
+
+`<prefab>` is a path from the project folder (`prefabs/Tractor.prefab`). A
+prefab whose fields change is edited in place: only the part values' text is
+replaced (or added, in the editor's key order, where the file has none), so
+its diff is just those values. Each edited file must open to exactly what was
+filled before it's written; one that doesn't, or that still uses old component
+names, is left as it was and reported. A nested instance of another prefab is
+left to that prefab's own file. `--dry-run` writes no prefab, but the game
+module is still built, into the project's `.sfs/build`. Any other argument is
+refused.
 
 ## Animated characters
 
@@ -309,6 +398,7 @@ Any entity can be the child of another, and moves, turns and scales with it
 
 | Action | Result |
 | --- | --- |
+| Click a row | Selects it, when the mouse is released (a drag from a row, to drop it on another or into a reference slot, leaves the selection as it is) |
 | Drag an entity onto another | It becomes that entity's child, staying where it is in the world |
 | Drag an entity onto the empty space below the list | It becomes a root, staying where it is |
 | Right-click → Create Child | A new entity under this one, at its origin |
@@ -355,8 +445,15 @@ outlined, the one clicked last a little bolder.
   script they all run. Changing a field sets
   it on every one of them. A field whose values differ between them is dimmed
   until you set it. **Add Component** adds one to each that hasn't one, and
-  right-click → **Remove Component** removes it from them all. Each of these is
-  one undo step.
+  right-click → **Remove Component** removes it from them all; tags the same,
+  with **+ Add Tag** and a chip's **x**. Each of these is one undo step.
+- An **entity reference** set on several is set relatively: a target in the
+  first one's own prefab copy becomes the same part of each one's copy (each
+  tractor gets its own arm), and any other target (an entity of the scene
+  itself) is the same entity for all. Where a copy has no such part, its field
+  is left as it was (logged). Clearing one, or a list's item, clears the saved
+  value a **Missing** reference keeps on each of them too, and a Missing
+  reference shows as differing from an empty one.
 - The **gizmo** sits in the middle of them (the average of where they are).
   Moving it moves them all as far; rotating or scaling it turns or scales
   each one as much, about its own origin. To turn a set of objects about
@@ -391,6 +488,14 @@ The inspector is generated from [reflection](../core/reflection/index.md). Every
 reflected component gets an editor built from its fields and attributes, so a
 component you write appears in **Add Component** with no editor code.
 
+A [tag](../core/reflection/index.md#tags) (a component with no data, such as
+Solid Object) isn't a section: it's a chip in the **Tags** row under the name,
+its **x** removing it, drawn in the override colour when a prefab instance adds
+it. **+ Add Tag** lists only tags, and **Add Component** only the others, both
+grouped by module with a search box. On a prefab instance a tag is overridden
+like any component: adding one saves `"TipBody": {}` in its `$overrides`, and
+removing one of the prefab's saves `null`.
+
 ## Code panel
 
 The Code panel is a real Neovim, embedded: the editor starts `nvim --embed` and
@@ -415,7 +520,14 @@ executable. It is deliberately small: no plugin manager or
 plugins, a built-in colour scheme, 2-space indents, and C++ support through
 Neovim's built-in LSP client when `clangd` is installed. That gives go to
 definition (`gd`), hover (`K`), completion, diagnostics, rename (`grn`) and code
-actions (`gra`); `Space h` switches between header and source.
+actions (`gra`); `Space h` switches between header and source. Beside clangd it
+runs [sfs-lsp](sfs-lsp/index.md), the engine's own checks: completion and docs
+for `[[sfs::...]]` attributes, sfs-codegen's warnings as you type, and lints of
+the SFS API with their fixes.
+
+The editor sets `SFS_LSP` to the `sfs-lsp` that matches its engine for every
+config, so your own config can start it too: see
+[sfs-lsp in Neovim](sfs-lsp/index.md#neovim) for the lines to add.
 
 The editor sets `g:sfs_editor = 1` before any config runs, so your own config
 can check `vim.g.sfs_editor` and leave out what an embedded editor doesn't need
@@ -435,7 +547,9 @@ in the project's `scripts/` folder (not assets or builds): `Space f f` and
 
 Projects carry a `.clangd` that points clangd at the game module's compile
 database (each build links it at `.sfs/compile_commands.json`), so clangd finds
-the engine headers with any config, in any editor.
+the engine headers with any config, in any editor. It also turns off clang's
+unknown-attribute warnings, which `[[sfs::...]]` would set off; sfs-lsp checks
+attributes instead.
 
 The panel draws with a monospace font: a Nerd Font Mono if one is installed
 (for the icons many configs use), otherwise Cascadia Mono or Consolas on
@@ -509,7 +623,9 @@ not be writable, e.g. under Program Files). The previous run's log is kept as
 `log.prev.txt`. On Windows the game opens no console window; started from a
 terminal, it logs there too. Release builds log from INFO up, debug builds
 everything; a message repeated many times in a row is written once with a
-count.
+count. The file is written by a thread of its own (a line logged is only
+queued, so a frame never waits on the disk): at least every second, soon after
+a warning, and an error is on disk before its call returns.
 
 On x86-64 the engine's 3D physics is built for AVX2 (a CPU from about 2013 on):
 on an older processor the game says so in a message box instead of crashing.
@@ -601,11 +717,10 @@ camera, in a window that follows it, so it costs no more than a small field.
 Set a field into a hole in the land (with its edge on a whole number of
 quarter units) and give both the same grass, and they meet with no seam.
 
-**What flattens grass:** anything with a Rigid Body, sized by its colliders,
-unless its **Bends Grass** is off. A **Grass Bender** component does the same
-for things without physics, such as a character moved by a script or a
-vehicle's wheels. With **Fit Mesh** on (the default) it's sized to its entity's
-own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
+**What flattens grass:** anything with a **Grass Bender** component, and
+nothing else (a Rigid Body alone doesn't). With **Fit Colliders** on it's sized
+by its entity's own colliders: a physics prop, a crate knocked about. With
+**Fit Mesh** on (the default) it's sized to its entity's own mesh: put one on each wheel and only the wheels bend grass. Turn it off,
 or use it on something without a mesh, to set its **Radius** yourself. Grass is pressed the way a thing is moving, or outward under one
 standing still, and springs back afterwards.
 

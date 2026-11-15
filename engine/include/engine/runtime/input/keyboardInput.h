@@ -2,6 +2,8 @@
 
 #include <SDL_scancode.h>
 #include <array>
+#include <optional>
+#include <string_view>
 
 namespace sfs
 {
@@ -98,6 +100,15 @@ enum class Key : int
   Right = SDL_SCANCODE_RIGHT,
 };
 
+/**
+ * The key with a name, as the Key enumerator is spelled ("Space", "Up", "F8",
+ * "A", "Num1"), ignoring case: for keys named in data, such as an
+ * InputContextComponent's.
+ * @param name the key's name
+ * @return the key, or nothing for a name no key has
+ */
+std::optional<Key> keyFromName(std::string_view name);
+
 class KeyboardInput
 {
 public:
@@ -116,6 +127,14 @@ public:
   bool keyHeld(Key key) const;
   bool keyPressed(Key key) const;
   bool keyReleased(Key key) const;
+
+  /**
+   * Makes a key read as untouched from now on in this copy of the keyboard:
+   * not held, pressed or released. A scene withholds the keys an input
+   * context claims from the objects it outranks.
+   * @param key the key to withhold
+   */
+  void withhold(Key key);
 
 private:
   std::array<bool, SDL_NUM_SCANCODES> currentKeys{};

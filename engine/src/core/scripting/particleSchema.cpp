@@ -16,6 +16,9 @@ const LuaSchema& particleEffectSchema()
       field(
           "gravityZ", &ParticleEffectDesc::gravityZ, "number: vertical accel"),
       field("drag", &ParticleEffectDesc::drag, "number: velocity damping"),
+      field("windInfluence",
+            &ParticleEffectDesc::windInfluence,
+            "number: share of the wind carried toward"),
       rangeField("size", &ParticleEffectDesc::size, "tiles (min/max)"),
       rangeField("speed", &ParticleEffectDesc::speed, "tiles/sec (min/max)"),
       rangeField(
