@@ -1,190 +1,229 @@
 # Segfault Simulator
 
-A game engine with an ECS core, a Unity-style OOP layer for game code, and an
-editor. It's one engine for flat 2D, isometric 2D and 3D games, drawn by one
-renderer on every desktop platform and on the web. Build your game in C++
-against the engine library (or in the editor), and optionally drive it with a
-live Lua scripting API.
+Segfault Simulator (SFS) is a general-purpose C++ game engine with an editor. One ECS and one renderer make flat 2D,
+isometric 2D and 3D games, which run on the desktop and in the browser.
 
 <p align="center">
-  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer">
-    <strong>▶ Play Glowfall Isle (3D)</strong>
-  </a>
+  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator" target="_blank" rel="noopener noreferrer"><strong>▶ Play the 3D sample</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/samplePlatformer" target="_blank" rel="noopener noreferrer">
-    <strong>▶ Play Neon Sprint (flat 2D)</strong>
-  </a>
+  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/samplePlatformer" target="_blank" rel="noopener noreferrer"><strong>▶ Play the 2D sample</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://hurricane-pinecone.github.io/Segfault-Simulator/docs/"><strong>Documentation</strong></a>
 </p>
 
-## Table of Contents
+## Features
 
-- [Overview](#overview)
-- [Documentation](#documentation)
-- [Prerequisites](#prerequisites)
-- [Using SFS in Your Game](#using-sfs-in-your-game)
-  - [Get the Engine Package](#get-the-engine-package)
-  - [Require and Link It](#require-and-link-it)
-  - [Raw CMake Install (no Conan)](#raw-cmake-install-no-conan)
-  - [Runtime Assets](#runtime-assets)
-- [The Samples](#the-samples)
-- [Working on the Engine](#working-on-the-engine)
+**Engine core**
+- An ECS of entities, components and systems, with cached queries, observers and scene singletons.
+- Reflection generated from your headers by `sfs-codegen`. Fields take `[[sfs::...]]` attributes, and there are no
+  registration macros.
+- Typed events between systems, parent and child hierarchies, prefabs, and scriptable objects (`.asset` files) for
+  data many entities share.
+- A live Lua modding API and an in-game dev console.
 
-## Overview
+**Runtime**
+- One WebGPU renderer for every style: wgpu-native on the desktop (Vulkan, Direct3D 12 or Metal, with an OpenGL
+  fallback) and the browser's WebGPU on the web. Material graphs, shadows, clustered point lights, bloom and depth of
+  field.
+- 3D physics on Jolt (rigid bodies, colliders, raycasts), and built-in 2D physics with swept collision and triggers.
+- Navigation for AI vehicles: path planning round colliders, and traffic between agents.
+- Declarative game UI, particles and decals, skeletal animation, and voxel terrain.
 
-SegFaultSimulator (SFS) is one engine where flat 2D, isometric 2D and 3D are
-styles of the same world:
+**Tools**
+- **SfsEditor**, a docking editor for scenes of every style. It has prefabs, material graphs and an embedded Neovim
+  code panel. It builds and reloads your C++ game scripts when you press Play, and exports a desktop game or a web
+  page.
+- **sfs-lsp**, a language server that runs beside clangd. It completes `[[sfs::...]]` attributes, shows codegen's
+  diagnostics as you type, and lints use of the engine's API and architecture rules (`sfs-lsp --fix` applies fixes).
 
-- An **ECS core** of entities, components and systems, with one component set
-  for every style (transforms, cameras, lights, sprites, particle emitters,
-  2D and 3D physics, meshes, grass), reflected so they are editable and
-  saveable.
-- **Three styles**, set per scene:
-  - **Flat 2D**: sprites on a plane, seen straight on, for side-on or
-    top-down games.
-  - **Isometric 2D**: a tile grid with heights, drawn as a true orthographic
-    isometric picture with real depth: sprites, voxel terrain, decals and
-    particles placed on the grid.
-  - **3D**: a free-camera world with models, material graphs, grass and Jolt
-    physics.
-- **One renderer** (`IRenderer`) and one render system for all three, with
-  render modules for sprites, meshes, particles, decals, voxels, grass and UI,
-  and the same lighting everywhere: sun and point-light shadows, clustered
-  point lights, bloom, depth of field and haze.
-- **WebGPU everywhere**: wgpu-native on Windows, Linux and macOS (Vulkan,
-  Direct3D 12 or Metal, with an OpenGL fallback), and the browser's WebGPU on
-  the web. Shaders are WGSL. Render backends are pluggable.
-- **SfsEditor**, a docking editor for scenes of every style, with prefabs,
-  material graphs, native C++ game scripts built on Play, and game export.
-- A **live Lua scripting / modding API** and an in-game dev console.
+**Platforms**
+- Windows and Linux, both built and tested in CI, and the web through Emscripten.
+- macOS is untested. The renderer and the Conan recipe support it, but no CI job builds it.
 
-It ships as three libraries:
+## Status
 
-| Target                 | Contents                                                     | Dependencies |
-| ---------------------- | ------------------------------------------------------------ | ------------ |
-| `sfs::engine`          | The runtime: game loop, scenes, rendering, input, assets, UI. | SDL2, Dear ImGui |
-| `sfs::engine-webgpu`   | The WebGPU render backend and renderer.                      | wgpu-native |
-| `sfs::engine-core`     | The ECS, scripting, particle and rendering-data core, no rendering. | none |
-
-Link `sfs::engine-webgpu` (it brings `sfs::engine`) to build a game;
-`sfs::engine-core` is for headless tools or projects that bring their own
-rendering.
+SFS is early and in active development. The API still changes between versions, and there are no releases yet, so
+you build it from source.
 
 ## Documentation
 
-For in-depth documentation, see: **[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**.
-A bot auto writes the docs, so if they're shit blame Bill Gates or whoever birthed Claude.
+The guide to making a game with SFS is at
+**[hurricane-pinecone.github.io/Segfault-Simulator/docs](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/)**.
+Good places to start:
 
-## Prerequisites
+- [The editor](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/editor/): projects, scenes, panels,
+  prefabs and exporting.
+- [Entities, components and systems](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/core/ecs/): the data
+  model your game is built on.
+- [Game scripts](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/editor/scripting/): writing gameplay in
+  C++ in the editor.
+- [Lua scripting](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/core/scripting/): a live modding API
+  for your game.
+- [Game and scenes](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/runtime/game-and-scenes/): the frame
+  loop, if you write a game against the engine library without the editor.
 
-SFS is distributed with **Conan (v2)** and built with **CMake**. On macOS:
+## Getting started
 
-```bash
-brew install conan cmake
-conan profile detect --force
-```
-
-## Using SFS in Your Game
-
-### Get the Engine Package
-
-SFS is not published to a public Conan remote, so build the package from source
-into your local Conan cache once:
+You need CMake 3.24 or newer, Conan 2 (`pip install "conan==2.*"`), a C++23 compiler, and a 64-bit CPU with AVX2.
+The editor's code panel uses Neovim 0.11 or newer if you have it. Build the editor and run it from its own folder,
+so it finds its assets:
 
 ```bash
 git clone https://github.com/hurricane-pinecone/Segfault-Simulator.git
 cd Segfault-Simulator
-conan create .                          # the full runtime
+conan profile detect --force
+conan install . --build=missing -s build_type=Debug
+cmake --preset debug
+cmake --build --preset debug
+cd build/Debug/bin && ./SfsEditor
 ```
 
-To package only the dependency-free core (no SDL or GPU):
+On Linux, Conan builds SDL from source and may need system packages for it. Add
+`-c tools.system.package_manager:mode=install -c tools.system.package_manager:sudo=True` to `conan install` to let it
+install them.
+
+In the editor, **File → New Project** creates a project folder (`project.sfsproj`, `scenes/`, `assets/`, `scripts/`).
+Add C++ scripts under `scripts/`, press **Play** to build them and run the scene, and use **File → Export Game** to
+write a playable copy. The [editor guide](https://hurricane-pinecone.github.io/Segfault-Simulator/docs/editor/) covers
+the rest.
+
+On Windows, the editor needs a shared engine to load your game module, and MSVC builds the engine statically. Build
+the Windows editor with MinGW instead (see below).
+
+## Building from source
+
+The build uses Conan 2 for dependencies and CMake presets for the build. Engine internals, profiling, lint tooling
+and shell aliases are in [engine/README.md](engine/README.md).
+
+### Presets
+
+`CMakePresets.json` has `debug`, `release` and `relwithdebinfo` (with Tracy profiling). Each builds into
+`build/<BuildType>/` after a `conan install` of the same build type:
 
 ```bash
-conan create . -o "&:core_only=True"    # sfs::engine-core
+conan install . --build=missing -s build_type=Release
+cmake --preset release
+cmake --build --preset release
 ```
 
-### Require and Link It
+Pass options at configure time, such as `cmake --preset debug -DENGINE_BUILD_SAMPLE=OFF`. The defaults below are for
+a top-level build:
 
-Add the engine to your game's `conanfile.txt`:
+| Option | Default | Effect |
+| --- | --- | --- |
+| `ENGINE_CORE_ONLY` | `OFF` | Build only `engine-core` and its tests, with no Conan or third-party libraries. |
+| `ENGINE_BUILD_EDITOR` | `ON` | Build SfsEditor, and SfsPlayer, which exported games run on. |
+| `ENGINE_BUILD_TESTS` | `ON` | Build the engine test suite. |
+| `ENGINE_BUILD_SAMPLE` | `ON` | Build the sample games in a web build. |
+| `ENGINE_SHARED` | `ON` (`OFF` with MSVC) | Build the engine as shared libraries. The editor needs this. |
+| `ENGINE_SANITIZE` | `OFF` | Build with AddressSanitizer and UndefinedBehaviorSanitizer. |
+| `SFS_CODEGEN_EXECUTABLE` | empty | A host `sfs-codegen`, needed when cross-compiling or building for the web. |
 
-```ini
-[requires]
-sfs-engine/0.1.0
+### Using the engine in your own CMake project
 
-[generators]
-CMakeDeps
-CMakeToolchain
+SFS isn't on a public Conan remote, so package it into your local Conan cache:
+
+```bash
+conan create .                         # the full runtime
+conan create . -o "&:core_only=True"   # engine-core only, with no SDL or GPU
 ```
 
-Then link it in your `CMakeLists.txt`:
+Then require `sfs-engine/0.1.0` in your game's `conanfile.txt` (with the `CMakeDeps` and `CMakeToolchain`
+generators) and link one of its targets:
 
 ```cmake
 find_package(engine REQUIRED)
 target_link_libraries(myGame PRIVATE sfs::engine-webgpu)   # or sfs::engine-core
 ```
 
-The SDL / imgui / wgpu-native closure comes in transitively, so you do not
-list those yourself.
+| Target | Contents |
+| --- | --- |
+| `sfs::engine-webgpu` | The WebGPU renderer. It brings `sfs::engine`, so link this to build a game. |
+| `sfs::engine` | The runtime: game loop, scenes, input, assets, UI and physics, on SDL2 and Dear ImGui. |
+| `sfs::engine-core` | The ECS, scripting, particles and rendering data, with no dependencies. For headless tools. |
 
-### Raw CMake Install (no Conan)
-
-The engine also installs as a plain CMake package:
+Without Conan, install a workspace build as a plain CMake package and point `CMAKE_PREFIX_PATH` at it:
 
 ```bash
-cmake --install <engine-build-dir> --prefix /path/to/engine
+cmake --install build/Release --prefix /path/to/engine
 ```
 
-Point your build at it and consume the same targets:
+The package's `bin/` holds the host tools `sfs-codegen` and `sfs-lsp`. On Windows, call `sfs_deploy_runtime(myGame)`
+after `find_package(engine)` to copy the engine's DLLs next to your executable. Either way, `find_package(engine)`
+sets `ENGINE_ASSET_DIR` to the engine's runtime assets (such as the default font), which your game copies next to
+its executable.
 
-```cmake
-# cmake -D CMAKE_PREFIX_PATH=/path/to/engine ...
-find_package(engine REQUIRED)
-target_link_libraries(myGame PRIVATE sfs::engine-webgpu)
+### Windows (MinGW cross-build)
+
+The Windows editor is cross-built from Linux or WSL with MinGW-w64 (`g++-mingw-w64-x86-64-posix` on Debian and
+Ubuntu). It needs a native build first for its host `sfs-codegen`, and a Conan host profile named `windows-mingw`:
+`os=Windows`, `arch=x86_64`, `compiler=gcc` 13 with `compiler.threads=posix` and `compiler.exception=seh`, the
+`x86_64-w64-mingw32-*-posix` tools in `tools.build:compiler_executables`, and `-static-libgcc -static-libstdc++` in
+the link flags.
+
+```bash
+conan install . -of build-win -pr:h windows-mingw -pr:b default --build=missing
+cmake -S . -B build-win/build/Release -DCMAKE_BUILD_TYPE=Release \
+  --toolchain "$PWD/build-win/build/Release/generators/conan_toolchain.cmake" \
+  -DSFS_CODEGEN_EXECUTABLE="$PWD/build/Debug/bin/sfs-codegen"
+cmake --build build-win/build/Release
 ```
 
-The package's `bin/` holds the engine's host tools: `sfs-codegen`, which
-generates reflection from your headers at build time, and `sfs-lsp`, the
-language server editors run beside clangd for `[[sfs::...]]` completion and
-SFS code checks (see `docs/editor/sfs-lsp`).
+The editor and its DLLs land in `build-win/build/Release/bin/`. A native MSVC build works for the engine and its
+tests, as in CI's Windows job: `conan install . --build=missing -s build_type=Release -s compiler.cppstd=23
+-o "*:shared=False"`, then `cmake --preset conan-default` and `cmake --build --preset conan-release`.
 
-### Runtime Assets
+### Web
 
-The engine loads a few runtime assets of its own (e.g. the default font).
-`find_package(engine)` sets `ENGINE_ASSET_DIR` to their location; copy them next
-to your executable:
+The web build draws on the browser's WebGPU, so it runs in a recent Chrome, Edge or Safari, or Firefox 141 or newer
+on Windows. It needs Emscripten on your `PATH` (CI pins 6.0.13, because 7.0.0 can't compile Jolt) and a native build
+for the host `sfs-codegen`. It builds the two sample games into `build-web/bin/`:
 
-```cmake
-add_custom_command(TARGET myGame POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${ENGINE_ASSET_DIR}" "$<TARGET_FILE_DIR:myGame>/assets")
+```bash
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release \
+  -DSFS_CODEGEN_EXECUTABLE="$PWD/build/Debug/bin/sfs-codegen"
+cmake --build build-web
+cd build-web/bin && python3 -m http.server
 ```
 
-## The Samples
+To export your own project as a web page, use the editor's export, which also needs Emscripten.
 
-Two games made in SfsEditor, both playable in the browser (links above):
+### Tests
 
-- `samples/showcase3d/` is **Glowfall Isle**, the 3D sample: an island with
-  models, material graphs, grass, physics and a day that passes.
-- `samples/platformer2d/` is **Neon Sprint**, the flat 2D sample: a neon
-  runner with sprites, point lights and particles.
+A preset build includes the tests. Each has a label (`core`, `runtime` or `webgpu`), so you can run one group. The
+core tests also build on their own with only CMake and a compiler:
 
-Each is an editor project (`project.sfsproj`): open its folder in SfsEditor
-to play it, change it, or export it as a game. The web build publishes them as
-the site's root and `samplePlatformer/` page.
+```bash
+ctest --test-dir build/Debug --output-on-failure -L runtime
 
-For building the engine itself, the bundled workspace build, and tooling, see
-[engine development](./engine/README.md).
+cmake -S . -B build-core -DENGINE_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-core
+ctest --test-dir build-core --output-on-failure
+```
 
-## Working on the Engine
+### Formatting
 
-CI checks that the engine's C++ is formatted with clang-format 17.0.6 (the
-repo's `.clang-format`). A pre-commit hook formats what you commit, so you don't
-have to think about it. Turn it on once per clone:
+CI checks the engine's C++ with clang-format 17.0.6 against the repo's `.clang-format`. Turn on the pre-commit hook
+once per clone, and it formats the files you commit:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-It formats only the files you're committing, in the folders CI checks, and only
-what's staged. The first time, it installs clang-format 17.0.6 into `.git/` if
-that version isn't on your PATH (other versions format slightly differently).
-Skip it for one commit with `git commit --no-verify`.
+It installs clang-format 17.0.6 into `.git/` if that version isn't on your `PATH`. Skip it for one commit with
+`git commit --no-verify`.
+
+## Licence
+
+SFS is licensed under the [PolyForm Shield License 1.0.0](LICENSE.md). Anyone may use it, and make and sell games
+with it, royalty-free. What you may not do is offer a product that competes with SFS. The games you make with SFS
+are yours.
+
+Copyright 2026 Jimmy Couch. Third-party libraries in `engine/lib` and those fetched at build time keep their own
+licences.
+
+## Contributing
+
+Outside contributors sign the [Contributor License Agreement](CLA.md) once, before their first pull request is merged.
+You keep the copyright in your contribution and give the maintainer a licence to use it. A bot comments on your first
+pull request with the sentence to post to sign it.

@@ -34,7 +34,7 @@ class SfsEngineConan(ConanFile):
         "SegFaultSimulator: a game engine for flat 2D, isometric and 3D games "
         "(dependency-free ECS/scripting core + SDL/WebGPU render runtime)."
     )
-    license = "MIT"
+    license = "PolyForm-Shield-1.0.0"
     settings = "os", "compiler", "build_type", "arch"
 
     # core_only packages just engine-core (ECS/scripting/particles), without the
