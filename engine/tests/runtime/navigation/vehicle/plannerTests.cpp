@@ -9,6 +9,7 @@
 #include <engine/runtime/navigation/vehicle/vehicleSearch.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <thread>
@@ -721,7 +722,11 @@ int main()
         submitPlan(scheduler, 1, "test", PlanScheduler::Clock::now(), q);
     PlanResult r;
     int legs = 0;
-    for (int i = 0; i < 2000; ++i)
+    // Waits by the clock, not a count of polls: a sanitized build plans
+    // several times slower.
+    const auto waitUntil =
+        std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    while (std::chrono::steady_clock::now() < waitUntil)
     {
       const PlanScheduler::Collected c = scheduler.collect(t);
       for (const std::any& leg : c.legs)
