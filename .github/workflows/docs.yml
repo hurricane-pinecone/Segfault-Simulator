@@ -1,10 +1,11 @@
 name: Docs
 
 # Three flows in one workflow so they share a single Actions entry:
-#  - sync:    a master push (or manual run) that touches source drafts doc
-#             updates with Claude Code and opens a PR (the review gate -- nothing
-#             lands on master unreviewed). Docs-only pushes don't match the source
-#             paths below, so there is no loop.
+#  - sync:    a weekly audit (and manual runs): Claude Code checks the docs
+#             against every source change since the last audit (the
+#             docs-audited tag) and opens one PR with what's missing or wrong
+#             (the review gate -- nothing lands on master unreviewed). Changes
+#             are meant to bring their own docs; this catches what didn't.
 #  - iterate: feedback on a docs PR -- a "@claude ..." comment, or a submitted
 #             review that requests changes (or mentions @claude) -- has Claude
 #             bring the branch up to date with master (resolving conflicts),
@@ -24,25 +25,17 @@ name: Docs
 # ("Merging master in" below means updating a PR's own branch, not landing it.)
 # Each job is gated by event type, so a review runs only `iterate`, and so on.
 on:
-  push:
-    branches: [master]
-    paths:
-      - engine/**
-      - editor/**
-      - samples/**
   workflow_dispatch:
     inputs:
       base:
         description: >-
-          Git ref to diff from (e.g. a commit SHA). Manual runs default to the
-          previous commit, which is the workflow-YAML commit itself after you
-          push a workflow change -- set this to the commit BEFORE the source
-          changes you want documented (e.g. 90dc33d to cover 1ecf031), or to an
-          older ref to backfill docs for already-merged work.
+          Git ref to audit from (e.g. a commit SHA). Defaults to the
+          docs-audited tag, where the last audit ended; set it to an older ref
+          to audit further back.
         required: false
         default: ""
   schedule:
-    - cron: "0 3 * * 1" # Mondays: revise open docs PRs
+    - cron: "0 3 * * 1" # Mondays: revise open docs PRs, then audit
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -52,14 +45,16 @@ on:
 
 permissions:
   contents: write
+  issues: write # the editor-docs issue when a change needs only those
   pull-requests: write
   statuses: write # the jobs self-report the required checks on docs PRs
 
 jobs:
-  # On a master push that touches source, draft documentation updates with Claude
-  # Code and open a PR with them.
+  # The weekly audit: document what changed since the last one, in one PR. It
+  # runs after `revise`, so the open docs PRs are current first.
   sync:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: revise
+    if: "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -73,11 +68,13 @@ jobs:
       - name: Collect changed source files
         id: changed
         run: |
-          # A manual run's explicit base wins; otherwise use the push's
-          # before-sha. Either is validated below and falls back to HEAD~1.
+          # A manual run's explicit base wins; otherwise the last audit's end
+          # (the docs-audited tag). Either is validated below and falls back
+          # to HEAD~1.
+          git fetch -q origin 'refs/tags/docs-audited:refs/tags/docs-audited' 2>/dev/null || true
           base='${{ github.event.inputs.base }}'
           if [ -z "$base" ]; then
-            base='${{ github.event.before }}'
+            base="$(git rev-parse -q --verify 'docs-audited^{commit}' || true)"
           fi
           if [ -z "$base" ] \
              || [ "$base" = "0000000000000000000000000000000000000000" ] \
@@ -121,10 +118,12 @@ jobs:
 
           The exact before->after changes are in source.diff at the repo root -- READ IT FIRST to see what actually changed. The whole repository is checked out, so Read/Grep/Glob any source or doc file you need to judge the impact.
 
-          Then bring the Markdown documentation under docs/ in line with these changes wherever they alter what a game developer relies on (public API, behaviour, structure, or example snippets). There are two cases, and you should do BOTH as needed:
-          - UPDATE an existing page when a change alters a feature that docs/ already covers.
-          - CREATE a new page when a change introduces a public feature or subsystem a game developer relies on and NO page documents it yet (this is expected for new architecture -- do not skip it just because nothing exists to edit). Place it and register it in the mkdocs.yml nav per .github/docs-structure.md so it appears on the site.
-          If the change is internal-only (a refactor, a comment, a private detail) and the docs still read correctly, make NO edits. Document the public surface, not every changed file.
+          There are two sets of docs, and you keep both in line with these changes (.github/docs-style.md and .github/docs-structure.md say exactly what goes where):
+          - docs/ is the public site for game developers making a game with SFS: what a feature is for in a game, how to use it, what to watch out for (including performance advice that changes how a game should be written), with examples from a game.
+          - engine/docs/ is the internal documentation for engine developers: how it works (layouts, algorithms, invariants, benchmark targets, implementation trade-offs, the linter's full rules).
+          For each set, UPDATE an existing page when a change alters a feature it already covers, and CREATE a page when a change introduces a feature or subsystem that has none yet (this is expected for new architecture -- do not skip it just because nothing exists to edit). A new public page gets its mkdocs.yml nav entry per .github/docs-structure.md; internal pages have no nav.
+          Never edit docs/editor/: those pages are written by hand, with screenshots. If a change alters what the editor's users see or do, write one line per change (what changed, and which docs/editor page it affects) to docs-editor-notes.txt at the repository root instead.
+          If the change is internal-only (a refactor, a comment, a private detail) and both sets still read correctly, make NO edits. Document what each reader needs, not every changed file.
 
           Read .github/docs-style.md (prose and voice) and .github/docs-structure.md (page layout, navigation, and what you may edit) before editing, and follow both. Match the voice and structure of the existing docs.
 
@@ -141,11 +140,30 @@ jobs:
           # root and is ignored). If Claude made no edits, the PR step is skipped
           # so a no-op run leaves any open docs PR untouched instead of letting
           # create-pull-request close it for having no diff.
-          if [ -n "$(git status --porcelain -- docs mkdocs.yml)" ]; then
+          # docs/editor/ is written by hand: anything Claude did there is undone.
+          git checkout -- docs/editor 2>/dev/null || true
+          git clean -fdq -- docs/editor
+          if [ -n "$(git status --porcelain -- docs engine/docs mkdocs.yml)" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+          # The editor docs to update by hand, for the PR (or an issue).
+          if [ -s docs-editor-notes.txt ]; then
+            { echo "notes<<EOF"; sed 's/^/- /' docs-editor-notes.txt; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      # Editor changes with no other docs edits still reach the owner.
+      - name: Open an issue for editor docs
+        if: steps.changed.outputs.empty == 'false' && steps.edited.outputs.changed == 'false' && steps.edited.outputs.notes != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.edited.outputs.notes }}
+        run: |
+          gh issue create --title "Editor docs to update (${GITHUB_SHA::7})" --label documentation \
+            --body "Source changes in ${GITHUB_SHA::7} affect pages under docs/editor/, which are written by hand:
+
+          $NOTES"
 
       - name: Resolve the PR title
         id: title
@@ -171,6 +189,7 @@ jobs:
           # its nav entry; source.diff and other root files stay out of the PR.
           add-paths: |
             docs
+            engine/docs
             mkdocs.yml
           # A fresh branch per triggering commit (docs/auto-sync-<short-sha>) so a
           # new source change opens its OWN PR instead of force-updating the
@@ -196,12 +215,25 @@ jobs:
             here in the conversation first: GitHub runs nothing for reviews while a PR
             has conflicts.
 
+            Public docs (docs/) are for game developers; internal docs (engine/docs/)
+            for engine developers. Editor pages (docs/editor/) are written by hand.
+
+            **Editor docs to update by hand:**
+            ${{ steps.edited.outputs.notes || 'none' }}
+
       # Safe: create-pull-request restricts this PR to docs/ + mkdocs.yml (add-paths).
       - name: Mark required checks satisfied (docs-only PR)
         if: steps.edited.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/mark-docs-checks.sh "${{ steps.cpr.outputs.pull-request-head-sha }}"
+
+      # The next audit starts here. Moved even when nothing needed documenting,
+      # and not on a failed run, so a failure is audited again next time.
+      - name: Mark where this audit ended
+        run: |
+          git tag -f docs-audited "$GITHUB_SHA"
+          git push -f origin refs/tags/docs-audited
 
   # Feedback on a docs PR: Claude brings the branch up to date with master
   # (resolving any conflicts), does what the feedback asks, and pushes the
@@ -399,12 +431,14 @@ jobs:
         id: push
         if: steps.pr.outputs.docs == 'true'
         run: |
-          if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs mkdocs.yml; then
+          if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs engine/docs mkdocs.yml; then
             gh pr comment "$PR" --body "I couldn't resolve the conflicts with master (markers are left in the files above), so I haven't pushed anything. Resolve them by hand, or ask again with more to go on."
             echo "reported=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          git add -A -- docs mkdocs.yml
+          git checkout -- docs/editor 2>/dev/null || true
+          git clean -fdq -- docs/editor
+          git add -A -- docs engine/docs mkdocs.yml
           if [ -f .git/MERGE_HEAD ]; then
             git commit --no-edit # the merge with master, conflicts resolved
           elif ! git diff --cached --quiet; then
@@ -520,7 +554,7 @@ jobs:
             git fetch origin "$branch"
             git checkout -q -B "$branch" "origin/$branch"
             # What this PR changes, against where it branched off.
-            git diff "$(git merge-base origin/master HEAD)" HEAD -- docs mkdocs.yml > pr.diff
+            git diff "$(git merge-base origin/master HEAD)" HEAD -- docs engine/docs mkdocs.yml > pr.diff
             conflicts=""
             if ! git merge --no-edit origin/master >/dev/null; then
               conflicts="$(git diff --name-only --diff-filter=U)"
@@ -549,6 +583,9 @@ jobs:
               continue
             fi
 
+            # docs/editor/ is written by hand: anything Claude did there is undone.
+            git checkout -- docs/editor 2>/dev/null || true
+            git clean -fdq -- docs/editor
             verdict="$(head -n1 docs-pr-verdict.txt 2>/dev/null | tr -d '[:space:]')"
             note="$(tail -n +2 docs-pr-verdict.txt 2>/dev/null)"
             if [ "$verdict" = "close" ]; then
@@ -557,14 +594,14 @@ jobs:
               gh pr comment "$pr" --body "This looks like it's no longer needed, so I'd close it (I haven't changed anything):
 
           $note"
-            elif git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs mkdocs.yml >/dev/null; then
+            elif git grep -nE '^(<<<<<<<|>>>>>>>) ' -- docs engine/docs mkdocs.yml >/dev/null; then
               git merge --abort 2>/dev/null || true
               gh pr comment "$pr" --body "I tried to bring this up to date with master but couldn't resolve its conflicts, so I've left it as it was. Resolve them by hand, or submit a review with more to go on."
-            elif [ -z "$conflicts" ] && [ -z "$(git status --porcelain -- docs mkdocs.yml)" ]; then
+            elif [ -z "$conflicts" ] && [ -z "$(git status --porcelain -- docs engine/docs mkdocs.yml)" ]; then
               # Merges cleanly and still accurate: nothing worth a commit.
               echo "#$pr is still accurate; left as it is."
             else
-              git add -A -- docs mkdocs.yml
+              git add -A -- docs engine/docs mkdocs.yml
               if [ -f .git/MERGE_HEAD ]; then
                 git commit -q --no-edit
               elif ! git diff --cached --quiet; then

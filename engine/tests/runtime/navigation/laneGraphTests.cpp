@@ -171,7 +171,10 @@ int main()
                           .count();
     std::printf("  40x40 grid: %.2f ms\n", ms);
     CHECK(r.has_value());
-    CHECK(ms < 100.0);
+    if (!testing::kSanitized)
+    {
+      CHECK(ms < 100.0);
+    }
   }
 
   TEST("a lane trip should join its stretches with searched windows, one model")

@@ -213,7 +213,10 @@ int main()
                 h.system.stats().debugLines,
                 on,
                 off);
-    CHECK(on - off < 5.0); // generous: a debug build's, on any machine
+    if (!testing::kSanitized)
+    {
+      CHECK(on - off < 5.0); // generous: a debug build's, on any machine
+    }
   }
 
   return testing::report("debugLinesTests");

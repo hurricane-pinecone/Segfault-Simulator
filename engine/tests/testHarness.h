@@ -37,6 +37,22 @@
 
 namespace testing
 {
+/**
+ * Whether the build runs under AddressSanitizer or ThreadSanitizer, which slow
+ * code several times over, so timing checks don't hold there and are skipped.
+ */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+inline constexpr bool kSanitized = true;
+#elif defined(__has_feature)
+  #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+inline constexpr bool kSanitized = true;
+  #else
+inline constexpr bool kSanitized = false;
+  #endif
+#else
+inline constexpr bool kSanitized = false;
+#endif
+
 struct Stats
 {
   int passed = 0;
